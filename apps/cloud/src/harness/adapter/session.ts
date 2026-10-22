@@ -6,7 +6,7 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { OrchestrationV2RuntimeRequest, RunId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import type * as Cause from "effect/Cause";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -18,7 +18,10 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { HarnessError, type HarnessOpenInput, type HarnessSession } from "../Harness.ts";
-import type { HarnessRuntimeReporter } from "../HarnessProcessLifetime.ts";
+import {
+  makeReleaseChunkOmittedFailure,
+  type HarnessRuntimeReporter,
+} from "../HarnessProcessLifetime.ts";
 import { checkpointThreadLoad } from "../HarnessThreadLoad.ts";
 import { saveCheckpoint, saveComputer, threadMatches, validateOpen } from "./checkpoint.ts";
 import { applyInterrupt, controlTurn } from "./controls.ts";
@@ -54,6 +57,18 @@ export const openAdapterSession = (
       const lock = yield* Semaphore.make(1);
       let disposed = false;
       let failure: HarnessError | undefined;
+      const recordFailure = (error: HarnessError) => {
+        const recorded = (failure ??= error);
+        if (state.active !== undefined) {
+          Deferred.doneUnsafe(state.active.began, Effect.fail(recorded));
+          Deferred.doneUnsafe(state.active.started, Effect.fail(recorded));
+        }
+        Queue.failCauseUnsafe(output, Cause.fail(recorded));
+      };
+      const poison = (error: HarnessError) =>
+        Effect.sync(() => {
+          if (!disposed) recordFailure(error);
+        });
       const requests = new Map<string, OrchestrationV2RuntimeRequest>(
         input.checkpoint?.snapshot.runtimeRequests.map((request) => [request.id, request]),
       );
@@ -64,15 +79,23 @@ export const openAdapterSession = (
         revision: undefined,
       };
       const reporter: HarnessRuntimeReporter = {
-        releaseChunkOmitted: (event) => {
+        releaseChunkOmitted: (event, omission = makeReleaseChunkOmittedFailure(event)) => {
           Queue.offerUnsafe(output, {
             kind: "log",
             runId: state.active?.input.runId ?? null,
             level: "warning",
             message: JSON.stringify(event),
           });
+          recordFailure(
+            new HarnessError({
+              operation: "events",
+              message: "A release module was omitted.",
+              cause: omission,
+            }),
+          );
         },
       };
+      // Runtime finalizers drain the process's last reports before this sink closes.
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           disposed = true;
@@ -135,24 +158,15 @@ export const openAdapterSession = (
       }
       const check = (operation: HarnessError["operation"]) =>
         Effect.suspend(() =>
-          disposed
-            ? Effect.fail(new HarnessError({ operation, message: "Harness is disposed." }))
-            : failure !== undefined
-              ? Effect.fail(failure)
+          failure !== undefined
+            ? Effect.fail(failure)
+            : disposed
+              ? Effect.fail(new HarnessError({ operation, message: "Harness is disposed." }))
               : Effect.void,
         );
-      const poison = (error: HarnessError) =>
-        Effect.gen(function* () {
-          if (disposed) return;
-          failure ??= error;
-          if (state.active !== undefined) {
-            yield* Deferred.fail(state.active.began, failure);
-            yield* Deferred.fail(state.active.started, failure);
-          }
-          yield* Queue.fail(output, failure);
-        });
       const checkpoint = (operation: "events" | "export") =>
         Effect.gen(function* () {
+          yield* check(operation);
           if (state.providerThread === undefined) {
             return yield* Effect.fail(
               new HarnessError({ operation, message: "No provider thread has been loaded." }),
@@ -165,6 +179,7 @@ export const openAdapterSession = (
             operation,
             requests,
           );
+          yield* check(operation);
           state.providerThread = saved.snapshot.providerThread;
           state.revision = saved.revision;
           return saved;
@@ -239,7 +254,9 @@ export const openAdapterSession = (
                 for (const request of cancelRequests(current, requests, yield* DateTime.now))
                   yield* publish(requestEvent(request, current), current.input.runId);
                 // Computer owns the revision. Runner drive changes require real Drive evidence.
-                state.revision = yield* saveComputer(input, "events");
+                const revision = yield* saveComputer(input, "events");
+                yield* check("events");
+                state.revision = revision;
                 state.last = current;
                 state.active = undefined;
               }

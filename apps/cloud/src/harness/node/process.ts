@@ -6,6 +6,10 @@ import { NodeProcessExitError } from "../../isolate/NodeProcess.ts";
 import type { NodeBridge } from "../../isolate/NodeBridge.ts";
 import type { NodeChildProcess } from "../../isolate/NodeChildProcess.ts";
 import type { KernelExitStatus } from "../../kernel/KernelProcessTable.ts";
+import {
+  makeReleaseChunkOmittedFailure,
+  type ReleaseChunkOmittedFailure,
+} from "../HarnessProcessLifetime.ts";
 import { createHarnessRuntime } from "./runtime.ts";
 import { installHarnessPersonality, reserveHarnessRealm } from "./personality.ts";
 import type { NodeHarnessProcess, NodeHarnessProcessInput } from "./types.ts";
@@ -33,6 +37,15 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
   const terminal = new Promise<Outcome>((resolve) => {
     finish = resolve;
   });
+  let releaseOmissionFailure: ReleaseChunkOmittedFailure | undefined;
+  const processInput: NodeHarnessProcessInput = {
+    ...input,
+    reportReleaseChunkOmitted: (event) => {
+      const failure = makeReleaseChunkOmittedFailure(event);
+      releaseOmissionFailure ??= failure;
+      return input.reportReleaseChunkOmitted?.(event, failure);
+    },
+  };
   const settle = (value: Outcome) => {
     if (outcome !== undefined) return;
     outcome = value;
@@ -67,7 +80,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
   let allocated: ReturnType<typeof createHarnessRuntime> | undefined;
   try {
     runtime = createHarnessRuntime(
-      input,
+      processInput,
       {
         lifetime: lifetime.signal,
         stdin: stdin.signal,
@@ -77,7 +90,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       () => bridge,
     );
     allocated = runtime;
-    personality = installHarnessPersonality(runtime, input, lifetime.signal);
+    personality = installHarnessPersonality(runtime, processInput, lifetime.signal);
     bridge = personality.bridge;
     realm.commit();
   } catch (error) {
@@ -217,14 +230,26 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
         });
       await new Promise<void>((resolve) => NodeTimers.setImmediate(resolve));
       restoring = true;
-      await attempt(() => personality.restore());
-      await attempt(() => realm.release());
+      await attempt(() => personality.restoreGlobals());
+      await attempt(() => personality.drainReports());
+      try {
+        personality.restoreReporter();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        realm.release();
+      } catch (error) {
+        failures.push(error);
+      }
     }
     if (failures.length === 1) throw failures[0];
     if (failures.length > 1)
       throw new AggregateError(failures, "Node harness execution or cleanup failed");
     if ("error" in result) throw result.error;
-    return result.status;
+    return releaseOmissionFailure !== undefined && result.status.exitCode === 0
+      ? { ...result.status, exitCode: 1 }
+      : result.status;
   })();
   void exited.catch(() => undefined);
   const abort = async (reason?: unknown, signal: 9 | 15 = 15) => {

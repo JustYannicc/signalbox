@@ -1,27 +1,25 @@
 // @effect-diagnostics nodeBuiltinImport:off - hash build inputs and coverage evidence.
 import * as NodeCrypto from "node:crypto";
 import ts from "typescript-legacy";
+import type { ReleaseOmissionConfiguration } from "@t3tools/contracts/harnessReleaseOmission";
 
+/** Pinned to one binary. Only explicitly cold lazy JS initializers count; missing inputs stay bundled. */
 export interface ReleaseCoverageCorpus {
   readonly schemaVersion: 1;
+  /** Coverage rows are valid only for this exact provider release binary. */
   readonly binarySha256: string;
   readonly provenance: readonly { readonly name: string; readonly sha256: string }[];
   readonly pending: readonly string[];
-  /** Only inputs with an observed lazy initializer belong here. Eager inputs are never inferred cold. */
+  /** Only observed cold, lazy JavaScript inputs may be omitted; absent inputs remain bundled. */
   readonly inputs: readonly { readonly inputPath: string; readonly initialized: boolean }[];
 }
 
 export interface ReleaseOmissionOptions {
-  readonly configuration: {
-    readonly name: string;
-    readonly env: Readonly<Record<string, string | null>>;
-    readonly settings: Readonly<Record<string, unknown>>;
-  };
+  readonly configuration: ReleaseOmissionConfiguration;
   readonly corpus?: ReleaseCoverageCorpus;
 }
 
-export interface OmittedReleaseChunk {
-  readonly chunkId: string;
+export interface OmittedReleaseModule {
   readonly inputPath: string;
   readonly tier: "configuration" | "corpus";
   readonly sourceBytes: number;
@@ -34,11 +32,12 @@ export interface ReleaseOmissionManifest {
   readonly configurationReplacements: Readonly<Record<string, number>>;
   readonly configurationRemoved: readonly string[];
   readonly corpus: {
+    readonly binarySha256: ReleaseCoverageCorpus["binarySha256"];
     readonly sha256: string;
     readonly provenance: ReleaseCoverageCorpus["provenance"];
     readonly pending: ReleaseCoverageCorpus["pending"];
   } | null;
-  readonly chunks: readonly OmittedReleaseChunk[];
+  readonly chunks: readonly OmittedReleaseModule[];
 }
 
 export const releaseSourceHash = (source: string) =>
@@ -46,8 +45,10 @@ export const releaseSourceHash = (source: string) =>
 
 /** Untrusted corpus files must fail closed rather than treating missing records as cold. */
 export function parseReleaseCoverageCorpus(value: unknown): ReleaseCoverageCorpus {
-  if (typeof value !== "object" || value === null) throw new Error("RELEASE_CORPUS_INVALID");
-  const input = value as Record<string, unknown>;
+  const isRecord = (candidate: unknown): candidate is Record<string, unknown> =>
+    typeof candidate === "object" && candidate !== null && !Array.isArray(candidate);
+  if (!isRecord(value)) throw new Error("RELEASE_CORPUS_INVALID");
+  const input = value;
   const hash = (v: unknown): v is string => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
   if (
     input.schemaVersion !== 1 ||
@@ -55,19 +56,17 @@ export function parseReleaseCoverageCorpus(value: unknown): ReleaseCoverageCorpu
     !Array.isArray(input.inputs) ||
     !Array.isArray(input.provenance) ||
     !input.provenance.length ||
-    !Array.isArray(input.pending) ||
-    input.pending.some((v) => typeof v !== "string")
+    !Array.isArray(input.pending)
   )
     throw new Error("RELEASE_CORPUS_INVALID");
+  const pending = input.pending.filter((item): item is string => typeof item === "string");
+  if (pending.length !== input.pending.length) throw new Error("RELEASE_CORPUS_INVALID");
   const seen = new Set<string>();
   const inputs = input.inputs.map((row: unknown) => {
     if (
-      typeof row !== "object" ||
-      row === null ||
-      !("inputPath" in row) ||
+      !isRecord(row) ||
       typeof row.inputPath !== "string" ||
       !row.inputPath ||
-      !("initialized" in row) ||
       typeof row.initialized !== "boolean" ||
       seen.has(row.inputPath)
     )
@@ -76,15 +75,7 @@ export function parseReleaseCoverageCorpus(value: unknown): ReleaseCoverageCorpu
     return { inputPath: row.inputPath, initialized: row.initialized };
   });
   const provenance = input.provenance.map((row: unknown) => {
-    if (
-      typeof row !== "object" ||
-      row === null ||
-      !("name" in row) ||
-      typeof row.name !== "string" ||
-      !row.name ||
-      !("sha256" in row) ||
-      !hash(row.sha256)
-    )
+    if (!isRecord(row) || typeof row.name !== "string" || !row.name || !hash(row.sha256))
       throw new Error("RELEASE_CORPUS_INVALID");
     return { name: row.name, sha256: row.sha256 };
   });
@@ -93,14 +84,18 @@ export function parseReleaseCoverageCorpus(value: unknown): ReleaseCoverageCorpu
     binarySha256: input.binarySha256,
     inputs,
     provenance,
-    pending: input.pending as string[],
+    pending,
   };
 }
 
 /** Hoisted exports also fail when a cycle calls them before their module initializes. */
-export function omittedModuleSource(source: string, chunk: OmittedReleaseChunk, commonJs: boolean) {
+export function omittedModuleSource(
+  source: string,
+  module: OmittedReleaseModule,
+  commonJs: boolean,
+) {
   const file = ts.createSourceFile(
-    chunk.inputPath,
+    module.inputPath,
     source,
     ts.ScriptTarget.Latest,
     true,
@@ -116,7 +111,7 @@ export function omittedModuleSource(source: string, chunk: OmittedReleaseChunk, 
     if (ts.isExportDeclaration(statement)) {
       // An unsupported namespace must fail the build before any artifact is published.
       if (!statement.exportClause || !ts.isNamedExports(statement.exportClause))
-        throw new Error(`RELEASE_OMISSION_EXPORT_UNSUPPORTED: ${chunk.inputPath}`);
+        throw new Error(`RELEASE_OMISSION_EXPORT_UNSUPPORTED: ${module.inputPath}`);
       for (const element of statement.exportClause.elements) names.add(element.name.text);
     } else if (ts.isExportAssignment(statement)) names.add("default");
     else if (
@@ -132,16 +127,15 @@ export function omittedModuleSource(source: string, chunk: OmittedReleaseChunk, 
         statement.name
       )
         names.add(statement.name.text);
-      else throw new Error(`RELEASE_OMISSION_EXPORT_UNSUPPORTED: ${chunk.inputPath}`);
+      else throw new Error(`RELEASE_OMISSION_EXPORT_UNSUPPORTED: ${module.inputPath}`);
     }
   }
   const detail = JSON.stringify({
     code: "RELEASE_CHUNK_OMITTED",
-    chunkId: chunk.chunkId,
-    inputPath: chunk.inputPath,
-    tier: chunk.tier,
+    inputPath: module.inputPath,
+    tier: module.tier,
   });
-  const failure = `const detail=${detail};const error=Object.assign(new Error("RELEASE_CHUNK_OMITTED: "+detail.chunkId+" ("+detail.inputPath+")"),detail,{name:"ReleaseChunkOmittedError"});try{globalThis[Symbol.for("signalbox.releaseChunkOmitted")]?.(detail)}finally{throw error}`;
+  const failure = `/* Event shape and Symbol.for key mirror HarnessProcessLifetime.ts; the build tool cannot import cloud runtime code. */const detail=${detail};const error=Object.assign(new Error("RELEASE_CHUNK_OMITTED: "+detail.inputPath),detail,{name:"ReleaseChunkOmittedError"});try{globalThis[Symbol.for("signalbox.releaseChunkOmitted")]?.(detail)}finally{throw error}`;
   const bindings = [...names].map((name, i) => `v${i} as ${JSON.stringify(name)}`);
   const exports = commonJs
     ? ""

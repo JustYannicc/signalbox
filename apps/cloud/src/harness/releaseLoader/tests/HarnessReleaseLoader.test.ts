@@ -47,6 +47,25 @@ describe("loadHarnessRelease", () => {
     expect(ready.plan.preparedModules["cli/cli.js"]?.path).toBe("cli/main/cli.js");
   });
 
+  it("rejects a rehashed qualification artifact on the product load path", async () => {
+    const fixture = await claudeFixture({
+      omission: {
+        schemaVersion: 1,
+        configuration: { name: "qualification", env: {} },
+        configurationReplacements: {},
+        configurationRemoved: [],
+        corpus: null,
+        chunks: [],
+      },
+      omissionIdentity: { configuration: { name: "qualification" } },
+    });
+
+    await expect(loadHarnessRelease(fixture.options)).rejects.toThrow(
+      "Claude release configuration is not product-enabled",
+    );
+    expect(fixture.reads).toContain("cli/manifest.json");
+  });
+
   it("does not resolve for the caller until the last required read finishes", async () => {
     const fixture = await claudeFixture();
     let release!: () => void;

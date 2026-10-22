@@ -8,6 +8,7 @@ import type {
   ProviderAdapterV2ThreadSnapshot,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
+import { ReleaseChunkOmittedFailure } from "@t3tools/contracts/harnessReleaseOmission";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
@@ -113,6 +114,7 @@ const harnessCauseSchema: Schema.Codec<unknown, unknown, never, never> = Schema.
     return Schema.Union([
       effectCauseSchema,
       nestedHarnessErrorSchema(),
+      ReleaseChunkOmittedFailure,
       makeAggregateErrorSchema(harnessCauseSchema),
       makeErrorSchema(harnessCauseSchema),
       Schema.Defect(),

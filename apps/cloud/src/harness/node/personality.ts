@@ -1,6 +1,6 @@
 import { createHarnessModelTransport } from "./modelTransport.ts";
 import { installNodePersonality } from "../../isolate/NodeBootstrap.ts";
-import { RELEASE_CHUNK_OMITTED_SYMBOL } from "../ClaudeHostConfig.ts";
+import { RELEASE_CHUNK_OMITTED_SYMBOL } from "../HarnessProcessLifetime.ts";
 import type { NodeHarnessProcessInput } from "./types.ts";
 import type { createHarnessRuntime } from "./runtime.ts";
 
@@ -36,16 +36,40 @@ export function installHarnessPersonality(
     modules: runtime.modules,
     globals: { Bun: runtime.bun, process: runtime.process },
   });
-  const reporter = input.reportReleaseChunkOmitted ?? (() => undefined);
-  const previous = new Map<PropertyKey, PropertyDescriptor | undefined>([
-    ...["fetch", "console"].map(
+  const reporter: NonNullable<NodeHarnessProcessInput["reportReleaseChunkOmitted"]> =
+    input.reportReleaseChunkOmitted ?? (() => undefined);
+  const previous = new Map<PropertyKey, PropertyDescriptor | undefined>(
+    ["fetch", "console"].map(
       (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const,
     ),
-    [
-      RELEASE_CHUNK_OMITTED_SYMBOL,
-      Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL),
-    ],
-  ]);
+  );
+  const previousReporter = Object.getOwnPropertyDescriptor(
+    globalThis,
+    RELEASE_CHUNK_OMITTED_SYMBOL,
+  );
+  const pendingReports = new Set<Promise<void>>();
+  const reportErrors: unknown[] = [];
+  let globalsRestored = false;
+  let reporterRestored = false;
+  const report = (
+    event: Parameters<typeof reporter>[0],
+    failure: Parameters<typeof reporter>[1],
+  ) => {
+    const pending = reporter(event, failure);
+    if (pending !== undefined) {
+      let tracked: Promise<void>;
+      tracked = Promise.resolve(pending).then(
+        () => {
+          pendingReports.delete(tracked);
+        },
+        (error) => {
+          reportErrors.push(error);
+          pendingReports.delete(tracked);
+        },
+      );
+      pendingReports.add(tracked);
+    }
+  };
   const transport = createHarnessModelTransport(input.modelTransport, signal);
   const modelFetch = transport.fetch;
   try {
@@ -62,7 +86,7 @@ export function installHarnessPersonality(
       enumerable: previous.get("console")?.enumerable ?? true,
     });
     Object.defineProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL, {
-      value: reporter,
+      value: report,
       configurable: true,
       writable: false,
       enumerable: false,
@@ -72,6 +96,9 @@ export function installHarnessPersonality(
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);
       else Reflect.deleteProperty(globalThis, name);
     }
+    if (previousReporter)
+      Object.defineProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL, previousReporter);
+    else Reflect.deleteProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL);
     personality.restore();
     throw error;
   }
@@ -89,7 +116,17 @@ export function installHarnessPersonality(
       if (failures.length > 1)
         throw new AggregateError(failures, "Node harness transport cleanup failed");
     },
-    restore() {
+    async drainReports() {
+      while (pendingReports.size > 0) {
+        await Promise.all(Array.from(pendingReports));
+      }
+      const failures = reportErrors.splice(0);
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1)
+        throw new AggregateError(failures, "Release omission reports failed");
+    },
+    restoreGlobals() {
+      if (globalsRestored) return;
       if (Object.getOwnPropertyDescriptor(globalThis, "fetch")?.value !== modelFetch) {
         throw new Error("Node harness fetch ownership changed");
       }
@@ -97,8 +134,7 @@ export function installHarnessPersonality(
         throw new Error("Node harness console ownership changed");
       }
       if (
-        Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL)?.value !==
-        reporter
+        Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL)?.value !== report
       ) {
         throw new Error("Node harness release reporter ownership changed");
       }
@@ -107,6 +143,19 @@ export function installHarnessPersonality(
         if (descriptor) Object.defineProperty(globalThis, name, descriptor);
         else Reflect.deleteProperty(globalThis, name);
       }
+      globalsRestored = true;
+    },
+    restoreReporter() {
+      if (reporterRestored) return;
+      if (
+        Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL)?.value !== report
+      ) {
+        throw new Error("Node harness release reporter ownership changed");
+      }
+      if (previousReporter)
+        Object.defineProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL, previousReporter);
+      else Reflect.deleteProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL);
+      reporterRestored = true;
     },
   };
 }

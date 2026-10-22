@@ -27,6 +27,8 @@ export const publishHarnessArtifact = async (
   const { store, projectId, prefix } = destination;
   const local = artifactDirectorySource(directory);
   const artifact = await openHarnessReleaseArtifact(selected, local);
+  if (artifact.manifest.omission && artifact.manifest.omission.configuration.name !== "product")
+    throw new Error("HARNESS_ARTIFACT_QUALIFICATION_ONLY");
   const key = (path: string) => harnessArtifactKey(projectId, selected.artifactRef, path, prefix);
   const remote = {
     read: async (_reference: string, path: string) => store.read(key(path)),

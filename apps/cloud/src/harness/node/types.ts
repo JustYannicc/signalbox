@@ -12,7 +12,10 @@ import type {
 import type { NodeProcessEnvironment, NodeRuntimeIdentity } from "../../isolate/NodeProcess.ts";
 
 import type { LoadedHarnessRelease } from "../HarnessReleaseLoader.ts";
-import type { ReleaseChunkOmittedEvent } from "../HarnessProcessLifetime.ts";
+import type {
+  ReleaseChunkOmittedEvent,
+  ReleaseChunkOmittedFailure,
+} from "../HarnessProcessLifetime.ts";
 
 export interface NodeHarnessProcessInput {
   readonly loadedRelease?: LoadedHarnessRelease;
@@ -35,7 +38,10 @@ export interface NodeHarnessProcessInput {
   readonly addons?: NodeEnvironmentOptions["addons"];
   readonly bun: { readonly main: string; readonly version: string; readonly revision: string };
   readonly modelTransport: (request: Request) => Promise<Response>;
-  readonly reportReleaseChunkOmitted?: (event: ReleaseChunkOmittedEvent) => void;
+  readonly reportReleaseChunkOmitted?: (
+    event: ReleaseChunkOmittedEvent,
+    failure: ReleaseChunkOmittedFailure,
+  ) => void | Promise<void>;
 }
 
 export interface NodeHarnessProcess {

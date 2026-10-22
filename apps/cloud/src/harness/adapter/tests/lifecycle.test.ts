@@ -31,22 +31,25 @@ const finish = (f: Effect.Success<typeof running>) =>
   });
 
 describe("AdapterHarness lifecycle", () => {
-  it.effect("publishes omitted release chunks on the existing harness diagnostic stream", () =>
+  it.effect("fails an active turn after a release module is omitted", () =>
     Effect.gen(function* () {
       const f = yield* running;
       const event = {
         code: "RELEASE_CHUNK_OMITTED",
-        chunkId: "bun-graph:/chunks/lazy.js",
         inputPath: "bun-graph:/chunks/lazy.js",
         tier: "configuration",
       } as const;
       f.reportReleaseChunkOmitted(event);
-      expect(yield* f.next).toEqual({
-        kind: "log",
-        runId: f.turn.runId,
-        level: "warning",
-        message: JSON.stringify(event),
-      });
+      expect((yield* f.next).kind).toBe("log");
+      yield* f.terminal();
+      yield* f.endEvents;
+      const collector = yield* Fiber.join(f.collector);
+      expect(Exit.isFailure(collector)).toBe(true);
+      expect(
+        f.events.some((item) => item.kind === "provider" && item.event.type === "turn.terminal"),
+      ).toBe(false);
+      expect(f.calls).not.toContain("save");
+      expect(Result.isFailure(yield* f.session.export().pipe(Effect.result))).toBe(true);
     }).pipe(Effect.scoped),
   );
 

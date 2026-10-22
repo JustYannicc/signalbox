@@ -1,4 +1,13 @@
 import type { KernelExitStatus } from "../kernel/KernelProgramHost.ts";
+import type {
+  ReleaseChunkOmittedEvent,
+  ReleaseChunkOmittedFailure,
+} from "@t3tools/contracts/harnessReleaseOmission";
+
+export type {
+  ReleaseChunkOmittedEvent,
+  ReleaseChunkOmittedFailure,
+} from "@t3tools/contracts/harnessReleaseOmission";
 
 export interface HarnessOwnedProcess {
   readonly exited: Promise<KernelExitStatus>;
@@ -19,15 +28,27 @@ export interface HarnessProcessStartup {
   readonly failure?: unknown;
 }
 
-export interface ReleaseChunkOmittedEvent {
-  readonly code: "RELEASE_CHUNK_OMITTED";
-  readonly chunkId: string;
-  readonly inputPath: string;
-  readonly tier: "configuration" | "corpus";
-}
+export const RELEASE_CHUNK_OMITTED_SYMBOL = Symbol.for("signalbox.releaseChunkOmitted");
+
+export const makeReleaseChunkOmittedFailure = (
+  event: ReleaseChunkOmittedEvent,
+): ReleaseChunkOmittedFailure => {
+  const trace = new Error("Release module was omitted.");
+  return {
+    _tag: "ReleaseChunkOmittedFailure",
+    code: event.code,
+    inputPath: event.inputPath,
+    tier: event.tier,
+    message: trace.message,
+    stack: trace.stack ?? trace.message,
+  };
+};
 
 export interface HarnessRuntimeReporter {
-  readonly releaseChunkOmitted: (event: ReleaseChunkOmittedEvent) => void;
+  readonly releaseChunkOmitted: (
+    event: ReleaseChunkOmittedEvent,
+    failure?: ReleaseChunkOmittedFailure,
+  ) => void | Promise<void>;
 }
 
 export interface HarnessProcessObserver {

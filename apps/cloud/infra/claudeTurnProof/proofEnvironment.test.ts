@@ -8,7 +8,7 @@ import {
   createProofIdentity,
   createProofProcessEnvironment,
 } from "./proofEnvironment.ts";
-import { CLAUDE_PROOF_HOST_CONFIG } from "../../src/harness/ClaudeHostConfig.ts";
+import { CLAUDE_QUALIFICATION_HOST_CONFIG } from "./hostConfiguration.ts";
 
 const require = NodeModule.createRequire(import.meta.url);
 
@@ -54,7 +54,7 @@ describe("proof package resolver", () => {
 
 describe("Claude full-tools proof configuration", () => {
   it("keeps the existing environment except SIMPLE and enables the documented tools list", () => {
-    expect(createProofProcessEnvironment()).toEqual(CLAUDE_PROOF_HOST_CONFIG.env);
+    expect(createProofProcessEnvironment()).toEqual(CLAUDE_QUALIFICATION_HOST_CONFIG.env);
     const identity = createProofIdentity("run all configured tools");
     expect(identity.argv).toEqual([
       "claude",

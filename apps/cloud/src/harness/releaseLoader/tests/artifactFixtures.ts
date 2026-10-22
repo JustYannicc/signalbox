@@ -1,6 +1,7 @@
 import {
   serializeHarnessReleaseArtifactManifest,
   type HarnessReleaseArtifactManifest,
+  type HarnessReleaseOmissionIdentity,
   type HarnessReleaseArtifactSource,
 } from "../../../harnessReleases/HarnessReleaseArtifact.ts";
 import type { PreparedModuleType, ReleaseFile } from "../../HarnessReleasePlan.ts";
@@ -24,6 +25,7 @@ async function artifactFixture(
   composition: Pick<HarnessReleaseArtifactManifest, "harness" | "components">,
   files: Map<string, Uint8Array>,
   maxPreparedModuleBytes: number,
+  omission?: HarnessReleaseOmissionIdentity,
 ) {
   const inventory: Record<string, ReleaseFile> = {};
   for (const [path, bytes] of files) inventory[path] = await descriptor(bytes);
@@ -33,6 +35,7 @@ async function artifactFixture(
     sourceIdentity,
     computer: trustedComputer,
     files: inventory,
+    ...(omission === undefined ? {} : { omission }),
   });
   files.set("manifest.json", common);
   const artifactHash = (await descriptor(common)).sha256;
@@ -104,6 +107,8 @@ export async function claudeFixture(
   options: {
     cliMapBytes?: Uint8Array;
     sdkMapBytes?: Uint8Array;
+    omission?: unknown;
+    omissionIdentity?: HarnessReleaseOmissionIdentity;
     assets?: Readonly<Record<string, { bytes: Uint8Array; loader: number; encoding: number }>>;
   } = {},
 ) {
@@ -170,6 +175,7 @@ export async function claudeFixture(
       requiredHostModules: [],
       environmentPackageModules: {},
       bytes: cliModuleBytes,
+      ...(options.omission === undefined ? {} : { omission: options.omission }),
     }),
   );
   let sdkMap;
@@ -205,5 +211,6 @@ export async function claudeFixture(
     },
     files,
     cliModuleBytes + sdkBytes.byteLength,
+    options.omissionIdentity,
   );
 }

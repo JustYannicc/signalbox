@@ -4,7 +4,7 @@ import {
   omittedModuleSource,
   parseReleaseCoverageCorpus,
   releaseSourceHash,
-  type OmittedReleaseChunk,
+  type OmittedReleaseModule,
   type ReleaseOmissionManifest,
   type ReleaseOmissionOptions,
 } from "./release-omission.ts";
@@ -35,17 +35,20 @@ export function createReleaseOmission(input: {
     options.configuration.env,
     input.resolve,
   );
+  // Loader 13 text becomes source data for esbuild's text loader, so it cannot be replaced by JS stubs.
+  const javascriptInputs = new Set([...input.sources.keys()].map((path) => `bun-graph:${path}`));
   let specialize = false;
   let configurationRemoved: string[] = [];
-  const omitted = new Map<string, OmittedReleaseChunk>();
+  const omitted = new Map<string, OmittedReleaseModule>();
   const originals = new Map<string, string>();
   const specialized = new Map<string, string>();
   const stubs = new Map<string, string>();
   const prepareSource = (source: string, path: string, namespace: string) => {
+    // Different esbuild namespaces can reuse a path while referring to different source bytes.
     const id = `${namespace}:${path}`;
     originals.set(id, source);
     const chunk = omitted.get(id);
-    if (chunk) {
+    if (chunk?.tier === "corpus") {
       let stub = stubs.get(id);
       if (stub === undefined)
         stubs.set(
@@ -53,6 +56,7 @@ export function createReleaseOmission(input: {
           (stub = omittedModuleSource(
             source,
             chunk,
+            // Prepared packages have no Bun loader flags; their namespace limits the CommonJS fallback.
             input.commonJs(path) ||
               (/\bmodule\.exports\b/.test(source) && namespace === "signalbox-environment-package"),
           )),
@@ -65,19 +69,20 @@ export function createReleaseOmission(input: {
     return result;
   };
   const plan = async <T extends { metafile: Esbuild.Metafile }>(build: () => Promise<T>) => {
+    // The baseline finds candidate inputs, the configured pass proves removals, and the final pass applies omissions.
     const baseline = await build();
+    pinned.analyze();
     specialize = true;
     const configured = await build();
     const remaining = contributed(configured.metafile);
     configurationRemoved = [...contributed(baseline.metafile)]
       .filter((name) => !remaining.has(name) && originals.has(name))
       .sort();
-    const add = (inputPath: string, tier: OmittedReleaseChunk["tier"]) => {
+    const add = (inputPath: string, tier: OmittedReleaseModule["tier"]) => {
       if (omitted.has(inputPath)) return;
       const source = originals.get(inputPath);
       if (source === undefined) throw new Error(`RELEASE_CORPUS_INPUT_UNKNOWN: ${inputPath}`);
       omitted.set(inputPath, {
-        chunkId: inputPath,
         inputPath,
         tier,
         sourceBytes: new TextEncoder().encode(source).byteLength,
@@ -88,9 +93,9 @@ export function createReleaseOmission(input: {
     for (const row of corpus?.inputs ?? []) {
       if (!originals.has(row.inputPath))
         throw new Error(`RELEASE_CORPUS_INPUT_UNKNOWN: ${row.inputPath}`);
-      if (!row.initialized) add(row.inputPath, "corpus");
+      if (!row.initialized && javascriptInputs.has(row.inputPath)) add(row.inputPath, "corpus");
     }
-    pinned.releaseAnalysis();
+    pinned.dropParseCache();
     return build();
   };
   const manifest = (): ReleaseOmissionManifest => ({
@@ -100,6 +105,7 @@ export function createReleaseOmission(input: {
     configurationRemoved,
     corpus: corpus
       ? {
+          binarySha256: corpus.binarySha256,
           sha256: releaseSourceHash(JSON.stringify(corpus)),
           provenance: corpus.provenance,
           pending: corpus.pending,

@@ -128,6 +128,31 @@ describe("Harness artifact preparation", () => {
     expect(new TextDecoder().decode(await artifact.read("sdk/sdk.js"))).toBe("export const sdk=1;");
   });
 
+  it("copies Claude omission configuration identity into the product artifact manifest", async () => {
+    const { cli, input } = await setup();
+    const omission = {
+      schemaVersion: 1,
+      configuration: { name: "product", env: {} },
+      configurationReplacements: {},
+      configurationRemoved: [],
+      corpus: null,
+      chunks: [],
+    };
+    await NodeFSP.writeFile(
+      NodePath.join(cli, "manifest.json"),
+      JSON.stringify({ schemaVersion: 1, mainModule: "entry.js", omission }),
+    );
+
+    const identity = await prepareHarnessArtifact(input);
+    const artifact = await openHarnessReleaseArtifact(
+      identity,
+      artifactDirectorySource(input.output),
+    );
+    expect(Reflect.get(artifact.manifest, "omission")).toEqual({
+      configuration: { name: "product" },
+    });
+  });
+
   it("rejects a pre-existing public destination without changing it", async () => {
     const { root, input } = await setup();
     const marker = NodePath.join(input.output, "owner.txt");

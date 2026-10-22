@@ -1,4 +1,5 @@
 import type { HarnessRelease } from "../HarnessRelease.ts";
+import type { HarnessReleaseOmissionIdentity } from "../../harnessReleases/HarnessReleaseArtifact.ts";
 
 export interface ReleaseFile {
   readonly bytes: number;
@@ -22,6 +23,7 @@ export interface VerifiedReleaseArtifact {
       readonly sdk?: { readonly manifest: string };
     };
     readonly files: Readonly<Record<string, ReleaseFile>>;
+    readonly omission?: HarnessReleaseOmissionIdentity;
     readonly computer: ComputerIdentity;
   };
   readonly rawManifests: {
@@ -85,6 +87,8 @@ export interface ReleaseEntrypoint {
 
 export interface ClaudeReleasePlan extends PlanBase {
   readonly harness: "claude-code";
+  /** The CLI's omission metadata stays visible after admission. */
+  readonly omission?: Readonly<Record<string, unknown>>;
   readonly componentManifestPaths: { readonly cli: string; readonly sdk: string };
   readonly main: ReleaseEntrypoint;
   readonly initialize: ReleaseEntrypoint;

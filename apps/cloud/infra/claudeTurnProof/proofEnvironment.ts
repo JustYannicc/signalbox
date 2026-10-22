@@ -2,7 +2,7 @@ import * as BunJsc from "../../src/isolate/NodeBunJsc.ts";
 import { createNodeEnvironmentResolver } from "../../src/isolate/NodeEnvironment.ts";
 import { createNodeModule, type NodePreparedModuleResolver } from "../../src/isolate/NodeModule.ts";
 import type { NodeBridge } from "../../src/isolate/NodeBridge.ts";
-import { CLAUDE_PROOF_HOST_CONFIG } from "../../src/harness/ClaudeHostConfig.ts";
+import { CLAUDE_QUALIFICATION_HOST_CONFIG } from "./hostConfiguration.ts";
 
 export interface ProofPackages {
   readonly yaml: object;
@@ -10,7 +10,7 @@ export interface ProofPackages {
 }
 
 export function createProofProcessEnvironment() {
-  return { ...CLAUDE_PROOF_HOST_CONFIG.env };
+  return { ...CLAUDE_QUALIFICATION_HOST_CONFIG.env };
 }
 
 export function createProofIdentity(prompt: string) {

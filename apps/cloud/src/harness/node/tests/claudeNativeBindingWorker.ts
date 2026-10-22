@@ -3,10 +3,7 @@ import * as NodeUtil from "node:util";
 import { ThreadId } from "@t3tools/contracts";
 import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
-import { AdapterHarness, AdapterRuntimeFactory, layer } from "../../AdapterHarness.ts";
 import { makeClaudeNativeHostBinding } from "../../ClaudeNativeHostBinding.ts";
-import { RELEASE_CHUNK_OMITTED_SYMBOL } from "../../ClaudeHostConfig.ts";
 import { nativeTurnThreadLoad, type NativeThreadLoad } from "../../HarnessThreadLoad.ts";
 import type {
   PreparedClaudeSdk,
@@ -71,7 +68,7 @@ function sdkQuery(
   }) satisfies ClaudeSdkQuery;
 }
 
-function coldSetup(override?: "prepared" | "both" | "omitted") {
+function coldSetup(override?: "prepared" | "both") {
   const f = readinessFixture();
   return Effect.scoped(
     Effect.gen(function* () {
@@ -112,24 +109,6 @@ function coldSetup(override?: "prepared" | "both" | "omitted") {
       const binding = makeClaudeNativeHostBinding({
         process: {
           ...f.input,
-          ...(override === "omitted"
-            ? {
-                loadRelease: async () => ({
-                  launch() {
-                    const reporter = Reflect.get(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL);
-                    NodeAssert.equal(typeof reporter, "function");
-                    Reflect.apply(reporter, undefined, [
-                      {
-                        code: "RELEASE_CHUNK_OMITTED",
-                        chunkId: "bun-graph:/chunks/lazy.js",
-                        inputPath: "bun-graph:/chunks/lazy.js",
-                        tier: "configuration",
-                      },
-                    ]);
-                  },
-                }),
-              }
-            : {}),
           computer: services.computer,
           ...(!hasPreparedOverride
             ? {}
@@ -145,7 +124,7 @@ function coldSetup(override?: "prepared" | "both" | "omitted") {
         mcpSessions: services.mcpSessions,
         loadSdk: async (bridge) => {
           const module = bridge.require("node:module") as GuestModule;
-          if (override === undefined || override === "omitted") assertPreparedAssets(module);
+          if (override === undefined) assertPreparedAssets(module);
           else {
             const require = module.createRequire("/entry.js");
             NodeAssert.equal(require(latinAsset), "caller text");
@@ -188,41 +167,6 @@ function coldSetup(override?: "prepared" | "both" | "omitted") {
         services.session.providerSessionId,
       );
       const controller = new AbortController();
-      if (override === "omitted") {
-        const harness = yield* AdapterHarness.pipe(
-          Effect.provide(layer),
-          Effect.provideService(AdapterRuntimeFactory, binding.factory),
-        );
-        const session = yield* harness.open(openInput);
-        yield* binding.configureMcp(
-          {
-            epoch: 1,
-            servers: { executor: { url: `${origin}/thread/epoch-1/executor` } },
-          },
-          controller.signal,
-          load,
-        );
-        yield* session.turn(services.turn);
-        yield* Effect.promise(() => offeredPrompt);
-        yield* session.dispose;
-        const items = yield* Stream.runCollect(session.events);
-        const event = {
-          code: "RELEASE_CHUNK_OMITTED",
-          chunkId: "bun-graph:/chunks/lazy.js",
-          inputPath: "bun-graph:/chunks/lazy.js",
-          tier: "configuration",
-        } as const;
-        NodeAssert.ok(
-          Array.from(items).some(
-            (item) =>
-              item.kind === "log" &&
-              item.runId === services.turn.runId &&
-              item.level === "warning" &&
-              item.message === JSON.stringify(event),
-          ),
-        );
-        return;
-      }
       const runtime = yield* binding.factory.open(openInput, {
         releaseChunkOmitted: () => undefined,
       });
@@ -391,13 +335,11 @@ const run =
     ? () => coldSetup("prepared")
     : NodeWorkerThreads.workerData === "both"
       ? () => coldSetup("both")
-      : NodeWorkerThreads.workerData === "omitted"
-        ? () => coldSetup("omitted")
-        : NodeWorkerThreads.workerData === "cold"
-          ? coldSetup
-          : NodeWorkerThreads.workerData === "resume"
-            ? resumeSetup
-            : undefined;
+      : NodeWorkerThreads.workerData === "cold"
+        ? coldSetup
+        : NodeWorkerThreads.workerData === "resume"
+          ? resumeSetup
+          : undefined;
 if (run === undefined || NodeWorkerThreads.parentPort === null)
   throw new Error("Invalid native binding test case.");
 const port = NodeWorkerThreads.parentPort;
