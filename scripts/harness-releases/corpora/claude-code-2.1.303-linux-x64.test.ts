@@ -23,6 +23,10 @@ it("parses the pinned corpus and retains the input reached by partial session C"
     name: expect.stringContaining("partial session C"),
     sha256: "eb5130dc3e798df0836745ed5839c761e440d807e75573939a360ff519f385cc",
   });
+  expect(corpus.provenance).toContainEqual({
+    name: "session-C-r109-partial",
+    sha256: "fbd02ad2991c25657fcbbeb43890a669fd584a54115a81e4c24f1c9ec1095d89",
+  });
   expect(corpus.pending).toEqual([
     "session-C-from-1244",
     "session-A-from-1244",

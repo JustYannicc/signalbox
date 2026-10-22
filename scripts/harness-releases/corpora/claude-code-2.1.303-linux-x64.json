@@ -197,6 +197,10 @@
     {
       "name": "signalbox-1244/control/product-host-migration-r108/local-c-r3/release-coverage.json (partial session C; startup failed before first model request; omitted source 50b683c56c18f0b21634f4eaaa49b7cdf6fbd007d078a0102da4b38d5b48f6a7)",
       "sha256": "eb5130dc3e798df0836745ed5839c761e440d807e75573939a360ff519f385cc"
+    },
+    {
+      "name": "session-C-r109-partial",
+      "sha256": "fbd02ad2991c25657fcbbeb43890a669fd584a54115a81e4c24f1c9ec1095d89"
     }
   ],
   "pending": [
@@ -3572,7 +3576,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-b2p1c81d.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-b36fs2x5.js",
@@ -7296,7 +7300,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-qe5e3h95.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-qf127zag.js",
@@ -7376,7 +7380,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-qrdjkjr4.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-qs81ae3t.js",
@@ -8204,7 +8208,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-tc2tdjep.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-tchq2jhx.js",
