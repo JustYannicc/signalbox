@@ -7,7 +7,7 @@ import {
   readStateManifest,
   writeAttemptValues,
   writeStateManifest,
-} from "./revision/RevisionJournalValues.ts";
+} from "./KernelRevisionJournalStorage.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
 
 const MEBIBYTE = 1024 * 1024;

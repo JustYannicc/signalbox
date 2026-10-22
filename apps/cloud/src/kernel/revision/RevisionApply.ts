@@ -5,7 +5,7 @@ import type { createFacetFilePersistence } from "../FacetFilePersistence.ts";
 import type { ApplyPlan, DirtyInode, TreeEntry, WorkspaceState } from "./RevisionTypes.ts";
 import { KernelRevisionWorkspaceError } from "./RevisionErrors.ts";
 import { readDirty, readEpoch, readState, restoreDirtySnapshot } from "./RevisionJournal.ts";
-import { writeStateManifest } from "./RevisionJournalValues.ts";
+import { writeStateManifest } from "../KernelRevisionJournalStorage.ts";
 import { applyChangesToManifest, encodeManifest, sameCommit, scanTree } from "./RevisionTree.ts";
 import { assertNoRevisionConflict } from "./RevisionConflict.ts";
 import { findRetiredInodes, resolveLocalInodes, validatePlans } from "./RevisionPlan.ts";

@@ -9,7 +9,7 @@ import {
   readStateManifest,
   writeAttemptValues,
   writeStateManifest,
-} from "./RevisionJournalValues.ts";
+} from "../KernelRevisionJournalStorage.ts";
 import type { CheckpointAttempt, DirtyInode, WorkspaceState } from "./RevisionTypes.ts";
 
 function firstRow(rows: Iterable<Record<string, unknown>>): Record<string, unknown> | undefined {
