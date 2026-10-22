@@ -43,7 +43,7 @@ export const closeFailedHostStart = (input: {
   readonly operation: "open" | "turn";
   readonly cause: Cause.Cause<unknown>;
   readonly startup: () => HarnessProcessStartup | undefined;
-  readonly cleanup: Effect.Effect<void, unknown>;
+  readonly cleanup: Effect.Effect<void, HarnessError>;
 }) =>
   Effect.gen(function* () {
     const observed = yield* Effect.try(input.startup).pipe(Effect.exit);

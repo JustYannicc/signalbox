@@ -7,6 +7,7 @@ import { HarnessError } from "../Harness.ts";
 import { hostFixture } from "./hostFixture.ts";
 
 const codec = Schema.toCodecJson(HarnessError);
+const isHarnessError = Schema.is(HarnessError);
 
 describe("Harness host failed starts", () => {
   it.effect.each([
@@ -80,8 +81,8 @@ describe("Harness host failed starts", () => {
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isSuccess(result)) throw new Error("Expected failed start");
         const error = result.cause.reasons.find(Cause.isFailReason)?.error;
-        expect(error).toBeInstanceOf(HarnessError);
-        if (!(error instanceof HarnessError)) throw new Error("Expected public HarnessError");
+        expect(isHarnessError(error)).toBe(true);
+        if (!isHarnessError(error)) throw new Error("Expected public HarnessError");
         expect(error.message).toBe("Native MCP configuration or turn start failed.");
         expect(error.nativeStartup).toEqual({
           bootstrap: { bytes: 42, state: "written" },
@@ -94,7 +95,7 @@ describe("Harness host failed starts", () => {
             (reason) => Cause.isDieReason(reason) && reason.defect === original,
           ),
         ).toBe(true);
-        const encoded = Schema.encodeSync(codec)(error);
+        const encoded = yield* Schema.encodeEffect(codec)(error);
         const json = JSON.stringify(encoded);
         expect(json).toContain("native WASI trap");
         expect(json).toContain("native setup failed");
@@ -115,8 +116,10 @@ describe("Harness host failed starts", () => {
         expect(rows).toHaveLength(1);
         expect(rows[0]?.boot_attempt_id).toBe("boot-1");
         expect(rows[0]?.run_id).toBe(instance.adapter.turn.runId);
-        const durable = Schema.decodeUnknownSync(codec)(JSON.parse(String(rows[0]?.error_json)));
-        expect(Schema.encodeSync(codec)(durable)).toEqual(encoded);
+        const durable = yield* Schema.decodeUnknownEffect(codec)(
+          JSON.parse(String(rows[0]?.error_json)),
+        );
+        expect(yield* Schema.encodeEffect(codec)(durable)).toEqual(encoded);
       }).pipe(Effect.scoped),
   );
 
@@ -147,12 +150,12 @@ describe("Harness host failed starts", () => {
       expect(Cause.pretty(result.cause)).toContain("original native failure");
       expect(Cause.pretty(result.cause)).toContain("Injected transaction failure");
       const failure = result.cause.reasons.find(Cause.isFailReason)?.error;
-      if (!(failure instanceof HarnessError) || !Cause.isCause(failure.cause))
+      if (!isHarnessError(failure) || !Cause.isCause(failure.cause))
         throw new Error("Expected a native start error with its causes");
       const journalFailure = failure.cause.reasons.find(
         (reason) =>
           Cause.isFailReason(reason) &&
-          reason.error instanceof HarnessError &&
+          isHarnessError(reason.error) &&
           reason.error.operation === "journal",
       );
       if (journalFailure === undefined || !Cause.isFailReason(journalFailure))
@@ -161,9 +164,9 @@ describe("Harness host failed starts", () => {
         operation: "journal",
         message: "Harness failure journal write failed.",
       });
-      const encoded = Schema.encodeSync(codec)(failure);
-      const decoded = Schema.decodeUnknownSync(codec)(JSON.parse(JSON.stringify(encoded)));
-      expect(Schema.encodeSync(codec)(decoded)).toEqual(encoded);
+      const encoded = yield* Schema.encodeEffect(codec)(failure);
+      const decoded = yield* Schema.decodeUnknownEffect(codec)(JSON.parse(JSON.stringify(encoded)));
+      expect(yield* Schema.encodeEffect(codec)(decoded)).toEqual(encoded);
     }).pipe(Effect.scoped),
   );
 

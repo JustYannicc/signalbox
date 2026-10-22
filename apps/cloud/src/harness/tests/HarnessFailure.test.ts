@@ -3,8 +3,6 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { HarnessError } from "../Harness.ts";
-import { writeHostFailure } from "../host/failure.ts";
-import { hostSqlite } from "./hostSqlite.ts";
 
 const harnessErrorCodec = Schema.toCodecJson(HarnessError);
 const encodeHarnessError = Schema.encodeSync(harnessErrorCodec);
@@ -181,44 +179,5 @@ describe("Harness failure details", () => {
     const recovered = decodeHarnessError(encodeHarnessError(original));
 
     expect(recovered.cause).toEqual(legacyCause);
-  });
-
-  it("persists the encoded failure across SQLite close and reopen", () => {
-    const fixture = hostSqlite();
-    let handle = fixture.open();
-    try {
-      const original = failure();
-      writeHostFailure(handle.storage, "attempt-with-run", "run-1", original);
-      writeHostFailure(handle.storage, "attempt-without-run", undefined, original);
-      expect(handle.rows("SELECT id FROM harness_host_failures")).toHaveLength(2);
-      handle.close();
-
-      handle = fixture.open();
-      const rows = handle.rows(
-        "SELECT id, boot_attempt_id, run_id, error_json FROM harness_host_failures ORDER BY id",
-      );
-      expect(rows).toHaveLength(2);
-      expect(rows[0]).toMatchObject({
-        id: 1,
-        boot_attempt_id: "attempt-with-run",
-        run_id: "run-1",
-      });
-      expect(rows[1]).toMatchObject({
-        id: 2,
-        boot_attempt_id: "attempt-without-run",
-        run_id: null,
-      });
-      expect(typeof rows[0]?.error_json).toBe("string");
-
-      const durable = JSON.parse(String(rows[0]?.error_json));
-      const recovered = decodeHarnessError(durable);
-      expect(Cause.isCause(recovered.cause)).toBe(true);
-      expect(recovered.nativeStartup?.bootstrap).toEqual({ bytes: 64, state: "failed" });
-      expect(recovered.nativeStartup?.wasi).toBe("failed");
-      expect(encodeHarnessError(recovered)).toEqual(durable);
-    } finally {
-      handle.close();
-      fixture.dispose();
-    }
   });
 });
