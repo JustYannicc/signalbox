@@ -97,36 +97,42 @@ describe("SIGPIPE disposition across exec", () => {
     ["epipe", "terminate"],
     ["terminate", "terminate"],
     ["epipe", "epipe"],
-  ] as const)("uses replacement disposition from %s to %s", async (source, sigpipe) => {
-    expect(
-      await run(
-        new Map<string, KernelProgramBinding>([
-          ["/bin/driver", driver(source)],
-          [
-            "/bin/replacement",
-            {
-              manifest: manifest("replacement"),
-              implementation: {
-                kind: "wasm",
-                sigpipe,
-                module: wasmSigpipeCommand(false, true),
+  ] as const)(
+    "unblocks without another write after exec from %s to %s",
+    async (source, sigpipe) => {
+      expect(
+        await run(
+          new Map<string, KernelProgramBinding>([
+            ["/bin/driver", driver(source)],
+            [
+              "/bin/replacement",
+              {
+                manifest: manifest("replacement"),
+                implementation: {
+                  kind: "wasm",
+                  sigpipe,
+                  module: wasmSignalMaskCommand(1, blockedSigpipe.low, 0),
+                },
               },
-            },
-          ],
-        ]),
-      ),
-    ).toEqual({
-      status: "ok",
-      value: sigpipe === "epipe" ? exitStatus(64) : { exitCode: 0, signal: 13, coreDumped: false },
-    });
-  });
+            ],
+          ]),
+        ),
+      ).toEqual({
+        status: "ok",
+        value: sigpipe === "epipe" ? exitStatus(0) : { exitCode: 0, signal: 13, coreDumped: false },
+      });
+    },
+  );
 
   it.each([undefined, "local", "forward"] as const)(
-    "discards pending SIGPIPE through an ignoring image, admission=%s",
+    "discards pending SIGPIPE on delivery in an ignoring image, admission=%s",
     async (admission) => {
-      const ignoring = asyncBinding("ignoring", (context) =>
-        context.exec(execRequest(context, "/bin/default")),
-      );
+      const ignoring = asyncBinding("ignoring", (context) => {
+        expect(
+          context.processes.signalMask(context.identity.handle, 1, blockedSigpipe).status,
+        ).toBe("ok");
+        return context.exec(execRequest(context, "/bin/default"));
+      });
       expect(
         await run(
           new Map<string, KernelProgramBinding>([
@@ -151,6 +157,54 @@ describe("SIGPIPE disposition across exec", () => {
       ).toEqual({ status: "ok", value: exitStatus(0) });
     },
   );
+
+  it("keeps pending SIGPIPE through an ignoring exec until a default image unblocks", async () => {
+    const ignoring = asyncBinding("ignoring", (context) =>
+      context.exec(execRequest(context, "/bin/default")),
+    );
+    expect(
+      await run(
+        new Map<string, KernelProgramBinding>([
+          ["/bin/driver", driver("terminate")],
+          [
+            "/bin/replacement",
+            { ...ignoring, implementation: { ...ignoring.implementation, sigpipe: "epipe" } },
+          ],
+          [
+            "/bin/default",
+            {
+              manifest: manifest("default"),
+              implementation: {
+                kind: "wasm",
+                module: wasmSignalMaskCommand(1, blockedSigpipe.low, 0),
+              },
+            },
+          ],
+        ]),
+      ),
+    ).toEqual({ status: "ok", value: { exitCode: 0, signal: 13, coreDumped: false } });
+  });
+
+  it("returns EPIPE from a replacement write with an ignoring disposition", async () => {
+    expect(
+      await run(
+        new Map<string, KernelProgramBinding>([
+          ["/bin/driver", driver("terminate")],
+          [
+            "/bin/replacement",
+            {
+              manifest: manifest("replacement"),
+              implementation: {
+                kind: "wasm",
+                sigpipe: "epipe",
+                module: wasmSigpipeCommand(false, true),
+              },
+            },
+          ],
+        ]),
+      ),
+    ).toEqual({ status: "ok", value: exitStatus(64) });
+  });
 
   it("preserves pending default SIGPIPE when replacement validation fails before commit", async () => {
     const source = asyncBinding("driver", async (context) => {

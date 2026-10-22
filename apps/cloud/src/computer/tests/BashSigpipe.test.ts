@@ -44,6 +44,63 @@ function program(fixture: ReturnType<typeof childBashFixture>, child: boolean) {
 }
 
 describe.skipIf(!bashAvailable || !coreutilsArtifactsAvailable)("GNU Bash SIGPIPE", () => {
+  it.each([
+    [false, "terminate"],
+    [true, "terminate"],
+    [false, "epipe"],
+    [true, "epipe"],
+  ] as const)(
+    "inherits the parent's disposition in a pipeline, child=%s policy=%s",
+    async (child, sigpipe) => {
+      const command =
+        "set -o pipefail; printf '%131073s' x | head -c 1; printf 'pipeline=%s children=%s\\n' \"$?\" \"${PIPESTATUS[*]}\" >&2; exit 42";
+      const native = NodeChildProcess.spawnSync("/bin/bash", [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `${sigpipe === "epipe" ? "trap '' PIPE" : "trap - PIPE"}; ${command}`,
+      ]);
+      expect(native.error).toBeUndefined();
+      expect(native.status).toBe(42);
+      const lastLine =
+        sigpipe === "epipe" ? "pipeline=1 children=1 0\n" : "pipeline=141 children=141 0\n";
+      expect(native.stderr.toString().endsWith(lastLine)).toBe(true);
+      const head = coreutilsModule("head");
+      const fixture = childBashFixture({
+        args: ["bash", "--noprofile", "--norc", "-c", command],
+        async exec(request) {
+          expect(request.path).toBe("/bin/head");
+          const context = { ...fixture.context, ...request };
+          if (!child) return createKernelCoreutilsProgram(head).run(context);
+          const owner = createKernelCoreutilsHost({ context });
+          try {
+            return await createChildCoreutils({
+              module: head,
+              port: owner.port,
+              args: request.args,
+              env: request.env,
+            }).run();
+          } finally {
+            await owner.close();
+          }
+        },
+      });
+      fixture.write("/bin/head", "", 0o755);
+      try {
+        expect(
+          fixture.processes.setSigpipeDisposition(fixture.context.identity.handle, sigpipe).status,
+        ).toBe("ok");
+        expect(await program(fixture, child).run(fixture.context)).toEqual(exited(42));
+        expect(fixture.stdoutBytes()).toEqual(new Uint8Array(native.stdout));
+        expect(fixture.stderr().endsWith(lastLine)).toBe(true);
+        expect(fixture.processes.size).toBe(1);
+        expect(fixture.wakes.size).toBe(0);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
   it.each([false, true])(
     "terminates Bash with SIGPIPE before its next command, child=%s",
     async (child) => {

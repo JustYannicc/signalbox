@@ -128,25 +128,40 @@ describe.skipIf(!artifactAvailable)("pinned ripgrep SIGPIPE policy", () => {
         }
       },
     };
+    const registry = new KernelProgramRegistry();
     const catalog = createChildProgramCatalog({
-      registry: new KernelProgramRegistry(),
+      registry,
       filesystem: fixture.filesystem,
       loader,
       capacity: new ChildWorkerCapacity(),
       programs: { bash: code, busyboxCat: code, ripgrep: code },
       hostname: "ripgrep-sigpipe-test",
     });
-    const ripgrep = catalog.bindings.get("/bin/rg")?.implementation;
-    if (ripgrep?.kind !== "async") throw new Error("Missing child ripgrep program");
-
+    const host = new KernelProgramHost({
+      registry,
+      programs: catalog.bindings,
+      processes: fixture.context.processes,
+      wakes: fixture.context.wakes,
+    });
+    const prepared = host.prepare({ filesystem: fixture.filesystem });
     try {
-      expect(await ripgrep.run(fixture.context)).toEqual(exited(1));
+      const program = host.resolve("/bin/rg");
+      if (program.status !== "ok") throw new Error("Missing child ripgrep program");
+      const child = callKernel(host.backend(prepared), "process.spawn", {
+        program: program.value,
+        args: fixture.context.args,
+        env: fixture.context.env,
+      });
+      if (child.status !== "ok") throw new Error("Could not admit child ripgrep");
+      expect(await host.exitStatus(child.value)).toEqual({ status: "ok", value: exited(1) });
+      expect(host.processes.reap(child.value).status).toBe("ok");
       expect(writeStdout).toHaveBeenCalled();
       expect(fixture.stdout()).toEqual(new Uint8Array());
       expect(fixture.stderr()).toBe("");
       expect(fixture.context.processes.size).toBe(1);
       expect(fixture.context.wakes.size).toBe(0);
     } finally {
+      await prepared.release();
       await catalog.drain();
       await fixture.close();
       vi.restoreAllMocks();

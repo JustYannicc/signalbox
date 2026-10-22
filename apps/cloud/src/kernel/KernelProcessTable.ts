@@ -127,12 +127,14 @@ export class KernelProcessTable {
     const signalMask = options.signalMask ?? inheritedMask.value;
     if (!validSignalMask(signalMask))
       return reject(kernelError("INVALID_ARGUMENT", "Invalid process signal mask"));
+    let parentSignals = this.#rootSignals;
     if (parentHandle !== undefined) {
       const parent = this.#record(parentHandle);
       if (parent.status !== "ok") return reject(parent);
       if (parent.value.completionObserved || parent.value.outcome) {
         return reject(kernelError("NOT_FOUND", "Parent process has already exited"));
       }
+      parentSignals = parent.value.signals;
     }
     if (this.#processes.size + this.#admissions >= this.#maxProcesses) {
       return reject(kernelError("RESOURCE_LIMIT", "Too many child processes"));
@@ -169,7 +171,7 @@ export class KernelProcessTable {
         settled: undefined,
         cleanup: cleanupOnce,
         listeners: new Set(),
-        signals: new KernelProcessSignals(signalMask),
+        signals: parentSignals.fork(signalMask),
         completionObserved: false,
         outcome: undefined,
       } satisfies Omit<ProcessRecord, "handle"> & { handle: KernelHandle<"process"> });

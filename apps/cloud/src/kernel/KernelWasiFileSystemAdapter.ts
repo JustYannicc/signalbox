@@ -25,15 +25,18 @@ export function createKernelWasiFileSystemAdapter(
       try {
         return yield* imports.fd_write(...args);
       } catch (error) {
-        if (error instanceof KernelBrokenPipeError && options.sigpipe !== "epipe") {
+        if (error instanceof KernelBrokenPipeError) {
           // The guest ABI has no sigaction delivery; masked default actions remain pending.
-          if (options.process === undefined) throw new KernelProcessSignal(SIGPIPE);
-          const result = options.process.processes.generateSignal(
-            options.process.identity.handle,
-            SIGPIPE,
-          );
-          if (result.status !== "ok")
-            throw new Error("Writing process signal state is unavailable", { cause: error });
+          if (options.process === undefined) {
+            if (options.sigpipe !== "epipe") throw new KernelProcessSignal(SIGPIPE);
+          } else {
+            const result = options.process.processes.generateSignal(
+              options.process.identity.handle,
+              SIGPIPE,
+            );
+            if (result.status !== "ok")
+              throw new Error("Writing process signal state is unavailable", { cause: error });
+          }
         }
         throw error;
       }

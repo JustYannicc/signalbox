@@ -22,15 +22,23 @@ export function validSignalMask(mask: KernelSignalMask): boolean {
 /** Logical-process state shared by every adapter for the same process handle. */
 export class KernelProcessSignals {
   #blocked: bigint;
-  #sigpipe: KernelSigpipeDisposition = "terminate";
+  #sigpipe: "default" | "ignore";
   readonly #pending = new Map<number, (signal: number) => KernelResult<void>>();
 
-  constructor(mask: KernelSignalMask = { low: 0, high: 0 }) {
+  constructor(
+    mask: KernelSignalMask = { low: 0, high: 0 },
+    sigpipe: "default" | "ignore" = "default",
+  ) {
     this.#blocked = this.#bits(mask) & ~UNBLOCKABLE;
+    this.#sigpipe = sigpipe;
   }
 
   get mask(): KernelSignalMask {
     return { low: Number(this.#blocked & 0xffff_ffffn), high: Number(this.#blocked >> 32n) };
+  }
+
+  fork(mask: KernelSignalMask = this.mask): KernelProcessSignals {
+    return new KernelProcessSignals(mask, this.#sigpipe);
   }
 
   change(how: number, mask: KernelSignalMask): KernelSignalMask {
@@ -43,8 +51,7 @@ export class KernelProcessSignals {
   }
 
   setSigpipeDisposition(disposition: KernelSigpipeDisposition): void {
-    this.#sigpipe = disposition;
-    if (disposition === "epipe") this.#pending.delete(SIGPIPE);
+    this.#sigpipe = disposition === "epipe" ? "ignore" : "default";
   }
 
   send(signal: number, deliver: (signal: number) => KernelResult<void>): KernelResult<void> {
@@ -61,9 +68,8 @@ export class KernelProcessSignals {
   }
 
   generate(signal: KernelProcessSignalNumber): KernelResult<void> {
-    if (signal === SIGPIPE && this.#sigpipe === "epipe") return kernelOk(undefined);
     return this.send(signal, () => {
-      if (signal === SIGPIPE && this.#sigpipe === "epipe") return kernelOk(undefined);
+      if (signal === SIGPIPE && this.#sigpipe === "ignore") return kernelOk(undefined);
       throw new KernelProcessSignal(signal);
     });
   }
