@@ -269,7 +269,7 @@ export class KernelCoreutilsFacet extends DurableObject {
             root.mode === 0o755 && root.uid === 1000 && root.gid === 1000,
             "Root POSIX metadata differs",
           );
-          assert(BASH_ARTIFACT.bytes === 3_887_571, "GNU Bash artifact pin changed");
+          assert(BASH_ARTIFACT.bytes === 3_890_330, "GNU Bash artifact pin changed");
           assert(BUSYBOX_ARTIFACT.bytes === 241_159, "BusyBox artifact pin changed");
           return { root, artifacts: { bash: BASH_ARTIFACT, busybox: BUSYBOX_ARTIFACT } };
         });

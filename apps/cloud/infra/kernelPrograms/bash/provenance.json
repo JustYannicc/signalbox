@@ -6,10 +6,10 @@
   "shimLicense": "MIT",
   "patch": {
     "path": "patches/fd-getfd.patch",
-    "sha256": "4ea7a980f9ae121ab1382064ceabf91ead51f0735218a2bdeb372547297fc388"
+    "sha256": "5df897065b403d5a545431edcf7b17453d1c391206b317898013436931acbfb1"
   },
-  "recipeSha256": "393b416736cd7757fc175f611b03f6ec1691b4ae89a0b9bd4462aaff5f28f8ce",
-  "patchedShimSha256": "c2df62a6eab94c3e767c81a341e2b5b95f4066b07b226091a117b33733a61a83",
+  "recipeSha256": "133ea2a24f1cf0151940e2018726eab551dcc18e2f1d482ace2b95e763de6faa",
+  "patchedShimSha256": "59b63815ecc839373fa8f76fa70dc835ce929f69fd8e2e6618293d336aa2ca7a",
   "image": "node@sha256:14078204b6bb268c107ceff6d3c43f45a888105e5c2b18b14c32b3409d93a1b0",
   "inputs": {
     "nimbus": "f7024781c3dc2be1325efa1279aa9682cd84a2cd48f7782eb87ccd90ff0f1c12",
@@ -24,8 +24,8 @@
   },
   "output": {
     "file": "bash.async.wasm",
-    "sha256": "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87",
-    "bytes": 3887571
+    "sha256": "c3e8dc79b9660a21ed1873f8c900a0c1f195d274c183706cf5f68ff9e5fb9e00",
+    "bytes": 3890330
   },
   "imports": [
     {
@@ -131,6 +131,16 @@
     {
       "module": "nimbus_proc",
       "name": "dup",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "fd_getflags",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "fd_setfd",
       "kind": "function"
     },
     {
@@ -369,7 +379,7 @@
       "kind": "function"
     }
   ],
-  "version": "5.2.37+nimbus.e9f019ab.fd-getfd.1",
+  "version": "5.2.37+nimbus.e9f019ab.fd-flags.2",
   "upstreamArtifact": {
     "path": "packages/worker/wasm/bash/bash.async.wasm",
     "sha256": "ddc86c1422556654f02edf083f70017275bbc52f53781d1b74ac538bc7d0b102",

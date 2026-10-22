@@ -8,9 +8,9 @@ import * as Esbuild from "esbuild";
 const BASH = Object.freeze({
   revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
   path: "build/bash.async.wasm",
-  version: "5.2.37+nimbus.e9f019ab.fd-getfd.1",
-  sha256: "17caf644602115465f3ef02204e2f67917bfe58d6089c10f77f94863e4c3bd87",
-  bytes: 3_887_571,
+  version: "5.2.37+nimbus.e9f019ab.fd-flags.2",
+  sha256: "c3e8dc79b9660a21ed1873f8c900a0c1f195d274c183706cf5f68ff9e5fb9e00",
+  bytes: 3_890_330,
 });
 const BUSYBOX = Object.freeze({
   revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",

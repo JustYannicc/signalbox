@@ -1,18 +1,36 @@
 --- a/nimbus-proc.c
 +++ b/nimbus-proc.c
-@@ -134,13 +134,13 @@
+@@ -134,14 +134,28 @@
   * originals become __real_* (unused). One fd namespace — the M3 FdTable. */
  int __wrap_dup2(int o, int n) { int r = __np_dup2(o, n); if (r < 0) { errno = -r; return -1; } return r; }
  int __wrap_dup(int o)         { int r = __np_dup(o);     if (r < 0) { errno = -r; return -1; } return r; }
 +IMPORT("fd_getfd") extern int __np_fd_getfd(int fd);
++IMPORT("fd_getflags") extern int __np_fd_getflags(int fd);
++IMPORT("fd_setfd") extern int __np_fd_setfd(int fd, int flags);
  int __wrap_fcntl(int fd, int cmd, ...) {
    /* F_DUPFD (0) — bash saves/restores fds via fcntl; route to the fd table. */
    if (cmd == F_DUPFD) { int r = __np_dup(fd); if (r < 0) { errno = -r; return -1; } return r; }
-   /* bash probes F_GETFD to learn whether `exec N>file` must save fd N first;
-    * a closed fd has to answer EBADF or bash dups a descriptor that is not there. */
+-  /* bash probes F_GETFD to learn whether `exec N>file` must save fd N first;
+-   * a closed fd has to answer EBADF or bash dups a descriptor that is not there. */
 -  __wasi_fdstat_t st;
 -  if (__wasi_fd_fdstat_get(fd, &st) != 0) { errno = EBADF; return -1; }
+-  return 0; /* F_GETFD/F_SETFD/F_GETFL/F_SETFL: flags are tracked host-side */
++  if (cmd == F_GETFD) {
++    int r = __np_fd_getflags(fd);
++    if (r < 0) { errno = -r; return -1; }
++    return r;
++  }
++  if (cmd == F_SETFD) {
++    va_list args;
++    va_start(args, cmd);
++    int flags = va_arg(args, int);
++    va_end(args);
++    int r = __np_fd_setfd(fd, flags);
++    if (r < 0) { errno = -r; return -1; }
++    return 0;
++  }
 +  if (__np_fd_getfd(fd) != 0) { errno = EBADF; return -1; }
-   return 0; /* F_GETFD/F_SETFD/F_GETFL/F_SETFL: flags are tracked host-side */
++  return 0; /* F_GETFL/F_SETFL retain the existing status-flag behavior. */
  }
  
+ int   kill(pid_t pid, int sig)    { int r = __np_kill(pid, sig); if (r < 0) { errno = -r; return -1; } return 0; }
