@@ -4,7 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { openAdapterSession } from "../../adapter/session.ts";
+import { AdapterHarness, AdapterRuntimeFactory, layer } from "../../AdapterHarness.ts";
 import { makeClaudeNativeHostBinding } from "../../ClaudeNativeHostBinding.ts";
 import { RELEASE_CHUNK_OMITTED_SYMBOL } from "../../ClaudeHostConfig.ts";
 import { nativeTurnThreadLoad, type NativeThreadLoad } from "../../HarnessThreadLoad.ts";
@@ -189,7 +189,11 @@ function coldSetup(override?: "prepared" | "both" | "omitted") {
       );
       const controller = new AbortController();
       if (override === "omitted") {
-        const session = yield* openAdapterSession(openInput, binding.factory.open);
+        const harness = yield* AdapterHarness.pipe(
+          Effect.provide(layer),
+          Effect.provideService(AdapterRuntimeFactory, binding.factory),
+        );
+        const session = yield* harness.open(openInput);
         yield* binding.configureMcp(
           {
             epoch: 1,
