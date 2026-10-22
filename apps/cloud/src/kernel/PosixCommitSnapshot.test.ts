@@ -54,7 +54,17 @@ function rewriteManifest(
     ),
   ][0];
   if (!row) throw new Error(`Missing snapshot for ${turnId}`);
-  const entries: Array<Record<string, unknown>> = JSON.parse(String(row.manifest_json));
+  const manifest = String(row.manifest_json).startsWith("chunked-manifest-v1:")
+    ? [
+        ...database.sql.exec(
+          "SELECT json FROM kernel_fs_commit_manifest WHERE turn_id = ? ORDER BY part",
+          turnId,
+        ),
+      ]
+        .map((part) => String(part.json))
+        .join("")
+    : String(row.manifest_json);
+  const entries: Array<Record<string, unknown>> = JSON.parse(manifest);
   rewrite(entries);
   database.sql.exec(
     "UPDATE kernel_fs_commit_snapshot SET manifest_json = ? WHERE turn_id = ?",
