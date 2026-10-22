@@ -8,6 +8,12 @@ import { isPosixMetadata, type PosixMetadata, type PosixStorage } from "../Posix
 import type { Inode, Stat } from "../storage.ts";
 import { FILE_CHUNK_BYTES } from "./SqliteChunks.ts";
 import { firstRow, type FacetStorage, StorageError } from "./SqliteDatabase.ts";
+import {
+  deleteCommitManifest,
+  installCommitManifest,
+  readCommitManifest,
+  writeCommitManifest,
+} from "./SqliteCommitManifest.ts";
 
 const CHUNK = BigInt(FILE_CHUNK_BYTES);
 
@@ -156,6 +162,7 @@ export class SqliteCommitSnapshot {
       db.sql.exec(
         "CREATE TABLE IF NOT EXISTS kernel_fs_commit_snapshot_chunk (turn_id TEXT NOT NULL, ino TEXT NOT NULL, part INTEGER NOT NULL, bin BLOB NOT NULL, PRIMARY KEY (turn_id, ino, part))",
       );
+      installCommitManifest(db);
     });
   }
 
@@ -183,6 +190,7 @@ export class SqliteCommitSnapshot {
         receipt.commit,
       );
       this.db.sql.exec("DELETE FROM kernel_fs_commit_snapshot_chunk WHERE turn_id = ?", turnId);
+      deleteCommitManifest(this.db, turnId);
       this.db.sql.exec("DELETE FROM kernel_fs_commit_snapshot WHERE turn_id = ?", turnId);
     });
   }
@@ -227,7 +235,10 @@ export class SqliteCommitSnapshot {
         ) {
           throw new StorageError("ESTALE");
         }
-        return this.#inodes(turnId, decodeEntries(existing.manifest_json));
+        return this.#inodes(
+          turnId,
+          decodeEntries(readCommitManifest(this.db, turnId, existing.manifest_json)),
+        );
       }
 
       const seen = new Set<string>();
@@ -281,7 +292,7 @@ export class SqliteCommitSnapshot {
         at.repository,
         at.fork,
         at.commit,
-        JSON.stringify(entries),
+        writeCommitManifest(this.db, turnId, JSON.stringify(entries)),
       );
       return this.#inodes(turnId, entries);
     });
