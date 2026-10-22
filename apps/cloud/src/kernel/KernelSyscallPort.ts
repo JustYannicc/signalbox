@@ -16,7 +16,8 @@ export type KernelSyscallResponse =
       readonly value: number;
       readonly regions: readonly KernelMemoryRegion[];
     }
-  | { readonly kind: "exit"; readonly code: number };
+  | { readonly kind: "exit"; readonly code: number }
+  | { readonly kind: "signal"; readonly signal: 9 | 13 | 15 };
 
 export interface KernelSyscallPort {
   readonly call: (request: KernelSyscallRequest) => Promise<KernelSyscallResponse>;

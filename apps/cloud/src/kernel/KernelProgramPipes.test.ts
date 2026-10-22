@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - exercises the same Node stream adapter as the harness runtime.
+import * as NodeStream from "node:stream";
+import type * as NodeStreamWeb from "node:stream/web";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ABI_VERSION,
@@ -14,6 +17,8 @@ import {
   type KernelProgramBinding,
 } from "./KernelProgramHost.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
+import { createNodeFs } from "../isolate/NodeFs.ts";
+import { createKernelProcessStreams } from "./KernelProcessStreams.ts";
 
 const now = () => 1_800_000_000_000_000_001n;
 const bytes = (value: string) => new TextEncoder().encode(value);
@@ -92,6 +97,88 @@ async function readAll(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> 
 }
 
 describe("KernelProgramPipes", () => {
+  it("terminates a WASI writer with SIGPIPE when its stdout reader closes", async () => {
+    const context = setup({ kind: "wasm", module: wasmFdReadWriteCommand(4) });
+    const piped = context.host.preparePiped({ filesystem: context.filesystem });
+    try {
+      await piped.stdout.cancel();
+      const input = piped.stdin.getWriter();
+      await input.write(bytes("wasm"));
+      await input.close();
+      input.releaseLock();
+      const child = spawn(context.host, piped);
+      expect(await context.host.exitStatus(child)).toEqual({
+        status: "ok",
+        value: { exitCode: 0, signal: 13, coreDumped: false },
+      });
+      expect(context.host.processes.reap(child).status).toBe("ok");
+    } finally {
+      await context.close(piped);
+    }
+  });
+
+  it("keeps a Node writer alive after writeSync reports EPIPE", async () => {
+    const context = setup({
+      kind: "javascript",
+      runInline: ({ filesystem }) => {
+        const node = createNodeFs(filesystem).fs;
+        expect(() => node.writeSync(1, bytes("node"))).toThrow(
+          expect.objectContaining({ code: "EPIPE" }),
+        );
+        node.writeSync(2, bytes("survived"));
+        return 42;
+      },
+    });
+    const piped = context.host.preparePiped({ filesystem: context.filesystem });
+    try {
+      await piped.stdout.cancel();
+      const child = spawn(context.host, piped);
+      expect(await context.host.exitStatus(child)).toEqual({
+        status: "ok",
+        value: { exitCode: 42, signal: 0, coreDumped: false },
+      });
+      expect(new TextDecoder().decode(await readAll(piped.stderr))).toBe("survived");
+      expect(context.host.processes.reap(child).status).toBe("ok");
+    } finally {
+      await context.close(piped);
+    }
+  });
+
+  it("keeps a Node logical process alive after its stream emits EPIPE", async () => {
+    const context = setup({
+      kind: "async",
+      run: async ({ filesystem, signal }) => {
+        const streams = createKernelProcessStreams(filesystem, { signal });
+        const stream = NodeStream.Writable.fromWeb(
+          streams.stdout as NodeStreamWeb.WritableStream<Uint8Array>,
+        );
+        const failed = new Promise<Error>((resolve) => stream.once("error", resolve));
+        const closed = new Promise<void>((resolve) => stream.once("close", resolve));
+        stream.end(bytes("node"));
+        expect(await failed).toMatchObject({ code: "EPIPE" });
+        await closed;
+        expect(signal.aborted).toBe(false);
+        const stderr = streams.stderr.getWriter();
+        await stderr.write(bytes("survived"));
+        stderr.releaseLock();
+        return { exitCode: 42, signal: 0, coreDumped: false };
+      },
+    });
+    const piped = context.host.preparePiped({ filesystem: context.filesystem });
+    try {
+      await piped.stdout.cancel();
+      const child = spawn(context.host, piped);
+      expect(await context.host.exitStatus(child)).toEqual({
+        status: "ok",
+        value: { exitCode: 42, signal: 0, coreDumped: false },
+      });
+      expect(new TextDecoder().decode(await readAll(piped.stderr))).toBe("survived");
+      expect(context.host.processes.reap(child).status).toBe("ok");
+    } finally {
+      await context.close(piped);
+    }
+  });
+
   it("runs synchronous JS tools against piped stdin, stdout, and stderr", async () => {
     const context = setup({
       kind: "javascript",

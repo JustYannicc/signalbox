@@ -19,6 +19,7 @@ import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { enterCurrentKernelCpuUser } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
+import { KernelProcessSignal } from "../KernelProcessSignal.ts";
 import { runSync } from "../wasi/internal_wasi_calls.ts";
 import {
   prepareKernelWasiRuntime,
@@ -292,6 +293,7 @@ export function execKernelProgram(
     } catch (error) {
       ticket?.cancel();
       ticket?.throwCancelFailure();
+      if (error instanceof KernelProcessSignal) return error.exitStatus;
       throw error;
     }
   });

@@ -1,5 +1,5 @@
 import { createAgentOsWasiArgumentTransform } from "../AgentOsWasi.ts";
-import { createKernelWasiDeviceAdapter } from "../KernelWasiDevices.ts";
+import { createKernelWasiFileSystemAdapter } from "../KernelWasiSignals.ts";
 import type { KernelCapability, KernelHandle, KernelResult } from "../KernelAbi.ts";
 import type { KernelAsyncProgram } from "../KernelAsyncProgram.ts";
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
@@ -116,7 +116,7 @@ export function prepareKernelWasiRuntime(
     options.agentOsPreopens
       ? createAgentOsWasiArgumentTransform(options.prepared.filesystem)
       : undefined,
-    createKernelWasiDeviceAdapter(options.prepared.filesystem),
+    createKernelWasiFileSystemAdapter(options.prepared.filesystem),
   );
 
   const importObject = Object.create(null) as WebAssembly.Imports;

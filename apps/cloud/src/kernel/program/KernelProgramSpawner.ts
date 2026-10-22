@@ -581,6 +581,7 @@ export class KernelProgramSpawner {
               : { exitCode, signal: 0, coreDumped: false };
           } catch (error) {
             if (controller.signal.aborted) return terminatedStatus(sentSignal);
+            if (error instanceof KernelProcessSignal) return error.exitStatus;
             throw error;
           }
         });
@@ -643,6 +644,7 @@ export class KernelProgramSpawner {
               return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
             } catch (error) {
               if (controller.signal.aborted) return terminatedStatus(sentSignal);
+              if (error instanceof KernelProcessSignal) return error.exitStatus;
               throw error;
             }
           }),
@@ -679,6 +681,7 @@ export class KernelProgramSpawner {
             : { exitCode, signal: 0, coreDumped: false },
         (error: unknown) => {
           if (controller.signal.aborted) return terminatedStatus(sentSignal);
+          if (error instanceof KernelProcessSignal) return error.exitStatus;
           throw error;
         },
       );

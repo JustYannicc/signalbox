@@ -24,7 +24,7 @@ export function createChildGit(options: ChildGitOptions) {
       });
       wasi.bind(instance);
       nimbus.bind(instance);
-      return { exitCode: await wasi.start(instance), signal: 0, coreDumped: false } as const;
+      return wasi.startProcess(instance);
     },
   };
 }

@@ -1,4 +1,5 @@
 import type { KernelSyscallPort } from "../kernel/KernelSyscallPort.ts";
+import { KernelProcessSignal, kernelProcessExitStatus } from "../kernel/KernelProcessSignal.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
 
 type WasmArgument = number | bigint;
@@ -238,6 +239,7 @@ export function createChildWasi(options: ChildWasiOptions) {
         regions: requestRegions,
       });
       if (response.kind === "exit") throw new ChildWasiExit(response.code);
+      if (response.kind === "signal") throw new KernelProcessSignal(response.signal);
       if (imported.name === "proc_exit") {
         throw new Error("WASI proc_exit returned without exiting the child");
       }
@@ -277,7 +279,7 @@ export function createChildWasi(options: ChildWasiOptions) {
     return wasm.promising(fn as (...args: WasmArgument[]) => unknown)(...args);
   }
 
-  return {
+  const wasi = {
     imports,
     bind,
     async initialize(candidate: WebAssembly.Instance): Promise<void> {
@@ -305,6 +307,11 @@ export function createChildWasi(options: ChildWasiOptions) {
         throw error;
       });
     },
+  };
+  return {
+    ...wasi,
+    startProcess: (candidate: WebAssembly.Instance) =>
+      kernelProcessExitStatus(() => wasi.start(candidate)),
   };
 }
 
