@@ -1,8 +1,6 @@
 import { createAgentOsWasiArgumentTransform } from "../AgentOsWasi.ts";
-import {
-  createKernelWasiFileSystemAdapter,
-  type KernelSigpipeDisposition,
-} from "../KernelWasiFileSystemAdapter.ts";
+import { createKernelWasiFileSystemAdapter } from "../KernelWasiFileSystemAdapter.ts";
+import type { KernelSigpipeDisposition } from "../KernelProcessSignal.ts";
 import type { KernelCapability, KernelHandle, KernelResult } from "../KernelAbi.ts";
 import type { KernelAsyncProgram } from "../KernelAsyncProgram.ts";
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
@@ -31,16 +29,18 @@ export interface KernelInlineProgramContext {
 
 export type KernelInlineProgram = (context: KernelInlineProgramContext) => number;
 
-export type KernelProgramImplementation =
+export type KernelProgramImplementation = {
+  readonly sigpipe?: KernelSigpipeDisposition;
+} & (
   | {
       readonly kind: "wasm";
       readonly module: WebAssembly.Module;
-      readonly sigpipe?: KernelSigpipeDisposition;
       readonly agentOsPreopens?: boolean;
       readonly cwdEnvironment?: "PWD";
     }
   | { readonly kind: "javascript"; readonly runInline: KernelInlineProgram }
-  | { readonly kind: "async"; readonly run: KernelAsyncProgram["run"] };
+  | { readonly kind: "async"; readonly run: KernelAsyncProgram["run"] }
+);
 
 export interface KernelProgramBinding {
   /** Exact manifest passed to KernelProgramRegistry.register by the owner. */

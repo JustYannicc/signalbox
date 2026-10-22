@@ -1,4 +1,5 @@
 export type KernelProcessSignalNumber = 9 | 13 | 15;
+export type KernelSigpipeDisposition = "terminate" | "epipe";
 
 /** Carries termination through WASM imports and replacement images without becoming an errno. */
 export class KernelProcessSignal extends Error {

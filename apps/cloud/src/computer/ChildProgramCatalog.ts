@@ -142,6 +142,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     createChildWorkerProgram({
       ...admission,
       executable: "/bin/rg",
+      sigpipe: "epipe",
       code: options.programs.ripgrep,
       capacity,
       lifetimes,

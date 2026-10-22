@@ -1,4 +1,4 @@
-import type { KernelProcessSignalNumber } from "./KernelProcessSignal.ts";
+import type { KernelProcessSignalNumber, KernelSigpipeDisposition } from "./KernelProcessSignal.ts";
 import {
   KernelResourceTable,
   attemptKernelOperation,
@@ -380,7 +380,10 @@ export class KernelProcessTable {
     return record.value.signals.send(signal, (number) => record.value.child!.signal(number));
   }
 
-  /** Generated default actions use the writer's mask even when its runner cannot receive signals. */
+  /**
+   * Generated default actions use the writer's mask even when its runner cannot receive signals.
+   * An unblocked action throws KernelProcessSignal; a blocked one stays pending and returns ok.
+   */
   generateSignal(
     handle: KernelHandle<"process"> | undefined,
     signal: KernelProcessSignalNumber,
@@ -392,6 +395,19 @@ export class KernelProcessTable {
     if (record.value.completionObserved || record.value.outcome)
       return kernelError("NOT_FOUND", "Process has already exited");
     return record.value.signals.generate(signal);
+  }
+
+  setSigpipeDisposition(
+    handle: KernelHandle<"process">,
+    disposition: KernelSigpipeDisposition,
+  ): KernelResult<void> {
+    if (this.#closed) return kernelError("CANCELLED", "Process table is closed");
+    const record = this.#record(handle);
+    if (record.status !== "ok") return record;
+    if (record.value.completionObserved || record.value.outcome)
+      return kernelError("NOT_FOUND", "Process has already exited");
+    record.value.signals.setSigpipeDisposition(disposition);
+    return kernelOk(undefined);
   }
 
   /** AgentOS operations: block, unblock, replace, or query the previous mask. */

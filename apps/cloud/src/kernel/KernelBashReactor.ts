@@ -1,7 +1,7 @@
 import type { KernelBashCredentials } from "./KernelBashProgram.ts";
 import type { KernelBashPort } from "./KernelBashPort.ts";
 import type { KernelExitStatus } from "./KernelProcessTable.ts";
-import { KernelProcessSignal, kernelProcessSignalExitStatus } from "./KernelProcessSignal.ts";
+import { KernelProcessSignal } from "./KernelProcessSignal.ts";
 import { createBashInstance } from "./bash/BashInstance.ts";
 import { createBashEnvironment } from "./bash/BashEnvironment.ts";
 import { range } from "./bash/BashMemory.ts";
@@ -160,7 +160,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
     try {
       result = await execute(current);
     } catch (error) {
-      if (error instanceof KernelProcessSignal) result = kernelProcessSignalExitStatus(error);
+      if (error instanceof KernelProcessSignal) result = error.exitStatus;
       else {
         await current.port.complete({ kind: "failure", message: String(error) });
         throw error;

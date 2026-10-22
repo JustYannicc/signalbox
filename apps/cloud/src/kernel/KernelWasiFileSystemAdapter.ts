@@ -1,14 +1,13 @@
 import type { KernelAsyncProgramContext } from "./KernelAsyncProgram.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import { KernelBrokenPipeError } from "./KernelPipe.ts";
-import { KernelProcessSignal } from "./KernelProcessSignal.ts";
+import { KernelProcessSignal, type KernelSigpipeDisposition } from "./KernelProcessSignal.ts";
 import { createKernelWasiDeviceAdapter } from "./KernelWasiDevices.ts";
 import type { WasiCall } from "./wasi/internal_wasi_calls.ts";
 import type { WasiFileSystemImportAdapter } from "./wasi/internal_wasi_lifecycle.ts";
 
 const SIGPIPE = 13;
 
-export type KernelSigpipeDisposition = "terminate" | "epipe";
 export interface KernelWasiSignalOptions {
   readonly sigpipe?: KernelSigpipeDisposition;
   readonly process?: Pick<KernelAsyncProgramContext, "processes" | "identity">;

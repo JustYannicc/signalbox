@@ -28,7 +28,7 @@ function wasmWriter() {
     return [id, ...leb(value.length), ...value];
   }
   const constant = (value: number) => [0x41, ...leb(value)];
-  const body = [0, ...[1, 0, 1, 12].flatMap(constant), 0x10, 1, 0x10, 2, 0x0b];
+  const body = [0, ...[1, 0, 1, 12].flatMap(constant), 0x10, 0, 0x10, 1, 0x0b];
   const data = [16, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 121];
 
   return new WebAssembly.Module(
@@ -41,31 +41,21 @@ function wasmWriter() {
       0,
       0,
       0,
-      ...section(
-        1,
-        [
-          4, 0x60, 5, 127, 127, 127, 127, 127, 1, 127, 0x60, 4, 127, 127, 127, 127, 1, 127, 0x60, 1,
-          127, 0, 0x60, 0, 0,
-        ],
-      ),
+      ...section(1, [3, 0x60, 4, 127, 127, 127, 127, 1, 127, 0x60, 1, 127, 0, 0x60, 0, 0]),
       ...section(2, [
-        3,
-        ...name("host_process"),
-        ...name("proc_signal_mask_v2"),
-        0,
-        0,
+        2,
         ...name("wasi_snapshot_preview1"),
         ...name("fd_write"),
         0,
-        1,
+        0,
         ...name("wasi_snapshot_preview1"),
         ...name("proc_exit"),
         0,
-        2,
+        1,
       ]),
-      ...section(3, [1, 3]),
+      ...section(3, [1, 2]),
       ...section(5, [1, 0, 1]),
-      ...section(7, [2, ...name("memory"), 2, 0, ...name("_start"), 0, 3]),
+      ...section(7, [2, ...name("memory"), 2, 0, ...name("_start"), 0, 2]),
       ...section(10, [1, ...leb(body.length), ...body]),
       ...section(11, [1, 0, 0x41, 0, 0x0b, ...leb(data.length), ...data]),
     ]),

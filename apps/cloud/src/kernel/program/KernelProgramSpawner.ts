@@ -556,6 +556,11 @@ export class KernelProgramSpawner {
     readonly process: KernelLaunchedChild;
     readonly lifecycle?: import("../wasi/internal_wasi_lifecycle.ts").WasiLifecycle;
   } {
+    const disposition = this.#processes.setSigpipeDisposition(
+      identity.handle,
+      implementation.sigpipe ?? "terminate",
+    );
+    if (disposition.status !== "ok") throw new Error("Process signal state is unavailable");
     let sentSignal = 0;
     const beginBody = () =>
       ticket === undefined ? !controller.signal.aborted : ticket.beginBody(controller.signal);

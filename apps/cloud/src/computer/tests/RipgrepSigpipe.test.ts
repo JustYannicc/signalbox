@@ -31,6 +31,20 @@ if (!artifactAvailable && NodeProcess.env.SIGNALBOX_REQUIRE_RIPGREP_ARTIFACT ===
 
 const module = artifactAvailable ? loadRipgrep() : undefined;
 
+function acknowledgement(value: object): asserts value is {
+  host(): KernelSyscallPort;
+  stopped(): void;
+} {
+  if (
+    !("stopped" in value) ||
+    typeof value.stopped !== "function" ||
+    !("host" in value) ||
+    typeof value.host !== "function"
+  ) {
+    throw new Error("Dispatch omitted its syscall host or completion acknowledgement");
+  }
+}
+
 describe.skipIf(!artifactAvailable)("pinned ripgrep SIGPIPE policy", () => {
   it("returns EPIPE to local ripgrep without terminating it by signal", async () => {
     const fixture = childBusyboxFixture({ env: { PATH: "/bin" } });
@@ -98,14 +112,11 @@ describe.skipIf(!artifactAvailable)("pinned ripgrep SIGPIPE policy", () => {
     const code = { mainModule: "main.js", modules: { "main.js": "export default {};" } };
     const loader: ChildWorkerLoaderPort = {
       async run(input, invocation) {
-        const rpc = invocation as unknown as {
-          host(): KernelSyscallPort;
-          stopped(): void;
-        };
+        acknowledgement(invocation);
         try {
           const wasi = createChildWasi({
             module: module!,
-            syscalls: rpc.host(),
+            syscalls: invocation.host(),
             args: input.command.argv,
             env: input.command.env,
           });
@@ -113,7 +124,7 @@ describe.skipIf(!artifactAvailable)("pinned ripgrep SIGPIPE policy", () => {
           wasi.bind(instance);
           return await wasi.startProcess(instance);
         } finally {
-          rpc.stopped();
+          invocation.stopped();
         }
       },
     };

@@ -4,7 +4,7 @@ import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
 import { createKernelSyscallHost } from "./KernelSyscallHost.ts";
 import type { KernelSyscallRequest } from "./KernelSyscallPort.ts";
 import { setup, spawn } from "./tests/kernelProgramPipeFixture.ts";
-import { sigpipeCommand } from "./tests/kernelSigpipeFixture.ts";
+import { wasmSigpipeCommand } from "./tests/wasmGuest.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
 
 const EPIPE = 64;
@@ -85,7 +85,7 @@ describe("kernel SIGPIPE generation", () => {
   it.each([false, true])(
     "returns EPIPE for a blocked WASI SIGPIPE, inherited=%s",
     async (inherited) => {
-      const context = setup({ kind: "wasm", module: sigpipeCommand(!inherited, false) });
+      const context = setup({ kind: "wasm", module: wasmSigpipeCommand(!inherited, false) });
       const piped = context.host.preparePiped({ filesystem: context.filesystem });
       try {
         if (inherited)
@@ -104,7 +104,7 @@ describe("kernel SIGPIPE generation", () => {
   );
 
   it("delivers pending SIGPIPE when a WASI guest unblocks it", async () => {
-    const context = setup({ kind: "wasm", module: sigpipeCommand(true, true) });
+    const context = setup({ kind: "wasm", module: wasmSigpipeCommand(true, true) });
     const piped = context.host.preparePiped({ filesystem: context.filesystem });
     const seen = vi.spyOn(context.host.processes, "signalMask");
     try {

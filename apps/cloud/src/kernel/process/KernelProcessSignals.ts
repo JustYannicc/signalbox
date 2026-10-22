@@ -1,5 +1,9 @@
 import { kernelError, kernelOk, type KernelResult } from "../KernelAbi.ts";
-import { KernelProcessSignal, type KernelProcessSignalNumber } from "../KernelProcessSignal.ts";
+import {
+  KernelProcessSignal,
+  type KernelProcessSignalNumber,
+  type KernelSigpipeDisposition,
+} from "../KernelProcessSignal.ts";
 
 export interface KernelSignalMask {
   readonly low: number;
@@ -7,6 +11,7 @@ export interface KernelSignalMask {
 }
 
 const UNBLOCKABLE = (1n << 8n) | (1n << 18n);
+const SIGPIPE = 13;
 
 export function validSignalMask(mask: KernelSignalMask): boolean {
   return [mask.low, mask.high].every(
@@ -17,6 +22,7 @@ export function validSignalMask(mask: KernelSignalMask): boolean {
 /** Logical-process state shared by every adapter for the same process handle. */
 export class KernelProcessSignals {
   #blocked: bigint;
+  #sigpipe: KernelSigpipeDisposition = "terminate";
   readonly #pending = new Map<number, (signal: number) => KernelResult<void>>();
 
   constructor(mask: KernelSignalMask = { low: 0, high: 0 }) {
@@ -36,6 +42,11 @@ export class KernelProcessSignals {
     return previous;
   }
 
+  setSigpipeDisposition(disposition: KernelSigpipeDisposition): void {
+    this.#sigpipe = disposition;
+    if (disposition === "epipe") this.#pending.delete(SIGPIPE);
+  }
+
   send(signal: number, deliver: (signal: number) => KernelResult<void>): KernelResult<void> {
     if (this.#isBlocked(signal)) {
       // The pinned AgentOS ABI coalesces each of its 64 signal numbers.
@@ -50,7 +61,9 @@ export class KernelProcessSignals {
   }
 
   generate(signal: KernelProcessSignalNumber): KernelResult<void> {
+    if (signal === SIGPIPE && this.#sigpipe === "epipe") return kernelOk(undefined);
     return this.send(signal, () => {
+      if (signal === SIGPIPE && this.#sigpipe === "epipe") return kernelOk(undefined);
       throw new KernelProcessSignal(signal);
     });
   }
