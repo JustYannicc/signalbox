@@ -25,11 +25,11 @@ async function runtimePorts(): Promise<
     commands: {
       loader: commandLoader().loader,
       capacity: new ChildWorkerCapacity(2),
-      machine: {
+      machine: () => ({
         spawn: async () => {
           throw new Error("Unused machine");
         },
-      },
+      }),
     },
     save: async () => {
       throw new Error("Unused save");

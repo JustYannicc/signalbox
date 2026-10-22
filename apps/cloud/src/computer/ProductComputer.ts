@@ -1,8 +1,10 @@
 import { KernelProcessTable } from "../kernel/KernelProcessTable.ts";
 import {
   systemIdentityForThread,
+  type SystemIdentity,
   type SystemIdentityConfig,
 } from "@t3tools/contracts/systemIdentity";
+import type { KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
 import { createCommandGateway, type CommandGatewayOptions } from "./CommandGateway.ts";
 import { CHILD_COREUTILS_COMMANDS } from "./ChildProgramSet.ts";
 import {
@@ -14,10 +16,12 @@ import type { ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
-  "processes" | "loader" | "systemIdentity" | "hostname"
+  "processes" | "loader" | "systemIdentity" | "hostname" | "machine"
 > {
   readonly threadId: string;
   readonly systemIdentity?: SystemIdentityConfig;
+  /** Build the machine transport from the same resolved identity the isolate receives. */
+  readonly machine: (systemIdentity: SystemIdentity) => KernelCommandForwarder;
   readonly signal: AbortSignal;
   readonly loader:
     | ChildWorkerLoaderPort
@@ -43,6 +47,7 @@ export function createProductComputer(options: ProductComputerOptions) {
     CHILD_COREUTILS_COMMANDS.some((command) => programs.coreutils?.[command] === undefined)
   )
     throw new TypeError("Product Computer requires the full command catalog");
+  const machine = options.machine(systemIdentity);
   const processes = new KernelProcessTable({ wakes: options.wakes });
   const loader =
     "run" in options.loader
@@ -54,6 +59,7 @@ export function createProductComputer(options: ProductComputerOptions) {
         );
   const gateway = createCommandGateway({
     ...options,
+    machine,
     systemIdentity,
     hostname: systemIdentity.hostname,
     loader,

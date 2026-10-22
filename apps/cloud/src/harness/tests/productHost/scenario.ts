@@ -114,7 +114,10 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
             loader: commands.loader,
             capacity,
             systemIdentity,
-            machine: machine.port,
+            machine: (identity) => {
+              NodeAssert.deepEqual(identity, systemIdentity);
+              return machine.port;
+            },
           },
           hydrate: async ({ files: canonical, signal }) => {
             files = canonical;
