@@ -109,6 +109,7 @@ const runtimeMutationCases: ReadonlyArray<{
   readonly name: string;
   readonly specifier: string;
   readonly sources: Record<string, string>;
+  readonly globals?: Record<string, "global" | "process">;
   readonly layerModules?: Record<string, string>;
   readonly environmentPackageModules?: Record<string, string>;
 }> = [
@@ -131,6 +132,66 @@ const runtimeMutationCases: ReadonlyArray<{
     specifier: "./mutator.js",
     sources: {
       "/mutator.js": `const g=global;g.process.env.FLAG="changed";`,
+    },
+  },
+  {
+    name: "a globalThis property alias",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const g=globalThis["globalThis"];g["process"]["env"]["FLAG"]="changed";`,
+    },
+  },
+  {
+    name: "a global property alias",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const g=globalThis["global"];g["process"]["env"]["FLAG"]="changed";`,
+    },
+  },
+  {
+    name: "a self property alias",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const g=globalThis.self;g["process"]["env"]["FLAG"]="changed";`,
+    },
+    globals: { self: "global" },
+  },
+  {
+    name: "a window globalThis property alias",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const g=window.globalThis;g["process"]["env"]["FLAG"]="changed";`,
+    },
+    globals: { window: "global" },
+  },
+  {
+    name: "nested global object aliases",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const g=globalThis.global.globalThis;g["process"]["env"]["FLAG"]="changed";`,
+    },
+  },
+  {
+    name: "an unknown global property that holds the global object",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const g=globalThis.omissionAlias;g["process"]["env"]["FLAG"]="changed";`,
+    },
+    globals: { omissionAlias: "global" },
+  },
+  {
+    name: "an unknown global property that holds process",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const p=globalThis.omissionAlias;p["env"]["FLAG"]="changed";`,
+    },
+    globals: { omissionAlias: "process" },
+  },
+  {
+    name: "a computed global object alias",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const key="globalThis";const g=globalThis[key];g["process"]["env"]["FLAG"]="changed";`,
     },
   },
   {
@@ -273,16 +334,35 @@ const mutationCases: ReadonlyArray<{
 describe("release omission", () => {
   it.each(runtimeMutationCases)(
     "keeps runtime environment reads live after $name",
-    async ({ specifier, sources: extraSources, layerModules, environmentPackageModules }) => {
+    async ({
+      specifier,
+      sources: extraSources,
+      globals,
+      layerModules,
+      environmentPackageModules,
+    }) => {
       const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "release-omission-live-"));
       const previous = process.env.FLAG;
+      const previousGlobals = new Map(
+        Object.keys(globals ?? {}).map((key) => [
+          key,
+          Object.getOwnPropertyDescriptor(globalThis, key),
+        ]),
+      );
       try {
+        for (const [key, value] of Object.entries(globals ?? {})) {
+          Object.defineProperty(globalThis, key, {
+            configurable: true,
+            value: value === "global" ? globalThis : process,
+          });
+        }
         const extracted = await fixture(root, {
-          "/cli": `import ${JSON.stringify(specifier)};export const read=process.env.FLAG;export const run=()=>process.env.FLAG==="on"?"pinned":"dynamic";`,
+          "/cli": `import ${JSON.stringify(specifier)};export const read=process.env.FLAG;export const run=async()=>process.env.FLAG==="on"?"pinned":(await import('./changed.js')).value;`,
+          "/changed.js": `export const value="dynamic";`,
           ...extraSources,
         });
         const output = NodePath.join(root, "bundle");
-        await rebundle({
+        const built = await rebundle({
           extracted,
           output,
           version: "fixture",
@@ -299,8 +379,16 @@ describe("release omission", () => {
         const release = launcher.launch();
         expect(process.env.FLAG).toBe("changed");
         expect.soft(release.read).toBe("changed");
-        expect.soft(release.run()).toBe("dynamic");
+        expect.soft(await release.run()).toBe("dynamic");
+        expect
+          .soft(built.manifest.omission?.configurationRemoved)
+          .not.toContain("bun-graph:/changed.js");
+        expect.soft(built.manifest.omission?.configurationReplacements).toEqual({});
       } finally {
+        for (const [key, descriptor] of previousGlobals) {
+          if (descriptor === undefined) Reflect.deleteProperty(globalThis, key);
+          else Object.defineProperty(globalThis, key, descriptor);
+        }
         if (previous === undefined) delete process.env.FLAG;
         else process.env.FLAG = previous;
         await NodeFSP.rm(root, { recursive: true, force: true });

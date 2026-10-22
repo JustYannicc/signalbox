@@ -1,9 +1,9 @@
-import { RELEASE_MODULE_OMITTED_REPORTER_KEY } from "@t3tools/contracts/harnessReleaseOmission";
-import type { KernelExitStatus } from "../kernel/KernelProgramHost.ts";
-import type {
-  ReleaseModuleOmittedEvent,
-  ReleaseModuleOmittedFailure,
+import {
+  RELEASE_MODULE_OMITTED_REPORTER_KEY,
+  type ReleaseModuleOmittedEvent,
+  type ReleaseModuleOmittedFailure,
 } from "@t3tools/contracts/harnessReleaseOmission";
+import type { KernelExitStatus } from "../kernel/KernelProgramHost.ts";
 
 export type {
   ReleaseModuleOmittedEvent,

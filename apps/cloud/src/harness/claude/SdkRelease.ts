@@ -1,7 +1,7 @@
 import type { SdkSpawnOptions } from "./SdkTypes.ts";
 import type { NodeBridge } from "../../isolate/NodeBridge.ts";
 import type { NodeHarnessProcessInput } from "../NodeHarnessProcess.ts";
-import { CLAUDE_HOST_CONFIG } from "../ClaudeHostConfig.ts";
+import { CLAUDE_HOST_CONFIG } from "../releasePlan/hostConfiguration.ts";
 
 type SdkLaunchInput = Pick<NodeHarnessProcessInput, "identity" | "bun"> & {
   readonly computer: {

@@ -49,9 +49,8 @@ export async function readClaudeOmission(input: {
   const name = input.configurationName ?? "product";
   if (name !== "product" && name !== "qualification")
     throw new Error("CLAUDE_HOST_CONFIGURATION_INVALID");
-  if (!input.enabled && input.corpusPath) throw new Error("CLAUDE_OMISSION_NOT_ENABLED");
-  if (!input.enabled && !input.corpusPath) {
-    if (input.configurationName) throw new Error("CLAUDE_OMISSION_NOT_ENABLED");
+  if (!input.enabled) {
+    if (input.corpusPath || input.configurationName) throw new Error("CLAUDE_OMISSION_NOT_ENABLED");
     return undefined;
   }
   const corpus = input.corpusPath

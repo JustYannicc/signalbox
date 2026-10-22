@@ -13,7 +13,10 @@ import { assertOneByteModules, inlineLegalNotices } from "./one-byte-output.ts";
 import { type BunGraphOptions, createBunGraphPlugin, NODE_BUILTINS } from "./bun-graph-plugin.ts";
 import { createReleaseOmission } from "./rebundle-omission.ts";
 import type { ReleaseOmissionOptions } from "./release-omission.ts";
-import { parsePinnedEnvironmentSourceId, pinnedEnvironmentSourceId } from "./pinned-environment.ts";
+import {
+  parsePinnedEnvironmentSourceId,
+  pinnedEnvironmentSourceId,
+} from "./pinned-environment-origin.ts";
 
 export interface RebundleOptions extends BunGraphOptions {
   readonly omission?: ReleaseOmissionOptions;
