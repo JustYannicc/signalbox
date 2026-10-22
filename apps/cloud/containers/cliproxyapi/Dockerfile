@@ -27,14 +27,14 @@ RUN go mod download
 ARG CLIPROXYAPI_TEST_CARRIED_FLOWS=0
 RUN if [ "$CLIPROXYAPI_TEST_CARRIED_FLOWS" = "1" ]; then \
       test_output=/tmp/cliproxyapi-carried-tests.json; \
-      if ! GOMAXPROCS=2 go test -p 2 -count=1 -json \
-        -run 'CodexDevice|ManualClaude|ClaudeManualFlow|TestGenerateAuthURLKeepsTheLocalCallback' \
+      if ! GOMAXPROCS=2 go test -race -p 2 -count=1 -json \
+        -run 'TestStartOAuthV8CodexDeviceFlowDoesNotRaceConfigReload|TestStartOAuthV8CodexDeviceFlowKeepsConfigAcrossProxyUpdate|TestStartOAuthV8CodexDeviceFlowKeepsSessionWhenClientLeavesAfterFlush|CodexDevice|ManualClaude|ClaudeManualFlow|TestGenerateAuthURLKeepsTheLocalCallback' \
         ./sdk/auth ./internal/api/handlers/management ./internal/auth/claude \
         > "$test_output"; then \
         cat "$test_output"; \
         exit 1; \
       fi; \
-      if ! jq -s -e '[.[] | select(.Action == "pass" and .Test != null) | .Test] as $passed | ["TestCodexDeviceLoginReportsCodeBeforePollingAndHonorsCancellation", "TestStartOAuthV8ClaudeManualFlowUsesHostedCallbackWithoutForwarder", "TestManualClaudeGenerateAuthURLUsesHostedCallback", "TestManualClaudeCodeExchangeUsesTheSameHostedRedirect", "TestGenerateAuthURLKeepsTheLocalCallback"] as $expected | ($expected - $passed) == []' "$test_output" > /dev/null; then \
+      if ! jq -s -e '[.[] | select(.Action == "pass" and .Test != null) | .Test] as $passed | ["TestStartOAuthV8CodexDeviceFlowDoesNotRaceConfigReload", "TestStartOAuthV8CodexDeviceFlowKeepsConfigAcrossProxyUpdate", "TestStartOAuthV8CodexDeviceFlowKeepsSessionWhenClientLeavesAfterFlush", "TestCodexDeviceLoginReportsCodeBeforePollingAndHonorsCancellation", "TestStartOAuthV8ClaudeManualFlowUsesHostedCallbackWithoutForwarder", "TestManualClaudeGenerateAuthURLUsesHostedCallback", "TestManualClaudeCodeExchangeUsesTheSameHostedRedirect", "TestGenerateAuthURLKeepsTheLocalCallback"] as $expected | ($expected - $passed) == []' "$test_output" > /dev/null; then \
         cat "$test_output"; \
         echo "CLIProxyAPI carried-flow test filter did not pass all expected tests." >&2; \
         exit 1; \
