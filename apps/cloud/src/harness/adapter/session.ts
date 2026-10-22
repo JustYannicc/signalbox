@@ -296,7 +296,8 @@ export const openAdapterSession = (
         check(operation).pipe(
           Effect.andThen(effect.pipe(Effect.forkIn(scope), Effect.flatMap(Fiber.join))),
         );
-      const markDisposed = Effect.gen(function* () {
+      const markClosing = Effect.gen(function* () {
+        // Closing blocks new work while finalizers can still report failures.
         closing = true;
         if (state.active !== undefined) {
           const error = new HarnessError({
@@ -308,7 +309,7 @@ export const openAdapterSession = (
         }
       });
       const close = yield* Effect.cached(
-        markDisposed.pipe(
+        markClosing.pipe(
           Effect.andThen(Scope.close(scope, Exit.void)),
           Effect.catchCause((cause) =>
             Effect.fail(
@@ -329,7 +330,7 @@ export const openAdapterSession = (
           ),
         ),
       );
-      yield* Effect.addFinalizer(() => markDisposed);
+      yield* Effect.addFinalizer(() => markClosing);
       return {
         release: input.release,
         get providerSession() {

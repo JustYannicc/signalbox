@@ -11,7 +11,7 @@ export function reserveHarnessRealm() {
   if (active !== undefined || Object.hasOwn(globalThis, Symbol.for("signalbox.nodeBridge.v1"))) {
     throw new Error("A live Node personality already owns this realm");
   }
-  // Imported release chunks and builtin facades keep their first process's objects.
+  // Imported release modules and builtin facades keep their first process's objects.
   if (launched)
     throw new Error("This realm already launched a Node release. Use a separate Worker");
   const owner = {};
