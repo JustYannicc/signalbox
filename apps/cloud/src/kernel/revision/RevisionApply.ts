@@ -5,6 +5,7 @@ import type { createFacetFilePersistence } from "../FacetFilePersistence.ts";
 import type { ApplyPlan, DirtyInode, TreeEntry, WorkspaceState } from "./RevisionTypes.ts";
 import { KernelRevisionWorkspaceError } from "./RevisionErrors.ts";
 import { readDirty, readEpoch, readState, restoreDirtySnapshot } from "./RevisionJournal.ts";
+import { writeStateManifest } from "./RevisionJournalValues.ts";
 import { applyChangesToManifest, encodeManifest, sameCommit, scanTree } from "./RevisionTree.ts";
 import { assertNoRevisionConflict } from "./RevisionConflict.ts";
 import { findRetiredInodes, resolveLocalInodes, validatePlans } from "./RevisionPlan.ts";
@@ -115,7 +116,7 @@ export async function applyRevision(input: {
       database.sql.exec(
         "UPDATE kernel_fs_workspace_state SET commit_id = ?, manifest_json = ?, baseline_epoch = ? WHERE singleton = 1",
         after.commit,
-        encodeManifest(manifest),
+        writeStateManifest(database, encodeManifest(manifest)),
         readEpoch(database),
       );
       restoreDirtySnapshot(database, dirtyBeforeApply);

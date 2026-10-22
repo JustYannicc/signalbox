@@ -1,27 +1,16 @@
-import { Schema } from "effect";
-import type { ChangedInode, ForkCommit } from "../FilePersistencePorts.ts";
+import type { ForkCommit } from "../FilePersistencePorts.ts";
 import type { FacetStorage } from "../FacetSqliteStorage.ts";
-import type { Inode } from "../storage.ts";
 import { KernelRevisionWorkspaceError } from "./RevisionErrors.ts";
 import { decodeManifest } from "./RevisionTree.ts";
+import {
+  deleteAttemptValues,
+  installJournalValues,
+  readAttemptValues,
+  readStateManifest,
+  writeAttemptValues,
+  writeStateManifest,
+} from "./RevisionJournalValues.ts";
 import type { CheckpointAttempt, DirtyInode, WorkspaceState } from "./RevisionTypes.ts";
-
-const ChangedInodeJson = Schema.fromJsonString(
-  Schema.Array(
-    Schema.Struct({
-      inode: Schema.BigIntFromString,
-      paths: Schema.Array(Schema.String),
-      removedPaths: Schema.Array(Schema.String),
-    }),
-  ),
-);
-const DirtyInodeJson = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ inode: Schema.String, version: Schema.Number })),
-);
-const decodeChangedInodes = Schema.decodeUnknownSync(ChangedInodeJson);
-const encodeChangedInodes = Schema.encodeSync(ChangedInodeJson);
-const decodeDirtyInodes = Schema.decodeUnknownSync(DirtyInodeJson);
-const encodeDirtyInodes = Schema.encodeSync(DirtyInodeJson);
 
 function firstRow(rows: Iterable<Record<string, unknown>>): Record<string, unknown> | undefined {
   const result = rows[Symbol.iterator]().next();
@@ -34,6 +23,7 @@ function invalidJournalData(): never {
 
 export function installWorkspaceJournal(database: FacetStorage): void {
   database.transactionSync(() => {
+    installJournalValues(database);
     database.sql.exec(
       "CREATE TABLE IF NOT EXISTS kernel_fs_workspace_state (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), repository TEXT NOT NULL, fork_name TEXT NOT NULL, commit_id TEXT NOT NULL, manifest_json TEXT NOT NULL, epoch INTEGER NOT NULL, baseline_epoch INTEGER NOT NULL)",
     );
@@ -88,7 +78,7 @@ export function readState(database: FacetStorage): WorkspaceState {
   );
   if (!row)
     throw new KernelRevisionWorkspaceError("EIO", "The facet workspace revision is missing");
-  const manifestJson = String(row.manifest_json);
+  const manifestJson = readStateManifest(database, row.manifest_json);
   const epoch = Number(row.baseline_epoch);
   if (!Number.isSafeInteger(epoch) || epoch < 0) return invalidJournalData();
   return {
@@ -147,28 +137,11 @@ export function readAttempt(
     ),
   );
   if (!row) return undefined;
-  const manifest = String(row.manifest_json);
+  const values = readAttemptValues(database, operationId, row);
+  const manifest = values.manifest;
   const epoch = Number(row.epoch);
   if (!Number.isSafeInteger(epoch) || epoch < 0) return invalidJournalData();
   decodeManifest(manifest);
-  let changed: ReturnType<typeof decodeChangedInodes>;
-  let dirty: ReturnType<typeof decodeDirtyInodes>;
-  try {
-    changed = decodeChangedInodes(String(row.changed_json));
-    dirty = decodeDirtyInodes(String(row.dirty_json));
-  } catch {
-    return invalidJournalData();
-  }
-  if (
-    dirty.some(
-      (entry) =>
-        !/^[1-9][0-9]*$/.test(entry.inode) ||
-        !Number.isSafeInteger(entry.version) ||
-        entry.version < 0,
-    )
-  ) {
-    return invalidJournalData();
-  }
   return {
     at: {
       repository: String(row.repository),
@@ -177,21 +150,9 @@ export function readAttempt(
     },
     manifest,
     epoch,
-    changed: changed.map((entry) => ({
-      inode: entry.inode as Inode,
-      paths: entry.paths,
-      removedPaths: entry.removedPaths,
-    })),
-    dirty,
+    changed: values.changed,
+    dirty: values.dirty,
   };
-}
-
-function encodeChanged(changed: readonly ChangedInode[]): string {
-  return encodeChangedInodes(changed);
-}
-
-function encodeDirty(dirty: readonly DirtyInode[]): string {
-  return encodeDirtyInodes(dirty);
 }
 
 export function checkpointReceiptWithBase(database: FacetStorage, operationId: string) {
@@ -216,12 +177,13 @@ export function ensureWorkspaceState(
   input: { readonly at: ForkCommit; readonly manifestJson: string },
 ): void {
   database.transactionSync(() => {
+    if (hasWorkspaceState(database)) return;
     database.sql.exec(
       "INSERT OR IGNORE INTO kernel_fs_workspace_state (singleton, repository, fork_name, commit_id, manifest_json, epoch, baseline_epoch) VALUES (1, ?, ?, ?, ?, 0, 0)",
       input.at.repository,
       input.at.fork,
       input.at.commit,
-      input.manifestJson,
+      writeStateManifest(database, input.manifestJson),
     );
     database.sql.exec("DELETE FROM kernel_fs_workspace_dirty_inode");
   });
@@ -244,16 +206,22 @@ export function insertCheckpointAttempt(
         "The facet revision advanced during checkpoint",
       );
     }
+    if (readAttempt(database, operationId)) return;
+    const values = writeAttemptValues(database, operationId, {
+      manifest: attempt.manifest,
+      changed: attempt.changed,
+      dirty: attempt.dirty,
+    });
     database.sql.exec(
       "INSERT OR IGNORE INTO kernel_fs_workspace_attempt (operation_id, repository, fork_name, base_commit, manifest_json, epoch, changed_json, dirty_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       operationId,
       attempt.at.repository,
       attempt.at.fork,
       attempt.at.commit,
-      attempt.manifest,
+      values.manifest,
       attempt.epoch,
-      encodeChanged(attempt.changed),
-      encodeDirty(attempt.dirty),
+      values.changed,
+      values.dirty,
     );
   });
 }
@@ -295,7 +263,7 @@ export function recordCheckpoint(
     database.sql.exec(
       "UPDATE kernel_fs_workspace_state SET commit_id = ?, manifest_json = ?, baseline_epoch = ? WHERE singleton = 1",
       after.commit,
-      attempt.manifest,
+      writeStateManifest(database, attempt.manifest),
       attempt.epoch,
     );
     for (const dirty of attempt.dirty) {
@@ -314,16 +282,22 @@ export function recordCheckpoint(
       after.commit,
       attempt.epoch,
     );
-    database.sql.exec(
-      "DELETE FROM kernel_fs_workspace_attempt WHERE operation_id = ?",
-      operationId,
-    );
-    database.sql.exec(
-      "DELETE FROM kernel_fs_workspace_attempt WHERE repository = ? AND fork_name = ? AND base_commit <> ?",
-      attempt.at.repository,
-      attempt.at.fork,
-      after.commit,
-    );
+    const obsolete = [
+      ...database.sql.exec(
+        "SELECT operation_id FROM kernel_fs_workspace_attempt WHERE operation_id = ? OR (repository = ? AND fork_name = ? AND base_commit <> ?)",
+        operationId,
+        attempt.at.repository,
+        attempt.at.fork,
+        after.commit,
+      ),
+    ];
+    for (const row of obsolete) {
+      deleteAttemptValues(database, String(row.operation_id));
+      database.sql.exec(
+        "DELETE FROM kernel_fs_workspace_attempt WHERE operation_id = ?",
+        String(row.operation_id),
+      );
+    }
     return after;
   });
 }
@@ -341,6 +315,7 @@ export function deleteStaleAttempt(
       current.at.fork === staleBase.fork &&
       current.at.commit === staleBase.commit
     ) {
+      deleteAttemptValues(database, operationId);
       database.sql.exec(
         "DELETE FROM kernel_fs_workspace_attempt WHERE operation_id = ?",
         operationId,
