@@ -1,3 +1,4 @@
+import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -21,12 +22,14 @@ import type {
 import { createMcpRoutes, validateConnections } from "./mcp.ts";
 import { fingerprint, type SeedCatalog } from "./seed.ts";
 import { createHostSession, sameAccess, snapshotAccess } from "./session.ts";
+import { closeFailedHostStart } from "./failure.ts";
 import { createHostStorage } from "./storage.ts";
 
 export const createHostLifecycle = <G>(
   options: Omit<HarnessHostOptions<G>, "release" | "programs">,
   loaded: LoadedHarnessRelease,
   catalog: SeedCatalog,
+  closeOwner: Effect.Effect<void>,
 ): Effect.Effect<HarnessSessionHost<G>, HarnessError, Scope.Scope> =>
   Effect.gen(function* () {
     const owner = yield* makeFacetLifetime(yield* Scope.Scope);
@@ -42,11 +45,12 @@ export const createHostLifecycle = <G>(
         }),
         (value) =>
           Effect.sync(() => value.dispose()).pipe(
-            Effect.catchCause(() =>
+            Effect.catchCause((cause) =>
               Effect.die(
                 new HarnessError({
                   operation: "dispose",
                   message: "Harness files cleanup failed.",
+                  cause,
                 }),
               ),
             ),
@@ -60,12 +64,13 @@ export const createHostLifecycle = <G>(
         // Joining acquisitions keeps their late finalizers inside the live Computer/file scopes.
         Scope.close(acquisitionScope, Exit.void).pipe(
           Effect.ensuring(Scope.close(computerScope, Exit.void)),
-          Effect.catchCause(() => {
+          Effect.catchCause((cause) => {
             poisoned = true;
             return Effect.die(
               new HarnessError({
                 operation: "dispose",
                 message: "Harness Computer cleanup failed.",
+                cause,
               }),
             );
           }),
@@ -167,11 +172,12 @@ export const createHostLifecycle = <G>(
                     if (Exit.isFailure(exit)) poisoned = true;
                   }),
                 ),
-                Effect.catchCause(() =>
+                Effect.catchCause((cause) =>
                   Effect.die(
                     new HarnessError({
                       operation: "dispose",
                       message: "Harness runtime cleanup failed.",
+                      cause,
                     }),
                   ),
                 ),
@@ -227,17 +233,37 @@ export const createHostLifecycle = <G>(
       });
       const dispose = yield* Effect.cached(
         owner.close.pipe(
-          Effect.catchCause(() =>
+          Effect.catchCause((cause) =>
             Effect.fail(
               new HarnessError({
                 operation: "dispose",
                 message: "Harness host cleanup failed.",
+                cause,
               }),
             ),
           ),
           Effect.uninterruptible,
         ),
       );
+      const failStart = (
+        bootAttemptId: string,
+        operation: "open" | "turn",
+        cause: Cause.Cause<unknown>,
+        cleanup: Effect.Effect<void, HarnessError>,
+        runId?: string,
+      ) =>
+        closeFailedHostStart({
+          database: storage.database,
+          bootAttemptId,
+          runId,
+          operation,
+          cause,
+          startup: () => native?.binding.startup?.(),
+          cleanup: cleanup.pipe(
+            Effect.ensuring(Effect.orDie(dispose)),
+            Effect.ensuring(closeOwner),
+          ),
+        });
       return {
         threadId: options.threadId,
         release: facet.release,
@@ -383,6 +409,7 @@ export const createHostLifecycle = <G>(
                 attempts.set(attempt.id, attempt);
                 occupied = attempt;
                 let raw: HarnessSession | undefined;
+                let startupFailure: HarnessError | undefined;
                 return yield* Effect.gen(function* () {
                   if (initialAccess?.signal.aborted)
                     return yield* Effect.fail(
@@ -456,6 +483,7 @@ export const createHostLifecycle = <G>(
                       if (occupied === attempt) occupied = undefined;
                       if (!ok) poisoned = true;
                     },
+                    (cause, runId, cleanup) => failStart(attempt.id, "turn", cause, cleanup, runId),
                   );
                   return attempt.session;
                 }).pipe(
@@ -465,15 +493,22 @@ export const createHostLifecycle = <G>(
                       : Effect.gen(function* () {
                           attempt.ended = true;
                           if (occupied === attempt) occupied = undefined;
-                          yield* raw?.dispose ?? Effect.void;
+                          startupFailure = yield* failStart(
+                            attempt.id,
+                            "open",
+                            exit.cause,
+                            raw?.dispose ?? Effect.void,
+                          );
                         }),
                   ),
-                  Effect.catchCause(() =>
+                  Effect.catchCause((cause) =>
                     Effect.fail(
-                      new HarnessError({
-                        operation: "open",
-                        message: "Harness native acquisition failed.",
-                      }),
+                      startupFailure ??
+                        new HarnessError({
+                          operation: "open",
+                          message: "Harness native acquisition failed.",
+                          cause,
+                        }),
                     ),
                   ),
                 );

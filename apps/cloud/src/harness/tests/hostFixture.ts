@@ -15,6 +15,7 @@ import {
   type TurnAccess,
   type ExecutorMcpPort,
 } from "../HarnessSessionHost.ts";
+import type { HarnessProcessStartup } from "../HarnessProcessLifetime.ts";
 import { HarnessError, type HarnessOpenInput } from "../Harness.ts";
 import { fixture } from "../adapter/tests/fixture.ts";
 import { claudeFixture, codexFixture } from "../releaseLoader/tests/artifactFixtures.ts";
@@ -49,7 +50,8 @@ export const hostFixture = Effect.gen(function* () {
   const configured = yield* Queue.unbounded<NativeMcpConfiguration>();
   let configureGate = Effect.void;
   let programReadGate = async () => {};
-  let configurationFailure = false;
+  let configurationFailure: HarnessError | undefined;
+  let processStartup: HarnessProcessStartup | undefined;
   let acquisitionFailure = false;
   let missingConfigure = false;
   let subscription = false;
@@ -57,7 +59,7 @@ export const hostFixture = Effect.gen(function* () {
   let forward: ExecutorMcpPort<Grant>["forward"] = async () => new Response("executor");
   let runtimeInput: Parameters<HarnessHostOptions<Grant>["buildRuntime"]>[0] | undefined;
   let loaderReads = 0;
-  const make = (overrides: Partial<HarnessHostOptions<Grant>> = {}) =>
+  const make = (overrides: Partial<HarnessHostOptions<Grant>> = {}, closeOwner = Effect.void) =>
     Effect.gen(function* () {
       const adapter = yield* fixture;
       const lifetime = yield* Scope.make();
@@ -125,6 +127,7 @@ export const hostFixture = Effect.gen(function* () {
             runtimeInput = input;
             yield* Effect.addFinalizer(() => Effect.suspend(() => cleanup));
             const binding = {
+              startup: () => processStartup,
               factory: {
                 open: (supplied: HarnessOpenInput) =>
                   Effect.suspend(() => {
@@ -160,13 +163,8 @@ export const hostFixture = Effect.gen(function* () {
                   configurationSignals.push(signal);
                   yield* Queue.offer(configured, config);
                   yield* configureGate;
-                  if (configurationFailure)
-                    return yield* Effect.fail(
-                      new HarnessError({
-                        operation: "turn",
-                        message: "opaque-grant-secret",
-                      }),
-                    );
+                  if (configurationFailure !== undefined)
+                    return yield* Effect.fail(configurationFailure);
                 }),
             };
             if (missingConfigure) Reflect.deleteProperty(binding, "configureMcp");
@@ -174,7 +172,9 @@ export const hostFixture = Effect.gen(function* () {
           }),
         ...overrides,
       };
-      const host = yield* createHarnessSessionHost(options).pipe(Scope.provide(lifetime));
+      const host = yield* createHarnessSessionHost(options, closeOwner).pipe(
+        Scope.provide(lifetime),
+      );
       return {
         host,
         adapter,
@@ -247,8 +247,13 @@ export const hostFixture = Effect.gen(function* () {
     failAcquisition: (value: boolean) => {
       acquisitionFailure = value;
     },
-    failConfiguration: () => {
-      configurationFailure = true;
+    failConfiguration: (
+      failure = new HarnessError({ operation: "turn", message: "Native configuration failed." }),
+    ) => {
+      configurationFailure = failure;
+    },
+    setStartup: (startup: HarnessProcessStartup) => {
+      processStartup = startup;
     },
     omitConfigurationPort: () => {
       missingConfigure = true;

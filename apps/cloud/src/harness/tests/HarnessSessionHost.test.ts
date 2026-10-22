@@ -108,7 +108,7 @@ describe("HarnessSessionHost", () => {
       expect(bindings).toBe(1);
       expect(releases).toBe(1);
       expect(f.acquisitions).toHaveLength(0);
-      expect(canonicalFilesAreLive()).toBe(true);
+      expect(() => canonicalFilesAreLive()).toThrow("disposed");
       expect(Exit.isFailure(yield* instance.open("attempt-C").pipe(Effect.exit))).toBe(true);
       expect(f.handle.rows("SELECT * FROM harness_boot_attempts")).toHaveLength(1);
       yield* instance.host.dispose;
@@ -198,7 +198,7 @@ describe("HarnessSessionHost", () => {
         expect(Exit.isFailure(disposal)).toBe(cleanupFailure);
         if (Exit.isFailure(disposal)) {
           expect(Cause.pretty(disposal.cause)).toContain("Harness host cleanup failed.");
-          expect(Cause.pretty(disposal.cause)).not.toContain("opaque-acquisition-secret");
+          expect(Cause.pretty(disposal.cause)).toContain("opaque-acquisition-secret");
         }
         expect(Exit.isFailure(yield* Fiber.join(opening))).toBe(true);
         expect(disposed).toBe(true);
@@ -248,25 +248,22 @@ describe("HarnessSessionHost", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect(
-    "consumes a failed native attempt, then accepts a new attempt after clean cleanup",
-    () =>
-      Effect.gen(function* () {
-        const f = yield* hostFixture;
-        const instance = yield* f.make();
-        yield* instance.host.seed("assets");
-        yield* instance.host.seed("programs");
-        f.failAcquisition(true);
-        expect(Exit.isFailure(yield* instance.open().pipe(Effect.exit))).toBe(true);
-        f.failAcquisition(false);
-        expect(Exit.isFailure(yield* instance.open().pipe(Effect.exit))).toBe(true);
-        const recovered = yield* instance.open("fresh-attempt");
-        expect(f.acquisitions).toHaveLength(2);
-        yield* recovered.dispose;
-      }).pipe(Effect.scoped),
+  it.effect("consumes a failed native attempt and requires a reconstructed host", () =>
+    Effect.gen(function* () {
+      const f = yield* hostFixture;
+      const instance = yield* f.make();
+      yield* instance.host.seed("assets");
+      yield* instance.host.seed("programs");
+      f.failAcquisition(true);
+      expect(Exit.isFailure(yield* instance.open().pipe(Effect.exit))).toBe(true);
+      f.failAcquisition(false);
+      expect(Exit.isFailure(yield* instance.open().pipe(Effect.exit))).toBe(true);
+      expect(Exit.isFailure(yield* instance.open("fresh-attempt").pipe(Effect.exit))).toBe(true);
+      expect(f.acquisitions).toHaveLength(1);
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("poisons reopen after native cleanup fails and sanitizes the injected failure", () =>
+  it.effect("poisons reopen after native cleanup fails and retains its cause", () =>
     Effect.gen(function* () {
       const f = yield* hostFixture;
       const instance = yield* f.make();
@@ -276,8 +273,7 @@ describe("HarnessSessionHost", () => {
       f.setCleanup(Effect.die("opaque-grant-secret"));
       const exit = yield* session.dispose.pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit))
-        expect(Cause.pretty(exit.cause)).not.toContain("opaque-grant-secret");
+      if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("opaque-grant-secret");
       expect(Exit.isFailure(yield* instance.open("fresh-attempt").pipe(Effect.exit))).toBe(true);
       yield* instance.host.dispose.pipe(Effect.ignore);
     }).pipe(Effect.scoped),

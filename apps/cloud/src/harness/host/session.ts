@@ -3,6 +3,7 @@ import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -214,17 +215,23 @@ export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =
         input: HarnessOpenInput,
         signal: AbortSignal,
         onClosed: (ok: boolean) => void,
+        onStartFailure: (
+          cause: Cause.Cause<unknown>,
+          runId: string,
+          cleanup: Effect.Effect<void, HarnessError>,
+        ) => Effect.Effect<HarnessError>,
       ): HarnessHostSession<G> {
         providerThreadId = input.checkpoint?.snapshot.providerThread.id;
         const dispose = Effect.suspend(() => {
           stop();
           return raw.dispose.pipe(
             Effect.onExit((exit) => Effect.sync(() => onClosed(Exit.isSuccess(exit)))),
-            Effect.catchCause(() =>
+            Effect.catchCause((cause) =>
               Effect.fail(
                 new HarnessError({
                   operation: "dispose",
                   message: "Harness session cleanup failed.",
+                  cause,
                 }),
               ),
             ),
@@ -374,14 +381,8 @@ export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =
                     ).pipe(Effect.exit);
                     if (Exit.isFailure(started)) {
                       mcp.retire(config.epoch);
-                      yield* dispose.pipe(Effect.ignore);
-                      yield* Deferred.fail(
-                        result,
-                        new HarnessError({
-                          operation: "turn",
-                          message: "Native MCP configuration or turn start failed.",
-                        }),
-                      );
+                      const failure = yield* onStartFailure(started.cause, turn.runId, dispose);
+                      yield* Deferred.fail(result, failure);
                     } else yield* Deferred.succeed(result, undefined);
                     return result;
                   }),

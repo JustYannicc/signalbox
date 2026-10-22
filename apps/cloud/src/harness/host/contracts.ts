@@ -1,4 +1,5 @@
 import type { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { HarnessProcessStartup } from "../HarnessProcessLifetime.ts";
 import type { NativeThreadLoad } from "../HarnessThreadLoad.ts";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -66,6 +67,7 @@ export interface NativeMcpConfiguration {
   readonly servers: Readonly<Record<string, { readonly url: string }>>;
 }
 export interface NativeHostBinding {
+  readonly startup?: () => HarnessProcessStartup | undefined;
   readonly factory: AdapterRuntimeFactory["Service"];
   /** Await native installation before the next prompt; lazy first queries must enforce this too. */
   readonly configureMcp: (

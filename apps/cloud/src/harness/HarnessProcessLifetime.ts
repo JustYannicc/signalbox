@@ -15,6 +15,8 @@ export interface HarnessProcessStartup {
   } | null;
   readonly wasi: "not-started" | "running" | "returned" | "failed";
   readonly exit: KernelExitStatus | null;
+  /** The original WASI/startup throw, retained by identity. */
+  readonly failure?: unknown;
 }
 
 export interface HarnessProcessObserver {

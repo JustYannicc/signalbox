@@ -272,13 +272,16 @@ export const createProductHarnessSessionHost = <G>(
       const stdio = yield* acquireStdio(wakes, owner.signal, options.observeOutput);
       const { release: _release, programs, ...runtime } = options;
       const bindings = createProductBindings<G>(runtime, programs.codes, wakes, stdio, owner.close);
-      const host = yield* createHarnessSessionHost({
-        ...options,
-        files: { ...options.files, wakes, stdio: stdio.stdio },
-        programs: options.programs.seed,
-        bindComputer: bindings.bindComputer,
-        buildRuntime: bindings.buildRuntime,
-      });
+      const host = yield* createHarnessSessionHost(
+        {
+          ...options,
+          files: { ...options.files, wakes, stdio: stdio.stdio },
+          programs: options.programs.seed,
+          bindComputer: bindings.bindComputer,
+          buildRuntime: bindings.buildRuntime,
+        },
+        owner.close,
+      );
       return bindings.wrap(host);
     }).pipe(
       Scope.provide(owner.scope),

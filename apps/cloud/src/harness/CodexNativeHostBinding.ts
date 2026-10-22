@@ -10,6 +10,7 @@ import type {
   NativeMcpConfiguration,
   NativeThreadLoad,
 } from "./HarnessSessionHost.ts";
+import type { HarnessOwnedProcess } from "./HarnessProcessLifetime.ts";
 import { mcpAborted } from "./host/mcp.ts";
 
 type NativeRuntime = ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -48,6 +49,7 @@ export function makeCodexNativeHostBinding(
   options: CodexNativeHostBindingOptions,
 ): NativeHostBinding {
   let native: NativeRuntime | undefined;
+  let process: HarnessOwnedProcess | undefined;
   let harness: HarnessOpenInput | undefined;
   let claimed = false;
   let mapReads = 0;
@@ -65,6 +67,15 @@ export function makeCodexNativeHostBinding(
     });
   const factory = makeCodexIsolateAdapter({
     ...options,
+    processObserver: {
+      started(value) {
+        process = value;
+        options.processObserver?.started(value);
+      },
+      abandoned(cause) {
+        options.processObserver?.abandoned(cause);
+      },
+    },
     adapter: {
       ...options.adapter,
       mcpServers: () =>
@@ -94,6 +105,7 @@ export function makeCodexNativeHostBinding(
       return ready.thread;
     });
   return {
+    startup: () => process?.startup?.(),
     factory: {
       open: (input) =>
         factory.open(input).pipe(
