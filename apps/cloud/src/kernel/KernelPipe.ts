@@ -5,6 +5,16 @@ type IoOptions = { nonblocking?: boolean; signal?: AbortSignal | undefined };
 
 const pipeError = (code: string, message: string) => Object.assign(new Error(message), { code });
 
+/** Distinguishes a missing pipe reader from an unrelated backend or host EPIPE. */
+export class KernelBrokenPipeError extends Error {
+  readonly code = "EPIPE";
+
+  constructor() {
+    super("Pipe has no reader");
+    this.name = "KernelBrokenPipeError";
+  }
+}
+
 /** One bounded pipe. Descriptor open descriptions own its two endpoints. */
 export class KernelPipe {
   readonly #bytes: Uint8Array;
@@ -67,7 +77,7 @@ export class KernelPipe {
   #tryWrite(source: Uint8Array, atomic: boolean): number {
     if (this.#writerClosed) throw pipeError("EBADF", "Pipe writer is closed");
     if (source.byteLength === 0) return 0;
-    if (this.#readerClosed) throw pipeError("EPIPE", "Pipe has no reader");
+    if (this.#readerClosed) throw new KernelBrokenPipeError();
     const available = this.#bytes.length - this.#length;
     // POSIX PIPE_BUF writes must not interleave when writers share a pipe.
     if (available === 0 || (atomic && available < source.byteLength)) {

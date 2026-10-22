@@ -19,6 +19,7 @@ export function createKernelCoreutilsHost({ context }: KernelCoreutilsHostOption
   const controller = new AbortController();
   const abort = () => controller.abort(context.signal.reason);
   const syscalls = createKernelSyscallHost({
+    process: context,
     filesystem: context.filesystem,
     args: [...context.args],
     env: context.env,

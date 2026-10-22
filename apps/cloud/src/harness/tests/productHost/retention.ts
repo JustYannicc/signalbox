@@ -7,9 +7,9 @@ import { KernelWakeRegistry } from "../../../kernel/KernelWakeRegistry.ts";
 import { createMemoryFilePersistencePorts } from "../../../kernel/MemoryFilePersistencePorts.ts";
 import { createHarnessSessionHost, type HarnessHostOptions } from "../../HarnessSessionHost.ts";
 import {
-  createProductHarnessSessionHost,
-  type ProductHarnessHostOptions,
-} from "../../ProductHarnessSessionHost.ts";
+  createProductClaudeHarnessSessionHost,
+  type ProductClaudeHarnessHostOptions,
+} from "../../ProductClaudeHarnessSessionHost.ts";
 import { claudeFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
 import { hostSqlite } from "../hostSqlite.ts";
 import { commandLoader, programFixture } from "./commands.ts";
@@ -18,7 +18,7 @@ import { services } from "./adapter.ts";
 type HostKind = "direct" | "product";
 
 async function runtimePorts(): Promise<
-  Pick<ProductHarnessHostOptions<unknown>, "commands" | "save" | "port" | "native">
+  Pick<ProductClaudeHarnessHostOptions<unknown>, "commands" | "save" | "port" | "native">
 > {
   const deps = await Effect.runPromise(services);
   return {
@@ -77,7 +77,9 @@ const nowNs = () => 0n;
 const response = async () => new Response();
 const unusedBinding = () => Effect.die("Unused runtime binding");
 
-function directOptions(options: ProductHarnessHostOptions<unknown>): HarnessHostOptions<unknown> {
+function directOptions(
+  options: ProductClaudeHarnessHostOptions<unknown>,
+): HarnessHostOptions<unknown> {
   return {
     ...options,
     files: { ...options.files, wakes: new KernelWakeRegistry() },
@@ -94,7 +96,7 @@ async function makeHost(
 ) {
   const release = await claudeFixture();
   const programs = await programFixture();
-  const options: ProductHarnessHostOptions<unknown> = {
+  const options: ProductClaudeHarnessHostOptions<unknown> = {
     ...(await runtimePorts()),
     threadId: "retention-test",
     release: release.options,
@@ -122,7 +124,7 @@ async function makeHost(
   };
   const creation =
     direct === undefined
-      ? createProductHarnessSessionHost(options)
+      ? createProductClaudeHarnessSessionHost(options)
       : createHarnessSessionHost(direct);
   const host = await Effect.runPromise(creation.pipe(Scope.provide(scope)));
   return { host, refs };

@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { ReleaseOmissionConfiguration } from "@t3tools/contracts/harnessReleaseOmission";
-import { matchesClaudeHostConfiguration } from "../ClaudeHostConfig.ts";
+import { matchesClaudeHostConfiguration } from "./hostConfiguration.ts";
 import { decodeCliManifest, decodeSdkManifest } from "./schemas.ts";
 import type {
   ClaudeReleasePlan,

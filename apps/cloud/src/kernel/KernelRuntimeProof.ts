@@ -1,6 +1,7 @@
 import { ABI_VERSION, KernelProgramRegistry, KernelWakeRegistry } from "./KernelAbi.ts";
 import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
 import { KernelProgramHost } from "./KernelProgramHost.ts";
+import { createKernelRipgrepProgram } from "./KernelRipgrepProgram.ts";
 import { createKernelAsyncWasi } from "./KernelWasi.ts";
 import { AgentOsFileSystemHost } from "./AgentOsFileSystemHost.ts";
 import type { KernelDescriptorResource, WasiPollResult } from "./KernelDescriptors.ts";
@@ -108,7 +109,7 @@ export async function runKernelRuntimeProof(
         registry,
         wakes,
         programs: new Map([
-          ["/bin/rg", { manifest, implementation: { kind: "wasm", module: rg } }],
+          ["/bin/rg", { manifest, implementation: createKernelRipgrepProgram({ module: rg }) }],
         ]),
       });
       const resolved = host.resolve("/bin/rg");

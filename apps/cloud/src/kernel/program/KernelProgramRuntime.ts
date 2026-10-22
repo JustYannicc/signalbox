@@ -1,5 +1,6 @@
 import { createAgentOsWasiArgumentTransform } from "../AgentOsWasi.ts";
-import { createKernelWasiDeviceAdapter } from "../KernelWasiDevices.ts";
+import { createKernelWasiFileSystemAdapter } from "../KernelWasiFileSystemAdapter.ts";
+import type { KernelSigpipeDisposition } from "../KernelProcessSignal.ts";
 import type { KernelCapability, KernelHandle, KernelResult } from "../KernelAbi.ts";
 import type { KernelAsyncProgram } from "../KernelAsyncProgram.ts";
 import { AgentOsDescriptorHost } from "../AgentOsDescriptorHost.ts";
@@ -28,7 +29,9 @@ export interface KernelInlineProgramContext {
 
 export type KernelInlineProgram = (context: KernelInlineProgramContext) => number;
 
-export type KernelProgramImplementation =
+export type KernelProgramImplementation = {
+  readonly sigpipe?: KernelSigpipeDisposition;
+} & (
   | {
       readonly kind: "wasm";
       readonly module: WebAssembly.Module;
@@ -36,7 +39,8 @@ export type KernelProgramImplementation =
       readonly cwdEnvironment?: "PWD";
     }
   | { readonly kind: "javascript"; readonly runInline: KernelInlineProgram }
-  | { readonly kind: "async"; readonly run: KernelAsyncProgram["run"] };
+  | { readonly kind: "async"; readonly run: KernelAsyncProgram["run"] }
+);
 
 export interface KernelProgramBinding {
   /** Exact manifest passed to KernelProgramRegistry.register by the owner. */
@@ -57,6 +61,7 @@ export interface KernelWasiRuntimeOptions {
   readonly env: Readonly<Record<string, string>>;
   readonly cwdEnvironment?: "PWD";
   readonly asyncMode: boolean;
+  readonly sigpipe?: KernelSigpipeDisposition;
   readonly agentOsPreopens?: boolean;
   readonly identity: KernelProcessIdentity | undefined;
   readonly signal: AbortSignal | undefined;
@@ -116,7 +121,12 @@ export function prepareKernelWasiRuntime(
     options.agentOsPreopens
       ? createAgentOsWasiArgumentTransform(options.prepared.filesystem)
       : undefined,
-    createKernelWasiDeviceAdapter(options.prepared.filesystem),
+    createKernelWasiFileSystemAdapter(options.prepared.filesystem, {
+      ...(options.sigpipe === undefined ? {} : { sigpipe: options.sigpipe }),
+      ...(options.identity === undefined
+        ? {}
+        : { process: { identity: options.identity, processes: options.processes } }),
+    }),
   );
 
   const importObject = Object.create(null) as WebAssembly.Imports;

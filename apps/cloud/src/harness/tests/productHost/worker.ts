@@ -22,7 +22,8 @@ try {
     NodeWorkerThreads.workerData !== "interrupt" &&
     NodeWorkerThreads.workerData !== "dispose" &&
     NodeWorkerThreads.workerData !== "hydrate" &&
-    NodeWorkerThreads.workerData !== "shutdown-omission"
+    NodeWorkerThreads.workerData !== "shutdown-omission" &&
+    NodeWorkerThreads.workerData !== "start-failure"
   )
     throw new Error("Unknown product scenario");
   await run(

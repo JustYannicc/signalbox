@@ -142,6 +142,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     createChildWorkerProgram({
       ...admission,
       executable: "/bin/rg",
+      sigpipe: "epipe",
       code: options.programs.ripgrep,
       capacity,
       lifetimes,
@@ -154,6 +155,8 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
             args: context.args,
             env: context.env,
             signal: context.signal,
+            process: context,
+            sigpipe: "epipe",
           },
           lease,
         );

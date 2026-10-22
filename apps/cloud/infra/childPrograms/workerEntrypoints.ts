@@ -38,7 +38,7 @@ export function ripgrepMain(entrypoint: string): string {
     "    const wasi = createChildWasi({ module, syscalls: owner, args: command.argv, env: { ...command.env, PWD: command.cwd } });",
     "    const instance = new WebAssembly.Instance(module, wasi.imports);",
     "    wasi.bind(instance);",
-    "    return { exitCode: await wasi.start(instance), signal: 0, coreDumped: false };",
+    "    return await wasi.startProcess(instance);",
     "  }",
     "}",
     "",
