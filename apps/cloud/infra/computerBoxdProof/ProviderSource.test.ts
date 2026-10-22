@@ -19,17 +19,36 @@ interface ExecResult {
   readonly stderr: string;
 }
 type ExecAction = () => Promise<ExecResult>;
+interface ExecRequest {
+  readonly machineId: string;
+  readonly command: readonly string[];
+  readonly timeout: number;
+}
 
 function controlledSdk(input: {
   readonly exec: readonly ExecAction[];
   readonly upload?: () => Promise<number>;
 }) {
-  const calls: Array<"exec" | "upload" | "download"> = [];
+  const calls: Array<"get" | "exec" | "upload" | "download"> = [];
+  const execRequests: ExecRequest[] = [];
   let nextExec = 0;
   const client = {
     machines: {
-      exec: async () => {
+      get: async (id: string) => {
+        calls.push("get");
+        return {
+          id,
+          imageRef: "https://private.invalid/image?token=not-for-receipt",
+          resources: { vcpu: 1, memoryBytes: 4_294_967_296, diskBytes: 10_737_418_240 },
+          source: { kind: "fork" as const, name: "proof-source", version: null, id: "source-id" },
+        };
+      },
+      exec: async (
+        machineId: string,
+        request: { readonly command: string[]; readonly timeout: number },
+      ) => {
         calls.push("exec");
+        execRequests.push({ machineId, command: request.command, timeout: request.timeout });
         const action = input.exec[nextExec++];
         if (action === undefined) throw new Error("Unexpected setup command");
         return action();
@@ -46,7 +65,7 @@ function controlledSdk(input: {
       },
     },
   } satisfies ProofProviderSdkPort;
-  return { client, calls };
+  return { client, calls, execRequests };
 }
 
 function reports() {
@@ -77,6 +96,37 @@ function prepareSource(
 const success = (): Promise<ExecResult> => Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
 
 describe("Boxd proof source preparation", () => {
+  it("captures real machine identity with fixed direct commands and omits the raw image ref", async () => {
+    const sdk = controlledSdk({
+      exec: [
+        () => Promise.resolve({ exitCode: 0, stdout: "Linux 6.12.8 #1 SMP x86_64\n", stderr: "" }),
+        () => Promise.resolve({ exitCode: 0, stdout: "raw-boxd-host\n", stderr: "" }),
+        () =>
+          Promise.resolve({ exitCode: 0, stdout: 'ID=linux\nPRETTY_NAME="Linux"\n', stderr: "" }),
+      ],
+    });
+    const provider = proofProvider(sdk.client, "proof-owner");
+
+    const identity = await provider.vm.measureIdentity("machine-1", new AbortController().signal);
+
+    expect(identity).toMatchObject({
+      sourceKind: "fork",
+      resources: { vcpu: 1, memoryBytes: 4_294_967_296, diskBytes: 10_737_418_240 },
+      unameSrvm: "Linux 6.12.8 #1 SMP x86_64\n",
+      hostname: "raw-boxd-host\n",
+      osRelease: 'ID=linux\nPRETTY_NAME="Linux"\n',
+    });
+    expect(identity.imageRefSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(identity)).not.toContain("private.invalid");
+    expect(JSON.stringify(identity)).not.toContain("not-for-receipt");
+    expect(sdk.calls).toEqual(["get", "exec", "exec", "exec"]);
+    expect(sdk.execRequests).toEqual([
+      { machineId: "machine-1", command: ["uname", "-srvm"], timeout: 15_000 },
+      { machineId: "machine-1", command: ["hostname"], timeout: 15_000 },
+      { machineId: "machine-1", command: ["cat", "/etc/os-release"], timeout: 15_000 },
+    ]);
+  });
+
   it("records a first-command failure and stops before upload", async () => {
     const sdk = controlledSdk({
       exec: [

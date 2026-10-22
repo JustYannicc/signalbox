@@ -5,6 +5,7 @@ import type { MachineHandle } from "../../src/computer/Machine.ts";
 import {
   BoxdProofWorkspaceError,
   createBoxdProofWorkspaceResume,
+  type BoxdProofMachineIdentity,
   type BoxdProofTrackedFile,
   type BoxdProofVmPort,
 } from "./Workspace.ts";
@@ -42,6 +43,10 @@ class ResumeVm implements BoxdProofVmPort {
   readonly uploads: string[] = [];
   readonly downloads: string[] = [];
   readonly files = new Map<string, NativeFile>();
+
+  async measureIdentity(): Promise<BoxdProofMachineIdentity> {
+    throw new Error("workspace recovery must not repeat identity measurement");
+  }
 
   async exec(
     _machineId: string,

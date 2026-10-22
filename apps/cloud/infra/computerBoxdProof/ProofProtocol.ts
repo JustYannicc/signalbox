@@ -1,3 +1,5 @@
+import type { BoxdProofMachineIdentity, BoxdProofMachineIdentityStatus } from "./Identity.ts";
+
 export const COMPUTER_BOXD_PROOF_STAGE = /^computer-boxd-[a-z0-9]{8,20}$/;
 export type ProofMode = "direct" | "nested" | "nested-recovery";
 export type StagePhase =
@@ -37,6 +39,8 @@ export interface ProofReceipt {
   readonly vmNames: readonly string[];
   readonly checks: Readonly<Record<string, SafeOutcome>>;
   readonly cleanup: CleanupState;
+  readonly machineIdentityStatus: BoxdProofMachineIdentityStatus;
+  readonly machineIdentity?: BoxdProofMachineIdentity;
   readonly inputs?: {
     readonly runnerSha256: string;
     readonly runnerWithoutRegionCommentsSha256?: string;

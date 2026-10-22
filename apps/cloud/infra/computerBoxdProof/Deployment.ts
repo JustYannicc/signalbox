@@ -7,6 +7,7 @@ import {
   type SafeOutcome,
   type ProofReceipt,
 } from "./ProofProtocol.ts";
+import type { BoxdProofMachineIdentity, BoxdProofMachineIdentityStatus } from "./Identity.ts";
 export {
   COMPUTER_BOXD_PROOF_STAGE,
   ProofLauncherFailure,
@@ -70,6 +71,7 @@ export function initialProofReceipt(stage: string, sourceCommit: string): ProofR
       workerRemoval: "pending",
     },
     cleanup: "not_started",
+    machineIdentityStatus: "pending",
   };
 }
 
@@ -82,16 +84,63 @@ export interface WorkerEvidence {
   readonly checks: Readonly<Record<string, SafeOutcome>>;
   readonly cleanupConfirmed: boolean;
   readonly status: "pending" | "running" | "passed" | "failed";
+  readonly machineIdentityStatus: BoxdProofMachineIdentityStatus;
+  readonly machineIdentity?: BoxdProofMachineIdentity;
+}
+
+function safeMachineIdentity(value: unknown): value is BoxdProofMachineIdentity {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).sort().join(",") !==
+      "hostname,imageRefSha256,osRelease,resources,sourceKind,unameSrvm" ||
+    typeof value.imageRefSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.imageRefSha256) ||
+    !["image", "fork", "snapshot"].includes(String(value.sourceKind)) ||
+    typeof value.unameSrvm !== "string" ||
+    typeof value.hostname !== "string" ||
+    typeof value.osRelease !== "string" ||
+    value.unameSrvm.length === 0 ||
+    value.hostname.length === 0 ||
+    value.osRelease.length === 0 ||
+    value.unameSrvm.includes("\0") ||
+    value.hostname.includes("\0") ||
+    value.osRelease.includes("\0") ||
+    new TextEncoder().encode(value.unameSrvm).byteLength > 32 * 1024 ||
+    new TextEncoder().encode(value.hostname).byteLength > 32 * 1024 ||
+    new TextEncoder().encode(value.osRelease).byteLength > 32 * 1024 ||
+    !isRecord(value.resources) ||
+    Object.keys(value.resources).sort().join(",") !== "diskBytes,memoryBytes,vcpu" ||
+    !Number.isSafeInteger(value.resources.vcpu) ||
+    Number(value.resources.vcpu) < 1 ||
+    !Number.isSafeInteger(value.resources.memoryBytes) ||
+    Number(value.resources.memoryBytes) < 1 ||
+    !Number.isSafeInteger(value.resources.diskBytes) ||
+    Number(value.resources.diskBytes) < 1
+  ) {
+    return false;
+  }
+  return (
+    new TextEncoder().encode(value.unameSrvm).byteLength +
+      new TextEncoder().encode(value.hostname).byteLength +
+      new TextEncoder().encode(value.osRelease).byteLength <=
+    48 * 1024
+  );
 }
 
 export function workerEvidence(value: unknown, stage: string): WorkerEvidence {
+  const expectedKeys = ["checks", "cleanupConfirmed", "machineIdentityStatus", "status", "vmNames"];
+  const expectedKeysWithIdentity = [...expectedKeys, "machineIdentity"].sort().join(",");
+  const actualKeys = isRecord(value) ? Object.keys(value).sort().join(",") : "";
   if (
     !isRecord(value) ||
-    Object.keys(value).sort().join(",") !== "checks,cleanupConfirmed,status,vmNames" ||
+    (actualKeys !== expectedKeys.sort().join(",") && actualKeys !== expectedKeysWithIdentity) ||
     !["pending", "running", "passed", "failed"].includes(String(value.status)) ||
     !Array.isArray(value.vmNames) ||
     !isRecord(value.checks) ||
-    typeof value.cleanupConfirmed !== "boolean"
+    typeof value.cleanupConfirmed !== "boolean" ||
+    !["pending", "captured", "failed"].includes(String(value.machineIdentityStatus)) ||
+    (value.machineIdentityStatus === "captured" && !safeMachineIdentity(value.machineIdentity)) ||
+    (value.machineIdentityStatus !== "captured" && value.machineIdentity !== undefined)
   ) {
     throw new ProofLauncherFailure("The proof Worker returned invalid safe evidence.");
   }
@@ -123,6 +172,10 @@ export function workerEvidence(value: unknown, stage: string): WorkerEvidence {
     vmNames: [...names].sort(),
     checks,
     cleanupConfirmed: value.cleanupConfirmed,
+    machineIdentityStatus: value.machineIdentityStatus as BoxdProofMachineIdentityStatus,
+    ...(value.machineIdentity === undefined
+      ? {}
+      : { machineIdentity: value.machineIdentity as BoxdProofMachineIdentity }),
   };
 }
 
@@ -132,6 +185,10 @@ export function mergeWorkerEvidence(receipt: ProofReceipt, value: unknown): Proo
     ...receipt,
     vmNames: [...new Set([...receipt.vmNames, ...evidence.vmNames])].sort(),
     checks: { ...receipt.checks, ...evidence.checks },
+    machineIdentityStatus: evidence.machineIdentityStatus,
+    ...(evidence.machineIdentity === undefined
+      ? {}
+      : { machineIdentity: evidence.machineIdentity }),
   };
 }
 

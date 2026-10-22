@@ -146,6 +146,10 @@
     "./signalboxAsks": {
       "types": "./src/signalboxAsks.ts",
       "import": "./src/signalboxAsks.ts"
+    },
+    "./systemIdentity": {
+      "types": "./src/systemIdentity.ts",
+      "import": "./src/systemIdentity.ts"
     }
   },
   "scripts": {

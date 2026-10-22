@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
+
 import { createNodeOs } from "../NodeOs.ts";
 import type { NodeRuntimeIdentity } from "../NodeProcess.ts";
 
@@ -72,6 +74,27 @@ describe("Node os facet", () => {
         identity: identity(93, { platform: "", homedir: "" }),
       }),
     ).toThrow(TypeError);
+  });
+
+  it("reports the configured machine identity without exposing the execution host", () => {
+    const os = createNodeOs({
+      env: {},
+      identity: identity(94),
+      systemIdentity: systemIdentityForThread("example", {
+        release: "6.12.8-production",
+        version: "#1 SMP PREEMPT_DYNAMIC",
+        machine: "x86_64",
+        hostnamePolicy: "thread",
+        verification: "measured",
+      }),
+    });
+    expect(os.release()).toBe("6.12.8-production");
+    expect(os.version()).toBe("#1 SMP PREEMPT_DYNAMIC");
+    expect(os.hostname()).toBe("t-example");
+    expect(os.machine()).toBe("x86_64");
+    expect(os.platform()).toBe("linux");
+    expect(os.arch()).toBe("x64");
+    expect(os.type()).toBe("Linux");
   });
 
   it("reports real host metrics and interfaces as unsupported", () => {

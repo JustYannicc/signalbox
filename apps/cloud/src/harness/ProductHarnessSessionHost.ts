@@ -38,7 +38,13 @@ type ProductClaudeNativeOptions<G> = Omit<
   readonly harness?: "claude-code";
   readonly process: Omit<
     NativeProcess,
-    "host" | "computer" | "stdio" | "loadedRelease" | "modelTransport" | "processHandle"
+    | "host"
+    | "computer"
+    | "stdio"
+    | "loadedRelease"
+    | "modelTransport"
+    | "processHandle"
+    | "systemIdentity"
   >;
   readonly adapter: (
     input: RuntimeInput<G>,
@@ -69,7 +75,7 @@ export interface ProductHarnessHostOptions<G> extends Omit<
   };
   readonly commands: Omit<
     ProductComputerOptions,
-    "filesystem" | "wakes" | "programs" | "signal" | "home" | "parent"
+    "filesystem" | "wakes" | "programs" | "signal" | "home" | "parent" | "threadId"
   >;
   readonly hydrate?: (input: BindingInput<G>) => Promise<void>;
   readonly observeOutput?: KernelSessionOutputObserver;
@@ -120,6 +126,7 @@ function createProductBindings<G>(
             try: () =>
               createProductComputer({
                 ...options.commands,
+                threadId: input.threadId,
                 filesystem: input.files,
                 wakes,
                 programs: codes,
@@ -201,6 +208,7 @@ function createProductBindings<G>(
           mcp: input.mcp,
           process: {
             ...native.process,
+            systemIdentity: bound.systemIdentity,
             host: bound.host,
             computer,
             stdio,

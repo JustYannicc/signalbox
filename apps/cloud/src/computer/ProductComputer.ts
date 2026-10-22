@@ -1,4 +1,10 @@
 import { KernelProcessTable } from "../kernel/KernelProcessTable.ts";
+import {
+  systemIdentityForThread,
+  type SystemIdentity,
+  type SystemIdentityConfig,
+} from "@t3tools/contracts/systemIdentity";
+import type { KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
 import { createCommandGateway, type CommandGatewayOptions } from "./CommandGateway.ts";
 import { CHILD_COREUTILS_COMMANDS } from "./ChildProgramSet.ts";
 import {
@@ -10,8 +16,12 @@ import type { ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
-  "processes" | "loader"
+  "processes" | "loader" | "systemIdentity" | "hostname" | "machine"
 > {
+  readonly threadId: string;
+  readonly systemIdentity?: SystemIdentityConfig;
+  /** Build the machine transport from the same resolved identity the isolate receives. */
+  readonly machine: (systemIdentity: SystemIdentity) => KernelCommandForwarder;
   readonly signal: AbortSignal;
   readonly loader:
     | ChildWorkerLoaderPort
@@ -25,6 +35,7 @@ export interface ProductComputerOptions extends Omit<
 /** One thread owns the full command catalog and every admitted process, including machine work. */
 export function createProductComputer(options: ProductComputerOptions) {
   const { programs } = options;
+  const systemIdentity = systemIdentityForThread(options.threadId, options.systemIdentity);
   if (
     [
       programs.bash,
@@ -36,6 +47,7 @@ export function createProductComputer(options: ProductComputerOptions) {
     CHILD_COREUTILS_COMMANDS.some((command) => programs.coreutils?.[command] === undefined)
   )
     throw new TypeError("Product Computer requires the full command catalog");
+  const machine = options.machine(systemIdentity);
   const processes = new KernelProcessTable({ wakes: options.wakes });
   const loader =
     "run" in options.loader
@@ -45,12 +57,20 @@ export function createProductComputer(options: ProductComputerOptions) {
           options.loader.compiledModules,
           options.loader.limits,
         );
-  const gateway = createCommandGateway({ ...options, loader, processes });
+  const gateway = createCommandGateway({
+    ...options,
+    machine,
+    systemIdentity,
+    hostname: systemIdentity.hostname,
+    loader,
+    processes,
+  });
   const owner = new AbortController();
   const signal = AbortSignal.any([owner.signal, options.signal]);
   let closing: Promise<void> | undefined;
   return {
     ...gateway,
+    systemIdentity,
     processes,
     exec: ((command, callerSignal, requester) =>
       gateway.exec(

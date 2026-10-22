@@ -2,6 +2,11 @@
 import * as Brand from "effect/Brand";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import {
+  boxdProofMachineIdentitySchema,
+  type BoxdProofMachineIdentityObservation,
+  type BoxdProofMachineIdentityStatus,
+} from "./Identity.ts";
 import { SignalboxDriveId } from "@t3tools/contracts/signalboxDrives";
 import type { RecipeHash } from "../../src/computer/Computer.ts";
 import { makeBoxdMachines, type boxdMachineClient } from "../../src/computer/BoxdMachines.ts";
@@ -18,6 +23,8 @@ const state = Schema.Struct({
   sourceExpiresAt: Schema.optionalKey(Schema.Number),
   sourceCommit: Schema.optionalKey(Schema.String),
   runnerSha256: Schema.optionalKey(Schema.String),
+  machineIdentityStatus: Schema.optionalKey(Schema.Literals(["pending", "captured", "failed"])),
+  machineIdentity: Schema.optionalKey(boxdProofMachineIdentitySchema),
 });
 export type ProofState = typeof state.Type;
 export const decodeProofState = Schema.decodeUnknownSync(state);
@@ -66,6 +73,7 @@ export class ProofOwnership {
       vmNames: [`computer-${this.sourceOperation}`, `computer-${this.commandOperation}`],
       checks: {},
       cleanupConfirmed: false,
+      machineIdentityStatus: "pending",
     };
   }
 
@@ -81,6 +89,17 @@ export class ProofOwnership {
   async check(name: string, value: typeof outcome.Type) {
     const current = await this.read();
     await this.save({ ...current, checks: { ...current.checks, [name]: value } });
+  }
+
+  async recordMachineIdentity(observation: BoxdProofMachineIdentityObservation) {
+    const current = await this.read();
+    const status: BoxdProofMachineIdentityStatus = observation.status;
+    if ((current.machineIdentityStatus ?? "pending") !== "pending") return;
+    await this.save({
+      ...current,
+      machineIdentityStatus: status,
+      ...(observation.status === "captured" ? { machineIdentity: observation.identity } : {}),
+    });
   }
 
   sourceInput(expiresAt: number): MachineCreateInput {

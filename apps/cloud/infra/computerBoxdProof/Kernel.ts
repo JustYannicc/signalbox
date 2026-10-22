@@ -9,6 +9,7 @@ import type { ForkCommit } from "../../src/kernel/FilePersistencePorts.ts";
 import { createProofAdmittedCommands } from "./AdmittedCommands.ts";
 import { runLocalOnlyControl } from "./LocalOnlyControl.ts";
 import type { ChildWorkerLoaderPort } from "../../src/computer/WorkerLoaderDispatch.ts";
+import type { BoxdProofMachineIdentityObservation } from "./Identity.ts";
 
 /** One facet SQLite filesystem and durable one-file proof revision repository. */
 export function proofKernel(
@@ -58,7 +59,10 @@ export function proofKernel(
       write("/workspace/out.bin", INITIAL_FILE);
       return runLocalOnlyControl(admitted, signal);
     },
-    workspace(vm: BoxdProofVmPort) {
+    workspace(
+      vm: BoxdProofVmPort,
+      onMachineIdentity?: (observation: BoxdProofMachineIdentityObservation) => Promise<void>,
+    ) {
       return createFacetWorkspace({
         database,
         persistence,
@@ -69,6 +73,7 @@ export function proofKernel(
         mount: (...args) =>
           createBoxdProofWorkspace({
             vm,
+            ...(onMachineIdentity === undefined ? {} : { onMachineIdentity }),
             trackedFiles: [
               {
                 path: "/out.bin",

@@ -1,4 +1,5 @@
 import { ThreadId } from "@t3tools/contracts";
+import { SystemIdentity } from "@t3tools/contracts/systemIdentity";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec } from "./jsonCodec.ts";
@@ -56,6 +57,8 @@ export const RunnerCommandConfigSchema = Schema.Struct({
   operationId: Id,
   machineId: Id,
   generation: Schema.Int.check(Schema.isGreaterThan(0)),
+  /** Resolved host identity; omitted only by legacy private launch files. */
+  systemIdentity: Schema.optional(SystemIdentity),
   token: Schema.String.check(Schema.isNonEmpty()),
   workspaceReceipt: AbsolutePath,
   cgroupPath: Schema.optional(CgroupPath),
