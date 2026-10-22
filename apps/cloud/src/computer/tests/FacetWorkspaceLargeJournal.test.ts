@@ -161,8 +161,10 @@ describe("facet workspace large revision journals", () => {
       const indices = largeCommit.files.map((file) => largeFileIndex(file.paths[0] ?? ""));
       expect(indices.every((index) => index !== undefined)).toBe(true);
       expect(new Set(indices).size).toBe(LARGE_FILE_COUNT);
-      expect(indices.reduce((minimum, index) => Math.min(minimum, index!), Infinity)).toBe(1);
-      expect(indices.reduce((maximum, index) => Math.max(maximum, index!), -Infinity)).toBe(
+      expect(indices.reduce<number>((minimum, index) => Math.min(minimum, index!), Infinity)).toBe(
+        1,
+      );
+      expect(indices.reduce<number>((maximum, index) => Math.max(maximum, index!), -Infinity)).toBe(
         LARGE_FILE_COUNT,
       );
       expect(
