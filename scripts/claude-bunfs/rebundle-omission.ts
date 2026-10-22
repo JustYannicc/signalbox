@@ -1,8 +1,6 @@
 import type * as Esbuild from "esbuild";
-import {
-  createPinnedEnvironmentTransform,
-  pinnedEnvironmentSourceId,
-} from "./pinned-environment.ts";
+import { createPinnedEnvironmentTransform } from "./pinned-environment.ts";
+import { pinnedEnvironmentSourceId } from "./pinned-environment-origin.ts";
 import {
   omittedModuleSource,
   parseReleaseCoverageCorpus,

@@ -1,19 +1,13 @@
 import ts from "typescript-legacy";
 import { ScopedBindings } from "./release-inventory-scope.ts";
+import {
+  bindingPath,
+  processRequireOrigin,
+  UNKNOWN_ORIGIN,
+  type Origin,
+} from "./pinned-environment-origin.ts";
 
-type Origin = readonly string[];
 type Parsed = { file: ts.SourceFile; bindings: ScopedBindings<never> };
-
-export function pinnedEnvironmentSourceId(namespace: string, path: string) {
-  return `${namespace}\0${path}`;
-}
-
-export function parsePinnedEnvironmentSourceId(value: string) {
-  const separator = value.indexOf("\0");
-  return separator < 0
-    ? { namespace: "bun-graph", path: value }
-    : { namespace: value.slice(0, separator), path: value.slice(separator + 1) };
-}
 
 function isAssignment(kind: ts.SyntaxKind) {
   return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
@@ -65,66 +59,9 @@ const hasEnvironmentOrigin = (origin: Origin | undefined) => origin?.[0] === "en
 const canReachEnvironment = (origin: Origin | undefined) =>
   origin !== undefined &&
   (origin.length === 0 ||
-    origin[0] === "?" ||
+    origin[0] === UNKNOWN_ORIGIN ||
     origin[0] === GLOBAL_OBJECT ||
     hasEnvironmentOrigin(origin));
-
-function isImportMetaRequire(node: ts.Node) {
-  return (
-    ts.isPropertyAccessExpression(node) &&
-    node.name.text === "require" &&
-    ts.isMetaProperty(node.expression) &&
-    node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
-    node.expression.name.text === "meta"
-  );
-}
-
-function processRequireOrigin(node: ts.Node, module: Parsed): Origin | undefined {
-  if (!ts.isCallExpression(node) || node.arguments.length === 0) return undefined;
-  const callee = node.expression;
-  const isRequire =
-    isImportMetaRequire(callee) ||
-    (ts.isIdentifier(callee) &&
-      callee.text === "require" &&
-      module.bindings.lookup(callee) === undefined) ||
-    (ts.isPropertyAccessExpression(callee) &&
-      callee.name.text === "require" &&
-      ts.isIdentifier(callee.expression) &&
-      callee.expression.text === "module" &&
-      module.bindings.lookup(callee.expression) === undefined);
-  if (!isRequire) return undefined;
-  const argument = node.arguments[0];
-  if (!argument || !ts.isStringLiteralLike(argument)) return ["?"];
-  return argument.text === "process" || argument.text === "node:process" ? [] : undefined;
-}
-
-function bindingPath(declaration: ts.Identifier, variable: ts.VariableDeclaration) {
-  if (ts.isIdentifier(variable.name)) return [];
-  const path: string[] = [];
-  let current: ts.Node = declaration;
-  while (current !== variable.name) {
-    const parent = current.parent;
-    if (ts.isBindingElement(parent)) {
-      if (parent.dotDotDotToken) return undefined;
-      const key = parent.propertyName
-        ? ts.isStringLiteralLike(parent.propertyName) || ts.isNumericLiteral(parent.propertyName)
-          ? parent.propertyName.text
-          : "?"
-        : ts.isIdentifier(parent.name)
-          ? parent.name.text
-          : "?";
-      path.unshift(key);
-      current = parent;
-      continue;
-    }
-    if (ts.isObjectBindingPattern(parent) || ts.isArrayBindingPattern(parent)) {
-      current = parent;
-      continue;
-    }
-    return undefined;
-  }
-  return path;
-}
 
 /** Resolve imported env aliases before esbuild folds guards. Imported bindings are invisible to define. */
 export function createPinnedEnvironmentTransform(
@@ -244,17 +181,17 @@ export function createPinnedEnvironmentTransform(
     seen = new Set(seen).add(node);
     if (ts.isParenthesizedExpression(node))
       return origin(node.expression, module, seen, allowMutableAliases);
-    const requireOrigin = processRequireOrigin(node, module);
+    const requireOrigin = processRequireOrigin(node, module.bindings);
     if (requireOrigin !== undefined) return requireOrigin;
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const base = origin(node.expression, module, seen, allowMutableAliases);
       const key = property(node);
       if (base?.length === 1 && base[0] === GLOBAL_OBJECT) {
         if (key === "process") return [];
-        // A computed key on the global object may name `process`.
-        return key === undefined ? ["?"] : undefined;
+        if (key !== undefined && GLOBAL_OBJECT_NAMES.has(key)) return [GLOBAL_OBJECT];
+        return [UNKNOWN_ORIGIN];
       }
-      if (base) return [...base, key ?? "?"];
+      if (base) return [...base, key ?? UNKNOWN_ORIGIN];
       if (key !== undefined && ts.isIdentifier(node.expression)) {
         const target = namespaceTarget(node.expression, module);
         if (target) return exported(target, key, seen, allowMutableAliases);
@@ -424,7 +361,10 @@ export function createPinnedEnvironmentTransform(
     };
     const escapesEnvironment = (node: ts.Node, module: Parsed) => {
       const possible = possibleOrigin(node, module);
-      if (!canReachEnvironment(possible) || ((possible?.length ?? 2) > 1 && possible?.[0] !== "?"))
+      if (
+        !canReachEnvironment(possible) ||
+        ((possible?.length ?? 2) > 1 && possible?.[0] !== UNKNOWN_ORIGIN)
+      )
         return false;
       const parent = node.parent;
       if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent))

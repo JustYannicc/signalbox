@@ -5,7 +5,7 @@ import {
   ReleaseOmissionConfiguration,
   type ReleaseOmissionConfiguration as ReleaseOmissionConfigurationType,
 } from "@t3tools/contracts/harnessReleaseOmission";
-import { CLAUDE_HOST_CONFIG } from "../../src/harness/ClaudeHostConfig.ts";
+import { CLAUDE_HOST_CONFIG } from "../../src/harness/releasePlan/hostConfiguration.ts";
 
 export const CLAUDE_QUALIFICATION_HOST_CONFIG = {
   name: "qualification",
