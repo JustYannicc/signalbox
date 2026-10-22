@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import { it } from "@effect/vitest";
 import { RunnerCommandConfigJson } from "@signalbox/runner-protocol/RunnerCommandProtocol";
+import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import { expect } from "vite-plus/test";
 
 import { prepareRunnerCommandCgroup } from "./RunnerCommandCgroup.ts";
@@ -60,7 +61,7 @@ const withFixture = (
   }
 };
 
-const configJson = (receiptPath: string, cgroupPath?: string) =>
+const configJson = (receiptPath: string, cgroupPath?: string, systemIdentity?: unknown) =>
   JSON.stringify({
     version: 1,
     endpoint: "wss://cloud.example/api/computer/runner",
@@ -68,6 +69,7 @@ const configJson = (receiptPath: string, cgroupPath?: string) =>
     operationId: "operation-1",
     machineId: "machine-1",
     generation: 3,
+    ...(systemIdentity === undefined ? {} : { systemIdentity }),
     token: "launch-secret",
     workspaceReceipt: receiptPath,
     ...(cgroupPath === undefined ? {} : { cgroupPath }),
@@ -134,6 +136,41 @@ it("attests a canonical command cwd only while launch config and owner receipt s
       configPath,
       configJson(receiptPath).replace('"machineId":"machine-1"', '"machineId":"machine-2"'),
     );
+    expect(
+      workspaceAttestation.attestCanonicalCwd({
+        threadId: config.threadId,
+        generation: config.generation,
+        cwd: "/workspace",
+      }),
+    ).toBe(false);
+  });
+});
+
+it("keeps resolved system identity inside the per-command config attestation", () => {
+  withFixture(({ configPath, receiptPath, workspaceSystem }) => {
+    const systemIdentity = systemIdentityForThread("thread-command-1");
+    writePrivateConfig(configPath, configJson(receiptPath, undefined, systemIdentity));
+    NodeFS.writeFileSync(receiptPath, receiptJson(), { mode: 0o600 });
+
+    const config = loadRunnerCommandConfig(configPath, workspaceSystem);
+    const workspaceAttestation = verifyRunnerCommandWorkspace(
+      {
+        configPath,
+        config,
+        expectedReceipt: readRunnerCommandReceipt(receiptPath, workspaceSystem),
+      },
+      workspaceSystem,
+    );
+    expect(
+      workspaceAttestation.attestCanonicalCwd({
+        threadId: config.threadId,
+        generation: config.generation,
+        cwd: "/workspace",
+      }),
+    ).toBe(true);
+
+    const changedIdentity = { ...systemIdentity, version: "#2 SMP" };
+    writePrivateConfig(configPath, configJson(receiptPath, undefined, changedIdentity));
     expect(
       workspaceAttestation.attestCanonicalCwd({
         threadId: config.threadId,

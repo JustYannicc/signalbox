@@ -35,7 +35,7 @@ export interface ProductHostOptions<G, Native> extends Omit<
   };
   readonly commands: Omit<
     ProductComputerOptions,
-    "filesystem" | "wakes" | "programs" | "signal" | "home" | "parent"
+    "filesystem" | "wakes" | "programs" | "signal" | "home" | "parent" | "threadId"
   >;
   readonly hydrate?: (input: BindingInput<G>) => Promise<void>;
   readonly observeOutput?: KernelSessionOutputObserver;
@@ -103,6 +103,7 @@ function createProductBindings<G, Native>(
             try: () =>
               createProductComputer({
                 ...options.commands,
+                threadId: input.threadId,
                 filesystem: input.files,
                 wakes,
                 programs: codes,

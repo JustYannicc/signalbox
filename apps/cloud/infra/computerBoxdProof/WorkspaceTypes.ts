@@ -1,6 +1,7 @@
 import type { PosixMetadata } from "../../src/kernel/PosixStorage.ts";
 import type { FileHydrationPort } from "../../src/kernel/FilePersistencePorts.ts";
 import type { Inode, Stat } from "../../src/kernel/storage.ts";
+import type { BoxdProofMachineIdentity, BoxdProofMachineIdentityObservation } from "./Identity.ts";
 
 /** PROOF ONLY: one /workspace/out.bin file; this makes no production Drive or Artifacts claim. */
 export const BOXD_PROOF_WORKSPACE_LABEL = "proof-only: one tracked /workspace/out.bin";
@@ -27,6 +28,11 @@ export interface BoxdProofVmPort {
     signal: AbortSignal,
   ) => Promise<void>;
   readonly download: (machineId: string, path: string, signal: AbortSignal) => Promise<Uint8Array>;
+  /** Reads real boxd machine identity before the command Runner's hostname setup. */
+  readonly measureIdentity: (
+    machineId: string,
+    signal: AbortSignal,
+  ) => Promise<BoxdProofMachineIdentity>;
 }
 
 export interface BoxdProofTrackedFile {
@@ -41,6 +47,7 @@ export interface BoxdProofTrackedFile {
 export interface BoxdProofWorkspaceOptions {
   readonly vm: BoxdProofVmPort;
   readonly trackedFiles: readonly BoxdProofTrackedFile[];
+  readonly onMachineIdentity?: (observation: BoxdProofMachineIdentityObservation) => Promise<void>;
 }
 
 /** The resume factory needs durable before-revision reads, but never writes them into the VM. */

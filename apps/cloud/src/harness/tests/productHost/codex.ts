@@ -48,12 +48,11 @@ export const productOptions = (release: ReleaseOptions, home = "/home/product-co
       commands: {
         loader: commands.loader,
         capacity: new ChildWorkerCapacity(2),
-        hostname: "product-codex-test",
-        machine: {
+        machine: () => ({
           async spawn() {
             throw new Error("Unexpected forwarded command");
           },
-        },
+        }),
       },
       modelTransport: async () => {
         modelCalls++;

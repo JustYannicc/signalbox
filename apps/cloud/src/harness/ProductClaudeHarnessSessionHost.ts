@@ -21,7 +21,13 @@ type ProductClaudeNativeOptions<G> = Omit<
   readonly harness?: "claude-code";
   readonly process: Omit<
     NativeProcess,
-    "host" | "computer" | "stdio" | "loadedRelease" | "modelTransport" | "processHandle"
+    | "host"
+    | "computer"
+    | "stdio"
+    | "loadedRelease"
+    | "modelTransport"
+    | "processHandle"
+    | "systemIdentity"
   >;
   readonly adapter: (
     input: RuntimeInput<G>,
@@ -45,6 +51,7 @@ function claudeBinding<G>(): ProductNativeBinding<G, ProductClaudeNativeOptions<
           mcp: input.mcp,
           process: {
             ...native.process,
+            systemIdentity: ports.commands.systemIdentity,
             host: ports.commands.host,
             computer: ports.computer,
             stdio: ports.stdio,

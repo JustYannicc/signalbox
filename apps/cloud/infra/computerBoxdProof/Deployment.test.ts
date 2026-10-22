@@ -35,6 +35,7 @@ describe("computer boxd proof deployment helpers", () => {
       vmNames: ["computer-sb-computer-boxd-12345678-source"],
       checks: { seed: "passed" },
       cleanupConfirmed: false,
+      machineIdentityStatus: "pending",
     };
 
     expect(workerEvidence(evidence, stage)).toEqual({
@@ -42,6 +43,7 @@ describe("computer boxd proof deployment helpers", () => {
       vmNames: evidence.vmNames,
       checks: { worker_seed: "passed" },
       cleanupConfirmed: false,
+      machineIdentityStatus: "pending",
     });
     expect(() => workerEvidence({ ...evidence, trace: "private" }, stage)).toThrow(
       "invalid safe evidence",
@@ -52,6 +54,39 @@ describe("computer boxd proof deployment helpers", () => {
     expect(() =>
       workerEvidence({ ...evidence, vmNames: ["computer-sb-other-source"] }, stage),
     ).toThrow("unowned VM name");
+  });
+
+  it("keeps exact machine outputs with only hashed image and measured resource identity", () => {
+    const stage = "computer-boxd-12345678";
+    const evidence = {
+      status: "passed",
+      vmNames: ["computer-sb-computer-boxd-12345678-command-1"],
+      checks: {},
+      cleanupConfirmed: true,
+      machineIdentityStatus: "captured",
+      machineIdentity: {
+        imageRefSha256: "a".repeat(64),
+        sourceKind: "fork",
+        resources: { vcpu: 1, memoryBytes: 4_294_967_296, diskBytes: 10_737_418_240 },
+        unameSrvm: "Linux 6.12.8 #1 SMP x86_64\n",
+        hostname: "raw-boxd-host\n",
+        osRelease: 'ID=linux\nPRETTY_NAME="Linux"\n',
+      },
+    };
+
+    expect(workerEvidence(evidence, stage)).toMatchObject({
+      machineIdentityStatus: "captured",
+      machineIdentity: evidence.machineIdentity,
+    });
+    expect(() =>
+      workerEvidence(
+        {
+          ...evidence,
+          machineIdentity: { ...evidence.machineIdentity, imageRef: "https://private.invalid" },
+        },
+        stage,
+      ),
+    ).toThrow("invalid safe evidence");
   });
 
   it("keeps stage and receipt files private while updating them atomically", async () => {
