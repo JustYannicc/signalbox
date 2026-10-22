@@ -38,6 +38,7 @@ export interface ChildWorkerDispatch<Host extends object> {
 }
 
 export interface ChildWorkerProgramOptions<Host extends object> {
+  readonly sigpipe?: KernelProgramImplementation["sigpipe"];
   readonly executable: string;
   readonly code: ChildWorkerCode;
   readonly capacity: Pick<ChildWorkerCapacity, "run">;
@@ -88,6 +89,7 @@ export function createChildWorkerProgram<Host extends object>(
   const lifetimes = options.lifetimes ?? new ChildWorkerLifetimes();
   return Object.freeze({
     kind: "async" as const,
+    ...(options.sigpipe === undefined ? {} : { sigpipe: options.sigpipe }),
     async run(context: KernelAsyncProgramContext) {
       const result = Promise.withResolvers<KernelCommandExit>();
       let settled = false;

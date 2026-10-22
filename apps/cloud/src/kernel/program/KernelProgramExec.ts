@@ -19,6 +19,7 @@ import type { KernelWakeRegistry } from "../KernelWakeRegistry.ts";
 import { enterCurrentKernelCpuUser } from "../KernelCpuExecution.ts";
 import { runKernelExecution, runKernelInlineExecution } from "../process/KernelExecution.ts";
 import { KernelProcessCancelledError } from "../process/KernelProcessCancellation.ts";
+import { kernelProcessSignalExitStatus } from "../KernelProcessSignal.ts";
 import { runSync } from "../wasi/internal_wasi_calls.ts";
 import {
   prepareKernelWasiRuntime,
@@ -217,10 +218,20 @@ export function execKernelProgram(
         ticket === undefined
           ? environmentWithHome(executionRequest.home, executionRequest.env)
           : executionRequest.env;
+      const commitImage = () => {
+        sweepCloseOnExec(executionRequest);
+        commitKernelProgramFileBytes(executionRequest.filesystem, fileBytes);
+        const disposition = options.processes.setSigpipeDisposition(
+          executionRequest.identity.handle,
+          implementation.sigpipe ?? "terminate",
+        );
+        if (disposition.status !== "ok") throw new Error("Process signal state is unavailable");
+      };
       if (implementation.kind === "wasm") {
         // Validate every import before CLOEXEC descriptors are removed.
         const runtime = beforeExecCommit(() =>
           prepareKernelWasiRuntime(implementation.module, {
+            ...(implementation.sigpipe === undefined ? {} : { sigpipe: implementation.sigpipe }),
             ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
             ...(implementation.cwdEnvironment === undefined
               ? {}
@@ -241,8 +252,7 @@ export function execKernelProgram(
           return await afterExecCommit(async () => {
             if (executionRequest.signal.aborted)
               throw new KernelProcessCancelledError("Program execution cancelled");
-            sweepCloseOnExec(executionRequest);
-            commitKernelProgramFileBytes(executionRequest.filesystem, fileBytes);
+            commitImage();
             const exitCode = await runtime.lifecycle.startAsync(runtime.instantiate());
             return status(exitCode);
           }).finally(() => cancelTicket(ticket));
@@ -255,8 +265,7 @@ export function execKernelProgram(
         return await afterExecCommit(() => {
           if (executionRequest.signal.aborted)
             throw new KernelProcessCancelledError("Program execution cancelled");
-          sweepCloseOnExec(executionRequest);
-          commitKernelProgramFileBytes(executionRequest.filesystem, fileBytes);
+          commitImage();
           const exitCode = runKernelInlineExecution(executionRequest.signal, () =>
             runInlineJavaScript(implementation.runInline, prepared, args, env),
           );
@@ -270,8 +279,7 @@ export function execKernelProgram(
       return await afterExecCommit(async () => {
         if (executionRequest.signal.aborted)
           throw new KernelProcessCancelledError("Program execution cancelled");
-        sweepCloseOnExec(executionRequest);
-        commitKernelProgramFileBytes(executionRequest.filesystem, fileBytes);
+        commitImage();
         const context: KernelAsyncProgramBaseContext = Object.freeze({
           filesystem: executionRequest.filesystem,
           home: executionRequest.home,
@@ -292,7 +300,7 @@ export function execKernelProgram(
     } catch (error) {
       ticket?.cancel();
       ticket?.throwCancelFailure();
-      throw error;
+      return kernelProcessSignalExitStatus(error);
     }
   });
 }

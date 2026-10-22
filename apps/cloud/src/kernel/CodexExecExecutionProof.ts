@@ -3,6 +3,7 @@ import * as NodeBuffer from "node:buffer";
 import { ABI_VERSION, KernelProgramRegistry, KernelWakeRegistry } from "./KernelAbi.ts";
 import { KernelFileSystem } from "./KernelFileSystem.ts";
 import { KernelProgramHost, type KernelProgramBinding } from "./KernelProgramHost.ts";
+import { createKernelRipgrepProgram } from "./KernelRipgrepProgram.ts";
 import { KernelCommandExecutor } from "./KernelCommandExecutor.ts";
 import { KernelForwardingUnavailable } from "./KernelCommandForwarder.ts";
 import { CodexExecProcesses } from "./CodexExecProcesses.ts";
@@ -72,7 +73,7 @@ export async function runCodexExecExecutionProof(
       requiredCapabilities: [],
       entrypoint: "exec-proof-rg-pinned",
     },
-    implementation: { kind: "wasm", module: rg },
+    implementation: createKernelRipgrepProgram({ module: rg }),
   });
   const host = new KernelProgramHost({ registry, wakes, programs });
   let forwarded = 0;

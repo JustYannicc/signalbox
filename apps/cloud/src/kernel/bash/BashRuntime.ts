@@ -1,8 +1,9 @@
 // The Asyncify continuation protocol follows Nimbus e9f019ab4e40cb6037aff7e1a0eaf20842578ed3.
 // Copyright (c) 2026 Ashish Kumar Singh and Nimbus contributors. See NIMBUS-LICENSE.
 import { kernelError, kernelOk } from "../KernelAbi.ts";
-import { createKernelWasiDeviceAdapter } from "../KernelWasiDevices.ts";
+import { createKernelWasiFileSystemAdapter } from "../KernelWasiFileSystemAdapter.ts";
 import type { KernelExitStatus } from "../KernelProcessTable.ts";
+import { kernelProcessSignalExitStatus } from "../KernelProcessSignal.ts";
 import { KernelProgramExecAdmissionError } from "../KernelAsyncProgram.ts";
 import type { KernelAsyncProgramCpu } from "../KernelAsyncProgram.ts";
 import { runKernelExecution } from "../process/KernelExecution.ts";
@@ -59,7 +60,7 @@ function createProcess(
       },
     },
     preopens.transformArguments,
-    createKernelWasiDeviceAdapter(context.filesystem),
+    createKernelWasiFileSystemAdapter(context.filesystem, { process: context }),
   );
   // Imports close over this object; none can run until the instance has been bound.
   const process = {
@@ -169,6 +170,8 @@ async function execute(
           }
       }
     }
+  } catch (error) {
+    return kernelProcessSignalExitStatus(error);
   } finally {
     await process.lifecycle.closeAsync();
   }

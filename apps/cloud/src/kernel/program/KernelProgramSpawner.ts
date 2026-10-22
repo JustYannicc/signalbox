@@ -21,7 +21,7 @@ import type {
 } from "../KernelAsyncProgram.ts";
 import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 import type { KernelCommand } from "../KernelCommandForwarder.ts";
-import { KernelProcessSignal } from "../KernelProcessSignal.ts";
+import { KernelProcessSignal, kernelProcessSignalExitStatus } from "../KernelProcessSignal.ts";
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
 import {
   KernelProcessTable,
@@ -556,6 +556,11 @@ export class KernelProgramSpawner {
     readonly process: KernelLaunchedChild;
     readonly lifecycle?: import("../wasi/internal_wasi_lifecycle.ts").WasiLifecycle;
   } {
+    const disposition = this.#processes.setSigpipeDisposition(
+      identity.handle,
+      implementation.sigpipe ?? "terminate",
+    );
+    if (disposition.status !== "ok") throw new Error("Process signal state is unavailable");
     let sentSignal = 0;
     const beginBody = () =>
       ticket === undefined ? !controller.signal.aborted : ticket.beginBody(controller.signal);
@@ -581,7 +586,7 @@ export class KernelProgramSpawner {
               : { exitCode, signal: 0, coreDumped: false };
           } catch (error) {
             if (controller.signal.aborted) return terminatedStatus(sentSignal);
-            throw error;
+            return kernelProcessSignalExitStatus(error);
           }
         });
       const completion = cpuProcess ? cpuProcess.run(start) : start();
@@ -643,7 +648,7 @@ export class KernelProgramSpawner {
               return controller.signal.aborted ? terminatedStatus(sentSignal) : exit;
             } catch (error) {
               if (controller.signal.aborted) return terminatedStatus(sentSignal);
-              throw error;
+              return kernelProcessSignalExitStatus(error);
             }
           }),
         );
@@ -652,6 +657,7 @@ export class KernelProgramSpawner {
     }
 
     const runtime = createKernelWasiRuntime(implementation.module, {
+      ...(implementation.sigpipe === undefined ? {} : { sigpipe: implementation.sigpipe }),
       ...(implementation.agentOsPreopens ? { agentOsPreopens: true } : {}),
       ...(implementation.cwdEnvironment === undefined
         ? {}
@@ -679,7 +685,7 @@ export class KernelProgramSpawner {
             : { exitCode, signal: 0, coreDumped: false },
         (error: unknown) => {
           if (controller.signal.aborted) return terminatedStatus(sentSignal);
-          throw error;
+          return kernelProcessSignalExitStatus(error);
         },
       );
     };

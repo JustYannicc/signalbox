@@ -133,3 +133,52 @@ export function exitBeforeReadyEngine(exitCode?: number): WebAssembly.Module {
     ]),
   );
 }
+
+/** Writes stdout, then stderr, so a closed stdout pipe must arrive as an errno. */
+export function brokenStdoutEngine(): WebAssembly.Module {
+  const memory = new Uint8Array(160);
+  const view = new DataView(memory.buffer);
+  view.setUint32(32, 128, true);
+  view.setUint32(36, 1, true);
+  view.setUint32(40, 129, true);
+  view.setUint32(44, 9, true);
+  memory.set(encoder.encode("xsurvived\n"), 128);
+  const body = [
+    0,
+    ...call(0, [1, 32, 1, 16]),
+    ...call(0, [2, 40, 1, 20]),
+    ...constant(0),
+    0x10,
+    1,
+    0x0b,
+  ];
+  const imports = [
+    ...name("wasi_snapshot_preview1"),
+    ...name("fd_write"),
+    0,
+    0,
+    ...name("wasi_snapshot_preview1"),
+    ...name("proc_exit"),
+    0,
+    1,
+  ];
+  return new WebAssembly.Module(
+    new Uint8Array([
+      0,
+      97,
+      115,
+      109,
+      1,
+      0,
+      0,
+      0,
+      ...section(1, [3, 0x60, 4, 0x7f, 0x7f, 0x7f, 0x7f, 1, 0x7f, 0x60, 1, 0x7f, 0, 0x60, 0, 0]),
+      ...section(2, [2, ...imports]),
+      ...section(3, [1, 2]),
+      ...section(5, [1, 0, 1]),
+      ...section(7, [2, ...name("memory"), 2, 0, ...name("_start"), 0, 2]),
+      ...section(10, [1, ...leb(body.length), ...body]),
+      ...section(11, [1, 0, 0x41, 0, 0x0b, ...leb(memory.length), ...memory]),
+    ]),
+  );
+}
