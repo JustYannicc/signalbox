@@ -12,7 +12,8 @@ import { pathString, type PathLike } from "./path.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
 import { NodeFileHandle } from "./file-handle.ts";
 import { createAsyncOperations } from "./async-operations.ts";
-import type { AsyncLeafRunner } from "./operations.ts";
+import { runAsync, type AsyncLeafRunner } from "./operations.ts";
+import { chmodOperation, chownOperation } from "./permission-ops.ts";
 import { NodeFsDir } from "./directory.ts";
 import { createNodeFsGlob } from "./glob.ts";
 
@@ -37,8 +38,11 @@ export function createPromisesApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLea
       if (path instanceof NodeFileHandle) await path.appendFile(data, options ?? undefined);
       else await operations.appendFile(path, data, options);
     },
-    async chmod(path: PathLike, _mode: number): Promise<void> {
-      throw unsupportedFs("chmod", pathString(path));
+    async chmod(path: PathLike, mode: number | string): Promise<void> {
+      await runAsync(chmodOperation(kernelFs, path, mode), runLeaf);
+    },
+    async chown(path: PathLike, uid: number, gid: number): Promise<void> {
+      await runAsync(chownOperation(kernelFs, path, uid, gid), runLeaf);
     },
     async copyFile(source: PathLike, destination: PathLike, flags = 0): Promise<void> {
       await operations.copyFile(pathString(source), pathString(destination), flags);

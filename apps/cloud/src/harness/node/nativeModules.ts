@@ -27,6 +27,7 @@ import * as NodeVM from "node:vm";
 import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeZlib from "node:zlib";
 import { createNodeAsyncHooks } from "../../isolate/NodeAsyncHooks.ts";
+import { createNodeInspectorModule } from "../../isolate/NodeInspector.ts";
 import { nodeTlsModule } from "../../isolate/NodeTls.ts";
 
 function nativeModule(namespace: object): object {
@@ -37,38 +38,40 @@ function nativeModule(namespace: object): object {
   return value;
 }
 
-export const DEFAULT_NODE_NATIVE_MODULES = Object.freeze(
-  Object.fromEntries(
-    Object.entries({
-      assert: NodeAssert,
-      async_hooks: createNodeAsyncHooks(),
-      buffer: NodeBuffer,
-      constants: NodeConstants,
-      crypto: NodeCrypto,
-      diagnostics_channel: NodeDiagnosticsChannel,
-      events: NodeEvents,
-      http: NodeHttp,
-      http2: NodeHttp2,
-      https: NodeHttps,
-      inspector: NodeInspector,
-      net: NodeNet,
-      perf_hooks: NodePerfHooks,
-      querystring: NodeQuerystring,
-      stream: NodeStream,
-      "stream/consumers": NodeStreamConsumers,
-      "stream/promises": NodeStreamPromises,
-      "stream/web": NodeStreamWeb,
-      string_decoder: NodeStringDecoder,
-      timers: NodeTimers,
-      "timers/promises": NodeTimersPromises,
-      tls: nodeTlsModule(),
-      url: NodeURL,
-      util: NodeUtil,
-      "util/types": NodeUtilTypes,
-      v8: NodeV8,
-      vm: NodeVM,
-      worker_threads: NodeWorkerThreads,
-      zlib: NodeZlib,
-    }).map(([name, namespace]) => [name, nativeModule(namespace)]),
-  ),
+const nativeModules: Record<string, object> = Object.fromEntries(
+  Object.entries({
+    assert: NodeAssert,
+    async_hooks: createNodeAsyncHooks(),
+    buffer: NodeBuffer,
+    constants: NodeConstants,
+    crypto: NodeCrypto,
+    diagnostics_channel: NodeDiagnosticsChannel,
+    events: NodeEvents,
+    http: NodeHttp,
+    http2: NodeHttp2,
+    https: NodeHttps,
+    inspector: NodeInspector,
+    net: NodeNet,
+    perf_hooks: NodePerfHooks,
+    querystring: NodeQuerystring,
+    stream: NodeStream,
+    "stream/consumers": NodeStreamConsumers,
+    "stream/promises": NodeStreamPromises,
+    "stream/web": NodeStreamWeb,
+    string_decoder: NodeStringDecoder,
+    timers: NodeTimers,
+    "timers/promises": NodeTimersPromises,
+    tls: nodeTlsModule(),
+    url: NodeURL,
+    util: NodeUtil,
+    "util/types": NodeUtilTypes,
+    v8: NodeV8,
+    vm: NodeVM,
+    worker_threads: NodeWorkerThreads,
+    zlib: NodeZlib,
+  }).map(([name, namespace]) => [name, nativeModule(namespace)]),
 );
+
+nativeModules.inspector = createNodeInspectorModule(nativeModule(NodeInspector));
+
+export const DEFAULT_NODE_NATIVE_MODULES = Object.freeze(nativeModules);

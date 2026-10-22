@@ -4,6 +4,7 @@ import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import {
   applyRunnerCommandSystemIdentity,
   resolveRunnerCommandSystemIdentity,
+  sameSystemIdentity,
   type RunnerCommandSystemIdentitySystem,
 } from "./RunnerCommandSystemIdentity.ts";
 
@@ -46,6 +47,16 @@ describe("command Runner system identity", () => {
     expect(() =>
       resolveRunnerCommandSystemIdentity("command-thread-1", systemIdentityForThread("other")),
     ).toThrow("does not match its thread");
+  });
+
+  it("includes configured resources when comparing identities", () => {
+    const configured = identity();
+    const changedResources = systemIdentityForThread("command-thread-1", {
+      ...configured,
+      resources: { memoryBytes: 8 * 1024 ** 3, vcpus: 4, profile: "steady" },
+    });
+
+    expect(sameSystemIdentity(configured, changedResources)).toBe(false);
   });
 
   it("sets and reads back the native hostname without comparing provisional release data", () => {

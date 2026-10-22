@@ -3,7 +3,13 @@
  */
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { runSync, type AsyncLeafRunner } from "./operations.ts";
-import { accessOperation } from "./permission-ops.ts";
+import {
+  accessOperation,
+  chmodOperation,
+  fchmodOperation,
+  chownOperation,
+  fchownOperation,
+} from "./permission-ops.ts";
 import { unsupportedFs } from "./errors.ts";
 import { appendFileSync, copyFileSync, readFileSync, writeFileSync } from "./files.ts";
 import {
@@ -100,20 +106,29 @@ export function existsSync(kernelFs: KernelFileSystem, path: PathLike): boolean 
   }
 }
 
-export function chmodSync(path: PathLike, _mode: number): never {
-  throw unsupportedFs("chmod", pathString(path));
+export function chmodSync(kernelFs: KernelFileSystem, path: PathLike, mode: number | string): void {
+  runSync(chmodOperation(kernelFs, path, mode));
 }
 
-export function fchmodSync(_fd: number, _mode: number): never {
-  throw unsupportedFs("fchmod");
+export function fchmodSync(kernelFs: KernelFileSystem, fd: number, mode: number | string): void {
+  runSync(fchmodOperation(kernelFs, fd, mode));
+}
+
+export function chownSync(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  uid: number,
+  gid: number,
+): void {
+  runSync(chownOperation(kernelFs, path, uid, gid));
+}
+
+export function fchownSync(kernelFs: KernelFileSystem, fd: number, uid: number, gid: number): void {
+  runSync(fchownOperation(kernelFs, fd, uid, gid));
 }
 
 export function statfsSync(path: PathLike): never {
   throw unsupportedFs("statfs", pathString(path));
-}
-
-export function fchownUnsupported(_fd: number, _uid: number, _gid: number): never {
-  throw unsupportedFs("fchown");
 }
 
 export function createSyncApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
@@ -137,6 +152,11 @@ export function createSyncApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRun
   function fstatApi(fd: number, options?: StatOptions): NodeStatsLike {
     return fstatSync(kernelFs, fd, options);
   }
+
+  const realpathSyncApi = (
+    path: PathLike,
+    options?: BufferEncoding | Parameters<typeof realpathSync>[2],
+  ) => realpathSync(kernelFs, path, options);
 
   return {
     openSync: (path: PathLike, flags: string | number = "r", mode?: number) =>
@@ -175,8 +195,7 @@ export function createSyncApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRun
       readdirSync(kernelFs, path, options),
     readlinkSync: (path: PathLike, options?: BufferEncoding | Parameters<typeof readlinkSync>[2]) =>
       readlinkSync(kernelFs, path, options),
-    realpathSync: (path: PathLike, options?: BufferEncoding | Parameters<typeof realpathSync>[2]) =>
-      realpathSync(kernelFs, path, options),
+    realpathSync: Object.assign(realpathSyncApi, { native: realpathSyncApi }),
     renameSync: (oldPath: PathLike, newPath: PathLike) => renameSync(kernelFs, oldPath, newPath),
     mkdirSync: (path: PathLike, options?: number | Parameters<typeof mkdirSync>[2]) =>
       mkdirSync(kernelFs, path, options),
@@ -202,9 +221,10 @@ export function createSyncApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRun
     ) => utimesSync(kernelFs, path, atime, mtime),
     accessSync: (path: PathLike, mode?: number) => accessSync(kernelFs, path, mode),
     existsSync: (path: PathLike) => existsSync(kernelFs, path),
-    chmodSync,
-    fchmodSync,
-    fchownSync: fchownUnsupported,
+    chmodSync: (path: PathLike, mode: number | string) => chmodSync(kernelFs, path, mode),
+    fchmodSync: (fd: number, mode: number | string) => fchmodSync(kernelFs, fd, mode),
+    chownSync: (path: PathLike, uid: number, gid: number) => chownSync(kernelFs, path, uid, gid),
+    fchownSync: (fd: number, uid: number, gid: number) => fchownSync(kernelFs, fd, uid, gid),
     statfsSync: (path: PathLike) => statfsSync(path),
     createReadStream: (
       path: PathLike | undefined,

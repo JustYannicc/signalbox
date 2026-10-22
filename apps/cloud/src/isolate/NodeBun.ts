@@ -2,7 +2,7 @@ import type { KernelProgramHost } from "../kernel/KernelProgramHost.ts";
 import type { BunIsolateCapability, BunShimHost } from "./BunShim.ts";
 import type { NodeFsModules } from "./NodeFs.ts";
 import type { createNodeChildProcess } from "./NodeChildProcess.ts";
-import type { createNodeProcess } from "./NodeProcess.ts";
+import type { createNodeProcess, NodeProcessStreams } from "./NodeProcess.ts";
 import { createBunFileHost } from "./node/bunHost/files.ts";
 import { createBunSpawn } from "./node/bunHost/spawn.ts";
 import { toBunStdinReadable } from "./node/bunHost/streams.ts";
@@ -10,10 +10,7 @@ import { createBunWhich } from "./node/bunHost/which.ts";
 
 export interface NodeBunHostOptions {
   readonly filesystem: NodeFsModules;
-  readonly process: Pick<
-    ReturnType<typeof createNodeProcess>,
-    "cwd" | "env" | "stdin" | "stdout" | "stderr"
-  >;
+  readonly process: Pick<ReturnType<typeof createNodeProcess>, "cwd" | "env"> & NodeProcessStreams;
   readonly childProcess: Pick<ReturnType<typeof createNodeChildProcess>, "spawn">;
   readonly programHost: Pick<KernelProgramHost, "resolve">;
   readonly main: string;

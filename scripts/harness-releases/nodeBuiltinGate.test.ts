@@ -161,6 +161,87 @@ describe("release builtin gate", () => {
     ]);
   });
 
+  it("tracks builtin calls through namespace, default, named, destructured and require aliases", () => {
+    const scan = scanBuiltinSource(
+      source(`
+      import defaultOS from 'node:os';
+      import * as osNamespace from 'os';
+      import { platform as namedPlatform } from 'node:os';
+      defaultOS.release();
+      osNamespace['hostname']();
+      namedPlatform();
+      const { uptime: uptimeAlias } = require('os'); uptimeAlias();
+      const requireAlias = require;
+      const requiredOS = requireAlias('node:os'); requiredOS.arch();
+      const releaseAlias = requiredOS.release; releaseAlias();
+    `),
+    );
+
+    expect(
+      scan.requiredFunctions.map(({ specifier, memberPath }) => [specifier, memberPath]),
+    ).toEqual([
+      ["os", ["arch"]],
+      ["os", ["hostname"]],
+      ["os", ["platform"]],
+      ["os", ["release"]],
+      ["os", ["release"]],
+      ["os", ["uptime"]],
+    ]);
+    expect(scan.requiredSpecifiers).toContain("os");
+    expect(scan.functionAmbiguities).toEqual([]);
+  });
+
+  it("preserves calls through computed builtin members as source-located uncertainty", () => {
+    const scan = scanBuiltinSource(
+      source(`
+      import * as os from 'node:os';
+      os[process.env.NODE_BUILTIN_FUNCTION]();
+      const call = os[process.env.NODE_BUILTIN_FUNCTION]; call();
+    `),
+    );
+
+    expect(
+      scan.functionAmbiguities.map(({ kind, module, line, specifier }) => [
+        kind,
+        module,
+        line,
+        specifier,
+      ]),
+    ).toEqual([
+      ["dynamic-builtin-member-call", "release.mjs", 3, "os.<computed>"],
+      ["dynamic-builtin-member-call", "release.mjs", 4, "os.<computed>"],
+    ]);
+    expect(scan.functionCallScope).toBe("static-direct-calls");
+  });
+
+  it("does not treat methods on process data fields as Node builtin calls", () => {
+    const scan = scanBuiltinSource(
+      source(`
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED?.trim();
+      process.platform.toLowerCase();
+      process.stdout.write('done');
+    `),
+    );
+
+    expect(
+      scan.requiredFunctions.map(({ specifier, memberPath }) => [specifier, memberPath]),
+    ).toEqual([["process", ["stdout", "write"]]]);
+    expect(scan.functionAmbiguities).toEqual([]);
+  });
+
+  it("tracks builtin constructors as function-level calls", () => {
+    const scan = scanBuiltinSource(
+      source(`
+      import { URL } from 'node:url';
+      new URL('https://signalbox.test');
+    `),
+    );
+
+    expect(
+      scan.requiredFunctions.map(({ specifier, memberPath }) => [specifier, memberPath]),
+    ).toEqual([["url", ["URL"]]]);
+  });
+
   it("rejects each missing installed builtin against the actual runtime inventory", async () => {
     const installed = await captureRuntimeBuiltinSpecifiers();
     const scan = scanBuiltinSource(

@@ -152,6 +152,7 @@ describe("RunnerMachineSockets", () => {
       machine: "x86_64",
       hostnamePolicy: "thread",
       verification: "measured",
+      resources: { memoryBytes: 8 * 1024 ** 3, vcpus: 6, profile: "steady" },
     };
     const systemIdentity = systemIdentityForThread(threadId, systemIdentityConfig);
     const f = fixture(Promise.resolve(), socketContextFixture(), systemIdentity);

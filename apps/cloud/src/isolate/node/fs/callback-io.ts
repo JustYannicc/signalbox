@@ -4,8 +4,8 @@
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { createFileCallbackApi } from "./callback-files.ts";
 import { createAsyncOperations } from "./async-operations.ts";
-import type { AsyncLeafRunner } from "./operations.ts";
-import { unsupportedFs } from "./errors.ts";
+import { runAsync, type AsyncLeafRunner } from "./operations.ts";
+import { fchmodOperation, fchownOperation } from "./permission-ops.ts";
 import { ioOptions, type IoOptions } from "./fd-ops.ts";
 import type { fstatSync } from "./metadata-ops.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
@@ -237,20 +237,16 @@ export function createIoCallbackApi(kernelFs: KernelFileSystem, runLeaf?: AsyncL
     fstat,
     fsync: (fd: number, callback: FsCallback) =>
       schedule<[]>(callback, async () => (await operations.fsync(fd), []), "fsync"),
-    fchown: (_fd: number, _uid: number, _gid: number, callback: FsCallback) =>
+    fchown: (fd: number, uid: number, gid: number, callback: FsCallback) =>
       schedule<[]>(
         callback,
-        async () => {
-          throw unsupportedFs("fchown");
-        },
+        async () => (await runAsync(fchownOperation(kernelFs, fd, uid, gid), runLeaf), []),
         "fchown",
       ),
-    fchmod: (_fd: number, _mode: number, callback: FsCallback) =>
+    fchmod: (fd: number, mode: number | string, callback: FsCallback) =>
       schedule<[]>(
         callback,
-        async () => {
-          throw unsupportedFs("fchmod");
-        },
+        async () => (await runAsync(fchmodOperation(kernelFs, fd, mode), runLeaf), []),
         "fchmod",
       ),
   };

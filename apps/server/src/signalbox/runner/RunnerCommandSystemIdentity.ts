@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 
 import {
   DEFAULT_SYSTEM_IDENTITY,
+  sameSystemIdentity as sameSystemIdentityContract,
   systemIdentityForThread,
   type SystemIdentity,
 } from "@t3tools/contracts/systemIdentity";
@@ -45,20 +46,7 @@ export function runnerCommandSystemIdentitySystem(
   });
 }
 
-export function sameSystemIdentity(left?: SystemIdentity, right?: SystemIdentity): boolean {
-  return left === undefined || right === undefined
-    ? left === right
-    : left.release === right.release &&
-        left.version === right.version &&
-        left.machine === right.machine &&
-        left.hostnamePolicy === right.hostnamePolicy &&
-        left.verification === right.verification &&
-        left.hostname === right.hostname &&
-        left.platform === right.platform &&
-        left.type === right.type &&
-        left.arch === right.arch &&
-        left.endianness === right.endianness;
-}
+export const sameSystemIdentity = sameSystemIdentityContract;
 
 /** Resolve legacy launch files through the same shared defaults as the isolate tier. */
 export function resolveRunnerCommandSystemIdentity(

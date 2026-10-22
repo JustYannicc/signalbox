@@ -123,7 +123,10 @@ describe("Claude release build integration", () => {
   it("builds identical source for two exact release identities and leaves proof checks pending", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-inputs-"));
     try {
-      const source = 'export const sourceMarker = "same-code";\n';
+      const source = `
+        function unused() { process.getBuiltinModule('cluster'); }
+        export const sourceMarker = "same-code";
+      `;
       const first = await makeExtraction(root, "2.1.302", source);
       const second = await makeExtraction(root, "2.1.303", source);
       const firstOutput = NodePath.join(root, "artifact-2.1.302");
@@ -178,6 +181,11 @@ describe("Claude release build integration", () => {
           .artifact,
       ).toEqual(secondResult.artifact);
       expect(await NodeFSP.stat(`${secondOutput}.provenance.json`)).toBeDefined();
+      const provenance = JSON.parse(
+        await NodeFSP.readFile(`${secondOutput}.provenance.json`, "utf8"),
+      );
+      expect(provenance.builtinCoverage.artifact.sha256).toBe(secondResult.artifact.sha256);
+      expect(provenance.builtinCoverage.requiredBuiltins).not.toContain("cluster");
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

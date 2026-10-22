@@ -3,6 +3,7 @@ export type NodeSystemErrorCode =
   | "EAGAIN"
   | "EIO"
   | "EINVAL"
+  | "ENOSYS"
   | "ENOTSUP"
   | "EPERM"
   | "ESRCH";
@@ -10,12 +11,19 @@ export type NodeSystemErrorCode =
 export class NodeSystemError extends Error {
   readonly code: NodeSystemErrorCode;
   readonly syscall: string | undefined;
+  declare readonly path?: string;
 
-  constructor(code: NodeSystemErrorCode, message: string, syscall?: string) {
+  constructor(
+    code: NodeSystemErrorCode,
+    message: string,
+    syscall?: string,
+    options?: { readonly path?: string },
+  ) {
     super(message);
     this.name = "NodeSystemError";
     this.code = code;
     this.syscall = syscall;
+    if (options?.path !== undefined) this.path = options.path;
   }
 }
 

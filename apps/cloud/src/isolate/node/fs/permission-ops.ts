@@ -15,12 +15,26 @@ export function* accessOperation(
   );
 }
 
+export function* chmodOperation(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  mode: number | string,
+): FsOperation<void> {
+  const name = pathString(path);
+  const permissions = parsePermissionMode(mode);
+  yield* fsOperation(
+    "chmod",
+    name,
+    leaf(() => kernelFs.chmod(name, permissions)),
+  );
+}
+
 export function* fchmodOperation(
   kernelFs: KernelFileSystem,
   fd: number,
   mode: number | string,
 ): FsOperation<void> {
-  const permissions = chmodMode(mode);
+  const permissions = parsePermissionMode(mode);
   yield* fsOperation(
     "fchmod",
     undefined,
@@ -28,7 +42,34 @@ export function* fchmodOperation(
   );
 }
 
-function chmodMode(mode: number | string): number {
+export function* chownOperation(
+  kernelFs: KernelFileSystem,
+  path: PathLike,
+  uid: number,
+  gid: number,
+): FsOperation<void> {
+  const name = pathString(path);
+  yield* fsOperation(
+    "chown",
+    name,
+    leaf(() => kernelFs.chown(name, uid, gid)),
+  );
+}
+
+export function* fchownOperation(
+  kernelFs: KernelFileSystem,
+  fd: number,
+  uid: number,
+  gid: number,
+): FsOperation<void> {
+  yield* fsOperation(
+    "fchown",
+    undefined,
+    leaf(() => kernelFs.fchown(fd, uid, gid)),
+  );
+}
+
+export function parsePermissionMode(mode: number | string): number {
   let value = mode;
   if (typeof value === "string") {
     if (!/^[0-7]+$/.test(value)) {

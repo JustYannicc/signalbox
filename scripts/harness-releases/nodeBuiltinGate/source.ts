@@ -8,6 +8,12 @@ import {
 } from "../../claude-bunfs/release-inventory-require.ts";
 import { ScopedBindings } from "../../claude-bunfs/release-inventory-scope.ts";
 import type { NodeBuiltinAmbiguity } from "./coverage.ts";
+import { scanBuiltinFunctionCalls } from "./functions.ts";
+import {
+  builtinMemberReference,
+  isBuiltinReference,
+  type BuiltinFunctionAnalysisOrigin,
+} from "./functionReferences.ts";
 
 const moduleLoaders = [
   { specifier: "module", origin: "module", member: "createRequire", memberOrigin: "factory" },
@@ -18,10 +24,11 @@ const moduleLoaders = [
     memberOrigin: "builtin-loader",
   },
 ] as const;
-type Origin = (typeof moduleLoaders)[number]["origin" | "memberOrigin"] | "require" | "bridge";
+type Origin = BuiltinFunctionAnalysisOrigin;
 const moduleForSpecifier = (specifier: string | undefined) =>
   moduleLoaders.find((rule) => rule.specifier === specifier?.replace(/^node:/, ""));
 function moduleMember(value: Origin | undefined, name: string | undefined): Origin | undefined {
+  if (isBuiltinReference(value)) return builtinMemberReference(value, name);
   const rule = moduleLoaders.find((rule) => rule.origin === value);
   return (
     rule &&
@@ -201,11 +208,13 @@ export function scanBuiltinSource(input: BuiltinSource) {
     ts.forEachChild(node, visit);
   };
   visit(file);
+  const functionInventory = scanBuiltinFunctionCalls(file, bindings, requires);
   return {
     name: input.name,
     bytes: Buffer.byteLength(input.source),
     sha256: NodeCrypto.createHash("sha256").update(input.source).digest("hex"),
     requiredSpecifiers: [...references].sort(),
     ambiguities,
+    ...functionInventory,
   };
 }

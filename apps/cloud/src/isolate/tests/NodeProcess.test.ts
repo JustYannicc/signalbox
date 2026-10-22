@@ -1,10 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - PassThrough supplies streams for the explicit host context in these tests.
 import * as NodeStream from "node:stream";
 import { describe, expect, it } from "@effect/vitest";
+import { DEFAULT_SYSTEM_IDENTITY } from "@t3tools/contracts/systemIdentity";
 
 import { kernelError, kernelOk } from "../../kernel/KernelAbi.ts";
 import { KernelCpuAccounting } from "../../kernel/KernelCpuAccounting.ts";
 import { createNodePath } from "../NodePath.ts";
+import { createNodeFs } from "../NodeFs.ts";
+import { nodeFsPosixFixture } from "./helpers/NodeFsPosixFixture.ts";
 import {
   createNodeProcess,
   NodeProcessExitError,
@@ -66,6 +69,31 @@ function thrownBy(run: () => unknown): unknown {
 }
 
 describe("Node process facet", () => {
+  it("uses the canonical filesystem umask for subsequent file and directory creation", () => {
+    const f = nodeFsPosixFixture();
+    const process = createNodeProcess({ ...host(100), filesystem: f.kernelFs });
+    const fs = createNodeFs(f.kernelFs).fs;
+    try {
+      const { umask } = process;
+      expect(umask()).toBe(0o022);
+      expect(umask("077")).toBe(0o022);
+      fs.mkdirSync("/private");
+      fs.writeFileSync("/private/file", "private", { mode: 0o666 });
+      expect(f.kernelFs.getPosixMetadata("/private").mode).toBe(0o700);
+      expect(f.kernelFs.getPosixMetadata("/private/file").mode).toBe(0o600);
+      expect(umask(0o022)).toBe(0o077);
+      for (const mask of [-1, 0x1_0000_0000, 1.5, "08"]) {
+        expect(() => umask(mask)).toThrow();
+        expect(umask()).toBe(0o022);
+      }
+      expect(thrownBy(() => createNodeProcess(host(101)).umask())).toMatchObject({
+        code: "ENOTSUP",
+      });
+    } finally {
+      f.close();
+    }
+  });
+
   it("keeps identity, environment, cwd and streams scoped to each host", () => {
     const firstHost = host(41);
     const secondHost = host(42, "/work/two");
@@ -309,14 +337,17 @@ describe("Node process facet", () => {
     const process = createNodeProcess({ ...host(71), cpuAccounting: accounting });
     const initial = process.cpuUsage();
     expect(initial).toEqual({ user: 0, system: 0 });
+    expect(process.resourceUsage()).toMatchObject({ userCPUTime: 0, systemCPUTime: 0 });
 
     const leaveUser = accounting.enterUser();
     nowNs = 15_500n;
     const beforeSyscall = process.cpuUsage();
     expect(beforeSyscall).toEqual({ user: 15, system: 0 });
+    expect(process.resourceUsage()).toMatchObject({ userCPUTime: 15, systemCPUTime: 0 });
     const leaveSystem = accounting.enterSystem();
     nowNs += 2_500n;
     expect(process.cpuUsage(beforeSyscall)).toEqual({ user: 0, system: 2 });
+    expect(process.resourceUsage()).toMatchObject({ userCPUTime: 15, systemCPUTime: 2 });
     leaveSystem();
     nowNs += 3_000n;
     leaveUser();
@@ -390,11 +421,48 @@ describe("Node process facet", () => {
     secondCpu.dispose();
   });
 
-  it("requires kernel CPU accounting while other host telemetry remains unsupported", () => {
-    const process = createNodeProcess(host(71));
-    expect(thrownBy(() => process.memoryUsage())).toMatchObject({ code: "ENOTSUP" });
-    expect(thrownBy(() => process.memoryUsage.rss())).toMatchObject({ code: "ENOTSUP" });
-    expect(thrownBy(() => process.cpuUsage())).toMatchObject({ code: "ENOTSUP" });
-    expect(thrownBy(() => process.resourceUsage())).toMatchObject({ code: "ENOTSUP" });
+  it("reports modeled memory and a stable CPU fallback without host accounting", () => {
+    const clock = monotonicClock(12_000_000_000n);
+    const base = host(71);
+    const process = createNodeProcess({
+      ...base,
+      monotonicNowNs: clock.now,
+      systemIdentity: {
+        ...DEFAULT_SYSTEM_IDENTITY,
+        hostname: "t-process-71",
+        platform: "linux",
+        type: "Linux",
+        arch: "x64",
+        endianness: "LE",
+        resources: { memoryBytes: 8 * 1024 ** 3, vcpus: 6, profile: "steady" },
+      },
+    });
+    const memory = process.memoryUsage();
+
+    expect(process.availableMemory()).toBe(7 * 1024 ** 3);
+    expect(process.constrainedMemory()).toBe(8 * 1024 ** 3);
+    expect(memory).toEqual({
+      rss: 1024 ** 3,
+      heapTotal: Math.floor(1024 ** 3 / 3),
+      heapUsed: Math.floor(Math.floor(1024 ** 3 / 3) / 2),
+      external: 1024 ** 3 / 16,
+      arrayBuffers: 1024 ** 3 / 64,
+    });
+    expect(memory.rss).toBeLessThan(process.constrainedMemory());
+    expect(memory.heapUsed).toBeLessThanOrEqual(memory.heapTotal);
+    expect(memory.heapTotal).toBeLessThanOrEqual(memory.rss);
+    expect(memory.arrayBuffers).toBeLessThanOrEqual(memory.external);
+    expect(process.memoryUsage.rss()).toBe(memory.rss);
+    expect(process.resourceUsage()).toMatchObject({
+      userCPUTime: 0,
+      systemCPUTime: 0,
+      maxRSS: 1024 ** 3 / 1024,
+    });
+    expect(process.cpuUsage()).toEqual({ user: 0, system: 0 });
+    expect(process.memoryUsage()).not.toBe(memory);
+
+    clock.advanceBy(1_000_000_000n);
+    expect(process.cpuUsage()).toEqual({ user: 20_000, system: 5_000 });
+    expect(process.resourceUsage()).toMatchObject({ userCPUTime: 20_000, systemCPUTime: 5_000 });
   });
 });

@@ -81,6 +81,28 @@ describe("Harness artifact preparation", () => {
     await expect(NodeFSP.lstat(codexOutput)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rejects an unsupported os.getPriority call before publication", async () => {
+    const { sdk, input } = await setup();
+    await NodeFSP.writeFile(
+      NodePath.join(sdk, "sdk.js"),
+      "import * as os from 'node:os';\nos.getPriority();",
+    );
+
+    await expect(prepareHarnessArtifact(input)).rejects.toThrow(
+      /NODE_BUILTIN_COVERAGE_FAILED: unsupported-functions=os\.getPriority@/u,
+    );
+    await expect(NodeFSP.lstat(input.output)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("accepts modeled memory calls from the configured public runtime", async () => {
+    const { sdk, input } = await setup();
+    await NodeFSP.writeFile(
+      NodePath.join(sdk, "sdk.js"),
+      "import * as os from 'node:os';\nos.totalmem(); os.freemem();",
+    );
+    await expect(prepareHarnessArtifact(input)).resolves.toHaveProperty("artifactHash");
+  });
+
   it("accepts DNS supplied by the runtime adapter with no caller module map", async () => {
     const { sdk, input } = await setup();
     await NodeFSP.writeFile(
