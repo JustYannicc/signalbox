@@ -57,10 +57,17 @@ function isWrite(node: ts.Node): boolean {
   return false;
 }
 
+// `process` is also reachable as a property of the global object, so an unresolved global
+// counts as a possible route to `process.env`.
+const GLOBAL_OBJECT = "#global";
+const GLOBAL_OBJECT_NAMES = new Set(["globalThis", "global", "self", "window"]);
 const hasEnvironmentOrigin = (origin: Origin | undefined) => origin?.[0] === "env";
 const canReachEnvironment = (origin: Origin | undefined) =>
   origin !== undefined &&
-  (origin.length === 0 || origin[0] === "?" || hasEnvironmentOrigin(origin));
+  (origin.length === 0 ||
+    origin[0] === "?" ||
+    origin[0] === GLOBAL_OBJECT ||
+    hasEnvironmentOrigin(origin));
 
 function isImportMetaRequire(node: ts.Node) {
   return (
@@ -242,6 +249,11 @@ export function createPinnedEnvironmentTransform(
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const base = origin(node.expression, module, seen, allowMutableAliases);
       const key = property(node);
+      if (base?.length === 1 && base[0] === GLOBAL_OBJECT) {
+        if (key === "process") return [];
+        // A computed key on the global object may name `process`.
+        return key === undefined ? ["?"] : undefined;
+      }
       if (base) return [...base, key ?? "?"];
       if (key !== undefined && ts.isIdentifier(node.expression)) {
         const target = namespaceTarget(node.expression, module);
@@ -251,7 +263,12 @@ export function createPinnedEnvironmentTransform(
     }
     if (!ts.isIdentifier(node)) return undefined;
     const binding = module.bindings.lookup(node);
-    if (!binding) return node.text === "process" ? [] : undefined;
+    if (!binding)
+      return node.text === "process"
+        ? []
+        : GLOBAL_OBJECT_NAMES.has(node.text)
+          ? [GLOBAL_OBJECT]
+          : undefined;
     const declaration = binding.declaration;
     if (seen.has(declaration)) return undefined;
     const parent = declaration.parent;

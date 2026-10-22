@@ -120,6 +120,27 @@ const runtimeMutationCases: ReadonlyArray<{
     },
   },
   {
+    name: "a computed global process environment",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `globalThis["process"]["env"]["FLAG"]="changed";`,
+    },
+  },
+  {
+    name: "an aliased global object",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const g=global;g.process.env.FLAG="changed";`,
+    },
+  },
+  {
+    name: "a global object passed to unknown code",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const mutate=(g)=>{g.process.env.FLAG="changed";};mutate(globalThis);`,
+    },
+  },
+  {
     name: "a layer module",
     specifier: "signalbox:mutation",
     sources: {},
