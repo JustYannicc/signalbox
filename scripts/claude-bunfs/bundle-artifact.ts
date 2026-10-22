@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import type { ReleaseOmissionManifest } from "./release-omission.ts";
 
 export interface BundleFile {
   readonly path: string;
@@ -34,6 +35,7 @@ export interface BundlePublication {
   readonly requiredHostModules: ReadonlyArray<string>;
   readonly sourceModules: ReadonlyArray<string>;
   readonly metafile: unknown;
+  readonly omission?: ReleaseOmissionManifest;
 }
 
 const hash = (bytes: Uint8Array | string) =>
@@ -118,6 +120,7 @@ export async function publishBundle(input: BundlePublication) {
       assets,
       requiredHostModules: [...new Set(input.requiredHostModules)].sort(),
       sourceModules: [...new Set(input.sourceModules)].sort(),
+      ...(input.omission === undefined ? {} : { omission: input.omission }),
       bytes: Object.values(modules).reduce((total, module) => total + module.bytes, 0),
     };
     const manifestSource = `${JSON.stringify(manifest, null, 2)}\n`;

@@ -107,99 +107,101 @@ const capabilities: OrchestrationV2ProviderCapabilities = {
   runtimePolicy: { enforcement: "native" },
 };
 
-export const data = Effect.gen(function* () {
-  const now = yield* DateTime.now;
-  const threadId = ThreadId.make("thread");
-  const instanceId = ProviderInstanceId.make("codex");
-  const driver = ProviderDriverKind.make("codex");
-  const providerSessionId = ProviderSessionId.make("session");
-  const providerThread = {
-    id: ProviderThreadId.make("provider-thread"),
-    driver,
-    providerInstanceId: instanceId,
-    providerSessionId,
-    appThreadId: threadId,
-    ownerNodeId: null,
-    nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" as const },
-    nativeConversationHeadRef: null,
-    status: "idle" as const,
-    firstRunOrdinal: null,
-    lastRunOrdinal: null,
-    handoffIds: [],
-    forkedFrom: null,
-    pendingBackgroundTasks: [],
-    contextUsage: null,
-    nativeMetadata: null,
-    goal: null,
-    createdAt: now,
-    updatedAt: now,
-  };
-  const providerSession = {
-    id: providerSessionId,
-    driver,
-    providerInstanceId: instanceId,
-    status: "ready" as const,
-    cwd: "/workspace",
-    model: "model",
-    capabilities,
-    createdAt: now,
-    updatedAt: now,
-    lastError: null,
-  };
-  const modelSelection = { instanceId, model: "model" };
-  const turn: RunnerTurn = {
-    preparationGeneration: 1,
-    threadId,
-    runId: RunId.make("run-1"),
-    traceId: "0".repeat(32),
-    runOrdinal: 1,
-    providerTurnOrdinal: 1,
-    attemptId: RunAttemptId.make("attempt-1"),
-    rootNodeId: NodeId.make("root-1"),
-    appThread: {
-      id: threadId,
-      projectId: ProjectId.make("project"),
-      title: "Test",
+export const dataForDriver = (driver: ProviderDriverKind) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread");
+    const instanceId = ProviderInstanceId.make("codex");
+    const providerSessionId = ProviderSessionId.make("session");
+    const providerThread = {
+      id: ProviderThreadId.make("provider-thread"),
+      driver,
       providerInstanceId: instanceId,
+      providerSessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" as const },
+      nativeConversationHeadRef: null,
+      status: "idle" as const,
+      firstRunOrdinal: null,
+      lastRunOrdinal: null,
+      handoffIds: [],
+      forkedFrom: null,
+      pendingBackgroundTasks: [],
+      contextUsage: null,
+      nativeMetadata: null,
+      goal: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const providerSession = {
+      id: providerSessionId,
+      driver,
+      providerInstanceId: instanceId,
+      status: "ready" as const,
+      cwd: "/workspace",
+      model: "model",
+      capabilities,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+    const modelSelection = { instanceId, model: "model" };
+    const turn: RunnerTurn = {
+      preparationGeneration: 1,
+      threadId,
+      runId: RunId.make("run-1"),
+      traceId: "0".repeat(32),
+      runOrdinal: 1,
+      providerTurnOrdinal: 1,
+      attemptId: RunAttemptId.make("attempt-1"),
+      rootNodeId: NodeId.make("root-1"),
+      appThread: {
+        id: threadId,
+        projectId: ProjectId.make("project"),
+        title: "Test",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+      providerThread: { ...providerThread, nativeThreadRef: null },
+      message: {
+        messageId: MessageId.make("message"),
+        text: "Hello",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      activeProviderThreadId: providerThread.id,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-      forkedFrom: null,
-      createdBy: "user",
-      creationSource: "web",
-      createdAt: now,
-      updatedAt: now,
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      lastVisitedAt: null,
-      deletedAt: null,
-    },
-    providerThread: { ...providerThread, nativeThreadRef: null },
-    message: {
-      messageId: MessageId.make("message"),
-      text: "Hello",
-      attachments: [],
-      createdBy: "user",
-      creationSource: "web",
-    },
-    modelSelection,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-  };
-  return {
-    now,
-    threadId,
-    instanceId,
-    driver,
-    providerSessionId,
-    providerThread,
-    providerSession,
-    modelSelection,
-    turn,
-  };
-});
+    };
+    return {
+      now,
+      threadId,
+      instanceId,
+      driver,
+      providerSessionId,
+      providerThread,
+      providerSession,
+      modelSelection,
+      turn,
+    };
+  });
+
+export const data = dataForDriver(ProviderDriverKind.make("codex"));

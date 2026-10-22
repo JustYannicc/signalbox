@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { ReleaseOmissionConfiguration } from "@t3tools/contracts/harnessReleaseOmission";
 
 const Sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 const ManifestPath = Schema.Literals([
@@ -22,6 +23,27 @@ const File = Schema.Struct({
   ),
   sha256: Sha256,
 }).annotate({ parseOptions: { onExcessProperty: "error" } });
+const OmissionConfigurationIdentity = Schema.Struct({
+  name: ReleaseOmissionConfiguration.fields.name,
+}).annotate({
+  parseOptions: { onExcessProperty: "error" },
+});
+const OmissionIdentity = Schema.Struct({
+  configuration: OmissionConfigurationIdentity,
+}).annotate({ parseOptions: { onExcessProperty: "error" } });
+const OmissionRecord = Schema.Record(Schema.String, Schema.Unknown);
+const decodeOmissionRecord = Schema.decodeUnknownSync(OmissionRecord, {
+  onExcessProperty: "error",
+  reportInput: false,
+});
+const decodeOmissionConfiguration = Schema.decodeUnknownSync(ReleaseOmissionConfiguration, {
+  onExcessProperty: "error",
+  reportInput: false,
+});
+const decodeOmissionIdentity = Schema.decodeUnknownSync(OmissionIdentity, {
+  onExcessProperty: "error",
+  reportInput: false,
+});
 
 export const HarnessReleaseArtifactManifestSchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
@@ -29,12 +51,14 @@ export const HarnessReleaseArtifactManifestSchema = Schema.Struct({
   sourceIdentity: Sha256,
   components: Components,
   files: Schema.Record(Schema.String, File),
+  omission: Schema.optionalKey(OmissionIdentity),
   computer: Schema.Struct({ sourceIdentity: Sha256, manifestSha256: Sha256 }).annotate({
     parseOptions: { onExcessProperty: "error" },
   }),
 }).annotate({ parseOptions: { onExcessProperty: "error" } });
 
 export type HarnessReleaseArtifactManifest = typeof HarnessReleaseArtifactManifestSchema.Type;
+export type HarnessReleaseOmissionIdentity = typeof OmissionIdentity.Type;
 export type ArtifactComponent = "codex" | "cli" | "sdk";
 
 const decodeArtifactManifest = Schema.decodeUnknownSync(HarnessReleaseArtifactManifestSchema, {
@@ -68,6 +92,8 @@ export type HarnessReleaseArtifactErrorCode =
   | "NON_CANONICAL_MANIFEST"
   | "SOURCE_IDENTITY_MISMATCH"
   | "INVALID_COMPONENTS"
+  | "INVALID_OMISSION"
+  | "OMISSION_IDENTITY_MISMATCH"
   | "UNSAFE_PATH"
   | "MISSING_COMPONENT_MANIFEST"
   | "RAW_MANIFEST_SIZE_MISMATCH"
@@ -109,6 +135,31 @@ export const decodeHarnessReleaseArtifactIdentity = (input: unknown) => {
     return decodeArtifactIdentity(input);
   } catch {
     return failArtifact("INVALID_IDENTITY");
+  }
+};
+
+export const decodeHarnessReleaseOmissionIdentity = (
+  input: unknown,
+): HarnessReleaseOmissionIdentity => {
+  try {
+    const omission = decodeOmissionRecord(input);
+    const configuration = decodeOmissionConfiguration(omission.configuration);
+    return decodeOmissionIdentity({ configuration: { name: configuration.name } });
+  } catch {
+    return failArtifact("INVALID_OMISSION");
+  }
+};
+
+export const harnessReleaseOmissionIdentityFromProviderManifest = (
+  input: unknown,
+): HarnessReleaseOmissionIdentity | undefined => {
+  try {
+    const manifest = decodeRawProviderManifestRecord(input);
+    return Object.hasOwn(manifest, "omission")
+      ? decodeHarnessReleaseOmissionIdentity(manifest.omission)
+      : undefined;
+  } catch {
+    return failArtifact("INVALID_OMISSION");
   }
 };
 

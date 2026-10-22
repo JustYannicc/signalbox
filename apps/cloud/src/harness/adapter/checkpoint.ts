@@ -97,9 +97,17 @@ const stableSnapshot = (snapshot: ProviderAdapterV2ThreadSnapshot) =>
     (request) => request.status !== "pending" || request.responseCapability.type === "message",
   );
 
-export const saveComputer = (input: HarnessOpenInput, operation: "events" | "export") =>
+export const saveComputer = (
+  input: HarnessOpenInput,
+  operation: "events" | "export",
+  failureSignal: AbortSignal,
+) =>
   Effect.tryPromise({
-    try: (signal) => input.computer.save(signal),
+    try: (signal) => {
+      const saving = AbortSignal.any([signal, failureSignal]);
+      saving.throwIfAborted();
+      return input.computer.save(saving);
+    },
     catch: (cause) =>
       new HarnessError({
         operation,
@@ -114,6 +122,8 @@ export const saveCheckpoint = (
   providerThread: OrchestrationV2ProviderThread,
   operation: "events" | "export",
   requests: ReadonlyMap<string, OrchestrationV2RuntimeRequest>,
+  check: () => Effect.Effect<void, HarnessError>,
+  failureSignal: AbortSignal,
 ) =>
   Effect.gen(function* () {
     if (
@@ -130,7 +140,9 @@ export const saveCheckpoint = (
         }),
       );
     }
-    const revision = yield* saveComputer(input, operation);
+    yield* check();
+    const revision = yield* saveComputer(input, operation, failureSignal);
+    yield* check();
     const nativeSnapshot = yield* runtime.readThreadSnapshot({ providerThread }).pipe(
       Effect.mapError(
         (cause) =>
@@ -141,6 +153,7 @@ export const saveCheckpoint = (
           }),
       ),
     );
+    yield* check();
     for (const request of nativeSnapshot.runtimeRequests) {
       const prior = requests.get(request.id);
       if (

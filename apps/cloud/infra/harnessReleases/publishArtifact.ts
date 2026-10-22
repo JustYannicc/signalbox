@@ -6,6 +6,7 @@ import {
   type HarnessReleaseArtifactIdentity,
 } from "../../src/harnessReleases/HarnessReleaseArtifact.ts";
 import { harnessArtifactKey } from "../../src/harnessReleases/HarnessReleaseArtifactBucket.ts";
+import { matchesClaudeHostConfiguration } from "../../src/harness/ClaudeHostConfig.ts";
 import { artifactDirectorySource } from "./prepareArtifact.ts";
 
 export interface HarnessArtifactPublicationStore {
@@ -27,6 +28,17 @@ export const publishHarnessArtifact = async (
   const { store, projectId, prefix } = destination;
   const local = artifactDirectorySource(directory);
   const artifact = await openHarnessReleaseArtifact(selected, local);
+  if (artifact.manifest.omission) {
+    if (artifact.manifest.omission.configuration.name !== "product")
+      throw new Error("HARNESS_ARTIFACT_QUALIFICATION_ONLY");
+    const providerOmission = artifact.rawManifests.cli?.omission;
+    const providerConfiguration =
+      providerOmission !== null && typeof providerOmission === "object"
+        ? Reflect.get(providerOmission, "configuration")
+        : undefined;
+    if (!matchesClaudeHostConfiguration(providerConfiguration))
+      throw new Error("HARNESS_ARTIFACT_PRODUCT_CONFIGURATION_MISMATCH");
+  }
   const key = (path: string) => harnessArtifactKey(projectId, selected.artifactRef, path, prefix);
   const remote = {
     read: async (_reference: string, path: string) => store.read(key(path)),

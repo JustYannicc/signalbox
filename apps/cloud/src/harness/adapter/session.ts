@@ -6,7 +6,8 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { OrchestrationV2RuntimeRequest, RunId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import type * as Cause from "effect/Cause";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -18,6 +19,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { HarnessError, type HarnessOpenInput, type HarnessSession } from "../Harness.ts";
+import { type HarnessRuntimeReporter } from "../HarnessProcessLifetime.ts";
 import { checkpointThreadLoad } from "../HarnessThreadLoad.ts";
 import { saveCheckpoint, saveComputer, threadMatches, validateOpen } from "./checkpoint.ts";
 import { applyInterrupt, controlTurn } from "./controls.ts";
@@ -29,6 +31,8 @@ import {
   retainRequest,
 } from "./requestState.ts";
 import { makeTurn } from "./turns.ts";
+import { makeAdapterFailure } from "./failure.ts";
+import type { ActiveTurn } from "./state.ts";
 
 const isHarnessError = Schema.is(HarnessError);
 const encodeEventJson = Schema.encodeEffect(Schema.toCodecJson(ProviderAdapterV2Event));
@@ -38,6 +42,7 @@ export const openAdapterSession = (
   original: HarnessOpenInput,
   createRuntime: (
     input: HarnessOpenInput,
+    reporter: HarnessRuntimeReporter,
   ) => Effect.Effect<
     ProviderAdapterV2SessionRuntime,
     HarnessError | ProviderAdapterV2Error,
@@ -51,7 +56,7 @@ export const openAdapterSession = (
       const output = yield* Queue.unbounded<RunnerItem, HarnessError | Cause.Done>();
       const lock = yield* Semaphore.make(1);
       let disposed = false;
-      let failure: HarnessError | undefined;
+      let closing = false;
       const requests = new Map<string, OrchestrationV2RuntimeRequest>(
         input.checkpoint?.snapshot.runtimeRequests.map((request) => [request.id, request]),
       );
@@ -61,12 +66,19 @@ export const openAdapterSession = (
         providerThread: undefined,
         revision: undefined,
       };
+      const clock = yield* Clock.Clock;
+      const failure = makeAdapterFailure(output, state, () => clock.currentTimeMillisUnsafe());
+      const poison = (error: HarnessError) =>
+        Effect.sync(() => {
+          if (!closing) failure.record(error);
+        });
+      // Runtime finalizers drain the process's last reports before this sink closes.
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           disposed = true;
         }).pipe(Effect.andThen(Queue.end(output)), Effect.asVoid),
       );
-      const runtime = yield* createRuntime(input).pipe(
+      const runtime = yield* createRuntime(input, failure.reporter).pipe(
         Effect.mapError((cause) =>
           isHarnessError(cause)
             ? cause
@@ -123,24 +135,15 @@ export const openAdapterSession = (
       }
       const check = (operation: HarnessError["operation"]) =>
         Effect.suspend(() =>
-          disposed
-            ? Effect.fail(new HarnessError({ operation, message: "Harness is disposed." }))
-            : failure !== undefined
-              ? Effect.fail(failure)
+          failure.current !== undefined
+            ? Effect.fail(failure.current)
+            : disposed || closing
+              ? Effect.fail(new HarnessError({ operation, message: "Harness is disposed." }))
               : Effect.void,
         );
-      const poison = (error: HarnessError) =>
-        Effect.gen(function* () {
-          if (disposed) return;
-          failure ??= error;
-          if (state.active !== undefined) {
-            yield* Deferred.fail(state.active.began, failure);
-            yield* Deferred.fail(state.active.started, failure);
-          }
-          yield* Queue.fail(output, failure);
-        });
       const checkpoint = (operation: "events" | "export") =>
         Effect.gen(function* () {
+          yield* check(operation);
           if (state.providerThread === undefined) {
             return yield* Effect.fail(
               new HarnessError({ operation, message: "No provider thread has been loaded." }),
@@ -152,12 +155,15 @@ export const openAdapterSession = (
             state.providerThread,
             operation,
             requests,
+            () => check(operation),
+            failure.signal,
           );
+          yield* check(operation);
           state.providerThread = saved.snapshot.providerThread;
           state.revision = saved.revision;
           return saved;
         });
-      const publish = (event: ProviderAdapterV2Event, runId: RunId) =>
+      const publish = (event: ProviderAdapterV2Event, runId: RunId, completed?: ActiveTurn) =>
         encodeEventJson(event).pipe(
           Effect.flatMap(eventRecord),
           Effect.mapError(
@@ -169,7 +175,14 @@ export const openAdapterSession = (
               }),
           ),
           Effect.flatMap((encoded) =>
-            Queue.offer(output, { kind: "provider", runId, event: encoded }),
+            Effect.sync(() => {
+              if (disposed || closing || failure.current !== undefined) return;
+              if (completed !== undefined) {
+                state.last = completed;
+                state.active = undefined;
+              }
+              Queue.offerUnsafe(output, { kind: "provider", runId, event: encoded });
+            }),
           ),
         );
       const onEvent = (event: ProviderAdapterV2Event) =>
@@ -183,12 +196,19 @@ export const openAdapterSession = (
             Effect.gen(function* () {
               if (
                 disposed ||
-                failure !== undefined ||
+                closing ||
+                failure.current !== undefined ||
                 (state.active ?? state.last) !== current ||
                 event.driver !== runtime.driver ||
                 !belongsToTurn(event, current)
               )
                 return;
+              if (event.type === "turn_item.updated") {
+                current.nextItemOrdinal = Math.max(
+                  current.nextItemOrdinal,
+                  event.turnItem.ordinal + 1,
+                );
+              }
               if (event.type === "provider_thread.updated") {
                 state.providerThread = current.providerThread = event.providerThread;
               }
@@ -227,11 +247,18 @@ export const openAdapterSession = (
                 for (const request of cancelRequests(current, requests, yield* DateTime.now))
                   yield* publish(requestEvent(request, current), current.input.runId);
                 // Computer owns the revision. Runner drive changes require real Drive evidence.
-                state.revision = yield* saveComputer(input, "events");
-                state.last = current;
-                state.active = undefined;
+                yield* check("events");
+                const revision = yield* saveComputer(input, "events", failure.signal);
+                yield* check("events");
+                state.revision = revision;
               }
-              yield* publish(event, current.input.runId);
+              // One process serves several turns. Only unpublished work belongs to a later
+              // shutdown omission; publishing the terminal ends this turn's failure boundary.
+              yield* publish(
+                event,
+                current.input.runId,
+                event.type === "turn.terminal" ? current : undefined,
+              );
             }),
           );
         });
@@ -270,7 +297,7 @@ export const openAdapterSession = (
           Effect.andThen(effect.pipe(Effect.forkIn(scope), Effect.flatMap(Fiber.join))),
         );
       const markDisposed = Effect.gen(function* () {
-        disposed = true;
+        closing = true;
         if (state.active !== undefined) {
           const error = new HarnessError({
             operation: "dispose",
@@ -280,7 +307,7 @@ export const openAdapterSession = (
           yield* Deferred.fail(state.active.started, error);
         }
       });
-      const dispose = yield* Effect.cached(
+      const close = yield* Effect.cached(
         markDisposed.pipe(
           Effect.andThen(Scope.close(scope, Exit.void)),
           Effect.catchCause((cause) =>
@@ -293,6 +320,13 @@ export const openAdapterSession = (
             ),
           ),
           Effect.uninterruptible,
+        ),
+      );
+      const dispose = close.pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            failure.shutdown === undefined ? Effect.void : Effect.fail(failure.shutdown),
+          ),
         ),
       );
       yield* Effect.addFinalizer(() => markDisposed);

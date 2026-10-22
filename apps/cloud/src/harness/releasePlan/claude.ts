@@ -1,3 +1,6 @@
+import * as Schema from "effect/Schema";
+import { ReleaseOmissionConfiguration } from "@t3tools/contracts/harnessReleaseOmission";
+import { matchesClaudeHostConfiguration } from "./hostConfiguration.ts";
 import { decodeCliManifest, decodeSdkManifest } from "./schemas.ts";
 import type {
   ClaudeReleasePlan,
@@ -15,11 +18,43 @@ import {
   verifiedFile,
 } from "./validation.ts";
 
+const decodeOmission = Schema.decodeUnknownSync(
+  Schema.Struct({
+    schemaVersion: Schema.Literal(1),
+    configuration: ReleaseOmissionConfiguration,
+  }),
+  { reportInput: false },
+);
+
 export function claudePlan(input: HarnessReleasePlanInput): ClaudeReleasePlan {
   const cliPath = componentManifest(input, "cli");
   const sdkPath = componentManifest(input, "sdk");
   const cli = rawManifest(decodeCliManifest, input.rawManifests.cli);
   const sdk = rawManifest(decodeSdkManifest, input.rawManifests.sdk);
+  let omissionConfiguration: ReleaseOmissionConfiguration | undefined;
+  if (cli.omission !== undefined) {
+    try {
+      omissionConfiguration = decodeOmission(cli.omission).configuration;
+    } catch (cause) {
+      throw new HarnessReleasePlanError("Invalid Claude release omission", cause);
+    }
+  }
+  if (
+    (cli.omission === undefined) !== (input.manifest.omission === undefined) ||
+    omissionConfiguration?.name !== input.manifest.omission?.configuration.name
+  ) {
+    throw new HarnessReleasePlanError(
+      "Claude omission identity does not match the common manifest",
+    );
+  }
+  if (omissionConfiguration && omissionConfiguration.name !== "product") {
+    throw new HarnessReleasePlanError("Claude release configuration is not product-enabled");
+  }
+  if (omissionConfiguration && !matchesClaudeHostConfiguration(omissionConfiguration)) {
+    throw new HarnessReleasePlanError(
+      "Claude release configuration does not match the product host",
+    );
+  }
   for (const name of [...Object.keys(cli.modules), ...Object.keys(sdk.modules)])
     relativeModuleName(name);
   if (cli.mainExport !== "launch" || cli.embeddedEntrypointExport !== "launch")

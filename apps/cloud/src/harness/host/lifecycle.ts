@@ -210,11 +210,13 @@ export const createHostLifecycle = <G>(
               );
             native = { binding, session, signal };
             return {
-              open: (harness: HarnessOpenInput) =>
+              open: (harness: HarnessOpenInput, reporter) =>
                 Effect.gen(function* () {
-                  const runtime = yield* binding.factory
-                    .open({ ...harness, loadedRelease: loaded })
-                    .pipe(Scope.provide(scope));
+                  // Native cleanup shares the adapter's Scope so shutdown reports reach its live sink.
+                  const runtime = yield* binding.factory.open(
+                    { ...harness, loadedRelease: loaded },
+                    reporter,
+                  );
                   if (harness.checkpoint !== undefined) {
                     const access = attempt.initialAccess;
                     if (access === undefined)

@@ -249,8 +249,8 @@ export function makeClaudeNativeHostBinding(
       lastEpoch = configuration.epoch;
     });
 
-  const baseFactory = {
-    open: (input: HarnessOpenInput) =>
+  const baseFactory: NativeHostBinding["factory"] = {
+    open: (input: HarnessOpenInput, reporter) =>
       Effect.suspend(() => {
         if (opened)
           return Effect.fail(
@@ -268,7 +268,7 @@ export function makeClaudeNativeHostBinding(
               ? mcp.fetch(request)
               : input.modelTransport(request),
         };
-        return isolate.open(routedInput).pipe(
+        return isolate.open(routedInput, reporter).pipe(
           Effect.map((runtime): NativeRuntime => {
             native = runtime;
             return {

@@ -4,8 +4,10 @@ import * as NodePath from "node:path";
 import { verifyArtifactNodeBuiltins } from "./verifyNodeBuiltins.ts";
 import { OwnedArtifactOutput, type ArtifactFileSystem } from "./prepareArtifact.output.ts";
 import {
+  harnessReleaseOmissionIdentityFromProviderManifest,
   openHarnessReleaseArtifact,
   serializeHarnessReleaseArtifactManifest,
+  type HarnessReleaseOmissionIdentity,
   type HarnessReleaseArtifactIdentity,
 } from "../../src/harnessReleases/HarnessReleaseArtifact.ts";
 
@@ -162,6 +164,7 @@ export const prepareHarnessArtifactWithFileSystem = async (
 
   const files: Record<string, { bytes: number; sha256: string }> = {};
   const components: Partial<Record<"codex" | "cli" | "sdk", { manifest: string }>> = {};
+  let omission: HarnessReleaseOmissionIdentity | undefined;
   const copyTree = async (
     root: string,
     component: (typeof componentNames)[number],
@@ -209,6 +212,16 @@ export const prepareHarnessArtifactWithFileSystem = async (
         if (!childStat.isFile()) throw new Error("HARNESS_ARTIFACT_SPECIAL_FILE");
 
         const bytes = await readSourceFile(filesystem, root, childAbsolute, childStat);
+        if (component === "cli" && childRelative === "manifest.json") {
+          // Keep the full artifact reader as the validation boundary so malformed source
+          // manifests still fail only after the private artifact has been assembled.
+          try {
+            const manifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+            omission = harnessReleaseOmissionIdentityFromProviderManifest(manifest);
+          } catch {
+            omission = undefined;
+          }
+        }
         const key = `${component}/${childRelative}`;
         files[key] = { bytes: bytes.byteLength, sha256: digest(bytes) };
         const destination = NodePath.join(
@@ -242,6 +255,7 @@ export const prepareHarnessArtifactWithFileSystem = async (
       computer: input.computer,
       components,
       files,
+      ...(omission === undefined ? {} : { omission }),
     });
     const artifactHash = digest(manifestBytes);
     const identity = {

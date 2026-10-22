@@ -31,6 +31,28 @@ const finish = (f: Effect.Success<typeof running>) =>
   });
 
 describe("AdapterHarness lifecycle", () => {
+  it.effect("fails an active turn after a release module is omitted", () =>
+    Effect.gen(function* () {
+      const f = yield* running;
+      const event = {
+        code: "RELEASE_MODULE_OMITTED",
+        inputPath: "bun-graph:/chunks/lazy.js",
+        tier: "configuration",
+      } as const;
+      f.reportReleaseModuleOmitted(event);
+      expect((yield* f.next).kind).toBe("log");
+      yield* f.terminal();
+      yield* f.endEvents;
+      const collector = yield* Fiber.join(f.collector);
+      expect(Exit.isFailure(collector)).toBe(true);
+      expect(
+        f.events.filter((item) => item.kind === "provider" && item.event.type === "turn.terminal"),
+      ).toMatchObject([{ event: { status: "failed", failure: { code: event.code } } }]);
+      expect(f.calls).not.toContain("save");
+      expect(Result.isFailure(yield* f.session.export().pipe(Effect.result))).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "passes host inputs through and publishes started before provider JSON, saving before terminal",
     () =>

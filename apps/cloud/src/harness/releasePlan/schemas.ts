@@ -54,6 +54,7 @@ export const decodeCliManifest = Schema.decodeUnknownSync(
     assets: Schema.Record(NonEmpty, Asset),
     requiredHostModules: RequiredHostModules,
     environmentPackageModules: Schema.Record(NonEmpty, FileDescriptor),
+    omission: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
     bytes: ByteCount,
   }),
 );

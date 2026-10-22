@@ -6,6 +6,8 @@ import * as NodeUtil from "node:util";
 import { isNodeErrorCode } from "./guards.ts";
 import { assertExtractedBuiltinCoverage } from "./nodeBuiltinGate.ts";
 import { rebundleClaudeRelease } from "../claude-bunfs/rebundle.ts";
+import type { ReleaseOmissionOptions } from "../claude-bunfs/release-omission.ts";
+import { readClaudeOmission } from "./claudeOmission.ts";
 import type { BuiltinCapabilityManifest } from "../claude-bunfs/builtin-gap.ts";
 import {
   freezeArtifact,
@@ -32,6 +34,7 @@ export interface BuildClaudeReleaseOptions {
   readonly result?: string;
   readonly repository?: string;
   readonly capabilities?: BuiltinCapabilityManifest;
+  readonly omission?: ReleaseOmissionOptions;
 }
 
 function stringList(value: unknown, code: string): string[] {
@@ -174,6 +177,7 @@ export async function buildClaudeRelease(
       environmentPackageModules: inputs.environmentPackageModules,
       requireBootstrap: inputs.requireBootstrap,
       deferInitialization: true,
+      ...(options.omission ? { omission: options.omission } : {}),
     });
     if (
       built.manifest.mainExport !== "launch" ||
@@ -277,6 +281,9 @@ async function main() {
       output: { type: "string" },
       result: { type: "string" },
       capabilities: { type: "string" },
+      "omit-unreachable": { type: "boolean" },
+      "coverage-corpus": { type: "string" },
+      "host-configuration": { type: "string" },
     },
     allowPositionals: false,
     strict: true,
@@ -287,7 +294,7 @@ async function main() {
   const result = values.result;
   if (!identityPath || !extracted || !output || !result)
     throw new Error(
-      "Usage: buildClaude.ts --identity <identity.json> --extracted <directory> --output <new-directory> --result <new-result.json> [--capabilities <runtime-capabilities.json>]",
+      "Usage: buildClaude.ts --identity <identity.json> --extracted <directory> --output <new-directory> --result <new-result.json> [--capabilities <runtime-capabilities.json>] [--omit-unreachable] [--coverage-corpus <corpus.json>] [--host-configuration product|qualification]",
     );
   const identity = parseOfficialReleaseIdentity(
     JSON.parse(await NodeFSP.readFile(identityPath, "utf8")),
@@ -297,12 +304,18 @@ async function main() {
         JSON.parse(await NodeFSP.readFile(values.capabilities, "utf8")),
       )
     : undefined;
+  const omission = await readClaudeOmission({
+    enabled: Boolean(values["omit-unreachable"]),
+    ...(values["coverage-corpus"] ? { corpusPath: values["coverage-corpus"] } : {}),
+    ...(values["host-configuration"] ? { configurationName: values["host-configuration"] } : {}),
+  });
   await buildClaudeRelease({
     identity,
     extracted,
     output,
     result,
     ...(capabilities ? { capabilities } : {}),
+    ...(omission ? { omission } : {}),
   });
 }
 

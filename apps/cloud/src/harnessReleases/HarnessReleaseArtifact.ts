@@ -5,6 +5,7 @@ import {
   decodeRawProviderManifest,
   deepFreeze,
   failArtifact,
+  harnessReleaseOmissionIdentityFromProviderManifest,
   HarnessReleaseArtifactError,
   HarnessReleaseArtifactManifestSchema,
   serializeHarnessReleaseArtifactManifest,
@@ -12,16 +13,23 @@ import {
   type DeepReadonly,
   type HarnessReleaseArtifactErrorCode,
   type HarnessReleaseArtifactManifest,
+  type HarnessReleaseOmissionIdentity,
 } from "./internal/artifactManifest.ts";
 
 export const HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH = "manifest.json";
 
 export {
+  decodeRawProviderManifest,
+  harnessReleaseOmissionIdentityFromProviderManifest,
   HarnessReleaseArtifactError,
   HarnessReleaseArtifactManifestSchema,
   serializeHarnessReleaseArtifactManifest,
 };
-export type { HarnessReleaseArtifactErrorCode, HarnessReleaseArtifactManifest };
+export type {
+  HarnessReleaseArtifactErrorCode,
+  HarnessReleaseArtifactManifest,
+  HarnessReleaseOmissionIdentity,
+};
 
 export interface HarnessReleaseArtifactIdentity {
   readonly artifactRef: string;
@@ -103,6 +111,17 @@ export const openHarnessReleaseArtifact = async (
     else if (component.manifest.startsWith("cli/")) rawManifests.cli = parsed;
     else if (component.manifest.startsWith("sdk/")) rawManifests.sdk = parsed;
     else failArtifact("INVALID_COMPONENTS");
+  }
+
+  const providerOmission =
+    rawManifests.cli === undefined
+      ? undefined
+      : harnessReleaseOmissionIdentityFromProviderManifest(rawManifests.cli);
+  if (
+    manifest.omission?.configuration.name !== providerOmission?.configuration.name ||
+    (manifest.omission === undefined) !== (providerOmission === undefined)
+  ) {
+    failArtifact("OMISSION_IDENTITY_MISMATCH");
   }
 
   const verifiedReads = new Map<string, Promise<Uint8Array>>();

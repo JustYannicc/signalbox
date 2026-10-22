@@ -109,6 +109,42 @@ describe("planHarnessRelease", () => {
     expect(plan.sdk.version).toBe("next-sdk");
   });
 
+  it("preserves omission configuration identity in the accepted Claude plan", () => {
+    const input = claudeInput();
+    const omission = {
+      schemaVersion: 1,
+      configuration: { name: "product", env: {} },
+      configurationReplacements: {},
+      configurationRemoved: [],
+      corpus: null,
+      omittedModules: [],
+    };
+    Reflect.set(input.rawManifests.cli, "omission", omission);
+    Reflect.set(input.manifest, "omission", { configuration: { name: "product" } });
+
+    const plan = planHarnessRelease(input);
+    expect(plan).not.toHaveProperty("omission");
+    expect(input.rawManifests.cli).toHaveProperty("omission", omission);
+  });
+
+  it.each([
+    ["qualification", "Claude release configuration is not product-enabled"],
+    ["unknown", "Invalid Claude release omission"],
+  ])("rejects %s configuration from product planning", (name, message) => {
+    const input = claudeInput();
+    Reflect.set(input.rawManifests.cli, "omission", {
+      schemaVersion: 1,
+      configuration: { name, env: {} },
+      configurationReplacements: {},
+      configurationRemoved: [],
+      corpus: null,
+      omittedModules: [],
+    });
+    Reflect.set(input.manifest, "omission", { configuration: { name } });
+
+    expect(() => planHarnessRelease(input)).toThrow(message);
+  });
+
   it.each([
     ["cli", "schemaVersion", 2],
     ["sdk", "schemaVersion", 2],

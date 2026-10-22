@@ -11,8 +11,12 @@ import { createDeferredInitialization } from "./deferred-initialization.ts";
 import { entryExports, planSingleModule } from "./single-module.ts";
 import { assertOneByteModules, inlineLegalNotices } from "./one-byte-output.ts";
 import { type BunGraphOptions, createBunGraphPlugin, NODE_BUILTINS } from "./bun-graph-plugin.ts";
+import { createReleaseOmission } from "./rebundle-omission.ts";
+import type { ReleaseOmissionOptions } from "./release-omission.ts";
+import { parsePinnedEnvironmentSourceId, pinnedEnvironmentSourceId } from "./pinned-environment.ts";
 
 export interface RebundleOptions extends BunGraphOptions {
+  readonly omission?: ReleaseOmissionOptions;
   readonly extracted: string;
   readonly output: string;
   readonly version: string;
@@ -53,6 +57,26 @@ export async function rebundle(options: RebundleOptions) {
     new Set(javascript.map((module) => module.name)),
   );
   const sourceByName = new Map(decoded.map((module) => [module.name, module.source]));
+  const omission = options.omission
+    ? createReleaseOmission({
+        options: options.omission,
+        binarySha256: input.manifest.binary.sha256,
+        sources: sourceByName,
+        resolve: (specifier, importer) => {
+          const location = parsePinnedEnvironmentSourceId(importer);
+          if (Object.hasOwn(options.layerModules ?? {}, specifier))
+            return pinnedEnvironmentSourceId("signalbox-layer", specifier);
+          if (Object.hasOwn(options.environmentPackageModules ?? {}, specifier))
+            return pinnedEnvironmentSourceId("signalbox-environment-package", specifier);
+          const name = specifier.startsWith(".")
+            ? NodePath.posix.resolve(NodePath.posix.dirname(location.path), specifier)
+            : specifier;
+          const module = input.byName.get(name) ?? input.byKey.get(name);
+          return module ? pinnedEnvironmentSourceId("bun-graph", module.name) : undefined;
+        },
+        commonJs: (path) => input.byName.get(path)?.format === 2,
+      })
+    : undefined;
   const deferred = options.deferInitialization ? createDeferredInitialization() : undefined;
   const deferSource = (source: string, importer: string) =>
     deferred
@@ -88,6 +112,8 @@ export async function rebundle(options: RebundleOptions) {
     sources: sourceByName,
     options,
     deferSource,
+    ...(omission ? { observeSource: omission.observeSource } : {}),
+    ...(omission ? { prepareSource: omission.prepareSource } : {}),
   });
   const { loaded, requiredHostModules } = graph;
   const output = NodePath.resolve(options.output);
@@ -96,6 +122,7 @@ export async function rebundle(options: RebundleOptions) {
     entryNames: "[dir]/[name]",
     bundle: true,
     minifyWhitespace: true,
+    ...(omission ? { minifySyntax: true, treeShaking: true } : {}),
     format: "esm",
     platform: "node",
     target: "es2022",
@@ -114,13 +141,15 @@ export async function rebundle(options: RebundleOptions) {
   } satisfies Esbuild.BuildOptions;
   // Split output still drives verification: lazy __esm init follows static reachability, so each
   // entry's split graph is what that entry evaluates.
-  const split = await Esbuild.build({
-    ...shared,
-    entryPoints: entries,
-    chunkNames: "chunks/[name]-[hash]",
-    splitting: true,
-    plugins: [...(deferred ? [deferred.plugin] : []), graph.plugin],
-  });
+  const buildSplit = () =>
+    Esbuild.build({
+      ...shared,
+      entryPoints: entries,
+      chunkNames: "chunks/[name]-[hash]",
+      splitting: true,
+      plugins: [...(deferred ? [deferred.plugin] : []), graph.plugin],
+    });
+  const split = await (omission ? omission.plan(buildSplit) : buildSplit());
   const missingPackages = [
     ...new Set(
       Object.values(split.metafile.outputs).flatMap((output) =>
@@ -164,13 +193,12 @@ export async function rebundle(options: RebundleOptions) {
       contents,
     });
   }
+  const publishedFiles = published.outputFiles.map((file) => ({
+    path: NodePath.relative(output, file.path).split(NodePath.sep).join("/"),
+    contents: file.contents,
+  }));
   const modules = [
-    ...inlineLegalNotices(
-      published.outputFiles.map((file) => ({
-        path: NodePath.relative(output, file.path).split(NodePath.sep).join("/"),
-        contents: file.contents,
-      })),
-    ),
+    ...inlineLegalNotices(publishedFiles),
     ...facades,
     ...Object.entries(options.runtimeModules ?? {}).map(([path, source]) => ({
       path,
@@ -195,6 +223,7 @@ export async function rebundle(options: RebundleOptions) {
     assets: embeddedAssets,
     requiredHostModules: [...requiredHostModules],
     sourceModules: [...loaded],
+    ...(omission ? { omission: omission.manifest() } : {}),
     metafile: published.metafile,
   });
 }

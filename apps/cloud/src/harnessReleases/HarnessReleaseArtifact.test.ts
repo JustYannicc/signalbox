@@ -31,6 +31,20 @@ const asRecord = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = asRecord(value);
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) throw new Error("Expected JSON value");
+  return serialized;
+};
+
 const expectCode = (operation: Promise<unknown>, code: string) =>
   expect(operation).rejects.toMatchObject({ code });
 
@@ -115,6 +129,30 @@ const createFixture = async (harness: "codex" | "claude-code" = "codex") => {
       mutate(value);
       await installManifestBytes(encoder.encode(JSON.stringify(value)));
     },
+    async mutateClaudeProviderManifest(mutate: (value: Record<string, unknown>) => void) {
+      const bytes = files.get("cli/manifest.json");
+      if (!bytes) throw new Error("Missing CLI manifest fixture");
+      const providerManifest = asRecord(JSON.parse(decoder.decode(bytes)));
+      mutate(providerManifest);
+      const providerBytes = encoder.encode(JSON.stringify(providerManifest));
+      files.set("cli/manifest.json", providerBytes);
+      const envelopeBytes = files.get(HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH);
+      if (!envelopeBytes) throw new Error("Missing common manifest fixture");
+      const envelope = asRecord(JSON.parse(decoder.decode(envelopeBytes)));
+      asRecord(envelope.files)["cli/manifest.json"] = {
+        bytes: providerBytes.byteLength,
+        sha256: await sha256(providerBytes),
+      };
+      envelope.omission = { configuration: { name: "product" } };
+      await installManifestBytes(encoder.encode(canonicalJson(envelope)));
+    },
+    async mutateCanonicalEnvelopeAndRehash(mutate: (value: Record<string, unknown>) => void) {
+      const bytes = files.get(HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH);
+      if (!bytes) throw new Error("Missing common manifest fixture");
+      const envelope = asRecord(JSON.parse(decoder.decode(bytes)));
+      mutate(envelope);
+      await installManifestBytes(encoder.encode(canonicalJson(envelope)));
+    },
   };
 };
 
@@ -166,6 +204,44 @@ describe("harness release artifact reader", () => {
     expect(openedClaude.manifest.files[CLI_MODULE_PATH]?.bytes).toBe(claude.payload.byteLength);
     expect(await openedClaude.read(CLI_MODULE_PATH)).toEqual(claude.payload);
     expect(claude.reads).toContain(CLI_MODULE_PATH);
+  });
+
+  it("rejects a rehashed common qualification tag that disagrees with the CLI manifest", async () => {
+    const fixture = await createFixture("claude-code");
+    await fixture.mutateClaudeProviderManifest((manifest) => {
+      manifest.omission = {
+        schemaVersion: 1,
+        configuration: { name: "product", env: {} },
+        configurationReplacements: {},
+        configurationRemoved: [],
+        corpus: null,
+        omittedModules: [],
+      };
+    });
+    await fixture.mutateCanonicalEnvelopeAndRehash((envelope) => {
+      asRecord(asRecord(envelope.omission).configuration).name = "qualification";
+    });
+
+    await expectOpenCode(fixture, "OMISSION_IDENTITY_MISMATCH");
+  });
+
+  it("rejects unknown omission configuration names in raw and common manifests", async () => {
+    const fixture = await createFixture("claude-code");
+    await fixture.mutateClaudeProviderManifest((manifest) => {
+      manifest.omission = {
+        schemaVersion: 1,
+        configuration: { name: "preview", env: {} },
+        configurationReplacements: {},
+        configurationRemoved: [],
+        corpus: null,
+        omittedModules: [],
+      };
+    });
+    await fixture.mutateCanonicalEnvelopeAndRehash((envelope) => {
+      asRecord(asRecord(envelope.omission).configuration).name = "preview";
+    });
+
+    await expectOpenCode(fixture, "MANIFEST_INVALID");
   });
 
   it("requires Claude CLI and SDK components to name their own manifests", async () => {

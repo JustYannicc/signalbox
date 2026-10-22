@@ -8,6 +8,7 @@ import {
   createProofIdentity,
   createProofProcessEnvironment,
 } from "./proofEnvironment.ts";
+import { CLAUDE_QUALIFICATION_HOST_CONFIG } from "./hostConfiguration.ts";
 
 const require = NodeModule.createRequire(import.meta.url);
 
@@ -53,31 +54,7 @@ describe("proof package resolver", () => {
 
 describe("Claude full-tools proof configuration", () => {
   it("keeps the existing environment except SIMPLE and enables the documented tools list", () => {
-    expect(createProofProcessEnvironment()).toEqual({
-      HOME: "/home/claude",
-      TMPDIR: "/tmp",
-      PATH: "/usr/local/bin:/usr/bin:/bin",
-      CLAUDE_CODE_SHELL: "/bin/bash",
-      USE_BUILTIN_RIPGREP: "0",
-      TERM: "dumb",
-      NO_COLOR: "1",
-      ANTHROPIC_API_KEY: "mock-only-dummy-key",
-      ANTHROPIC_BASE_URL: "http://mock.anthropic.invalid",
-      DISABLE_TELEMETRY: "1",
-      DISABLE_ERROR_REPORTING: "1",
-      DISABLE_AUTOUPDATER: "1",
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: "1",
-      CI: "1",
-      HTTP_PROXY: "",
-      HTTPS_PROXY: "",
-      ALL_PROXY: "",
-      http_proxy: "",
-      https_proxy: "",
-      all_proxy: "",
-      NO_PROXY: "*",
-      no_proxy: "*",
-    });
+    expect(createProofProcessEnvironment()).toEqual(CLAUDE_QUALIFICATION_HOST_CONFIG.env);
     const identity = createProofIdentity("run all configured tools");
     expect(identity.argv).toEqual([
       "claude",

@@ -79,6 +79,7 @@ function coldSetup(override?: "prepared" | "both") {
       const modelRequests: string[] = [];
       const installs: ClaudeAgentSdkMcpServers[] = [];
       const order: string[] = [];
+      const hasPreparedOverride = override === "prepared" || override === "both";
       let fetchedMcp = "";
       let fetchedModel = "";
       let queryOptions: unknown;
@@ -109,7 +110,7 @@ function coldSetup(override?: "prepared" | "both") {
         process: {
           ...f.input,
           computer: services.computer,
-          ...(override === undefined
+          ...(!hasPreparedOverride
             ? {}
             : {
                 prepared: (specifier: string) => {
@@ -160,13 +161,15 @@ function coldSetup(override?: "prepared" | "both") {
           return new Response("ordinary-model");
         },
       };
-      const runtime = yield* binding.factory.open(openInput);
       const load = nativeTurnThreadLoad(
         services.turn,
         services.session,
         services.session.providerSessionId,
       );
       const controller = new AbortController();
+      const runtime = yield* binding.factory.open(openInput, {
+        releaseModuleOmitted: () => undefined,
+      });
       yield* binding.configureMcp(
         {
           epoch: 1,
@@ -262,29 +265,35 @@ function resumeSetup() {
           fetch: async () => new Response("unused"),
         },
       });
-      const runtime = yield* binding.factory.open({
-        release: {
-          harness: "claude-code",
-          version: "test",
-          manifestSha256: "resume-binding-test",
-          modules: { entry: { bytes: 1, sha256: "entry" } },
-        },
-        session: services.session,
-        computer: services.computer,
-        modelTransport: async () => new Response("unused"),
-      });
-      const secondOpen = yield* Effect.exit(
-        binding.factory.open({
+      const runtime = yield* binding.factory.open(
+        {
           release: {
             harness: "claude-code",
             version: "test",
-            manifestSha256: "second-open",
+            manifestSha256: "resume-binding-test",
             modules: { entry: { bytes: 1, sha256: "entry" } },
           },
-          session: { ...services.session, threadId: ThreadId.make("other-thread") },
+          session: services.session,
           computer: services.computer,
           modelTransport: async () => new Response("unused"),
-        }),
+        },
+        { releaseModuleOmitted: () => undefined },
+      );
+      const secondOpen = yield* Effect.exit(
+        binding.factory.open(
+          {
+            release: {
+              harness: "claude-code",
+              version: "test",
+              manifestSha256: "second-open",
+              modules: { entry: { bytes: 1, sha256: "entry" } },
+            },
+            session: { ...services.session, threadId: ThreadId.make("other-thread") },
+            computer: services.computer,
+            modelTransport: async () => new Response("unused"),
+          },
+          { releaseModuleOmitted: () => undefined },
+        ),
       );
       NodeAssert.equal(secondOpen._tag, "Failure");
       const requestedThread = {

@@ -27,6 +27,7 @@ const decodeMap = Schema.decodeUnknownSync(
 const encodeHarnessError = Schema.encodeUnknownSync(Schema.toCodecJson(HarnessError));
 const layer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer);
 const servers = { executor: { url: "https://harness-mcp.invalid/owner/1/1/0" } };
+const reporter = { releaseModuleOmitted: () => undefined };
 const ensure: NativeThreadLoad = { method: "ensureThread", input: session };
 const resume = {
   method: "resumeThread" as const,
@@ -43,7 +44,7 @@ describe("Codex native binding", () => {
         await reply.promise;
       });
       launch.mockResolvedValue(f.peer.process);
-      const runtime = yield* f.binding.factory.open(f.harness);
+      const runtime = yield* f.binding.factory.open(f.harness, reporter);
       let finished = false;
       const configuring = yield* f.binding
         .configureMcp({ epoch: 1, servers }, new AbortController().signal, load)
@@ -77,7 +78,7 @@ describe("Codex native binding", () => {
     Effect.gen(function* () {
       const f = yield* bindingFixture();
       launch.mockResolvedValue(f.peer.process);
-      const runtime = yield* f.binding.factory.open(f.harness);
+      const runtime = yield* f.binding.factory.open(f.harness, reporter);
       yield* f.binding.configureMcp(
         { epoch: 1, servers: {} },
         new AbortController().signal,
@@ -93,7 +94,7 @@ describe("Codex native binding", () => {
     Effect.gen(function* () {
       const f = yield* bindingFixture();
       launch.mockResolvedValue(f.peer.process);
-      yield* f.binding.factory.open(f.harness);
+      yield* f.binding.factory.open(f.harness, reporter);
       const controller = new AbortController();
       controller.abort();
       expect(
@@ -123,7 +124,7 @@ describe("Codex native binding", () => {
         await reply.promise;
       });
       launch.mockResolvedValue(f.peer.process);
-      const runtime = yield* f.binding.factory.open(f.harness);
+      const runtime = yield* f.binding.factory.open(f.harness, reporter);
       const controller = new AbortController();
       const configuring = yield* f.binding
         .configureMcp({ epoch: 1, servers }, controller.signal, ensure)
@@ -153,7 +154,7 @@ describe("Codex native binding", () => {
         await reply.promise;
       });
       launch.mockResolvedValue(f.peer.process);
-      yield* f.binding.factory.open(f.harness);
+      yield* f.binding.factory.open(f.harness, reporter);
       const signal = new AbortController().signal;
       const supplied = { executor: { url: servers.executor.url } };
       const configuring = yield* f.binding
@@ -182,7 +183,7 @@ describe("Codex native binding", () => {
     Effect.gen(function* () {
       const f = yield* bindingFixture();
       launch.mockResolvedValue(f.peer.process);
-      const runtime = yield* f.binding.factory.open(f.harness);
+      const runtime = yield* f.binding.factory.open(f.harness, reporter);
       expect(Exit.isFailure(yield* Effect.exit(runtime.ensureThread(session)))).toBe(true);
       yield* f.binding.configureMcp({ epoch: 1, servers }, new AbortController().signal, ensure);
       expect(Exit.isFailure(yield* Effect.exit(runtime.resumeThread(resume.input)))).toBe(true);
@@ -205,8 +206,8 @@ describe("Codex native binding", () => {
     Effect.gen(function* () {
       const f = yield* bindingFixture();
       launch.mockResolvedValue(f.peer.process);
-      yield* f.binding.factory.open(f.harness);
-      const failure = yield* f.binding.factory.open(f.harness).pipe(Effect.flip);
+      yield* f.binding.factory.open(f.harness, reporter);
+      const failure = yield* f.binding.factory.open(f.harness, reporter).pipe(Effect.flip);
       expect(encodeHarnessError(failure)).toEqual({
         _tag: "HarnessError",
         operation: "open",

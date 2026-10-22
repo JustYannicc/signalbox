@@ -47,6 +47,49 @@ describe("loadHarnessRelease", () => {
     expect(ready.plan.preparedModules["cli/cli.js"]?.path).toBe("cli/main/cli.js");
   });
 
+  it("rejects a rehashed qualification artifact on the product load path", async () => {
+    const fixture = await claudeFixture({
+      omission: {
+        schemaVersion: 1,
+        configuration: { name: "qualification", env: {} },
+        configurationReplacements: {},
+        configurationRemoved: [],
+        corpus: null,
+        omittedModules: [],
+      },
+      omissionIdentity: { configuration: { name: "qualification" } },
+    });
+
+    await expect(loadHarnessRelease(fixture.options)).rejects.toThrow(
+      "Claude release configuration is not product-enabled",
+    );
+    expect(fixture.reads).toContain("cli/manifest.json");
+  });
+
+  it("rejects product omission metadata that pins the qualification environment", async () => {
+    const fixture = await claudeFixture({
+      omission: {
+        schemaVersion: 1,
+        configuration: {
+          name: "product",
+          env: {
+            ANTHROPIC_BASE_URL: "http://mock.anthropic.invalid",
+            DISABLE_TELEMETRY: "1",
+          },
+        },
+        configurationReplacements: {},
+        configurationRemoved: [],
+        corpus: null,
+        omittedModules: [],
+      },
+      omissionIdentity: { configuration: { name: "product" } },
+    });
+
+    await expect(loadHarnessRelease(fixture.options)).rejects.toThrow(
+      "Claude release configuration does not match the product host",
+    );
+  });
+
   it("does not resolve for the caller until the last required read finishes", async () => {
     const fixture = await claudeFixture();
     let release!: () => void;

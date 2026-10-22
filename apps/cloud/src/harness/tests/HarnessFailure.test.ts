@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { HarnessError } from "../Harness.ts";
+import { makeReleaseModuleOmittedFailure } from "../HarnessProcessLifetime.ts";
 
 const harnessErrorCodec = Schema.toCodecJson(HarnessError);
 const encodeHarnessError = Schema.encodeSync(harnessErrorCodec);
@@ -76,6 +77,31 @@ const failure = () =>
   });
 
 describe("Harness failure details", () => {
+  it("round-trips typed release omission details and trace", () => {
+    const cause = makeReleaseModuleOmittedFailure({
+      code: "RELEASE_MODULE_OMITTED",
+      inputPath: "bun-graph:/modules/lazy.js",
+      tier: "configuration",
+    });
+    const original = new HarnessError({
+      operation: "events",
+      message: "A release module was omitted.",
+      cause,
+    });
+    const durable = JSON.parse(JSON.stringify(encodeHarnessError(original)));
+    const recovered = decodeHarnessError(durable);
+
+    expect(recovered.cause).toMatchObject({
+      _tag: "ReleaseModuleOmittedFailure",
+      code: "RELEASE_MODULE_OMITTED",
+      inputPath: "bun-graph:/modules/lazy.js",
+      tier: "configuration",
+      message: "Release module was omitted.",
+      stack: expect.stringContaining("Release module was omitted."),
+    });
+    expect(encodeHarnessError(recovered)).toEqual(durable);
+  });
+
   it("round-trips every Effect Cause reason, nested errors, WASI startup, and cleanup failures", () => {
     const original = failure();
     const json = JSON.stringify(encodeHarnessError(original));
