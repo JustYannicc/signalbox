@@ -1,6 +1,7 @@
 import { KernelProgramRegistry } from "../kernel/KernelAbi.ts";
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import type { KernelProcessTable } from "../kernel/KernelProcessTable.ts";
+import { KernelCpuExecution } from "../kernel/KernelCpuExecution.ts";
 import { KernelProgramHost, type KernelProgramHostOptions } from "../kernel/KernelProgramHost.ts";
 import type { KernelWakeRegistry } from "../kernel/KernelWakeRegistry.ts";
 import type { KernelCommandExecutorOptions } from "../kernel/KernelCommandExecutor.ts";
@@ -50,6 +51,9 @@ export interface CommandGatewayOptions {
 /** Both ingress paths use admitted child bodies over one thread's resources. */
 export function createCommandGateway(options: CommandGatewayOptions) {
   const lifetimes = new ChildWorkerLifetimes();
+  // Both hosts run processes from one table, so they charge CPU through one execution meter.
+  const cpuExecution =
+    options.cpuAccounting === undefined ? undefined : new KernelCpuExecution(options.cpuAccounting);
   const localOnly: KernelCommandForwarder = {
     async spawn() {
       throw new KernelForwardingUnavailable(
@@ -87,7 +91,7 @@ export function createCommandGateway(options: CommandGatewayOptions) {
         wakes: options.wakes,
         processes: options.processes,
         admit: admission.admit,
-        ...(options.cpuAccounting === undefined ? {} : { cpuAccounting: options.cpuAccounting }),
+        ...(cpuExecution === undefined ? {} : { cpuExecution }),
         ...(options.selectFileBytes === undefined
           ? {}
           : { selectFileBytes: options.selectFileBytes }),

@@ -1,6 +1,7 @@
 import { vi } from "vite-plus/test";
 import type { AgentOsSpawnRequest } from "../kernel/AgentOsProcessWire.ts";
 import type { KernelResult } from "../kernel/KernelAbi.ts";
+import type { KernelCpuAccounting } from "../kernel/KernelCpuAccounting.ts";
 import type {
   KernelCommand,
   KernelCommandChild,
@@ -34,6 +35,7 @@ export interface CommandGatewayFixtureOptions {
     readonly minimumWorkspaceBytes?: number;
   }[];
   readonly capacityLimit?: number;
+  readonly cpuAccounting?: KernelCpuAccounting;
 }
 
 export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}) {
@@ -84,6 +86,7 @@ export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}
       ? {}
       : { orderedMachineRules: options.orderedMachineRules }),
     home: "/guest/home",
+    ...(options.cpuAccounting === undefined ? {} : { cpuAccounting: options.cpuAccounting }),
   });
 
   return {
