@@ -1,16 +1,13 @@
 import { BunCapabilityUnavailable, type BunShimHost, type BunSpawnOptions } from "../../BunShim.ts";
 import * as NodeOS from "node:os";
 import type { createNodeChildProcess } from "../../NodeChildProcess.ts";
-import type { createNodeProcess } from "../../NodeProcess.ts";
+import type { createNodeProcess, NodeProcessStreams } from "../../NodeProcess.ts";
 import { getSynchronousSpawnError } from "../childProcess/ChildProcess.ts";
 import { childProcessError } from "../childProcess/errors.ts";
 import { toBunChildOutputReadable, toBunWritable } from "./streams.ts";
 
 type NodeChildProcessHost = Pick<ReturnType<typeof createNodeChildProcess>, "spawn">;
-type BunProcess = Pick<
-  ReturnType<typeof createNodeProcess>,
-  "cwd" | "env" | "stdin" | "stdout" | "stderr"
->;
+type BunProcess = Pick<ReturnType<typeof createNodeProcess>, "cwd" | "env"> & NodeProcessStreams;
 type BunWhich = NonNullable<BunShimHost["which"]>;
 type BunSpawn = NonNullable<BunShimHost["spawn"]>;
 type BunStdioMode = "pipe" | "ignore" | "inherit";
