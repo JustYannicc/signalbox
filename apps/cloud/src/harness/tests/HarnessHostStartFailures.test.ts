@@ -146,6 +146,24 @@ describe("Harness host failed starts", () => {
       if (Exit.isSuccess(result)) throw new Error("Expected failed start");
       expect(Cause.pretty(result.cause)).toContain("original native failure");
       expect(Cause.pretty(result.cause)).toContain("Injected transaction failure");
+      const failure = result.cause.reasons.find(Cause.isFailReason)?.error;
+      if (!(failure instanceof HarnessError) || !Cause.isCause(failure.cause))
+        throw new Error("Expected a native start error with its causes");
+      const journalFailure = failure.cause.reasons.find(
+        (reason) =>
+          Cause.isFailReason(reason) &&
+          reason.error instanceof HarnessError &&
+          reason.error.operation === "journal",
+      );
+      if (journalFailure === undefined || !Cause.isFailReason(journalFailure))
+        throw new Error("Expected a separately labeled journal failure");
+      expect(journalFailure.error).toMatchObject({
+        operation: "journal",
+        message: "Harness failure journal write failed.",
+      });
+      const encoded = Schema.encodeSync(codec)(failure);
+      const decoded = Schema.decodeUnknownSync(codec)(JSON.parse(JSON.stringify(encoded)));
+      expect(Schema.encodeSync(codec)(decoded)).toEqual(encoded);
     }).pipe(Effect.scoped),
   );
 

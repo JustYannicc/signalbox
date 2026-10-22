@@ -99,7 +99,7 @@ export const closeFailedHostStart = (input: {
             cause,
             Cause.fail(
               new HarnessError({
-                operation: "dispose",
+                operation: "journal",
                 message: "Harness failure journal write failed.",
                 cause: journaled.cause,
               }),
