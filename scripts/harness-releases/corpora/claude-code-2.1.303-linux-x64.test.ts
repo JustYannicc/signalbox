@@ -54,6 +54,10 @@ it("parses the pinned corpus and retains inputs reached by partial sessions", as
       name: "session-C-r113-partial",
       sha256: "53b15d0edf975f3c4ccda2b624471f33d485a5f0598915e5be46a04ab0722503",
     },
+    {
+      name: "session-A-r113-partial",
+      sha256: "f60c9f8546ad1e4fac1815c4aec78946d8db9d381bab523db801c720a6de0798",
+    },
   ]) {
     expect(corpus.provenance).toContainEqual(provenance);
   }
