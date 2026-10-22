@@ -1,11 +1,5 @@
 import { type ThreadObjectNamespace, threadObjectStub } from "../ThreadDirectory.ts";
-import {
-  PREVIEW_COOKIE,
-  PREVIEW_ROUTE_COOKIE,
-  PREVIEW_TICKET_PATH,
-  readCookie,
-  readPreviewRoute,
-} from "./previewHost.ts";
+import { PREVIEW_COOKIE, PREVIEW_TICKET_PATH, readCookie } from "./previewHost.ts";
 import { threadOfPreviewToken } from "./previewToken.ts";
 
 /**
@@ -23,13 +17,10 @@ export function routePreview(
   const credential =
     (url.pathname === PREVIEW_TICKET_PATH ? url.searchParams.get("ticket") : null) ??
     readCookie(request.headers.get("cookie"), PREVIEW_COOKIE);
-  const threadId =
-    (credential === null ? null : threadOfPreviewToken(credential)) ??
-    readPreviewRoute(readCookie(request.headers.get("cookie"), PREVIEW_ROUTE_COOKIE))?.threadId ??
-    null;
+  const threadId = credential === null ? null : threadOfPreviewToken(credential);
   if (threadId === null) {
-    return new Response("Open this preview from its thread in Signalbox.", {
-      status: 401,
+    return new Response("Preview not found.", {
+      status: 404,
       headers: { "cache-control": "no-store" },
     });
   }

@@ -52,7 +52,7 @@ import type { SearchBackfillProgress, SearchThreadDocuments } from "./ThreadEngi
 import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PullInput } from "./threadWire.ts";
-import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
+import type { PreviewLinkOptions, PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type { DriveAuthorization, RemoteAuthorization } from "./ThreadAuthorization.ts";
 import {
   type Actor,
@@ -213,6 +213,7 @@ export interface ThreadObjectApi extends TerminalObjectApi {
     actor: Actor,
     port: number,
     handoff?: boolean,
+    options?: PreviewLinkOptions,
   ) => Promise<PreviewLinkResult>;
   /**
    * The agent's browser, mirrored: newline-delimited `AgentBrowserUpdate`s in
@@ -390,6 +391,7 @@ export interface ThreadHandle extends TerminalHandle {
     actor: Actor,
     port: number,
     handoff?: boolean,
+    options?: PreviewLinkOptions,
   ) => Effect.Effect<PreviewLinkResult, ThreadObjectError>;
   /**
    * See `ThreadObjectApi.browserWatch`. Ends when the object goes away, or
@@ -660,8 +662,8 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
           return { ports, browsed: browsed === true };
         },
       ),
-    previewLink: (actor, port, handoff) =>
-      call("previewLink", () => api.previewLink(actor, port, handoff)),
+    previewLink: (actor, port, handoff, options) =>
+      call("previewLink", () => api.previewLink(actor, port, handoff, options)),
     browserWatch: (actor, tabId) =>
       lines(
         "browserWatch",

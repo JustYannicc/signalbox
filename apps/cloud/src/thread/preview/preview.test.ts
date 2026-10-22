@@ -3,13 +3,7 @@ import { previewLabel } from "@t3tools/shared/preview";
 import { describe, expect, it } from "@effect/vitest";
 
 import { requestHeaders, responseHeaders } from "./previewHeaders.ts";
-import {
-  isPreviewHost,
-  labelOfHost,
-  previewOrigin,
-  previewSettings,
-  withoutCookie,
-} from "./previewHost.ts";
+import { isPreviewHost, labelOfHost, previewOrigin, previewSettings } from "./previewHost.ts";
 import { previewToken, threadOfPreviewToken, verifyPreviewToken } from "./previewToken.ts";
 
 const threadId = ThreadId.make("thread:4f1c");
@@ -82,47 +76,78 @@ describe("preview hosts", () => {
 describe("preview headers", () => {
   const origin = "https://abc.preview.example";
 
-  it("send the dev server a plain localhost request without the gateway's cookie", () => {
+  it("sends Vite only the allowlisted browser headers and no credentials", () => {
     const headers = requestHeaders(
       new Headers({
         host: "abc.preview.example",
-        cookie: "theme=dark; signalbox_preview=secret; sid=1",
+        cookie: "signalbox_preview=secret; sid=1",
+        authorization: "Bearer user-token",
+        "x-api-key": "user-api-key",
+        "x-csrf-token": "user-csrf-token",
+        "x-session-id": "user-session",
+        "x-forwarded-host": "attacker.example",
+        "cf-connecting-ip": "203.0.113.9",
         origin,
         referer: `${origin}/src/main.ts`,
-        "cf-connecting-ip": "203.0.113.9",
         connection: "upgrade",
+        upgrade: "websocket",
         "sec-websocket-key": "k",
+        "sec-websocket-version": "13",
+        "sec-websocket-protocol": "vite-hmr",
         accept: "text/html",
+        "accept-encoding": "gzip, br",
+        "accept-language": "en-US,en;q=0.9",
+        "cache-control": "no-cache",
+        "if-none-match": "etag-1",
       }),
       { origin, port: 5173 },
     );
     expect(Object.fromEntries(headers)).toEqual({
       host: "localhost:5173",
-      cookie: "theme=dark; sid=1",
       origin: "http://localhost:5173",
       referer: "http://localhost:5173/src/main.ts",
       accept: "text/html",
+      "accept-encoding": "gzip, br",
+      "accept-language": "en-US,en;q=0.9",
+      "cache-control": "no-cache",
+      "if-none-match": "etag-1",
     });
-    expect(withoutCookie("signalbox_preview=x", "signalbox_preview")).toBeNull();
+    expect(headers.map(([name]) => name)).not.toContain("cookie");
   });
 
-  it("keep redirects on the preview origin and the gateway's cookie the gateway's", () => {
+  it("does not forward an unrelated page origin or referrer", () => {
+    const headers = requestHeaders(
+      new Headers({ origin: "https://attacker.example", referer: "https://attacker.example/" }),
+      { origin, port: 5173 },
+    );
+    expect(headers).toEqual([["host", "localhost:5173"]]);
+  });
+
+  it("keeps redirects and cookies scoped to this preview origin", () => {
     const headers = responseHeaders(
       [
         ["Location", "http://localhost:5173/login?next=%2F"],
         ["Set-Cookie", "signalbox_preview=evil; Path=/"],
-        ["Set-Cookie", "sid=2; Path=/"],
+        ["Set-Cookie", "sid=2; Path=/; Domain=.preview.example; SameSite=Lax"],
         ["Content-Length", "12"],
         ["Transfer-Encoding", "chunked"],
+        ["Service-Worker-Allowed", "/"],
+        ["Service-Worker-Navigation-Preload", "true"],
+        ["Clear-Site-Data", '"cache", "cookies", "storage"'],
         ["Content-Type", "text/html"],
+        ["Cache-Control", "no-cache"],
       ],
       { port: 5173 },
     );
     expect(headers.get("location")).toBe("/login?next=%2F");
-    expect(headers.getSetCookie()).toEqual(["sid=2; Path=/"]);
+    expect(headers.getSetCookie()).toEqual(["sid=2; Path=/; SameSite=Lax"]);
     expect(headers.get("content-length")).toBeNull();
     expect(headers.get("transfer-encoding")).toBeNull();
+    expect(headers.get("service-worker-allowed")).toBeNull();
+    expect(headers.get("service-worker-navigation-preload")).toBeNull();
+    expect(headers.get("clear-site-data")).toBeNull();
     expect(headers.get("content-type")).toBe("text/html");
+    expect(headers.get("cache-control")).toBe("no-cache");
     expect(
       responseHeaders([["location", "https://example.com/x"]], { port: 5173 }).get("location"),
     ).toBe("https://example.com/x");

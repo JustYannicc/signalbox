@@ -1,6 +1,6 @@
 # Watch the agent's browser
 
-In a Signalbox Cloud thread, agents browse in the cloud: real sites open in your own cloud browser, signed in as you, and the agent's dev servers open in a browser on the thread's machine. You can watch either one live and take over when the agent needs a hand.
+In a Signalbox Cloud thread, agents browse in the cloud: real sites open in your own cloud browser, signed in as you, and thread previews open separately without your saved logins. You can watch either one live and take over when the agent needs a hand.
 
 ## Watch
 
@@ -18,7 +18,7 @@ Watching costs nothing. When the agent pauses for a minute, your cloud browser r
 
 Click **Take over** to drive the page yourself, for example to fill in something only you know. The agent waits while you drive, and **Hand back** lets it continue from wherever you left the page. If you stop interacting for two minutes, or close the panel, the agent gets the tab back on its own.
 
-Taking over works while the agent is working on the thread. After the turn ends, the thread's machine and your cloud browser close shortly after.
+Taking over works while the agent is working on the thread. After the turn ends, the browser closes shortly after.
 
 ## Payments
 
@@ -30,12 +30,12 @@ The agent keeps its browser open only while it waits, for up to 30 minutes. To c
 
 ## Steps
 
-Every step the agent takes in the browser, and every stretch you drove, is kept with the thread. Card numbers and passwords are masked in it. Pick a step in the panel to see the page as it was when that step finished, even after the machine has stopped. Pages are rebuilt from what was recorded, so images and styles that a site has since changed may look different.
+Every step the agent takes in the browser, and every stretch you drove, is kept with the thread. Card numbers and passwords are masked in it. Pick a step in the panel to see the page as it was when that step finished, even after the browser has closed. Pages are rebuilt from what was recorded, so images and styles that a site has since changed may look different.
 
 Steps stay in the browser panel. They're never added to the conversation, so the agent only sees what it looked at itself.
 
-## Open a dev server
+## Open thread work
 
-Choose a dev server from **Previews** to open it in your browser. If the thread's machine has stopped, opening the preview starts it and the dev server again. You do not need to send another message. Keep the tab open while you use it; after the last preview closes, the machine stops after its normal idle period.
+Choose **Files** or a dev server from **Previews** to open it in your browser. Files opens the thread's `index.html`; linked styles, scripts and images load from the same thread. A dev server starts again when needed, without sending another message. Keep the tab open while you use it.
 
 You must be signed in as someone who can see the thread. A shared preview link asks for your own sign-in.

@@ -6,6 +6,10 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodePath from "@effect/platform-node/NodePath";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
+import type {
+  BrowserPreviewUrlAnswer,
+  BrowserPreviewUrlRequest,
+} from "@signalbox/runner-protocol/BrowserProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
@@ -102,6 +106,8 @@ const personSession = (view: ReturnType<typeof makeDrivesView>): PersonSession =
 export interface ContextServer {
   /** The MCP endpoints the harnesses are configured with, by server name. */
   readonly mcpServers: RunnerMcpServers;
+  /** The random loopback listener is private control traffic, never a preview target. */
+  readonly controlPort: number;
   /** Takes this turn's view of the drives; a failure keeps the last one. */
   readonly pin: (client: ContextClient) => Effect.Effect<void>;
   /** The exact context view pinned for the last turn, when it could be read. */
@@ -124,6 +130,12 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   /** Waits for the first tunnel welcome to restore saved services before exposing their tools. */
   readonly previewServicesReady?: Effect.Effect<void, RunnerConnectionError>;
   readonly previewHosts?: Effect.Effect<ReadonlyArray<string> | null, RunnerConnectionError>;
+  readonly previewTargets?: Effect.Effect<
+    ReadonlyArray<{ readonly port: number; readonly host: string }> | null,
+    RunnerConnectionError
+  >;
+  /** The checkout whose files the thread's canonical port-80 preview serves. */
+  readonly workspaceRoot?: string;
   /** The browser behind the `preview_*` tools; the machine's and the person's by default. */
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
@@ -140,6 +152,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
       ? makePayments({ asker: paymentAsker(automationCaller(view), input.threadId) })
       : null;
   const previewHosts = input.previewHosts;
+  const previewTargets = input.previewTargets;
   const browser =
     input.browser ??
     makeRunnerBrowser(
@@ -152,6 +165,23 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
         ...(previewHosts === undefined
           ? {}
           : { previewHosts: () => Effect.runPromise(previewHosts) }),
+        ...(previewTargets === undefined
+          ? {}
+          : { previewTargets: () => Effect.runPromise(previewTargets) }),
+        ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
+        ...(previewTargets === undefined
+          ? {}
+          : {
+              previewUrl: (request: BrowserPreviewUrlRequest): Promise<BrowserPreviewUrlAnswer> => {
+                const client = view.client();
+                return client === null
+                  ? Promise.resolve({
+                      _tag: "refused",
+                      message: "A thread preview is available only while this turn runs.",
+                    })
+                  : Effect.runPromise(client.previewUrl(request));
+              },
+            }),
       },
     );
   payments?.bind(browser);
@@ -264,6 +294,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
       [CONTEXT_SERVER_NAME]: `${origin}${MCP_PATH}`,
       [BROWSER_SERVER_NAME]: `${origin}${BROWSER_PATH}`,
     },
+    controlPort: address.port,
     pin: (client) =>
       view.pin(client).pipe(
         // Only a changed view needs rclone to drop what it listed.

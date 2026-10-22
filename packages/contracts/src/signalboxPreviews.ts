@@ -1,11 +1,10 @@
 /**
  * Signalbox previews. Part of `WsRpcGroup`.
  *
- * A thread's machine runs the dev servers its agents start. Signalbox Cloud
- * lists the ones it finds on the machine and opens each at its own origin
- * through the PreviewGateway, for the thread's members only. A preview link
- * belongs to the thread. Opening it starts a stopped machine and its declared
- * dev server. An open preview keeps the machine awake.
+ * Thread files and dev servers open at their own HTTPS origins through the
+ * PreviewGateway, for thread members only. A preview link belongs to the
+ * thread, across execution placements. Opening a declared dev server starts
+ * it when needed; an open server preview keeps its execution alive.
  *
  * Only environments advertising `capabilities.signalboxPreviews` serve these.
  * A self-hosted server answers `SignalboxPreviewsUnavailableError`; its own
@@ -25,6 +24,9 @@ export const SIGNALBOX_PREVIEWS_WS_METHODS = {
   subscribe: "signalbox.previews.subscribe",
   open: "signalbox.previews.open",
 } as const;
+
+/** A routing slot for the thread's files, stable across execution placements. */
+export const THREAD_FILES_PREVIEW_PORT = 80;
 
 /** The agent's browser (see `AgentBrowserTab`). */
 export const SIGNALBOX_AGENT_BROWSER_WS_METHODS = {
@@ -65,6 +67,7 @@ export type SignalboxThreadPreviews = typeof SignalboxThreadPreviews.Type;
 export const SignalboxPreviewOpenInput = Schema.Struct({
   threadId: ThreadId,
   port: PositiveInt,
+  path: Schema.optionalKey(Schema.String),
 });
 export type SignalboxPreviewOpenInput = typeof SignalboxPreviewOpenInput.Type;
 
@@ -111,11 +114,10 @@ const OpenRpc = Rpc.make(SIGNALBOX_PREVIEWS_WS_METHODS.open, {
 });
 
 /**
- * The agent's browser (#587). Agents in a cloud thread browse on the thread's
- * machine: real sites in the person's headless Kernel browser, dev servers in
- * the machine's own Chromium. Neither has a live view, so the machine records
- * each tab's page as DOM snapshots and mutations (rrweb) and mirrors them to
- * whoever watches; the client replays them as a read-only copy of the page.
+ * The agent's browser (#587). Real sites open in the person's browser and
+ * thread work opens through the preview gateway, without their profile.
+ * The browser records each tab as DOM snapshots and mutations (rrweb);
+ * clients replay the recording as a read-only copy of the page.
  *
  * Watching costs no browser time: the mirror only reads what the agent's own
  * connection already sees, and shows the last state while the person's
@@ -128,8 +130,8 @@ export const AgentBrowserTab = Schema.Struct({
   tabId: Schema.String,
   url: Schema.String,
   title: Schema.String,
-  /** The person's cloud browser (real sites) or the machine's (dev servers). */
-  browser: Schema.Literals(["person", "machine"]),
+  /** `machine` is accepted for older recordings. New local-work tabs use `preview`. */
+  browser: Schema.Literals(["person", "preview", "machine"]),
 });
 export type AgentBrowserTab = typeof AgentBrowserTab.Type;
 

@@ -217,6 +217,7 @@ const fakeClient = (calls: Calls): ContextClient => ({
   browserSession: Effect.die("The person's browser isn't part of these tests."),
   endBrowser: () => Effect.die("The person's browser isn't part of these tests."),
   browserSignIn: () => Effect.die("The person's browser isn't part of these tests."),
+  previewUrl: () => Effect.die("Preview URL minting isn't part of these tests."),
 });
 
 const serve = (

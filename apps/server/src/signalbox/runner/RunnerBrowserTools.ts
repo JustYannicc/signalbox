@@ -39,9 +39,9 @@ import { json, register, ToolError } from "./RunnerContextTools.ts";
 export const BROWSER_SERVER_NAME = "t3-code";
 
 export const BROWSER_INSTRUCTIONS = [
-  "The preview_* tools open each URL in the right browser for it. Your own work (localhost, this machine's ports and network) opens in a headless browser here, with no logins or cookies: start the dev server in the background, then open it at http://localhost:<port> (or preview_navigate with target {kind:'environment-port',port}).",
+  "Use preview_navigate with target {kind:'environment-port',port:5173} to open an app running in this thread. Its files and assets load through the thread's HTTPS preview. Open public websites with preview_open or preview_navigate using their URL.",
   "Real sites open in the person's own cloud browser, signed in as them with the logins they have saved there. Act there as they would, and stop to ask before anything they'd want to decide: sending, deleting, accepting terms. Payments go to the person to finish: call needs_you_payment right before paying, and keep calling it until they answer. If a site asks you to sign in, call sign_in: it signs the person's browser in with their saved 1Password login, which you never see, and their tabs reload signed in. Never type a password or code yourself. When sign_in can't, do what its message says, and never retry a failed one. A tab moves between the two browsers when its URL does, so dev tabs never carry the person's cookies.",
-  "preview_snapshot returns the page's text, accessibility tree, console and network entries. To show the user a screenshot, call preview_snapshot with save=true: it appears in this thread with the tool call. Files on this machine can't be embedded in your reply.",
+  "preview_snapshot returns the page's text, accessibility tree, console and network entries. To show the user a screenshot, call preview_snapshot with save=true: it appears in this thread with the tool call.",
 ].join("\n");
 
 /** Console and network entries a snapshot reports, newest last, as upstream's snapshots do. */
@@ -155,7 +155,7 @@ export const layerBrowserTools = (browser: BrowserBackend) =>
       register({
         name: "preview_navigate",
         description:
-          "Navigate a tab. Pass {url:'http://localhost:5173'} or {target:{kind:'environment-port',port:5173}} for a dev server on this machine. Exactly one of url or target is required.",
+          "Navigate a tab. Use {target:{kind:'environment-port',port:5173}} for an app running in this thread, or pass url for a public website. Exactly one of url or target is required.",
         parameters: PreviewAutomationNavigateInput,
         handle: (input) => answer(() => browser.navigate(input)),
         writes: moves,
@@ -244,7 +244,7 @@ export const layerBrowserTools = (browser: BrowserBackend) =>
       register({
         name: "preview_upload",
         description:
-          "Set files on this machine, by absolute path, on the <input type=file> the locator names.",
+          "Set the file at the supplied path on the <input type=file> the locator names.",
         parameters: PreviewAutomationUploadInput,
         handle: (input) => answer(() => browser.upload(input)),
         writes: acts,

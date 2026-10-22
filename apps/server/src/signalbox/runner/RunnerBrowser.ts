@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - Owns Playwright resources outside the Effect runtime.
 import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import {
   INCOGNITO_BROWSER_PROFILE_ID,
@@ -28,9 +30,14 @@ import {
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
-import type { BrowserSignInAnswer } from "@signalbox/runner-protocol/BrowserProtocol";
+import type {
+  BrowserPreviewUrlAnswer,
+  BrowserPreviewUrlRequest,
+  BrowserSignInAnswer,
+} from "@signalbox/runner-protocol/BrowserProtocol";
 import type { AgentBrowserHandoff } from "@t3tools/contracts/signalboxPreviews";
-import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
+import { isPreviewPortAllowed } from "@t3tools/shared/previewPorts";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { constVoid } from "effect/Function";
 import type { CDPSession, Dialog, Page } from "playwright-core";
@@ -172,11 +179,24 @@ const pushBounded = <A>(
   if (buffer.length > limit) buffer.splice(0, buffer.length - limit);
 };
 
-/** A navigation's URL: `environment-port` targets are this machine's loopback ports. */
+const isThreadPreviewHost = (
+  host: string,
+  targets: ReadonlyArray<{ readonly port: number; readonly host: string }> | null,
+) =>
+  targets?.some((target) => {
+    const suffix = /^[a-z2-7]{26}(.+)$/i.exec(target.host)?.[1];
+    return (
+      suffix !== undefined &&
+      host.toLowerCase().endsWith(suffix.toLowerCase()) &&
+      /^[a-z2-7]{26}/i.test(host.slice(0, -suffix.length))
+    );
+  }) ?? false;
+
+/** Resolves the URL shape already used by the shared browser tools. */
 const navigationUrl = (input: PreviewAutomationNavigateInput) => {
-  if (input.url !== undefined) return normalizePreviewUrl(input.url);
+  if (input.url !== undefined) return input.url;
   const target = input.target!;
-  if (target.kind === "url") return normalizePreviewUrl(target.url);
+  if (target.kind === "url") return target.url;
   const path = target.path ?? "";
   return `${target.protocol ?? "http"}://localhost:${target.port}${path === "" || path.startsWith("/") ? path : `/${path}`}`;
 };
@@ -244,9 +264,18 @@ export const makeRunnerBrowser = (
     readonly timer?: Timer;
     readonly guard?: PageGuard;
     readonly previewHosts?: () => Promise<ReadonlyArray<string> | null>;
+    readonly previewTargets?: () => Promise<ReadonlyArray<{
+      readonly port: number;
+      readonly host: string;
+    }> | null>;
+    readonly previewUrl?: (request: BrowserPreviewUrlRequest) => Promise<BrowserPreviewUrlAnswer>;
+    readonly workspaceRoot?: string;
+    /** Only local Workerd preview origins use HTTP; deployed preview tickets require HTTPS. */
+    readonly allowHttpPreviewUrl?: boolean;
   } = {},
 ): BrowserBackend => {
   const tabs = new Map<string, Tab>();
+  const previewTicketHosts = new Set<string>();
   let current: string | null = null;
   /** Tab ids of the person's pages while its browser is let go, by CDP target, for when it's back. */
   const parked = new Map<string, string>();
@@ -282,8 +311,120 @@ export const makeRunnerBrowser = (
       recorder.changed();
       throw cause;
     });
+  const withoutPreviewTicket = (rawUrl: string) => {
+    try {
+      const url = new URL(rawUrl);
+      if (previewTicketHosts.has(url.hostname.toLowerCase())) {
+        url.searchParams.delete("ticket");
+        return url.toString();
+      }
+    } catch {
+      // Keep the browser's original text when it isn't a URL.
+    }
+    return rawUrl;
+  };
 
-  const routeOf = async (url: string): Promise<BrowserRoute> => {
+  const hasPreviewResolver =
+    options.previewTargets !== undefined && options.previewUrl !== undefined;
+  const previewDestination = async (
+    rawUrl: string,
+    environmentPort?: number,
+  ): Promise<{ readonly url: string; readonly route: BrowserRoute }> => {
+    // Locally hosted tests and self-hosted Runner integrations keep their old direct behavior.
+    if (!hasPreviewResolver) {
+      const url = /^file:/i.test(rawUrl) ? rawUrl : normalizePreviewUrl(rawUrl);
+      return { url, route: await legacyRouteOf(url) };
+    }
+
+    let parsed: URL;
+    try {
+      parsed = /^file:/i.test(rawUrl) ? new URL(rawUrl) : new URL(normalizePreviewUrl(rawUrl));
+    } catch {
+      throw failure("That browser address is invalid.");
+    }
+
+    let port = environmentPort;
+    let path: string;
+    const targets = await options.previewTargets!();
+    if (parsed.protocol === "file:") {
+      if (options.workspaceRoot === undefined || parsed.hostname !== "")
+        throw failure("Only files in this thread's workspace can be opened in the preview.");
+      let filePath: string;
+      try {
+        filePath = NodeURL.fileURLToPath(parsed);
+      } catch {
+        throw failure("Only files in this thread's workspace can be opened in the preview.");
+      }
+      const relativePath = NodePath.relative(
+        NodePath.resolve(options.workspaceRoot),
+        NodePath.resolve(filePath),
+      );
+      if (relativePath === ".." || relativePath.startsWith(`..${NodePath.sep}`))
+        throw failure("Only files in this thread's workspace can be opened in the preview.");
+      const segments =
+        relativePath === "" ? [] : relativePath.split(NodePath.sep).map(encodeURIComponent);
+      path = `/${segments.join("/")}${parsed.search}${parsed.hash}`;
+      port ??= 80;
+    } else {
+      path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      const host = parsed.hostname.toLowerCase().replace(/\.$/, "");
+      const explicitPort =
+        parsed.port === "" ? (parsed.protocol === "https:" ? 443 : 80) : Number(parsed.port);
+      const matching = targets?.find((target) => target.host.toLowerCase() === host);
+      if (environmentPort !== undefined) port = environmentPort;
+      else if (matching !== undefined) port = matching.port;
+      else if (
+        isLoopbackHost(host) ||
+        host.endsWith(".localhost") ||
+        /^127(?:\.\d{1,3}){3}$/.test(host)
+      )
+        port = explicitPort;
+      else {
+        if (isThreadPreviewHost(host, targets))
+          throw failure("That preview is not available to this thread.");
+      }
+    }
+
+    if (port !== undefined) {
+      const target = targets?.find((candidate) => candidate.port === port);
+      if (!isPreviewPortAllowed(port) || target === undefined)
+        throw failure(`There is no active preview for port ${port} in this thread.`);
+      previewTicketHosts.add(target.host.toLowerCase());
+      const answer = await options.previewUrl!({ port, path });
+      if (answer._tag === "refused") throw failure(answer.message);
+      let minted: URL;
+      try {
+        minted = new URL(answer.url);
+      } catch {
+        throw failure("The thread returned an invalid preview address.");
+      }
+      const localWorkerdOrigin =
+        minted.protocol === "http:" &&
+        minted.hostname.toLowerCase().endsWith(".localhost") &&
+        minted.port === "8787";
+      if (
+        minted.username !== "" ||
+        minted.password !== "" ||
+        minted.hostname.toLowerCase() !== target.host.toLowerCase() ||
+        (minted.protocol !== "https:" &&
+          !(options.allowHttpPreviewUrl === true && minted.protocol === "http:") &&
+          !localWorkerdOrigin)
+      )
+        throw failure("The thread returned a preview for a different port.");
+      return { url: minted.toString(), route: "machine" };
+    }
+
+    if (isThreadPreviewHost(parsed.hostname, targets))
+      throw failure("That preview is not available to this thread.");
+    const url = parsed.toString();
+    const route = await legacyRouteOf(url);
+    // A browser-owned preview hostname from another thread never gets a person's profile.
+    const previewHosts = await options.previewHosts?.();
+    if (previewHosts?.some((host) => host.toLowerCase() === parsed.hostname.toLowerCase()))
+      throw failure("That preview is not available to this thread.");
+    return { url, route };
+  };
+  const legacyRouteOf = async (url: string): Promise<BrowserRoute> => {
     if (sources.person === null || browserFor(url) === "machine") return "machine";
     const previewHosts = await options.previewHosts?.();
     return previewHosts === null ? "machine" : browserFor(url, previewHosts);
@@ -369,7 +510,7 @@ export const makeRunnerBrowser = (
     );
     page.on("response", (response) =>
       keep(tab.networkEntries, {
-        url: response.url(),
+        url: withoutPreviewTicket(response.url()),
         method: response.request().method(),
         status: response.status(),
         failed: false,
@@ -378,7 +519,7 @@ export const makeRunnerBrowser = (
     );
     page.on("requestfailed", (request) =>
       keep(tab.networkEntries, {
-        url: request.url(),
+        url: withoutPreviewTicket(request.url()),
         method: request.method(),
         status: null,
         failed: true,
@@ -555,7 +696,7 @@ export const makeRunnerBrowser = (
       available: true,
       visible: false,
       tabId: tab?.tabId ?? null,
-      url: tab?.page.url() ?? null,
+      url: tab === undefined ? null : withoutPreviewTicket(tab.page.url()),
       // Reading the title waits behind an open dialog.
       title:
         tab === undefined
@@ -615,9 +756,9 @@ export const makeRunnerBrowser = (
   const signIn: BrowserBackend["signIn"] = async (input) => {
     const person = sources.person;
     const tab = currentTab();
-    if (input.site === undefined && tab?.route === "machine") {
+    if (input.site === undefined && tab !== undefined && tab.route !== "person") {
       throw failure(
-        "The current tab runs in this machine's browser, which keeps no logins; sign_in is for real sites in the person's browser.",
+        "This tab does not use a saved personal login. Open a public site to use sign_in.",
       );
     }
     const tabOrigin = tab === undefined ? null : new URL(tab.page.url()).origin;
@@ -665,8 +806,9 @@ export const makeRunnerBrowser = (
     },
     open: async (input) => {
       const reuse = input.reuseExistingTab ?? true;
-      const url = input.url === undefined ? undefined : normalizePreviewUrl(input.url);
-      const route = url === undefined ? "machine" : await routeOf(url);
+      const destination = input.url === undefined ? undefined : await previewDestination(input.url);
+      const url = destination?.url;
+      const route = destination?.route ?? "machine";
       const found =
         input.tabId !== undefined ? await findTab(input) : reuse ? currentTab() : undefined;
       const tab =
@@ -683,8 +825,11 @@ export const makeRunnerBrowser = (
       return statusOf(tab);
     },
     navigate: async (input) => {
-      const url = navigationUrl(input);
-      const route = await routeOf(url);
+      const destination = await previewDestination(
+        navigationUrl(input),
+        input.target?.kind === "environment-port" ? input.target.port : undefined,
+      );
+      const { url, route } = destination;
       const found = input.tabId === undefined ? currentTab() : await findTab(input);
       const tab = found === undefined ? await createTab(route) : await onRoute(found, route);
       await act({ tabId: tab.tabId }, "navigate", (each) => goto(each, url, input));

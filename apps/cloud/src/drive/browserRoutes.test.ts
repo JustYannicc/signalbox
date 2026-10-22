@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import { memoryKernel } from "../browser/memoryKernel.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import type { DriveAuthorization } from "../thread/ThreadAuthorization.ts";
+import type { ThreadObjectApi } from "../thread/ThreadDirectory.ts";
 import type { DriveRouteEnv } from "./driveRoutes.ts";
 import { handleDriveRequest } from "./driveRoutes.ts";
 import { driveToken } from "./driveToken.ts";
@@ -22,6 +23,7 @@ const IDLE = ThreadId.make("thread-cccc3333");
 const LEASE = "lease-secret";
 
 const leaseTokens = new Map<ThreadId, string>();
+const previewLinks: Array<Parameters<ThreadObjectApi["previewLink"]>> = [];
 const tokenFor = (threadId: ThreadId) =>
   Effect.tap(driveToken(LEASE, threadId, 1), (token) =>
     Effect.sync(() => leaseTokens.set(threadId, token)),
@@ -34,6 +36,13 @@ const envFor = (cloud: ReturnType<typeof makeMemoryCloud>) =>
       idFromName: (name: string) => name,
       jurisdiction: () => ({ idFromName: (name: string) => name }),
       get: (threadId: ThreadId) => ({
+        previewLink: async (...args: Parameters<ThreadObjectApi["previewLink"]>) => {
+          previewLinks.push(args);
+          return {
+            _tag: "ok",
+            url: "https://thread-preview.example/__signalbox/preview?ticket=short-lived",
+          };
+        },
         authorizeDrive: async (token: string): Promise<DriveAuthorization> =>
           token === leaseTokens.get(threadId)
             ? {
@@ -78,6 +87,35 @@ describe("the person's browser from a thread's machine (#574)", () => {
   const kernel = memoryKernel();
   const cloud = makeMemoryCloud({ kernel: kernel.api });
   const env = envFor(cloud);
+
+  it.effect("opens local work with the calling thread's credential and no person's profile", () =>
+    Effect.gen(function* () {
+      yield* signIn(cloud);
+      const before = kernel.created.length;
+      const token = yield* tokenFor(RUNNING);
+      const opened = yield* post(env, BROWSER_PATHS.previewUrl, token, {
+        port: 80,
+        path: "/site/index.html",
+      });
+      expect(browserJson.previewUrl.decode(opened.text)).toEqual({
+        _tag: "ready",
+        url: "https://thread-preview.example/__signalbox/preview?ticket=short-lived",
+      });
+      expect(previewLinks).toHaveLength(1);
+      expect(previewLinks[0]).toEqual([
+        { userId: OWNER, contextIds: ["personal"] },
+        80,
+        true,
+        { path: "/site/index.html", agent: true },
+      ]);
+      const idle = yield* post(env, BROWSER_PATHS.previewUrl, yield* tokenFor(IDLE), { port: 80 });
+      expect(browserJson.previewUrl.decode(idle.text)._tag).toBe("refused");
+      const denied = yield* post(env, BROWSER_PATHS.previewUrl, `${token}-forged`, { port: 80 });
+      expect(denied.status).toBe(403);
+      expect(previewLinks).toHaveLength(1);
+      expect(kernel.created).toHaveLength(before);
+    }),
+  );
 
   it.effect("opens on the owner's profile during a turn, and ends when asked", () =>
     Effect.gen(function* () {

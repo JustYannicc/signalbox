@@ -330,7 +330,7 @@ describe("the thread's browser with the person's", () => {
       ]);
       // A dev tab has nothing to sign in to.
       await browser.navigate({ url: `http://localhost:${port}/` });
-      await expect(browser.signIn({})).rejects.toThrow("keeps no logins");
+      await expect(browser.signIn({})).rejects.toThrow("does not use a saved personal login");
     } finally {
       await browser.close();
     }

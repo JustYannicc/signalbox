@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   type DataFrame,
   PREVIEW_TUNNEL_VERSION,
@@ -10,8 +11,12 @@ import {
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import type { ThreadId } from "@t3tools/contracts";
-import type { AgentBrowserStep } from "@t3tools/contracts/signalboxPreviews";
+import {
+  THREAD_FILES_PREVIEW_PORT,
+  type AgentBrowserStep,
+} from "@t3tools/contracts/signalboxPreviews";
 import { previewLabel } from "@t3tools/shared/preview";
+import { isPreviewPortAllowed } from "@t3tools/shared/previewPorts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -20,17 +25,24 @@ import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 
 import { makeTrailSender, serveMirror } from "./previewMirror.ts";
-import { proxyHttp, type ProxyStream, proxyWebSocket, type TunnelFrame } from "./previewProxy.ts";
+import {
+  proxyHttp,
+  proxyRunnerPreviewFile,
+  type ProxyStream,
+  proxyWebSocket,
+  type TunnelFrame,
+} from "./previewProxy.ts";
 import type { BrowserMirror, MirrorViewer } from "./RunnerBrowserMirror.ts";
 import { RunnerConnectionError, reconnectDelay } from "./RunnerSession.ts";
+import { makeRunnerPreviewFiles } from "./RunnerPreviewFiles.ts";
 import { openThreadSocket } from "./runnerSocket.ts";
 import type { RunnerPreviewServices } from "./RunnerPreviewServices.ts";
 
 /**
  * The machine end of the PreviewGateway's tunnel (`PreviewTunnel.ts` in the
  * runner protocol): a second outbound socket to the thread, next to the
- * Runner's own, that reports the machine's web servers and proxies the
- * thread's HTTP requests and WebSockets to them (`previewProxy.ts`). It
+ * Runner's own, that reports the machine's web servers, serves its workspace
+ * files, and proxies HTTP requests and WebSockets to those servers. It
  * reconnects after every drop, aborting the streams the drop broke, until
  * the thread refuses it or its scope closes with the Runner's generation.
  *
@@ -73,6 +85,10 @@ export interface PreviewTunnelInput {
   readonly services: RunnerPreviewServices["Service"];
   /** Opens/restores the drive and installs its dependencies before services start. */
   readonly prepareServices: (drive: DriveAccess) => Effect.Effect<void, RunnerConnectionError>;
+  /** The Runner's drive checkout; port 80 serves files from this workspace. */
+  readonly workspaceRoot: string;
+  /** Loopback ports used by this Runner's context/control servers. */
+  readonly controlPorts: ReadonlyArray<number>;
   /** The agent's browser, which viewers watch through the thread. */
   readonly mirror?: BrowserMirror;
 }
@@ -84,6 +100,11 @@ export interface PreviewTunnel {
   readonly ready: Effect.Effect<void, RunnerConnectionError>;
   /** Null until routing is known: public URLs must stay on the machine meanwhile. */
   readonly previewHosts: Effect.Effect<ReadonlyArray<string> | null, RunnerConnectionError>;
+  /** Same hosts with their preview ports, for reminting signed browser links. */
+  readonly previewTargets: Effect.Effect<
+    ReadonlyArray<{ readonly port: number; readonly host: string }> | null,
+    RunnerConnectionError
+  >;
   /** Persists the current declarations and completes after the thread acknowledges them. */
   readonly persistServices: (
     services: ReadonlyArray<PreviewService>,
@@ -131,6 +152,16 @@ export const previewTunnelTransport = (url: string): PreviewTunnelTransport => (
 export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
   input: PreviewTunnelInput,
 ): Effect.fn.Return<PreviewTunnel, never, Scope.Scope> {
+  const previewFiles = makeRunnerPreviewFiles(input.workspaceRoot, yield* HostProcess.Platform);
+  const isMachinePort = (port: number) =>
+    port !== THREAD_FILES_PREVIEW_PORT &&
+    isPreviewPortAllowed(port) &&
+    !input.controlPorts.includes(port);
+  const publicPorts = (next: ReadonlyArray<PreviewPort>): ReadonlyArray<PreviewPort> =>
+    [
+      { port: THREAD_FILES_PREVIEW_PORT, processName: null },
+      ...next.filter((candidate) => isMachinePort(candidate.port)),
+    ].toSorted((left, right) => left.port - right.port);
   const ended = yield* Deferred.make<string>();
   yield* Effect.addFinalizer(() => Deferred.succeed(ended, "stopped"));
   const ready = yield* Deferred.make<void, RunnerConnectionError>();
@@ -165,7 +196,7 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
           if (terminalError !== null) return { _tag: "Stopped" as const, error: terminalError };
           servicesRevision++;
           desiredServices = services;
-          for (const { port } of services) previewPorts.add(port);
+          for (const { port } of services) if (isMachinePort(port)) previewPorts.add(port);
           serviceWaiters.set(servicesRevision, ack);
           return { _tag: "Pending" as const, revision: servicesRevision };
         });
@@ -176,10 +207,10 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
     );
 
   // Plain variables: every read and write below happens in one synchronous step.
-  let ports: ReadonlyArray<PreviewPort> = [];
+  let ports: ReadonlyArray<PreviewPort> = publicPorts([]);
   let previewHostSuffix: string | null = null;
   // A server stopping does not make its public preview safe for a saved profile.
-  const previewPorts = new Set<number>();
+  const previewPorts = new Set<number>([THREAD_FILES_PREVIEW_PORT]);
   /** Sends the ports on the welcomed connection, if there is one. */
   let reportPorts: ((ports: ReadonlyArray<PreviewPort>) => void) | null = null;
   let welcomed = false;
@@ -205,9 +236,9 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
   yield* input.ports
     .watch((next) =>
       Effect.sync(() => {
-        ports = next;
-        for (const { port } of next) previewPorts.add(port);
-        reportPorts?.(next);
+        ports = publicPorts(next);
+        for (const { port } of ports) if (isMachinePort(port)) previewPorts.add(port);
+        reportPorts?.(ports);
       }),
     )
     .pipe(Effect.forkScoped);
@@ -236,7 +267,7 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
         return yield* new RunnerConnectionError({ message: "Expected the thread's welcome." });
       }
       previewHostSuffix = answer.previewHostSuffix ?? null;
-      for (const { port } of answer.services ?? []) previewPorts.add(port);
+      for (const { port } of answer.services ?? []) if (isMachinePort(port)) previewPorts.add(port);
       if (answer.drive !== undefined) {
         if (answer.drive === null) {
           if (!servicesRestored) {
@@ -295,6 +326,19 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
       const open = (message: Extract<TunnelThreadMessage, { type: "request" | "ws.open" }>) => {
         const { stream, port } = message;
         streams.get(stream)?.abort();
+        if (
+          !isPreviewPortAllowed(port) ||
+          (port !== THREAD_FILES_PREVIEW_PORT && input.controlPorts.includes(port))
+        ) {
+          return emit({ type: "fail", stream, message: `Nothing serves port ${port} here.` });
+        }
+        if (port === THREAD_FILES_PREVIEW_PORT) {
+          if (message.type !== "request") {
+            return emit({ type: "fail", stream, message: "Thread files only support HTTP." });
+          }
+          const proxyInput = { emit, done: () => void streams.delete(stream) };
+          return streams.set(stream, proxyRunnerPreviewFile(message, previewFiles, proxyInput));
+        }
         if (!ports.some((reported) => reported.port === port)) {
           return emit({ type: "fail", stream, message: `Nothing serves port ${port} here.` });
         }
@@ -399,23 +443,30 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
     }
   }).pipe(Effect.forkScoped);
 
-  const previewHosts = Effect.gen(function* () {
+  const previewTargets = Effect.gen(function* () {
     if (!(yield* Deferred.isDone(ready))) return null;
     yield* Deferred.await(ready);
     const suffix = previewHostSuffix;
     if (suffix === null) return [];
     return yield* Effect.promise(() =>
       Promise.all(
-        [...previewPorts].map(
-          async (port) => `${await previewLabel(input.threadId, port)}${suffix}`,
-        ),
+        [...previewPorts]
+          .toSorted((left, right) => left - right)
+          .map(async (port) => ({
+            port,
+            host: `${await previewLabel(input.threadId, port)}${suffix}`,
+          })),
       ),
     );
   });
+  const previewHosts = Effect.map(previewTargets, (targets) =>
+    targets === null ? null : targets.map((target) => target.host),
+  );
   return {
     ended: Deferred.await(ended),
     ready: Deferred.await(ready),
     previewHosts,
+    previewTargets,
     persistServices,
   };
 });

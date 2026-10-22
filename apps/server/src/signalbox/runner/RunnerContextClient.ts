@@ -19,6 +19,8 @@ import {
 import {
   BROWSER_PATHS,
   type BrowserEndRequest,
+  type BrowserPreviewUrlAnswer,
+  type BrowserPreviewUrlRequest,
   type BrowserSessionAnswer,
   type BrowserSignInAnswer,
   type BrowserSignInRequest,
@@ -130,6 +132,9 @@ export interface ContextClient {
   readonly browserSignIn: (
     request: BrowserSignInRequest,
   ) => Effect.Effect<BrowserSignInAnswer, ContextClientError>;
+  readonly previewUrl: (
+    request: BrowserPreviewUrlRequest,
+  ) => Effect.Effect<BrowserPreviewUrlAnswer, ContextClientError>;
 }
 
 class Retryable extends Schema.TaggedError<Retryable>()("Retryable", { message: Schema.String }) {}
@@ -259,6 +264,11 @@ export const makeContextClient = Effect.fn("makeContextClient")(function* (input
       browserJson.signInRequest.encode,
       browserJson.signIn.decode,
       false,
+    ),
+    previewUrl: json(
+      BROWSER_PATHS.previewUrl,
+      browserJson.previewUrlRequest.encode,
+      browserJson.previewUrl.decode,
     ),
   } satisfies ContextClient;
 });

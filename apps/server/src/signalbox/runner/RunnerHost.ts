@@ -199,6 +199,7 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             );
           const context = yield* startContextServer({
             mountPoint: config.drivesMountPoint ?? null,
+            workspaceRoot: cwd,
             threadId: request.threadId,
             secretRequests,
             previewServices,
@@ -210,6 +211,11 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
               if (!(yield* Deferred.isDone(previewServicesPublisher))) return null;
               const tunnel = yield* Deferred.await(previewServicesPublisher);
               return yield* tunnel.previewHosts;
+            }),
+            previewTargets: Effect.gen(function* () {
+              if (!(yield* Deferred.isDone(previewServicesPublisher))) return null;
+              const tunnel = yield* Deferred.await(previewServicesPublisher);
+              return yield* tunnel.previewTargets;
             }),
           });
           const made = yield* makeRunnerAdapters({
@@ -375,6 +381,8 @@ export const makeRunnerHost = Effect.fn("makeRunnerHost")(function* (config: Run
             threadId: request.threadId,
             generation: request.generation,
             token: request.token,
+            workspaceRoot: cwd,
+            controlPorts: [context.controlPort],
             transport: previewTunnelTransport(
               threadSocketUrl(cloudUrl, PREVIEW_TUNNEL_PATH, request.threadId),
             ),

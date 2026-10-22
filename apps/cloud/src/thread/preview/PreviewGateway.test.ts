@@ -1,5 +1,8 @@
 import {
   PREVIEW_TUNNEL_VERSION,
+  DATA_KIND,
+  dataFrame,
+  tunnelThreadFrame,
   type TunnelRunnerMessage,
   tunnelRunnerFrame,
 } from "@signalbox/runner-protocol/PreviewTunnel";
@@ -8,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { PreviewGateway } from "./PreviewGateway.ts";
 import { previewSettings } from "./previewHost.ts";
+import { previewToken } from "./previewToken.ts";
 
 const threadId = ThreadId.make("thread-preview");
 const service = { port: 5173, command: "pnpm dev --host 0.0.0.0", cwd: "." };
@@ -18,12 +22,14 @@ const socket = () => {
   return {
     readyState: Number(WebSocket.OPEN),
     sent,
+    onSend: null as ((value: string | Uint8Array) => void) | null,
     serializeAttachment: (value: unknown) => {
       attachment = structuredClone(value);
     },
     deserializeAttachment: () => structuredClone(attachment),
-    send: (value: string | Uint8Array) => {
+    send(value: string | Uint8Array) {
       sent.push(value);
+      this.onSend?.(value);
     },
     close() {
       this.readyState = WebSocket.CLOSED;
@@ -48,7 +54,7 @@ class SocketResponse extends NativeResponse {
 }
 afterEach(() => vi.unstubAllGlobals());
 
-const fixture = () => {
+const fixture = (options: { files?: (request: Request) => Promise<Response | null> } = {}) => {
   let now = 1_000;
   let generation = 1;
   let member = true;
@@ -66,6 +72,17 @@ const fixture = () => {
     },
   } as unknown as DurableObjectState;
   vi.stubGlobal("Response", SocketResponse);
+  vi.stubGlobal(
+    "HTMLRewriter",
+    class {
+      on() {
+        return this;
+      }
+      transform(response: Response) {
+        return response;
+      }
+    },
+  );
   vi.stubGlobal(
     "WebSocketPair",
     class {
@@ -91,6 +108,7 @@ const fixture = () => {
         configuration = { ...configuration, services };
       },
       drive: async () => null,
+      ...options,
       holdChanged: async () => {
         changes.push(gateway.held);
       },
@@ -141,6 +159,161 @@ const fixture = () => {
 };
 
 describe("opening a thread preview", () => {
+  it("keeps the Files slot anonymous when a tunnel reports a process on its reserved port", async () => {
+    const f = fixture({ files: async () => null });
+    const tunnel = await f.tunnel();
+    await tunnel.say({ type: "ports", ports: [{ port: 80, processName: "nginx" }] });
+    expect(f.gateway.ports().find((port) => port.port === 80)).toEqual({
+      port: 80,
+      processName: null,
+    });
+  });
+  it("keeps the requested path and expires agent sessions with their ticket", async () => {
+    const f = fixture();
+    const link = await f.gateway.link("member", 5173, true, {
+      agent: true,
+      path: "/site/index.html?x=1#part",
+    });
+    if (link._tag !== "ok") throw new Error(link.message);
+    f.advance(30_000);
+    const opened = await f.gateway.serve(new Request(link.url))!;
+    expect(opened.headers.get("location")).toBe("/site/index.html?x=1#part");
+    expect(opened.headers.get("set-cookie")).toContain("Max-Age=90");
+    const cookie = opened.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const request = () =>
+      new Request(new URL("/site/index.html", link.url).toString(), { headers: { cookie } });
+    expect((await f.gateway.serve(request())!).status).toBe(200);
+    const watching = await f.gateway.serve(
+      new Request(new URL("/__signalbox_preview/lease", link.url), {
+        headers: { cookie, upgrade: "websocket" },
+      }),
+    )!;
+    expect(watching.status).toBe(101);
+    expect(f.gateway.held).toBe(true);
+    f.advance(90_000);
+    expect((await f.gateway.serve(request())!).status).toBe(404);
+    expect(f.gateway.held).toBe(false);
+  });
+
+  it("hides missing, forged, cross-thread and wrong-port credentials", async () => {
+    const f = fixture();
+    const signedIn = await f.signIn();
+    for (const credential of [
+      null,
+      "invalid",
+      await previewToken("thread-signing-key-independent-of-machine", {
+        k: "session",
+        t: "another-thread",
+        u: "member",
+        p: 5173,
+        exp: 99_000,
+      }),
+      await previewToken("thread-signing-key-independent-of-machine", {
+        k: "session",
+        t: threadId,
+        u: "member",
+        p: 5174,
+        exp: 99_000,
+      }),
+    ]) {
+      const response = await f.gateway.serve(
+        new Request(signedIn.origin, {
+          headers: credential === null ? {} : { cookie: `signalbox_preview=${credential}` },
+        }),
+      )!;
+      expect(response.status).toBe(404);
+    }
+  });
+
+  it.each([8787, 8788, 8790, 0, 65536])(
+    "does not open control or invalid port %s",
+    async (port) => {
+      const f = fixture();
+      const tunnel = await f.tunnel();
+      if (port > 0) await tunnel.say({ type: "ports", ports: [{ port, processName: null }] });
+      expect((await f.gateway.link("member", port, true))._tag).toBe("unavailable");
+      expect(f.gateway.ports().some((entry) => entry.port === port)).toBe(false);
+    },
+  );
+
+  it.each(["//other.example/a", "/\\other.example/a", "https://other.example/a", "/bad\npath"])(
+    "refuses unsafe redirect path %s",
+    async (path) => {
+      expect((await fixture().gateway.link("member", 5173, true, { path }))._tag).toBe(
+        "unavailable",
+      );
+    },
+  );
+
+  it.each(["files", "machine"] as const)(
+    "loads one multi-file page through the same authority on %s",
+    async (placement) => {
+      const content = new Map([
+        [
+          "/site/index.html",
+          [
+            "text/html",
+            '<link rel="stylesheet" href="./style.css"><script src="./main.js"></script>',
+          ],
+        ],
+        ["/site/style.css", ["text/css", "body{color:red}"]],
+        ["/site/main.js", ["text/javascript", "console.log('preview')"]],
+      ]);
+      const source = (request: Request) => {
+        const file = content.get(new URL(request.url).pathname);
+        return new Response(file?.[1] ?? "Missing", {
+          status: file ? 200 : 404,
+          headers: { "content-type": file?.[0] ?? "text/plain" },
+        });
+      };
+      const f = fixture({
+        files: async (request) => (placement === "files" ? source(request) : null),
+      });
+      if (placement === "machine") {
+        const tunnel = await f.tunnel();
+        await tunnel.say({ type: "ports", ports: [{ port: 80, processName: null }] });
+        tunnel.ws.onSend = (value) => {
+          if (typeof value !== "string") return;
+          const frame = tunnelThreadFrame.decode(value);
+          if (frame.type !== "request") return;
+          void (async () => {
+            const response = source(new Request(`https://preview.test${frame.path}`));
+            await tunnel.say({
+              type: "head",
+              stream: frame.stream,
+              status: response.status,
+              headers: [...response.headers],
+            });
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            const data = dataFrame(frame.stream, DATA_KIND.body, bytes);
+            await f.gateway.onTunnelMessage(
+              tunnel.ws as unknown as WebSocket,
+              data.buffer as ArrayBuffer,
+            );
+            await tunnel.say({ type: "end", stream: frame.stream });
+          })();
+        };
+      }
+      const link = await f.gateway.link("member", 80, true, {
+        agent: true,
+        path: "/site/index.html",
+      });
+      if (link._tag !== "ok") throw new Error(link.message);
+      expect(new URL(link.url).protocol).toBe("https:");
+      const opened = await f.gateway.serve(new Request(link.url))!;
+      expect(opened.headers.get("location")).toBe("/site/index.html");
+      const cookie = opened.headers.get("set-cookie")!.split(";", 1)[0]!;
+      for (const [path, [mime, body]] of content) {
+        const response = await f.gateway.serve(
+          new Request(new URL(path, link.url), { headers: { cookie } }),
+        )!;
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toContain(mime);
+        expect(await response.text()).toContain(body);
+      }
+    },
+  );
+
   it("tells the runner which deployment hosts its public previews", async () => {
     const f = fixture();
     const { ws } = await f.tunnel();
@@ -193,17 +366,15 @@ describe("opening a thread preview", () => {
     });
   });
 
-  it("sends expired handoff links back through browser sign-in", async () => {
+  it("answers 404 for expired handoff links", async () => {
     const f = fixture();
     const signedIn = await f.signIn();
     f.advance(60 * 60_000);
     const expired = await f.gateway.serve(
       new Request(signedIn.url, { headers: { accept: "text/html" } }),
     )!;
-    expect(expired.status).toBe(302);
-    expect(expired.headers.get("location")).toBe(
-      "https://cloud.example/api/cloud/threads/thread-preview/previews/5173",
-    );
+    expect(expired.status).toBe(404);
+    expect(expired.headers.get("location")).toBeNull();
   });
 
   it("checks membership before starting anything, including an old signed credential", async () => {
@@ -216,7 +387,7 @@ describe("opening a thread preview", () => {
         headers: { cookie: signedIn.cookie, upgrade: "websocket" },
       }),
     )!;
-    expect(denied.status).toBe(403);
+    expect(denied.status).toBe(404);
     expect(f.gateway.held).toBe(false);
     expect(f.changes).toEqual([]);
   });

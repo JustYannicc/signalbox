@@ -86,6 +86,7 @@ export interface DriveRouteEnv extends GitHub.GitHubEnv, DirectUploadsEnv {
 }
 
 type Services =
+  | ThreadDirectory.ThreadDirectory
   | Crypto.Crypto
   | DriveDirectory.DriveDirectory
   | DriveShortcuts.DriveShortcuts

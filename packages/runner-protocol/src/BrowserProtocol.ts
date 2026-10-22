@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { PortSchema } from "@t3tools/contracts";
+
 import { DRIVE_API_PREFIX } from "./DriveProtocol.ts";
 import { jsonCodec } from "./jsonCodec.ts";
 
@@ -31,6 +33,7 @@ export const BROWSER_PATHS = {
   session: `${DRIVE_API_PREFIX}/browser/session`,
   end: `${DRIVE_API_PREFIX}/browser/end`,
   signIn: `${DRIVE_API_PREFIX}/browser/sign-in`,
+  previewUrl: `${DRIVE_API_PREFIX}/browser/preview-url`,
 } as const;
 
 export const BrowserSessionAnswer = Schema.Union([
@@ -73,9 +76,24 @@ export const BrowserSignInAnswer = Schema.Union([
 ]);
 export type BrowserSignInAnswer = typeof BrowserSignInAnswer.Type;
 
+/** A location in this thread's work, opened through its HTTPS preview gateway. */
+export const BrowserPreviewUrlRequest = Schema.Struct({
+  port: PortSchema,
+  path: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(8192))),
+});
+export type BrowserPreviewUrlRequest = typeof BrowserPreviewUrlRequest.Type;
+
+export const BrowserPreviewUrlAnswer = Schema.Union([
+  Schema.TaggedStruct("ready", { url: Schema.String }),
+  Schema.TaggedStruct("refused", { message: Schema.String }),
+]);
+export type BrowserPreviewUrlAnswer = typeof BrowserPreviewUrlAnswer.Type;
+
 export const browserJson = {
   session: jsonCodec(BrowserSessionAnswer),
   endRequest: jsonCodec(BrowserEndRequest),
   signInRequest: jsonCodec(BrowserSignInRequest),
   signIn: jsonCodec(BrowserSignInAnswer),
+  previewUrlRequest: jsonCodec(BrowserPreviewUrlRequest),
+  previewUrl: jsonCodec(BrowserPreviewUrlAnswer),
 };

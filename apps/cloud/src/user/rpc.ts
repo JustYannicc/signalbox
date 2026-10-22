@@ -1092,11 +1092,13 @@ export const layerHandlers = (input: {
                   (error) => new SignalboxPreviewError({ message: failureMessage(error) }),
                 ),
               ),
-        [SIGNALBOX_PREVIEWS_WS_METHODS.open]: ({ threadId, port }) =>
+        [SIGNALBOX_PREVIEWS_WS_METHODS.open]: ({ threadId, port, path }) =>
           identity.previews !== true
             ? Effect.fail(new SignalboxPreviewsUnavailableError())
             : threadCall(
-                Effect.flatMap(actorNow, (actor) => threads.openPreview(actor, threadId, port)),
+                Effect.flatMap(actorNow, (actor) =>
+                  threads.openPreview(actor, threadId, port, false, { path }),
+                ),
                 (message) => new SignalboxPreviewError({ message }),
               ).pipe(
                 Effect.flatMap((link) =>

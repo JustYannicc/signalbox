@@ -25,6 +25,8 @@ const previewOpen = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const params = yield* HttpRouter.params;
   const portText = params.port;
+  const url = yield* requestUrl;
+  const path = url.searchParams.get("path") ?? undefined;
   const input =
     portText !== undefined && /^[1-9][0-9]*$/u.test(portText)
       ? decodePreviewInput({ threadId: params.threadId, port: Number(portText) })
@@ -34,8 +36,7 @@ const previewOpen = Effect.gen(function* () {
   }
   const { threadId, port } = input.value;
 
-  const returnTo = `/api/cloud/threads/${encodeURIComponent(threadId)}/previews/${port}`;
-  const url = yield* requestUrl;
+  const returnTo = `${url.pathname}${url.search}`;
   const signIn = new URL("/sign-in", url.origin);
   signIn.searchParams.set("returnTo", returnTo);
 
@@ -55,6 +56,7 @@ const previewOpen = Effect.gen(function* () {
     threadId,
     port,
     true,
+    { path },
   );
   return link._tag === "ok" ? redirect(link.url) : text("This preview is unavailable.", 404);
 }).pipe(

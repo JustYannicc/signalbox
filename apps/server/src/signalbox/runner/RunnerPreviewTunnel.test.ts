@@ -1,5 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - real dev servers on ephemeral ports.
 import * as NodeHttp from "node:http";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type * as NodeNet from "node:net";
 
 import { NodeWS } from "@effect/platform-node-shared/NodeSocket";
@@ -134,6 +137,8 @@ const startTunnel = (
   mirror?: BrowserMirror,
   services = makeServiceState(),
   prepareServices: (drive: DriveAccess) => Effect.Effect<void> = () => Effect.void,
+  workspaceRoot = "/tmp",
+  controlPorts: ReadonlyArray<number> = [],
 ) =>
   Effect.gen(function* () {
     const thread = yield* makeFakeThread;
@@ -146,6 +151,8 @@ const startTunnel = (
       ports: portSource.source,
       services: services.service,
       prepareServices,
+      workspaceRoot,
+      controlPorts,
       ...(mirror === undefined ? {} : { mirror }),
     });
     return { thread, tunnel, setPorts: portSource.set, services };
@@ -310,13 +317,92 @@ describe("RunnerPreviewTunnel", () => {
         yield* nextControl(socket);
         const hostOf = (port: number) =>
           Effect.promise(async () => `${await previewLabel(threadId, port)}-test.preview.example`);
-        expect(yield* tunnel.previewHosts).toEqual([yield* hostOf(5173), yield* hostOf(3000)]);
+        expect(yield* tunnel.previewHosts).toEqual([
+          yield* hostOf(80),
+          yield* hostOf(3000),
+          yield* hostOf(5173),
+        ]);
+        expect(yield* tunnel.previewTargets).toMatchObject([
+          { port: 80, host: yield* hostOf(80) },
+          { port: 3000, host: yield* hostOf(3000) },
+          { port: 5173, host: yield* hostOf(5173) },
+        ]);
         yield* setPorts([{ port: 8080, processName: "node" }]);
         expect(yield* tunnel.previewHosts).toEqual([
-          yield* hostOf(5173),
+          yield* hostOf(80),
           yield* hostOf(3000),
+          yield* hostOf(5173),
           yield* hostOf(8080),
         ]);
+      }),
+    ),
+  );
+
+  it.effect("serves workspace pages and assets on the reserved port and blocks control ports", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const workspace = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "signalbox-preview-tunnel-")),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(() => NodeFSP.rm(workspace, { recursive: true, force: true })),
+        );
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(NodePath.join(workspace, "assets"));
+          await NodeFSP.writeFile(NodePath.join(workspace, "index.html"), "<main>thread</main>");
+          await NodeFSP.writeFile(
+            NodePath.join(workspace, "assets", "site.css"),
+            "body { color: red; }",
+          );
+        });
+
+        const controlPort = 62_000;
+        const { thread, tunnel } = yield* startTunnel(
+          [80, 8787, 8788, 8790, controlPort, 5173],
+          undefined,
+          undefined,
+          undefined,
+          workspace,
+          [controlPort],
+        );
+        const socket = yield* welcome(thread, false, {
+          previewHostSuffix: "-preview.example",
+        });
+        expect(yield* nextControl(socket)).toEqual({
+          type: "ports",
+          ports: [
+            { port: 80, processName: null },
+            { port: 5173, processName: "node" },
+          ],
+        });
+        expect(yield* tunnel.previewTargets).toMatchObject([{ port: 80 }, { port: 5173 }]);
+
+        yield* socket.toRunner(request(1, 80, "/"));
+        yield* socket.toRunner({ type: "end", stream: 1 });
+        const home = yield* readResponse(socket, 1);
+        expect(home.status).toBe(200);
+        expect(home.headers.get("content-type")).toBe("text/html; charset=utf-8");
+        expect(home.body.toString()).toBe("<main>thread</main>");
+
+        yield* socket.toRunner(request(2, 80, "/assets/site.css"));
+        yield* socket.toRunner({ type: "end", stream: 2 });
+        const asset = yield* readResponse(socket, 2);
+        expect(asset.headers.get("content-type")).toBe("text/css; charset=utf-8");
+        expect(asset.body.toString()).toBe("body { color: red; }");
+
+        yield* socket.toRunner(request(3, 80, "/assets/site.css", { method: "HEAD" }));
+        yield* socket.toRunner({ type: "end", stream: 3 });
+        const head = yield* readResponse(socket, 3);
+        expect(head.status).toBe(200);
+        expect(head.headers.get("content-length")).toBe(String("body { color: red; }".length));
+        expect(head.chunks).toEqual([]);
+
+        yield* socket.toRunner(request(4, controlPort, "/"));
+        expect(yield* nextControl(socket)).toEqual({
+          type: "fail",
+          stream: 4,
+          message: `Nothing serves port ${controlPort} here.`,
+        });
       }),
     ),
   );
@@ -330,7 +416,10 @@ describe("RunnerPreviewTunnel", () => {
         const socket = yield* welcome(thread);
         expect(yield* nextControl(socket)).toEqual({
           type: "ports",
-          ports: [{ port, processName: "node" }],
+          ports: [
+            { port: 80, processName: null },
+            { port, processName: "node" },
+          ],
         });
 
         yield* socket.toRunner(
@@ -447,10 +536,16 @@ describe("RunnerPreviewTunnel", () => {
         socket = yield* welcome(thread);
         expect(yield* nextControl(socket)).toEqual({
           type: "ports",
-          ports: [{ port, processName: "node" }],
+          ports: [
+            { port: 80, processName: null },
+            { port, processName: "node" },
+          ],
         });
         yield* setPorts([]);
-        expect(yield* nextControl(socket)).toEqual({ type: "ports", ports: [] });
+        expect(yield* nextControl(socket)).toEqual({
+          type: "ports",
+          ports: [{ port: 80, processName: null }],
+        });
       }),
     ),
   );
@@ -474,7 +569,10 @@ describe("RunnerPreviewTunnel", () => {
             (drive) => Effect.sync(() => prepared.push(drive)),
           );
           let socket = yield* welcome(thread, false, { drive: access, services: saved });
-          expect(yield* nextControl(socket)).toEqual({ type: "ports", ports: [] });
+          expect(yield* nextControl(socket)).toEqual({
+            type: "ports",
+            ports: [{ port: 80, processName: null }],
+          });
           expect(prepared).toEqual([access]);
           expect(services.restores).toBe(1);
 
@@ -484,7 +582,10 @@ describe("RunnerPreviewTunnel", () => {
           yield* socket.drop;
 
           socket = yield* welcome(thread, false, { drive: access, services: saved });
-          expect(yield* nextControl(socket)).toEqual({ type: "ports", ports: [] });
+          expect(yield* nextControl(socket)).toEqual({
+            type: "ports",
+            ports: [{ port: 80, processName: null }],
+          });
           expect(yield* nextControl(socket)).toEqual({ type: "services", services: saved });
           yield* socket.toRunner({ type: "services.saved", services: saved });
           yield* Fiber.join(saving);
@@ -511,7 +612,10 @@ describe("RunnerPreviewTunnel", () => {
         );
         const socket = yield* welcome(thread, false, { drive: access, services: [] });
 
-        expect(yield* nextControl(socket)).toEqual({ type: "ports", ports: [] });
+        expect(yield* nextControl(socket)).toEqual({
+          type: "ports",
+          ports: [{ port: 80, processName: null }],
+        });
         expect(prepared).toEqual([]);
         expect(services.restores).toBe(1);
       }),
@@ -642,6 +746,8 @@ describe("RunnerPreviewTunnel", () => {
           ports: makePorts([{ port, processName: null }]).source,
           services: makeServiceState().service,
           prepareServices: () => Effect.void,
+          workspaceRoot: "/tmp",
+          controlPorts: [],
         });
         expect(yield* Queue.take(events)).toBe(`tunnel ${PREVIEW_TUNNEL_PATH}?threadId=thread-1`);
         const text = (frame: string | Uint8Array) => {
@@ -651,7 +757,10 @@ describe("RunnerPreviewTunnel", () => {
         expect(text(yield* Queue.take(frames))).toMatchObject({ type: "hello", generation: 3 });
         expect(text(yield* Queue.take(frames))).toEqual({
           type: "ports",
-          ports: [{ port, processName: null }],
+          ports: [
+            { port: 80, processName: null },
+            { port, processName: null },
+          ],
         });
         expect(text(yield* Queue.take(frames))).toMatchObject({
           type: "head",
@@ -725,7 +834,10 @@ describe("RunnerPreviewTunnel", () => {
         publish!(step, recording);
 
         const socket = yield* welcome(thread, true);
-        expect(yield* nextControl(socket)).toEqual({ type: "ports", ports: [] });
+        expect(yield* nextControl(socket)).toEqual({
+          type: "ports",
+          ports: [{ port: 80, processName: null }],
+        });
         const announced = yield* nextControl(socket);
         if (announced.type !== "trail.step") throw new Error(JSON.stringify(announced));
         expect(announced.step).toEqual(step);

@@ -7,6 +7,7 @@ import {
 import {
   previewOpenFailureMessage,
   previewPortLabel,
+  previewPortDescription,
 } from "@t3tools/client-runtime/state/signalboxPreviews";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SignalboxPreviewPort } from "@t3tools/contracts/signalboxPreviews";
@@ -19,8 +20,7 @@ import type { AppBarProps } from "../../components/ui/AppBar.types";
 import { signalboxPreviews, useThreadPreviews } from "../../state/signalboxPreviews";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-const previewTitle = (port: SignalboxPreviewPort) =>
-  `Open ${port.processName ?? "the dev server"} on port ${port.port}`;
+const previewTitle = (port: SignalboxPreviewPort) => `Open ${previewPortDescription(port)}`;
 
 /** The browser signs in separately, so a shared link cannot borrow this app's identity. */
 function useOpenThreadPreview(environmentId: EnvironmentId, threadId: ThreadId) {

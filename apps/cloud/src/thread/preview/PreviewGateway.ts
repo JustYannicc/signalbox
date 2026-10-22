@@ -24,28 +24,22 @@ import {
   withPreviewLease,
 } from "./previewPage.ts";
 import type { ThreadId } from "@t3tools/contracts";
+import { THREAD_FILES_PREVIEW_PORT } from "@t3tools/contracts/signalboxPreviews";
 import { previewLabel } from "@t3tools/shared/preview";
+import { isPreviewPortAllowed } from "@t3tools/shared/previewPorts";
 
 import { BrowserMirror, type BrowserMirrorHost } from "./BrowserMirror.ts";
 import { requestHeaders, responseHeaders, sendableCloseCode } from "./previewHeaders.ts";
 import {
   labelOfHost,
   PREVIEW_COOKIE,
-  PREVIEW_ROUTE_COOKIE,
-  previewRouteCookie,
-  readPreviewRoute,
   PREVIEW_TICKET_PATH,
   previewOrigin,
   type PreviewSettings,
   readCookie,
 } from "./previewHost.ts";
 import { previewsLine } from "../threadWire.ts";
-import {
-  type PreviewClaims,
-  previewToken,
-  previewTokenTarget,
-  verifyPreviewToken,
-} from "./previewToken.ts";
+import { type PreviewClaims, previewToken, verifyPreviewToken } from "./previewToken.ts";
 
 /**
  * The thread object's half of the PreviewGateway: the Runner's tunnel socket
@@ -102,11 +96,13 @@ interface TunnelAttachment {
 interface ViewAttachment {
   readonly userId: string;
   readonly port: number;
+  readonly expiresAt?: number;
 }
 
 interface ClientAttachment {
   readonly stream: number;
   readonly generation: number;
+  readonly expiresAt?: number;
 }
 
 export interface PreviewGatewayHost extends Pick<
@@ -120,6 +116,8 @@ export interface PreviewGatewayHost extends Pick<
   readonly configuration: () => Promise<PreviewConfiguration>;
   readonly saveServices: (services: ReadonlyArray<PreviewService>) => Promise<void>;
   readonly drive: () => Promise<DriveAccess | null>;
+  /** Null while a machine owns the live files; never serve an older Drive copy then. */
+  readonly files?: (request: Request) => Promise<Response | null>;
   /** For tests; the wall clock otherwise. */
   readonly now?: () => number;
   /** The lease token when `generation` holds the lease (and `token` matches, if given). */
@@ -162,6 +160,21 @@ type Pending =
 export type PreviewLinkResult =
   | { readonly _tag: "ok"; readonly url: string }
   | { readonly _tag: "unavailable"; readonly message: string };
+
+export interface PreviewLinkOptions {
+  readonly path?: string | undefined;
+  readonly agent?: boolean | undefined;
+}
+
+const previewPath = (value: string): string | null => {
+  // oxlint-disable-next-line no-control-regex -- Redirect paths cannot contain control bytes.
+  if (!value.startsWith("/") || value.startsWith("//") || /[\\\\\u0000-\u001f\u007f]/u.test(value))
+    return null;
+  const parsed = new URL(value, "https://preview.invalid");
+  return parsed.origin === "https://preview.invalid"
+    ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+    : null;
+};
 
 const NULL_BODY_STATUS = new Set([204, 205, 304]);
 
@@ -217,9 +230,14 @@ export class PreviewGateway {
   }
 
   private views() {
-    return this.host.ctx
-      .getWebSockets(VIEW_TAG)
-      .filter((socket) => socket.readyState === WebSocket.OPEN);
+    return this.host.ctx.getWebSockets(VIEW_TAG).filter((socket) => {
+      const expiresAt = attachmentOf<ViewAttachment>(socket)?.expiresAt;
+      if (expiresAt !== undefined && expiresAt <= this.now()) {
+        tryClose(socket, CLOSE.refused, "Preview expired. Open it again from the thread.");
+        return false;
+      }
+      return socket.readyState === WebSocket.OPEN;
+    });
   }
 
   private viewState(socket: WebSocket) {
@@ -508,7 +526,13 @@ export class PreviewGateway {
 
   private clientFor(stream: number): WebSocket | null {
     for (const socket of this.host.ctx.getWebSockets(CLIENT_TAG)) {
-      if (attachmentOf<ClientAttachment>(socket)?.stream === stream) return socket;
+      const attachment = attachmentOf<ClientAttachment>(socket);
+      if (attachment?.stream !== stream) continue;
+      if (attachment.expiresAt !== undefined && attachment.expiresAt <= this.now()) {
+        tryClose(socket, CLOSE.refused, "Preview expired. Open it again from the thread.");
+        return null;
+      }
+      return socket;
     }
     return null;
   }
@@ -516,7 +540,11 @@ export class PreviewGateway {
   async onClientMessage(socket: WebSocket, data: string | ArrayBuffer) {
     if (this.host.ctx.getTags(socket).includes(VIEW_TAG)) {
       const viewer = attachmentOf<ViewAttachment>(socket);
-      if (viewer === null || !(await this.host.canSee(viewer.userId))) {
+      if (
+        viewer === null ||
+        (viewer.expiresAt !== undefined && viewer.expiresAt <= this.now()) ||
+        !(await this.host.canSee(viewer.userId))
+      ) {
         tryClose(socket, CLOSE.refused, "You cannot see this thread.");
         this.lastActive = this.now();
         await this.holdMaybeChanged();
@@ -529,6 +557,7 @@ export class PreviewGateway {
     const tunnel = this.tunnel();
     if (
       attachment === null ||
+      (attachment.expiresAt !== undefined && attachment.expiresAt <= this.now()) ||
       tunnel === null ||
       tunnel.attachment.generation !== attachment.generation
     ) {
@@ -585,44 +614,20 @@ export class PreviewGateway {
   ): Promise<Response> {
     const ticket = url.pathname === PREVIEW_TICKET_PATH ? url.searchParams.get("ticket") : null;
     const credential = ticket ?? readCookie(request.headers.get("cookie"), PREVIEW_COOKIE);
-    const reopen = "Open it again from the thread in Signalbox.";
-    const returnToApp = async () => {
-      const target =
-        (credential === null ? null : previewTokenTarget(credential)) ??
-        readPreviewRoute(readCookie(request.headers.get("cookie"), PREVIEW_ROUTE_COOKIE));
-      if (
-        request.method === "GET" &&
-        (request.headers.get("accept")?.includes("text/html") ||
-          request.headers.get("sec-fetch-dest") === "document") &&
-        target !== null &&
-        target.threadId === this.host.threadId() &&
-        (await this.label(target.port)) === label
-      ) {
-        return new Response(null, {
-          status: 302,
-          headers: {
-            location: new URL(
-              previewOpenPath(target.threadId, target.port),
-              this.host.appOrigin,
-            ).toString(),
-            "cache-control": "no-store",
-          },
-        });
-      }
-      return page(401, `Sign in again to open this preview. ${reopen}`);
-    };
-    if (credential === null) return returnToApp();
+    const missing = () => page(404, "Preview not found.");
+    if (credential === null) return missing();
     const configuration = await this.loadConfiguration();
     const claims = await verifyPreviewToken(credential, configuration.key, this.now());
     if (
       claims === null ||
+      !isPreviewPortAllowed(claims.p) ||
       claims.t !== this.host.threadId() ||
       (await this.label(claims.p)) !== label ||
       (ticket !== null ? claims.k !== "ticket" : claims.k !== "session")
     ) {
-      return returnToApp();
+      return missing();
     }
-    if (!(await this.host.canSee(claims.u))) return page(403, "You can't see this thread.");
+    if (!(await this.host.canSee(claims.u))) return missing();
     if (ticket !== null) return this.signIn(claims, configuration.key);
     if (url.pathname === PREVIEW_SCRIPT_PATH) return previewScript();
     if (url.pathname === PREVIEW_VIEW_PATH) {
@@ -630,10 +635,18 @@ export class PreviewGateway {
         return page(426, "Open this preview in a browser.");
       const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
       this.host.ctx.acceptWebSocket(server, [VIEW_TAG]);
-      server.serializeAttachment({ userId: claims.u, port: claims.p } satisfies ViewAttachment);
+      server.serializeAttachment({
+        userId: claims.u,
+        port: claims.p,
+        expiresAt: claims.exp,
+      } satisfies ViewAttachment);
       trySend(server, this.viewState(server));
       await this.holdMaybeChanged();
       return new Response(null, { status: 101, webSocket: client });
+    }
+    if (claims.p === THREAD_FILES_PREVIEW_PORT && this.host.files !== undefined) {
+      const response = await this.host.files(request);
+      if (response !== null) return response;
     }
     const tunnel = this.tunnel();
     const leaseToken =
@@ -649,26 +662,26 @@ export class PreviewGateway {
     }
     const origin = previewOrigin(settings, label);
     return request.headers.get("upgrade")?.toLowerCase() === "websocket"
-      ? this.openSocket(request, url, tunnel, claims.p, origin)
+      ? this.openSocket(request, url, tunnel, claims.p, origin, claims.exp)
       : this.forward(request, url, tunnel, claims.p, origin);
   }
 
   /** Trades a link's ticket for this origin's session cookie. */
   private async signIn(claims: PreviewClaims, key: string) {
+    const ttl = claims.agent === true ? Math.max(0, claims.exp - this.now()) : SESSION_TTL_MS;
     const session = await previewToken(key, {
       ...claims,
       k: "session",
-      exp: this.now() + SESSION_TTL_MS,
+      exp: this.now() + ttl,
     });
     const secure = this.host.settings?.scheme === "https" ? "; Secure" : "";
-    const headers = new Headers({ location: "/", "cache-control": "no-store" });
+    const headers = new Headers({
+      location: previewPath(claims.path ?? "/") ?? "/",
+      "cache-control": "no-store",
+    });
     headers.append(
       "set-cookie",
-      `${PREVIEW_COOKIE}=${session}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${SESSION_TTL_MS / 1000}`,
-    );
-    headers.append(
-      "set-cookie",
-      `${PREVIEW_ROUTE_COOKIE}=${previewRouteCookie(this.host.threadId(), claims.p)}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=31536000`,
+      `${PREVIEW_COOKIE}=${session}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${Math.floor(ttl / 1000)}`,
     );
     return new Response(null, { status: 302, headers });
   }
@@ -773,6 +786,7 @@ export class PreviewGateway {
     tunnel: { socket: WebSocket; attachment: TunnelAttachment },
     port: number,
     origin: string,
+    expiresAt: number,
   ): Promise<Response> {
     const stream = this.newStream();
     const opened = deferred<{ protocol: string } | { error: string }>();
@@ -804,6 +818,7 @@ export class PreviewGateway {
     server.serializeAttachment({
       stream,
       generation: tunnel.attachment.generation,
+      expiresAt,
     } satisfies ClientAttachment);
     await this.holdMaybeChanged();
     return new Response(null, {
@@ -877,7 +892,11 @@ export class PreviewGateway {
       ]),
     );
     for (const port of this.tunnel()?.attachment.ports ?? []) ports.set(port.port, port);
-    return [...ports.values()].toSorted((a, b) => a.port - b.port);
+    if (this.host.files !== undefined)
+      ports.set(THREAD_FILES_PREVIEW_PORT, { port: THREAD_FILES_PREVIEW_PORT, processName: null });
+    return [...ports.values()]
+      .filter((entry) => isPreviewPortAllowed(entry.port))
+      .toSorted((a, b) => a.port - b.port);
   }
 
   private notify() {
@@ -941,8 +960,16 @@ export class PreviewGateway {
   }
 
   /** A link that opens the preview of `port` for `userId`. */
-  async link(userId: string, port: number, handoff = false): Promise<PreviewLinkResult> {
+  async link(
+    userId: string,
+    port: number,
+    handoff = false,
+    options: PreviewLinkOptions = {},
+  ): Promise<PreviewLinkResult> {
+    const path = previewPath(options.path ?? "/");
+    if (path === null) return { _tag: "unavailable", message: "Invalid preview path." };
     const settings = this.host.settings;
+    if (!isPreviewPortAllowed(port)) return { _tag: "unavailable", message: "Preview not found." };
     if (settings === null) return { _tag: "unavailable", message: "Previews are off here." };
     if (!(await this.host.canSee(userId))) {
       return { _tag: "unavailable", message: "Thread not found." };
@@ -951,11 +978,14 @@ export class PreviewGateway {
     if (!this.ports().some((entry) => entry.port === port)) {
       return { _tag: "unavailable", message: "This preview has no dev server to start." };
     }
-    if (!handoff)
+    if (!handoff) {
+      const url = new URL(previewOpenPath(this.host.threadId(), port), this.host.appOrigin);
+      if (path !== "/") url.searchParams.set("path", path);
       return {
         _tag: "ok",
-        url: new URL(previewOpenPath(this.host.threadId(), port), this.host.appOrigin).toString(),
+        url: url.toString(),
       };
+    }
     const threadId = this.host.threadId();
     const ticket = await previewToken(configuration.key, {
       k: "ticket",
@@ -963,6 +993,8 @@ export class PreviewGateway {
       u: userId,
       p: port,
       exp: this.now() + TICKET_TTL_MS,
+      ...(options.agent === true ? { agent: true } : {}),
+      ...(path !== "/" ? { path } : {}),
     });
     const url = new URL(PREVIEW_TICKET_PATH, previewOrigin(settings, await this.label(port)));
     url.searchParams.set("ticket", ticket);
