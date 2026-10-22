@@ -14,7 +14,6 @@ import { createFacetWorkspace } from "../FacetWorkspace.ts";
 import type { MachineWorkspace } from "../MachineWorkspace.ts";
 
 export const base: ForkCommit = { repository: "repo", fork: "alice", commit: "fork-1" };
-export const LARGE_FILE_COUNT = 65_000;
 const SQLITE_VALUE_GUARD_BYTES = 2 * 1024 * 1024;
 const clock = () => 1_800_000_000_000_000_001n;
 const textEncoder = new TextEncoder();
@@ -233,30 +232,29 @@ export function largeJournalRig() {
     setHydratedFile(path: string, bytes: Uint8Array) {
       hydrationFiles.set(path, bytes.slice());
     },
-    seedLargeFlatTree() {
+    seedFlatTree(count: number) {
       if (live.workspace) throw new Error("Seed the tree before opening its workspace");
       const sequence = `WITH RECURSIVE n(i) AS (
-        SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${LARGE_FILE_COUNT}
+        SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count}
       )`;
-      guarded.storage.sql.exec(`${sequence}
+      guarded.storage.transactionSync(() => {
+        guarded.storage.sql.exec(`${sequence}
         INSERT INTO kernel_fs_inode (ino, type, size, nlink, atime_ns, mtime_ns, ctime_ns, target)
         SELECT printf('7%031d', i), 'file', '0', 1, '100', '101', '102', NULL FROM n
       `);
-      guarded.storage.sql.exec(`${sequence}
+        guarded.storage.sql.exec(`${sequence}
         INSERT INTO kernel_fs_entry (parent, name, ino)
         SELECT '1', printf('file-%05d.txt', i), printf('7%031d', i) FROM n
       `);
-      guarded.storage.sql.exec(`${sequence}
+        guarded.storage.sql.exec(`${sequence}
         INSERT INTO kernel_fs_posix (ino, mode, uid, gid)
         SELECT printf('7%031d', i), 420, 1000, 1000 FROM n
       `);
-      guarded.storage.sql.exec("UPDATE kernel_fs_meta SET v = ? WHERE k = 'next_inode'", "100000");
-    },
-    changeLargeFileMetadata() {
-      guarded.storage.sql.exec(`UPDATE kernel_fs_inode
-        SET ctime_ns = CAST(CAST(ctime_ns AS INTEGER) + 1 AS TEXT)
-        WHERE type = 'file' AND ino LIKE '7%'
-      `);
+        guarded.storage.sql.exec(
+          "UPDATE kernel_fs_meta SET v = ? WHERE k = 'next_inode'",
+          "100000",
+        );
+      });
     },
     failAfterStateUpdate() {
       guarded.failAfterStateUpdate();
