@@ -1,12 +1,12 @@
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
 import {
-  createProductHarnessSessionHost,
-  type ProductHarnessHostOptions,
+  createProductCodexHarnessSessionHost,
+  type ProductCodexHarnessHostOptions,
 } from "../../ProductCodexHarnessSessionHost.ts";
 import { ChildWorkerCapacity } from "../../../computer/ChildWorkerCapacity.ts";
 import { createMemoryFilePersistencePorts } from "../../../kernel/MemoryFilePersistencePorts.ts";
-import { codexFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
+import type { codexFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
 import {
   adapterOptions,
   session as codexSession,
@@ -28,7 +28,7 @@ export const productOptions = (release: ReleaseOptions, home = "/home/product-co
     let fallbackCalls = 0;
     let modelCalls = 0;
     const commands = commandLoader();
-    const options: ProductHarnessHostOptions<unknown> = {
+    const options: ProductCodexHarnessHostOptions<unknown> = {
       threadId: codexSession.threadId,
       release,
       programs: { codes: programs.codes, seed: programs.seed },
@@ -91,7 +91,7 @@ export const productOptions = (release: ReleaseOptions, home = "/home/product-co
       },
       hydrate: async () => {},
     };
-    const host = yield* createProductHarnessSessionHost(options);
+    const host = yield* createProductCodexHarnessSessionHost(options);
     yield* Effect.addFinalizer(() => Effect.orDie(host.dispose));
     yield* host.seed("assets");
     yield* host.seed("programs");

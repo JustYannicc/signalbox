@@ -1,8 +1,12 @@
-// @effect-diagnostics nodeBuiltinImport:off - Build the same registered sources a facet loader receives.
+// @effect-diagnostics nodeBuiltinImport:off - Approximate a facet loader's module map from emitted sources.
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { build } from "esbuild";
 import { expect, it } from "vite-plus/test";
+import {
+  encodeModuleTransport,
+  decodeModuleTransport,
+} from "../../../infra/isolateProbe/moduleTransport.ts";
 
 const root = NodeURL.fileURLToPath(new URL("../../../../../", import.meta.url));
 const harnessRoot = "apps/cloud/src/harness/";
@@ -24,11 +28,14 @@ const harnesses = [
   },
 ];
 
-for (const { harness, entry, composition, binding, excluded } of harnesses) {
-  it.each([
-    { kind: "entry", source: entry },
-    { kind: "product composition", source: composition },
-  ])(`${harness} registers only its own host graph through $kind`, async ({ source }) => {
+it.each(
+  harnesses.flatMap(({ entry, composition, ...harness }) => [
+    { ...harness, kind: "entry", source: entry },
+    { ...harness, kind: "product composition", source: composition },
+  ]),
+)(
+  "$harness registers only its own host graph through $kind",
+  async ({ harness, source, binding, excluded }) => {
     const result = await build({
       absWorkingDir: root,
       entryPoints: [harnessRoot + source],
@@ -55,6 +62,23 @@ for (const { harness, entry, composition, binding, excluded } of harnesses) {
     expect(inputs).toContain(harnessRoot + "host/lifecycle.ts");
     expect(inputs).toContain("apps/cloud/src/kernel/KernelFileSystem.ts");
     expect(inputs.filter((path) => excluded.test(path))).toEqual([]);
+    const descriptors = result.outputFiles
+      .filter((file) => file.path.endsWith(".js"))
+      .map((file) => ({
+        name: NodePath.relative(NodePath.join(root, "facet"), file.path),
+        type: "js" as const,
+        bytes: file.contents,
+      }));
+    const transport = await decodeModuleTransport(encodeModuleTransport({ harness }, descriptors));
+    expect(transport.input).toEqual({ harness });
+    expect(Object.keys(transport.modules).sort()).toEqual(
+      descriptors.map((module) => module.name).sort(),
+    );
+    for (const module of descriptors) {
+      expect(transport.modules[module.name]).toEqual({
+        js: new TextDecoder().decode(module.bytes),
+      });
+    }
     for (const [path] of registered) {
       const source = modules.get(path);
       expect(source).toBeDefined();
@@ -62,5 +86,5 @@ for (const { harness, entry, composition, binding, excluded } of harnesses) {
         harness === "Claude" ? /makeCodexNativeHostBinding/ : /makeClaudeNativeHostBinding/,
       );
     }
-  });
-}
+  },
+);

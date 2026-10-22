@@ -15,7 +15,7 @@ import * as Exit from "effect/Exit";
 import { machineFixture, type Scenario } from "./machine.ts";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { HarnessError } from "../../Harness.ts";
-import { createProductHarnessSessionHost } from "../../ProductClaudeHarnessSessionHost.ts";
+import { createProductClaudeHarnessSessionHost } from "../../ProductClaudeHarnessSessionHost.ts";
 import type { HarnessOwnedProcess } from "../../HarnessProcessLifetime.ts";
 import { ChildWorkerCapacity } from "../../../computer/ChildWorkerCapacity.ts";
 import { CHILD_PROGRAM_PATHS } from "../../../computer/ChildProgramSet.ts";
@@ -93,7 +93,7 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn") {
         let saveCalls = 0;
         const release = yield* Effect.promise(() => claudeFixture());
         const programs = yield* Effect.promise(programFixture);
-        const host = yield* createProductHarnessSessionHost({
+        const host = yield* createProductClaudeHarnessSessionHost({
           threadId: d.threadId,
           release: release.options,
           programs,

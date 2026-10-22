@@ -1,58 +1,29 @@
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
-import type { Computer } from "../computer/Computer.ts";
+import type { Computer } from "../../computer/Computer.ts";
 import {
   createProductComputer,
   type ProductComputer,
   type ProductComputerOptions,
-} from "../computer/ProductComputer.ts";
+} from "../../computer/ProductComputer.ts";
 import {
   createKernelSessionStdio,
   type KernelSessionOutputObserver,
-} from "../kernel/KernelSessionStdio.ts";
-import { KernelWakeRegistry } from "../kernel/KernelWakeRegistry.ts";
-import { CHILD_PROGRAM_PATHS } from "../computer/ChildProgramSet.ts";
-import type { ClaudeNativeHostBindingOptions } from "./ClaudeNativeHostBinding.ts";
-import type { CodexNativeHostBindingOptions } from "./CodexNativeHostBinding.ts";
-import { HarnessError } from "./Harness.ts";
-import { makeFacetLifetime } from "./facet/lifetime.ts";
+} from "../../kernel/KernelSessionStdio.ts";
+import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
+import { CHILD_PROGRAM_PATHS } from "../../computer/ChildProgramSet.ts";
+import { HarnessError } from "../Harness.ts";
+import { makeFacetLifetime } from "../facet/lifetime.ts";
 import {
   createHarnessSessionHost,
   type HarnessHostOptions,
   type HarnessSessionHost,
   type NativeHostBinding,
-} from "./HarnessSessionHost.ts";
+} from "../HarnessSessionHost.ts";
 
 type BindingInput<G> = Parameters<HarnessHostOptions<G>["bindComputer"]>[0];
 type RuntimeInput<G> = Parameters<HarnessHostOptions<G>["buildRuntime"]>[0];
-type NativeProcess = ClaudeNativeHostBindingOptions["process"];
-export type ProductClaudeNativeOptions<G> = Omit<
-  ClaudeNativeHostBindingOptions,
-  "process" | "adapter" | "mcp"
-> & {
-  readonly harness?: "claude-code";
-  readonly process: Omit<
-    NativeProcess,
-    "host" | "computer" | "stdio" | "loadedRelease" | "modelTransport" | "processHandle"
-  >;
-  readonly adapter: (
-    input: RuntimeInput<G>,
-  ) => Effect.Effect<ClaudeNativeHostBindingOptions["adapter"], HarnessError, Scope.Scope>;
-};
-
-export type ProductCodexNativeOptions = Omit<CodexNativeHostBindingOptions, "process"> & {
-  readonly harness: "codex";
-  readonly process: Omit<
-    CodexNativeHostBindingOptions["process"],
-    "host" | "computer" | "stdio"
-  > & {
-    readonly environment: CodexNativeHostBindingOptions["process"]["environment"] & {
-      readonly HOME: string;
-    };
-  };
-};
-
-export interface ProductHarnessHostOptions<G> extends Omit<
+export interface ProductHostOptions<G, Native> extends Omit<
   HarnessHostOptions<G>,
   "files" | "programs" | "bindComputer" | "buildRuntime"
 > {
@@ -70,7 +41,7 @@ export interface ProductHarnessHostOptions<G> extends Omit<
   readonly observeOutput?: KernelSessionOutputObserver;
   readonly save: (input: BindingInput<G>) => ReturnType<Computer["save"]>;
   readonly port: Computer["port"];
-  readonly native: ProductClaudeNativeOptions<G> | ProductCodexNativeOptions;
+  readonly native: Native;
 }
 
 export interface ProductHarnessSessionHost<G> extends HarnessSessionHost<G> {
@@ -81,16 +52,21 @@ export interface ProductHarnessSessionHost<G> extends HarnessSessionHost<G> {
 
 // workerd retains registered module sources even when they are never imported. Each product
 // entry supplies its own native binding so the shared composition cannot pull in another harness.
-export type ProductNativeBinding<G> = (
-  input: RuntimeInput<G>,
-  ports: {
-    readonly commands: ProductComputer;
-    readonly computer: Computer;
-    readonly stdio: ReturnType<typeof createKernelSessionStdio>;
-  },
-) => Effect.Effect<NativeHostBinding, HarnessError, Scope.Scope>;
+export interface ProductNativeBinding<G, Native> {
+  readonly harness: HarnessSessionHost<G>["release"]["harness"];
+  readonly home: (native: Native) => string;
+  readonly build: (
+    native: Native,
+    input: RuntimeInput<G>,
+    ports: {
+      readonly commands: ProductComputer;
+      readonly computer: Computer;
+      readonly stdio: ReturnType<typeof createKernelSessionStdio>;
+    },
+  ) => Effect.Effect<NativeHostBinding, HarnessError, Scope.Scope>;
+}
 
-// Anything that outlives open is built outside createProductHarnessSessionHost; closures there
+// Anything that outlives open is built outside createProductHost; closures there
 // keep options, and its release source, alive.
 const acquireWakes = Effect.acquireRelease(
   Effect.sync(() => new KernelWakeRegistry()),
@@ -108,9 +84,9 @@ function acquireStdio(
 }
 
 // Runtime callbacks share a V8 context, so this scope must never receive release sources.
-function createProductBindings<G>(
-  options: Pick<ProductHarnessHostOptions<G>, "commands" | "native" | "hydrate" | "port" | "save">,
-  buildNative: ProductNativeBinding<G>,
+function createProductBindings<G, Native>(
+  options: Pick<ProductHostOptions<G, Native>, "commands" | "native" | "hydrate" | "port" | "save">,
+  binding: ProductNativeBinding<G, Native>,
   codes: ProductComputerOptions["programs"],
   wakes: KernelWakeRegistry,
   stdio: ReturnType<typeof createKernelSessionStdio>,
@@ -130,7 +106,7 @@ function createProductBindings<G>(
                 filesystem: input.files,
                 wakes,
                 programs: codes,
-                home: productComputerHome(options.native),
+                home: binding.home(options.native),
                 signal: input.signal,
               }),
             catch: (cause) =>
@@ -174,16 +150,13 @@ function createProductBindings<G>(
     buildRuntime: (input: RuntimeInput<G>) =>
       Effect.gen(function* () {
         const bound = commands;
-        const native = options.native;
-        const releaseHarness = input.loaded.plan.release.harness;
-        const nativeHarness = native.harness ?? "claude-code";
-        if (bound === undefined || releaseHarness !== nativeHarness)
+        if (bound === undefined || input.loaded.plan.release.harness !== binding.harness)
           return yield* new HarnessError({
             operation: "open",
             message: "Product host native binding does not match the verified release.",
           });
         computer = input.harness.computer;
-        return yield* buildNative(input, { commands: bound, computer, stdio });
+        return yield* binding.build(options.native, input, { commands: bound, computer, stdio });
       }),
     wrap(host: HarnessSessionHost<G>): ProductHarnessSessionHost<G> {
       return {
@@ -214,18 +187,9 @@ function createProductBindings<G>(
   };
 }
 
-function productComputerHome<G>(native: ProductHarnessHostOptions<G>["native"]) {
-  if (native.harness !== "codex") return native.process.identity.homedir;
-  const home = native.process.environment.HOME;
-  if (typeof home !== "string" || !home.startsWith("/"))
-    throw new Error("Codex product Computer requires an absolute HOME path.");
-  return home;
-}
-
-/** Public product composition. Harness-specific entries supply the native binding. */
-export const createProductHarnessSessionHost = <G>(
-  options: ProductHarnessHostOptions<G>,
-  buildNative: ProductNativeBinding<G>,
+export const createProductHost = <G, Native>(
+  options: ProductHostOptions<G, Native>,
+  binding: ProductNativeBinding<G, Native>,
 ): Effect.Effect<ProductHarnessSessionHost<G>, HarnessError, Scope.Scope> =>
   Effect.gen(function* () {
     yield* Effect.try({
@@ -248,9 +212,9 @@ export const createProductHarnessSessionHost = <G>(
       const wakes = yield* acquireWakes;
       const stdio = yield* acquireStdio(wakes, owner.signal, options.observeOutput);
       const { release: _release, programs, ...runtime } = options;
-      const bindings = createProductBindings<G>(
+      const bindings = createProductBindings<G, Native>(
         runtime,
-        buildNative,
+        binding,
         programs.codes,
         wakes,
         stdio,
