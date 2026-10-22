@@ -28,14 +28,14 @@ export const SystemIdentity = Schema.Struct({
 });
 export type SystemIdentity = typeof SystemIdentity.Type;
 
-// These compatibility values are provisional until computer-boxd-proof measures the image.
-// Keep that status explicit in host configuration; it is never part of guest OS output.
+// Pinned to the boxd image measured by Computer boxd proof run 39809209636.
+// Remeasure these defaults when the machine image changes.
 export const DEFAULT_SYSTEM_IDENTITY: SystemIdentityConfig = Object.freeze({
-  release: "6.12.0",
-  version: "#1 SMP",
+  release: "6.18.0+",
+  version: "#1 SMP PREEMPT_DYNAMIC Fri Oct 16 14:27:07 UTC 2026",
   machine: "x86_64",
   hostnamePolicy: "thread",
-  verification: "provisional",
+  verification: "measured",
 });
 
 export function systemHostname(threadId: string): string {

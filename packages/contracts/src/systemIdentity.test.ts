@@ -27,7 +27,7 @@ describe("shared system identity", () => {
       endianness: "LE",
     });
     expect(Object.isFrozen(identity)).toBe(true);
-    expect(DEFAULT_SYSTEM_IDENTITY.verification).toBe("provisional");
+    expect(DEFAULT_SYSTEM_IDENTITY.verification).toBe("measured");
   });
 
   it("keeps hostnames valid and stable for opaque or long thread ids", () => {
