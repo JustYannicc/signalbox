@@ -1,6 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - native stream types describe host-provided streams; this module does not access a Node host.
 import type * as NodeStream from "node:stream";
-import type { SystemIdentity } from "@t3tools/contracts/systemIdentity";
+import * as Schema from "effect/Schema";
+import {
+  SystemIdentity,
+  systemIdentityForThread,
+  type SystemIdentity as SystemIdentityValue,
+} from "@t3tools/contracts/systemIdentity";
 
 import type { KernelHandle } from "../../../kernel/KernelAbi.ts";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
@@ -8,7 +13,9 @@ import type { KernelProcessTable } from "../../../kernel/KernelProcessTable.ts";
 import type { KernelCpuProcess } from "../../../kernel/KernelCpuAccounting.ts";
 
 export type NodeProcessEnvironment = Record<string, string | undefined>;
-export type NodeProcessFileSystem = Pick<KernelFileSystem, "cwd" | "chdir">;
+export type NodeProcessBuiltinModuleResolver = (specifier: string) => object | undefined;
+export type NodeProcessFileSystem = Pick<KernelFileSystem, "cwd" | "chdir"> &
+  Partial<Pick<KernelFileSystem, "posixPolicy" | "setUmask">>;
 
 export interface NodeRuntimeUserIdentity {
   readonly username: string;
@@ -47,13 +54,24 @@ export interface NodeProcessHostContext {
   readonly filesystem: NodeProcessFileSystem;
   readonly env: NodeProcessEnvironment;
   readonly identity: NodeRuntimeIdentity;
-  readonly systemIdentity?: SystemIdentity;
+  readonly systemIdentity?: SystemIdentityValue;
   readonly streams: NodeProcessStreams;
+  readonly resolveBuiltinModule?: NodeProcessBuiltinModuleResolver;
   /** Monotonic nanoseconds for this host; defaults to the captured native clock. */
   readonly monotonicNowNs?: () => bigint;
   readonly cpuAccounting?: Pick<KernelCpuProcess, "snapshot">;
   readonly processes?: Pick<KernelProcessTable, "signalPid">;
   readonly parentProcessHandle?: KernelHandle<"process">;
+}
+
+const decodeSystemIdentity = Schema.decodeUnknownSync(SystemIdentity);
+
+export function resolveNodeProcessSystemIdentity(
+  context: Pick<NodeProcessHostContext, "identity" | "systemIdentity">,
+): SystemIdentityValue {
+  return context.systemIdentity === undefined
+    ? systemIdentityForThread("process-" + context.identity.pid)
+    : decodeSystemIdentity(context.systemIdentity);
 }
 
 export function validateNodeRuntimeIdentity(identity: NodeRuntimeIdentity): void {
@@ -141,6 +159,12 @@ export function validateNodeProcessHost(context: NodeProcessHostContext): void {
   }
   if (typeof context.filesystem.chdir !== "function") {
     throw new TypeError("Node host context requires filesystem.chdir");
+  }
+  if (
+    context.resolveBuiltinModule !== undefined &&
+    typeof context.resolveBuiltinModule !== "function"
+  ) {
+    throw new TypeError("Node host context resolveBuiltinModule must be a function when supplied");
   }
   if (!context.env || typeof context.env !== "object") {
     throw new TypeError("Node host context requires a mutable env object");

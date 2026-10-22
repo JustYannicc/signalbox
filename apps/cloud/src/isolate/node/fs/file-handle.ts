@@ -4,7 +4,8 @@
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { DescriptorLifetime } from "./descriptor-lifetime.ts";
 import { createAsyncOperations } from "./async-operations.ts";
-import type { AsyncLeafRunner } from "./operations.ts";
+import { runAsync, type AsyncLeafRunner } from "./operations.ts";
+import { fchownOperation } from "./permission-ops.ts";
 import type { ReadFileOptions, WriteFileOptions } from "./files.ts";
 import { ioOptions, type IoOptions } from "./fd-ops.ts";
 import type { TimeLike } from "./metadata-ops.ts";
@@ -42,6 +43,12 @@ export class NodeFileHandle {
 
   async chmod(mode: number | string): Promise<void> {
     await this.#lifetime.run(() => this.#operations.fchmod(this.fd, mode));
+  }
+
+  async chown(uid: number, gid: number): Promise<void> {
+    await this.#lifetime.run(() =>
+      runAsync(fchownOperation(this.#kernelFs, this.fd, uid, gid), this.#runLeaf),
+    );
   }
 
   async truncate(length = 0): Promise<void> {

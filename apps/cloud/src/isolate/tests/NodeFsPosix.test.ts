@@ -4,6 +4,104 @@ import { createNodeFs } from "../NodeFs.ts";
 import { nodeFsPosixFixture } from "./helpers/NodeFsPosixFixture.ts";
 
 describe("Node fs canonical permissions", () => {
+  it("creates directories with mode and the live umask without changing existing directories", async () => {
+    const test = nodeFsPosixFixture();
+    const fs = createNodeFs(test.kernelFs).fs;
+    const previousUmask = test.kernelFs.setUmask(0o027);
+    try {
+      fs.mkdirSync("/default-mode");
+      fs.mkdirSync("/explicit-mode", 0o777);
+      const created = await fs.promises.mkdir("/nested/parent/leaf", {
+        recursive: true,
+        mode: 0o777,
+      });
+      fs.mkdirSync("/existing", 0o700);
+      await fs.promises.mkdir("/existing", { recursive: true, mode: 0o777 });
+
+      expect(fs.statSync("/default-mode").mode & 0o7777).toBe(0o750);
+      expect(fs.statSync("/explicit-mode").mode & 0o7777).toBe(0o750);
+      expect(created).toBe("/nested");
+      for (const path of ["/nested", "/nested/parent", "/nested/parent/leaf"])
+        expect(fs.statSync(path).mode & 0o7777).toBe(0o750);
+      expect(fs.statSync("/existing").mode & 0o7777).toBe(0o700);
+
+      expect(() => fs.mkdirSync("/invalid/child", { recursive: true, mode: -1 })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+      expect(fs.existsSync("/invalid")).toBe(false);
+    } finally {
+      test.kernelFs.setUmask(previousUmask);
+      test.close();
+    }
+  });
+
+  it("changes path and descriptor permissions through sync, promise, callback and handle APIs", async () => {
+    const test = nodeFsPosixFixture();
+    const root = new KernelFileSystem({
+      mounts: [{ path: "/", storage: test.storage }],
+      posix: {
+        credentials: { uid: 0, gid: 0, euid: 0, egid: 0 },
+        umask: 0o022,
+      },
+    });
+    const fs = createNodeFs(root).fs;
+    try {
+      fs.writeFileSync("/file", "bytes");
+      fs.chmodSync("/file", "0640");
+      expect(fs.statSync("/file").mode & 0o7777).toBe(0o640);
+      await fs.promises.chmod("/file", 0o600);
+      expect(fs.statSync("/file").mode & 0o7777).toBe(0o600);
+      await new Promise<void>((resolve, reject) => {
+        fs.chmod("/file", 0o644, (error) => (error ? reject(error) : resolve()));
+      });
+      expect(fs.statSync("/file").mode & 0o7777).toBe(0o644);
+
+      const fd = fs.openSync("/file", "r");
+      try {
+        fs.fchmodSync(fd, 0o640);
+        expect(fs.fstatSync(fd).mode & 0o7777).toBe(0o640);
+        await new Promise<void>((resolve, reject) => {
+          fs.fchmod(fd, 0o620, (error) => (error ? reject(error) : resolve()));
+        });
+        expect(fs.fstatSync(fd).mode & 0o7777).toBe(0o620);
+      } finally {
+        fs.closeSync(fd);
+      }
+
+      fs.chownSync("/file", 2000, 2000);
+      expect(fs.statSync("/file")).toMatchObject({ uid: 2000, gid: 2000 });
+      await fs.promises.chown("/file", 3000, 3000);
+      expect(fs.statSync("/file")).toMatchObject({ uid: 3000, gid: 3000 });
+      await new Promise<void>((resolve, reject) => {
+        fs.chown("/file", 4000, 4000, (error) => (error ? reject(error) : resolve()));
+      });
+      expect(fs.statSync("/file")).toMatchObject({ uid: 4000, gid: 4000 });
+
+      const descriptor = fs.openSync("/file", "r");
+      try {
+        fs.fchownSync(descriptor, 5000, 5000);
+        expect(fs.fstatSync(descriptor)).toMatchObject({ uid: 5000, gid: 5000 });
+        await new Promise<void>((resolve, reject) => {
+          fs.fchown(descriptor, 6000, 6000, (error) => (error ? reject(error) : resolve()));
+        });
+        expect(fs.fstatSync(descriptor)).toMatchObject({ uid: 6000, gid: 6000 });
+      } finally {
+        fs.closeSync(descriptor);
+      }
+
+      const handle = await fs.promises.open("/file", "r");
+      try {
+        await handle.chown(7000, 7000);
+        expect(await handle.stat()).toMatchObject({ uid: 7000, gid: 7000 });
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      root.dispose();
+      test.close();
+    }
+  });
+
   it("preserves original permission bits during the official atomic-edit sequence", async () => {
     const test = nodeFsPosixFixture();
     const fs = createNodeFs(test.kernelFs).fs;
@@ -196,6 +294,20 @@ describe("Node fs canonical permissions", () => {
         await handle.close();
       }
       await expect(plainFs.promises.access("/file", 1)).rejects.toMatchObject({ code: "ENOTSUP" });
+      await expect(plainFs.promises.chmod("/file", 0o600)).rejects.toMatchObject({
+        code: "ENOTSUP",
+      });
+      await expect(plainFs.promises.chown("/file", 1000, 1000)).rejects.toMatchObject({
+        code: "ENOTSUP",
+      });
+      await expect(plainFs.promises.mkdir("/mode", { mode: 0o700 })).rejects.toMatchObject({
+        code: "ENOTSUP",
+      });
+      expect(plainFs.existsSync("/mode")).toBe(false);
+      expect(() => plainFs.statfsSync("/file")).toThrow(
+        expect.objectContaining({ code: "ENOTSUP" }),
+      );
+      await expect(plainFs.promises.statfs("/file")).rejects.toMatchObject({ code: "ENOTSUP" });
     } finally {
       plain.close();
     }

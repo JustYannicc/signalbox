@@ -97,24 +97,69 @@ describe("Node os facet", () => {
     expect(os.type()).toBe("Linux");
   });
 
-  it("reports real host metrics and interfaces as unsupported", () => {
-    const os = createNodeOs({ env: {}, identity: identity(94) });
+  it("reports modeled machine metrics without exposing host measurements", () => {
+    let nowNs = 20_000_000_000n;
+    const os = createNodeOs({
+      env: {},
+      identity: identity(94, { availableParallelism: 99 }),
+      systemIdentity: systemIdentityForThread("metric-host", {
+        release: "6.12.0",
+        version: "#1 SMP",
+        machine: "aarch64",
+        hostnamePolicy: "thread",
+        verification: "provisional",
+        resources: { memoryBytes: 8 * 1024 ** 3, vcpus: 6, profile: "steady" },
+      }),
+      monotonicNowNs: () => nowNs,
+    });
+    const interfaces = os.networkInterfaces();
+    const cpus = os.cpus();
 
-    expect(thrownBy(() => os.availableParallelism())).toMatchObject({ code: "ENOTSUP" });
+    expect(os.availableParallelism()).toBe(6);
+    expect(os.totalmem()).toBe(8 * 1024 ** 3);
+    expect(os.freemem()).toBe(7 * 1024 ** 3);
+    expect(cpus).toHaveLength(6);
+    expect(cpus[0]?.model).toBe("aarch64 virtual CPU");
+    expect(os.loadavg()).toEqual([0.08, 0.06, 0.04]);
+    expect(os.uptime()).toBe(0);
+    expect(os.hostname()).toBe("t-metric-host");
+    expect(Object.keys(interfaces)).toEqual(["lo", "eth0"]);
+    expect(interfaces.eth0?.[0]?.address).toMatch(/^10\.192\.\d+\.\d+$/);
+    expect(interfaces.eth0?.[0]?.address).not.toContain("host-94");
+    expect(Object.isFrozen(os.constants)).toBe(true);
+
+    nowNs += 2_000_000_000n;
+    expect(os.uptime()).toBe(2);
+    cpus[0]!.times.user = 99;
+    interfaces.eth0![0]!.address = "host-address";
+    expect(os.cpus()[0]?.times.user).toBe(40);
+    expect(os.networkInterfaces().eth0?.[0]?.address).not.toBe("host-address");
     expect(thrownBy(() => os.getPriority(94))).toMatchObject({ code: "ENOTSUP" });
     expect(thrownBy(() => os.setPriority(94, 0))).toMatchObject({ code: "ENOTSUP" });
-    expect(thrownBy(() => os.totalmem())).toMatchObject({ code: "ENOTSUP" });
-    expect(thrownBy(() => os.freemem())).toMatchObject({ code: "ENOTSUP" });
-    expect(thrownBy(() => os.networkInterfaces())).toMatchObject({ code: "ENOTSUP" });
-    expect(Object.isFrozen(os.constants)).toBe(true);
   });
 
-  it("uses only an explicit positive safe host parallelism value", () => {
+  it("uses the shared machine vCPU count and validates the legacy process identity", () => {
     const os = createNodeOs({
       env: {},
       identity: identity(95, { availableParallelism: 4 }),
     });
-    expect(os.availableParallelism()).toBe(4);
+    expect(os.availableParallelism()).toBe(1);
+    expect(os.cpus()).toHaveLength(1);
+
+    const configured = createNodeOs({
+      env: {},
+      identity: identity(95, { availableParallelism: 4 }),
+      systemIdentity: systemIdentityForThread("configured-vcpus", {
+        release: "6.12.0",
+        version: "#1 SMP",
+        machine: "x86_64",
+        hostnamePolicy: "thread",
+        verification: "provisional",
+        resources: { memoryBytes: 4 * 1024 ** 3, vcpus: 4, profile: "steady" },
+      }),
+    });
+    expect(configured.availableParallelism()).toBe(4);
+    expect(configured.cpus()).toHaveLength(4);
 
     for (const availableParallelism of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       expect(() =>

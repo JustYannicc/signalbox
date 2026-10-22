@@ -89,8 +89,16 @@ describe("runtime builtin inventory", () => {
         return runtime;
       },
     );
-    const modules = await captureRuntimeBuiltinInventory();
+    const captured = await captureRuntimeBuiltinInventory();
+    const modules = captured.modules;
     expect(modules).toBe(runtime?.modules);
+    expect(captured.functions).toEqual([]);
+    expect(captured.profile).toMatchObject({
+      systemIdentity: { platform: "linux", arch: "x64", verification: "measured" },
+      processIdentity: { availableParallelism: 1 },
+      filesystem: { posixPolicy: true, setUmask: true },
+      cpu: { execution: false, processAccounting: false },
+    });
     expect(officialRequiredBuiltins).toHaveLength(37);
     for (const name of officialRequiredBuiltins) {
       expect(modules[name], name).toBeDefined();
@@ -129,6 +137,39 @@ describe("runtime builtin inventory", () => {
     expect(Object.getOwnPropertyDescriptors(globalThis)).toEqual(globals);
   });
 
+  it("uses the public POSIX profile and retains modeled CPU support", async () => {
+    const captured = await captureRuntimeBuiltinInventory([
+      { specifier: "process", memberPath: ["umask"] },
+      { specifier: "process", memberPath: ["cpuUsage"] },
+    ]);
+
+    expect(captured.functions).toMatchObject([
+      {
+        specifier: "process",
+        memberPath: ["umask"],
+        status: "supported",
+      },
+      {
+        specifier: "process",
+        memberPath: ["cpuUsage"],
+        status: "supported",
+        evidence: expect.stringContaining("modeled fallback"),
+      },
+    ]);
+    expect(captured.profile).toMatchObject({
+      filesystem: { posixPolicy: true },
+      cpu: { execution: false, processAccounting: false },
+    });
+    const withoutPosix = HarnessInventory.inspectNodeBuiltinFunctionCapabilities(
+      captured.modules,
+      [{ specifier: "process", memberPath: ["umask"] }],
+      { ...captured.profile, filesystem: { ...captured.profile.filesystem, posixPolicy: false } },
+    );
+    expect(withoutPosix).toMatchObject([
+      { status: "unsupported", evidence: expect.stringContaining("KernelFileSystem.posixPolicy") },
+    ]);
+  });
+
   it("waits for DNS draining before returning the disposed inventory", async () => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -145,7 +186,7 @@ describe("runtime builtin inventory", () => {
         },
       };
     });
-    const capture = captureRuntimeBuiltinInventory().then((modules) => {
+    const capture = captureRuntimeBuiltinInventory().then(({ modules }) => {
       returned = true;
       return modules;
     });

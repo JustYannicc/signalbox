@@ -4,8 +4,8 @@
 import type * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { createAsyncOperations } from "./async-operations.ts";
-import type { AsyncLeafRunner } from "./operations.ts";
-import { unsupportedFs } from "./errors.ts";
+import { runAsync, type AsyncLeafRunner } from "./operations.ts";
+import { chmodOperation, chownOperation } from "./permission-ops.ts";
 import type { mkdirSync, mkdtempSync, readdirSync, rmSync } from "./directories.ts";
 import type { lstatSync, readlinkSync, realpathSync, statSync, TimeLike } from "./metadata-ops.ts";
 import { pathString, type PathLike } from "./path.ts";
@@ -230,14 +230,21 @@ export function createPathCallbackApi(kernelFs: KernelFileSystem, runLeaf?: Asyn
         name,
       );
     },
-    chmod: (path: PathLike, _mode: number, callback: FsCallback) => {
+    chmod: (path: PathLike, mode: number | string, callback: FsCallback) => {
       const name = pathString(path);
       schedule<[]>(
         callback,
-        async () => {
-          throw unsupportedFs("chmod", name);
-        },
+        async () => (await runAsync(chmodOperation(kernelFs, name, mode), runLeaf), []),
         "chmod",
+        name,
+      );
+    },
+    chown: (path: PathLike, uid: number, gid: number, callback: FsCallback) => {
+      const name = pathString(path);
+      schedule<[]>(
+        callback,
+        async () => (await runAsync(chownOperation(kernelFs, name, uid, gid), runLeaf), []),
+        "chown",
         name,
       );
     },

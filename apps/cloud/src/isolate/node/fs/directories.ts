@@ -8,6 +8,7 @@ import * as NodePath from "node:path";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { codedError } from "./errors.ts";
 import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
+import { parsePermissionMode } from "./permission-ops.ts";
 import { encodedPath, nodeDirent, type NodeDirentLike } from "./metadata.ts";
 import { pathString, type PathLike } from "./path.ts";
 
@@ -18,7 +19,7 @@ export interface ReaddirOptions {
 
 export interface MkdirOptions {
   recursive?: boolean;
-  mode?: number;
+  mode?: number | string;
 }
 
 function parseReaddirOptions(options?: BufferEncoding | ReaddirOptions | null): ReaddirOptions {
@@ -69,6 +70,7 @@ function codeOf(error: unknown): string | undefined {
 function* mkdirRecursive(
   kernelFs: KernelFileSystem,
   path: string,
+  mode: number,
 ): FsOperation<string | undefined> {
   if (path.length === 0) throw codedError("ENOENT", "no such file or directory", "mkdir");
   const absolute = NodePath.posix.isAbsolute(path);
@@ -85,7 +87,7 @@ function* mkdirRecursive(
       }
     } catch (error) {
       if (codeOf(error) !== "ENOENT") throw error;
-      yield* leaf(() => kernelFs.mkdir(current));
+      yield* leaf(() => kernelFs.mkdir(current, mode));
       firstCreated ??= current;
     }
   }
@@ -105,17 +107,18 @@ export function* mkdirOperation(
 ): FsOperation<string | undefined> {
   const name = pathString(path);
   const normalized = typeof options === "number" ? { mode: options } : (options ?? {});
-  if (normalized.mode !== undefined) {
+  const mode = normalized.mode === undefined ? 0o777 : parsePermissionMode(normalized.mode);
+  if (normalized.mode !== undefined && kernelFs.posixPolicy === undefined) {
     throw Object.assign(codedError("ENOTSUP", "filesystem permissions are not modeled", "mkdir"), {
       path: name,
     });
   }
   if (normalized.recursive)
-    return yield* fsOperation("mkdir", name, mkdirRecursive(kernelFs, name));
+    return yield* fsOperation("mkdir", name, mkdirRecursive(kernelFs, name, mode));
   yield* fsOperation(
     "mkdir",
     name,
-    leaf(() => kernelFs.mkdir(name)),
+    leaf(() => kernelFs.mkdir(name, mode)),
   );
   return undefined;
 }

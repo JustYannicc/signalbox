@@ -2,11 +2,22 @@
 import * as NodeEvents from "node:events";
 import * as NodeProcess from "node:process";
 
-import { validateNodeProcessHost, type NodeProcessHostContext } from "./node/process/context.ts";
+import {
+  resolveNodeProcessSystemIdentity,
+  validateNodeProcessHost,
+  type NodeProcessHostContext,
+} from "./node/process/context.ts";
 import { unsupportedNodeOperation } from "./node/process/NodeError.ts";
 import { nodeProcessSignalError, normalizeNodeSignal } from "./node/process/signals.ts";
 import { createCpuUsage } from "./node/process/cpu-usage.ts";
 import { createProcessWarnings } from "./node/process/warnings.ts";
+import { processUmask } from "./node/process/umask.ts";
+import { exposeProcessExports } from "./node/process/exports.ts";
+import { createProcessCredentialGetters } from "./node/process/credentials.ts";
+import { nodeExecveUnavailable } from "./node/process/execve.ts";
+import { exposeNodeProcessStreams, type NodeProcessStdin } from "./node/process/streams.ts";
+import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
+import { createNodeSystemMetrics } from "./NodeSystemMetrics.ts";
 
 /* Adapted from Rivet agentOS's Node process bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * This keeps its exit-event/typed-exit shape while requiring Signalbox host identity and capabilities.
@@ -16,12 +27,14 @@ import { createProcessWarnings } from "./node/process/warnings.ts";
 export { NodeSystemError } from "./node/process/NodeError.ts";
 export type {
   NodeProcessEnvironment,
+  NodeProcessBuiltinModuleResolver,
   NodeProcessFileSystem,
   NodeProcessHostContext,
   NodeProcessStreams,
   NodeRuntimeIdentity,
   NodeRuntimeUserIdentity,
 } from "./node/process/context.ts";
+export type { NodeProcessStdin } from "./node/process/streams.ts";
 
 export class NodeProcessExitError extends Error {
   readonly code: number;
@@ -79,62 +92,10 @@ function validateExitCode(code: unknown): number {
 }
 
 function unsupportedMeasurement(name: string) {
-  return (..._args: unknown[]) => unsupportedNodeOperation(`process.${name}`);
-}
-
-function unsupportedMemoryUsage() {
-  const memoryUsage = unsupportedMeasurement("memoryUsage") as (() => never) & { rss: () => never };
-  memoryUsage.rss = unsupportedMeasurement("memoryUsage.rss");
-  return memoryUsage;
-}
-
-const eventEmitterMethods = [
-  "addListener",
-  "emit",
-  "eventNames",
-  "getMaxListeners",
-  "listenerCount",
-  "listeners",
-  "off",
-  "on",
-  "once",
-  "prependListener",
-  "prependOnceListener",
-  "rawListeners",
-  "removeAllListeners",
-  "removeListener",
-  "setMaxListeners",
-] as const;
-
-function exposeOwnBoundMethods(target: object, names: readonly string[]): void {
-  const boundByMethod = new Map<(...args: unknown[]) => unknown, (...args: unknown[]) => unknown>();
-  for (const name of names) {
-    const method: unknown = Reflect.get(target, name);
-    if (typeof method !== "function")
-      throw new TypeError(`Node process method is unavailable: ${name}`);
-    const callable = method as (...args: unknown[]) => unknown;
-    let bound = boundByMethod.get(callable);
-    if (!bound) {
-      bound = (...args: unknown[]) => Reflect.apply(callable, target, args);
-      boundByMethod.set(callable, bound);
-    }
-    // Node's own process methods are plain writable properties. graceful-fs replaces cwd and
-    // chdir, and signal-exit replaces emit; a read-only method throws in their strict-mode code.
-    Object.defineProperty(target, name, {
-      value: bound,
-      configurable: true,
-      enumerable: true,
-      writable: true,
-    });
-  }
-}
-
-function exposeOwnAccessors(target: object, prototype: object, names: readonly string[]): void {
-  for (const name of names) {
-    const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
-    if (!descriptor) throw new TypeError(`Node process property is unavailable: ${name}`);
-    Object.defineProperty(target, name, { ...descriptor, configurable: false, enumerable: true });
-  }
+  return markNodeBuiltinCapability(
+    (..._args: unknown[]) => unsupportedNodeOperation(`process.${name}`),
+    { status: "unsupported", evidence: `HostProcess.${name} has no host measurement capability` },
+  );
 }
 
 class HostProcess extends NodeEvents.EventEmitter {
@@ -151,14 +112,26 @@ class HostProcess extends NodeEvents.EventEmitter {
   readonly versions: Readonly<Record<string, string>>;
   readonly main: unknown;
   readonly mainModule: unknown;
-  readonly stdin: NodeProcessHostContext["streams"]["stdin"];
+  readonly stdin: NodeProcessStdin;
   readonly stdout: NodeProcessHostContext["streams"]["stdout"];
   readonly stderr: NodeProcessHostContext["streams"]["stderr"];
   readonly hrtime: HrtimeFunction;
   readonly emitWarning: ReturnType<typeof createProcessWarnings>;
   readonly #host: NodeProcessHostContext;
+  readonly #systemIdentity: NonNullable<NodeProcessHostContext["systemIdentity"]>;
+  readonly #metrics: ReturnType<typeof createNodeSystemMetrics>;
   readonly #monotonicNowNs: () => bigint;
   readonly #startTimeNs: bigint;
+  memoryUsage: ReturnType<typeof createNodeSystemMetrics>["memoryUsage"];
+  cpuUsage: ReturnType<typeof createCpuUsage>;
+  resourceUsage: ReturnType<typeof createNodeSystemMetrics>["resourceUsage"];
+  availableMemory: () => number;
+  constrainedMemory: () => number;
+  getuid: () => number;
+  getgid: () => number;
+  geteuid: () => number;
+  getegid: () => number;
+  getgroups: () => number[];
 
   #state: NodeProcessState = "running";
   #exitCode: number | undefined;
@@ -166,9 +139,27 @@ class HostProcess extends NodeEvents.EventEmitter {
   constructor(host: NodeProcessHostContext) {
     super();
     this.#host = host;
+    this.#systemIdentity = resolveNodeProcessSystemIdentity(host);
     this.hrtime = createHrtime(host.monotonicNowNs);
     this.#monotonicNowNs = this.hrtime.bigint;
     this.#startTimeNs = this.#monotonicNowNs();
+    this.#metrics = createNodeSystemMetrics(this.#systemIdentity, {
+      readMonotonicTimeNs: this.#monotonicNowNs,
+      ...(host.cpuAccounting === undefined
+        ? {}
+        : { readCpuAccounting: () => host.cpuAccounting?.snapshot() }),
+    });
+    this.memoryUsage = this.#metrics.memoryUsage;
+    this.cpuUsage = createCpuUsage(() => this.#metrics.cpuSnapshot());
+    this.resourceUsage = this.#metrics.resourceUsage;
+    this.availableMemory = () => this.#metrics.freeMemoryBytes;
+    this.constrainedMemory = () => this.#metrics.totalMemoryBytes;
+    const credentialGetters = createProcessCredentialGetters(host.filesystem);
+    this.getuid = credentialGetters.getuid;
+    this.getgid = credentialGetters.getgid;
+    this.geteuid = credentialGetters.geteuid;
+    this.getegid = credentialGetters.getegid;
+    this.getgroups = credentialGetters.getgroups;
     this.env = host.env;
     this.argv = [...host.identity.argv];
     this.execArgv = [...(host.identity.execArgv ?? [])];
@@ -182,9 +173,10 @@ class HostProcess extends NodeEvents.EventEmitter {
     this.versions = Object.freeze({ ...host.identity.versions });
     this.main = host.identity.main;
     this.mainModule = host.identity.main;
-    this.stdin = host.streams.stdin;
-    this.stdout = host.streams.stdout;
-    this.stderr = host.streams.stderr;
+    const streams = exposeNodeProcessStreams(host.streams);
+    this.stdin = streams.stdin;
+    this.stdout = streams.stdout;
+    this.stderr = streams.stderr;
     this.emitWarning = createProcessWarnings(this);
 
     for (const name of ["_events", "_eventsCount", "_maxListeners"]) {
@@ -193,17 +185,8 @@ class HostProcess extends NodeEvents.EventEmitter {
         Object.defineProperty(this, name, { ...descriptor, enumerable: false });
       }
     }
-    // The bridge's CJS-to-ESM conversion copies enumerable own exports, not prototype methods.
-    exposeOwnBoundMethods(this, [
-      ...eventEmitterMethods,
-      "cwd",
-      "chdir",
-      "nextTick",
-      "emitWarning",
-      "exit",
-      "kill",
-    ]);
-    exposeOwnAccessors(this, HostProcess.prototype, ["exitCode", "state"]);
+    // CJS-to-ESM conversion copies own exports, so prototype methods need bound properties.
+    exposeProcessExports(this, host);
   }
 
   get state(): NodeProcessState {
@@ -226,6 +209,13 @@ class HostProcess extends NodeEvents.EventEmitter {
 
   chdir(directory: string): void {
     this.#host.filesystem.chdir(directory);
+  }
+
+  getBuiltinModule(id: string): object | undefined {
+    if (typeof id !== "string") {
+      throw new TypeError('The "id" argument must be of type string');
+    }
+    return this.#host.resolveBuiltinModule?.(id);
   }
 
   nextTick<Args extends unknown[]>(callback: (...args: Args) => void, ...args: Args): void {
@@ -258,6 +248,14 @@ class HostProcess extends NodeEvents.EventEmitter {
     throw new NodeProcessExitError(exitCode, cause);
   }
 
+  reallyExit(code?: number): never {
+    return this.exit(code);
+  }
+
+  execve(file: string, args: readonly string[], env?: Readonly<Record<string, string>>): never {
+    return nodeExecveUnavailable(file, args, env);
+  }
+
   kill(pid: number, signal?: string | number): true {
     if (!Number.isSafeInteger(pid)) {
       throw new TypeError(`The "pid" argument must be an integer. Received ${String(pid)}`);
@@ -277,13 +275,9 @@ class HostProcess extends NodeEvents.EventEmitter {
     return true;
   }
 
-  memoryUsage = unsupportedMemoryUsage();
-  // Logical user/syscall time uses the kernel's clock resolution; Cloudflare advances it at I/O.
-  cpuUsage = createCpuUsage(() => this.#host.cpuAccounting?.snapshot());
-  resourceUsage = unsupportedMeasurement("resourceUsage");
+  // Kernel accounting stays exact when available; the shared profile supplies the fallback.
   getActiveResourcesInfo = unsupportedMeasurement("getActiveResourcesInfo");
-  availableMemory = unsupportedMeasurement("availableMemory");
-  constrainedMemory = unsupportedMeasurement("constrainedMemory");
+  umask = (mask?: number | string) => processUmask(this.#host.filesystem, mask);
   uptime = () => Number(this.#monotonicNowNs() - this.#startTimeNs) / 1_000_000_000;
 }
 

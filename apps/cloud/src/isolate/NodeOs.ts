@@ -1,11 +1,15 @@
 // @effect-diagnostics nodeBuiltinImport:off - os constants are static; all dynamic identity comes from host input.
+import * as NodeBuffer from "node:buffer";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
-
-import type { NodeProcessHostContext } from "./node/process/context.ts";
+import { createNodeSystemMetrics } from "./NodeSystemMetrics.ts";
+import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
+import {
+  resolveNodeProcessSystemIdentity,
+  type NodeProcessHostContext,
+  validateNodeRuntimeIdentity,
+} from "./node/process/context.ts";
 import { unsupportedNodeOperation } from "./node/process/NodeError.ts";
-import { validateNodeRuntimeIdentity } from "./node/process/context.ts";
 
 /* Adapted from Rivet agentOS's Node os bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * HOME/TMPDIR override directory values; the shared machine config owns OS identity.
@@ -25,7 +29,10 @@ function freezeNativeValue(value: unknown): unknown {
 const nativeConstants = freezeNativeValue(NodeOS.constants) as typeof NodeOS.constants;
 
 function unsupported(name: string) {
-  return (..._args: unknown[]) => unsupportedNodeOperation(`os.${name}`);
+  return markNodeBuiltinCapability(
+    (..._args: unknown[]) => unsupportedNodeOperation(`os.${name}`),
+    { status: "unsupported", evidence: `NodeOs.${name} has no host capability` },
+  );
 }
 
 function stripTrailingSeparators(value: string, separator: string): string {
@@ -70,17 +77,21 @@ function architectureEndianness(arch: string): "BE" | "LE" | undefined {
 }
 
 export function createNodeOs(
-  host: Pick<NodeProcessHostContext, "env" | "identity" | "systemIdentity">,
+  host: Pick<NodeProcessHostContext, "env" | "identity" | "systemIdentity" | "monotonicNowNs">,
 ) {
   if (!host || !host.env || typeof host.env !== "object") {
     throw new TypeError("Node os requires a host environment");
   }
   validateNodeRuntimeIdentity(host.identity);
-  const system = host.systemIdentity;
-  const defaultSystem = system ?? systemIdentityForThread(`process-${host.identity.pid}`);
+  const hasConfiguredSystemIdentity = host.systemIdentity !== undefined;
+  const system = resolveNodeProcessSystemIdentity(host);
+  const metrics =
+    host.monotonicNowNs === undefined
+      ? createNodeSystemMetrics(system)
+      : createNodeSystemMetrics(system, { readMonotonicTimeNs: host.monotonicNowNs });
 
-  const platform = system?.platform ?? host.identity.platform;
-  const arch = system?.arch ?? host.identity.arch;
+  const platform = hasConfiguredSystemIdentity ? system.platform : host.identity.platform;
+  const arch = hasConfiguredSystemIdentity ? system.arch : host.identity.arch;
   const isWindows = platform === "win32";
   const separator = isWindows ? "\\" : "/";
   const path = isWindows ? NodePath.win32 : NodePath.posix;
@@ -97,53 +108,100 @@ export function createNodeOs(
     devNull: isWindows ? "\\\\.\\nul" : "/dev/null",
     constants: nativeConstants,
     type: () => {
-      if (system) return system.type;
+      if (hasConfiguredSystemIdentity) return system.type;
       if (host.identity.type) return host.identity.type;
       const type = platformType(platform);
       return type ?? unsupportedNodeOperation("os.type");
     },
-    release: () =>
-      platform === "linux" ? defaultSystem.release : unsupportedNodeOperation("os.release"),
-    version: () =>
-      platform === "linux" ? defaultSystem.version : unsupportedNodeOperation("os.version"),
-    hostname: () => defaultSystem.hostname,
-    userInfo: (options?: { readonly encoding?: "utf8" | "buffer" }) => {
+    release: () => (platform === "linux" ? system.release : unsupportedNodeOperation("os.release")),
+    version: () => (platform === "linux" ? system.version : unsupportedNodeOperation("os.version")),
+    hostname: () => system.hostname,
+    userInfo: (options?: { readonly encoding?: BufferEncoding | "buffer" }) => {
       const user = host.identity.user;
       if (!user) return unsupportedNodeOperation("os.userInfo");
-      if (options?.encoding === "buffer") return unsupportedNodeOperation("os.userInfo(buffer)");
-      if (options?.encoding !== undefined && options.encoding !== "utf8") {
-        throw new TypeError(`Unsupported os.userInfo encoding: ${options.encoding}`);
+      const encoding = options?.encoding ?? "utf8";
+      if (encoding !== "buffer" && !NodeBuffer.Buffer.isEncoding(encoding)) {
+        throw new TypeError(`Unsupported os.userInfo encoding: ${encoding}`);
       }
+      const encode = (value: string) => {
+        const bytes = NodeBuffer.Buffer.from(value);
+        return encoding === "buffer" ? bytes : bytes.toString(encoding);
+      };
       return {
-        username: user.username,
+        username: encode(user.username),
         uid: user.uid,
         gid: user.gid,
-        shell: user.shell,
-        homedir: host.identity.homedir,
+        shell: user.shell === null ? null : encode(user.shell),
+        homedir: encode(host.identity.homedir),
       };
     },
     endianness: () => {
       const endianness =
-        system?.endianness ?? host.identity.endianness ?? architectureEndianness(arch);
+        (hasConfiguredSystemIdentity ? system.endianness : undefined) ??
+        host.identity.endianness ??
+        architectureEndianness(arch);
       return endianness ?? unsupportedNodeOperation("os.endianness");
     },
     machine: () => {
-      if (system) return system.machine;
+      if (hasConfiguredSystemIdentity) return system.machine;
       if (arch === "x64") return "x86_64";
       if (arch === "arm64") return "aarch64";
       return unsupportedNodeOperation("os.machine");
     },
-    cpus: unsupported("cpus"),
-    availableParallelism: () =>
-      host.identity.availableParallelism ?? unsupportedNodeOperation("os.availableParallelism"),
-    loadavg: unsupported("loadavg"),
-    uptime: unsupported("uptime"),
-    freemem: unsupported("freemem"),
-    totalmem: unsupported("totalmem"),
-    networkInterfaces: unsupported("networkInterfaces"),
+    cpus: metrics.cpus,
+    availableParallelism: () => metrics.availableParallelism,
+    loadavg: metrics.loadavg,
+    uptime: metrics.uptime,
+    freemem: () => metrics.freeMemoryBytes,
+    totalmem: () => metrics.totalMemoryBytes,
+    networkInterfaces: metrics.networkInterfaces,
     getPriority: unsupported("getPriority"),
     setPriority: unsupported("setPriority"),
   };
+  const availability: Readonly<Record<string, boolean>> = {
+    type:
+      hasConfiguredSystemIdentity || !!host.identity.type || platformType(platform) !== undefined,
+    release: platform === "linux",
+    version: platform === "linux",
+    userInfo: host.identity.user !== undefined,
+    endianness:
+      hasConfiguredSystemIdentity ||
+      host.identity.endianness !== undefined ||
+      architectureEndianness(arch) !== undefined,
+    machine: hasConfiguredSystemIdentity || arch === "x64" || arch === "arm64",
+  };
+  for (const name of [
+    "arch",
+    "platform",
+    "homedir",
+    "tmpdir",
+    "type",
+    "release",
+    "version",
+    "hostname",
+    "userInfo",
+    "endianness",
+    "machine",
+  ] as const) {
+    markNodeBuiltinCapability(os[name], {
+      status: availability[name] === false ? "conditional" : "supported",
+      evidence: `NodeOs.${name} uses explicit host identity and environment`,
+    });
+  }
+  for (const name of [
+    "availableParallelism",
+    "cpus",
+    "loadavg",
+    "uptime",
+    "freemem",
+    "totalmem",
+    "networkInterfaces",
+  ] as const) {
+    markNodeBuiltinCapability(os[name], {
+      status: "supported",
+      evidence: `NodeOs.${name} uses modeled values from shared per-thread system identity`,
+    });
+  }
   return Object.freeze(os);
 }
 

@@ -9,6 +9,7 @@ import { createWatchFile } from "./watchFile.ts";
 import { createWatchEvents } from "./watchEvents.ts";
 import { createPromisesApi } from "./promises.ts";
 import { createSyncApi } from "./sync.ts";
+import { declareNodeFsCapabilities } from "./capabilities.ts";
 
 export type NodeFsPromisesModule = ReturnType<typeof createPromisesApi> & {
   constants: typeof fsConstants;
@@ -71,5 +72,6 @@ export function createNodeFs(
     ),
   ) as unknown as NodeFsModule;
 
+  declareNodeFsCapabilities(fsModule, promiseModule, kernelFs.posixPolicy !== undefined);
   return Object.freeze({ fs: fsModule, "fs/promises": promiseModule });
 }

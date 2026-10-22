@@ -11,7 +11,7 @@ import { createNodeProcess } from "../../isolate/NodeProcess.ts";
 import { createNodeReadline } from "../../isolate/NodeReadline.ts";
 import { createNodeComputerChildProcess } from "../../isolate/NodeComputerProcess.ts";
 import type { NodeChildProcess } from "../../isolate/NodeChildProcess.ts";
-import { createNodeBridge } from "../../isolate/NodeBridge.ts";
+import { createNodeBridge, NodeBridgeError } from "../../isolate/NodeBridge.ts";
 import type { NodeBridge } from "../../isolate/NodeBridge.ts";
 import { createNodeBunHost } from "../../isolate/NodeBun.ts";
 import { createBunShim } from "../../isolate/BunShim.ts";
@@ -61,6 +61,19 @@ export function createHarnessRuntime(
       streams,
       identity,
       systemIdentity: input.systemIdentity ?? systemIdentityForThread(input.computer.threadId),
+      resolveBuiltinModule: (specifier: string) => {
+        try {
+          return bridge().require(specifier);
+        } catch (error) {
+          if (
+            error instanceof NodeBridgeError &&
+            (error.code === "NODE_BUILTIN_UNKNOWN" || error.code === "NODE_BUILTIN_UNAVAILABLE")
+          ) {
+            return undefined;
+          }
+          throw error;
+        }
+      },
       processes: input.host.processes,
       ...(input.processHandle === undefined ? {} : { parentProcessHandle: input.processHandle }),
       ...(cpu === undefined ? {} : { cpuAccounting: cpu }),

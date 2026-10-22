@@ -12,7 +12,11 @@ import {
   threadFrame,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { ThreadId } from "@t3tools/contracts";
-import { systemIdentityForThread, type SystemIdentity } from "@t3tools/contracts/systemIdentity";
+import {
+  sameSystemIdentity,
+  systemIdentityForThread,
+  type SystemIdentity,
+} from "@t3tools/contracts/systemIdentity";
 import type { MachineOwnershipAttestation } from "./Machine.ts";
 import type { MachineProcessClosureAttestation } from "./MachineWorkspace.ts";
 import type {
@@ -28,18 +32,6 @@ import {
 } from "./runner/CommandRunnerIdentity.ts";
 
 export const RUNNER_MACHINE_SOCKET_TAG = "command-runner";
-
-const sameSystemIdentity = (left: SystemIdentity, right: SystemIdentity) =>
-  left.release === right.release &&
-  left.version === right.version &&
-  left.machine === right.machine &&
-  left.hostnamePolicy === right.hostnamePolicy &&
-  left.verification === right.verification &&
-  left.hostname === right.hostname &&
-  left.platform === right.platform &&
-  left.type === right.type &&
-  left.arch === right.arch &&
-  left.endianness === right.endianness;
 
 export const isRunnerMachineSocket = (
   ctx: Pick<DurableObjectState, "getTags">,
