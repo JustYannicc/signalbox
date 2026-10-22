@@ -15,7 +15,8 @@ import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import { machineFixture, type Scenario } from "./machine.ts";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { createProductHarnessSessionHost } from "../../ProductHarnessSessionHost.ts";
+import { HarnessError } from "../../Harness.ts";
+import { createProductClaudeHarnessSessionHost } from "../../ProductClaudeHarnessSessionHost.ts";
 import type { HarnessOwnedProcess } from "../../HarnessProcessLifetime.ts";
 import { ChildWorkerCapacity } from "../../../computer/ChildWorkerCapacity.ts";
 import { CHILD_PROGRAM_PATHS } from "../../../computer/ChildProgramSet.ts";
@@ -28,7 +29,7 @@ import { commandLoader, programFixture } from "./commands.ts";
 import { nativeFixture } from "./native.ts";
 import { adapter, services } from "./adapter.ts";
 
-export function run(scenario: Scenario | "hydrate" = "turn") {
+export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn") {
   return Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -81,14 +82,18 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
         const modelRequests: string[] = [];
         let files: KernelFileSystem | undefined;
         let retainedFd: number | undefined;
+        let nativeBindingClosed = false;
         const hydrateEntered = Promise.withResolvers<void>();
         const hydrateCancelled = Promise.withResolvers<void>();
         const hydrateReleased = Promise.withResolvers<void>();
-        const machine = machineFixture(scenario === "hydrate" ? "turn" : scenario, () => {
-          NodeAssert.ok(files !== undefined);
-          if (retainedFd !== undefined) files.fstat(retainedFd);
-          else files.stat("/workspace/file.txt");
-        });
+        const machine = machineFixture(
+          scenario === "hydrate" || scenario === "start-failure" ? "turn" : scenario,
+          () => {
+            NodeAssert.ok(files !== undefined);
+            if (retainedFd !== undefined) files.fstat(retainedFd);
+            else files.stat("/workspace/file.txt");
+          },
+        );
         yield* Effect.addFinalizer(() => Effect.sync(machine.release));
         const observed: Uint8Array[] = [];
         let nativeProcess: HarnessOwnedProcess | undefined;
@@ -96,7 +101,7 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
         let saveCalls = 0;
         const release = yield* Effect.promise(() => claudeFixture());
         const programs = yield* Effect.promise(programFixture);
-        const host = yield* createProductHarnessSessionHost({
+        const host = yield* createProductClaudeHarnessSessionHost({
           threadId: d.threadId,
           release: release.options,
           programs,
@@ -168,8 +173,19 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
           },
           native: {
             adapter: ({ harness }) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 NodeAssert.equal(hydrated, true);
+                if (scenario === "start-failure") {
+                  yield* Effect.addFinalizer(() =>
+                    Effect.sync(() => {
+                      nativeBindingClosed = true;
+                    }),
+                  );
+                  return yield* new HarnessError({
+                    operation: "open",
+                    message: "Controlled native acquisition failure",
+                  });
+                }
                 return adapter(harness.computer.files, deps, instanceId);
               }),
             mcpSessions: deps.mcpSessions,
@@ -240,6 +256,19 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
           yield* host.dispose;
           NodeAssert.equal(files.descriptors.has(retainedFd), false);
           NodeAssert.equal(capacity.active, 0);
+          return;
+        }
+        if (scenario === "start-failure") {
+          const outcome = yield* host
+            .open({ session: sessionInput, bootAttemptId: "failed-boot" })
+            .pipe(Effect.exit);
+          NodeAssert.equal(Exit.isFailure(outcome), true);
+          NodeAssert.equal(nativeBindingClosed, true);
+          NodeAssert.equal(native.launched, false);
+          NodeAssert.equal(capacity.active, 0);
+          NodeAssert.throws(() => host.computer.files.stat("/bin/bash"), /disposed/);
+          yield* host.dispose;
+          yield* host.dispose;
           return;
         }
         const session = yield* host.open({ session: sessionInput, bootAttemptId: "recorded-boot" });
