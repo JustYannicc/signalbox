@@ -75,6 +75,8 @@ export interface KernelProgramHostOptions {
   readonly wakes: KernelWakeRegistry;
   readonly processes?: KernelProcessTable;
   readonly cpuAccounting?: KernelCpuAccounting;
+  /** Hosts over one process table share a meter; accounting allows only one per instance. */
+  readonly cpuExecution?: KernelCpuExecution;
   readonly selectFileBytes?: KernelProgramFileByteSelector;
   readonly admit?: (
     request: KernelProgramAdmissionRequest,
@@ -111,10 +113,13 @@ export class KernelProgramHost {
     this.#registry = options.registry;
     this.wakes = options.wakes;
     this.processes = options.processes ?? new KernelProcessTable({ wakes: options.wakes });
+    if (options.cpuExecution !== undefined && options.cpuAccounting !== undefined)
+      throw new RangeError("Pass either cpuAccounting or a shared cpuExecution, not both");
     this.cpuExecution =
-      options.cpuAccounting === undefined
+      options.cpuExecution ??
+      (options.cpuAccounting === undefined
         ? undefined
-        : new KernelCpuExecution(options.cpuAccounting);
+        : new KernelCpuExecution(options.cpuAccounting));
     this.#selectFileBytes = options.selectFileBytes;
     const programs = new Map<string, ProgramRecord>();
     const registeredVersions = new Set<string>();
