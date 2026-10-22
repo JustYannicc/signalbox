@@ -7,8 +7,6 @@ import {
 } from "@t3tools/contracts/harnessReleaseOmission";
 import { CLAUDE_HOST_CONFIG } from "../../src/harness/ClaudeHostConfig.ts";
 
-export type ClaudeHostConfigurationName = "product" | "qualification";
-
 export const CLAUDE_QUALIFICATION_HOST_CONFIG = {
   name: "qualification",
   env: {

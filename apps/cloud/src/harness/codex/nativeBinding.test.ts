@@ -27,7 +27,7 @@ const decodeMap = Schema.decodeUnknownSync(
 const encodeHarnessError = Schema.encodeUnknownSync(Schema.toCodecJson(HarnessError));
 const layer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer);
 const servers = { executor: { url: "https://harness-mcp.invalid/owner/1/1/0" } };
-const reporter = { releaseChunkOmitted: () => undefined };
+const reporter = { releaseModuleOmitted: () => undefined };
 const ensure: NativeThreadLoad = { method: "ensureThread", input: session };
 const resume = {
   method: "resumeThread" as const,

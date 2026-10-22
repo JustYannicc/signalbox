@@ -23,7 +23,11 @@ const usage = {
 };
 
 /** SDK and CLI doubles, behind the real native adapter and its shared Node personality. */
-export function nativeFixture(nativeId: string, systemIdentity: SystemIdentity) {
+export function nativeFixture(
+  nativeId: string,
+  systemIdentity: SystemIdentity,
+  onExit?: () => void,
+) {
   const outputs: string[] = [];
   let consumed = 0;
   let launched = false;
@@ -105,6 +109,7 @@ export function nativeFixture(nativeId: string, systemIdentity: SystemIdentity) 
         0o644,
       );
       const logicalProcess = bridge.require("node:process") as ReturnType<typeof createNodeProcess>;
+      if (onExit !== undefined) logicalProcess.once("exit", onExit);
       const os = bridge.require("node:os") as ReturnType<typeof createNodeOs>;
       NodeAssert.equal(logicalProcess.arch, systemIdentity.arch);
       NodeAssert.equal(logicalProcess.platform, systemIdentity.platform);
@@ -162,6 +167,8 @@ export function nativeFixture(nativeId: string, systemIdentity: SystemIdentity) 
           failure = error;
           throw error;
         }
+      } finally {
+        if (onExit !== undefined) logicalProcess.exit(0);
       }
     },
   });

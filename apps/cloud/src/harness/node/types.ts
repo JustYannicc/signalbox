@@ -14,8 +14,8 @@ import type { SystemIdentity } from "@t3tools/contracts/systemIdentity";
 
 import type { LoadedHarnessRelease } from "../HarnessReleaseLoader.ts";
 import type {
-  ReleaseChunkOmittedEvent,
-  ReleaseChunkOmittedFailure,
+  ReleaseModuleOmittedEvent,
+  ReleaseModuleOmittedFailure,
 } from "../HarnessProcessLifetime.ts";
 
 export interface NodeHarnessProcessInput {
@@ -40,9 +40,9 @@ export interface NodeHarnessProcessInput {
   readonly addons?: NodeEnvironmentOptions["addons"];
   readonly bun: { readonly main: string; readonly version: string; readonly revision: string };
   readonly modelTransport: (request: Request) => Promise<Response>;
-  readonly reportReleaseChunkOmitted?: (
-    event: ReleaseChunkOmittedEvent,
-    failure: ReleaseChunkOmittedFailure,
+  readonly reportReleaseModuleOmitted?: (
+    event: ReleaseModuleOmittedEvent,
+    failure: ReleaseModuleOmittedFailure,
   ) => void | Promise<void>;
 }
 

@@ -66,7 +66,7 @@ async function setupRehashedQualificationArtifact() {
     configurationReplacements: {},
     configurationRemoved: [],
     corpus: null,
-    chunks: [],
+    omittedModules: [],
   };
   await NodeFSP.writeFile(NodePath.join(cli, "manifest.json"), JSON.stringify({ omission }));
   await NodeFSP.writeFile(NodePath.join(cli, "main.js"), "export const launch = () => {};\n");
@@ -105,6 +105,42 @@ async function setupRehashedQualificationArtifact() {
       artifactHash,
     },
   };
+}
+
+async function setupProductArtifactWithQualificationPins() {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "1358-product-pins-"));
+  roots.push(root);
+  const cli = NodePath.join(root, "cli");
+  const sdk = NodePath.join(root, "sdk");
+  await NodeFSP.mkdir(cli);
+  await NodeFSP.mkdir(sdk);
+  const omission = {
+    schemaVersion: 1,
+    configuration: {
+      name: "product",
+      env: {
+        ANTHROPIC_BASE_URL: "http://mock.anthropic.invalid",
+        DISABLE_TELEMETRY: "1",
+      },
+    },
+    configurationReplacements: {},
+    configurationRemoved: [],
+    corpus: null,
+    omittedModules: [],
+  };
+  await NodeFSP.writeFile(NodePath.join(cli, "manifest.json"), JSON.stringify({ omission }));
+  await NodeFSP.writeFile(NodePath.join(cli, "main.js"), "export const launch = () => {};\n");
+  await NodeFSP.writeFile(NodePath.join(sdk, "manifest.json"), "{}\n");
+  await NodeFSP.writeFile(NodePath.join(sdk, "sdk.js"), "export const initialize = () => {};\n");
+  const output = NodePath.join(root, "output");
+  const identity = await prepareHarnessArtifact({
+    harness: "claude-code",
+    sourceIdentity: "a".repeat(64),
+    computer: { sourceIdentity: "b".repeat(64), manifestSha256: "c".repeat(64) },
+    components: { cli, sdk },
+    output,
+  });
+  return { identity, output };
 }
 
 describe("Harness artifact publication", () => {
@@ -169,6 +205,21 @@ describe("Harness artifact publication", () => {
     } finally {
       await NodeFSP.rm(fixture.root, { recursive: true, force: true });
     }
+  });
+
+  it("rejects product configuration pins that differ from the product host before publication", async () => {
+    const fixture = await setupProductArtifactWithQualificationPins();
+    const writes: string[] = [];
+    await expect(
+      publishHarnessArtifact(fixture.identity, fixture.output, {
+        store: {
+          put: async (key) => void writes.push(key),
+          read: async () => new Uint8Array(),
+        },
+        projectId: "alpha",
+      }),
+    ).rejects.toThrow("HARNESS_ARTIFACT_PRODUCT_CONFIGURATION_MISMATCH");
+    expect(writes).toEqual([]);
   });
 
   it("escapes literal object-key percent characters once in the Cloudflare request", async () => {

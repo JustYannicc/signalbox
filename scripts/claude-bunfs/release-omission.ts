@@ -1,7 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off - hash build inputs and coverage evidence.
 import * as NodeCrypto from "node:crypto";
 import ts from "typescript-legacy";
-import type { ReleaseOmissionConfiguration } from "@t3tools/contracts/harnessReleaseOmission";
+import {
+  RELEASE_MODULE_OMITTED_CODE,
+  RELEASE_MODULE_OMITTED_REPORTER_KEY,
+  type ReleaseModuleOmittedEvent,
+  type ReleaseOmissionConfiguration,
+} from "@t3tools/contracts/harnessReleaseOmission";
 
 /** Pinned to one binary. Only explicitly cold lazy JS initializers count; missing inputs stay bundled. */
 export interface ReleaseCoverageCorpus {
@@ -37,7 +42,7 @@ export interface ReleaseOmissionManifest {
     readonly provenance: ReleaseCoverageCorpus["provenance"];
     readonly pending: ReleaseCoverageCorpus["pending"];
   } | null;
-  readonly chunks: readonly OmittedReleaseModule[];
+  readonly omittedModules: readonly OmittedReleaseModule[];
 }
 
 export const releaseSourceHash = (source: string) =>
@@ -130,12 +135,19 @@ export function omittedModuleSource(
       else throw new Error(`RELEASE_OMISSION_EXPORT_UNSUPPORTED: ${module.inputPath}`);
     }
   }
-  const detail = JSON.stringify({
-    code: "RELEASE_CHUNK_OMITTED",
+  const detail = {
+    code: RELEASE_MODULE_OMITTED_CODE,
     inputPath: module.inputPath,
     tier: module.tier,
-  });
-  const failure = `/* Event shape and Symbol.for key mirror HarnessProcessLifetime.ts; the build tool cannot import cloud runtime code. */const detail=${detail};const error=Object.assign(new Error("RELEASE_CHUNK_OMITTED: "+detail.inputPath),detail,{name:"ReleaseChunkOmittedError"});try{globalThis[Symbol.for("signalbox.releaseChunkOmitted")]?.(detail)}finally{throw error}`;
+  } satisfies ReleaseModuleOmittedEvent;
+  const detailSource = JSON.stringify(detail);
+  const reporterKey = JSON.stringify(RELEASE_MODULE_OMITTED_REPORTER_KEY);
+  const errorCode = JSON.stringify(`${RELEASE_MODULE_OMITTED_CODE}: `);
+  const failure = [
+    `const detail=${detailSource};`,
+    `const error=Object.assign(new Error(${errorCode}+detail.inputPath),detail,{name:"ReleaseModuleOmittedError"});`,
+    `try{globalThis[Symbol.for(${reporterKey})]?.(detail)}finally{throw error}`,
+  ].join("");
   const bindings = [...names].map((name, i) => `v${i} as ${JSON.stringify(name)}`);
   const exports = commonJs
     ? ""

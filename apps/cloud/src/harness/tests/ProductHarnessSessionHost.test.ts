@@ -5,7 +5,7 @@ import * as NodeURL from "node:url";
 import * as NodeWorkerThreads from "node:worker_threads";
 import { expect, it, onTestFinished } from "vite-plus/test";
 
-it.each(["turn", "interrupt", "dispose", "hydrate"])(
+it.each(["turn", "interrupt", "dispose", "hydrate", "shutdown-omission"])(
   "owns the controlled Claude %s through the public product Computer",
   async (scenario) => {
     const worker = new NodeWorkerThreads.Worker(

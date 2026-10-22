@@ -1,5 +1,8 @@
 import type * as Esbuild from "esbuild";
-import { createPinnedEnvironmentTransform } from "./pinned-environment.ts";
+import {
+  createPinnedEnvironmentTransform,
+  pinnedEnvironmentSourceId,
+} from "./pinned-environment.ts";
 import {
   omittedModuleSource,
   parseReleaseCoverageCorpus,
@@ -31,7 +34,11 @@ export function createReleaseOmission(input: {
   if (corpus && corpus.binarySha256 !== input.binarySha256)
     throw new Error("RELEASE_CORPUS_BINARY_MISMATCH");
   const pinned = createPinnedEnvironmentTransform(
-    input.sources,
+    new Map<string, string>(
+      [...input.sources].map(
+        ([path, source]) => [pinnedEnvironmentSourceId("bun-graph", path), source] as const,
+      ),
+    ),
     options.configuration.env,
     input.resolve,
   );
@@ -47,15 +54,15 @@ export function createReleaseOmission(input: {
     // Different esbuild namespaces can reuse a path while referring to different source bytes.
     const id = `${namespace}:${path}`;
     originals.set(id, source);
-    const chunk = omitted.get(id);
-    if (chunk?.tier === "corpus") {
+    const module = omitted.get(id);
+    if (module?.tier === "corpus") {
       let stub = stubs.get(id);
       if (stub === undefined)
         stubs.set(
           id,
           (stub = omittedModuleSource(
             source,
-            chunk,
+            module,
             // Prepared packages have no Bun loader flags; their namespace limits the CommonJS fallback.
             input.commonJs(path) ||
               (/\bmodule\.exports\b/.test(source) && namespace === "signalbox-environment-package"),
@@ -65,9 +72,15 @@ export function createReleaseOmission(input: {
     }
     if (!specialize) return source;
     let result = specialized.get(id);
-    if (result === undefined) specialized.set(id, (result = pinned.transform(source, path)));
+    if (result === undefined)
+      specialized.set(
+        id,
+        (result = pinned.transform(source, pinnedEnvironmentSourceId(namespace, path))),
+      );
     return result;
   };
+  const observeSource = (source: string, path: string, namespace: string) =>
+    pinned.addSource(pinnedEnvironmentSourceId(namespace, path), source);
   const plan = async <T extends { metafile: Esbuild.Metafile }>(build: () => Promise<T>) => {
     // The baseline finds candidate inputs, the configured pass proves removals, and the final pass applies omissions.
     const baseline = await build();
@@ -111,7 +124,7 @@ export function createReleaseOmission(input: {
           pending: corpus.pending,
         }
       : null,
-    chunks: [...omitted.values()].sort((a, b) => a.inputPath.localeCompare(b.inputPath)),
+    omittedModules: [...omitted.values()].sort((a, b) => a.inputPath.localeCompare(b.inputPath)),
   });
-  return { prepareSource, plan, manifest };
+  return { observeSource, prepareSource, plan, manifest };
 }

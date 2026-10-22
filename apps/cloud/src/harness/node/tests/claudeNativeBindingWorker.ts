@@ -168,7 +168,7 @@ function coldSetup(override?: "prepared" | "both") {
       );
       const controller = new AbortController();
       const runtime = yield* binding.factory.open(openInput, {
-        releaseChunkOmitted: () => undefined,
+        releaseModuleOmitted: () => undefined,
       });
       yield* binding.configureMcp(
         {
@@ -277,7 +277,7 @@ function resumeSetup() {
           computer: services.computer,
           modelTransport: async () => new Response("unused"),
         },
-        { releaseChunkOmitted: () => undefined },
+        { releaseModuleOmitted: () => undefined },
       );
       const secondOpen = yield* Effect.exit(
         binding.factory.open(
@@ -292,7 +292,7 @@ function resumeSetup() {
             computer: services.computer,
             modelTransport: async () => new Response("unused"),
           },
-          { releaseChunkOmitted: () => undefined },
+          { releaseModuleOmitted: () => undefined },
         ),
       );
       NodeAssert.equal(secondOpen._tag, "Failure");

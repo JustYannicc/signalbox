@@ -32,6 +32,7 @@ export function createBunGraphPlugin(input: {
   readonly options: BunGraphOptions;
   readonly deferSource: (source: string, importer: string) => string;
   readonly prepareSource?: (source: string, path: string, namespace: string) => string;
+  readonly observeSource?: (source: string, path: string, namespace: string) => void;
 }) {
   const { extraction, options, deferSource } = input;
   const loaded = new Set<string>();
@@ -74,16 +75,18 @@ export function createBunGraphPlugin(input: {
         return { path: module.name, namespace: "bun-graph" };
       });
       build.onLoad({ filter: /.*/, namespace: "signalbox-layer" }, (args) =>
-        once(args, async () => ({
-          contents: deferSource(options.layerModules![args.path]!, args.path),
-          loader: "js",
-        })),
+        once(args, async () => {
+          const source = options.layerModules![args.path]!;
+          input.observeSource?.(source, args.path, args.namespace);
+          return { contents: deferSource(source, args.path), loader: "js" };
+        }),
       );
       build.onLoad({ filter: /.*/, namespace: "signalbox-environment-package" }, (args) =>
-        once(args, async () => ({
-          contents: deferSource(options.environmentPackageModules![args.path]!, args.path),
-          loader: "js",
-        })),
+        once(args, async () => {
+          const source = options.environmentPackageModules![args.path]!;
+          input.observeSource?.(source, args.path, args.namespace);
+          return { contents: deferSource(source, args.path), loader: "js" };
+        }),
       );
       build.onLoad({ filter: /.*/, namespace: "bun-graph" }, (args) =>
         once(args, async () => {
@@ -101,6 +104,7 @@ export function createBunGraphPlugin(input: {
             const source = options.transform
               ? await options.transform(normalized)
               : normalized.source;
+            input.observeSource?.(source, module.name, args.namespace);
             return { contents: deferSource(source, module.name), loader: "js" };
           }
           if (module.loader === 13) {

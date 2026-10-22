@@ -215,7 +215,7 @@ describe("harness release artifact reader", () => {
         configurationReplacements: {},
         configurationRemoved: [],
         corpus: null,
-        chunks: [],
+        omittedModules: [],
       };
     });
     await fixture.mutateCanonicalEnvelopeAndRehash((envelope) => {
@@ -223,6 +223,25 @@ describe("harness release artifact reader", () => {
     });
 
     await expectOpenCode(fixture, "OMISSION_IDENTITY_MISMATCH");
+  });
+
+  it("rejects unknown omission configuration names in raw and common manifests", async () => {
+    const fixture = await createFixture("claude-code");
+    await fixture.mutateClaudeProviderManifest((manifest) => {
+      manifest.omission = {
+        schemaVersion: 1,
+        configuration: { name: "preview", env: {} },
+        configurationReplacements: {},
+        configurationRemoved: [],
+        corpus: null,
+        omittedModules: [],
+      };
+    });
+    await fixture.mutateCanonicalEnvelopeAndRehash((envelope) => {
+      asRecord(asRecord(envelope.omission).configuration).name = "preview";
+    });
+
+    await expectOpenCode(fixture, "MANIFEST_INVALID");
   });
 
   it("requires Claude CLI and SDK components to name their own manifests", async () => {

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Controlled native modules run in an isolated test realm.
 import * as NodeAssert from "node:assert/strict";
+import * as NodeUtil from "node:util";
 import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import * as NodeBuffer from "node:buffer";
 import * as NodeConstants from "node:constants";
@@ -13,6 +14,11 @@ import * as Stream from "effect/Stream";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
+import * as Result from "effect/Result";
+import {
+  RELEASE_MODULE_OMITTED_CODE,
+  RELEASE_MODULE_OMITTED_REPORTER_KEY,
+} from "@t3tools/contracts/harnessReleaseOmission";
 import { machineFixture, type Scenario } from "./machine.ts";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { createProductHarnessSessionHost } from "../../ProductHarnessSessionHost.ts";
@@ -28,7 +34,7 @@ import { commandLoader, programFixture } from "./commands.ts";
 import { nativeFixture } from "./native.ts";
 import { adapter, services } from "./adapter.ts";
 
-export function run(scenario: Scenario | "hydrate" = "turn") {
+export function run(scenario: Scenario | "hydrate" = "turn", omitOnExit = false) {
   return Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -72,7 +78,28 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
           hostnamePolicy: "thread",
           verification: "measured",
         });
-        const native = nativeFixture(nativeId, systemIdentity);
+        const native = nativeFixture(
+          nativeId,
+          systemIdentity,
+          omitOnExit
+            ? () => {
+                const event = {
+                  code: RELEASE_MODULE_OMITTED_CODE,
+                  inputPath: "bun-graph:/modules/exit-listener.js",
+                  tier: "corpus",
+                };
+                const reporter = Reflect.get(
+                  globalThis,
+                  Symbol.for(RELEASE_MODULE_OMITTED_REPORTER_KEY),
+                );
+                NodeAssert.equal(typeof reporter, "function");
+                try {
+                  Reflect.apply(reporter, undefined, [event]);
+                } catch {}
+                throw Object.assign(new Error(event.code), event);
+              }
+            : undefined,
+        );
         const commands = commandLoader();
         const capacity = new ChildWorkerCapacity(2);
         const persistencePorts = createMemoryFilePersistencePorts();
@@ -253,7 +280,7 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
           NodeAssert.equal(host.commands.host.resolve(executable).status, "ok");
         const terminal = yield* Deferred.make<void>();
         const events: RunnerItem[] = [];
-        yield* session.events.pipe(
+        const collector = yield* session.events.pipe(
           Stream.runForEach((event) =>
             Effect.gen(function* () {
               events.push(event);
@@ -261,6 +288,7 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
                 yield* Deferred.succeed(terminal, undefined);
             }),
           ),
+          Effect.exit,
           Effect.forkScoped,
         );
         yield* session.turn({
@@ -352,7 +380,27 @@ export function run(scenario: Scenario | "hydrate" = "turn") {
         yield* Effect.promise(() => host.commands.drain());
         NodeAssert.equal(capacity.active, 0);
         const processTable = host.commands.processes;
-        yield* host.dispose;
+        if (omitOnExit) {
+          const disposed = yield* host.dispose.pipe(Effect.result);
+          NodeAssert.equal(Result.isFailure(disposed), true);
+          NodeAssert.match(
+            NodeUtil.inspect(disposed, { depth: 30 }),
+            /ReleaseModuleOmittedFailure/u,
+          );
+          yield* Fiber.join(collector);
+          NodeAssert.ok(
+            events.some(
+              (event) =>
+                event.kind === "log" && event.message.includes(RELEASE_MODULE_OMITTED_CODE),
+            ),
+          );
+          NodeAssert.equal(
+            events.filter(
+              (event) => event.kind === "provider" && event.event.type === "turn.terminal",
+            ).length,
+            1,
+          );
+        } else yield* host.dispose;
         NodeAssert.equal(processTable.size, 0);
         yield* Effect.promise(() =>
           NodeAssert.rejects(host.computer.port(8080, new AbortController().signal)),

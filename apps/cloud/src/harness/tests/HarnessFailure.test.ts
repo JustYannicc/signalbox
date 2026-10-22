@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { HarnessError } from "../Harness.ts";
-import { makeReleaseChunkOmittedFailure } from "../HarnessProcessLifetime.ts";
+import { makeReleaseModuleOmittedFailure } from "../HarnessProcessLifetime.ts";
 
 const harnessErrorCodec = Schema.toCodecJson(HarnessError);
 const encodeHarnessError = Schema.encodeSync(harnessErrorCodec);
@@ -78,8 +78,8 @@ const failure = () =>
 
 describe("Harness failure details", () => {
   it("round-trips typed release omission details and trace", () => {
-    const cause = makeReleaseChunkOmittedFailure({
-      code: "RELEASE_CHUNK_OMITTED",
+    const cause = makeReleaseModuleOmittedFailure({
+      code: "RELEASE_MODULE_OMITTED",
       inputPath: "bun-graph:/modules/lazy.js",
       tier: "configuration",
     });
@@ -92,8 +92,8 @@ describe("Harness failure details", () => {
     const recovered = decodeHarnessError(durable);
 
     expect(recovered.cause).toMatchObject({
-      _tag: "ReleaseChunkOmittedFailure",
-      code: "RELEASE_CHUNK_OMITTED",
+      _tag: "ReleaseModuleOmittedFailure",
+      code: "RELEASE_MODULE_OMITTED",
       inputPath: "bun-graph:/modules/lazy.js",
       tier: "configuration",
       message: "Release module was omitted.",

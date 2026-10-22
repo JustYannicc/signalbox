@@ -1,21 +1,24 @@
 import * as Schema from "effect/Schema";
 
+export const RELEASE_MODULE_OMITTED_CODE = "RELEASE_MODULE_OMITTED";
+export const RELEASE_MODULE_OMITTED_REPORTER_KEY = "signalbox.releaseModuleOmitted";
+
 export const ReleaseOmissionConfiguration = Schema.Struct({
-  name: Schema.String,
+  name: Schema.Literals(["product", "qualification"]),
   env: Schema.Record(Schema.String, Schema.NullOr(Schema.String)),
 }).annotate({ parseOptions: { onExcessProperty: "error" } });
 export type ReleaseOmissionConfiguration = typeof ReleaseOmissionConfiguration.Type;
 
-export const ReleaseChunkOmittedEvent = Schema.Struct({
-  code: Schema.Literal("RELEASE_CHUNK_OMITTED"),
+export const ReleaseModuleOmittedEvent = Schema.Struct({
+  code: Schema.Literal(RELEASE_MODULE_OMITTED_CODE),
   inputPath: Schema.String,
   tier: Schema.Literals(["configuration", "corpus"]),
 }).annotate({ parseOptions: { onExcessProperty: "error" } });
-export type ReleaseChunkOmittedEvent = typeof ReleaseChunkOmittedEvent.Type;
+export type ReleaseModuleOmittedEvent = typeof ReleaseModuleOmittedEvent.Type;
 
-export const ReleaseChunkOmittedFailure = Schema.TaggedStruct("ReleaseChunkOmittedFailure", {
-  ...ReleaseChunkOmittedEvent.fields,
+export const ReleaseModuleOmittedFailure = Schema.TaggedStruct("ReleaseModuleOmittedFailure", {
+  ...ReleaseModuleOmittedEvent.fields,
   message: Schema.String,
   stack: Schema.String,
 }).annotate({ parseOptions: { onExcessProperty: "error" } });
-export type ReleaseChunkOmittedFailure = typeof ReleaseChunkOmittedFailure.Type;
+export type ReleaseModuleOmittedFailure = typeof ReleaseModuleOmittedFailure.Type;

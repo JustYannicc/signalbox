@@ -117,34 +117,33 @@ describe("planHarnessRelease", () => {
       configurationReplacements: {},
       configurationRemoved: [],
       corpus: null,
-      chunks: [],
+      omittedModules: [],
     };
     Reflect.set(input.rawManifests.cli, "omission", omission);
     Reflect.set(input.manifest, "omission", { configuration: { name: "product" } });
 
     const plan = planHarnessRelease(input);
-    expect(Reflect.get(plan, "omission")).toEqual(omission);
+    expect(plan).not.toHaveProperty("omission");
+    expect(input.rawManifests.cli).toHaveProperty("omission", omission);
   });
 
-  it.each(["qualification", "unknown"])(
-    "rejects %s configuration from product planning",
-    (name) => {
-      const input = claudeInput();
-      Reflect.set(input.rawManifests.cli, "omission", {
-        schemaVersion: 1,
-        configuration: { name, env: {} },
-        configurationReplacements: {},
-        configurationRemoved: [],
-        corpus: null,
-        chunks: [],
-      });
-      Reflect.set(input.manifest, "omission", { configuration: { name } });
+  it.each([
+    ["qualification", "Claude release configuration is not product-enabled"],
+    ["unknown", "Invalid Claude release omission"],
+  ])("rejects %s configuration from product planning", (name, message) => {
+    const input = claudeInput();
+    Reflect.set(input.rawManifests.cli, "omission", {
+      schemaVersion: 1,
+      configuration: { name, env: {} },
+      configurationReplacements: {},
+      configurationRemoved: [],
+      corpus: null,
+      omittedModules: [],
+    });
+    Reflect.set(input.manifest, "omission", { configuration: { name } });
 
-      expect(() => planHarnessRelease(input)).toThrow(
-        "Claude release configuration is not product-enabled",
-      );
-    },
-  );
+    expect(() => planHarnessRelease(input)).toThrow(message);
+  });
 
   it.each([
     ["cli", "schemaVersion", 2],

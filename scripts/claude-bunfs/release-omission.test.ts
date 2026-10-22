@@ -10,7 +10,7 @@ import { parseReleaseCoverageCorpus, releaseSourceHash } from "./release-omissio
 import { createPinnedEnvironmentTransform } from "./pinned-environment.ts";
 
 const binarySha256 = releaseSourceHash("fixture");
-const configuration = { name: "fixture-host", env: { DISABLE: "1", ABSENT: null } };
+const configuration = { name: "qualification", env: { DISABLE: "1", ABSENT: null } } as const;
 
 async function fixture(
   root: string,
@@ -105,6 +105,49 @@ const validCorpus = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const runtimeMutationCases: ReadonlyArray<{
+  readonly name: string;
+  readonly specifier: string;
+  readonly sources: Record<string, string>;
+  readonly layerModules?: Record<string, string>;
+  readonly environmentPackageModules?: Record<string, string>;
+}> = [
+  {
+    name: "a destructured CommonJS process environment",
+    specifier: "./mutator.js",
+    sources: {
+      "/mutator.js": `const {env}=require("node:process");env.FLAG="changed";`,
+    },
+  },
+  {
+    name: "a layer module",
+    specifier: "signalbox:mutation",
+    sources: {},
+    layerModules: {
+      "signalbox:mutation": `const {env}=require("node:process");env.FLAG="changed";`,
+    },
+  },
+  {
+    name: "an environment package module",
+    specifier: "signalbox:mutation",
+    sources: {},
+    environmentPackageModules: {
+      "signalbox:mutation": `const {env}=require("node:process");env.FLAG="changed";`,
+    },
+  },
+  {
+    name: "a layer alias imported from an environment package",
+    specifier: "signalbox:mutation",
+    sources: {},
+    layerModules: {
+      "signalbox:mutation": `import{env}from"signalbox:environment";env.FLAG="changed";`,
+    },
+    environmentPackageModules: {
+      "signalbox:environment": `const {env}=require("node:process");export{env};`,
+    },
+  },
+];
+
 const resolveSource =
   (sources: ReadonlyMap<string, string>) => (specifier: string, importer: string) => {
     const path = specifier.startsWith(".")
@@ -173,13 +216,81 @@ const mutationCases: ReadonlyArray<{
     name: "an environment alias passed to unknown code",
     modules: [["/probe.js", "const env=process.env;inspectEnvironment(env);"]],
   },
+  {
+    name: "a destructured CommonJS process environment",
+    modules: [["/mutator.js", 'const {env}=require("node:process");env.FLAG="changed";']],
+  },
+  {
+    name: "an import.meta.require process alias",
+    modules: [
+      ["/mutator.js", 'const proc=import.meta.require("process");proc.env.FLAG="changed";'],
+    ],
+  },
+  {
+    name: "aliases of a CommonJS process environment",
+    modules: [
+      [
+        "/mutator.js",
+        'const proc=require("node:process");const env=proc.env;const alias=env;alias.FLAG="changed";',
+      ],
+    ],
+  },
+  {
+    name: "a computed write through a CommonJS process alias",
+    modules: [["/mutator.js", 'const proc=require("process");proc[key].FLAG="changed";']],
+  },
+  {
+    name: "a CommonJS process value passed to unknown code",
+    modules: [["/mutator.js", 'inspect(require("process"));']],
+  },
+  {
+    name: "an import.meta.require environment that escapes to unknown code",
+    modules: [["/mutator.js", 'inspect(import.meta.require("node:process").env);']],
+  },
 ];
 
 describe("release omission", () => {
+  it.each(runtimeMutationCases)(
+    "keeps runtime environment reads live after $name",
+    async ({ specifier, sources: extraSources, layerModules, environmentPackageModules }) => {
+      const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "release-omission-live-"));
+      const previous = process.env.FLAG;
+      try {
+        const extracted = await fixture(root, {
+          "/cli": `import ${JSON.stringify(specifier)};export const read=process.env.FLAG;export const run=()=>process.env.FLAG==="on"?"pinned":"dynamic";`,
+          ...extraSources,
+        });
+        const output = NodePath.join(root, "bundle");
+        await rebundle({
+          extracted,
+          output,
+          version: "fixture",
+          platform: "linux-x64",
+          deferInitialization: true,
+          ...(layerModules ? { layerModules } : {}),
+          ...(environmentPackageModules ? { environmentPackageModules } : {}),
+          omission: { configuration: { name: "qualification", env: { FLAG: "on" } } },
+        });
+        await NodeFSP.writeFile(NodePath.join(output, "package.json"), '{"type":"module"}');
+        const launcher = await import(
+          NodeURL.pathToFileURL(NodePath.join(output, "claude.js")).href
+        );
+        const release = launcher.launch();
+        expect(process.env.FLAG).toBe("changed");
+        expect.soft(release.read).toBe("changed");
+        expect.soft(release.run()).toBe("dynamic");
+      } finally {
+        if (previous === undefined) delete process.env.FLAG;
+        else process.env.FLAG = previous;
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("omits configured and corpus-cold payloads, preserves reachable code, and reports failed initialization", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "release-omission-"));
     const reports: unknown[] = [];
-    const key = Symbol.for("signalbox.releaseChunkOmitted");
+    const key = Symbol.for("signalbox.releaseModuleOmitted");
     const previous = Reflect.get(globalThis, key);
     Reflect.set(globalThis, key, (event: unknown) => {
       reports.push(event);
@@ -224,8 +335,8 @@ describe("release omission", () => {
         "cjs",
       ]) {
         await expect(Promise.resolve().then(() => release[name]())).rejects.toMatchObject({
-          name: "ReleaseChunkOmittedError",
-          code: "RELEASE_CHUNK_OMITTED",
+          name: "ReleaseModuleOmittedError",
+          code: "RELEASE_MODULE_OMITTED",
           inputPath: `bun-graph:/${name.startsWith("cjs") ? "cold.cjs" : "cold.js"}`,
           tier: "corpus",
         });
@@ -233,11 +344,11 @@ describe("release omission", () => {
       expect(reports).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            code: "RELEASE_CHUNK_OMITTED",
+            code: "RELEASE_MODULE_OMITTED",
             inputPath: "bun-graph:/cold.js",
           }),
           expect.objectContaining({
-            code: "RELEASE_CHUNK_OMITTED",
+            code: "RELEASE_MODULE_OMITTED",
             inputPath: "bun-graph:/cold.cjs",
           }),
         ]),
@@ -246,21 +357,24 @@ describe("release omission", () => {
       expect(source).not.toContain("tier-one-payload");
       expect(source).not.toContain("tier-two-payload");
       expect(source).not.toContain("commonjs-payload");
+      expect(source).toContain("RELEASE_MODULE_OMITTED");
+      expect(source).toContain("signalbox.releaseModuleOmitted");
+      expect(source).not.toContain("mirror HarnessProcessLifetime");
       expect(built.manifest.omission).toMatchObject({
-        configuration: { name: "fixture-host" },
+        configuration: { name: "qualification" },
         configurationRemoved: ["bun-graph:/gated.js"],
         corpus: {
           binarySha256,
           provenance: [{ name: "fixture-coverage", sha256: releaseSourceHash("coverage") }],
         },
       });
-      expect(built.manifest.omission?.chunks).toEqual(
+      expect(built.manifest.omission?.omittedModules).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ inputPath: "bun-graph:/gated.js", tier: "configuration" }),
           expect.objectContaining({ inputPath: "bun-graph:/cold.js", tier: "corpus" }),
         ]),
       );
-      expect(built.manifest.omission?.chunks).not.toEqual(
+      expect(built.manifest.omission?.omittedModules).not.toEqual(
         expect.arrayContaining([
           expect.objectContaining({ inputPath: "bun-graph:/unreported.js" }),
         ]),
@@ -287,7 +401,7 @@ describe("release omission", () => {
         version: "fixture",
         platform: "linux-x64",
         omission: {
-          configuration: { name: "fixture-host", env: { FLAG: null } },
+          configuration: { name: "qualification", env: { FLAG: null } },
         },
       });
       await expect(
@@ -296,7 +410,7 @@ describe("release omission", () => {
         ),
       ).resolves.toBe("configuration-kept");
       expect(built.manifest.omission?.configurationRemoved).toContain("bun-graph:/erased.js");
-      expect(built.manifest.omission?.chunks).toContainEqual(
+      expect(built.manifest.omission?.omittedModules).toContainEqual(
         expect.objectContaining({ inputPath: "bun-graph:/erased.js", tier: "configuration" }),
       );
     } finally {
@@ -325,7 +439,7 @@ describe("release omission", () => {
       await NodeFSP.writeFile(NodePath.join(output, "package.json"), '{"type":"module"}');
       const launcher = await import(NodeURL.pathToFileURL(NodePath.join(output, "claude.js")).href);
       expect(launcher.launch().actualData).toBe("actual imported text");
-      expect(built.manifest.omission?.chunks).not.toEqual(
+      expect(built.manifest.omission?.omittedModules).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ inputPath: "bun-graph:/message.txt" })]),
       );
     } finally {

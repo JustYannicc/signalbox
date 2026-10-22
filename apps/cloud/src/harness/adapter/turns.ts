@@ -187,6 +187,7 @@ export const makeTurn = ({
             began: yield* Deferred.make<void, HarnessError>(),
             started: yield* Deferred.make<void, HarnessError>(),
             nativeTurn: undefined,
+            nextItemOrdinal: 1,
             interruptRequested: false,
             interruptApplied: false,
             requests: new Map(),

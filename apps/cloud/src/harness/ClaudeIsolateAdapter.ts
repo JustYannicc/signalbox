@@ -83,7 +83,7 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
           ...options.process,
           ...(loadedRelease === undefined ? {} : { loadedRelease }),
           modelTransport: input.modelTransport,
-          reportReleaseChunkOmitted: reporter.releaseChunkOmitted,
+          reportReleaseModuleOmitted: reporter.releaseModuleOmitted,
           signal: lifetime.signal,
           loadRelease: async (installed, signal) => {
             bridge = installed;

@@ -16,6 +16,7 @@ export interface ActiveTurn {
   readonly started: Deferred.Deferred<void, HarnessError>;
   providerThread: OrchestrationV2ProviderThread;
   nativeTurn: OrchestrationV2ProviderTurn | undefined;
+  nextItemOrdinal: number;
   interruptRequested: boolean;
   interruptApplied: boolean;
   readonly requests: Map<string, OrchestrationV2RuntimeRequest>;

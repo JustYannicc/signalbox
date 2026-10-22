@@ -55,7 +55,7 @@ describe("loadHarnessRelease", () => {
         configurationReplacements: {},
         configurationRemoved: [],
         corpus: null,
-        chunks: [],
+        omittedModules: [],
       },
       omissionIdentity: { configuration: { name: "qualification" } },
     });
@@ -64,6 +64,30 @@ describe("loadHarnessRelease", () => {
       "Claude release configuration is not product-enabled",
     );
     expect(fixture.reads).toContain("cli/manifest.json");
+  });
+
+  it("rejects product omission metadata that pins the qualification environment", async () => {
+    const fixture = await claudeFixture({
+      omission: {
+        schemaVersion: 1,
+        configuration: {
+          name: "product",
+          env: {
+            ANTHROPIC_BASE_URL: "http://mock.anthropic.invalid",
+            DISABLE_TELEMETRY: "1",
+          },
+        },
+        configurationReplacements: {},
+        configurationRemoved: [],
+        corpus: null,
+        omittedModules: [],
+      },
+      omissionIdentity: { configuration: { name: "product" } },
+    });
+
+    await expect(loadHarnessRelease(fixture.options)).rejects.toThrow(
+      "Claude release configuration does not match the product host",
+    );
   });
 
   it("does not resolve for the caller until the last required read finishes", async () => {

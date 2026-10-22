@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { ReleaseOmissionConfiguration } from "@t3tools/contracts/harnessReleaseOmission";
+import { matchesClaudeHostConfiguration } from "../ClaudeHostConfig.ts";
 import { decodeCliManifest, decodeSdkManifest } from "./schemas.ts";
 import type {
   ClaudeReleasePlan,
@@ -48,6 +49,11 @@ export function claudePlan(input: HarnessReleasePlanInput): ClaudeReleasePlan {
   }
   if (omissionConfiguration && omissionConfiguration.name !== "product") {
     throw new HarnessReleasePlanError("Claude release configuration is not product-enabled");
+  }
+  if (omissionConfiguration && !matchesClaudeHostConfiguration(omissionConfiguration)) {
+    throw new HarnessReleasePlanError(
+      "Claude release configuration does not match the product host",
+    );
   }
   for (const name of [...Object.keys(cli.modules), ...Object.keys(sdk.modules)])
     relativeModuleName(name);
@@ -131,7 +137,6 @@ export function claudePlan(input: HarnessReleasePlanInput): ClaudeReleasePlan {
     moduleMaps,
     requiredHostModules: { cli: cli.requiredHostModules, sdk: sdk.requiredHostModules },
     environmentPackageModules: cli.environmentPackageModules,
-    ...(cli.omission === undefined ? {} : { omission: cli.omission }),
     cli: cli.release,
     sdk: sdk.release,
   };

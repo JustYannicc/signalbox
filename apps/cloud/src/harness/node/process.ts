@@ -7,8 +7,8 @@ import type { NodeBridge } from "../../isolate/NodeBridge.ts";
 import type { NodeChildProcess } from "../../isolate/NodeChildProcess.ts";
 import type { KernelExitStatus } from "../../kernel/KernelProcessTable.ts";
 import {
-  makeReleaseChunkOmittedFailure,
-  type ReleaseChunkOmittedFailure,
+  makeReleaseModuleOmittedFailure,
+  type ReleaseModuleOmittedFailure,
 } from "../HarnessProcessLifetime.ts";
 import { createHarnessRuntime } from "./runtime.ts";
 import { installHarnessPersonality, reserveHarnessRealm } from "./personality.ts";
@@ -37,13 +37,13 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
   const terminal = new Promise<Outcome>((resolve) => {
     finish = resolve;
   });
-  let releaseOmissionFailure: ReleaseChunkOmittedFailure | undefined;
+  let releaseOmissionFailure: ReleaseModuleOmittedFailure | undefined;
   const processInput: NodeHarnessProcessInput = {
     ...input,
-    reportReleaseChunkOmitted: (event) => {
-      const failure = makeReleaseChunkOmittedFailure(event);
+    reportReleaseModuleOmitted: (event) => {
+      const failure = makeReleaseModuleOmittedFailure(event);
       releaseOmissionFailure ??= failure;
-      return input.reportReleaseChunkOmitted?.(event, failure);
+      return input.reportReleaseModuleOmitted?.(event, failure);
     },
   };
   const settle = (value: Outcome) => {
@@ -233,11 +233,6 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       await attempt(() => personality.restoreGlobals());
       await attempt(() => personality.drainReports());
       try {
-        personality.restoreReporter();
-      } catch (error) {
-        failures.push(error);
-      }
-      try {
         realm.release();
       } catch (error) {
         failures.push(error);
@@ -255,6 +250,10 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
   const abort = async (reason?: unknown, signal: 9 | 15 = 15) => {
     force(reason, signal);
     await exited;
+    await personality.drainReports();
+    // A reused process can finish turns before shutdown. Late imports still belong to this
+    // realm, so disposal checks their latch without rewriting an already published exit.
+    if (releaseOmissionFailure !== undefined) throw releaseOmissionFailure;
   };
   return {
     stdin: input.stdio.stdin,

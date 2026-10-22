@@ -136,7 +136,7 @@ describe("Harness artifact preparation", () => {
       configurationReplacements: {},
       configurationRemoved: [],
       corpus: null,
-      chunks: [],
+      omittedModules: [],
     };
     await NodeFSP.writeFile(
       NodePath.join(cli, "manifest.json"),

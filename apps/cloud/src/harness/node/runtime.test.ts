@@ -47,12 +47,12 @@ describe("Node harness teardown", () => {
   );
 });
 
-it.each(["before-exit", "exit-listener", "after-restore"] as const)(
+it.each(["before-exit", "exit-listener", "after-restore", "after-exited"] as const)(
   "latches release omission as a failed native exit when reported %s",
   (mode) =>
     new Promise<void>((resolve, reject) => {
       const worker = new NodeWorkerThreads.Worker(
-        new URL("./tests/releaseChunkOmittedWorker.ts", import.meta.url),
+        new URL("./tests/releaseModuleOmittedWorker.ts", import.meta.url),
         { workerData: mode },
       );
       onTestFinished(async () => {

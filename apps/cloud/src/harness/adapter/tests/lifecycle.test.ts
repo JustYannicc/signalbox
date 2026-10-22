@@ -35,19 +35,19 @@ describe("AdapterHarness lifecycle", () => {
     Effect.gen(function* () {
       const f = yield* running;
       const event = {
-        code: "RELEASE_CHUNK_OMITTED",
+        code: "RELEASE_MODULE_OMITTED",
         inputPath: "bun-graph:/chunks/lazy.js",
         tier: "configuration",
       } as const;
-      f.reportReleaseChunkOmitted(event);
+      f.reportReleaseModuleOmitted(event);
       expect((yield* f.next).kind).toBe("log");
       yield* f.terminal();
       yield* f.endEvents;
       const collector = yield* Fiber.join(f.collector);
       expect(Exit.isFailure(collector)).toBe(true);
       expect(
-        f.events.some((item) => item.kind === "provider" && item.event.type === "turn.terminal"),
-      ).toBe(false);
+        f.events.filter((item) => item.kind === "provider" && item.event.type === "turn.terminal"),
+      ).toMatchObject([{ event: { status: "failed", failure: { code: event.code } } }]);
       expect(f.calls).not.toContain("save");
       expect(Result.isFailure(yield* f.session.export().pipe(Effect.result))).toBe(true);
     }).pipe(Effect.scoped),

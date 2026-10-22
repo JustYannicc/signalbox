@@ -13,6 +13,7 @@ import { assertOneByteModules, inlineLegalNotices } from "./one-byte-output.ts";
 import { type BunGraphOptions, createBunGraphPlugin, NODE_BUILTINS } from "./bun-graph-plugin.ts";
 import { createReleaseOmission } from "./rebundle-omission.ts";
 import type { ReleaseOmissionOptions } from "./release-omission.ts";
+import { parsePinnedEnvironmentSourceId, pinnedEnvironmentSourceId } from "./pinned-environment.ts";
 
 export interface RebundleOptions extends BunGraphOptions {
   readonly omission?: ReleaseOmissionOptions;
@@ -62,10 +63,16 @@ export async function rebundle(options: RebundleOptions) {
         binarySha256: input.manifest.binary.sha256,
         sources: sourceByName,
         resolve: (specifier, importer) => {
+          const location = parsePinnedEnvironmentSourceId(importer);
+          if (Object.hasOwn(options.layerModules ?? {}, specifier))
+            return pinnedEnvironmentSourceId("signalbox-layer", specifier);
+          if (Object.hasOwn(options.environmentPackageModules ?? {}, specifier))
+            return pinnedEnvironmentSourceId("signalbox-environment-package", specifier);
           const name = specifier.startsWith(".")
-            ? NodePath.posix.resolve(NodePath.posix.dirname(importer), specifier)
+            ? NodePath.posix.resolve(NodePath.posix.dirname(location.path), specifier)
             : specifier;
-          return (input.byName.get(name) ?? input.byKey.get(name))?.name;
+          const module = input.byName.get(name) ?? input.byKey.get(name);
+          return module ? pinnedEnvironmentSourceId("bun-graph", module.name) : undefined;
         },
         commonJs: (path) => input.byName.get(path)?.format === 2,
       })
@@ -105,6 +112,7 @@ export async function rebundle(options: RebundleOptions) {
     sources: sourceByName,
     options,
     deferSource,
+    ...(omission ? { observeSource: omission.observeSource } : {}),
     ...(omission ? { prepareSource: omission.prepareSource } : {}),
   });
   const { loaded, requiredHostModules } = graph;

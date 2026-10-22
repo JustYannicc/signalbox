@@ -4,6 +4,17 @@ import { ScopedBindings } from "./release-inventory-scope.ts";
 type Origin = readonly string[];
 type Parsed = { file: ts.SourceFile; bindings: ScopedBindings<never> };
 
+export function pinnedEnvironmentSourceId(namespace: string, path: string) {
+  return `${namespace}\0${path}`;
+}
+
+export function parsePinnedEnvironmentSourceId(value: string) {
+  const separator = value.indexOf("\0");
+  return separator < 0
+    ? { namespace: "bun-graph", path: value }
+    : { namespace: value.slice(0, separator), path: value.slice(separator + 1) };
+}
+
 function isAssignment(kind: ts.SyntaxKind) {
   return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
 }
@@ -48,7 +59,65 @@ function isWrite(node: ts.Node): boolean {
 
 const hasEnvironmentOrigin = (origin: Origin | undefined) => origin?.[0] === "env";
 const canReachEnvironment = (origin: Origin | undefined) =>
-  origin !== undefined && (origin.length === 0 || hasEnvironmentOrigin(origin));
+  origin !== undefined &&
+  (origin.length === 0 || origin[0] === "?" || hasEnvironmentOrigin(origin));
+
+function isImportMetaRequire(node: ts.Node) {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === "require" &&
+    ts.isMetaProperty(node.expression) &&
+    node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+    node.expression.name.text === "meta"
+  );
+}
+
+function processRequireOrigin(node: ts.Node, module: Parsed): Origin | undefined {
+  if (!ts.isCallExpression(node) || node.arguments.length === 0) return undefined;
+  const callee = node.expression;
+  const isRequire =
+    isImportMetaRequire(callee) ||
+    (ts.isIdentifier(callee) &&
+      callee.text === "require" &&
+      module.bindings.lookup(callee) === undefined) ||
+    (ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "require" &&
+      ts.isIdentifier(callee.expression) &&
+      callee.expression.text === "module" &&
+      module.bindings.lookup(callee.expression) === undefined);
+  if (!isRequire) return undefined;
+  const argument = node.arguments[0];
+  if (!argument || !ts.isStringLiteralLike(argument)) return ["?"];
+  return argument.text === "process" || argument.text === "node:process" ? [] : undefined;
+}
+
+function bindingPath(declaration: ts.Identifier, variable: ts.VariableDeclaration) {
+  if (ts.isIdentifier(variable.name)) return [];
+  const path: string[] = [];
+  let current: ts.Node = declaration;
+  while (current !== variable.name) {
+    const parent = current.parent;
+    if (ts.isBindingElement(parent)) {
+      if (parent.dotDotDotToken) return undefined;
+      const key = parent.propertyName
+        ? ts.isStringLiteralLike(parent.propertyName) || ts.isNumericLiteral(parent.propertyName)
+          ? parent.propertyName.text
+          : "?"
+        : ts.isIdentifier(parent.name)
+          ? parent.name.text
+          : "?";
+      path.unshift(key);
+      current = parent;
+      continue;
+    }
+    if (ts.isObjectBindingPattern(parent) || ts.isArrayBindingPattern(parent)) {
+      current = parent;
+      continue;
+    }
+    return undefined;
+  }
+  return path;
+}
 
 /** Resolve imported env aliases before esbuild folds guards. Imported bindings are invisible to define. */
 export function createPinnedEnvironmentTransform(
@@ -56,6 +125,7 @@ export function createPinnedEnvironmentTransform(
   env: Readonly<Record<string, string | null>>,
   resolve: (specifier: string, importer: string) => string | undefined,
 ) {
+  const sourceByName = new Map(sources);
   const parsed = new Map<string, Parsed>();
   const hits = new Map<string, number>();
   let mutations = new WeakMap<ts.Identifier, boolean>();
@@ -72,12 +142,22 @@ export function createPinnedEnvironmentTransform(
   const parse = (name: string, source?: string) => {
     const previous = parsed.get(name);
     if (previous && (source === undefined || previous.file.text === source)) return previous;
-    const text = source ?? sources.get(name);
+    const text = source ?? sourceByName.get(name);
     if (text === undefined) return undefined;
     const file = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
     const value = { file, bindings: new ScopedBindings<never>(file) };
     if (cacheParsed) parsed.set(name, value);
     return value;
+  };
+  const addSource = (name: string, source: string) => {
+    const previous = sourceByName.get(name);
+    if (previous === source) return;
+    if (analyzed) {
+      invalidateAllPins = true;
+      throw new Error(`RELEASE_OMISSION_GRAPH_CHANGED: ${name}`);
+    }
+    parsed.delete(name);
+    sourceByName.set(name, source);
   };
   const property = (node: ts.PropertyAccessExpression | ts.ElementAccessExpression) =>
     ts.isPropertyAccessExpression(node)
@@ -138,7 +218,7 @@ export function createPinnedEnvironmentTransform(
             const value = origin(candidate, module, next, allowMutableAliases);
             if (!allowMutableAliases && value !== undefined) return value;
             if (hasEnvironmentOrigin(value)) return value;
-            if (value?.length === 0) processOrigin = value;
+            if (canReachEnvironment(value)) processOrigin = value;
           }
           if (processOrigin) return processOrigin;
         }
@@ -157,10 +237,12 @@ export function createPinnedEnvironmentTransform(
     seen = new Set(seen).add(node);
     if (ts.isParenthesizedExpression(node))
       return origin(node.expression, module, seen, allowMutableAliases);
+    const requireOrigin = processRequireOrigin(node, module);
+    if (requireOrigin !== undefined) return requireOrigin;
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const base = origin(node.expression, module, seen, allowMutableAliases);
       const key = property(node);
-      if (base && key !== undefined) return [...base, key];
+      if (base) return [...base, key ?? "?"];
       if (key !== undefined && ts.isIdentifier(node.expression)) {
         const target = namespaceTarget(node.expression, module);
         if (target) return exported(target, key, seen, allowMutableAliases);
@@ -174,7 +256,8 @@ export function createPinnedEnvironmentTransform(
     if (seen.has(declaration)) return undefined;
     const parent = declaration.parent;
     if (ts.isVariableDeclaration(parent)) {
-      if (!ts.isIdentifier(parent.name) || parent.name !== declaration) return undefined;
+      const path = bindingPath(declaration, parent);
+      if (!path) return undefined;
       if (allowMutableAliases) {
         const candidates = [
           ...(parent.initializer ? [parent.initializer] : []),
@@ -183,8 +266,9 @@ export function createPinnedEnvironmentTransform(
         let processOrigin: Origin | undefined;
         for (const candidate of candidates) {
           const value = origin(candidate, module, new Set(seen).add(declaration), true);
-          if (hasEnvironmentOrigin(value)) return value;
-          if (value?.length === 0) processOrigin = value;
+          const resolved = value === undefined ? undefined : [...value, ...path];
+          if (hasEnvironmentOrigin(resolved)) return resolved;
+          if (canReachEnvironment(resolved)) processOrigin = resolved;
         }
         return processOrigin;
       }
@@ -201,7 +285,9 @@ export function createPinnedEnvironmentTransform(
         visit(module.file);
         mutations.set(declaration, mutated);
       }
-      return mutated ? undefined : origin(parent.initializer, module, seen.add(declaration));
+      if (mutated) return undefined;
+      const value = origin(parent.initializer, module, seen.add(declaration));
+      return value === undefined ? undefined : [...value, ...path];
     }
     let imported: ts.Node = parent;
     while (imported.parent && !ts.isImportDeclaration(imported)) imported = imported.parent;
@@ -238,7 +324,7 @@ export function createPinnedEnvironmentTransform(
     analyzed = true;
     if (!hasPinnedProperty) return;
     const modules: { readonly name: string; readonly parsed: Parsed }[] = [];
-    for (const [name, source] of sources) {
+    for (const [name, source] of sourceByName) {
       const parsedSource = parse(name, source);
       if (parsedSource) modules.push({ name, parsed: parsedSource });
     }
@@ -321,7 +407,8 @@ export function createPinnedEnvironmentTransform(
     };
     const escapesEnvironment = (node: ts.Node, module: Parsed) => {
       const possible = possibleOrigin(node, module);
-      if (!canReachEnvironment(possible) || (possible?.length ?? 2) > 1) return false;
+      if (!canReachEnvironment(possible) || ((possible?.length ?? 2) > 1 && possible?.[0] !== "?"))
+        return false;
       const parent = node.parent;
       if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent))
         return parent.expression !== node;
@@ -390,6 +477,7 @@ export function createPinnedEnvironmentTransform(
   };
   return {
     analyze,
+    addSource,
     transform,
     dropParseCache: () => {
       parsed.clear();

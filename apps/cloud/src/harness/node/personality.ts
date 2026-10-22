@@ -1,6 +1,6 @@
 import { createHarnessModelTransport } from "./modelTransport.ts";
 import { installNodePersonality } from "../../isolate/NodeBootstrap.ts";
-import { RELEASE_CHUNK_OMITTED_SYMBOL } from "../HarnessProcessLifetime.ts";
+import { RELEASE_MODULE_OMITTED_SYMBOL } from "../HarnessProcessLifetime.ts";
 import type { NodeHarnessProcessInput } from "./types.ts";
 import type { createHarnessRuntime } from "./runtime.ts";
 
@@ -36,8 +36,8 @@ export function installHarnessPersonality(
     modules: runtime.modules,
     globals: { Bun: runtime.bun, process: runtime.process },
   });
-  const reporter: NonNullable<NodeHarnessProcessInput["reportReleaseChunkOmitted"]> =
-    input.reportReleaseChunkOmitted ?? (() => undefined);
+  const reporter: NonNullable<NodeHarnessProcessInput["reportReleaseModuleOmitted"]> =
+    input.reportReleaseModuleOmitted ?? (() => undefined);
   const previous = new Map<PropertyKey, PropertyDescriptor | undefined>(
     ["fetch", "console"].map(
       (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const,
@@ -45,12 +45,11 @@ export function installHarnessPersonality(
   );
   const previousReporter = Object.getOwnPropertyDescriptor(
     globalThis,
-    RELEASE_CHUNK_OMITTED_SYMBOL,
+    RELEASE_MODULE_OMITTED_SYMBOL,
   );
   const pendingReports = new Set<Promise<void>>();
   const reportErrors: unknown[] = [];
   let globalsRestored = false;
-  let reporterRestored = false;
   const report = (
     event: Parameters<typeof reporter>[0],
     failure: Parameters<typeof reporter>[1],
@@ -85,7 +84,9 @@ export function installHarnessPersonality(
       writable: false,
       enumerable: previous.get("console")?.enumerable ?? true,
     });
-    Object.defineProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL, {
+    // Imported modules and queued callbacks outlive process.exited. This realm cannot
+    // launch again, so its reporter stays installed until the Worker destroys the realm.
+    Object.defineProperty(globalThis, RELEASE_MODULE_OMITTED_SYMBOL, {
       value: report,
       configurable: true,
       writable: false,
@@ -97,8 +98,8 @@ export function installHarnessPersonality(
       else Reflect.deleteProperty(globalThis, name);
     }
     if (previousReporter)
-      Object.defineProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL, previousReporter);
-    else Reflect.deleteProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL);
+      Object.defineProperty(globalThis, RELEASE_MODULE_OMITTED_SYMBOL, previousReporter);
+    else Reflect.deleteProperty(globalThis, RELEASE_MODULE_OMITTED_SYMBOL);
     personality.restore();
     throw error;
   }
@@ -134,7 +135,7 @@ export function installHarnessPersonality(
         throw new Error("Node harness console ownership changed");
       }
       if (
-        Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL)?.value !== report
+        Object.getOwnPropertyDescriptor(globalThis, RELEASE_MODULE_OMITTED_SYMBOL)?.value !== report
       ) {
         throw new Error("Node harness release reporter ownership changed");
       }
@@ -144,18 +145,6 @@ export function installHarnessPersonality(
         else Reflect.deleteProperty(globalThis, name);
       }
       globalsRestored = true;
-    },
-    restoreReporter() {
-      if (reporterRestored) return;
-      if (
-        Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL)?.value !== report
-      ) {
-        throw new Error("Node harness release reporter ownership changed");
-      }
-      if (previousReporter)
-        Object.defineProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL, previousReporter);
-      else Reflect.deleteProperty(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL);
-      reporterRestored = true;
     },
   };
 }

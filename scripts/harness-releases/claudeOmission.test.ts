@@ -31,4 +31,10 @@ describe("Claude release omission configuration", () => {
       readClaudeOmission({ enabled: false, configurationName: "qualification" }),
     ).rejects.toThrow("CLAUDE_OMISSION_NOT_ENABLED");
   });
+
+  it("rejects a coverage corpus when omission is disabled", async () => {
+    await expect(
+      readClaudeOmission({ enabled: false, corpusPath: "/fixture-not-read.json" }),
+    ).rejects.toThrow("CLAUDE_OMISSION_NOT_ENABLED");
+  });
 });

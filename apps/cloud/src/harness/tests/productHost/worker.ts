@@ -21,10 +21,14 @@ try {
     NodeWorkerThreads.workerData !== "turn" &&
     NodeWorkerThreads.workerData !== "interrupt" &&
     NodeWorkerThreads.workerData !== "dispose" &&
-    NodeWorkerThreads.workerData !== "hydrate"
+    NodeWorkerThreads.workerData !== "hydrate" &&
+    NodeWorkerThreads.workerData !== "shutdown-omission"
   )
     throw new Error("Unknown product scenario");
-  await run(NodeWorkerThreads.workerData);
+  await run(
+    NodeWorkerThreads.workerData === "shutdown-omission" ? "turn" : NodeWorkerThreads.workerData,
+    NodeWorkerThreads.workerData === "shutdown-omission",
+  );
   port.postMessage({ ok: true });
 } catch (error) {
   port.postMessage({ ok: false, error: NodeUtil.inspect(error, { depth: 15 }) });

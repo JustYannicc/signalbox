@@ -87,8 +87,6 @@ export interface ReleaseEntrypoint {
 
 export interface ClaudeReleasePlan extends PlanBase {
   readonly harness: "claude-code";
-  /** The CLI's omission metadata stays visible after admission. */
-  readonly omission?: Readonly<Record<string, unknown>>;
   readonly componentManifestPaths: { readonly cli: string; readonly sdk: string };
   readonly main: ReleaseEntrypoint;
   readonly initialize: ReleaseEntrypoint;

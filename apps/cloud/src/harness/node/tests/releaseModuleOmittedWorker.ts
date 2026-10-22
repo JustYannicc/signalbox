@@ -1,16 +1,15 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeWorkerThreads from "node:worker_threads";
 import { launchNodeHarnessProcess } from "../../NodeHarnessProcess.ts";
-import { RELEASE_CHUNK_OMITTED_SYMBOL } from "../../HarnessProcessLifetime.ts";
+import { RELEASE_MODULE_OMITTED_SYMBOL } from "../../HarnessProcessLifetime.ts";
 import type { NodeBridge } from "../../../isolate/NodeBridge.ts";
 import { fixture } from "./fixture.ts";
 
-type Mode = "before-exit" | "exit-listener" | "after-restore";
+type Mode = "before-exit" | "exit-listener" | "after-restore" | "after-exited";
 const mode: Mode = NodeWorkerThreads.workerData;
 const f = fixture();
 const reported: unknown[] = [];
 const failures: unknown[] = [];
-const priorReporter = Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL);
 const priorFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
 let sinkOpen = true;
 let exited = false;
@@ -26,12 +25,12 @@ const lateReportGate = new Promise<void>((resolve) => {
   releaseLateReport = resolve;
 });
 const event = {
-  code: "RELEASE_CHUNK_OMITTED",
+  code: "RELEASE_MODULE_OMITTED",
   inputPath: "bun-graph:/chunks/lazy.js",
   tier: "corpus",
 } as const;
 const report = (value: unknown) => {
-  const reporter = Reflect.get(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL);
+  const reporter = Reflect.get(globalThis, RELEASE_MODULE_OMITTED_SYMBOL);
   if (typeof reporter !== "function") throw new Error("Release omission reporter is unavailable");
   Reflect.apply(reporter, undefined, [value]);
 };
@@ -58,11 +57,10 @@ if (mode === "after-restore") {
 try {
   const harness = launchNodeHarnessProcess({
     ...f.input,
-    reportReleaseChunkOmitted: (reportedEvent: unknown, failure?: unknown) => {
+    reportReleaseModuleOmitted: (reportedEvent: unknown, failure?: unknown) => {
       if (!sinkOpen) throw new Error("diagnostic sink closed before late report");
       reported.push(reportedEvent);
       if (failure !== undefined) failures.push(failure);
-      if (mode === "exit-listener") throw new Error("diagnostic sink rejected report");
       if (mode === "after-restore") {
         startLateReport();
         return lateReportGate;
@@ -97,7 +95,7 @@ try {
   const drainedStdout = readStdout();
   const completion = harness.exited.then((status) => {
     exited = true;
-    sinkOpen = false;
+    if (mode !== "after-exited") sinkOpen = false;
     return status;
   });
   if (mode === "after-restore") {
@@ -117,10 +115,11 @@ try {
     NodeAssert.equal(lateReportError, undefined, "the reporter must survive personality restore");
     NodeAssert.equal(lateDiagnosticAfterRestore, true);
   }
-  NodeAssert.equal(status.exitCode, 1, "an omitted release module must fail the native process");
+  if (mode === "after-exited") report(event);
+  NodeAssert.equal(status.exitCode, mode === "after-exited" ? 0 : 1);
   NodeAssert.equal(reported.length, 1);
   NodeAssert.deepEqual(reported[0], {
-    code: "RELEASE_CHUNK_OMITTED",
+    code: "RELEASE_MODULE_OMITTED",
     inputPath: "bun-graph:/chunks/lazy.js",
     tier: "corpus",
   });
@@ -128,16 +127,13 @@ try {
   if (failure === null || (typeof failure !== "object" && typeof failure !== "function")) {
     throw new Error("Release omission failure was not an object");
   }
-  NodeAssert.equal(Reflect.get(failure, "_tag"), "ReleaseChunkOmittedFailure");
-  NodeAssert.equal(Reflect.get(failure, "code"), "RELEASE_CHUNK_OMITTED");
+  NodeAssert.equal(Reflect.get(failure, "_tag"), "ReleaseModuleOmittedFailure");
+  NodeAssert.equal(Reflect.get(failure, "code"), "RELEASE_MODULE_OMITTED");
   NodeAssert.equal(Reflect.get(failure, "inputPath"), event.inputPath);
   NodeAssert.equal(Reflect.get(failure, "tier"), event.tier);
-  NodeAssert.match(String(Reflect.get(failure, "stack")), /releaseChunkOmittedWorker/u);
-  await harness.dispose();
-  NodeAssert.deepEqual(
-    Object.getOwnPropertyDescriptor(globalThis, RELEASE_CHUNK_OMITTED_SYMBOL),
-    priorReporter,
-  );
+  NodeAssert.match(String(Reflect.get(failure, "stack")), /releaseModuleOmittedWorker/u);
+  await NodeAssert.rejects(harness.dispose(), (error) => error === failure);
+  NodeAssert.equal(typeof Reflect.get(globalThis, RELEASE_MODULE_OMITTED_SYMBOL), "function");
   NodeWorkerThreads.parentPort?.postMessage({ ok: true });
 } finally {
   Object.defineProperty = originalDefineProperty as typeof Object.defineProperty;
