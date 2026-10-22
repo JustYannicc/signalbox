@@ -8,12 +8,7 @@ import { isPosixMetadata, type PosixMetadata, type PosixStorage } from "../Posix
 import type { Inode, Stat } from "../storage.ts";
 import { FILE_CHUNK_BYTES } from "./SqliteChunks.ts";
 import { firstRow, type FacetStorage, StorageError } from "./SqliteDatabase.ts";
-import {
-  deleteCommitManifest,
-  installCommitManifest,
-  readCommitManifest,
-  writeCommitManifest,
-} from "./SqliteCommitManifest.ts";
+import { createSqliteJsonParts } from "./SqliteJsonParts.ts";
 
 const CHUNK = BigInt(FILE_CHUNK_BYTES);
 
@@ -149,9 +144,11 @@ function decodeEntries(value: unknown): SnapshotEntry[] {
 export class SqliteCommitSnapshot {
   private readonly db: FacetStorage;
   private readonly fs: PosixStorage;
+  private readonly manifestParts: ReturnType<typeof createSqliteJsonParts>;
   constructor(db: FacetStorage, fs: PosixStorage) {
     this.db = db;
     this.fs = fs;
+    this.manifestParts = createSqliteJsonParts(db, "kernel_fs_commit_manifest");
     db.transactionSync(() => {
       db.sql.exec(
         "CREATE TABLE IF NOT EXISTS kernel_fs_commit_receipt (repository TEXT NOT NULL, fork_name TEXT NOT NULL, base_commit TEXT NOT NULL, turn_id TEXT NOT NULL, commit_id TEXT NOT NULL, PRIMARY KEY (repository, fork_name, base_commit, turn_id))",
@@ -162,7 +159,7 @@ export class SqliteCommitSnapshot {
       db.sql.exec(
         "CREATE TABLE IF NOT EXISTS kernel_fs_commit_snapshot_chunk (turn_id TEXT NOT NULL, ino TEXT NOT NULL, part INTEGER NOT NULL, bin BLOB NOT NULL, PRIMARY KEY (turn_id, ino, part))",
       );
-      installCommitManifest(db);
+      this.manifestParts.install();
     });
   }
 
@@ -190,7 +187,7 @@ export class SqliteCommitSnapshot {
         receipt.commit,
       );
       this.db.sql.exec("DELETE FROM kernel_fs_commit_snapshot_chunk WHERE turn_id = ?", turnId);
-      deleteCommitManifest(this.db, turnId);
+      this.manifestParts.remove(turnId);
       this.db.sql.exec("DELETE FROM kernel_fs_commit_snapshot WHERE turn_id = ?", turnId);
     });
   }
@@ -237,7 +234,7 @@ export class SqliteCommitSnapshot {
         }
         return this.#inodes(
           turnId,
-          decodeEntries(readCommitManifest(this.db, turnId, existing.manifest_json)),
+          decodeEntries(this.manifestParts.read(turnId, existing.manifest_json)),
         );
       }
 
@@ -292,7 +289,7 @@ export class SqliteCommitSnapshot {
         at.repository,
         at.fork,
         at.commit,
-        writeCommitManifest(this.db, turnId, JSON.stringify(entries)),
+        this.manifestParts.write(turnId, JSON.stringify(entries)),
       );
       return this.#inodes(turnId, entries);
     });
