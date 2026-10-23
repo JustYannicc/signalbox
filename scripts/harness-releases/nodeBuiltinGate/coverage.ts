@@ -27,6 +27,12 @@ export interface NodeBuiltinFunctionCall {
   readonly module: string;
   readonly line: number;
   readonly column: number;
+  readonly guard?: {
+    readonly kind: "feature-test" | "optional-call";
+    readonly expression: string;
+    readonly line: number;
+    readonly column: number;
+  };
 }
 
 export interface NodeBuiltinCoverageInput {
@@ -57,7 +63,7 @@ export interface NodeBuiltinCoverageReport {
   readonly unknownBuiltinSpecifiers: readonly string[];
   readonly ambiguities: readonly NodeBuiltinAmbiguity[];
   readonly requiredFunctions: readonly (NodeBuiltinFunctionCall & {
-    readonly status: NodeBuiltinFunctionStatus;
+    readonly status: NodeBuiltinFunctionStatus | "guarded";
     readonly evidence: string;
   })[];
   readonly functionAmbiguities: readonly (NodeBuiltinAmbiguity & {
@@ -137,6 +143,14 @@ export function inspectNodeBuiltinCoverage(
           : duplicateCapabilityKeys.has(key)
             ? "conflicting runtime capability records"
             : (capability?.evidence ?? "runtime inventory has no evidence for this function");
+      if (status === "missing" && installed.has(specifier) && call.guard) {
+        return {
+          ...call,
+          specifier,
+          status: "guarded" as const,
+          evidence: `${evidence}; call skipped when absent by ${call.guard.expression}`,
+        };
+      }
       return { ...call, specifier, status, evidence };
     })
     .sort(
@@ -171,7 +185,10 @@ export function inspectNodeBuiltinCoverage(
       missingBuiltins.length ||
       unknownBuiltinSpecifiers.length ||
       requiredFunctions.some(
-        (call) => call.status !== "supported" && call.status !== "platform-pruned",
+        (call) =>
+          call.status !== "supported" &&
+          call.status !== "platform-pruned" &&
+          call.status !== "guarded",
       ) ||
       functionAmbiguities.some((ambiguity) => ambiguity.severity === "error")
         ? "fail"

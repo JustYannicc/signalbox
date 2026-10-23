@@ -60,6 +60,24 @@ function processFixture(pid: number, isTTY: boolean, withRawMode = false) {
 }
 
 describe("Node builtin runtime inventory", () => {
+  it("keeps present non-callable values distinct from absent functions", () => {
+    const capabilities = inspectNodeBuiltinFunctionCapabilities(
+      { process: { report: { getReport: {}, unset: undefined, nullValue: null } } },
+      ["getReport", "unset", "nullValue", "missing"].map((member) => ({
+        specifier: "process",
+        memberPath: ["report", member],
+      })),
+    );
+    expect(capabilities.map(({ status }) => status)).toEqual([
+      "unsupported",
+      "missing",
+      "unsupported",
+      "missing",
+    ]);
+    expect(capabilities[0]?.evidence).toContain("exists but is not callable");
+    expect(capabilities[1]?.evidence).toBe("process.report.unset is undefined");
+  });
+
   it("distinguishes declared, unavailable, unannotated and missing calls without invocation", () => {
     let calls = 0;
     const release = markNodeBuiltinCapability(

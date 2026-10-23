@@ -183,8 +183,9 @@ export function inspectNodeBuiltinFunctionCapabilities(
       return {
         specifier,
         memberPath,
-        status: "missing",
-        evidence: `${specifier}.${memberPath.join(".") || "<module>"} exists but is not callable`,
+        // Existence guards must not make present non-callable values pass publication.
+        status: value === undefined ? "missing" : "unsupported",
+        evidence: `${specifier}.${memberPath.join(".") || "<module>"} ${value === undefined ? "is undefined" : "exists but is not callable"}`,
       };
     }
 
