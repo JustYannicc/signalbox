@@ -35,29 +35,29 @@ const pointer = (args: readonly WasmArgument[], index: number): number => {
 
 const MEMORY_PLANS: Readonly<Record<string, WasiMemoryPlan>> = {
   args_sizes_get(regions, args) {
-    regions.add(pointer(args, 0), 4);
-    regions.add(pointer(args, 1), 4);
+    regions.add(pointer(args, 0), 4, "out");
+    regions.add(pointer(args, 1), 4, "out");
   },
   args_get(regions, args, options) {
-    regions.add(pointer(args, 0), options.argsCount * 4);
-    regions.add(pointer(args, 1), options.argsSize);
+    regions.add(pointer(args, 0), options.argsCount * 4, "out");
+    regions.add(pointer(args, 1), options.argsSize, "out");
   },
   environ_sizes_get(regions, args) {
-    regions.add(pointer(args, 0), 4);
-    regions.add(pointer(args, 1), 4);
+    regions.add(pointer(args, 0), 4, "out");
+    regions.add(pointer(args, 1), 4, "out");
   },
   environ_get(regions, args, options) {
-    regions.add(pointer(args, 0), options.envCount * 4);
-    regions.add(pointer(args, 1), options.envSize);
+    regions.add(pointer(args, 0), options.envCount * 4, "out");
+    regions.add(pointer(args, 1), options.envSize, "out");
   },
   clock_res_get(regions, args) {
-    regions.add(pointer(args, 1), 8);
+    regions.add(pointer(args, 1), 8, "out");
   },
   clock_time_get(regions, args) {
-    regions.add(pointer(args, 2), 8);
+    regions.add(pointer(args, 2), 8, "out");
   },
   random_get(regions, args) {
-    regions.add(pointer(args, 0), pointer(args, 1));
+    regions.add(pointer(args, 0), pointer(args, 1), "out");
   },
   sched_yield: noMemory,
   proc_exit: noMemory,
@@ -65,9 +65,9 @@ const MEMORY_PLANS: Readonly<Record<string, WasiMemoryPlan>> = {
   poll_oneoff(regions, args) {
     const count = pointer(args, 2) >>> 0;
     if (count === 0 || count > 1024) return;
-    regions.add(pointer(args, 0), count * 48);
-    regions.add(pointer(args, 1), count * 32);
-    regions.add(pointer(args, 3), 4);
+    regions.add(pointer(args, 0), count * 48, "in");
+    regions.add(pointer(args, 1), count * 32, "out");
+    regions.add(pointer(args, 3), 4, "out");
   },
   sock_accept: noMemory,
   sock_recv: noMemory,
@@ -78,85 +78,85 @@ const MEMORY_PLANS: Readonly<Record<string, WasiMemoryPlan>> = {
   fd_close: noMemory,
   fd_datasync: noMemory,
   fd_fdstat_get(regions, args) {
-    regions.add(pointer(args, 1), 24);
+    regions.add(pointer(args, 1), 24, "out");
   },
   fd_fdstat_set_flags: noMemory,
   fd_fdstat_set_rights: noMemory,
   fd_filestat_get(regions, args) {
-    regions.add(pointer(args, 1), 64);
+    regions.add(pointer(args, 1), 64, "out");
   },
   fd_filestat_set_size: noMemory,
   fd_filestat_set_times: noMemory,
   fd_pread(regions, args) {
-    regions.add(pointer(args, 4), 4);
-    regions.addIovecs(pointer(args, 1), pointer(args, 2));
+    regions.add(pointer(args, 4), 4, "out");
+    regions.addIovecs(pointer(args, 1), pointer(args, 2), "out");
   },
   fd_pwrite(regions, args) {
-    regions.add(pointer(args, 4), 4);
-    regions.addIovecs(pointer(args, 1), pointer(args, 2));
+    regions.add(pointer(args, 4), 4, "out");
+    regions.addIovecs(pointer(args, 1), pointer(args, 2), "in");
   },
   fd_prestat_get(regions, args) {
-    regions.add(pointer(args, 1), 8);
+    regions.add(pointer(args, 1), 8, "out");
   },
   fd_prestat_dir_name(regions, args) {
-    regions.add(pointer(args, 1), pointer(args, 2));
+    regions.add(pointer(args, 1), pointer(args, 2), "out");
   },
   fd_read(regions, args) {
-    regions.add(pointer(args, 3), 4);
-    regions.addIovecs(pointer(args, 1), pointer(args, 2));
+    regions.add(pointer(args, 3), 4, "out");
+    regions.addIovecs(pointer(args, 1), pointer(args, 2), "out");
   },
   fd_readdir(regions, args) {
-    regions.add(pointer(args, 1), Math.min(pointer(args, 2) >>> 0, MAX_TRANSFER_BYTES));
-    regions.add(pointer(args, 4), 4);
+    regions.add(pointer(args, 1), Math.min(pointer(args, 2) >>> 0, MAX_TRANSFER_BYTES), "out");
+    regions.add(pointer(args, 4), 4, "out");
   },
   fd_renumber: noMemory,
   fd_seek(regions, args) {
-    regions.add(pointer(args, 3), 8);
+    regions.add(pointer(args, 3), 8, "out");
   },
   fd_sync: noMemory,
   fd_tell(regions, args) {
-    regions.add(pointer(args, 1), 8);
+    regions.add(pointer(args, 1), 8, "out");
   },
   fd_write(regions, args) {
-    regions.add(pointer(args, 3), 4);
-    regions.addIovecs(pointer(args, 1), pointer(args, 2));
+    regions.add(pointer(args, 3), 4, "out");
+    regions.addIovecs(pointer(args, 1), pointer(args, 2), "in");
   },
   path_create_directory(regions, args) {
-    regions.add(pointer(args, 1), pointer(args, 2));
+    regions.add(pointer(args, 1), pointer(args, 2), "in");
   },
   path_filestat_get(regions, args) {
-    regions.add(pointer(args, 2), pointer(args, 3));
-    regions.add(pointer(args, 4), 64);
+    regions.add(pointer(args, 2), pointer(args, 3), "in");
+    regions.add(pointer(args, 4), 64, "out");
   },
   path_filestat_set_times(regions, args) {
-    regions.add(pointer(args, 2), pointer(args, 3));
+    regions.add(pointer(args, 2), pointer(args, 3), "in");
   },
   path_link(regions, args) {
-    regions.add(pointer(args, 2), pointer(args, 3));
-    regions.add(pointer(args, 5), pointer(args, 6));
+    regions.add(pointer(args, 2), pointer(args, 3), "in");
+    regions.add(pointer(args, 5), pointer(args, 6), "in");
   },
   path_open(regions, args) {
-    regions.add(pointer(args, 2), pointer(args, 3));
-    regions.add(pointer(args, 8), 4);
+    regions.add(pointer(args, 2), pointer(args, 3), "in");
+    regions.add(pointer(args, 8), 4, "out");
   },
   path_readlink(regions, args) {
-    regions.add(pointer(args, 1), pointer(args, 2));
-    regions.add(pointer(args, 3), Math.min(pointer(args, 4) >>> 0, MAX_TRANSFER_BYTES));
-    regions.add(pointer(args, 5), 4);
+    regions.add(pointer(args, 1), pointer(args, 2), "in");
+    regions.add(pointer(args, 3), Math.min(pointer(args, 4) >>> 0, MAX_TRANSFER_BYTES), "out");
+    regions.add(pointer(args, 5), 4, "out");
   },
   path_remove_directory(regions, args) {
-    regions.add(pointer(args, 1), pointer(args, 2));
+    regions.add(pointer(args, 1), pointer(args, 2), "in");
   },
   path_rename(regions, args) {
-    regions.add(pointer(args, 1), pointer(args, 2));
-    regions.add(pointer(args, 4), pointer(args, 5));
+    regions.add(pointer(args, 1), pointer(args, 2), "in");
+    regions.add(pointer(args, 4), pointer(args, 5), "in");
   },
   path_symlink(regions, args) {
-    regions.add(pointer(args, 0), pointer(args, 1));
-    regions.add(pointer(args, 3), pointer(args, 4));
+    regions.add(pointer(args, 0), pointer(args, 1), "in");
+    regions.add(pointer(args, 3), pointer(args, 4), "in");
   },
   path_unlink_file(regions, args) {
-    regions.add(pointer(args, 1), pointer(args, 2));
+    regions.add(pointer(args, 1), pointer(args, 2), "in");
   },
 };
 

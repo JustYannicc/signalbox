@@ -53,8 +53,8 @@ describe("ChildWasi", () => {
         (size, region) => size + region.bytes.length,
         0,
       );
-      expect(requestBytes).toBe(16 * 1024 * 1024 + 12);
-      expect(responseBytes).toBe(0);
+      expect(requestBytes).toBe(8);
+      expect(responseBytes).toBe(4);
       expect(view.getUint32(16, true)).toBe(0);
       expect(new Uint8Array(memory.buffer)[1024 + 64 * 1024 * 1024 - 1]).toBe(255);
     } finally {
@@ -493,7 +493,7 @@ function harness(options: HarnessOptions = {}) {
     async call(request) {
       requests.push({
         ...request,
-        regions: request.regions.map(({ pointer, bytes }) => ({ pointer, bytes: bytes.slice() })),
+        regions: request.regions.map((region) => ({ ...region, bytes: region.bytes.slice() })),
       });
       return host.call(request);
     },
@@ -531,7 +531,7 @@ function guestMemory(instance: WebAssembly.Instance): WebAssembly.Memory {
 }
 
 function regionBounds(request: Pick<KernelSyscallRequest, "regions">) {
-  return request.regions.map(({ pointer, bytes }) => [pointer, bytes.byteLength]);
+  return request.regions.map(({ pointer, bytes, length }) => [pointer, length ?? bytes.byteLength]);
 }
 
 function stringVector(
