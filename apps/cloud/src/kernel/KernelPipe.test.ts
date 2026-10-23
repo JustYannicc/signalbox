@@ -112,6 +112,31 @@ describe("KernelPipe", () => {
     }
   });
 
+  it("bounds the payload blocked writers retain together, falling back to short writes", async () => {
+    const wakes = new KernelWakeRegistry();
+    const held = new KernelPipe(wakes, 4096);
+    const other = new KernelPipe(wakes);
+    const source = new Uint8Array(1_048_576).fill(3);
+    try {
+      const holding = held.writeBlocking(new Uint8Array(16 * 1_048_576).fill(9));
+      expect(await other.writeBlocking(source)).toBe(65_536);
+
+      held.closeReader();
+      await expect(holding).rejects.toMatchObject({ code: "EPIPE", bytesWritten: 4096 });
+      other.tryReadInto(new Uint8Array(65_536));
+      const writing = other.writeBlocking(source);
+      const received = new Uint8Array(source.byteLength);
+      let offset = 0;
+      while (offset < received.byteLength) {
+        offset += await other.readInto(received.subarray(offset));
+      }
+      expect(await writing).toBe(source.byteLength);
+      expect(received).toEqual(source);
+    } finally {
+      wakes.dispose();
+    }
+  });
+
   it("reports the completed prefix when a blocked write loses its reader", async () => {
     const wakes = new KernelWakeRegistry();
     const pipe = new KernelPipe(wakes, 4096);
