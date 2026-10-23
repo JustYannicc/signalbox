@@ -14,7 +14,10 @@ const code = {
   mainModule: "main.js",
   modules: { "main.js": "export default {}" },
 };
-const snapshotState = Object.freeze({ revision: 7 }) as unknown as KernelBashForkState;
+const snapshotState = Object.freeze({
+  revision: 7,
+  memoryBytes: 196_608,
+}) as unknown as KernelBashForkState;
 const source: KernelBashForkSource = {
   state: vi.fn(async () => snapshotState),
   read: vi.fn(async () => new Uint8Array([7, 8, 9])),
@@ -22,9 +25,49 @@ const source: KernelBashForkSource = {
 };
 
 describe("Bash fork dispatch", () => {
+  it("reports an oversized snapshot before admitting its restore worker", async () => {
+    const fixture = childBashFixture();
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/fork-residency",
+      residentByteLimit: snapshotState.memoryBytes - 1,
+    });
+    const lifetimes = new ChildWorkerLifetimes();
+    const reason = new Error("Snapshot requires another execution destination");
+    const pressures: number[] = [];
+    const stop = capacity.onPressure((pressure) => {
+      if (pressure.kind === "unplaceable" && "request" in pressure) {
+        pressures.push(pressure.request.residentBytes);
+        fixture.controller.abort(reason);
+      }
+    });
+    const run = vi.fn(async () => exited(0));
+    const dispatch = createChildBashForkDispatch({
+      credentials: bashCredentials,
+      code,
+      capacity,
+      lifetimes,
+      dispatch: { run },
+    });
+    try {
+      await expect(
+        dispatch(fixture.context, { port: fixture.owner.port, close: async () => {} }, source),
+      ).rejects.toBe(reason);
+      expect(pressures).toEqual([snapshotState.memoryBytes]);
+      expect(run).not.toHaveBeenCalled();
+      expect(capacity.active).toBe(0);
+      expect(capacity.waiting).toBe(0);
+    } finally {
+      stop();
+      await lifetimes.drain();
+      await fixture.close();
+    }
+  });
+
   it("queues a fork and forwards snapshot state without copying it", async () => {
     const fixture = childBashFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childbashforkdispatch-test-1",
+    });
     const lifetimes = new ChildWorkerLifetimes();
     const permit = await capacity.acquire(fixture.controller.signal, undefined);
     let snapshot: KernelBashForkSource | undefined;
@@ -36,10 +79,10 @@ describe("Bash fork dispatch", () => {
       snapshot = host.forkSnapshot();
       expect(snapshot).toBeDefined();
       expect(snapshot).not.toBe(source);
-      expect(source.state).not.toHaveBeenCalled();
+      expect(source.state).toHaveBeenCalledOnce();
       expect(source.read).not.toHaveBeenCalled();
       expect(await snapshot!.state()).toBe(snapshotState);
-      expect(source.state).toHaveBeenCalledOnce();
+      expect(source.state).toHaveBeenCalledTimes(2);
       return exited(17);
     });
     const dispatch = createChildBashForkDispatch({
@@ -72,7 +115,9 @@ describe("Bash fork dispatch", () => {
 
   it("reports a lost transport while keeping its physical permit until stop acknowledgement", async () => {
     const fixture = childBashFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childbashforkdispatch-test-2",
+    });
     const lifetimes = new ChildWorkerLifetimes();
     const stopped = Promise.withResolvers<void>();
     let host: KernelBashPort | undefined;
@@ -117,7 +162,9 @@ describe("Bash fork dispatch", () => {
 
   it("closes the fork owner but retains capacity when an untyped transport failure has no stop ACK", async () => {
     const fixture = childBashFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childbashforkdispatch-test-3",
+    });
     const lifetimes = new ChildWorkerLifetimes();
     const close = vi.fn(async () => {});
     const dispatch = createChildBashForkDispatch({
@@ -147,7 +194,9 @@ describe("Bash fork dispatch", () => {
 
   it("captures modules and uses the fork's current umask while joining owner cleanup", async () => {
     const fixture = childBashFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childbashforkdispatch-test-4",
+    });
     const lifetimes = new ChildWorkerLifetimes();
     const closing = Promise.withResolvers<void>();
     const closed = Promise.withResolvers<void>();

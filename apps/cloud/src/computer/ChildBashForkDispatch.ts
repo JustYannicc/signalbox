@@ -20,14 +20,18 @@ export function createChildBashForkDispatch(options: {
   // Work that needs more simultaneous workers than the caller's I/O limit can queue forever;
   // nested priority keeps descendants ahead of unrelated roots without exceeding that limit.
   const runner = createChildWorkerRunner({ ...options, executable: "/bin/bash" });
-  return (context, owner, source) => {
-    return runner.run(context, (admitted, lease) =>
-      createWorkerBashForkHost(
-        { context: admitted, credentials: options.credentials },
-        lease,
-        owner,
-        source,
-      ),
+  return async (context, owner, source) => {
+    const { memoryBytes } = await source.state();
+    return runner.run(
+      context,
+      (admitted, lease) =>
+        createWorkerBashForkHost(
+          { context: admitted, credentials: options.credentials },
+          lease,
+          owner,
+          source,
+        ),
+      memoryBytes,
     );
   };
 }
