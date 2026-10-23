@@ -94,8 +94,12 @@ export async function prepareKernelCoreutilsProgramsFacet(destination: string) {
     "infra/kernelPrograms/coreutils/provenance.json",
     "infra/kernelPrograms/coreutils/import-abi.json",
     "infra/kernelPrograms/coreutils/build-mkdir.sh",
+    "infra/kernelPrograms/coreutils/build-head.sh",
+    "infra/kernelPrograms/coreutils/head.manifest.json",
     "infra/kernelPrograms/coreutils/patches/0001-use-proc-umask-on-wasi.patch",
     "infra/kernelPrograms/coreutils/patches/0002-mkdir-wasi-mode.patch",
+    "infra/kernelPrograms/coreutils/patches/0003-avoid-fdstat-on-regular-io.patch",
+    "infra/kernelPrograms/coreutils/patches/0005-head-1m-byte-buffer.patch",
   ]) {
     sources.push(await sourceRecord(cloudRoot, path));
   }

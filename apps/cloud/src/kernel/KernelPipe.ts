@@ -4,14 +4,23 @@ type Direction = "read" | "write";
 type IoOptions = { nonblocking?: boolean; signal?: AbortSignal | undefined };
 
 const pipeError = (code: string, message: string) => Object.assign(new Error(message), { code });
+const PIPE_BUF_BYTES = 4096;
+const MAX_BLOCKING_WRITE_BYTES = 16 * 1024 * 1024;
+// Blocked writers keep their payload until readers drain it, and every pipe shares the isolate's
+// memory, so their payloads together stay under one budget. Past it, writers fall back to a short
+// write of at most one pipe buffer, which they retry.
+const RETAINED_WRITE_BYTES = 16 * 1024 * 1024;
+let retainedWriteBytes = 0;
 
 /** Distinguishes a missing pipe reader from an unrelated backend or host EPIPE. */
 export class KernelBrokenPipeError extends Error {
   readonly code = "EPIPE";
+  readonly bytesWritten: number;
 
-  constructor() {
+  constructor(bytesWritten = 0) {
     super("Pipe has no reader");
     this.name = "KernelBrokenPipeError";
+    this.bytesWritten = bytesWritten;
   }
 }
 
@@ -71,7 +80,7 @@ export class KernelPipe {
   }
 
   tryWrite(source: Uint8Array): number {
-    return this.#tryWrite(source, source.byteLength <= 4096);
+    return this.#tryWrite(source, source.byteLength <= PIPE_BUF_BYTES);
   }
 
   #tryWrite(source: Uint8Array, atomic: boolean): number {
@@ -99,9 +108,59 @@ export class KernelPipe {
 
   write(source: Uint8Array, options: IoOptions = {}): Promise<number> {
     // A blocked caller may grow or reuse guest memory before it resumes.
-    const atomic = source.byteLength <= 4096;
+    const atomic = source.byteLength <= PIPE_BUF_BYTES;
     const owned = new Uint8Array(source.subarray(0, this.#bytes.length));
     return this.#io("write", () => this.#tryWrite(owned, atomic), options);
+  }
+
+  async writeBlocking(
+    source: Uint8Array,
+    options: Pick<IoOptions, "signal"> = {},
+  ): Promise<number> {
+    // WASI caps vectors here too; larger Node callers receive a bounded short write.
+    const size = Math.min(
+      source.byteLength,
+      MAX_BLOCKING_WRITE_BYTES,
+      RETAINED_WRITE_BYTES - retainedWriteBytes,
+    );
+    if (size < Math.min(source.byteLength, this.#bytes.length)) return this.write(source, options);
+    const owned = new Uint8Array(source.subarray(0, size));
+    retainedWriteBytes += size;
+    const atomic = source.byteLength <= PIPE_BUF_BYTES;
+    let offset = 0;
+    try {
+      return await this.#io(
+        "write",
+        () => {
+          if (owned.byteLength === 0) return this.#tryWrite(owned, atomic);
+          while (offset < owned.byteLength) {
+            try {
+              offset += this.#tryWrite(owned.subarray(offset), atomic);
+            } catch (error) {
+              if (error instanceof KernelBrokenPipeError) {
+                throw new KernelBrokenPipeError(offset + error.bytesWritten);
+              }
+              throw error;
+            }
+          }
+          return offset;
+        },
+        options,
+      );
+    } catch (error) {
+      // A retry must not duplicate a prefix that already reached the reader.
+      if (
+        offset > 0 &&
+        error instanceof Error &&
+        "code" in error &&
+        ["ECANCELED", "EBADF", "ENOMEM"].includes(String(error.code))
+      ) {
+        return offset;
+      }
+      throw error;
+    } finally {
+      retainedWriteBytes -= size;
+    }
   }
 
   closeReader() {

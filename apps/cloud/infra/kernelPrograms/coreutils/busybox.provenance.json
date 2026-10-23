@@ -1,9 +1,11 @@
 {
   "repository": "https://github.com/AshishKumar4/Nimbus",
   "revision": "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
-  "path": "packages/worker/wasm/bash/coreutils/busybox.wasm",
-  "sha256": "7d1b34a31d74473be1fdb50706ed75e8ec765b68878b4fb2cf6ab486cbcb2631",
-  "bytes": 241159,
+  "path": "bin/busybox.wasm",
+  "version": "1.37.0+nimbus.e9f019ab.io-buffer.1",
+  "buildRecipe": "infra/kernelPrograms/coreutils/build-busybox-buffered.sh",
+  "sha256": "6aefd645a67065f611b6cbdf78a5899def4404e01917375164a02426750d47ba",
+  "bytes": 295812,
   "program": "BusyBox 1.37.0",
   "license": "GPL-2.0-only",
   "imports": [
@@ -24,6 +26,7 @@
     "wasi_snapshot_preview1.fd_fdstat_get:function",
     "wasi_snapshot_preview1.fd_fdstat_set_flags:function",
     "wasi_snapshot_preview1.fd_filestat_get:function",
+    "wasi_snapshot_preview1.fd_pread:function",
     "wasi_snapshot_preview1.fd_prestat_dir_name:function",
     "wasi_snapshot_preview1.fd_prestat_get:function",
     "wasi_snapshot_preview1.fd_read:function",

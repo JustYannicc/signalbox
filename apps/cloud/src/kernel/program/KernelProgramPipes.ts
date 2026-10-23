@@ -242,7 +242,7 @@ export function writeEndpoint(pipe: KernelPipe, wakes: KernelWakeRegistry): Poll
     write: (source, flags) =>
       (flags & FDFLAGS.NONBLOCK) !== 0 || currentKernelIoMode() === "sync"
         ? pipe.tryWrite(source)
-        : pipe.write(source, { signal: currentKernelSignal() }),
+        : pipe.writeBlocking(source, { signal: currentKernelSignal() }),
     poll: (direction, signal) => pollPipe(pipe, wakes, direction, signal ?? currentKernelSignal()),
   };
 }

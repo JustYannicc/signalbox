@@ -1,0 +1,49 @@
+diff --git a/vendor/uu_head/src/head.rs b/vendor/uu_head/src/head.rs
+index 428d624..8ca52ca 100644
+--- a/vendor/uu_head/src/head.rs
++++ b/vendor/uu_head/src/head.rs
+@@ -22,6 +22,7 @@ use uucore::translate;
+ use uucore::{format_usage, show};
+ 
+ const BUF_SIZE: usize = 65536;
++const IO_BUFFER_SIZE: usize = 1024 * 1024;
+ 
+ mod options {
+     pub const BYTES: &str = "BYTES";
+@@ -240,17 +241,33 @@ fn wrap_in_stdout_error(err: io::Error) -> io::Error {
+ fn read_n_bytes(input: impl Read, n: u64) -> io::Result<u64> {
+     // Read the first `n` bytes from the `input` reader.
+     let mut reader = input.take(n);
++    let mut buffer = vec![0; IO_BUFFER_SIZE];
+ 
+     // Write those bytes to `stdout`.
+     let stdout = io::stdout();
+-    let mut stdout = stdout.lock();
++    let stdout = stdout.lock();
++    let mut writer = BufWriter::with_capacity(IO_BUFFER_SIZE, stdout);
++    let mut bytes_written = 0;
+ 
+-    let bytes_written = io::copy(&mut reader, &mut stdout).map_err(wrap_in_stdout_error)?;
++    loop {
++        let count = match reader.read(&mut buffer) {
++            Ok(count) => count,
++            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
++            Err(error) => return Err(wrap_in_stdout_error(error)),
++        };
++        if count == 0 {
++            break;
++        }
++        for chunk in buffer[..count].chunks(BUF_SIZE) {
++            writer.write_all(chunk).map_err(wrap_in_stdout_error)?;
++        }
++        bytes_written += count as u64;
++    }
+ 
+     // Make sure we finish writing everything to the target before
+     // exiting. Otherwise, when Rust is implicitly flushing, any
+     // error will be silently ignored.
+-    stdout.flush().map_err(wrap_in_stdout_error)?;
++    writer.flush().map_err(wrap_in_stdout_error)?;
+ 
+     Ok(bytes_written)
+ }
