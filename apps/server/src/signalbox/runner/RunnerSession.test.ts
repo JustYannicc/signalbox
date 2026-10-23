@@ -27,6 +27,7 @@ import type {
 import { expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -34,6 +35,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 
 import { makeRunnerSession, RunnerConnectionError, type RunnerTransport } from "./RunnerSession.ts";
+import * as RunnerMachineFiles from "./RunnerMachineFiles.ts";
 import type { RunnerTurns } from "./RunnerTurns.ts";
 import type { RunnerTerminals } from "./RunnerTerminals.ts";
 import type { RunnerExecHost } from "./RunnerExecHost.ts";
@@ -69,6 +71,7 @@ const makeFakeThread = Effect.gen(function* () {
   const workflowStopCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const runtimeResponseCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const execCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+  const machineFileCapabilities = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const execReports = yield* Ref.make<ReadonlyArray<ExecReport>>([]);
   const helloPulls = yield* Deferred.make<boolean>();
   const terminalProcessIds = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
@@ -105,6 +108,10 @@ const makeFakeThread = Effect.gen(function* () {
                 message.runtimeResponses,
               ]);
               yield* Ref.update(execCapabilities, (all) => [...all, message.exec]);
+              yield* Ref.update(machineFileCapabilities, (all) => [
+                ...all,
+                message.machineFileLookup,
+              ]);
               yield* Ref.update(helloRuns, (all) => [...all, message.takenRunIds]);
               yield* reply({
                 type: "welcome",
@@ -162,6 +169,7 @@ const makeFakeThread = Effect.gen(function* () {
     dropOnTerminalReport,
     runtimeResponseCapabilities,
     execCapabilities,
+    machineFileCapabilities,
     execReports,
     helloRuns,
     dropAfterCommit,
@@ -346,7 +354,7 @@ const sessionOf = (
     makeTerminals: makeNoopTerminals,
   });
 
-it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
+it.layer(Layer.mergeAll(NodeCrypto.layer, RunnerMachineFiles.layer))("RunnerSession", (it) => {
   it.effect("advertises feedback and returns the requested adapter result over the session", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -543,6 +551,7 @@ it.layer(NodeCrypto.layer)("RunnerSession", (it) => {
           });
           yield* thread.ready;
           expect(yield* Ref.get(thread.execCapabilities)).toEqual([true]);
+          expect(yield* Ref.get(thread.machineFileCapabilities)).toEqual([true]);
 
           const command: ExecCommandMessage = {
             type: "exec.command",

@@ -58,6 +58,9 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       ...context,
       process: context,
       nimbusStatMetadata: true,
+      ...(context.preparePathSearch === undefined
+        ? {}
+        : { preparePathSearch: context.preparePathSearch }),
     });
     const memory = new SyscallMemory();
     const namespaces = createBashHostImports(context, credentials, () => memory, preopens);

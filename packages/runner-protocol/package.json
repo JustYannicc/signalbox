@@ -31,6 +31,10 @@
       "types": "./src/ExecProtocol.ts",
       "import": "./src/ExecProtocol.ts"
     },
+    "./MachineFilesProtocol": {
+      "types": "./src/MachineFilesProtocol.ts",
+      "import": "./src/MachineFilesProtocol.ts"
+    },
     "./DriveProtocol": {
       "types": "./src/DriveProtocol.ts",
       "import": "./src/DriveProtocol.ts"

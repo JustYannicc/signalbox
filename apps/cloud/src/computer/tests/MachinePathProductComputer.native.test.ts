@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { bashModule, machinePathFixture } from "./MachinePathFixture.ts";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
+import { emptyMachineFilesFixture } from "../machineInventoryTesting.ts";
+import { controlledMachineFiles } from "./MachinePathControlledFiles.ts";
+import { bashModule, machinePathFixture, machinePathInventory } from "./MachinePathFixture.ts";
+import { writeUpperFile } from "./MachinePathFixtureSupport.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
@@ -22,11 +25,13 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
     },
   );
 
-  it("admits both stages of the R29 pipeline", async () => {
+  it("admits both stages of the machine pipeline", async () => {
     const fixture = machinePathFixture(bashModule!);
     try {
       const result = await fixture.run('printf "b\\na\\nb\\n" | sort | uniq -c');
-      expect(result.status.exitCode).toBe(23);
+      expect(result.status.exitCode, JSON.stringify({ result, calls: fixture.machineCalls })).toBe(
+        23,
+      );
       expect(result.stderr).toBe("");
       expect(
         fixture.machineCalls
@@ -38,6 +43,26 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
       ]);
     } finally {
       await fixture.close();
+    }
+  });
+
+  it("keeps the dirty transition across ProductComputer reopen", async () => {
+    const machineFiles = controlledMachineFiles(machinePathInventory);
+    const first = machinePathFixture(bashModule!, { files: machineFiles.files });
+    try {
+      expect((await first.run("sort")).status.exitCode).toBe(23);
+      expect(machineFiles.state()).toEqual({ generation: 1, pristine: false });
+    } finally {
+      await first.close();
+    }
+
+    const reopened = machinePathFixture(bashModule!, { files: machineFiles.files });
+    try {
+      expect((await reopened.run("uniq -c")).status.exitCode).toBe(23);
+      expect(machineFiles.calls.length).toBeGreaterThan(0);
+      expect(machineFiles.state()).toEqual({ generation: 1, pristine: false });
+    } finally {
+      await reopened.close();
     }
   });
 
@@ -64,6 +89,24 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
       expect(result.status.exitCode).toBe(127);
       expect(result.stderr).toContain("command not found");
       expect(fixture.machineCalls).toEqual([]);
+      expect(fixture.fileLookups).toEqual([]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("keeps a fresh thread typo on its image and does not start a machine process", async () => {
+    const files = emptyMachineFilesFixture();
+    const fixture = machinePathFixture(bashModule!, {
+      threadId: "machine-path-fresh-thread-typo",
+      files,
+    });
+    try {
+      const result = await fixture.run("signalbox_fresh_thread_typo");
+      expect(result.status.exitCode).toBe(127);
+      expect(result.stderr).toContain("command not found");
+      expect(fixture.machineCalls).toEqual([]);
+      expect(files.current()).toMatchObject({ generation: 1, pristine: true });
     } finally {
       await fixture.close();
     }
@@ -105,28 +148,18 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
     }
   });
 
-  it("exposes executable regular files, resolved symlinks, directory listings and readable stubs", async () => {
+  it("uses machine file mode for Bash executable predicates without copying file bytes", async () => {
     const fixture = machinePathFixture(bashModule!);
     try {
-      expect(fixture.filesystem.stat("/usr/bin/sort")).toMatchObject({
-        type: "file",
-        posix: { mode: 0o755, uid: 0, gid: 0 },
-      });
-      expect(fixture.filesystem.lstat("/usr/bin/awk").type).toBe("symlink");
-      expect(fixture.filesystem.realpath("/usr/bin/awk")).toBe("/usr/bin/mawk");
-      expect(fixture.filesystem.realpath("/bin/sort")).toBe("/usr/bin/sort");
-      fixture.filesystem.access("/usr/bin/sort", 1, true);
-      expect(fixture.filesystem.readdir("/usr/bin")).toEqual(
-        expect.arrayContaining(["jq", "sort", "uniq", "wc", "awk", "xargs", "find", "git"]),
+      const result = await fixture.run(
+        '[ -f /usr/bin/sort ]; printf "file=%s\\n" "$?"; [ -x /usr/bin/sort ]; printf "x=%s\\n" "$?"; [ -L /usr/bin/sort ]; printf "L=%s\\n" "$?"',
+        "/usr/bin:/bin",
       );
-      const fd = fixture.filesystem.open("/usr/bin/sort", KernelOpenFlags.O_RDONLY);
-      try {
-        const bytes = new Uint8Array(Number(fixture.filesystem.fstat(fd).size));
-        fixture.filesystem.read(fd, bytes, 0n);
-        expect(new TextDecoder().decode(bytes)).toContain("Signalbox machine executable entry");
-      } finally {
-        fixture.filesystem.close(fd);
-      }
+      expect(result.status.exitCode).toBe(0);
+      expect(result.stdout).toBe("file=0\nx=0\nL=1\n");
+      expect(result.stderr).toBe("");
+      expect(fixture.machineCalls).toEqual([]);
+      expect(fixture.fileLookups).toEqual([]);
     } finally {
       await fixture.close();
     }
@@ -161,13 +194,39 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
     }
   });
 
-  it("still applies normal machine admission to an unqualified catalog alias", async () => {
+  it("forwards an explicit machine-only path", async () => {
     const fixture = machinePathFixture(bashModule!);
     try {
-      expect((await fixture.run("/usr/bin/grep -P pattern")).status.exitCode).toBe(23);
+      expect(
+        (await fixture.direct("/usr/lib/git-core/git-remote-https", ["git-remote-https"])).status
+          .exitCode,
+      ).toBe(23);
       expect(
         fixture.machineCalls.map((call) => ({ executable: call.executable, argv: call.argv })),
-      ).toEqual([{ executable: "/usr/bin/grep", argv: ["/usr/bin/grep", "-P", "pattern"] }]);
+      ).toEqual([
+        {
+          executable: "/usr/lib/git-core/git-remote-https",
+          argv: ["git-remote-https"],
+        },
+      ]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("executes a user script at /usr/bin/bash instead of the catalog alias", async () => {
+    const fixture = machinePathFixture(bashModule!, {
+      before(filesystem) {
+        writeUpperFile(filesystem, "/usr/bin/bash", "printf USER_BASH_ALIAS\n");
+      },
+    });
+    try {
+      const result = await fixture.run("/usr/bin/bash --noprofile --norc -c 'printf CATALOG'");
+      expect(result.status.exitCode).toBe(0);
+      expect(result.stdout).toBe("USER_BASH_ALIAS");
+      expect(result.stderr).toBe("");
+      expect(fixture.localCalls).toEqual(["/bin/bash"]);
+      expect(fixture.machineCalls).toEqual([]);
     } finally {
       await fixture.close();
     }

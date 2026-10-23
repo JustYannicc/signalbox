@@ -1,4 +1,4 @@
-import { runSync } from "../wasi/internal_wasi_calls.ts";
+import { complete, runSync } from "../wasi/internal_wasi_calls.ts";
 import { withKernelFileWrite } from "../KernelIoLock.ts";
 import {
   canonicalFileByteSelection,
@@ -16,12 +16,19 @@ import type {
   WasiPathLookup,
   WasiResolvedParent,
   WasiResolvedPath,
+  WasiPathSearchCheck,
 } from "../wasi/internal_wasi_paths.ts";
 import { descriptorPathAlias } from "./KernelPathAliases.ts";
-import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
+import {
+  kernelError,
+  runKernelSync,
+  withKernelErrors,
+  withKernelErrorsAsync,
+} from "./KernelFileSystemErrors.ts";
 import { KernelPathResolver, type ResolveOptions } from "./KernelPathResolver.ts";
 import type { KernelStat } from "./KernelFileSystemTypes.ts";
 import { KernelPosix } from "./KernelPosix.ts";
+import { kernelLowerNativeMetadata } from "../KernelLowerFileSystemStorage.ts";
 import { deviceInfoForDescriptor, deviceStat, virtualDevice } from "./KernelVirtualDevices.ts";
 
 const encoder = new TextEncoder();
@@ -90,7 +97,28 @@ export class KernelFileSystemPaths {
       if (device !== undefined) return deviceStat(device);
       const alias = descriptorPathAlias(path);
       if (alias !== undefined) return this.#statDescriptor(this.#getAlias(alias));
-      return this.#statResolved(this.resolve(path));
+      return this.#statResolved(this.resolve(path, this.#searchOptions(true)));
+    });
+  }
+
+  checkExecutable(path: string): Promise<KernelStat> {
+    return withKernelErrorsAsync(async () => {
+      if (virtualDevice(path) !== undefined || descriptorPathAlias(path) !== undefined) {
+        const stat = this.stat(path);
+        this.access(path, 1, true);
+        return stat;
+      }
+      const options = this.#searchOptionsAsync(true);
+      await this.#checkFinalAbsoluteSymlinkAsync(path, options);
+      const resolved = await this.resolver.resolveAsync(path, options);
+      const metadata = await this.#posix.checkAccessAsync(
+        resolved.mount.storage,
+        resolved.inode,
+        resolved.stat.type,
+        1,
+        true,
+      );
+      return this.#statResolvedWithMetadata(resolved, undefined, metadata);
     });
   }
 
@@ -100,7 +128,12 @@ export class KernelFileSystemPaths {
       if (device !== undefined) return deviceStat(device);
       const alias = descriptorPathAlias(path);
       if (alias !== undefined) return this.#statMagicLink(alias, this.#getAlias(alias));
-      return this.#statResolved(this.resolver.resolve(path, { followFinal: false }));
+      return this.#statResolved(
+        this.resolver.resolve(path, {
+          followFinal: false,
+          ...this.#searchOptions(true),
+        }),
+      );
     });
   }
 
@@ -219,10 +252,7 @@ export class KernelFileSystemPaths {
       if (requested !== 0) throw kernelError("ENOTSUP");
       return;
     }
-    const checkSearch = (mount: WasiResolvedPath["mount"], directory: Inode): void => {
-      this.#posix.checkAccess(mount.storage, directory, "directory", 1, effectiveIds);
-    };
-    const resolved = this.resolve(path, { checkSearch });
+    const resolved = this.resolve(path, this.#searchOptions(effectiveIds));
 
     if ((requested & 2) !== 0 && resolved.mount.readOnly) throw kernelError("EROFS");
     if (requested !== 0) {
@@ -357,6 +387,14 @@ export class KernelFileSystemPaths {
     } catch (error) {
       if (!isCode(error, "ENOTSUP")) throw error;
     }
+    return this.#statResolvedWithMetadata(resolved, descriptor, posix);
+  }
+
+  #statResolvedWithMetadata(
+    resolved: WasiResolvedPath,
+    descriptor: WasiDescriptor | undefined,
+    posix: PosixMetadata | undefined,
+  ): KernelStat {
     const temporary =
       resolved.stat.type === "file" && descriptor === undefined
         ? bindFileByteAccess(this.#fileBytes(), resolved.mount.storage, resolved.inode)
@@ -367,11 +405,35 @@ export class KernelFileSystemPaths {
         ...stat,
         ino: resolved.inode,
         dev: resolved.mount.device,
+        ...kernelLowerNativeMetadata(resolved.mount.storage, resolved.inode),
         ...(posix === undefined ? {} : { posix }),
       };
     } finally {
       temporary?.release();
     }
+  }
+
+  #searchCheck(effectiveIds: boolean): WasiPathSearchCheck | undefined {
+    if (this.#posix.credentials === undefined) return undefined;
+    return (mount, directory) =>
+      this.#posix.checkAccess(mount.storage, directory, "directory", 1, effectiveIds);
+  }
+
+  #searchOptions(effectiveIds: boolean): { readonly checkSearch?: WasiPathSearchCheck } {
+    const checkSearch = this.#searchCheck(effectiveIds);
+    return checkSearch === undefined ? {} : { checkSearch };
+  }
+
+  #searchCheckAsync(effectiveIds: boolean): WasiPathSearchCheck | undefined {
+    if (this.#posix.credentials === undefined) return undefined;
+    return async (mount, directory) => {
+      await this.#posix.checkAccessAsync(mount.storage, directory, "directory", 1, effectiveIds);
+    };
+  }
+
+  #searchOptionsAsync(effectiveIds: boolean): { readonly checkSearch?: WasiPathSearchCheck } {
+    const checkSearch = this.#searchCheckAsync(effectiveIds);
+    return checkSearch === undefined ? {} : { checkSearch };
   }
 
   #statDescriptor(descriptor: WasiDescriptor): KernelStat {
@@ -432,6 +494,21 @@ export class KernelFileSystemPaths {
     if (lookup.kind === "missing" || lookup.path.stat.type !== "symlink") return;
     const unresolved = lookup.path;
     const target = runKernelSync(unresolved.mount.storage.readlink(unresolved.inode));
+    if (target.startsWith("/")) {
+      this.#assertAbsoluteTarget(target, unresolved.mount.id, unresolved.mount.path);
+    }
+  }
+
+  async #checkFinalAbsoluteSymlinkAsync(path: string, options: ResolveOptions): Promise<void> {
+    const lookup = await this.resolver.resolveOrCreateAsync(path, {
+      ...options,
+      followFinal: false,
+    });
+    if (lookup.kind === "missing" || lookup.path.stat.type !== "symlink") return;
+    const unresolved = lookup.path;
+    const target = await this.resolver.runAsync(
+      complete(unresolved.mount.storage.readlink(unresolved.inode)),
+    );
     if (target.startsWith("/")) {
       this.#assertAbsoluteTarget(target, unresolved.mount.id, unresolved.mount.path);
     }

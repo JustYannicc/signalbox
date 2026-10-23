@@ -259,7 +259,7 @@ jobs:
           # runner-image.yml's paths, without what never ships.
           shipped="$(grep -Ev '\.(test\.tsx?|md)$' <<< "$files" || true)"
           if [[ "$complete" != "true" ]] ||
-            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/preview/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/automation-compiler/|packages/runner-protocol/|packages/automations/|apps/cloud/infra/runner-images\.alchemy\.ts$|apps/cloud/infra/runnerImagePublication\.ts$|\.github/workflows/runner-image\.yml$)' <<< "$shipped"; then
+            grep -Eq '^(apps/server/src/signalbox/runner/|apps/server/src/preview/|apps/server/src/orchestration-v2/Adapters/|apps/server/src/workflows/|packages/automation-compiler/|packages/runner-protocol/|packages/automations/|apps/cloud/infra/runner-images\.alchemy\.ts$|apps/cloud/infra/runnerImagePublication\.ts$|apps/cloud/infra/kernelPrograms/machine-files/|\.github/workflows/runner-image\.yml$)' <<< "$shipped"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -424,6 +424,13 @@ jobs:
       - *setup
       - *build
       - *bundle_runner
+
+      - name: Load Runner machine inventory
+        if: needs.runner_image.result == 'success'
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.runner_image.outputs.machine_file_inventory }}
+          path: apps/cloud/infra/kernelPrograms/machine-files/build
 
       # Each preview signs its own sessions: stable across its redeploys, and
       # never accepted by production or another preview.

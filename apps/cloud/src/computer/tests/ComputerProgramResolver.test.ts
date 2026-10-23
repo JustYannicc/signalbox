@@ -1,109 +1,195 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { ComputerProgramResolver } from "../ComputerProgramResolver.ts";
-import type { MachineProgramInventory } from "../MachineProgramInventory.ts";
-import { snapshotMachinePrograms } from "../MachineProgramInventory.ts";
-import { childBashFixture } from "./ChildBashFixture.ts";
-import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
-import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
-import { sqliteFixture } from "./helpers/sqliteFixture.ts";
-import type { PosixStorage } from "../../kernel/PosixStorage.ts";
+import type { ResolvedProgram } from "../../kernel/KernelAbi.ts";
+import type { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
+import type { KernelProgramAdmissionRequest } from "../../kernel/KernelProgramAdmission.ts";
+import type { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
+import type { KernelProgramBinding } from "../../kernel/KernelProgramHost.ts";
+import { CHILD_PROGRAM_PATHS } from "../ChildProgramSet.ts";
+import {
+  ComputerProgramResolver,
+  type ComputerProgramResolverRequest,
+} from "../ComputerProgramResolver.ts";
 
-const file = (path: string) => ({ path, uid: 0, gid: 0, mode: 0o755 });
-const inventory = (
-  entries: MachineProgramInventory["entries"],
-  image = "controlled-image",
-): MachineProgramInventory => ({ image, entries, path: ["/usr/bin", "/bin"] });
+interface FileRecord {
+  readonly type: "file" | "directory";
+  readonly executable: boolean;
+  readonly lower: boolean;
+}
 
-describe("Computer program inventory lifecycle", () => {
-  it("refreshes only unchanged owned entries across image changes", async () => {
-    const fixture = childBashFixture();
-    try {
-      fixture.filesystem.mkdir("/usr");
-      fixture.filesystem.mkdir("/usr/bin");
-      fixture.write("/usr/bin/user-program", "user bytes", 0o755);
-      const first = inventory([
-        file("/usr/bin/removed"),
-        file("/usr/bin/edited"),
-        file("/usr/bin/user-program"),
-        file("/usr/bin/target-a"),
-        file("/usr/bin/target-b"),
-        { ...file("/usr/bin/alias"), mode: 0o777, target: "/usr/bin/target-a" },
-      ]);
-      void new ComputerProgramResolver(fixture.filesystem, first);
-      fixture.write("/usr/bin/edited", "edited by user", 0o755);
-      const next = inventory(
-        [
-          { ...file("/usr/bin/target-a"), mode: 0o711 },
-          file("/usr/bin/target-b"),
-          { ...file("/usr/bin/alias"), mode: 0o777, target: "/usr/bin/target-b" },
-        ],
-        "controlled-image-v2",
-      );
-      void new ComputerProgramResolver(fixture.filesystem, next);
-      expect(() => fixture.filesystem.lstat("/usr/bin/removed")).toThrow();
-      expect(fixture.read("/usr/bin/edited")).toBe("edited by user");
-      expect(fixture.read("/usr/bin/user-program")).toBe("user bytes");
-      expect(fixture.filesystem.readlink("/usr/bin/alias")).toBe("/usr/bin/target-b");
-      expect(fixture.filesystem.getPosixMetadata("/usr/bin/target-a").mode).toBe(0o711);
-      const generation = fixture.filesystem.changeGeneration();
-      void new ComputerProgramResolver(fixture.filesystem, next);
-      expect(fixture.filesystem.changeGeneration()).toBe(generation);
-    } finally {
-      await fixture.close();
-    }
+const command = (
+  executable: string,
+  options: {
+    readonly cwd?: string;
+    readonly path?: string;
+    readonly signal?: AbortSignal;
+    readonly filesystem?: KernelFileSystem;
+  } = {},
+) => {
+  const cwd = options.cwd ?? "/workspace";
+  return {
+    kind: "command" as const,
+    stdio: "piped" as const,
+    command: {
+      executable,
+      argv: [executable],
+      cwd,
+      env: { PATH: options.path ?? "/workspace/bin:/usr/bin", HOME: "/workspace" },
+    },
+    baseCwd: cwd,
+    actions: [],
+    attributes: undefined,
+    filesystem: options.filesystem ?? ({} as KernelFileSystem),
+    processes: {} as KernelProcessTable,
+    signal: options.signal ?? new AbortController().signal,
+    target: {
+      kind: "unsupported" as const,
+      code: "NOT_FOUND" as const,
+      message: "Command not found",
+    },
+  } satisfies KernelProgramAdmissionRequest;
+};
+
+function resolverFor(files: Readonly<Record<string, FileRecord>>) {
+  const requested: string[][] = [];
+  const lower = new Set(
+    Object.entries(files)
+      .filter(([, file]) => file.lower)
+      .map(([path]) => path),
+  );
+  const filesystem = {
+    async checkExecutable(path: string) {
+      const file = files[path];
+      if (file === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      if (!file.executable) throw Object.assign(new Error("denied"), { code: "EACCES" });
+      return { type: file.type };
+    },
+  } as unknown as KernelFileSystem;
+  const prepare = vi.fn(async (paths: readonly string[]) => {
+    requested.push([...paths]);
   });
+  const isLower = vi.fn(async (path: string) => lower.has(path));
+  return {
+    resolver: new ComputerProgramResolver({
+      path: ["/workspace/bin", "/usr/bin"],
+      overlay: { prepare, isLower },
+    }),
+    filesystem,
+    requested,
+    prepare,
+    isLower,
+  };
+}
 
-  it("does not mutate a read-only mount during startup", () => {
-    const database = sqliteFixture();
-    const storage = createFacetSqliteStorage(database.storage, () => 1n);
-    storage.posix.initialize(storage.root, { mode: 0o755, uid: 1000, gid: 1000 });
-    const filesystem = new KernelFileSystem({
-      mounts: [{ path: "/", storage, readOnly: true }],
-      posix: { credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 }, umask: 0o022 },
+const catalogBinding = {} as KernelProgramBinding;
+const bindings = new Map([[CHILD_PROGRAM_PATHS.bash, catalogBinding]]);
+const withCatalog = (
+  request: KernelProgramAdmissionRequest,
+  catalog: ReadonlyMap<string, KernelProgramBinding> = new Map(),
+): ComputerProgramResolverRequest => ({ ...request, catalog });
+
+describe("ComputerProgramResolver", () => {
+  it("checks PATH in order and returns the selected lower-machine catalog alias", async () => {
+    const fixture = resolverFor({
+      "/workspace/bin/bash": { type: "file", executable: true, lower: true },
+      "/usr/bin/bash": { type: "file", executable: true, lower: true },
     });
-    try {
-      expect(
-        () => new ComputerProgramResolver(filesystem, inventory([file("/usr/bin/program")])),
-      ).toThrow("read-only");
-      expect(filesystem.readdir("/")).toEqual([]);
-    } finally {
-      filesystem.dispose();
-      database.close();
-    }
-  });
-
-  it("reconciles an interrupted seed on the next open", async () => {
-    const fixture = childBashFixture();
-    const posix = (fixture.filesystem.resolve("/").mount.storage as PosixStorage).posix;
-    const create = posix.create;
-    const failure = vi.spyOn(posix, "create").mockImplementation((parent, name, options) => {
-      if (name === "second") throw new Error("Interrupted image seed");
-      return create(parent, name, options);
+    const request = command("bash", {
+      path: "/workspace/bin:/usr/bin",
+      filesystem: fixture.filesystem,
     });
-    try {
-      expect(
-        () =>
-          new ComputerProgramResolver(
-            fixture.filesystem,
-            inventory([file("/usr/bin/first"), file("/usr/bin/second")]),
-          ),
-      ).toThrow("Interrupted image seed");
-      expect(fixture.filesystem.stat("/usr/bin/first").type).toBe("file");
-      failure.mockRestore();
-      void new ComputerProgramResolver(fixture.filesystem, inventory([], "next-image"));
-      expect(fixture.filesystem.readdir("/usr/bin")).toEqual([]);
-    } finally {
-      failure.mockRestore();
-      await fixture.close();
-    }
+
+    const input = withCatalog(request, bindings);
+    const result = await fixture.resolver.resolve(input);
+
+    expect(fixture.requested).toEqual([["/workspace/bin/bash", "/usr/bin/bash"]]);
+    expect(result.command.executable).toBe("/workspace/bin/bash");
+    expect(input.command).toBe(request.command);
+    expect(input.catalog).toBe(bindings);
+    expect(result.catalog).toEqual({
+      command: { ...request.command, executable: CHILD_PROGRAM_PATHS.bash },
+      binding: catalogBinding,
+    });
   });
 
-  it.each([
-    { entries: [{ ...file("/usr/bin/program"), mode: 0o644 }] },
-    { entries: [file("/usr/bin/program"), file("/usr/bin/program")] },
-    { entries: [{ ...file("/usr/bin/alias"), target: "/missing-target" }] },
-    { entries: [file("/usr/bin/../program")] },
-  ])("rejects invalid inventory entries", ({ entries }) => {
-    expect(() => snapshotMachinePrograms(inventory(entries))).toThrow();
+  it("uses an explicit machine-only path without consulting PATH", async () => {
+    const fixture = resolverFor({
+      "/home/node/.local/bin/review_late": { type: "file", executable: true, lower: true },
+      "/workspace/bin/review_late": { type: "file", executable: true, lower: true },
+    });
+    const request = command("/home/node/.local/bin/review_late", {
+      filesystem: fixture.filesystem,
+    });
+
+    const result = await fixture.resolver.resolve(withCatalog(request));
+
+    expect(fixture.requested).toEqual([["/home/node/.local/bin/review_late"]]);
+    expect(result.command.executable).toBe("/home/node/.local/bin/review_late");
+    expect(result.catalog).toBeUndefined();
+  });
+
+  it("lets an executable upper-layer shadow take precedence over a catalog alias", async () => {
+    const fixture = resolverFor({
+      "/workspace/bin/bash": { type: "file", executable: true, lower: false },
+      "/usr/bin/bash": { type: "file", executable: true, lower: true },
+    });
+
+    await expect(
+      fixture.resolver.resolve(
+        withCatalog(command("bash", { filesystem: fixture.filesystem }), bindings),
+      ),
+    ).rejects.toMatchObject({
+      name: "KernelProgramExecAdmissionError",
+      code: "ENOEXEC",
+    });
+    expect(fixture.isLower).toHaveBeenCalledTimes(1);
+    expect(fixture.isLower).toHaveBeenCalledWith("/workspace/bin/bash", expect.any(AbortSignal));
+  });
+
+  it("distinguishes a permission-denied PATH match from a fresh miss", async () => {
+    const denied = resolverFor({
+      "/workspace/bin/tool": { type: "file", executable: false, lower: false },
+    });
+    const missing = resolverFor({});
+
+    await expect(
+      denied.resolver.resolve(
+        withCatalog(command("tool", { path: "/workspace/bin", filesystem: denied.filesystem })),
+      ),
+    ).rejects.toMatchObject({ code: "EACCES" });
+    await expect(
+      missing.resolver.resolve(
+        withCatalog(command("typo", { path: "/workspace/bin", filesystem: missing.filesystem })),
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(missing.requested).toEqual([["/workspace/bin/typo"]]);
+  });
+
+  it("continues PATH search when batched prefetch crosses a denied directory", async () => {
+    const fixture = resolverFor({
+      "/workspace/bin/tool": { type: "file", executable: false, lower: true },
+      "/usr/bin/tool": { type: "file", executable: true, lower: true },
+    });
+    fixture.prepare.mockRejectedValueOnce(Object.assign(new Error("denied"), { code: "EACCES" }));
+    const result = await fixture.resolver.resolve(
+      withCatalog(command("tool", { filesystem: fixture.filesystem })),
+    );
+    expect(result.command.executable).toBe("/usr/bin/tool");
+  });
+
+  it("preserves an already-resolved local program without querying machine state", async () => {
+    const fixture = resolverFor({});
+    const request = {
+      ...command("/bin/sort"),
+      target: {
+        kind: "resolved" as const,
+        program: {} as unknown as ResolvedProgram,
+        binding: catalogBinding,
+      },
+    } as KernelProgramAdmissionRequest;
+
+    const result = await fixture.resolver.resolve(withCatalog(request, bindings));
+
+    expect(result.command).toBe(request.command);
+    expect(fixture.prepare).not.toHaveBeenCalled();
   });
 });

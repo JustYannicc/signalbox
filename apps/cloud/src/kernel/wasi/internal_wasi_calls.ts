@@ -8,6 +8,7 @@ import {
   runKernelInlineExecution,
 } from "../process/KernelExecution.ts";
 import { WasiError } from "./internal_wasi_memory.ts";
+import { KernelFileSystemUnavailable } from "../KernelLowerFileSystem.ts";
 
 export type WasiCall<T> = Generator<unknown, T, unknown>;
 
@@ -105,6 +106,7 @@ export async function runAsync<T>(
 }
 
 export function mapErrno(error: unknown): number {
+  if (error instanceof KernelFileSystemUnavailable) throw error;
   if (error instanceof WasiError) {
     return error.errno;
   }

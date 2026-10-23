@@ -190,6 +190,23 @@ jobs:
           cache: true
           run-install: true
 
+      - name: Cache the pinned Bash artifact for machine path tests
+        id: machine_path_bash_cache
+        if: ${{ needs.cloud_migrations.outputs.test_packages == '' || contains(needs.cloud_migrations.outputs.test_packages, '@signalbox/cloud') }}
+        uses: actions/cache@v6
+        with:
+          path: .t3/1071/programs
+          key: machine-path-bash-${{ hashFiles('scripts/harness-releases/programInputs.ts') }}
+
+      - name: Fetch the pinned Bash artifact for machine path tests
+        if: ${{ (needs.cloud_migrations.outputs.test_packages == '' || contains(needs.cloud_migrations.outputs.test_packages, '@signalbox/cloud')) && steps.machine_path_bash_cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types scripts/harness-releases/fetchPrograms.ts \
+            --output "$RUNNER_TEMP/signalbox-machine-path-programs"
+          mkdir -p .t3/1071/programs
+          cp "$RUNNER_TEMP/signalbox-machine-path-programs/bash.wasm" .t3/1071/programs/bash.wasm
+
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
 
@@ -218,6 +235,7 @@ jobs:
       - name: Test
         env:
           TEST_PACKAGES: ${{ needs.cloud_migrations.outputs.test_packages }}
+          SIGNALBOX_REQUIRE_BASH_ARTIFACT: "1"
         run: |
           filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web')
           if [[ -n "$TEST_PACKAGES" ]]; then

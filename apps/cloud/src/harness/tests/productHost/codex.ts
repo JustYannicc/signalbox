@@ -14,6 +14,10 @@ import {
 import { echoEngine } from "../../codex/tests/wasm.ts";
 import { hostSqlite } from "../hostSqlite.ts";
 import { commandLoader, programFixture } from "./commands.ts";
+import {
+  emptyMachineFilesFixture,
+  machineInventoryFixture,
+} from "../../../computer/machineInventoryTesting.ts";
 
 type ReleaseOptions = Awaited<ReturnType<typeof codexFixture>>["options"];
 
@@ -32,6 +36,7 @@ export const productOptions = (release: ReleaseOptions, home = "/home/product-co
       threadId: codexSession.threadId,
       release,
       programs: { codes: programs.codes, seed: programs.seed },
+      machineInventory: machineInventoryFixture(),
       files: {
         identity: "product-codex-computer",
         database: database.open().storage,
@@ -49,8 +54,7 @@ export const productOptions = (release: ReleaseOptions, home = "/home/product-co
         loader: commands.loader,
         capacity: new ChildWorkerCapacity(2),
         machine: () => ({
-          image: "controlled-unused-machine",
-          inventory: { image: "controlled-unused-machine", path: [], entries: [] },
+          files: emptyMachineFilesFixture(),
           async spawn() {
             throw new Error("Unexpected forwarded command");
           },

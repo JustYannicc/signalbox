@@ -72,31 +72,38 @@ export function createCommandGateway(options: CommandGatewayOptions) {
     machine: KernelCommandForwarder,
     evidence?: ComputerProgramAdmissionOptions["evidence"],
   ) => {
+    const resolver = options.resolver;
+    const registry = new KernelProgramRegistry();
+    const reservationFor: NonNullable<ChildProgramCatalogOptions["reservationFor"]> = (...args) =>
+      admission.reservationFor(...args);
+    const catalog = createChildProgramCatalog({
+      registry,
+      filesystem: options.filesystem,
+      loader: options.loader,
+      capacity: options.capacity,
+      programs: options.programs,
+      hostname: options.systemIdentity?.hostname ?? options.hostname,
+      lifetimes,
+      reservationFor,
+    });
     const admission = createComputerProgramAdmission({
       escalation,
       machine,
       capacity: options.capacity,
+      ...(resolver === undefined
+        ? {}
+        : {
+            resolve: (request) => resolver.resolve({ ...request, catalog: catalog.bindings }),
+          }),
       ...(evidence === undefined ? {} : { evidence }),
     });
     try {
-      const registry = new KernelProgramRegistry();
-      const catalog = createChildProgramCatalog({
-        registry,
-        filesystem: options.filesystem,
-        loader: options.loader,
-        capacity: options.capacity,
-        programs: options.programs,
-        hostname: options.systemIdentity?.hostname ?? options.hostname,
-        lifetimes,
-        reservationFor: admission.reservationFor,
-      });
       const host = new KernelProgramHost({
         registry,
-        programs: options.resolver?.bindings(registry, catalog.bindings) ?? catalog.bindings,
+        programs: catalog.bindings,
         wakes: options.wakes,
         processes: options.processes,
-        admit: (request) =>
-          options.resolver?.admit(request, admission.admit) ?? admission.admit(request),
+        admit: admission.admit,
         ...(cpuExecution === undefined ? {} : { cpuExecution }),
         ...(options.selectFileBytes === undefined
           ? {}
@@ -109,11 +116,8 @@ export function createCommandGateway(options: CommandGatewayOptions) {
     }
   };
   const normal = pair(
-    new ComputerEscalationTable(
-      options.orderedMachineRules,
-      options.resolver?.policy ?? COMPUTER_ISOLATE_POLICY,
-      (command) =>
-        qualifyGnuCommand(options.resolver?.localCommand(command) ?? command, options.filesystem),
+    new ComputerEscalationTable(options.orderedMachineRules, COMPUTER_ISOLATE_POLICY, (command) =>
+      qualifyGnuCommand(command, options.filesystem),
     ),
     options.machine,
     options.evidence,

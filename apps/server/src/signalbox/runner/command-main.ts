@@ -5,8 +5,10 @@ import * as NodeUtil from "node:util";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import { runRunnerCommandBootstrap } from "./RunnerCommandBootstrap.ts";
+import * as RunnerMachineFiles from "./RunnerMachineFiles.ts";
 
 const { values } = NodeUtil.parseArgs({
   strict: true,
@@ -18,6 +20,6 @@ const { values } = NodeUtil.parseArgs({
 
 runRunnerCommandBootstrap(NodePath.resolve(values.config)).pipe(
   Effect.scoped,
-  Effect.provide(NodeServices.layer),
+  Effect.provide(Layer.mergeAll(NodeServices.layer, RunnerMachineFiles.layer)),
   NodeRuntime.runMain,
 );

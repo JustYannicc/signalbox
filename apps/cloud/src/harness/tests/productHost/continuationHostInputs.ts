@@ -131,6 +131,7 @@ export const makeContinuationHostInputs = (
       threadId: d.threadId,
       release: release.options,
       programs,
+      machineInventory: machine.inventory,
       files: {
         identity: "recorded-claude-files",
         database: databaseHandle.storage,

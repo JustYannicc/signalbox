@@ -1,100 +1,95 @@
 import { KernelProgramExecAdmissionError } from "../kernel/KernelAsyncProgram.ts";
-import type { KernelProgramRegistry } from "../kernel/KernelAbi.ts";
-import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
-import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
-import type {
-  KernelProgramAdmissionRequest,
-  KernelProgramAdmissionDecision,
-} from "../kernel/KernelProgramAdmission.ts";
+import type { KernelProgramAdmissionRequest } from "../kernel/KernelProgramAdmission.ts";
 import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
 import { CHILD_PROGRAM_PATHS } from "./ChildProgramSet.ts";
-import { seedComputerProgramFiles } from "./ComputerProgramFiles.ts";
-import { COMPUTER_ISOLATE_POLICY } from "./EscalationPolicy.ts";
-import {
-  snapshotMachinePrograms,
-  type MachineProgramInventory,
-} from "./MachineProgramInventory.ts";
+import type { ComputerProgramResolution } from "./ComputerProgramAdmission.ts";
 
-/** One Computer owns both its filesystem discovery entries and its exec lookup. */
+const catalogPaths = new Map<string, string>(Object.entries(CHILD_PROGRAM_PATHS));
+
+export interface ComputerProgramResolverOptions {
+  readonly path: readonly string[];
+  readonly overlay: {
+    readonly prepare: (paths: readonly string[], signal?: AbortSignal) => Promise<void>;
+    readonly isLower: (path: string, signal?: AbortSignal) => Promise<boolean>;
+  };
+}
+
+export type ComputerProgramResolverRequest = KernelProgramAdmissionRequest & {
+  readonly catalog: ReadonlyMap<string, KernelProgramBinding>;
+};
+
+/** Discovery and admission resolve through the same upper-first namespace. */
 export class ComputerProgramResolver {
-  readonly #inventory: MachineProgramInventory;
-  readonly #local = new Map<string, string>(
-    Object.values(CHILD_PROGRAM_PATHS).map((path) => [path, path]),
-  );
+  readonly #options: ComputerProgramResolverOptions;
 
-  constructor(filesystem: KernelFileSystem, inventory: MachineProgramInventory) {
-    this.#inventory = snapshotMachinePrograms(inventory);
-    for (const entry of this.#inventory.entries) {
-      const name = entry.path.slice(entry.path.lastIndexOf("/") + 1);
-      const local = Object.entries(CHILD_PROGRAM_PATHS).find(([command]) => command === name)?.[1];
-      if (local !== undefined) this.#local.set(entry.path, local);
-    }
-    seedComputerProgramFiles(filesystem, this.#inventory, this.#local);
+  constructor(options: ComputerProgramResolverOptions) {
+    this.#options = options;
   }
 
-  get policy() {
-    return {
-      ...COMPUTER_ISOLATE_POLICY,
-      isolateExecutables: [
-        ...new Set([...COMPUTER_ISOLATE_POLICY.isolateExecutables, ...this.#local.keys()]),
-      ],
-    };
-  }
-
-  localCommand(command: KernelCommand): KernelCommand {
-    const executable = this.#local.get(command.executable);
-    return executable === undefined ? command : { ...command, executable };
-  }
-
-  bindings(registry: KernelProgramRegistry, bindings: Map<string, KernelProgramBinding>) {
-    for (const [path, local] of this.#local) {
-      if (bindings.has(path)) continue;
-      const binding = bindings.get(local);
-      if (binding === undefined) continue;
-      const manifest = Object.freeze({
-        ...binding.manifest,
-        name: `${binding.manifest.name}:path:${path}`,
-      });
-      const result = registry.register(manifest);
-      if (result.status !== "ok") throw new Error(`Could not register catalog path: ${path}`);
-      bindings.set(path, { manifest, implementation: binding.implementation });
-    }
-    return bindings;
-  }
-
-  admit(
-    request: KernelProgramAdmissionRequest,
-    admit: (input: KernelProgramAdmissionRequest) => Promise<KernelProgramAdmissionDecision>,
-  ) {
-    // Explicit local bindings keep their existing semantics, including direct calls without PATH.
-    if (request.target.kind === "resolved") return admit(request);
+  readonly resolve = async (
+    request: ComputerProgramResolverRequest,
+  ): Promise<ComputerProgramResolution> => {
     const command = request.command;
+    if (request.target.kind === "resolved") return { command };
     const paths = command.executable.includes("/")
-      ? [command.executable]
-      : (command.env.PATH ?? this.#inventory.path.join(":"))
+      ? [absolutePath(command.executable, command.cwd)]
+      : (command.env.PATH ?? this.#options.path.join(":"))
           .split(":")
-          .map((directory) => `${directory || command.cwd}/${command.executable}`);
+          .map((directory) =>
+            absolutePath(`${directory || command.cwd}/${command.executable}`, command.cwd),
+          );
+    try {
+      await this.#options.overlay.prepare(paths, request.signal);
+    } catch (error) {
+      if (!["EACCES", "ENOENT", "ENOTDIR"].includes(String(errorCode(error)))) throw error;
+    }
+    request.signal.throwIfAborted();
     let denied = false;
     for (const path of paths) {
-      const absolute = path.startsWith("/") ? path : `${command.cwd}/${path}`;
+      let lower: boolean;
       try {
-        if (request.filesystem.stat(absolute).type !== "file") continue;
-        request.filesystem.access(absolute, 1, true);
+        lower = await this.#options.overlay.isLower(path, request.signal);
+        if ((await request.filesystem.checkExecutable(path, request.signal)).type !== "file")
+          continue;
       } catch (error) {
-        if (typeof error === "object" && error !== null && "code" in error) {
-          if (error.code === "ENOENT" || error.code === "ENOTDIR") continue;
-          if (error.code === "EACCES") {
-            denied = true;
-            continue;
-          }
+        const code = errorCode(error);
+        if (code === "ENOENT" || code === "ENOTDIR") continue;
+        if (code === "EACCES") {
+          denied = true;
+          continue;
         }
         throw error;
       }
-      return admit({ ...request, command: { ...command, executable: absolute } });
+      const resolved = { ...command, executable: path };
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      const catalog = catalogPaths.get(name);
+      const binding = catalog === undefined ? undefined : request.catalog.get(catalog);
+      if (lower && catalog !== undefined && binding !== undefined) {
+        return {
+          command: resolved,
+          catalog: { command: { ...resolved, executable: catalog }, binding },
+        };
+      }
+      if (!lower) {
+        // Bash owns script interpretation after exec reports an unrecognised upper file.
+        throw new KernelProgramExecAdmissionError(
+          "ENOEXEC",
+          `Executable format is unavailable: ${path}`,
+        );
+      }
+      return { command: resolved };
     }
     throw new KernelProgramExecAdmissionError(
       denied ? "EACCES" : "ENOENT",
       `Command ${denied ? "is not executable" : "not found"}: ${command.executable}`,
     );
-  }
+  };
+}
+
+function absolutePath(path: string, cwd: string): string {
+  return path.startsWith("/") ? path : `${cwd}/${path}`;
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
 }

@@ -1,6 +1,6 @@
-import type { Mount, Storage } from "../storage.ts";
+import type { MaybeAsyncStorage, Mount } from "../storage.ts";
 import { WasiDescriptorTable, type WasiDescriptor } from "../wasi/internal_wasi_descriptors.ts";
-import { complete, runSync, type WasiCall } from "../wasi/internal_wasi_calls.ts";
+import { complete, runAsync, runSync, type WasiCall } from "../wasi/internal_wasi_calls.ts";
 import {
   normalizeMounts,
   type WasiMountedStorage,
@@ -11,7 +11,13 @@ import {
   type WasiResolvedPath,
   WasiPathResolver,
 } from "../wasi/internal_wasi_paths.ts";
-import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
+import { runCurrentKernelCpuAsyncSystemImport } from "../KernelCpuExecution.ts";
+import {
+  kernelError,
+  runKernelSync,
+  withKernelErrors,
+  withKernelErrorsAsync,
+} from "./KernelFileSystemErrors.ts";
 import { deviceInfoForDescriptor, virtualDevicePath } from "./KernelVirtualDevices.ts";
 import { descriptorPathSuffix } from "./KernelPathAliases.ts";
 
@@ -22,7 +28,7 @@ export interface ResolveOptions {
 }
 
 export function mountedStorageForTable(
-  mounts: Mount<Storage>[],
+  mounts: Mount<MaybeAsyncStorage>[],
   descriptors: WasiDescriptorTable,
 ): WasiMountedStorage[] {
   const normalized = withKernelErrors(() => normalizeMounts(mounts));
@@ -132,6 +138,32 @@ export class KernelPathResolver {
     );
     this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
     return resolved;
+  }
+
+  async resolveAsync(path: string, options: ResolveOptions = {}): Promise<WasiResolvedPath> {
+    const lookup = await this.resolveOrCreateAsync(path, options);
+    if (lookup.kind === "missing") throw kernelError("ENOENT");
+    return lookup.path;
+  }
+
+  resolveOrCreateAsync(path: string, options: ResolveOptions = {}): Promise<WasiPathLookup> {
+    return withKernelErrorsAsync(async () => {
+      const context = await this.#contextAsync(path, options.cwd);
+      const lookup = await this.#runAsyncCall(
+        this.#resolver.resolveOrCreate(
+          context.anchor,
+          context.relative,
+          options.followFinal ?? true,
+          this.#searchCheck(path, context.relative, options.checkSearch),
+        ),
+      );
+      if (lookup.kind === "existing") {
+        this.#assertResolvedMount(lookup.path.mount, lookup.path.pathComponents);
+      } else {
+        this.#assertResolvedMount(lookup.parent.mount, lookup.parent.pathComponents);
+      }
+      return lookup;
+    });
   }
 
   resolveFromAnchor(anchor: WasiPathAnchor, path: string, followFinal = true): WasiResolvedPath {
@@ -259,12 +291,26 @@ export class KernelPathResolver {
     return copyAnchor(this.#run(this.#resolver.validateAnchor(anchor)));
   }
 
+  async #validateAnchorAsync(anchor: WasiPathAnchor): Promise<WasiPathAnchor> {
+    return copyAnchor(await this.#runAsyncCall(this.#resolver.validateAnchor(anchor)));
+  }
+
   run<T>(call: WasiCall<T>): T {
     return this.#run(call);
   }
 
+  runAsync<T>(call: WasiCall<T>): Promise<T> {
+    return this.#runAsyncCall(call);
+  }
+
   #run<T>(call: WasiCall<T>): T {
     return withKernelErrors(() => runSync(call));
+  }
+
+  #runAsyncCall<T>(call: WasiCall<T>): Promise<T> {
+    return withKernelErrorsAsync(() =>
+      runCurrentKernelCpuAsyncSystemImport((runSystem) => runAsync(call, runSystem)),
+    );
   }
 
   #context(path: string, cwdOverride?: string): { anchor: WasiPathAnchor; relative: string } {
@@ -292,6 +338,31 @@ export class KernelPathResolver {
     }
     const mount = this.#mountFor(cwdOverride);
     return this.#relativeMountContext(this.#anchorAt(mount, cwdOverride), path);
+  }
+
+  async #contextAsync(
+    path: string,
+    cwdOverride?: string,
+  ): Promise<{ anchor: WasiPathAnchor; relative: string }> {
+    if (typeof path !== "string") throw kernelError("EINVAL");
+    const descriptorSuffix = descriptorPathSuffix(path);
+    if (descriptorSuffix !== undefined) {
+      const descriptor = this.#descriptorForSuffix(descriptorSuffix.fd);
+      if (descriptor.kind !== "directory") throw kernelError("ENOTDIR");
+      const anchor = await this.#validateAnchorAsync(this.#descriptorAnchor(descriptor));
+      return { anchor, relative: descriptorSuffix.relativePath };
+    }
+
+    if (path.startsWith("/")) return this.#context(path, cwdOverride);
+    if (cwdOverride === undefined) {
+      const anchor = this.#cwdAnchor;
+      if (anchor === undefined) throw kernelError("ENOENT", "No mounted working directory");
+      const validated = await this.#validateAnchorAsync(anchor);
+      this.#cwdAnchor = copyAnchor(validated);
+      return this.#relativeMountContext(validated, path);
+    }
+    const mount = this.#mountFor(cwdOverride);
+    return this.#relativeMountContext(await this.#anchorAtAsync(mount, cwdOverride), path);
   }
 
   #descriptorForSuffix(fd: number): WasiDescriptor {
@@ -344,6 +415,21 @@ export class KernelPathResolver {
     const relative = relativeToMount(path, mount.path);
     if (relative === ".") return root;
     const resolved = this.#run(this.#resolver.resolve(root, relative, true));
+    if (resolved.stat.type !== "directory") throw kernelError("ENOTDIR");
+    return {
+      mount,
+      inode: resolved.inode,
+      ancestors: resolved.ancestors,
+      pathComponents: resolved.pathComponents,
+    };
+  }
+
+  async #anchorAtAsync(mount: WasiMountedStorage, path: string): Promise<WasiPathAnchor> {
+    const root = this.#rootAnchor(mount);
+    const relative = relativeToMount(path, mount.path);
+    if (relative === ".") return root;
+    const resolved = await this.#runAsyncCall(this.#resolver.resolve(root, relative, true));
+    this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
     if (resolved.stat.type !== "directory") throw kernelError("ENOTDIR");
     return {
       mount,

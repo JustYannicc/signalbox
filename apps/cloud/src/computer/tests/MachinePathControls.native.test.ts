@@ -9,7 +9,7 @@ import { bashModule } from "./MachinePathFixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
-describe.skipIf(bashModule === undefined)("R29 filesystem discovery controls", () => {
+describe.skipIf(bashModule === undefined)("filesystem discovery controls", () => {
   it.each([
     { command: "jq", marker: undefined, path: undefined, argv: ["jq"], stdout: "" },
     {

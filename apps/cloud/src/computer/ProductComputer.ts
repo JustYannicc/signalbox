@@ -15,6 +15,8 @@ import type { ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 import type { ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
 import type { MachineProgramInventory } from "./MachineProgramInventory.ts";
+import type { MachineFilesPort } from "./MachineFilesPort.ts";
+import { createComputerMachineFileSystem } from "./ComputerMachineFileSystem.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
@@ -22,11 +24,10 @@ export interface ProductComputerOptions extends Omit<
 > {
   readonly threadId: string;
   readonly systemIdentity?: SystemIdentityConfig;
+  readonly machineInventory: MachineProgramInventory;
   /** Build the machine transport from the same resolved identity the isolate receives. */
   readonly machine: (systemIdentity: SystemIdentity) => KernelCommandForwarder & {
-    readonly image: string;
-    /** The inventory must describe the same immutable image this transport executes. */
-    readonly inventory: MachineProgramInventory;
+    readonly files: MachineFilesPort;
   };
   readonly signal: AbortSignal;
   readonly loader:
@@ -54,10 +55,33 @@ export function createProductComputer(options: ProductComputerOptions) {
     CHILD_COREUTILS_COMMANDS.some((command) => programs.coreutils?.[command] === undefined)
   )
     throw new TypeError("Product Computer requires the full command catalog");
-  const machine = options.machine(systemIdentity);
-  if (!machine.inventory || machine.image !== machine.inventory.image)
-    throw new TypeError("Machine executable inventory does not match the selected image");
-  const resolver = new ComputerProgramResolver(options.filesystem, machine.inventory);
+  const owner = new AbortController();
+  const signal = AbortSignal.any([owner.signal, options.signal]);
+  const transport = options.machine(systemIdentity);
+  const overlay = options.filesystem.installLowerFileSystem(
+    createComputerMachineFileSystem({
+      inventory: options.machineInventory,
+      files: transport.files,
+      signal,
+    }),
+  );
+  const machine: KernelCommandForwarder = {
+    async spawn(command, callerSignal) {
+      overlay.invalidate();
+      try {
+        const generation = transport.files.current().generation;
+        if (generation !== null) await transport.files.markExecuted(generation);
+        const child = await transport.spawn(command, callerSignal);
+        const exited = child.exited.finally(() => overlay.invalidate());
+        void exited.catch(() => undefined);
+        return { ...child, exited };
+      } catch (error) {
+        overlay.invalidate();
+        throw error;
+      }
+    },
+  };
+  const resolver = new ComputerProgramResolver({ path: options.machineInventory.path, overlay });
   const processes = new KernelProcessTable({ wakes: options.wakes });
   const loader =
     "run" in options.loader
@@ -67,17 +91,21 @@ export function createProductComputer(options: ProductComputerOptions) {
           options.loader.compiledModules,
           options.loader.limits,
         );
-  const gateway = createCommandGateway({
-    ...options,
-    machine,
-    systemIdentity,
-    hostname: systemIdentity.hostname,
-    loader,
-    processes,
-    resolver,
-  });
-  const owner = new AbortController();
-  const signal = AbortSignal.any([owner.signal, options.signal]);
+  let gateway: ReturnType<typeof createCommandGateway>;
+  try {
+    gateway = createCommandGateway({
+      ...options,
+      machine,
+      systemIdentity,
+      hostname: systemIdentity.hostname,
+      loader,
+      processes,
+      resolver,
+    });
+  } catch (error) {
+    overlay.dispose();
+    throw error;
+  }
   let closing: Promise<void> | undefined;
   return {
     ...gateway,
@@ -95,12 +123,18 @@ export function createProductComputer(options: ProductComputerOptions) {
         // Close admission before cancelling processes; drain acknowledges stopped child owners.
         const drained = gateway.close();
         void drained.catch(() => undefined);
-        const disposed = await processes.dispose();
-        const results = await Promise.allSettled([drained]);
+        const results = await Promise.allSettled([drained, processes.dispose()]);
         const failures: unknown[] = results.flatMap((result) =>
           result.status === "rejected" ? [result.reason] : [],
         );
-        if (disposed.status !== "ok") failures.push(disposed);
+        const disposed = results[1];
+        if (disposed?.status === "fulfilled" && disposed.value.status !== "ok")
+          failures.push(disposed.value);
+        try {
+          overlay.dispose();
+        } catch (error) {
+          failures.push(error);
+        }
         if (failures.length) throw new AggregateError(failures, "Product Computer cleanup failed");
       })();
       return closing;

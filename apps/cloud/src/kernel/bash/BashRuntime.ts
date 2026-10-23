@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Ashish Kumar Singh and Nimbus contributors. See NIMBUS-LICENSE.
 import { kernelError, kernelOk } from "../KernelAbi.ts";
 import { createKernelWasiFileSystemAdapter } from "../KernelWasiFileSystemAdapter.ts";
+import { createKernelFileSystemPathSearch } from "../KernelFileSystemPathSearch.ts";
 import type { KernelExitStatus } from "../KernelProcessTable.ts";
 import { kernelProcessSignalExitStatus } from "../KernelProcessSignal.ts";
 import { KernelProgramExecAdmissionError } from "../KernelAsyncProgram.ts";
@@ -60,10 +61,19 @@ function createProcess(
       },
     },
     preopens.transformArguments,
-    createKernelWasiFileSystemAdapter(context.filesystem, {
-      process: context,
-      nimbusStatMetadata: true,
-    }),
+    createKernelWasiFileSystemAdapter(
+      context.filesystem,
+      {
+        process: context,
+      },
+      {
+        nimbusStatMetadata: true,
+        signal: context.signal,
+        preparePathSearch:
+          context.preparePathSearch ??
+          createKernelFileSystemPathSearch(context.filesystem, context.env.PATH),
+      },
+    ),
   );
   // Imports close over this object; none can run until the instance has been bound.
   const process = {

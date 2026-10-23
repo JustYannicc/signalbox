@@ -44,7 +44,9 @@ function setup(
     connection: 2,
     protocolVersion: 8,
     exec: true,
-    send: ({ command: sent }) => {
+    send: (message) => {
+      if (message.type !== "exec.command") return;
+      const sent = message.command;
       frames.push(sent);
       const waiters = commandWaiters.get(sent.type);
       waiters?.shift()?.resolve(sent);
@@ -95,7 +97,9 @@ describe("ThreadExecForwarder", () => {
       connection: 3,
       protocolVersion: 7,
       exec: false,
-      send: ({ command: sent }) => old.frames.push(sent),
+      send: (message) => {
+        if (message.type === "exec.command") old.frames.push(message.command);
+      },
     });
     await expect(old.forwarder.spawn(command, new AbortController().signal)).rejects.toMatchObject({
       code: "RUNNER_NOT_READY",

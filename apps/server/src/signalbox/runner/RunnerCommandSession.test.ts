@@ -16,6 +16,7 @@ import type { RunnerExecWorkspaceAttestation } from "./RunnerExecHost.ts";
 import type { RunnerTransport } from "./RunnerSession.ts";
 import { RunnerConnectionError } from "./RunnerConnectionError.ts";
 import { runRunnerCommandSession } from "./RunnerCommandSession.ts";
+import * as RunnerMachineFiles from "./RunnerMachineFiles.ts";
 
 const threadId = ThreadId.make("command-thread");
 const build: RunnerBuild = { imageDigest: null, revision: "test-revision", cliVersions: {} };
@@ -54,6 +55,9 @@ const sessionInput = (transport: RunnerTransport) => ({
   workspace,
 });
 
+const startCommandSession = (transport: RunnerTransport) =>
+  runRunnerCommandSession(sessionInput(transport)).pipe(Effect.provide(RunnerMachineFiles.layer));
+
 const welcome: ThreadMessage = {
   type: "welcome",
   generation: 7,
@@ -61,13 +65,11 @@ const welcome: ThreadMessage = {
   activeRunId: null,
 };
 
-it.effect("opens an exec-only session and preserves command receipts until end", () =>
+it.effect("opens a command session and preserves process receipts until end", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeThread;
-      const fiber = yield* runRunnerCommandSession(sessionInput(thread.transport)).pipe(
-        Effect.forkScoped,
-      );
+      const fiber = yield* startCommandSession(thread.transport).pipe(Effect.forkScoped);
 
       expect(yield* Queue.take(thread.sent)).toEqual({
         type: "hello",
@@ -80,6 +82,7 @@ it.effect("opens an exec-only session and preserves command receipts until end",
         lastAckedSequence: 0,
         build,
         exec: true,
+        machineFileLookup: true,
       });
 
       yield* Queue.offer(thread.incoming, welcome);
@@ -130,13 +133,48 @@ it.effect("opens an exec-only session and preserves command receipts until end",
   ),
 );
 
+it.effect("answers machine file requests with native metadata and per-path errors", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeThread;
+      const fiber = yield* startCommandSession(thread.transport).pipe(Effect.forkScoped);
+      yield* Queue.take(thread.sent);
+      yield* Queue.offer(thread.incoming, welcome);
+
+      const request = {
+        type: "machine.files.request",
+        generation: 7,
+        requestId: "machine-files-1",
+        operations: [
+          { id: "root", op: "stat", path: "/" },
+          { id: "missing", op: "stat", path: "/signalbox-file-does-not-exist" },
+        ],
+      } satisfies Extract<ThreadMessage, { readonly type: "machine.files.request" }>;
+      yield* Queue.offer(thread.incoming, request);
+      expect(yield* Queue.take(thread.sent)).toMatchObject({
+        type: "machine.files.result",
+        generation: 7,
+        requestId: "machine-files-1",
+        outcome: {
+          status: "ok",
+          results: [
+            { id: "root", op: "stat", stat: { type: "directory", mode: expect.any(Number) } },
+            { id: "missing", op: "stat", error: { code: "ENOENT" } },
+          ],
+        },
+      });
+
+      yield* Queue.offer(thread.incoming, { type: "end", reason: "released" });
+      yield* Fiber.join(fiber);
+    }),
+  ),
+);
+
 it.effect("rejects commands before a compatible welcome", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeThread;
-      const fiber = yield* runRunnerCommandSession(sessionInput(thread.transport)).pipe(
-        Effect.forkScoped,
-      );
+      const fiber = yield* startCommandSession(thread.transport).pipe(Effect.forkScoped);
       const hello = yield* Queue.take(thread.sent);
       expect(hello.type).toBe("hello");
 
@@ -159,9 +197,7 @@ it.effect("rejects commands from another generation before the host sees them", 
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeThread;
-      const fiber = yield* runRunnerCommandSession(sessionInput(thread.transport)).pipe(
-        Effect.forkScoped,
-      );
+      const fiber = yield* startCommandSession(thread.transport).pipe(Effect.forkScoped);
       yield* Queue.take(thread.sent);
       yield* Queue.offer(thread.incoming, welcome);
       yield* Queue.offer(thread.incoming, {
@@ -190,9 +226,7 @@ it.effect("rejects terminal commands instead of opening a PTY", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeThread;
-      const fiber = yield* runRunnerCommandSession(sessionInput(thread.transport)).pipe(
-        Effect.forkScoped,
-      );
+      const fiber = yield* startCommandSession(thread.transport).pipe(Effect.forkScoped);
       yield* Queue.take(thread.sent);
       yield* Queue.offer(thread.incoming, welcome);
       yield* Queue.offer(thread.incoming, {
@@ -223,9 +257,7 @@ it.effect("ends after a socket drop without reconnecting or replaying commands",
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeThread;
-      const fiber = yield* runRunnerCommandSession(sessionInput(thread.transport)).pipe(
-        Effect.forkScoped,
-      );
+      const fiber = yield* startCommandSession(thread.transport).pipe(Effect.forkScoped);
       yield* Queue.take(thread.sent);
       yield* Queue.offer(thread.incoming, welcome);
       yield* Queue.offer(thread.incoming, {
@@ -267,7 +299,7 @@ it.effect("ends the session when a serialized exec report cannot be sent", () =>
           close: Effect.void,
         }),
       };
-      const fiber = yield* runRunnerCommandSession(sessionInput(transport)).pipe(Effect.forkScoped);
+      const fiber = yield* startCommandSession(transport).pipe(Effect.forkScoped);
       yield* Deferred.await(helloSent);
       yield* Queue.offer(incoming, welcome);
       yield* Queue.offer(incoming, {
