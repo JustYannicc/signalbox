@@ -3,6 +3,27 @@ import { HarnessReleasePlanError, planHarnessRelease } from "../../HarnessReleas
 import { claudeInput, codexInput, descriptor, hash, otherHash } from "./fixtures.ts";
 
 describe("planHarnessRelease", () => {
+  it("carries verified worker descriptors and rejects missing or contradictory payloads", () => {
+    const input = claudeInput();
+    const worker = {
+      entry: "file:///embedded/worker",
+      module: "worker.cjs",
+      inputs: ["bun-graph:/embedded/worker"],
+      sourceBytes: 34,
+      preparedBytes: descriptor.bytes,
+    };
+    Reflect.set(input.rawManifests.cli, "workerEntries", { "hooks-worker": worker });
+    const plan = planHarnessRelease(input);
+    expect(plan.harness === "claude-code" && plan.workerEntries["hooks-worker"]).toEqual({
+      ...worker,
+      module: "worker.cjs",
+    });
+    worker.preparedBytes++;
+    expect(() => planHarnessRelease(input)).toThrow("Invalid Claude worker entry");
+    worker.preparedBytes--;
+    worker.module = "missing.js";
+    expect(() => planHarnessRelease(input)).toThrow();
+  });
   it("prepares every Codex runtime descriptor and excludes build provenance", () => {
     const input = codexInput();
     const plan = planHarnessRelease(input);

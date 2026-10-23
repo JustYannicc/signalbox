@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - build and inspect temporary release fixtures.
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -162,6 +164,120 @@ async function makeExtraction(
 async function expectPathMissing(path: string) {
   await expect(NodeFSP.lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
 }
+
+describe("worker release partitions", () => {
+  it("keeps shared inputs once, retains cold worker inputs and preserves lazy live exports", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-partitions-"));
+    try {
+      const { extracted } = await makeExtraction(
+        root,
+        `export {namedValue} from "/$bunfs/root/lib/values.js"; export const workerUrl=${JSON.stringify(WORKER_NAME)}; export const mainMarker="main-only-body";`,
+        `/*! Worker license */ export {namedValue} from "/$bunfs/root/lib/values.js"; export const dynamic=()=>{const Promise={}; return import("/$bunfs/root/lib/legacy.cjs")}; export const workerMarker="worker-only-body";`,
+      );
+      const manifest = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(extracted, "manifest.json"), "utf8"),
+      );
+      const output = NodePath.join(root, "packed");
+      const built = await rebundle({
+        extracted,
+        output,
+        version: "fixture",
+        platform: "linux-x64",
+        deferInitialization: true,
+        partitionHooksWorker: true,
+        omission: {
+          configuration: { name: "product", env: {} },
+          corpus: {
+            schemaVersion: 1,
+            binarySha256: manifest.binary.sha256,
+            provenance: [{ name: "main", sha256: "a".repeat(64) }],
+            pending: ["worker coverage"],
+            inputs: [
+              { inputPath: `bun-graph:${WORKER_NAME}`, initialized: false },
+              { inputPath: `bun-graph:${LEGACY_NAME}`, initialized: false },
+            ],
+          },
+        },
+      });
+      const worker = built.manifest.workerEntries?.["hooks-worker"];
+      expect(worker?.entry).toBe(`file://${WORKER_NAME}`);
+      expect(worker?.module).toBe("signalbox/worker-hooks.js");
+      expect(worker?.inputs).toEqual(
+        [
+          `bun-graph:${LEGACY_NAME}`,
+          "bun-graph:/$bunfs/root/lib/values.js",
+          `bun-graph:${WORKER_NAME}`,
+        ].sort(),
+      );
+      expect(worker?.preparedBytes).toBe(
+        built.manifest.modules["signalbox/worker-hooks.js"]?.bytes,
+      );
+      expect(worker?.sourceBytes).toBe(
+        manifest.modules
+          .filter((m: { name: string }) => worker?.inputs.includes(`bun-graph:${m.name}`))
+          .reduce(
+            (sum: number, m: { artifacts: { contents: { bytes: number } } }) =>
+              sum + m.artifacts.contents.bytes,
+            0,
+          ),
+      );
+      expect(built.manifest.omission?.omittedModules).toEqual([]);
+      const packedMeta = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(output, "metafile.json"), "utf8"),
+      );
+      const assigned = Object.values(packedMeta.partitions).flat();
+      expect(new Set(assigned).size).toBe(assigned.length);
+      expect([...assigned].sort()).toEqual(Object.keys(packedMeta.inputs).sort());
+      expect(packedMeta.partitions["signalbox/worker-hooks.js"]).toEqual(
+        expect.arrayContaining([...(worker?.inputs ?? [])]),
+      );
+      expect(built.manifest.omission?.retainedInputs?.worker).toContain(`bun-graph:${WORKER_NAME}`);
+      const mainText = await NodeFSP.readFile(
+        NodePath.join(output, "signalbox/release.js"),
+        "utf8",
+      );
+      const workerText = await NodeFSP.readFile(
+        NodePath.join(output, "signalbox/worker-hooks.js"),
+        "utf8",
+      );
+      expect(mainText).not.toContain("worker-only-body");
+      expect(workerText).not.toContain("main-only-body");
+      expect(workerText).toContain("Worker license");
+      expect(workerText).not.toContain("release.js");
+      expect(mainText).toContain("./worker-hooks.js");
+      expect(
+        Object.keys(built.manifest.modules).filter((path) => path.startsWith("signalbox/")),
+      ).toHaveLength(2);
+      await NodeFSP.writeFile(NodePath.join(output, "package.json"), '{"type":"module"}');
+      const probe = `import {launch as main} from "./claude.js"; import {launch as hooks} from "./signalbox/worker-hooks.js"; const a=main(), b=hooks(); console.log(JSON.stringify({shared:a.namedValue===b.namedValue,dynamic:(await b.dynamic()).default.value}));`;
+      await NodeFSP.writeFile(NodePath.join(output, "probe.mjs"), probe);
+      const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)(process.execPath, [
+        NodePath.join(output, "probe.mjs"),
+      ]);
+      expect(JSON.parse(stdout)).toEqual({ shared: true, dynamic: "legacy-cjs" });
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+  it("rejects a release whose worker entry is absent", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-no-worker-"));
+    try {
+      const { extracted } = await makeExtraction(root, "export const main=1;");
+      await expect(
+        rebundle({
+          extracted,
+          output: NodePath.join(root, "packed"),
+          version: "fixture",
+          platform: "linux-x64",
+          deferInitialization: true,
+          partitionHooksWorker: true,
+        }),
+      ).rejects.toThrow("BUNDLE_WORKER_ENTRY_MISSING");
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("integrated Claude rebundling", () => {
   it("bundles declared environment packages and rejects the complete unsupplied package closure", async () => {

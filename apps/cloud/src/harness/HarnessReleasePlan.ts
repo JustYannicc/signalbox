@@ -16,6 +16,7 @@ export type {
   PreparedReleaseModule,
   ReleaseComponent,
   ReleaseEntrypoint,
+  ReleaseWorkerEntry,
   ReleaseFile,
   VerifiedReleaseArtifact,
 } from "./releasePlan/types.ts";

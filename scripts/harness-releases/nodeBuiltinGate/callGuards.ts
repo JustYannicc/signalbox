@@ -40,7 +40,7 @@ function memberChain(
   return [...receiver, access, property];
 }
 
-/** Only immediate expressions qualify; aliases and enclosing control flow stay required. */
+/** Only immediate guards qualify; aliases and deferred execution stay required. */
 export function builtinCallGuard(
   call: ts.CallExpression | ts.NewExpression,
   builtinRoot: string,
@@ -54,7 +54,7 @@ export function builtinCallGuard(
     .slice(callee[0] === builtinRoot ? 1 : 3)
     .filter((_part, index) => index % 2 === 1);
   if (JSON.stringify(memberPath) !== JSON.stringify(resolvedMemberPath)) return undefined;
-  const evidence = (node: ts.Node, kind: "feature-test" | "optional-call") => {
+  const evidence = (node: ts.Node, kind: NonNullable<NodeBuiltinFunctionCall["guard"]>["kind"]) => {
     const file = call.getSourceFile();
     const point = file.getLineAndCharacterOfPosition(node.getStart(file));
     return {
@@ -66,6 +66,35 @@ export function builtinCallGuard(
   };
   if (call.questionDotToken && memberChain(call.expression, builtinRoot, true))
     return evidence(call, "optional-call");
+
+  // Optional constant lookups may catch absence instead of testing the property first.
+  let lookup: ts.Node = call;
+  while (
+    ts.isParenthesizedExpression(lookup.parent) ||
+    ((ts.isPropertyAccessExpression(lookup.parent) ||
+      ts.isElementAccessExpression(lookup.parent)) &&
+      lookup.parent.expression === lookup)
+  )
+    lookup = lookup.parent;
+  if (
+    ts.isBinaryExpression(lookup.parent) &&
+    lookup.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    lookup.parent.right === lookup
+  )
+    lookup = lookup.parent;
+  const statement = lookup.parent;
+  if (ts.isExpressionStatement(statement) && ts.isBlock(statement.parent)) {
+    const block = statement.parent,
+      attempt = block.parent;
+    if (
+      block.statements.length === 1 &&
+      ts.isTryStatement(attempt) &&
+      attempt.tryBlock === block &&
+      attempt.catchClause?.block.statements.length === 0 &&
+      !attempt.finallyBlock
+    )
+      return evidence(attempt, "caught-call");
+  }
 
   let consequent: ts.Expression = call;
   while (ts.isParenthesizedExpression(consequent.parent)) consequent = consequent.parent;

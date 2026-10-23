@@ -24,6 +24,40 @@ const check = (source: string, runtime = inventory) =>
   assertPackagedBuiltinCoverage([{ name: "sdk/sdk.mjs", source }], runtime);
 
 describe("feature-tested builtin calls", () => {
+  it("accepts a synchronous optional constant lookup with an empty catch", async () => {
+    const runtime = {
+      ...inventory,
+      functions: [
+        {
+          specifier: "process",
+          memberPath: ["binding"],
+          status: "missing" as const,
+          evidence: "process.binding is absent",
+        },
+      ],
+    };
+    const source =
+      'const Buffer={}; if(!Buffer.kStringMaxLength)try{Buffer.kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}';
+    const report = await check(source, runtime);
+    expect(report.requiredFunctions).toEqual([
+      expect.objectContaining({
+        specifier: "process",
+        memberPath: ["binding"],
+        status: "guarded",
+        guard: expect.objectContaining({ kind: "caught-call" }),
+      }),
+    ]);
+    for (const source of [
+      'try{process.binding("buffer")}catch(error){throw error}',
+      'try{process.binding("buffer")}catch{fallback()}',
+      'try{process.binding("buffer");work()}catch{}',
+      'try{const later=()=>process.binding("buffer")}catch{}',
+      'try{Promise.resolve().then(()=>process.binding("buffer"))}catch{}',
+      'try{process.binding("buffer")}finally{}',
+      'try{process.binding("buffer")}catch{} process.binding("buffer")',
+    ])
+      await expect(check(source, runtime)).rejects.toThrow("missing-functions=process.binding");
+  });
   it.each([
     "const process = globalThis.process.report; process.getReport?.()",
     'const process = globalThis.process.report; typeof process.getReport === "function" && process.getReport()',

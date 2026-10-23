@@ -9,6 +9,22 @@ import {
 } from "./artifactFixtures.ts";
 
 describe("loadHarnessRelease", () => {
+  it("preserves worker selection through the verified public loader", async () => {
+    const entry = {
+      entry: "file:///embedded/worker",
+      module: "worker.cjs",
+      inputs: ["bun-graph:/embedded/worker"],
+      sourceBytes: 42,
+      preparedBytes: new TextEncoder().encode("synthetic worker.cjs").length,
+    };
+    const fixture = await claudeFixture({ workerEntries: { "hooks-worker": entry } });
+    const ready = await loadHarnessRelease(fixture.options);
+    expect(
+      ready.plan.harness === "claude-code" && ready.plan.workerEntries["hooks-worker"],
+    ).toEqual(entry);
+    expect(fixture.reads.filter((path) => path === "cli/worker.cjs")).toHaveLength(1);
+    expect(ready.payloads.has("cli/worker.cjs")).toBe(false);
+  });
   it("verifies Codex modules without retaining bytes and leaves Cargo.lock out of native inputs", async () => {
     const fixture = await codexFixture();
     const ready = await loadHarnessRelease(fixture.options);

@@ -177,6 +177,7 @@ export async function buildClaudeRelease(
       environmentPackageModules: inputs.environmentPackageModules,
       requireBootstrap: inputs.requireBootstrap,
       deferInitialization: true,
+      partitionHooksWorker: true,
       ...(options.omission ? { omission: options.omission } : {}),
     });
     if (

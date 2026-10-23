@@ -28,7 +28,7 @@ export interface NodeBuiltinFunctionCall {
   readonly line: number;
   readonly column: number;
   readonly guard?: {
-    readonly kind: "feature-test" | "optional-call";
+    readonly kind: "feature-test" | "optional-call" | "caught-call";
     readonly expression: string;
     readonly line: number;
     readonly column: number;

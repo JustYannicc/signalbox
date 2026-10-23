@@ -25,6 +25,7 @@ export function createReleaseOmission(input: {
   readonly binarySha256: string;
   readonly sources: ReadonlyMap<string, string>;
   readonly resolve: (specifier: string, importer: string) => string | undefined;
+  readonly retainWorker?: (metafile: Esbuild.Metafile) => ReadonlySet<string>;
   readonly commonJs: (path: string) => boolean;
 }) {
   const { options } = input;
@@ -42,6 +43,7 @@ export function createReleaseOmission(input: {
   );
   // Loader 13 text becomes source data for esbuild's text loader, so it cannot be replaced by JS stubs.
   const javascriptInputs = new Set([...input.sources.keys()].map((path) => `bun-graph:${path}`));
+  let workerInputs: ReadonlySet<string> = new Set();
   let specialize = false;
   let configurationRemoved: string[] = [];
   const omitted = new Map<string, OmittedReleaseModule>();
@@ -68,7 +70,7 @@ export function createReleaseOmission(input: {
         );
       return stub;
     }
-    if (!specialize) return source;
+    if (!specialize || workerInputs.has(id)) return source;
     let result = specialized.get(id);
     if (result === undefined)
       specialized.set(
@@ -82,6 +84,7 @@ export function createReleaseOmission(input: {
   const plan = async <T extends { metafile: Esbuild.Metafile }>(build: () => Promise<T>) => {
     // The baseline finds candidate inputs, the configured pass proves removals, and the final pass applies omissions.
     const baseline = await build();
+    workerInputs = input.retainWorker?.(baseline.metafile) ?? new Set();
     pinned.analyze();
     specialize = true;
     const configured = await build();
@@ -90,7 +93,7 @@ export function createReleaseOmission(input: {
       .filter((name) => !remaining.has(name) && originals.has(name))
       .sort();
     const add = (inputPath: string, tier: OmittedReleaseModule["tier"]) => {
-      if (omitted.has(inputPath)) return;
+      if (omitted.has(inputPath) || workerInputs.has(inputPath)) return;
       const source = originals.get(inputPath);
       if (source === undefined) throw new Error(`RELEASE_CORPUS_INPUT_UNKNOWN: ${inputPath}`);
       omitted.set(inputPath, {
@@ -114,6 +117,7 @@ export function createReleaseOmission(input: {
     configuration: options.configuration,
     configurationReplacements: pinned.report(),
     configurationRemoved,
+    ...(workerInputs.size ? { retainedInputs: { worker: [...workerInputs].sort() } } : {}),
     corpus: corpus
       ? {
           binarySha256: corpus.binarySha256,

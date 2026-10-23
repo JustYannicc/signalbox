@@ -49,6 +49,18 @@ export const decodeCliManifest = Schema.decodeUnknownSync(
     embeddedEntrypointExport: NonEmpty,
     embeddedEntrypoints: Names,
     hostEntrypoints: Names,
+    workerEntries: Schema.optionalKey(
+      Schema.Record(
+        NonEmpty,
+        Schema.Struct({
+          entry: NonEmpty,
+          module: NonEmpty,
+          inputs: Schema.Array(NonEmpty),
+          sourceBytes: ByteCount,
+          preparedBytes: ByteCount,
+        }),
+      ),
+    ),
     moduleMap: ModuleMap,
     modules: Modules,
     assets: Schema.Record(NonEmpty, Asset),

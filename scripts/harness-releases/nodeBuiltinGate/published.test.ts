@@ -10,6 +10,8 @@ import {
 } from "../../claude-bunfs/bundle-artifact.ts";
 import { sha256 } from "../guards.ts";
 import { assertPublishedBuiltinCoverage } from "../nodeBuiltinGate.ts";
+import { linkPublishedSources } from "./publishedGraph.ts";
+import { scanBuiltinSource } from "../nodeBuiltinGate.ts";
 import { readPublishedBuiltinSources } from "./published.ts";
 
 const roots: string[] = [];
@@ -120,6 +122,37 @@ const inventory = {
     cpu: { execution: false, processAccounting: false },
   },
 };
+
+describe("published partition linking", () => {
+  it("validates the worker retention tier and rejects overlapping omissions", async () => {
+    const fixture = await makeOmissionFixture();
+    const omission = {
+      ...fixture.omission,
+      retainedInputs: { worker: ["bun-graph:worker-only.js"] },
+    };
+    const valid = await publish({ omission });
+    expect((await readPublishedBuiltinSources(valid.directory)).omission).toEqual(omission);
+    const invalid = await publish({
+      omission: {
+        ...omission,
+        retainedInputs: { worker: [fixture.omission.omittedModules[0]!.inputPath] },
+      },
+    });
+    await expect(readPublishedBuiltinSources(invalid.directory)).rejects.toThrow(
+      "NODE_BUILTIN_PUBLISHED_MANIFEST_INVALID",
+    );
+  });
+
+  it("finds builtin calls whose facade crosses the partition boundary", async () => {
+    const linked = await linkPublishedSources([
+      { name: "signalbox/main.js", source: 'import {os} from "./worker.js"; os.release();' },
+      { name: "signalbox/worker.js", source: 'import os from "node:os"; export {os};' },
+    ]);
+    expect(scanBuiltinSource(linked).requiredFunctions).toContainEqual(
+      expect.objectContaining({ specifier: "os", memberPath: ["release"] }),
+    );
+  });
+});
 
 describe("published builtin gate", () => {
   it("scans every declared final JS module using its type and verifies the artifact identity", async () => {

@@ -9,6 +9,12 @@ import { publishBundle, type BundleFile, type EmbeddedAsset } from "./bundle-art
 import { discoverEmbeddedModuleReferences } from "./embedded-entrypoints.ts";
 import { createDeferredInitialization } from "./deferred-initialization.ts";
 import { entryExports, planSingleModule } from "./single-module.ts";
+import {
+  HOOKS_WORKER_ENTRY,
+  hooksWorkerEntries,
+  workerInputClosure,
+  packWorkerPartition,
+} from "./worker-partition.ts";
 import { assertOneByteModules, inlineLegalNotices } from "./one-byte-output.ts";
 import { type BunGraphOptions, createBunGraphPlugin, NODE_BUILTINS } from "./bun-graph-plugin.ts";
 import { createReleaseOmission } from "./rebundle-omission.ts";
@@ -20,6 +26,7 @@ import {
 
 export interface RebundleOptions extends BunGraphOptions {
   readonly omission?: ReleaseOmissionOptions;
+  readonly partitionHooksWorker?: boolean;
   readonly extracted: string;
   readonly output: string;
   readonly version: string;
@@ -60,9 +67,15 @@ export async function rebundle(options: RebundleOptions) {
     new Set(javascript.map((module) => module.name)),
   );
   const sourceByName = new Map(decoded.map((module) => [module.name, module.source]));
+  let workerInputs = new Set<string>();
+  const retainWorker = (metafile: Esbuild.Metafile) => {
+    workerInputs = workerInputClosure(metafile, HOOKS_WORKER_ENTRY);
+    return workerInputs;
+  };
   const omission = options.omission
     ? createReleaseOmission({
         options: options.omission,
+        ...(options.partitionHooksWorker ? { retainWorker } : {}),
         binarySha256: input.manifest.binary.sha256,
         sources: sourceByName,
         resolve: (specifier, importer) => {
@@ -110,13 +123,17 @@ export async function rebundle(options: RebundleOptions) {
     entries[name] = specifier;
     hostEntrypoints[name] = `${name}.js`;
   }
+  let packing = false;
   const graph = createBunGraphPlugin({
     extraction: input,
     sources: sourceByName,
     options,
     deferSource,
     ...(omission ? { observeSource: omission.observeSource } : {}),
-    ...(omission ? { prepareSource: omission.prepareSource } : {}),
+    prepareSource: (source, path, namespace) => {
+      const prepared = omission?.prepareSource(source, path, namespace) ?? source;
+      return packing && deferred ? deferred.linkDynamicImports(prepared, path) : prepared;
+    },
   });
   const { loaded, requiredHostModules } = graph;
   const output = NodePath.resolve(options.output);
@@ -165,9 +182,32 @@ export async function rebundle(options: RebundleOptions) {
   if (missingPackages.length)
     throw new Error(`BUNDLE_ENVIRONMENT_MODULES_MISSING: ${missingPackages.join(", ")}`);
   options.verify?.(split.metafile, embeddedEntrypoints);
-  let published = split;
+  if (options.partitionHooksWorker && !omission) retainWorker(split.metafile);
+  let published: { metafile: Esbuild.Metafile; outputFiles: BundleFile[] } = split;
   let facades: BundleFile[] = [];
-  if (deferred) {
+  if (options.partitionHooksWorker) {
+    if (!deferred) throw new Error("BUNDLE_WORKER_DEFERRED_REQUIRED");
+    const workerEntry = embeddedEntrypoints[HOOKS_WORKER_ENTRY];
+    if (!workerEntry) throw new Error(`BUNDLE_WORKER_ENTRY_MISSING: ${HOOKS_WORKER_ENTRY}`);
+    const single = planSingleModule({
+      mainEntry: "claude",
+      entries,
+      exports: entryExports(split.metafile, output, entries),
+    });
+    packing = true;
+    const packed = await packWorkerPartition({
+      output,
+      main: single,
+      workerEntry,
+      workerSpecifier: entries[workerEntry.slice(0, -3)]!,
+      workerInputs,
+      shared,
+      plugins: [single.plugin, deferred.plugin, graph.plugin],
+    });
+    packing = false;
+    published = packed;
+    facades = packed.facades;
+  } else if (deferred) {
     // Deferred entries evaluate nothing until launch(), so one shared module keeps their timing.
     const single = planSingleModule({
       mainEntry: "claude",
@@ -209,6 +249,9 @@ export async function rebundle(options: RebundleOptions) {
     })),
   ];
   assertOneByteModules(modules);
+  const workerEntries = options.partitionHooksWorker
+    ? hooksWorkerEntries(workerInputs, input.byName, modules)
+    : undefined;
   return publishBundle({
     output,
     release: {
@@ -221,6 +264,7 @@ export async function rebundle(options: RebundleOptions) {
     ...(deferred ? ({ mainExport: "launch", embeddedEntrypointExport: "launch" } as const) : {}),
     environmentPackageModules: options.environmentPackageModules ?? {},
     embeddedEntrypoints,
+    ...(workerEntries ? { workerEntries } : {}),
     hostEntrypoints,
     modules,
     assets: embeddedAssets,

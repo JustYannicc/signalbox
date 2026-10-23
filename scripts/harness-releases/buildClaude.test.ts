@@ -15,7 +15,9 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
 async function makeExtraction(root: string, version: string, source: string) {
   const extracted = NodePath.join(root, `extracted-${version}`);
-  const payload = Buffer.from(source);
+  const workerName = "/$bunfs/root/src/plugins/functionHooks/hooks-worker/hooks-worker.js";
+  const payload = Buffer.from(`${source}\nexport const workerUrl=${JSON.stringify(workerName)};`);
+  const worker = Buffer.from("export const workerMarker=1;");
   const binary = Buffer.from(`synthetic-official-binary-${version}`);
   const binarySha256 = digest(binary);
   const officialManifest = {
@@ -31,6 +33,7 @@ async function makeExtraction(root: string, version: string, source: string) {
   await NodeFSP.mkdir(NodePath.join(extracted, ".bun-data"), { recursive: true });
   await NodeFSP.mkdir(NodePath.join(extracted, "source"));
   await NodeFSP.writeFile(NodePath.join(extracted, "source/cli.js"), payload);
+  await NodeFSP.writeFile(NodePath.join(extracted, "source/worker.js"), worker);
   await NodeFSP.writeFile(
     NodePath.join(extracted, "manifest.json"),
     JSON.stringify({
@@ -38,6 +41,21 @@ async function makeExtraction(root: string, version: string, source: string) {
       binary: { bytes: binary.byteLength, sha256: binarySha256 },
       graph: { entry: 0, flags: 0, recordSize: 72 },
       modules: [
+        {
+          index: 1,
+          name: workerName,
+          key: workerName.slice(1),
+          loader: 1,
+          encoding: 0,
+          format: 1,
+          artifacts: {
+            contents: {
+              path: "source/worker.js",
+              bytes: worker.byteLength,
+              sha256: digest(worker),
+            },
+          },
+        },
         {
           index: 0,
           name: "/$bunfs/root/cli",

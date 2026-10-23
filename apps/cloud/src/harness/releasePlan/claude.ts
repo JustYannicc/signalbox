@@ -115,7 +115,22 @@ export function claudePlan(input: HarnessReleasePlanInput): ClaudeReleasePlan {
         declaredEntrypoint("cli", module, cli.modules),
       ]),
     );
+  const workerEntries = Object.fromEntries(
+    Object.entries(cli.workerEntries ?? {}).map(([id, entry]) => {
+      const module = declaredEntrypoint("cli", entry.module, cli.modules);
+      if (
+        !entry.entry.startsWith("file:///") ||
+        new Set(entry.inputs).size !== entry.inputs.length ||
+        entry.inputs.length === 0 ||
+        entry.preparedBytes !== preparedModules[module]!.bytes ||
+        !Object.hasOwn(cli.embeddedEntrypoints, entry.entry.slice("file://".length))
+      )
+        throw new HarnessReleasePlanError(`Invalid Claude worker entry: ${id}`);
+      return [id, { ...entry }];
+    }),
+  );
   return {
+    workerEntries,
     harness: "claude-code",
     release: release(input, cli.release.version, preparedModules),
     sourceIdentity: input.manifest.sourceIdentity,
