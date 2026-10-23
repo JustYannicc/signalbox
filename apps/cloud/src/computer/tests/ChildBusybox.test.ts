@@ -38,7 +38,7 @@ function child(fixture: ReturnType<typeof childBusyboxFixture>, port: KernelBusy
   return createChildBusybox({ module, port, args: fixture.context.args, env: fixture.context.env });
 }
 
-describe.skipIf(!available)("actual pinned Nimbus BusyBox child", () => {
+describe.skipIf(!available)("actual pinned BusyBox child", () => {
   it("copies binary stdin to the borrowed stdout using only syscall ABI ranges", async () => {
     const input = Uint8Array.from({ length: 180_013 }, (_, index) => index % 256);
     const fixture = childBusyboxFixture({ stdin: input });

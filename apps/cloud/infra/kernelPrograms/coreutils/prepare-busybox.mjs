@@ -65,7 +65,7 @@ try {
 }
 const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 if (bytes.byteLength !== ARTIFACT.bytes || sha256 !== ARTIFACT.sha256) {
-  throw new Error(`Nimbus BusyBox pin mismatch: ${bytes.byteLength} bytes ${sha256}`);
+  throw new Error(`BusyBox pin mismatch: ${bytes.byteLength} bytes ${sha256}`);
 }
 
 const module = await WebAssembly.compile(bytes);

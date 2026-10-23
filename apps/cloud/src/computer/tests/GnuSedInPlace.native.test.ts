@@ -41,7 +41,7 @@ if (artifactAvailable) {
     bytes.length !== KERNEL_BUSYBOX_ARTIFACT.bytes ||
     NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== KERNEL_BUSYBOX_ARTIFACT.sha256
   ) {
-    throw new Error("BusyBox test artifact does not match the pinned Nimbus image");
+    throw new Error("BusyBox test artifact does not match its pin");
   }
   busyboxModule = new WebAssembly.Module(bytes);
 }

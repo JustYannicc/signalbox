@@ -64,6 +64,7 @@ cat > "$TOOLS/nproc" <<'NPROC'
 echo "${BUILD_JOBS:-2}"
 NPROC
 chmod +x "$TOOLS/nproc"
+# Kbuild runs `ar rcs <lib>` with no members for empty built-in.a files, which BSD ar rejects.
 cat > "$TOOLS/wasm32-wasi-ar" <<'WASI_AR'
 #!/usr/bin/env bash
 set -euo pipefail
