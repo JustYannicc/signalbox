@@ -16,8 +16,10 @@ export interface BashCheckpoint {
 export async function storeBashCheckpoint(
   filesystem: KernelFileSystem,
   source: KernelBashForkSource,
+  signal?: AbortSignal,
 ): Promise<BashCheckpoint> {
   const state = await source.state();
+  signal?.throwIfAborted();
   if (!Number.isSafeInteger(state.memoryBytes) || state.memoryBytes < 0) {
     throw new RangeError("Invalid Bash checkpoint size");
   }

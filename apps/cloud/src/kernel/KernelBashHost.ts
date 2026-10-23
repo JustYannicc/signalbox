@@ -274,7 +274,13 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
           }
         }),
       async complete(result) {
-        if (active !== undefined) throw new Error("Bash process still has an active operation");
+        if (active !== undefined && !context.signal.aborted)
+          throw new Error("Bash process still has an active operation");
+        await active?.catch(() => {});
+        if (context.signal.aborted) {
+          finish({ kind: "exit", status: { exitCode: 0, signal: 9, coreDumped: false } });
+          return;
+        }
         finish(result);
       },
     };

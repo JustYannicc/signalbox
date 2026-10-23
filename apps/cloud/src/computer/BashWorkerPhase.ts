@@ -27,19 +27,27 @@ export interface ParkedBashProcess {
 export class BashWorkerPhase implements WorkerBashPhase {
   readonly #filesystem: KernelFileSystem;
   readonly #rootPid: number;
+  readonly #signal: AbortSignal;
   readonly #operations = new Map<KernelBashPort, Operations>();
   readonly #parked = new Map<number, ParkedBashProcess>();
   readonly #startFork: (work: () => Promise<void>) => void;
   #stopped = false;
+  #dispatchFailed = false;
 
   constructor(options: {
     readonly filesystem: KernelFileSystem;
     readonly rootPid: number;
+    readonly signal: AbortSignal;
     readonly startFork: (work: () => Promise<void>) => void;
   }) {
     this.#filesystem = options.filesystem;
     this.#rootPid = options.rootPid;
+    this.#signal = options.signal;
     this.#startFork = options.startFork;
+  }
+
+  dispatchFailed() {
+    this.#dispatchFailed = true;
   }
 
   startOperation(port: KernelBashPort, operation: KernelBashOperation) {
@@ -68,7 +76,7 @@ export class BashWorkerPhase implements WorkerBashPhase {
       if (started.kind === "ready") result = started.result;
       else pending = started.id;
     }
-    const checkpoint = await storeBashCheckpoint(this.#filesystem, source);
+    const checkpoint = await storeBashCheckpoint(this.#filesystem, source, this.#signal);
     let consumed = false;
     this.#parked.set(pid, {
       port,
@@ -107,7 +115,7 @@ export class BashWorkerPhase implements WorkerBashPhase {
 
   async placeFork(port: KernelBashPort, _pid: number, source: KernelBashForkSource) {
     if (this.#stopped) throw new Error("Bash Worker phase has stopped");
-    const checkpoint = await storeBashCheckpoint(this.#filesystem, source);
+    const checkpoint = await storeBashCheckpoint(this.#filesystem, source, this.#signal);
     this.#startFork(async () => {
       try {
         await port.runFork(checkpoint.source());
@@ -120,18 +128,29 @@ export class BashWorkerPhase implements WorkerBashPhase {
   /** Called only by the dispatch stop-ACK path, before it releases the physical slot. */
   async stopped(execution: ChildWorkerExecution) {
     if (this.#stopped) throw new Error("Bash Worker phase already stopped");
-    if (this.#parked.size > 0) await execution.handoff();
+    const abandoning = this.#dispatchFailed || this.#signal.aborted;
+    if (this.#parked.size > 0 && !abandoning) await execution.handoff();
     this.#stopped = true;
     const retained = new Set([...this.#parked.values()].map((parked) => parked.port));
     for (const [port, operations] of this.#operations) {
       if (!retained.has(port)) await operations.close();
     }
     this.#operations.clear();
+    if (this.#dispatchFailed) {
+      // The dispatch cleanup closes this owner before the stop ACK reaches this phase.
+      await this.#closeParked();
+      return;
+    }
+    if (this.#signal.aborted) {
+      await this.#closeParked(false);
+      return;
+    }
     for (const parked of this.#parked.values()) {
       if (parked.pid === this.#rootPid) continue;
       this.#startFork(async () => {
         try {
           const resumed = await parked.resume();
+          if (this.#signal.aborted || this.#dispatchFailed) return;
           if (resumed.kind === "exit") {
             await parked.port.complete({ kind: "exit", status: resumed.status });
           } else {
@@ -142,6 +161,29 @@ export class BashWorkerPhase implements WorkerBashPhase {
         }
       });
     }
+  }
+
+  async #closeParked(includeRoot = true) {
+    const failures: unknown[] = [];
+    await Promise.all(
+      [...this.#parked.values()]
+        .filter((parked) => includeRoot || parked.pid !== this.#rootPid)
+        .map(async (parked) => {
+          try {
+            await parked.resume();
+          } catch (error) {
+            failures.push(error);
+          }
+          try {
+            await parked.checkpoint.close();
+          } catch (error) {
+            failures.push(error);
+          }
+        }),
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "Bash parked process cleanup failed");
   }
 
   get root(): ParkedBashProcess | undefined {

@@ -24,6 +24,7 @@ import {
   type KernelWaitPidResult,
 } from "./process/KernelProcessWaiters.ts";
 
+export { isKernelProcessCancelledError } from "./process/KernelProcessCancellation.ts";
 export { KERNEL_WNOHANG } from "./process/KernelProcessWaiters.ts";
 export type { KernelExitStatus, KernelWaitPidResult } from "./process/KernelProcessWaiters.ts";
 export type { KernelSignalMask } from "./process/KernelProcessSignals.ts";

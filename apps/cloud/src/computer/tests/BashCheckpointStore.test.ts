@@ -23,6 +23,26 @@ const state = (memoryBytes: number): KernelBashForkState => ({
 });
 
 describe("Bash checkpoint backing", () => {
+  it("preserves cancellation when the filesystem closes while checkpoint state is pending", async () => {
+    const fixture = createTestFilesystem();
+    const controller = new AbortController();
+    const captured = Promise.withResolvers<KernelBashForkState>();
+    const cancelled = new Error("Checkpoint owner stopped");
+    const checkpoint = storeBashCheckpoint(
+      fixture.filesystem,
+      {
+        state: () => captured.promise,
+        read: async () => new Uint8Array(),
+        restored: async () => {},
+      },
+      controller.signal,
+    );
+    controller.abort(cancelled);
+    fixture.close();
+    captured.resolve(state(0));
+    await expect(checkpoint).rejects.toBe(cancelled);
+  });
+
   it("streams an immutable heap through bounded reads without exposing a file or guest fd", async () => {
     const fixture = createTestFilesystem();
     const original = new Uint8Array(BASH_FORK_CHUNK_BYTES * 3 + 17);

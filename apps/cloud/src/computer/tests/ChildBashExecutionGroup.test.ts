@@ -1,7 +1,8 @@
 import { expect, it, vi } from "vite-plus/test";
 import { createKernelBashHost } from "../../kernel/KernelBashHost.ts";
 import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
-import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
+import type { KernelBashOperation, KernelBashPort } from "../../kernel/KernelBashPort.ts";
+import type { KernelExitStatus } from "../../kernel/KernelProcessTable.ts";
 import { createChildBashProgram } from "../ChildBashProgram.ts";
 import { ChildBashExecutionGroup } from "../ChildBashExecutionGroup.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
@@ -12,6 +13,18 @@ import { createWorkerLoaderDispatch } from "../WorkerLoaderDispatch.ts";
 import { bashCredentials, childBashFixture } from "./ChildBashFixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+
+function nestedErrors(error: unknown, visited = new Set<unknown>()): unknown[] {
+  if (visited.has(error)) return [];
+  visited.add(error);
+  const causes =
+    error instanceof AggregateError
+      ? error.errors
+      : error instanceof Error && error.cause !== undefined
+        ? [error.cause]
+        : [];
+  return [error, ...causes.flatMap((cause) => nestedErrors(cause, visited))];
+}
 
 it("keeps a fork killed before restore available for its parent's waitpid", async () => {
   const fixture = childBashFixture();
@@ -134,6 +147,35 @@ function emptyForkSource(): KernelBashForkSource {
   };
 }
 
+async function parkPendingExec(host: KernelBashPort) {
+  const operation: KernelBashOperation = {
+    kind: "exec",
+    request: { path: "/bin/tool", args: ["tool"], env: {} },
+  };
+  const started = await host.startOperation!(operation);
+  if (started.kind !== "pending") throw new Error("Exec did not park");
+  const state = await emptyForkSource().state();
+  await host.park!(
+    {
+      state: async () => ({
+        ...state,
+        continuation: {
+          resume: 0,
+          pending: {
+            kind: "operation",
+            operation,
+            call: { namespace: "nimbus_proc", name: "execve", args: [] },
+          },
+          operationId: started.id,
+        },
+      }),
+      read: async () => new Uint8Array(),
+      restored: async () => {},
+    },
+    started.id,
+  );
+}
+
 it("reports an initial confirmed root quota rejection as a command failure", async () => {
   const fixture = childBashFixture();
   const { capacity, program } = createQuotaProgram("test/bash-group-quota-initial", async () => {
@@ -205,6 +247,136 @@ it("completes a parked exec without reacquiring a Bash worker", async () => {
   }
 });
 
+it("drains a parked Bash operation cancelled by its owning signal", async () => {
+  const fixture = childBashFixture();
+  const controller = new AbortController();
+  const operationStarted = Promise.withResolvers<void>();
+  const context = {
+    ...fixture.context,
+    signal: controller.signal,
+    exec: (request: { readonly signal: AbortSignal }) =>
+      new Promise<KernelExitStatus>((_resolve, reject) => {
+        operationStarted.resolve();
+        const abort = () => reject(request.signal.reason);
+        if (request.signal.aborted) abort();
+        else request.signal.addEventListener("abort", abort, { once: true });
+      }),
+  };
+  const { capacity, program } = createQuotaProgram(
+    "test/bash-group-cancelled-parked-operation",
+    async (invocation) => {
+      const host = invocation.host() as KernelBashPort;
+      await parkPendingExec(host);
+      invocation.stopped();
+      return { exitCode: 0, signal: 0, coreDumped: false };
+    },
+  );
+  const run = program.run(context);
+  try {
+    await operationStarted.promise;
+    expect(capacity.active).toBe(0);
+    controller.abort();
+    await expect(run).resolves.toEqual({ exitCode: 0, signal: 9, coreDumped: false });
+    await expect(program.drain()).resolves.toBeUndefined();
+    expect(capacity.active).toBe(0);
+  } finally {
+    controller.abort();
+    await program.drain().catch(() => {});
+    await fixture.close();
+  }
+});
+
+it("discards parked processes after a cancelled dispatch stop is acknowledged", async () => {
+  const fixture = childBashFixture();
+  const controller = new AbortController();
+  const operationStarted = Promise.withResolvers<void>();
+  const parked = Promise.withResolvers<void>();
+  const acknowledgeStop = Promise.withResolvers<void>();
+  const context = {
+    ...fixture.context,
+    signal: controller.signal,
+    exec: (request: { readonly signal: AbortSignal }) =>
+      new Promise<KernelExitStatus>((_resolve, reject) => {
+        operationStarted.resolve();
+        const abort = () => reject(request.signal.reason);
+        if (request.signal.aborted) abort();
+        else request.signal.addEventListener("abort", abort, { once: true });
+      }),
+  };
+  const { capacity, program } = createQuotaProgram(
+    "test/bash-group-cancelled-dispatch",
+    async (invocation) => {
+      const host = invocation.host() as KernelBashPort;
+      await parkPendingExec(host);
+      parked.resolve();
+      await acknowledgeStop.promise;
+      controller.abort();
+      invocation.stopped();
+      await host.complete({
+        kind: "exit",
+        status: { exitCode: 0, signal: 0, coreDumped: false },
+      });
+      return { exitCode: 0, signal: 0, coreDumped: false };
+    },
+  );
+  const run = program.run(context);
+  try {
+    await parked.promise;
+    await operationStarted.promise;
+    expect(capacity.active).toBe(1);
+    acknowledgeStop.resolve();
+    await expect(run).resolves.toEqual({ exitCode: 0, signal: 9, coreDumped: false });
+    await expect(program.drain()).resolves.toBeUndefined();
+    expect(capacity.active).toBe(0);
+  } finally {
+    controller.abort();
+    acknowledgeStop.resolve();
+    await program.drain().catch(() => {});
+    await fixture.close();
+  }
+});
+
+it("closes pending operations after an unknown parked dispatch failure", async () => {
+  const fixture = childBashFixture();
+  const controller = new AbortController();
+  const failure = new Error("Unknown failure while parked");
+  const context = {
+    ...fixture.context,
+    signal: controller.signal,
+    exec: (request: { readonly signal: AbortSignal }) =>
+      new Promise<KernelExitStatus>((_resolve, reject) => {
+        const abort = () => reject(request.signal.reason);
+        if (request.signal.aborted) abort();
+        else request.signal.addEventListener("abort", abort, { once: true });
+      }),
+  };
+  const { capacity, program } = createQuotaProgram(
+    "test/bash-group-unknown-parked-dispatch",
+    async (invocation) => {
+      await parkPendingExec(invocation.host() as KernelBashPort);
+      invocation.stopped();
+      throw failure;
+    },
+  );
+  try {
+    await expect(program.run(context)).resolves.toEqual({
+      exitCode: 0,
+      signal: 9,
+      coreDumped: false,
+    });
+    const rejected = await program.drain().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(nestedErrors(rejected)).toContain(failure);
+    expect(capacity.active).toBe(0);
+  } finally {
+    controller.abort();
+    await program.drain().catch(() => {});
+    await fixture.close();
+  }
+});
+
 it("reports a resumed confirmed root quota rejection as a command failure", async () => {
   const fixture = childBashFixture();
   let invocations = 0;
@@ -233,34 +405,51 @@ it("reports a resumed confirmed root quota rejection as a command failure", asyn
   }
 });
 
-it("keeps an unknown worker failure visible until its stop is acknowledged", async () => {
-  const fixture = childBashFixture();
-  const failure = new Error("unrecognized worker failure");
-  let worker: LoaderInvocation | undefined;
-  const { capacity, program } = createQuotaProgram(
-    "test/bash-group-quota-unknown",
-    async (invocation) => {
-      worker = invocation;
-      invocation.host();
-      throw failure;
-    },
-  );
-  try {
-    await expect(program.run(fixture.context)).resolves.toEqual({
-      exitCode: 0,
-      signal: 9,
-      coreDumped: false,
-    });
-    expect(capacity.active).toBe(1);
-    worker!.stopped();
-    await expect(program.drain()).rejects.toThrow(failure.message);
-    expect(capacity.active).toBe(0);
-  } finally {
-    worker?.stopped();
-    await program.drain().catch(() => {});
-    await fixture.close();
-  }
-});
+it.each([
+  { message: "unrecognized worker failure after cancellation", name: "Error" },
+  { message: "Bash process still has an active operation", name: "Error" },
+  { message: "spoofed cancellation", name: "KernelProcessCancelledError" },
+])(
+  "keeps an unknown worker failure after cancellation: $name: $message",
+  async ({ message, name }) => {
+    const fixture = childBashFixture();
+    const controller = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const failWorker = Promise.withResolvers<void>();
+    const failure = Object.assign(new Error(message), { name });
+    let worker: LoaderInvocation | undefined;
+    const { capacity, program } = createQuotaProgram(
+      "test/bash-group-unknown-failure-after-cancel",
+      async (invocation) => {
+        worker = invocation;
+        invocation.host();
+        entered.resolve();
+        await failWorker.promise;
+        throw failure;
+      },
+    );
+    const run = program.run({ ...fixture.context, signal: controller.signal });
+    try {
+      await entered.promise;
+      controller.abort();
+      failWorker.resolve();
+      expect(capacity.active).toBe(1);
+      worker!.stopped();
+      await expect(run).resolves.toEqual({
+        exitCode: 0,
+        signal: 9,
+        coreDumped: false,
+      });
+      await expect(program.drain()).rejects.toThrow(failure.message);
+      expect(capacity.active).toBe(0);
+    } finally {
+      controller.abort();
+      worker?.stopped();
+      await program.drain().catch(() => {});
+      await fixture.close();
+    }
+  },
+);
 
 it("turns a fork quota rejection into EAGAIN with one clean waitpid reap", async () => {
   const fixture = childBashFixture();

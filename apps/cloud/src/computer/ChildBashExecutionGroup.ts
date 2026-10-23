@@ -4,10 +4,14 @@ import type { KernelBashCredentials } from "../kernel/KernelBashProgram.ts";
 import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
 import type { KernelExitStatus } from "../kernel/KernelProcessTable.ts";
+import { isKernelProcessCancelledError } from "../kernel/KernelProcessTable.ts";
 import type { BashCheckpoint } from "./BashCheckpointStore.ts";
 import { BashWorkerPhase } from "./BashWorkerPhase.ts";
 import type { createChildWorkerRunner } from "./ChildWorkerProgram.ts";
-import { isStoppedWorkerLoaderQuotaFailure } from "./ChildWorkerDispatchError.ts";
+import {
+  ChildWorkerDispatchError,
+  isStoppedWorkerLoaderQuotaFailure,
+} from "./ChildWorkerDispatchError.ts";
 import { createWorkerBashForkHost } from "./WorkerBashHost.ts";
 
 type Runner = ReturnType<typeof createChildWorkerRunner<KernelBashPort>>;
@@ -47,7 +51,7 @@ export class ChildBashExecutionGroup {
         }
         throw error;
       }
-    });
+    }, context.signal);
   }
 
   async finish(close: () => Promise<void>): Promise<void> {
@@ -58,8 +62,9 @@ export class ChildBashExecutionGroup {
       await close();
     }
     if (this.#failures.size === 1) throw this.#failures.values().next().value;
-    if (this.#failures.size > 1)
+    if (this.#failures.size > 1) {
       throw new AggregateError(this.#failures, "Bash continuation failed");
+    }
   }
 
   async #execute(
@@ -75,8 +80,9 @@ export class ChildBashExecutionGroup {
         const phase = new BashWorkerPhase({
           filesystem: context.filesystem,
           rootPid: context.identity.pid,
+          signal: context.signal,
           startFork: (work) => {
-            this.#track(work);
+            this.#track(work, context.signal);
           },
         });
         const residentBytes = source === undefined ? 0 : (await source.state()).memoryBytes;
@@ -90,7 +96,11 @@ export class ChildBashExecutionGroup {
             void stopped.promise.then(
               () => this.#stops.delete(stopped.promise),
               (error: unknown) => {
-                if (!isStoppedWorkerLoaderQuotaFailure(error)) this.#failures.add(error);
+                if (
+                  !isStoppedWorkerLoaderQuotaFailure(error) &&
+                  !isOwnedBashCancellation(error, context.signal)
+                )
+                  this.#failures.add(error);
                 this.#stops.delete(stopped.promise);
               },
             );
@@ -104,9 +114,14 @@ export class ChildBashExecutionGroup {
             );
             return {
               host: bridge.host,
-              ...(bridge.onDispatchFailure === undefined
-                ? {}
-                : { onDispatchFailure: bridge.onDispatchFailure }),
+              onDispatchFailure: async (error) => {
+                phase.dispatchFailed();
+                try {
+                  await bridge.onDispatchFailure?.(error);
+                } finally {
+                  if (!isStoppedWorkerLoaderQuotaFailure(error)) await owner.close();
+                }
+              },
               // The group keeps the kernel process and its descriptors through parked phases.
               close() {},
               async onStopped() {
@@ -114,6 +129,10 @@ export class ChildBashExecutionGroup {
                   await phase.stopped(execution);
                   stopped.resolve();
                 } catch (error) {
+                  if (isOwnedBashCancellation(error, context.signal)) {
+                    stopped.resolve();
+                    return;
+                  }
                   stopped.reject(error);
                   throw error;
                 }
@@ -123,6 +142,16 @@ export class ChildBashExecutionGroup {
           residentBytes,
         );
         const parked = phase.root;
+        if (context.signal.aborted) {
+          checkpoint = parked?.checkpoint;
+          try {
+            await parked?.resume();
+          } finally {
+            await parked?.checkpoint.close();
+          }
+          await owner.close();
+          return { exitCode: 0, signal: 9, coreDumped: false };
+        }
         if (exit.signal !== 0) {
           await parked?.checkpoint.close();
           await owner.close();
@@ -147,16 +176,35 @@ export class ChildBashExecutionGroup {
     }
   }
 
-  #track<T>(work: () => Promise<T>): Promise<T> {
+  #track<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
     const pending = Promise.resolve().then(work);
     this.#tasks.add(pending);
     void pending.then(
       () => this.#tasks.delete(pending),
       (error: unknown) => {
-        if (!isStoppedWorkerLoaderQuotaFailure(error)) this.#failures.add(error);
+        if (!isStoppedWorkerLoaderQuotaFailure(error) && !isOwnedBashCancellation(error, signal))
+          this.#failures.add(error);
         this.#tasks.delete(pending);
       },
     );
     return pending;
   }
+}
+
+function isOwnedBashCancellation(
+  error: unknown,
+  signal: AbortSignal,
+  visited = new Set<unknown>(),
+): boolean {
+  if (!signal.aborted || visited.has(error)) return false;
+  visited.add(error);
+  if (error === signal.reason) return true;
+  if (error instanceof ChildWorkerDispatchError)
+    return isOwnedBashCancellation(error.cause, signal, new Set(visited));
+  if (error instanceof AggregateError)
+    return (
+      error.errors.length > 0 &&
+      error.errors.every((cause) => isOwnedBashCancellation(cause, signal, new Set(visited)))
+    );
+  return isKernelProcessCancelledError(error);
 }
