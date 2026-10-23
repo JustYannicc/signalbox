@@ -265,7 +265,11 @@ export function createCodexLocaleProductComputer(
       git: programsByName("git"),
       sed: programsByName("sed"),
     },
-    machine: () => machine,
+    machine: () => ({
+      ...machine,
+      image: "controlled-codex-locale",
+      inventory: { image: "controlled-codex-locale", path: ["/bin", "/usr/bin"], entries: [] },
+    }),
     ...(options.orderedMachineRules === undefined
       ? {}
       : { orderedMachineRules: options.orderedMachineRules }),

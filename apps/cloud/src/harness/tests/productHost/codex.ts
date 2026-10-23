@@ -49,6 +49,8 @@ export const productOptions = (release: ReleaseOptions, home = "/home/product-co
         loader: commands.loader,
         capacity: new ChildWorkerCapacity(2),
         machine: () => ({
+          image: "controlled-unused-machine",
+          inventory: { image: "controlled-unused-machine", path: [], entries: [] },
           async spawn() {
             throw new Error("Unexpected forwarded command");
           },

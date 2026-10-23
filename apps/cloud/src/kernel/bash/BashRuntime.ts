@@ -60,7 +60,10 @@ function createProcess(
       },
     },
     preopens.transformArguments,
-    createKernelWasiFileSystemAdapter(context.filesystem, { process: context }),
+    createKernelWasiFileSystemAdapter(context.filesystem, {
+      process: context,
+      nimbusStatMetadata: true,
+    }),
   );
   // Imports close over this object; none can run until the instance has been bound.
   const process = {

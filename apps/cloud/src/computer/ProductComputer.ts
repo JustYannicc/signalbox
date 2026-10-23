@@ -13,15 +13,21 @@ import {
 } from "./CompiledChildWorkerLoader.ts";
 import type { ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 import type { ChildWorkerLimits } from "./ChildWorkerLimits.ts";
+import { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
+import type { MachineProgramInventory } from "./MachineProgramInventory.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
-  "processes" | "loader" | "systemIdentity" | "hostname" | "machine"
+  "processes" | "loader" | "systemIdentity" | "hostname" | "machine" | "resolver"
 > {
   readonly threadId: string;
   readonly systemIdentity?: SystemIdentityConfig;
   /** Build the machine transport from the same resolved identity the isolate receives. */
-  readonly machine: (systemIdentity: SystemIdentity) => KernelCommandForwarder;
+  readonly machine: (systemIdentity: SystemIdentity) => KernelCommandForwarder & {
+    readonly image: string;
+    /** The inventory must describe the same immutable image this transport executes. */
+    readonly inventory: MachineProgramInventory;
+  };
   readonly signal: AbortSignal;
   readonly loader:
     | ChildWorkerLoaderPort
@@ -49,6 +55,9 @@ export function createProductComputer(options: ProductComputerOptions) {
   )
     throw new TypeError("Product Computer requires the full command catalog");
   const machine = options.machine(systemIdentity);
+  if (!machine.inventory || machine.image !== machine.inventory.image)
+    throw new TypeError("Machine executable inventory does not match the selected image");
+  const resolver = new ComputerProgramResolver(options.filesystem, machine.inventory);
   const processes = new KernelProcessTable({ wakes: options.wakes });
   const loader =
     "run" in options.loader
@@ -65,6 +74,7 @@ export function createProductComputer(options: ProductComputerOptions) {
     hostname: systemIdentity.hostname,
     loader,
     processes,
+    resolver,
   });
   const owner = new AbortController();
   const signal = AbortSignal.any([owner.signal, options.signal]);

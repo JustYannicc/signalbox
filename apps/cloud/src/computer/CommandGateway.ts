@@ -24,6 +24,7 @@ import {
 import { COMPUTER_ISOLATE_POLICY } from "./EscalationPolicy.ts";
 import { ComputerEscalationTable } from "./EscalationTable.ts";
 import { qualifyGnuCommand } from "./GnuCommandCompatibility.ts";
+import type { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
 
 export type CommandProgramCodes = ChildProgramCatalogOptions["programs"] & {
   readonly busyboxApplets: ChildWorkerCode;
@@ -42,6 +43,7 @@ export interface CommandGatewayOptions {
   readonly hostname: string;
   readonly systemIdentity?: SystemIdentity;
   readonly machine: KernelCommandForwarder;
+  readonly resolver?: ComputerProgramResolver;
   readonly evidence?: ComputerProgramAdmissionOptions["evidence"];
   readonly orderedMachineRules?: ConstructorParameters<typeof ComputerEscalationTable>[0];
   readonly parent?: KernelCommandExecutorOptions["parent"];
@@ -90,10 +92,11 @@ export function createCommandGateway(options: CommandGatewayOptions) {
       });
       const host = new KernelProgramHost({
         registry,
-        programs: catalog.bindings,
+        programs: options.resolver?.bindings(registry, catalog.bindings) ?? catalog.bindings,
         wakes: options.wakes,
         processes: options.processes,
-        admit: admission.admit,
+        admit: (request) =>
+          options.resolver?.admit(request, admission.admit) ?? admission.admit(request),
         ...(cpuExecution === undefined ? {} : { cpuExecution }),
         ...(options.selectFileBytes === undefined
           ? {}
@@ -106,8 +109,11 @@ export function createCommandGateway(options: CommandGatewayOptions) {
     }
   };
   const normal = pair(
-    new ComputerEscalationTable(options.orderedMachineRules, COMPUTER_ISOLATE_POLICY, (command) =>
-      qualifyGnuCommand(command, options.filesystem),
+    new ComputerEscalationTable(
+      options.orderedMachineRules,
+      options.resolver?.policy ?? COMPUTER_ISOLATE_POLICY,
+      (command) =>
+        qualifyGnuCommand(options.resolver?.localCommand(command) ?? command, options.filesystem),
     ),
     options.machine,
     options.evidence,

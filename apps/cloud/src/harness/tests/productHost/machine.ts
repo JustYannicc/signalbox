@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import type { MachineProgramInventory } from "../../../computer/MachineProgramInventory.ts";
 import type {
   KernelCommandForwarder,
   KernelCommandExit,
@@ -14,7 +15,13 @@ export function machineFixture(scenario: Scenario, assertFilesLive: () => void) 
   const released = Promise.withResolvers<void>();
   let cleanupCount = 0;
   let clean = false;
-  const port: KernelCommandForwarder = {
+  const port: KernelCommandForwarder & { image: string; inventory: MachineProgramInventory } = {
+    image: "controlled-product-machine",
+    inventory: {
+      image: "controlled-product-machine",
+      path: ["/usr/bin"],
+      entries: [{ path: "/usr/bin/machine-tool", mode: 0o755, uid: 1000, gid: 1000 }],
+    },
     async spawn(command, signal) {
       signal.throwIfAborted();
       requests.push(command.executable);

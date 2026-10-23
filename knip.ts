@@ -29,6 +29,7 @@ export default {
       entry: [
         "knip-schemas.ts",
         "knip-declarations.ts",
+        "machine-programs/capture.mjs", // Runs inside the pinned machine image.
         "claude-bunfs/prepare-bun-proof.ts", // signalbox: standalone isolate proof builder
         "mobile-native-client.ts",
         "setup-worktree.ts",

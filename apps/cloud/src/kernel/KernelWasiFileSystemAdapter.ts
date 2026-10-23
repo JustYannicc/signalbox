@@ -5,10 +5,12 @@ import { KernelProcessSignal, type KernelSigpipeDisposition } from "./KernelProc
 import { createKernelWasiDeviceAdapter } from "./KernelWasiDevices.ts";
 import type { WasiCall } from "./wasi/internal_wasi_calls.ts";
 import type { WasiFileSystemImportAdapter } from "./wasi/internal_wasi_lifecycle.ts";
+import { nimbusWasiMetadata } from "./KernelNimbusWasiMetadata.ts";
 
 const SIGPIPE = 13;
 
 export interface KernelWasiSignalOptions {
+  readonly nimbusStatMetadata?: boolean;
   readonly sigpipe?: KernelSigpipeDisposition;
   readonly process?: Pick<KernelAsyncProgramContext, "processes" | "identity">;
 }
@@ -20,7 +22,9 @@ export function createKernelWasiFileSystemAdapter(
 ): WasiFileSystemImportAdapter {
   const devices = createKernelWasiDeviceAdapter(filesystem);
   return (memory, imports) => ({
-    ...devices(memory, imports),
+    ...(options.nimbusStatMetadata
+      ? nimbusWasiMetadata(memory, devices(memory, imports))
+      : devices(memory, imports)),
     fd_write: function* (fd, iovs, iovsLen, nwritten): WasiCall<number> {
       try {
         return yield* imports.fd_write(fd, iovs, iovsLen, nwritten);

@@ -26,6 +26,8 @@ async function runtimePorts(): Promise<
       loader: commandLoader().loader,
       capacity: new ChildWorkerCapacity(2),
       machine: () => ({
+        image: "controlled-unused-machine",
+        inventory: { image: "controlled-unused-machine", path: [], entries: [] },
         spawn: async () => {
           throw new Error("Unused machine");
         },
