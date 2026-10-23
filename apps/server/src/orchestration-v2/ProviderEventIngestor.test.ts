@@ -830,6 +830,7 @@ layer("ProviderEventIngestorV2", (it) => {
       }),
   );
 
+  // signalbox: the cloud Runner owns continuation provenance; local runs must ignore its events.
   it.effect("leaves cloud continuation associations outside the local run event pipeline", () =>
     Effect.gen(function* () {
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
