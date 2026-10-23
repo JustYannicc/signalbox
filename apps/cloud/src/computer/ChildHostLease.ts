@@ -43,11 +43,11 @@ const release = Symbol("release");
 
 export class ChildHostRef<Value> {
   #value: Value | undefined;
-  readonly #onRelease: ((value: Value) => void) | undefined;
+  #onRelease: (() => void) | undefined;
 
   constructor(value: Value, onRelease?: (value: Value) => void) {
     this.#value = value;
-    this.#onRelease = onRelease;
+    this.#onRelease = onRelease === undefined ? undefined : () => onRelease(value);
   }
 
   get(): Value {
@@ -59,9 +59,10 @@ export class ChildHostRef<Value> {
 
   /** Only the lease clears a ref, so holders can't revoke each other's access. */
   [release](): void {
-    const value = this.#value;
+    const onRelease = this.#onRelease;
+    this.#onRelease = undefined;
     this.#value = undefined;
-    if (value !== undefined) this.#onRelease?.(value);
+    onRelease?.();
   }
 }
 

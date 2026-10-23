@@ -1,8 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off - reads the pinned local GNU Bash artifact.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeProcess from "node:process";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createKernelBashHost } from "../../kernel/KernelBashHost.ts";
+import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
 import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import { createChildBash } from "../ChildBash.ts";
@@ -12,7 +14,17 @@ const artifact = new URL("../../../../../.t3/1071/programs/bash.wasm", import.me
 const available = NodeFS.existsSync(artifact);
 if (!available && NodeProcess.env.SIGNALBOX_REQUIRE_BASH_ARTIFACT === "1")
   throw new Error("Required GNU Bash artifact is missing");
-const module = available ? new WebAssembly.Module(NodeFS.readFileSync(artifact)) : undefined;
+const module = available
+  ? (() => {
+      const bytes = NodeFS.readFileSync(artifact);
+      if (
+        bytes.byteLength !== KERNEL_BASH_ARTIFACT.bytes ||
+        NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== KERNEL_BASH_ARTIFACT.sha256
+      )
+        throw new Error("GNU Bash artifact does not match its pin");
+      return new WebAssembly.Module(bytes);
+    })()
+  : undefined;
 
 describe.skipIf(!available)("Bash fork placement failure", () => {
   it("reports a child killed after restore through wait status while the parent continues", async () => {

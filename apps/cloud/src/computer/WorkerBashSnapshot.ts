@@ -29,6 +29,6 @@ export class WorkerBashSnapshot extends RpcTarget implements KernelBashForkSourc
 }
 
 function disposeSource(source: KernelBashForkSource): void {
-  if (Symbol.dispose in source && typeof source[Symbol.dispose] === "function")
-    source[Symbol.dispose]();
+  const dispose = Symbol.dispose in source ? source[Symbol.dispose] : undefined;
+  if (typeof dispose === "function") dispose.call(source);
 }
