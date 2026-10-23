@@ -225,13 +225,111 @@
     {
       "name": "session-A-r113-partial",
       "sha256": "f60c9f8546ad1e4fac1815c4aec78946d8db9d381bab523db801c720a6de0798"
+    },
+    {
+      "name": "v6-capture-resume-r1/continue-checkpoint",
+      "sha256": "5e4542ad28062b2d72a91dcd93ba7494ef04228110c7b93b642b752a2b0dbc0c"
+    },
+    {
+      "name": "v6-capture-resume-r1/resume-checkpoint-partial",
+      "sha256": "e79403fbc129a29bc3a15c6dabecaa5747793a391903ef736b39fd3baf855ffb"
+    },
+    {
+      "name": "v6-capture-resume-r2/continue-checkpoint-partial",
+      "sha256": "0b971ec8419d384a930347ca711104cd6d1d79bd930219b057cec715aeb464d2"
+    },
+    {
+      "name": "v6-capture-resume-r2/resume-checkpoint-partial",
+      "sha256": "248519df285ef1d9e7413f44b60388d8b20a0054b00e1779112482b5e9d65178"
+    },
+    {
+      "name": "v6-capture-resume-r3/continue-checkpoint-partial",
+      "sha256": "16e1182be40eb446249c054a2e0dd658859d1744c9aa51ae41798f74d5347949"
+    },
+    {
+      "name": "v6-capture-resume-r3/resume-checkpoint-partial",
+      "sha256": "d4c374601c25026f36cfa1ac9190b49f052618333a0e7b5e677cde8f9c90ea8d"
+    },
+    {
+      "name": "v6-capture-resume-r4/continue-checkpoint",
+      "sha256": "89385c1aa8a0743298e863aaadfafd2dad210f2561a84ab1fa11ad4806275e32"
+    },
+    {
+      "name": "v6-capture-resume-r4/resume-checkpoint",
+      "sha256": "68da316689763e634a99dc8e00c7b637d847b3a3c58fe7a731b1295150105495"
+    },
+    {
+      "name": "v6-interrupt-r1/interrupt-continue-partial",
+      "sha256": "8bc0eeddad499649a9a7f1ec36b136ac63a22b9c81e717d1d8cf8b2161cc5d96"
+    },
+    {
+      "name": "v6-interrupt-r1/interrupt-original-partial",
+      "sha256": "29505d7db76542a0e47cc5863312e02670ee2722fb28a0878e349f0c3e878d8f"
+    },
+    {
+      "name": "v6-interrupt-r1/interrupt-resume-partial",
+      "sha256": "5c83156556c0c38dd37a7cdfbc4c35ca32c44970d670768624b487323b867b1b"
+    },
+    {
+      "name": "v6-interrupt-r2/interrupt-continue",
+      "sha256": "cd6a7467c86d4c80af553e7c2e3600d419e6f835a28fc254cbaa649c7a79f0a5"
+    },
+    {
+      "name": "v6-interrupt-r2/interrupt-original-partial",
+      "sha256": "124154d559effa1cdce7718abe09455ff22c208e28b0ba65d496e10b7c033003"
+    },
+    {
+      "name": "v6-interrupt-r2/interrupt-resume",
+      "sha256": "cb83703e636da90016f8cd32334d497fb9a5906a896bd157e96258a4bd0ea85e"
+    },
+    {
+      "name": "v6-unomitted-release.js",
+      "sha256": "86e0f3676ea87b35e83606776a2bd67a9dd98b74e80d57efcccf8961921bb854"
+    },
+    {
+      "name": "v6-unomitted-chunk-spans.jsonl.gz",
+      "sha256": "c8412fe2def21d648968c352f18c6b22c8c8bbc7db1f102656b7a5b0aa07fe73"
+    },
+    {
+      "name": "v6-recovery-driver",
+      "sha256": "de0306639534ced599ba545771c546d65b4115a59edd926afecda723763172f2"
+    },
+    {
+      "name": "v6-node-cli-driver",
+      "sha256": "d5b2fa50b8a7b764ea15fb328ef6283e9961c192464bc55ebbed4a97da9719ec"
+    },
+    {
+      "name": "v6-interrupt-driver",
+      "sha256": "eb4081bdcadb47301743a62eb381dddf82f6276364a05e074b3c2c11ae016161"
+    },
+    {
+      "name": "v6-interrupt-node-cli-driver",
+      "sha256": "d5b2fa50b8a7b764ea15fb328ef6283e9961c192464bc55ebbed4a97da9719ec"
+    },
+    {
+      "name": "v6-initializer-mapper",
+      "sha256": "32667d156c74015f5f84a1605f997728f7cabcf3c35caa1675540281c0d2a6cc"
     }
   ],
   "pending": [
     "session-C-from-1244",
     "session-A-from-1244",
     "session-B-from-1244",
-    "WebSearch-completion"
+    "WebSearch-completion",
+    "compaction-auto",
+    "compaction-slash",
+    "background-Bash-completion",
+    "Agent-Task-subagents",
+    "image-Read",
+    "MCP-stdio",
+    "MCP-http",
+    "plugin-hooks-PreToolUse-PostToolUse-SessionStart",
+    "TodoWrite",
+    "WebFetch-completion",
+    "permission-prompts-denials",
+    "slash-commands",
+    "settings-model-switching",
+    "output-styles"
   ],
   "inputs": [
     {
@@ -832,7 +930,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-1xn1h09a.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-1yaynhrv.js",
@@ -840,7 +938,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-1yk0b2ky.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-1ynv1rf9.js",
@@ -2132,7 +2230,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-6hh08p3q.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-6hjnenhz.js",
@@ -4528,7 +4626,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-e2derxke.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-e2hxvwnx.js",
@@ -4776,7 +4874,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-epvse6vk.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-eqdffg2v.js",
@@ -5572,7 +5670,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-hfrg3wrg.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-hfvk3ys0.js",
@@ -6276,7 +6374,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-knvpnmph.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-kq8bvqwg.js",
@@ -7624,7 +7722,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-rea1e3db.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-rehtf1e3.js",
@@ -7768,7 +7866,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-s22n3b79.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-s23e5evk.js",
@@ -9212,7 +9310,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-xj41x97a.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-xjat7wkv.js",
