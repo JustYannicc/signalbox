@@ -18,7 +18,7 @@ const LEGACY_FORK_DEPTH = 1;
 const SUBSHELL_PIPELINE_STAGES = 15;
 
 describe.skipIf(!bashArtifactAvailable)("GNU Bash process slots through CommandGateway", () => {
-  it("records the legacy JSPI fork trap at depth one", async () => {
+  it("preserves the same-isolate recursive fork leaf output", async () => {
     const fixture = childBashFixture({
       args: [
         "bash",
@@ -45,7 +45,9 @@ describe.skipIf(!bashArtifactAvailable)("GNU Bash process slots through CommandG
         module: bashModule!,
         credentials: bashCredentials,
       }).run(fixture.context);
-      await expect(fallback).rejects.toMatchObject({ message: "unreachable" });
+      await expect(fallback).resolves.toEqual({ exitCode: 0, signal: 0, coreDumped: false });
+      expect(fixture.read("/workspace/gate/tree.result")).toBe("0:leaf\n");
+      expect(fixture.stderr()).toBe("");
     } finally {
       await fixture.close();
     }
