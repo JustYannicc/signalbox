@@ -10,6 +10,8 @@ An acknowledged normal stop releases the lease and lets the next process warm-re
 
 Logical waiting does not close a Dynamic Worker fetch or free its platform slot. `ProcessSlots.park` cannot be wired around an open fetch. Physical Bash parking captures Asyncify state in bounded external storage and hands off its lease only after the dispatch RPC returns and the process stop is acknowledged. Resume reacquires capacity, possibly on a different slot, before restoring state.
 
-Programs without checkpoint parking still hold their slots while blocked. Pipelines that need more such leaf programs running simultaneously than the context limit can deadlock until #1388 adds those checkpoints or #1396 places them elsewhere.
+Admission prioritizes siblings of a process already holding a slot, using the kernel parent PID within its process table. Equal priorities remain FIFO. A completed exec finishes in the host without restoring the replaced Bash heap, so its pipe descriptors can close even when every slot is busy.
+
+Programs without checkpoint parking still hold their slots while blocked. A pipeline that needs more such leaf programs running simultaneously than the context limit remains unsupported under #1436; it needs the checkpoints from #1388 or placement from #1396.
 
 The 2026-10-23 deployed probe confirmed the [Dynamic Workers platform limits](https://developers.cloudflare.com/dynamic-workers/platform/limits/) and [Worker Loader API](https://developers.cloudflare.com/dynamic-workers/api-reference/) behavior described above.

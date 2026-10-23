@@ -16,9 +16,8 @@ export function createChildBashForkDispatch(options: {
   readonly dispatch: ChildWorkerDispatch<KernelBashPort>;
   readonly lifetimes: ChildWorkerLifetimes;
 }): NonNullable<KernelBashHostOptions["runFork"]> {
-  // Bash waits and non-Bash pipe operations retain their physical slots until park is wired.
-  // Work that needs more simultaneous workers than the caller's I/O limit can queue forever;
-  // nested priority keeps descendants ahead of unrelated roots without exceeding that limit.
+  // Non-Bash children retain their slot while blocked. More leaf pipeline stages than the
+  // caller's in-flight limit can still deadlock until #1388 can park those programs too.
   const runner = createChildWorkerRunner({ ...options, executable: "/bin/bash" });
   return async (context, owner, source) => {
     const { memoryBytes } = await source.state();

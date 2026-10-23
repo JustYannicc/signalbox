@@ -31,11 +31,11 @@ it.effect("keeps nested command admission through the request and session host w
           await value.close();
         }),
     );
-    const reserve = fixture.capacity.reserve.bind(fixture.capacity);
-    vi.spyOn(fixture.capacity, "reserve").mockImplementation((...args) => {
-      const pending = reserve(...args);
+    const enqueue = fixture.capacity.enqueue.bind(fixture.capacity);
+    vi.spyOn(fixture.capacity, "enqueue").mockImplementation((...args) => {
+      const ticket = enqueue(...args);
       attempted.resolve();
-      return pending;
+      return ticket;
     });
     const f = yield* requestFixture;
     f.setHost({

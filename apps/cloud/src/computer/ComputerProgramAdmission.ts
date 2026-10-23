@@ -115,9 +115,21 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
         }
 
         // Claim FIFO/nested priority before hashing; this ticket holds no process permit.
+        const process = request.kind === "exec" ? request.identity?.handle : request.parent;
+        const parent =
+          request.kind === "exec" && process === undefined
+            ? undefined
+            : request.processes.info(process);
+        const parentPid =
+          parent?.status === "ok"
+            ? request.kind === "exec"
+              ? parent.value.parentPid
+              : parent.value.pid
+            : undefined;
         ticket = options.capacity.enqueue(controller.signal, {
           processes: request.processes,
-          process: request.kind === "exec" ? request.identity?.handle : request.parent,
+          process,
+          ...(parentPid === undefined ? {} : { parentPid }),
         });
         const prepared = await awaitWithAbort(prepare.call(implementation), controller.signal);
         controller.signal.throwIfAborted();

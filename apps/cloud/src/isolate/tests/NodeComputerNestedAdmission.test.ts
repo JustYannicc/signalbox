@@ -27,11 +27,11 @@ it("admits a nested Node shim before queued roots in the same command pool", asy
       }
     },
   });
-  const reserve = fixture.capacity.reserve.bind(fixture.capacity);
-  vi.spyOn(fixture.capacity, "reserve").mockImplementation((...args) => {
-    const pending = reserve(...args);
+  const enqueue = fixture.capacity.enqueue.bind(fixture.capacity);
+  vi.spyOn(fixture.capacity, "enqueue").mockImplementation((...args) => {
+    const ticket = enqueue(...args);
     attempted.resolve();
-    return pending;
+    return ticket;
   });
   const queued = new AbortController();
   let root: Promise<void> | undefined;
@@ -39,10 +39,12 @@ it("admits a nested Node shim before queued roots in the same command pool", asy
   const running = fixture.capacity.run(
     fixture.controller.signal,
     async (execution) => {
-      root = fixture.capacity.acquire(queued.signal, undefined, syntheticRequest).then((permit) => {
-        rootAdmitted = true;
-        permit.release();
-      });
+      root = fixture.capacity
+        .acquire(queued.signal, undefined, syntheticRequest)
+        .then(async (permit) => {
+          rootAdmitted = true;
+          await permit.release();
+        });
       void root.catch(() => undefined);
       const shim = createNodeComputerChildProcess(
         fixture.gateway.host,

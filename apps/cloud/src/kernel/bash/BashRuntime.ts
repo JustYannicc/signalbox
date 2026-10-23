@@ -16,7 +16,7 @@ import { rewindBash as rewind } from "./BashTransitions.ts";
 import type { KernelBashCredentials, KernelBashProgramContext } from "./BashContext.ts";
 import { bashImports } from "./BashImports.ts";
 import { errno, range, resultErrno } from "./BashMemory.ts";
-import type { BashProcess } from "./BashProcess.ts";
+import type { BashProcess, BashTransition } from "./BashProcess.ts";
 import { BashPreopens } from "./BashPreopens.ts";
 
 const PAGE = 65_536;
@@ -98,7 +98,7 @@ async function execute(
         if (error instanceof WasiExit) return status(error.code);
         throw error;
       }
-      const pending = process.pending;
+      const pending = runtimeTransition(process.pending);
       process.pending = undefined;
       if (pending === undefined) {
         if (process.rewinding)
@@ -174,6 +174,24 @@ async function execute(
     return kernelProcessSignalExitStatus(error);
   } finally {
     await process.lifecycle.closeAsync();
+  }
+}
+
+function runtimeTransition(pending: BashTransition | undefined) {
+  if (pending?.kind !== "operation") return pending;
+  const operation = pending.operation;
+  switch (operation.kind) {
+    case "wait":
+      return {
+        kind: "wait" as const,
+        pid: operation.pid,
+        options: operation.options,
+        status: Number(pending.call.args[1]),
+      };
+    case "exec":
+      return { kind: "exec" as const, ...operation.request };
+    default:
+      throw new Error(`Unexpected same-isolate Bash operation: ${operation.kind}`);
   }
 }
 

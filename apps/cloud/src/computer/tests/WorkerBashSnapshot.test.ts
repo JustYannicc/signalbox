@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import type { KernelBashForkState } from "../../kernel/KernelBashFork.ts";
 import { ChildHostLease } from "../ChildHostLease.ts";
 import { WorkerBashSnapshot } from "../WorkerBashSnapshot.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 const state = {
+  version: 1,
+  continuation: { resume: 0 },
   memoryBytes: 8,
   stackPointer: 0,
   captures: {
@@ -19,7 +22,7 @@ const state = {
     nextId: 1,
     nextGeneration: 1,
   },
-};
+} satisfies KernelBashForkState;
 
 describe("worker Bash snapshot", () => {
   it.each(["resolve", "reject"] as const)(

@@ -8,8 +8,16 @@ export interface ChildWorkerSlotRequest {
 }
 
 export interface ChildWorkerRequester {
-  readonly processes: Pick<KernelProcessTable, "admissionOwner" | "setAdmissionOwner">;
+  readonly processes: Pick<KernelProcessTable, "admissionOwner" | "setAdmissionOwner"> &
+    Partial<Pick<KernelProcessTable, "info">>;
   readonly process: KernelHandle<"process"> | undefined;
+  /** Kernel parent PID for a child that has not been allocated yet. */
+  readonly parentPid?: number;
+}
+
+export interface ChildWorkerSiblingFamily {
+  readonly processes: object;
+  readonly parentPid: number;
 }
 
 export interface ChildWorkerExecution {

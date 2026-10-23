@@ -5,6 +5,12 @@ import {
 import { KernelProcessSignal, kernelProcessExitStatus } from "../kernel/KernelProcessSignal.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
 import { childWasiIo } from "./ChildWasiIo.ts";
+import type {
+  KernelBashImportCall,
+  KernelBashOperationEffect,
+  KernelBashOperationResult,
+} from "../kernel/KernelBashCheckpoint.ts";
+import type { BashAsyncifyOperationHooks } from "../kernel/KernelBashCheckpoint.ts";
 
 type WasmArgument = number | bigint;
 type WasiMemoryPlan = (
@@ -179,6 +185,8 @@ export interface ChildWasiOptions {
   readonly syscalls: KernelSyscallPort;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
+  /** Product Bash uses Asyncify checkpoints instead of JSPI's opaque suspended import stack. */
+  readonly asyncify?: BashAsyncifyOperationHooks;
 }
 
 /** Keeps linear memory in the child and sends only each syscall's ABI ranges to its owner. */
@@ -216,6 +224,33 @@ export function createChildWasi(options: ChildWasiOptions) {
       string,
       WebAssembly.ImportValue
     >;
+    if (options.asyncify !== undefined) {
+      namespace[imported.name] = (...args: WasmArgument[]): number => {
+        const resumed = options.asyncify!.landing();
+        if (resumed !== undefined) return resumed;
+        if (instance === undefined || memory === undefined) {
+          throw new Error("Child WASI memory has not been bound");
+        }
+        if (imported.name === "random_get") return randomGet(args, memory);
+        const regions = new MemoryRegions(memory);
+        MEMORY_PLANS[imported.name]!(regions, args, encoded);
+        const request = {
+          name: imported.name,
+          args,
+          memorySize: memory.buffer.byteLength,
+          regions: regions.snapshot(),
+        };
+        return options.asyncify!.suspend(
+          { kind: "wasi", request },
+          {
+            namespace: imported.module as "wasi_snapshot_preview1" | "wasi_unstable",
+            name: imported.name,
+            args,
+          },
+        );
+      };
+      continue;
+    }
     namespace[imported.name] = new wasm.Suspending(async (...args): Promise<number> => {
       if (instance === undefined || memory === undefined) {
         throw new Error("Child WASI memory has not been bound");
@@ -289,7 +324,30 @@ export function createChildWasi(options: ChildWasiOptions) {
 
   function invoke(fn: WebAssembly.ExportValue, ...args: WasmArgument[]): Promise<unknown> {
     if (typeof fn !== "function") throw new TypeError("Expected a WebAssembly function export");
+    // Bash also has uninstrumented env imports that still suspend through JSPI.
     return wasm.promising(fn as (...args: WasmArgument[]) => unknown)(...args);
+  }
+
+  function applyOperation(
+    call: KernelBashImportCall,
+    result: KernelBashOperationResult,
+  ): KernelBashOperationEffect {
+    if (result.kind !== "wasi") throw new TypeError("WASI import received a non-WASI result");
+    if (memory === undefined) throw new Error("Child WASI memory has not been bound");
+    const response = result.value;
+    if (response.kind === "exit")
+      return {
+        kind: "exit",
+        status: { exitCode: response.code >>> 0, signal: 0, coreDumped: false },
+      };
+    if (response.kind === "signal") throw new KernelProcessSignal(response.signal);
+    if (call.name === "proc_exit") {
+      throw new Error("WASI proc_exit returned without exiting the child");
+    }
+    const regions = new MemoryRegions(memory);
+    MEMORY_PLANS[call.name]!(regions, call.args, encoded);
+    regions.apply(response.regions);
+    return { kind: "resume", value: response.value };
   }
 
   async function start(candidate: WebAssembly.Instance): Promise<number> {
@@ -317,6 +375,7 @@ export function createChildWasi(options: ChildWasiOptions) {
     start,
     startProcess: (candidate: WebAssembly.Instance) =>
       kernelProcessExitStatus(() => start(candidate)),
+    applyOperation,
     run(fn: WebAssembly.ExportValue, ...args: WasmArgument[]): Promise<unknown> {
       if (instance === undefined) throw new Error("Child WASI has not been bound");
       return invoke(fn, ...args).catch((error: unknown) => {
@@ -325,6 +384,18 @@ export function createChildWasi(options: ChildWasiOptions) {
       });
     },
   };
+}
+
+function randomGet(args: readonly WasmArgument[], memory: WebAssembly.Memory): number {
+  const start = pointer(args, 0) >>> 0;
+  const length = pointer(args, 1) >>> 0;
+  if (start + length > memory.buffer.byteLength) return 21;
+  for (let offset = 0; offset < length; offset += 65_536) {
+    crypto.getRandomValues(
+      new Uint8Array(memory.buffer, start + offset, Math.min(65_536, length - offset)),
+    );
+  }
+  return 0;
 }
 
 function encodedSize(values: readonly string[]): number {
