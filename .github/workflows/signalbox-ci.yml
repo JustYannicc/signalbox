@@ -170,6 +170,9 @@ jobs:
     if: ${{ !cancelled() && needs.cloud_migrations.outputs.test != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      PROGRAMS_RELEASE_TAG: kernel-programs-20261023-6aefd645-2d079609
+      COREUTILS_TAR_SHA256: 875eb1dcdb31d6ea53f59b64b6de6bef8e0ebc4680a7698310ab0cfc989d50d9
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -189,6 +192,36 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+
+      - name: Cache pinned kernel programs
+        id: kernel_program_cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            .t3/1071/programs
+            .t3/issue-1263/programs
+          key: kernel-programs-${{ env.PROGRAMS_RELEASE_TAG }}
+
+      - name: Fetch pinned kernel programs
+        if: steps.kernel_program_cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types scripts/harness-releases/fetchPrograms.ts \
+            --output "$RUNNER_TEMP/signalbox-kernel-programs"
+          mkdir -p .t3/1071/programs .t3/issue-1263/programs/coreutils
+          cp "$RUNNER_TEMP/signalbox-kernel-programs/bash.wasm" .t3/1071/programs/bash.wasm
+          cp "$RUNNER_TEMP/signalbox-kernel-programs/busybox.wasm" .t3/1071/programs/busybox.wasm
+          cp "$RUNNER_TEMP/signalbox-kernel-programs/rg.wasm" .t3/1071/programs/rg.wasm
+          cp "$RUNNER_TEMP/signalbox-kernel-programs/rg.wasm" .t3/issue-1263/programs/rg.wasm
+
+          coreutils_tar="$RUNNER_TEMP/coreutils.tar"
+          curl --fail --location --retry 3 \
+            --output "$coreutils_tar" \
+            "https://github.com/JustYannicc/signalbox/releases/download/$PROGRAMS_RELEASE_TAG/coreutils.tar"
+          printf '%s  %s\n' "$COREUTILS_TAR_SHA256" "$coreutils_tar" | sha256sum --check
+          tar --extract --file "$coreutils_tar" \
+            --directory .t3/issue-1263/programs/coreutils \
+            --strip-components=1
 
       - name: Ensure Electron runtime is installed
         run: vp run --filter @t3tools/desktop ensure:electron
@@ -218,6 +251,11 @@ jobs:
       - name: Test
         env:
           TEST_PACKAGES: ${{ needs.cloud_migrations.outputs.test_packages }}
+          SIGNALBOX_REQUIRE_BASH_ARTIFACT: "1"
+          SIGNALBOX_REQUIRE_BUSYBOX_ARTIFACT: "1"
+          SIGNALBOX_REQUIRE_COREUTILS_ARTIFACTS: "1"
+          SIGNALBOX_REQUIRE_CHILD_IO_ARTIFACTS: "1"
+          SIGNALBOX_REQUIRE_RIPGREP_ARTIFACT: "1"
         run: |
           filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web')
           if [[ -n "$TEST_PACKAGES" ]]; then
