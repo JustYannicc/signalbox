@@ -35,6 +35,7 @@ export interface CommandGatewayOptions {
   readonly filesystem: KernelFileSystem;
   readonly processes: KernelProcessTable;
   readonly wakes: KernelWakeRegistry;
+  /** The owning adapter supplies its I/O context's limit: ten for a DO, four for a Worker request. */
   readonly capacity: Pick<ChildWorkerCapacity, "run" | "reserve">;
   readonly loader: ChildProgramCatalogOptions["loader"];
   readonly programs: CommandProgramCodes;

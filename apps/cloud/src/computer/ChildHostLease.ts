@@ -5,6 +5,19 @@
  */
 export class ChildHostLease {
   #refs: Set<ChildHostRef<unknown>> | undefined = new Set();
+  readonly #onObserve: ((residentBytes: number) => void) | undefined;
+
+  constructor(onObserve?: (residentBytes: number) => void) {
+    this.#onObserve = onObserve;
+  }
+
+  observe(residentBytes: number): void {
+    if (this.#refs === undefined) throw closedHostError();
+    if (!Number.isSafeInteger(residentBytes) || residentBytes < 0) {
+      throw new RangeError("Child host memory size must be a nonnegative safe integer");
+    }
+    this.#onObserve?.(residentBytes);
+  }
 
   hold<Value>(value: Value): ChildHostRef<Value> {
     const ref = new ChildHostRef(value);
@@ -37,7 +50,7 @@ export class ChildHostRef<Value> {
 
   get(): Value {
     if (this.#value === undefined) {
-      throw Object.assign(new Error("Child host is closed"), { code: "EBADF" });
+      throw closedHostError();
     }
     return this.#value;
   }
@@ -46,4 +59,8 @@ export class ChildHostRef<Value> {
   [release](): void {
     this.#value = undefined;
   }
+}
+
+function closedHostError() {
+  return Object.assign(new Error("Child host is closed"), { code: "EBADF" });
 }

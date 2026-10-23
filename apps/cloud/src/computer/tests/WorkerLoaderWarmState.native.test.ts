@@ -71,9 +71,9 @@ afterAll(async () => {
 
 describe("actual warm child isolation", () => {
   it.each(["direct", "registry"])(
-    "gives fresh invocations distinct physical isolates through %s loading",
+    "gives concurrent slot leases distinct physical isolates through %s loading",
     async (kind) => {
-      const response = await fetch(new URL(`/?kind=${kind}&fresh`, endpoint));
+      const response = await fetch(new URL(`/?kind=${kind}&concurrent`, endpoint));
       const body = await response.text();
       expect(response.status, body).toBe(200);
       const result = JSON.parse(body) as WarmStateResult;

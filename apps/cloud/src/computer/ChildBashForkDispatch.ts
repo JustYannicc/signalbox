@@ -16,12 +16,9 @@ export function createChildBashForkDispatch(options: {
   readonly dispatch: ChildWorkerDispatch<KernelBashPort>;
   readonly lifetimes: ChildWorkerLifetimes;
 }): NonNullable<KernelBashHostOptions["runFork"]> {
-  // With idle capacity and three initial Bash memories per isolate, N background two-stage pipelines need
-  // at most N+2 fork workers, 2N exec workers and their root. Fifteen such jobs need <=48 of 64 permits;
-  // an ordinary P-stage external pipeline needs <=max(1,P-1)+P, <=63 for P<=32.
-  // Beyond that envelope, blocked pipe writers can fill the hard cap before their readers
-  // are admitted. Queuing bounds admitted workers but cannot solve that existing deadlock;
-  // it needs runnable-credit scheduling with parked continuations, not a larger fixed cap.
+  // Bash waits and non-Bash pipe operations retain their physical slots until park is wired.
+  // Work that needs more simultaneous workers than the caller's I/O limit can queue forever;
+  // nested priority keeps descendants ahead of unrelated roots without exceeding that limit.
   const runner = createChildWorkerRunner({ ...options, executable: "/bin/bash" });
   return (context, owner, source) => {
     return runner.run(context, (admitted, lease) =>

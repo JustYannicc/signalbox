@@ -7,7 +7,7 @@ import type { KernelSyscallRequest } from "../../kernel/KernelSyscallPort.ts";
 import { childBusyboxFixture, exited, text } from "./ChildBusyboxFixture.ts";
 import { createChildCoreutils } from "../ChildCoreutils.ts";
 import { createChildCoreutilsProgram } from "../ChildCoreutilsProgram.ts";
-import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
+import { ChildWorkerCapacity, type ChildWorkerReservation } from "../ChildWorkerCapacity.ts";
 import { coreutilsArtifactsAvailable, runCoreutilsCommand } from "./CoreutilsArtifactFixture.ts";
 import { wasmEnvironmentGetCommand } from "./CoreutilsWasmImportFixture.ts";
 
@@ -106,10 +106,7 @@ describe("Coreutils child bridge", () => {
       async (_name, env) => {
         const fixture = childBusyboxFixture({ args: ["pwd"], env });
         const capacity = new ChildWorkerCapacity(1);
-        const reservation = await capacity.reserve(fixture.context.signal, {
-          processes: fixture.context.processes,
-          process: fixture.context.identity.handle,
-        });
+        let reservation!: ChildWorkerReservation;
         const capacityRun = vi.spyOn(capacity, "run");
         const commands: KernelCommand[] = [];
         let parentEnvironment: string | undefined;
@@ -149,6 +146,14 @@ describe("Coreutils child bridge", () => {
         });
 
         try {
+          reservation = await capacity.reserve(
+            fixture.context.signal,
+            {
+              processes: fixture.context.processes,
+              process: fixture.context.identity.handle,
+            },
+            await program.prepare(),
+          );
           const result = await program.run(fixture.context);
           expect(parentEnvironment).toBe("PATH=/bin\0PWD=/workspace\0");
           expect(result).toEqual(exited());

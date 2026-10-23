@@ -1,17 +1,16 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { KernelAsyncProgramContext } from "../../kernel/KernelAsyncProgram.ts";
-import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
+import { ChildWorkerCapacity, type ChildWorkerReservation } from "../ChildWorkerCapacity.ts";
 import { createChildWorkerProgram } from "../ChildWorkerProgram.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
+
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 describe("Child worker environment after admission", () => {
   it("claims the original context before deriving one environment for host and command", async () => {
     const fixture = childBusyboxFixture({ env: { PATH: "/bin", PWD: "/old" } });
     const capacity = new ChildWorkerCapacity(1);
-    const reservation = await capacity.reserve(fixture.context.signal, {
-      processes: fixture.context.processes,
-      process: fixture.context.identity.handle,
-    });
+    let reservation!: ChildWorkerReservation;
     const order: string[] = [];
     let hostEnvironment: Readonly<Record<string, string>> | undefined;
     const childEnv = vi.fn((context: KernelAsyncProgramContext) => {
@@ -46,6 +45,14 @@ describe("Child worker environment after admission", () => {
       },
     });
     try {
+      reservation = await capacity.reserve(
+        fixture.context.signal,
+        {
+          processes: fixture.context.processes,
+          process: fixture.context.identity.handle,
+        },
+        await program.prepare(),
+      );
       await expect(program.run(fixture.context)).resolves.toEqual(exited());
       await program.drain();
       expect(order).toEqual(["claim", "environment"]);
@@ -60,11 +67,7 @@ describe("Child worker environment after admission", () => {
   it("never derives an environment after a rejected claim", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1);
-    const reservation = await capacity.reserve(fixture.context.signal, {
-      processes: fixture.context.processes,
-      process: fixture.context.identity.handle,
-    });
-    reservation.cancel();
+    let reservation!: ChildWorkerReservation;
     const childEnv = vi.fn(() => ({}));
     const createHost = vi.fn(() => ({ host: {}, close() {} }));
     const dispatch = vi.fn(async () => exited());
@@ -78,6 +81,15 @@ describe("Child worker environment after admission", () => {
       dispatch: { run: dispatch },
     });
     try {
+      reservation = await capacity.reserve(
+        fixture.context.signal,
+        {
+          processes: fixture.context.processes,
+          process: fixture.context.identity.handle,
+        },
+        await program.prepare(),
+      );
+      reservation.cancel();
       await expect(program.run(fixture.context)).rejects.toThrow("no longer available");
       await expect(program.drain()).resolves.toBeUndefined();
       expect(childEnv).not.toHaveBeenCalled();
@@ -92,10 +104,7 @@ describe("Child worker environment after admission", () => {
   it("releases a claimed slot and reports environment preparation failure to its caller only", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1);
-    const reservation = await capacity.reserve(fixture.context.signal, {
-      processes: fixture.context.processes,
-      process: fixture.context.identity.handle,
-    });
+    let reservation!: ChildWorkerReservation;
     const failure = new Error("environment unavailable");
     const createHost = vi.fn(() => ({ host: {}, close() {} }));
     const program = createChildWorkerProgram({
@@ -110,6 +119,14 @@ describe("Child worker environment after admission", () => {
       dispatch: { run: async () => exited() },
     });
     try {
+      reservation = await capacity.reserve(
+        fixture.context.signal,
+        {
+          processes: fixture.context.processes,
+          process: fixture.context.identity.handle,
+        },
+        await program.prepare(),
+      );
       await expect(program.run(fixture.context)).rejects.toBe(failure);
       await expect(program.drain()).resolves.toBeUndefined();
       expect(createHost).not.toHaveBeenCalled();

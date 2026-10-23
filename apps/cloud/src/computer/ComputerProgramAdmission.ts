@@ -11,6 +11,7 @@ import {
   isChildWorkerReservation,
   type ChildWorkerCapacity,
   type ChildWorkerReservation,
+  type ChildWorkerSlotRequest,
 } from "./ChildWorkerCapacity.ts";
 import {
   assertComputerForwardingSupported,
@@ -89,7 +90,16 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
       if (implementation.kind !== "async") {
         throw new KernelProgramExecAdmissionError("ENOTSUP", "Computer requires a child program");
       }
-      // close() aborts queued reserves; removable links avoid AbortSignal.any retaining the session signal.
+      const prepare = (
+        implementation as KernelProgramImplementation & {
+          readonly prepare?: () => Promise<ChildWorkerSlotRequest>;
+        }
+      ).prepare;
+      if (typeof prepare !== "function") {
+        throw new TypeError("Child worker implementation must prepare its ProcessSlot request");
+      }
+
+      // close() aborts preparation or queued reserves; removable links avoid retaining session signals.
       const controller = new AbortController();
       const onAbort = () => controller.abort(request.signal.reason);
       reserves.add(controller);
@@ -97,10 +107,16 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
       try {
         request.signal.addEventListener("abort", onAbort, { once: true });
         if (request.signal.aborted) onAbort();
-        reservation = await options.capacity.reserve(controller.signal, {
-          processes: request.processes,
-          process: request.kind === "exec" ? request.identity?.handle : request.parent,
-        });
+        const prepared = await prepare.call(implementation);
+        controller.signal.throwIfAborted();
+        reservation = await options.capacity.reserve(
+          controller.signal,
+          {
+            processes: request.processes,
+            process: request.kind === "exec" ? request.identity?.handle : request.parent,
+          },
+          prepared,
+        );
       } finally {
         request.signal.removeEventListener("abort", onAbort);
         reserves.delete(controller);

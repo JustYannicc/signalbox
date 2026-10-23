@@ -17,7 +17,7 @@ describe("seeded child program registration", () => {
       const catalog = createSeededChildProgramCatalog({
         filesystem: f.filesystem,
         registry: new KernelProgramRegistry(),
-        capacity: new ChildWorkerCapacity(),
+        capacity: new ChildWorkerCapacity(10),
         loader: { run },
         hostname: "lazy-program-test",
         programs: { bash: code, busyboxCat: code, ripgrep: code },

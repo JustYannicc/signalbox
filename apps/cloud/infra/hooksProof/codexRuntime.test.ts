@@ -29,7 +29,7 @@ function fixture() {
   const runtime = createCodexHookRuntime(
     () => ({ bindings: new Map(), async drain() {} }),
     wakes,
-    new ChildWorkerCapacity(),
+    new ChildWorkerCapacity(10),
   );
   return {
     database,

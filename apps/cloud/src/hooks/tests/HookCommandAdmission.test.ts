@@ -4,14 +4,20 @@ import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import { createHookService } from "../HookService.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+const syntheticRequest = Object.freeze({ codeId: "test-holder", residentBytes: 0 });
 
-it("runs command hooks while all ten invoking shells hold the shared pool", async () => {
+it("runs command hooks after the ten invoking shells acknowledge stop", async () => {
   const attempted = Promise.withResolvers<void>();
+  const allStopAcks = Promise.withResolvers<void>();
+  const allDispatches = Promise.withResolvers<void>();
   const dispatch = Promise.withResolvers<void>();
   let attempts = 0;
+  let stopAcks = 0;
+  let dispatches = 0;
   const fixture = commandGatewayFixture({
     capacityLimit: 10,
     async run(_input, invocation) {
+      if (++dispatches === 10) allDispatches.resolve();
       try {
         await dispatch.promise;
         const host = await invocation.host<KernelBusyboxPort>();
@@ -66,8 +72,8 @@ it("runs command hooks while all ten invoking shells hold the shared pool", asyn
     parents.map((process) =>
       fixture.capacity.run(
         fixture.controller.signal,
-        () =>
-          hooks.invoke(
+        async (execution) => {
+          const hook = hooks.invoke(
             "command",
             {},
             {
@@ -76,15 +82,25 @@ it("runs command hooks while all ten invoking shells hold the shared pool", asyn
               env: {},
               requester: { processes: fixture.context.processes, process },
             },
-          ),
+          );
+          void hook.catch(() => undefined);
+          await attempted.promise;
+          // In this fixture, every hook request is queued before its shell stop is acknowledged.
+          if (++stopAcks === 10) allStopAcks.resolve();
+          await allStopAcks.promise;
+          await execution.handoff();
+          return hook;
+        },
         { processes: fixture.context.processes, process },
+        syntheticRequest,
       ),
     ),
   );
   void running.catch(() => undefined);
   try {
     await attempted.promise;
-    expect(fixture.capacity.active).toBe(20);
+    await allDispatches.promise;
+    expect(fixture.capacity.active).toBe(10);
     dispatch.resolve();
     const results = await running;
     expect(results.map((result) => new TextDecoder().decode(result.stdout))).toEqual(

@@ -10,12 +10,14 @@ vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 it.effect("keeps nested command admission through the request and session host wrappers", () =>
   Effect.gen(function* () {
     const attempted = Promise.withResolvers<void>();
+    const dispatchStarted = Promise.withResolvers<void>();
     const dispatch = Promise.withResolvers<void>();
     const fixture = yield* Effect.acquireRelease(
       Effect.sync(() =>
         commandGatewayFixture({
           capacityLimit: 1,
           async run(_input, invocation) {
+            dispatchStarted.resolve();
             await dispatch.promise;
             invocation.acknowledge();
             return exited(7);
@@ -50,10 +52,11 @@ it.effect("keeps nested command admission through the request and session host w
     const runtime = yield* f.open(context);
     const running = yield* runtime.run(f.firstInput, context).pipe(Effect.forkScoped);
     yield* f.instance.adapter.nextStart;
+    const syntheticRequest = Object.freeze({ codeId: "test-holder", residentBytes: 0 });
     yield* Effect.promise(() =>
       fixture.capacity.run(
         fixture.controller.signal,
-        async () => {
+        async (execution) => {
           const child = f.harness.computer.exec(
             { executable: "/bin/pwd", argv: ["pwd"], cwd: "/workspace", env: {} },
             fixture.controller.signal,
@@ -62,7 +65,13 @@ it.effect("keeps nested command admission through the request and session host w
           void child.catch(() => undefined);
           try {
             await attempted.promise;
-            expect(fixture.capacity.active).toBe(2);
+            // This fake shell acknowledges stop only after nested admission is queued.
+            const stopAck = Promise.withResolvers<void>();
+            stopAck.resolve();
+            await stopAck.promise;
+            await execution.handoff();
+            await dispatchStarted.promise;
+            expect(fixture.capacity.active).toBe(1);
             dispatch.resolve();
             const admitted = await child;
             const [status] = await Promise.all([
@@ -79,6 +88,7 @@ it.effect("keeps nested command admission through the request and session host w
           }
         },
         { processes: fixture.context.processes, process: fixture.context.identity.handle },
+        syntheticRequest,
       ),
     );
     expect(fixture.capacity.active).toBe(0);

@@ -86,7 +86,8 @@ export function createCodexHooksProofClass(
     async (wakes, owner) => {
       let capacity = capacities.get(owner.context);
       if (!capacity) {
-        capacity = new ChildWorkerCapacity();
+        // The owner is a Durable Object; its I/O context allows ten in-flight child workers.
+        capacity = new ChildWorkerCapacity(10);
         capacities.set(owner.context, capacity);
       }
       await seedPrograms(owner.filesystem, owner.request, catalog, owner.context.storage);

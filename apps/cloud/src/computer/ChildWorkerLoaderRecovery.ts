@@ -1,34 +1,32 @@
-const discardedWorkerIds = new WeakMap<WorkerLoader, Set<string>>();
-
 export const CHILD_WORKER_KILLED_BY_SIGKILL = Object.freeze({
   exitCode: 0,
   signal: 9,
   coreDumped: false,
 });
 
-/** WorkerLoader has no delete API, so failed named entries must be bypassed with load(). */
-export function childWorkerStubFor(
-  loader: WorkerLoader,
-  workerId: string,
-  code: WorkerLoaderWorkerCode,
-) {
-  if (discardedWorkerIds.get(loader)?.has(workerId)) return loader.load(code);
-  return loader.get(workerId, () => code);
+export function requireChildWorkerLoaderId(input: { readonly loaderId: string }): string {
+  if (typeof input.loaderId !== "string" || input.loaderId.length === 0) {
+    throw new TypeError("Child loader ID must be a nonempty string");
+  }
+  return input.loaderId;
 }
 
-/** A fresh-isolate key is already unique and will not be looked up again. */
-export function discardChildWorkerStub(
-  loader: WorkerLoader,
-  workerId: string,
-  freshIsolate: boolean | undefined,
-) {
-  if (freshIsolate === true) return;
-  let discarded = discardedWorkerIds.get(loader);
-  if (discarded === undefined) {
-    discarded = new Set();
-    discardedWorkerIds.set(loader, discarded);
+/** The slot owner must retire a lost loader ID before dispatch completion is acknowledged. */
+export async function acknowledgeChildWorkerMemoryLoss(target: unknown) {
+  if ((typeof target !== "object" && typeof target !== "function") || target === null) {
+    throw new TypeError("Child memory loss requires a loader retirement callback");
   }
-  discarded.add(workerId);
+  const lifecycle = target as { lost?: unknown; stopped?: unknown };
+  if (typeof lifecycle.lost !== "function") {
+    throw new TypeError("Child memory loss requires a loader retirement callback");
+  }
+  if (typeof lifecycle.stopped !== "function") {
+    throw new TypeError("Child memory loss requires a stopped acknowledgment");
+  }
+  const lost = lifecycle.lost as () => Promise<void>;
+  const stopped = lifecycle.stopped as () => void | Promise<void>;
+  await lost.call(target);
+  await stopped.call(target);
 }
 
 export function isChildWorkerMemoryLimitFailure(cause: unknown): boolean {

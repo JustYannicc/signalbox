@@ -133,7 +133,7 @@ describe.skipIf(!artifactAvailable)("pinned ripgrep SIGPIPE policy", () => {
       registry,
       filesystem: fixture.filesystem,
       loader,
-      capacity: new ChildWorkerCapacity(),
+      capacity: new ChildWorkerCapacity(10),
       programs: { bash: code, busyboxCat: code, ripgrep: code },
       hostname: "ripgrep-sigpipe-test",
     });

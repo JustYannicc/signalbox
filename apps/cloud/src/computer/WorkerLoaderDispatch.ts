@@ -1,11 +1,11 @@
 import { RpcTarget } from "cloudflare:workers";
-import { childWorkerId, childWorkerInstanceId } from "./ChildWorkerIdentity.ts";
+import { childWorkerId } from "./ChildWorkerIdentity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
 import {
+  acknowledgeChildWorkerMemoryLoss,
   CHILD_WORKER_KILLED_BY_SIGKILL,
-  childWorkerStubFor,
-  discardChildWorkerStub,
   isChildWorkerMemoryLimitFailure,
+  requireChildWorkerLoaderId,
 } from "./ChildWorkerLoaderRecovery.ts";
 import { resolveChildWorkerLimits, type ResolvedChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import type { ChildWorkerDispatch, ChildWorkerInvocation } from "./ChildWorkerProgram.ts";
@@ -23,11 +23,14 @@ export interface ChildWorkerLoaderPort {
 class ChildInvocation<Host extends object> extends RpcTarget {
   readonly #host: Host;
   readonly #acknowledge: () => void;
+  readonly #onMemoryLost: (() => Promise<void>) | undefined;
+  #memoryLoss: Promise<void> | undefined;
 
-  constructor(host: Host, acknowledge: () => void) {
+  constructor(host: Host, acknowledge: () => void, onMemoryLost?: () => Promise<void>) {
     super();
     this.#host = host;
     this.#acknowledge = acknowledge;
+    this.#onMemoryLost = onMemoryLost;
   }
 
   host() {
@@ -37,9 +40,23 @@ class ChildInvocation<Host extends object> extends RpcTarget {
   stopped() {
     this.#acknowledge();
   }
+
+  lost(): Promise<void> {
+    if (this.#memoryLoss === undefined) {
+      const onMemoryLost = this.#onMemoryLost;
+      this.#memoryLoss =
+        onMemoryLost === undefined
+          ? Promise.reject(new Error("Child memory loss requires an onMemoryLost callback"))
+          : Promise.resolve().then(onMemoryLost);
+    }
+    return this.#memoryLoss;
+  }
 }
 
-function dispatchModules(input: ChildWorkerInvocation, limits: ResolvedChildWorkerLimits) {
+function dispatchModules(
+  input: Omit<ChildWorkerInvocation, "loaderId">,
+  limits: ResolvedChildWorkerLimits,
+) {
   let wrapper = "__signalbox_child_dispatch.js";
   const paths = new Set(
     Object.keys(input.modules).map((name) => new URL(name, "https://child.invalid/").pathname),
@@ -69,26 +86,53 @@ export default class extends WorkerEntrypoint {
   };
 }
 
+function workerCodeFor(
+  input: Omit<ChildWorkerInvocation, "loaderId">,
+  limits: ResolvedChildWorkerLimits,
+) {
+  return {
+    compatibilityDate: "2026-10-19",
+    compatibilityFlags: ["nodejs_compat"],
+    ...dispatchModules(input, limits),
+    globalOutbound: null,
+  };
+}
+
+/** The admission code ID describes wrapped modules and normalized Worker Loader policy. */
+export async function childWorkerDispatchCodeId(
+  input: Omit<ChildWorkerInvocation, "loaderId">,
+): Promise<string> {
+  const limits = resolveChildWorkerLimits(input.limits);
+  return childWorkerId(workerCodeFor(input, limits));
+}
+
 /** Code and syscalls are supplied by Computer; guest programs receive no outbound network binding. */
 export function createWorkerLoaderDispatch<Host extends object>(
   loader: WorkerLoader | ChildWorkerLoaderPort,
 ): ChildWorkerDispatch<Host> {
   return {
-    async run(input: ChildWorkerInvocation, host: Host) {
+    async run(input: ChildWorkerInvocation, host: Host, onMemoryLost?: () => Promise<void>) {
       const limits = resolveChildWorkerLimits(input.limits);
       const stopped = Promise.withResolvers<void>();
       let acknowledged = false;
-      const invocation = new ChildInvocation(host, () => {
-        acknowledged = true;
-        stopped.resolve();
-      });
+      const invocation = new ChildInvocation(
+        host,
+        () => {
+          acknowledged = true;
+          stopped.resolve();
+        },
+        onMemoryLost,
+      );
       let submitted = false;
       let invokingChild = false;
-      let failedWorker:
-        | { readonly id: string; readonly freshIsolate: boolean | undefined }
-        | undefined;
       try {
-        const code = dispatchModules(input, limits);
+        const loaderId = requireChildWorkerLoaderId(input);
+        const workerCode = workerCodeFor(input, limits);
+        const code = {
+          mainModule: workerCode.mainModule,
+          modules: workerCode.modules,
+          limits: workerCode.limits,
+        };
         let exit: KernelCommandExit;
         if ("run" in loader) {
           for (const module of Object.values(code.modules)) {
@@ -102,34 +146,21 @@ export function createWorkerLoaderDispatch<Host extends object>(
           }
           submitted = true;
           invokingChild = true;
-          exit = await loader.run(
-            {
-              ...code,
-              command: input.command,
-              ...(input.freshIsolate === undefined ? {} : { freshIsolate: input.freshIsolate }),
-            },
-            invocation,
-          );
+          const childInput: ChildWorkerInvocation = {
+            ...code,
+            loaderId,
+            command: input.command,
+          };
+          exit = await loader.run(childInput, invocation);
         } else {
           for (const module of Object.values(code.modules)) {
             if (typeof module !== "string" && "wasmReference" in module) {
               throw new Error("Child WASM reference requires a compiled module registry");
             }
           }
-          const workerCode = {
-            compatibilityDate: "2026-10-19",
-            compatibilityFlags: ["nodejs_compat"],
-            ...code,
-            globalOutbound: null,
-          };
-          const workerId = childWorkerInstanceId(
-            await childWorkerId(workerCode, input.entrypoint),
-            input.freshIsolate,
-          );
-          failedWorker = { id: workerId, freshIsolate: input.freshIsolate };
           submitted = true;
           // Native Worker Loader supports compiled WASM inputs; installed types still require bytes.
-          const worker = childWorkerStubFor(loader, workerId, workerCode as WorkerLoaderWorkerCode);
+          const worker = loader.get(loaderId, () => workerCode as WorkerLoaderWorkerCode);
           const entrypoint = worker.getEntrypoint(undefined, {
             limits,
           }) as unknown as ChildEntrypoint<Host>;
@@ -140,14 +171,14 @@ export function createWorkerLoaderDispatch<Host extends object>(
         return exit;
       } catch (cause) {
         if (invokingChild && isChildWorkerMemoryLimitFailure(cause)) {
-          if (failedWorker !== undefined) {
-            discardChildWorkerStub(
-              loader as WorkerLoader,
-              failedWorker.id,
-              failedWorker.freshIsolate,
-            );
+          try {
+            await acknowledgeChildWorkerMemoryLoss(invocation);
+          } catch (retirementFailure) {
+            throw new ChildWorkerDispatchError(retirementFailure, {
+              kind: "unconfirmed",
+              stopped: stopped.promise,
+            });
           }
-          invocation.stopped();
           return CHILD_WORKER_KILLED_BY_SIGKILL;
         }
         if (!submitted) invocation.stopped();

@@ -43,7 +43,8 @@ export async function proveComputerPolicy(input: ComputerPolicyProofInput) {
 
   const registry = new KernelProgramRegistry();
   const wakes = new KernelWakeRegistry();
-  const capacity = new ChildWorkerCapacity();
+  // This proof can run in a Worker request, whose in-flight child limit is four.
+  const capacity = new ChildWorkerCapacity(4);
   const catalog = createSeededChildProgramCatalog({
     registry,
     filesystem: input.filesystem,

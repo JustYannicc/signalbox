@@ -25,8 +25,9 @@ function loader() {
   return { native: { get, load: vi.fn() }, get, code: () => code };
 }
 
-function input(modules: ChildWorkerModules) {
+function input(modules: ChildWorkerModules, loaderId = "slot-test") {
   return {
+    loaderId,
     mainModule: "main.js",
     modules: { "main.js": "export default {}", ...modules },
     command,
@@ -34,32 +35,32 @@ function input(modules: ChildWorkerModules) {
 }
 
 describe("module dispatch ownership", () => {
-  it("gives budgeted invocations separate isolates through the direct loader", async () => {
+  it("uses distinct provided slot IDs through the direct loader", async () => {
     const f = loader();
     const dispatch = createWorkerLoaderDispatch(f.native);
-    const command = { ...input({}), freshIsolate: true };
-    await Promise.all([dispatch.run(command, {}), dispatch.run(command, {})]);
+    const first = input({}, "direct-slot-one");
+    const second = input({}, "direct-slot-two");
+    await Promise.all([dispatch.run(first, {}), dispatch.run(second, {})]);
     const keys = f.get.mock.calls.map(([key]) => key);
-    expect(keys).toHaveLength(2);
-    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys).toEqual(["direct-slot-one", "direct-slot-two"]);
   });
 
-  it("preserves separate-isolate admission through the compiled registry hop", async () => {
+  it("forwards provided slot IDs through the compiled registry hop", async () => {
     const f = loader();
     const compiledLoader = createCompiledChildWorkerLoader(f.native, new Map([[hash, compiled]]));
-    const received: (boolean | undefined)[] = [];
+    const received: string[] = [];
     const dispatch = createWorkerLoaderDispatch({
       run(input, invocation) {
-        received.push(input.freshIsolate);
+        received.push(input.loaderId);
         return compiledLoader.run(input, invocation);
       },
     });
-    const command = { ...input({ "program.wasm": { wasmReference: hash } }), freshIsolate: true };
-    await Promise.all([dispatch.run(command, {}), dispatch.run(command, {})]);
-    expect(received).toEqual([true, true]);
+    const first = input({ "program.wasm": { wasmReference: hash } }, "compiled-slot-one");
+    const second = input({ "program.wasm": { wasmReference: hash } }, "compiled-slot-two");
+    await Promise.all([dispatch.run(first, {}), dispatch.run(second, {})]);
+    expect(received).toEqual(["compiled-slot-one", "compiled-slot-two"]);
     const keys = f.get.mock.calls.map(([key]) => key);
-    expect(keys).toHaveLength(2);
-    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys).toEqual(["compiled-slot-one", "compiled-slot-two"]);
   });
 
   it("passes a compiled module by identity through the direct loader", async () => {

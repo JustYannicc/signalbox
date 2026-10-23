@@ -92,7 +92,7 @@ function fixture() {
       };
     },
     wakes,
-    new ChildWorkerCapacity(),
+    new ChildWorkerCapacity(10),
   );
   return {
     database,

@@ -6,10 +6,13 @@ import {
   isChildWorkerReservation,
   type ChildWorkerCapacity,
   type ChildWorkerReservation,
+  type ChildWorkerExecution,
+  type ChildWorkerSlotRequest,
 } from "./ChildWorkerCapacity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
+import { createChildWorkerPreparation } from "./ChildWorkerPreparation.ts";
 
 export type ChildWorkerModule =
   | string
@@ -25,17 +28,21 @@ export interface ChildWorkerCode {
   readonly modules: ChildWorkerModules | ChildWorkerModulesFactory;
   readonly entrypoint?: string;
   readonly limits?: ChildWorkerLimits;
-  readonly freshIsolate?: boolean;
 }
 
 export interface ChildWorkerInvocation extends Omit<ChildWorkerCode, "modules"> {
+  readonly loaderId: string;
   readonly modules: ChildWorkerModules;
   readonly command: KernelCommand;
 }
 
 export interface ChildWorkerDispatch<Host extends object> {
   /** The permit follows this promise, including any descendant continuations in the worker. */
-  readonly run: (input: ChildWorkerInvocation, host: Host) => Promise<KernelCommandExit>;
+  readonly run: (
+    input: ChildWorkerInvocation,
+    host: Host,
+    onMemoryLost?: () => Promise<void>,
+  ) => Promise<KernelCommandExit>;
 }
 
 export interface ChildWorkerProgramOptions<Host extends object> {
@@ -55,18 +62,23 @@ export interface ChildWorkerProgramOptions<Host extends object> {
   readonly createHost: (
     context: KernelAsyncProgramContext,
     lease: ChildHostLease,
+    execution: ChildWorkerExecution,
   ) => {
     readonly host: Host;
     /** Logical exit may precede dispatch completion when descendants retain the worker. */
     readonly exited?: Promise<KernelCommandExit>;
     readonly close: () => Promise<void> | void;
+    readonly onStopped?: () => Promise<void> | void;
   };
 }
 
 export type ChildWorkerProgram = Extract<
   KernelProgramImplementation,
   { readonly kind: "async" }
-> & { readonly drain: () => Promise<void> };
+> & {
+  readonly prepare: (residentBytes?: number) => Promise<ChildWorkerSlotRequest>;
+  readonly drain: () => Promise<void>;
+};
 
 /** Keep kernel admission and fd ownership in the facet while the program body runs in a child. */
 export function createChildWorkerProgram<Host extends object>(
@@ -77,6 +89,7 @@ export function createChildWorkerProgram<Host extends object>(
     kind: "async" as const,
     ...(options.sigpipe === undefined ? {} : { sigpipe: options.sigpipe }),
     run: (context: KernelAsyncProgramContext) => runner.run(context, options.createHost),
+    prepare: runner.prepare,
     drain: runner.drain,
   });
 }
@@ -91,20 +104,21 @@ export function createChildWorkerRunner<Host extends object>(
     reservationFor,
     childEnv,
     dispatch,
-    code: { mainModule, modules: moduleSource, entrypoint, limits, freshIsolate },
+    code: { mainModule, modules: moduleSource, entrypoint, limits },
   } = options;
   const code = Object.freeze({
     mainModule,
     ...(entrypoint === undefined ? {} : { entrypoint }),
-    ...(freshIsolate === undefined ? {} : { freshIsolate }),
     limits: resolveChildWorkerLimits(limits),
   });
-  const loadModules = createModuleLoader(moduleSource);
+  const preparation = createChildWorkerPreparation({ ...code, modules: moduleSource });
   const lifetimes = options.lifetimes ?? new ChildWorkerLifetimes();
   return Object.freeze({
+    prepare: preparation.prepare,
     async run(
       context: KernelAsyncProgramContext,
       createHost: ChildWorkerProgramOptions<Host>["createHost"],
+      initialResidentBytes = 0,
     ) {
       const result = Promise.withResolvers<KernelCommandExit>();
       let settled = false;
@@ -121,61 +135,84 @@ export function createChildWorkerRunner<Host extends object>(
           result.reject(error);
         },
       };
-      const work = async () => {
-        context.signal.throwIfAborted();
-        const modules = await loadModules();
-        context.signal.throwIfAborted();
-        const env = Object.freeze({
-          ...(childEnv === undefined ? context.env : childEnv(context)),
-        });
-        const lease = new ChildHostLease();
-        const owner = createHost(childEnv === undefined ? context : { ...context, env }, lease);
-        if (owner.exited !== undefined) void owner.exited.then(settle.resolve, settle.reject);
-        let failure: ChildWorkerDispatchError | undefined;
-        try {
-          return await dispatch.run(
-            Object.freeze({
-              ...code,
-              modules,
-              command: {
-                executable,
-                argv: [...context.args],
-                cwd: context.filesystem.cwd,
-                env,
-              },
-            }),
-            owner.host,
+      const lifetime = (async () => {
+        const reservation =
+          reservationFor === undefined ? undefined : claimReservation(reservationFor, context);
+        const request = reservation?.request ?? (await preparation.prepare(initialResidentBytes));
+        const modules = preparation.claim(request);
+        const work = async (execution: ChildWorkerExecution) => {
+          context.signal.throwIfAborted();
+          const env = Object.freeze({
+            ...(childEnv === undefined ? context.env : childEnv(context)),
+          });
+          const lease = new ChildHostLease((bytes) => execution.observe(bytes));
+          const owner = createHost(
+            childEnv === undefined ? context : { ...context, env },
+            lease,
+            execution,
           );
-        } catch (error) {
-          failure =
-            error instanceof ChildWorkerDispatchError
-              ? error
-              : new ChildWorkerDispatchError(error, {
-                  kind: "unconfirmed",
-                  stopped: new Promise<void>(() => {}),
-                });
-          settle.reject(failure);
-        } finally {
-          // Late child calls then fail with EBADF instead of reaching a process that is closing.
-          lease.release();
+          if (owner.exited !== undefined) void owner.exited.then(settle.resolve, settle.reject);
+          let failure: ChildWorkerDispatchError | undefined;
           try {
-            await owner.close();
+            return await dispatch.run(
+              Object.freeze({
+                ...code,
+                loaderId: execution.lease.loaderId,
+                modules,
+                command: {
+                  executable,
+                  argv: [...context.args],
+                  cwd: context.filesystem.cwd,
+                  env,
+                },
+              }),
+              owner.host,
+              () => execution.lose("memory"),
+            );
+          } catch (error) {
+            failure =
+              error instanceof ChildWorkerDispatchError
+                ? error
+                : new ChildWorkerDispatchError(error, {
+                    kind: "unconfirmed",
+                    stopped: new Promise<void>(() => {}),
+                  });
+            settle.reject(failure);
           } finally {
-            if (failure?.termination.kind === "unconfirmed") {
-              // Capability cleanup cannot acknowledge a worker whose transport disappeared.
-              await failure.termination.stopped;
+            // Late child calls then fail with EBADF instead of reaching a process that is closing.
+            lease.release();
+            try {
+              await owner.close();
+            } finally {
+              if (failure?.termination.kind === "unconfirmed") {
+                // Capability cleanup cannot acknowledge a worker whose transport disappeared.
+                await failure.termination.stopped;
+              }
+              await owner.onStopped?.();
             }
           }
-        }
-        throw failure;
-      };
-      const lifetime =
-        reservationFor === undefined
-          ? capacity.run(context.signal, work, {
-              processes: context.processes,
-              process: context.identity.handle,
-            })
-          : runWithReservation(reservationFor, context, work);
+          throw failure;
+        };
+        return reservation === undefined
+          ? capacity.run(
+              context.signal,
+              work,
+              {
+                processes: context.processes,
+                process: context.identity.handle,
+              },
+              request,
+            )
+          : reservation.run(
+              context.signal,
+              work,
+              {
+                processes: context.processes,
+                process: context.identity.handle,
+              },
+              request,
+            );
+      })();
       // Logical exit can precede dispatch completion and physical teardown on either admission path.
       // Drain gets only failures the caller never received; the rest would pin the command's frames.
       lifetimes.track(
@@ -192,47 +229,13 @@ export function createChildWorkerRunner<Host extends object>(
   });
 }
 
-function runWithReservation<T>(
+function claimReservation(
   reservationFor: (context: KernelAsyncProgramContext) => ChildWorkerReservation,
   context: KernelAsyncProgramContext,
-  work: () => Promise<T>,
-): Promise<T> {
+): ChildWorkerReservation {
   const reservation = reservationFor(context);
   if (!isChildWorkerReservation(reservation)) {
     throw new TypeError("Child worker reservation resolver did not return a capacity reservation");
   }
-  return reservation.run(context.signal, work, {
-    processes: context.processes,
-    process: context.identity.handle,
-  });
-}
-
-function createModuleLoader(source: ChildWorkerModules | ChildWorkerModulesFactory) {
-  if (typeof source === "function") return createFactoryModuleLoader(source);
-  return createStaticModuleLoader(captureModules(source));
-}
-
-function createFactoryModuleLoader(source: ChildWorkerModulesFactory) {
-  return async () => captureModules(await source());
-}
-
-function createStaticModuleLoader(modules: ChildWorkerModules) {
-  return async () => modules;
-}
-
-function captureModules(modules: ChildWorkerModules): ChildWorkerModules {
-  return Object.freeze(
-    Object.fromEntries(
-      Object.entries(modules).map(([name, module]) => [
-        name,
-        typeof module === "string"
-          ? module
-          : "wasmReference" in module
-            ? Object.freeze({ wasmReference: module.wasmReference })
-            : "wasm" in module
-              ? Object.freeze({ wasm: module.wasm })
-              : Object.freeze({ js: module.js }),
-      ]),
-    ),
-  );
+  return reservation;
 }

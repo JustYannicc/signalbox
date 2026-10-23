@@ -4,13 +4,16 @@ import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import { createNodeComputerChildProcess } from "../NodeComputerProcess.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+const syntheticRequest = Object.freeze({ codeId: "test-holder", residentBytes: 0 });
 
 it("admits a nested Node shim before queued roots in the same command pool", async () => {
   const attempted = Promise.withResolvers<void>();
+  const dispatchStarted = Promise.withResolvers<void>();
   const dispatch = Promise.withResolvers<void>();
   const fixture = commandGatewayFixture({
     capacityLimit: 1,
     async run(_input, invocation) {
+      dispatchStarted.resolve();
       try {
         await dispatch.promise;
         await writeStdio(
@@ -35,8 +38,8 @@ it("admits a nested Node shim before queued roots in the same command pool", asy
   let rootAdmitted = false;
   const running = fixture.capacity.run(
     fixture.controller.signal,
-    async () => {
-      root = fixture.capacity.acquire(queued.signal, undefined).then((permit) => {
+    async (execution) => {
+      root = fixture.capacity.acquire(queued.signal, undefined, syntheticRequest).then((permit) => {
         rootAdmitted = true;
         permit.release();
       });
@@ -61,15 +64,23 @@ it("admits a nested Node shim before queued roots in the same command pool", asy
       child.stdout?.on("data", (chunk) => output.push(String(chunk)));
       child.stdin?.end();
       await attempted.promise;
-      expect(fixture.capacity.active).toBe(2);
+      // The fake invoking shell ACKs stop after the shim has queued nested admission.
+      const stopAck = Promise.withResolvers<void>();
+      stopAck.resolve();
+      await stopAck.promise;
+      await execution.handoff();
+      await dispatchStarted.promise;
+      expect(fixture.capacity.active).toBe(1);
       expect(rootAdmitted).toBe(false);
       dispatch.resolve();
       await done;
       expect(child.exitCode).toBe(7);
       expect(output.join("")).toBe("nested shim");
-      expect(rootAdmitted).toBe(false);
+      await root;
+      expect(rootAdmitted).toBe(true);
     },
     { processes: fixture.context.processes, process: fixture.context.identity.handle },
+    syntheticRequest,
   );
   try {
     await running;

@@ -55,7 +55,8 @@ export function createClaudeTurnProofClass(
     throw new Error("Claude hooks proof requires the pinned Bash, BusyBox and ripgrep programs");
   }
   return class ClaudeHooksProof extends DurableObject {
-    private readonly capacity = new ChildWorkerCapacity();
+    // This Durable Object I/O context allows ten distinct children with in-flight calls.
+    private readonly capacity = new ChildWorkerCapacity(10);
     private filesystemHost: ReturnType<typeof createProofFilesystemHost> | undefined;
     private seedState: ReturnType<typeof createClaudeHooksSeedState> | undefined;
 

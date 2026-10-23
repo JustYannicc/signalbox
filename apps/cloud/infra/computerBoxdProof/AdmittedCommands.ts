@@ -5,6 +5,8 @@ import { KernelForwardingUnavailable } from "../../src/kernel/KernelCommandForwa
 import {
   ChildWorkerCapacity,
   type ChildWorkerRequester,
+  type ChildWorkerExecution,
+  type ChildWorkerSlotRequest,
 } from "../../src/computer/ChildWorkerCapacity.ts";
 import { ChildWorkerLifetimes } from "../../src/computer/ChildWorkerLifetimes.ts";
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
@@ -26,15 +28,21 @@ export function createProofAdmittedCommands(
     readonly wakes: KernelWakeRegistry;
   },
 ) {
-  const capacity = new ChildWorkerCapacity();
+  // This adapter also runs from a Worker request, whose in-flight child limit is four.
+  const capacity = new ChildWorkerCapacity(4);
   const lifetimes = new ChildWorkerLifetimes();
   let fallbackRuns = 0;
   const observedCapacity = {
-    reserve: (signal: AbortSignal, requester: ChildWorkerRequester) =>
-      capacity.reserve(signal, requester),
-    run: <T>(signal: AbortSignal, work: () => Promise<T>, requester: ChildWorkerRequester) => {
+    reserve: (signal: AbortSignal, requester: ChildWorkerRequester, code: ChildWorkerSlotRequest) =>
+      capacity.reserve(signal, requester, code),
+    run: <T>(
+      signal: AbortSignal,
+      work: (execution: ChildWorkerExecution) => Promise<T>,
+      requester: ChildWorkerRequester,
+      code: ChildWorkerSlotRequest,
+    ) => {
       fallbackRuns++;
-      return capacity.run(signal, work, requester);
+      return capacity.run(signal, work, requester, code);
     },
   };
   let machine: KernelCommandForwarder | undefined;

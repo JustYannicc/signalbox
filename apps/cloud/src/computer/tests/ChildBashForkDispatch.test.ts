@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
+import type { KernelBashForkSource, KernelBashForkState } from "../../kernel/KernelBashFork.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { ChildWorkerInvocation } from "../ChildWorkerProgram.ts";
 import { createChildBashForkDispatch } from "../ChildBashForkDispatch.ts";
@@ -13,29 +13,33 @@ vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 const code = {
   mainModule: "main.js",
   modules: { "main.js": "export default {}" },
-  freshIsolate: true,
 };
+const snapshotState = Object.freeze({ revision: 7 }) as unknown as KernelBashForkState;
 const source: KernelBashForkSource = {
-  state: async () => {
-    throw new Error("The facet must not read the snapshot");
-  },
-  read: async () => {
-    throw new Error("The facet must not copy the snapshot");
-  },
-  restored: async () => {},
+  state: vi.fn(async () => snapshotState),
+  read: vi.fn(async () => new Uint8Array([7, 8, 9])),
+  restored: vi.fn(async () => {}),
 };
 
 describe("Bash fork dispatch", () => {
-  it("queues against physical capacity without reading or copying the parent's snapshot", async () => {
+  it("queues a fork and forwards snapshot state without copying it", async () => {
     const fixture = childBashFixture();
-    const capacity = new ChildWorkerCapacity(1, { hardLimit: 1 });
+    const capacity = new ChildWorkerCapacity(1);
     const lifetimes = new ChildWorkerLifetimes();
     const permit = await capacity.acquire(fixture.controller.signal, undefined);
+    let snapshot: KernelBashForkSource | undefined;
     const run = vi.fn(async (input: ChildWorkerInvocation, host: KernelBashPort) => {
       if (!("forkSnapshot" in host) || typeof host.forkSnapshot !== "function")
         throw new Error("Fork host has no snapshot capability");
-      expect(input.freshIsolate).toBe(true);
-      expect(host.forkSnapshot()).toBe(source);
+      expect(input.loaderId).toEqual(expect.any(String));
+      expect(input.loaderId.length).toBeGreaterThan(0);
+      snapshot = host.forkSnapshot();
+      expect(snapshot).toBeDefined();
+      expect(snapshot).not.toBe(source);
+      expect(source.state).not.toHaveBeenCalled();
+      expect(source.read).not.toHaveBeenCalled();
+      expect(await snapshot!.state()).toBe(snapshotState);
+      expect(source.state).toHaveBeenCalledOnce();
       return exited(17);
     });
     const dispatch = createChildBashForkDispatch({
@@ -58,6 +62,8 @@ describe("Bash fork dispatch", () => {
       await lifetimes.drain();
       expect(capacity.active).toBe(0);
       expect(run).toHaveBeenCalledOnce();
+      expect(source.read).not.toHaveBeenCalled();
+      expect(source.restored).not.toHaveBeenCalled();
     } finally {
       permit.release();
       await fixture.close();
@@ -66,7 +72,7 @@ describe("Bash fork dispatch", () => {
 
   it("reports a lost transport while keeping its physical permit until stop acknowledgement", async () => {
     const fixture = childBashFixture();
-    const capacity = new ChildWorkerCapacity(1, { hardLimit: 1 });
+    const capacity = new ChildWorkerCapacity(1);
     const lifetimes = new ChildWorkerLifetimes();
     const stopped = Promise.withResolvers<void>();
     let host: KernelBashPort | undefined;
@@ -111,7 +117,7 @@ describe("Bash fork dispatch", () => {
 
   it("closes the fork owner but retains capacity when an untyped transport failure has no stop ACK", async () => {
     const fixture = childBashFixture();
-    const capacity = new ChildWorkerCapacity(1, { hardLimit: 1 });
+    const capacity = new ChildWorkerCapacity(1);
     const lifetimes = new ChildWorkerLifetimes();
     const close = vi.fn(async () => {});
     const dispatch = createChildBashForkDispatch({
@@ -141,7 +147,7 @@ describe("Bash fork dispatch", () => {
 
   it("captures modules and uses the fork's current umask while joining owner cleanup", async () => {
     const fixture = childBashFixture();
-    const capacity = new ChildWorkerCapacity(1, { hardLimit: 1 });
+    const capacity = new ChildWorkerCapacity(1);
     const lifetimes = new ChildWorkerLifetimes();
     const closing = Promise.withResolvers<void>();
     const closed = Promise.withResolvers<void>();

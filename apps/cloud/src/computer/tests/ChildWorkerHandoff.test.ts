@@ -1,0 +1,91 @@
+import { describe, expect, it, vi } from "vite-plus/test";
+import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
+import { ChildWorkerDispatchError } from "../ChildWorkerDispatchError.ts";
+import { createChildWorkerProgram } from "../ChildWorkerProgram.ts";
+import { ChildHostLease } from "../ChildHostLease.ts";
+import { createWorkerBashForkHost } from "../WorkerBashHost.ts";
+import { createKernelBashHost } from "../../kernel/KernelBashHost.ts";
+import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
+import { childBusyboxFixture } from "./ChildBusyboxFixture.ts";
+import { bashCredentials } from "./ChildBashFixture.ts";
+
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+
+describe("child slot handoff", () => {
+  it("waits for a disconnected Worker's stop ACK before handing its slot off", async () => {
+    const fixture = childBusyboxFixture();
+    const capacity = new ChildWorkerCapacity(1);
+    const cleaned = Promise.withResolvers<void>();
+    const stopped = Promise.withResolvers<void>();
+    const handedOff = Promise.withResolvers<void>();
+    let handoffs = 0;
+    const failure = new ChildWorkerDispatchError(new Error("disconnected"), {
+      kind: "unconfirmed",
+      stopped: stopped.promise,
+    });
+    const program = createChildWorkerProgram({
+      executable: "/bin/tool",
+      code: { mainModule: "main.js", modules: {} },
+      capacity,
+      dispatch: {
+        async run() {
+          throw failure;
+        },
+      },
+      createHost(_context, _lease, execution) {
+        return {
+          host: {},
+          close() {
+            cleaned.resolve();
+          },
+          async onStopped() {
+            await execution.handoff();
+            handoffs++;
+            handedOff.resolve();
+          },
+        };
+      },
+    });
+    try {
+      await expect(program.run(fixture.context)).rejects.toBe(failure);
+      await cleaned.promise;
+      expect(handoffs).toBe(0);
+      expect(capacity.active).toBe(1);
+      stopped.resolve();
+      await handedOff.promise;
+      await program.drain();
+      expect(handoffs).toBe(1);
+      expect(capacity.active).toBe(0);
+    } finally {
+      stopped.resolve();
+      await fixture.close();
+    }
+  });
+
+  it("revokes an already-exported checkpoint capability when its Worker lease closes", async () => {
+    const fixture = childBusyboxFixture();
+    const owner = createKernelBashHost({ context: fixture.context, credentials: bashCredentials });
+    const lease = new ChildHostLease();
+    const source: KernelBashForkSource = {
+      state: vi.fn(),
+      read: vi.fn(),
+      restored: vi.fn(),
+    };
+    const bridge = createWorkerBashForkHost(
+      { context: fixture.context, credentials: bashCredentials },
+      lease,
+      owner,
+      source,
+    );
+    try {
+      const exported = bridge.host.forkSnapshot();
+      expect(exported).toBeDefined();
+      lease.release();
+      expect(() => exported!.state()).toThrow(expect.objectContaining({ code: "EBADF" }));
+      expect(source.state).not.toHaveBeenCalled();
+    } finally {
+      await owner.close();
+      await fixture.close();
+    }
+  });
+});

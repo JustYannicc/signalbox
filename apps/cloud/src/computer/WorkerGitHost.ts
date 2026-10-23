@@ -7,17 +7,21 @@ import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
 
 class WorkerGitPort extends RpcTarget implements KernelGitPort {
   readonly #port: ChildHostRef<KernelGitPort>;
+  readonly #lease: ChildHostLease;
 
-  constructor(port: ChildHostRef<KernelGitPort>) {
+  constructor(port: ChildHostRef<KernelGitPort>, lease: ChildHostLease) {
     super();
     this.#port = port;
+    this.#lease = lease;
   }
 
   async call(request: KernelSyscallRequest) {
+    this.#lease.observe(request.memorySize);
     return this.#port.get().call(request);
   }
 
   async callGit(request: KernelGitCall): Promise<KernelGitCallResult> {
+    this.#lease.observe(request.memorySize);
     return this.#port.get().callGit(request);
   }
 }
@@ -28,5 +32,5 @@ export function createWorkerGitHost(
   lease: ChildHostLease,
 ) {
   const owner = createKernelGitHost(options);
-  return { host: new WorkerGitPort(lease.hold(owner.port)), close: owner.close };
+  return { host: new WorkerGitPort(lease.hold(owner.port), lease), close: owner.close };
 }

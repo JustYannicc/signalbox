@@ -22,6 +22,7 @@ import {createChildWasi} from "./ChildWasi.js";
 let isolate;let calls=0;
 export class Child extends WorkerEntrypoint {
   async run(command,owner){
+    await owner.ready();
     isolate??=crypto.randomUUID();
     const previous=this.previous??null;this.previous=command.argv[0];
     const wasi=createChildWasi({module,syscalls:owner,args:command.argv,env:command.env});
@@ -48,16 +49,21 @@ import {KernelWakeRegistry} from "./src/kernel/KernelWakeRegistry.ts";
 import {createKernelSyscallHost} from "./src/kernel/KernelSyscallHost.ts";
 const modules={"main.js":${JSON.stringify(child)},"ChildWasi.js":${JSON.stringify(childWasiSource)}};
 class Owner extends RpcTarget {
-  constructor(syscalls,observations){super();this.syscalls=syscalls;this.observations=observations;}
+  constructor(syscalls,observations,join){super();this.syscalls=syscalls;this.observations=observations;this.join=join;}
+  ready(){return this.join();}
   call(request){return this.syscalls.call(request);}
   observed(value){this.observations.push(value);}
 }
 export default {async fetch(request,env){
   const kind=new URL(request.url).searchParams.get("kind");
-  const freshIsolate=new URL(request.url).searchParams.has("fresh");
+  const concurrent=new URL(request.url).searchParams.has("concurrent");
   if(kind!=="direct"&&kind!=="registry")return new Response("missing",{status:404});
-  const capacity=new ChildWorkerCapacity(),observations=[],stdout=[];
+  // A Worker request allows four distinct children with in-flight calls.
+  const capacity=new ChildWorkerCapacity(4),observations=[],stdout=[],pending=[];
+  const peers=Promise.withResolvers();let entered=0;
+  const join=()=>{if(!concurrent)return Promise.resolve();if(++entered===2)peers.resolve();return peers.promise;};
   for(const [marker,secret]of [["first","one"],["second","two"]]){
+    const work=async()=>{
     const output=[];
     const filesystem=new KernelFileSystem({mounts:[],stdio:[{readInto:()=>0},{write:bytes=>{output.push(...bytes);return bytes.length;}},{}]});
     const args=[marker,"雪"],variables={PRIVATE:secret,PWD:"/"},signal=new AbortController().signal;
@@ -69,8 +75,8 @@ export default {async fetch(request,env){
     const loader=kind==="direct"?env.LOADER:createCompiledChildWorkerLoader(env.LOADER,new Map([[${JSON.stringify(wasmHash)},module]]));
     const dispatch=createWorkerLoaderDispatch(loader);
     const program=createChildWorkerProgram({executable:"/bin/warm-proof",capacity,dispatch,
-      code:{mainModule:"main.js",entrypoint:"Child",freshIsolate,modules:{...modules,"counter.wasm":kind==="direct"?{wasm:module}:{wasmReference:${JSON.stringify(wasmHash)}}}},
-      createHost:()=>({host:new Owner(syscalls,observations),close:()=>syscalls.close()}),
+      code:{mainModule:"main.js",entrypoint:"Child",modules:{...modules,"counter.wasm":kind==="direct"?{wasm:module}:{wasmReference:${JSON.stringify(wasmHash)}}}},
+      createHost:()=>({host:new Owner(syscalls,observations,join),close:()=>syscalls.close()}),
     });
     try{
       const exit=await program.run({args,env:variables,filesystem,signal,identity:process.value,processes,wakes,home:undefined});
@@ -78,7 +84,10 @@ export default {async fetch(request,env){
       if(exit.exitCode!==0)throw new Error("Warm child failed "+JSON.stringify(exit));
       stdout.push(new TextDecoder().decode(new Uint8Array(output)));
     }finally{completion.resolve({exitCode:0,signal:0,coreDumped:false});await processes.dispose();wakes.dispose();filesystem.dispose();}
+    };
+    if(concurrent)pending.push(work());else await work();
   }
+  await Promise.all(pending);
   return Response.json({kind,observations,stdout,active:capacity.active});
 }};`;
 }

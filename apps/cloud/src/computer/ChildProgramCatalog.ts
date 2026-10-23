@@ -78,7 +78,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     return program;
   };
   const credentials = bashCredentials(options.filesystem, options.hostname);
-  const bashCode = { ...options.programs.bash, freshIsolate: true };
+  const bashCode = options.programs.bash;
   const bashDispatch = createWorkerLoaderDispatch<KernelBashPort>(options.loader);
   const runFork = createChildBashForkDispatch({
     credentials,

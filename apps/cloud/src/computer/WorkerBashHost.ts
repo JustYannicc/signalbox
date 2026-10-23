@@ -14,6 +14,25 @@ import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
 import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
 import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
 
+class WorkerBashSnapshot extends RpcTarget implements KernelBashForkSource {
+  readonly #source: ChildHostRef<KernelBashForkSource>;
+
+  constructor(source: ChildHostRef<KernelBashForkSource>) {
+    super();
+    this.#source = source;
+  }
+
+  state() {
+    return this.#source.get().state();
+  }
+  read(offset: number, length: number) {
+    return this.#source.get().read(offset, length);
+  }
+  restored() {
+    return this.#source.get().restored();
+  }
+}
+
 class WorkerBashPort extends RpcTarget implements KernelBashPort {
   readonly #lease: ChildHostLease;
   readonly #port: ChildHostRef<KernelBashPort>;
@@ -41,7 +60,7 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
   }
 
   forkSnapshot() {
-    return this.#snapshot?.get();
+    return this.#snapshot === undefined ? undefined : new WorkerBashSnapshot(this.#snapshot);
   }
 
   async runFork(source: KernelBashForkSource) {
@@ -49,10 +68,12 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
   }
 
   async call(request: KernelSyscallRequest) {
+    this.#lease.observe(request.memorySize);
     return this.#port.get().call(request);
   }
 
   async callBash(request: KernelBashCall) {
+    this.#lease.observe(request.memorySize);
     return this.#port.get().callBash(request);
   }
 

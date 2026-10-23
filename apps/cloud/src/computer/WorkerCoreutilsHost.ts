@@ -6,17 +6,21 @@ import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
 
 class WorkerCoreutilsPort extends RpcTarget implements KernelCoreutilsPort {
   readonly #port: ChildHostRef<KernelCoreutilsPort>;
+  readonly #lease: ChildHostLease;
 
-  constructor(port: ChildHostRef<KernelCoreutilsPort>) {
+  constructor(port: ChildHostRef<KernelCoreutilsPort>, lease: ChildHostLease) {
     super();
     this.#port = port;
+    this.#lease = lease;
   }
 
   async call(request: Parameters<KernelCoreutilsPort["call"]>[0]) {
+    this.#lease.observe(request.memorySize);
     return this.#port.get().call(request);
   }
 
   async callCoreutils(request: KernelCoreutilsCall) {
+    this.#lease.observe(request.memorySize);
     return this.#port.get().callCoreutils(request);
   }
 }
@@ -27,5 +31,5 @@ export function createWorkerCoreutilsHost(
   lease: ChildHostLease,
 ) {
   const owner = createKernelCoreutilsHost(options);
-  return { host: new WorkerCoreutilsPort(lease.hold(owner.port)), close: owner.close };
+  return { host: new WorkerCoreutilsPort(lease.hold(owner.port), lease), close: owner.close };
 }

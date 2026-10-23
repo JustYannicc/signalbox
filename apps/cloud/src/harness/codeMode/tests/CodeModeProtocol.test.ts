@@ -12,6 +12,7 @@ import { KernelWakeRegistry } from "../../../kernel/KernelWakeRegistry.ts";
 import { hostClient } from "./client.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+const syntheticRequest = Object.freeze({ codeId: "test-holder", residentBytes: 0 });
 const code: CodeModeCellCode = { mainModule: "unused.js", modules: {} };
 const loader = {
   run: async (): Promise<never> => {
@@ -98,7 +99,7 @@ describe("CodeMode framed protocol admission", () => {
   });
 
   it("completes limit plus one cells that each wait for a command", async () => {
-    const commands = new ChildWorkerCapacity();
+    const commands = new ChildWorkerCapacity(10);
     const cells = new ChildWorkerCapacity(commands.limit);
     const ready = Promise.withResolvers<void>();
     const finish = Promise.withResolvers<void>();
@@ -125,6 +126,7 @@ describe("CodeMode framed protocol admission", () => {
               completed++;
             },
             requester,
+            syntheticRequest,
           );
           await events.stopped();
           return { terminated: false, error: null, writes: {} };

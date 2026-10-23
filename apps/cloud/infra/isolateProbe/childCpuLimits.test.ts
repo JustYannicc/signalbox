@@ -151,7 +151,7 @@ function composedProgramFixture(sourceKind: "static" | "lazy-factory") {
       return createChildWorkerProgram({
         executable: "/bin/program",
         code: this.code(modules),
-        capacity: new ChildWorkerCapacity(),
+        capacity: new ChildWorkerCapacity(10),
         dispatch,
         createHost: () => ({ host, close }),
       });

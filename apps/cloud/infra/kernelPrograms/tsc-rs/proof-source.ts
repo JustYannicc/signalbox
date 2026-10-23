@@ -38,7 +38,8 @@ export class ProbeFacet extends DurableObject {
     let forwardingCalls = 0;
     const observations = [];
     const counters = {syscalls:0,filesystem:0};
-    const capacity = new ChildWorkerCapacity();
+    // This Durable Object I/O context allows ten distinct children with in-flight calls.
+    const capacity = new ChildWorkerCapacity(10);
     let dispatches = 0;
     let closedHosts = 0;
     try {

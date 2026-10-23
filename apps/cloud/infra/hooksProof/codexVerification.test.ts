@@ -43,7 +43,7 @@ function fixture(bashPostToolUseResponse = "codex-exec-proof\n") {
   const runtime = createCodexHookRuntime(
     () => ({ bindings: new Map(), async drain() {} }),
     wakes,
-    new ChildWorkerCapacity(),
+    new ChildWorkerCapacity(10),
   );
   const configured = runtime.configure({
     filesystem,

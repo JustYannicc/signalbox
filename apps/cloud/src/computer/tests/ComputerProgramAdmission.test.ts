@@ -9,6 +9,12 @@ import { createComputerProgramAdmission } from "../ComputerProgramAdmission.ts";
 import { ComputerEscalationTable } from "../EscalationTable.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
 
+vi.mock("cloudflare:workers", () => ({ RpcTarget: class {} }));
+
+function prepared() {
+  return Object.freeze({ codeId: "admission-test", residentBytes: 0 });
+}
+
 function requestFor(
   context: KernelAsyncProgramContext,
   implementation: KernelProgramImplementation,
@@ -59,6 +65,41 @@ function machinePort() {
 }
 
 describe("Computer program admission", () => {
+  it("prepares before reserving and passes the same request object through", async () => {
+    const fixture = childBusyboxFixture();
+    const capacity = new ChildWorkerCapacity(1);
+    const order: string[] = [];
+    const preparedRequest = prepared();
+    const implementation = {
+      kind: "async" as const,
+      prepare: async () => {
+        order.push("prepare");
+        return preparedRequest;
+      },
+      run: async () => exited(),
+    };
+    const originalReserve = capacity.reserve.bind(capacity);
+    const reserve = vi.spyOn(capacity, "reserve").mockImplementation(async (...args) => {
+      order.push("reserve");
+      return originalReserve(...args);
+    });
+    const admission = createComputerProgramAdmission({
+      capacity,
+      escalation: new ComputerEscalationTable(),
+      machine: machinePort(),
+    });
+    try {
+      const decision = await admission.admit(requestFor(fixture.context, implementation));
+      expect(order).toEqual(["prepare", "reserve"]);
+      expect(reserve.mock.calls[0]?.[2]).toBe(preparedRequest);
+      decision.cancel?.();
+      expect(capacity.active).toBe(0);
+    } finally {
+      admission.close();
+      await fixture.close();
+    }
+  });
+
   it("consumes the captured binding's slot once at full capacity without reacquisition", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1);
@@ -100,7 +141,7 @@ describe("Computer program admission", () => {
       await expect(program.run(context)).resolves.toEqual(exited(17));
       await expect(program.run(context)).rejects.toThrow("does not belong");
       expect(capacityRun).not.toHaveBeenCalled();
-      expect(modules).toHaveBeenCalledOnce();
+      expect(modules).toHaveBeenCalledTimes(2);
       const next = await queued;
       expect(capacity.active).toBe(1);
       next.cancel?.();
@@ -123,7 +164,11 @@ describe("Computer program admission", () => {
       };
       const admission = createComputerProgramAdmission(options);
       const other = createComputerProgramAdmission(options);
-      const program = { kind: "async" as const, run: async () => exited() };
+      const program = {
+        kind: "async" as const,
+        prepare: async () => prepared(),
+        run: async () => exited(),
+      };
       try {
         const decision = await admission.admit(requestFor(fixture.context, program));
         if (decision.admission === undefined) throw new Error("Expected a reserved dispatch");
@@ -161,7 +206,11 @@ describe("Computer program admission", () => {
       },
     });
     try {
-      const program = { kind: "async" as const, run: async () => exited() };
+      const program = {
+        kind: "async" as const,
+        prepare: async () => prepared(),
+        run: async () => exited(),
+      };
       const pending = admission.admit(requestFor(fixture.context, program));
       const rejected = expect(pending).rejects.toMatchObject({ code: "ECANCELED" });
       await entered.promise;
@@ -184,7 +233,11 @@ describe("Computer program admission", () => {
       machine: machinePort(),
     });
     try {
-      const program = { kind: "async" as const, run: async () => exited() };
+      const program = {
+        kind: "async" as const,
+        prepare: async () => prepared(),
+        run: async () => exited(),
+      };
       const decision = await admission.admit(requestFor(fixture.context, program));
       expect(capacity.active).toBe(1);
       admission.close();
@@ -205,9 +258,13 @@ describe("Computer program admission", () => {
       escalation: new ComputerEscalationTable(),
       machine: machinePort(),
     });
-    const program = { kind: "async" as const, run: async () => exited() };
+    const program = {
+      kind: "async" as const,
+      prepare: async () => prepared(),
+      run: async () => exited(),
+    };
     try {
-      const held = await capacity.acquire(fixture.context.signal, undefined);
+      const held = await capacity.acquire(fixture.context.signal, undefined, prepared());
       const reserving = Promise.withResolvers<void>();
       const reserve = capacity.reserve.bind(capacity);
       vi.spyOn(capacity, "reserve").mockImplementation((...args) => {
@@ -221,12 +278,17 @@ describe("Computer program admission", () => {
       admission.close();
       await rejected;
       expect(capacity.active).toBe(1);
-      held.release();
+      await held.release();
       await expect(
-        capacity.run(fixture.context.signal, async () => 23, {
-          processes: fixture.context.processes,
-          process: fixture.context.identity.handle,
-        }),
+        capacity.run(
+          fixture.context.signal,
+          async () => 23,
+          {
+            processes: fixture.context.processes,
+            process: fixture.context.identity.handle,
+          },
+          prepared(),
+        ),
       ).resolves.toBe(23);
       expect(capacity.active).toBe(0);
     } finally {

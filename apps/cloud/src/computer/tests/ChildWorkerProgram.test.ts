@@ -188,6 +188,7 @@ describe("ChildWorkerProgram", () => {
         coreDumped: boolean;
       }>();
       const dispatched = Promise.withResolvers<never>();
+      void dispatched.promise.catch(() => undefined);
       const closing = deferred<void>();
       const closed = Promise.withResolvers<void>();
       const program = createChildWorkerProgram({
@@ -232,6 +233,7 @@ describe("ChildWorkerProgram", () => {
         coreDumped: boolean;
       }>();
       const dispatched = Promise.withResolvers<never>();
+      void dispatched.promise.catch(() => undefined);
       const closing = deferred<void>();
       const closed = Promise.withResolvers<void>();
       const failure = new ChildWorkerDispatchError(new Error("Dispatch failed before exit"), {
@@ -323,7 +325,7 @@ describe("ChildWorkerProgram", () => {
 
   it("captures code and exact command while keeping process resources at the owner", () =>
     withContext(async (context) => {
-      const capacity = new ChildWorkerCapacity();
+      const capacity = new ChildWorkerCapacity(10);
       const wasm = new Uint8Array([0, 97, 115, 109]);
       const modules = { "entry.js": "original", "tool.wasm": { wasm: wasm.buffer } };
       const limits = { cpuMs: 777 };
@@ -373,7 +375,7 @@ describe("ChildWorkerProgram", () => {
     }));
 
   it("rejects invalid limits before capacity, host creation, or dispatch", () => {
-    const capacity = new ChildWorkerCapacity();
+    const capacity = new ChildWorkerCapacity(10);
     const runCapacity = vi.spyOn(capacity, "run");
     const dispatch = vi.fn(async () => ({ exitCode: 0, signal: 0, coreDumped: false }));
     const createHost = vi.fn(() => ({ host: {}, close() {} }));
@@ -434,7 +436,7 @@ describe("ChildWorkerProgram", () => {
 
   it("closes the owner on dispatch failure and releases admission on setup failure", () =>
     withContext(async (context) => {
-      const capacity = new ChildWorkerCapacity();
+      const capacity = new ChildWorkerCapacity(10);
       const close = vi.fn();
       const failure = new ChildWorkerDispatchError(new Error("dispatch failed"), {
         kind: "stopped",

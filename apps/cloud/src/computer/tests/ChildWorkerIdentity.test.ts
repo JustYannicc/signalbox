@@ -58,6 +58,12 @@ describe("child Worker code identity", () => {
     const expected = await childWorkerId(code(first), undefined, new Map([[first, hash]]));
     expect(await childWorkerId(code(second), undefined, new Map([[second, hash]]))).toBe(expected);
     expect(
+      await childWorkerId({
+        ...policy,
+        modules: { ...modules, "program.wasm": { wasmReference: hash } },
+      }),
+    ).toBe(expected);
+    expect(
       await childWorkerId(code(second), undefined, new Map([[second, "b".repeat(64)]])),
     ).not.toBe(expected);
   });

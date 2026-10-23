@@ -11,6 +11,7 @@ const command = { executable: "/bin/tool", argv: ["tool"], cwd: "/work", env: {}
 const exit = { exitCode: 0, signal: 0, coreDumped: false };
 
 class Target extends RpcTarget {
+  readonly lost = vi.fn();
   readonly stopped = vi.fn();
 }
 
@@ -26,14 +27,19 @@ function fixture(cpuMs = 300_000) {
     code = value;
     return { getEntrypoint, getDurableObjectClass: vi.fn() };
   });
+  const load = vi.fn<WorkerLoader["load"]>();
   const registry = new Map([[hash, module]]);
-  const port = createCompiledChildWorkerLoader({ get, load: vi.fn() }, registry, { cpuMs });
+  const port = createCompiledChildWorkerLoader({ get, load }, registry, { cpuMs });
   const target = new Target();
-  return { port, target, get, getEntrypoint, run, registry, code: () => code };
+  return { port, target, get, load, getEntrypoint, run, registry, code: () => code };
 }
 
-function invocation(cpuMs = 300_000): ChildWorkerInvocation {
+function invocation(
+  cpuMs = 300_000,
+  loaderId = "slot-1",
+): ChildWorkerInvocation & { readonly loaderId: string } {
   return {
+    loaderId,
     mainModule: "main.js",
     entrypoint: "Child",
     modules: {
@@ -46,29 +52,51 @@ function invocation(cpuMs = 300_000): ChildWorkerInvocation {
 }
 
 describe("compiled child worker loader", () => {
-  it("reuses pinned code across command changes and newly constructed loader ports", async () => {
+  it("uses the supplied loader ID verbatim", async () => {
     const f = fixture();
-    await f.port.run(invocation(), f.target);
+
+    await f.port.run(invocation(300_000, "slot-owner:17"), f.target);
+
+    expect(f.get).toHaveBeenCalledWith("slot-owner:17", expect.any(Function));
+  });
+
+  it("keeps concurrent compiled calls under their own slot IDs", async () => {
+    const f = fixture();
+
+    await Promise.all([
+      f.port.run(invocation(300_000, "compiled-slot-a"), new Target()),
+      f.port.run(invocation(300_000, "compiled-slot-b"), new Target()),
+    ]);
+
+    expect(f.get.mock.calls.map(([id]) => id)).toEqual(["compiled-slot-a", "compiled-slot-b"]);
+  });
+
+  it("uses each acquired slot ID across command changes and loader ports", async () => {
+    const f = fixture();
+    await f.port.run(invocation(300_000, "slot-first"), f.target);
     await f.port.run(
-      { ...invocation(), command: { ...command, argv: ["different"], env: { SECRET: "second" } } },
+      {
+        ...invocation(300_000, "slot-second"),
+        command: { ...command, argv: ["different"], env: { SECRET: "second" } },
+      },
       new Target(),
     );
     const next = createCompiledChildWorkerLoader(
-      { get: f.get, load: vi.fn() },
+      { get: f.get, load: f.load },
       new Map([[hash, new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))]]),
     );
-    await next.run(invocation(), new Target());
+    await next.run(invocation(300_000, "slot-third"), new Target());
     const keys = f.get.mock.calls.map(([key]) => key);
-    expect(keys[0]).toMatch(/^child-v1:[a-f0-9]{64}$/);
-    expect(new Set(keys).size).toBe(1);
+    expect(keys).toEqual(["slot-first", "slot-second", "slot-third"]);
     await f.port.run(
       {
-        ...invocation(),
+        ...invocation(300_000, "slot-fourth"),
         modules: { ...invocation().modules, "main.js": "export class Child { changed=true }" },
       },
       f.target,
     );
-    expect(f.get.mock.calls.at(-1)?.[0]).not.toBe(keys[0]);
+    expect(f.get.mock.calls.at(-1)?.[0]).toBe("slot-fourth");
+    expect(f.load).not.toHaveBeenCalled();
   });
 
   it.each([1_000, 300_000, 600_000])(
@@ -170,6 +198,21 @@ describe("compiled child worker loader", () => {
     }
   });
 
+  it("rejects missing or empty loader IDs before loading and acknowledges no child", async () => {
+    const { loaderId: _loaderId, ...missingId } = invocation();
+    const inputs = [invocation(300_000, ""), missingId as ChildWorkerInvocation];
+
+    for (const input of inputs) {
+      const f = fixture();
+      await expect(f.port.run(input, f.target)).rejects.toThrow(
+        "Child loader ID must be a nonempty string",
+      );
+
+      expect(f.get).not.toHaveBeenCalled();
+      expect(f.target.stopped).toHaveBeenCalledOnce();
+    }
+  });
+
   it("does not acknowledge a failed dispatch after handing code to the loader", async () => {
     const f = fixture();
     const failure = new Error("RPC disconnected");
@@ -179,7 +222,8 @@ describe("compiled child worker loader", () => {
     expect(f.target.stopped).not.toHaveBeenCalled();
   });
 
-  it("discards memory-limited named workers and uses a fresh handle across loader ports", async () => {
+  it("retires the lost slot before acknowledging memory failure and never calls load", async () => {
+    const events: string[] = [];
     const failedRun = vi
       .fn()
       .mockRejectedValue(Object.assign(new Error("Worker failed"), { outcome: "exceededMemory" }));
@@ -192,22 +236,61 @@ describe("compiled child worker loader", () => {
         getEntrypoint: vi.fn().mockReturnValue({ run }),
         getDurableObjectClass: vi.fn(),
       }) as unknown as WorkerStub;
-    const get = vi.fn<WorkerLoader["get"]>().mockReturnValue(stub(failedRun));
-    const load = vi.fn<WorkerLoader["load"]>().mockImplementation(() => stub(recoveryRun));
+    const get = vi
+      .fn<WorkerLoader["get"]>()
+      .mockImplementation((loaderId) =>
+        loaderId === "slot-lost" ? stub(failedRun) : stub(recoveryRun),
+      );
+    const load = vi.fn<WorkerLoader["load"]>();
     const loader = { get, load };
     const port = () => createCompiledChildWorkerLoader(loader, new Map([[hash, module]]));
+    const lostTarget = new Target();
+    lostTarget.lost.mockImplementation(async () => {
+      events.push("lost");
+    });
+    lostTarget.stopped.mockImplementation(() => {
+      events.push("stopped");
+    });
 
-    await expect(port().run(invocation(), new Target())).resolves.toEqual({
+    await expect(port().run(invocation(300_000, "slot-lost"), lostTarget)).resolves.toEqual({
       exitCode: 0,
       signal: 9,
       coreDumped: false,
     });
-    await expect(port().run(invocation(), new Target())).resolves.toEqual(exit);
-    await expect(port().run(invocation(), new Target())).resolves.toEqual(exit);
+    await expect(port().run(invocation(300_000, "slot-fresh"), new Target())).resolves.toEqual(
+      exit,
+    );
 
     expect(failedRun).toHaveBeenCalledOnce();
-    expect(get).toHaveBeenCalledOnce();
-    expect(load).toHaveBeenCalledTimes(2);
-    expect(recoveryRun).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls.map(([id]) => id)).toEqual(["slot-lost", "slot-fresh"]);
+    expect(load).not.toHaveBeenCalled();
+    expect(lostTarget.lost).toHaveBeenCalledOnce();
+    expect(events).toEqual(["lost", "stopped"]);
+    expect(recoveryRun).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when memory loss cannot retire the loader ID", async () => {
+    const f = fixture();
+    f.run.mockRejectedValue(new Error("Worker exceeded memory limit"));
+    const target = new Target();
+    target.lost.mockRejectedValue(new Error("slot retirement failed"));
+
+    await expect(f.port.run(invocation(), target)).rejects.toThrow("slot retirement failed");
+
+    expect(target.lost).toHaveBeenCalledOnce();
+    expect(target.stopped).not.toHaveBeenCalled();
+  });
+
+  it("does not acknowledge memory loss when the target has no retirement RPC", async () => {
+    const f = fixture();
+    f.run.mockRejectedValue(new Error("Worker exceeded memory limit"));
+    const target = { stopped: vi.fn() };
+
+    await expect(f.port.run(invocation(), target as unknown as RpcTarget)).rejects.toThrow(
+      "Child memory loss requires a loader retirement callback",
+    );
+
+    expect(f.get).toHaveBeenCalledOnce();
+    expect(target.stopped).not.toHaveBeenCalled();
   });
 });

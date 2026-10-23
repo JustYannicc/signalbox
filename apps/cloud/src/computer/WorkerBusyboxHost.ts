@@ -11,17 +11,21 @@ import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
 
 class WorkerBusyboxPort extends RpcTarget implements KernelBusyboxPort {
   readonly #port: ChildHostRef<KernelBusyboxPort>;
+  readonly #lease: ChildHostLease;
 
-  constructor(port: ChildHostRef<KernelBusyboxPort>) {
+  constructor(port: ChildHostRef<KernelBusyboxPort>, lease: ChildHostLease) {
     super();
     this.#port = port;
+    this.#lease = lease;
   }
 
   async call(request: KernelSyscallRequest) {
+    this.#lease.observe(request.memorySize);
     return this.#port.get().call(request);
   }
 
   async callBusybox(request: KernelBusyboxCall): Promise<KernelBusyboxCallResult> {
+    this.#lease.observe(request.memorySize);
     return this.#port.get().callBusybox(request);
   }
 }
@@ -32,5 +36,5 @@ export function createWorkerBusyboxHost(
   lease: ChildHostLease,
 ) {
   const owner = createKernelBusyboxHost(options);
-  return { host: new WorkerBusyboxPort(lease.hold(owner.port)), close: owner.close };
+  return { host: new WorkerBusyboxPort(lease.hold(owner.port), lease), close: owner.close };
 }
