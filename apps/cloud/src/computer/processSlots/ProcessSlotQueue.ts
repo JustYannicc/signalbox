@@ -150,8 +150,13 @@ export class ProcessSlotQueue {
       )
     )
       return;
+    // A scheduler that runs the callback before returning would recurse and then keep a stale
+    // cancel; that firing still reports, and the next state change re-arms like a throwing one.
+    let scheduling = true;
+    let ranDuringSchedule = false;
     try {
-      this.#cancelQuantum = this.#scheduleQuantum(() => {
+      const cancel = this.#scheduleQuantum(() => {
+        if (scheduling) ranDuringSchedule = true;
         this.#cancelQuantum = undefined;
         const blocked = this.#blocked();
         for (const { waiter, blocker } of blocked) {
@@ -162,9 +167,12 @@ export class ProcessSlotQueue {
         }
         if (this.#blocked().some(({ blocker }) => blocker.kind === "capacity"))
           this.#pressure({ kind: "capacity" });
-        this.#armPressure();
+        if (!scheduling) this.#armPressure();
       });
+      scheduling = false;
+      if (!ranDuringSchedule) this.#cancelQuantum = cancel;
     } catch {
+      scheduling = false;
       // A broken scheduler cannot poison permit admission; the next state change can retry it.
       this.#cancelQuantum = undefined;
     }

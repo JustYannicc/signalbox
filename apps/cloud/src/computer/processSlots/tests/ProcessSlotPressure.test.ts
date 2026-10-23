@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { fill, fixture, stopped } from "./fixture.ts";
+import { createProcessSlots } from "../../ProcessSlots.ts";
+import { InMemoryProcessSlotStore } from "./InMemoryProcessSlotStore.ts";
 
 describe("process-slot pressure episodes", () => {
   it("re-arms capacity pressure behind a parked holder that has outgrown its isolate", async () => {
@@ -191,5 +193,57 @@ describe("process-slot pressure episodes", () => {
     await rejected;
     await Promise.all(held.map(({ lease }) => slots.release(lease, stopped)));
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps pressure armable when a scheduler runs its callback before returning", async () => {
+    let calls = 0;
+    let synchronous = true;
+    const later = new Set<() => void>();
+    const slots = await createProcessSlots({
+      owner: "supervisor/shard-a",
+      inFlightLimit: 1,
+      residentByteLimit: 100,
+      store: new InMemoryProcessSlotStore(),
+      invalidate() {},
+      scheduleQuantum(callback) {
+        calls++;
+        if (synchronous) callback();
+        else later.add(callback);
+        return () => later.delete(callback);
+      },
+      async reconcile() {
+        return stopped;
+      },
+    });
+    const listener = vi.fn();
+    slots.signals.onPressure(listener);
+    const abort = new AbortController();
+    const request = (codeId: string, signal: AbortSignal) => ({
+      owner: "supervisor/shard-a",
+      codeId,
+      residentBytes: 1,
+      signal,
+    });
+    const held = await slots.acquire(request("bash", new AbortController().signal));
+    const second = slots.acquire(request("bash", abort.signal));
+    const secondRejected = expect(second).rejects.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(calls).toBe(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    synchronous = false;
+    const third = slots.acquire(request("js", abort.signal));
+    const thirdRejected = expect(third).rejects.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(later.size).toBe(1);
+    // Snapshot: a firing callback re-arms into the same set.
+    for (const callback of Array.from(later)) callback();
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: "capacity", waiting: 2 }),
+    );
+
+    abort.abort();
+    await Promise.all([secondRejected, thirdRejected]);
+    await slots.release(held.lease, stopped);
   });
 });
