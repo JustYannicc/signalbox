@@ -1,15 +1,20 @@
 // @effect-diagnostics nodeBuiltinImport:off - reads only the locally prepared, hash-pinned WASM artifact.
-// @effect-diagnostics globalTimers:off - a deadline bounds a stalled guest without polling.
 import * as NodeBuffer from "node:buffer";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeProcess from "node:process";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { within } from "./ChildBashGatewayCommand.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
 import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
 import { createChildBash } from "../ChildBash.ts";
+import { readAll } from "../commandGatewayTesting.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
+import { createBashGateway } from "./ChildBashGatewayFixture.ts";
+import { bashAtomicityWriters as writers } from "./ChildBashAtomicityCases.ts";
+
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 const artifact = new URL("../../../../../.t3/1071/programs/bash.wasm", import.meta.url);
 const available = NodeFS.existsSync(artifact);
@@ -27,29 +32,6 @@ if (available) {
 }
 
 const bashArgs = (script: string) => ["bash", "--noprofile", "--norc", "-c", script];
-
-type Completion<T> =
-  | { readonly kind: "completed"; readonly value: T }
-  | { readonly kind: "rejected"; readonly error: unknown }
-  | { readonly kind: "deadline" };
-
-async function within<T>(promise: Promise<T>, milliseconds: number): Promise<Completion<T>> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<{ readonly kind: "deadline" }>((resolve) => {
-    timer = setTimeout(() => resolve({ kind: "deadline" }), milliseconds);
-  });
-  try {
-    return await Promise.race([
-      promise.then(
-        (value) => ({ kind: "completed" as const, value }),
-        (error: unknown) => ({ kind: "rejected" as const, error }),
-      ),
-      deadline,
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
 
 function contiguousRuns(data: string) {
   const result: { readonly byte: number; readonly length: number }[] = [];
@@ -78,62 +60,85 @@ function hashRuns(first: string, second: string, size: number) {
   return hash.digest("hex");
 }
 
-async function run(script: string, path: string) {
-  const fixture = childBashFixture({
-    args: bashArgs(script),
-    env: { HOME: "/workspace", PATH: "/bin", TMPDIR: "/workspace" },
+async function run(script: string, path: string, residentByteLimit?: number) {
+  const run = createBashGateway({ residentByteLimit });
+  const { fixture } = run;
+  const pressure = Promise.withResolvers<never>();
+  const unsubscribe = fixture.capacity.onPressure((value) => {
+    if (value.kind === "unplaceable")
+      pressure.reject(new Error(`Unplaceable atomicity continuation: ${JSON.stringify(value)}`));
   });
+  const child = await fixture.gateway.exec(
+    {
+      executable: "/bin/bash",
+      argv: bashArgs(script),
+      cwd: "/workspace",
+      env: { HOME: "/workspace", PATH: "/bin", TMPDIR: "/workspace" },
+    },
+    fixture.controller.signal,
+    undefined,
+  );
+  let failure: { readonly error: unknown } | undefined;
   try {
     const outcome = await within(
-      createChildBash({
-        module,
-        credentials: bashCredentials,
-        pid: fixture.owner.pid,
-        port: fixture.owner.port,
-        args: fixture.context.args,
-        env: fixture.context.env,
-      }).run(),
+      Promise.race([
+        Promise.all([readAll(child.stdout), readAll(child.stderr), child.exited]),
+        pressure.promise,
+      ]),
       120_000,
     );
-    if (outcome.kind === "deadline") throw new Error("GNU Bash did not finish within 120 seconds");
+    if (outcome.kind === "deadline")
+      throw new Error(`GNU Bash stalled: ${JSON.stringify(run.forkTrace.slice(-40))}`);
     if (outcome.kind === "rejected") throw outcome.error;
-    const data = fixture.read(path);
+    const [stdout, stderr, status] = outcome.value;
+    await fixture.gateway.drain();
+    let data: string;
+    try {
+      data = fixture.read(path);
+    } catch (cause) {
+      throw new Error(
+        `Bash output ${path} is missing after ${JSON.stringify(status)}; stderr: ${new TextDecoder().decode(stderr)}`,
+        { cause },
+      );
+    }
     return {
-      status: outcome.value,
-      stdout: fixture.stdout(),
-      stderr: fixture.stderr(),
+      status,
+      stdout: new TextDecoder().decode(stdout),
+      stderr: new TextDecoder().decode(stderr),
       byteLength: NodeBuffer.Buffer.byteLength(data, "utf8"),
       sha256: NodeCrypto.createHash("sha256").update(data, "utf8").digest("hex"),
       runs: contiguousRuns(data),
     };
+  } catch (error) {
+    failure = { error };
+
+    throw error;
   } finally {
+    unsubscribe();
     fixture.controller.abort();
-    await fixture.close();
+    const cleanup: unknown[] = [];
+    try {
+      await child.dispose();
+    } catch (error) {
+      cleanup.push(error);
+    }
+    try {
+      await fixture.close();
+    } catch (error) {
+      cleanup.push(error);
+    }
+    if (cleanup.length > 0)
+      throw new AggregateError(
+        failure === undefined ? cleanup : [failure.error, ...cleanup],
+        "Bash file test cleanup failed",
+      );
   }
 }
-
-const barrier = (size: number, body: (payload: string) => string) =>
-  `printf -v A '%0*d' ${size} 0; printf -v B '%*s' ${size} ''; coproc FEED { while read -r l; do echo "$l"; done; }; exec 5<&\${FEED[0]} 6>&\${FEED[1]}; ` +
-  `( read -r _ <&5; ${body("$A")} ) & ( read -r _ <&5; ${body("$B")} ) & echo go >&6; echo go >&6; exec 6>&- 5<&-; eval "exec \${FEED[1]}>&-"; wait; echo ok`;
 
 const sizes = [
   ["256 KiB", 256 * 1024],
   ["4 MiB", 4 * 1024 * 1024],
   ["16 MiB", 16 * 1024 * 1024],
-] as const;
-const writers = [
-  {
-    label: "O_APPEND",
-    path: "/workspace/append.log",
-    script: (size: number) =>
-      barrier(size, (payload) => `echo -n "${payload}" >> /workspace/append.log`),
-  },
-  {
-    label: "shared open offset",
-    path: "/workspace/shared-offset.log",
-    script: (size: number) =>
-      `exec 7>/workspace/shared-offset.log; ${barrier(size, (payload) => `echo -n "${payload}" >&7`)}`,
-  },
 ] as const;
 
 const cases = sizes.flatMap(([sizeLabel, size]) =>
@@ -148,7 +153,10 @@ describe.skipIf(!available)("pinned GNU Bash file write atomicity", () => {
   it.each(cases)(
     "$label",
     async ({ size, writer }) => {
-      const result = await run(writer.script(size), writer.path);
+      // The pinned Bash guest expands a 16 MiB argument into a 128.625 MiB heap.
+      // This larger test-only slot proves I/O atomicity; product-budget placement is tested separately.
+      const ioAtomicityBudget = size === 16 * 1024 * 1024 ? 160 * 1024 * 1024 : undefined;
+      const result = await run(writer.script(size), writer.path, ioAtomicityBudget);
       const firstThenSecond = [
         { byte: "0".charCodeAt(0), length: size },
         { byte: " ".charCodeAt(0), length: size },

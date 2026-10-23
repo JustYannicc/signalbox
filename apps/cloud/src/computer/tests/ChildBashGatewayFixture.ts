@@ -6,6 +6,7 @@ import { expect } from "vite-plus/test";
 import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
 import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
 import { createChildBash } from "../ChildBash.ts";
+import type { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { commandGatewayFixture, readAll, type FakeChildRun } from "../commandGatewayTesting.ts";
 import { bashCredentials } from "./ChildBashFixture.ts";
 import {
@@ -33,6 +34,18 @@ type DisposableForkSource = KernelBashForkSource & {
   [Symbol.dispose](): void;
 };
 
+interface BashGatewayOptions {
+  readonly capacityLimit?: number;
+  readonly residentByteLimit?: number;
+  readonly localForkPackingBytes?: number;
+  readonly beforeRpcReturn?: (details: {
+    readonly pid: number;
+    readonly loaderId: string;
+    readonly events: readonly BashForkTraceEvent[];
+    readonly capacity: Pick<ChildWorkerCapacity, "onPressure">;
+  }) => void | Promise<void>;
+}
+
 function loadPinnedBash() {
   const bytes = NodeFS.readFileSync(bashPath);
   expect(bytes.byteLength).toBe(KERNEL_BASH_ARTIFACT.bytes);
@@ -42,7 +55,9 @@ function loadPinnedBash() {
   return new WebAssembly.Module(bytes);
 }
 
-export function createBashGateway() {
+export function createBashGateway(options: BashGatewayOptions = {}) {
+  const pidByLoaderId = new Map<string, number>();
+  let capacityMetrics = () => ({ active: 0, waiting: 0 });
   const activeLoaderIds = new Set<string>();
   const seenLoaderIds = new Set<string>();
   const reactorPeaks: number[] = [];
@@ -66,10 +81,21 @@ export function createBashGateway() {
     workerRuns++;
     maxLiveLoaderIds = Math.max(maxLiveLoaderIds, activeLoaderIds.size);
     let reactor: ReturnType<typeof createChildBash> | undefined;
+    let pid: number | undefined;
     try {
       const host = await invocation.host<BashPortWithState>();
-      const { pid, residentByteLimit } = await host.metadata();
-      const port = traceForkPort(host, pid, forkTrace);
+      const metadata = await host.metadata();
+      pid = metadata.pid;
+      const { residentByteLimit } = metadata;
+      pidByLoaderId.set(input.loaderId, pid);
+      forkTrace.push({
+        event: "worker-start",
+        pid,
+        loaderId: input.loaderId,
+        command: input.command.argv.at(-1),
+        ...capacityMetrics(),
+      });
+      const port = traceForkPort(host, pid, forkTrace, capacityMetrics);
       const sourceSnapshot = await port.forkSnapshot();
       const receipt: SnapshotReceipt = { order: [], restored: 0, disposed: 0 };
       const snapshot: DisposableForkSource | undefined =
@@ -98,6 +124,9 @@ export function createBashGateway() {
         env: input.command.env,
         snapshot,
         residentWasmBudgetBytes: residentByteLimit,
+        ...(options.localForkPackingBytes === undefined
+          ? {}
+          : { localForkPackingBytes: options.localForkPackingBytes }),
         createForkSource(source) {
           return {
             async state() {
@@ -109,8 +138,22 @@ export function createBashGateway() {
                 memoryBytes: state.memoryBytes,
                 stackPointer: state.stackPointer,
                 captureTop: state.captures.top,
+                captureBase: state.captures.base,
+                captureSize: state.captures.size,
+                captureLiveBytes: state.captures.liveBytes,
                 resume: state.continuation.resume,
                 pending: pending?.kind,
+                operationName:
+                  pending?.kind === "operation"
+                    ? pending.operation.kind === "wasi" || pending.operation.kind === "bash"
+                      ? pending.operation.request.name
+                      : pending.operation.kind
+                    : undefined,
+                operationArgs:
+                  pending?.kind === "operation" &&
+                  (pending.operation.kind === "wasi" || pending.operation.kind === "bash")
+                    ? pending.operation.request.args
+                    : undefined,
                 role: pending?.kind === "fork" ? pending.role : undefined,
                 operationId: state.continuation.operationId,
                 result: state.continuation.result,
@@ -140,11 +183,41 @@ export function createBashGateway() {
       } finally {
         activeLoaderIds.delete(input.loaderId);
         invocation.acknowledge();
+        if (pid !== undefined)
+          forkTrace.push({
+            event: "stop-ack",
+            pid,
+            loaderId: input.loaderId,
+            ...capacityMetrics(),
+          });
       }
     }
   };
 
-  const fixture = commandGatewayFixture({ capacityLimit: SLOT_COUNT, run });
+  const fixture = commandGatewayFixture({
+    capacityLimit: options.capacityLimit ?? SLOT_COUNT,
+    ...(options.residentByteLimit === undefined
+      ? {}
+      : { residentByteLimit: options.residentByteLimit }),
+    run,
+    async onRpcReturn(input) {
+      const pid = pidByLoaderId.get(input.loaderId);
+      if (pid !== undefined) {
+        try {
+          await options.beforeRpcReturn?.({
+            pid,
+            loaderId: input.loaderId,
+            events: forkTrace,
+            capacity: fixture.capacity,
+          });
+        } finally {
+          pidByLoaderId.delete(input.loaderId);
+        }
+        forkTrace.push({ event: "rpc-return", pid, loaderId: input.loaderId });
+      }
+    },
+  });
+  capacityMetrics = () => ({ active: fixture.capacity.active, waiting: fixture.capacity.waiting });
   fixture.filesystem.mkdir("/workspace/gate");
   fixture.filesystem.mkdir("/bin");
   fixture.write("/bin/bash", "", 0o755);
@@ -203,8 +276,9 @@ export async function runBashScript(
 export function expectBoundedSlots(
   run: ReturnType<typeof createBashGateway>,
   residentByteLimit: number,
+  capacityLimit = SLOT_COUNT,
 ) {
-  expect(run.maxLiveLoaderIds).toBeLessThanOrEqual(SLOT_COUNT);
+  expect(run.maxLiveLoaderIds).toBeLessThanOrEqual(capacityLimit);
   expect(run.activeLoaderIds.size).toBe(0);
   expect(run.workerRuns).toBeGreaterThan(0);
   expect(run.seenLoaderIds.size).toBeGreaterThan(0);

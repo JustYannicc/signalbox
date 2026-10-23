@@ -8,11 +8,16 @@ export interface BashPortWithState extends KernelBashPort {
 }
 
 export type BashForkTraceEvent = Record<string, unknown>;
+export type BashCapacityMetrics = () => {
+  readonly active: number;
+  readonly waiting: number;
+};
 
 export function traceForkPort<Port extends KernelBashPort>(
   port: Port,
   pid: number,
   trace: BashForkTraceEvent[],
+  capacityMetrics: BashCapacityMetrics = () => ({ active: 0, waiting: 0 }),
 ): Port {
   return new Proxy(port, {
     get(target, property, receiver) {
@@ -24,9 +29,10 @@ export function traceForkPort<Port extends KernelBashPort>(
             pid,
             childPid: forked.kind === "fork" ? forked.pid : undefined,
             errno: forked.kind === "error" ? forked.errno : undefined,
+            ...capacityMetrics(),
           });
           if (forked.kind === "error") return forked;
-          const childPort = traceForkPort(forked.port, forked.pid, trace);
+          const childPort = traceForkPort(forked.port, forked.pid, trace, capacityMetrics);
           return new Proxy(forked, {
             get(forkTarget, key, forkReceiver) {
               if (key === "port") return childPort;
@@ -61,6 +67,12 @@ export function traceForkPort<Port extends KernelBashPort>(
                 captureTop: state.captures.top,
                 resume: state.continuation.resume,
                 pending: pending?.kind,
+                operationName:
+                  pending?.kind === "operation"
+                    ? pending.operation.kind === "wasi" || pending.operation.kind === "bash"
+                      ? pending.operation.request.name
+                      : pending.operation.kind
+                    : undefined,
                 role: pending?.kind === "fork" ? pending.role : undefined,
                 operationId: state.continuation.operationId,
                 result: state.continuation.result,
@@ -81,11 +93,44 @@ export function traceForkPort<Port extends KernelBashPort>(
             trace.push({ event: "wait-operation", pid, childPid: operation.pid });
           } else if (
             (operation.kind === "wasi" || operation.kind === "bash") &&
-            ["path_open", "fd_write", "fd_close"].includes(operation.request.name)
+            ["fd_read", "fd_write"].includes(operation.request.name)
           ) {
-            trace.push({ event: "syscall", pid, name: operation.request.name });
+            trace.push({
+              event: "syscall",
+              pid,
+              name: operation.request.name,
+              args: operation.request.args,
+              ...(operation.kind === "wasi"
+                ? {
+                    transferOffset: operation.request.transferOffset,
+                    transferLength: operation.request.transferLength,
+                  }
+                : {}),
+              ...capacityMetrics(),
+            });
           }
-          return target.startOperation!(operation);
+          const started = await target.startOperation!(operation);
+          if (
+            started.kind === "pending" &&
+            (operation.kind === "wasi" || operation.kind === "bash") &&
+            ["fd_read", "fd_write"].includes(operation.request.name)
+          ) {
+            trace.push({
+              event: "operation-pending",
+              pid,
+              name: operation.request.name,
+              args: operation.request.args,
+              operationId: started.id,
+              ...(operation.kind === "wasi"
+                ? {
+                    transferOffset: operation.request.transferOffset,
+                    transferLength: operation.request.transferLength,
+                  }
+                : {}),
+              ...capacityMetrics(),
+            });
+          }
+          return started;
         };
       }
       if (property === "complete") {
@@ -105,9 +150,10 @@ export function traceForkPort<Port extends KernelBashPort>(
       if (property === "placeFork") {
         const placeFork = target.placeFork;
         if (placeFork === undefined) return undefined;
-        return (source: KernelBashForkSource) => {
-          trace.push({ event: "placeFork", pid });
-          return placeFork.call(target, source);
+        return async (source: KernelBashForkSource) => {
+          trace.push({ event: "placeFork", pid, ...capacityMetrics() });
+          await placeFork.call(target, source);
+          trace.push({ event: "placeFork-return", pid, ...capacityMetrics() });
         };
       }
       if (property === "runFork") {

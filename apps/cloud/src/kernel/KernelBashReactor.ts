@@ -266,61 +266,69 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
     restoredResult?: KernelBashOperationResult,
     restoredOperationId?: string,
   ): Promise<KernelExitStatus | undefined> {
-    const observed = await observeResident(current);
-    const moved = await parkAtBoundary(
-      current,
-      {
-        resume: current.process.resume,
-        pending: {
-          kind: "operation",
-          operation: pending.operation,
-          call: pending.call,
-        },
-        ...(restoredResult === undefined ? {} : { result: restoredResult }),
-        ...(restoredOperationId === undefined ? {} : { operationId: restoredOperationId }),
-      },
-      observed,
-    );
-    if (moved) return status(0);
-
+    let operation = pending.operation;
     let result = restoredResult;
-    if (result === undefined) {
-      if (restoredOperationId !== undefined)
-        throw new Error("A parked Bash operation resumed without its stored result");
-      const started = await startOperation(current.port, pending.operation);
-      if (started.kind === "pending") {
-        if (current.port.park === undefined)
-          throw new Error("Bash port returned a pending operation without checkpoint park support");
-        const continuation: KernelBashCheckpointContinuation = {
+    let operationId = restoredOperationId;
+    for (;;) {
+      const observed = await observeResident(current);
+      const moved = await parkAtBoundary(
+        current,
+        {
           resume: current.process.resume,
-          pending: {
-            kind: "operation",
-            operation: pending.operation,
-            call: pending.call,
-          },
-          operationId: started.id,
-        };
-        const snapshot = createBashForkSnapshot(current.process, continuation);
-        await guestRuns.freeze(async () => {
-          await observeResident(current);
-          await current.port.park!(await forkSource(snapshot.source), started.id);
-        });
-        recordResidentAfterPlacement(current);
-        current.process.parked = true;
-        return status(0);
-      }
-      result = started.result;
-    }
+          pending: { kind: "operation", operation, call: pending.call },
+          ...(result === undefined ? {} : { result }),
+          ...(operationId === undefined ? {} : { operationId }),
+        },
+        observed,
+      );
+      if (moved) return status(0);
 
-    const effect = applyOperation(current, pending.operation, pending.call, result);
-    if (effect.kind === "exit") {
+      if (result === undefined) {
+        if (operationId !== undefined)
+          throw new Error("A parked Bash operation resumed without its stored result");
+        const started = await startOperation(current.port, operation);
+        if (started.kind === "pending") {
+          if (current.port.park === undefined)
+            throw new Error(
+              "Bash port returned a pending operation without checkpoint park support",
+            );
+          const continuation: KernelBashCheckpointContinuation = {
+            resume: current.process.resume,
+            pending: {
+              kind: "operation",
+              operation,
+              call: pending.call,
+            },
+            operationId: started.id,
+          };
+          const snapshot = createBashForkSnapshot(current.process, continuation);
+          await guestRuns.freeze(async () => {
+            await observeResident(current);
+            await current.port.park!(await forkSource(snapshot.source), started.id);
+          });
+          recordResidentAfterPlacement(current);
+          current.process.parked = true;
+          return status(0);
+        }
+        result = started.result;
+      }
+
+      const effect = applyOperation(current, operation, pending.call, result);
+      if (effect.kind === "exit") {
+        current.process.pending = undefined;
+        return effect.status;
+      }
+      if (effect.kind === "continue") {
+        operation = effect.operation;
+        result = undefined;
+        operationId = undefined;
+        continue;
+      }
+      current.process.resume = effect.value;
       current.process.pending = undefined;
-      return effect.status;
+      rewindBash(current.process);
+      return undefined;
     }
-    current.process.resume = effect.value;
-    current.process.pending = undefined;
-    rewindBash(current.process);
-    return undefined;
   }
 
   /** Execute a fork transition once, placing either the current parent or its child as needed. */

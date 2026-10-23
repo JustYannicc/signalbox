@@ -4,13 +4,14 @@ import {
 } from "../kernel/KernelSyscallPort.ts";
 import { KernelProcessSignal, kernelProcessExitStatus } from "../kernel/KernelProcessSignal.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
-import { childWasiIo } from "./ChildWasiIo.ts";
+import { applyChildWasiIoWindow, childWasiIo, childWasiIoWindow } from "./ChildWasiIo.ts";
 import type {
   KernelBashImportCall,
   KernelBashOperationEffect,
   KernelBashOperationResult,
 } from "../kernel/KernelBashCheckpoint.ts";
 import type { BashAsyncifyOperationHooks } from "../kernel/KernelBashCheckpoint.ts";
+import type { KernelSyscallRequest, KernelSyscallResponse } from "../kernel/KernelSyscallPort.ts";
 
 type WasmArgument = number | bigint;
 type WasiMemoryPlan = (
@@ -232,14 +233,19 @@ export function createChildWasi(options: ChildWasiOptions) {
           throw new Error("Child WASI memory has not been bound");
         }
         if (imported.name === "random_get") return randomGet(args, memory);
-        const regions = new MemoryRegions(memory);
-        MEMORY_PLANS[imported.name]!(regions, args, encoded);
-        const request = {
-          name: imported.name,
-          args,
-          memorySize: memory.buffer.byteLength,
-          regions: regions.snapshot(),
-        };
+        const ioRequest = childWasiIoWindow({ name: imported.name, args, memory });
+        const request =
+          ioRequest ??
+          (() => {
+            const regions = new MemoryRegions(memory);
+            MEMORY_PLANS[imported.name]!(regions, args, encoded);
+            return {
+              name: imported.name,
+              args,
+              memorySize: memory.buffer.byteLength,
+              regions: regions.snapshot(),
+            };
+          })();
         return options.asyncify!.suspend(
           { kind: "wasi", request },
           {
@@ -329,12 +335,21 @@ export function createChildWasi(options: ChildWasiOptions) {
   }
 
   function applyOperation(
+    request: KernelSyscallRequest,
     call: KernelBashImportCall,
     result: KernelBashOperationResult,
   ): KernelBashOperationEffect {
     if (result.kind !== "wasi") throw new TypeError("WASI import received a non-WASI result");
     if (memory === undefined) throw new Error("Child WASI memory has not been bound");
     const response = result.value;
+    const io = applyChildWasiIoWindow({ request, response, memory });
+    if (io?.kind === "continue") {
+      return {
+        kind: "continue",
+        operation: { kind: "wasi", request: io.request },
+      };
+    }
+    if (io?.kind === "complete") return applyResponse(io.value);
     if (response.kind === "exit")
       return {
         kind: "exit",
@@ -348,6 +363,16 @@ export function createChildWasi(options: ChildWasiOptions) {
     MEMORY_PLANS[call.name]!(regions, call.args, encoded);
     regions.apply(response.regions);
     return { kind: "resume", value: response.value };
+  }
+
+  function applyResponse(response: number | Exclude<KernelSyscallResponse, { kind: "return" }>) {
+    if (typeof response === "number") return { kind: "resume" as const, value: response };
+    if (response.kind === "exit")
+      return {
+        kind: "exit" as const,
+        status: { exitCode: response.code >>> 0, signal: 0, coreDumped: false },
+      };
+    throw new KernelProcessSignal(response.signal);
   }
 
   async function start(candidate: WebAssembly.Instance): Promise<number> {

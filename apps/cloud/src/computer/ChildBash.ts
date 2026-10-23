@@ -72,7 +72,8 @@ export function createChildBash(options: ChildBashOptions) {
       return {
         imports: { ...wasi.imports, ...bash.imports },
         applyOperation(operation: KernelBashOperation, call, result: KernelBashOperationResult) {
-          if (operation.kind === "wasi") return wasi.applyOperation(call, result);
+          if (operation.kind === "wasi")
+            return wasi.applyOperation(operation.request, call, result);
           if (operation.kind === "bash") return bash.applyOperation(call, result);
           throw new TypeError(`No guest memory adapter for ${operation.kind} operation`);
         },

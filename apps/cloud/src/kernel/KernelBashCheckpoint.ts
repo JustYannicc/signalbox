@@ -82,6 +82,7 @@ export interface KernelBashCheckpointContinuation {
 
 export type KernelBashOperationEffect =
   | { readonly kind: "resume"; readonly value: number }
+  | { readonly kind: "continue"; readonly operation: KernelBashOperation }
   | { readonly kind: "exit"; readonly status: KernelExitStatus };
 
 export interface BashAsyncifyOperationHooks {
