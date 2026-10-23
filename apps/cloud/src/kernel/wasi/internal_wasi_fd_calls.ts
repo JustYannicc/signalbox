@@ -408,6 +408,8 @@ export class WasiFdCalls {
 
   *fdSeek(fd: number, offset: bigint, whence: number, newOffset: number): WasiCall<number> {
     const descriptor = this.#descriptors.get(fd);
+    // signalbox: probing an unseekable stream must not queue behind a blocked read.
+    if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     return yield* descriptor.withOffset(() => this.#fdSeek(descriptor, offset, whence, newOffset));
   }
 
@@ -417,8 +419,6 @@ export class WasiFdCalls {
     whence: number,
     newOffset: number,
   ): WasiCall<number> {
-    // signalbox: Bash probes ESPIPE before deciding whether a read may buffer later pipe records.
-    if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     requireRight(descriptor, whence === 1 && offset === 0n ? RIGHTS.FD_TELL : RIGHTS.FD_SEEK);
     this.#memory.range(newOffset, 8);
     let base: bigint;
@@ -448,11 +448,11 @@ export class WasiFdCalls {
 
   *fdTell(fd: number, offset: number): WasiCall<number> {
     const descriptor = this.#descriptors.get(fd);
+    if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     return yield* descriptor.withOffset(() => this.#fdTell(descriptor, offset));
   }
 
   *#fdTell(descriptor: WasiDescriptor, offset: number): WasiCall<number> {
-    if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     requireRight(descriptor, RIGHTS.FD_TELL);
     this.#memory.range(offset, 8);
     this.#memory.u64(offset, descriptor.offset);
