@@ -26,12 +26,19 @@ const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const sourcePath = process.argv[2];
 const outputDir = NodePath.resolve(process.argv[3] ?? scriptDir);
 const mkdirCandidatePath = process.argv[4];
-if (mkdirCandidatePath === undefined) {
-  throw new Error("Pass the rebuilt, pinned mkdir.wasm as the fourth argument");
+const headCandidatePath = process.argv[5];
+if (mkdirCandidatePath === undefined || headCandidatePath === undefined) {
+  throw new Error(
+    "Pass the rebuilt, pinned mkdir.wasm and head.wasm as the fourth and fifth arguments",
+  );
 }
 const mkdirManifestPath = NodePath.join(
   NodePath.dirname(NodePath.resolve(mkdirCandidatePath)),
   "mkdir.manifest.json",
+);
+const headManifestPath = NodePath.join(
+  NodePath.dirname(NodePath.resolve(headCandidatePath)),
+  "head.manifest.json",
 );
 
 let sourceBytes;
@@ -164,6 +171,71 @@ try {
   totalBytes += mkdirBytes.byteLength - packagedMkdir.bytes;
   NodeFS.writeFileSync(NodePath.join(outputDir, "bin", "mkdir.wasm"), mkdirBytes);
   NodeFS.copyFileSync(mkdirManifestPath, NodePath.join(outputDir, "mkdir.manifest.json"));
+
+  const packagedHead = programs.head;
+  const headPin = ABI_LOCK.overrides?.head;
+  if (headPin === undefined) throw new Error("No rebuilt head import and source pin is recorded");
+  const headBytes = NodeFS.readFileSync(headCandidatePath);
+  const headSha256 = NodeCrypto.createHash("sha256").update(headBytes).digest("hex");
+  if (headSha256 !== headPin.sha256 || headBytes.byteLength !== headPin.bytes) {
+    throw new Error(
+      `Rebuilt head does not match its pin: ${headBytes.byteLength} bytes ${headSha256}`,
+    );
+  }
+  const headModule = await WebAssembly.compile(headBytes);
+  const headImports = WebAssembly.Module.imports(headModule)
+    .map(({ module, name, kind }) => ({ module, name, kind }))
+    .sort(compareImports);
+  const pinnedHeadImports = headPin.imports
+    .map(({ module, name, kind }) => ({ module, name, kind }))
+    .sort(compareImports);
+  if (JSON.stringify(headImports) !== JSON.stringify(pinnedHeadImports)) {
+    throw new Error("Rebuilt head WASM imports do not match the ABI pin");
+  }
+  const headExports = WebAssembly.Module.exports(headModule)
+    .map(({ name, kind }) => ({ name, kind }))
+    .sort(compareExports);
+  const pinnedHeadExports = headPin.exports
+    .map(({ name, kind }) => ({ name, kind }))
+    .sort(compareExports);
+  if (JSON.stringify(headExports) !== JSON.stringify(pinnedHeadExports)) {
+    throw new Error("Rebuilt head WASM exports do not match the ABI pin");
+  }
+  const headManifestBytes = NodeFS.readFileSync(headManifestPath);
+  assertHash("sha256", headManifestBytes, headPin.source.buildManifestSha256, headManifestPath);
+  const headManifest = JSON.parse(headManifestBytes.toString("utf8"));
+  if (
+    headManifest.artifact?.sha256 !== headSha256 ||
+    headManifest.artifact?.bytes !== headBytes.byteLength ||
+    headManifest.source?.repository !== headPin.source.repository ||
+    headManifest.source?.commit !== headPin.source.agentOsCommit ||
+    headManifest.source?.archiveSha256 !== headPin.source.agentOsArchiveSha256 ||
+    headManifest.source?.patch?.sha256 !== headPin.source.umaskPatchSha256 ||
+    headManifest.source?.commandPatch?.sha256 !== headPin.source.headPatchSha256 ||
+    headManifest.source?.packageArchiveSha256 !== headPin.source.uuHeadArchiveSha256 ||
+    headManifest.source?.packageHeadSourceSha256 !== headPin.source.uuHeadSourceSha256 ||
+    headManifest.source?.recipeSha256 !== headPin.source.buildRecipeSha256 ||
+    headManifest.source?.cargoLockSha256 !== headPin.source.effectiveCargoLockSha256 ||
+    headManifest.wasiLibc?.commit !== headPin.source.wasiLibcCommit ||
+    headManifest.wasiLibc?.archiveSha256 !== headPin.source.wasiLibcArchiveSha256 ||
+    headManifest.wasiLibc?.libcArchiveSha256 !== headPin.source.libcArchiveSha256 ||
+    headManifest.toolchain?.rustChannel !== headPin.source.rustToolchain ||
+    headManifest.toolchain?.rustc !== headPin.source.rustcVersion ||
+    headManifest.toolchain?.rustcCommit !== headPin.source.rustcCommit ||
+    headManifest.toolchain?.cargo !== headPin.source.cargoVersion ||
+    headManifest.toolchain?.wasiSdkArchiveSha256 !== headPin.source.wasiSdkArchiveSha256
+  ) {
+    throw new Error("Rebuilt head manifest differs from its pinned source and artifact inputs");
+  }
+  programs.head = {
+    path: headPin.path,
+    bytes: headBytes.byteLength,
+    sha256: headSha256,
+    imports: headPin.imports,
+  };
+  totalBytes += headBytes.byteLength - packagedHead.bytes;
+  NodeFS.writeFileSync(NodePath.join(outputDir, "bin", "head.wasm"), headBytes);
+  NodeFS.copyFileSync(headManifestPath, NodePath.join(outputDir, "head.manifest.json"));
   NodeFS.copyFileSync(
     NodePath.join(scratch, "package/LICENSE"),
     NodePath.join(outputDir, "LICENSE"),
@@ -186,6 +258,15 @@ try {
           path: "mkdir.manifest.json",
           sha256: NodeCrypto.createHash("sha256")
             .update(NodeFS.readFileSync(mkdirManifestPath))
+            .digest("hex"),
+        },
+      },
+      head: {
+        packageArtifact: packagedHead,
+        buildManifest: {
+          path: "head.manifest.json",
+          sha256: NodeCrypto.createHash("sha256")
+            .update(NodeFS.readFileSync(headManifestPath))
             .digest("hex"),
         },
       },
@@ -219,6 +300,12 @@ function assertHash(algorithm, bytes, expected, label) {
 function compareImports(left, right) {
   const a = `${left.module}\0${left.name}\0${left.kind}`;
   const b = `${right.module}\0${right.name}\0${right.kind}`;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compareExports(left, right) {
+  const a = `${left.name}\0${left.kind}`;
+  const b = `${right.name}\0${right.kind}`;
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
