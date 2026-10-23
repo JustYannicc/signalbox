@@ -147,7 +147,8 @@ async function runComputerCommand(
     const stdin = createKernelProcessStreams(prepared.filesystem, { signal: input.signal }).stdin;
     const streams = createKernelProcessStreams(prepared.filesystem, { signal: output.signal });
     pumps = [
-      stdin.pipeTo(child.stdin, { signal: input.signal }),
+      // The descriptor signal owns cancellation; Workerd drops a second cancel's rejection.
+      stdin.pipeTo(child.stdin, { signal: input.signal, preventCancel: true }),
       child.stdout.pipeTo(streams.stdout, { signal: output.signal }),
       child.stderr.pipeTo(streams.stderr, { signal: output.signal }),
     ];
