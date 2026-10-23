@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 
 import { runRunnerCommandBootstrap } from "./RunnerCommandBootstrap.ts";
 import * as RunnerMachineFiles from "./RunnerMachineFiles.ts";
+import * as RunnerNativeFileSystem from "./RunnerNativeFileSystem.ts";
 
 const { values } = NodeUtil.parseArgs({
   strict: true,
@@ -20,6 +21,11 @@ const { values } = NodeUtil.parseArgs({
 
 runRunnerCommandBootstrap(NodePath.resolve(values.config)).pipe(
   Effect.scoped,
-  Effect.provide(Layer.mergeAll(NodeServices.layer, RunnerMachineFiles.layer)),
+  Effect.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      RunnerMachineFiles.layer.pipe(Layer.provide(RunnerNativeFileSystem.layer)),
+    ),
+  ),
   NodeRuntime.runMain,
 );

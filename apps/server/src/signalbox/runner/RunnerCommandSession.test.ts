@@ -7,6 +7,7 @@ import type {
 import { ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -17,6 +18,7 @@ import type { RunnerTransport } from "./RunnerSession.ts";
 import { RunnerConnectionError } from "./RunnerConnectionError.ts";
 import { runRunnerCommandSession } from "./RunnerCommandSession.ts";
 import * as RunnerMachineFiles from "./RunnerMachineFiles.ts";
+import * as RunnerNativeFileSystem from "./RunnerNativeFileSystem.ts";
 
 const threadId = ThreadId.make("command-thread");
 const build: RunnerBuild = { imageDigest: null, revision: "test-revision", cliVersions: {} };
@@ -56,7 +58,9 @@ const sessionInput = (transport: RunnerTransport) => ({
 });
 
 const startCommandSession = (transport: RunnerTransport) =>
-  runRunnerCommandSession(sessionInput(transport)).pipe(Effect.provide(RunnerMachineFiles.layer));
+  runRunnerCommandSession(sessionInput(transport)).pipe(
+    Effect.provide(RunnerMachineFiles.layer.pipe(Layer.provide(RunnerNativeFileSystem.layer))),
+  );
 
 const welcome: ThreadMessage = {
   type: "welcome",

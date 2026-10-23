@@ -274,8 +274,10 @@ async function buildMachineFilesBridge(outfile: string) {
   const contents = [
     `import * as readline from "node:readline";`,
     `import * as Effect from "effect/Effect";`,
+    `import * as Layer from "effect/Layer";`,
+    `import * as RunnerNativeFileSystem from ${JSON.stringify(NodePath.join(NodePath.dirname(handler), "RunnerNativeFileSystem.ts"))};`,
     `import * as RunnerMachineFiles from ${JSON.stringify(handler)};`,
-    `const host = await Effect.runPromise(Effect.map(RunnerMachineFiles.RunnerMachineFiles, value => value).pipe(Effect.provide(RunnerMachineFiles.layer)));`,
+    `const host = await Effect.runPromise(Effect.map(RunnerMachineFiles.RunnerMachineFiles, value => value).pipe(Effect.provide(RunnerMachineFiles.layer.pipe(Layer.provide(RunnerNativeFileSystem.layer)))));`,
     `const lines = readline.createInterface({ input: process.stdin });`,
     `for await (const line of lines) {`,
     `  const input = JSON.parse(line);`,

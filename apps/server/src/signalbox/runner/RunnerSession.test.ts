@@ -36,6 +36,7 @@ import * as Stream from "effect/Stream";
 
 import { makeRunnerSession, RunnerConnectionError, type RunnerTransport } from "./RunnerSession.ts";
 import * as RunnerMachineFiles from "./RunnerMachineFiles.ts";
+import * as RunnerNativeFileSystem from "./RunnerNativeFileSystem.ts";
 import type { RunnerTurns } from "./RunnerTurns.ts";
 import type { RunnerTerminals } from "./RunnerTerminals.ts";
 import type { RunnerExecHost } from "./RunnerExecHost.ts";
@@ -354,7 +355,12 @@ const sessionOf = (
     makeTerminals: makeNoopTerminals,
   });
 
-it.layer(Layer.mergeAll(NodeCrypto.layer, RunnerMachineFiles.layer))("RunnerSession", (it) => {
+it.layer(
+  Layer.mergeAll(
+    NodeCrypto.layer,
+    RunnerMachineFiles.layer.pipe(Layer.provide(RunnerNativeFileSystem.layer)),
+  ),
+)("RunnerSession", (it) => {
   it.effect("advertises feedback and returns the requested adapter result over the session", () =>
     Effect.scoped(
       Effect.gen(function* () {
