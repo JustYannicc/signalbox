@@ -4,6 +4,135 @@ import { KernelPipe } from "./KernelPipe.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 
 describe("KernelPipe", () => {
+  it.each(["abort", "dispose", "writer-close"] as const)(
+    "reports an accepted prefix before %s interrupts a blocking write",
+    async (interruption) => {
+      const wakes = new KernelWakeRegistry();
+      const pipe = new KernelPipe(wakes, 4096);
+      const controller = new AbortController();
+      try {
+        const writing = pipe.writeBlocking(new Uint8Array(5000).fill(7), {
+          signal: controller.signal,
+        });
+        expect(pipe.bufferedBytes).toBe(4096);
+        if (interruption === "abort") controller.abort();
+        else if (interruption === "dispose") wakes.dispose();
+        else pipe.closeWriter();
+        expect(await writing).toBe(4096);
+        const received = new Uint8Array(4096);
+        expect(pipe.tryReadInto(received)).toBe(4096);
+        expect(received).toEqual(new Uint8Array(4096).fill(7));
+        expect(wakes.size).toBe(0);
+      } finally {
+        wakes.dispose();
+      }
+    },
+  );
+
+  it("preserves endpoint validation for empty blocking writes", async () => {
+    const wakes = new KernelWakeRegistry();
+    const pipe = new KernelPipe(wakes);
+    try {
+      expect(await pipe.writeBlocking(new Uint8Array())).toBe(0);
+      pipe.closeReader();
+      expect(await pipe.writeBlocking(new Uint8Array())).toBe(0);
+      pipe.closeWriter();
+      await expect(pipe.writeBlocking(new Uint8Array())).rejects.toMatchObject({ code: "EBADF" });
+    } finally {
+      wakes.dispose();
+    }
+  });
+
+  it("keeps write short counts while blocking writes finish across pipe refills", async () => {
+    const wakes = new KernelWakeRegistry();
+    const pipe = new KernelPipe(wakes, 4096);
+    const source = Uint8Array.from({ length: 5000 }, (_, index) => index % 251);
+    const expected = source.slice(0, 4096);
+    try {
+      expect(await pipe.write(source)).toBe(4096);
+      const shortWrite = new Uint8Array(4096);
+      pipe.tryReadInto(shortWrite);
+      expect(shortWrite).toEqual(expected);
+
+      pipe.tryWrite(new Uint8Array(4096));
+      const blockingSource = source.slice();
+      const writing = pipe.writeBlocking(blockingSource);
+      blockingSource.fill(99);
+
+      const firstRefill = Promise.withResolvers<void>();
+      const unsubscribeFirst = pipe.subscribe("read")(() => firstRefill.resolve());
+      const firstDrain = new Uint8Array(2048);
+      pipe.tryReadInto(firstDrain);
+      await firstRefill.promise;
+      unsubscribeFirst();
+
+      const secondRefill = Promise.withResolvers<void>();
+      const unsubscribeSecond = pipe.subscribe("read")(() => secondRefill.resolve());
+      const secondDrain = new Uint8Array(2048);
+      pipe.tryReadInto(secondDrain);
+      await secondRefill.promise;
+      unsubscribeSecond();
+
+      const thirdRefill = Promise.withResolvers<void>();
+      const unsubscribeThird = pipe.subscribe("read")(() => thirdRefill.resolve());
+      const thirdDrain = new Uint8Array(2048);
+      pipe.tryReadInto(thirdDrain);
+      await thirdRefill.promise;
+      unsubscribeThird();
+
+      expect(await writing).toBe(source.byteLength);
+      const tail = new Uint8Array(2952);
+      pipe.tryReadInto(tail);
+      expect(firstDrain).toEqual(new Uint8Array(2048));
+      expect(secondDrain).toEqual(new Uint8Array(2048));
+      expect(thirdDrain).toEqual(expected.subarray(0, 2048));
+      expect(tail).toEqual(source.subarray(2048));
+      expect(wakes.size).toBe(0);
+    } finally {
+      wakes.dispose();
+    }
+  });
+
+  it("completes a 1 MiB blocking write through the fixed-size pipe buffer", async () => {
+    const wakes = new KernelWakeRegistry();
+    const pipe = new KernelPipe(wakes);
+    const source = Uint8Array.from({ length: 1_048_576 }, (_, index) => index % 251);
+    const received = new Uint8Array(source.byteLength);
+    try {
+      const writing = pipe.writeBlocking(source);
+      let offset = 0;
+      while (offset < received.byteLength) {
+        offset += await pipe.readInto(received.subarray(offset));
+      }
+      expect(await writing).toBe(source.byteLength);
+      expect(received).toEqual(source);
+      expect(wakes.size).toBe(0);
+    } finally {
+      wakes.dispose();
+    }
+  });
+
+  it("reports the completed prefix when a blocked write loses its reader", async () => {
+    const wakes = new KernelWakeRegistry();
+    const pipe = new KernelPipe(wakes, 4096);
+    try {
+      pipe.tryWrite(new Uint8Array(4096));
+      const writing = pipe.writeBlocking(new Uint8Array(5000).fill(7));
+
+      const refill = Promise.withResolvers<void>();
+      const unsubscribe = pipe.subscribe("read")(() => refill.resolve());
+      pipe.tryReadInto(new Uint8Array(4));
+      await refill.promise;
+      unsubscribe();
+      pipe.closeReader();
+
+      await expect(writing).rejects.toMatchObject({ code: "EPIPE", bytesWritten: 4 });
+      expect(wakes.size).toBe(0);
+    } finally {
+      wakes.dispose();
+    }
+  });
+
   it("owns blocked Buffer writes even when the caller mutates its bytes", async () => {
     const wakes = new KernelWakeRegistry();
     const pipe = new KernelPipe(wakes, 4096);

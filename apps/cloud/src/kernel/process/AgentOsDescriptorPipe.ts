@@ -48,7 +48,7 @@ export function allocateAgentOsPipe(
     supportsNonblocking: true,
     write: (source, flags) =>
       options.asyncMode && (flags & FDFLAGS.NONBLOCK) === 0
-        ? pipe.write(source, {
+        ? pipe.writeBlocking(source, {
             signal: options.currentSignal?.(),
           })
         : pipe.tryWrite(source),

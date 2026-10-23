@@ -21,9 +21,9 @@ export function createKernelWasiFileSystemAdapter(
   const devices = createKernelWasiDeviceAdapter(filesystem);
   return (memory, imports) => ({
     ...devices(memory, imports),
-    fd_write: function* (...args): WasiCall<number> {
+    fd_write: function* (fd, iovs, iovsLen, nwritten): WasiCall<number> {
       try {
-        return yield* imports.fd_write(...args);
+        return yield* imports.fd_write(fd, iovs, iovsLen, nwritten);
       } catch (error) {
         if (error instanceof KernelBrokenPipeError) {
           // The guest ABI has no sigaction delivery; masked default actions remain pending.
@@ -36,6 +36,10 @@ export function createKernelWasiFileSystemAdapter(
             );
             if (result.status !== "ok")
               throw new Error("Writing process signal state is unavailable", { cause: error });
+          }
+          if (error.bytesWritten > 0) {
+            memory.u32(nwritten, error.bytesWritten);
+            return 0;
           }
         }
         throw error;

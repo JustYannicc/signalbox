@@ -2,6 +2,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { KernelFileSystem, type WasiStdio } from "../../kernel/KernelFileSystem.ts";
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
 import type { KernelSyscallPort, KernelSyscallRequest } from "../../kernel/KernelSyscallPort.ts";
+import { KernelPipe } from "../../kernel/KernelPipe.ts";
+import {
+  KernelProcessTable,
+  type KernelExitStatus,
+  type KernelProcessIdentity,
+} from "../../kernel/KernelProcessTable.ts";
+import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
+import type { KernelWasiSignalOptions } from "../../kernel/KernelWasiFileSystemAdapter.ts";
 import { ChildWasiExit, createChildWasi } from "../ChildWasi.ts";
 
 const bytes = (value: string) => new TextEncoder().encode(value);
@@ -331,6 +339,112 @@ describe("ChildWasi", () => {
     }
   });
 
+  it.each([
+    ["default", "reader-close"],
+    ["ignored", "reader-close"],
+    ["blocked", "reader-close"],
+    ["ignored", "abort"],
+    ["ignored", "dispose"],
+    ["ignored", "writer-close"],
+  ] as const)(
+    "reports partial ChildWasi writes with %s SIGPIPE and %s",
+    async (sigpipe, interruption) => {
+      const wakes = new KernelWakeRegistry();
+      const pipe = new KernelPipe(wakes);
+      const completion = Promise.withResolvers<KernelExitStatus>();
+      const controller = new AbortController();
+      const processes = new KernelProcessTable({ wakes });
+      let identity: KernelProcessIdentity | undefined;
+      const spawned = processes.spawn(
+        undefined,
+        (candidate) => {
+          identity = candidate;
+          return {
+            completion: completion.promise,
+            signal: () => ({ status: "ok" as const, value: undefined }),
+          };
+        },
+        () => {},
+      );
+      if (spawned.status !== "ok" || identity === undefined) {
+        throw new Error("Could not create the signal owner process");
+      }
+      const handle = identity.handle;
+      if (sigpipe === "ignored") {
+        expect(processes.setSigpipeDisposition(handle, "epipe").status).toBe("ok");
+      }
+      if (sigpipe === "blocked") {
+        expect(processes.signalMask(handle, 0, { low: 4096, high: 0 }).status).toBe("ok");
+      }
+
+      const fixture = harness({
+        stdio: [
+          {},
+          { write: (source) => pipe.writeBlocking(source, { signal: controller.signal }) },
+          {},
+        ],
+        process: { identity, processes },
+      });
+      const module = wasmFdWrite();
+      const child = createChildWasi({
+        module,
+        syscalls: fixture.syscalls,
+        args: [],
+        env: {},
+      });
+      const instance = new WebAssembly.Instance(module, child.imports);
+      child.bind(instance);
+      const memory = guestMemory(instance);
+      memory.grow(16);
+      const view = new DataView(memory.buffer);
+      view.setUint32(32, 128, true);
+      view.setUint32(36, 1_048_576, true);
+      view.setUint32(16, 0, true);
+      new Uint8Array(memory.buffer, 128, 1_048_576).fill(0xa7);
+
+      pipe.tryWrite(new Uint8Array(65_536).fill(0xee));
+      let pending: Promise<unknown> | undefined;
+      const refilled = Promise.withResolvers<void>();
+      const unsubscribe = pipe.subscribe("read")(() => refilled.resolve());
+      try {
+        pending = child.run(guestRun(instance));
+        pipe.tryReadInto(new Uint8Array(4));
+        await refilled.promise;
+        unsubscribe();
+        if (interruption === "reader-close") pipe.closeReader();
+        else if (interruption === "abort") controller.abort();
+        else if (interruption === "dispose") wakes.dispose();
+        else pipe.closeWriter();
+
+        if (sigpipe === "default") {
+          await expect(pending).rejects.toMatchObject({ signal: 13 });
+          expect(view.getUint32(16, true)).toBe(0);
+        } else {
+          expect(await pending).toBe(0);
+          expect(view.getUint32(16, true)).toBe(4);
+          if (interruption === "reader-close") {
+            expect(await child.run(guestRun(instance))).toBe(64);
+          }
+          if (sigpipe === "blocked") {
+            expect(() => processes.signalMask(handle, 1, { low: 4096, high: 0 })).toThrow(
+              expect.objectContaining({ signal: 13 }),
+            );
+          }
+        }
+      } finally {
+        unsubscribe();
+        pipe.closeReader();
+        pipe.closeWriter();
+        completion.resolve({ exitCode: 0, signal: 0, coreDumped: false });
+        await pending?.catch(() => undefined);
+        fixture.host.close();
+        fixture.filesystem.dispose();
+        await processes.dispose();
+        wakes.dispose();
+      }
+    },
+  );
+
   it("keeps initialize exit status public through ChildWasiExit", async () => {
     const fixture = harness({ stdio: [{}, {}, {}] });
     const module = wasmProcExit(70, "_initialize");
@@ -359,6 +473,7 @@ interface HarnessOptions {
   readonly args?: readonly string[];
   readonly env?: Readonly<Record<string, string>>;
   readonly stdio?: readonly [WasiStdio, WasiStdio, WasiStdio];
+  readonly process?: KernelWasiSignalOptions["process"];
 }
 
 function harness(options: HarnessOptions = {}) {
@@ -371,6 +486,7 @@ function harness(options: HarnessOptions = {}) {
     args: options.args ?? [],
     env: options.env ?? {},
     signal: new AbortController().signal,
+    ...(options.process === undefined ? {} : { process: options.process }),
   });
   const requests: KernelSyscallRequest[] = [];
   const syscalls: KernelSyscallPort = {
@@ -382,7 +498,7 @@ function harness(options: HarnessOptions = {}) {
       return host.call(request);
     },
   };
-  return { filesystem, requests, syscalls };
+  return { filesystem, requests, syscalls, host };
 }
 
 async function runGuest(
@@ -462,6 +578,32 @@ function wasmImportRun(
       ...section(1, [1, ...funcType(params, results)]),
       ...section(2, [1, ...name(namespace), ...name(importName), 0, 0]),
       ...section(3, [1, 0]),
+      ...section(5, [1, 0, 1]),
+      ...section(7, [2, ...name("memory"), 2, 0, ...name("run"), 0, 1]),
+      ...section(10, [1, ...leb(body.length), ...body]),
+    ]),
+  );
+}
+
+function wasmFdWrite() {
+  const body = [0, 65, 1, 65, 32, 65, 1, 65, 16, 16, 0, 11];
+  return new WebAssembly.Module(
+    new Uint8Array([
+      0,
+      97,
+      115,
+      109,
+      1,
+      0,
+      0,
+      0,
+      ...section(1, [
+        2,
+        ...funcType(["i32", "i32", "i32", "i32"], ["i32"]),
+        ...funcType([], ["i32"]),
+      ]),
+      ...section(2, [1, ...name("wasi_snapshot_preview1"), ...name("fd_write"), 0, 0]),
+      ...section(3, [1, 1]),
       ...section(5, [1, 0, 1]),
       ...section(7, [2, ...name("memory"), 2, 0, ...name("run"), 0, 1]),
       ...section(10, [1, ...leb(body.length), ...body]),
