@@ -44,6 +44,28 @@ const requireGeneration = (state: State, generation: number) => {
   if (state.publisher.generation !== generation) return fail("OUT_OF_ORDER");
 };
 
+export type ReconciliationRequest = Omit<
+  Extract<HarnessThreadSupervisorCommand, { readonly type: "reconcile" }>,
+  "runId" | "admissionResolution"
+>;
+
+export function validateReconciliationRequest(state: State, command: ReconciliationRequest) {
+  requireControl(state, command.control);
+  requireGeneration(state, command.expectedGeneration);
+  if (state.lifecycle !== "indeterminate" && state.lifecycle !== "recoverable")
+    return fail("OUT_OF_ORDER");
+  if (state.pendingControlSync) return fail("OUT_OF_ORDER");
+  if (
+    command.outcome !== "unknown" &&
+    (!command.invocationSettlement || !allJoined(command.invocationSettlement))
+  )
+    return fail("INDETERMINATE");
+  if (state.prepared && (!command.preparedFacetCleanup || !allClean(command.preparedFacetCleanup)))
+    return fail("INDETERMINATE");
+  if (!state.prepared && command.preparedFacetCleanup !== null) return fail("CONFLICT");
+  if ((command.outcome === "completed") !== (command.checkpoint !== null)) return fail("INVALID");
+}
+
 export function transition(state: State | null, command: HarnessThreadSupervisorCommand): Decision {
   if (command.type === "initialize") {
     if (state) {
@@ -415,22 +437,7 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
           return fail("CONFLICT");
         return decide(state, "unchanged");
       }
-      if (state.lifecycle !== "indeterminate" && state.lifecycle !== "recoverable")
-        return fail("OUT_OF_ORDER");
-      if (state.pendingControlSync) return fail("OUT_OF_ORDER");
-      if (
-        command.outcome !== "unknown" &&
-        (!command.invocationSettlement || !allJoined(command.invocationSettlement))
-      )
-        return fail("INDETERMINATE");
-      if (
-        state.prepared &&
-        (!command.preparedFacetCleanup || !allClean(command.preparedFacetCleanup))
-      )
-        return fail("INDETERMINATE");
-      if (!state.prepared && command.preparedFacetCleanup !== null) return fail("CONFLICT");
-      if ((command.outcome === "completed") !== (command.checkpoint !== null))
-        return fail("INVALID");
+      validateReconciliationRequest(state, command);
       if (command.outcome === "unknown") {
         if (command.admissionResolution !== null) return fail("CONFLICT");
       } else {

@@ -45,6 +45,7 @@ it("accepts completed reconciliation only for the checkpoint committed in Files"
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({
     partialCommitStatus: "supervisor-pending",
+    wrongOutcomeCode: "CONFLICT",
     wrongCheckpointCode: "CONFLICT",
     filesAfterMismatch: {
       checkpoint: { checkpointId: "workerd-completed-checkpoint-2" },

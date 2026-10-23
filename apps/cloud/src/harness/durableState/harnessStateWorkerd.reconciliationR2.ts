@@ -13,6 +13,14 @@ import { failNextSupervisorBefore, loseNextFilesReply } from "./harnessStateWork
 
 const hasType = (command: unknown, type: string) =>
   typeof command === "object" && command !== null && "type" in command && command.type === type;
+const isAdmissionWrite = (command: unknown) =>
+  hasType(command, "reconcileAdmission") &&
+  !(
+    typeof command === "object" &&
+    command !== null &&
+    "validateOnly" in command &&
+    command.validateOnly === true
+  );
 
 async function settleUnknown(durable: ReturnType<typeof durableFor>, runId: string) {
   await durable.threadSupervisor.execute({
@@ -55,10 +63,7 @@ export async function reconcileAdmissionRecovery(env: WorkerdEnv) {
     preparedFacetCleanup: null,
   };
   const lostReply = await failed(() =>
-    durableFor(
-      loseNextFilesReply(env, (command) => hasType(command, "reconcileAdmission")),
-      runId,
-    ).reconcile(input),
+    durableFor(loseNextFilesReply(env, isAdmissionWrite), runId).reconcile(input),
   );
   const resumed = durableFor(env, runId);
   const filesAfterLostReply = await env.HARNESS_FILES_STORE.getByName(runId).execute({
@@ -159,6 +164,17 @@ export async function reconcileCompletedCheckpoint(env: WorkerdEnv) {
   });
   await settleUnknown(durable, runId);
   const checkpoint2 = write.files.checkpoint;
+  const wrongOutcome = await failed(() =>
+    durable.reconcile({
+      control: control2,
+      expectedGeneration: 1,
+      evidenceId: "completed-checkpoint-evidence",
+      outcome: "notApplied",
+      checkpoint: null,
+      invocationSettlement: joins,
+      preparedFacetCleanup: null,
+    }),
+  );
   const wrongCheckpoint = await failed(() =>
     durable.reconcile({
       control: control2,
@@ -191,6 +207,7 @@ export async function reconcileCompletedCheckpoint(env: WorkerdEnv) {
 
   return {
     partialCommitStatus: write.status,
+    wrongOutcomeCode: wrongOutcome.code,
     wrongCheckpointCode: wrongCheckpoint.code,
     filesAfterMismatch: {
       checkpoint: filesAfterMismatch.checkpoint,

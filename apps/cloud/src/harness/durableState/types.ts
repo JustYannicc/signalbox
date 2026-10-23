@@ -14,6 +14,8 @@ import type {
   HarnessThreadSupervisorPublisher,
   HarnessThreadSupervisorResult,
 } from "../HarnessThreadSupervisor.ts";
+import type { HarnessThreadSupervisorReconciliationRequest } from "./supervisor/reconciliationReceipts.ts";
+import type { HarnessThreadSupervisorReconciliationReservation } from "./supervisor/service.ts";
 
 export type HarnessRunInitialization = Extract<
   HarnessRunStoreCommand,
@@ -64,6 +66,9 @@ export interface HarnessDurableStateStubs {
   readonly filesStore: { execute(command: unknown): Promise<HarnessFilesStoreResult> };
   readonly threadSupervisor: {
     execute(command: unknown): Promise<HarnessThreadSupervisorResult>;
+    reserveReconciliation(
+      input: HarnessThreadSupervisorReconciliationRequest,
+    ): Promise<HarnessThreadSupervisorReconciliationReservation>;
   };
 }
 

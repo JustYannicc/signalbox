@@ -16,15 +16,15 @@ const NextControl = Schema.Struct({
   epoch: positive,
   controlKey: capability,
 });
-const Checkpoint = Schema.Struct({ checkpointId: id, manifestSha256: digest });
-const Cleanup = Schema.Struct({
+export const Checkpoint = Schema.Struct({ checkpointId: id, manifestSha256: digest });
+export const Cleanup = Schema.Struct({
   stopAcknowledged: Schema.Boolean,
   invocationRpcJoined: Schema.Boolean,
   fetchJoined: Schema.Boolean,
   callbackPortsJoined: Schema.Boolean,
   disposed: Schema.Boolean,
 });
-const InvocationSettlementEvidence = Schema.Struct({
+export const InvocationSettlementEvidence = Schema.Struct({
   invocationRpcJoined: Schema.Boolean,
   fetchJoined: Schema.Boolean,
   callbackPortsJoined: Schema.Boolean,
@@ -39,13 +39,21 @@ const Publication = Schema.Struct({
   checkpoint: Checkpoint,
 });
 const PreparedPublication = Publication;
-const AdmissionResolution = Schema.Struct({
+export const AdmissionResolution = Schema.Struct({
   evidenceId: id,
   stepId: Schema.NullOr(id),
   outcome: Schema.Literals(["notApplied", "completed"]),
   expectedCheckpoint: Checkpoint,
   checkpoint: Checkpoint,
 });
+const ReconciliationEvidence = {
+  expectedGeneration: positive,
+  evidenceId: id,
+  outcome: Schema.Literals(["notApplied", "completed", "unknown"]),
+  checkpoint: Schema.NullOr(Checkpoint),
+  invocationSettlement: Schema.NullOr(InvocationSettlementEvidence),
+  preparedFacetCleanup: Schema.NullOr(Cleanup),
+};
 
 export const HarnessThreadSupervisorCommand = Schema.Union([
   Schema.Struct({
@@ -165,18 +173,13 @@ export const HarnessThreadSupervisorCommand = Schema.Union([
     type: Schema.Literal("reconcile"),
     runId: id,
     control: Control,
-    expectedGeneration: positive,
-    evidenceId: id,
-    outcome: Schema.Literals(["notApplied", "completed", "unknown"]),
-    checkpoint: Schema.NullOr(Checkpoint),
-    invocationSettlement: Schema.NullOr(InvocationSettlementEvidence),
-    preparedFacetCleanup: Schema.NullOr(Cleanup),
+    ...ReconciliationEvidence,
     admissionResolution: Schema.NullOr(AdmissionResolution),
   }),
 ]);
 export type HarnessThreadSupervisorCommand = typeof HarnessThreadSupervisorCommand.Type;
 
-const PreparedFacet = Schema.Struct({
+export const PreparedFacet = Schema.Struct({
   operationId: id,
   generation: positive,
   facetNonce: id,

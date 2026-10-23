@@ -77,6 +77,7 @@ export const HarnessFilesStoreCommand = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("reconcileAdmission"),
+    validateOnly: Schema.optional(Schema.Boolean),
     runId: id,
     control: Control,
     publisher: Publisher,

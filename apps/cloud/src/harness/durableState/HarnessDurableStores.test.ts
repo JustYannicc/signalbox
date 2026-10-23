@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import { createHarnessFilesStore } from "../HarnessFilesStore.ts";
 import { createHarnessThreadSupervisor } from "../HarnessThreadSupervisor.ts";
 import type { HarnessFilesDatabase } from "./files/types.ts";
+import { formatTable, reconciliationTable } from "./supervisor/sqlite.ts";
 import type { HarnessThreadSupervisorDatabase } from "./supervisor/types.ts";
 
 const runId = "durable-run";
@@ -181,6 +182,44 @@ describe("harness durable stores", () => {
           },
         });
       }),
+  );
+
+  it.effect("adds the reconciliation lookup table to an existing supervisor database", () =>
+    Effect.gen(function* () {
+      const supervisorDb = database() as ReturnType<typeof database> &
+        HarnessThreadSupervisorDatabase;
+      dbs.add(supervisorDb);
+      const first = createHarnessThreadSupervisor(supervisorDb, runId);
+      yield* first.execute({
+        type: "initialize",
+        runId,
+        nativeSessionId: "native-session-fixed",
+        control: control1,
+        publisher: publisher1,
+        checkpoint: manifest0,
+      });
+
+      supervisorDb.sql.exec(`DROP INDEX ${reconciliationTable}_one_pending`);
+      supervisorDb.sql.exec(`DROP TABLE ${reconciliationTable}`);
+      supervisorDb.sql.exec(`UPDATE ${formatTable} SET version = 1 WHERE slot = 1`);
+
+      const migrated = yield* createHarnessThreadSupervisor(supervisorDb, runId).execute({
+        type: "read",
+        runId,
+        control: control1,
+      });
+      const version = supervisorDb.sql.exec(`SELECT version FROM ${formatTable} WHERE slot = 1`);
+      const table = supervisorDb.sql.exec(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        reconciliationTable,
+      );
+      expect(migrated.snapshot).toMatchObject({
+        nativeSessionId: "native-session-fixed",
+        lifecycle: "accepting",
+      });
+      expect([...version]).toEqual([{ version: 2 }]);
+      expect([...table]).toEqual([{ name: reconciliationTable }]);
+    }),
   );
 
   it.effect(

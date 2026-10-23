@@ -318,7 +318,7 @@ export function createHarnessFilesStore(
                     activeStepId: null,
                     admissionResolution: resolution,
                   };
-                  saveState(database, current.row, next);
+                  if (!command.validateOnly) saveState(database, current.row, next);
                   return result(next, "reconciled");
                 }
                 if (!command.checkpoint || !same(state.checkpoint, command.checkpoint))
@@ -333,7 +333,7 @@ export function createHarnessFilesStore(
                   return fail("CONFLICT");
                 }
                 const next = { ...state, admissionResolution: resolution };
-                saveState(database, current.row, next);
+                if (!command.validateOnly) saveState(database, current.row, next);
                 return result(next, "reconciled");
               }
               case "writeCheckpoint": {

@@ -19,6 +19,10 @@ import {
   rejectMismatchedControlSyncOperation,
 } from "./harnessStateWorkerd.controlRecovery.ts";
 import { publicationReceiptSelection } from "./harnessStateWorkerd.publicationReceipts.ts";
+import {
+  prepareReconciliationHistory,
+  replayReconciliationHistory,
+} from "./harnessStateWorkerd.reconciliationHistory.ts";
 
 export { HarnessFilesStoreObject, HarnessRunStoreObject, HarnessThreadSupervisorObject };
 
@@ -52,6 +56,10 @@ export default {
       return Response.json(await rejectMismatchedControlSyncOperation(env));
     if (path === "/publication-receipts")
       return Response.json(await publicationReceiptSelection(env));
+    if (path === "/reconciliation-history-prepare")
+      return Response.json(await prepareReconciliationHistory(env));
+    if (path === "/reconciliation-history-replay")
+      return Response.json(await replayReconciliationHistory(env));
     return new Response("not found", { status: 404 });
   },
 };
