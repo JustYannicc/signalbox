@@ -2,8 +2,12 @@ import { kernelError, kernelOk, type KernelResult } from "./KernelAbi.ts";
 import { KernelProgramExecAdmissionError } from "./KernelAsyncProgram.ts";
 import type { KernelAsyncProgramCpu } from "./KernelAsyncProgram.ts";
 import type { KernelBashCredentials, KernelBashProgramContext } from "./KernelBashProgram.ts";
-import type { KernelBashCompletion, KernelBashPort } from "./KernelBashPort.ts";
-import type { KernelExitStatus } from "./KernelProcessTable.ts";
+import type {
+  KernelBashCompletion,
+  KernelBashPort,
+  KernelBashWaitResult,
+} from "./KernelBashPort.ts";
+import { KERNEL_WNOHANG, type KernelExitStatus } from "./KernelProcessTable.ts";
 import { createKernelSyscallHost } from "./KernelSyscallHost.ts";
 import { createBashHostImports } from "./bash/BashHostImports.ts";
 import { assertBashPosixCredentials } from "./bash/BashEnvironment.ts";
@@ -38,6 +42,7 @@ interface BashHostNode {
   readonly context: KernelBashProgramContext;
   readonly port: KernelBashPort;
   readonly completion: Promise<KernelExitStatus>;
+  readonly reapedChildren: Map<number, ReapedBashChild>;
   abort(): void;
   finish(result: KernelBashCompletion): void;
   signal(signal: number): KernelResult<void>;
@@ -45,9 +50,18 @@ interface BashHostNode {
   dispose(): void;
 }
 
+interface ReapedBashChild {
+  readonly processGroupId: number;
+  readonly status: KernelExitStatus;
+}
+
+const MAX_PID = 0x7fffffff;
+const MAX_CACHED_WAIT_STATUSES = 256;
+
 /** The returned port borrows the root context. close releases only this bridge's forked resources. */
 export function createKernelBashHost(options: KernelBashHostOptions) {
   const nodes = new Set<BashHostNode>();
+  let cachedWaitStatusCount = 0;
   let closed = false;
   let closing: Promise<void> | undefined;
   const runFork =
@@ -177,6 +191,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
         }),
       fork: () =>
         operation(async () => {
+          reapCompletedChildren();
           const table = context.filesystem.descriptors.fork(
             [...context.filesystem.descriptors.entries()].map(([fd]) => ({
               parentFd: fd,
@@ -236,12 +251,14 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       wait: (pid, flags) =>
         operation(async () => {
           for (;;) {
+            const cached = takeReapedChild(node, pid, flags);
+            if (cached !== undefined) return cached;
             const result = context.processes.waitpid(context.identity.handle, pid, flags);
             if (result.status === "ok") {
               if (result.value.pid !== 0) {
                 for (const child of nodes) {
                   if (child.parent === node && child.context.identity.pid === result.value.pid)
-                    nodes.delete(child);
+                    discardNode(child);
                 }
               }
               return { kind: "wait" as const, ...result.value };
@@ -289,6 +306,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       context,
       port,
       completion: completion.promise,
+      reapedChildren: new Map(),
       abort,
       finish,
       signal(signal: number) {
@@ -315,6 +333,85 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
     return node;
   }
 
+  function takeReapedChild(
+    node: BashHostNode,
+    selector: number,
+    flags: number,
+  ): KernelBashWaitResult | undefined {
+    if (
+      node.context.signal.aborted ||
+      !Number.isSafeInteger(selector) ||
+      selector < -MAX_PID ||
+      selector > MAX_PID ||
+      !Number.isSafeInteger(flags) ||
+      flags < 0 ||
+      (flags & ~KERNEL_WNOHANG) !== 0
+    )
+      return undefined;
+
+    const parent = node.context.processes.info(node.context.identity.handle);
+    if (parent.status !== "ok") return undefined;
+    const cached = [...node.reapedChildren.entries()]
+      .sort(([left], [right]) => left - right)
+      .find(
+        ([pid, child]) =>
+          selector === -1 ||
+          (selector === 0 && child.processGroupId === parent.value.processGroupId) ||
+          (selector < -1 && child.processGroupId === -selector) ||
+          (selector > 0 && pid === selector),
+      );
+    if (cached === undefined) return undefined;
+
+    const [pid, child] = cached;
+    node.reapedChildren.delete(pid);
+    cachedWaitStatusCount--;
+    return { kind: "wait", pid, status: child.status };
+  }
+
+  function discardNode(node: BashHostNode) {
+    nodes.delete(node);
+    cachedWaitStatusCount -= node.reapedChildren.size;
+    node.reapedChildren.clear();
+  }
+
+  // Preserve exited-child statuses for Bash while freeing process-table entries before another fork.
+  function reapCompletedChildren() {
+    for (const child of nodes) {
+      if (cachedWaitStatusCount >= MAX_CACHED_WAIT_STATUSES) break;
+      const parent = child.parent;
+      if (parent === undefined) continue;
+
+      const completed = options.context.processes.lookupPid(child.context.identity.pid);
+      if (
+        completed.status !== "ok" ||
+        completed.value.status !== "exited" ||
+        completed.value.info.parentPid !== parent.context.identity.pid
+      )
+        continue;
+      const parentStatus = options.context.processes.lookupPid(parent.context.identity.pid);
+      if (parentStatus.status !== "ok" || parentStatus.value.status !== "running") continue;
+
+      const waited = options.context.processes.waitpid(
+        parent.context.identity.handle,
+        child.context.identity.pid,
+        KERNEL_WNOHANG,
+      );
+      if (
+        waited.status !== "ok" ||
+        waited.value.pid !== child.context.identity.pid ||
+        !("status" in waited.value)
+      )
+        continue;
+
+      parent.reapedChildren.set(child.context.identity.pid, {
+        processGroupId: completed.value.info.processGroupId,
+        status: waited.value.status,
+      });
+      cachedWaitStatusCount++;
+      discardNode(child);
+    }
+  }
+
   function descendsFrom(child: BashHostNode, ancestor: BashHostNode): boolean {
     for (let parent = child.parent; parent !== undefined; parent = parent.parent) {
       if (parent === ancestor) return true;
@@ -334,7 +431,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       if (node !== root)
         await options.context.processes.terminateAndReap(node.context.identity.handle);
       node.dispose();
-      if (node !== root) nodes.delete(node);
+      discardNode(node);
     }
   }
 
