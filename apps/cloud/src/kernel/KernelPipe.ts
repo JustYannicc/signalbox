@@ -124,8 +124,8 @@ export class KernelPipe {
       RETAINED_WRITE_BYTES - retainedWriteBytes,
     );
     if (size < Math.min(source.byteLength, this.#bytes.length)) return this.write(source, options);
-    retainedWriteBytes += size;
     const owned = new Uint8Array(source.subarray(0, size));
+    retainedWriteBytes += size;
     const atomic = source.byteLength <= PIPE_BUF_BYTES;
     let offset = 0;
     try {
