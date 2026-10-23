@@ -12,6 +12,18 @@ type Returned = Extract<KernelSyscallResponse, { kind: "return" }>;
 type Terminal = Exclude<KernelSyscallResponse, Returned>;
 type ChildWasiIoValue = number | Terminal;
 
+// path_readlink's resolver returns ENAMETOOLONG above 4096 UTF-8 bytes.
+const MAX_RETAINED_READLINK_PATH_BYTES = 4096;
+
+interface ChildWasiIoContinuation {
+  readonly iovecTable?: Uint8Array;
+  readonly pathBytes?: Uint8Array;
+}
+
+interface ChildWasiIoRequest extends KernelSyscallRequest {
+  readonly childWasiIoContinuation?: ChildWasiIoContinuation;
+}
+
 interface ChildWasiIoOptions {
   readonly name: string;
   readonly args: readonly WasmArgument[];
@@ -39,15 +51,18 @@ interface TransferShape {
   readonly inputLength: number;
   readonly length: number;
   readonly inputs: readonly { readonly pointer: number; readonly bytes: Uint8Array }[];
+  readonly continuation?: ChildWasiIoContinuation;
 }
 
-interface TransferWindow {
-  readonly request: KernelSyscallRequest;
+interface TransferPlan {
   readonly regions: MemoryRegions;
   readonly countPointer: number;
   readonly capacity: number;
   readonly offset: number;
-  readonly shape: TransferShape;
+}
+
+interface TransferWindow extends TransferPlan {
+  readonly request: KernelSyscallRequest;
 }
 
 export type ChildWasiIoProgress =
@@ -79,15 +94,9 @@ export function applyChildWasiIoWindow(options: {
     previous: request,
   });
   if (shape === undefined) return undefined;
+  if (response.kind !== "return") return { kind: "complete", value: response };
 
-  const window = transferWindow(shape, memory, request.transferOffset ?? 0);
-  if (response.kind !== "return") {
-    return {
-      kind: "complete",
-      value: window.offset > 0 ? finish(memory, window.countPointer, window.offset) : response,
-    };
-  }
-
+  const window = transferPlan(shape, memory, request.transferOffset ?? 0);
   window.regions.apply(response.regions, { pointer: window.countPointer, length: 4 });
   if (response.value !== 0) {
     return {
@@ -116,19 +125,7 @@ export async function childWasiIo(
   if (request === undefined) return undefined;
 
   for (;;) {
-    let response: KernelSyscallResponse;
-    try {
-      response = await options.syscalls.call(request);
-    } catch (error) {
-      const offset = request.transferOffset ?? 0;
-      if (offset > 0) {
-        const shape = transferShape({ ...options, previous: request });
-        if (shape === undefined) throw error;
-        return finish(options.memory, shape.countPointer, offset);
-      }
-      throw error;
-    }
-
+    const response = await options.syscalls.call(request);
     const progress = applyChildWasiIoWindow({ request, response, memory: options.memory });
     if (progress === undefined) return undefined;
     if (progress.kind === "complete") return progress.value;
@@ -144,23 +141,27 @@ function transferShape(options: TransferOptions): TransferShape | undefined {
   const link = name === "path_readlink";
   if (!read && !write && !directory && !link) return undefined;
 
+  const saved = previous === undefined ? undefined : readContinuation(previous);
   const argument = (index: number) => Number(args[index]) >>> 0;
   const positioned = name === "fd_pread" || name === "fd_pwrite";
   const countPointer = argument(link ? 5 : positioned || directory ? 4 : 3);
   const inputPointer = argument(1);
   const inputLength = argument(2);
   const inputs: Array<{ pointer: number; bytes: Uint8Array }> = [];
-  const table =
-    (read || write) && inputLength <= MAX_IOVECS
-      ? previous === undefined
-        ? capture(memory, inputPointer, inputLength * 8)
-        : captureRequestBytes(previous, inputPointer, inputLength * 8)
-      : undefined;
+  let table: Uint8Array | undefined;
+  if ((read || write) && inputLength <= MAX_IOVECS) {
+    table =
+      saved?.iovecTable === undefined
+        ? previous === undefined
+          ? capture(memory, inputPointer, inputLength * 8)
+          : captureRequestBytes(previous, inputPointer, inputLength * 8)
+        : saved.iovecTable;
+    if (table !== undefined) inputs.push({ pointer: inputPointer, bytes: table });
+  }
 
   let length = 0;
   if (read || write) {
     if (table !== undefined) {
-      inputs.push({ pointer: inputPointer, bytes: table });
       const view = new DataView(table.buffer, table.byteOffset, table.byteLength);
       for (let index = 0; index < inputLength; index++)
         length += view.getUint32(index * 8 + 4, true);
@@ -171,12 +172,18 @@ function transferShape(options: TransferOptions): TransferShape | undefined {
     length = argument(link ? 4 : 2);
     if (link) {
       const path =
-        previous === undefined
-          ? capture(memory, inputPointer, inputLength)
-          : captureRequestBytes(previous, inputPointer, inputLength);
+        saved?.pathBytes !== undefined
+          ? saved.pathBytes
+          : inputLength <= MAX_RETAINED_READLINK_PATH_BYTES
+            ? previous === undefined
+              ? capture(memory, inputPointer, inputLength)
+              : captureRequestBytes(previous, inputPointer, inputLength)
+            : undefined;
       if (path !== undefined) inputs.push({ pointer: inputPointer, bytes: path });
     }
   }
+
+  const continuation = rememberContinuation(saved, table, inputs, link, inputPointer);
 
   return {
     name,
@@ -190,6 +197,7 @@ function transferShape(options: TransferOptions): TransferShape | undefined {
     inputLength,
     length,
     inputs,
+    ...(continuation === undefined ? {} : { continuation }),
   };
 }
 
@@ -199,6 +207,25 @@ function transferWindow(
   offset: number,
   previous?: KernelSyscallRequest,
 ): TransferWindow {
+  const plan = transferPlan(shape, memory, offset);
+  const request: ChildWasiIoRequest = {
+    name: shape.name,
+    args: shape.args,
+    memorySize: memory.buffer.byteLength,
+    regions: plan.regions.snapshot(shape.inputs),
+    transferOffset: offset,
+    transferLength: plan.capacity,
+    ...(previous === undefined ? {} : { residentWasmBytes: previous.residentWasmBytes }),
+    ...(shape.continuation === undefined ? {} : { childWasiIoContinuation: shape.continuation }),
+  };
+  return { ...plan, request };
+}
+
+function transferPlan(
+  shape: TransferShape,
+  memory: WebAssembly.Memory,
+  offset: number,
+): TransferPlan {
   const capacity = Math.min(KERNEL_SYSCALL_MAX_IO_BYTES, Math.max(0, shape.length - offset));
   const regions = new MemoryRegions(memory, capacity);
   regions.add(shape.countPointer, 4, "out");
@@ -215,16 +242,29 @@ function transferWindow(
       regions.add(buffer + offset, capacity, "out");
   }
 
-  const request: KernelSyscallRequest = {
-    name: shape.name,
-    args: shape.args,
-    memorySize: memory.buffer.byteLength,
-    regions: regions.snapshot(shape.inputs),
-    transferOffset: offset,
-    transferLength: capacity,
-    ...(previous === undefined ? {} : { residentWasmBytes: previous.residentWasmBytes }),
-  };
-  return { request, regions, countPointer: shape.countPointer, capacity, offset, shape };
+  return { regions, countPointer: shape.countPointer, capacity, offset };
+}
+
+function readContinuation(request: KernelSyscallRequest): ChildWasiIoContinuation | undefined {
+  const continuation = (request as ChildWasiIoRequest).childWasiIoContinuation;
+  return continuation === undefined ? undefined : Object.freeze(continuation);
+}
+
+function rememberContinuation(
+  previous: ChildWasiIoContinuation | undefined,
+  table: Uint8Array | undefined,
+  inputs: readonly { readonly pointer: number; readonly bytes: Uint8Array }[],
+  link: boolean,
+  inputPointer: number,
+): ChildWasiIoContinuation | undefined {
+  const path = link ? inputs.find((input) => input.pointer === inputPointer)?.bytes : undefined;
+  const iovecTable = previous?.iovecTable ?? table;
+  const pathBytes = previous?.pathBytes ?? path;
+  if (iovecTable === undefined && pathBytes === undefined) return undefined;
+  return Object.freeze({
+    ...(iovecTable === undefined ? {} : { iovecTable }),
+    ...(pathBytes === undefined ? {} : { pathBytes }),
+  });
 }
 
 function finished(
