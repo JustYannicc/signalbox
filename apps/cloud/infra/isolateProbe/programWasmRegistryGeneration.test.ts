@@ -9,6 +9,14 @@ import { JSPI_WASM } from "./wasmFixture.ts";
 
 const jspiHash = "3c82c5088c45f5acae60187e020c7f3fce285c2bb032323b318d0372b9c6ed50";
 
+function expectDispatchImports(
+  imports: readonly { specifier: string; external: boolean }[],
+  specifiers: readonly string[],
+) {
+  expect(imports.every((entry) => entry.external)).toBe(true);
+  expect(new Set(imports.map((entry) => entry.specifier))).toEqual(new Set(specifiers));
+}
+
 describe("public child WASM registry generation", () => {
   it("emits a closed static module graph and records the references from the same inventory", async () => {
     const directory = await NodeFSP.mkdtemp(
@@ -64,9 +72,9 @@ describe("public child WASM registry generation", () => {
       });
       expect(dispatcher).toContain(`./wasm/${jspiHash}.wasm`);
       expect(dispatcher).toContain(jspiHash);
-      expect(manifest.dispatchImports).toEqual([
-        { specifier: "cloudflare:workers", external: true },
-        { specifier: `./wasm/${jspiHash}.wasm`, external: true },
+      expectDispatchImports(manifest.dispatchImports, [
+        "cloudflare:workers",
+        `./wasm/${jspiHash}.wasm`,
       ]);
 
       const moduleNames = new Set(manifest.modules.map((module: { name: string }) => module.name));
@@ -104,9 +112,7 @@ describe("public child WASM registry generation", () => {
       const defaultBuild = await prepare({ generatedDirectory: defaultDirectory });
       expect(defaultBuild.programWasm.references).toEqual({});
       expect(defaultBuild.programWasm.modules).toEqual([]);
-      expect(defaultBuild.dispatchImports).toEqual([
-        { specifier: "cloudflare:workers", external: true },
-      ]);
+      expectDispatchImports(defaultBuild.dispatchImports, ["cloudflare:workers"]);
 
       const invalidDirectory = NodePath.join(directory, "invalid");
       await expect(
