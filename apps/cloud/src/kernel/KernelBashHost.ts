@@ -176,7 +176,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
           }
         }),
       fork: () =>
-        operation(() => {
+        operation(async () => {
           const table = context.filesystem.descriptors.fork(
             [...context.filesystem.descriptors.entries()].map(([fd]) => ({
               parentFd: fd,

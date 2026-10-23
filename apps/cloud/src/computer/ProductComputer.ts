@@ -43,6 +43,7 @@ export function createProductComputer(options: ProductComputerOptions) {
       programs.busyboxApplets,
       programs.ripgrep,
       programs.git,
+      programs.sed,
     ].some((code) => code === undefined) ||
     CHILD_COREUTILS_COMMANDS.some((command) => programs.coreutils?.[command] === undefined)
   )

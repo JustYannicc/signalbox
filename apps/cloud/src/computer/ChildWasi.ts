@@ -1,6 +1,10 @@
-import type { KernelSyscallPort } from "../kernel/KernelSyscallPort.ts";
+import {
+  KERNEL_SYSCALL_MAX_IO_BYTES,
+  type KernelSyscallPort,
+} from "../kernel/KernelSyscallPort.ts";
 import { KernelProcessSignal, kernelProcessExitStatus } from "../kernel/KernelProcessSignal.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
+import { childWasiIo } from "./ChildWasiIo.ts";
 
 type WasmArgument = number | bigint;
 type WasiMemoryPlan = (
@@ -25,7 +29,6 @@ interface EncodedOptions {
 
 const WASI_NAMESPACES = new Set(["wasi_snapshot_preview1", "wasi_unstable"]);
 const encoder = new TextEncoder();
-const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
 
 const noMemory: WasiMemoryPlan = () => {};
 const pointer = (args: readonly WasmArgument[], index: number): number => {
@@ -106,7 +109,7 @@ const MEMORY_PLANS: Readonly<Record<string, WasiMemoryPlan>> = {
     regions.addIovecs(pointer(args, 1), pointer(args, 2), "out");
   },
   fd_readdir(regions, args) {
-    regions.add(pointer(args, 1), Math.min(pointer(args, 2) >>> 0, MAX_TRANSFER_BYTES), "out");
+    regions.add(pointer(args, 1), Math.min(pointer(args, 2) >>> 0, regions.transferLimit), "out");
     regions.add(pointer(args, 4), 4, "out");
   },
   fd_renumber: noMemory,
@@ -141,7 +144,7 @@ const MEMORY_PLANS: Readonly<Record<string, WasiMemoryPlan>> = {
   },
   path_readlink(regions, args) {
     regions.add(pointer(args, 1), pointer(args, 2), "in");
-    regions.add(pointer(args, 3), Math.min(pointer(args, 4) >>> 0, MAX_TRANSFER_BYTES), "out");
+    regions.add(pointer(args, 3), Math.min(pointer(args, 4) >>> 0, regions.transferLimit), "out");
     regions.add(pointer(args, 5), 4, "out");
   },
   path_remove_directory(regions, args) {
@@ -229,7 +232,16 @@ export function createChildWasi(options: ChildWasiOptions) {
         }
         return 0;
       }
-      const regions = new MemoryRegions(memory);
+      const io = await childWasiIo({
+        name: imported.name,
+        args,
+        memory,
+        syscalls: options.syscalls,
+      });
+      if (typeof io === "number") return io;
+      if (io?.kind === "exit") throw new ChildWasiExit(io.code);
+      if (io?.kind === "signal") throw new KernelProcessSignal(io.signal);
+      const regions = new MemoryRegions(memory, KERNEL_SYSCALL_MAX_IO_BYTES);
       MEMORY_PLANS[imported.name]!(regions, args, encoded);
       const requestRegions = regions.snapshot();
       const response = await options.syscalls.call({
@@ -237,6 +249,7 @@ export function createChildWasi(options: ChildWasiOptions) {
         args,
         memorySize: memory.buffer.byteLength,
         regions: requestRegions,
+        transferOffset: 0,
       });
       if (response.kind === "exit") throw new ChildWasiExit(response.code);
       if (response.kind === "signal") throw new KernelProcessSignal(response.signal);

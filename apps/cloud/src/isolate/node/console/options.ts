@@ -1,4 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - Node compatibility requires the native stream and process interfaces.
 import type * as NodeStream from "node:stream";
 import type * as NodeUtil from "node:util";
 

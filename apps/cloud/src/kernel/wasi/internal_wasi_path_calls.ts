@@ -2,8 +2,10 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { withKernelFileWrite } from "../KernelIoLock.ts";
 import type { CreateOptions, Inode } from "../storage.ts";
-import { WasiError, WasiMemory } from "./internal_wasi_memory.ts";
+import { MAX_TRANSFER_BYTES } from "../KernelSyscallPort.ts";
+import { utf8ByteLength, WasiError, WasiMemory } from "./internal_wasi_memory.ts";
 import { complete, type WasiCall } from "./internal_wasi_calls.ts";
 import {
   ALL_RIGHTS,
@@ -42,13 +44,9 @@ const EISDIR = 31;
 const ENAMETOOLONG = 37;
 const ENOENT = 44;
 const ENOTDIR = 54;
-const ENOTSUP = 58;
 const EROFS = 69;
 const EXDEV = 75;
 const ENOTCAPABLE = 76;
-
-const MAX_PATH_TRANSFER = 16 * 1024 * 1024;
-const encoder = new TextEncoder();
 
 const OFLAGS = { CREATE: 1, DIRECTORY: 2, EXCLUSIVE: 4, TRUNCATE: 8 } as const;
 const DIRFLAGS_SYMLINK_FOLLOW = 1;
@@ -372,11 +370,10 @@ export class WasiPathCalls {
         if (byteAccess !== undefined && selection.kind === "view") byteView = selection.view;
       }
       if (truncate) {
-        if (byteAccess !== undefined) {
-          byteAccess.truncate(0n);
-        } else {
-          yield* complete(resolved.mount.storage.truncate(inode, 0n));
-        }
+        const storage = resolved.mount.storage;
+        yield* withKernelFileWrite(storage, inode, () =>
+          byteAccess !== undefined ? byteAccess.truncate(0n) : storage.truncate(inode, 0n),
+        );
       }
       childFd = this.#descriptors.allocate({
         kind: resolved.stat.type,
@@ -444,9 +441,17 @@ export class WasiPathCalls {
     const resolved = yield* this.#paths.resolve(this.#anchor(directory), path, false);
     if (resolved.stat.type !== "symlink") throw new WasiError(EINVAL);
     const target = yield* complete(resolved.mount.storage.readlink(resolved.inode));
-    const encoded = encoder.encode(target);
-    const used = Math.min(capacity, encoded.byteLength, MAX_PATH_TRANSFER);
-    this.#memory.writeRange(buffer, used).set(encoded.subarray(0, used));
+    const transferOffset = this.#memory.transferOffset;
+    const targetLength = utf8ByteLength(target);
+    const used = Math.min(
+      capacity,
+      Math.max(0, targetLength - transferOffset),
+      Math.max(0, MAX_TRANSFER_BYTES - transferOffset),
+      // signalbox: readlink replies use the same fixed cap as other child I/O.
+      this.#memory.transferLimit,
+    );
+    const copied = this.#memory.writeUtf8Slice(buffer, target, transferOffset, used);
+    if (copied !== used) throw new TypeError("Readlink UTF-8 slice was incomplete");
     this.#memory.u32(bufused, used);
     return 0;
   }
@@ -591,7 +596,7 @@ export class WasiPathCalls {
 
   #readPath(pointer: number, length: number): string {
     const size = length >>> 0;
-    if (size > MAX_PATH_TRANSFER) throw new WasiError(ENAMETOOLONG);
+    if (size > MAX_TRANSFER_BYTES) throw new WasiError(ENAMETOOLONG);
     return this.#memory.string(pointer, size);
   }
 }

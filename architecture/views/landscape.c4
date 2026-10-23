@@ -6,7 +6,8 @@ views {
       Who uses Signalbox and what it reaches. Four people share one Signalbox (A and B members of folder Company,
       C its admin, D an outside collaborator on folder Team only); an operator runs it through Build & infra.
       It reaches five groups of outside services.
-      Click Signalbox for the modules, a person for the hierarchy, the operator for deployment, a group for its services.
+      Click Signalbox for what it is built from (Basalt, Pumice and the Signalbox OS that composes them), a person
+      for the hierarchy, the operator for deployment, a group for its services. Every module is in `Overview / Containers`.
       The sidebar holds the rest: Domain, States, Workflows, Journeys, Scenarios.
     '''
     include personA with { navigateTo hierarchy }
@@ -15,7 +16,7 @@ views {
     include personD with { navigateTo people-meet }
     include operator with { navigateTo deployment }
     include build with { navigateTo deployment }
-    include signalbox with { navigateTo containers }
+    include signalbox with { navigateTo components }
     group 'Outside Signalbox' {
       color muted
       opacity 10%

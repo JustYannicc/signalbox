@@ -7,10 +7,12 @@ import { createKernelBusyboxHost } from "../../kernel/KernelBusyboxHost.ts";
 import { createKernelCoreutilsHost } from "../../kernel/KernelCoreutilsHost.ts";
 import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
+import type { KernelSyscallRequest } from "../../kernel/KernelSyscallPort.ts";
 import { KernelPipe } from "../../kernel/KernelPipe.ts";
 import { createChildBusybox } from "../ChildBusybox.ts";
 import { createChildCoreutils } from "../ChildCoreutils.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
+import { bashArtifactAvailable, startBlockedBashReaders } from "./ChildBlockedReadersFixture.ts";
 import { coreutilsArtifactsAvailable, coreutilsModule } from "./CoreutilsArtifactFixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
@@ -18,7 +20,11 @@ const busyboxPath = new URL("../../../../../.t3/1071/programs/busybox.wasm", imp
 const available = NodeFS.existsSync(busyboxPath) && coreutilsArtifactsAvailable;
 if (!available && NodeProcess.env.SIGNALBOX_REQUIRE_CHILD_IO_ARTIFACTS === "1")
   throw new Error("Child I/O tests require pinned BusyBox and coreutils artifacts");
+const NONBLOCK = 4;
 const SIZE = 200 * 1024 * 1024;
+const BLOCKED_BASH_READERS = 16;
+const scenarios = ["cat-null", "cat-pipe-head", "head-file"] as const;
+type Scenario = (typeof scenarios)[number];
 
 function loadBusybox(): WebAssembly.Module {
   const bytes = NodeFS.readFileSync(busyboxPath);
@@ -78,99 +84,179 @@ function discard(fixture: ReturnType<typeof childBusyboxFixture>) {
   return () => ({ bytes, sha256: hash.digest("hex") });
 }
 
+async function runScenario(scenario: Scenario, blockedReaderCount: number) {
+  const producer = childBusyboxFixture({
+    args: ["cat", "input"],
+    env: { PATH: "/bin", PWD: "/workspace" },
+  });
+  const expectedSha256 = seed(producer);
+  const pipe = new KernelPipe(producer.context.wakes);
+  const consumer = childBusyboxFixture({
+    args: ["head", "-c", "200M"],
+    env: { PATH: "/bin", PWD: "/workspace" },
+    readInto: (target) => pipe.readInto(target),
+  });
+  // Match the product pipe endpoint's immediate NONBLOCK contract.
+  Object.assign(consumer.filesystem.descriptors.get(0).stdio!, {
+    supportsNonblocking: true,
+    readInto: (target: Uint8Array, flags: number) =>
+      (flags & NONBLOCK) !== 0 ? pipe.tryReadInto(target) : pipe.readInto(target),
+  });
+  const catOwner = createKernelBusyboxHost({ context: producer.context });
+  const headFixture = scenario === "head-file" ? producer : consumer;
+  const headArgs =
+    scenario === "head-file" ? ["head", "-c", "200M", "input"] : consumer.context.args;
+  const headOwner = createKernelCoreutilsHost({
+    context: { ...headFixture.context, args: headArgs },
+  });
+  const calls = { count: 0 };
+  const catPort = counted(
+    {
+      call: catOwner.port.call.bind(catOwner.port),
+      callBusybox: catOwner.port.callBusybox.bind(catOwner.port),
+    },
+    calls,
+  );
+  const headPort = counted(
+    {
+      call: headOwner.port.call.bind(headOwner.port),
+      callCoreutils: headOwner.port.callCoreutils.bind(headOwner.port),
+    },
+    calls,
+  );
+  const moved = discard(scenario === "cat-null" ? producer : headFixture);
+  if (scenario === "cat-pipe-head") {
+    vi.spyOn(producer.filesystem.descriptors.get(1).stdio!, "write").mockImplementation((bytes) =>
+      pipe.writeBlocking(bytes),
+    );
+  }
+  let blockedReaders: Awaited<ReturnType<typeof startBlockedBashReaders>> | undefined;
+  try {
+    if (blockedReaderCount > 0) {
+      blockedReaders = await startBlockedBashReaders(blockedReaderCount);
+      expect(blockedReaders.fdReadEntries()).toBe(blockedReaderCount + 1);
+      expect(blockedReaders.forkCount()).toBe(blockedReaderCount + 1);
+    }
+    const results =
+      scenario === "head-file"
+        ? [
+            await createChildCoreutils({
+              module: coreutilsModule("head"),
+              port: headPort,
+              args: headArgs,
+              env: headFixture.context.env,
+            }).run(),
+          ]
+        : await Promise.all([
+            createChildBusybox({
+              module: loadBusybox(),
+              port: catPort,
+              args: producer.context.args,
+              env: producer.context.env,
+            })
+              .run()
+              .finally(() => pipe.closeWriter()),
+            ...(scenario === "cat-pipe-head"
+              ? [
+                  createChildCoreutils({
+                    module: coreutilsModule("head"),
+                    port: headPort,
+                    args: headArgs,
+                    env: consumer.context.env,
+                  })
+                    .run()
+                    .finally(() => pipe.closeReader()),
+                ]
+              : []),
+          ]);
+    expect(results).toEqual(results.map(() => exited()));
+    const result = moved();
+    expect(result.bytes).toBe(SIZE);
+    expect(result.sha256).toBe(expectedSha256);
+    expect(
+      calls.count,
+      `200 MiB with ${blockedReaderCount} blocked Bash readers must stay below 5,000 RPCs`,
+    ).toBeLessThan(5_000);
+  } finally {
+    if (blockedReaders !== undefined) await blockedReaders.close();
+    pipe.closeReader();
+    pipe.closeWriter();
+    await catOwner.close();
+    await headOwner.close();
+    await consumer.close();
+    await producer.close();
+    vi.restoreAllMocks();
+  }
+}
+
 describe.skipIf(!available)("bulk child I/O", () => {
-  it.each(["cat-null", "cat-pipe-head", "head-file"] as const)(
-    "%s",
+  it.each(scenarios)(
+    "%s with 0 blocked Bash readers",
     async (scenario) => {
-      const producer = childBusyboxFixture({
-        args: ["cat", "input"],
-        env: { PATH: "/bin", PWD: "/workspace" },
-      });
-      const expectedSha256 = seed(producer);
-      const pipe = new KernelPipe(producer.context.wakes);
-      const consumer = childBusyboxFixture({
-        args: ["head", "-c", "200M"],
-        env: { PATH: "/bin", PWD: "/workspace" },
-        readInto: (target) => pipe.readInto(target),
-      });
-      const catOwner = createKernelBusyboxHost({ context: producer.context });
-      const headFixture = scenario === "head-file" ? producer : consumer;
-      const headArgs =
-        scenario === "head-file" ? ["head", "-c", "200M", "input"] : consumer.context.args;
-      const headOwner = createKernelCoreutilsHost({
-        context: { ...headFixture.context, args: headArgs },
-      });
-      const calls = { count: 0 };
-      const catPort = counted(
-        {
-          call: catOwner.port.call.bind(catOwner.port),
-          callBusybox: catOwner.port.callBusybox.bind(catOwner.port),
-        },
-        calls,
-      );
-      const headPort = counted(
-        {
-          call: headOwner.port.call.bind(headOwner.port),
-          callCoreutils: headOwner.port.callCoreutils.bind(headOwner.port),
-        },
-        calls,
-      );
-      const moved = discard(scenario === "cat-null" ? producer : headFixture);
-      if (scenario === "cat-pipe-head") {
-        vi.spyOn(producer.filesystem.descriptors.get(1).stdio!, "write").mockImplementation(
-          (bytes) => pipe.writeBlocking(bytes),
-        );
-      }
-      try {
-        const results =
-          scenario === "head-file"
-            ? [
-                await createChildCoreutils({
-                  module: coreutilsModule("head"),
-                  port: headPort,
-                  args: headArgs,
-                  env: headFixture.context.env,
-                }).run(),
-              ]
-            : await Promise.all([
-                createChildBusybox({
-                  module: loadBusybox(),
-                  port: catPort,
-                  args: producer.context.args,
-                  env: producer.context.env,
-                })
-                  .run()
-                  .finally(() => pipe.closeWriter()),
-                ...(scenario === "cat-pipe-head"
-                  ? [
-                      createChildCoreutils({
-                        module: coreutilsModule("head"),
-                        port: headPort,
-                        args: headArgs,
-                        env: consumer.context.env,
-                      })
-                        .run()
-                        .finally(() => pipe.closeReader()),
-                    ]
-                  : []),
-              ]);
-        expect(results).toEqual(results.map(() => exited()));
-        const result = moved();
-        expect(result.bytes).toBe(SIZE);
-        expect(result.sha256).toBe(expectedSha256);
-        expect(calls.count, "200 MiB must not need thousands of serial child RPCs").toBeLessThan(
-          5_000,
-        );
-      } finally {
-        pipe.closeReader();
-        pipe.closeWriter();
-        await catOwner.close();
-        await headOwner.close();
-        await consumer.close();
-        await producer.close();
-        vi.restoreAllMocks();
-      }
+      await runScenario(scenario, 0);
     },
     120_000,
   );
+});
+
+describe.skipIf(!available || !bashArtifactAvailable)(
+  "bulk child I/O with 16 blocked Bash readers",
+  () => {
+    it.each(scenarios)(
+      "%s with 16 blocked Bash readers",
+      async (scenario) => {
+        await runScenario(scenario, BLOCKED_BASH_READERS);
+      },
+      120_000,
+    );
+  },
+);
+
+describe.skipIf(!available)("small-file child I/O", () => {
+  it("cats 1,000 small files without an empty internal EOF RPC", async () => {
+    const names = Array.from({ length: 1000 }, (_, index) => `small-${index}`);
+    const fixture = childBusyboxFixture({
+      args: ["cat", ...names],
+      env: { PATH: "/bin", PWD: "/workspace" },
+    });
+    const hash = NodeCrypto.createHash("sha256");
+    for (const name of names) {
+      const fd = fixture.filesystem.open(name, KernelOpenFlags.O_CREAT | KernelOpenFlags.O_WRONLY);
+      const bytes = new Uint8Array(100).fill(name.length);
+      expect(fixture.filesystem.write(fd, bytes, null)).toBe(100);
+      fixture.filesystem.close(fd);
+      hash.update(bytes);
+    }
+    const owner = createKernelBusyboxHost({ context: fixture.context });
+    const calls = { count: 0 };
+    let reads = 0;
+    const port = counted(
+      {
+        call: async (request: KernelSyscallRequest) => {
+          if (request.name === "fd_read") reads++;
+          return owner.port.call(request);
+        },
+        callBusybox: owner.port.callBusybox.bind(owner.port),
+      },
+      calls,
+    );
+    const moved = discard(fixture);
+    try {
+      expect(
+        await createChildBusybox({
+          module: loadBusybox(),
+          port,
+          args: fixture.context.args,
+          env: fixture.context.env,
+        }).run(),
+      ).toEqual(exited());
+      expect(moved()).toEqual({ bytes: 100000, sha256: hash.digest("hex") });
+      expect(reads).toBe(2000);
+      expect(calls.count).toBeLessThanOrEqual(6013);
+    } finally {
+      await owner.close();
+      await fixture.close();
+      vi.restoreAllMocks();
+    }
+  });
 });

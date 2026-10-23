@@ -61,6 +61,44 @@ export function wasmImportReactor(
   );
 }
 
+export function wasmImportCommand(
+  importName: string,
+  params: readonly ValueType[],
+  args: readonly number[],
+  data: Uint8Array,
+) {
+  const body = [
+    0,
+    ...args.flatMap((value, index) => [params[index] === "i64" ? 0x42 : 0x41, ...leb(value, true)]),
+    0x10,
+    0,
+    0x04,
+    0x40,
+    0,
+    0x0b,
+    0x0b,
+  ];
+  return new WebAssembly.Module(
+    new Uint8Array([
+      0,
+      97,
+      115,
+      109,
+      1,
+      0,
+      0,
+      0,
+      ...section(1, [2, ...type(params, ["i32"]), ...type([], [])]),
+      ...section(2, [1, ...name("wasi_snapshot_preview1"), ...name(importName), 0, 0]),
+      ...section(3, [1, 1]),
+      ...section(5, [1, 0, 1]),
+      ...section(7, [2, ...name("memory"), 2, 0, ...name("_start"), 0, 1]),
+      ...section(10, [1, ...leb(body.length), ...body]),
+      ...section(11, [1, 0, 0x41, 0, 0x0b, ...leb(data.length), ...data]),
+    ]),
+  );
+}
+
 export function wasmSignalMaskCommand(how: number, low: number, high: number) {
   const body = [
     0,

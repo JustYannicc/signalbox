@@ -142,7 +142,10 @@ export function createChildWorkerRunner<Host extends object>(
           );
           if (owner.exited !== undefined) void owner.exited.then(settle.resolve, settle.reject);
           let failure: ChildWorkerDispatchError | undefined;
+          let dispatched = false;
           try {
+            context.signal.throwIfAborted();
+            dispatched = true;
             return await dispatch.run(
               Object.freeze({
                 ...code,
@@ -162,10 +165,12 @@ export function createChildWorkerRunner<Host extends object>(
             failure =
               error instanceof ChildWorkerDispatchError
                 ? error
-                : new ChildWorkerDispatchError(error, {
-                    kind: "unconfirmed",
-                    stopped: new Promise<void>(() => {}),
-                  });
+                : new ChildWorkerDispatchError(
+                    error,
+                    dispatched
+                      ? { kind: "unconfirmed", stopped: new Promise<void>(() => {}) }
+                      : { kind: "stopped" },
+                  );
             settle.reject(failure);
             await owner.onDispatchFailure?.(failure);
           } finally {

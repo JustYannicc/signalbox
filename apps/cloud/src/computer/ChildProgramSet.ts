@@ -13,7 +13,7 @@ export const CHILD_COREUTILS_COMMANDS = Object.freeze([
 
 export type ChildCoreutilsCommand = (typeof CHILD_COREUTILS_COMMANDS)[number];
 
-export const CHILD_BUSYBOX_APPLETS = Object.freeze(["cat", "sed", "grep", "touch"] as const);
+export const CHILD_BUSYBOX_APPLETS = Object.freeze(["cat", "grep", "touch"] as const);
 
 export const CHILD_PROGRAM_PATHS = Object.freeze({
   bash: "/bin/bash",

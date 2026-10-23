@@ -5,6 +5,7 @@ import {
 import { KERNEL_BASH_ARTIFACT } from "../../src/kernel/KernelBashProgram.ts";
 import { KERNEL_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusyboxProgram.ts";
 import { KERNEL_GIT_ARTIFACT } from "../../src/kernel/KernelGitProgram.ts";
+import { KERNEL_GNU_SED_ARTIFACT } from "../../src/kernel/KernelGnuPrograms.ts";
 import { KERNEL_RIPGREP_ARTIFACT } from "../../src/kernel/KernelRipgrepProgram.ts";
 import {
   CHILD_COREUTILS_COMMANDS,
@@ -50,6 +51,7 @@ export function createSeededCommandProgramCodes(
   requireProgramCode(programs.busyboxApplets, "busybox applets");
   requireProgramCode(programs.ripgrep, "ripgrep");
   requireProgramCode(programs.git, "git");
+  requireProgramCode(programs.sed, "GNU sed");
   const coreutilsPrograms = {} as Record<ChildCoreutilsCommand, ChildWorkerCode>;
   for (const command of CHILD_COREUTILS_COMMANDS) {
     const code = programs.coreutils?.[command];
@@ -68,6 +70,7 @@ export function createSeededCommandProgramCodes(
     ripgrep: attachProgramReference(programs.ripgrep, KERNEL_RIPGREP_ARTIFACT.sha256),
     coreutils,
     git: attachProgramReference(programs.git, KERNEL_GIT_ARTIFACT.sha256),
+    sed: attachProgramReference(programs.sed, KERNEL_GNU_SED_ARTIFACT.sha256),
   });
 }
 

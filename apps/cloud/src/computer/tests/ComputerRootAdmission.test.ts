@@ -263,18 +263,9 @@ describe("Computer root admission", () => {
         KernelOpenFlags.O_WRONLY | KernelOpenFlags.O_CLOEXEC,
       );
       const inherited = fixture.filesystem.open("/workspace/out", KernelOpenFlags.O_RDONLY);
-      const before = [...fixture.filesystem.descriptors.entries()];
-      await expect(
-        executor.spawn(command("/bin/native"), fixture.context.signal),
-      ).rejects.toMatchObject({ code: "ENOTSUP" });
-      expect(fork).not.toHaveBeenCalled();
-      expect([...fixture.filesystem.descriptors.entries()]).toEqual(before);
-      expect(fixture.read("/workspace/out")).toBe("prior-write");
-      expect(machine.spawn).not.toHaveBeenCalled();
-      fixture.filesystem.close(inherited);
-      fixture.filesystem.close(extra);
       // The planned pipes replace even missing inherited standard descriptors.
       for (const fd of [0, 1, 2]) fixture.filesystem.close(fd);
+      const before = [...fixture.filesystem.descriptors.entries()];
       const child = await executor.spawn(command("/bin/native"), fixture.context.signal);
       try {
         const writer = child.stdin.getWriter();
@@ -296,6 +287,14 @@ describe("Computer root admission", () => {
       expect(machine.spawn).toHaveBeenCalledWith(command("/bin/native"), expect.any(AbortSignal));
       expect(disposed).toHaveBeenCalledOnce();
       expect(input).toEqual([bytes]);
+      expect([...fixture.filesystem.descriptors.entries()]).toEqual(before);
+      expect(fixture.read("/workspace/out")).toBe("prior-write");
+      expect(processes.signalMask(undefined, 3)).toEqual({
+        status: "ok",
+        value: { low: 0, high: 0 },
+      });
+      fixture.filesystem.close(inherited);
+      fixture.filesystem.close(extra);
       expect(observed.enqueue).not.toHaveBeenCalled();
       expect(capacity.active).toBe(0);
     } finally {

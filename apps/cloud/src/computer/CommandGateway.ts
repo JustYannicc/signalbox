@@ -29,6 +29,7 @@ export type CommandProgramCodes = ChildProgramCatalogOptions["programs"] & {
   readonly busyboxApplets: ChildWorkerCode;
   readonly coreutils: Readonly<Record<ChildCoreutilsCommand, ChildWorkerCode>>;
   readonly git: ChildWorkerCode;
+  readonly sed: ChildWorkerCode;
 };
 
 export interface CommandGatewayOptions {
