@@ -153,7 +153,7 @@ export class WasiFdCalls {
   *fdFdstatGet(fd: number, output: number): WasiCall<number> {
     const descriptor = this.#descriptors.get(fd);
     this.#memory.range(output, 24);
-    const view = this.#memory.view(output, 24);
+    const view = this.#memory.writeView(output, 24);
     new Uint8Array(view.buffer, view.byteOffset, view.byteLength).fill(0);
     view.setUint8(0, filetype(descriptor.kind === "stdio" ? "character" : descriptor.kind));
     view.setUint16(2, descriptor.flags, true);
@@ -244,7 +244,7 @@ export class WasiFdCalls {
     if (!descriptor.preopen || descriptor.preopenPath === undefined) throw new WasiError(ENOTSUP);
     const pathLength = new TextEncoder().encode(descriptor.preopenPath).byteLength;
     this.#memory.range(output, 8);
-    const view = this.#memory.view(output, 8);
+    const view = this.#memory.writeView(output, 8);
     new Uint8Array(view.buffer, view.byteOffset, view.byteLength).fill(0);
     view.setUint8(0, 0);
     view.setUint32(4, pathLength, true);
@@ -257,7 +257,7 @@ export class WasiFdCalls {
     const encoded = new TextEncoder().encode(descriptor.preopenPath);
     const capacity = pathLen >>> 0;
     if (capacity < encoded.byteLength) throw new WasiError(ENAMETOOLONG);
-    this.#memory.range(path, encoded.byteLength).set(encoded);
+    this.#memory.writeRange(path, encoded.byteLength).set(encoded);
     return 0;
   }
 
@@ -553,7 +553,7 @@ export class WasiFdCalls {
         }
         validateCount(count, size);
         if (count === 0) return total;
-        this.#memory.range(vector.pointer + offset, count).set(scratch.subarray(0, count));
+        this.#memory.writeRange(vector.pointer + offset, count).set(scratch.subarray(0, count));
         offset += count;
         total += count;
         if (count < size) return total;
@@ -590,7 +590,7 @@ export class WasiFdCalls {
         const count = yield* this.#readInto(descriptor, position + BigInt(total), scratch);
         validateCount(count, size);
         if (count === 0) return total;
-        this.#memory.range(vector.pointer + offset, count).set(scratch.subarray(0, count));
+        this.#memory.writeRange(vector.pointer + offset, count).set(scratch.subarray(0, count));
         total += count;
         offset += count;
         if (count < size) return total;
@@ -761,7 +761,7 @@ export function writeFilestat(
   stat: Stat,
   type: "file" | "directory" | "symlink" | "character" = stat.type,
 ): void {
-  const view = memory.view(pointer, 64);
+  const view = memory.writeView(pointer, 64);
   new Uint8Array(view.buffer, view.byteOffset, view.byteLength).fill(0);
   view.setBigUint64(0, BigInt.asUintN(64, device), true);
   view.setBigUint64(8, BigInt.asUintN(64, inode), true);
@@ -817,7 +817,7 @@ function encodeDirectoryEntries(
   if (start > DIR_COOKIE_MAX) return 0;
   let index = Number(start);
   let offset = 0;
-  const output = memory.range(pointer, capacity);
+  memory.range(pointer, capacity);
   while (index < entries.length) {
     const entry = entries[index];
     if (entry === undefined) throw new TypeError("Invalid directory entry");
@@ -831,7 +831,7 @@ function encodeDirectoryEntries(
     view.setUint8(20, filetype(entry.type));
     record.set(name, 24);
     const used = Math.min(recordLength, capacity - offset);
-    output.set(record.subarray(0, used), offset);
+    memory.writeRange(pointer + offset, used).set(record.subarray(0, used));
     offset += used;
     if (used < recordLength) break;
     index++;

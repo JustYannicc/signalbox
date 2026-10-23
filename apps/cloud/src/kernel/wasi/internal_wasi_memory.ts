@@ -70,12 +70,22 @@ export class WasiMemory {
     return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
 
+  /** Access only bytes the caller will overwrite, so sparse syscall memory can return exact writes. */
+  writeRange(pointer: number, length: number): Uint8Array<ArrayBuffer> {
+    return this.range(pointer, length);
+  }
+
+  writeView(pointer: number, length: number): DataView {
+    const bytes = this.writeRange(pointer, length);
+    return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+
   u32(pointer: number, value: number): void {
-    this.view(pointer, 4).setUint32(0, value >>> 0, true);
+    this.writeView(pointer, 4).setUint32(0, value >>> 0, true);
   }
 
   u64(pointer: number, value: bigint): void {
-    this.view(pointer, 8).setBigUint64(0, BigInt.asUintN(64, value), true);
+    this.writeView(pointer, 8).setBigUint64(0, BigInt.asUintN(64, value), true);
   }
 
   readU32(pointer: number): number {
@@ -132,8 +142,10 @@ export class WasiMemory {
     }
 
     // Validate both destination ranges before changing guest memory.
-    const pointerView = this.view(pointers, pointerBytes);
-    const output = this.range(buffer, size);
+    this.range(pointers, pointerBytes);
+    this.range(buffer, size);
+    const pointerView = this.writeView(pointers, pointerBytes);
+    const output = this.writeRange(buffer, size);
     let outputOffset = 0;
     const firstString = buffer >>> 0;
     for (const [index, bytes] of encoded.entries()) {

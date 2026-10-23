@@ -85,8 +85,10 @@ export class WasiHost {
 
   *#argsSizesGet(countPointer: number, sizePointer: number): WasiCall<number> {
     const { count, size } = this.#memory.stringSizes(this.#args);
-    const countView = this.#memory.view(countPointer, 4);
-    const sizeView = this.#memory.view(sizePointer, 4);
+    this.#memory.range(countPointer, 4);
+    this.#memory.range(sizePointer, 4);
+    const countView = this.#memory.writeView(countPointer, 4);
+    const sizeView = this.#memory.writeView(sizePointer, 4);
     countView.setUint32(0, count, true);
     sizeView.setUint32(0, size, true);
     return ERRNO_SUCCESS;
@@ -99,8 +101,10 @@ export class WasiHost {
 
   *#environSizesGet(countPointer: number, sizePointer: number): WasiCall<number> {
     const { count, size } = this.#memory.stringSizes(this.#env);
-    const countView = this.#memory.view(countPointer, 4);
-    const sizeView = this.#memory.view(sizePointer, 4);
+    this.#memory.range(countPointer, 4);
+    this.#memory.range(sizePointer, 4);
+    const countView = this.#memory.writeView(countPointer, 4);
+    const sizeView = this.#memory.writeView(sizePointer, 4);
     countView.setUint32(0, count, true);
     sizeView.setUint32(0, size, true);
     return ERRNO_SUCCESS;
@@ -128,7 +132,7 @@ export class WasiHost {
   }
 
   *#randomGet(pointer: number, length: number): WasiCall<number> {
-    const output = this.#memory.range(pointer, length);
+    const output = this.#memory.writeRange(pointer, length);
     for (let offset = 0; offset < output.byteLength; offset += RANDOM_CHUNK_BYTES) {
       const end = Math.min(offset + RANDOM_CHUNK_BYTES, output.byteLength);
       crypto.getRandomValues(output.subarray(offset, end));
