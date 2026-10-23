@@ -323,7 +323,7 @@ export class KernelLowerFileSystemSourceIndex {
     if (this.#entryByPath.get(path) !== entry) {
       return this.#readDirectoryFresh(path, signal ?? currentKernelSignal(), attempt);
     }
-    if (entry.stat.type !== "directory") return undefined;
+    if (entry.stat.type !== "directory" && entry.stat.type !== "symlink") return undefined;
     if (currentKernelIoMode() === "sync") {
       throw kernelError("ENOTSUP", "Lower directory entries require asynchronous execution");
     }

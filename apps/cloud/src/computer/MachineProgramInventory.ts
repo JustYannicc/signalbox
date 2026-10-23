@@ -1,3 +1,5 @@
+import { resolveInventoryPath } from "./machineFiles/InventoryPath.ts";
+
 export type MachineProgramEntryType =
   | "file"
   | "directory"
@@ -122,43 +124,66 @@ export function indexMachinePrograms(
     return indexed;
   };
 
+  const resolve = (path: string, followFinal: boolean) => {
+    assertCanonicalMachinePath(path);
+    return resolveInventoryPath(path, index().byPath, inventory.excludedRoots, followFinal);
+  };
   const isExcluded = (path: string) => {
     assertCanonicalMachinePath(path);
-    return inventory.excludedRoots.some((root) => underRoot(path, root));
+    return (
+      inventory.excludedRoots.some((root) => underRoot(path, root)) ||
+      resolve(path, false).kind === "excluded"
+    );
   };
   const needsLiveDirectory = (path: string) => {
     assertCanonicalMachinePath(path);
-    return inventory.excludedRoots.some((root) => parentPath(root) === path);
+    if (inventory.excludedRoots.some((root) => parentPath(root) === path)) return true;
+    const resolved = resolve(path, true);
+    return (
+      resolved.kind === "excluded" ||
+      (resolved.kind === "entry" &&
+        inventory.excludedRoots.some((root) => parentPath(root) === resolved.path))
+    );
   };
 
   return {
     path: inventory.path,
     excludedRoots: inventory.excludedRoots,
     lookup(paths) {
-      const excluded = paths.map((path) => {
-        assertCanonicalMachinePath(path);
-        return isExcluded(path);
+      return paths.map((path) => {
+        const resolved = resolve(path, false);
+        return resolved.kind === "entry" ? atPath(resolved.entry, path) : undefined;
       });
-      if (excluded.every(Boolean)) return paths.map(() => undefined);
-      const current = index();
-      return paths.map((path, index) => (excluded[index] ? undefined : current.byPath.get(path)));
     },
     readdir(path) {
-      if (isExcluded(path) || needsLiveDirectory(path)) return undefined;
-      const current = index();
-      if (current.byPath.get(path)?.type !== "directory") return undefined;
-      return current.children.get(path) ?? [];
+      if (needsLiveDirectory(path)) return undefined;
+      const resolved = resolve(path, true);
+      if (resolved.kind !== "entry" || resolved.entry.type !== "directory") return undefined;
+      return (index().children.get(resolved.path) ?? []).map((entry) =>
+        atPath(
+          entry,
+          `${path === "/" ? "" : path}/${entry.path.slice(entry.path.lastIndexOf("/") + 1)}`,
+        ),
+      );
     },
     needsLiveDirectory,
     readlink(path) {
-      if (isExcluded(path)) throw new TypeError(`Machine path is excluded: ${path}`);
-      const entry = index().byPath.get(path);
-      if (entry?.type !== "symlink" || entry.target === undefined)
+      const resolved = resolve(path, false);
+      if (resolved.kind === "excluded") throw new TypeError(`Machine path is excluded: ${path}`);
+      if (
+        resolved.kind !== "entry" ||
+        resolved.entry.type !== "symlink" ||
+        resolved.entry.target === undefined
+      )
         throw new TypeError(`Machine path is not a symlink: ${path}`);
-      return entry.target;
+      return resolved.entry.target;
     },
     isExcluded,
   };
+}
+
+function atPath(entry: MachineProgramEntry, path: string): MachineProgramEntry {
+  return entry.path === path ? entry : { ...entry, path };
 }
 
 function validateEnvelope(inventory: MachineProgramInventory): void {

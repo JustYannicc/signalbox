@@ -76,14 +76,19 @@ function fixture() {
   };
 }
 
-describe("Bash PATH metadata batching", () => {
-  it("primes all PATH candidates during the first stat without reading file bytes", async () => {
+describe("Bash PATH metadata lookup", () => {
+  it("prepares only the candidate the guest requests without reading file bytes", async () => {
     const test = fixture();
     try {
       expect((await test.stat("first/tool")).value).toBe(44);
+      expect(test.lookups).toEqual([["/first/tool", "/first"]]);
       expect((await test.stat("second/tool")).value).toBe(0);
-      expect(test.lookups).toHaveLength(1);
-      expect(test.lookups[0]).toEqual(expect.arrayContaining(["/first/tool", "/second/tool"]));
+      expect(test.lookups).toEqual([
+        ["/first/tool", "/first"],
+        ["/second/tool", "/second"],
+      ]);
+      expect((await test.stat("first/tool")).value).toBe(44);
+      expect(test.lookups).toHaveLength(2);
     } finally {
       test.close();
     }
@@ -97,7 +102,7 @@ describe("Bash PATH metadata batching", () => {
       fd = test.filesystem.open("/second", KernelOpenFlags.O_RDONLY);
       test.lookups.length = 0;
       expect((await test.stat("tool", fd)).value).toBe(0);
-      expect(test.lookups[0]).toEqual(expect.arrayContaining(["/first/tool", "/second/tool"]));
+      expect(test.lookups).toEqual([["/second/tool"]]);
     } finally {
       if (fd !== undefined) test.filesystem.close(fd);
       test.close();

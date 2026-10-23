@@ -426,7 +426,7 @@ describe("KernelLowerFileSystem", () => {
     }
   });
 
-  it("checks effective search permission for public and WASI stat paths", async () => {
+  it("checks effective permissions for public stat, directory listings, and WASI stat", async () => {
     const fixture = filesystem({
       credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 },
       umask: 0o022,
@@ -434,6 +434,7 @@ describe("KernelLowerFileSystem", () => {
     const { source } = lowerSource([
       lowerEntry("/private", "directory", 0n, { mode: 0o700, uid: 0, gid: 0 }),
       lowerEntry("/private/secret", "file", 6n, { mode: 0o644, uid: 0, gid: 0 }),
+      lowerEntry("/private/listable", "directory", 0n, { mode: 0o755, uid: 0, gid: 0 }),
     ]);
     const lower = fixture.fs.installLowerFileSystem(source);
     const syscalls = createKernelSyscallHost({
@@ -444,7 +445,7 @@ describe("KernelLowerFileSystem", () => {
     });
     const path = encoder.encode("private/secret");
     try {
-      await lower.prepare(["/private/secret"]);
+      await lower.prepare(["/private", "/private/secret", "/private/listable"]);
       expect(fixture.fs.stat("/private")).toMatchObject({
         type: "directory",
         posix: { mode: 0o700, uid: 0, gid: 0 },
@@ -453,6 +454,12 @@ describe("KernelLowerFileSystem", () => {
         expect.objectContaining({ code: "EACCES" }),
       );
       expect(() => fixture.fs.lstat("/private/secret")).toThrow(
+        expect.objectContaining({ code: "EACCES" }),
+      );
+      expect(() => fixture.fs.readdir("/private")).toThrow(
+        expect.objectContaining({ code: "EACCES" }),
+      );
+      expect(() => fixture.fs.readdir("/private/listable")).toThrow(
         expect.objectContaining({ code: "EACCES" }),
       );
 
@@ -468,6 +475,28 @@ describe("KernelLowerFileSystem", () => {
       expect(response).toMatchObject({ kind: "return", value: 2 });
     } finally {
       syscalls.close();
+      lower.dispose();
+      fixture.close();
+    }
+  });
+
+  it("can list readable names without search permission on the final directory", async () => {
+    const fixture = filesystem({
+      credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 },
+      umask: 0o022,
+    });
+    const { source } = lowerSource([
+      lowerEntry("/names", "directory", 0n, { mode: 0o744, uid: 0, gid: 0 }),
+      lowerEntry("/names/item", "file", 6n, { mode: 0o644, uid: 0, gid: 0 }),
+    ]);
+    const lower = fixture.fs.installLowerFileSystem(source);
+    try {
+      await lower.prepare(["/names"]);
+      expect(fixture.fs.readdir("/names")).toEqual(["item"]);
+      expect(() => fixture.fs.stat("/names/item")).toThrow(
+        expect.objectContaining({ code: "EACCES" }),
+      );
+    } finally {
       lower.dispose();
       fixture.close();
     }

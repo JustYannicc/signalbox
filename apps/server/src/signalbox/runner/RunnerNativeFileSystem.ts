@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - native BigInt metadata keeps nanoseconds and inode identities that Effect FileSystem converts to Date and number.
 import * as NodeBuffer from "node:buffer";
 import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
 import {
   MACHINE_FILES_MAX_CONTENT_BYTES,
   MACHINE_FILES_MAX_READDIR_ENTRIES,
@@ -150,7 +149,7 @@ const readdirOperation = async (operation: Extract<MachineFileOperation, { op: "
         ...(operation.withStat === true
           ? {
               stat: statShape(
-                await NodeFS.promises.lstat(NodePath.join(operation.path, entry.name), {
+                await NodeFS.promises.lstat(`${operation.path}/${entry.name}`, {
                   bigint: true,
                 }),
               ),

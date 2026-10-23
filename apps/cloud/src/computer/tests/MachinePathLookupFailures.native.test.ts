@@ -83,7 +83,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine lookup failur
         fixture.direct("signalbox_lookup_crash", ["signalbox_lookup_crash"], path),
       );
       expect(lookupCalls.length).toBeGreaterThan(1);
-      expect(lookupCalls[0]).toBe(64);
+      expect(lookupCalls.every((count) => count > 0 && count <= 64)).toBe(true);
       expect(fixture.sqlWriteCount()).toBe(writesBefore);
       expect(fixture.machineCalls).toHaveLength(machineCallsBeforeLookup);
       return visibleFailure;

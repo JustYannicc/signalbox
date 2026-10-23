@@ -38,16 +38,12 @@ export class ComputerProgramResolver {
           .map((directory) =>
             absolutePath(`${directory || command.cwd}/${command.executable}`, command.cwd),
           );
-    try {
-      await this.#options.overlay.prepare(paths, request.signal);
-    } catch (error) {
-      if (!["EACCES", "ENOENT", "ENOTDIR"].includes(String(errorCode(error)))) throw error;
-    }
     request.signal.throwIfAborted();
     let denied = false;
     for (const path of paths) {
       let lower: boolean;
       try {
+        await this.#options.overlay.prepare([path], request.signal);
         lower = await this.#options.overlay.isLower(path, request.signal);
         if ((await request.filesystem.checkExecutable(path, request.signal)).type !== "file")
           continue;

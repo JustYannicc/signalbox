@@ -101,7 +101,7 @@ describe("ComputerProgramResolver", () => {
     const input = withCatalog(request, bindings);
     const result = await fixture.resolver.resolve(input);
 
-    expect(fixture.requested).toEqual([["/workspace/bin/bash", "/usr/bin/bash"]]);
+    expect(fixture.requested).toEqual([["/workspace/bin/bash"]]);
     expect(result.command.executable).toBe("/workspace/bin/bash");
     expect(input.command).toBe(request.command);
     expect(input.catalog).toBe(bindings);
@@ -164,7 +164,7 @@ describe("ComputerProgramResolver", () => {
     expect(missing.requested).toEqual([["/workspace/bin/typo"]]);
   });
 
-  it("continues PATH search when batched prefetch crosses a denied directory", async () => {
+  it("continues PATH search after a denied candidate", async () => {
     const fixture = resolverFor({
       "/workspace/bin/tool": { type: "file", executable: false, lower: true },
       "/usr/bin/tool": { type: "file", executable: true, lower: true },

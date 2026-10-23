@@ -166,8 +166,10 @@ export class KernelFileSystemPaths {
   readdir(path: string): string[] {
     return withKernelErrors(() => {
       if (virtualDevice(path) !== undefined) throw kernelError("ENOTDIR");
-      const resolved = this.resolve(path);
+      const resolved = this.resolve(path, this.#searchOptions(true));
       if (resolved.stat.type !== "directory") throw kernelError("ENOTDIR");
+      if (this.#posix.credentials !== undefined)
+        this.#posix.checkAccess(resolved.mount.storage, resolved.inode, "directory", 4, true);
       return runKernelSync(resolved.mount.storage.readdir(resolved.inode)).map(
         (entry) => entry.name,
       );

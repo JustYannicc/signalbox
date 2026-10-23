@@ -82,6 +82,62 @@ it.layer(RunnerMachineFiles.layer.pipe(Layer.provide(RunnerNativeFileSystem.laye
       }),
     );
 
+    it.effect("keeps readdir child metadata on the native symlink and parent walk", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        const a = NodePath.join(f.root, "a");
+        const b = NodePath.join(f.root, "b");
+        yield* native(() =>
+          NodeFSP.mkdir(NodePath.join(a, "sub"), { recursive: true, mode: 0o700 }),
+        );
+        yield* native(() =>
+          NodeFSP.mkdir(NodePath.join(b, "sub"), { recursive: true, mode: 0o755 }),
+        );
+        yield* native(() =>
+          NodeFSP.writeFile(NodePath.join(a, "child"), "lexical child", { mode: 0o600 }),
+        );
+        yield* native(() =>
+          NodeFSP.writeFile(NodePath.join(b, "child"), "native", { mode: 0o755 }),
+        );
+        yield* native(() => NodeFSP.symlink(NodePath.join(b, "sub"), NodePath.join(a, "link")));
+
+        const path = `${a}/link/..`;
+        const nativeChildStat = yield* native(() =>
+          NodeFSP.lstat(`${path}/child`, { bigint: true }),
+        );
+        const result = yield* lookup(
+          request([{ id: "entries", op: "readdir", path, withStat: true }]),
+        );
+
+        expect(result.outcome.status).toBe("ok");
+        if (result.outcome.status !== "ok") return;
+        expect(result.outcome.results).toMatchObject([
+          {
+            id: "entries",
+            op: "readdir",
+            entries: [
+              {
+                name: "child",
+                type: "file",
+                stat: {
+                  mode: Number(nativeChildStat.mode),
+                  type: "file",
+                  size: nativeChildStat.size.toString(),
+                  dev: nativeChildStat.dev.toString(),
+                  ino: nativeChildStat.ino.toString(),
+                  atimeNs: nativeChildStat.atimeNs.toString(),
+                  mtimeNs: nativeChildStat.mtimeNs.toString(),
+                  ctimeNs: nativeChildStat.ctimeNs.toString(),
+                  birthtimeNs: nativeChildStat.birthtimeNs.toString(),
+                },
+              },
+              { name: "sub", type: "directory" },
+            ],
+          },
+        ]);
+      }),
+    );
+
     it.effect(
       "returns native stat metadata, original link bytes, directory details, and only requested ranges",
       () =>
