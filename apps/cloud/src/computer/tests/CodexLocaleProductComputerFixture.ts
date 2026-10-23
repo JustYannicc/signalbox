@@ -11,7 +11,11 @@ import type { KernelGitPort } from "../../kernel/KernelGitPort.ts";
 import { KERNEL_GIT_ARTIFACT } from "../../kernel/KernelGitProgram.ts";
 import { KERNEL_GNU_SED_ARTIFACT } from "../../kernel/KernelGnuPrograms.ts";
 import type { KernelCommand, KernelCommandExit } from "../../kernel/KernelCommandForwarder.ts";
-import { KernelFileSystem, KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
+import {
+  KernelFileSystem,
+  KernelOpenFlags,
+  type KernelPosixMetadata,
+} from "../../kernel/KernelFileSystem.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
@@ -106,7 +110,14 @@ function testCode(name: string): ChildWorkerCode {
   return { mainModule, modules: { [mainModule]: "export default class {}" } };
 }
 
-export function createCodexLocaleProductComputer(programs: CodexLocalePrograms) {
+export function createCodexLocaleProductComputer(
+  programs: CodexLocalePrograms,
+  options: {
+    readonly directory?: KernelPosixMetadata;
+    readonly file?: KernelPosixMetadata;
+    readonly machine?: KernelCommandForwarder;
+  } = {},
+) {
   const database = sqliteFixture();
   const storage = createFacetSqliteStorage(database.storage, () => 1_800_000_000_000_000_001n);
   const credentials = { uid: 1000, gid: 1000, euid: 1000, egid: 1000 } as const;
@@ -135,13 +146,23 @@ export function createCodexLocaleProductComputer(programs: CodexLocalePrograms) 
   }
   filesystem.chdir("/workspace");
   writeFile(filesystem, "/workspace/proof.txt", "BEFORE\n");
+  for (const [path, owner] of [
+    ["/workspace", options.directory],
+    ["/workspace/proof.txt", options.file],
+  ] as const) {
+    if (owner === undefined) continue;
+    const inode = filesystem.resolve(path).inode;
+    storage.posix.chown(inode, owner);
+    storage.posix.chmod(inode, owner.mode);
+  }
 
   const wakes = new KernelWakeRegistry();
   const signal = new AbortController().signal;
   const machineCalls: KernelCommand[] = [];
   const machine: KernelCommandForwarder = {
-    async spawn(command) {
+    async spawn(command, signal) {
       machineCalls.push({ ...command, argv: [...command.argv], env: { ...command.env } });
+      if (options.machine !== undefined) return options.machine.spawn(command, signal);
       throw new Error("Unexpected machine admission in the Codex locale regression");
     },
   };
