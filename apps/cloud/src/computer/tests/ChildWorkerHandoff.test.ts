@@ -88,4 +88,37 @@ describe("child slot handoff", () => {
       await fixture.close();
     }
   });
+
+  it("releases the parent's fork-source stub as soon as restoration is acknowledged", async () => {
+    const fixture = childBusyboxFixture();
+    const owner = createKernelBashHost({ context: fixture.context, credentials: bashCredentials });
+    const lease = new ChildHostLease();
+    const dispose = vi.fn();
+    const restored = vi.fn(async () => {});
+    const source = {
+      state: vi.fn(),
+      read: vi.fn(),
+      restored,
+      [Symbol.dispose]: dispose,
+    };
+    const bridge = createWorkerBashForkHost(
+      { context: fixture.context, credentials: bashCredentials },
+      lease,
+      owner,
+      source,
+    );
+    try {
+      const exported = bridge.host.forkSnapshot();
+      await exported!.restored();
+      expect(restored).toHaveBeenCalledOnce();
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(() => exported!.state()).toThrow(expect.objectContaining({ code: "EBADF" }));
+      lease.release();
+      expect(dispose).toHaveBeenCalledOnce();
+    } finally {
+      lease.release();
+      await owner.close();
+      await fixture.close();
+    }
+  });
 });

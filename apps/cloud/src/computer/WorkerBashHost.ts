@@ -1,4 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
+import { WorkerBashSnapshot } from "./WorkerBashSnapshot.ts";
 import {
   createKernelBashHost,
   type KernelBashHostOptions,
@@ -14,31 +15,12 @@ import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
 import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
 import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
 
-class WorkerBashSnapshot extends RpcTarget implements KernelBashForkSource {
-  readonly #source: ChildHostRef<KernelBashForkSource>;
-
-  constructor(source: ChildHostRef<KernelBashForkSource>) {
-    super();
-    this.#source = source;
-  }
-
-  state() {
-    return this.#source.get().state();
-  }
-  read(offset: number, length: number) {
-    return this.#source.get().read(offset, length);
-  }
-  restored() {
-    return this.#source.get().restored();
-  }
-}
-
 class WorkerBashPort extends RpcTarget implements KernelBashPort {
   readonly #lease: ChildHostLease;
   readonly #port: ChildHostRef<KernelBashPort>;
   readonly #pid: number;
   readonly #credentials: KernelBashCredentials;
-  readonly #snapshot: ChildHostRef<KernelBashForkSource> | undefined;
+  readonly #snapshot: WorkerBashSnapshot | undefined;
 
   constructor(
     lease: ChildHostLease,
@@ -52,7 +34,7 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
     this.#port = lease.hold(port);
     this.#pid = pid;
     this.#credentials = credentials;
-    this.#snapshot = snapshot === undefined ? undefined : lease.hold(snapshot);
+    this.#snapshot = snapshot === undefined ? undefined : new WorkerBashSnapshot(lease, snapshot);
   }
 
   metadata() {
@@ -60,7 +42,7 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
   }
 
   forkSnapshot() {
-    return this.#snapshot === undefined ? undefined : new WorkerBashSnapshot(this.#snapshot);
+    return this.#snapshot;
   }
 
   async runFork(source: KernelBashForkSource) {
