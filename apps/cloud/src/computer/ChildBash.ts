@@ -5,7 +5,7 @@ import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
 import { createChildWasi } from "./ChildWasi.ts";
 import { createChildBashImports } from "./ChildBashImports.ts";
 import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
-import type { BashAsyncifyOperationHooks } from "../kernel/bash/BashTransitions.ts";
+import type { BashAsyncifyOperationHooks } from "../kernel/KernelBashCheckpoint.ts";
 import type {
   KernelBashOperation,
   KernelBashOperationResult,

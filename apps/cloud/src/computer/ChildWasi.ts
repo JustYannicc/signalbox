@@ -6,7 +6,7 @@ import type {
   KernelBashOperationEffect,
   KernelBashOperationResult,
 } from "../kernel/KernelBashCheckpoint.ts";
-import type { BashAsyncifyOperationHooks } from "../kernel/bash/BashTransitions.ts";
+import type { BashAsyncifyOperationHooks } from "../kernel/KernelBashCheckpoint.ts";
 
 type WasmArgument = number | bigint;
 type WasiMemoryPlan = (
@@ -189,10 +189,7 @@ export interface ChildWasiOptions {
 /** Keeps linear memory in the child and sends only each syscall's ABI ranges to its owner. */
 export function createChildWasi(options: ChildWasiOptions) {
   const wasm = WebAssembly as unknown as JSPI;
-  if (
-    options.asyncify === undefined &&
-    (typeof wasm.Suspending !== "function" || typeof wasm.promising !== "function")
-  ) {
+  if (typeof wasm.Suspending !== "function" || typeof wasm.promising !== "function") {
     throw new Error("The child WASI bridge requires WebAssembly JSPI support");
   }
 
@@ -314,7 +311,7 @@ export function createChildWasi(options: ChildWasiOptions) {
 
   function invoke(fn: WebAssembly.ExportValue, ...args: WasmArgument[]): Promise<unknown> {
     if (typeof fn !== "function") throw new TypeError("Expected a WebAssembly function export");
-    if (options.asyncify !== undefined) return Promise.resolve(fn(...args));
+    // Bash also has uninstrumented env imports that still suspend through JSPI.
     return wasm.promising(fn as (...args: WasmArgument[]) => unknown)(...args);
   }
 

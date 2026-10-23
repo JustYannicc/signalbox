@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import { notifyKernelSuspension, runKernelSuspensionObserver } from "./KernelSuspension.ts";
-import { WasiClock } from "./wasi/internal_wasi_clock.ts";
-import { runAsync } from "./wasi/internal_wasi_calls.ts";
-import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
-import { WasiPoller } from "./wasi/internal_wasi_poll.ts";
+import { createKernelPollFixture } from "./tests/kernelPollFixture.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -54,56 +51,55 @@ describe("kernel suspension observation", () => {
   });
 
   it("does not count immediately ready clock polls as suspension", async () => {
-    const memory = new WebAssembly.Memory({ initial: 1 });
-    const wasiMemory = new WasiMemory();
-    wasiMemory.set(memory);
-    const clock = new WasiClock();
-    vi.spyOn(clock, "now").mockReturnValue(200n);
-    const wait = vi.spyOn(clock, "wait");
-    const poller = new WasiPoller(wasiMemory, true, undefined, clock);
-    writeClockSubscription(memory, 100n);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const now = vi.spyOn(performance, "now").mockReturnValue(200);
+    const fixture = createKernelPollFixture(100);
     const observed = vi.fn();
-
-    await expect(
-      runKernelSuspensionObserver(observed, () => runAsync(poller.pollOneoff(0, 64, 1, 96))),
-    ).resolves.toBe(0);
-    expect(observed).not.toHaveBeenCalled();
-    expect(wait).not.toHaveBeenCalled();
-    expect(new DataView(memory.buffer).getUint32(96, true)).toBe(1);
+    try {
+      const response = await runKernelSuspensionObserver(observed, () =>
+        fixture.call(fixture.request),
+      );
+      expect(observed).not.toHaveBeenCalled();
+      expect(fixture.eventCount(response)).toBe(1);
+    } finally {
+      fixture.abort();
+      fixture.close();
+      now.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("marks a clock poll at its actual wait and resumes on the clock milestone", async () => {
-    const memory = new WebAssembly.Memory({ initial: 1 });
-    const wasiMemory = new WasiMemory();
-    wasiMemory.set(memory);
-    const clock = new WasiClock();
-    let now = 100n;
-    vi.spyOn(clock, "now").mockImplementation(() => now);
-    const milestone = deferred<void>();
-    const wait = vi.spyOn(clock, "wait").mockReturnValue(milestone.promise);
-    const poller = new WasiPoller(wasiMemory, true, undefined, clock);
-    writeClockSubscription(memory, 200n);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let nowMs = 100;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    const fixture = createKernelPollFixture(200);
     const observed = vi.fn();
-
-    const pending = runKernelSuspensionObserver(observed, () =>
-      runAsync(poller.pollOneoff(0, 64, 1, 96)),
+    let settled = false;
+    const pending = runKernelSuspensionObserver(observed, () => fixture.call(fixture.request));
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
     );
-    expect(observed).toHaveBeenCalledTimes(1);
-    expect(wait).toHaveBeenCalledTimes(1);
+    try {
+      expect(observed).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
 
-    now = 200n;
-    milestone.resolve();
-    await expect(pending).resolves.toBe(0);
-    expect(new DataView(memory.buffer).getUint32(96, true)).toBe(1);
+      nowMs = 200;
+      await vi.advanceTimersByTimeAsync(100);
+      const response = await pending;
+      expect(fixture.eventCount(response)).toBe(1);
+      expect(observed).toHaveBeenCalledTimes(1);
+    } finally {
+      fixture.abort();
+      await pending.catch(() => {});
+      fixture.close();
+      now.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });
-
-function writeClockSubscription(memory: WebAssembly.Memory, deadline: bigint) {
-  const subscription = new DataView(memory.buffer, 0, 48);
-  subscription.setBigUint64(0, 1n, true);
-  subscription.setUint8(8, 0);
-  subscription.setUint32(16, 1, true);
-  subscription.setBigUint64(24, deadline, true);
-  subscription.setUint16(40, 1, true);
-  new DataView(memory.buffer).setUint32(96, 0, true);
-}

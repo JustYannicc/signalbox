@@ -153,7 +153,7 @@ class ParkableWorkerBashPort extends WorkerBashPort {
     return this.#phase.get().placeFork(this.#process.get(), this.#pid, source);
   }
 
-  observeResident(bytes: number) {
+  override observeResident(bytes: number) {
     this.#lease.observe(bytes);
   }
 }

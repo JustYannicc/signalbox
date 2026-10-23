@@ -1,5 +1,4 @@
 import { expect, it, vi } from "vite-plus/test";
-import { WasiError } from "../../kernel/wasi/internal_wasi_memory.ts";
 import { createKernelBashHost } from "../../kernel/KernelBashHost.ts";
 import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
@@ -298,8 +297,7 @@ it("turns a fork quota rejection into EAGAIN with one clean waitpid reap", async
       coreDumped: false,
     });
     await expect(program.drain()).resolves.toBeUndefined();
-    expect(forkFailure).toBeInstanceOf(WasiError);
-    expect((forkFailure as WasiError).errno).toBe(6);
+    expect(forkFailure).toMatchObject({ errno: 6, message: "WASI error: 6" });
     expect(waited).toEqual({
       kind: "wait",
       pid: forkPid,

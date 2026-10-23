@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Ashish Kumar Singh and Nimbus contributors. See NIMBUS-LICENSE.
 import type { BashProcess } from "./BashProcess.ts";
 import { range, string, flatStrings, environment, errno } from "./BashMemory.ts";
-import type { KernelBashImportCall, KernelBashOperation } from "../KernelBashCheckpoint.ts";
+import type { BashAsyncifyOperationHooks } from "../KernelBashCheckpoint.ts";
+export type { BashAsyncifyOperationHooks } from "../KernelBashCheckpoint.ts";
 
 export type BashContinuation = Pick<
   BashProcess,
@@ -12,13 +13,6 @@ export type BashContinuation = Pick<
 export function rewindBash(process: BashContinuation, pointer = process.captures.top): void {
   process.rewinding = true;
   process.exports.asyncify_start_rewind(pointer);
-}
-
-export interface BashAsyncifyOperationHooks {
-  /** Called by synchronous WASM imports; it records the call and starts Asyncify unwind. */
-  readonly suspend: (operation: KernelBashOperation, call: KernelBashImportCall) => number;
-  /** Stops a rewind when the saved import is reached and returns its prepared result. */
-  readonly landing: () => number | undefined;
 }
 
 export function createBashAsyncifyOperationHooks(

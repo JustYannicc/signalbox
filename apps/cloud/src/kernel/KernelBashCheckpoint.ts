@@ -83,3 +83,10 @@ export interface KernelBashCheckpointContinuation {
 export type KernelBashOperationEffect =
   | { readonly kind: "resume"; readonly value: number }
   | { readonly kind: "exit"; readonly status: KernelExitStatus };
+
+export interface BashAsyncifyOperationHooks {
+  /** Called by synchronous WASM imports; it records the call and starts Asyncify unwind. */
+  readonly suspend: (operation: KernelBashOperation, call: KernelBashImportCall) => number;
+  /** Stops a rewind when the saved import is reached and returns its prepared result. */
+  readonly landing: () => number | undefined;
+}

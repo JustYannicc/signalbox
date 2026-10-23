@@ -6,7 +6,7 @@ import type {
   KernelBashOperationEffect,
   KernelBashOperationResult,
 } from "../kernel/KernelBashCheckpoint.ts";
-import type { BashAsyncifyOperationHooks } from "../kernel/bash/BashTransitions.ts";
+import type { BashAsyncifyOperationHooks } from "../kernel/KernelBashCheckpoint.ts";
 
 const none: NimbusMemoryPlan = () => {};
 const plans: Readonly<Record<string, NimbusMemoryPlan>> = {
@@ -47,7 +47,8 @@ export function createChildBashImports(options: {
     if (item.kind !== "function")
       throw new TypeError(`Invalid GNU Bash import ${namespace}.${item.name}`);
     const target = (imports[namespace] ??= {}) as Record<string, WebAssembly.ImportValue>;
-    if (options.asyncify !== undefined) {
+    // The pinned image only instruments nimbus_proc and WASI imports for Asyncify.
+    if (options.asyncify !== undefined && namespace !== "env") {
       target[item.name] = (...args: number[]) => {
         const resumed = options.asyncify!.landing();
         if (resumed !== undefined) return resumed;

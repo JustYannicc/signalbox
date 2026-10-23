@@ -481,18 +481,19 @@ describe("ChildWorkerCapacity sibling affinity", () => {
       });
       const enqueue = vi.spyOn(capacity, "enqueue");
       const base = requestFor(fixture.context, implementation);
+      const { stdio: _stdio, ...withoutStdio } = base;
       let request: KernelProgramAdmissionRequest;
       if (kind === "exec") {
         request = base;
       } else if (kind === "spawn") {
         request = Object.freeze({
-          ...base,
+          ...withoutStdio,
           kind,
           parent: fixture.context.identity.handle,
         });
       } else {
         request = Object.freeze({
-          ...base,
+          ...withoutStdio,
           kind,
           parent: fixture.context.identity.handle,
           stdio: "piped",

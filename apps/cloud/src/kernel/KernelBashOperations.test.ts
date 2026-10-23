@@ -3,10 +3,7 @@ import { KernelPipe } from "./KernelPipe.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import { createKernelBashOperations } from "./KernelBashOperations.ts";
 import type { KernelBashPort } from "./KernelBashPort.ts";
-import { WasiClock } from "./wasi/internal_wasi_clock.ts";
-import { runAsync } from "./wasi/internal_wasi_calls.ts";
-import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
-import { WasiPoller } from "./wasi/internal_wasi_poll.ts";
+import { createKernelPollFixture } from "./tests/kernelPollFixture.ts";
 
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
@@ -164,34 +161,62 @@ describe("KernelBashOperations", () => {
   });
 
   it("keeps an immediately ready poll ready and counts no suspension", async () => {
-    const fixture = pollFixture(200n, 100n);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const now = vi.spyOn(performance, "now").mockReturnValue(200);
+    const fixture = createKernelPollFixture(100);
+    const port = unusedPort();
+    const call = vi.fn(fixture.call);
+    port.call = call;
+    const operations = createKernelBashOperations(port);
     try {
-      const started = await fixture.operations.start(pollOperation());
-      expect(readyResult(started)).toEqual({ kind: "wasi", value: wasiResult });
-      expect(fixture.wait).not.toHaveBeenCalled();
-      expect(new DataView(fixture.memory.buffer).getUint32(96, true)).toBe(1);
-      expect(fixture.port.call).toHaveBeenCalledTimes(1);
+      const started = await operations.start({ kind: "wasi", request: fixture.request });
+      const result = readyResult(started);
+      expect(result.kind).toBe("wasi");
+      if (result.kind !== "wasi") throw new Error("Poll should return a WASI result");
+      expect(result.value).toMatchObject({ kind: "return", value: 0 });
+      expect(fixture.eventCount(result.value)).toBe(1);
+      expect(call).toHaveBeenCalledTimes(1);
     } finally {
-      await fixture.operations.close();
+      fixture.abort();
+      await operations.close();
+      fixture.close();
+      now.mockRestore();
+      vi.useRealTimers();
     }
   });
 
   it("returns pending for a clock poll and resumes at its explicit milestone", async () => {
-    const fixture = pollFixture(100n, 200n);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let nowMs = 100;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => nowMs);
+    const fixture = createKernelPollFixture(200);
+    const port = unusedPort();
+    const call = vi.fn(fixture.call);
+    port.call = call;
+    const operations = createKernelBashOperations(port);
+    const take = vi.spyOn(operations, "take");
     try {
-      const started = await fixture.operations.start(pollOperation());
+      const started = await operations.start({ kind: "wasi", request: fixture.request });
       expect(started.kind).toBe("pending");
       if (started.kind !== "pending") throw new Error("Clock poll should be pending");
-      expect(fixture.wait).toHaveBeenCalledTimes(1);
+      expect(call).toHaveBeenCalledTimes(1);
 
-      const taken = fixture.operations.take(started.id);
-      fixture.setNow(200n);
-      fixture.milestone.resolve();
-      await expect(taken).resolves.toEqual({ kind: "wasi", value: wasiResult });
-      expect(new DataView(fixture.memory.buffer).getUint32(96, true)).toBe(1);
-      expect(fixture.port.call).toHaveBeenCalledTimes(1);
+      const resultPromise = take(started.id);
+      nowMs = 200;
+      await vi.advanceTimersByTimeAsync(100);
+      const result = await resultPromise;
+      expect(result.kind).toBe("wasi");
+      if (result.kind !== "wasi") throw new Error("Poll should return a WASI result");
+      expect(result.value).toMatchObject({ kind: "return", value: 0 });
+      expect(fixture.eventCount(result.value)).toBe(1);
+      expect(take).toHaveBeenCalledTimes(1);
+      expect(call).toHaveBeenCalledTimes(1);
     } finally {
-      await fixture.operations.close();
+      fixture.abort();
+      await operations.close();
+      fixture.close();
+      now.mockRestore();
+      vi.useRealTimers();
     }
   });
 
@@ -251,49 +276,4 @@ type Started = Awaited<ReturnType<ReturnType<typeof createKernelBashOperations>[
 function readyResult(started: Started) {
   if (started.kind !== "ready") throw new Error("Operation should be ready");
   return started.result;
-}
-
-function pollOperation() {
-  return {
-    kind: "wasi" as const,
-    request: { name: "poll_oneoff", args: [0, 64, 1, 96], memorySize: 65_536, regions: [] },
-  };
-}
-
-function pollFixture(now: bigint, deadline: bigint) {
-  const memory = new WebAssembly.Memory({ initial: 1 });
-  const wasiMemory = new WasiMemory();
-  wasiMemory.set(memory);
-  const clock = new WasiClock();
-  let currentTime = now;
-  vi.spyOn(clock, "now").mockImplementation(() => currentTime);
-  const milestone = deferred<void>();
-  const wait = vi.spyOn(clock, "wait").mockReturnValue(milestone.promise);
-  const poller = new WasiPoller(wasiMemory, true, undefined, clock);
-  const subscription = new DataView(memory.buffer, 0, 48);
-  subscription.setBigUint64(0, 1n, true);
-  subscription.setUint8(8, 0);
-  subscription.setUint32(16, 1, true);
-  subscription.setBigUint64(24, deadline, true);
-  subscription.setUint16(40, 1, true);
-  const port = unusedPort();
-  port.call = vi.fn(() =>
-    runAsync(poller.pollOneoff(0, 64, 1, 96)).then((value) => ({
-      kind: "return" as const,
-      value,
-      regions: [],
-    })),
-  );
-  return {
-    port,
-    operations: createKernelBashOperations(port),
-    clock,
-    poller,
-    memory,
-    wait,
-    milestone,
-    setNow(value: bigint) {
-      currentTime = value;
-    },
-  };
 }
