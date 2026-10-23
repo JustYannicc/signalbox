@@ -1,4 +1,5 @@
 import { currentKernelIoMode, currentKernelSignal } from "./process/KernelExecution.ts";
+import { notifyKernelSuspension } from "./KernelSuspension.ts";
 import { complete, type WasiCall } from "./wasi/internal_wasi_calls.ts";
 import { WasiError } from "./wasi/internal_wasi_memory.ts";
 
@@ -31,6 +32,7 @@ export class KernelIoLock {
     signal?.addEventListener("abort", abort, { once: true });
     let acquired = false;
     try {
+      notifyKernelSuspension();
       yield waiter.ready.promise;
       if (signal?.aborted) throw new WasiError(11);
       acquired = true;
