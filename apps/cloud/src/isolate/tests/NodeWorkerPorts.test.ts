@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as NodeWorkerThreads from "node:worker_threads";
 import {
   NodeWorkerMessagePort,
   NodeWorkerPortBroker,
@@ -135,6 +136,64 @@ describe("worker message port facade", () => {
     await f.broker.drain();
     await expect(received.promise).resolves.toBe("still attached");
     await dispose(f);
+  });
+
+  it("exposes transferred ports on MessageEvent in native transfer-list order", async () => {
+    const nativeCarrier = new NodeWorkerThreads.MessageChannel();
+    const nativeInData = new NodeWorkerThreads.MessageChannel();
+    const f = await bridge();
+    let nativeEvent: MessageEvent | undefined;
+
+    try {
+      const nativeReceived = Promise.withResolvers<MessageEvent>();
+      nativeCarrier.port2.addEventListener("message", (event) =>
+        nativeReceived.resolve(event as MessageEvent),
+      );
+      nativeCarrier.port1.postMessage({ endpoint: nativeInData.port2, alias: nativeInData.port2 }, [
+        nativeInData.port2,
+      ]);
+      nativeEvent = await nativeReceived.promise;
+      const nativeData = nativeEvent.data as {
+        endpoint: NodeWorkerThreads.MessagePort;
+        alias: NodeWorkerThreads.MessagePort;
+      };
+      expect(nativeEvent.ports).toHaveLength(1);
+      expect(nativeEvent.ports[0]).toBe(nativeData.endpoint);
+      expect(nativeEvent.ports[0]).toBe(nativeData.alias);
+
+      const inData = f.source.ports.channel();
+      const onlyInTransfer = f.source.ports.channel();
+      const received = Promise.withResolvers<MessageEvent>();
+      f.receiverPort.addEventListener("message", (event) =>
+        received.resolve(event as MessageEvent),
+      );
+      f.sourcePort.postMessage({ endpoint: inData.port2, alias: inData.port2 }, [
+        inData.port2,
+        onlyInTransfer.port2,
+      ]);
+      const event = await received.promise;
+      const data = event.data as {
+        endpoint: NodeWorkerMessagePort;
+        alias: NodeWorkerMessagePort;
+      };
+      expect(event.ports).toHaveLength(2);
+      expect(event.ports[0]).toBe(data.endpoint);
+      expect(event.ports[0]).toBe(data.alias);
+      expect(event.ports[1]).not.toBe(data.endpoint);
+
+      const reply = Promise.withResolvers<unknown>();
+      onlyInTransfer.port1.once("message", (value: unknown) => reply.resolve(value));
+      (event.ports[1] as NodeWorkerMessagePort).postMessage("available from event.ports");
+      await Promise.all([f.source.ports.drain(), f.receiver.ports.drain()]);
+      await f.broker.drain();
+      await expect(reply.promise).resolves.toBe("available from event.ports");
+    } finally {
+      nativeCarrier.port1.close();
+      nativeCarrier.port2.close();
+      nativeInData.port1.close();
+      for (const port of nativeEvent?.ports ?? []) port.close();
+      await dispose(f);
+    }
   });
 
   it("keeps transferred ports working after their creator exits", async () => {

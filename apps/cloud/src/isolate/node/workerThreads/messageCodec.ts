@@ -1,4 +1,5 @@
 import * as NodeUtil from "node:util";
+import { dataCloneError } from "./portState.ts";
 
 export type WorkerMessagePortHandle = Readonly<{
   id: string;
@@ -55,10 +56,6 @@ const dataViewBuffer = Object.getOwnPropertyDescriptor(DataView.prototype, "buff
 const regexpSource = Object.getOwnPropertyDescriptor(RegExp.prototype, "source")?.get;
 const isProxy = typeof NodeUtil.types?.isProxy === "function" ? NodeUtil.types.isProxy : undefined;
 
-function dataCloneError(message: string): DOMException {
-  return new DOMException(message, "DataCloneError");
-}
-
 function isSharedArrayBuffer(value: unknown): value is SharedArrayBuffer {
   if (sharedArrayBufferByteLength === undefined || value === null || typeof value !== "object") {
     return false;
@@ -87,6 +84,18 @@ function viewBuffer(value: ArrayBufferView): ArrayBufferLike {
     }
   }
   throw dataCloneError("Unsupported ArrayBuffer view");
+}
+
+function isArrayBuffer(value: unknown): value is ArrayBuffer {
+  if (arrayBufferByteLength === undefined || value === null || typeof value !== "object") {
+    return false;
+  }
+  try {
+    arrayBufferByteLength.call(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function hasMapBrand(value: object): value is Map<unknown, unknown> {
@@ -182,15 +191,7 @@ function copyErrorField(
 
 function hasNativeCloneBrand(value: object): boolean {
   if (ArrayBuffer.isView(value)) return true;
-  if (isSharedArrayBuffer(value)) return true;
-  if (arrayBufferByteLength !== undefined) {
-    try {
-      arrayBufferByteLength.call(value);
-      return true;
-    } catch {
-      // Not an ArrayBuffer.
-    }
-  }
+  if (isSharedArrayBuffer(value) || isArrayBuffer(value)) return true;
   try {
     Date.prototype.getTime.call(value);
     return true;
@@ -365,12 +366,14 @@ export function encodeWorkerMessage<Port extends object>(
     const target: object = Array.isArray(source) ? [] : {};
     seen.set(source, target);
     if (Array.isArray(source)) (target as unknown[]).length = source.length;
+    // Native traversal must snapshot earlier values before a later getter mutates them.
     for (const key of Object.keys(source)) {
       Object.defineProperty(target, key, {
-        value: cloneForNative(Reflect.get(source, key, source)),
+        get() {
+          return cloneForNative(Reflect.get(source, key, source));
+        },
         configurable: true,
         enumerable: true,
-        writable: true,
       });
     }
     return target;

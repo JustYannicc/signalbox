@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  NodeWorkerMessagePort,
   NodeWorkerPortBroker,
+  NodeWorkerPorts,
   type NodeWorkerMessage,
   type NodeWorkerPortAddress,
   type NodeWorkerPortEvent,
@@ -29,6 +31,44 @@ function fixture() {
     });
   };
   return { broker, events, connect };
+}
+
+interface PublicPortsRuntime {
+  readonly owner: string;
+  readonly ports: NodeWorkerPorts;
+}
+
+function publicPortsRuntime(
+  owner: string,
+  broker: NodeWorkerPortBroker,
+  beforeReceive?: (event: NodeWorkerPortEvent) => Promise<void>,
+): PublicPortsRuntime {
+  return {
+    owner,
+    ports: new NodeWorkerPorts({
+      owner,
+      connect: async (receiver) =>
+        broker.connect(owner, {
+          receive: async (event) => {
+            await beforeReceive?.(event);
+            return receiver.receive(event);
+          },
+        }),
+      disconnect: () => broker.disconnect(owner),
+    }),
+  };
+}
+
+async function transferPort(
+  broker: NodeWorkerPortBroker,
+  source: PublicPortsRuntime,
+  destination: PublicPortsRuntime,
+  port: NodeWorkerMessagePort,
+): Promise<NodeWorkerMessagePort> {
+  const packet = source.ports.encode({ port }, [port]);
+  await Promise.all([source.ports.drain(), destination.ports.drain()]);
+  await broker.transfer(source.owner, destination.owner, packet);
+  return (destination.ports.decode(packet) as { port: NodeWorkerMessagePort }).port;
 }
 
 describe("worker message port broker", () => {
@@ -78,6 +118,119 @@ describe("worker message port broker", () => {
     await child.close(childPort);
     await f.broker.drain();
     expect(f.broker.residentPorts).toBe(0);
+  });
+
+  it("delivers an unread message and transferred port before the peer close", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const source = publicPortsRuntime("source", broker);
+    const destination = publicPortsRuntime("destination", broker);
+    const carrier = source.ports.channel();
+    const nested = source.ports.channel();
+    const receivedCarrier = await transferPort(broker, source, destination, carrier.port2);
+    const nestedReply = Promise.withResolvers<unknown>();
+    const receivedMessage = Promise.withResolvers<MessageEvent>();
+    const order: string[] = [];
+    nested.port1.once("message", (value: unknown) => nestedReply.resolve(value));
+
+    try {
+      carrier.port1.postMessage({ value: "queued", nested: nested.port2 }, [nested.port2]);
+      carrier.port1.close();
+      await Promise.all([source.ports.drain(), destination.ports.drain()]);
+      await broker.drain();
+
+      receivedCarrier.addEventListener("message", (event) => {
+        order.push("message");
+        receivedMessage.resolve(event as MessageEvent);
+      });
+      receivedCarrier.on("close", () => order.push("close"));
+      const event = await receivedMessage.promise;
+      await broker.drain();
+      const received = event.data as {
+        readonly value: string;
+        readonly nested: NodeWorkerMessagePort;
+      };
+      expect(received.value).toBe("queued");
+      expect(received.nested).toBe(event.ports[0]);
+      expect(order).toEqual(["message", "close"]);
+
+      received.nested.postMessage("nested still works", []);
+      await Promise.all([source.ports.drain(), destination.ports.drain()]);
+      await broker.drain();
+      await expect(nestedReply.promise).resolves.toBe("nested still works");
+    } finally {
+      await Promise.all([source.ports.dispose(), destination.ports.dispose()]);
+      await broker.drain();
+    }
+
+    expect(broker.residentPorts).toBe(0);
+  });
+
+  it("releases nested transfers when the unread receiver is explicitly closed", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const source = publicPortsRuntime("source", broker);
+    const destination = publicPortsRuntime("destination", broker);
+    const carrier = source.ports.channel();
+    const nested = source.ports.channel();
+    const _receivedCarrier = await transferPort(broker, source, destination, carrier.port2);
+    const nestedPeerEvents: string[] = [];
+    nested.port1.on("close", () => nestedPeerEvents.push("close"));
+
+    try {
+      carrier.port1.postMessage({ nested: nested.port2 }, [nested.port2]);
+      await source.ports.drain();
+      await broker.drain();
+
+      await destination.ports.dispose();
+      await source.ports.drain();
+      await broker.drain();
+      expect(nestedPeerEvents).toEqual(["close"]);
+    } finally {
+      await Promise.all([source.ports.dispose(), destination.ports.dispose()]);
+      await broker.drain();
+    }
+
+    expect(broker.residentPorts).toBe(0);
+  });
+
+  it("discards a disconnected in-flight delivery without poisoning sibling ports", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const source = publicPortsRuntime("source", broker);
+    const destination = publicPortsRuntime("destination", broker, async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    const sibling = publicPortsRuntime("sibling", broker);
+    const disconnected = source.ports.channel();
+    const siblingChannel = source.ports.channel();
+    const disconnectedPort = await transferPort(broker, source, destination, disconnected.port2);
+    const siblingPort = await transferPort(broker, source, sibling, siblingChannel.port2);
+    disconnectedPort.on("message", () => undefined);
+    const siblingMessages: unknown[] = [];
+    siblingPort.on("message", (value: unknown) => siblingMessages.push(value));
+
+    try {
+      disconnected.port1.postMessage("discard after disconnect");
+      await entered.promise;
+      await destination.ports.dispose();
+      release.resolve();
+
+      siblingChannel.port1.postMessage("sibling remains usable");
+      await Promise.all([source.ports.drain(), sibling.ports.drain()]);
+      await broker.drain();
+      expect(siblingMessages).toEqual(["sibling remains usable"]);
+    } finally {
+      release.resolve();
+      await Promise.all([
+        source.ports.dispose(),
+        destination.ports.dispose(),
+        sibling.ports.dispose(),
+      ]);
+      await broker.drain();
+    }
+
+    expect(broker.residentPorts).toBe(0);
   });
 
   it("does not hold a broker lock while a message handler posts its reply", async () => {

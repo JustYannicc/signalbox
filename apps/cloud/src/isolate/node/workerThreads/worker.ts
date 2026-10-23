@@ -53,8 +53,16 @@ export function createNodeWorkerThreadsWithPorts(
 
   const environmentData = new Map(context.environmentData ?? []);
   const workers = new Set<WorkerFacade>();
+  let changed = Promise.withResolvers<void>();
   let disposed = false;
   let disposePromise: Promise<void> | undefined;
+
+  function referencesChanged(): void {
+    const previous = changed;
+    changed = Promise.withResolvers<void>();
+    previous.resolve();
+    ports.referencesChanged();
+  }
 
   class WorkerFacade extends NodeEvents.EventEmitter implements NodeWorkerInstance {
     readonly stdin: NodeStream.Writable | null;
@@ -64,7 +72,6 @@ export function createNodeWorkerThreadsWithPorts(
     readonly #request: NodeWorkerStartRequest;
     readonly #port: ReturnType<NodeWorkerPorts["channel"]>["port1"];
     readonly #runEvents: NodeWorkerRunEvents;
-    readonly #finished = Promise.withResolvers<number>();
     readonly #onReferenceChange: () => void;
     #startPromise: Promise<NodeWorkerRun> | undefined;
     #stopPromise: Promise<number> | undefined;
@@ -97,7 +104,7 @@ export function createNodeWorkerThreadsWithPorts(
 
       this.#threadId = id;
       this.#port = channel.port1;
-      this.#onReferenceChange = () => ports.referencesChanged();
+      this.#onReferenceChange = referencesChanged;
       this.stdin = parsed.stdin ? this.#createStdin() : null;
       this.stdout = parsed.stdout ? new NodeStream.PassThrough() : null;
       this.stderr = parsed.stderr ? new NodeStream.PassThrough() : null;
@@ -140,7 +147,6 @@ export function createNodeWorkerThreadsWithPorts(
       };
       this.#port.on("message", this.#forwardMessage);
       this.#port.on("messageerror", this.#forwardMessageError);
-      void ports.failure.catch((error: unknown) => this.#recordFailure(error));
       queueMicrotask(() => {
         void this.#ensureStarted().catch(() => undefined);
       });
@@ -182,8 +188,9 @@ export function createNodeWorkerThreadsWithPorts(
       return this.#terminationPromise;
     }
 
-    get finished(): Promise<number> {
-      return this.#finished.promise;
+    get blocksDrain(): boolean {
+      // A confirmed stop still has to deliver its final output and exit.
+      return this.#exited || this.hasRef();
     }
 
     startCpuProfile = unsupported("Worker.startCpuProfile");
@@ -252,6 +259,7 @@ export function createNodeWorkerThreadsWithPorts(
           throw new Error("Worker supervisor did not acknowledge guest stop");
         await this.#finishExit(exit);
       } catch (error) {
+        if (this.#exited) return;
         this.#recordFailure(error);
         this.#emitError(error instanceof Error ? error : new Error(String(error)));
         try {
@@ -302,8 +310,8 @@ export function createNodeWorkerThreadsWithPorts(
         } catch (error) {
           this.#recordFailure(error);
         }
-        this.#finished.resolve(exit.code);
         workers.delete(this);
+        this.#onReferenceChange();
       })();
       return this.#finishPromise;
     }
@@ -322,16 +330,37 @@ export function createNodeWorkerThreadsWithPorts(
   }
 
   const failure = Promise.withResolvers<never>();
+  const failureWaiters = new Set<(error: unknown) => void>();
   let failureSettled = false;
+  let failureError: unknown;
   void failure.promise.catch(() => undefined);
+  void ports.failure.catch(rejectFailure);
   function rejectFailure(error: unknown): void {
     if (failureSettled) return;
     failureSettled = true;
+    failureError = error;
     failure.reject(error);
+    for (const reject of failureWaiters) reject(error);
+    failureWaiters.clear();
   }
   function waitFor<T>(operation: Promise<T>): Promise<T> {
-    if (failureSettled) return failure.promise;
-    return Promise.race([operation, failure.promise]);
+    if (failureSettled) {
+      void operation.catch(() => undefined);
+      return Promise.reject(failureError);
+    }
+    const result = Promise.withResolvers<T>();
+    failureWaiters.add(result.reject);
+    void operation.then(
+      (value) => {
+        failureWaiters.delete(result.reject);
+        result.resolve(value);
+      },
+      (error: unknown) => {
+        failureWaiters.delete(result.reject);
+        result.reject(error);
+      },
+    );
+    return result.promise;
   }
 
   const Worker = class extends WorkerFacade {
@@ -339,7 +368,7 @@ export function createNodeWorkerThreadsWithPorts(
       super(filename, options);
       workers.add(this);
       this.once("exit", () => workers.delete(this));
-      ports.referencesChanged();
+      referencesChanged();
     }
   };
   const module = createThreadModule(Worker, ports, context, environmentData);
@@ -348,10 +377,10 @@ export function createNodeWorkerThreadsWithPorts(
     module,
     async drain(): Promise<void> {
       for (;;) {
-        const active = [...workers].filter((worker) => worker.hasRef());
-        if (active.length > 0) await waitFor(Promise.all(active.map((worker) => worker.finished)));
+        const nextChange = changed.promise;
         await waitFor(ports.drain());
-        if (![...workers].some((worker) => worker.hasRef())) return;
+        if (![...workers].some((worker) => worker.blocksDrain)) return;
+        await waitFor(nextChange);
       }
     },
     dispose(): Promise<void> {

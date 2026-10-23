@@ -236,7 +236,15 @@ export class NodeWorkerPorts implements NodeWorkerPortRuntime {
       return true;
     }
     const value = this.decode(event.message);
+    const ports = event.message.ports.map(({ handle }) => {
+      const port = this.#ports.get(handle.id);
+      if (port === undefined || getPortState(port).address.lease !== handle.lease)
+        throw dataCloneError("MessagePort transfer was not adopted");
+      return port;
+    });
     const message = new MessageEvent("message", { data: value });
+    // Node's constructor brand-checks native ports, while this facade exposes its adopted ports.
+    Object.defineProperty(message, "ports", { enumerable: true, value: ports });
     port.emit("message", value);
     port.dispatchEvent(message);
     this.referencesChanged();

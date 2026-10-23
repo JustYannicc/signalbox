@@ -150,6 +150,118 @@ describe("worker message codec", () => {
     expect(clone.error.cause).toBe(clone.shared);
   });
 
+  it("snapshots a binary backing store before later getters and preserves its aliases", () => {
+    const makeMessage = () => {
+      const buffer = new ArrayBuffer(8);
+      new Uint8Array(buffer).set([0, 1, 2, 3, 4, 5, 6, 7]);
+      const message: {
+        bytes: Uint8Array;
+        view: DataView;
+        words: Uint16Array;
+        buffer: ArrayBuffer;
+        date: Date;
+        mutate?: boolean;
+        self?: unknown;
+      } = {
+        bytes: new Uint8Array(buffer, 2, 3),
+        view: new DataView(buffer, 1, 6),
+        words: new Uint16Array(buffer, 0, 4),
+        buffer,
+        date: new Date(1234),
+      };
+      Object.defineProperty(message, "mutate", {
+        enumerable: true,
+        get() {
+          new Uint8Array(buffer)[2] = 7;
+          message.date.setTime(7000);
+          return true;
+        },
+      });
+      message.self = message;
+      return message;
+    };
+
+    const native = structuredClone(makeMessage());
+    const encoded = encodeWorkerMessage(makeMessage(), { ports: makePortRegistry().hooks });
+    const clone = encoded.value as ReturnType<typeof makeMessage>;
+
+    expect(clone.bytes[0]).toBe(native.bytes[0]);
+    expect(clone.bytes[0]).toBe(2);
+    expect(clone.bytes.buffer).toBe(clone.buffer);
+    expect(clone.view.buffer).toBe(clone.buffer);
+    expect(clone.words.buffer).toBe(clone.buffer);
+    expect(clone.bytes.byteOffset).toBe(2);
+    expect(clone.view.byteOffset).toBe(1);
+    expect(clone.words.byteOffset).toBe(0);
+    expect(clone.date).toEqual(native.date);
+    expect(clone.date).toEqual(new Date(1234));
+    expect(clone.self).toBe(clone);
+  });
+
+  it("keeps same-isolate SharedArrayBuffer views attached to the real shared backing", () => {
+    const shared = new SharedArrayBuffer(4);
+    const bytes = new Uint8Array(shared);
+    const clone = encodeWorkerMessage(
+      { shared, bytes },
+      { ports: makePortRegistry().hooks, sharedMemory: "same-isolate" },
+    ).value as { shared: SharedArrayBuffer; bytes: Uint8Array };
+
+    bytes[0] = 9;
+
+    expect(clone.shared).not.toBe(shared);
+    expect(clone.bytes.buffer).toBe(clone.shared);
+    expect(clone.bytes[0]).toBe(9);
+    clone.bytes[1] = 7;
+    expect(bytes[1]).toBe(7);
+  });
+
+  it("preserves length-tracking views that share a resizable backing store", () => {
+    const makeMessage = () => {
+      const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+      return { bytes: new Uint8Array(buffer, 2), words: new Uint16Array(buffer) };
+    };
+    const native = structuredClone(makeMessage());
+    const clone = encodeWorkerMessage(makeMessage(), { ports: makePortRegistry().hooks }).value as {
+      bytes: Uint8Array;
+      words: Uint16Array;
+    };
+
+    (native.bytes.buffer as ArrayBuffer).resize(10);
+    (clone.bytes.buffer as ArrayBuffer).resize(10);
+
+    expect(clone.bytes.length).toBe(native.bytes.length);
+    expect(clone.words.length).toBe(native.words.length);
+  });
+
+  it("keeps transferred backing stores on native clone and detachment semantics", () => {
+    const makeMessage = () => {
+      const buffer = new ArrayBuffer(1);
+      const bytes = new Uint8Array(buffer);
+      bytes[0] = 1;
+      return {
+        buffer,
+        value: {
+          bytes,
+          get mutate() {
+            bytes[0] = 7;
+            return true;
+          },
+        },
+      };
+    };
+    const nativeInput = makeMessage();
+    const native = structuredClone(nativeInput.value, { transfer: [nativeInput.buffer] });
+    const input = makeMessage();
+    const encoded = encodeWorkerMessage(input.value, {
+      transfer: [input.buffer],
+      ports: makePortRegistry().hooks,
+    });
+    const clone = encoded.value as { bytes: Uint8Array };
+
+    expect(clone.bytes[0]).toBe(native.bytes[0]);
+    expect(input.buffer.byteLength).toBe(0);
+  });
+
   it("transfers a logical port once and replaces every alias by its adopted port", () => {
     const registry = makePortRegistry();
     const port = registry.createPort("peer-1");

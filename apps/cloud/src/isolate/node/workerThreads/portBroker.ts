@@ -11,8 +11,10 @@ interface Port {
   peer: string | undefined;
   started: boolean;
   closed: boolean;
+  peerClosed: boolean;
   readonly pending: NodeWorkerMessage[];
   delivering: NodeWorkerMessage | undefined;
+  deliveringOwner: string | undefined;
   pumping: Promise<void> | undefined;
 }
 
@@ -73,15 +75,17 @@ export class NodeWorkerPortBroker {
               peer: peer.id,
               started: false,
               closed: false,
+              peerClosed: false,
               pending: [],
               delivering: undefined,
+              deliveringOwner: undefined,
               pumping: undefined,
             });
         }),
       post: (address, message) =>
         run(() => {
           const source = this.#owned(owner, address);
-          if (source.closed || source.peer === undefined) return;
+          if (source.closed || source.peerClosed || source.peer === undefined) return;
           const destination = this.#ports.get(source.peer);
           if (destination === undefined || destination.closed) return;
           this.#move(owner, destination.owner, message);
@@ -185,10 +189,50 @@ export class NodeWorkerPortBroker {
     port.peer = undefined;
     if (peer !== undefined) {
       peer.peer = undefined;
-      peer.closed = true;
+      peer.peerClosed = true;
       this.#schedule(peer);
     }
     this.#schedule(port);
+  }
+
+  #discardPending(port: Port): void {
+    const abandoned = new Set<Port>();
+    for (const message of port.pending) {
+      this.#collectDiscardedMessage(
+        message,
+        message === port.delivering ? (port.deliveringOwner ?? port.owner) : port.owner,
+        abandoned,
+      );
+    }
+    port.pending.length = 0;
+    for (const nested of abandoned) this.#close(nested);
+  }
+
+  #discardMessage(message: NodeWorkerMessage, owner: string): void {
+    const abandoned = new Set<Port>();
+    this.#collectDiscardedMessage(message, owner, abandoned);
+    for (const nested of abandoned) this.#close(nested);
+  }
+
+  #collectDiscardedMessage(message: NodeWorkerMessage, owner: string, abandoned: Set<Port>): void {
+    for (const { handle } of message.ports) {
+      const port = this.#ports.get(handle.id);
+      if (
+        port === undefined ||
+        port.owner !== owner ||
+        port.address.lease !== handle.lease ||
+        abandoned.has(port)
+      )
+        continue;
+      abandoned.add(port);
+      for (const pending of port.pending) {
+        this.#collectDiscardedMessage(
+          pending,
+          pending === port.delivering ? (port.deliveringOwner ?? port.owner) : port.owner,
+          abandoned,
+        );
+      }
+    }
   }
 
   #schedule(port: Port): void {
@@ -197,30 +241,51 @@ export class NodeWorkerPortBroker {
     // No broker lock or process admission is held while another process handles a message.
     const pumping = Promise.resolve()
       .then(async () => {
-        while (port.started && port.pending.length > 0) {
+        while (!port.closed && port.started && port.pending.length > 0) {
           const owner = this.#owners.get(port.owner);
           const message = port.pending[0];
           if (owner === undefined || !owner.active || message === undefined) break;
           const address = port.address;
           const receivingOwner = port.owner;
           port.delivering = message;
+          port.deliveringOwner = receivingOwner;
           const accepted = await owner.receiver.receive({
             type: "message",
             port: address,
             message,
           });
           port.delivering = undefined;
-          if (accepted) port.pending.shift();
-          else if (address.lease === port.address.lease)
-            throw new Error("Worker port receiver rejected its current lease");
-          else {
+          port.deliveringOwner = undefined;
+          if (accepted) {
+            if (port.pending[0] === message) port.pending.shift();
+          } else if (
+            !port.closed &&
+            address.lease !== port.address.lease &&
+            this.#ports.get(address.id) === port
+          ) {
             const nested = new Set<Port>();
             this.#collectMessage(message, receivingOwner, nested);
             for (const transferred of nested) transferred.owner = port.owner;
+          } else if (
+            !owner.active ||
+            this.#owners.get(receivingOwner) !== owner ||
+            port.closed ||
+            this.#ports.get(address.id) !== port
+          ) {
+            if (port.pending[0] === message) {
+              this.#discardMessage(message, receivingOwner);
+              port.pending.shift();
+            }
+          } else if (address.lease === port.address.lease) {
+            throw new Error("Worker port receiver rejected its current lease");
           }
         }
         if (port.closed) {
-          port.pending.length = 0;
+          this.#discardPending(port);
+          const owner = this.#owners.get(port.owner);
+          if (owner?.active) await owner.receiver.receive({ type: "close", port: port.address });
+          this.#ports.delete(port.address.id);
+        } else if (port.peerClosed && port.pending.length === 0) {
           const owner = this.#owners.get(port.owner);
           if (owner?.active) await owner.receiver.receive({ type: "close", port: port.address });
           this.#ports.delete(port.address.id);
@@ -233,7 +298,9 @@ export class NodeWorkerPortBroker {
         if (
           completed &&
           this.#ports.get(port.address.id) === port &&
-          (port.closed || (port.started && port.pending.length > 0))
+          (port.closed ||
+            (port.started && port.pending.length > 0) ||
+            (port.peerClosed && port.pending.length === 0))
         )
           this.#schedule(port);
       });

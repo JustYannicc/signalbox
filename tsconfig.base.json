@@ -58,7 +58,7 @@
         },
         "overrides": [
           {
-            // Node personality adapters implement Node contracts with the platform's native modules.
+            // signalbox: Node personality adapters implement Node contracts with the platform's native modules.
             "include": ["**/apps/cloud/src/isolate/**"],
             "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
           },
