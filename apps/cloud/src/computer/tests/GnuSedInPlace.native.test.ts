@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - compares the pinned local BusyBox artifact with GNU sed in private temporary files.
+// @effect-diagnostics nodeBuiltinImport:off - compares the pinned WASI GNU sed artifact with GNU sed in private temporary files.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -6,7 +6,7 @@ import * as NodeProcess from "node:process";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import { createKernelBusyboxHost } from "../../kernel/KernelBusyboxHost.ts";
-import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
+import { KERNEL_GNU_SED_ARTIFACT } from "../../kernel/KernelGnuPrograms.ts";
 import { createChildBusybox } from "../ChildBusybox.ts";
 import {
   GNU_SED,
@@ -27,23 +27,23 @@ import {
 import { childBusyboxFixture } from "./ChildBusyboxFixture.ts";
 
 const artifact =
-  NodeProcess.env.SIGNALBOX_BUSYBOX_ARTIFACT_PATH ??
-  new URL("../../../../../.t3/1071/programs/busybox.wasm", import.meta.url);
+  NodeProcess.env.SIGNALBOX_GNU_SED_ARTIFACT ??
+  new URL("../../../../../.t3/1071/programs/sed.wasm", import.meta.url);
 const artifactAvailable = NodeFS.existsSync(artifact);
-if (!artifactAvailable && NodeProcess.env.SIGNALBOX_REQUIRE_BUSYBOX_ARTIFACT === "1") {
-  throw new Error("SIGNALBOX_REQUIRE_BUSYBOX_ARTIFACT=1 requires the pinned BusyBox WASM artifact");
+if (!artifactAvailable && NodeProcess.env.SIGNALBOX_REQUIRE_GNU_ARTIFACTS === "1") {
+  throw new Error("SIGNALBOX_REQUIRE_GNU_ARTIFACTS=1 requires the pinned GNU sed WASM artifact");
 }
 
-let busyboxModule: WebAssembly.Module | undefined;
+let sedModule: WebAssembly.Module | undefined;
 if (artifactAvailable) {
   const bytes = new Uint8Array(NodeFS.readFileSync(artifact));
   if (
-    bytes.length !== KERNEL_BUSYBOX_ARTIFACT.bytes ||
-    NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== KERNEL_BUSYBOX_ARTIFACT.sha256
+    bytes.length !== KERNEL_GNU_SED_ARTIFACT.bytes ||
+    NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== KERNEL_GNU_SED_ARTIFACT.sha256
   ) {
-    throw new Error("BusyBox test artifact does not match its pin");
+    throw new Error("GNU sed test artifact does not match its pin");
   }
-  busyboxModule = new WebAssembly.Module(bytes);
+  sedModule = new WebAssembly.Module(bytes);
 }
 
 const receipts: unknown[] = [];
@@ -55,7 +55,7 @@ afterAll(() => {
   NodeFS.chmodSync(destination, 0o600);
 });
 
-describe.skipIf(busyboxModule === undefined)("pinned BusyBox sed -i versus GNU sed", () => {
+describe.skipIf(sedModule === undefined)("pinned WASI GNU sed -i versus native GNU sed", () => {
   it("matches file bytes, backups, modes, and replacement behavior for the measured forms", async () => {
     const gnuVersion = ensureGnuSed();
     for (const case_ of sedInPlaceCases) {
@@ -67,7 +67,7 @@ describe.skipIf(busyboxModule === undefined)("pinned BusyBox sed -i versus GNU s
       let childAfter = childBefore;
       try {
         childResult = await createChildBusybox({
-          module: busyboxModule!,
+          module: sedModule!,
           port: owner.port,
           args: fixture.context.args,
           env: fixture.context.env,
@@ -169,7 +169,7 @@ describe.skipIf(busyboxModule === undefined)("pinned BusyBox sed -i versus GNU s
       let childAfter = childBefore;
       try {
         childResult = await createChildBusybox({
-          module: busyboxModule!,
+          module: sedModule!,
           port: owner.port,
           args: fixture.context.args,
           env: fixture.context.env,
@@ -332,7 +332,7 @@ describe.skipIf(busyboxModule === undefined)("pinned BusyBox sed -i versus GNU s
       let childAfter = childBefore;
       try {
         childResult = await createChildBusybox({
-          module: busyboxModule!,
+          module: sedModule!,
           port,
           args: fixture.context.args,
           env: fixture.context.env,

@@ -11,6 +11,7 @@ import {
 import { KERNEL_BASH_ARTIFACT } from "../../src/kernel/KernelBashProgram.ts";
 import { KERNEL_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusyboxProgram.ts";
 import { KERNEL_GIT_ARTIFACT } from "../../src/kernel/KernelGitProgram.ts";
+import { KERNEL_GNU_SED_ARTIFACT } from "../../src/kernel/KernelGnuPrograms.ts";
 import { KERNEL_RIPGREP_ARTIFACT } from "../../src/kernel/KernelRipgrepProgram.ts";
 import { readPinnedProgram } from "./measured.ts";
 import {
@@ -90,6 +91,7 @@ describe("full child program preparation", () => {
     expect(await programReference(codes.busyboxApplets)).toBe(KERNEL_BUSYBOX_ARTIFACT.sha256);
     expect(await programReference(codes.ripgrep)).toBe(KERNEL_RIPGREP_ARTIFACT.sha256);
     expect(await programReference(codes.git)).toBe(KERNEL_GIT_ARTIFACT.sha256);
+    expect(await programReference(codes.sed)).toBe(KERNEL_GNU_SED_ARTIFACT.sha256);
     for (const command of CHILD_COREUTILS_COMMANDS) {
       expect(await programReference(codes.coreutils![command])).toBe(
         coreutilsProvenance.commands[command].sha256,
@@ -210,6 +212,7 @@ function fullProgramSources(): FullChildProgramSources {
     bash: code("bash"),
     busyboxCat: code("busybox-cat"),
     busyboxApplets: code("busybox-applets"),
+    sed: code("gnu-sed"),
     ripgrep: code("ripgrep"),
     coreutils,
     git: code("git"),

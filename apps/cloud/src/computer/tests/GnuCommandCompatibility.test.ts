@@ -289,4 +289,25 @@ describe("qualifyGnuCommand", () => {
     const result = qualifyGnuCommand(command("grep", ["-n", "needle", "nested/input"], { env }));
     expect(result.kind).toBe(kind);
   });
+
+  it.each(["C.UTF-8", "C.utf8"])("qualifies %s for GNU sed only", (locale) => {
+    const env = { LANG: locale, LC_CTYPE: locale, LC_ALL: locale };
+    expect(
+      qualifyGnuCommand(command("sed", ["-i", "s/BEFORE/AFTER/", "proof.txt"], { env })).kind,
+    ).toBe("qualified-isolate");
+    expect(qualifyGnuCommand(command("grep", ["needle", "input"], { env })).kind).toBe("machine");
+  });
+
+  it.each(["POSIX.UTF-8", "C.UTF8", "en_US.UTF-8", "fr_CH.UTF-8"])(
+    "leaves the unproved sed locale %s on the machine",
+    (locale) => {
+      expect(
+        qualifyGnuCommand(
+          command("sed", ["-i", "s/BEFORE/AFTER/", "proof.txt"], {
+            env: { LC_ALL: locale },
+          }),
+        ).kind,
+      ).toBe("machine");
+    },
+  );
 });

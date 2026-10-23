@@ -20,6 +20,7 @@ export async function programFixture() {
     bash: code,
     busyboxCat: code,
     busyboxApplets: code,
+    sed: code,
     ripgrep: code,
     git: code,
     coreutils: {

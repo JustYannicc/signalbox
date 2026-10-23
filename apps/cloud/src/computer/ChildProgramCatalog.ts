@@ -13,6 +13,7 @@ import { createWorkerSyscalls } from "./WorkerSyscalls.ts";
 import type { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
 import { KERNEL_BASH_ARTIFACT, type KernelBashCredentials } from "../kernel/KernelBashProgram.ts";
 import { KERNEL_BUSYBOX_VERSION } from "../kernel/KernelBusyboxPrograms.ts";
+import { KERNEL_GNU_SED_ARTIFACT } from "../kernel/KernelGnuPrograms.ts";
 import { KERNEL_RIPGREP_PROGRAM_MANIFEST } from "../kernel/KernelRipgrepProgram.ts";
 import type {
   ChildWorkerCode,
@@ -41,6 +42,7 @@ export interface ChildProgramCodes {
   readonly ripgrep: ChildWorkerCode;
   readonly coreutils?: Partial<Readonly<Record<ChildCoreutilsCommand, ChildWorkerCode>>>;
   readonly git?: ChildWorkerCode;
+  readonly sed?: ChildWorkerCode;
 }
 
 export interface ChildProgramCatalogOptions {
@@ -129,6 +131,33 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
           ...admission,
           executable: `/bin/${applet}`,
           code: options.programs.busyboxApplets ?? options.programs.busyboxCat,
+          capacity,
+          lifetimes,
+          dispatch: catDispatch,
+        }),
+      ),
+    });
+  }
+
+  const sedCode = options.programs.sed;
+  if (sedCode !== undefined) {
+    const artifact = KERNEL_GNU_SED_ARTIFACT;
+    const manifest = Object.freeze({
+      name: "@gnu/sed",
+      version: artifact.version,
+      abiVersion: ABI_VERSION,
+      requiredCapabilities: Object.freeze([]),
+      entrypoint: `gnu-sed:${artifact.sha256}`,
+    });
+    register(options.registry, manifest);
+    bindings.set("/bin/sed", {
+      manifest,
+      // GNU sed uses the same WASI and process metadata imports as BusyBox.
+      implementation: child((admission) =>
+        createChildBusyboxProgram({
+          ...admission,
+          executable: "/bin/sed",
+          code: sedCode,
           capacity,
           lifetimes,
           dispatch: catDispatch,

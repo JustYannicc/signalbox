@@ -1,15 +1,16 @@
-// v1 end to end (#1192): a pool you can invite people to, plus your own accounts connected. Nothing more.
-// Everything is yours by default. You can share a pool; your tools always stay yours.
-// Only Persons A and B. Each has a personal top level they never see and an own pool that starts empty;
-// sharing a pool lends it into the invitee's top level. Local Claude Code and Codex get their models and
-// tools from Signalbox through one click. The final interfaces stay underneath (placements, lending,
-// resolution); v1 shows that much of them. Not in v1: folders, organizations, domain auto-join, admin roles,
-// shared tools, threads, harness runtime, computer, Bases, drive, assistant, automations.
+// Basalt's first release end to end (#1192; decisions in #1322): a pool you can invite people to, plus
+// your own tools connected, used from local Claude Code and Codex. Nothing more.
+// Only Persons A and B. Basalt is built on the tools service v2 and its own sign-in, on one host: `/` the
+// app, `/v1` the model gateway, `/mcp` the tools gateway. Each pool is one pool app, shared like an app
+// inside the organization, which appears only as the sharing boundary. Tools are each person's own and
+// never shared. Not in this release: folders, admin roles, organizations beyond the sharing boundary,
+// domain auto-join, API keys in pools, shared tools, Codex computer history, threads, harness runtime,
+// computer, Bases, drive, assistant, automations.
 // Modules are black boxes; the Gateway appears only as its two ports. The harness sees a normal provider
 // and normal MCP servers.
 views {
 
-  style signalbox, platform, modelProviders, services {
+  style signalbox, modelProviders, services {
     color muted
     opacity 10%
   }
@@ -19,34 +20,37 @@ views {
   dynamic view v1_overview_journey {
     #v1
     variant sequence
-    title 'Workflows/v1/0 · First day with Signalbox v1'
+    title 'Workflows/Basalt/0 · First day with Basalt'
     description '''
-      What does v1 do? Everything is yours by default; you can share a pool, and your tools always stay yours.
-      A and B sign in to their own empty pools, A fills A's pool and shares it with B, B picks it for B's
-      computer, each connects their own tools, and one click sets up each computer so local Claude Code and
-      Codex get models and tools from Signalbox.
+      What does Basalt's first release do? A and B sign in to their own empty pools, A connects
+      subscriptions and shares the pool with B, B picks it for B's computer, each connects their own tools,
+      and a pasted prompt sets up each computer so local Claude Code and Codex get models and tools from
+      Basalt. Sharing a pool never shares tools.
     '''
 
     include personA with { description 'shares a pool' }
-    include personB with { description "uses A's shared pool" }
-    include laptopCli, signalbox, signalbox.identity, signalbox.models, signalbox.connections, signalbox.gateway
+    include personB with { description "uses A's pool" }
+    include signalbox
+    include laptopCli with { description 'your own agent'; technology 'official CLIs · computer key' }
+    include signalbox.identity with { title 'Sign-in'; description 'Google · GitHub · passkeys'; technology 'Executor v2 sign-in' }
+    include signalbox.models with { title 'Pools'; description 'one pool app per pool'; technology 'Executor v2 app · CLIProxyAPI Home' }
+    include signalbox.connections with { title 'Connectors'; description 'one click · yours only'; technology 'Executor v2 apps' }
+    include signalbox.gateway.modelGateway with { title 'Model gateway'; description '/v1'; technology 'router Worker' }
+    include signalbox.gateway.toolGateway with { title 'Tools gateway'; description '/mcp · tool search'; technology 'Executor v2 MCP' }
 
     personA -> signalbox.identity 'Sign in' {
       navigateTo v1_sign_in
       notes """
-        - Hosted sign-in, e.g. with Google; an own pool that starts empty
+        - Google, GitHub or a passkey; an own pool that starts empty
       """
     }
     personB -> signalbox.identity 'Sign in' {
       navigateTo v1_sign_in
-      notes """
-        - B gets B's own top level and own empty pool too
-      """
     }
-    personA -> signalbox.models 'Fill my pool' {
+    personA -> signalbox.models 'Connect subscriptions' {
       navigateTo v1_pool_one_click
       notes """
-        - One click per Claude or ChatGPT subscription; an API key works too
+        - Every provider the pool backend can sign in; subscriptions only
       """
     }
     personA -> signalbox.models 'Share with B' {
@@ -55,18 +59,12 @@ views {
         - Like sharing a doc: an invite link, a member list, remove
       """
     }
-    personB -> signalbox.models "Pick A's pool here" {
+    personB -> signalbox.models "Pick A's pool for this computer" {
       navigateTo v1_invite
-      notes """
-        - A's shared pool sits next to B's own; one click picks it for this computer
-      """
     }
     parallel {
       personA -> signalbox.connections 'My Google · Confluence' {
         navigateTo v1_connections_one_click
-        notes """
-          - One click each; acts as A and serves only A
-        """
       }
       personB -> signalbox.connections 'My Google · Confluence' {
         notes """
@@ -74,19 +72,16 @@ views {
         """
       }
     }
-    personB -> laptopCli 'Set up this computer' {
+    personB -> laptopCli 'Paste setup prompt' {
       navigateTo v1_set_up_this_computer
-      notes """
-        - One click: a personal key, then Claude Code and Codex config written
-      """
     }
-    laptopCli -[model]-> signalbox.gateway 'Model request' {
+    laptopCli -[model]-> signalbox.gateway.modelGateway 'Model request' {
       navigateTo v1_local_model_request
       notes """
-        - Runs on the pool B picked: A's shared pool
+        - Runs on A's pool, the one B picked for this computer
       """
     }
-    laptopCli -[tool]-> signalbox.gateway 'Tool call' {
+    laptopCli -[tool]-> signalbox.gateway.toolGateway 'Tool call' {
       navigateTo v1_local_tool_call
       notes """
         - Only B's own connections
@@ -94,9 +89,6 @@ views {
     }
     personA -> signalbox.models 'Usage per member' {
       navigateTo v1_usage
-      notes """
-        - A sees B's use of A's pool; B sees B's own usage on every pool
-      """
     }
 
     style personA, personB {
@@ -109,50 +101,41 @@ views {
   dynamic view v1_sign_in {
     #v1
     variant sequence
-    title 'Workflows/v1/1 · Sign in'
+    title 'Workflows/Basalt/1 · Sign in'
     description '''
-      What does a person have after signing in for the first time? Hosted sign-in, here with Google. Each
-      person gets a personal top level they never see and an own pool on it that starts empty. No
-      organization, no picker, nothing to set up.
+      What does a person have after signing in for the first time? The tools service's own sign-in, with
+      Google, GitHub or a passkey. Each person gets an own pool that starts empty. Nothing to set up.
     '''
 
     include personA with { description 'first sign-in' }
     include personB with { description 'first sign-in' }
-    include signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.models, platform, platform.workos, services, services.google
+    include signalbox, services, services.google, services.github
+    include signalbox.web with { title 'App'; description '/'; technology 'Executor v2' }
+    include signalbox.identity with {
+      title 'Sign-in'
+      description 'Google · GitHub · passkeys'
+      technology 'Executor v2 sign-in'
+    }
+    include signalbox.models.custody with { title 'Pool app'; description 'one per pool'; technology 'Executor v2 app' }
 
     personA -> signalbox.web 'Continue with Google'
-    signalbox.web -> signalbox.identity 'signIn' {
-      navigateTo identity_identity_signin
-    }
-    signalbox.identity -> platform.workos 'Hosted sign-in' {
+    signalbox.web -> signalbox.identity 'signIn'
+    signalbox.identity -> services.google 'Google sign-in'
+    signalbox.identity <- services.google 'complete'
+    signalbox.identity -> signalbox.models.custody 'Own empty pool' {
       notes """
-        - Hosted sign-in; Google is one example provider
-      """
-    }
-    platform.workos -> services.google 'Google sign-in'
-    signalbox.identity <- platform.workos 'complete' {
-      notes """
-        - Returns A; no organization and no account picker
-      """
-    }
-    signalbox.identity -> signalbox.tree 'Personal top level' {
-      notes """
-        - Made on first sign-in, owned by A, never shown as a thing to manage
-      """
-    }
-    signalbox.identity -> signalbox.models 'Own empty pool' {
-      notes """
-        - Placed on A's top level and preferred there; accounts come next
+        - A new pool app, owned by A; accounts come next
       """
     }
     signalbox.web <- signalbox.identity 'Session'
     personA <- signalbox.web 'My pool, empty'
-    personB -> signalbox.web 'Continue with Google' {
+    personB -> signalbox.web 'Continue with GitHub' {
       notes """
-        - Steps 2 to 9 again: B gets B's own top level and own empty pool
+        - A passkey works too, with no outside provider
       """
     }
-    signalbox.identity -> signalbox.models 'Own empty pool'
+    signalbox.identity -> services.github 'GitHub sign-in'
+    signalbox.identity -> signalbox.models.custody 'Own empty pool'
     personB <- signalbox.web 'My pool, empty'
 
     style personA, personB {
@@ -165,48 +148,73 @@ views {
   dynamic view v1_pool_one_click {
     #v1
     variant sequence
-    title 'Workflows/v1/2 · Fill your pool'
+    title 'Workflows/Basalt/2 · Connect subscriptions'
     description '''
-      How does A put model accounts into A's pool? One click each: a Claude subscription, a ChatGPT
-      subscription, or an API key. They sit in Models behind the one model gateway, with the pool backend
-      behind it. Nobody ever sees another person's credentials.
+      How does A put subscriptions into A's pool? Connect offers every provider the pool backend can sign
+      in, each through the backend's own login flow. Basalt has no per-provider code, so a provider the
+      backend adds later just appears. Subscriptions only, no API keys. Nobody ever sees another person's
+      credentials.
     '''
 
     include personA with { description 'owns this pool' }
-    include signalbox, signalbox.web, signalbox.models, modelProviders, modelProviders.anthropic, modelProviders.openai
+    include signalbox
+    include signalbox.web with { title 'App'; description '/'; technology 'Executor v2' }
+    include signalbox.models.custody with { title 'Pool app'; description 'one per pool'; technology 'Executor v2 app' }
+    include signalbox.models.backend.cpaContainer with {
+      title 'Pool backend'
+      description 'warm container'
+      technology 'CLIProxyAPI Home'
+    }
+    include modelProviders with {
+      title 'Subscription provider'
+      description 'Claude · ChatGPT · Grok · Antigravity · Kimi · Devin · Meta'
+    }
 
-    personA -> signalbox.web 'Add Claude subscription' {
-      navigateTo folders_pools_signin_subscription
+    personA -> signalbox.web 'Connect'
+    signalbox.web -> signalbox.models.custody 'providers'
+    signalbox.models.custody -> signalbox.models.backend.cpaContainer 'providers' {
       notes """
-        - On A's pool, made empty at sign-in
+        - The list and each provider's login flow come from the pool backend
       """
     }
-    signalbox.web -> signalbox.models 'connect(my pool)'
-    signalbox.models -> modelProviders.anthropic 'Subscription sign-in' {
-      notes """
-        - One click opens the provider's sign-in; A approves
-      """
-    }
-    personA -> signalbox.web 'Add ChatGPT subscription'
-    signalbox.web -> signalbox.models 'connect(my pool)'
-    signalbox.models -> modelProviders.openai 'Subscription sign-in' {
-      notes """
-        - One click; device code
-      """
-    }
-    opt 'an API key instead or too' {
-      personA -> signalbox.web 'Paste API key' {
-        navigateTo folders_pools_paste_credentials
+    personA <- signalbox.web 'Every provider'
+    signalbox.models.custody -> signalbox.models.backend.cpaContainer 'start login'
+    alt {
+      when 'sign-in and callback URL' {
+        personA -> modelProviders 'Sign in' {
+          notes """
+            - Claude, ChatGPT, Grok, Antigravity, Devin
+          """
+        }
+        personA -> signalbox.web 'Paste localhost URL' {
+          notes """
+            - The `localhost` URL the browser lands on, or a login file
+          """
+        }
+        signalbox.web -> signalbox.models.custody 'complete'
+        signalbox.models.custody -> signalbox.models.backend.cpaContainer 'callback'
       }
-      signalbox.web -> signalbox.models 'connect(API key)'
+      else 'device code' {
+        personA <- signalbox.web 'Code and link' {
+          notes """
+            - Kimi, Meta
+          """
+        }
+        personA -> modelProviders 'Enter code'
+        signalbox.models.custody -> signalbox.models.backend.cpaContainer 'wait for done'
+      }
     }
-    signalbox.models -> signalbox.models 'Seal into the pool backend' {
+    signalbox.models.backend.cpaContainer -> signalbox.models.backend.cpaContainer 'Keep the login' {
       notes """
-        - Credentials live in the pool host, never on a client
+        - Credentials live in the pool backend, never on a client
         - Nobody, A included, sees them again; members never see them at all
       """
     }
-    personA <- signalbox.web 'Pool ready'
+    personA <- signalbox.web 'Account in my pool' {
+      notes """
+        - Its usage window and reset time, in the pool's Accounts view
+      """
+    }
 
     style personA {
       color green
@@ -218,51 +226,49 @@ views {
   dynamic view v1_invite {
     #v1
     variant sequence
-    title 'Workflows/v1/3 · Share your pool'
+    title 'Workflows/Basalt/3 · Share your pool'
     description '''
-      How does A share a pool with B, and how does A stop it? As easily as sharing a doc: an invite by email
-      or link, a member list, remove. Underneath, the invite lends the pool into B's top level, so the
-      hierarchy resolves it for B. B sees it next to B's own pool and picks one per computer. Sharing a pool
-      never shares tools: A's and B's connections stay separate.
+      How does A share a pool with B, and how does A stop it? Like sharing a doc: an organization invite by
+      link or email, then the pool app is shared with B. The organization is only the sharing boundary.
+      B sees A's pool next to B's own and picks one per computer. Sharing a pool never shares tools.
     '''
 
     include personA with { description 'shares a pool' }
     include personB with { description 'invited' }
-    include laptopCli, signalbox, signalbox.web, signalbox.models, signalbox.tree, signalbox.gateway.modelGateway
+    include signalbox
+    include laptopCli with { description 'your own agent'; technology 'official CLIs · computer key' }
+    include signalbox.web with { title 'App'; description '/'; technology 'Executor v2' }
+    include signalbox.models.custody with { title 'Pool app'; description 'one per pool'; technology 'Executor v2 app' }
+    include signalbox.models.backend.cpaContainer with { title 'Pool backend'; description 'warm container'; technology 'CLIProxyAPI Home' }
+    include signalbox.gateway.modelGateway with { title 'Model gateway'; description '/v1'; technology 'router Worker' }
 
     personA -> signalbox.web 'Share pool' {
       notes """
-        - From the pool: copy an invite link, or type B's email
+        - An invite link or B's email; it expires after 7 days
       """
     }
-    signalbox.web -> signalbox.models 'Invite link'
     personB -> signalbox.web 'Open link' {
       navigateTo v1_sign_in
       notes """
         - Signs in first if B has no account yet
       """
     }
-    signalbox.web -> signalbox.models 'accept'
-    signalbox.models -> signalbox.tree "Loan into B's top level" {
-      navigateTo state_loan
+    signalbox.web -> signalbox.models.custody 'Share app with B' {
       notes """
-        - A loan, not a copy: the pool stays A's, its credentials stay hidden
-        - Only the pool is lent: A's and B's connections stay separate
+        - The tools service's own app sharing, inside the organization
+        - Only the pool: A's and B's connections stay separate
       """
     }
-    personB <- signalbox.web 'Two pools' {
-      notes """
-        - B's own pool and A's shared pool, side by side
-      """
-    }
+    signalbox.models.custody -> signalbox.models.backend.cpaContainer 'Member user'
+    personB <- signalbox.web 'Two pools'
     personB -> signalbox.web 'Use for this computer' {
       notes """
-        - One click per computer
+        - The pool app lists B's computers; one click per computer
       """
     }
-    signalbox.web -> signalbox.tree 'Set preferred' {
+    signalbox.models.custody -> signalbox.models.backend.cpaContainer 'Re-point computer key' {
       notes """
-        - The `preferred` pick among the pools at B's top level
+        - Nothing changes on the computer
       """
     }
     laptopCli -[model]-> signalbox.gateway.modelGateway "B's requests" {
@@ -273,20 +279,16 @@ views {
     }
     personA -> signalbox.web 'Members' {
       navigateTo v1_usage
-      notes """
-        - A and B, with each one's usage
-      """
     }
     opt 'A removes B' {
       personA -> signalbox.web 'Remove B'
-      signalbox.web -> signalbox.models 'End loan'
-      signalbox.models -> signalbox.tree "Unplace from B's top level"
+      signalbox.web -> signalbox.models.custody 'Unshare'
+      signalbox.models.custody -> signalbox.models.backend.cpaContainer "Revoke B's keys on this pool"
       laptopCli -[model]-> signalbox.gateway.modelGateway "B's next request"
-      signalbox.gateway.modelGateway -> signalbox.tree 'Resolve pool'
-      laptopCli <- signalbox.gateway.modelGateway 'Pool removed' {
+      laptopCli <- signalbox.gateway.modelGateway 'Denied' {
         notes """
-          - Fails clearly, never a silent switch; B picks B's own pool again in one click
-          - B's key and B's own connections are untouched
+          - A request already running finishes; the next one fails clearly
+          - B's own pool and B's own connections are untouched
         """
       }
     }
@@ -301,39 +303,46 @@ views {
   dynamic view v1_usage {
     #v1
     variant sequence
-    title 'Workflows/v1/4 · Understand usage'
+    title 'Workflows/Basalt/4 · Understand usage'
     description '''
-      Who sees which usage? The pool owner sees usage per member, per model and over time. Each member sees
-      their own usage on every pool they use. Every model request is metered with its person, pool and model.
+      Who sees which usage? The pool owner sees tokens per member and per model over time, cost as the
+      API-equivalent price, and whether the pool needs more accounts. Each member sees their own usage and,
+      per subscription, what's left and when it resets. Each pool shows only its own data.
     '''
 
     include personA with { description 'owns the pool' }
     include personB with { description "member of A's pool" }
-    include laptopCli, signalbox, signalbox.web, signalbox.gateway.modelGateway, signalbox.models
+    include signalbox
+    include laptopCli with { description 'your own agent'; technology 'official CLIs · computer key' }
+    include signalbox.web with { title 'App'; description '/'; technology 'Executor v2' }
+    include signalbox.gateway.modelGateway with { title 'Model gateway'; description '/v1'; technology 'router Worker' }
+    include signalbox.models.custody with { title 'Pool app'; description 'one per pool'; technology 'Executor v2 app' }
+    include signalbox.models.backend.cpaContainer with { title 'Pool backend'; description 'warm container'; technology 'CLIProxyAPI Home' }
 
     laptopCli -[model]-> signalbox.gateway.modelGateway 'Model request' {
       navigateTo v1_local_model_request
     }
-    signalbox.gateway.modelGateway -[async]-> signalbox.models 'meter' {
-      navigateTo folders_usage_record
+    signalbox.gateway.modelGateway -[model]-> signalbox.models.backend.cpaContainer 'serve'
+    signalbox.models.backend.cpaContainer -> signalbox.models.backend.cpaContainer 'Record usage' {
       notes """
-        - One usage row: person, pool, model, tokens, time; off the request path
+        - Member, model, tokens, time; off the request path
       """
     }
     personA -> signalbox.web "My pool's usage"
-    signalbox.web -> signalbox.models 'view(pool usage)'
-    personA <- signalbox.web 'Per member · model · time' {
+    signalbox.web -> signalbox.models.custody 'usage'
+    signalbox.models.custody -> signalbox.models.backend.cpaContainer 'read usage'
+    personA <- signalbox.web 'Tokens · cost · accounts' {
       notes """
-        - A sees A and B on A's pool, split by model and over time
-        - Never B's use of other pools
+        - Tokens per member and per model over time
+        - Cost as a separate view, at API-equivalent prices
+        - Accounts needed: add or remove one, from how often accounts hit limits
+        - An optional cap per member, off by default
       """
     }
     personB -> signalbox.web 'My usage'
-    signalbox.web -> signalbox.models 'view(my usage)'
-    personB <- signalbox.web 'Mine, on every pool' {
+    personB <- signalbox.web "Mine · what's left · resets" {
       notes """
-        - B's own usage on B's pool and on A's shared pool
-        - Never other members' usage
+        - B's own usage on each pool B uses; never other members'
       """
     }
 
@@ -347,70 +356,42 @@ views {
   dynamic view v1_connections_one_click {
     #v1
     variant sequence
-    title 'Workflows/v1/5 · Connect your own tool accounts'
+    title 'Workflows/Basalt/5 · Connect your own tools'
     description '''
-      How does each person bring their own Google and Confluence? One click each through hosted OAuth, no
-      admin. A connection acts as the person who made it, sits on their top level and serves only their
-      requests; sharing a pool never shares tools. The tools gateway (Gateway plus Connections) exposes
-      them through that person's MCP endpoint, with tool search by default.
+      How does each person bring their own Google and Confluence? One click each, on our OAuth clients, no
+      admin. A connection acts as the person who made it and serves only their requests; sharing a pool never
+      shares tools. Any other MCP server or API can be added too, just not in one click.
     '''
 
     include personA with { description 'own tools' }
     include personB with { description 'own tools' }
-    include signalbox, signalbox.web, signalbox.ingress, signalbox.gateway.toolGateway, signalbox.connections, signalbox.tree, services, services.google, services.atlassian
+    include signalbox, services, services.google, services.atlassian
+    include signalbox.web with { title 'App'; description '/'; technology 'Executor v2' }
+    include signalbox.connections with { title 'Connectors'; description 'one click · yours only'; technology 'Executor v2 apps' }
 
     personA -> signalbox.web 'Connect my Google'
-    signalbox.web -> signalbox.connections 'connect(Google)' {
-      notes """
-        - Hosted OAuth: the Signalbox-hosted service provides the OAuth app
-      """
-    }
-    signalbox.web -> services.google 'Consent' {
+    signalbox.web -> signalbox.connections 'connect(Google)'
+    personA -> services.google 'Consent' {
       notes """
         - A's one human click
-        - If A's Google Workspace restricts third-party apps, allowing our OAuth
-          client is that customer's setting, outside Signalbox
       """
     }
-    services.google -> signalbox.ingress 'OAuth callback'
-    signalbox.ingress -> signalbox.connections 'complete' {
-      navigateTo state_connection
+    services.google -> signalbox.connections 'OAuth callback' {
       notes """
-        - Tokens sealed in the vault; no client ever holds them
-      """
-    }
-    signalbox.connections -> signalbox.tree "Place at A's top level" {
-      notes """
+        - Tokens stay in the tools service; no client ever holds them
         - Acts as A, serves only A's requests
       """
     }
-    personA -> signalbox.web 'Connect my Confluence' {
-      notes """
-        - Same one click: steps 2 to 6 with Atlassian
-      """
-    }
-    signalbox.web -> services.atlassian 'Consent'
-    signalbox.connections -> signalbox.tree "Place at A's top level"
+    personA -> signalbox.web 'Connect my Confluence'
+    personA -> services.atlassian 'Consent'
+    services.atlassian -> signalbox.connections 'OAuth callback'
     personB -> signalbox.web 'Connect my Google' {
       notes """
-        - B's own account, same steps, placed on B's top level
-        - Even while B uses A's pool, A's and B's tools never mix
+        - B's own account; even while B uses A's pool, their tools never mix
       """
     }
-    signalbox.connections -> signalbox.tree "Place at B's top level"
-    personA -> signalbox.gateway.toolGateway 'My MCP endpoint' {
-      notes """
-        - A's own endpoint, reached with A's key
-      """
-    }
-    signalbox.gateway.toolGateway -> signalbox.tree "Resolve A's top level"
-    signalbox.gateway.toolGateway -> signalbox.connections 'toolbox' {
-      notes """
-        - A's Google and Confluence only; never B's
-        - search + execute: tools are found by search, not listed
-      """
-    }
-    personA <- signalbox.gateway.toolGateway 'search · execute'
+    personB -> services.google 'Consent'
+    services.google -> signalbox.connections 'OAuth callback'
     opt 'A disconnects' {
       personA -> signalbox.web 'Disconnect Google'
       signalbox.web -> signalbox.connections 'disconnect' {
@@ -430,79 +411,58 @@ views {
   dynamic view v1_set_up_this_computer {
     #v1
     variant sequence
-    title 'Workflows/v1/6 · Set up this computer'
+    title 'Workflows/Basalt/6 · Set up this computer'
     description '''
-      What does one click on "Set up this computer" change on B's machine? It mints a personal key and writes
-      Claude Code's and Codex's own config so their models and tools go through Signalbox. The desktop app
-      writes it, or a served command does in a terminal (#403). Codex runs on the Signalbox key alone, with no
-      OpenAI sign-in (#449; #assumption, see its step). Undo removes exactly what was written.
+      How does B point local Claude Code and Codex at Basalt? B pastes a short prompt into their own agent.
+      Its one-time link mints a key for this computer, bound to the pool picked for it, and the agent writes
+      Claude Code's and Codex's own config. Undo is a second paste that removes exactly what was written.
     '''
 
     include personB with { description 'sets up a computer' }
-    include signalbox, signalbox.desktop, signalbox.cli, signalbox.gateway, signalbox.identity, laptopCli
+    include signalbox
+    include laptopCli with { description 'your own agent'; technology 'official CLIs · computer key' }
+    include signalbox.web with { title 'App'; description '/'; technology 'Executor v2' }
+    include signalbox.models.custody with { title 'Pool app'; description 'one per pool'; technology 'Executor v2 app' }
+    include signalbox.gateway.toolGateway with { title 'Tools gateway'; description '/mcp · tool search'; technology 'Executor v2 MCP' }
 
-    personB -> signalbox.desktop 'Set up this computer' {
+    personB -> signalbox.web 'Set up this computer'
+    personB <- signalbox.web 'Setup prompt' {
       notes """
-        - One click; the web app shows the same button
+        - Carries a one-time link that expires in minutes, never the key
       """
     }
-    signalbox.desktop -> signalbox.gateway 'Mint my key' {
-      navigateTo folders_pools_local_key
+    personB -> laptopCli 'Paste into my agent'
+    laptopCli -> signalbox.web 'Open one-time link'
+    signalbox.web -> signalbox.models.custody 'Mint computer key' {
       notes """
-        - Personal: it carries B and B's top level
-        - Its requests use the pool B picked for this computer
+        - Bound to the pool picked for this computer, plus a tools token
       """
     }
-    signalbox.gateway -> signalbox.identity 'Sign for B'
-    signalbox.desktop <- signalbox.gateway 'Personal key'
-    alt 'who writes the config' {
-      when 'desktop app' {
-        signalbox.desktop -> laptopCli 'Write Claude Code' {
-          notes """
-            - Settings env `ANTHROPIC_BASE_URL` → the Signalbox model gateway
-            - The key in Claude Code's own settings, so a Dock-launched app works too
-            - A `signalbox` MCP server → B's MCP endpoint
-          """
-        }
-        signalbox.desktop -> laptopCli 'Write Codex' {
-          notes """
-            - `~/.codex/config.toml`: a `model_providers` entry with `requires_openai_auth = false`,
-              the Signalbox endpoint and the key in `http_headers`; `model_provider` selects it
-            - Codex runs on the Signalbox key alone, with no OpenAI sign-in
-            - `#assumption`: what turning OpenAI auth off disables is being checked separately
-            - A `signalbox` MCP server → B's MCP endpoint
-          """
-        }
-      }
-      else 'terminal' {
-        personB -> signalbox.cli 'Run served command' {
-          navigateTo folders_modelgateway_laptop_pool
-          notes """
-            - The page shows one command for machines without the desktop app
-          """
-        }
-        signalbox.cli -> laptopCli 'Write the same config'
-      }
-    }
-    laptopCli -> laptopCli 'Normal provider · MCP' {
+    laptopCli <- signalbox.web 'Computer key · tools token'
+    laptopCli -> laptopCli 'Write Claude Code' {
       notes """
-        - Each harness sees one more provider and one more MCP server, nothing else
+        - `ANTHROPIC_BASE_URL` and the key in its settings
+        - A `signalbox` MCP server
       """
     }
+    laptopCli -> laptopCli 'Write Codex' {
+      notes """
+        - A `model_providers` entry with `requires_openai_auth = true` and the key in an `X-Api-Key` header
+        - B signs Codex into any ChatGPT account
+        - A `signalbox` MCP server
+      """
+    }
+    laptopCli -[tool]-> signalbox.gateway.toolGateway 'Verify' {
+      notes """
+        - Through a `signalbox` tool
+      """
+    }
+    personB <- laptopCli 'Done: restart and send a message'
     opt 'undo' {
-      signalbox.desktop -> laptopCli 'Remove what was written' {
+      personB -> laptopCli 'Paste undo prompt'
+      laptopCli -> laptopCli 'Remove what was written' {
         notes """
-          - Exactly the written entries; B's other settings untouched
-        """
-      }
-    }
-    opt 'revoke the key' {
-      personB -> signalbox.desktop 'Revoke key'
-      signalbox.desktop -> signalbox.gateway 'Revoke'
-      laptopCli -> signalbox.gateway 'Next request'
-      laptopCli <- signalbox.gateway 'Denied' {
-        notes """
-          - Fails clearly on the very next model or tool request
+          - Exactly the marked entries; B's other settings untouched
         """
       }
     }
@@ -517,57 +477,59 @@ views {
   dynamic view v1_local_model_request {
     #v1
     variant sequence
-    title 'Workflows/v1/7 · Local model request'
+    title 'Workflows/Basalt/7 · Local model request'
     description '''
-      Which pool serves a local request? Each request carries the personal key to the model gateway. Tree
-      resolves the pool the person picked for that computer among the pools at their top level: here A's pool,
-      lent into B's top level. Models serves it through the pool's accounts and meters the usage.
+      Which pool serves a local request? The computer key carries the pool picked for that computer, here
+      A's pool. The pool backend keeps a conversation on one account, spreads new ones and fails over at an
+      account's limit.
     '''
 
-    include personB with { description "uses A's shared pool" }
-    include laptopCli, signalbox, signalbox.gateway.modelGateway, signalbox.identity, signalbox.tree, signalbox.models, modelProviders, modelProviders.anthropic, modelProviders.openai
+    include personB with { description "uses A's pool" }
+    include signalbox
+    include laptopCli with { description 'your own agent'; technology 'official CLIs · computer key' }
+    include signalbox.gateway.modelGateway with {
+      title 'Model gateway'
+      description '/v1'
+      technology 'router Worker'
+    }
+    include signalbox.models.backend.cpaContainer with { title 'Pool backend'; description 'warm container'; technology 'CLIProxyAPI Home' }
+    include modelProviders with { title 'Subscription provider'; description 'Claude · ChatGPT · Grok · …' }
 
     personB -> laptopCli 'Runs Claude Code'
     laptopCli -[model]-> signalbox.gateway.modelGateway 'Messages call + key' {
       notes """
-        - `ANTHROPIC_BASE_URL` points here; Claude Code thinks it is a normal provider
+        - `ANTHROPIC_BASE_URL` points here; Claude Code sees a normal provider
       """
     }
-    signalbox.gateway.modelGateway -> signalbox.identity 'Verify key' {
+    signalbox.gateway.modelGateway -[model]-> signalbox.models.backend.cpaContainer 'serve' {
       notes """
-        - Yields B and B's top level
+        - The key's pool: A's pool
       """
     }
-    signalbox.gateway.modelGateway -> signalbox.tree 'Resolve pool' {
-      navigateTo folders_placement_resolve
+    signalbox.models.backend.cpaContainer -> signalbox.models.backend.cpaContainer 'Pick an account' {
       notes """
-        - Pools at B's top level: B's own and A's loan; the `preferred` pick wins
-        - Here that is A's shared pool
+        - Sticky per conversation; new conversations spread; failover at limits
       """
     }
-    signalbox.gateway.modelGateway -[model]-> signalbox.models 'serve' {
-      notes """
-        - The pool backend picks one of the pool's accounts
-      """
-    }
-    signalbox.models -[model]-> modelProviders.anthropic 'Messages'
+    signalbox.models.backend.cpaContainer -[model]-> modelProviders 'Messages'
     laptopCli <- signalbox.gateway.modelGateway 'Streamed reply'
-    signalbox.gateway.modelGateway -[async]-> signalbox.models 'meter' {
-      navigateTo v1_usage
-      notes """
-        - Usage row for B on A's pool, by model; off the request path
-      """
-    }
     personB -> laptopCli 'Runs Codex'
     laptopCli -[model]-> signalbox.gateway.modelGateway 'Responses call + key' {
       notes """
-        - Same key, same steps 3 to 8
-        - Key only: `requires_openai_auth = false`, no OpenAI sign-in (`#assumption`)
+        - Key in `X-Api-Key`; Codex signed into any ChatGPT account
       """
     }
-    signalbox.gateway.modelGateway -[model]-> signalbox.models 'serve'
-    signalbox.models -[model]-> modelProviders.openai 'Responses'
+    signalbox.gateway.modelGateway -[model]-> signalbox.models.backend.cpaContainer 'serve'
+    signalbox.models.backend.cpaContainer -[model]-> modelProviders 'Responses'
     laptopCli <- signalbox.gateway.modelGateway 'Streamed reply'
+    opt 'key revoked' {
+      laptopCli -[model]-> signalbox.gateway.modelGateway 'Next request'
+      laptopCli <- signalbox.gateway.modelGateway 'Denied' {
+        notes """
+          - Fails clearly, never a silent switch
+        """
+      }
+    }
 
     style personB {
       color green
@@ -579,40 +541,43 @@ views {
   dynamic view v1_local_tool_call {
     #v1
     variant sequence
-    title 'Workflows/v1/8 · Local tool call'
+    title 'Workflows/Basalt/8 · Local tool call'
     description '''
       Which tools does a local harness get? Only its own person's connections. B's local Codex calls the
-      `signalbox` MCP server, which is the tools gateway (Gateway plus Connections). It finds Confluence by tool
-      search, runs it through execute, and the tools gateway fills B's credentials from the vault at egress. B uses
-      A's shared pool, but sharing a pool never shares tools: A's connections never resolve for B.
+      `signalbox` MCP server, which is the tools gateway. It finds Confluence by tool search and runs it. B
+      uses A's pool, but sharing a pool never shares tools: A's connections never reach B.
     '''
 
-    include personB with { description "uses A's shared pool" }
-    include laptopCli, signalbox, signalbox.gateway.toolGateway, signalbox.tree, signalbox.connections, services, services.atlassian
+    include personB with { description "uses A's pool" }
+    include signalbox
+    include laptopCli with { description 'your own agent'; technology 'official CLIs · computer key' }
+    include services, services.atlassian
+    include signalbox.gateway.toolGateway with {
+      title 'Tools gateway'
+      description '/mcp · tool search'
+      technology 'Executor v2 MCP'
+    }
+    include signalbox.connections with { title 'Connectors'; description 'one click · yours only'; technology 'Executor v2 apps' }
 
     personB -> laptopCli 'Ask in Codex'
     laptopCli -[tool]-> signalbox.gateway.toolGateway 'search "confluence"' {
-      navigateTo folders_connections_tool_search_call
       notes """
-        - The `signalbox` MCP server's search tool, with B's key
+        - The `signalbox` MCP server's search, with B's tools token
       """
     }
-    signalbox.gateway.toolGateway -> signalbox.tree "Resolve B's top level" {
+    signalbox.gateway.toolGateway -> signalbox.connections "B's connections" {
       notes """
-        - B's own connections only
-        - The pool loan from A brings no tools: A's connections never resolve for B
+        - B's own only; A's never resolve for B
       """
     }
-    signalbox.gateway.toolGateway -> signalbox.connections 'toolbox (search)'
     laptopCli <- signalbox.gateway.toolGateway 'Confluence tools'
-    laptopCli -[tool]-> signalbox.gateway.toolGateway 'execute'
+    laptopCli -[tool]-> signalbox.gateway.toolGateway 'call'
     signalbox.gateway.toolGateway -[tool]-> signalbox.connections 'call'
-    signalbox.connections -> signalbox.connections 'Fill from vault' {
+    signalbox.connections -[tool]-> services.atlassian 'Confluence API' {
       notes """
-        - B's credentials, injected at egress only; never returned to the harness
+        - As B; credentials never returned to the harness
       """
     }
-    signalbox.connections -[tool]-> services.atlassian 'Confluence API'
     laptopCli <- signalbox.gateway.toolGateway 'Result'
 
     style personB {

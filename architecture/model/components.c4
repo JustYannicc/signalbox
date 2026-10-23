@@ -1,0 +1,18 @@
+// Which component each module lives in (#1191 addendum, 2026-10-23). Tags, not parents, so every FQN stays
+// put: Basalt (identity, inference, connectors), Pumice (harness, environment) and the Signalbox OS that
+// composes both. Modules the components table doesn't name carry no component tag yet.
+model {
+  extend signalbox.identity { #basalt }
+  extend signalbox.models { #basalt }
+  extend signalbox.gateway { #basalt }
+  extend signalbox.connections { #basalt }
+
+  extend signalbox.harness { #pumice }
+  extend signalbox.computer { #pumice }
+
+  extend signalbox.thread { #os }
+  extend signalbox.automations { #os }
+  extend signalbox.observability { #os }
+  extend signalbox.funnel { #os }
+  extend signalbox.tree { #os }
+}

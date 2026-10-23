@@ -1,6 +1,4 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - Compare native Node stream behavior with the compatibility facade.
 import * as NodeStream from "node:stream";
-// @effect-diagnostics-next-line nodeBuiltinImport:off - Native Node console is the differential oracle.
 import * as NodeConsole from "node:console";
 import * as NodeUtil from "node:util";
 import { describe, expect, it, vi } from "vite-plus/test";
