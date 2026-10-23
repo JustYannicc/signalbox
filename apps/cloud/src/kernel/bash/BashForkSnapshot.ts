@@ -5,13 +5,19 @@ import {
 } from "../KernelBashFork.ts";
 import { BashCaptureStore } from "./BashCaptureStore.ts";
 import type { BashContinuation } from "./BashTransitions.ts";
+import type { KernelBashCheckpointContinuation } from "../KernelBashCheckpoint.ts";
 
-export function createBashForkSnapshot(process: BashContinuation) {
+export function createBashForkSnapshot(
+  process: BashContinuation,
+  continuation: KernelBashCheckpointContinuation = continuationFor(process),
+) {
   let memory: WebAssembly.Memory | undefined = process.exports.memory;
   const state: KernelBashForkState = {
+    version: 1,
     memoryBytes: memory.buffer.byteLength,
     stackPointer: Number(process.exports.__stack_pointer.value),
     captures: process.captures.snapshot(),
+    continuation,
   };
   const copied = Promise.withResolvers<void>();
   const source: KernelBashForkSource = {
@@ -46,8 +52,12 @@ export function createBashForkSnapshot(process: BashContinuation) {
   };
 }
 
-export async function restoreBashFork(process: BashContinuation, source: KernelBashForkSource) {
+export async function restoreBashFork(
+  process: BashContinuation,
+  source: KernelBashForkSource,
+): Promise<KernelBashCheckpointContinuation> {
   const state = await source.state();
+  if (state.version !== 1) throw new Error(`Unsupported Bash checkpoint version ${state.version}`);
   const memory = process.exports.memory;
   if (memory.buffer.byteLength < state.memoryBytes)
     memory.grow((state.memoryBytes - memory.buffer.byteLength) / 65_536);
@@ -59,4 +69,26 @@ export async function restoreBashFork(process: BashContinuation, source: KernelB
   }
   process.exports.__stack_pointer.value = state.stackPointer;
   process.captures = BashCaptureStore.restore(state.captures);
+  return state.continuation;
+}
+
+function continuationFor(process: BashContinuation): KernelBashCheckpointContinuation {
+  const pending = process.pending;
+  if (pending?.kind === "operation") {
+    return {
+      resume: process.resume,
+      pending: { kind: "operation", operation: pending.operation, call: pending.call },
+    };
+  }
+  if (pending?.kind === "fork") {
+    return {
+      resume: process.resume,
+      pending: {
+        kind: "fork",
+        role: "child",
+        call: { namespace: "nimbus_proc", name: "fork", args: [] },
+      },
+    };
+  }
+  throw new Error("A Bash checkpoint needs a pending syscall or fork continuation");
 }

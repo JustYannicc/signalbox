@@ -1,11 +1,14 @@
 import type { BashCaptureState } from "./bash/BashCaptureState.ts";
+import type { KernelBashCheckpointContinuation } from "./KernelBashCheckpoint.ts";
 
 export const BASH_FORK_CHUNK_BYTES = 64 * 1024;
 
 export interface KernelBashForkState {
+  readonly version: 1;
   readonly memoryBytes: number;
   readonly stackPointer: number;
   readonly captures: BashCaptureState;
+  readonly continuation: KernelBashCheckpointContinuation;
 }
 
 /** The parent stays suspended until restored, so reads need no second full memory image. */
