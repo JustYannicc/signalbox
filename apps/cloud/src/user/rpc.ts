@@ -130,7 +130,8 @@ import { messages as contentSearchMessages } from "./DriveContentSearchErrors.ts
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
-import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
+import { makeUserThreadOperations } from "./ThreadOperations.ts";
+import { deviceMember, makeBrowsingHandlers } from "../thread/BrowsingRpc.ts";
 import { makeTerminalHandlers, TERMINAL_METHODS, TERMINAL_SCOPES } from "./terminalRpc.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
 import type { BrowserReply } from "../thread/threadWire.ts";
@@ -621,11 +622,13 @@ export const layerHandlers = (input: {
                 const left = [...known].some((id) => !actor.contextIds.includes(id));
                 known = new Set(actor.contextIds);
                 if (!left) return false;
-                return yield* coreThreads.snapshot(actor, threadId).pipe(
-                  Effect.as(false),
-                  Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(true) }),
-                  Effect.orElseSucceed(() => false),
-                );
+                return yield* makeUserThreadOperations(coreThreads, actor)
+                  .snapshot(threadId)
+                  .pipe(
+                    Effect.as(false),
+                    Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(true) }),
+                    Effect.orElseSucceed(() => false),
+                  );
               }),
             ),
             Stream.filter((lost) => lost),
@@ -819,7 +822,9 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           threadCall(
-            Effect.flatMap(actorNow, (actor) => coreThreads.dispatch(actor, command)),
+            Effect.flatMap(actorNow, (actor) =>
+              makeUserThreadOperations(coreThreads, actor).dispatch(command),
+            ),
             (message) =>
               new OrchestrationV2DispatchCommandError({
                 commandId: command.commandId,
@@ -829,7 +834,9 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (request) =>
           threadCall(
-            Effect.flatMap(actorNow, (actor) => coreThreads.launch(actor, request)),
+            Effect.flatMap(actorNow, (actor) =>
+              makeUserThreadOperations(coreThreads, actor).launch(request),
+            ),
             (message) =>
               new OrchestrationV2ThreadLaunchError({
                 commandId: request.commandId,
@@ -839,7 +846,9 @@ export const layerHandlers = (input: {
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (request) =>
           Stream.unwrap(
-            Effect.map(actorNow, (actor) => coreThreads.subscribe(actor, request)),
+            Effect.map(actorNow, (actor) =>
+              makeUserThreadOperations(coreThreads, actor).subscribe(request),
+            ),
           ).pipe(
             Stream.interruptWhen(lostSight(request.threadId)),
             Stream.flattenIterable,
@@ -902,7 +911,9 @@ export const layerHandlers = (input: {
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (request) =>
           threadCall(
             Effect.map(
-              Effect.flatMap(actorNow, (actor) => coreThreads.snapshot(actor, request.threadId)),
+              Effect.flatMap(actorNow, (actor) =>
+                makeUserThreadOperations(coreThreads, actor).snapshot(request.threadId),
+              ),
               (snapshot) => snapshot.projection,
             ),
             (message) =>

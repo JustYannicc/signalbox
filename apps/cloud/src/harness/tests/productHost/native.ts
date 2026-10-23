@@ -144,6 +144,7 @@ export function nativeFixture(
               ? undefined
               : {
                   method: "POST",
+                  signal: active.signal,
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify({
                     model,
@@ -169,6 +170,7 @@ export function nativeFixture(
               ? undefined
               : {
                   method: "POST",
+                  signal: active.signal,
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify({
                     model,

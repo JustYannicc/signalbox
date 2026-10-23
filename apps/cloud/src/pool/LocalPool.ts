@@ -27,6 +27,7 @@ export const denyExternalFetch = Layer.succeed(
 );
 
 export interface LocalPool {
+  readonly api: PoolDirectory.PoolObjectApi & PoolDirectory.PoolModelApi;
   readonly directory: PoolDirectory.PoolDirectory["Service"];
   readonly register: Effect.Effect<
     void,
@@ -127,5 +128,5 @@ export const createLocalPool = <SqlLayerError, SqlRequirements>(
         engine.forwardModel(owner, path, request).pipe(Effect.map(({ response }) => response)),
       );
     };
-    return { directory, register, fetch } satisfies LocalPool;
+    return { api: personalApi, directory, register, fetch } satisfies LocalPool;
   });

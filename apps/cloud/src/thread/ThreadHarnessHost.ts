@@ -141,7 +141,13 @@ export const createThreadHarnessHost = <G>(options: {
                 return yield* failed("This facet cannot execute machine control work.");
               if (sent !== undefined && sent.runId !== work.activeRunId) {
                 if (!interruptRequested) {
-                  yield* session.control({ type: "interrupt", runId: sent.runId });
+                  yield* session.control({
+                    type: "interrupt",
+                    runId: sent.runId,
+                    ...(sent.preparationGeneration === undefined
+                      ? {}
+                      : { preparationGeneration: sent.preparationGeneration }),
+                  });
                   interruptRequested = true;
                 }
                 return;
