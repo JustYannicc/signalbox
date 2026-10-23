@@ -74,7 +74,8 @@ describe("kernel suspension observation", () => {
     let nowMs = 100;
     const now = vi.spyOn(performance, "now").mockImplementation(() => nowMs);
     const fixture = createKernelPollFixture(200);
-    const observed = vi.fn();
+    const entered = Promise.withResolvers<void>();
+    const observed = vi.fn(() => entered.resolve());
     let settled = false;
     const pending = runKernelSuspensionObserver(observed, () => fixture.call(fixture.request));
     void pending.then(
@@ -86,6 +87,7 @@ describe("kernel suspension observation", () => {
       },
     );
     try {
+      await entered.promise;
       expect(observed).toHaveBeenCalledTimes(1);
       expect(settled).toBe(false);
 

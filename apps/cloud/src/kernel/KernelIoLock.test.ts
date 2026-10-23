@@ -1,17 +1,19 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { KernelIoLock } from "./KernelIoLock.ts";
 import { runKernelSuspensionObserver } from "./KernelSuspension.ts";
-import { runAsync } from "./wasi/internal_wasi_calls.ts";
 
 describe("kernel I/O lock suspension", () => {
-  it("keeps an immediately acquired lock ready", async () => {
+  it("keeps an immediately acquired lock ready", () => {
     const lock = new KernelIoLock();
     const suspended = vi.fn();
-    const release = await runKernelSuspensionObserver(suspended, () => runAsync(lock.acquire({})));
+    const acquisition = lock.acquire({});
+    const result = runKernelSuspensionObserver(suspended, () => acquisition.next());
+    expect(result.done).toBe(true);
+    if (!result.done) throw new Error("Immediate acquisition suspended");
     try {
       expect(suspended).not.toHaveBeenCalled();
     } finally {
-      release();
+      result.value();
     }
   });
 
@@ -20,22 +22,19 @@ describe("kernel I/O lock suspension", () => {
     const releaseOwner = lock.tryAcquire({});
     if (releaseOwner === undefined) throw new Error("First lock owner was not admitted");
     const suspended = vi.fn();
-    let acquired = false;
-    const waiting = runKernelSuspensionObserver(suspended, () => runAsync(lock.acquire({}))).then(
-      (release) => {
-        acquired = true;
-        return release;
-      },
-    );
+    const acquisition = lock.acquire({});
+    const queued = runKernelSuspensionObserver(suspended, () => acquisition.next());
     try {
+      expect(queued.done).toBe(false);
       expect(suspended).toHaveBeenCalledOnce();
-      expect(acquired).toBe(false);
     } finally {
       releaseOwner();
-      const releaseWaiter = await waiting;
-      releaseWaiter();
+      if (!queued.done) await queued.value;
+      const acquired = acquisition.next();
+      expect(acquired.done).toBe(true);
+      if (!acquired.done) throw new Error("Released waiter did not acquire the lock");
+      acquired.value();
     }
-    expect(acquired).toBe(true);
     expect(suspended).toHaveBeenCalledOnce();
   });
 });

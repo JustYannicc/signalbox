@@ -164,7 +164,8 @@ describe("child I/O visibility and ordering", () => {
     const descriptors = new AgentOsDescriptorHost({
       memory: () => memory,
       descriptors: fixture.filesystem.descriptors,
-      wakes: fixture.wakes,
+      wakes: fixture.context.wakes,
+      asyncMode: true,
     });
     try {
       expect(descriptors.imports.fd_pipe(0, 4)).toBe(0);

@@ -23,12 +23,19 @@ async function replayCapturedContinuation(captured: ProcessSlotRequest) {
     if (pressure.kind === "unplaceable") pressured.resolve(pressure);
   });
   const execute = vi.fn(async () => {});
-  const pending = capacity.run(
-    controller.signal,
-    undefined,
-    execute,
-    Object.freeze({ codeId: captured.codeId, residentBytes: captured.residentBytes }),
-  );
+  const pending = capacity
+    .acquire(
+      controller.signal,
+      undefined,
+      Object.freeze({ codeId: captured.codeId, residentBytes: captured.residentBytes }),
+    )
+    .then(async (permit) => {
+      try {
+        await execute();
+      } finally {
+        await permit.release();
+      }
+    });
   const settled = pending.then(
     () => ({ kind: "completed" as const }),
     (error: unknown) => ({ kind: "rejected" as const, error }),

@@ -61,7 +61,7 @@ function hashRuns(first: string, second: string, size: number) {
 }
 
 async function run(script: string, path: string, residentByteLimit?: number) {
-  const run = createBashGateway({ residentByteLimit });
+  const run = createBashGateway(residentByteLimit === undefined ? {} : { residentByteLimit });
   const { fixture } = run;
   const pressure = Promise.withResolvers<never>();
   const unsubscribe = fixture.capacity.onPressure((value) => {
