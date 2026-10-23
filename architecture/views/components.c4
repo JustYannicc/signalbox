@@ -1,0 +1,103 @@
+// What Signalbox is built from (#1191 addendum, 2026-10-23): components that each stand on their own, with
+// their own repo and deploy, and the Signalbox OS that composes them. One box per primitive; the module tags
+// (#basalt, #pumice, #os) in model/components.c4 say the same for every module.
+views {
+
+  view components {
+    title 'Overview/Decisions/Components'
+    description '''
+      What is Signalbox built from, and which component owns which primitive?
+      - **Basalt** (indigo) owns Identity, Inference (model gateway, pools) and Connectors (tools gateway,
+        vault). People sign into it for pools and tools; its first release is `Overview / Decisions / Basalt`.
+      - **Pumice** (amber) owns Harness (the official Claude Code and Codex, unmodified) and Environment (the
+        computer behind the command, files and port gateways).
+      - **The Signalbox OS** (blue) composes both and owns Runtime (thread, automations, observability), Apps
+        (the client gateway) and Place (Tree).
+
+      Each component is its own repo and deploys alone; local Claude Code and Codex use Basalt with no OS at
+      all. If upstream absorbs every PR, a component shrinks to composition (deploy stack, apps, config).
+      Click a primitive for its gateway or module.
+    '''
+
+    include personA with { title 'People'; description 'Person A · B · C' }
+    include laptopCli with { description 'uses Basalt on its own' }
+
+    group 'Signalbox OS' {
+      color primary
+      opacity 6%
+      include signalbox.funnel with {
+        title 'Apps'
+        description 'client gateway · web · desktop · mobile · CLI'
+        navigateTo funnel_clients
+      }
+      include signalbox.thread with {
+        title 'Runtime'
+        description 'thread · automations · observability'
+        navigateTo m-thread
+      }
+      include signalbox.tree with {
+        title 'Place'
+        description 'Tree: hierarchy · placement · lending'
+        navigateTo m-tree
+      }
+    }
+
+    group 'Basalt' {
+      color indigo
+      opacity 6%
+      include signalbox.identity with {
+        title 'Identity'
+        description 'who you are · who you share with'
+        navigateTo m-identity
+      }
+      include signalbox.gateway.modelGateway with {
+        title 'Inference'
+        description 'model gateway · pools'
+        navigateTo funnel_model
+      }
+      include signalbox.gateway.toolGateway with {
+        title 'Connectors'
+        description 'tools gateway · vault'
+        navigateTo funnel_connections
+      }
+    }
+
+    group 'Pumice' {
+      color amber
+      opacity 6%
+      include signalbox.harness with {
+        title 'Harness'
+        description 'official Claude Code · Codex, unmodified'
+        navigateTo m-harness
+      }
+      include signalbox.computer with {
+        title 'Environment'
+        description 'computer: command · files · port gateways'
+        navigateTo funnel_command
+      }
+    }
+
+    // Only the boxes above, and only the wiring that shows who composes whom.
+    exclude signalbox, signalbox.gateway
+    exclude * -> *
+    include personA -> signalbox.funnel with { title 'any client' }
+    include personA -> laptopCli
+    include laptopCli -> signalbox.gateway.modelGateway with { title 'models' }
+    include laptopCli -> signalbox.gateway.toolGateway with { title 'tools' }
+    include signalbox.funnel -> signalbox.identity with { title 'sign in' }
+    include signalbox.funnel -> signalbox.thread with { title 'send · watch' }
+    include signalbox.thread -> signalbox.tree with { title 'resolve place' }
+    include signalbox.thread -> signalbox.harness with { title 'turns' }
+    include signalbox.harness -> signalbox.gateway.modelGateway with { title 'models' }
+    include signalbox.harness -> signalbox.gateway.toolGateway with { title 'tools' }
+    include signalbox.harness -> signalbox.computer with { title 'Bash · Read · Edit' }
+
+    rank source { personA }
+
+    style personA, laptopCli { color green }
+    style signalbox.funnel, signalbox.thread, signalbox.tree { color primary }
+    style signalbox.identity, signalbox.gateway.modelGateway, signalbox.gateway.toolGateway { color indigo }
+    style signalbox.harness, signalbox.computer { color amber }
+    autoLayout TopBottom
+  }
+}

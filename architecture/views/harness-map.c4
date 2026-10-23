@@ -16,6 +16,8 @@ views {
         **apps** the client gateway.
       - No box in the talk: Tree resolves the thread's place for each turn, which picks the pool, the
         connections, the instructions and skills, and the drive.
+
+      Which component owns each part (Basalt, Pumice or the Signalbox OS) is `Overview / Decisions / Components`.
     '''
 
     include personA with { title 'People'; description 'Person A · B · C' }
