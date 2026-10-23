@@ -1,5 +1,4 @@
 import * as NodeReadline from "node:readline";
-// @effect-diagnostics-next-line nodeBuiltinImport:off - Compare native Node stream behavior with the compatibility facade.
 import * as NodeStream from "node:stream";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createNodeReadline } from "../NodeReadline.ts";

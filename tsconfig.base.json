@@ -58,6 +58,13 @@
         },
         "overrides": [
           {
+            // signalbox: Node personality code and its fixtures preserve native module and Date contracts.
+            "include": ["apps/cloud/src/isolate/**/*.ts"],
+            "options": {
+              "diagnosticSeverity": { "nodeBuiltinImport": "off", "globalDate": "off" }
+            }
+          },
+          {
             // signalbox: native infrastructure fixtures and artifact packagers run outside Effect.
             "include": [
               "**/apps/cloud/infra/**/*.test.ts",
