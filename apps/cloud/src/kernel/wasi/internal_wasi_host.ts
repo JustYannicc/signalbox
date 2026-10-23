@@ -85,6 +85,7 @@ export class WasiHost {
 
   *#argsSizesGet(countPointer: number, sizePointer: number): WasiCall<number> {
     const { count, size } = this.#memory.stringSizes(this.#args);
+    // Validate both pointers first so an EFAULT on the second leaves no recorded write on the first.
     this.#memory.range(countPointer, 4);
     this.#memory.range(sizePointer, 4);
     const countView = this.#memory.writeView(countPointer, 4);
@@ -101,6 +102,7 @@ export class WasiHost {
 
   *#environSizesGet(countPointer: number, sizePointer: number): WasiCall<number> {
     const { count, size } = this.#memory.stringSizes(this.#env);
+    // Validate both pointers first so an EFAULT on the second leaves no recorded write on the first.
     this.#memory.range(countPointer, 4);
     this.#memory.range(sizePointer, 4);
     const countView = this.#memory.writeView(countPointer, 4);

@@ -94,12 +94,13 @@ export class SyscallMemory extends WasiMemory {
           bytes: bytes.slice(start, end),
         }));
       }
-      // Native comparison skips scalar scans of unchanged legacy or aliased in-out buffers.
+      // Native comparison skips scalar scans of unchanged undirected or aliased in-out buffers.
       if (NodeBuffer.Buffer.compare(bytes, region.original) === 0) return [];
       let first = 0;
       while (first < bytes.length && bytes[first] === region.original[first]) first++;
       let last = bytes.length;
       while (last > first && bytes[last - 1] === region.original[last - 1]) last--;
+      // Retain whole ABI words without echoing unchanged input buffers.
       const start = Math.floor(first / 8) * 8;
       const end = Math.min(bytes.length, Math.ceil(last / 8) * 8);
       return [{ pointer: region.pointer + start, bytes: bytes.slice(start, end) }];

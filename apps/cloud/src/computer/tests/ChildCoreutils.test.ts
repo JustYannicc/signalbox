@@ -150,7 +150,7 @@ describe("Coreutils child bridge", () => {
 
         try {
           const result = await program.run(fixture.context);
-          expect(parentEnvironment).toBe("PATH=/bin\0PWD=/workspace");
+          expect(parentEnvironment).toBe("PATH=/bin\0PWD=/workspace\0");
           expect(result).toEqual(exited());
           expect(commands).toEqual([
             {

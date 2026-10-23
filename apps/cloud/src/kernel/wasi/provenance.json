@@ -46,6 +46,10 @@
     {
       "file": "internal_wasi_path_calls.ts",
       "reason": "Internal process creation policy delegates atomic inode metadata creation to the shared filesystem and consumes guest mode hints per syscall. The upstream Storage contract and default WASI behavior remain unchanged."
+    },
+    {
+      "file": "internal_wasi_memory.ts",
+      "reason": "writeRange/writeView mark bytes a call only overwrites, so child syscall memory can return exact output writes instead of diffing whole regions. fd, host, poll and path calls use them for out-pointers and read buffers; guest-visible results are unchanged."
     }
   ],
   "upstreamAlignment": {

@@ -70,6 +70,7 @@ export class WasiMemory {
     return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
 
+  // signalbox: write-only access lets child syscall memory return exactly the bytes a call wrote.
   /** Access only bytes the caller will overwrite, so sparse syscall memory can return exact writes. */
   writeRange(pointer: number, length: number): Uint8Array<ArrayBuffer> {
     return this.range(pointer, length);
