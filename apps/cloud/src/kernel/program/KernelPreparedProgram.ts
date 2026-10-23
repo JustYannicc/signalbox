@@ -30,6 +30,8 @@ export interface KernelProgramPrepareOptions {
   readonly executable?: string;
   readonly cwd?: string;
   readonly actions?: readonly AgentOsSpawnFileAction[];
+  /** Command APIs inherit standard descriptors and WASI preopens; runtime sockets stay with their owner. */
+  readonly descriptorInheritance?: "stdio";
   /** Process-local default used by ordinary opens before its ordered file actions run. */
   readonly fileBytes?: KernelFileByteSelection;
   /** Borrowed streams replace the child's standard descriptors and remain caller-owned. */
@@ -179,10 +181,12 @@ export function prepareKernelProgram(
   if (input.signal?.aborted)
     throw Object.assign(new Error("Program preparation cancelled"), { code: "ECANCELED" });
   const parentTable = input.filesystem.descriptors;
-  const mappings = [...parentTable.entries()].map(([parentFd]) => ({
-    parentFd,
-    childFd: parentFd,
-  }));
+  const mappings = [...parentTable.entries()]
+    .filter(
+      ([fd, descriptor]) =>
+        options.descriptorInheritance !== "stdio" || fd <= 2 || descriptor.preopen === true,
+    )
+    .map(([parentFd]) => ({ parentFd, childFd: parentFd }));
   const childTable = parentTable.fork(mappings, { exec: false });
   let childFilesystem: KernelFileSystem | undefined;
   try {

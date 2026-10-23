@@ -20,6 +20,7 @@ import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { createProductComputer } from "../ProductComputer.ts";
+import type { ProductComputerOptions } from "../ProductComputer.ts";
 import type { ChildWorkerLoaderPort } from "../WorkerLoaderDispatch.ts";
 import type { ChildWorkerCode } from "../ChildWorkerProgram.ts";
 import { createChildBash } from "../ChildBash.ts";
@@ -116,6 +117,7 @@ export function createCodexLocaleProductComputer(
     readonly directory?: KernelPosixMetadata;
     readonly file?: KernelPosixMetadata;
     readonly machine?: KernelCommandForwarder;
+    readonly orderedMachineRules?: ProductComputerOptions["orderedMachineRules"];
   } = {},
 ) {
   const database = sqliteFixture();
@@ -264,6 +266,9 @@ export function createCodexLocaleProductComputer(
       sed: programsByName("sed"),
     },
     machine: () => machine,
+    ...(options.orderedMachineRules === undefined
+      ? {}
+      : { orderedMachineRules: options.orderedMachineRules }),
     signal,
   });
 

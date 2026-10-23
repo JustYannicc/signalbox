@@ -29,7 +29,7 @@ const command = () => ({
 });
 
 describe("admitted piped commands", () => {
-  it("selects trusted file bytes once, honors an explicit canonical binding and rejects incompatible inherited files", async () => {
+  it("selects trusted file bytes once without inheriting the command owner's open files", async () => {
     const database = sqliteFixture();
     const storage = createFacetSqliteStorage(database.storage, () => 1n);
     const filesystem = new KernelFileSystem({ mounts: [{ path: "/", storage }] });
@@ -118,13 +118,26 @@ describe("admitted piped commands", () => {
       expect(selector).toHaveBeenCalledOnce();
       const inherited = filesystem.open("/file", KernelOpenFlags.O_RDONLY);
       const cancellations = cancel.mock.calls.length;
-      await expect(
-        new KernelCommandExecutor(shared).spawn(
-          { ...command(), cwd: "/" },
-          new AbortController().signal,
-        ),
-      ).rejects.toMatchObject({ code: "UNSUPPORTED" });
-      expect(run).toHaveBeenCalledTimes(2);
+      const child = await new KernelCommandExecutor(shared).spawn(
+        { ...command(), cwd: "/" },
+        new AbortController().signal,
+      );
+      try {
+        const [output, error, status] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        expect({ output, error, status }).toEqual({
+          output: "selected bytes",
+          error: "",
+          status: exitStatus(0),
+        });
+      } finally {
+        await child.dispose();
+      }
+      expect(filesystem.descriptors.has(inherited)).toBe(true);
+      expect(run).toHaveBeenCalledTimes(3);
       expect(cancel).toHaveBeenCalledTimes(cancellations + 1);
       expect(filesystem.fileBytes).toBe(canonicalFileByteSelection);
       expect(readFile(filesystem, "/file")).toBe("canonical");

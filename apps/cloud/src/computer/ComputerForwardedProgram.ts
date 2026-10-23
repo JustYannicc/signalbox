@@ -51,10 +51,17 @@ export function assertComputerForwardingSupported(request: KernelProgramAdmissio
     }
   }
   const descriptors = new Map(
-    Array.from(request.filesystem.descriptors.entries(), ([fd, descriptor]) => [
-      fd,
-      { preopen: descriptor.preopen === true, closeOnExec: descriptor.closeOnExec },
-    ]),
+    Array.from(request.filesystem.descriptors.entries())
+      .filter(
+        ([fd, descriptor]) => request.kind !== "command" || fd <= 2 || descriptor.preopen === true,
+      )
+      .map(
+        ([fd, descriptor]) =>
+          [
+            fd,
+            { preopen: descriptor.preopen === true, closeOnExec: descriptor.closeOnExec },
+          ] as const,
+      ),
   );
   if (request.kind === "command") {
     for (const fd of [0, 1, 2]) {

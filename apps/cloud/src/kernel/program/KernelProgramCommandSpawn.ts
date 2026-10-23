@@ -139,7 +139,7 @@ export async function spawnKernelCommandPiped(
       piped = preparePipedKernelProgram(
         options.wakes,
         { ...capturedInput, ...(admission === undefined ? {} : { admission }) },
-        { cwd: captured.cwd, fileBytes },
+        { cwd: captured.cwd, fileBytes, descriptorInheritance: "stdio" },
       );
     } catch (error) {
       return preparationError(error);
