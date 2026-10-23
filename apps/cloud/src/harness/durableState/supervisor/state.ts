@@ -28,6 +28,11 @@ const Settlement = Schema.Struct({
   fetchJoined: Schema.Boolean,
   callbackPortsJoined: Schema.Boolean,
 });
+const InvocationSettlementEvidence = Schema.Struct({
+  invocationRpcJoined: Schema.Boolean,
+  fetchJoined: Schema.Boolean,
+  callbackPortsJoined: Schema.Boolean,
+});
 const LastFailure = Schema.Struct({
   phase: Schema.Literals(["prepare", "publish", "activate"]),
   operationId: id,
@@ -79,6 +84,9 @@ export const State = Schema.Struct({
   lastFailure: Schema.NullOr(LastFailure),
   reconciliationEvidenceId: Schema.NullOr(id),
   reconciliationOutcome: Schema.NullOr(Schema.Literals(["notApplied", "completed", "unknown"])),
+  reconciliationCheckpoint: Schema.NullOr(Checkpoint),
+  reconciliationInvocationSettlement: Schema.NullOr(InvocationSettlementEvidence),
+  reconciliationPreparedFacetCleanup: Schema.NullOr(Cleanup),
 });
 export type State = typeof State.Type;
 

@@ -82,6 +82,9 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
       lastFailure: null,
       reconciliationEvidenceId: null,
       reconciliationOutcome: null,
+      reconciliationCheckpoint: null,
+      reconciliationInvocationSettlement: null,
+      reconciliationPreparedFacetCleanup: null,
     });
   }
 
@@ -344,17 +347,42 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
     case "reconcile": {
       requireControl(state, command.control);
       requireGeneration(state, command.expectedGeneration);
+      if (state.reconciliationEvidenceId === command.evidenceId) {
+        if (
+          state.reconciliationOutcome !== command.outcome ||
+          !same(state.reconciliationCheckpoint, command.checkpoint) ||
+          !same(state.reconciliationInvocationSettlement, command.invocationSettlement) ||
+          !same(state.reconciliationPreparedFacetCleanup, command.preparedFacetCleanup)
+        )
+          return fail("CONFLICT");
+        return decide(state, "unchanged");
+      }
       if (state.lifecycle !== "indeterminate" && state.lifecycle !== "recoverable")
         return fail("OUT_OF_ORDER");
       if (
-        state.reconciliationEvidenceId === command.evidenceId &&
-        state.reconciliationOutcome === command.outcome
+        command.outcome !== "unknown" &&
+        (!command.invocationSettlement || !allJoined(command.invocationSettlement))
       )
-        return decide(state, "unchanged");
-      if (state.prepared && (!command.cleanup || !allClean(command.cleanup)))
         return fail("INDETERMINATE");
-      if (command.outcome === "completed" && command.checkpoint === null) return fail("INVALID");
-      if (command.outcome !== "completed" && command.checkpoint !== null) return fail("INVALID");
+      if (
+        state.prepared &&
+        (!command.preparedFacetCleanup || !allClean(command.preparedFacetCleanup))
+      )
+        return fail("INDETERMINATE");
+      if (!state.prepared && command.preparedFacetCleanup !== null) return fail("CONFLICT");
+      if ((command.outcome === "completed") !== (command.checkpoint !== null))
+        return fail("INVALID");
+      const settlement = command.invocationSettlement
+        ? {
+            outcome:
+              command.outcome === "completed"
+                ? ("settled" as const)
+                : command.outcome === "notApplied"
+                  ? ("stopped" as const)
+                  : ("indeterminate" as const),
+            ...command.invocationSettlement,
+          }
+        : state.settlement;
       return decide(
         {
           ...state,
@@ -364,18 +392,16 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
             : command.outcome === "notApplied"
               ? { admittedStepId: null }
               : {}),
-          prepared: command.cleanup && allClean(command.cleanup) ? null : state.prepared,
+          prepared:
+            command.preparedFacetCleanup && allClean(command.preparedFacetCleanup)
+              ? null
+              : state.prepared,
           reconciliationEvidenceId: command.evidenceId,
           reconciliationOutcome: command.outcome,
-          settlement:
-            command.outcome === "unknown"
-              ? state.settlement
-              : {
-                  outcome: command.outcome === "completed" ? "settled" : "stopped",
-                  invocationRpcJoined: true,
-                  fetchJoined: true,
-                  callbackPortsJoined: true,
-                },
+          reconciliationCheckpoint: command.checkpoint,
+          reconciliationInvocationSettlement: command.invocationSettlement,
+          reconciliationPreparedFacetCleanup: command.preparedFacetCleanup,
+          settlement,
         },
         "reconciled",
       );
@@ -410,6 +436,10 @@ export function snapshot(state: State) {
     settlement: state.settlement,
     lastFailure: state.lastFailure,
     reconciliationEvidenceId: state.reconciliationEvidenceId,
+    reconciliationOutcome: state.reconciliationOutcome,
+    reconciliationCheckpoint: state.reconciliationCheckpoint,
+    reconciliationInvocationSettlement: state.reconciliationInvocationSettlement,
+    reconciliationPreparedFacetCleanup: state.reconciliationPreparedFacetCleanup,
   };
 }
 

@@ -293,6 +293,8 @@ describe("harness durable stores", () => {
           control: control2,
           expectedGeneration: 1,
           operationId: "drain-1",
+          publication: null,
+          preparedPublication: null,
         });
         const wrongGeneration = yield* Effect.flip(
           files.execute({

@@ -24,6 +24,11 @@ const Cleanup = Schema.Struct({
   callbackPortsJoined: Schema.Boolean,
   disposed: Schema.Boolean,
 });
+const InvocationSettlementEvidence = Schema.Struct({
+  invocationRpcJoined: Schema.Boolean,
+  fetchJoined: Schema.Boolean,
+  callbackPortsJoined: Schema.Boolean,
+});
 const Failure = Schema.Struct({ kind: id, message: id });
 
 export const HarnessThreadSupervisorCommand = Schema.Union([
@@ -137,7 +142,8 @@ export const HarnessThreadSupervisorCommand = Schema.Union([
     evidenceId: id,
     outcome: Schema.Literals(["notApplied", "completed", "unknown"]),
     checkpoint: Schema.NullOr(Checkpoint),
-    cleanup: Schema.NullOr(Cleanup),
+    invocationSettlement: Schema.NullOr(InvocationSettlementEvidence),
+    preparedFacetCleanup: Schema.NullOr(Cleanup),
   }),
 ]);
 export type HarnessThreadSupervisorCommand = typeof HarnessThreadSupervisorCommand.Type;
@@ -196,6 +202,10 @@ export const HarnessThreadSupervisorSnapshot = Schema.Struct({
   settlement: Schema.NullOr(Settlement),
   lastFailure: Schema.NullOr(LastFailure),
   reconciliationEvidenceId: Schema.NullOr(id),
+  reconciliationOutcome: Schema.NullOr(Schema.Literals(["notApplied", "completed", "unknown"])),
+  reconciliationCheckpoint: Schema.NullOr(Checkpoint),
+  reconciliationInvocationSettlement: Schema.NullOr(InvocationSettlementEvidence),
+  reconciliationPreparedFacetCleanup: Schema.NullOr(Cleanup),
 });
 export type HarnessThreadSupervisorSnapshot = typeof HarnessThreadSupervisorSnapshot.Type;
 

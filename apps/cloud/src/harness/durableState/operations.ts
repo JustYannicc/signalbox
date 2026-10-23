@@ -10,23 +10,18 @@ import type {
   HarnessDurableStateInitializationResult,
   HarnessDurableStateStepInput,
   HarnessDurableStateStepResult,
-} from "../HarnessDurableState.ts";
+  HarnessRunStoreClient,
+} from "./types.ts";
 import type { HarnessFilesStoreResult } from "../HarnessFilesStore.ts";
 import type { HarnessThreadSupervisorResult } from "../HarnessThreadSupervisor.ts";
+import { HarnessDurableStateError, failureOf, hasCode } from "./errors.ts";
 
 export interface DurableStateStubs {
   readonly runId: string;
-  readonly runStore: { execute(command: unknown): Promise<unknown> };
+  readonly runStore: HarnessRunStoreClient;
   readonly filesStore: { execute(command: unknown): Promise<HarnessFilesStoreResult> };
   readonly threadSupervisor: { execute(command: unknown): Promise<HarnessThreadSupervisorResult> };
 }
-
-const failureOf = (error: unknown) => {
-  if (error instanceof Error && "code" in error && typeof error.code === "string")
-    return { code: error.code, message: error.message.slice(0, 512) };
-  if (error instanceof Error) return { code: "STORAGE", message: error.message.slice(0, 512) };
-  return { code: "STORAGE", message: "Durable state operation failed." };
-};
 
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
@@ -35,7 +30,7 @@ export async function initialize(
   input: HarnessDurableStateInitializationInput,
 ): Promise<HarnessDurableStateInitializationResult> {
   if (input.run.seed.identity.runId !== stores.runId)
-    throw new Error("Run journal initialization targets another run.");
+    throw new HarnessDurableStateError({ code: "CONFLICT" });
   const journal = await stores.runStore.execute(input.run);
   const files = await stores.filesStore.execute({
     type: "initialize",
@@ -53,7 +48,7 @@ export async function initialize(
     checkpoint: files.checkpoint,
   });
   return {
-    journal: journal as HarnessDurableStateInitializationResult["journal"],
+    journal,
     files,
     supervisor,
   };
@@ -68,13 +63,26 @@ export async function beginDrain(
     runId: stores.runId,
     ...input,
   });
+  const prepared = supervisor.snapshot.preparedFacet;
+  const preparedPublication = prepared
+    ? {
+        operationId: prepared.operationId,
+        fromGeneration: supervisor.snapshot.generation,
+        toGeneration: prepared.generation,
+        priorFacetNonce: supervisor.snapshot.facetNonce,
+        preparedFacetNonce: prepared.facetNonce,
+        checkpoint: prepared.checkpoint,
+      }
+    : null;
   try {
     const files = await stores.filesStore.execute({
       type: "syncControl",
       runId: stores.runId,
       control: input.nextControl,
-      expectedGeneration: input.expectedGeneration,
+      expectedGeneration: supervisor.snapshot.generation,
       operationId: input.operationId,
+      publication: supervisor.snapshot.lastPublication,
+      preparedPublication,
     });
     return { status: "draining", supervisor, files };
   } catch (error) {
@@ -95,7 +103,7 @@ export async function admitStep(
     current.snapshot.lifecycle !== "accepting" ||
     current.snapshot.checkpoint.checkpointId !== input.expectedCheckpointId
   )
-    throw new Error("The supervisor is not accepting this step.");
+    throw new HarnessDurableStateError({ code: "OUT_OF_ORDER" });
   const supervisor = await stores.threadSupervisor.execute({
     type: "admitStep",
     runId: stores.runId,
@@ -165,7 +173,7 @@ export async function recordActivation(
       current.snapshot.lifecycle !== "activation-failed" &&
       current.snapshot.lifecycle !== "accepting")
   )
-    throw new Error("The current claim has no matching published facet.");
+    throw new HarnessDurableStateError({ code: "OUT_OF_ORDER" });
   const files = await stores.filesStore.execute({
     type: "recordActivation",
     runId: stores.runId,
@@ -247,7 +255,7 @@ export async function recordPreparedFacetFailure(
     current.snapshot.preparedFacet?.operationId !== input.operationId ||
     preparedPublisher === null
   )
-    throw new Error("The current claim has no matching inert facet.");
+    throw new HarnessDurableStateError({ code: "OUT_OF_ORDER" });
   if (
     input.cleanup.stopAcknowledged &&
     input.cleanup.invocationRpcJoined &&
@@ -263,7 +271,7 @@ export async function recordPreparedFacetFailure(
         operationId: input.operationId,
       });
       if (receipt.publication?.status === "confirmed")
-        throw new Error("Published file authority cannot be rolled back.");
+        throw new HarnessDurableStateError({ code: "CONFLICT" });
       if (receipt.publication?.status === "pending")
         await stores.filesStore.execute({
           type: "abortFacetPublication",
@@ -274,7 +282,7 @@ export async function recordPreparedFacetFailure(
           operationId: input.operationId,
         });
     } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "MISSING")) throw error;
+      if (!hasCode(error, "MISSING")) throw error;
     }
   }
   return stores.threadSupervisor.execute({

@@ -1,22 +1,16 @@
 import type {
   HarnessDurableStatePublicationInput,
   HarnessDurableStatePublicationResult,
-} from "../HarnessDurableState.ts";
+} from "./types.ts";
 import type { HarnessFilesPublication, HarnessFilesStoreResult } from "../HarnessFilesStore.ts";
 import type { HarnessThreadSupervisorResult } from "../HarnessThreadSupervisor.ts";
+import { HarnessDurableStateError, failureOf } from "./errors.ts";
 
 export interface PublicationStubs {
   readonly runId: string;
   readonly filesStore: { execute(command: unknown): Promise<HarnessFilesStoreResult> };
   readonly threadSupervisor: { execute(command: unknown): Promise<HarnessThreadSupervisorResult> };
 }
-
-const failureOf = (error: unknown) => {
-  if (error instanceof Error && "code" in error && typeof error.code === "string")
-    return { code: error.code, message: error.message.slice(0, 512) };
-  if (error instanceof Error) return { code: "STORAGE", message: error.message.slice(0, 512) };
-  return { code: "STORAGE", message: "Publication operation failed." };
-};
 
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
@@ -54,7 +48,6 @@ function publicationMatchesSupervisor(
     publication.priorFacetNonce === expected.priorFacetNonce &&
     publication.preparedFacetNonce === expected.preparedFacetNonce &&
     same(publication.checkpoint, expected.checkpoint) &&
-    supervisor.snapshot.nativeSessionId.length > 0 &&
     supervisor.snapshot.generation === expected.toGeneration &&
     supervisor.snapshot.facetNonce === expected.preparedFacetNonce
   );
@@ -74,7 +67,7 @@ export async function publishFreshFacet(
     snapshot.nativeSessionId !== input.verifiedNativeSessionId ||
     !same(snapshot.checkpoint, input.checkpoint)
   )
-    throw new Error("The prepared facet does not match the durable native session and checkpoint.");
+    throw new HarnessDurableStateError({ code: "CONFLICT" });
 
   let expectedGeneration: number;
   let publisher = current.currentPublisher;
@@ -82,7 +75,7 @@ export async function publishFreshFacet(
   let priorFacetNonce: string;
   if (snapshot.lifecycle === "preparing") {
     if (snapshot.preparedFacet?.operationId !== input.operationId || preparedPublisher === null)
-      throw new Error("The current claim has no matching prepared facet.");
+      throw new HarnessDurableStateError({ code: "OUT_OF_ORDER" });
     expectedGeneration = snapshot.generation;
     priorFacetNonce = current.currentPublisher.facetNonce;
   } else if (
@@ -96,7 +89,7 @@ export async function publishFreshFacet(
     preparedPublisher = current.currentPublisher;
     publisher = current.currentPublisher;
   } else {
-    throw new Error("The current supervisor lifecycle cannot publish this facet.");
+    throw new HarnessDurableStateError({ code: "OUT_OF_ORDER" });
   }
 
   const expectedReceipt = {
@@ -167,7 +160,10 @@ export async function publishFreshFacet(
     return { status: "supervisor-pending", files, receipt, failure: failureOf(error) };
   }
 
-  if (!publicationMatchesSupervisor(supervisor, expectedReceipt))
+  if (
+    !publicationMatchesSupervisor(supervisor, expectedReceipt) ||
+    supervisor.snapshot.nativeSessionId !== input.verifiedNativeSessionId
+  )
     return {
       status: "files-pending",
       supervisor,
@@ -195,8 +191,8 @@ export async function publishFreshFacet(
       confirmed.status !== "confirmed" ||
       !matchesReceipt(confirmed, expectedReceipt)
     )
-      throw new Error("Files publication confirmation does not match the supervisor receipt.");
-    return { status: "published", supervisor, files, receipt: confirmed };
+      throw new HarnessDurableStateError({ code: "CONFLICT" });
+    return { status: "published", control: input.control, supervisor, files, receipt: confirmed };
   } catch (error) {
     let receiptAfterFailure: HarnessFilesPublication | null = null;
     try {
@@ -211,7 +207,13 @@ export async function publishFreshFacet(
         receiptAfterFailure?.status === "confirmed" &&
         matchesReceipt(receiptAfterFailure, expectedReceipt)
       )
-        return { status: "published", supervisor, files: observed, receipt: receiptAfterFailure };
+        return {
+          status: "published",
+          control: input.control,
+          supervisor,
+          files: observed,
+          receipt: receiptAfterFailure,
+        };
     } catch {
       // A current controller can inspect the supervisor and receipt after this response is lost.
     }

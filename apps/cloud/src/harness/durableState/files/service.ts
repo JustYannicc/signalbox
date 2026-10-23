@@ -6,6 +6,7 @@ import { HarnessFilesStoreError, fail } from "./errors.ts";
 import { insertCheckpoint, prepareCheckpoint, readCheckpoint } from "./content.ts";
 import { metaTable, requireOwnSchema } from "./sqlite.ts";
 import { decodeState, encodeState } from "./state.ts";
+import type { State } from "./state.ts";
 import type { HarnessFilesStore } from "./types.ts";
 import type { HarnessFilesDatabase } from "./types.ts";
 import type { HarnessFilesStoreCommand as HarnessFilesStoreCommandType } from "./contracts.ts";
@@ -19,6 +20,55 @@ const decodeCommand = Schema.decodeUnknownSync(HarnessFilesStoreCommand, {
   onExcessProperty: "error",
 });
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+type SyncControlCommand = Extract<HarnessFilesStoreCommandType, { readonly type: "syncControl" }>;
+const sameReceipt = (
+  publication: State["lastPublication"],
+  receipt: SyncControlCommand["publication"],
+) =>
+  publication === null || receipt === null
+    ? publication === receipt
+    : publication.operationId === receipt.operationId &&
+      publication.fromGeneration === receipt.fromGeneration &&
+      publication.toGeneration === receipt.toGeneration &&
+      publication.priorFacetNonce === receipt.priorFacetNonce &&
+      publication.preparedFacetNonce === receipt.preparedFacetNonce &&
+      same(publication.checkpoint, receipt.checkpoint);
+const visiblePublication = (state: State) => state.pendingPublication ?? state.lastPublication;
+
+function controlSyncMatchesState(state: State, command: SyncControlCommand): boolean {
+  const pending = state.pendingPublication;
+  if (pending) {
+    if (command.preparedPublication) {
+      return (
+        command.expectedGeneration === pending.fromGeneration &&
+        sameReceipt(state.lastPublication, command.publication) &&
+        sameReceipt(pending, command.preparedPublication) &&
+        state.publisher.generation === pending.fromGeneration &&
+        state.pendingPublisher?.generation === pending.toGeneration &&
+        state.pendingPublisher.facetNonce === pending.preparedFacetNonce
+      );
+    }
+    return (
+      command.expectedGeneration === pending.toGeneration &&
+      sameReceipt(pending, command.publication) &&
+      state.publisher.generation === pending.fromGeneration &&
+      state.pendingPublisher?.generation === pending.toGeneration &&
+      state.pendingPublisher.facetNonce === pending.preparedFacetNonce
+    );
+  }
+
+  const prepared = command.preparedPublication;
+  return (
+    command.expectedGeneration === state.publisher.generation &&
+    sameReceipt(state.lastPublication, command.publication) &&
+    (prepared === null ||
+      (prepared.fromGeneration === state.publisher.generation &&
+        prepared.toGeneration === state.publisher.generation + 1 &&
+        prepared.priorFacetNonce === state.publisher.facetNonce &&
+        prepared.preparedFacetNonce !== state.publisher.facetNonce &&
+        same(prepared.checkpoint, state.checkpoint)))
+  );
+}
 
 function stateRow(database: HarnessFilesDatabase) {
   const row = first(
@@ -126,7 +176,7 @@ export function createHarnessFilesStore(
               },
               parentCheckpointId: content.parentCheckpointId,
               activeStepId: stillCurrent.activeStepId,
-              publication: stillCurrent.publication,
+              publication: visiblePublication(stillCurrent),
               files: content.files,
             } as const;
           }
@@ -171,7 +221,8 @@ export function createHarnessFilesStore(
                 activeStepId: null,
                 lastCommittedStepId: null,
                 pendingPublisher: null,
-                publication: null,
+                lastPublication: null,
+                pendingPublication: null,
                 controlSyncOperationId: null,
                 activationOperationId: null,
               };
@@ -185,15 +236,18 @@ export function createHarnessFilesStore(
                 if (
                   same(state.control, command.control) &&
                   state.controlSyncOperationId === command.operationId
-                )
+                ) {
+                  if (!controlSyncMatchesState(state, command)) return fail("CONFLICT");
                   return result(state, "unchanged");
+                }
                 if (
                   command.control.ownerId !== state.control.ownerId ||
                   command.control.epoch !== state.control.epoch + 1 ||
+                  command.control.incarnationId === state.control.incarnationId ||
                   command.control.controlKey === state.control.controlKey ||
-                  command.expectedGeneration !== state.publisher.generation
+                  !controlSyncMatchesState(state, command)
                 )
-                  return fail("STALE_CONTROL");
+                  return fail("CONFLICT");
                 const next = {
                   ...state,
                   control: command.control,
@@ -206,7 +260,7 @@ export function createHarnessFilesStore(
               }
               case "admitStep": {
                 requirePublisher(state, command.publisher);
-                if (state.lifecycle !== "accepting" || state.publication !== null)
+                if (state.lifecycle !== "accepting" || state.pendingPublication !== null)
                   return fail("OUT_OF_ORDER");
                 if (state.activeStepId) {
                   if (state.activeStepId === command.stepId) return result(state, "unchanged");
@@ -253,26 +307,30 @@ export function createHarnessFilesStore(
                 requireControl(state, command.control);
                 if (
                   state.lifecycle === "publishing" &&
-                  state.publication?.operationId === command.operationId &&
-                  state.publication.status === "pending" &&
+                  state.pendingPublication?.operationId === command.operationId &&
+                  state.pendingPublication.status === "pending" &&
                   same(state.pendingPublisher, command.preparedPublisher) &&
-                  same(state.publication.checkpoint, command.checkpoint)
+                  same(state.pendingPublication.checkpoint, command.checkpoint) &&
+                  command.expectedGeneration === state.pendingPublication.fromGeneration &&
+                  (same(state.publisher, command.publisher) ||
+                    same(state.pendingPublisher, command.publisher))
                 )
                   return result(state, "unchanged", []);
                 if (
-                  state.lifecycle === "published" &&
-                  state.publication?.operationId === command.operationId &&
-                  state.publication.status === "confirmed" &&
+                  state.lastPublication?.operationId === command.operationId &&
+                  state.lastPublication.status === "confirmed" &&
                   same(state.publisher, command.preparedPublisher) &&
-                  same(state.publication.checkpoint, command.checkpoint) &&
-                  command.expectedGeneration === state.publication.fromGeneration
+                  same(state.lastPublication.checkpoint, command.checkpoint) &&
+                  command.expectedGeneration === state.lastPublication.fromGeneration &&
+                  same(state.publisher, command.publisher)
                 )
                   return result(state, "unchanged", []);
                 requirePublisher(state, command.publisher);
                 if (
                   state.lifecycle !== "draining" ||
                   state.activeStepId !== null ||
-                  state.publication !== null ||
+                  state.pendingPublication !== null ||
+                  state.pendingPublisher !== null ||
                   command.expectedGeneration !== state.publisher.generation ||
                   command.preparedPublisher.generation !== state.publisher.generation + 1 ||
                   command.preparedPublisher.facetNonce === state.publisher.facetNonce ||
@@ -285,7 +343,7 @@ export function createHarnessFilesStore(
                   ...state,
                   lifecycle: "publishing" as const,
                   pendingPublisher: command.preparedPublisher,
-                  publication: {
+                  pendingPublication: {
                     operationId: command.operationId,
                     fromGeneration: state.publisher.generation,
                     toGeneration: command.preparedPublisher.generation,
@@ -300,13 +358,13 @@ export function createHarnessFilesStore(
               }
               case "confirmFacetPublication": {
                 requireControl(state, command.control);
-                const publication = state.publication;
+                const publication = state.pendingPublication;
                 if (
-                  publication?.operationId === command.operationId &&
-                  publication.status === "confirmed" &&
+                  state.lastPublication?.operationId === command.operationId &&
+                  state.lastPublication.status === "confirmed" &&
                   same(state.publisher, command.preparedPublisher) &&
-                  command.expectedGeneration === publication.fromGeneration &&
-                  same(publication.checkpoint, command.checkpoint)
+                  command.expectedGeneration === state.lastPublication.fromGeneration &&
+                  same(state.lastPublication.checkpoint, command.checkpoint)
                 )
                   return result(state, "unchanged", []);
                 if (
@@ -324,14 +382,15 @@ export function createHarnessFilesStore(
                   publisher: state.pendingPublisher,
                   pendingPublisher: null,
                   lifecycle: "published" as const,
-                  publication: { ...publication, status: "confirmed" as const },
+                  lastPublication: { ...publication, status: "confirmed" as const },
+                  pendingPublication: null,
                 };
                 saveState(database, current.row, next);
                 return result(next, "confirmed", []);
               }
               case "abortFacetPublication": {
                 requireControl(state, command.control);
-                const publication = state.publication;
+                const publication = state.pendingPublication;
                 if (
                   state.lifecycle !== "publishing" ||
                   publication?.status !== "pending" ||
@@ -345,17 +404,23 @@ export function createHarnessFilesStore(
                   ...state,
                   lifecycle: "draining" as const,
                   pendingPublisher: null,
-                  publication: null,
+                  pendingPublication: null,
                 };
                 saveState(database, current.row, next);
                 return result(next, "aborted", []);
               }
               case "readPublication": {
                 requireControl(state, command.control);
-                if (state.publication?.operationId !== command.operationId) return fail("MISSING");
+                const publication =
+                  state.pendingPublication?.operationId === command.operationId
+                    ? state.pendingPublication
+                    : state.lastPublication?.operationId === command.operationId
+                      ? state.lastPublication
+                      : null;
+                if (!publication) return fail("MISSING");
                 return result(
                   state,
-                  state.publication.status === "pending" ? "pending" : "unchanged",
+                  publication.status === "pending" ? "pending" : "unchanged",
                   [],
                 );
               }
@@ -369,8 +434,8 @@ export function createHarnessFilesStore(
                   return result(state, "unchanged");
                 if (
                   (state.lifecycle !== "published" && state.lifecycle !== "activation-failed") ||
-                  state.publication?.operationId !== command.operationId ||
-                  state.publication.status !== "confirmed" ||
+                  state.lastPublication?.operationId !== command.operationId ||
+                  state.lastPublication.status !== "confirmed" ||
                   command.expectedGeneration !== state.publisher.generation
                 )
                   return fail("OUT_OF_ORDER");
@@ -388,7 +453,7 @@ export function createHarnessFilesStore(
                 if (state.lifecycle !== "published" && state.lifecycle !== "activation-failed")
                   return fail("OUT_OF_ORDER");
                 if (
-                  state.publication?.operationId !== command.operationId ||
+                  state.lastPublication?.operationId !== command.operationId ||
                   command.expectedGeneration !== state.publisher.generation
                 )
                   return fail("CONFLICT");
@@ -424,7 +489,7 @@ function result(
     checkpoint: state.checkpoint,
     parentCheckpointId,
     activeStepId: state.activeStepId,
-    publication: state.publication,
+    publication: visiblePublication(state),
     files,
   };
 }

@@ -10,6 +10,19 @@ import {
 const Control = HarnessThreadSupervisorControlClaim;
 const Publisher = HarnessThreadSupervisorPublisher;
 const CheckpointRef = Schema.Struct({ checkpointId: id, manifestSha256: digest });
+const PublicationReceiptFields = {
+  operationId: id,
+  fromGeneration: positive,
+  toGeneration: positive,
+  priorFacetNonce: id,
+  preparedFacetNonce: id,
+  checkpoint: CheckpointRef,
+};
+const PublicationReceipt = Schema.Struct(PublicationReceiptFields);
+const Publication = Schema.Struct({
+  ...PublicationReceiptFields,
+  status: Schema.Literals(["pending", "confirmed"]),
+});
 
 export const HarnessFilesStoreFile = Schema.Struct({
   path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
@@ -43,6 +56,8 @@ export const HarnessFilesStoreCommand = Schema.Union([
     control: Control,
     expectedGeneration: positive,
     operationId: id,
+    publication: Schema.NullOr(PublicationReceipt),
+    preparedPublication: Schema.NullOr(PublicationReceipt),
   }),
   Schema.Struct({
     type: Schema.Literal("admitStep"),
@@ -123,15 +138,7 @@ export const HarnessFilesStoreCommand = Schema.Union([
 ]);
 export type HarnessFilesStoreCommand = typeof HarnessFilesStoreCommand.Type;
 
-export const HarnessFilesPublication = Schema.Struct({
-  operationId: id,
-  fromGeneration: positive,
-  toGeneration: positive,
-  priorFacetNonce: id,
-  preparedFacetNonce: id,
-  checkpoint: CheckpointRef,
-  status: Schema.Literals(["pending", "confirmed"]),
-});
+export const HarnessFilesPublication = Publication;
 export type HarnessFilesPublication = typeof HarnessFilesPublication.Type;
 
 export const HarnessFilesStoreResult = Schema.Struct({

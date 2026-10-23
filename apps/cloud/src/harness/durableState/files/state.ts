@@ -40,7 +40,8 @@ export const State = Schema.Struct({
   activeStepId: Schema.NullOr(id),
   lastCommittedStepId: Schema.NullOr(id),
   pendingPublisher: Schema.NullOr(Publisher),
-  publication: Schema.NullOr(Publication),
+  lastPublication: Schema.NullOr(Publication),
+  pendingPublication: Schema.NullOr(Publication),
   controlSyncOperationId: Schema.NullOr(id),
   activationOperationId: Schema.NullOr(id),
 });
@@ -66,12 +67,22 @@ export function decodeState(value: unknown, runId: string): State {
       state.checkpoint.checkpointId === ""
     )
       throw new Error("Files state identity mismatch.");
-    if (state.lifecycle === "publishing" && !state.publication) throw new Error("Missing receipt.");
-    if ((state.lifecycle === "publishing") !== (state.pendingPublisher !== null))
+    const publishing = state.lifecycle === "publishing";
+    if (
+      publishing !== (state.pendingPublisher !== null) ||
+      publishing !== (state.pendingPublication !== null)
+    )
       throw new Error("Pending publisher does not match phase.");
-    if (state.lifecycle !== "publishing" && state.publication?.status === "pending")
+    if (state.pendingPublication && state.pendingPublication.status !== "pending")
       throw new Error("Unconfirmed receipt outside publication.");
-    if (state.activeStepId !== null && state.publication !== null)
+    if (state.lastPublication && state.lastPublication.status !== "confirmed")
+      throw new Error("Confirmed receipt history is invalid.");
+    if (
+      state.lastPublication?.toGeneration !== undefined &&
+      state.lastPublication.toGeneration !== state.publisher.generation
+    )
+      throw new Error("Confirmed receipt does not match the active publisher.");
+    if (state.activeStepId !== null && state.pendingPublication !== null)
       throw new Error("Publication overlaps an admitted step.");
     return state;
   } catch (error) {
