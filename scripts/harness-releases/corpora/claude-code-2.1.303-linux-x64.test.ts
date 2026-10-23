@@ -12,6 +12,12 @@ it("parses the pinned corpus and retains inputs reached by partial sessions and 
     ),
   );
 
+  // Fresh-resume module #1070 hit in the omitted release.
+  expect(corpus.inputs).toContainEqual({
+    inputPath: "bun-graph:/$bunfs/root/chunk-6hh08p3q.js",
+    initialized: true,
+  });
+
   expect(corpus.binarySha256).toBe(
     "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450",
   );
@@ -36,7 +42,6 @@ it("parses the pinned corpus and retains inputs reached by partial sessions and 
     "bun-graph:/$bunfs/root/chunk-y4vjzwc0.js",
     "bun-graph:/$bunfs/root/chunk-1xn1h09a.js",
     "bun-graph:/$bunfs/root/chunk-1yk0b2ky.js",
-    "bun-graph:/$bunfs/root/chunk-6hh08p3q.js",
     "bun-graph:/$bunfs/root/chunk-e2derxke.js",
     "bun-graph:/$bunfs/root/chunk-epvse6vk.js",
     "bun-graph:/$bunfs/root/chunk-hfrg3wrg.js",
