@@ -47,7 +47,9 @@ export const productOptions = (release: ReleaseOptions, home = "/home/product-co
       },
       commands: {
         loader: commands.loader,
-        capacity: new ChildWorkerCapacity(2),
+        capacity: new ChildWorkerCapacity(2, {
+          owner: "test/src-harness-tests-producthost-codex-1",
+        }),
         machine: () => ({
           async spawn() {
             throw new Error("Unexpected forwarded command");

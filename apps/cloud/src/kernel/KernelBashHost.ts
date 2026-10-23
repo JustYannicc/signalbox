@@ -18,12 +18,14 @@ import type { KernelBashForkSource } from "./KernelBashFork.ts";
 
 export interface KernelBashForkHost {
   readonly port: KernelBashPort;
+  readonly onDispatchFailure?: (error: unknown) => Promise<void> | void;
   readonly close: () => Promise<void>;
 }
 
 export interface KernelBashHostOptions {
   readonly context: KernelBashProgramContext;
   readonly credentials: KernelBashCredentials;
+  readonly isStoppedQuotaFailure?: (error: unknown) => boolean;
   readonly runFork?: (
     context: KernelBashProgramContext,
     owner: KernelBashForkHost,
@@ -131,10 +133,24 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
           });
         remoteStarted = true;
         try {
-          const result = await runFork(context, { port, close: () => closeTree(node) }, source);
+          const result = await runFork(
+            context,
+            {
+              port,
+              close: () => closeTree(node),
+              onDispatchFailure(error) {
+                if (options.isStoppedQuotaFailure?.(error)) finish(unstartedForkExit);
+              },
+            },
+            source,
+          );
           finish({ kind: "exit", status: result });
           return result;
         } catch (error) {
+          if (options.isStoppedQuotaFailure?.(error)) {
+            finish(unstartedForkExit);
+            throw new WasiError(6);
+          }
           finish({ kind: "exit", status: { exitCode: 0, signal: 9, coreDumped: false } });
           throw error;
         }
@@ -299,6 +315,12 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
     }
     return false;
   }
+
+  const unstartedForkExit = {
+    kind: "exit" as const,
+    status: { exitCode: 0, signal: 0, coreDumped: false },
+  };
+
   async function closeTree(root: BashHostNode) {
     const owned = [...nodes].filter((node) => node === root || descendsFrom(node, root));
     await Promise.all(owned.map((node) => node.close()));

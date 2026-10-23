@@ -1,7 +1,10 @@
 import { RpcTarget } from "cloudflare:workers";
 import { createChildWorkerDispatchCode } from "./ChildWorkerDispatchCode.ts";
 export { childWorkerDispatchCodeId } from "./ChildWorkerDispatchCode.ts";
-import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
+import {
+  ChildWorkerDispatchError,
+  WORKER_LOADER_QUOTA_MESSAGES,
+} from "./ChildWorkerDispatchError.ts";
 import {
   acknowledgeChildWorkerMemoryLoss,
   CHILD_WORKER_KILLED_BY_SIGKILL,
@@ -21,6 +24,30 @@ export interface ChildWorkerLoaderPort {
   readonly run: (input: ChildWorkerInvocation, invocation: RpcTarget) => Promise<KernelCommandExit>;
 }
 
+const enteredChildInvocations = new WeakSet<object>();
+
+/** Only these runtime quota errors prove that no dynamic child invocation was created. */
+export function workerLoaderQuotaFailure(cause: unknown): (Error & { code: "EAGAIN" }) | undefined {
+  if ((typeof cause !== "object" && typeof cause !== "function") || cause === null) return;
+  const name = Reflect.get(cause, "name");
+  const message = Reflect.get(cause, "message");
+  if (
+    name !== "Error" ||
+    typeof message !== "string" ||
+    !WORKER_LOADER_QUOTA_MESSAGES.includes(message)
+  )
+    return;
+  if (Reflect.get(cause, "code") === "EAGAIN") return cause as Error & { code: "EAGAIN" };
+  return Object.assign(new Error(message, { cause }), { code: "EAGAIN" as const });
+}
+
+/** The dispatch wrapper calls host before loading or running guest code. */
+export function hasChildWorkerInvocationEntered(invocation: unknown): boolean {
+  if ((typeof invocation !== "object" || invocation === null) && typeof invocation !== "function")
+    return false;
+  return enteredChildInvocations.has(invocation);
+}
+
 class ChildInvocation<Host extends object> extends RpcTarget {
   readonly #host: Host;
   readonly #acknowledge: () => void;
@@ -35,6 +62,7 @@ class ChildInvocation<Host extends object> extends RpcTarget {
   }
 
   host() {
+    enteredChildInvocations.add(this);
     return this.#host;
   }
 
@@ -109,11 +137,16 @@ export function createWorkerLoaderDispatch<Host extends object>(
           submitted = true;
           // Native Worker Loader supports compiled WASM inputs; installed types still require bytes.
           const worker = loader.get(loaderId, () => workerCode as WorkerLoaderWorkerCode);
-          const entrypoint = worker.getEntrypoint(undefined, {
-            limits,
-          }) as unknown as ChildEntrypoint<Host>;
-          invokingChild = true;
-          exit = await entrypoint.run(input.command, invocation);
+          let entrypoint: ChildEntrypoint<Host> | undefined;
+          try {
+            entrypoint = worker.getEntrypoint(undefined, {
+              limits,
+            }) as unknown as ChildEntrypoint<Host>;
+            invokingChild = true;
+            exit = await entrypoint.run(input.command, invocation);
+          } finally {
+            disposeWorkerLoaderStubs(entrypoint, worker);
+          }
         }
         await stopped.promise;
         return exit;
@@ -129,13 +162,38 @@ export function createWorkerLoaderDispatch<Host extends object>(
           }
           return CHILD_WORKER_KILLED_BY_SIGKILL;
         }
-        if (!submitted) invocation.stopped();
+        let failureCause = cause;
+        const quotaFailure = workerLoaderQuotaFailure(cause);
+        if (quotaFailure !== undefined && !hasChildWorkerInvocationEntered(invocation)) {
+          if (!acknowledged) invocation.stopped();
+          failureCause = quotaFailure;
+        }
+        if (!submitted && !acknowledged) invocation.stopped();
         // RPC failure and host capability closure cannot prove that the child stopped.
         throw new ChildWorkerDispatchError(
-          cause,
+          failureCause,
           acknowledged ? { kind: "stopped" } : { kind: "unconfirmed", stopped: stopped.promise },
         );
       }
     },
   };
+}
+
+/** Worker Loader results are RPC stubs; release both even if one disposer fails. */
+export function disposeWorkerLoaderStubs(...stubs: readonly unknown[]): void {
+  const failures: unknown[] = [];
+  for (const stub of stubs) {
+    if ((typeof stub !== "object" && typeof stub !== "function") || stub === null) continue;
+    const dispose = Reflect.get(stub, Symbol.dispose);
+    if (typeof dispose !== "function") continue;
+    try {
+      dispose.call(stub);
+    } catch (cause) {
+      failures.push(cause);
+    }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "Worker Loader stubs failed to dispose");
+  }
 }

@@ -9,7 +9,9 @@ vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 describe("child programs without reservations", () => {
   it("admits a nested child without exceeding the strict worker cap", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(2);
+    const capacity = new ChildWorkerCapacity(2, {
+      owner: "test/src-computer-tests-childworkernestedprogram-test-1",
+    });
     const childStarted = Promise.withResolvers<void>();
     const completion = Promise.withResolvers<ReturnType<typeof exited>>();
     let maximum = 0;

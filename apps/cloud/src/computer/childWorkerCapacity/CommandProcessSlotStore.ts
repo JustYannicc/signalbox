@@ -1,6 +1,6 @@
-import type { ProcessSlotState, ProcessSlotStore } from "./ProcessSlots.ts";
+import type { ProcessSlotState, ProcessSlotStore } from "../ProcessSlots.ts";
 
-/** Interim command-gateway owner until the supervisor supplies its durable store in #1396. */
+/** In-memory store for callers whose capacity lifetime is shorter than one request. */
 export class CommandProcessSlotStore implements ProcessSlotStore {
   #state: ProcessSlotState | undefined;
 

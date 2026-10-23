@@ -58,7 +58,9 @@ async function hold(capacity: ChildWorkerCapacity, requester: ChildWorkerRequest
 describe("nested child worker capacity", () => {
   it("keeps nested requests under the strict cap and admits them before queued roots", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-1",
+    });
     const signal = new AbortController().signal;
     const parent = tree.spawn();
     const release = await hold(capacity, parent);
@@ -105,7 +107,9 @@ describe("nested child worker capacity", () => {
 
   it("admits a background continuation after its subshell exits and is reaped", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-2",
+    });
     const holder = tree.spawn();
     const release = await hold(capacity, holder);
     const subshellExit = Promise.withResolvers<{
@@ -142,7 +146,9 @@ describe("nested child worker capacity", () => {
 
   it("inherits worker ownership through an unpermitted process", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-3",
+    });
     const holder = tree.spawn();
     const release = await hold(capacity, holder);
     const middle = tree.spawn(holder.identity);
@@ -173,7 +179,9 @@ describe("nested child worker capacity", () => {
 
   it("gives an exec replacement its own owner until that worker settles", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-4",
+    });
     const signal = new AbortController().signal;
     const holder = tree.spawn();
     const release = await hold(capacity, holder);
@@ -215,7 +223,9 @@ describe("nested child worker capacity", () => {
   it("does not mistake another process table's matching pid for a permit holder", async () => {
     const first = processTree();
     const second = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-5",
+    });
     const holder = first.spawn();
     const unrelated = second.spawn();
     expect(unrelated.identity.pid).toBe(holder.identity.pid);
@@ -236,7 +246,9 @@ describe("nested child worker capacity", () => {
 
   it("treats descendants of a stopped worker as roots", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-6",
+    });
     const holder = tree.spawn();
     const release = await hold(capacity, holder);
     const child = tree.spawn(holder.identity);
@@ -258,7 +270,9 @@ describe("nested child worker capacity", () => {
 
   it("keeps the strict cap and serves queued descendants before roots", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-7",
+    });
     const signal = new AbortController().signal;
     const parent = tree.spawn();
     try {
@@ -303,7 +317,9 @@ describe("nested child worker capacity", () => {
 
   it("removes an aborted descendant from the strict-cap queue without blocking its successor", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-8",
+    });
     const parent = tree.spawn();
     const requester = { processes: tree.processes, process: parent.identity.handle };
     const signal = new AbortController().signal;

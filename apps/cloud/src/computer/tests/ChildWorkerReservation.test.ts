@@ -47,7 +47,9 @@ afterEach(async () => {
 
 describe("ChildWorkerReservation", () => {
   it("is capacity-owned, shares queued admission, and cancels once", async () => {
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerreservation-test-1",
+    });
     const signal = new AbortController().signal;
     const reservation = await capacity.reserve(signal, requester(), prepared("reservation-one"));
     expect(isChildWorkerReservation(reservation)).toBe(true);
@@ -69,7 +71,9 @@ describe("ChildWorkerReservation", () => {
   });
 
   it("consumes synchronously, ignores cancel after handoff, and releases on settlement", async () => {
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerreservation-test-2",
+    });
     const signal = new AbortController().signal;
     const reservation = await capacity.reserve(signal, requester(), prepared("reservation-run"));
     const started = deferred<void>();
@@ -95,7 +99,9 @@ describe("ChildWorkerReservation", () => {
   });
 
   it("releases an unconsumed reservation when run observes an aborted signal", async () => {
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerreservation-test-3",
+    });
     const controller = new AbortController();
     const reservation = await capacity.reserve(
       controller.signal,
@@ -113,7 +119,9 @@ describe("ChildWorkerReservation", () => {
 
   it("dispatches with its reserved slot at full capacity without reacquiring", () =>
     withFixture(async (fixture) => {
-      const capacity = new ChildWorkerCapacity(1);
+      const capacity = new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-childworkerreservation-test-4",
+      });
       let reservation!: ChildWorkerReservation;
       const capacityRun = vi.spyOn(capacity, "run");
       const modules = vi.fn(() => ({ "entry.js": "export default 0" }));
@@ -154,7 +162,9 @@ describe("ChildWorkerReservation", () => {
 
   it("rejects cancelled and duplicate tokens before host creation or dispatch", () =>
     withFixture(async (fixture) => {
-      const capacity = new ChildWorkerCapacity(1);
+      const capacity = new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-childworkerreservation-test-5",
+      });
       const capacityRun = vi.spyOn(capacity, "run");
       const modules = vi.fn(() => ({ "entry.js": "export default 0" }));
       const dispatch = vi.fn(async () => exited());
@@ -227,7 +237,9 @@ describe("ChildWorkerReservation", () => {
       ];
 
       for (const { reservationFor, expected } of cases) {
-        const capacity = new ChildWorkerCapacity(1);
+        const capacity = new ChildWorkerCapacity(1, {
+          owner: "test/src-computer-tests-childworkerreservation-test-6",
+        });
         const capacityRun = vi.spyOn(capacity, "run");
         const modules = vi.fn(() => ({ "entry.js": "export default 0" }));
         const dispatch = vi.fn(async () => exited());
@@ -256,7 +268,9 @@ describe("ChildWorkerReservation", () => {
 
   it("fails preparation before reserving or dispatching when module loading fails", () =>
     withFixture(async () => {
-      const capacity = new ChildWorkerCapacity(1);
+      const capacity = new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-childworkerreservation-test-7",
+      });
       const failure = new Error("module source unavailable");
       const modules = vi.fn(async () => {
         throw failure;
@@ -285,7 +299,9 @@ describe("ChildWorkerReservation", () => {
     Effect.gen(function* () {
       const fixture = childBusyboxFixture();
       try {
-        const capacity = new ChildWorkerCapacity(1);
+        const capacity = new ChildWorkerCapacity(1, {
+          owner: "test/src-computer-tests-childworkerreservation-test-8",
+        });
         let reservation!: ChildWorkerReservation;
         const descendant = Promise.withResolvers<ReturnType<typeof exited>>();
         const exitedEarly = deferred<ReturnType<typeof exited>>();

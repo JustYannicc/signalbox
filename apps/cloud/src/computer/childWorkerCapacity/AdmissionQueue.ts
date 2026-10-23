@@ -7,22 +7,30 @@ import type {
   ProcessSlotsOptions,
 } from "../ProcessSlots.ts";
 import type { ChildWorkerPermitHooks } from "./Execution.ts";
-import type { ChildWorkerPermit, ChildWorkerRequester, ChildWorkerSlotRequest } from "./types.ts";
-
-export interface InternalChildWorkerPermit extends ChildWorkerPermit {
-  bind(requester: ChildWorkerRequester): void;
-}
+import type {
+  InternalChildWorkerPermit,
+  ChildWorkerRequester,
+  ChildWorkerSlotRequest,
+} from "./types.ts";
 
 interface Waiter {
   readonly signal: AbortSignal;
-  readonly code: ChildWorkerSlotRequest;
-  readonly request: ProcessSlotRequest;
-  readonly resolve: (permit: InternalChildWorkerPermit) => void;
-  readonly reject: (error: unknown) => void;
+  readonly controller: AbortController;
+  resolve?: (permit: InternalChildWorkerPermit) => void;
+  reject?: (error: unknown) => void;
+  result?: Promise<InternalChildWorkerPermit>;
+  code?: ChildWorkerSlotRequest;
+  request?: ProcessSlotRequest;
   readonly onAbort: () => void;
   state: "queued" | "submitted" | "done";
   occupiesSlot: boolean;
   unplaceable: boolean;
+  failure?: unknown;
+}
+
+export interface QueuedChildWorkerAdmission {
+  acquire(code: ChildWorkerSlotRequest): Promise<InternalChildWorkerPermit>;
+  cancel(): void;
 }
 
 export interface ChildWorkerAdmissionQueueOptions {
@@ -66,53 +74,60 @@ export class ChildWorkerAdmissionQueue {
     return this.#nested.size + this.#roots.size + this.#pending.size;
   }
 
-  acquire(
+  enqueue(
     signal: AbortSignal,
     requester: ChildWorkerRequester | undefined,
-    code: ChildWorkerSlotRequest,
-  ): Promise<InternalChildWorkerPermit> {
-    if (signal.aborted) return Promise.reject(signal.reason);
-    if (this.#failure !== undefined) return Promise.reject(this.#failure.error);
-    const request = Object.freeze({
-      owner: this.#options.owner,
-      codeId: code.codeId,
-      residentBytes: code.residentBytes,
-      signal,
-    });
-    return new Promise<InternalChildWorkerPermit>((resolve, reject) => {
-      let waiter: Waiter;
-      const onAbort = () => {
-        if (waiter.state !== "queued") return;
-        waiter.state = "done";
-        this.#roots.delete(waiter);
-        this.#nested.delete(waiter);
-        signal.removeEventListener("abort", onAbort);
-        reject(signal.reason);
-        this.#drain();
-      };
-      const queue = this.#queueFor(requester);
-      waiter = {
-        signal,
-        code,
-        request,
-        resolve,
-        reject,
-        onAbort,
-        state: "queued",
-        occupiesSlot: false,
-        unplaceable: false,
-      };
-      queue.add(waiter);
-      signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
+  ): QueuedChildWorkerAdmission {
+    const controller = new AbortController();
+    const ownedSignal = AbortSignal.any([signal, controller.signal]);
+    let waiter!: Waiter;
+    const onAbort = () => {
+      if (waiter.state !== "queued") return;
+      waiter.state = "done";
+      waiter.failure = ownedSignal.reason;
+      this.#roots.delete(waiter);
+      this.#nested.delete(waiter);
+      ownedSignal.removeEventListener("abort", onAbort);
+      waiter.reject?.(ownedSignal.reason);
       this.#drain();
-    });
+    };
+    waiter = {
+      signal: ownedSignal,
+      controller,
+      onAbort,
+      state: "queued",
+      occupiesSlot: false,
+      unplaceable: false,
+    };
+    const queue = this.#queueFor(requester);
+    if (ownedSignal.aborted) {
+      waiter.state = "done";
+      waiter.failure = ownedSignal.reason;
+    } else if (this.#failure !== undefined) {
+      waiter.state = "done";
+      waiter.failure = this.#failure.error;
+    } else {
+      queue.add(waiter);
+      ownedSignal.addEventListener("abort", onAbort, { once: true });
+      if (ownedSignal.aborted) onAbort();
+      this.#drain();
+    }
+
+    return {
+      acquire: (code) => this.#acquire(waiter, code),
+      cancel: () => {
+        if (waiter.state === "done") return;
+        controller.abort(new Error("Child worker admission ticket cancelled"));
+        if (waiter.state === "queued") onAbort();
+      },
+    };
   }
 
   handlePressure(pressure: ProcessSlotPressure): void {
     if (pressure.kind !== "unplaceable" || !("request" in pressure)) return;
-    const waiter = [...this.#pending].find((candidate) =>
-      sameRequest(candidate.request, pressure.request),
+    const waiter = [...this.#pending].find(
+      (candidate) =>
+        candidate.request !== undefined && sameRequest(candidate.request, pressure.request),
     );
     if (waiter === undefined || waiter.unplaceable) return;
     waiter.unplaceable = true;
@@ -130,8 +145,10 @@ export class ChildWorkerAdmissionQueue {
     for (const queue of [this.#nested, this.#roots]) {
       for (const waiter of queue) {
         waiter.state = "done";
+        waiter.failure = error;
         waiter.signal.removeEventListener("abort", waiter.onAbort);
-        waiter.reject(error);
+        waiter.controller.abort(error);
+        waiter.reject?.(error);
       }
       queue.clear();
     }
@@ -144,6 +161,30 @@ export class ChildWorkerAdmissionQueue {
     return this.#options.isNested(requester) ? this.#nested : this.#roots;
   }
 
+  #acquire(waiter: Waiter, code: ChildWorkerSlotRequest): Promise<InternalChildWorkerPermit> {
+    if (waiter.result !== undefined) {
+      return Promise.reject(new TypeError("Child worker admission ticket was already reserved"));
+    }
+    if (waiter.state === "done") return Promise.reject(waiter.failure);
+    if (waiter.signal.aborted) {
+      waiter.onAbort();
+      return Promise.reject(waiter.failure ?? waiter.signal.reason);
+    }
+    waiter.code = code;
+    waiter.request = Object.freeze({
+      owner: this.#options.owner,
+      codeId: code.codeId,
+      residentBytes: code.residentBytes,
+      signal: waiter.signal,
+    });
+    waiter.result = new Promise<InternalChildWorkerPermit>((resolve, reject) => {
+      waiter.resolve = resolve;
+      waiter.reject = reject;
+    });
+    this.#drain();
+    return waiter.result;
+  }
+
   #drain(): void {
     if (this.#draining || this.#failure !== undefined) return;
     this.#draining = true;
@@ -151,12 +192,16 @@ export class ChildWorkerAdmissionQueue {
       // Unplaceable work reaches host pressure but never claims an execution slot.
       for (const queue of [this.#nested, this.#roots]) {
         for (const waiter of queue) {
-          if (waiter.code.residentBytes <= this.#options.residentByteLimit) continue;
+          if (
+            waiter.code === undefined ||
+            waiter.code.residentBytes <= this.#options.residentByteLimit
+          )
+            continue;
           queue.delete(waiter);
           if (waiter.signal.aborted) {
             waiter.state = "done";
             waiter.signal.removeEventListener("abort", waiter.onAbort);
-            waiter.reject(waiter.signal.reason);
+            waiter.reject?.(waiter.signal.reason);
             continue;
           }
           waiter.state = "submitted";
@@ -169,11 +214,12 @@ export class ChildWorkerAdmissionQueue {
         const queue = this.#nested.size > 0 ? this.#nested : this.#roots;
         const waiter = queue.values().next().value;
         if (waiter === undefined) return;
+        if (waiter.code === undefined) return;
         queue.delete(waiter);
         if (waiter.signal.aborted) {
           waiter.state = "done";
           waiter.signal.removeEventListener("abort", waiter.onAbort);
-          waiter.reject(waiter.signal.reason);
+          waiter.reject?.(waiter.signal.reason);
           continue;
         }
         waiter.state = "submitted";
@@ -241,18 +287,18 @@ export class ChildWorkerAdmissionQueue {
     let slots: ProcessSlots;
     try {
       slots = await this.#options.slots;
-      const result = await slots.acquire(waiter.request);
+      const result = await slots.acquire(waiter.request!);
       this.#pending.delete(waiter);
       if (!waiter.occupiesSlot || waiter.unplaceable) {
         await slots.release(result.lease, { acknowledged: true });
         const error = new Error("ProcessSlots admitted a request marked unplaceable");
         waiter.state = "done";
-        waiter.reject(error);
+        waiter.reject?.(error);
         this.fence(error);
         return;
       }
       waiter.state = "done";
-      waiter.resolve(
+      waiter.resolve?.(
         this.#options.makePermit(
           slots,
           result.lease,
@@ -280,7 +326,7 @@ export class ChildWorkerAdmissionQueue {
         this.#used--;
       }
       waiter.state = "done";
-      waiter.reject(error);
+      waiter.reject?.(error);
       this.#drain();
     }
   }

@@ -152,7 +152,10 @@ function composedProgramFixture(sourceKind: "static" | "lazy-factory") {
       return createChildWorkerProgram({
         executable: "/bin/program",
         code: this.code(modules),
-        capacity: new ChildWorkerCapacity(10),
+        // No DO context is available; the 2026-10-23 probe measured four fetches (see computer/README.md).
+        capacity: new ChildWorkerCapacity(4, {
+          owner: "test/infra-isolateprobe-childcpulimits-test-1",
+        }),
         dispatch,
         createHost: () => ({ host, close }),
       });

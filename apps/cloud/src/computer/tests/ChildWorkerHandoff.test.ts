@@ -14,7 +14,9 @@ vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 describe("child slot handoff", () => {
   it("waits for a disconnected Worker's stop ACK before handing its slot off", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerhandoff-test-1",
+    });
     const cleaned = Promise.withResolvers<void>();
     const stopped = Promise.withResolvers<void>();
     const handedOff = Promise.withResolvers<void>();

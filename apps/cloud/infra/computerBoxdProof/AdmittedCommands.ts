@@ -4,6 +4,7 @@ import type { KernelCommandForwarder } from "../../src/kernel/KernelCommandForwa
 import { KernelForwardingUnavailable } from "../../src/kernel/KernelCommandForwarder.ts";
 import {
   ChildWorkerCapacity,
+  type ChildWorkerCapacityOptions,
   type ChildWorkerRequester,
   type ChildWorkerExecution,
   type ChildWorkerSlotRequest,
@@ -26,13 +27,21 @@ import { nestedProofEscalation } from "./NestedCommand.ts";
 export function createProofAdmittedCommands(
   options: Pick<SeededChildProgramCatalogOptions, "filesystem" | "loader" | "programs"> & {
     readonly wakes: KernelWakeRegistry;
+    readonly limit?: number;
+    readonly owner: string;
+    readonly storage?: ChildWorkerCapacityOptions["storage"];
   },
 ) {
-  // This adapter also runs from a Worker request, whose in-flight child limit is four.
-  const capacity = new ChildWorkerCapacity(4);
+  // Unknown callers use the measured four-fetch Worker ceiling; DO callers pass ten explicitly.
+  const capacity = new ChildWorkerCapacity(options.limit ?? 4, {
+    owner: options.owner,
+    ...(options.storage === undefined ? {} : { storage: options.storage }),
+  });
   const lifetimes = new ChildWorkerLifetimes();
   let fallbackRuns = 0;
   const observedCapacity = {
+    enqueue: (signal: AbortSignal, requester: ChildWorkerRequester | undefined) =>
+      capacity.enqueue(signal, requester),
     reserve: (signal: AbortSignal, requester: ChildWorkerRequester, code: ChildWorkerSlotRequest) =>
       capacity.reserve(signal, requester, code),
     run: <T>(

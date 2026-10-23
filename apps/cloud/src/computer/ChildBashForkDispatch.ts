@@ -19,14 +19,18 @@ export function createChildBashForkDispatch(options: {
   // Non-Bash children retain their slot while blocked. More leaf pipeline stages than the
   // caller's in-flight limit can still deadlock until #1388 can park those programs too.
   const runner = createChildWorkerRunner({ ...options, executable: "/bin/bash" });
-  return (context, owner, source) => {
-    return runner.run(context, (admitted, lease) =>
-      createWorkerBashForkHost(
-        { context: admitted, credentials: options.credentials },
-        lease,
-        owner,
-        source,
-      ),
+  return async (context, owner, source) => {
+    const { memoryBytes } = await source.state();
+    return runner.run(
+      context,
+      (admitted, lease) =>
+        createWorkerBashForkHost(
+          { context: admitted, credentials: options.credentials },
+          lease,
+          owner,
+          source,
+        ),
+      memoryBytes,
     );
   };
 }

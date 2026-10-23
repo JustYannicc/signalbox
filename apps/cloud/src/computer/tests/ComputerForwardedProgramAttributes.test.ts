@@ -38,7 +38,9 @@ describe("machine process attributes", () => {
     const fixture = childBusyboxFixture();
     const machine = machinePort();
     const admission = createComputerProgramAdmission({
-      capacity: new ChildWorkerCapacity(1),
+      capacity: new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-computerforwardedprogramattributes-test-1",
+      }),
       machine,
       escalation: new ComputerEscalationTable([{ id: "native", executable: "/bin/native" }]),
     });
@@ -98,7 +100,9 @@ describe("machine process attributes", () => {
     const fixture = childBusyboxFixture();
     const machine = machinePort();
     const admission = createComputerProgramAdmission({
-      capacity: new ChildWorkerCapacity(1),
+      capacity: new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-computerforwardedprogramattributes-test-2",
+      }),
       machine,
       escalation: new ComputerEscalationTable([{ id: "native", executable: "/bin/native" }]),
     });

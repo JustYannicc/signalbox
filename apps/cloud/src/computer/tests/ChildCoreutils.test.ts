@@ -105,7 +105,9 @@ describe("Coreutils child bridge", () => {
       "shares the normalized cwd with the parent and child for %s",
       async (_name, env) => {
         const fixture = childBusyboxFixture({ args: ["pwd"], env });
-        const capacity = new ChildWorkerCapacity(1);
+        const capacity = new ChildWorkerCapacity(1, {
+          owner: "test/src-computer-tests-childcoreutils-test-1",
+        });
         let reservation!: ChildWorkerReservation;
         const capacityRun = vi.spyOn(capacity, "run");
         const commands: KernelCommand[] = [];
