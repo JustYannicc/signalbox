@@ -20,6 +20,7 @@ import {
   ProviderInstanceId,
   PlanId,
   type ProviderThreadId,
+  type ProviderContinuationAssociation,
   ProviderTurnId,
   RunAttemptId,
   RunId,
@@ -827,6 +828,67 @@ layer("ProviderEventIngestorV2", (it) => {
 
         assert.deepEqual(normalized, []);
       }),
+  );
+
+  it.effect("leaves cloud continuation associations outside the local run event pipeline", () =>
+    Effect.gen(function* () {
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      const projectId = yield* ids.allocate.project({ fixtureName: "cloud-continuation" });
+      const threadId = yield* ids.allocate.thread({
+        fixtureName: "cloud-continuation",
+        projectId,
+      });
+      const providerSessionId = yield* ids.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThreadId = ids.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "cloud-continuation",
+      });
+      const runId = RunId.make("run:cloud-continuation");
+      const identity: ProviderEventRouteIdentity = {
+        threadId,
+        runId,
+        providerThreadId,
+        attemptId: RunAttemptId.make("attempt:cloud-continuation"),
+      };
+      const state = makeProviderEventRoutingState({ identity, providerTurnId: null });
+      const event = {
+        type: "continuation.associated" as const,
+        driver: CODEX_DRIVER,
+        association: {
+          threadId,
+          runId,
+          messageId: MessageId.make("message:cloud-continuation"),
+          providerContinuation: {
+            sourceRunId: RunId.make("run:cloud-continuation:source"),
+            providerThreadId,
+            observations: [
+              {
+                sdkMessageId: "cloud-sdk-message",
+                blockIndex: 0,
+                observedCallId: "cloud-call",
+                block: { type: "text" as const, text: "Exact completion." },
+              },
+            ],
+          },
+        } satisfies ProviderContinuationAssociation,
+      };
+
+      assert.deepEqual(routeProviderEvent(event, identity, state), [false, state]);
+      assert.deepEqual(
+        yield* ingestor.normalize({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          runId,
+          event,
+        }),
+        [],
+      );
+    }),
   );
 
   it.effect("persists an interrupted run's inherited terminal through the live run router", () =>
