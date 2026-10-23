@@ -15,6 +15,8 @@ import {
   type HarnessProcessPreparedFacet,
 } from "./contracts.ts";
 import { HarnessProcessHandleImpl } from "./processHandle.ts";
+import { DURABLE_OBJECT_INVOCATION_LIMIT, WORKER_REQUEST_INVOCATION_LIMIT } from "./limits.ts";
+import { failureRecord, sameClaim } from "./storeSchema.ts";
 
 interface ContextAllocator {
   readonly owner: string;
@@ -46,22 +48,31 @@ export function createHarnessProcessPlacement(
           "stale-handle",
           "This runtime context already owns another ProcessSlots writer.",
           true,
-          undefined,
-          { owner: existing.owner, requestedOwner: options.owner },
         ),
       );
     return existing.promise;
   }
 
-  const promise = openPlacement(options);
-  allocators.set(options.contextKey, {
+  const entry: ContextAllocator = {
     owner: options.owner,
     controllerClaim: options.controllerClaim,
     shardIncarnationNonce: options.shardIncarnationNonce,
     context: options.context,
-    promise,
+    promise: openPlacement(options),
+  };
+  allocators.set(options.contextKey, entry);
+  void entry.promise.catch(() => {
+    if (allocators.get(options.contextKey) === entry) allocators.delete(options.contextKey);
   });
-  return promise;
+  return entry.promise;
+}
+
+export function forgetHarnessProcessPlacement(
+  contextKey: object,
+  placement: Promise<HarnessProcessPlacement>,
+): void {
+  const current = allocators.get(contextKey);
+  if (current?.promise === placement) allocators.delete(contextKey);
 }
 
 async function openPlacement(
@@ -89,7 +100,10 @@ async function openPlacement(
 
   // The owner-supplied dw-cap-probe measured these caller-context limits, not global agent caps.
   // A DO context admits 10 distinct loader IDs. A plain Worker request admits four.
-  const inFlightLimit = context === "durable-object" ? 10 : 4;
+  const inFlightLimit =
+    context === "durable-object"
+      ? DURABLE_OBJECT_INVOCATION_LIMIT
+      : WORKER_REQUEST_INVOCATION_LIMIT;
   const slots = await createProcessSlots({ ...processSlotOptions, inFlightLimit });
   slots.signals.onPressure((pressure) => {
     if (pressure.kind !== "capacity") return;
@@ -113,6 +127,7 @@ async function openPlacement(
     ): Promise<HarnessProcessHandle<Input>> {
       if (
         !sameClaim(request.controllerClaim, controllerClaim) ||
+        !request.processId ||
         !request.nativeSessionId ||
         !request.checkpointId ||
         !request.manifestRevision ||
@@ -143,7 +158,6 @@ async function openPlacement(
             true,
             undefined,
             {
-              shardOwner: options.owner,
               residentBytes: pressure.request.residentBytes,
               route: "different-destination-required",
             },
@@ -174,7 +188,6 @@ async function openPlacement(
             true,
             undefined,
             {
-              shardOwner: options.owner,
               residentBytes: request.residentBytes,
               route: "different-destination-required",
             },
@@ -197,6 +210,7 @@ async function openPlacement(
         shardOwner: options.owner,
         controllerClaim,
         operationId: request.operationId,
+        processId: request.processId,
         nativeSessionId: request.nativeSessionId,
         checkpointId: request.checkpointId,
         manifestRevision: request.manifestRevision,
@@ -219,7 +233,7 @@ async function openPlacement(
           "The placement recovery record could not be saved before opening the facet.",
           false,
           identity,
-          { loaderId: identity.loaderId },
+          { recoveryId: identity.loaderId },
           { cause },
         );
       }
@@ -235,15 +249,20 @@ async function openPlacement(
           await recovery.save({
             ...baseRecord,
             state: "cleanup-required",
-            lastFailure: errorText(cleanupCause),
+            lastFailure: failureRecord("prepare", "RPC_FAILED"),
           });
           throw new HarnessProcessPlacementError(
             "cleanup-incomplete",
             "Facet stub construction failed and the slot needs durable recovery.",
             true,
             identity,
-            { recoveryId: identity.loaderId, failure: errorText(cleanupCause) },
-            { cause },
+            { recoveryId: identity.loaderId, causeCode: "RPC_FAILED" },
+            {
+              cause: new AggregateError(
+                [cause, cleanupCause],
+                "Facet construction cleanup failed.",
+              ),
+            },
           );
         }
         throw new HarnessProcessPlacementError(
@@ -251,7 +270,7 @@ async function openPlacement(
           "Facet stub construction failed before any RPC or resource effect.",
           false,
           identity,
-          { loaderId: identity.loaderId },
+          { recoveryId: identity.loaderId },
           { cause },
         );
       }
@@ -270,20 +289,4 @@ async function openPlacement(
     },
   };
   return service;
-}
-
-function errorText(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function sameClaim(
-  left: HarnessProcessPlacementOptions["controllerClaim"],
-  right: HarnessProcessPlacementOptions["controllerClaim"],
-) {
-  return (
-    left.ownerId === right.ownerId &&
-    left.incarnationId === right.incarnationId &&
-    left.epoch === right.epoch &&
-    left.controlKey === right.controlKey
-  );
 }

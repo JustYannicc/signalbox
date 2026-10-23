@@ -32,17 +32,20 @@ describe("harness process placement", () => {
     const requests = Array.from({ length: count }, (_, index) => requestFor(index));
     const handles = await Promise.all(
       requests.map((request, index) =>
-        placement.prepareInert(request, () =>
-          testFacet({
-            async invoke(): Promise<HarnessProcessInvocationSettlement> {
-              open++;
-              peak = Math.max(peak, open);
-              entered[index]!.resolve();
-              await release[index]!.promise;
-              open--;
-              return { value: index, stopAcknowledged: true, joined };
+        placement.prepareInert(request, (identity) =>
+          testFacet(
+            {
+              async invoke(): Promise<HarnessProcessInvocationSettlement> {
+                open++;
+                peak = Math.max(peak, open);
+                entered[index]!.resolve();
+                await release[index]!.promise;
+                open--;
+                return { value: index, stopAcknowledged: true, joined };
+              },
             },
-          }),
+            identity,
+          ),
         ),
       ),
     );
@@ -85,7 +88,9 @@ describe("harness process placement", () => {
     const { placement, state } = await fixture("durable-object");
     const requests = Array.from({ length: 10 }, (_, index) => requestFor(index));
     const handles = await Promise.all(
-      requests.map((request) => placement.prepareInert(request, () => testFacet())),
+      requests.map((request) =>
+        placement.prepareInert(request, (identity) => testFacet({}, identity)),
+      ),
     );
     await Promise.all(
       handles.map((handle, index) =>
@@ -96,9 +101,9 @@ describe("harness process placement", () => {
     const blocked = requestFor(10);
     const request = { ...blocked, signal: abort.signal };
     let opened = false;
-    const pending = placement.prepareInert(request, () => {
+    const pending = placement.prepareInert(request, (_identity) => {
       opened = true;
-      return testFacet();
+      return testFacet({}, _identity);
     });
 
     expect(state.signals.inFlight).toBe(10);
@@ -124,14 +129,18 @@ describe("harness process placement", () => {
       readonly publication: HarnessProcessPublication;
     }>();
     const resumeStarted = Promise.withResolvers<void>();
-    const facet = testFacet({
-      async invoke() {
-        invocationStarted.resolve();
-        return await invocation.promise;
-      },
-    });
     const request = requestFor();
-    const handle = await placement.prepareInert(request, () => facet);
+    const handle = await placement.prepareInert(request, (identity) =>
+      testFacet(
+        {
+          async invoke() {
+            invocationStarted.resolve();
+            return await invocation.promise;
+          },
+        },
+        identity,
+      ),
+    );
 
     expect(state.signals.inFlight).toBe(0);
     expect(state.signals.resident).toBe(1);
@@ -165,14 +174,50 @@ describe("harness process placement", () => {
     expect(state.signals.resident).toBe(0);
   });
 
+  it("checks the full claim before a parked process regains its permit", async () => {
+    const { placement, state } = await fixture();
+    const request = requestFor();
+    let activationCalls = 0;
+    const handle = await placement.prepareInert(request, (identity) =>
+      testFacet(
+        {
+          async activate() {
+            activationCalls++;
+          },
+        },
+        identity,
+      ),
+    );
+    await handle.activate(publication(request, handle.identity));
+    expect(state.signals.inFlight).toBe(1);
+
+    await expect(
+      handle.park(
+        async () => ({
+          value: "stale-resume",
+          publication: publication(request, handle.identity, {
+            ...controllerClaim,
+            controlKey: "stale-control-key",
+          }),
+        }),
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ kind: "stale-publication" });
+
+    expect(state.signals.inFlight).toBe(0);
+    expect(state.signals.resident).toBe(1);
+    expect(activationCalls).toBe(1);
+    await handle.cleanup();
+  });
+
   it("returns an explicit recoverable route when a process cannot fit this shard", async () => {
     const { placement, state } = await fixture();
     let opened = false;
     const request = { ...requestFor(), residentBytes: 101 };
     await expect(
-      placement.prepareInert(request, () => {
+      placement.prepareInert(request, (identity) => {
         opened = true;
-        return testFacet();
+        return testFacet({}, identity);
       }),
     ).rejects.toMatchObject({
       kind: "unplaceable",
@@ -189,15 +234,18 @@ describe("harness process placement", () => {
     let stopAcknowledged = false;
     let fullyJoined = false;
     const request = requestFor();
-    const handle = await placement.prepareInert(request, () =>
-      testFacet({
-        async stop() {
-          return { acknowledged: stopAcknowledged };
+    const handle = await placement.prepareInert(request, (identity) =>
+      testFacet(
+        {
+          async stop() {
+            return { acknowledged: stopAcknowledged };
+          },
+          async join() {
+            return fullyJoined ? joined : joinedNone;
+          },
         },
-        async join() {
-          return fullyJoined ? joined : joinedNone;
-        },
-      }),
+        identity,
+      ),
     );
     await handle.activate(publication(request, handle.identity));
 
@@ -226,7 +274,7 @@ describe("harness process placement", () => {
       }
     });
     const request = requestFor();
-    const handle = await placement.prepareInert(request, () => testFacet());
+    const handle = await placement.prepareInert(request, (identity) => testFacet({}, identity));
     await handle.activate(publication(request, handle.identity));
 
     await expect(handle.cleanup()).rejects.toMatchObject({ kind: "cleanup-incomplete" });
@@ -241,12 +289,15 @@ describe("harness process placement", () => {
   it("keeps a cleanly disposed activation failure visible for repair", async () => {
     const { placement, recovery } = await fixture();
     const request = requestFor();
-    const handle = await placement.prepareInert(request, () =>
-      testFacet({
-        async activate() {
-          throw new Error("activation failed");
+    const handle = await placement.prepareInert(request, (identity) =>
+      testFacet(
+        {
+          async activate() {
+            throw new Error("activation failed");
+          },
         },
-      }),
+        identity,
+      ),
     );
 
     await expect(handle.activate(publication(request, handle.identity))).rejects.toMatchObject({
@@ -258,20 +309,94 @@ describe("harness process placement", () => {
     expect(placement.signals.inFlight).toBe(0);
     expect(placement.signals.resident).toBe(0);
   });
+
+  it("keeps a failed activation sticky after disposal retry and allocator reconstruction", async () => {
+    const backing: FixtureBacking = {
+      slotState: undefined,
+      recovery: new Map(),
+    };
+    const { placement, recovery } = await fixture("worker-request", undefined, backing);
+    const request = requestFor();
+    const sentinel = new Error("private-prompt-sentinel");
+    let activationCalls = 0;
+    let invocationCalls = 0;
+    let disposalCalls = 0;
+    let failFirstDisposal = true;
+    const handle = await placement.prepareInert(request, (identity) =>
+      testFacet(
+        {
+          async activate() {
+            activationCalls++;
+            throw new Error("activation-sentinel");
+          },
+          async invoke() {
+            invocationCalls++;
+            return { value: undefined, stopAcknowledged: true, joined };
+          },
+          async dispose() {
+            disposalCalls++;
+            if (!failFirstDisposal) return;
+            failFirstDisposal = false;
+            throw sentinel;
+          },
+        },
+        identity,
+      ),
+    );
+
+    const failure = await handle.activate(publication(request, handle.identity)).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toMatchObject({
+      kind: "activation-failed",
+      recoverable: true,
+      details: { causeCode: "DISPOSE_FAILED" },
+    } satisfies Partial<HarnessProcessPlacementError>);
+    expect((failure as Error).cause).toBe(sentinel);
+    expect(JSON.stringify((failure as HarnessProcessPlacementError).details)).not.toContain(
+      sentinel.message,
+    );
+    expect(JSON.stringify([...recovery.values()])).not.toContain(sentinel.message);
+    expect([...recovery.values()]).toMatchObject([
+      { state: "cleanup-required", terminalFailure: { code: "RPC_FAILED" } },
+    ]);
+
+    await handle.cleanup();
+    await handle.cleanup();
+    expect(disposalCalls).toBe(2);
+    expect([...recovery.values()]).toMatchObject([
+      { state: "activation-failed", terminalFailure: { code: "RPC_FAILED" } },
+    ]);
+    expect(activationCalls).toBe(1);
+    expect(invocationCalls).toBe(0);
+
+    const reconstructed = await fixture("worker-request", undefined, backing);
+    await expect(reconstructed.placement.recoverable()).resolves.toMatchObject([
+      { state: "activation-failed", terminalFailure: { code: "RPC_FAILED" } },
+    ]);
+    expect(activationCalls).toBe(1);
+    expect(invocationCalls).toBe(0);
+  });
 });
+
+interface FixtureBacking {
+  slotState: ProcessSlotState | undefined;
+  recovery: Map<string, HarnessProcessPlacementRecoveryRecord>;
+}
 
 async function fixture(
   context: "durable-object" | "worker-request" = "worker-request",
   beforeRemove?: (loaderId: string) => void,
+  backing: FixtureBacking = { slotState: undefined, recovery: new Map() },
 ) {
-  let saved: ProcessSlotState | undefined;
   const store: ProcessSlotStore = {
-    load: async () => saved,
+    load: async () => backing.slotState,
     save: async (next) => {
-      saved = next;
+      backing.slotState = next;
     },
   };
-  const recovery = new Map<string, HarnessProcessPlacementRecoveryRecord>();
+  const recovery = backing.recovery;
   const placement = await createHarnessProcessPlacement({
     owner: "test/shard",
     contextKey: {},
@@ -302,11 +427,12 @@ async function fixture(
     invalidate() {},
     reconcile: async () => ({ acknowledged: true }),
   });
-  return { placement, state: placement, recovery };
+  return { placement, state: placement, recovery, backing };
 }
 
 function requestFor(index = 0): HarnessProcessPlacementRequest {
   return {
+    processId: `process-${index}`,
     codeId: "program",
     residentBytes: 10,
     nativeSessionId: `native-session-${index}`,
@@ -324,6 +450,7 @@ function requestFor(index = 0): HarnessProcessPlacementRequest {
 function publication(
   request: HarnessProcessPlacementRequest,
   identity: HarnessProcessPlacementIdentity,
+  control: HarnessProcessControllerClaim = controllerClaim,
 ): HarnessProcessPublication {
   const receipt = {
     operationId: request.operationId,
@@ -347,6 +474,7 @@ function publication(
   };
   return {
     status: "published",
+    control,
     receipt,
     files: { publication: receipt },
     supervisor: {
@@ -372,8 +500,12 @@ function publication(
 
 function testFacet(
   overrides: Partial<HarnessProcessPreparedFacet<unknown>> = {},
+  identity: HarnessProcessPlacementIdentity,
 ): HarnessProcessPreparedFacet<unknown> {
   return {
+    async identity() {
+      return { facetKey: identity.facetKey, incarnationNonce: identity.incarnationNonce };
+    },
     async prepareInert(input) {
       return {
         nativeSessionId: input.nativeSessionId,

@@ -24,12 +24,14 @@ type ReceiptChange = Omit<Partial<HarnessProcessPublicationReceipt>, "checkpoint
 
 interface PublicationMismatch {
   readonly name: string;
+  readonly control?: Partial<HarnessProcessControllerClaim>;
   readonly receipt?: ReceiptChange;
   readonly manifestRevision?: string;
   readonly outerStatus?: "supervisor-pending";
 }
 
 const mismatches: readonly PublicationMismatch[] = [
+  { name: "controller control key", control: { controlKey: "different-control-key" } },
   { name: "operation id", receipt: { operationId: "other-operation" } },
   { name: "exact from generation", receipt: { fromGeneration: 2 } },
   { name: "exact to generation", receipt: { toGeneration: 5 } },
@@ -46,7 +48,7 @@ describe("composed process publication receipt", () => {
   it("accepts A's complete confirmed receipt and keeps its receipt object intact", async () => {
     const request = requestFor();
     const placement = await fixture();
-    const handle = await placement.prepareInert(request, () => testFacet());
+    const handle = await placement.prepareInert(request, (identity) => testFacet({}, identity));
     const publication = makePublication(request, handle.identity);
     await expect(handle.activate(publication)).resolves.toBeUndefined();
     expect(publication.receipt?.status).toBe("confirmed");
@@ -60,12 +62,15 @@ describe("composed process publication receipt", () => {
         : requestFor({ manifestRevision: change.manifestRevision });
     const placement = await fixture();
     const activated = vi.fn();
-    const handle = await placement.prepareInert(request, () =>
-      testFacet({
-        async activate() {
-          activated();
+    const handle = await placement.prepareInert(request, (identity) =>
+      testFacet(
+        {
+          async activate() {
+            activated();
+          },
         },
-      }),
+        identity,
+      ),
     );
     const publication = makePublication(request, handle.identity, change);
 
@@ -80,6 +85,7 @@ function requestFor(
   overrides: Partial<HarnessProcessPlacementRequest> = {},
 ): HarnessProcessPlacementRequest {
   return {
+    processId: "process",
     codeId: "program",
     residentBytes: 10,
     nativeSessionId: "native-session",
@@ -125,6 +131,9 @@ function makePublication(
   };
   return {
     status: change.outerStatus ?? "published",
+    ...(change.outerStatus === undefined
+      ? { control: { ...controllerClaim, ...change.control } }
+      : {}),
     receipt,
     files: { publication: receipt },
     supervisor: {
@@ -190,8 +199,12 @@ async function fixture() {
 
 function testFacet(
   overrides: Partial<HarnessProcessPreparedFacet<unknown>> = {},
+  identity: HarnessProcessPlacementIdentity,
 ): HarnessProcessPreparedFacet<unknown> {
   return {
+    async identity() {
+      return { facetKey: identity.facetKey, incarnationNonce: identity.incarnationNonce };
+    },
     async prepareInert(input) {
       return {
         nativeSessionId: input.nativeSessionId,

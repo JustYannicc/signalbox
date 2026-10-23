@@ -15,18 +15,18 @@ const harness = createTestHarness({
         worker_loaders: [{ binding: "LOADER" }],
         durable_objects: {
           bindings: [
+            { name: "PROCESS_EXECUTION_SHARDS", class_name: "HarnessProcessExecutionShardObject" },
             { name: "PLACEMENT_STORES", class_name: "HarnessProcessPlacementStoreObject" },
-            { name: "PROCESS_LIFECYCLE", class_name: "ProcessPlacementLifecycle" },
-            { name: "GATES", class_name: "ProcessPlacementGate" },
+            { name: "HARNESS_THREAD_SUPERVISOR", class_name: "ProcessPlacementSupervisor" },
           ],
         },
         migrations: [
           {
             tag: "v1",
             new_sqlite_classes: [
+              "HarnessProcessExecutionShardObject",
               "HarnessProcessPlacementStoreObject",
-              "ProcessPlacementLifecycle",
-              "ProcessPlacementGate",
+              "ProcessPlacementSupervisor",
             ],
           },
         ],
@@ -39,7 +39,7 @@ beforeAll(() => harness.listen(), 60_000);
 afterAll(() => harness.close());
 
 describe("process execution Worker entrypoint", () => {
-  it("routes 105 synthetic processes through independent four-process requests", async () => {
+  it("routes 105 processes through four-process entrypoint requests and keyed facets", async () => {
     const response = await harness.fetch("/", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -54,30 +54,56 @@ describe("process execution Worker entrypoint", () => {
           readonly requestContextId: string;
           readonly identity: {
             readonly loaderId: string;
+            readonly facetKey: string;
             readonly incarnationNonce: string;
           } | null;
+          readonly settlement?: {
+            readonly value: {
+              readonly moduleNonce: string;
+              readonly constructorNonce: string;
+              readonly loaderId: string;
+              readonly facetKey: string;
+              readonly requestContextId: string;
+              readonly phases: readonly string[];
+            };
+          };
           readonly status: string;
+          readonly error?: {
+            readonly facetFailureAt?: string;
+            readonly facetFailureCode?: string;
+            readonly causeCode?: string;
+          };
         }[];
-      };
-      readonly gate: {
-        readonly expected: number;
-        readonly entered: number;
-        readonly activeByContext: Record<string, number>;
-        readonly peakByContext: Record<string, number>;
       };
     };
 
     expect(result.result.processes).toHaveLength(105);
-    expect(result.result.processes.every((process) => process.status === "settled")).toBe(true);
+    expect(
+      result.result.processes.every((process) => process.status === "settled"),
+      JSON.stringify(result.result.processes.slice(0, 4)),
+    ).toBe(true);
     expect(result.result.processes.every((process) => process.identity !== null)).toBe(true);
     expect(new Set(result.result.processes.map((process) => process.identity!.loaderId)).size).toBe(
       105,
     );
     expect(
+      result.result.processes.every((process) => process.identity!.loaderId.length > 128),
+    ).toBe(true);
+    expect(
+      result.result.processes.every(
+        (process) => process.identity!.facetKey === process.identity!.loaderId,
+      ),
+    ).toBe(true);
+    expect(
       new Set(result.result.processes.map((process) => process.identity!.incarnationNonce)).size,
     ).toBe(105);
-    expect(result.gate).toMatchObject({ expected: 105, entered: 105 });
-    expect(Object.values(result.gate.activeByContext).every((active) => active === 0)).toBe(true);
+    expect(
+      new Set(result.result.processes.map((process) => process.settlement!.value.moduleNonce)).size,
+    ).toBe(105);
+    expect(
+      new Set(result.result.processes.map((process) => process.settlement!.value.constructorNonce))
+        .size,
+    ).toBe(105);
 
     const perRequest = new Map<string, number>();
     for (const process of result.result.processes)
@@ -87,12 +113,65 @@ describe("process execution Worker entrypoint", () => {
       1,
       ...Array.from({ length: 26 }, () => 4),
     ]);
-    expect(Object.keys(result.gate.peakByContext).sort()).toEqual([...perRequest.keys()].sort());
-    expect(Object.values(result.gate.peakByContext).every((peak) => peak <= 4)).toBe(true);
-    expect(Object.values(result.gate.peakByContext).filter((peak) => peak === 4)).toHaveLength(26);
+
+    for (const process of result.result.processes) {
+      expect(process.settlement!.value.phases).toEqual([
+        "identity",
+        "prepare",
+        "activate",
+        "invoke",
+      ]);
+      expect(process.settlement!.value.loaderId).toBe(process.identity!.loaderId);
+      expect(process.settlement!.value.facetKey).toBe(process.identity!.facetKey);
+      expect(process.settlement!.value.requestContextId).toBe(process.requestContextId);
+    }
+    // Request group sizes prove routing only. They do not claim concurrent JavaScript execution.
   }, 120_000);
 
-  it("fences a concurrent retry and rejects a stale writer release", async () => {
+  it("rejects a duplicate runShard while the original owns its durable context", async () => {
+    const response = await harness.fetch("/duplicate");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    expect(JSON.parse(body)).toMatchObject({
+      duplicateRejected: true,
+      result: { processes: [{ status: "settled" }] },
+    });
+  }, 120_000);
+
+  it("releases an empty unplaceable writer for a later explicit request", async () => {
+    const response = await harness.fetch("/unplaceable");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    expect(JSON.parse(body)).toMatchObject({
+      firstResult: { processes: [{ status: "unplaceable", identity: null }] },
+      retryResult: { processes: [{ status: "settled" }] },
+    });
+  }, 120_000);
+
+  it("repairs retained state under the current claim without replaying invocation", async () => {
+    const start = await harness.fetch("/recover/start");
+    const startBody = await start.text();
+    expect(start.status, startBody).toBe(200);
+    expect(startBody).not.toContain("private-prompt-sentinel");
+    expect(JSON.parse(startBody)).toMatchObject({
+      result: { processes: [{ status: "recoverable", recoveryId: expect.any(String) }] },
+    });
+
+    const stale = await harness.fetch("/recover/stale");
+    const staleBody = await stale.text();
+    expect(stale.status, staleBody).toBe(200);
+    expect(JSON.parse(staleBody)).toMatchObject({ staleRejected: true });
+
+    const retry = await harness.fetch("/recover/retry");
+    const retryBody = await retry.text();
+    expect(retry.status, retryBody).toBe(200);
+    const result = JSON.parse(retryBody) as {
+      readonly result: { readonly processes: readonly { readonly status: string }[] };
+    };
+    expect(result.result.processes).toMatchObject([{ status: "recovered" }]);
+  }, 120_000);
+
+  it("transactionally fences delayed writer A mutations after writer B claims the shard", async () => {
     const response = await harness.fetch("/fence");
     const body = await response.text();
     expect(response.status, body).toBe(200);
@@ -100,6 +179,11 @@ describe("process execution Worker entrypoint", () => {
       duplicateRejected: true,
       staleReleaseRejected: true,
       oldWriterRejected: true,
+      staleSaveRejected: true,
+      staleRecoverySaveRejected: true,
+      staleRecoveryRemoveRejected: true,
+      stateUnchanged: true,
+      recoveryUnchanged: true,
     });
-  });
+  }, 120_000);
 });

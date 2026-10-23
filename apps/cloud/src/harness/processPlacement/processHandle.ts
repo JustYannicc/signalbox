@@ -8,6 +8,8 @@ import {
   type HarnessProcessHandle,
   type HarnessProcessInvocationSettlement,
   type HarnessProcessJoined,
+  type HarnessProcessFailureRecord,
+  type HarnessProcessFailureStage,
   type HarnessProcessPlacementIdentity,
   type HarnessProcessPlacementOptions,
   type HarnessProcessPlacementRecoveryRecord,
@@ -16,11 +18,17 @@ import {
   type HarnessProcessPlacementRequest,
 } from "./contracts.ts";
 import { confirmedProcessPublication } from "./publication.ts";
+import { failureRecord } from "./storeSchema.ts";
 
 interface Attempt {
   rpcReturned: boolean;
   stopAcknowledged: boolean;
   joined: HarnessProcessJoined;
+}
+
+interface CleanupResult {
+  readonly failure: HarnessProcessFailureRecord;
+  readonly cause?: unknown;
 }
 
 const joinedNone: HarnessProcessJoined = Object.freeze({
@@ -58,7 +66,9 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   #joined: HarnessProcessJoined = joinedNone;
   #disposed = false;
   #released = false;
-  #lastFailure: string | undefined;
+  #lastFailure: HarnessProcessFailureRecord | undefined;
+  #terminalFailure: HarnessProcessFailureRecord | undefined;
+  #lastCause: unknown;
 
   constructor(input: {
     readonly slots: ProcessSlots;
@@ -79,7 +89,26 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   }
 
   async initialize(): Promise<void> {
+    let facetFailureAt: "identity" | "prepare" | "persist" | "park" = "identity";
     try {
+      const actual = await this.#facet.identity();
+      if (
+        actual.facetKey !== this.identity.facetKey ||
+        actual.incarnationNonce !== this.identity.incarnationNonce
+      )
+        throw new HarnessProcessPlacementError(
+          "prepare-failed",
+          "The constructed facet identity did not match its lease.",
+          true,
+          this.identity,
+          {
+            recoveryId: this.identity.loaderId,
+            identityMismatch:
+              actual.facetKey !== this.identity.facetKey ? "facet-key" : "incarnation",
+            causeCode: "IDENTITY_MISMATCH",
+          },
+        );
+      facetFailureAt = "prepare";
       const observed = await this.#facet.prepareInert({
         identity: this.identity,
         operationId: this.#request.operationId,
@@ -100,16 +129,32 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
           "The inert facet did not confirm its native session, checkpoint, identity, and settled open RPC.",
           true,
           this.identity,
-          { observed },
+          {
+            recoveryId: this.identity.loaderId,
+            identityMismatch:
+              observed.nativeSessionId !== this.#request.nativeSessionId
+                ? "native-session"
+                : observed.checkpointId !== this.#request.checkpointId ||
+                    observed.manifestRevision !== this.#request.manifestRevision
+                  ? "checkpoint"
+                  : observed.facetKey !== this.identity.facetKey
+                    ? "facet-key"
+                    : "incarnation",
+            causeCode: "IDENTITY_MISMATCH",
+          },
         );
 
       this.#joined = observed.joined;
+      facetFailureAt = "persist";
       await this.#persist("preparing");
+      facetFailureAt = "park";
       await this.#parkForPublication();
       this.#state = "prepared";
+      facetFailureAt = "persist";
       await this.#persist("prepared");
     } catch (cause) {
-      this.#lastFailure = errorText(cause);
+      this.#lastCause = cause;
+      this.#lastFailure = failureRecord("prepare", "RPC_FAILED");
       const cleanup = await this.#cleanupInternal(false);
       throw new HarnessProcessPlacementError(
         "prepare-failed",
@@ -118,8 +163,17 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
           : "The fresh facet could not be prepared inert and cleanup is incomplete.",
         cleanup !== undefined,
         this.identity,
-        { recoveryId: this.identity.loaderId, cleanupFailure: cleanup, cause: errorText(cause) },
-        { cause },
+        {
+          recoveryId: this.identity.loaderId,
+          ...(cleanup === undefined ? {} : { causeCode: cleanup.failure.code }),
+          facetFailureAt,
+          facetFailureCode: facetFailureCode(cause),
+          ...(cause instanceof HarnessProcessPlacementError &&
+          cause.details?.identityMismatch !== undefined
+            ? { identityMismatch: cause.details.identityMismatch }
+            : {}),
+        },
+        { cause: cleanup?.cause ?? cause },
       );
     }
   }
@@ -140,21 +194,15 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
           : "Facet publication failed and its prepared facet needs recovery.",
         cleanup !== undefined,
         this.identity,
-        { recoveryId: this.identity.loaderId, cleanupFailure: cleanup },
-        { cause },
+        {
+          recoveryId: this.identity.loaderId,
+          ...(cleanup === undefined ? {} : { causeCode: cleanup.failure.code }),
+        },
+        { cause: cleanup?.cause ?? cause },
       );
     }
 
-    const confirmed = confirmedProcessPublication(receipt, {
-      controllerClaim: this.#options.controllerClaim,
-      operationId: this.#request.operationId,
-      nativeSessionId: this.#request.nativeSessionId,
-      checkpointId: this.#request.checkpointId,
-      manifestRevision: this.#request.manifestRevision,
-      priorFacetNonce: this.#request.priorFacetNonce,
-      expectedFacetGeneration: this.#request.expectedFacetGeneration,
-      identity: this.identity,
-    });
+    const confirmed = this.#confirmPublication(receipt);
     if (confirmed === undefined) {
       const cleanup = await this.#cleanupInternal(false);
       throw new HarnessProcessPlacementError(
@@ -164,7 +212,11 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
           : "The control claim changed and prepared-facet cleanup needs recovery.",
         cleanup !== undefined,
         this.identity,
-        { recoveryId: this.identity.loaderId, cleanupFailure: cleanup },
+        {
+          recoveryId: this.identity.loaderId,
+          ...(cleanup === undefined ? {} : { causeCode: cleanup.failure.code }),
+        },
+        cleanup === undefined ? undefined : { cause: cleanup.cause },
       );
     }
 
@@ -185,14 +237,15 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     this.#parkOutcome = undefined;
     if (!admitted.ok) {
       this.#state = "cleanup-required";
-      this.#lastFailure = errorText(admitted.error);
+      this.#lastCause = admitted.error;
+      this.#lastFailure = failureRecord("recovery", "RECOVERY_UNKNOWN");
       await this.#persist("cleanup-required");
       throw new HarnessProcessPlacementError(
         "cleanup-incomplete",
         "The published facet could not regain ProcessSlots admission.",
         true,
         this.identity,
-        { recoveryId: this.identity.loaderId, failure: this.#lastFailure },
+        { recoveryId: this.identity.loaderId, causeCode: this.#lastFailure.code },
         { cause: admitted.error },
       );
     }
@@ -201,8 +254,9 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     try {
       await this.#facet.activate(confirmed);
     } catch (cause) {
-      this.#state = "activation-failed";
-      this.#lastFailure = errorText(cause);
+      this.#terminalFailure = failureRecord("activation", "RPC_FAILED");
+      this.#lastFailure = this.#terminalFailure;
+      this.#lastCause = cause;
       await this.#persist("activation-failed");
       const cleanup = await this.#cleanupInternal(true);
       throw new HarnessProcessPlacementError(
@@ -212,8 +266,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
           : "The published facet failed activation and cleanup needs persisted repair.",
         true,
         this.identity,
-        { recoveryId: this.identity.loaderId, cleanupFailure: cleanup, failure: this.#lastFailure },
-        { cause },
+        { recoveryId: this.identity.loaderId, causeCode: cleanup?.failure.code ?? "RPC_FAILED" },
+        { cause: cleanup?.cause ?? cause },
       );
     }
     this.#state = "active";
@@ -241,8 +295,10 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       this.#pruneSettledAttempts();
       if (!attempt.stopAcknowledged || !allJoined(attempt.joined)) {
         this.#state = "cleanup-required";
-        this.#lastFailure =
-          "Invocation returned without stop acknowledgement and full joined settlement.";
+        this.#lastFailure = failureRecord(
+          "invocation",
+          !attempt.stopAcknowledged ? "STOP_UNACKNOWLEDGED" : "JOIN_INCOMPLETE",
+        );
         await this.#persist("cleanup-required");
         return settlement;
       }
@@ -252,14 +308,15 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     } catch (cause) {
       attempt.rpcReturned = true;
       this.#state = "cleanup-required";
-      this.#lastFailure = errorText(cause);
+      this.#lastCause = cause;
+      this.#lastFailure = failureRecord("invocation", "RPC_FAILED");
       await this.#persist("cleanup-required");
       throw new HarnessProcessPlacementError(
         "invocation-unsettled",
         "The invocation RPC failed before placement could prove it settled.",
         true,
         this.identity,
-        { recoveryId: this.identity.loaderId, failure: this.#lastFailure },
+        { recoveryId: this.identity.loaderId, causeCode: this.#lastFailure.code },
         { cause },
       );
     }
@@ -285,38 +342,53 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     if (permit === undefined) this.#requireState("active");
     this.#permit = undefined;
     this.#state = "parked";
-    const outcome = this.#slots.park(this.lease, permit!, waitForResume, signal).then(
-      (value) => ({ ok: true as const, value }),
-      (error: unknown) => ({ ok: false as const, error }),
-    );
+    const outcome = this.#slots
+      .park(
+        this.lease,
+        permit!,
+        async () => {
+          const resumed = await waitForResume();
+          if (this.#confirmPublication(resumed.publication) === undefined)
+            throw new HarnessProcessPlacementError(
+              "stale-publication",
+              "The control claim changed before the parked facet could resume.",
+              true,
+              this.identity,
+              { recoveryId: this.identity.loaderId, causeCode: "PUBLICATION_UNCONFIRMED" },
+            );
+          return resumed;
+        },
+        signal,
+      )
+      .then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
     this.#parkOutcome = outcome;
     const admitted = await outcome;
     this.#parkOutcome = undefined;
     if (!admitted.ok) {
       this.#state = "cleanup-required";
-      this.#lastFailure = errorText(admitted.error);
+      this.#lastCause = admitted.error;
+      this.#lastFailure = failureRecord("recovery", "RECOVERY_UNKNOWN");
       await this.#persist("cleanup-required");
+      if (
+        admitted.error instanceof HarnessProcessPlacementError &&
+        admitted.error.kind === "stale-publication"
+      )
+        throw admitted.error;
       throw new HarnessProcessPlacementError(
         "cleanup-incomplete",
         "The parked process did not resume through ProcessSlots.",
         true,
         this.identity,
-        { recoveryId: this.identity.loaderId, failure: this.#lastFailure },
+        { recoveryId: this.identity.loaderId, causeCode: this.#lastFailure.code },
         { cause: admitted.error },
       );
     }
     this.#permit = admitted.value.permit;
     const publication = admitted.value.value.publication;
-    const confirmed = confirmedProcessPublication(publication, {
-      controllerClaim: this.#options.controllerClaim,
-      operationId: this.#request.operationId,
-      nativeSessionId: this.#request.nativeSessionId,
-      checkpointId: this.#request.checkpointId,
-      manifestRevision: this.#request.manifestRevision,
-      priorFacetNonce: this.#request.priorFacetNonce,
-      expectedFacetGeneration: this.#request.expectedFacetGeneration,
-      identity: this.identity,
-    });
+    const confirmed = this.#confirmPublication(publication);
     if (confirmed === undefined) {
       const cleanup = await this.#cleanupInternal(false);
       throw new HarnessProcessPlacementError(
@@ -326,14 +398,19 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
           : "The resume claim changed and parked-facet cleanup needs recovery.",
         cleanup !== undefined,
         this.identity,
-        { recoveryId: this.identity.loaderId, cleanupFailure: cleanup },
+        {
+          recoveryId: this.identity.loaderId,
+          ...(cleanup === undefined ? {} : { causeCode: cleanup.failure.code }),
+        },
+        cleanup === undefined ? undefined : { cause: cleanup.cause },
       );
     }
     try {
       await this.#facet.activate(confirmed);
     } catch (cause) {
-      this.#state = "activation-failed";
-      this.#lastFailure = errorText(cause);
+      this.#terminalFailure = failureRecord("activation", "RPC_FAILED");
+      this.#lastFailure = this.#terminalFailure;
+      this.#lastCause = cause;
       await this.#persist("activation-failed");
       const cleanup = await this.#cleanupInternal(true);
       throw new HarnessProcessPlacementError(
@@ -343,8 +420,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
           : "The published resume facet failed activation and cleanup needs repair.",
         true,
         this.identity,
-        { recoveryId: this.identity.loaderId, cleanupFailure: cleanup, failure: this.#lastFailure },
-        { cause },
+        { recoveryId: this.identity.loaderId, causeCode: cleanup?.failure.code ?? "RPC_FAILED" },
+        { cause: cleanup?.cause ?? cause },
       );
     }
     this.#state = "active";
@@ -364,7 +441,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       await this.#persist(this.#state);
       return result;
     } catch (cause) {
-      this.#lastFailure = errorText(cause);
+      this.#lastCause = cause;
+      this.#lastFailure = failureRecord("stop", "RPC_FAILED");
       this.#state = "cleanup-required";
       await this.#persist("cleanup-required");
       return { acknowledged: false };
@@ -381,7 +459,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       await this.#persist(this.#state);
       return result;
     } catch (cause) {
-      this.#lastFailure = errorText(cause);
+      this.#lastCause = cause;
+      this.#lastFailure = failureRecord("join", "RPC_FAILED");
       this.#state = "cleanup-required";
       await this.#persist("cleanup-required");
       return joinedNone;
@@ -396,7 +475,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         "Process placement cannot release this lease until stop, joined settlement, and disposal are confirmed.",
         true,
         this.identity,
-        { recoveryId: this.identity.loaderId, failure },
+        { recoveryId: this.identity.loaderId, causeCode: failure.failure.code },
+        { cause: failure.cause },
       );
   }
 
@@ -438,45 +518,54 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     this.#permit = undefined;
   }
 
-  async #cleanupInternal(keepActivationFailure: boolean): Promise<string | undefined> {
+  async #cleanupInternal(keepActivationFailure: boolean): Promise<CleanupResult | undefined> {
     if (this.#released) {
-      if (keepActivationFailure || this.#state === "activation-failed") return undefined;
+      if (keepActivationFailure || this.#terminalFailure !== undefined) return undefined;
       try {
         await this.#options.recovery.remove(this.identity.loaderId);
         return undefined;
       } catch (error) {
         this.#state = "cleanup-required";
-        this.#lastFailure = errorText(error);
+        this.#lastCause = error;
+        this.#lastFailure = failureRecord("recovery", "RPC_FAILED");
         await this.#persist("cleanup-required");
-        return this.#lastFailure;
+        return { failure: this.#lastFailure, cause: error };
       }
     }
-    let stopError: unknown;
-    let joinError: unknown;
-    let disposeError: unknown;
+    let cleanupCause: unknown;
+    let cleanupCode: HarnessProcessFailureRecord["code"] | undefined;
     try {
       const stopped = await this.stop();
-      if (!stopped.acknowledged) stopError = new Error("Stop was not acknowledged");
+      if (!stopped.acknowledged) {
+        cleanupCode = "STOP_UNACKNOWLEDGED";
+        cleanupCause = this.#lastCause;
+      }
     } catch (error) {
-      stopError = error;
+      cleanupCode = "RPC_FAILED";
+      cleanupCause = error;
     }
     try {
       const joined = await this.join();
-      if (!allJoined(joined))
-        joinError = new Error("Invocation, fetch, and ports have not all joined");
+      if (!allJoined(joined)) {
+        cleanupCode ??= "JOIN_INCOMPLETE";
+        cleanupCause ??= this.#lastCause;
+      }
     } catch (error) {
-      joinError = error;
+      cleanupCode ??= "RPC_FAILED";
+      cleanupCause ??= error;
     }
     try {
       await this.#facet.dispose();
       this.#disposed = true;
     } catch (error) {
-      disposeError = error;
+      cleanupCode ??= "DISPOSE_FAILED";
+      cleanupCause ??= error;
     }
 
     const settled = this.#stopAcknowledged && allJoined(this.#joined) && this.#attempts.size === 0;
     if (settled && this.#disposed) {
       try {
+        await this.#options.invalidate(this.identity.loaderId);
         await this.#slots.release(this.lease, { acknowledged: true });
         this.#released = true;
         const parkOutcome = this.#parkOutcome;
@@ -484,7 +573,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
           const result = await parkOutcome;
           if (result.ok && this.#permit === undefined) this.#permit = result.value.permit;
         }
-        if (keepActivationFailure) {
+        if (keepActivationFailure || this.#terminalFailure !== undefined) {
           this.#state = "activation-failed";
           await this.#persist("activation-failed");
         } else {
@@ -492,16 +581,19 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         }
         return undefined;
       } catch (error) {
-        disposeError ??= error;
+        cleanupCode ??= "RPC_FAILED";
+        cleanupCause ??= error;
       }
     }
 
-    this.#state = keepActivationFailure ? "activation-failed" : "cleanup-required";
-    const failures = [stopError, joinError, disposeError].filter((error) => error !== undefined);
-    this.#lastFailure =
-      failures.map(errorText).join("; ") || "Stop and joined settlement are incomplete";
+    this.#state = "cleanup-required";
+    this.#lastFailure = failureRecord(
+      this.#failureStage(cleanupCode),
+      cleanupCode ?? "RECOVERY_UNKNOWN",
+    );
+    this.#lastCause = cleanupCause;
     await this.#persist(this.#state);
-    return this.#lastFailure;
+    return { failure: this.#lastFailure, cause: cleanupCause };
   }
 
   async #persist(state: HarnessProcessPlacementRecoveryRecord["state"]): Promise<void> {
@@ -511,6 +603,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       shardOwner: this.identity.shardOwner,
       controllerClaim: this.#options.controllerClaim,
       operationId: this.#request.operationId,
+      processId: this.#request.processId,
       nativeSessionId: this.#request.nativeSessionId,
       checkpointId: this.#request.checkpointId,
       manifestRevision: this.#request.manifestRevision,
@@ -524,6 +617,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       stopAcknowledged: this.#stopAcknowledged,
       joined: this.#joined,
       ...(this.#lastFailure === undefined ? {} : { lastFailure: this.#lastFailure }),
+      ...(this.#terminalFailure === undefined ? {} : { terminalFailure: this.#terminalFailure }),
     });
   }
 
@@ -541,15 +635,44 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         `Process placement is ${this.#state}, expected ${expected}.`,
         this.#state !== "activation-failed",
         this.identity,
-        { recoveryId: this.identity.loaderId, state: this.#state },
+        { recoveryId: this.identity.loaderId, expectedState: expected, actualState: this.#state },
       );
+  }
+
+  #confirmPublication(publication: HarnessProcessPublication) {
+    return confirmedProcessPublication(publication, {
+      controllerClaim: this.#options.controllerClaim,
+      operationId: this.#request.operationId,
+      nativeSessionId: this.#request.nativeSessionId,
+      checkpointId: this.#request.checkpointId,
+      manifestRevision: this.#request.manifestRevision,
+      priorFacetNonce: this.#request.priorFacetNonce,
+      expectedFacetGeneration: this.#request.expectedFacetGeneration,
+      identity: this.identity,
+    });
+  }
+
+  #failureStage(code: HarnessProcessFailureRecord["code"] | undefined): HarnessProcessFailureStage {
+    if (code === "STOP_UNACKNOWLEDGED") return "stop";
+    if (code === "JOIN_INCOMPLETE") return "join";
+    if (code === "DISPOSE_FAILED") return "dispose";
+    return this.#terminalFailure === undefined ? "recovery" : "activation";
   }
 }
 
-export function allJoined(joined: HarnessProcessJoined): boolean {
+function allJoined(joined: HarnessProcessJoined): boolean {
   return joined.invocationRpc && joined.fetch && joined.ports;
 }
 
-export function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function facetFailureCode(
+  cause: unknown,
+): "type-error" | "range-error" | "syntax-error" | "rpc-not-found" | "rpc-error" | "unknown" {
+  if (cause instanceof TypeError || (cause instanceof Error && cause.name === "TypeError"))
+    return "type-error";
+  if (cause instanceof RangeError || (cause instanceof Error && cause.name === "RangeError"))
+    return "range-error";
+  if (cause instanceof Error && cause.name === "SyntaxError") return "syntax-error";
+  if (cause instanceof Error && cause.name === "ProcessFacetRpcNotFound") return "rpc-not-found";
+  if (cause instanceof Error) return "rpc-error";
+  return "unknown";
 }

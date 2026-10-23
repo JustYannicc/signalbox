@@ -37,6 +37,8 @@ export interface HarnessProcessPublicationReceipt {
 
 export interface HarnessProcessPublication {
   readonly status: "published" | "supervisor-pending" | "files-pending";
+  /** Published success carries the full claim checked by the composed durable-state operation. */
+  readonly control?: HarnessProcessControllerClaim;
   readonly receipt?: HarnessProcessPublicationReceipt | null;
   readonly files?: { readonly publication?: HarnessProcessPublicationReceipt | null };
   readonly supervisor?: {
@@ -86,6 +88,8 @@ export interface HarnessProcessObservedFacet {
 
 /** The stub is synchronous. All resource-opening work starts in prepareInert(). */
 export interface HarnessProcessPreparedFacet<Input = unknown> {
+  /** Reads state owned by the constructed facet instead of trusting a request echo. */
+  identity(): Promise<{ readonly facetKey: string; readonly incarnationNonce: string }>;
   prepareInert(input: {
     readonly identity: HarnessProcessPlacementIdentity;
     readonly operationId: string;
@@ -101,6 +105,7 @@ export interface HarnessProcessPreparedFacet<Input = unknown> {
 }
 
 export interface HarnessProcessPlacementRequest {
+  readonly processId: string;
   readonly codeId: string;
   readonly residentBytes: number;
   readonly nativeSessionId: string;
@@ -120,6 +125,7 @@ export interface HarnessProcessPlacementRecoveryRecord {
   readonly shardOwner: string;
   readonly controllerClaim: HarnessProcessControllerClaim;
   readonly operationId: string;
+  readonly processId: string;
   readonly nativeSessionId: string;
   readonly checkpointId: string;
   readonly manifestRevision: string;
@@ -138,7 +144,33 @@ export interface HarnessProcessPlacementRecoveryRecord {
     | "activation-failed";
   readonly stopAcknowledged: boolean;
   readonly joined: HarnessProcessJoined;
-  readonly lastFailure?: string;
+  readonly lastFailure?: HarnessProcessFailureRecord;
+  /** Publication ownership stays sticky until a separate authorized repair accepts it. */
+  readonly terminalFailure?: HarnessProcessFailureRecord;
+}
+
+export type HarnessProcessFailureStage =
+  | "prepare"
+  | "activation"
+  | "invocation"
+  | "stop"
+  | "join"
+  | "dispose"
+  | "recovery";
+
+export type HarnessProcessFailureCode =
+  | "RPC_FAILED"
+  | "IDENTITY_MISMATCH"
+  | "STOP_UNACKNOWLEDGED"
+  | "JOIN_INCOMPLETE"
+  | "DISPOSE_FAILED"
+  | "PUBLICATION_UNCONFIRMED"
+  | "RECOVERY_UNKNOWN";
+
+export interface HarnessProcessFailureRecord {
+  readonly stage: HarnessProcessFailureStage;
+  readonly code: HarnessProcessFailureCode;
+  readonly message: string;
 }
 
 export interface HarnessProcessPlacementRecoveryStore {
@@ -209,14 +241,14 @@ export class HarnessProcessPlacementError extends Error {
     | "stale-handle";
   readonly recoverable: boolean;
   readonly identity: HarnessProcessPlacementIdentity | undefined;
-  readonly details: Readonly<Record<string, unknown>> | undefined;
+  readonly details: HarnessProcessPlacementErrorDetails | undefined;
 
   constructor(
     kind: HarnessProcessPlacementError["kind"],
     message: string,
     recoverable: boolean,
     identity?: HarnessProcessPlacementIdentity,
-    details?: Readonly<Record<string, unknown>>,
+    details?: HarnessProcessPlacementErrorDetails,
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -226,6 +258,25 @@ export class HarnessProcessPlacementError extends Error {
     this.identity = identity;
     this.details = details;
   }
+}
+
+export interface HarnessProcessPlacementErrorDetails {
+  readonly recoveryId?: string;
+  readonly route?: "different-destination-required";
+  readonly residentBytes?: number;
+  readonly openInvocations?: number;
+  readonly expectedState?: HarnessProcessPlacementRecoveryRecord["state"];
+  readonly actualState?: HarnessProcessPlacementRecoveryRecord["state"];
+  readonly identityMismatch?: "facet-key" | "incarnation" | "native-session" | "checkpoint";
+  readonly causeCode?: HarnessProcessFailureCode;
+  readonly facetFailureAt?: "identity" | "prepare" | "persist" | "park";
+  readonly facetFailureCode?:
+    | "type-error"
+    | "range-error"
+    | "syntax-error"
+    | "rpc-not-found"
+    | "rpc-error"
+    | "unknown";
 }
 
 export type HarnessProcessPlacementProcessSlotsOptions = Omit<ProcessSlotsOptions, "inFlightLimit">;

@@ -1,127 +1,196 @@
 import { DurableObject } from "cloudflare:workers";
 import type { ProcessSlotState } from "../../computer/ProcessSlots.ts";
-import type {
-  HarnessProcessControllerClaim,
-  HarnessProcessPlacementRecoveryRecord,
-} from "./contracts.ts";
+import type { HarnessProcessPlacementRecoveryRecord } from "./contracts.ts";
+import type { HarnessProcessPlacementStoreClient } from "./durableStore.ts";
+import {
+  OWNER_KEY,
+  RECOVERY_PREFIX,
+  STATE_KEY,
+  WRITER_KEY,
+  assertWriter,
+  parseRecoveryRecord,
+  recoveryKey,
+  sameWriter,
+  writerIdentityKey,
+  type HarnessProcessPlacementWriter,
+} from "./storeSchema.ts";
 
-const OWNER_KEY = "harness-process-placement-owner-v1";
-const STATE_KEY = "harness-process-slots-v1";
-const RECOVERY_PREFIX = "harness-process-placement-recovery-v1/";
-const WRITER_KEY = "harness-process-placement-writer-v1";
+export class HarnessProcessPlacementStoreObject
+  extends DurableObject
+  implements HarnessProcessPlacementStoreClient
+{
+  readonly #activeWriter = new Map<string, string>();
 
-interface WriterRecord {
-  readonly executionOperationId: string;
-  readonly shardIndex: number;
-  readonly shardIncarnationNonce: string;
-  readonly controllerClaim: HarnessProcessControllerClaim;
-}
+  async readWriter(owner: string): Promise<HarnessProcessPlacementWriter | undefined> {
+    return await this.ctx.storage.transaction(async (transaction) => {
+      const assigned = await transaction.get<string>(OWNER_KEY);
+      if (assigned !== undefined && assigned !== owner)
+        throw new Error("Process-placement owner does not match this shard.");
+      const current = await transaction.get<unknown>(WRITER_KEY);
+      if (current === undefined) return undefined;
+      assertWriter(current);
+      return current;
+    });
+  }
 
-export class HarnessProcessPlacementStoreObject extends DurableObject {
-  async claimWriter(owner: string, writer: WriterRecord): Promise<void> {
+  async claimWriter(
+    owner: string,
+    writer: HarnessProcessPlacementWriter,
+    previousWriter?: HarnessProcessPlacementWriter,
+  ): Promise<void> {
     assertWriter(writer);
-    await this.ctx.storage.transaction(async (transaction) => {
-      await this.#assertOwnerIn(transaction, owner);
-      const existing = await transaction.get<WriterRecord>(WRITER_KEY);
-      if (existing !== undefined)
-        throw new Error("Another ProcessSlots allocator still owns this durable shard.");
-      await transaction.put(WRITER_KEY, writer);
+    if (this.#activeWriter.has(owner))
+      throw new Error("Another execution still owns this process-placement shard.");
+    const identity = writerIdentityKey(writer);
+    this.#activeWriter.set(owner, identity);
+    try {
+      await this.ctx.storage.transaction(async (transaction) => {
+        await this.#assertOwnerIn(transaction, owner, true);
+        const current = await transaction.get<unknown>(WRITER_KEY);
+        if (current === undefined) {
+          if (previousWriter !== undefined)
+            throw new Error("Process-placement writer changed before recovery claim.");
+        } else {
+          assertWriter(current);
+          if (
+            !sameWriter(current, writer) &&
+            (previousWriter === undefined || !sameWriter(current, previousWriter))
+          )
+            throw new Error("Another ProcessSlots allocator still owns this durable shard.");
+        }
+        await transaction.put(WRITER_KEY, writer);
+      });
+    } catch (error) {
+      if (this.#activeWriter.get(owner) === identity) this.#activeWriter.delete(owner);
+      throw error;
+    }
+  }
+
+  async releaseWriter(owner: string, writer: HarnessProcessPlacementWriter): Promise<void> {
+    assertWriter(writer);
+    const identity = writerIdentityKey(writer);
+    try {
+      await this.ctx.storage.transaction(async (transaction) => {
+        await this.#assertOwnerIn(transaction, owner);
+        const current = await transaction.get<unknown>(WRITER_KEY);
+        if (current === undefined) throw new Error("Process-placement writer is already released.");
+        assertWriter(current);
+        if (!sameWriter(current, writer))
+          throw new Error("ProcessSlots writer claim changed before release.");
+        await transaction.delete(WRITER_KEY);
+      });
+    } finally {
+      if (this.#activeWriter.get(owner) === identity) this.#activeWriter.delete(owner);
+    }
+  }
+
+  async load(
+    owner: string,
+    writer: HarnessProcessPlacementWriter,
+  ): Promise<ProcessSlotState | undefined> {
+    return await this.ctx.storage.transaction(async (transaction) => {
+      await this.#assertCurrentWriterIn(transaction, owner, writer);
+      return await transaction.get<ProcessSlotState>(STATE_KEY);
     });
   }
 
-  async releaseWriter(owner: string, writer: WriterRecord): Promise<void> {
-    await this.ctx.storage.transaction(async (transaction) => {
-      await this.#assertOwnerIn(transaction, owner);
-      const existing = await transaction.get<WriterRecord>(WRITER_KEY);
-      if (
-        existing === undefined ||
-        existing.executionOperationId !== writer.executionOperationId ||
-        existing.shardIndex !== writer.shardIndex ||
-        existing.shardIncarnationNonce !== writer.shardIncarnationNonce ||
-        !sameClaim(existing.controllerClaim, writer.controllerClaim)
-      )
-        throw new Error("ProcessSlots writer claim changed before release.");
-      await transaction.delete(WRITER_KEY);
-    });
-  }
-
-  async load(owner: string): Promise<ProcessSlotState | undefined> {
-    await this.#assertOwner(owner);
-    return await this.ctx.storage.get<ProcessSlotState>(STATE_KEY);
-  }
-
-  async save(owner: string, state: ProcessSlotState): Promise<void> {
+  async save(
+    owner: string,
+    writer: HarnessProcessPlacementWriter,
+    state: ProcessSlotState,
+  ): Promise<void> {
     if (state.owner !== owner)
       throw new Error("Process-slot durable owner does not match this shard.");
     await this.ctx.storage.transaction(async (transaction) => {
-      await this.#assertOwnerIn(transaction, owner);
+      await this.#assertCurrentWriterIn(transaction, owner, writer);
       await transaction.put(STATE_KEY, state);
     });
   }
 
-  async listRecovery(owner: string): Promise<readonly HarnessProcessPlacementRecoveryRecord[]> {
-    await this.#assertOwner(owner);
-    const entries = await this.ctx.storage.list<HarnessProcessPlacementRecoveryRecord>({
-      prefix: RECOVERY_PREFIX,
+  async listRecovery(
+    owner: string,
+    writer: HarnessProcessPlacementWriter,
+  ): Promise<readonly HarnessProcessPlacementRecoveryRecord[]> {
+    return await this.ctx.storage.transaction(async (transaction) => {
+      await this.#assertCurrentWriterIn(transaction, owner, writer);
+      const entries = await transaction.list<unknown>({ prefix: RECOVERY_PREFIX });
+      return [...entries.values()].map((entry) => parseRecoveryRecord(entry, owner));
     });
-    const records = [];
-    for (const record of entries.values()) {
-      if (
-        record.shardOwner !== owner ||
-        record.version !== 1 ||
-        record.facetKey !== record.loaderId
-      )
-        throw new Error("Process-placement recovery record is invalid.");
-      records.push(record);
-    }
-    return records;
   }
 
-  async saveRecovery(owner: string, record: HarnessProcessPlacementRecoveryRecord): Promise<void> {
-    if (record.shardOwner !== owner || record.facetKey !== record.loaderId)
-      throw new Error("Process-placement recovery owner or identity is invalid.");
+  async saveRecovery(
+    owner: string,
+    writer: HarnessProcessPlacementWriter,
+    record: HarnessProcessPlacementRecoveryRecord,
+  ): Promise<void> {
+    const checked = parseRecoveryRecord(record, owner);
     await this.ctx.storage.transaction(async (transaction) => {
-      await this.#assertOwnerIn(transaction, owner);
-      await transaction.put(recoveryKey(record.loaderId), record);
+      await this.#assertCurrentWriterIn(transaction, owner, writer);
+      const key = recoveryKey(checked.loaderId);
+      const previous = await transaction.get<unknown>(key);
+      if (previous !== undefined) {
+        const current = parseRecoveryRecord(previous, owner);
+        if (
+          current.terminalFailure !== undefined &&
+          !sameTerminalFailure(current.terminalFailure, checked.terminalFailure)
+        )
+          throw new Error("A terminal activation failure requires an authorized repair.");
+      }
+      await transaction.put(key, checked);
     });
   }
 
-  async removeRecovery(owner: string, loaderId: string): Promise<void> {
-    await this.#assertOwner(owner);
-    await this.ctx.storage.delete(recoveryKey(loaderId));
+  async removeRecovery(
+    owner: string,
+    writer: HarnessProcessPlacementWriter,
+    loaderId: string,
+  ): Promise<void> {
+    await this.ctx.storage.transaction(async (transaction) => {
+      await this.#assertCurrentWriterIn(transaction, owner, writer);
+      const key = recoveryKey(loaderId);
+      const value = await transaction.get<unknown>(key);
+      if (value === undefined) return;
+      const record = parseRecoveryRecord(value, owner);
+      if (record.terminalFailure !== undefined)
+        throw new Error("A terminal activation failure requires an authorized repair.");
+      await transaction.delete(key);
+    });
   }
 
-  async #assertOwner(owner: string): Promise<void> {
-    await this.ctx.storage.transaction((transaction) => this.#assertOwnerIn(transaction, owner));
-  }
-
-  async #assertOwnerIn(transaction: DurableObjectTransaction, owner: string): Promise<void> {
+  async #assertOwnerIn(
+    transaction: DurableObjectTransaction,
+    owner: string,
+    assignIfEmpty = false,
+  ): Promise<void> {
     const existing = await transaction.get<string>(OWNER_KEY);
     if (existing !== undefined && existing !== owner)
-      throw new Error("Process-placement store is already assigned to another shard owner.");
-    if (existing === undefined) await transaction.put(OWNER_KEY, owner);
+      throw new Error("Process-placement store is already assigned to another shard.");
+    if (existing === undefined) {
+      if (!assignIfEmpty) throw new Error("Process-placement shard owner has not been assigned.");
+      await transaction.put(OWNER_KEY, owner);
+    }
+  }
+
+  async #assertCurrentWriterIn(
+    transaction: DurableObjectTransaction,
+    owner: string,
+    writer: HarnessProcessPlacementWriter,
+  ): Promise<void> {
+    assertWriter(writer);
+    await this.#assertOwnerIn(transaction, owner);
+    const current = await transaction.get<unknown>(WRITER_KEY);
+    if (current === undefined) throw new Error("Process-placement writer is not claimed.");
+    assertWriter(current);
+    if (!sameWriter(current, writer))
+      throw new Error("Process-placement mutation came from a stale writer.");
   }
 }
 
-function recoveryKey(loaderId: string) {
-  return `${RECOVERY_PREFIX}${encodeURIComponent(loaderId)}`;
-}
-
-function sameClaim(left: HarnessProcessControllerClaim, right: HarnessProcessControllerClaim) {
+function sameTerminalFailure(
+  left: HarnessProcessPlacementRecoveryRecord["terminalFailure"],
+  right: HarnessProcessPlacementRecoveryRecord["terminalFailure"],
+): boolean {
   return (
-    left.ownerId === right.ownerId &&
-    left.incarnationId === right.incarnationId &&
-    left.epoch === right.epoch &&
-    left.controlKey === right.controlKey
+    left?.stage === right?.stage && left?.code === right?.code && left?.message === right?.message
   );
-}
-
-function assertWriter(writer: WriterRecord) {
-  if (
-    !writer.executionOperationId ||
-    !Number.isSafeInteger(writer.shardIndex) ||
-    writer.shardIndex < 0 ||
-    !writer.shardIncarnationNonce
-  )
-    throw new TypeError("ProcessSlots writer must bind an execution operation and shard index.");
 }

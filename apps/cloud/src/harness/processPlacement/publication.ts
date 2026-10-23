@@ -4,6 +4,7 @@ import type {
   HarnessProcessPublication,
   HarnessProcessPublicationReceipt,
 } from "./contracts.ts";
+import { sameClaim } from "./storeSchema.ts";
 
 export interface HarnessProcessPublicationExpectation {
   readonly controllerClaim: HarnessProcessControllerClaim;
@@ -23,6 +24,7 @@ export function confirmedProcessPublication(
 ): HarnessProcessPublicationReceipt | undefined {
   if (
     publication.status !== "published" ||
+    publication.control === undefined ||
     publication.receipt == null ||
     publication.files?.publication == null ||
     publication.supervisor == null
@@ -40,6 +42,7 @@ export function confirmedProcessPublication(
 
   if (
     receipt.status !== "confirmed" ||
+    !sameClaim(publication.control, expected.controllerClaim) ||
     files.publication?.status !== "confirmed" ||
     !sameReceipt(receipt, files.publication) ||
     receipt.operationId !== expected.operationId ||
