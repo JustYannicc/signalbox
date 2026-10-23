@@ -1,18 +1,53 @@
 import ts from "typescript-legacy";
 import type { NodeBuiltinFunctionCall } from "./coverage.ts";
-import { sameReference, type BuiltinReference } from "./referenceValues.ts";
 
-/** A guard applies to this call site, never to every call of the same builtin. */
+function unparen(expression: ts.Expression): ts.Expression {
+  while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+  return expression;
+}
+
+function memberChain(
+  raw: ts.Expression,
+  builtinRoot: string,
+  safe = false,
+): readonly string[] | undefined {
+  const node = unparen(raw);
+  if (ts.isIdentifier(node) && node.text === builtinRoot) return [node.text];
+  if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) return undefined;
+  const target = unparen(node.expression);
+  const property = ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : ts.isStringLiteralLike(node.argumentExpression)
+      ? node.argumentExpression.text
+      : undefined;
+  if (property === undefined) return undefined;
+  const access = ts.isPropertyAccessExpression(node) ? "." : "[]";
+  if (
+    builtinRoot === "process" &&
+    property === "process" &&
+    ts.isIdentifier(target) &&
+    (target.text === "globalThis" || target.text === "global")
+  )
+    return [target.text, access, property];
+  const receiver = memberChain(target, builtinRoot, safe);
+  if (!receiver) return undefined;
+  const root =
+    receiver.length === 1 ||
+    (receiver.length === 3 &&
+      receiver[2] === "process" &&
+      (receiver[0] === "globalThis" || receiver[0] === "global"));
+  if (safe && !root && !node.questionDotToken) return undefined;
+  return [...receiver, access, property];
+}
+
+/** Only immediate expressions qualify; aliases and enclosing control flow stay required. */
 export function builtinCallGuard(
   call: ts.CallExpression | ts.NewExpression,
-  callee: BuiltinReference,
-  reference: (expression: ts.Expression) => BuiltinReference | undefined,
+  builtinRoot: string,
 ): NodeBuiltinFunctionCall["guard"] {
-  const unparen = (expression: ts.Expression): ts.Expression => {
-    while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
-    return expression;
-  };
-  const matches = (expression: ts.Expression) => sameReference(reference(expression), callee);
+  if (!ts.isCallExpression(call)) return undefined;
+  const callee = memberChain(call.expression, builtinRoot);
+  if (!callee || callee.length === 1) return undefined;
   const evidence = (node: ts.Node, kind: "feature-test" | "optional-call") => {
     const file = call.getSourceFile();
     const point = file.getLineAndCharacterOfPosition(node.getStart(file));
@@ -23,76 +58,43 @@ export function builtinCallGuard(
       column: point.character + 1,
     };
   };
-
-  // Optional receivers alone do not protect an absent final method or Function.call target.
-  if (ts.isCallExpression(call) && call.questionDotToken && matches(call.expression))
+  if (call.questionDotToken && memberChain(call.expression, builtinRoot, true))
     return evidence(call, "optional-call");
 
-  const guardedTest = (raw: ts.Expression, truthy: boolean): ts.Expression | undefined => {
-    const test = unparen(raw);
-    if (ts.isPrefixUnaryExpression(test) && test.operator === ts.SyntaxKind.ExclamationToken)
-      return guardedTest(test.operand, !truthy);
-    if (!ts.isBinaryExpression(test)) return undefined;
-    const operator = test.operatorToken.kind;
-    if (
-      (truthy && operator === ts.SyntaxKind.AmpersandAmpersandToken) ||
-      (!truthy && operator === ts.SyntaxKind.BarBarToken)
-    )
-      return guardedTest(test.left, truthy) ?? guardedTest(test.right, truthy);
-
-    const equal =
-      operator === ts.SyntaxKind.EqualsEqualsToken ||
-      operator === ts.SyntaxKind.EqualsEqualsEqualsToken;
-    const unequal =
-      operator === ts.SyntaxKind.ExclamationEqualsToken ||
-      operator === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-    if (!equal && !unequal) return undefined;
-    const equalBranch = truthy === equal;
-    const left = unparen(test.left);
-    const right = unparen(test.right);
-    for (const [value, expected] of [
-      [left, right],
-      [right, left],
-    ] as const) {
-      if (
-        ts.isTypeOfExpression(value) &&
-        ts.isStringLiteralLike(expected) &&
-        matches(value.expression) &&
-        ((expected.text === "function" && equalBranch) ||
-          (expected.text === "undefined" && !equalBranch))
-      )
-        return test;
-      // Strict null comparisons also admit undefined, so only loose null checks suffice.
-      if (
-        (operator === ts.SyntaxKind.ExclamationEqualsToken ||
-          operator === ts.SyntaxKind.EqualsEqualsToken) &&
-        expected.kind === ts.SyntaxKind.NullKeyword &&
-        !equalBranch &&
-        matches(value)
-      )
-        return test;
-    }
-    return undefined;
-  };
-
-  for (let child: ts.Node = call; child.parent; child = child.parent) {
-    const parent = child.parent;
-    // A function may escape and run after the enclosing feature test.
-    if (ts.isFunctionLike(parent)) break;
-    let test: ts.Expression | undefined;
-    if (ts.isConditionalExpression(parent)) {
-      if (child === parent.whenTrue) test = guardedTest(parent.condition, true);
-      if (child === parent.whenFalse) test = guardedTest(parent.condition, false);
-    } else if (ts.isIfStatement(parent)) {
-      if (child === parent.thenStatement) test = guardedTest(parent.expression, true);
-      if (child === parent.elseStatement) test = guardedTest(parent.expression, false);
-    } else if (ts.isBinaryExpression(parent) && child === parent.right) {
-      if (parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken)
-        test = guardedTest(parent.left, true);
-      if (parent.operatorToken.kind === ts.SyntaxKind.BarBarToken)
-        test = guardedTest(parent.left, false);
-    }
-    if (test) return evidence(test, "feature-test");
+  let consequent: ts.Expression = call;
+  while (ts.isParenthesizedExpression(consequent.parent)) consequent = consequent.parent;
+  const parent = consequent.parent;
+  const condition =
+    ts.isConditionalExpression(parent) && parent.whenTrue === consequent
+      ? parent.condition
+      : ts.isBinaryExpression(parent) &&
+          parent.right === consequent &&
+          parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+        ? parent.left
+        : undefined;
+  const test = condition && unparen(condition);
+  if (!test || !ts.isBinaryExpression(test)) return undefined;
+  const operator = test.operatorToken.kind;
+  const equal =
+    operator === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    operator === ts.SyntaxKind.EqualsEqualsToken;
+  const unequal =
+    operator === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+    operator === ts.SyntaxKind.ExclamationEqualsToken;
+  const left = unparen(test.left);
+  const right = unparen(test.right);
+  for (const [value, expected] of [
+    [left, right],
+    [right, left],
+  ] as const) {
+    const typeTest = ts.isTypeOfExpression(value) && ts.isStringLiteralLike(expected);
+    const matches = typeTest
+      ? (expected.text === "function" && equal) || (expected.text === "undefined" && unequal)
+      : expected.kind === ts.SyntaxKind.NullKeyword &&
+        operator === ts.SyntaxKind.ExclamationEqualsToken;
+    const chain = matches && memberChain(typeTest ? value.expression : value, builtinRoot, true);
+    if (chain && JSON.stringify(chain) === JSON.stringify(callee))
+      return evidence(test, "feature-test");
   }
   return undefined;
 }

@@ -24,6 +24,32 @@ const check = (source: string, runtime = inventory) =>
   assertPackagedBuiltinCoverage([{ name: "sdk/sdk.mjs", source }], runtime);
 
 describe("feature-tested builtin calls", () => {
+  it.each([
+    ["absent receiver in optional call", "process.report.getReport?.()"],
+    [
+      "absent receiver in feature test",
+      'typeof process.report.getReport === "function" && process.report.getReport()',
+    ],
+    [
+      "captured alias differs from tested property",
+      'process.report={}; const get=process.report.getReport; process.report.getReport=()=>{}; if(typeof process.report.getReport === "function") get();',
+    ],
+    [
+      "stale guard on second loop iteration",
+      'process.report={getReport:()=>{}}; if(typeof process.report.getReport === "function") {for(let i=0;i<2;i++){process.report.getReport(); delete process.report.getReport;}}',
+    ],
+    [
+      "default property is a different receiver",
+      'process.report={default:{getReport:()=>{}}}; typeof process.report.default?.getReport === "function" && process.report.getReport()',
+    ],
+    [
+      "instance field executes after guarded class definition",
+      'process.report={getReport:()=>{}}; let C; if(typeof process.report.getReport === "function") { C=class { field=process.report.getReport() }; } delete process.report.getReport; new C()',
+    ],
+  ])("rejects review regression: %s", async (_name, source) => {
+    await expect(check(source)).rejects.toThrow("missing-functions=process.report.getReport");
+  });
+
   it("accepts the unchanged Claude SDK feature test when getReport is absent", async () => {
     const report = await assertPackagedBuiltinCoverage(
       [
@@ -49,24 +75,30 @@ describe("feature-tested builtin calls", () => {
 
   it.each([
     'typeof process.report?.getReport=="function"?process.report.getReport():null',
-    '"function" === typeof process.report.getReport ? process.report?.getReport() : null',
+    '"function" === typeof process.report?.getReport ? process.report.getReport() : null',
     'typeof process.report?.getReport !== "undefined" ? process.report.getReport() : null',
-    'typeof process.report.getReport != "undefined" && process.report.getReport()',
+    'typeof process.report?.getReport != "undefined" && process.report.getReport()',
     "process.report?.getReport != null ? process.report.getReport() : null",
-    "null != process.report.getReport && process.report.getReport()",
+    "null != process.report?.getReport && process.report.getReport()",
     'typeof process.report?.getReport === "function" && process.report.getReport()',
-    'typeof process.report?.getReport === "function" && ready && process.report.getReport()',
-    'if (typeof process.report?.getReport === "function") { process.report.getReport(); }',
-    'if (typeof process.report.getReport !== "undefined") { process.report.getReport(); }',
-    "if (process.report?.getReport != null) { process.report.getReport(); }",
-    'if ((typeof (process.report?.getReport) === "function") && ready) { process.report.getReport(); }',
-    "process.report.getReport?.()",
+    '((typeof ((process.report)?.getReport) === "function")) && ((process.report.getReport)())',
+    'typeof process.report?.["getReport"] === "function" && process.report["getReport"]()',
+    'typeof globalThis.process.report?.getReport === "function" && globalThis.process.report.getReport()',
     "process.report?.getReport?.()",
     'globalThis.process.report?.["getReport"]?.()',
-    'const p = process; typeof p.report?.getReport === "function" && p.report.getReport()',
-    'const {getReport: get} = process.report; if (typeof get === "function") get();',
-  ])("accepts exact-member feature detection: %s", async (source) => {
-    const report = await check(source);
+    "global.process?.report?.getReport?.()",
+    "process.report?.header?.getReport?.()",
+  ])("accepts immediate feature detection with safe receivers: %s", async (source) => {
+    const report = await check(source, {
+      ...inventory,
+      functions: [
+        ...inventory.functions,
+        {
+          ...inventory.functions[0]!,
+          memberPath: ["report", "header", "getReport"],
+        },
+      ],
+    });
     expect(report.status).toBe("pass");
     expect(report.requiredFunctions).toHaveLength(1);
     expect(report.requiredFunctions[0]).toMatchObject({
@@ -84,14 +116,33 @@ describe("feature-tested builtin calls", () => {
     'typeof process.report?.getReport === "function" || process.report.getReport()',
     'typeof process.report?.getReport === "function" ? null : process.report.getReport()',
     'typeof process.report?.getReport === "undefined" && process.report.getReport()',
-    "process.report.getReport !== null && process.report.getReport()",
+    "process.report?.getReport !== null && process.report.getReport()",
     'typeof process.report?.getReport === "function"; process.report.getReport()',
     'if (typeof process.report?.getReport === "function") {} process.report.getReport()',
     'if (typeof process.report?.getReport === "function" || ready) { process.report.getReport(); }',
     'if (typeof process.report?.getReport === "function") { function later() { process.report.getReport(); } }',
     "process.report?.getReport()",
     "process.report.getReport.call?.(process.report)",
-  ])("keeps calls without an exact dominating guard blocking: %s", async (source) => {
+    "process.report?.getReport?.call?.(process.report)",
+    '"function" === typeof process.report.getReport ? process.report?.getReport() : null',
+    'typeof process.report.getReport != "undefined" && process.report.getReport()',
+    "null != process.report.getReport && process.report.getReport()",
+    'typeof process.report?.getReport === "function" && ready && process.report.getReport()',
+    'typeof process.report?.getReport === "function" && (ready && process.report.getReport())',
+    'if (typeof process.report?.getReport === "function") { process.report.getReport(); }',
+    'if (typeof process.report?.getReport !== "undefined") { process.report.getReport(); }',
+    "if (process.report?.getReport != null) { process.report.getReport(); }",
+    'if ((typeof (process.report?.getReport) === "function") && ready) { process.report.getReport(); }',
+    'const p = process; typeof p.report?.getReport === "function" && p.report.getReport()',
+    'const {getReport: get} = process.report; typeof get === "function" && get()',
+    'const get = process.report?.getReport; typeof process.report?.getReport === "function" && get()',
+    'typeof process.report?.default?.getReport === "function" && process.report.getReport()',
+    'typeof process.report?.["getReport"] === "function" && process.report.getReport()',
+    'typeof process.report?.getReport === "function" && (delete process.report.getReport, process.report.getReport())',
+    'typeof process.report?.getReport === "function" && (process.report.getReport = undefined, process.report.getReport())',
+    'typeof process.report?.getReport === "function" && class { field = process.report.getReport() }',
+    'typeof process.report?.getReport === "function" && (() => process.report.getReport())',
+  ])("keeps calls outside the narrow accepted shapes blocking: %s", async (source) => {
     await expect(check(source)).rejects.toThrow("missing-functions=process.report.getReport");
   });
 
@@ -108,7 +159,7 @@ describe("feature-tested builtin calls", () => {
     async (status) => {
       for (const source of [
         'typeof process.report?.getReport === "function" && process.report.getReport()',
-        "process.report.getReport?.()",
+        "process.report?.getReport?.()",
       ]) {
         await expect(
           check(source, {
@@ -122,29 +173,36 @@ describe("feature-tested builtin calls", () => {
 
   it("does not excuse a missing module import with an optional call", async () => {
     await expect(
-      check('import process from "node:process"; process.report.getReport?.()', {
+      check('import process from "node:process"; process.report?.getReport?.()', {
         ...inventory,
         modules: [],
       }),
     ).rejects.toThrow("missing=process");
   });
 
-  it("applies to other builtin modules and imported aliases", async () => {
+  it("applies to other builtin modules without alias matching", async () => {
+    const runtime = {
+      ...inventory,
+      modules: ["os"],
+      functions: [
+        {
+          specifier: "os",
+          memberPath: ["release"],
+          status: "missing" as const,
+          evidence: "os.release is absent",
+        },
+      ],
+    };
     const report = await check(
-      'import { release as getRelease } from "node:os"; typeof getRelease === "function" && getRelease()',
-      {
-        ...inventory,
-        modules: ["os"],
-        functions: [
-          {
-            specifier: "os",
-            memberPath: ["release"],
-            status: "missing",
-            evidence: "os.release is absent",
-          },
-        ],
-      },
+      'import os from "node:os"; typeof os.release === "function" && os.release()',
+      runtime,
     );
     expect(report.requiredFunctions[0]).toMatchObject({ specifier: "os", status: "guarded" });
+    await expect(
+      check(
+        'import { release as getRelease } from "node:os"; typeof getRelease === "function" && getRelease()',
+        runtime,
+      ),
+    ).rejects.toThrow("missing-functions=os.release");
   });
 });

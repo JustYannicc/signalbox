@@ -75,6 +75,7 @@ describe("Node builtin runtime inventory", () => {
       "missing",
     ]);
     expect(capabilities[0]?.evidence).toContain("exists but is not callable");
+    expect(capabilities[1]?.evidence).toBe("process.report.unset is undefined");
   });
 
   it("distinguishes declared, unavailable, unannotated and missing calls without invocation", () => {
