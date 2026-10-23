@@ -167,6 +167,11 @@ specification {
   tag publishable { color sky }
   // The one gateway for a capability that crosses a boundary; adapters fan out behind it (#1191 addendum).
   tag funnel { color green }
+  // Which component a module lives in (#1191 addendum, 2026-10-23). Each component is its own repo; the
+  // Signalbox repo is the OS that composes them. See `Overview / Decisions / Components`.
+  tag basalt { color indigo }
+  tag pumice { color amber }
+  tag os { color primary }
 }
 
 global {

@@ -22,20 +22,22 @@ model/               people, clients, front-door, external, actors, hierarchy, d
 model/modules/       one file per module with its parts, seams, adapters and technologies
 deployment.c4        build layer + production topology (edge platform, machines, SaaS, devices)
 views/               landscape, containers (runtime), modules (drill-downs), hierarchy,
-                     domain, deployment, smells, v1, packages (publishable vs stays)
+                     domain, deployment, smells, v1 (Basalt's first release), packages (publishable vs stays)
 views/states/        state machines: thread, turn, ask, pool account, VM, computer over time, Base, trash, connection
 views/workflows/     dynamic views per workflow (Workflows/... in the sidebar)
   lifecycle.c4       thread and computer lifecycle (Workflows/Lifecycle/...): lifecycle_overview,
                      lifecycle_tool_needs_vm, lifecycle_long_process, lifecycle_idle_dev_server,
                      lifecycle_wake_after_day, lifecycle_fork_thread, lifecycle_interrupt,
                      lifecycle_park_and_shutdown, lifecycle_file_sync, lifecycle_boxd_data
-  workflows/v1.c4    v1 end to end (Workflows/v1/...): 0 first day (index) · 1 sign in · 2 fill your pool
-                     · 3 share your pool · 4 usage · 5 your own tools · 6 set up this computer
+  workflows/v1.c4    Basalt's first release end to end (Workflows/Basalt/...): 0 first day (index) · 1 sign in
+                     · 2 connect subscriptions · 3 share your pool · 4 usage · 5 your own tools · 6 set up this computer
                      · 7 local model request · 8 local tool call
   computer-gateway.c4 one command gateway and resource budgets (Workflows/Work/Computer/Gateway/...):
                      computer_gateway_same_command, computer_terminal_session, computer_budgets
 views/funnels.c4     every boundary is one gateway (Overview/Decisions/Gateways): funnels, then one drill-down
                      each: funnel_clients, funnel_command, funnel_files, funnel_model, funnel_connections, funnel_port
+views/components.c4 what Signalbox is built from (Overview/Decisions/Components): Basalt, Pumice and the
+                     Signalbox OS; model/components.c4 tags each module #basalt, #pumice or #os
 views/harness-map.c4 what an agent consists of and which parts we own (Overview/Decisions/Harness map):
                      harness_map, a talk's harness split applied to Signalbox
 views/journeys/      scenario walk-throughs (Scenarios/... in the sidebar)
@@ -47,7 +49,7 @@ CONTEXT.md           glossary and the words that are never kinds
 - Box text is the name. A module's description is its interface: 3-6 verbs. Tech goes in `technology`.
 - I/O between modules is relationships. A cross-module edge never targets another module's internals.
 - Tags: `#deep`, `#shallow`, `#passthrough` on modules; `#hypothetical-seam` on a seam with one adapter;
-  `#v1` on what v1 ships; `#planned` on adapters not built yet; `#publishable` on deep modules and parts that
+  `#v1` on what Basalt's first release ships; `#planned` on adapters not built yet; `#publishable` on deep modules and parts that
   become their own public npm packages (see `Overview / Decisions / Packages`); `#decided` / `#assumption` on
   settled answers vs working plans.
 - Seams carry `metadata { adapters 'N' }`. Modules carry `interface` and `deletion` (the deletion-test verdict).
