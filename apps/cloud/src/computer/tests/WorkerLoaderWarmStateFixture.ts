@@ -54,6 +54,7 @@ class Owner extends RpcTarget {
 }
 export default {async fetch(request,env){
   const kind=new URL(request.url).searchParams.get("kind");
+  const freshIsolate=new URL(request.url).searchParams.has("fresh");
   if(kind!=="direct"&&kind!=="registry")return new Response("missing",{status:404});
   const capacity=new ChildWorkerCapacity(),observations=[],stdout=[];
   for(const [marker,secret]of [["first","one"],["second","two"]]){
@@ -68,7 +69,7 @@ export default {async fetch(request,env){
     const loader=kind==="direct"?env.LOADER:createCompiledChildWorkerLoader(env.LOADER,new Map([[${JSON.stringify(wasmHash)},module]]));
     const dispatch=createWorkerLoaderDispatch(loader);
     const program=createChildWorkerProgram({executable:"/bin/warm-proof",capacity,dispatch,
-      code:{mainModule:"main.js",entrypoint:"Child",modules:{...modules,"counter.wasm":kind==="direct"?{wasm:module}:{wasmReference:${JSON.stringify(wasmHash)}}}},
+      code:{mainModule:"main.js",entrypoint:"Child",freshIsolate,modules:{...modules,"counter.wasm":kind==="direct"?{wasm:module}:{wasmReference:${JSON.stringify(wasmHash)}}}},
       createHost:()=>({host:new Owner(syscalls,observations),close:()=>syscalls.close()}),
     });
     try{

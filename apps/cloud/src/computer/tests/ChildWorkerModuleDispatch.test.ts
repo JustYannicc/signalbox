@@ -34,6 +34,34 @@ function input(modules: ChildWorkerModules) {
 }
 
 describe("module dispatch ownership", () => {
+  it("gives budgeted invocations separate isolates through the direct loader", async () => {
+    const f = loader();
+    const dispatch = createWorkerLoaderDispatch(f.native);
+    const command = { ...input({}), freshIsolate: true };
+    await Promise.all([dispatch.run(command, {}), dispatch.run(command, {})]);
+    const keys = f.get.mock.calls.map(([key]) => key);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("preserves separate-isolate admission through the compiled registry hop", async () => {
+    const f = loader();
+    const compiledLoader = createCompiledChildWorkerLoader(f.native, new Map([[hash, compiled]]));
+    const received: (boolean | undefined)[] = [];
+    const dispatch = createWorkerLoaderDispatch({
+      run(input, invocation) {
+        received.push(input.freshIsolate);
+        return compiledLoader.run(input, invocation);
+      },
+    });
+    const command = { ...input({ "program.wasm": { wasmReference: hash } }), freshIsolate: true };
+    await Promise.all([dispatch.run(command, {}), dispatch.run(command, {})]);
+    expect(received).toEqual([true, true]);
+    const keys = f.get.mock.calls.map(([key]) => key);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
   it("passes a compiled module by identity through the direct loader", async () => {
     const f = loader();
     const dispatch = createWorkerLoaderDispatch(f.native);

@@ -5,6 +5,8 @@ import { KernelProcessSignal } from "./KernelProcessSignal.ts";
 import { createBashInstance } from "./bash/BashInstance.ts";
 import { createBashEnvironment } from "./bash/BashEnvironment.ts";
 import { range } from "./bash/BashMemory.ts";
+import { BASH_RESIDENT_WASM_BYTES, type KernelBashForkSource } from "./KernelBashFork.ts";
+import { createBashForkSnapshot, restoreBashFork } from "./bash/BashForkSnapshot.ts";
 import {
   bashTransitionImports,
   rewindBash,
@@ -24,6 +26,8 @@ export interface KernelBashReactorOptions {
   readonly pid: number;
   readonly port: KernelBashPort;
   readonly createBinding: (port: KernelBashPort) => KernelBashReactorBinding;
+  readonly snapshot?: KernelBashForkSource | undefined;
+  readonly createForkSource?: (source: KernelBashForkSource) => KernelBashForkSource;
 }
 
 const status = (exitCode: number): KernelExitStatus => ({ exitCode, signal: 0, coreDumped: false });
@@ -31,7 +35,16 @@ const status = (exitCode: number): KernelExitStatus => ({ exitCode, signal: 0, c
 /** Owns only guest continuations and heaps. Process resources remain behind the supplied ports. */
 export function createKernelBashReactor(options: KernelBashReactorOptions) {
   const children = new Set<Promise<void>>();
+  const resident = new Set<WebAssembly.Memory>();
+  let peakResidentWasmBytes = 0;
   let root: Promise<KernelExitStatus> | undefined;
+
+  const residentWasmBytes = () => {
+    let bytes = 0;
+    for (const memory of resident) bytes += memory.buffer.byteLength;
+    peakResidentWasmBytes = Math.max(peakResidentWasmBytes, bytes);
+    return bytes;
+  };
 
   function create(pid: number, port: KernelBashPort) {
     const binding = options.createBinding(port);
@@ -61,6 +74,8 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
     };
     const created = createBashInstance(options.module, imports);
     Object.assign(process, created);
+    resident.add(created.exports.memory);
+    residentWasmBytes();
     binding.bind(created.instance);
     return { process, binding, pid, port };
   }
@@ -72,6 +87,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
     const ex = process.exports;
     for (;;) {
       const result = await binding.run(ex._start);
+      residentWasmBytes();
       if (typeof result === "number") return status(result);
       const pending = process.pending;
       process.pending = undefined;
@@ -98,7 +114,34 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
           const forked = await port.fork();
           if (forked.kind === "error") process.resume = -forked.errno;
           else {
+            let disposed = false;
+            const dispose = () => {
+              if (disposed) return;
+              disposed = true;
+              disposeFork(forked);
+            };
             try {
+              if (residentWasmBytes() + ex.memory.buffer.byteLength > BASH_RESIDENT_WASM_BYTES) {
+                if (forked.port.runFork === undefined)
+                  throw new Error("Bash fork placement requires a child dispatcher");
+                const snapshot = createBashForkSnapshot(process);
+                const source = options.createForkSource?.(snapshot.source) ?? snapshot.source;
+                const remote = forked.port.runFork(source);
+                const copied = remote.then(() => {
+                  throw new Error("Bash fork worker stopped before restoring its snapshot");
+                });
+                const completion = remote.finally(dispose).then(
+                  () => {},
+                  () => {},
+                );
+                children.add(completion);
+                void completion.then(() => children.delete(completion));
+                // Returning from fork lets the parent mutate its memory. Wait only for the copy.
+                await Promise.race([snapshot.copied, copied]);
+                process.resume = forked.pid;
+                rewindBash(process);
+                break;
+              }
               const child = create(forked.pid, forked.port);
               const source = ex.memory;
               const target = child.process.exports.memory;
@@ -111,7 +154,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
               // The port records failure for waitpid; a fork cannot replace the root's exit result.
               const completion = Promise.resolve()
                 .then(() => run(child))
-                .finally(() => disposeFork(forked))
+                .finally(dispose)
                 .then(
                   () => {},
                   () => {},
@@ -123,7 +166,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
               try {
                 await forked.port.complete({ kind: "failure", message: String(error) });
               } finally {
-                disposeFork(forked);
+                dispose();
               }
               throw error;
             }
@@ -161,6 +204,14 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
   }
 
   async function run(current: Process): Promise<KernelExitStatus> {
+    try {
+      return await runProcess(current);
+    } finally {
+      resident.delete(current.process.exports.memory);
+    }
+  }
+
+  async function runProcess(current: Process): Promise<KernelExitStatus> {
     let result: KernelExitStatus;
     try {
       result = await execute(current);
@@ -176,9 +227,28 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
   }
 
   return {
+    get peakResidentWasmBytes() {
+      residentWasmBytes();
+      return peakResidentWasmBytes;
+    },
     async run(): Promise<KernelExitStatus> {
       if (root !== undefined) throw new Error("GNU Bash reactor has already started");
-      root = Promise.resolve().then(() => run(create(options.pid, options.port)));
+      root = Promise.resolve().then(async () => {
+        const current = create(options.pid, options.port);
+        if (options.snapshot !== undefined) {
+          try {
+            await restoreBashFork(current.process, options.snapshot);
+            residentWasmBytes();
+            rewindBash(current.process);
+            await options.snapshot.restored();
+          } catch (error) {
+            await current.port.complete({ kind: "failure", message: String(error) });
+            resident.delete(current.process.exports.memory);
+            throw error;
+          }
+        }
+        return run(current);
+      });
       void root.catch(() => {});
       return root;
     },

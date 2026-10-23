@@ -7,6 +7,7 @@ import type { KernelSyscallPort } from "../kernel/KernelSyscallPort.ts";
 import { createChildWorkerProgram } from "./ChildWorkerProgram.ts";
 import { createWorkerLoaderDispatch, type ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 import { createWorkerBashHost } from "./WorkerBashHost.ts";
+import { createChildBashForkDispatch } from "./ChildBashForkDispatch.ts";
 import { createChildBusyboxProgram } from "./ChildBusyboxProgram.ts";
 import { createChildCoreutilsProgram } from "./ChildCoreutilsProgram.ts";
 import { createWorkerSyscalls } from "./WorkerSyscalls.ts";
@@ -77,16 +78,25 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     return program;
   };
   const credentials = bashCredentials(options.filesystem, options.hostname);
+  const bashCode = { ...options.programs.bash, freshIsolate: true };
   const bashDispatch = createWorkerLoaderDispatch<KernelBashPort>(options.loader);
+  const runFork = createChildBashForkDispatch({
+    credentials,
+    code: bashCode,
+    capacity,
+    dispatch: bashDispatch,
+    lifetimes,
+  });
   const bash = child((admission) =>
     createChildWorkerProgram({
       ...admission,
       executable: "/bin/bash",
-      code: options.programs.bash,
+      code: bashCode,
       capacity,
       lifetimes,
       dispatch: bashDispatch,
-      createHost: (context, lease) => createWorkerBashHost({ context, credentials }, lease),
+      createHost: (context, lease) =>
+        createWorkerBashHost({ context, credentials, runFork }, lease),
     }),
   );
 

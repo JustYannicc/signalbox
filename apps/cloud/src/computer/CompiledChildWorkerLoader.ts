@@ -1,5 +1,5 @@
 import type { WorkerEntrypoint } from "cloudflare:workers";
-import { childWorkerId } from "./ChildWorkerIdentity.ts";
+import { childWorkerId, childWorkerInstanceId } from "./ChildWorkerIdentity.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { ChildWorkerModules } from "./ChildWorkerProgram.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
@@ -104,7 +104,10 @@ export function createCompiledChildWorkerLoader(
           throw new TypeError("Child main module must contain JavaScript");
         }
         code = { ...policy, mainModule, modules };
-        workerId = await childWorkerId(code, entrypoint, compiledHashes);
+        workerId = childWorkerInstanceId(
+          await childWorkerId(code, entrypoint, compiledHashes),
+          input.freshIsolate,
+        );
       } catch (error) {
         // No loader call happened, so this invocation cannot own a running child.
         const completion = target as typeof target & { stopped(): void | Promise<void> };

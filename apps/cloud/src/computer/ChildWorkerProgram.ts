@@ -25,6 +25,7 @@ export interface ChildWorkerCode {
   readonly modules: ChildWorkerModules | ChildWorkerModulesFactory;
   readonly entrypoint?: string;
   readonly limits?: ChildWorkerLimits;
+  readonly freshIsolate?: boolean;
 }
 
 export interface ChildWorkerInvocation extends Omit<ChildWorkerCode, "modules"> {
@@ -78,11 +79,12 @@ export function createChildWorkerProgram<Host extends object>(
     childEnv,
     dispatch,
     createHost,
-    code: { mainModule, modules: moduleSource, entrypoint, limits },
+    code: { mainModule, modules: moduleSource, entrypoint, limits, freshIsolate },
   } = options;
   const code = Object.freeze({
     mainModule,
     ...(entrypoint === undefined ? {} : { entrypoint }),
+    ...(freshIsolate === undefined ? {} : { freshIsolate }),
     limits: resolveChildWorkerLimits(limits),
   });
   const loadModules = createModuleLoader(moduleSource);

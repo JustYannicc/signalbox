@@ -1,5 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
-import { childWorkerId } from "./ChildWorkerIdentity.ts";
+import { childWorkerId, childWorkerInstanceId } from "./ChildWorkerIdentity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
 import { resolveChildWorkerLimits, type ResolvedChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import type { ChildWorkerDispatch, ChildWorkerInvocation } from "./ChildWorkerProgram.ts";
@@ -91,7 +91,14 @@ export function createWorkerLoaderDispatch<Host extends object>(
             }
           }
           submitted = true;
-          exit = await loader.run({ ...code, command: input.command }, invocation);
+          exit = await loader.run(
+            {
+              ...code,
+              command: input.command,
+              ...(input.freshIsolate === undefined ? {} : { freshIsolate: input.freshIsolate }),
+            },
+            invocation,
+          );
         } else {
           for (const module of Object.values(code.modules)) {
             if (typeof module !== "string" && "wasmReference" in module) {
@@ -104,7 +111,10 @@ export function createWorkerLoaderDispatch<Host extends object>(
             ...code,
             globalOutbound: null,
           };
-          const workerId = await childWorkerId(workerCode, input.entrypoint);
+          const workerId = childWorkerInstanceId(
+            await childWorkerId(workerCode, input.entrypoint),
+            input.freshIsolate,
+          );
           submitted = true;
           // Native Worker Loader supports compiled WASM inputs; installed types still require bytes.
           const worker = loader.get(workerId, () => workerCode as WorkerLoaderWorkerCode);

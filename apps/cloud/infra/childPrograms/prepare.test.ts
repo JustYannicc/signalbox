@@ -37,7 +37,7 @@ describe("full child program preparation", () => {
     const cloudRoot = NodePath.resolve(import.meta.dirname, "../..");
     const sources = new Map();
     const programs = [
-      ["src/computer/ChildBash.ts", "ChildBash", bashMain],
+      ["src/computer/ChildBashWorker.ts", "ChildBash", bashMain],
       ["src/computer/ChildBusybox.ts", "ChildBusybox", busyboxMain],
       ["src/computer/ChildWasi.ts", "ChildRipgrep", ripgrepMain],
       ["src/computer/ChildCoreutils.ts", "ChildCoreutils", measuredProgramMain("Coreutils")],

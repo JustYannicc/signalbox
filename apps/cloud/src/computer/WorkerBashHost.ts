@@ -8,28 +8,42 @@ import type {
 } from "../kernel/KernelBashPort.ts";
 import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
 import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
+import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
 
 class WorkerBashPort extends RpcTarget implements KernelBashPort {
   readonly #lease: ChildHostLease;
   readonly #port: ChildHostRef<KernelBashPort>;
   readonly #pid: number;
   readonly #credentials: KernelBashCredentials;
+  readonly #snapshot: ChildHostRef<KernelBashForkSource> | undefined;
 
   constructor(
     lease: ChildHostLease,
     port: KernelBashPort,
     pid: number,
     credentials: KernelBashCredentials,
+    snapshot?: KernelBashForkSource,
   ) {
     super();
     this.#lease = lease;
     this.#port = lease.hold(port);
     this.#pid = pid;
     this.#credentials = credentials;
+    this.#snapshot = snapshot === undefined ? undefined : lease.hold(snapshot);
   }
 
   metadata() {
     return { pid: this.#pid, credentials: { ...this.#credentials } };
+  }
+
+  forkSnapshot() {
+    return this.#snapshot?.get();
+  }
+
+  async runFork(source: KernelBashForkSource) {
+    const port = this.#port.get();
+    if (port.runFork === undefined) throw new Error("Bash fork dispatcher is unavailable");
+    return port.runFork(source);
   }
 
   async call(request: KernelSyscallRequest) {
@@ -64,6 +78,21 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
     this.#lease.drop(this.#port);
     return completed;
   }
+}
+
+export function createWorkerBashForkHost(
+  options: KernelBashHostOptions,
+  lease: ChildHostLease,
+  port: KernelBashPort,
+  snapshot: KernelBashForkSource,
+) {
+  return new WorkerBashPort(
+    lease,
+    port,
+    options.context.identity.pid,
+    options.credentials,
+    snapshot,
+  );
 }
 
 /** Forked ports must remain RPC capabilities when they cross the child worker boundary. */

@@ -3,6 +3,7 @@ import type { KernelBashCredentials } from "../kernel/KernelBashProgram.ts";
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
 import { createChildWasi } from "./ChildWasi.ts";
 import { createChildBashImports } from "./ChildBashImports.ts";
+import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
 
 export interface ChildBashOptions {
   readonly module: WebAssembly.Module;
@@ -11,6 +12,8 @@ export interface ChildBashOptions {
   readonly port: KernelBashPort;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
+  readonly snapshot?: KernelBashForkSource | undefined;
+  readonly createForkSource?: (source: KernelBashForkSource) => KernelBashForkSource;
 }
 
 /** Run the unchanged GNU Bash image in the child, including its Nimbus Asyncify ABI. */

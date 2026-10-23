@@ -13,10 +13,16 @@ import { KernelProcessCancelledError } from "./process/KernelProcessCancellation
 import { KernelProcessSignal } from "./KernelProcessSignal.ts";
 import { SyscallMemory } from "./syscall/SyscallMemory.ts";
 import { runAsync } from "./wasi/internal_wasi_calls.ts";
+import type { KernelBashForkSource } from "./KernelBashFork.ts";
 
 export interface KernelBashHostOptions {
   readonly context: KernelBashProgramContext;
   readonly credentials: KernelBashCredentials;
+  readonly runFork?: (
+    context: KernelBashProgramContext,
+    port: KernelBashPort,
+    source: KernelBashForkSource,
+  ) => Promise<KernelExitStatus>;
 }
 
 interface BashHostNode {
@@ -69,6 +75,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
     let active: Promise<unknown> | undefined;
     let sentSignal = 0;
     let disposed = false;
+    let remoteStarted = false;
 
     const operation = <T>(run: () => Promise<T> | T): Promise<T> => {
       if (closed || completed || active !== undefined)
@@ -106,6 +113,19 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       }
     };
     const port: KernelBashPort = {
+      ...(options.runFork === undefined
+        ? {}
+        : {
+            runFork: (source: KernelBashForkSource) => {
+              if (closed || completed || remoteStarted)
+                return Promise.reject(new Error("Bash fork is no longer available for placement"));
+              remoteStarted = true;
+              return options.runFork!(context, port, source).catch((error: unknown) => {
+                finish({ kind: "failure", message: String(error) });
+                throw error;
+              });
+            },
+          }),
       call: (request) =>
         operation(() =>
           syscalls.call({

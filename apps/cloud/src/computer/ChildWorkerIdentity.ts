@@ -14,6 +14,11 @@ interface ChildWorkerIdentityCode {
 // A compiled module exposes no bytes. Reuse that immutable object without conflating different code.
 const opaqueModules = new WeakMap<WebAssembly.Module, string>();
 
+/** A continuation budget belongs to one isolate, including concurrent calls with identical code. */
+export function childWorkerInstanceId(codeId: string, freshIsolate: boolean | undefined): string {
+  return freshIsolate === true ? `${codeId}:instance:${crypto.randomUUID()}` : codeId;
+}
+
 /** Only code and loader policy belong in this key. Commands and host capabilities stay per call. */
 export async function childWorkerId(
   code: ChildWorkerIdentityCode,

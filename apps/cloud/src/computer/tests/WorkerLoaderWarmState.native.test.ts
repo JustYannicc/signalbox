@@ -71,6 +71,22 @@ afterAll(async () => {
 
 describe("actual warm child isolation", () => {
   it.each(["direct", "registry"])(
+    "gives fresh invocations distinct physical isolates through %s loading",
+    async (kind) => {
+      const response = await fetch(new URL(`/?kind=${kind}&fresh`, endpoint));
+      const body = await response.text();
+      expect(response.status, body).toBe(200);
+      const result = JSON.parse(body) as WarmStateResult;
+      expect(result.observations).toHaveLength(2);
+      expect(result.observations[0]?.isolate).toBeTruthy();
+      expect(result.observations[1]?.isolate).not.toBe(result.observations[0]?.isolate);
+      expect(result.observations.map(({ calls }) => calls)).toEqual([1, 1]);
+      expect(result.stdout).toEqual(["1", "1"]);
+      expect(result.active).toBe(0);
+    },
+  );
+
+  it.each(["direct", "registry"])(
     "keeps WASI state and host capabilities per call through %s loading",
     async (kind) => {
       const response = await fetch(new URL(`/?kind=${kind}`, endpoint));
