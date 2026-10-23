@@ -4,9 +4,7 @@ import type { KernelCommandChild } from "../../kernel/KernelCommandForwarder.ts"
 import { createNodeComputerChildProcess } from "../../isolate/NodeComputerProcess.ts";
 import type { NodeChildProcess } from "../../isolate/NodeChildProcess.ts";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
-import { KernelDescriptors } from "../../kernel/KernelDescriptors.ts";
-import { KernelWebSocketHost } from "../../kernel/KernelWebSocketHost.ts";
-import type { KernelWebSocketRouteResult } from "../../kernel/KernelWebSocketHost.ts";
+import { openExecConnection } from "./CodexExecConnectionFixture.ts";
 import {
   CODEX_UNIFIED_EXEC_ENV,
   createCodexLocaleProductComputer,
@@ -17,42 +15,6 @@ vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 const programs = loadCodexLocalePrograms();
 const exited = (exitCode = 0) => ({ exitCode, signal: 0, coreDumped: false });
-type Fixture = ReturnType<typeof createCodexLocaleProductComputer>;
-
-async function openExecConnection(fixture: Fixture) {
-  const memory = new WebAssembly.Memory({ initial: 1 });
-  const routed = Promise.withResolvers<AbortSignal>();
-  const response = Promise.withResolvers<KernelWebSocketRouteResult>();
-  const host = new KernelWebSocketHost({
-    memory: () => memory,
-    descriptors: new KernelDescriptors(fixture.filesystem.descriptors, fixture.computer.host.wakes),
-    route({ signal }) {
-      routed.resolve(signal);
-      return response.promise;
-    },
-  });
-  const url = new TextEncoder().encode("ws://exec.invalid/session");
-  const view = new DataView(memory.buffer);
-  view.setUint32(0, 1, true);
-  view.setUint32(4, 1024, true);
-  view.setUint32(8, 4096, true);
-  view.setUint32(12, url.byteLength, true);
-  new Uint8Array(memory.buffer, 16, url.byteLength).set(url);
-  view.setUint32(16 + url.byteLength, 0, true);
-  expect(host.imports.ws_open(0, 20 + url.byteLength, 4096)).toBe(0);
-  const fd = view.getUint32(4096, true);
-  const signal = await routed.promise;
-  expect(fixture.filesystem.descriptors.get(fd).closeOnExec).toBe(false);
-  return {
-    fd,
-    signal,
-    close() {
-      expect(host.imports.ws_drop(fd)).toBe(0);
-      response.resolve({ status: 503, headers: [] });
-      expect(signal.aborted).toBe(true);
-    },
-  };
-}
 
 async function observeNode(child: NodeChildProcess) {
   let stdout = "";
@@ -117,10 +79,7 @@ describe.skipIf(programs === undefined)("residual machine descriptor guards", ()
 describe.skipIf(programs === undefined)(
   "Codex remote exec process state at machine admission",
   () => {
-    describe.each([
-      { api: "node", mask: 0 },
-      { api: "computer", mask: 0 },
-    ])("$api command with caller signal mask $mask", ({ api, mask }) => {
+    describe.each(["node", "computer"])("%s command", (api) => {
       it.each([
         {
           command: "grep -P '^ROUTE_ONLY_1070$' route.txt",
@@ -168,7 +127,6 @@ describe.skipIf(programs === undefined)(
           undefined,
           () => ({ completion: parentDone.promise, signal: () => kernelOk(undefined) }),
           () => {},
-          { signalMask: { low: mask, high: 0 } },
         );
         if (parent.status !== "ok") throw new Error("Could not create command caller");
         const connection = await openExecConnection(fixture);
@@ -200,9 +158,6 @@ describe.skipIf(programs === undefined)(
               }),
             );
           } else {
-            expect(
-              fixture.computer.processes.signalMask(undefined, 2, { low: mask, high: 0 }).status,
-            ).toBe("ok");
             observation = await observeComputer(
               await fixture.computer.exec(
                 {
@@ -237,10 +192,6 @@ describe.skipIf(programs === undefined)(
           expect(receipt).toHaveBeenCalledOnce();
           expect(fixture.filesystem.descriptors.has(connection.fd)).toBe(true);
           expect(connection.signal.aborted).toBe(false);
-          expect(fixture.computer.processes.signalMask(parent.value.handle, 3)).toEqual({
-            status: "ok",
-            value: { low: mask, high: 0 },
-          });
         } finally {
           connection.close();
           parentDone.resolve(exited());

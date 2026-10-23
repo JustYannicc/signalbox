@@ -10,6 +10,7 @@ import { createKernelProcessStreams } from "../kernel/KernelProcessStreams.ts";
 import { KernelProcessSignal } from "../kernel/KernelProcessSignal.ts";
 import type { KernelProgramAdmissionRequest } from "../kernel/KernelProgramAdmission.ts";
 import { KernelOpenFlags } from "../kernel/KernelFileSystem.ts";
+import { inheritsKernelCommandDescriptor } from "../kernel/KernelCommandDescriptors.ts";
 
 /** Preview descriptor shape without opening, truncating or closing the guest's files. */
 export function assertComputerForwardingSupported(request: KernelProgramAdmissionRequest): void {
@@ -53,7 +54,8 @@ export function assertComputerForwardingSupported(request: KernelProgramAdmissio
   const descriptors = new Map(
     Array.from(request.filesystem.descriptors.entries())
       .filter(
-        ([fd, descriptor]) => request.kind !== "command" || fd <= 2 || descriptor.preopen === true,
+        ([fd, descriptor]) =>
+          request.kind !== "command" || inheritsKernelCommandDescriptor(fd, descriptor),
       )
       .map(
         ([fd, descriptor]) =>

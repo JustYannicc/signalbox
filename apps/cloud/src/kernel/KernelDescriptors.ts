@@ -45,6 +45,8 @@ export class KernelDescriptors {
           RIGHTS.FD_READ | RIGHTS.FD_WRITE | RIGHTS.FD_FDSTAT_SET_FLAGS | RIGHTS.POLL_FD_READWRITE,
         rightsInheriting: 0n,
         flags: FDFLAGS.NONBLOCK,
+        // Runtime sockets belong to their owner; explicit dup still clears CLOEXEC.
+        closeOnExec: true,
         onLastClose: () => resource.close(),
       });
     } catch (error) {

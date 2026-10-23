@@ -1,6 +1,7 @@
 import type { KernelHandle } from "../KernelAbi.ts";
 import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 import { KernelFileSystem } from "../KernelFileSystem.ts";
+import { inheritsKernelCommandDescriptor } from "../KernelCommandDescriptors.ts";
 import { withKernelErrors } from "../filesystem/KernelFileSystemErrors.ts";
 import type { AgentOsSpawnFileAction } from "../process/AgentOsProcessActions.ts";
 import { runSync } from "../wasi/internal_wasi_calls.ts";
@@ -184,7 +185,8 @@ export function prepareKernelProgram(
   const mappings = [...parentTable.entries()]
     .filter(
       ([fd, descriptor]) =>
-        options.descriptorInheritance !== "stdio" || fd <= 2 || descriptor.preopen === true,
+        options.descriptorInheritance !== "stdio" ||
+        inheritsKernelCommandDescriptor(fd, descriptor),
     )
     .map(([parentFd]) => ({ parentFd, childFd: parentFd }));
   const childTable = parentTable.fork(mappings, { exec: false });
