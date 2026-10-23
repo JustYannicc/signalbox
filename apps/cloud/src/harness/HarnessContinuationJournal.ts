@@ -1,9 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import type { FacetStorage } from "../../kernel/FacetSqliteStorage.ts";
-import { HarnessError } from "../Harness.ts";
-import { HarnessContinuation, type HarnessContinuationPublisher } from "../HarnessContinuations.ts";
+import type { FacetStorage } from "../kernel/FacetSqliteStorage.ts";
+import { HarnessError } from "./Harness.ts";
+import { HarnessContinuation, type HarnessContinuationPublisher } from "./HarnessContinuations.ts";
 
 const codec = Schema.fromJsonString(Schema.toCodecJson(HarnessContinuation));
 const encode = Schema.encodeSync(codec);

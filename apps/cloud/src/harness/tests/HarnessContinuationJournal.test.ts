@@ -9,7 +9,7 @@ import {
 import * as Effect from "effect/Effect";
 import { HarnessError } from "../Harness.ts";
 import type { HarnessContinuation } from "../HarnessContinuations.ts";
-import { createContinuationJournal } from "../host/continuations.ts";
+import { createContinuationJournal } from "../HarnessContinuationJournal.ts";
 import { hostSqlite } from "./hostSqlite.ts";
 
 const request: HarnessContinuation = {

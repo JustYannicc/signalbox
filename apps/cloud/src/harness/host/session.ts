@@ -1,7 +1,7 @@
 import { MessageId } from "@t3tools/contracts";
 import type { HarnessContinuation } from "../HarnessContinuations.ts";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import type { ContinuationJournal } from "./continuations.ts";
+import type { ContinuationJournal } from "../HarnessContinuationJournal.ts";
 import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import type {
   ProviderAdapterV2Event,

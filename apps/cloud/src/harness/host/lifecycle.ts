@@ -1,4 +1,4 @@
-import { createContinuationJournal } from "./continuations.ts";
+import { createContinuationJournal } from "../HarnessContinuationJournal.ts";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
