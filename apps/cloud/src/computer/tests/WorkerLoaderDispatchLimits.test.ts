@@ -375,6 +375,30 @@ describe("WorkerLoader child CPU limits", () => {
     expect(recoveryRun).toHaveBeenCalledOnce();
   });
 
+  it("keeps a guest memory-shaped failure after host entry and normal stop", async () => {
+    const message = "Worker exceeded its memory limit";
+    const run = vi.fn(async (_command: unknown, target: unknown) => {
+      const invocation = target as { host(): object; stopped(): void };
+      invocation.host();
+      invocation.stopped();
+      throw new Error(message);
+    });
+    const get = vi.fn<WorkerLoader["get"]>().mockReturnValue({
+      getEntrypoint: vi.fn().mockReturnValue({ run }),
+      getDurableObjectClass: vi.fn(),
+    } as unknown as WorkerStub);
+    const onMemoryLost = vi.fn(async () => {});
+    const dispatch = createWorkerLoaderDispatch<object>({ get, load: vi.fn() });
+
+    await expect(dispatch.run(invocation(), {}, onMemoryLost)).rejects.toMatchObject({
+      message,
+      termination: { kind: "stopped" },
+    });
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(onMemoryLost).not.toHaveBeenCalled();
+  });
+
   it("awaits loader retirement before acknowledging a memory loss", async () => {
     const enteredLoss = Promise.withResolvers<void>();
     const finishLoss = Promise.withResolvers<void>();

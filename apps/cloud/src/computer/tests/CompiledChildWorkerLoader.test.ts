@@ -204,22 +204,20 @@ describe("compiled child worker loader", () => {
       getDurableObjectClass: vi.fn(),
     };
     const get = vi.fn<WorkerLoader["get"]>().mockReturnValue(worker as unknown as WorkerStub);
-    const target = new Target();
-    target.lost.mockImplementation(async () => {
-      events.push("retired");
-    });
-    target.stopped.mockImplementation(() => {
-      events.push("stopped");
-    });
     const port = createCompiledChildWorkerLoader({ get, load: vi.fn() }, new Map([[hash, module]]));
+    const dispatch = createWorkerLoaderDispatch(port);
 
-    await expect(port.run(invocation(), target)).resolves.toEqual({
+    await expect(
+      dispatch.run(invocation(), {}, async () => {
+        events.push("retired");
+      }),
+    ).resolves.toEqual({
       exitCode: 0,
       signal: 9,
       coreDumped: false,
     });
 
-    expect(events).toEqual(["entrypoint-disposed", "worker-disposed", "retired", "stopped"]);
+    expect(events).toEqual(["entrypoint-disposed", "worker-disposed", "retired"]);
     expect(entrypoint[Symbol.dispose]).toHaveBeenCalledOnce();
     expect(worker[Symbol.dispose]).toHaveBeenCalledOnce();
   });
@@ -394,6 +392,42 @@ describe("compiled child worker loader", () => {
     expect(f.target.stopped).not.toHaveBeenCalled();
   });
 
+  it("keeps a guest memory-shaped failure after host entry and normal stop", async () => {
+    const message = "Worker exceeded its memory limit";
+    const events: string[] = [];
+    const entrypoint = {
+      [Symbol.dispose]: vi.fn(() => events.push("entrypoint-disposed")),
+      async run(_command: unknown, target: unknown) {
+        const invocation = target as { host(): object; stopped(): void };
+        invocation.host();
+        invocation.stopped();
+        throw new Error(message);
+      },
+    };
+    const worker = {
+      [Symbol.dispose]: vi.fn(() => events.push("worker-disposed")),
+      getEntrypoint: vi.fn(() => entrypoint),
+      getDurableObjectClass: vi.fn(),
+    };
+    const onMemoryLost = vi.fn(async () => {});
+    const port = createCompiledChildWorkerLoader(
+      {
+        get: vi.fn<WorkerLoader["get"]>().mockReturnValue(worker as unknown as WorkerStub),
+        load: vi.fn(),
+      },
+      new Map([[hash, module]]),
+    );
+    const dispatch = createWorkerLoaderDispatch(port);
+
+    await expect(dispatch.run(invocation(), {}, onMemoryLost)).rejects.toMatchObject({
+      message,
+      termination: { kind: "stopped" },
+    });
+
+    expect(events).toEqual(["entrypoint-disposed", "worker-disposed"]);
+    expect(onMemoryLost).not.toHaveBeenCalled();
+  });
+
   it("retires the lost slot before acknowledging memory failure and never calls load", async () => {
     const events: string[] = [];
     const failedRun = vi
@@ -416,53 +450,53 @@ describe("compiled child worker loader", () => {
     const load = vi.fn<WorkerLoader["load"]>();
     const loader = { get, load };
     const port = () => createCompiledChildWorkerLoader(loader, new Map([[hash, module]]));
-    const lostTarget = new Target();
-    lostTarget.lost.mockImplementation(async () => {
-      events.push("lost");
-    });
-    lostTarget.stopped.mockImplementation(() => {
-      events.push("stopped");
-    });
-
-    await expect(port().run(invocation(300_000, "slot-lost"), lostTarget)).resolves.toEqual({
+    const lostDispatch = createWorkerLoaderDispatch(port());
+    await expect(
+      lostDispatch.run(invocation(300_000, "slot-lost"), {}, async () => {
+        events.push("lost");
+      }),
+    ).resolves.toEqual({
       exitCode: 0,
       signal: 9,
       coreDumped: false,
     });
-    await expect(port().run(invocation(300_000, "slot-fresh"), new Target())).resolves.toEqual(
-      exit,
-    );
+    await expect(
+      createWorkerLoaderDispatch(port()).run(invocation(300_000, "slot-fresh"), {}),
+    ).resolves.toEqual(exit);
 
     expect(failedRun).toHaveBeenCalledOnce();
     expect(get.mock.calls.map(([id]) => id)).toEqual(["slot-lost", "slot-fresh"]);
     expect(load).not.toHaveBeenCalled();
-    expect(lostTarget.lost).toHaveBeenCalledOnce();
-    expect(events).toEqual(["lost", "stopped"]);
+    expect(events).toEqual(["lost"]);
     expect(recoveryRun).toHaveBeenCalledOnce();
   });
 
   it("fails closed when memory loss cannot retire the loader ID", async () => {
     const f = fixture();
     f.run.mockRejectedValue(new Error("Worker exceeded memory limit"));
-    const target = new Target();
-    target.lost.mockRejectedValue(new Error("slot retirement failed"));
+    const onMemoryLost = vi.fn(async () => {
+      throw new Error("slot retirement failed");
+    });
+    const dispatch = createWorkerLoaderDispatch(f.port);
 
-    await expect(f.port.run(invocation(), target)).rejects.toThrow("slot retirement failed");
+    await expect(dispatch.run(invocation(), {}, onMemoryLost)).rejects.toMatchObject({
+      cause: { message: "slot retirement failed" },
+      termination: { kind: "unconfirmed" },
+    });
 
-    expect(target.lost).toHaveBeenCalledOnce();
-    expect(target.stopped).not.toHaveBeenCalled();
+    expect(onMemoryLost).toHaveBeenCalledOnce();
   });
 
   it("does not acknowledge memory loss when the target has no retirement RPC", async () => {
     const f = fixture();
     f.run.mockRejectedValue(new Error("Worker exceeded memory limit"));
-    const target = { stopped: vi.fn() };
+    const dispatch = createWorkerLoaderDispatch(f.port);
 
-    await expect(f.port.run(invocation(), target as unknown as RpcTarget)).rejects.toThrow(
-      "Child memory loss requires a loader retirement callback",
-    );
+    await expect(dispatch.run(invocation(), {})).rejects.toMatchObject({
+      cause: { message: "Child memory loss requires an onMemoryLost callback" },
+      termination: { kind: "unconfirmed" },
+    });
 
     expect(f.get).toHaveBeenCalledOnce();
-    expect(target.stopped).not.toHaveBeenCalled();
   });
 });
