@@ -8,14 +8,24 @@ import * as NodeUtil from "node:util";
 import type { OfficialReleaseIdentity } from "./releaseIdentity.ts";
 import { claudeReleaseBase } from "./releaseIdentity.ts";
 import { buildClaudeRelease, parseBuiltinCapabilityManifest } from "./buildClaude.ts";
+import { CLAUDE_MEMORY_ENV } from "@t3tools/contracts/harnessMemorySettings";
 
 const digest = (value: Uint8Array | string) =>
   NodeCrypto.createHash("sha256").update(value).digest("hex");
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
-async function makeExtraction(root: string, version: string, source: string) {
+const nativeMemoryReads = Object.entries(CLAUDE_MEMORY_ENV)
+  .map(([key, value]) => `export const ${key} = Number(process.env.${key}) || ${value};`)
+  .join("\n");
+
+async function makeExtraction(
+  root: string,
+  version: string,
+  source: string,
+  memoryReads = nativeMemoryReads,
+) {
   const extracted = NodePath.join(root, `extracted-${version}`);
-  const payload = Buffer.from(source);
+  const payload = Buffer.from([source, memoryReads].join("\n"));
   const binary = Buffer.from(`synthetic-official-binary-${version}`);
   const binarySha256 = digest(binary);
   const officialManifest = {
@@ -90,6 +100,30 @@ async function makeExtraction(root: string, version: string, source: string) {
 }
 
 describe("Claude release build integration", () => {
+  it.each([
+    [
+      "renamed",
+      nativeMemoryReads.replaceAll("BASH_MAX_OUTPUT_LENGTH", "RENAMED_OUTPUT_LENGTH"),
+      "MISSING",
+    ],
+    ["changed", nativeMemoryReads.replace("|| 30000", "|| 30001"), "DEFAULT_CHANGED"],
+  ])("rejects %s memory settings before publishing any release", async (_name, reads, code) => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-memory-"));
+    try {
+      const input = await makeExtraction(root, "2.1.303", "export const marker = true;", reads);
+      const output = NodePath.join(root, "artifact");
+      await expect(buildClaudeRelease({ ...input, output })).rejects.toThrow(
+        `RELEASE_MEMORY_SETTING_${code}: BASH_MAX_OUTPUT_LENGTH`,
+      );
+      await expect(NodeFSP.stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(NodeFSP.stat(`${output}.provenance.json`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("validates capability snapshots before scanning a release", () => {
     expect(
       parseBuiltinCapabilityManifest({

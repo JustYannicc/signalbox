@@ -1,13 +1,13 @@
 # pyright: reportImplicitRelativeImport=false
 import argparse
-from contextlib import ExitStack, redirect_stderr
 import hashlib
 import io
 import json
-from pathlib import Path
 import tempfile
 import tomllib
 import unittest
+from contextlib import ExitStack, redirect_stderr
+from pathlib import Path
 from unittest.mock import patch
 
 import build
@@ -144,6 +144,7 @@ class ArtifactTests(unittest.TestCase):
                 return {**base, "EM_CONFIG": str(cache / "fixture-config")}
 
             replacements = {
+                "pin_memory_settings": lambda *_: {"pins": {}, "evidence": []},
                 "checkout": lambda cache, name, spec: root / "inputs" / name,
                 "verify_checkout": lambda *_: "pristine-source-hash",
                 "export_tree": lambda *_: None,
@@ -232,6 +233,7 @@ class PreparationTests(unittest.TestCase):
                 "checkout": lambda cache, name, spec: root / "inputs" / name,
                 "verify_checkout": lambda *_: "pristine-source-hash",
                 "export_tree": export_tree,
+                "pin_memory_settings": lambda *_: {"pins": {}, "evidence": []},
                 "apply_overlay": lambda *_: list(changes),
                 "apply_websocket_overlay": lambda *_: websocket_changes,
                 "prepare_dependencies": lambda *_: base,

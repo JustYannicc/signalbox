@@ -2,5 +2,7 @@
 // Infra publishing and proof hosts reach it through this root entry.
 export {
   CLAUDE_HOST_CONFIG,
+  CLAUDE_HOST_MEMORY_ENV,
+  claudeHostEnvironment,
   matchesClaudeHostConfiguration,
 } from "./releasePlan/hostConfiguration.ts";

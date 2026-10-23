@@ -24,6 +24,7 @@ import {
   type ClaudeArtifactEnvelope,
 } from "./claudeBuildOutput.ts";
 import { validateClaudeReleaseIdentity, verifyClaudeExtraction } from "./claudeReleaseIdentity.ts";
+import { checkClaudeMemorySettings } from "./checkMemorySettings.ts";
 
 export type { BuildClaudeReleaseResult, ClaudeArtifactEnvelope } from "./claudeBuildOutput.ts";
 
@@ -167,6 +168,7 @@ export async function buildClaudeRelease(
   await NodeFSP.mkdir(NodePath.dirname(output), { recursive: true });
   const stage = await NodeFSP.mkdtemp(`${output}.build-`);
   try {
+    const memorySettings = await checkClaudeMemorySettings(extracted);
     const bundlePath = NodePath.join(stage, "bundle");
     const built = await rebundleClaudeRelease({
       extracted,
@@ -241,6 +243,7 @@ export async function buildClaudeRelease(
       },
       buildInputs: inputs.provenance,
       builtinCoverage,
+      memorySettings,
       capabilities: options.capabilities
         ? { status: "supplied", sha256: sha256(JSON.stringify(options.capabilities)) }
         : { status: "missing" },

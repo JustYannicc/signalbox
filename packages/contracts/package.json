@@ -7,6 +7,10 @@
   ],
   "type": "module",
   "exports": {
+    "./harnessMemorySettings": {
+      "types": "./src/harnessMemorySettings.ts",
+      "import": "./src/harnessMemorySettings.ts"
+    },
     "./waitingCost": {
       "types": "./src/waitingCost.ts",
       "import": "./src/waitingCost.ts"

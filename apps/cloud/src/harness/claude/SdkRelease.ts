@@ -1,7 +1,7 @@
 import type { SdkSpawnOptions } from "./SdkTypes.ts";
 import type { NodeBridge } from "../../isolate/NodeBridge.ts";
 import type { NodeHarnessProcessInput } from "../NodeHarnessProcess.ts";
-import { CLAUDE_HOST_CONFIG } from "../releasePlan/hostConfiguration.ts";
+import { claudeHostEnvironment } from "../releasePlan/hostConfiguration.ts";
 
 type SdkLaunchInput = Pick<NodeHarnessProcessInput, "identity" | "bun"> & {
   readonly computer: {
@@ -27,11 +27,8 @@ export function applySdkLaunch(
     throw new Error("The installed Node personality has no process context");
   argv.splice(0, argv.length, request.command, main, ...request.args);
   for (const key of Object.keys(env)) Reflect.deleteProperty(env, key);
-  for (const [key, value] of Object.entries(request.env)) Reflect.set(env, key, value);
-  for (const [key, value] of Object.entries(CLAUDE_HOST_CONFIG.env)) {
-    if (value === null) Reflect.deleteProperty(env, key);
-    else Reflect.set(env, key, value);
-  }
+  for (const [key, value] of Object.entries(claudeHostEnvironment(request.env)))
+    Reflect.set(env, key, value);
   if (request.cwd !== undefined) input.computer.files.chdir(request.cwd);
 }
 

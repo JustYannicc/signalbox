@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import { readClaudeOmission } from "./claudeOmission.ts";
+import { CLAUDE_MEMORY_ENV } from "@t3tools/contracts/harnessMemorySettings";
 
 describe("Claude release omission configuration", () => {
-  it("returns the product configuration without settings", async () => {
+  it("keeps caller-overridable memory settings dynamic in product omission", async () => {
     const omission = await readClaudeOmission({ enabled: true });
     expect(omission?.configuration).toEqual({ name: "product", env: {} });
   });
@@ -15,6 +16,7 @@ describe("Claude release omission configuration", () => {
     expect(omission?.configuration.name).toBe("qualification");
     expect(omission?.configuration).not.toHaveProperty("settings");
     expect(omission?.configuration.env).toMatchObject({
+      ...CLAUDE_MEMORY_ENV,
       ANTHROPIC_API_KEY: "mock-only-dummy-key",
       ANTHROPIC_BASE_URL: "http://mock.anthropic.invalid",
     });

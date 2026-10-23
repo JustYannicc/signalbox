@@ -6,10 +6,10 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from binaryen import prepare_binaryen
 from dependencies.url_stage import prepare_url_dependency
@@ -17,8 +17,15 @@ from emscripten import prepare_emscripten_toolchain
 from emscripten_crypto import prepare_emscripten_crypto
 from emscripten_deps import prepare_emscripten_dependencies
 from emscripten_http import prepare_emscripten_http
+from memory_settings import pin_memory_settings
 from overlay import apply_overlay
-from sources import checkout, export_tree, read_pin, verify_checkout, verify_output_location
+from sources import (
+    checkout,
+    export_tree,
+    read_pin,
+    verify_checkout,
+    verify_output_location,
+)
 from sqlite import prepare_sqlite_dependencies
 from toolchain import prepare_dependencies, prepare_wasi_toolchain
 from wasi_reactor import prepare_wasi_reactor
@@ -71,6 +78,7 @@ def build(args):
     try:
         copied = output / "source"
         export_tree(source, copied, pin["commit"])
+        report["memorySettings"] = pin_memory_settings(copied)
         report["overlay"] = apply_overlay(copied, args.target)
         if args.target == "wasm32-wasip1":
             report["overlay"] += apply_websocket_overlay(copied, args.target)
