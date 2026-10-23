@@ -1,4 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - Node compatibility requires the native stream and process interfaces.
 import * as NodeStream from "node:stream";
 import { describe, expect, it, vi } from "@effect/vitest";
 import type { ComputerExecPort } from "../../computer/Computer.ts";
