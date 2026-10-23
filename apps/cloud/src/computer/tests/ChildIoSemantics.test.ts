@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import { KernelPipe } from "../../kernel/KernelPipe.ts";
+import { AgentOsDescriptorHost } from "../../kernel/AgentOsDescriptorHost.ts";
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
 import { createChildWasi } from "../ChildWasi.ts";
 import { childBusyboxFixture, text } from "./ChildBusyboxFixture.ts";
@@ -46,7 +47,7 @@ function guest(fixture: Fixture, sigpipe?: "epipe") {
     async fdstat(fd: number) {
       const r = reactor("fd_fdstat_get", ["i32", "i32"]);
       expect(await r.wasi.run(r.instance.exports.run!, fd, 64)).toBe(0);
-      return { flags: r.view.getUint16(66, true) };
+      return { flags: r.view.getUint16(66, true), filetype: r.view.getUint8(64) };
     },
     close: () => host.close(),
   };
@@ -137,6 +138,39 @@ describe("child I/O visibility and ordering", () => {
       await child.write(fd, "B");
       const current = fixture.read("input");
       expect(current).toBe("B");
+    } finally {
+      child.close();
+      await fixture.close();
+    }
+  });
+
+  it("reports ESPIPE when a guest probes a stream's seekability", async () => {
+    const fixture = childBusyboxFixture();
+    const child = guest(fixture);
+    try {
+      expect(await child.seek(0, 0n)).toEqual({ errno: 70, position: 0 });
+      expect(await child.seek(1, 0n)).toEqual({ errno: 70, position: 0 });
+      expect(await child.seek(99999, 0n)).toEqual({ errno: 8, position: 0 });
+    } finally {
+      child.close();
+      await fixture.close();
+    }
+  });
+
+  it("identifies a real pipe as a nonterminal before Bash reads a record", async () => {
+    const fixture = childBusyboxFixture();
+    const child = guest(fixture);
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const descriptors = new AgentOsDescriptorHost({
+      memory: () => memory,
+      descriptors: fixture.filesystem.descriptors,
+      wakes: fixture.wakes,
+    });
+    try {
+      expect(descriptors.imports.fd_pipe(0, 4)).toBe(0);
+      const readFd = new DataView(memory.buffer).getUint32(0, true);
+      expect((await child.fdstat(readFd)).filetype).toBe(0);
+      expect(await child.seek(readFd, 0n)).toEqual({ errno: 70, position: 0 });
     } finally {
       child.close();
       await fixture.close();

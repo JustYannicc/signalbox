@@ -162,7 +162,7 @@ export class WasiFdCalls {
     this.#memory.range(output, 24);
     const view = this.#memory.writeView(output, 24);
     new Uint8Array(view.buffer, view.byteOffset, view.byteLength).fill(0);
-    view.setUint8(0, filetype(descriptor.kind === "stdio" ? "character" : descriptor.kind));
+    view.setUint8(0, filetype(descriptorFiletype(descriptor)));
     view.setUint16(2, descriptor.flags, true);
     view.setBigUint64(8, descriptor.rightsBase, true);
     view.setBigUint64(16, descriptor.rightsInheriting, true);
@@ -214,14 +214,7 @@ export class WasiFdCalls {
       device = storageDescriptor.mount.device;
       inode = storageDescriptor.inode;
     }
-    writeFilestat(
-      this.#memory,
-      output,
-      device,
-      inode,
-      stat,
-      descriptor.kind === "stdio" ? "character" : descriptor.kind,
-    );
+    writeFilestat(this.#memory, output, device, inode, stat, descriptorFiletype(descriptor));
     return 0;
   }
 
@@ -424,9 +417,10 @@ export class WasiFdCalls {
     whence: number,
     newOffset: number,
   ): WasiCall<number> {
+    // signalbox: Bash probes ESPIPE before deciding whether a read may buffer later pipe records.
+    if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     requireRight(descriptor, whence === 1 && offset === 0n ? RIGHTS.FD_TELL : RIGHTS.FD_SEEK);
     this.#memory.range(newOffset, 8);
-    if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     let base: bigint;
     switch (whence) {
       case 0:
@@ -458,9 +452,9 @@ export class WasiFdCalls {
   }
 
   *#fdTell(descriptor: WasiDescriptor, offset: number): WasiCall<number> {
+    if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     requireRight(descriptor, RIGHTS.FD_TELL);
     this.#memory.range(offset, 8);
-    if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     this.#memory.u64(offset, descriptor.offset);
     return 0;
   }
@@ -779,8 +773,17 @@ function normalizeU64(value: bigint): bigint {
   return normalized;
 }
 
-export function filetype(type: "file" | "directory" | "symlink" | "character"): number {
+function descriptorFiletype(descriptor: WasiDescriptor) {
+  // signalbox: preview1 has no FIFO type; a pipe must not look like a terminal to libc.
+  return descriptor.kind === "stdio"
+    ? (descriptor.stdio?.filetype ?? "character")
+    : descriptor.kind;
+}
+
+export function filetype(type: "file" | "directory" | "symlink" | "character" | "unknown"): number {
   switch (type) {
+    case "unknown":
+      return 0;
     case "character":
       return 2;
     case "directory":
@@ -798,7 +801,7 @@ export function writeFilestat(
   device: bigint,
   inode: Inode,
   stat: Stat,
-  type: "file" | "directory" | "symlink" | "character" = stat.type,
+  type: "file" | "directory" | "symlink" | "character" | "unknown" = stat.type,
 ): void {
   const view = memory.writeView(pointer, 64);
   new Uint8Array(view.buffer, view.byteOffset, view.byteLength).fill(0);
