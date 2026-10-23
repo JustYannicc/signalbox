@@ -371,6 +371,21 @@ export class UserDirectory extends Context.Service<
   }
 >()("@signalbox/cloud/user/UserDirectory") {}
 
+export interface LocalUserDirectoryMethods<Error> {
+  readonly profile: Effect.Effect<AccountProfile | null, Error>;
+  readonly githubCommitAuthor: Effect.Effect<CommitAuthor | null, Error>;
+  readonly onePasswordToken: Effect.Effect<string | null, Error>;
+  readonly contextIds: Effect.Effect<ReadonlyArray<SignalboxContextId>, Error>;
+  readonly driveAccess: (driveId: string) => Effect.Effect<SignalboxDriveRole | null, Error>;
+  readonly readableDrives: Effect.Effect<
+    {
+      readonly contexts: ReadonlyArray<SignalboxContext>;
+      readonly drives: ReadonlyArray<SignalboxDrive>;
+    },
+    Error
+  >;
+}
+
 // A record, so adding a method to `UserObjectApi` without wrapping it fails to compile.
 const METHODS = Object.keys({
   trashProgress: true,
@@ -458,6 +473,53 @@ export function handleFor(api: UserObjectApi): UserHandle {
       });
   return Object.fromEntries(METHODS.map((method) => [method, call(method)])) as UserHandle;
 }
+
+const unavailableHandle = (reason: string): UserHandle =>
+  Object.fromEntries(
+    METHODS.map(
+      (method) =>
+        [
+          method,
+          (..._args: ReadonlyArray<unknown>) =>
+            Effect.fail(
+              new UserObjectError({
+                operation: method,
+                cause: new Error(`${method} is unavailable: ${reason}`),
+              }),
+            ),
+        ] as const,
+    ),
+  ) as unknown as UserHandle;
+
+const localEffect = <A, Error>(operation: Method, effect: Effect.Effect<A, Error>) =>
+  effect.pipe(Effect.mapError((cause) => new UserObjectError({ operation, cause })));
+
+/** A local domain owns exactly one user and rejects calls outside its real surface. */
+export const local = <Error>(userId: string, methods: LocalUserDirectoryMethods<Error>) => {
+  const unowned = unavailableHandle("the user is outside this local domain");
+  const unsupported = unavailableHandle("unsupported in the local domain");
+  const owned: UserHandle = {
+    ...unsupported,
+    profile: () => localEffect("profile", methods.profile),
+    githubCommitAuthor: () => localEffect("githubCommitAuthor", methods.githubCommitAuthor),
+    onePasswordToken: () => localEffect("onePasswordToken", methods.onePasswordToken),
+    contextIds: () => localEffect("contextIds", methods.contextIds),
+    driveAccess: (driveId) => localEffect("driveAccess", methods.driveAccess(driveId)),
+    readableDrives: () => localEffect("readableDrives", methods.readableDrives),
+  };
+  const unavailable = (operation: "connect" | "callApi") =>
+    Effect.fail(
+      new UserObjectError({
+        operation,
+        cause: new Error(`${operation} is unavailable in the local domain.`),
+      }),
+    );
+  return UserDirectory.of({
+    forUser: (requestedUserId) => (requestedUserId === userId ? owned : unowned),
+    connect: () => unavailable("connect"),
+    callApi: () => unavailable("callApi"),
+  });
+};
 
 /** The `fetch` and RPC surface of a user object stub, as the Worker sees it. */
 export type UserObjectStub = UserObjectApi & {

@@ -80,14 +80,18 @@ export const poolServerProvider = (input: {
   readonly instanceId: ProviderInstanceId;
   readonly displayName: string;
   readonly signedIn: boolean;
+  readonly registeredLocally?: boolean | undefined;
   readonly unavailableReason?: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly checkedAt: string;
 }): ServerProvider => {
   const harness = harnessByPoolKind.get(input.kind)!;
-  const ready = input.signedIn && input.models.length > 0;
+  const registeredLocally = input.registeredLocally ?? false;
+  const unavailableReason =
+    registeredLocally && !input.signedIn ? undefined : input.unavailableReason;
+  const ready = (input.signedIn || registeredLocally) && input.models.length > 0;
   const message =
-    input.unavailableReason ??
+    unavailableReason ??
     (input.signedIn && !ready
       ? "This pool's accounts serve no models right now. Try again shortly."
       : undefined);
@@ -104,26 +108,20 @@ export const poolServerProvider = (input: {
     version: null,
     // An accounts read can fail while cached accounts still serve the cached models.
     status:
-      ready && input.unavailableReason === undefined
-        ? "ready"
-        : input.signedIn
-          ? "warning"
-          : "error",
+      ready && unavailableReason === undefined ? "ready" : input.signedIn ? "warning" : "error",
     ...(message === undefined ? {} : { message }),
     auth: {
       status:
-        !input.signedIn && input.unavailableReason
+        !input.signedIn && (registeredLocally || input.unavailableReason)
           ? "unknown"
           : input.signedIn
             ? "authenticated"
             : "unauthenticated",
     },
-    ...(input.unavailableReason === undefined
-      ? {}
-      : { unavailableReason: input.unavailableReason }),
+    ...(unavailableReason === undefined ? {} : { unavailableReason }),
     checkedAt: input.checkedAt,
     availability: "available",
-    models: input.signedIn || input.unavailableReason ? input.models : [],
+    models: input.signedIn || registeredLocally || input.unavailableReason ? input.models : [],
     slashCommands: [],
     skills: [],
   };

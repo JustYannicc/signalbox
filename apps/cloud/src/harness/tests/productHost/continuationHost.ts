@@ -5,7 +5,12 @@ import * as NodeFS from "node:fs";
 import * as NodeChildProcess from "node:child_process";
 import * as Yaml from "yaml";
 import * as NodeAssert from "node:assert/strict";
-import { ProviderDriverKind, ProviderInstanceId, ProviderSessionId } from "@t3tools/contracts";
+import {
+  type ModelSelection,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSessionId,
+} from "@t3tools/contracts";
 import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import * as Effect from "effect/Effect";
 import { ChildWorkerCapacity } from "../../../computer/ChildWorkerCapacity.ts";
@@ -28,6 +33,8 @@ const makeContinuationHostInputs = (
   batch: boolean,
   opaque = false,
   binding: "explicit" | "unjoined" | "native" = "explicit",
+  modelRequests = false,
+  selection?: ModelSelection,
 ) =>
   Effect.gen(function* () {
     const database = yield* Effect.acquireRelease(Effect.sync(hostSqlite), (value) =>
@@ -39,7 +46,7 @@ const makeContinuationHostInputs = (
     const driver = ProviderDriverKind.make("claudeAgent");
     const providerSessionId = ProviderSessionId.make("original-recorded-session");
     const nativeId = "12345678-1234-4234-8234-123456789abc";
-    const modelSelection = { instanceId, model: "claude-sonnet-4-6" };
+    const modelSelection = selection ?? { instanceId, model: "claude-sonnet-4-6" };
     const turn = {
       ...d.turn,
       modelSelection,
@@ -84,6 +91,7 @@ const makeContinuationHostInputs = (
       batch,
       opaque,
       binding === "native",
+      modelRequests ? modelSelection.model : undefined,
     );
     const batchBindings = [
       {
@@ -181,7 +189,12 @@ const makeContinuationHostInputs = (
       },
       port: async () => ({ fetch: async () => new Response("machine service") }),
       modelTransport: async (request) =>
-        new Response(request.url.endsWith("/root") ? "root response" : "child response"),
+        new Response(
+          request.url.endsWith("/root") ||
+            new URL(request.url).searchParams.get("fixture") === "root"
+            ? "root response"
+            : "child response",
+        ),
       executor: { forward: async () => new Response("executor") },
       continuations: {
         publish: (request) =>
@@ -290,6 +303,11 @@ const makeContinuationHostInputs = (
   });
 
 export const continuationHostInputs = makeContinuationHostInputs(false);
+export const localDomainHostInputs = makeContinuationHostInputs(false, false, "explicit", true, {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-opus-5-5",
+  options: [{ id: "effort", value: "xhigh" }],
+});
 export const batchContinuationHostInputs = makeContinuationHostInputs(true);
 export const boundaryBatchContinuationHostInputs = makeContinuationHostInputs(true, true);
 export const unjoinedBatchContinuationHostInputs = makeContinuationHostInputs(

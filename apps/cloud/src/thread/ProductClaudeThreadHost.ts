@@ -1,5 +1,6 @@
 import type { OrchestrationV2Command, OrchestrationV2ThreadLaunchInput } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Console from "effect/Console";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -12,6 +13,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import { HarnessError } from "../harness/Harness.ts";
 import type { Actor } from "./ThreadAccess.ts";
 import { ThreadEngine } from "./ThreadEngine.ts";
+import { ThreadDirectory } from "./ThreadDirectory.ts";
 import { Threads } from "./Threads.ts";
 import * as StandaloneThread from "./StandaloneThread.ts";
 import { MachineBackend } from "./runner/MachineBackend.ts";
@@ -34,6 +36,11 @@ export type ProductClaudeThreadHostOptions<
   >;
 };
 
+export type ProductClaudeThreadMachine<G> = Pick<
+  ClaudeFacetHostOptions<G>,
+  "host" | "open" | "access"
+>;
+
 const failed = (message: string, cause?: unknown) =>
   new HarnessError({ operation: "events", message, ...(cause === undefined ? {} : { cause }) });
 
@@ -54,6 +61,7 @@ export const createProductClaudeThreadHost = <
   >,
 ) =>
   Effect.gen(function* () {
+    const hostConsole = yield* Console.Console;
     const scope = yield* Scope.fork(yield* Scope.Scope);
     const broken = yield* Deferred.make<never, HarnessError>();
     const port = yield* Deferred.make<FacetHostPort>();
@@ -66,7 +74,11 @@ export const createProductClaudeThreadHost = <
       StandaloneThread.layer({
         threadId: options.threadId,
         sql: options.sql,
-        platform: Layer.mergeAll(options.platform, backend),
+        platform: Layer.mergeAll(
+          options.platform,
+          backend,
+          Layer.succeed(Console.Console, hostConsole),
+        ),
       }),
     ).pipe(Scope.provide(scope));
     const threads = Context.get(runtime, Threads);
@@ -145,11 +157,13 @@ export const createProductClaudeThreadHost = <
       check.pipe(
         Effect.andThen(threads.launch(actor, input)),
         Effect.tap(() => activate),
+        Effect.provideService(Console.Console, hostConsole),
       );
     const dispatch = (actor: Actor, command: OrchestrationV2Command) =>
       check.pipe(
         Effect.andThen(threads.dispatch(actor, command)),
         Effect.tap(() => activate),
+        Effect.provideService(Console.Console, hostConsole),
       );
     const dispose = Effect.gen(function* () {
       closed = true;
@@ -157,7 +171,17 @@ export const createProductClaudeThreadHost = <
     });
     yield* Effect.addFinalizer(() => dispose.pipe(Effect.orDie));
     return {
-      threads: { ...threads, launch, dispatch },
+      directory: Context.get(runtime, ThreadDirectory),
+      threads: {
+        ...threads,
+        launch,
+        dispatch,
+        // The native personality replaces realm globals; host logs cannot enter SDK stdout.
+        subscribe: (...args: Parameters<typeof threads.subscribe>) =>
+          threads.subscribe(...args).pipe(Stream.provideService(Console.Console, hostConsole)),
+        commandOutput: (...args: Parameters<typeof threads.commandOutput>) =>
+          threads.commandOutput(...args).pipe(Stream.provideService(Console.Console, hostConsole)),
+      },
       launch,
       dispatch,
       host: Effect.raceFirst(host.host, Deferred.await(broken)),

@@ -28,15 +28,22 @@ export const poolProviders = (
       const signedIn = source.accounts.some(
         (account) => account.driver === POOL_INSTANCE_KINDS[kind].driver && takesTurns(account),
       );
+      const availableModels = harnessModels(kind, models, manifest);
+      const registeredLocally = models.some(
+        (model) =>
+          model.registration?.kind === "local" &&
+          availableModels.some((available) => available.slug === model.id),
+      );
       return poolServerProvider({
         kind,
         instanceId,
         displayName: config.displayName ?? POOL_INSTANCE_KINDS[kind].displayName,
         signedIn,
+        registeredLocally,
         ...(source.error && (signedIn || source.accounts.length === 0)
           ? { unavailableReason: source.error }
           : {}),
-        models: harnessModels(kind, models, manifest),
+        models: availableModels,
         checkedAt,
       });
     }),

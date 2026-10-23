@@ -30,9 +30,10 @@ export function continuationNativeFixture(
   batch = false,
   opaque = false,
   producerIdentities = false,
+  model?: string,
 ) {
   let selectedNativeId = nativeId;
-  const native = nativeFixture(nativeId, identity, undefined, () => selectedNativeId);
+  const native = nativeFixture(nativeId, identity, undefined, () => selectedNativeId, model);
   const releaseWake = Promise.withResolvers<void>();
   const processed = new Map(frameIds.map((id) => [id, Promise.withResolvers<void>()] as const));
   let userPromptCount = 0;
@@ -264,6 +265,9 @@ export function continuationNativeFixture(
     ...native,
     get sdkIdentity() {
       return native.sdkIdentity;
+    },
+    get querySelections() {
+      return native.querySelections;
     },
     loadSdk,
     releaseWake() {

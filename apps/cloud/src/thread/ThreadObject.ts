@@ -18,7 +18,6 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import type { SqlError } from "effect/sql/SqlError";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
-import { canWrite, myDriveId } from "../drive/driveAccess.ts";
 import type { ModelGatewayRecord } from "../models/ModelRecords.ts";
 import {
   type DriveObjectNamespace,
@@ -57,6 +56,7 @@ import {
   type RunnerSocketHost,
 } from "./runner/runnerSockets.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import * as ThreadUserServices from "./ThreadUserServices.ts";
 import * as ThreadTerminals from "./terminal/ThreadTerminals.ts";
 import * as TerminalStore from "./terminal/TerminalStore.ts";
 import * as TerminalOutbox from "./terminal/TerminalOutbox.ts";
@@ -162,29 +162,6 @@ const noteMachine = (
   },
 ) => ThreadRunner.ThreadRunner.use((runner) => runner.machineReported(input));
 
-/** Drives, when bound, and the owner's access to one and commit author, asked of their own object. */
-const layerThreadDrives = (env: ThreadObjectEnv) =>
-  Layer.effect(
-    ThreadRunner.ThreadDrives,
-    Effect.map(UserDirectory.UserDirectory, (users) => ({
-      enabled: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
-      writes: (userId: string, driveId: string) =>
-        // One's own Personal My Drive needs no lookup: Personal never goes away.
-        driveId === myDriveId(PERSONAL_CONTEXT_ID, userId)
-          ? Effect.succeed(true)
-          : Effect.map(users.forUser(userId).driveAccess(driveId), canWrite),
-      commitAuthor: (userId: string) => users.forUser(userId).githubCommitAuthor(),
-    })),
-  );
-
-/** The owner's 1Password token for their turns' secrets, asked of their own object. */
-const layerThreadSecrets = Layer.effect(
-  ThreadRunner.ThreadSecrets,
-  Effect.map(UserDirectory.UserDirectory, (users) => ({
-    token: (userId: string) => users.forUser(userId).onePasswordToken(),
-  })),
-);
-
 // The whole storage, not just `storage.sql`: commits and migrations run in transactions.
 // `machine`: the object's own container, the light class's machine where the deployment has one.
 const makeRuntime = (
@@ -207,7 +184,14 @@ const makeRuntime = (
             lastActiveAt: Effect.sync(() => previews.lastActiveAt),
           }),
         ),
-        Layer.provideMerge(Layer.mergeAll(layerThreadDrives(env), layerThreadSecrets)),
+        Layer.provideMerge(
+          Layer.mergeAll(
+            ThreadUserServices.layerDrives({
+              enabled: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
+            }),
+            ThreadUserServices.layerSecrets,
+          ),
+        ),
         Layer.provideMerge(ThreadPulls.layerReports.pipe(Layer.provideMerge(ThreadPulls.layer))),
         Layer.provideMerge(
           env.DRIVES === undefined
