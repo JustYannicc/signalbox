@@ -8,6 +8,8 @@ import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import { createChildBash } from "../ChildBash.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
 
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+
 const artifact = new URL("../../../../../.t3/1071/programs/bash.wasm", import.meta.url);
 const available = NodeFS.existsSync(artifact);
 if (!available && NodeProcess.env.SIGNALBOX_REQUIRE_BASH_ARTIFACT === "1")

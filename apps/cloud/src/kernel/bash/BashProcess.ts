@@ -2,6 +2,8 @@ import type { KernelBashCredentials, KernelBashProgramContext } from "./BashCont
 import type { BashCaptureStore, CaptureStats } from "./BashCaptureStore.ts";
 import type { WasiLifecycle } from "../wasi/internal_wasi_lifecycle.ts";
 import type { BashPreopens } from "./BashPreopens.ts";
+import type { KernelBashOperation, KernelBashImportCall } from "../KernelBashCheckpoint.ts";
+import type { KernelBashCheckpointContinuation } from "../KernelBashCheckpoint.ts";
 
 export interface BashExports {
   readonly memory: WebAssembly.Memory;
@@ -20,6 +22,11 @@ export type BashTransition =
   | { readonly kind: "capture"; readonly env: number; readonly stack: number }
   | { readonly kind: "longjmp"; readonly env: number; readonly value: number }
   | { readonly kind: "fork" }
+  | {
+      readonly kind: "operation";
+      readonly operation: KernelBashOperation;
+      readonly call: KernelBashImportCall;
+    }
   | {
       readonly kind: "wait";
       readonly pid: number;
@@ -45,4 +52,6 @@ export interface BashProcess {
   rewinding: boolean;
   resume: number;
   pending: BashTransition | undefined;
+  parked?: boolean;
+  checkpoint?: KernelBashCheckpointContinuation;
 }
