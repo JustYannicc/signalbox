@@ -102,6 +102,7 @@ export const run = () =>
           },
         };
         const userPromptCount = fixture.native.userPromptCount;
+        fixture.setRunId(followupRunnerTurn.runId);
         yield* fixture.session.turn({ turn: followupRunnerTurn, access: fixture.access });
         yield* Deferred.await(followupTerminal);
         NodeAssert.equal(fixture.native.userPromptCount, userPromptCount);

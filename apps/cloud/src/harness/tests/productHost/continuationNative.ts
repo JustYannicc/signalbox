@@ -9,6 +9,7 @@ type ProcessedFrame =
   | "task-started"
   | "initial-result"
   | "task-notification"
+  | "batch-user"
   | "buffered-assistant"
   | "buffered-result";
 
@@ -16,13 +17,21 @@ const frameIds: ReadonlyArray<ProcessedFrame> = [
   "task-started",
   "initial-result",
   "task-notification",
+  "batch-user",
   "buffered-assistant",
   "buffered-result",
 ];
 
 /** Controls only the SDK frame order; the product host and Claude adapter remain real. */
-export function continuationNativeFixture(nativeId: string, identity: SystemIdentity) {
-  const native = nativeFixture(nativeId, identity);
+export function continuationNativeFixture(
+  nativeId: string,
+  identity: SystemIdentity,
+  record?: (message: Message) => void,
+  batch = false,
+  opaque = false,
+) {
+  let selectedNativeId = nativeId;
+  const native = nativeFixture(nativeId, identity, undefined, () => selectedNativeId);
   const releaseWake = Promise.withResolvers<void>();
   const processed = new Map(frameIds.map((id) => [id, Promise.withResolvers<void>()] as const));
   let userPromptCount = 0;
@@ -49,6 +58,16 @@ export function continuationNativeFixture(nativeId: string, identity: SystemIden
     session_id: nativeId,
     uuid: "00000000-0000-4000-8000-000000000003",
   } satisfies Message;
+  const batchUuid = "00000000-0000-4000-8000-000000000006";
+  const batchTasks = [1, 2, 3].map((index) => ({
+    taskId: `background-task-${index}`,
+    callId: `toolu_background_task_${index}`,
+  }));
+  const batchBlocks = batchTasks.map(({ taskId, callId }, index) => ({
+    type: "text" as const,
+    text: `<system-reminder>\n<task-notification><task-id>${taskId}</task-id><tool-use-id>${callId}</tool-use-id><result>  Exact completion ${index + 1}.\r\n✓\n</result></task-notification>\n</system-reminder>`,
+    ...(index === 2 ? { cache_control: { type: "ephemeral" as const } } : {}),
+  }));
   const bufferedAssistant = {
     type: "assistant",
     uuid: "00000000-0000-4000-8000-000000000004",
@@ -88,6 +107,7 @@ export function continuationNativeFixture(nativeId: string, identity: SystemIden
     return {
       ...sdk,
       query(input) {
+        selectedNativeId = input.options.resume ?? input.options.sessionId ?? "";
         queryIdentities.push(input.options.resume ?? input.options.sessionId ?? "");
         const observedPrompt = (async function* () {
           for await (const message of input.prompt) {
@@ -100,6 +120,7 @@ export function continuationNativeFixture(nativeId: string, identity: SystemIden
         const idle = Promise.withResolvers<IteratorResult<Message, void>>();
         let phase = 0;
         let initialResult: Extract<Message, { type: "result"; subtype: "success" }> | undefined;
+        const queued: Array<readonly [ProcessedFrame, Message]> = [];
         let pending: ProcessedFrame | undefined;
 
         const acknowledgePrevious = () => {
@@ -108,8 +129,10 @@ export function continuationNativeFixture(nativeId: string, identity: SystemIden
           pending = undefined;
         };
         const deliver = (id: ProcessedFrame, value: Message) => {
+          const frame = { ...value, session_id: selectedNativeId };
+          record?.(frame);
           pending = id;
-          return { done: false as const, value };
+          return { done: false as const, value: frame };
         };
         const next = async (): Promise<IteratorResult<Message, void>> => {
           acknowledgePrevious();
@@ -125,8 +148,28 @@ export function continuationNativeFixture(nativeId: string, identity: SystemIden
             }
             initialResult = first.value;
             phase = 1;
+            if (batch && opaque) {
+              phase = 2;
+              return deliver("initial-result", initialResult);
+            }
+            if (batch) {
+              for (const [index, task] of batchTasks.entries())
+                queued.push([
+                  "task-started",
+                  {
+                    ...taskStarted,
+                    ...(opaque ? { task_type: "local_bash" } : {}),
+                    task_id: task.taskId,
+                    tool_use_id: task.callId,
+                    uuid: `00000000-0000-4000-8000-00000000001${index}`,
+                  },
+                ]);
+              const firstStarted = queued.shift()!;
+              return deliver(...firstStarted);
+            }
             return deliver("task-started", taskStarted);
           }
+          if (queued.length > 0) return deliver(...queued.shift()!);
           if (phase === 1) {
             phase = 2;
             return deliver("initial-result", initialResult!);
@@ -134,6 +177,41 @@ export function continuationNativeFixture(nativeId: string, identity: SystemIden
           if (phase === 2) {
             phase = 3;
             await releaseWake.promise;
+            if (batch) {
+              if (opaque)
+                for (const [index, task] of batchTasks.entries())
+                  queued.push([
+                    "task-started",
+                    {
+                      ...taskStarted,
+                      task_type: "local_bash",
+                      task_id: task.taskId,
+                      tool_use_id: task.callId,
+                      uuid: `00000000-0000-4000-8000-00000000001${index}`,
+                    },
+                  ]);
+              for (const [index, task] of batchTasks.entries())
+                queued.push([
+                  "task-notification",
+                  {
+                    ...taskNotification,
+                    task_id: task.taskId,
+                    tool_use_id: task.callId,
+                    uuid: `00000000-0000-4000-8000-00000000002${index}`,
+                  },
+                ]);
+              queued.push([
+                "batch-user",
+                {
+                  type: "user",
+                  uuid: batchUuid,
+                  session_id: selectedNativeId,
+                  parent_tool_use_id: null,
+                  message: { role: "user", content: batchBlocks },
+                } satisfies Message,
+              ]);
+              return deliver(...queued.shift()!);
+            }
             return deliver("task-notification", taskNotification);
           }
           if (phase === 3) {
@@ -191,5 +269,8 @@ export function continuationNativeFixture(nativeId: string, identity: SystemIden
     get queryIdentities() {
       return [...queryIdentities];
     },
+    batchUuid,
+    batchBlocks,
+    batchCalls: batchTasks.map((task) => task.callId),
   };
 }

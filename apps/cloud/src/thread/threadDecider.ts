@@ -10,6 +10,8 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
+  type ProviderContinuation,
+  continuationBlocksMatchObservations,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -204,6 +206,9 @@ function dispatchMessage(
     role: "user",
     text: command.text,
     ...(command.notification === undefined ? {} : { notification: command.notification }),
+    ...(command.providerContinuation === undefined
+      ? {}
+      : { providerContinuation: command.providerContinuation }),
     ...(command.delegatedCompletion === undefined
       ? {}
       : { delegatedCompletion: command.delegatedCompletion }),
@@ -289,7 +294,45 @@ function staleProviderContinuation(
   ) {
     return reject("This provider continuation is no longer current.");
   }
+  if (!continuationBlocksMatchObservations(continuation))
+    return reject("Provider continuation blocks do not match their observations.");
+  if (hasRepeatedProviderContinuationCompletion(projection, command, continuation)) {
+    return reject("This provider continuation repeats a source occurrence.");
+  }
   return undefined;
+}
+
+function hasRepeatedProviderContinuationCompletion(
+  projection: Projection,
+  command: CommandOf<"message.dispatch">,
+  continuation: ProviderContinuation,
+): boolean {
+  const observations = new Set<string>();
+  for (const observed of continuation.observations ?? []) {
+    const key = JSON.stringify([observed.sdkMessageId, observed.blockIndex]);
+    if (observations.has(key)) return true;
+    observations.add(key);
+  }
+  const identities = new Set<string>();
+  for (const completion of continuation.completions ?? []) {
+    const identity = JSON.stringify([completion.sourceCallId, completion.sourceOccurrenceId]);
+    if (identities.has(identity)) return true;
+    identities.add(identity);
+  }
+
+  return projection.messages.some((message) => {
+    const previous = message.providerContinuation;
+    return (
+      message.id !== command.messageId &&
+      previous?.providerThreadId === continuation.providerThreadId &&
+      (previous.completions?.some((completion) =>
+        identities.has(JSON.stringify([completion.sourceCallId, completion.sourceOccurrenceId])),
+      ) === true ||
+        previous.observations?.some((observed) =>
+          observations.has(JSON.stringify([observed.sdkMessageId, observed.blockIndex])),
+        ) === true)
+    );
+  });
 }
 
 function updateThread(

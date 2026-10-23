@@ -3,6 +3,7 @@ import {
   MessageId,
   OrchestrationV2Notification,
   ProviderDriverKind,
+  ProviderContinuation,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -20,6 +21,8 @@ export const HarnessContinuation = Schema.Struct({
   detail: Schema.NullOr(Schema.String),
   notification: Schema.optional(OrchestrationV2Notification),
   delivery: Schema.Literals(["adapter_buffered", "message_text"]),
+  completions: ProviderContinuation.fields.completions,
+  observations: ProviderContinuation.fields.observations,
 });
 export type HarnessContinuation = typeof HarnessContinuation.Type;
 

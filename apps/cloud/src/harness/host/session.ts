@@ -113,6 +113,26 @@ export const createHostSession = <G>(
               finishing = undefined;
             }
             return pull.pipe(
+              Effect.tap((chunk) => {
+                const event = chunk[0];
+                if (event.type !== "continuation.associated") return Effect.void;
+                const current = active;
+                if (
+                  continuations === undefined ||
+                  current === undefined ||
+                  event.driver !== current.turn.providerThread.driver ||
+                  event.association.threadId !== current.turn.threadId ||
+                  event.association.runId !== current.turn.runId ||
+                  event.association.messageId !== current.turn.message.messageId
+                )
+                  return Effect.die(
+                    new HarnessError({
+                      operation: "events",
+                      message: "Continuation association is outside its live turn.",
+                    }),
+                  );
+                return continuations.associate(event.association).pipe(Effect.orDie);
+              }),
               Effect.tap((chunk) =>
                 Effect.sync(() => {
                   const event = chunk[0];
@@ -192,6 +212,12 @@ export const createHostSession = <G>(
                         request.messageId ??
                         MessageId.make(`message:provider-continuation:${turn.sourceRunId}`),
                       detail: request.detail,
+                      ...(request.observations === undefined
+                        ? {}
+                        : { observations: request.observations }),
+                      ...(request.completions === undefined
+                        ? {}
+                        : { completions: request.completions }),
                       ...(request.notification === undefined
                         ? {}
                         : { notification: request.notification }),

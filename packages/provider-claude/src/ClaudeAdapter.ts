@@ -81,6 +81,8 @@ import {
 import {
   type ChatAttachment,
   ClaudeSettings,
+  MessageId,
+  ProviderContinuationObservation,
   defaultInstanceIdForDriver,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
@@ -104,6 +106,7 @@ import {
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
+  type ProviderContinuationAssociation,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
@@ -173,6 +176,12 @@ import {
 } from "@t3tools/provider-core/server/notification";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
+  bindClaudeContinuationCompletions,
+  claudeContinuationObservations,
+  type ClaudeContinuationObservationBatch,
+  type ClaudeContinuationOwnershipBinding,
+} from "./ClaudeContinuationBatch.ts";
+import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
@@ -196,6 +205,12 @@ type ClaudeQueryStreamExit = Exit.Exit<
   void,
   ClaudeAgentSdkQueryRunnerError | ProviderAdapter.ProviderAdapterProtocolError
 >;
+
+type ClaudeTaskNotification = Extract<SDKMessage, { readonly subtype: "task_notification" }>;
+type ClaudeContinuationObservation = ProviderContinuationObservation;
+const sameContinuationObservations = Schema.toEquivalence(
+  Schema.Array(ProviderContinuationObservation),
+);
 
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
@@ -2384,6 +2399,8 @@ interface ActiveClaudeTurnContext {
   promptStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  // A replay must agree with the batch already owned by this app turn.
+  readonly continuationObservations: Map<string, Map<number, ClaudeContinuationObservation>>;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -2425,6 +2442,8 @@ interface ClaudeLiveQueryContext {
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
+  // Retain stream observations after wake-buffer drains; replay never adds to this map.
+  readonly continuationNotifications: Map<string, Map<string | undefined, ClaudeTaskNotification>>;
 }
 
 interface ActiveClaudeToolCall {
@@ -2729,6 +2748,15 @@ export interface ClaudeAdapterV2Options {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
+  };
+  /** Return only captured source bindings; undefined leaves SDK observations unjoined. */
+  readonly continuationOwnership?: {
+    readonly resolve: (
+      observations: ClaudeContinuationObservationBatch,
+    ) => Effect.Effect<
+      ReadonlyArray<ClaudeContinuationOwnershipBinding> | undefined,
+      ProviderAdapter.ProviderAdapterProtocolError
+    >;
   };
 }
 
@@ -3094,6 +3122,41 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.andThen(Queue.offer(events, event)),
             Effect.asVoid,
           );
+
+        const continuationObservationsFor = (
+          observationInput: Parameters<typeof claudeContinuationObservations>[0],
+        ) =>
+          Effect.try({
+            try: () => claudeContinuationObservations(observationInput),
+            catch: (cause) =>
+              new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude continuation SDK observations could not be established.",
+                cause,
+              }),
+          });
+
+        const resolveContinuationCompletions = (
+          observations: ClaudeContinuationObservationBatch,
+        ) => {
+          const resolveOwnership = adapterOptions.continuationOwnership?.resolve;
+          if (resolveOwnership === undefined) return Effect.void;
+          return resolveOwnership(observations).pipe(
+            Effect.flatMap((bindings) =>
+              bindings === undefined
+                ? Effect.void
+                : Effect.try({
+                    try: () => bindClaudeContinuationCompletions(observations, bindings),
+                    catch: (cause) =>
+                      new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: CLAUDE_PROVIDER,
+                        detail: "Claude continuation ownership bindings were invalid.",
+                        cause,
+                      }),
+                  }),
+            ),
+          );
+        };
 
         // Claude emits retry progress but no recovered frame; the next
         // assistant message is the first reliable evidence of recovery.
@@ -5702,6 +5765,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             return;
           }
+          const liveQuery = yield* Ref.get(queryContext);
+          const queryNotifications =
+            liveQuery?.nativeThreadId === wakeInput.nativeThreadId
+              ? [...liveQuery.continuationNotifications.values()].flatMap((byCall) => [
+                  ...byCall.values(),
+                ])
+              : [];
+          const observations =
+            message.type === "user" && message.parent_tool_use_id === null
+              ? yield* continuationObservationsFor({
+                  uuid: message.uuid,
+                  content: message.message.content,
+                  notifications: queryNotifications,
+                })
+              : undefined;
+          const completions =
+            observations === undefined
+              ? undefined
+              : yield* resolveContinuationCompletions(observations);
           const shouldOffer = yield* Ref.modify(requestedContinuations, (current) => {
             if (current.has(wakeInput.nativeThreadId)) {
               return [false, current] as const;
@@ -5729,8 +5811,74 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             providerThreadId: route.providerThreadId,
             driver: CLAUDE_PROVIDER,
             detail,
+            ...(observations === undefined
+              ? {}
+              : {
+                  messageId: MessageId.make(
+                    `message:provider-continuation:${route.providerThreadId}:${message.uuid}`,
+                  ),
+                  observations,
+                  ...(completions === undefined ? {} : { completions }),
+                }),
             ...(notification === null ? {} : { notification }),
           });
+        });
+
+        const associateContinuationObservations = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly liveQuery: ClaudeLiveQueryContext;
+          readonly message: SDKMessage;
+        }) {
+          const { context, liveQuery, message } = input;
+          if (
+            message.type !== "user" ||
+            message.parent_tool_use_id !== null ||
+            context.input.message.providerContinuation === undefined
+          ) {
+            return;
+          }
+          const observations = yield* continuationObservationsFor({
+            uuid: message.uuid,
+            content: message.message.content,
+            notifications: [...liveQuery.continuationNotifications.values()].flatMap((byCall) => [
+              ...byCall.values(),
+            ]),
+          });
+          if (observations === undefined) return;
+          const previous = [...context.continuationObservations.values()].flatMap((byBlock) => [
+            ...byBlock.values(),
+          ]);
+          if (previous.length > 0) {
+            if (sameContinuationObservations(previous, observations)) return;
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: "Claude continuation already observed a different SDK batch.",
+            });
+          }
+          const completions = yield* resolveContinuationCompletions(observations);
+          // SDK block ids identify observations only; lineage stays on the existing app message.
+          const association = {
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            messageId: context.input.message.messageId,
+            providerContinuation: {
+              ...context.input.message.providerContinuation,
+              observations,
+              ...(completions === undefined ? {} : { completions }),
+            },
+          } satisfies ProviderContinuationAssociation;
+          yield* emitProviderEvent({
+            type: "continuation.associated",
+            driver: CLAUDE_PROVIDER,
+            association,
+          });
+          for (const observation of observations) {
+            const byBlock =
+              context.continuationObservations.get(observation.sdkMessageId) ??
+              new Map<number, ClaudeContinuationObservation>();
+            byBlock.set(observation.blockIndex, observation);
+            context.continuationObservations.set(observation.sdkMessageId, byBlock);
+          }
         });
 
         const applyBackgroundTaskRosterMessage = Effect.fnUntraced(function* (input: {
@@ -6005,8 +6153,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
+          const activeContext = yield* Ref.get(activeTurn);
           const context =
-            (yield* Ref.get(activeTurn)) ??
+            activeContext ??
             (yield* settledTurnForSubagentFrame(liveQuery.nativeThreadId, message));
           if (context === null) {
             yield* applyWorkflowProgressWithoutTurn(message);
@@ -6060,6 +6209,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
             }
             return;
+          }
+          if (activeContext === context) {
+            yield* associateContinuationObservations({ context, liveQuery, message });
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
 
@@ -7760,6 +7912,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 (subagent) => subagent.task.status === "running",
               ),
             ),
+            continuationNotifications: new Map(),
           };
           yield* Ref.set(queryContext, context);
           if (openingTurn !== undefined) {
@@ -7850,6 +8003,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     message.permissionMode !== undefined
                   ) {
                     context.permissionMode = message.permissionMode;
+                  }
+                  if (message.type === "system" && message.subtype === "task_notification") {
+                    // The query stream is the source boundary; replay doesn't pass through here.
+                    const byCall =
+                      context.continuationNotifications.get(message.task_id) ??
+                      new Map<string | undefined, ClaudeTaskNotification>();
+                    if (!byCall.has(message.tool_use_id)) {
+                      byCall.set(message.tool_use_id, message);
+                    }
+                    context.continuationNotifications.set(message.task_id, byCall);
                   }
                   return yield* handleSdkMessage({ query: querySession, message });
                 }),
@@ -7978,6 +8141,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (!goalsByNativeThread.has(nativeThreadId)) {
               goalsByNativeThread.set(nativeThreadId, turnInput.providerThread.goal ?? null);
             }
+            const continuationObservations = new Map<
+              string,
+              Map<number, ClaudeContinuationObservation>
+            >();
+            for (const observation of turnInput.message.providerContinuation?.observations ?? []) {
+              const byBlock =
+                continuationObservations.get(observation.sdkMessageId) ??
+                new Map<number, ClaudeContinuationObservation>();
+              if (byBlock.has(observation.blockIndex)) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: "Claude continuation input contains a duplicate SDK block reference.",
+                });
+              }
+              byBlock.set(observation.blockIndex, observation);
+              continuationObservations.set(observation.sdkMessageId, byBlock);
+            }
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               nativeThreadId,
@@ -8020,6 +8200,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              continuationObservations,
             };
             const userMessage =
               resumeInterruptedTurn || promptUuid === null

@@ -3,6 +3,7 @@ import {
   MessageId,
   ProjectId,
   ProviderDriverKind,
+  type ProviderContinuation,
   type OrchestrationV2DispatchCommandResult,
   ThreadId,
 } from "@t3tools/contracts";
@@ -137,16 +138,17 @@ const continuation = (
   providerThreadId: HarnessContinuation["providerThreadId"],
   driver: HarnessContinuation["driver"],
   overrides: Partial<HarnessContinuation> = {},
-): HarnessContinuation => ({
-  threadId,
-  sourceRunId,
-  providerThreadId,
-  driver,
-  messageId: MessageId.make("provider-continuation-message"),
-  detail: null,
-  delivery: "adapter_buffered",
-  ...overrides,
-});
+) =>
+  ({
+    threadId,
+    sourceRunId,
+    providerThreadId,
+    driver,
+    messageId: MessageId.make("provider-continuation-message"),
+    detail: null,
+    delivery: "adapter_buffered",
+    ...overrides,
+  }) satisfies HarnessContinuation;
 
 describe("HarnessContinuationPublisher", () => {
   it.effect("dispatches a journaled, replayable queued message on the current home and model", () =>
@@ -158,6 +160,27 @@ describe("HarnessContinuationPublisher", () => {
         outcome: "updated",
         summary: "Background lookup finished.",
       } as const;
+      const completions = [
+        {
+          sourceCallId: "task-call-1",
+          sourceOccurrenceId: "provider-occurrence-1",
+          block: { type: "text", text: "First task completed." },
+        },
+        {
+          sourceCallId: "task-call-2",
+          sourceOccurrenceId: "provider-occurrence-2",
+          block: { type: "text", text: "Second task completed." },
+        },
+        {
+          sourceCallId: "task-call-3",
+          sourceOccurrenceId: "provider-occurrence-3",
+          block: {
+            type: "text",
+            text: "Final task completed.",
+            cache_control: { type: "ephemeral" },
+          },
+        },
+      ] as const satisfies NonNullable<ProviderContinuation["completions"]>;
 
       yield* threads.dispatch(actor, {
         type: "message.dispatch",
@@ -183,7 +206,15 @@ describe("HarnessContinuationPublisher", () => {
       const before = yield* threads.snapshot(actor, threadId);
       const request = continuation(sourceRun.id, providerThread.id, providerThread.driver, {
         notification,
+        detail: "Three background completions finished.",
+        completions,
       });
+      const expectedProviderContinuation = {
+        sourceRunId: sourceRun.id,
+        providerThreadId: providerThread.id,
+        driver: providerThread.driver,
+        completions,
+      };
 
       yield* publisher.publish(request);
       const afterPublish = yield* threads.snapshot(actor, threadId);
@@ -195,9 +226,14 @@ describe("HarnessContinuationPublisher", () => {
         createdBy: "agent",
         creationSource: "provider",
         role: "user",
-        text: "Background task completed.",
+        text: "Three background completions finished.",
         notification,
+        providerContinuation: expectedProviderContinuation,
       });
+      expect(message.providerContinuation).toEqual(expectedProviderContinuation);
+      expect(
+        afterPublish.projection.messages.filter((item) => item.id === request.messageId),
+      ).toHaveLength(1);
       expect(followup).toMatchObject({
         threadId,
         status: "queued",
@@ -210,12 +246,9 @@ describe("HarnessContinuationPublisher", () => {
       expect(first.command).toMatchObject({
         type: "message.dispatch",
         dispatchMode: { type: "queue_after_active" },
-        providerContinuation: {
-          sourceRunId: sourceRun.id,
-          providerThreadId: providerThread.id,
-          driver: providerThread.driver,
-        },
       });
+      if (first.command.type !== "message.dispatch") throw new Error("Expected message dispatch.");
+      expect(first.command.providerContinuation).toEqual(expectedProviderContinuation);
       expect(first.creation.pools).toEqual(home("home-after-move").pools);
 
       yield* publisher.publish(request);
@@ -240,23 +273,121 @@ describe("HarnessContinuationPublisher", () => {
           Stream.takeUntil((item) => item.kind === "synchronized"),
           Stream.runCollect,
         );
-      expect(
-        replay.some(
-          (item) =>
-            item.kind === "event" &&
-            item.event.type === "message.updated" &&
-            item.event.payload.id === request.messageId,
-        ),
-      ).toBe(true);
+      expect(replay).toContainEqual(
+        expect.objectContaining({
+          kind: "event",
+          event: expect.objectContaining({
+            type: "message.updated",
+            payload: expect.objectContaining({
+              id: request.messageId,
+              providerContinuation: expectedProviderContinuation,
+            }),
+          }),
+        }),
+      );
 
       yield* fixture.cloud.settle;
       const settled = yield* threads.snapshot(actor, threadId);
       expect(settled.projection.runs.find((run) => run.id === followup.id)?.status).toBe(
         "completed",
       );
+      expect(
+        settled.projection.runs.filter((run) => run.userMessageId === request.messageId),
+      ).toHaveLength(1);
       expect(settled.projection.messages.find((item) => item.id === request.messageId)?.runId).toBe(
         followup.id,
       );
+    }),
+  );
+
+  it.effect("rejects duplicate source occurrences within a batch", () =>
+    Effect.gen(function* () {
+      const fixture = makeFixture();
+      const { threads, publisher, sourceRun, providerThread } = yield* launchAndSettle(fixture);
+      const completion = {
+        sourceCallId: "task-call-duplicate",
+        sourceOccurrenceId: "provider-occurrence-duplicate",
+        block: { type: "text", text: "Task completed." },
+      } as const;
+      const request = continuation(sourceRun.id, providerThread.id, providerThread.driver, {
+        completions: [completion, completion],
+      });
+
+      const rejected = yield* publisher.publish(request).pipe(Effect.flip);
+      expect(rejected).toBeInstanceOf(HarnessError);
+      expect(rejected.cause).toMatchObject({ _tag: "ThreadCommandRejectedError" });
+      const snapshot = yield* threads.snapshot(actor, threadId);
+      expect(snapshot.projection.messages.some((message) => message.id === request.messageId)).toBe(
+        false,
+      );
+      expect(snapshot.projection.runs).toHaveLength(1);
+    }),
+  );
+
+  it.effect("rejects the same source occurrence under a different message id", () =>
+    Effect.gen(function* () {
+      const fixture = makeFixture();
+      const { threads, publisher, sourceRun, providerThread } = yield* launchAndSettle(fixture);
+      const completions = [
+        {
+          sourceCallId: "task-call-replay",
+          sourceOccurrenceId: "provider-occurrence-replay",
+          block: { type: "text", text: "Task completed." },
+        },
+      ] as const satisfies NonNullable<ProviderContinuation["completions"]>;
+      const first = continuation(sourceRun.id, providerThread.id, providerThread.driver, {
+        messageId: MessageId.make("first-occurrence-message"),
+        completions,
+      });
+      const second = { ...first, messageId: MessageId.make("second-occurrence-message") };
+
+      yield* publisher.publish(first);
+      const rejected = yield* publisher.publish(second).pipe(Effect.flip);
+      expect(rejected).toBeInstanceOf(HarnessError);
+      expect(rejected.cause).toMatchObject({ _tag: "ThreadCommandRejectedError" });
+      const snapshot = yield* threads.snapshot(actor, threadId);
+      expect(
+        snapshot.projection.messages.filter((message) => message.id === first.messageId),
+      ).toHaveLength(1);
+      expect(snapshot.projection.messages.some((message) => message.id === second.messageId)).toBe(
+        false,
+      );
+      expect(
+        snapshot.projection.runs.filter((run) => run.userMessageId === first.messageId),
+      ).toHaveLength(1);
+    }),
+  );
+
+  it.effect("preserves distinct occurrences from the same source call", () =>
+    Effect.gen(function* () {
+      const fixture = makeFixture();
+      const { threads, publisher, sourceRun, providerThread } = yield* launchAndSettle(fixture);
+      const completions = [
+        {
+          sourceCallId: "task-call-repeated",
+          sourceOccurrenceId: "provider-occurrence-first",
+          block: { type: "text", text: "First completion." },
+        },
+        {
+          sourceCallId: "task-call-repeated",
+          sourceOccurrenceId: "provider-occurrence-second",
+          block: { type: "text", text: "Second completion." },
+        },
+      ] as const satisfies NonNullable<ProviderContinuation["completions"]>;
+      const request = continuation(sourceRun.id, providerThread.id, providerThread.driver, {
+        completions,
+      });
+
+      yield* publisher.publish(request);
+      const snapshot = yield* threads.snapshot(actor, threadId);
+      const message = snapshot.projection.messages.find((item) => item.id === request.messageId)!;
+      expect(message.providerContinuation?.completions).toEqual(completions);
+      expect(
+        snapshot.projection.messages.filter((item) => item.id === request.messageId),
+      ).toHaveLength(1);
+      expect(
+        snapshot.projection.runs.filter((run) => run.userMessageId === request.messageId),
+      ).toHaveLength(1);
     }),
   );
 
