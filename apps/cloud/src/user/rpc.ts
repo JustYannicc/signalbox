@@ -131,7 +131,7 @@ import * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { ProviderUploadFeedbackError } from "@t3tools/contracts";
 import * as Threads from "../thread/Threads.ts";
 import { makeUserThreadOperations } from "./ThreadOperations.ts";
-import { deviceMember, makeBrowsingHandlers } from "../thread/browsing/browsingRpc.ts";
+import { deviceMember, makeBrowsingHandlers } from "../thread/BrowsingRpc.ts";
 import { makeTerminalHandlers, TERMINAL_METHODS, TERMINAL_SCOPES } from "./terminalRpc.ts";
 import { type Actor, ThreadNotFoundError } from "../thread/ThreadAccess.ts";
 import type { BrowserReply } from "../thread/threadWire.ts";
