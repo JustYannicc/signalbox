@@ -111,6 +111,9 @@ async function makeHost(
       cwd: "/workspace",
       assetMode: 0o644,
     },
+    continuations: {
+      publish: () => Effect.die(new Error("Unexpected continuation in retention fixture")),
+    },
     modelTransport: response,
     executor: { forward: response },
   };

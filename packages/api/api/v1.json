@@ -2122,7 +2122,7 @@
       "rpc": "orchestration.dispatchCommand",
       "command": "message.dispatch",
       "access": "write",
-      "input": "1fac6d00",
+      "input": "9e7e4fd6",
       "output": "c5e5cd7a"
     },
     {

@@ -1,3 +1,7 @@
+import { MessageId } from "@t3tools/contracts";
+import type { HarnessContinuation } from "../HarnessContinuations.ts";
+import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import type { ContinuationJournal } from "../HarnessContinuationJournal.ts";
 import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import type {
   ProviderAdapterV2Event,
@@ -56,10 +60,16 @@ export const sameAccess = <G>(a: TurnAccess<G> | undefined, b: TurnAccess<G> | u
       a.signal === b.signal &&
       sameConnections(a.connections, b.connections);
 
-export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =>
+export const createHostSession = <G>(
+  mcp: ReturnType<McpRoutes<G>["session"]>,
+  continuations?: ContinuationJournal,
+) =>
   Effect.gen(function* () {
     const lock = yield* Semaphore.make(1);
     let closed = false;
+    let latest:
+      | Pick<HarnessContinuation, "threadId" | "sourceRunId" | "providerThreadId" | "driver">
+      | undefined;
     let highestOrdinal = 0;
     let providerThreadId: string | undefined;
     let initial:
@@ -152,6 +162,44 @@ export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =
           }),
     });
     return {
+      continuationRequests:
+        continuations === undefined
+          ? undefined
+          : {
+              offer: (request: ProviderContinuationRequest) =>
+                Effect.gen(function* () {
+                  const turn = latest;
+                  if (
+                    closed ||
+                    turn === undefined ||
+                    request.threadId !== turn.threadId ||
+                    request.providerThreadId !== turn.providerThreadId ||
+                    request.driver !== turn.driver
+                  )
+                    return yield* Effect.die(
+                      new HarnessError({
+                        operation: "events",
+                        message: "Continuation does not belong to this live Harness session.",
+                      }),
+                    );
+                  yield* continuations
+                    .publish({
+                      threadId: turn.threadId,
+                      sourceRunId: turn.sourceRunId,
+                      providerThreadId: turn.providerThreadId,
+                      driver: turn.driver,
+                      messageId:
+                        request.messageId ??
+                        MessageId.make(`message:provider-continuation:${turn.sourceRunId}`),
+                      detail: request.detail,
+                      ...(request.notification === undefined
+                        ? {}
+                        : { notification: request.notification }),
+                      delivery: request.delivery ?? "adapter_buffered",
+                    })
+                    .pipe(Effect.orDie);
+                }),
+            },
       decorate,
       stop,
       prepareInitial(
@@ -347,6 +395,12 @@ export const createHostSession = <G>(mcp: ReturnType<McpRoutes<G>["session"]>) =
                       result,
                     });
                     if (recent.size > 128) recent.delete(recent.keys().next().value!);
+                    latest = {
+                      threadId: turn.threadId,
+                      sourceRunId: turn.runId,
+                      providerThreadId: turn.providerThread.id,
+                      driver: turn.providerThread.driver,
+                    };
                     highestOrdinal = turn.runOrdinal;
                     providerThreadId = turn.providerThread.id;
                     active = {

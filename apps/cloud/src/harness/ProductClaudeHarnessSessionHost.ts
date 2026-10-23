@@ -1,3 +1,4 @@
+import type { HarnessContinuationPublisher } from "./HarnessContinuations.ts";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import {
@@ -31,12 +32,16 @@ type ProductClaudeNativeOptions<G> = Omit<
   >;
   readonly adapter: (
     input: RuntimeInput<G>,
-  ) => Effect.Effect<ClaudeNativeHostBindingOptions["adapter"], HarnessError, Scope.Scope>;
+  ) => Effect.Effect<
+    Omit<ClaudeNativeHostBindingOptions["adapter"], "continuationRequests">,
+    HarnessError,
+    Scope.Scope
+  >;
 };
 export type ProductClaudeHarnessHostOptions<G> = ProductHostOptions<
   G,
   ProductClaudeNativeOptions<G>
->;
+> & { readonly continuations: HarnessContinuationPublisher };
 
 function claudeBinding<G>(): ProductNativeBinding<G, ProductClaudeNativeOptions<G>> {
   return {
@@ -45,9 +50,14 @@ function claudeBinding<G>(): ProductNativeBinding<G, ProductClaudeNativeOptions<
     build: (native, input, ports) =>
       Effect.gen(function* () {
         const adapter = yield* native.adapter(input);
+        if (input.continuationRequests === undefined)
+          return yield* new HarnessError({
+            operation: "open",
+            message: "Claude product host requires a continuation publisher.",
+          });
         return makeClaudeNativeHostBinding({
           ...native,
-          adapter,
+          adapter: { ...adapter, continuationRequests: input.continuationRequests },
           mcp: input.mcp,
           process: {
             ...native.process,
@@ -75,5 +85,12 @@ export const createProductClaudeHarnessSessionHost = <G>(
             message: "Claude product host entry/harness mismatch: expected claude-code.",
           }),
         )
-      : createProductHost(options, claudeBinding<G>()),
+      : options.continuations === undefined
+        ? Effect.fail(
+            new HarnessError({
+              operation: "open",
+              message: "Claude product host requires a continuation publisher.",
+            }),
+          )
+        : createProductHost(options, claudeBinding<G>()),
   );

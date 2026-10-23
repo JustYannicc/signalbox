@@ -2821,6 +2821,13 @@ export const OrchestrationV2Command = Schema.Union([
     text: Schema.String,
     context: Schema.optional(OrchestrationMessageContext),
     attachments: Schema.Array(ChatAttachment),
+    providerContinuation: Schema.optional(
+      Schema.Struct({
+        sourceRunId: RunId,
+        providerThreadId: ProviderThreadId,
+        driver: Schema.optional(ProviderDriverKind),
+      }),
+    ),
     titleSeed: Schema.optional(TrimmedNonEmptyString),
     modelSelection: Schema.optional(ModelSelection),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),

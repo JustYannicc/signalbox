@@ -1,3 +1,7 @@
+import type {
+  HarnessContinuationPublisher,
+  HarnessContinuationRequests,
+} from "../HarnessContinuations.ts";
 import type { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { HarnessProcessStartup } from "../HarnessProcessLifetime.ts";
 import type { NativeThreadLoad } from "../HarnessThreadLoad.ts";
@@ -95,6 +99,7 @@ export interface HarnessHostOptions<G> {
   readonly programs: ProgramSeed;
   readonly modelTransport: HarnessOpenInput["modelTransport"];
   readonly hooks?: HarnessOpenInput["hooks"];
+  readonly continuations?: HarnessContinuationPublisher;
   readonly executor: ExecutorMcpPort<G>;
   readonly bindComputer: (input: {
     readonly threadId: string;
@@ -106,6 +111,7 @@ export interface HarnessHostOptions<G> {
     readonly harness: HarnessOpenInput;
     readonly loaded: LoadedHarnessRelease;
     readonly bootAttemptId: string;
+    readonly continuationRequests?: HarnessContinuationRequests;
     readonly mcp: { readonly origin: string; readonly fetch: (r: Request) => Promise<Response> };
     readonly signal: AbortSignal;
   }) => Effect.Effect<NativeHostBinding, HarnessError, Scope.Scope>;
