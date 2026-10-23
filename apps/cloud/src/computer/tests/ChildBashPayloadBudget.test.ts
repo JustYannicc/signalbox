@@ -2,6 +2,7 @@
 // @effect-diagnostics globalTimers:off - deadlines fail stalled guests; descriptor milestones establish progress.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeProcess from "node:process";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
 import { kernelPayloadBudget, type KernelPayloadWindow } from "../../kernel/KernelPayloadBudget.ts";
@@ -9,15 +10,22 @@ import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import { createChildBash } from "../ChildBash.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
 
+// The pinned third-party artifact is prepared locally; it is never committed as test data.
 const artifact = new URL("../../../../../.t3/1071/programs/bash.wasm", import.meta.url);
-const artifactBytes = NodeFS.readFileSync(artifact);
-if (
-  artifactBytes.length !== KERNEL_BASH_ARTIFACT.bytes ||
-  NodeCrypto.createHash("sha256").update(artifactBytes).digest("hex") !==
-    KERNEL_BASH_ARTIFACT.sha256
-)
-  throw new Error("GNU Bash test artifact does not match its pin");
-const module = new WebAssembly.Module(artifactBytes);
+const available = NodeFS.existsSync(artifact);
+if (!available && NodeProcess.env.SIGNALBOX_REQUIRE_BASH_ARTIFACT === "1")
+  throw new Error(`Required GNU Bash test artifact is missing: ${artifact.pathname}`);
+let module: WebAssembly.Module;
+if (available) {
+  const artifactBytes = NodeFS.readFileSync(artifact);
+  if (
+    artifactBytes.length !== KERNEL_BASH_ARTIFACT.bytes ||
+    NodeCrypto.createHash("sha256").update(artifactBytes).digest("hex") !==
+      KERNEL_BASH_ARTIFACT.sha256
+  )
+    throw new Error("GNU Bash test artifact does not match its pin");
+  module = new WebAssembly.Module(artifactBytes);
+}
 
 const bashArgs = (script: string) => ["bash", "--noprofile", "--norc", "-c", script];
 
@@ -126,7 +134,7 @@ function trackOpenCredits() {
   };
 }
 
-describe("pinned GNU Bash child payload budgets", () => {
+describe.skipIf(!available)("pinned GNU Bash child payload budgets", () => {
   it("sources a complete 1.5 MiB script", async () => {
     const fixture = childBashFixture({
       args: bashArgs("source ./big.sh; echo AFTER"),
