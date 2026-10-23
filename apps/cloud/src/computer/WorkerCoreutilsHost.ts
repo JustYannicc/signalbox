@@ -29,7 +29,6 @@ export function createWorkerCoreutilsHost(
   const owner = createKernelCoreutilsHost(options);
   return {
     host: new WorkerCoreutilsPort(lease.hold(owner.port)),
-    ready: owner.ready,
     close: owner.close,
   };
 }

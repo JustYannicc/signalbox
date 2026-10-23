@@ -88,7 +88,6 @@ export function createKernelGitHost({ context }: KernelGitHostOptions) {
 
   return {
     port,
-    ready: syscalls.ready,
     close(): Promise<void> {
       if (closing !== undefined) return closing;
       closed = true;

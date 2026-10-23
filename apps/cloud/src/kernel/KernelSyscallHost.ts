@@ -14,15 +14,12 @@ import { validateOptions } from "./wasi/internal_wasi_options.ts";
 import { SyscallMemory } from "./syscall/SyscallMemory.ts";
 import { KernelFileIoSequence } from "./KernelFileIoSequence.ts";
 import {
-  KERNEL_SYSCALL_INITIAL_WINDOW,
+  KERNEL_SYSCALL_MAX_IO_BYTES,
   MAX_TRANSFER_BYTES,
-  type KernelMemoryRegion,
   type KernelSyscallRequest,
   type KernelSyscallResponse,
 } from "./KernelSyscallPort.ts";
 import { FDFLAGS } from "./wasi/internal_wasi_descriptors.ts";
-import { kernelPayloadBudget, type KernelPayloadWindow } from "./KernelPayloadBudget.ts";
-import { createKernelSyscallWindows } from "./KernelSyscallWindows.ts";
 
 export interface KernelSyscallHostOptions extends KernelWasiSignalOptions {
   readonly filesystem: KernelFileSystem;
@@ -36,7 +33,6 @@ export interface KernelSyscallHostOptions extends KernelWasiSignalOptions {
 export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
   const memory = new SyscallMemory();
   const sequence = new KernelFileIoSequence(options.filesystem);
-  const windows = createKernelSyscallWindows();
   const filesystem = new WasiFileSystem(memory, [], [], {
     table: options.filesystem.descriptors,
     ownership: "borrowed",
@@ -71,26 +67,16 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
     : undefined;
   let busy = false;
   let closed = false;
-  let nextWindow: KernelPayloadWindow | undefined;
   const controller = new AbortController();
   const abort = () => {
     controller.abort(options.signal.reason);
     if (!busy) {
       sequence.release();
-      nextWindow?.release();
-      nextWindow = undefined;
     }
   };
   options.signal.addEventListener("abort", abort, { once: true });
   if (options.signal.aborted) abort();
 
-  const snapshot = (value: number) => {
-    const regions = memory.snapshot();
-    return {
-      response: { kind: "return" as const, value, regions },
-      bytes: payloadBytes(regions),
-    };
-  };
   const io = (name: string, args: readonly (number | bigint)[]) => {
     if (!["fd_read", "fd_write", "fd_pread", "fd_pwrite"].includes(name)) return undefined;
     const descriptor = options.filesystem.descriptors.get(Number(args[0]));
@@ -104,8 +90,6 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
   };
 
   return {
-    // Existing host factories may await setup; constructing a process never reserves payload bytes.
-    ready: Promise.resolve(),
     async call(request: KernelSyscallRequest): Promise<KernelSyscallResponse> {
       if (closed || busy) throw new Error("Syscall owner is unavailable or already executing");
       controller.signal.throwIfAborted();
@@ -114,7 +98,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
         sequence.release();
         throw new Error("Missing WASI syscall");
       }
-      const credited = request.transferOffset !== undefined;
+      const transferred = request.transferOffset !== undefined;
       const offset = request.transferOffset ?? 0;
       if (!Number.isSafeInteger(offset) || offset < 0) {
         sequence.release();
@@ -129,98 +113,65 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
         sequence.release();
         throw new TypeError("Invalid syscall transfer length");
       }
-      const current = nextWindow;
-      nextWindow = undefined;
-      current?.consume(request.transferLength ?? 0);
       busy = true;
       try {
         let response: KernelSyscallResponse;
-        let responseBytes = 0;
         let moved = 0;
         let descriptorIo: ReturnType<typeof io>;
         try {
           try {
             const args = [...(transform?.(request.name, request.args) ?? request.args)];
-            if (credited && request.name === "fd_readdir") {
+            if (transferred && request.name === "fd_readdir") {
               args[1] = Number(args[1]) + offset;
               args[2] = Number(args[2]) - offset;
-            } else if (credited && request.name === "path_readlink") {
+            } else if (transferred && request.name === "path_readlink") {
               args[3] = Number(args[3]) + offset;
               args[4] = Number(args[4]) - offset;
             }
-            const owner = await sequence.begin(request, args, controller.signal);
             memory.bind(
               request.memorySize,
               request.regions,
-              credited
+              transferred
                 ? Math.min(
-                    current?.bytes ?? KERNEL_SYSCALL_INITIAL_WINDOW,
-                    request.transferLength ?? MAX_TRANSFER_BYTES,
+                    KERNEL_SYSCALL_MAX_IO_BYTES,
+                    request.transferLength ?? KERNEL_SYSCALL_MAX_IO_BYTES,
                   )
                 : undefined,
               {
                 offset,
-                readOnce: credited && request.name === "fd_read",
-                ...(owner === undefined ? {} : { owner }),
+                readOnce: transferred && request.name === "fd_read",
               },
             );
-            sequence.bound(memory, args);
-            descriptorIo = credited ? io(request.name, args) : undefined;
+            const owner = await sequence.begin(request, args, memory, controller.signal);
+            memory.ioOwner = owner;
+            descriptorIo = transferred ? io(request.name, args) : undefined;
             const operation: WasiCall<number> = Reflect.apply(handler, undefined, args);
             const value = await runKernelExecution(controller.signal, () => runAsync(operation));
             moved = value === 0 ? transferCount(request, memory) : 0;
-            if (credited && value === 0) {
-              windows.observe(request, memory, {
-                moved,
-                transferLimit: memory.transferLimit,
-                currentWindow: current?.bytes ?? KERNEL_SYSCALL_INITIAL_WINDOW,
-                descriptor: descriptorIo?.descriptor,
-                nonblocking: descriptorIo?.nonblocking ?? false,
-              });
-            }
             sequence.complete(request, moved, memory.transferLimit, value === 0);
-            const result = snapshot(value);
-            response = result.response;
-            responseBytes = result.bytes;
+            response = {
+              kind: "return",
+              value,
+              regions: memory.snapshot(),
+              ...(descriptorIo === undefined ? {} : { io: descriptorIo }),
+            };
           } catch (error) {
             sequence.release();
             if (error instanceof KernelProcessSignal)
               response = { kind: "signal", signal: error.signal };
             else if (error instanceof WasiExit) response = { kind: "exit", code: error.code };
             else {
-              const result = snapshot(mapErrno(error));
-              response = result.response;
-              responseBytes = result.bytes;
+              response = { kind: "return", value: mapErrno(error), regions: memory.snapshot() };
             }
           }
         } finally {
-          // Disposal may race a suspended call. Its input credit returns even if mapping fails.
           memory.clear();
-          current?.release();
-        }
-        if (response.kind === "return" && credited && !closed && !controller.signal.aborted) {
-          const granted = await kernelPayloadBudget.open(
-            controller.signal,
-            responseBytes,
-            windows.preferredWindow,
-          );
-          if (closed || controller.signal.aborted) granted.release();
-          else {
-            nextWindow = granted;
-            response = {
-              ...response,
-              transferWindow: granted.bytes,
-              ...(descriptorIo === undefined ? {} : { io: descriptorIo }),
-            };
-          }
         }
         return response;
       } finally {
         busy = false;
         if (closed || controller.signal.aborted) {
           sequence.release();
-          nextWindow?.release();
-          nextWindow = undefined;
         }
       }
     },
@@ -229,19 +180,12 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
       closed = true;
       options.signal.removeEventListener("abort", abort);
       controller.abort();
-      nextWindow?.release();
-      nextWindow = undefined;
       if (!busy) {
         sequence.release();
         memory.clear();
       }
     },
   };
-}
-
-function payloadBytes(regions: readonly KernelMemoryRegion[]) {
-  const buffers = new Set(regions.map((region) => region.bytes.buffer));
-  return [...buffers].reduce((total, buffer) => total + buffer.byteLength, 0);
 }
 
 function transferCount(request: KernelSyscallRequest, memory: SyscallMemory) {

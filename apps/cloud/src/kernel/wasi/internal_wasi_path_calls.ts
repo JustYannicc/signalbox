@@ -44,7 +44,6 @@ const EISDIR = 31;
 const ENAMETOOLONG = 37;
 const ENOENT = 44;
 const ENOTDIR = 54;
-const ENOTSUP = 58;
 const EROFS = 69;
 const EXDEV = 75;
 const ENOTCAPABLE = 76;
@@ -448,7 +447,7 @@ export class WasiPathCalls {
       capacity,
       Math.max(0, targetLength - transferOffset),
       Math.max(0, MAX_TRANSFER_BYTES - transferOffset),
-      // signalbox: the readlink reply is a child transfer, so it fits the owner-issued credit.
+      // signalbox: readlink replies use the same fixed cap as other child I/O.
       this.#memory.transferLimit,
     );
     const copied = this.#memory.writeUtf8Slice(buffer, target, transferOffset, used);

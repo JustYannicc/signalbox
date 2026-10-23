@@ -34,7 +34,6 @@ export function createWorkerBusyboxHost(
   const owner = createKernelBusyboxHost(options);
   return {
     host: new WorkerBusyboxPort(lease.hold(owner.port)),
-    ready: owner.ready,
     close: owner.close,
   };
 }

@@ -38,6 +38,8 @@ export class WasiMemory {
   #memory: WebAssembly.Memory | undefined;
 
   // signalbox: owner-held locks span the bounded RPCs of one guest I/O call.
+  set ioOwner(_owner: object | undefined) {}
+
   get ioOwner(): object | undefined {
     return undefined;
   }
@@ -51,7 +53,7 @@ export class WasiMemory {
     return false;
   }
 
-  // signalbox: child RPC credits bound each prefix without changing original iovec validation.
+  // signalbox: fixed child RPC payloads bound each prefix without changing original iovec validation.
   get transferLimit(): number {
     return MAX_TRANSFER_BYTES;
   }
@@ -87,6 +89,10 @@ export class WasiMemory {
     return this.memory.buffer.byteLength;
   }
 
+  validateOutputRange(pointer: number, length: number): void {
+    this.validateRange(pointer, length);
+  }
+
   validateRange(pointer: number, length: number): void {
     if ((pointer >>> 0) + (length >>> 0) > this.byteLength) throw new WasiError(EFAULT);
   }
@@ -111,6 +117,11 @@ export class WasiMemory {
   /** Access only bytes the caller will overwrite, so sparse syscall memory can return exact writes. */
   writeRange(pointer: number, length: number): Uint8Array<ArrayBuffer> {
     return this.range(pointer, length);
+  }
+
+  // The caller relinquishes this scratch buffer after the read completes.
+  writeOwnedBytes(pointer: number, bytes: Uint8Array): void {
+    this.writeRange(pointer, bytes.byteLength).set(bytes);
   }
 
   writeView(pointer: number, length: number): DataView {

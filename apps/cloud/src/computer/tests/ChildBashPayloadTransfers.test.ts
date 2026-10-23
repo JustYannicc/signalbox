@@ -3,9 +3,8 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeProcess from "node:process";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
-import { kernelPayloadBudget, type KernelPayloadWindow } from "../../kernel/KernelPayloadBudget.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import { createChildBash } from "../ChildBash.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
@@ -63,21 +62,6 @@ function padding(bytes: number) {
   return line.repeat(Math.ceil(bytes / line.length));
 }
 
-async function holdWindows(count: number) {
-  const signal = new AbortController().signal;
-  const windows: KernelPayloadWindow[] = [];
-  try {
-    for (let index = 0; index < count; index++)
-      windows.push(await kernelPayloadBudget.open(signal));
-  } catch (error) {
-    for (const window of windows) window.release();
-    throw error;
-  }
-  return () => {
-    for (const window of windows) window.release();
-  };
-}
-
 function observePipeIo(
   port: KernelBashPort,
   onRead: () => void,
@@ -109,30 +93,7 @@ function observePipeIo(
   };
 }
 
-function trackOpenCredits() {
-  let outstanding = 0;
-  const open = kernelPayloadBudget.open.bind(kernelPayloadBudget);
-  const spy = vi.spyOn(kernelPayloadBudget, "open").mockImplementation(async (...args) => {
-    const window = await open(...args);
-    outstanding++;
-    let released = false;
-    return {
-      ...window,
-      release() {
-        if (released) return;
-        released = true;
-        outstanding--;
-        window.release();
-      },
-    };
-  });
-  return {
-    outstanding: () => outstanding,
-    restore: () => spy.mockRestore(),
-  };
-}
-
-describe.skipIf(!available)("pinned GNU Bash child payload budgets", () => {
+describe.skipIf(!available)("pinned GNU Bash child payload transfers", () => {
   it("sources a complete 1.5 MiB script", async () => {
     const fixture = childBashFixture({
       args: bashArgs("source ./big.sh; echo AFTER"),
@@ -146,26 +107,6 @@ describe.skipIf(!available)("pinned GNU Bash child payload budgets", () => {
       expect(fixture.stdout()).toBe("END\nAFTER\n");
     } finally {
       fixture.controller.abort();
-      await fixture.close();
-    }
-  }, 60_000);
-
-  it("sources a 200 KiB script while 100 other payload windows remain held", async () => {
-    const fixture = childBashFixture({
-      args: bashArgs("source ./mid.sh; echo AFTER"),
-      env: { HOME: "/workspace", PATH: "/bin", TMPDIR: "/workspace" },
-    });
-    let release: (() => void) | undefined;
-    try {
-      fixture.write("/workspace/mid.sh", `${padding(200 * 1024)}echo END\n`);
-      release = await holdWindows(100);
-      const result = await within(bridge(fixture).run(), 30_000);
-      expect(result.kind).toBe("completed");
-      if (result.kind === "completed") expect(result.value).toEqual(exited());
-      expect(fixture.stdout()).toBe("END\nAFTER\n");
-    } finally {
-      fixture.controller.abort();
-      release?.();
       await fixture.close();
     }
   }, 60_000);
@@ -215,8 +156,7 @@ describe.skipIf(!available)("pinned GNU Bash child payload budgets", () => {
     30_000,
   );
 
-  it("releases all reader credits on close so the next command can fork", async () => {
-    const credits = trackOpenCredits();
+  it("tears down cancelled pipe readers so a fresh command can fork", async () => {
     const fixture = childBashFixture({
       args: bashArgs(
         "coproc F { read -r z; }; exec 5<&${F[0]}; for i in {1..60}; do ( read -r x <&5 ) & done; wait",
@@ -253,7 +193,7 @@ describe.skipIf(!available)("pinned GNU Bash child payload budgets", () => {
       );
       expect(
         progress.kind,
-        `Only ${observedReaders} fd-0 reads entered across ${forkedProcesses} forks; ${credits.outstanding()} open credits remain`,
+        `Only ${observedReaders} fd-0 reads entered across ${forkedProcesses} forks`,
       ).toBe("completed");
       if (progress.kind === "completed") expect(progress.value).toBe(61);
 
@@ -268,7 +208,6 @@ describe.skipIf(!available)("pinned GNU Bash child payload budgets", () => {
         10_000,
       );
       expect(commandSettled.kind).toBe("completed");
-      const outstandingAfterClose = credits.outstanding();
 
       const following = childBashFixture({
         args: bashArgs('value=$(echo following); echo "forked:$value"'),
@@ -283,14 +222,11 @@ describe.skipIf(!available)("pinned GNU Bash child payload budgets", () => {
         following.controller.abort();
         await following.close();
       }
-      expect(outstandingAfterClose).toBe(0);
-      expect(credits.outstanding()).toBe(0);
     } finally {
       if (!closed) {
         fixture.controller.abort();
         await fixture.close();
       }
-      credits.restore();
     }
   }, 60_000);
 });

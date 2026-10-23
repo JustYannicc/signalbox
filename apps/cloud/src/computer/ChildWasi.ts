@@ -1,8 +1,6 @@
 import {
-  KERNEL_SYSCALL_INITIAL_WINDOW,
-  MAX_TRANSFER_BYTES,
+  KERNEL_SYSCALL_MAX_IO_BYTES,
   type KernelSyscallPort,
-  type KernelSyscallResponse,
 } from "../kernel/KernelSyscallPort.ts";
 import { KernelProcessSignal, kernelProcessExitStatus } from "../kernel/KernelProcessSignal.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
@@ -206,7 +204,6 @@ export function createChildWasi(options: ChildWasiOptions) {
 
   let instance: WebAssembly.Instance | undefined;
   let memory: WebAssembly.Memory | undefined;
-  let transferWindow = KERNEL_SYSCALL_INITIAL_WINDOW;
   const imports: WebAssembly.Imports = Object.create(null) as WebAssembly.Imports;
 
   for (const imported of WebAssembly.Module.imports(options.module)) {
@@ -240,13 +237,11 @@ export function createChildWasi(options: ChildWasiOptions) {
         args,
         memory,
         syscalls: options.syscalls,
-        transferWindow: () => transferWindow,
-        returned,
       });
       if (typeof io === "number") return io;
       if (io?.kind === "exit") throw new ChildWasiExit(io.code);
       if (io?.kind === "signal") throw new KernelProcessSignal(io.signal);
-      const regions = new MemoryRegions(memory, transferWindow);
+      const regions = new MemoryRegions(memory, KERNEL_SYSCALL_MAX_IO_BYTES);
       MEMORY_PLANS[imported.name]!(regions, args, encoded);
       const requestRegions = regions.snapshot();
       const response = await options.syscalls.call({
@@ -262,20 +257,8 @@ export function createChildWasi(options: ChildWasiOptions) {
         throw new Error("WASI proc_exit returned without exiting the child");
       }
       regions.apply(response.regions);
-      returned(response);
       return response.value;
     });
-  }
-
-  function returned(response: Extract<KernelSyscallResponse, { kind: "return" }>): void {
-    if (response.transferWindow === undefined) return;
-    if (
-      !Number.isSafeInteger(response.transferWindow) ||
-      response.transferWindow < KERNEL_SYSCALL_INITIAL_WINDOW ||
-      response.transferWindow > MAX_TRANSFER_BYTES
-    )
-      throw new TypeError("Invalid syscall transfer window");
-    transferWindow = response.transferWindow;
   }
 
   function bind(candidate: WebAssembly.Instance): void {

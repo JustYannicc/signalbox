@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
-import { kernelPayloadBudget, type KernelPayloadWindow } from "../../kernel/KernelPayloadBudget.ts";
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
-import {
-  KERNEL_SYSCALL_INITIAL_WINDOW,
-  type KernelSyscallPort,
-  type KernelSyscallRequest,
-  type KernelSyscallResponse,
-} from "../../kernel/KernelSyscallPort.ts";
+import type { KernelSyscallPort } from "../../kernel/KernelSyscallPort.ts";
 import { createChildWasi } from "../ChildWasi.ts";
 import { wasmImportReactor } from "./CoreutilsWasmImportFixture.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
@@ -17,9 +11,8 @@ const COUNT_POINTER = 32;
 const SENTINEL = 0xa5;
 
 describe("child WASI path transfers", () => {
-  it("assembles readdir windows through a partial dirent at the 4 KiB floor", async () => {
+  it("returns the complete UTF-8 directory listing without touching the unused buffer", async () => {
     const fixture = createTestFilesystem();
-    const heldWindows: KernelPayloadWindow[] = [];
     let guest: ChildGuest | undefined;
 
     try {
@@ -42,18 +35,6 @@ describe("child WASI path transfers", () => {
         (total, name) => total + 24 + new TextEncoder().encode(name).byteLength,
         0,
       );
-      const boundary = findBoundaryRecord(expectedNames, KERNEL_SYSCALL_INITIAL_WINDOW);
-      expect(boundary).toBeDefined();
-      expect(boundary!.bytesBeforeWindowEnd).toBeGreaterThan(24);
-      expect(boundary!.bytesBeforeWindowEnd).toBeLessThan(boundary!.recordLength);
-
-      const signal = new AbortController().signal;
-      for (let index = 0; index < 100; index++) {
-        heldWindows.push(await kernelPayloadBudget.open(signal));
-      }
-      expect(heldWindows.some((window) => window.bytes === KERNEL_SYSCALL_INITIAL_WINDOW)).toBe(
-        true,
-      );
 
       guest = createChildGuest(fixture.filesystem, "fd_readdir", [
         "i32",
@@ -71,38 +52,28 @@ describe("child WASI path transfers", () => {
         0,
       );
 
-      const used = guest.view.getUint32(COUNT_POINTER, true);
+      const used = new DataView(guest.memory.buffer).getUint32(COUNT_POINTER, true);
       expect(used).toBe(expectedByteCount);
-      expect(used).toBeGreaterThan(KERNEL_SYSCALL_INITIAL_WINDOW);
       expect(parseDirectory(bytes.subarray(0, used))).toEqual(
         expectedNames.map((name, index) => ({ name, nextCookie: BigInt(index + 1) })),
       );
       expect(bytes.subarray(used).every((byte) => byte === SENTINEL)).toBe(true);
-      expect(guest.requests.map((request) => request.transferOffset)).toEqual([
-        0, 4096, 8192, 12288,
-      ]);
-      expect(guest.requests.map((request) => request.transferLength)).toEqual([
-        4096, 4096, 4096, 4096,
-      ]);
-      expect(guest.responses.map((response) => responseWindow(response))).toEqual([
-        4096, 4096, 4096, 4096,
-      ]);
     } finally {
       guest?.close();
       fixture.close();
-      for (const window of heldWindows) window.release();
     }
   });
 
-  it("assembles a readlink target when a 4 KiB window splits an emoji's UTF-8 bytes", async () => {
+  it("returns an aliased readlink target exactly and leaves the rest untouched", async () => {
     const fixture = createTestFilesystem();
     let guest: ChildGuest | undefined;
 
     try {
-      const target = `${"x".repeat(KERNEL_SYSCALL_INITIAL_WINDOW - 1)}🎉${"é".repeat(20)}${"界".repeat(8)}`;
+      const target = `../target-${"é".repeat(20)}-${"界".repeat(8)}-🎉`;
       const expected = new TextEncoder().encode(target);
       fixture.filesystem.symlink(target, "/long-link");
       const path = new TextEncoder().encode("long-link");
+      const pathPointer = 64;
       guest = createChildGuest(fixture.filesystem, "path_readlink", [
         "i32",
         "i32",
@@ -112,31 +83,28 @@ describe("child WASI path transfers", () => {
         "i32",
       ]);
       const directoryFd = rootPreopenFd(fixture.filesystem);
-      const bufferCapacity = expected.byteLength + 64;
-      const output = new Uint8Array(guest.memory.buffer, OUTPUT_POINTER, bufferCapacity);
+      const bufferCapacity = 2 * 1024 * 1024;
+      guest.memory.grow(Math.ceil(bufferCapacity / 65_536));
+      const output = new Uint8Array(guest.memory.buffer, pathPointer, bufferCapacity);
       output.fill(SENTINEL);
-      new Uint8Array(guest.memory.buffer, 64, path.byteLength).set(path);
+      new Uint8Array(guest.memory.buffer, pathPointer, path.byteLength).set(path);
 
       expect(
         await guest.run(
           directoryFd,
-          64,
+          pathPointer,
           path.byteLength,
-          OUTPUT_POINTER,
+          pathPointer,
           bufferCapacity,
           COUNT_POINTER,
         ),
       ).toBe(0);
 
-      expect(expected[KERNEL_SYSCALL_INITIAL_WINDOW - 1]).toBe(0xf0);
       expect(output.subarray(0, expected.byteLength)).toEqual(expected);
       expect(output.subarray(expected.byteLength).every((byte) => byte === SENTINEL)).toBe(true);
-      expect(guest.view.getUint32(COUNT_POINTER, true)).toBe(expected.byteLength);
-      expect(guest.requests.map((request) => request.transferOffset)).toEqual([0, 4096]);
-      expect(guest.requests.map((request) => request.transferLength)).toEqual([
-        4096,
-        bufferCapacity - KERNEL_SYSCALL_INITIAL_WINDOW,
-      ]);
+      expect(new DataView(guest.memory.buffer).getUint32(COUNT_POINTER, true)).toBe(
+        expected.byteLength,
+      );
     } finally {
       guest?.close();
       fixture.close();
@@ -150,9 +118,6 @@ type GuestFilesystem = ReturnType<typeof createTestFilesystem>["filesystem"];
 
 interface ChildGuest {
   readonly memory: WebAssembly.Memory;
-  readonly view: DataView;
-  readonly requests: KernelSyscallRequest[];
-  readonly responses: KernelSyscallResponse[];
   readonly run: GuestCall;
   close(): void;
 }
@@ -169,14 +134,9 @@ function createChildGuest(
     env: {},
     signal: new AbortController().signal,
   });
-  const requests: KernelSyscallRequest[] = [];
-  const responses: KernelSyscallResponse[] = [];
   const port: KernelSyscallPort = {
     async call(request) {
-      requests.push(request);
-      const response = await host.call(structuredClone(request));
-      responses.push(response);
-      return structuredClone(response);
+      return structuredClone(await host.call(structuredClone(request)));
     },
   };
   const child = createChildWasi({ module, syscalls: port, args: [], env: {} });
@@ -189,9 +149,6 @@ function createChildGuest(
     throw new TypeError("WASI test reactor has no memory");
   return {
     memory,
-    view: new DataView(memory.buffer),
-    requests,
-    responses,
     run: (...args) => child.run(run, ...args),
     close: () => host.close(),
   };
@@ -203,22 +160,6 @@ function rootPreopenFd(filesystem: GuestFilesystem): number {
   );
   if (entry === undefined) throw new Error("Test filesystem has no root preopen");
   return entry[0];
-}
-
-function responseWindow(response: KernelSyscallResponse): number | undefined {
-  return response.kind === "return" ? response.transferWindow : undefined;
-}
-
-function findBoundaryRecord(names: readonly string[], window: number) {
-  let offset = 0;
-  for (const name of names) {
-    const recordLength = 24 + new TextEncoder().encode(name).byteLength;
-    if (offset < window && offset + recordLength > window) {
-      return { bytesBeforeWindowEnd: window - offset, recordLength };
-    }
-    offset += recordLength;
-  }
-  return undefined;
 }
 
 function parseDirectory(bytes: Uint8Array) {

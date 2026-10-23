@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { KernelFileSystem, KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
 import {
-  KERNEL_SYSCALL_INITIAL_WINDOW,
+  KERNEL_SYSCALL_MAX_IO_BYTES,
   type KernelSyscallRequest,
 } from "../../kernel/KernelSyscallPort.ts";
 import { createChildWasi } from "../ChildWasi.ts";
@@ -106,7 +106,7 @@ describe("directional child WASI transfers", () => {
     ["fd_write", 17 * MIB, 17 * MIB],
     ["fd_write", MIB, 3],
   ] as const)(
-    "%s with %i bytes and a %i-byte backend limit keeps transfer windows hidden",
+    "%s with %i bytes and a %i-byte backend limit completes the guest call without extra payload RPCs",
     async (name, size, backendLimit) => {
       let accepted = 0;
       let writes = 0;
@@ -149,7 +149,7 @@ describe("directional child WASI transfers", () => {
       let received = 0;
       let compared = 0;
       let payload = 0;
-      let credit = KERNEL_SYSCALL_INITIAL_WINDOW;
+      const limit = KERNEL_SYSCALL_MAX_IO_BYTES;
       const requests: KernelSyscallRequest[] = [];
       const child = createChildWasi({
         module,
@@ -158,7 +158,7 @@ describe("directional child WASI transfers", () => {
         syscalls: {
           async call(request) {
             requests.push(request);
-            const amount = Math.min(size - (request.transferOffset ?? 0), credit);
+            const amount = Math.min(size - (request.transferOffset ?? 0), limit);
             const region = request.regions.find(
               (region) => region.pointer === 1024 + (request.transferOffset ?? 0),
             );
@@ -184,7 +184,6 @@ describe("directional child WASI transfers", () => {
             const response = await host.call(copy);
             if (response.kind === "return") {
               received += response.regions.reduce((n, r) => n + r.bytes.length, 0);
-              credit = response.transferWindow ?? credit;
             }
             return structuredClone(response);
           },
@@ -235,7 +234,7 @@ describe("directional child WASI transfers", () => {
         if (name === "fd_read") expect(requests).toHaveLength(1);
         else expect(requests.length).toBeGreaterThanOrEqual(Math.ceil(size / MIB));
         if (backendLimit === 3) {
-          expect(requests[1]?.transferOffset).toBe(3);
+          expect(requests).toHaveLength(Math.ceil(size / MIB));
         }
         expect(compared).toBe(0);
       } finally {
@@ -302,7 +301,7 @@ describe("directional child WASI transfers", () => {
         expect(descriptor.offset).toBe(0n);
         expect(transfer.requests.length).toBeGreaterThan(2);
         expect(transfer.requests[0]?.transferOffset).toBe(0);
-        expect(transfer.requests[1]?.transferOffset).toBe(KERNEL_SYSCALL_INITIAL_WINDOW);
+        expect(transfer.requests[1]?.transferOffset).toBe(KERNEL_SYSCALL_MAX_IO_BYTES);
         for (const request of transfer.requests) {
           expect(request.args).toEqual([fd, 32, 3, base, countPointer]);
           const region = request.regions.find(
@@ -311,7 +310,7 @@ describe("directional child WASI transfers", () => {
           expect(region?.bytes.subarray(32 - region.pointer, 56 - region.pointer)).toEqual(table);
         }
         expect(positions[0]).toBe(base);
-        expect(positions).toContain(base + BigInt(KERNEL_SYSCALL_INITIAL_WINDOW));
+        expect(positions).toContain(base + BigInt(KERNEL_SYSCALL_MAX_IO_BYTES));
         if (name === "fd_pwrite") expect(output).toEqual(original);
         else {
           expect(first).toEqual(source.subarray(0, firstLength));

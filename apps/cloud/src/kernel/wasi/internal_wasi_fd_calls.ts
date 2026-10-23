@@ -5,6 +5,7 @@
 
 /* eslint-disable require-yield -- WASI handlers share a generator protocol for immediate and suspending calls. */
 
+import { KernelBrokenPipeError } from "../KernelPipe.ts";
 import { acquireKernelFileWrite, withKernelFileWrite } from "../KernelIoLock.ts";
 import type { DirectoryEntry, Inode, Stat, Times } from "../storage.ts";
 import { utf8ByteLength, WasiError, WasiMemory } from "./internal_wasi_memory.ts";
@@ -549,6 +550,14 @@ export class WasiFdCalls {
     limit: number,
   ): WasiCall<number> {
     if (vectors.length === 0 || limit === 0) return 0;
+    const drain = this.#memory.readOnce && descriptor.stdio?.supportsNonblocking === true;
+    let remaining = this.#memory.readOnce && !drain ? Math.min(limit, IO_CHUNK_BYTES) : limit;
+    for (const vector of vectors) {
+      const readLength = Math.min(vector.length, remaining);
+      if (readLength > 0) this.#memory.validateOutputRange(vector.pointer, readLength);
+      remaining -= readLength;
+      if (remaining === 0) break;
+    }
     const readInto = descriptor.stdio?.readInto;
     if (readInto === undefined) return 0;
     let total = 0;
@@ -559,18 +568,20 @@ export class WasiFdCalls {
         const scratch = new Uint8Array(size);
         let count: number;
         try {
-          const result = readInto.call(descriptor.stdio, scratch, descriptor.flags);
-          count = yield* complete(nonblockingResult(result, descriptor.flags));
+          // Once a pipe produces bytes, drain only immediately available data.
+          const flags = drain && total > 0 ? descriptor.flags | FDFLAGS.NONBLOCK : descriptor.flags;
+          const result = readInto.call(descriptor.stdio, scratch, flags);
+          count = yield* complete(nonblockingResult(result, flags));
         } catch (error) {
           if (total > 0 && mapErrno(error) === 6) return total;
           throw error;
         }
         validateCount(count, size);
         if (count === 0) return total;
-        this.#memory.writeRange(vector.pointer + offset, count).set(scratch.subarray(0, count));
+        this.#memory.writeOwnedBytes(vector.pointer + offset, scratch.subarray(0, count));
         offset += count;
         total += count;
-        if (this.#memory.readOnce) return total;
+        if (this.#memory.readOnce && !drain) return total;
         if (count < size) return total;
       }
     }
@@ -581,10 +592,23 @@ export class WasiFdCalls {
     const write = descriptor.stdio?.write;
     if (write === undefined) throw new WasiError(EIO);
     if (source.byteLength === 0) return 0;
-    const result = write.call(descriptor.stdio, source, descriptor.flags);
-    const count = yield* complete(nonblockingResult(result, descriptor.flags));
-    validateCount(count, source.byteLength);
-    return count;
+    let total = 0;
+    while (total < source.byteLength) {
+      let count: number;
+      try {
+        const result = write.call(descriptor.stdio, source.subarray(total), descriptor.flags);
+        count = yield* complete(nonblockingResult(result, descriptor.flags));
+      } catch (error) {
+        if (error instanceof KernelBrokenPipeError)
+          throw new KernelBrokenPipeError(total + error.bytesWritten);
+        if (total > 0) return total;
+        throw error;
+      }
+      validateCount(count, source.byteLength - total);
+      total += count;
+      if (count === 0 || (descriptor.flags & FDFLAGS.NONBLOCK) !== 0) break;
+    }
+    return total;
   }
 
   *#readVectors(
@@ -611,7 +635,7 @@ export class WasiFdCalls {
         }
         validateCount(count, size);
         if (count === 0) return total;
-        this.#memory.writeRange(vector.pointer + offset, count).set(scratch.subarray(0, count));
+        this.#memory.writeOwnedBytes(vector.pointer + offset, scratch.subarray(0, count));
         total += count;
         offset += count;
       }

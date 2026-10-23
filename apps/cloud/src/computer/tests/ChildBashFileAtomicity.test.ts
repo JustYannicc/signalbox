@@ -7,7 +7,7 @@ import * as NodeProcess from "node:process";
 import { describe, expect, it } from "vite-plus/test";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
-import { kernelPayloadBudget, type KernelPayloadWindow } from "../../kernel/KernelPayloadBudget.ts";
+import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
 import { createChildBash } from "../ChildBash.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
 
@@ -27,22 +27,6 @@ if (available) {
 }
 
 const bashArgs = (script: string) => ["bash", "--noprofile", "--norc", "-c", script];
-
-function holdWindows(count: number, signal: AbortSignal) {
-  return (async () => {
-    const windows: KernelPayloadWindow[] = [];
-    try {
-      for (let index = 0; index < count; index++)
-        windows.push(await kernelPayloadBudget.open(signal));
-    } catch (error) {
-      for (const window of windows) window.release();
-      throw error;
-    }
-    return () => {
-      for (const window of windows) window.release();
-    };
-  })();
-}
 
 type Completion<T> =
   | { readonly kind: "completed"; readonly value: T }
@@ -94,14 +78,12 @@ function hashRuns(first: string, second: string, size: number) {
   return hash.digest("hex");
 }
 
-async function run(script: string, heldCredits: number, path: string) {
+async function run(script: string, path: string) {
   const fixture = childBashFixture({
     args: bashArgs(script),
     env: { HOME: "/workspace", PATH: "/bin", TMPDIR: "/workspace" },
   });
-  let release: (() => void) | undefined;
   try {
-    release = await holdWindows(heldCredits, fixture.controller.signal);
     const outcome = await within(
       createChildBash({
         module,
@@ -126,7 +108,6 @@ async function run(script: string, heldCredits: number, path: string) {
     };
   } finally {
     fixture.controller.abort();
-    release?.();
     await fixture.close();
   }
 }
@@ -156,21 +137,18 @@ const writers = [
 ] as const;
 
 const cases = sizes.flatMap(([sizeLabel, size]) =>
-  [0, 100].flatMap((heldCredits) =>
-    writers.map((writer) => ({
-      size,
-      heldCredits,
-      writer,
-      label: `${writer.label} preserves two ${sizeLabel} writes ${heldCredits === 0 ? "normal" : "with 100 held credits"}`,
-    })),
-  ),
+  writers.map((writer) => ({
+    size,
+    writer,
+    label: `${writer.label} preserves two ${sizeLabel} writes`,
+  })),
 );
 
 describe.skipIf(!available)("pinned GNU Bash file write atomicity", () => {
   it.each(cases)(
     "$label",
-    async ({ size, heldCredits, writer }) => {
-      const result = await run(writer.script(size), heldCredits, writer.path);
+    async ({ size, writer }) => {
+      const result = await run(writer.script(size), writer.path);
       const firstThenSecond = [
         { byte: "0".charCodeAt(0), length: size },
         { byte: " ".charCodeAt(0), length: size },
@@ -205,7 +183,7 @@ describe.skipIf(!available)("pinned GNU Bash file write atomicity", () => {
           pid !== fixture.owner.pid &&
           !captured &&
           request.name === "fd_write" &&
-          (request.transferLength ?? 0) >= 4096 &&
+          (request.transferLength ?? 0) >= KERNEL_SYSCALL_MAX_IO_BYTES &&
           response.kind === "return" &&
           response.value === 0
         ) {
@@ -243,7 +221,7 @@ describe.skipIf(!available)("pinned GNU Bash file write atomicity", () => {
       const first = await within(written.promise, 15_000);
       expect(first.kind).toBe("completed");
       if (first.kind !== "completed") throw new Error("Writer never accepted its first chunk");
-      expect(first.value.bytes).toBeGreaterThan(0);
+      expect(first.value.bytes).toBe(KERNEL_SYSCALL_MAX_IO_BYTES);
       expect(first.value.bytes).toBeLessThan(4194304);
       expect(
         fixture.processes.signalPid(fixture.context.identity.handle, first.value.pid, 9).status,

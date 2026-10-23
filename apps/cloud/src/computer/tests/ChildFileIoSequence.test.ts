@@ -9,7 +9,7 @@ import { createChildWasi } from "../ChildWasi.ts";
 import { wasmImportReactor } from "./CoreutilsWasmImportFixture.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
 
-const SIZE = 128 * 1024;
+const SIZE = 2 * 1024 * 1024;
 const DATA = 1024;
 
 function guest(filesystem: KernelFileSystem, name: string, size = SIZE) {

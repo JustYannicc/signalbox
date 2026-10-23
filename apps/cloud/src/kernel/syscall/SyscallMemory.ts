@@ -1,7 +1,7 @@
 import * as NodeBuffer from "node:buffer";
 import { WasiMemory } from "../wasi/internal_wasi_memory.ts";
 import { MAX_TRANSFER_BYTES, type KernelMemoryRegion } from "../KernelSyscallPort.ts";
-import { ownKernelPayload } from "../KernelPayloadBudget.ts";
+import { ownKernelPayload } from "../KernelPayloads.ts";
 
 interface BoundRegion {
   readonly pointer: number;
@@ -11,6 +11,7 @@ interface BoundRegion {
   bytes: Uint8Array<ArrayBuffer> | undefined;
   readonly writes: Array<{ start: number; end: number }>;
   readonly tracked: boolean;
+  readonly chunks: Array<{ start: number; bytes: Uint8Array<ArrayBuffer> }>;
 }
 
 /** Only syscall arguments cross the RPC boundary. The child retains its complete linear memory. */
@@ -20,11 +21,15 @@ export class SyscallMemory extends WasiMemory {
   #transferLimit = MAX_TRANSFER_BYTES;
   #transferOffset = 0;
   #readOnce = false;
-  #credited = false;
+  #directional = false;
   #ioOwner: object | undefined;
 
   override get ioOwner(): object | undefined {
     return this.#ioOwner;
+  }
+
+  override set ioOwner(owner: object | undefined) {
+    this.#ioOwner = owner;
   }
 
   override get transferLimit(): number {
@@ -66,7 +71,7 @@ export class SyscallMemory extends WasiMemory {
     this.#transferOffset = transferOffset;
     this.#readOnce = readOnce;
     this.#ioOwner = transfer?.owner;
-    this.#credited =
+    this.#directional =
       transferLimit !== undefined && regions.every((region) => region.direction !== undefined);
     this.#regions = regions.map((region) => {
       const direction = region.direction ?? "inout";
@@ -86,7 +91,7 @@ export class SyscallMemory extends WasiMemory {
         throw new TypeError("Invalid syscall memory regions");
       }
       previousEnd = region.pointer + length;
-      const tracked = this.#credited;
+      const tracked = this.#directional;
       const input =
         region.bytes.buffer instanceof ArrayBuffer
           ? new Uint8Array(region.bytes.buffer, region.bytes.byteOffset, region.bytes.byteLength)
@@ -103,6 +108,7 @@ export class SyscallMemory extends WasiMemory {
               ? ownKernelPayload(input)
               : region.bytes.slice(),
         writes: [],
+        chunks: [],
         tracked,
       };
     });
@@ -113,7 +119,7 @@ export class SyscallMemory extends WasiMemory {
     vectors: readonly { pointer: number; length: number }[],
     totalLength: number,
   ): Uint8Array {
-    if (!this.#credited) return super.copyIovecs(vectors, totalLength);
+    if (!this.#directional) return super.copyIovecs(vectors, totalLength);
     const nonempty = vectors.filter((vector) => vector.length > 0);
     if (nonempty.length === 1)
       return ownKernelPayload(this.range(nonempty[0]!.pointer, totalLength));
@@ -145,8 +151,16 @@ export class SyscallMemory extends WasiMemory {
     this.validateRange(start, size);
     if (size === 0) return new Uint8Array(0);
     const region = this.#region(start, size);
-    const bytes = (region.bytes ??= new Uint8Array(region.length));
-    return new Uint8Array(bytes.buffer, bytes.byteOffset + start - region.pointer, size);
+    const offset = start - region.pointer;
+    const bytes = this.#ensureBytes(region, offset + size);
+    return new Uint8Array(bytes.buffer, bytes.byteOffset + offset, size);
+  }
+
+  override validateOutputRange(pointer: number, length: number): void {
+    const start = pointer >>> 0;
+    const size = length >>> 0;
+    super.validateRange(start, size);
+    if (size > 0) this.#region(start, size);
   }
 
   override writeRange(pointer: number, length: number): Uint8Array<ArrayBuffer> {
@@ -161,10 +175,38 @@ export class SyscallMemory extends WasiMemory {
     return bytes;
   }
 
+  override writeOwnedBytes(pointer: number, source: Uint8Array): void {
+    if (source.byteLength === 0) return;
+    this.validateOutputRange(pointer, source.byteLength);
+    const region = this.#region(pointer, source.byteLength);
+    const start = pointer - region.pointer;
+    if (
+      region.direction !== "out" ||
+      region.bytes !== undefined ||
+      region.chunks.some(
+        (chunk) =>
+          start < chunk.start + chunk.bytes.byteLength && chunk.start < start + source.byteLength,
+      )
+    ) {
+      this.writeRange(pointer, source.byteLength).set(source);
+      return;
+    }
+    const bytes =
+      source.buffer instanceof ArrayBuffer
+        ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength)
+        : source.slice();
+    region.chunks.push({ start, bytes });
+    region.writes.push({ start, end: start + bytes.byteLength });
+  }
+
   snapshot(): readonly KernelMemoryRegion[] {
     return this.#regions.flatMap((region) => {
       const bytes = region.bytes;
-      if (region.direction === "in" || bytes === undefined) return [];
+      if (region.direction === "in") return [];
+      if (bytes === undefined)
+        return region.chunks
+          .sort((a, b) => a.start - b.start)
+          .map((chunk) => ({ pointer: region.pointer + chunk.start, bytes: chunk.bytes }));
       if (region.direction === "out" || region.tracked) {
         const merged: Array<{ start: number; end: number }> = [];
         for (const range of region.writes.sort((a, b) => a.start - b.start)) {
@@ -175,10 +217,7 @@ export class SyscallMemory extends WasiMemory {
         }
         return merged.map(({ start, end }) => ({
           pointer: region.pointer + start,
-          bytes:
-            region.tracked && start === 0 && end === bytes.byteLength
-              ? bytes
-              : bytes.slice(start, end),
+          bytes: start === 0 && end === bytes.byteLength ? bytes : bytes.slice(start, end),
         }));
       }
       // Native comparison skips scalar scans of unchanged undirected or aliased in-out buffers.
@@ -198,6 +237,26 @@ export class SyscallMemory extends WasiMemory {
     this.#regions = [];
     this.#size = 0;
     this.#ioOwner = undefined;
+  }
+
+  #ensureBytes(region: BoundRegion, length: number): Uint8Array<ArrayBuffer> {
+    const current = region.bytes;
+    if (current === undefined) {
+      const end = region.chunks.reduce(
+        (maximum, chunk) => Math.max(maximum, chunk.start + chunk.bytes.byteLength),
+        length,
+      );
+      const allocated = new Uint8Array(end);
+      for (const chunk of region.chunks) allocated.set(chunk.bytes, chunk.start);
+      region.chunks.length = 0;
+      region.bytes = allocated;
+      return allocated;
+    }
+    if (current.byteLength >= length) return current;
+    const expanded = new Uint8Array(length);
+    expanded.set(current);
+    region.bytes = expanded;
+    return expanded;
   }
 
   #region(start: number, size: number): BoundRegion {

@@ -56,33 +56,6 @@ async function withContext(run: (context: KernelAsyncProgramContext) => Promise<
 }
 
 describe("ChildWorkerProgram", () => {
-  it("releases admission when payload readiness fails before dispatch", () =>
-    withContext(async (context) => {
-      const capacity = new ChildWorkerCapacity(1);
-      const ready = Promise.withResolvers<void>();
-      const created = Promise.withResolvers<void>();
-      const dispatch = vi.fn(async () => ({ exitCode: 0, signal: 0, coreDumped: false }));
-      const close = vi.fn();
-      const program = createChildWorkerProgram({
-        executable: "/bin/tool",
-        code: { mainModule: "entry.js", modules: {} },
-        capacity,
-        dispatch: { run: dispatch },
-        createHost: () => {
-          created.resolve();
-          return { host: {}, ready: ready.promise, close };
-        },
-      });
-      const running = program.run(context);
-      await created.promise;
-      ready.reject(new Error("Payload admission cancelled"));
-      await expect(running).rejects.toMatchObject({ termination: { kind: "stopped" } });
-      await program.drain();
-      expect(dispatch).not.toHaveBeenCalled();
-      expect(close).toHaveBeenCalledOnce();
-      expect(capacity.active).toBe(0);
-    }));
-
   it("leaves a host the child keeps after its command unable to reach the kernel process", () =>
     withContext(async (context) => {
       const argsSizes = {

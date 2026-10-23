@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeProcess from "node:process";
 import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
 import { KernelPipe } from "../../kernel/KernelPipe.ts";
+import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { createChildWasi } from "../ChildWasi.ts";
@@ -11,6 +12,7 @@ import { wasmImportReactor } from "./CoreutilsWasmImportFixture.ts";
 
 const MIB = 1024 * 1024;
 const SIZE = 16 * MIB;
+const PER_CHILD_OVERHEAD = 128 * 1024;
 const count = Number(NodeProcess.argv[2] ?? 8);
 const direction = NodeProcess.argv[3] ?? "write";
 const wakes = new KernelWakeRegistry();
@@ -56,8 +58,7 @@ const fixtures = Array.from({ length: count }, () => {
     env: {},
     syscalls: {
       async call(request) {
-        // Detach the sender's snapshot. Its Wasm heap is excluded from Node's arrayBuffers,
-        // leaving exactly the buffers a separate owner isolate would retain.
+        // Transfer the sender snapshot across the simulated RPC boundary so Node counts it once.
         const transfer = [...new Set(request.regions.map((region) => region.bytes.buffer))];
         const response = await host.call(structuredClone(request, { transfer }));
         if (response.kind !== "return") return response;
@@ -78,7 +79,6 @@ const fixtures = Array.from({ length: count }, () => {
   if (direction === "write") pipe.tryWrite(new Uint8Array(65_536));
   const view = new DataView(memory.buffer);
   async function warm() {
-    await host.ready;
     view.setUint32(32, 1024, true);
     view.setUint32(36, 0, true);
     NodeAssert.equal(
@@ -106,20 +106,25 @@ await Promise.all(fixtures.map((fixture) => fixture.entered.promise));
 globalThis.gc!();
 const after = NodeProcess.memoryUsage();
 const retained = after.arrayBuffers - before.arrayBuffers;
+// This one-iovec path transfers one input buffer; KernelPipe retains a view, not a second payload.
+const perChildBound = KERNEL_SYSCALL_MAX_IO_BYTES + PER_CHILD_OVERHEAD;
+const retentionBound = count * perChildBound;
 NodeProcess.stdout.write(
   JSON.stringify({
     count,
     direction,
     requestBytes: SIZE,
-    retainedArrayBufferBytes: retained,
+    ownerRetainedArrayBufferBytes: retained,
+    retentionBoundBytes: retentionBound,
+    perChildRetentionBoundBytes: perChildBound,
     externalDelta: after.external - before.external,
   }) + "\n",
 );
 
 try {
   NodeAssert.ok(
-    retained <= 32 * MIB + count * 128 * 1024,
-    `owner retained ${retained} bytes for ${count} blocked ${direction}s`,
+    retained <= retentionBound,
+    `owner retained ${retained} bytes for ${count} blocked ${direction}s; bound is ${retentionBound}`,
   );
   await Promise.all(
     fixtures.map(async (fixture, index) => {

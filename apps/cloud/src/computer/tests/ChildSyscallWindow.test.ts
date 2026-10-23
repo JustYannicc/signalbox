@@ -1,13 +1,14 @@
 import { expect, it } from "vite-plus/test";
 import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
 import { KernelBrokenPipeError, KernelPipe } from "../../kernel/KernelPipe.ts";
-import { KERNEL_SYSCALL_INITIAL_WINDOW } from "../../kernel/KernelSyscallPort.ts";
+import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { createChildWasi } from "../ChildWasi.ts";
 import { wasmImportReactor } from "./CoreutilsWasmImportFixture.ts";
 
 const SIZE = 16 * 1024 * 1024;
+const PREFIX_SIZE = KERNEL_SYSCALL_MAX_IO_BYTES + 65_536;
 
 it.each(["errno", "signal", "abort"] as const)(
   "keeps an earlier RPC's accepted prefix on later %s",
@@ -59,17 +60,18 @@ it.each(["errno", "signal", "abort"] as const)(
     const instance = new WebAssembly.Instance(module, child.imports);
     child.bind(instance);
     const memory = instance.exports.memory as WebAssembly.Memory;
-    memory.grow(1);
+    const pages = Math.ceil(Math.max(0, 1024 + PREFIX_SIZE - memory.buffer.byteLength) / 65_536);
+    if (pages > 0) memory.grow(pages);
     const view = new DataView(memory.buffer);
     view.setUint32(32, 1024, true);
-    view.setUint32(36, 65_536, true);
-    const source = new Uint8Array(memory.buffer, 1024, 65_536);
+    view.setUint32(36, PREFIX_SIZE, true);
+    const source = new Uint8Array(memory.buffer, 1024, PREFIX_SIZE);
     for (let index = 0; index < source.length; index++) source[index] = (index * 37) & 255;
     try {
       expect(await child.run(instance.exports.run!, 1, 32, 1, 16)).toBe(0);
-      expect(view.getUint32(16, true)).toBe(KERNEL_SYSCALL_INITIAL_WINDOW);
-      expect(offsets).toEqual([0, KERNEL_SYSCALL_INITIAL_WINDOW]);
-      expect(chunks).toEqual([source.slice(0, KERNEL_SYSCALL_INITIAL_WINDOW)]);
+      expect(view.getUint32(16, true)).toBe(KERNEL_SYSCALL_MAX_IO_BYTES);
+      expect(offsets).toEqual([0, KERNEL_SYSCALL_MAX_IO_BYTES]);
+      expect(chunks).toEqual([source.slice(0, KERNEL_SYSCALL_MAX_IO_BYTES)]);
       expect(calls).toBe(ending === "abort" ? 1 : 2);
     } finally {
       host.close();

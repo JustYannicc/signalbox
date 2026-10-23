@@ -27,7 +27,7 @@ export function createTestFilesystem() {
     },
   };
 }
-export const SIZE = 128 * 1024;
+export const SIZE = 2 * 1024 * 1024;
 const DATA = 1024;
 
 export function guest(filesystem: KernelFileSystem, name: string, size = SIZE) {

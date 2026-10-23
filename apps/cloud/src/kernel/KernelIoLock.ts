@@ -23,6 +23,8 @@ export class KernelIoLock {
     const release = this.tryAcquire(owner);
     if (release !== undefined) return release;
 
+    // Inline programs cannot suspend behind another process's continuation.
+    if (currentKernelIoMode() === "sync") return () => {};
     const waiter: Waiter = { owner, ready: Promise.withResolvers<void>(), granted: false };
     this.#waiters.push(waiter);
     const abort = () => waiter.ready.reject(new WasiError(11));

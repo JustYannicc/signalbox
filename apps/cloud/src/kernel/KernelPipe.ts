@@ -1,5 +1,5 @@
 import { KernelWakeRegistry, type WakeSubscription } from "./KernelWakeRegistry.ts";
-import { isKernelPayloadOwned, kernelPayloadBudget } from "./KernelPayloadBudget.ts";
+import { isKernelPayloadOwned, retainKernelPipePayload } from "./KernelPayloads.ts";
 import { MAX_TRANSFER_BYTES } from "./KernelSyscallPort.ts";
 
 type Direction = "read" | "write";
@@ -115,7 +115,7 @@ export class KernelPipe {
     options: Pick<IoOptions, "signal"> = {},
   ): Promise<number> {
     // WASI caps vectors here too; larger Node callers receive a bounded short write.
-    const reservation = kernelPayloadBudget.retainPipe(source, MAX_TRANSFER_BYTES);
+    const reservation = retainKernelPipePayload(source, MAX_TRANSFER_BYTES);
     const size = reservation.bytes;
     if (size < Math.min(source.byteLength, this.#bytes.length)) {
       reservation.release();

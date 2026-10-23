@@ -24,7 +24,6 @@ interface BashHostNode {
   readonly context: KernelBashProgramContext;
   readonly port: KernelBashPort;
   readonly completion: Promise<KernelExitStatus>;
-  readonly ready: Promise<void>;
   abort(): void;
   finish(result: KernelBashCompletion): void;
   signal(signal: number): KernelResult<void>;
@@ -235,7 +234,6 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       context,
       port,
       completion: completion.promise,
-      ready: syscalls.ready,
       abort,
       finish,
       signal(signal: number) {
@@ -272,7 +270,6 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
   return {
     pid: options.context.identity.pid,
     port: root.port,
-    ready: root.ready,
     exited: root.completion,
     close(): Promise<void> {
       return (closing ??= (async () => {

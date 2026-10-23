@@ -1,5 +1,5 @@
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
-import type { KernelSyscallRequest } from "./KernelSyscallPort.ts";
+import { KERNEL_SYSCALL_MAX_IO_BYTES, type KernelSyscallRequest } from "./KernelSyscallPort.ts";
 import type { SyscallMemory } from "./syscall/SyscallMemory.ts";
 import type { WasiDescriptor } from "./wasi/internal_wasi_descriptors.ts";
 import { runAsync } from "./wasi/internal_wasi_calls.ts";
@@ -26,6 +26,7 @@ export class KernelFileIoSequence {
   async begin(
     request: KernelSyscallRequest,
     args: readonly (number | bigint)[],
+    memory: SyscallMemory,
     signal: AbortSignal,
   ) {
     const fd = Number(args[0]);
@@ -40,26 +41,27 @@ export class KernelFileIoSequence {
     const descriptor = this.#filesystem.descriptors.get(fd);
     if (this.#active !== undefined && this.#active.descriptor !== descriptor) this.release();
     if (descriptor.kind !== "file") return undefined;
-    if (this.#active !== undefined) return this.#active.owner;
+    if (this.#active !== undefined) {
+      this.#active.remaining = memory
+        .iovecs(Number(args[1]), Number(args[2]))
+        .reduce((sum, vector) => sum + vector.length, 0);
+      return this.#active.owner;
+    }
 
+    let remaining: number;
+    try {
+      remaining = memory
+        .iovecs(Number(args[1]), Number(args[2]))
+        .reduce((sum, vector) => sum + vector.length, 0);
+    } catch {
+      return undefined;
+    }
+    if (offset === 0 && remaining <= KERNEL_SYSCALL_MAX_IO_BYTES) return undefined;
     const owner = {};
     const write = request.name === "fd_write" || request.name === "fd_pwrite";
     const release = await runAsync(descriptor.acquireIo(owner, write, signal));
-    this.#active = { name: request.name, fd, descriptor, owner, release, offset, remaining: 0 };
+    this.#active = { name: request.name, fd, descriptor, owner, release, offset, remaining };
     return owner;
-  }
-
-  bound(memory: SyscallMemory, args: readonly (number | bigint)[]) {
-    if (this.#active === undefined) return;
-    try {
-      const remaining = memory
-        .iovecs(Number(args[1]), Number(args[2]))
-        .reduce((sum, vector) => sum + vector.length, 0);
-      this.#active.remaining = Math.min(remaining, 0xffff_ffff - this.#active.offset);
-    } catch {
-      // The handler owns descriptor-rights and original-buffer validation order.
-      this.#active.remaining = 0;
-    }
   }
 
   complete(request: KernelSyscallRequest, count: number, limit: number, success: boolean) {

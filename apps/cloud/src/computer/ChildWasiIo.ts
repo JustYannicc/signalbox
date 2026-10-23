@@ -1,3 +1,4 @@
+import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../kernel/KernelSyscallPort.ts";
 import type {
   KernelMemoryRegion,
   KernelSyscallPort,
@@ -14,11 +15,9 @@ interface ChildWasiIoOptions {
   readonly args: readonly WasmArgument[];
   readonly memory: WebAssembly.Memory;
   readonly syscalls: KernelSyscallPort;
-  readonly transferWindow: () => number;
-  readonly returned: (response: Returned) => void;
 }
 
-/** Completes one guest I/O call without exposing the owner's transfer windows to the guest. */
+/** Completes oversized guest I/O through fixed-size RPCs. */
 export async function childWasiIo(
   options: ChildWasiIoOptions,
 ): Promise<number | Terminal | undefined> {
@@ -63,7 +62,7 @@ export async function childWasiIo(
     return 0;
   };
   for (;;) {
-    const capacity = Math.min(options.transferWindow(), Math.max(0, length - total));
+    const capacity = Math.min(KERNEL_SYSCALL_MAX_IO_BYTES, Math.max(0, length - total));
     const regions = new MemoryRegions(memory, capacity);
     regions.add(countPointer, 4, "out");
     if (read || write) {
@@ -93,7 +92,6 @@ export async function childWasiIo(
       throw error;
     }
     if (response.kind !== "return") return total > 0 ? finish() : response;
-    options.returned(response);
     // A count slot may alias data needed by a later window. The aggregate is its only guest write.
     regions.apply(response.regions, { pointer: countPointer, length: 4 });
     if (response.value !== 0) return total > 0 ? finish() : response.value;

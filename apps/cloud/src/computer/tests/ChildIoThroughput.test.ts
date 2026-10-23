@@ -9,7 +9,6 @@ import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import type { KernelSyscallRequest } from "../../kernel/KernelSyscallPort.ts";
 import { KernelPipe } from "../../kernel/KernelPipe.ts";
-import { kernelPayloadBudget } from "../../kernel/KernelPayloadBudget.ts";
 import { createChildBusybox } from "../ChildBusybox.ts";
 import { createChildCoreutils } from "../ChildCoreutils.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
@@ -21,6 +20,7 @@ const busyboxPath = new URL("../../../../../.t3/1071/programs/busybox.wasm", imp
 const available = NodeFS.existsSync(busyboxPath) && coreutilsArtifactsAvailable;
 if (!available && NodeProcess.env.SIGNALBOX_REQUIRE_CHILD_IO_ARTIFACTS === "1")
   throw new Error("Child I/O tests require pinned BusyBox and coreutils artifacts");
+const NONBLOCK = 4;
 const SIZE = 200 * 1024 * 1024;
 const BLOCKED_BASH_READERS = 16;
 const scenarios = ["cat-null", "cat-pipe-head", "head-file"] as const;
@@ -84,31 +84,7 @@ function discard(fixture: ReturnType<typeof childBusyboxFixture>) {
   return () => ({ bytes, sha256: hash.digest("hex") });
 }
 
-function trackOpenCredits() {
-  let outstanding = 0;
-  const open = kernelPayloadBudget.open.bind(kernelPayloadBudget);
-  const spy = vi.spyOn(kernelPayloadBudget, "open").mockImplementation(async (...args) => {
-    const window = await open(...args);
-    outstanding++;
-    let released = false;
-    return {
-      ...window,
-      release() {
-        if (released) return;
-        released = true;
-        outstanding--;
-        window.release();
-      },
-    };
-  });
-  return {
-    outstanding: () => outstanding,
-    restore: () => spy.mockRestore(),
-  };
-}
-
 async function runScenario(scenario: Scenario, blockedReaderCount: number) {
-  const credits = blockedReaderCount > 0 ? trackOpenCredits() : undefined;
   const producer = childBusyboxFixture({
     args: ["cat", "input"],
     env: { PATH: "/bin", PWD: "/workspace" },
@@ -119,6 +95,12 @@ async function runScenario(scenario: Scenario, blockedReaderCount: number) {
     args: ["head", "-c", "200M"],
     env: { PATH: "/bin", PWD: "/workspace" },
     readInto: (target) => pipe.readInto(target),
+  });
+  // Match the product pipe endpoint's immediate NONBLOCK contract.
+  Object.assign(consumer.filesystem.descriptors.get(0).stdio!, {
+    supportsNonblocking: true,
+    readInto: (target: Uint8Array, flags: number) =>
+      (flags & NONBLOCK) !== 0 ? pipe.tryReadInto(target) : pipe.readInto(target),
   });
   const catOwner = createKernelBusyboxHost({ context: producer.context });
   const headFixture = scenario === "head-file" ? producer : consumer;
@@ -203,10 +185,7 @@ async function runScenario(scenario: Scenario, blockedReaderCount: number) {
     await headOwner.close();
     await consumer.close();
     await producer.close();
-    const outstanding = credits?.outstanding();
-    credits?.restore();
     vi.restoreAllMocks();
-    if (outstanding !== undefined) expect(outstanding).toBe(0);
   }
 }
 

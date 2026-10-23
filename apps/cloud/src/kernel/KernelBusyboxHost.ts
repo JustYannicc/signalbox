@@ -73,7 +73,6 @@ export function createKernelBusyboxHost({ context }: KernelBusyboxHostOptions) {
   };
   return {
     port,
-    ready: syscalls.ready,
     close(): Promise<void> {
       return (closing ??= (async () => {
         closed = true;

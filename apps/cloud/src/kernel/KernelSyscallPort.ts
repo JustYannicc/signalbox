@@ -1,7 +1,7 @@
 import type { KernelProcessSignalNumber } from "./KernelProcessSignal.ts";
 
 export const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
-export const KERNEL_SYSCALL_INITIAL_WINDOW = 4096;
+export const KERNEL_SYSCALL_MAX_IO_BYTES = 1024 * 1024;
 
 export interface KernelMemoryRegion {
   readonly pointer: number;
@@ -26,7 +26,6 @@ export type KernelSyscallResponse =
       readonly kind: "return";
       readonly value: number;
       readonly regions: readonly KernelMemoryRegion[];
-      readonly transferWindow?: number;
       readonly io?: {
         readonly descriptor: "file" | "stdio" | "other";
         readonly nonblocking: boolean;

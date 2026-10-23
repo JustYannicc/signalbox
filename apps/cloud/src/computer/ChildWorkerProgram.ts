@@ -56,7 +56,6 @@ export interface ChildWorkerProgramOptions<Host extends object> {
     lease: ChildHostLease,
   ) => {
     readonly host: Host;
-    readonly ready?: Promise<unknown>;
     /** Logical exit may precede dispatch completion when descendants retain the worker. */
     readonly exited?: Promise<KernelCommandExit>;
     readonly close: () => Promise<void> | void;
@@ -120,8 +119,6 @@ export function createChildWorkerProgram<Host extends object>(
         let failure: ChildWorkerDispatchError | undefined;
         let dispatched = false;
         try {
-          // Host setup must finish before the worker receives its capability.
-          await owner.ready;
           context.signal.throwIfAborted();
           dispatched = true;
           return await dispatch.run(
