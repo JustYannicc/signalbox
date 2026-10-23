@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { withKernelFileWrite } from "../KernelIoLock.ts";
 import type { CreateOptions, Inode } from "../storage.ts";
 import { MAX_TRANSFER_BYTES } from "../KernelSyscallPort.ts";
 import { utf8ByteLength, WasiError, WasiMemory } from "./internal_wasi_memory.ts";
@@ -370,11 +371,10 @@ export class WasiPathCalls {
         if (byteAccess !== undefined && selection.kind === "view") byteView = selection.view;
       }
       if (truncate) {
-        if (byteAccess !== undefined) {
-          byteAccess.truncate(0n);
-        } else {
-          yield* complete(resolved.mount.storage.truncate(inode, 0n));
-        }
+        const storage = resolved.mount.storage;
+        yield* withKernelFileWrite(storage, inode, () =>
+          byteAccess !== undefined ? byteAccess.truncate(0n) : storage.truncate(inode, 0n),
+        );
       }
       childFd = this.#descriptors.allocate({
         kind: resolved.stat.type,

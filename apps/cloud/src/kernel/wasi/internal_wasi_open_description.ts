@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type { Inode, DirectoryEntry } from "../storage.ts";
-import { KernelIoLock, kernelFileWriteLock } from "../KernelIoLock.ts";
+import { KernelIoLock, acquireKernelFileWrite } from "../KernelIoLock.ts";
 import type { KernelFileByteAccess, KernelFileByteView } from "../KernelFileBytes.ts";
 import { complete, type WasiCall } from "./internal_wasi_calls.ts";
 import { WasiError } from "./internal_wasi_memory.ts";
@@ -158,18 +158,19 @@ export class WasiOpenDescription {
 
   *acquireIo(owner: object, write: boolean, signal?: AbortSignal): WasiCall<() => void> {
     const releaseOffset = yield* this.#offsetLock.acquire(owner, signal);
+    let acquired = false;
     try {
       const releaseInode =
         write && this.kind === "file" && this.mount !== undefined && this.inode !== undefined
-          ? yield* kernelFileWriteLock(this.mount.storage, this.inode).acquire(owner, signal)
+          ? yield* acquireKernelFileWrite(this.mount.storage, this.inode, owner, signal)
           : () => {};
+      acquired = true;
       return () => {
         releaseInode();
         releaseOffset();
       };
-    } catch (error) {
-      releaseOffset();
-      throw error;
+    } finally {
+      if (!acquired) releaseOffset();
     }
   }
 }

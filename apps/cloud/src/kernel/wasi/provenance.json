@@ -41,7 +41,7 @@
     },
     {
       "file": "internal_wasi_calls.ts",
-      "reason": "An optional synchronous step wrapper lets kernel CPU accounting measure generator work without charging the Promises yielded for I/O. Yielded operations stay owned across step-wrapper failures, and iterator cleanup finishes before the original failure propagates. The default step runner preserves generic WASI behavior."
+      "reason": "An optional synchronous step wrapper lets kernel CPU accounting measure generator work without charging the Promises yielded for I/O. Yielded operations stay owned across step-wrapper failures, and iterator cleanup finishes before the original failure propagates. The default step runner preserves generic WASI behavior. The synchronous runner marks its generator steps as inline I/O so inode contention cannot force it to suspend."
     },
     {
       "file": "internal_wasi_path_calls.ts",
@@ -57,7 +57,7 @@
     },
     {
       "file": "internal_wasi_descriptors.ts, internal_wasi_open_description.ts",
-      "reason": "Child I/O continuation RPCs re-enter an owner-held open-description lock. Regular-file writes additionally serialize by storage and inode across separate opens; APPEND resolves once and later chunks use the held offset. Cancellation removes queued lock requests and teardown releases held sequences after started work settles."
+      "reason": "Child I/O continuation RPCs re-enter an owner-held open-description lock. Regular-file writes additionally serialize by storage and inode across separate opens; Truncation shares the inode lock. Inline synchronous callers acquire it only when available and may interleave with child chunks; append chunks recheck EOF so a synchronous truncate cannot leave a hole. Cancellation removes queued lock requests and teardown releases held sequences after started work settles."
     }
   ],
   "upstreamAlignment": {

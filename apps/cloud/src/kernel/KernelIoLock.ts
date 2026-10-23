@@ -1,4 +1,5 @@
-import type { WasiCall } from "./wasi/internal_wasi_calls.ts";
+import { currentKernelIoMode, currentKernelSignal } from "./process/KernelExecution.ts";
+import { complete, type WasiCall } from "./wasi/internal_wasi_calls.ts";
 import { WasiError } from "./wasi/internal_wasi_memory.ts";
 
 interface Waiter {
@@ -19,11 +20,8 @@ export class KernelIoLock {
 
   *acquire(owner: object, signal?: AbortSignal): WasiCall<() => void> {
     if (signal?.aborted) throw new WasiError(11);
-    if (this.#owner === owner) return () => {};
-    if (this.#owner === undefined) {
-      this.#owner = owner;
-      return this.#release(owner);
-    }
+    const release = this.tryAcquire(owner);
+    if (release !== undefined) return release;
 
     const waiter: Waiter = { owner, ready: Promise.withResolvers<void>(), granted: false };
     this.#waiters.push(waiter);
@@ -45,6 +43,13 @@ export class KernelIoLock {
         }
       }
     }
+  }
+
+  tryAcquire(owner: object): (() => void) | undefined {
+    if (this.#owner === owner) return () => {};
+    if (this.#owner !== undefined) return undefined;
+    this.#owner = owner;
+    return this.#release(owner);
   }
 
   *with<T>(operation: () => WasiCall<T>, owner: object = {}): WasiCall<T> {
@@ -89,4 +94,31 @@ export function kernelFileWriteLock(storage: object, inode: bigint) {
     entries.set(inode, lock);
   }
   return lock;
+}
+
+/** Inline execution cannot suspend behind another process's continuation. */
+export function* acquireKernelFileWrite(
+  storage: object,
+  inode: bigint,
+  owner: object,
+  signal = currentKernelSignal(),
+): WasiCall<() => void> {
+  const lock = kernelFileWriteLock(storage, inode);
+  if (signal?.aborted) throw new WasiError(11);
+  // Sync callers retain their original immediate semantics and may interleave with child chunks.
+  if (currentKernelIoMode() === "sync") return lock.tryAcquire(owner) ?? (() => {});
+  return yield* lock.acquire(owner, signal);
+}
+
+export function* withKernelFileWrite<T>(
+  storage: object,
+  inode: bigint,
+  operation: () => T | Promise<T>,
+): WasiCall<T> {
+  const release = yield* acquireKernelFileWrite(storage, inode, {});
+  try {
+    return yield* complete(operation());
+  } finally {
+    release();
+  }
 }

@@ -5,6 +5,7 @@
 
 /* eslint-disable require-yield -- WASI handlers share a generator protocol for immediate and suspending calls. */
 
+import { acquireKernelFileWrite, withKernelFileWrite } from "../KernelIoLock.ts";
 import type { DirectoryEntry, Inode, Stat, Times } from "../storage.ts";
 import { utf8ByteLength, WasiError, WasiMemory } from "./internal_wasi_memory.ts";
 import { complete, mapErrno, type WasiCall } from "./internal_wasi_calls.ts";
@@ -124,10 +125,16 @@ export class WasiFdCalls {
     const size = normalizeU64(length);
     const end = start + size;
     if (end > MAX_FILE_SIZE) throw new WasiError(EFBIG);
-    const stat = yield* this.#stat(descriptor);
-    if (stat.type !== "file") throw new WasiError(stat.type === "directory" ? EISDIR : EINVAL);
-    if (end > stat.size) yield* this.#truncate(descriptor, end);
-    return 0;
+    const release = yield* acquireKernelFileWrite(descriptor.mount.storage, descriptor.inode, {});
+    try {
+      const stat = yield* this.#stat(descriptor);
+      if (stat.type !== "file") throw new WasiError(stat.type === "directory" ? EISDIR : EINVAL);
+      // A writer may have extended the file while allocation waited for the inode.
+      if (end > stat.size) yield* complete(this.#truncateBytes(descriptor, end));
+      return 0;
+    } finally {
+      release();
+    }
   }
 
   *fdClose(fd: number): WasiCall<number> {
@@ -486,13 +493,10 @@ export class WasiFdCalls {
             requireStorageDescriptor(descriptor),
             source,
             descriptor.offset,
-            // signalbox: APPEND resolves once; the held offset continues contiguously.
-            this.#memory.transferOffset === 0,
+            // signalbox: sync truncates can bypass the inode lock, so each chunk rechecks EOF.
+            true,
           );
-    if (
-      descriptor.kind !== "stdio" &&
-      ((descriptor.flags & FDFLAGS.APPEND) === 0 || this.#memory.transferOffset > 0)
-    ) {
+    if (descriptor.kind !== "stdio" && (descriptor.flags & FDFLAGS.APPEND) === 0) {
       descriptor.offset += BigInt(count);
     }
     yield* this.#syncAfterWrite(descriptor);
@@ -685,11 +689,15 @@ export class WasiFdCalls {
   }
 
   *#truncate(descriptor: WasiStorageDescriptor, size: bigint): WasiCall<void> {
-    if (descriptor.byteAccess !== undefined) {
-      descriptor.byteAccess.truncate(size);
-      return;
-    }
-    yield* complete(descriptor.mount.storage.truncate(descriptor.inode, size));
+    yield* withKernelFileWrite(descriptor.mount.storage, descriptor.inode, () =>
+      this.#truncateBytes(descriptor, size),
+    );
+  }
+
+  #truncateBytes(descriptor: WasiStorageDescriptor, size: bigint) {
+    return descriptor.byteAccess !== undefined
+      ? descriptor.byteAccess.truncate(size)
+      : descriptor.mount.storage.truncate(descriptor.inode, size);
   }
 
   *#getDirectoryEntries(descriptor: WasiStorageDescriptor): WasiCall<DirectoryEntry[]> {

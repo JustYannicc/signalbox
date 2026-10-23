@@ -22,6 +22,7 @@ import {
 } from "./KernelSyscallPort.ts";
 import { FDFLAGS } from "./wasi/internal_wasi_descriptors.ts";
 import { kernelPayloadBudget, type KernelPayloadWindow } from "./KernelPayloadBudget.ts";
+import { createKernelSyscallWindows } from "./KernelSyscallWindows.ts";
 
 export interface KernelSyscallHostOptions extends KernelWasiSignalOptions {
   readonly filesystem: KernelFileSystem;
@@ -35,7 +36,7 @@ export interface KernelSyscallHostOptions extends KernelWasiSignalOptions {
 export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
   const memory = new SyscallMemory();
   const sequence = new KernelFileIoSequence(options.filesystem);
-  const startingWindow = 64 * 1024;
+  const windows = createKernelSyscallWindows();
   const filesystem = new WasiFileSystem(memory, [], [], {
     table: options.filesystem.descriptors,
     ownership: "borrowed",
@@ -168,6 +169,15 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
             const operation: WasiCall<number> = Reflect.apply(handler, undefined, args);
             const value = await runKernelExecution(controller.signal, () => runAsync(operation));
             moved = value === 0 ? transferCount(request, memory) : 0;
+            if (credited && value === 0) {
+              windows.observe(request, memory, {
+                moved,
+                transferLimit: memory.transferLimit,
+                currentWindow: current?.bytes ?? KERNEL_SYSCALL_INITIAL_WINDOW,
+                descriptor: descriptorIo?.descriptor,
+                nonblocking: descriptorIo?.nonblocking ?? false,
+              });
+            }
             sequence.complete(request, moved, memory.transferLimit, value === 0);
             const result = snapshot(value);
             response = result.response;
@@ -189,13 +199,10 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
           current?.release();
         }
         if (response.kind === "return" && credited && !closed && !controller.signal.aborted) {
-          // A bulk syscall's last small chunk still reflects the complete transfer, not an idle reader.
-          const recentUse = (request.transferOffset ?? 0) + moved;
-          const preferredWindow = Math.min(1024 * 1024, Math.max(startingWindow, recentUse * 2));
           const granted = await kernelPayloadBudget.open(
             controller.signal,
             responseBytes,
-            preferredWindow,
+            windows.preferredWindow,
           );
           if (closed || controller.signal.aborted) granted.release();
           else {
