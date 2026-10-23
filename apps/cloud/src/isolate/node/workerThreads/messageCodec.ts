@@ -36,6 +36,9 @@ type TransferHooks<Port extends object> = Pick<
 
 type AdoptionHooks<Port extends object> = Pick<WorkerMessagePortHooks<Port>, "adoptTransfers">;
 
+type InternalCloneKind = "deferred" | "omit";
+type InternalCloneMarker = Readonly<{ marker: object; kind: InternalCloneKind }>;
+
 const mapProbe = {};
 const setProbe = {};
 const weakCollectionProbe = {};
@@ -281,7 +284,28 @@ export function encodeWorkerMessage<Port extends object>(
   }
 
   const seen = new WeakMap<object, object>();
-  const cloneForNative = (source: unknown): unknown => {
+  const internalCloneMarkers: InternalCloneMarker[] = [];
+  const objectMirrors: object[] = [];
+  const collections: object[] = [];
+  const createInternalMarker = (kind: InternalCloneKind): object => {
+    const marker = {};
+    internalCloneMarkers.push({ marker, kind });
+    return marker;
+  };
+  const createOmittedClone = (): object => ({ marker: createInternalMarker("omit") });
+  const createDeferredClone = (source: unknown): object => {
+    const holder = { marker: createInternalMarker("deferred") };
+    Object.defineProperty(holder, "value", {
+      get() {
+        return cloneForNative(source);
+      },
+      configurable: true,
+      enumerable: true,
+    });
+    return holder;
+  };
+
+  function cloneForNative(source: unknown): unknown {
     if (source === null || (typeof source !== "object" && typeof source !== "function")) {
       if (typeof source === "symbol") throw dataCloneError("Symbols cannot be cloned");
       return source;
@@ -325,8 +349,9 @@ export function encodeWorkerMessage<Port extends object>(
     if (hasMapBrand(source)) {
       const target = new Map<unknown, unknown>();
       seen.set(source, target);
+      collections.push(target);
       for (const [key, entry] of Map.prototype.entries.call(source)) {
-        target.set(cloneForNative(key), cloneForNative(entry));
+        target.set(createDeferredClone(key), createDeferredClone(entry));
       }
       return target;
     }
@@ -334,7 +359,8 @@ export function encodeWorkerMessage<Port extends object>(
     if (hasSetBrand(source)) {
       const target = new Set<unknown>();
       seen.set(source, target);
-      for (const entry of Set.prototype.values.call(source)) target.add(cloneForNative(entry));
+      collections.push(target);
+      for (const entry of Set.prototype.values.call(source)) target.add(createDeferredClone(entry));
       return target;
     }
 
@@ -365,11 +391,14 @@ export function encodeWorkerMessage<Port extends object>(
 
     const target: object = Array.isArray(source) ? [] : {};
     seen.set(source, target);
+    objectMirrors.push(target);
     if (Array.isArray(source)) (target as unknown[]).length = source.length;
-    // Native traversal must snapshot earlier values before a later getter mutates them.
     for (const key of Object.keys(source)) {
       Object.defineProperty(target, key, {
         get() {
+          if (!Object.hasOwn(source, key)) {
+            return createOmittedClone();
+          }
           return cloneForNative(Reflect.get(source, key, source));
         },
         configurable: true,
@@ -377,15 +406,93 @@ export function encodeWorkerMessage<Port extends object>(
       });
     }
     return target;
-  };
+  }
 
   const envelope = {
     value: cloneForNative(value),
     ports: portTransfers.map(({ marker, prepared }) => ({ marker, handle: prepared.handle })),
+    internalCloneMarkers,
+    objectMirrors,
+    collections,
   };
   const cloneOptions =
     nativeTransfers === undefined ? undefined : { transfer: nativeTransfers as Transferable[] };
-  const packet = structuredClone(envelope, cloneOptions) as EncodedWorkerMessage;
+  const cloned = structuredClone(envelope, cloneOptions) as {
+    value: unknown;
+    ports: EncodedWorkerMessage["ports"];
+    internalCloneMarkers: InternalCloneMarker[];
+    objectMirrors: object[];
+    collections: object[];
+  };
+  const internalMarkerKinds = new WeakMap<object, InternalCloneKind>();
+  for (const { marker, kind } of cloned.internalCloneMarkers) {
+    internalMarkerKinds.set(marker, kind);
+  }
+
+  const resolveDeferredClone = (value: unknown): unknown => {
+    if (value === null || typeof value !== "object") return value;
+    const markerDescriptor = Object.getOwnPropertyDescriptor(value, "marker");
+    const marker =
+      markerDescriptor !== undefined && "value" in markerDescriptor
+        ? markerDescriptor.value
+        : undefined;
+    if (
+      marker === null ||
+      typeof marker !== "object" ||
+      internalMarkerKinds.get(marker) !== "deferred"
+    ) {
+      return value;
+    }
+    const valueDescriptor = Object.getOwnPropertyDescriptor(value, "value");
+    return valueDescriptor !== undefined && "value" in valueDescriptor
+      ? valueDescriptor.value
+      : undefined;
+  };
+
+  for (const mirror of cloned.objectMirrors) {
+    for (const key of Object.keys(mirror)) {
+      const descriptor = Object.getOwnPropertyDescriptor(mirror, key);
+      const child =
+        descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined;
+      const markerDescriptor =
+        child !== null && typeof child === "object"
+          ? Object.getOwnPropertyDescriptor(child, "marker")
+          : undefined;
+      const marker =
+        markerDescriptor !== undefined && "value" in markerDescriptor
+          ? markerDescriptor.value
+          : undefined;
+      if (
+        marker !== null &&
+        typeof marker === "object" &&
+        internalMarkerKinds.get(marker) === "omit"
+      ) {
+        Reflect.deleteProperty(mirror, key);
+      }
+    }
+  }
+
+  for (const collection of cloned.collections) {
+    if (hasMapBrand(collection)) {
+      const entries = Array.from(Map.prototype.entries.call(collection)) as Array<
+        [unknown, unknown]
+      >;
+      Map.prototype.clear.call(collection);
+      for (const [key, entry] of entries) {
+        Map.prototype.set.call(collection, resolveDeferredClone(key), resolveDeferredClone(entry));
+      }
+    } else if (hasSetBrand(collection)) {
+      const entries = Array.from(Set.prototype.values.call(collection));
+      Set.prototype.clear.call(collection);
+      for (const entry of entries) Set.prototype.add.call(collection, resolveDeferredClone(entry));
+    }
+  }
+
+  const finalizedValue = cloned.value;
+  const packet: EncodedWorkerMessage = {
+    value: finalizedValue,
+    ports: cloned.ports,
+  };
 
   for (const { prepared } of portTransfers) prepared.commit();
   return packet;

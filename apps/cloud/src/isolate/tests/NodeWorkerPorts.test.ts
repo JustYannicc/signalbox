@@ -17,20 +17,32 @@ function runtime(
   broker: NodeWorkerPortBroker,
   options: Readonly<{
     beforeReceive?: (event: NodeWorkerPortEvent) => Promise<void> | void;
+    afterReceive?: (event: NodeWorkerPortEvent, result: Promise<boolean>) => void;
+    beforeClose?: () => Promise<void> | void;
     onReferenceChange?: () => void;
   }> = {},
 ): Runtime {
   const ports = new NodeWorkerPorts({
     owner,
-    connect: (receiver) =>
-      Promise.resolve(
-        broker.connect(owner, {
-          receive: async (event) => {
-            await options.beforeReceive?.(event);
-            return receiver.receive(event);
-          },
-        }),
-      ),
+    connect: async (receiver) => {
+      const connection = broker.connect(owner, {
+        receive: async (event) => {
+          await options.beforeReceive?.(event);
+          const result = receiver.receive(event);
+          options.afterReceive?.(event, result);
+          return result;
+        },
+      });
+      return {
+        open: connection.open,
+        post: connection.post,
+        start: connection.start,
+        close: async (address) => {
+          await options.beforeClose?.();
+          return connection.close(address);
+        },
+      };
+    },
     disconnect: () => broker.disconnect(owner),
     ...(options.onReferenceChange === undefined
       ? {}
@@ -192,6 +204,76 @@ describe("worker message port facade", () => {
       nativeCarrier.port2.close();
       nativeInData.port1.close();
       for (const port of nativeEvent?.ports ?? []) port.close();
+      await dispose(f);
+    }
+  });
+
+  it("fences a pending message after explicit close and still emits close", async () => {
+    const native = new NodeWorkerThreads.MessageChannel();
+    const nativeClosed = Promise.withResolvers<void>();
+    const nativeMessages: unknown[] = [];
+    native.port2.on("message", (value: unknown) => nativeMessages.push(value));
+    native.port2.once("close", () => nativeClosed.resolve());
+    native.port1.postMessage("pending");
+    native.port2.close();
+    await nativeClosed.promise;
+    native.port1.close();
+
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const closeStarted = Promise.withResolvers<void>();
+    const releaseClose = Promise.withResolvers<void>();
+    const receiveResult = Promise.withResolvers<{ readonly result: Promise<boolean> }>();
+    const f = await bridge({
+      receiver: {
+        beforeReceive: async (event) => {
+          if (event.type !== "message") return;
+          entered.resolve();
+          await release.promise;
+        },
+        afterReceive: (event, result) => {
+          if (event.type === "message") receiveResult.resolve({ result });
+        },
+        beforeClose: async () => {
+          closeStarted.resolve();
+          await releaseClose.promise;
+        },
+      },
+    });
+    const messages: unknown[] = [];
+    let closeCount = 0;
+    f.receiverPort.on("message", (value: unknown) => messages.push(value));
+    f.receiverPort.on("close", () => closeCount++);
+
+    try {
+      await f.receiver.ports.drain();
+      f.sourcePort.postMessage("pending");
+      await entered.promise;
+      f.receiverPort.close();
+      await closeStarted.promise;
+      release.resolve();
+      const { result } = await receiveResult.promise;
+      let resultSettled = false;
+      void result.then(
+        () => {
+          resultSettled = true;
+        },
+        () => {
+          resultSettled = true;
+        },
+      );
+      await Promise.resolve();
+      expect(resultSettled).toBe(false);
+      releaseClose.resolve();
+      await f.receiver.ports.drain();
+      await f.broker.drain();
+      expect(messages).toEqual(nativeMessages);
+      expect(closeCount).toBe(1);
+    } finally {
+      release.resolve();
+      releaseClose.resolve();
+      native.port1.close();
+      native.port2.close();
       await dispose(f);
     }
   });

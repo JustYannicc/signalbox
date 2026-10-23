@@ -255,10 +255,8 @@ describe("Node worker_threads facade", () => {
       exited.resolve(code);
     });
     worker.unref();
-    expect(worker.hasRef()).toBe(false);
     expect(h.facade.referenced).toBe(false);
     worker.ref();
-    expect(worker.hasRef()).toBe(true);
     expect(h.facade.referenced).toBe(true);
     worker.postMessage("queued before online");
     const stdinWritten = deferred<void>();

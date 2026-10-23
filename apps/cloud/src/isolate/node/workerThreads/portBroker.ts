@@ -13,10 +13,18 @@ interface Port {
   closed: boolean;
   peerClosed: boolean;
   readonly pending: NodeWorkerMessage[];
+  readonly pendingTransfers: Map<NodeWorkerMessage, PendingTransfers>;
+  queuePins: number;
   delivering: NodeWorkerMessage | undefined;
-  deliveringOwner: string | undefined;
   pumping: Promise<void> | undefined;
 }
+
+interface TransferLease {
+  owner: string;
+  readonly lease: string;
+}
+
+type PendingTransfers = Map<Port, TransferLease>;
 
 interface Owner {
   readonly receiver: NodeWorkerPortReceiver;
@@ -77,8 +85,9 @@ export class NodeWorkerPortBroker {
               closed: false,
               peerClosed: false,
               pending: [],
+              pendingTransfers: new Map(),
+              queuePins: 0,
               delivering: undefined,
-              deliveringOwner: undefined,
               pumping: undefined,
             });
         }),
@@ -89,6 +98,7 @@ export class NodeWorkerPortBroker {
           const destination = this.#ports.get(source.peer);
           if (destination === undefined || destination.closed) return;
           this.#move(owner, destination.owner, message);
+          destination.pendingTransfers.set(message, this.#pinTransfers(message, destination.owner));
           destination.pending.push(message);
           this.#schedule(destination);
         }),
@@ -118,7 +128,7 @@ export class NodeWorkerPortBroker {
       if (binding === undefined) return;
       binding.active = false;
       for (const port of this.#ports.values())
-        if (port.owner === owner && !port.closed) this.#close(port);
+        if (port.owner === owner && !port.closed && port.queuePins === 0) this.#close(port);
       this.#owners.delete(owner);
     });
   }
@@ -164,6 +174,65 @@ export class NodeWorkerPortBroker {
       port.started = false;
     }
     for (const port of nested) port.owner = to;
+    const movedPorts = new Set([...ports.map(({ port }) => port), ...nested]);
+    for (const container of movedPorts)
+      for (const [message, transfers] of container.pendingTransfers) {
+        if (message === container.delivering) continue;
+        for (const [transferred, lease] of transfers)
+          if (movedPorts.has(transferred) && lease.owner === from) lease.owner = to;
+      }
+  }
+
+  #pinTransfers(message: NodeWorkerMessage, owner: string): PendingTransfers {
+    const ports = new Set<Port>();
+    this.#collectMessage(message, owner, ports);
+    const transfers: PendingTransfers = new Map();
+    for (const port of ports) {
+      transfers.set(port, { owner, lease: port.address.lease });
+      port.queuePins++;
+    }
+    return transfers;
+  }
+
+  #retargetTransfers(transfers: PendingTransfers, from: string, to: string): void {
+    for (const [port, lease] of transfers)
+      if (
+        lease.owner !== from ||
+        port.owner !== from ||
+        port.address.lease !== lease.lease ||
+        this.#ports.get(port.address.id) !== port
+      )
+        throw new Error("Queued worker port transfer changed during delivery");
+    for (const [port, lease] of transfers) {
+      port.owner = to;
+      lease.owner = to;
+    }
+  }
+
+  #closeTransfers(transfers: PendingTransfers): void {
+    for (const [port, lease] of transfers)
+      if (
+        port.owner === lease.owner &&
+        port.address.lease === lease.lease &&
+        this.#ports.get(port.address.id) === port
+      )
+        this.#close(port);
+  }
+
+  #releaseTransfers(transfers: PendingTransfers): void {
+    for (const [port] of transfers) {
+      port.queuePins--;
+      if (port.queuePins === 0 && port.peerClosed && port.pending.length === 0)
+        this.#schedule(port);
+    }
+  }
+
+  #dropPending(port: Port, message: NodeWorkerMessage): void {
+    const transfers = port.pendingTransfers.get(message);
+    if (transfers === undefined) return;
+    this.#closeTransfers(transfers);
+    port.pendingTransfers.delete(message);
+    this.#releaseTransfers(transfers);
   }
 
   #collectMessage(message: NodeWorkerMessage, owner: string, nested: Set<Port>): void {
@@ -196,43 +265,9 @@ export class NodeWorkerPortBroker {
   }
 
   #discardPending(port: Port): void {
-    const abandoned = new Set<Port>();
-    for (const message of port.pending) {
-      this.#collectDiscardedMessage(
-        message,
-        message === port.delivering ? (port.deliveringOwner ?? port.owner) : port.owner,
-        abandoned,
-      );
-    }
+    for (const message of port.pending) this.#dropPending(port, message);
     port.pending.length = 0;
-    for (const nested of abandoned) this.#close(nested);
-  }
-
-  #discardMessage(message: NodeWorkerMessage, owner: string): void {
-    const abandoned = new Set<Port>();
-    this.#collectDiscardedMessage(message, owner, abandoned);
-    for (const nested of abandoned) this.#close(nested);
-  }
-
-  #collectDiscardedMessage(message: NodeWorkerMessage, owner: string, abandoned: Set<Port>): void {
-    for (const { handle } of message.ports) {
-      const port = this.#ports.get(handle.id);
-      if (
-        port === undefined ||
-        port.owner !== owner ||
-        port.address.lease !== handle.lease ||
-        abandoned.has(port)
-      )
-        continue;
-      abandoned.add(port);
-      for (const pending of port.pending) {
-        this.#collectDiscardedMessage(
-          pending,
-          pending === port.delivering ? (port.deliveringOwner ?? port.owner) : port.owner,
-          abandoned,
-        );
-      }
-    }
+    port.pendingTransfers.clear();
   }
 
   #schedule(port: Port): void {
@@ -247,25 +282,28 @@ export class NodeWorkerPortBroker {
           if (owner === undefined || !owner.active || message === undefined) break;
           const address = port.address;
           const receivingOwner = port.owner;
+          const transfers = port.pendingTransfers.get(message) ?? new Map();
           port.delivering = message;
-          port.deliveringOwner = receivingOwner;
           const accepted = await owner.receiver.receive({
             type: "message",
             port: address,
             message,
           });
           port.delivering = undefined;
-          port.deliveringOwner = undefined;
           if (accepted) {
-            if (port.pending[0] === message) port.pending.shift();
+            if (port.pending[0] === message) {
+              port.pending.shift();
+              port.pendingTransfers.delete(message);
+              if (!owner.active || this.#owners.get(receivingOwner) !== owner)
+                this.#closeTransfers(transfers);
+              this.#releaseTransfers(transfers);
+            }
           } else if (
             !port.closed &&
             address.lease !== port.address.lease &&
             this.#ports.get(address.id) === port
           ) {
-            const nested = new Set<Port>();
-            this.#collectMessage(message, receivingOwner, nested);
-            for (const transferred of nested) transferred.owner = port.owner;
+            this.#retargetTransfers(transfers, receivingOwner, port.owner);
           } else if (
             !owner.active ||
             this.#owners.get(receivingOwner) !== owner ||
@@ -273,7 +311,7 @@ export class NodeWorkerPortBroker {
             this.#ports.get(address.id) !== port
           ) {
             if (port.pending[0] === message) {
-              this.#discardMessage(message, receivingOwner);
+              this.#dropPending(port, message);
               port.pending.shift();
             }
           } else if (address.lease === port.address.lease) {
@@ -285,10 +323,18 @@ export class NodeWorkerPortBroker {
           const owner = this.#owners.get(port.owner);
           if (owner?.active) await owner.receiver.receive({ type: "close", port: port.address });
           this.#ports.delete(port.address.id);
-        } else if (port.peerClosed && port.pending.length === 0) {
+        } else if (port.peerClosed && port.pending.length === 0 && port.queuePins === 0) {
+          const address = port.address;
+          const ownerId = port.owner;
           const owner = this.#owners.get(port.owner);
-          if (owner?.active) await owner.receiver.receive({ type: "close", port: port.address });
-          this.#ports.delete(port.address.id);
+          if (owner?.active) await owner.receiver.receive({ type: "close", port: address });
+          if (
+            this.#ports.get(address.id) === port &&
+            port.owner === ownerId &&
+            port.address.lease === address.lease &&
+            this.#owners.get(ownerId) === owner
+          )
+            this.#ports.delete(address.id);
         }
         completed = true;
       })
@@ -300,7 +346,7 @@ export class NodeWorkerPortBroker {
           this.#ports.get(port.address.id) === port &&
           (port.closed ||
             (port.started && port.pending.length > 0) ||
-            (port.peerClosed && port.pending.length === 0))
+            (port.peerClosed && port.pending.length === 0 && port.queuePins === 0))
         )
           this.#schedule(port);
       });

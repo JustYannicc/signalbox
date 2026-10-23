@@ -262,6 +262,93 @@ describe("worker message codec", () => {
     expect(input.buffer.byteLength).toBe(0);
   });
 
+  it("omits an own property deleted by an earlier getter", () => {
+    const makeMessage = () => {
+      const message: { first?: number; later?: number } = {
+        get first() {
+          delete message.later;
+          return 1;
+        },
+        later: 2,
+      };
+      return message;
+    };
+    const native = structuredClone(makeMessage());
+    const encoded = encodeWorkerMessage(makeMessage(), { ports: makePortRegistry().hooks });
+    const clone = encoded.value as object;
+
+    expect(Object.keys(clone)).toEqual(Object.keys(native));
+    expect(clone).toEqual(native);
+  });
+
+  it("clones a later own property made non-enumerable by an earlier getter", () => {
+    const makeMessage = () => {
+      const message: { first?: number; later?: number } = {
+        get first() {
+          Object.defineProperty(message, "later", { enumerable: false });
+          return 1;
+        },
+        later: 2,
+      };
+      return message;
+    };
+    const native = structuredClone(makeMessage());
+    const encoded = encodeWorkerMessage(makeMessage(), { ports: makePortRegistry().hooks });
+    const clone = encoded.value as object;
+
+    expect(Object.keys(clone)).toEqual(Object.keys(native));
+    expect(clone).toEqual(native);
+    expect(clone).toHaveProperty("later", 2);
+  });
+
+  it("reads a later Map value after an earlier entry getter mutates it", () => {
+    const makeMessage = () => {
+      const later: Record<string, number> = { removed: 1 };
+      const first = {
+        get mutate() {
+          delete later.removed;
+          later.added = 2;
+          return true;
+        },
+      };
+      return new Map<string, object>([
+        ["first", first],
+        ["later", later],
+      ]);
+    };
+    const native = structuredClone(makeMessage());
+    const encoded = encodeWorkerMessage(makeMessage(), { ports: makePortRegistry().hooks });
+    const clone = encoded.value as Map<string, Record<string, number>>;
+
+    expect(Object.keys(clone.get("later")!)).toEqual(Object.keys(native.get("later")!));
+    expect(clone.get("later")).toEqual(native.get("later"));
+    expect(clone.get("later")).toEqual({ added: 2 });
+  });
+
+  it("keeps Map membership in native traversal order when a getter changes the source Map", () => {
+    const makeMessage = () => {
+      let message: Map<string, object>;
+      const first = {
+        get mutate() {
+          message.delete("later");
+          message.set("added", { value: 2 });
+          return true;
+        },
+      };
+      message = new Map<string, object>([
+        ["first", first],
+        ["later", { value: 1 }],
+      ]);
+      return message;
+    };
+    const native = structuredClone(makeMessage());
+    const encoded = encodeWorkerMessage(makeMessage(), { ports: makePortRegistry().hooks });
+    const clone = encoded.value as Map<string, object>;
+
+    expect(Array.from(clone)).toEqual(Array.from(native));
+    expect(Array.from(clone.keys())).toEqual(["first", "later"]);
+  });
+
   it("transfers a logical port once and replaces every alias by its adopted port", () => {
     const registry = makePortRegistry();
     const port = registry.createPort("peer-1");

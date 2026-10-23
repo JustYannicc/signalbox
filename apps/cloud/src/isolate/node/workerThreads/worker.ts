@@ -53,6 +53,8 @@ export function createNodeWorkerThreadsWithPorts(
 
   const environmentData = new Map(context.environmentData ?? []);
   const workers = new Set<WorkerFacade>();
+  const unreferenced = new WeakSet<WorkerFacade>();
+  let finishing = 0;
   let changed = Promise.withResolvers<void>();
   let disposed = false;
   let disposePromise: Promise<void> | undefined;
@@ -165,21 +167,20 @@ export function createNodeWorkerThreadsWithPorts(
       this.#setReferenced(false);
       return this;
     }
-    hasRef(): boolean {
-      return !this.#exited && this.#referenced;
-    }
     get threadId(): number {
       return this.#threadId;
     }
 
     terminate(): Promise<number> {
-      if (this.#exitCode !== undefined) return Promise.resolve(this.#exitCode);
+      const finished = this.#joinExit();
+      if (finished !== undefined) return finished;
       this.#terminating = true;
       if (this.#terminationPromise === undefined) {
         this.#terminationPromise = this.#ensureStarted().then(
           (run) => this.#stopRun(run),
           (error: unknown) => {
-            if (this.#exitCode !== undefined) return this.#exitCode;
+            const finished = this.#joinExit();
+            if (finished !== undefined) return finished;
             throw error;
           },
         );
@@ -188,24 +189,18 @@ export function createNodeWorkerThreadsWithPorts(
       return this.#terminationPromise;
     }
 
-    get blocksDrain(): boolean {
-      // A confirmed stop still has to deliver its final output and exit.
-      return this.#exited || this.hasRef();
-    }
-
     startCpuProfile = unsupported("Worker.startCpuProfile");
     startHeapProfile = unsupported("Worker.startHeapProfile");
     getHeapSnapshot = unsupported("Worker.getHeapSnapshot");
     cpuUsage = unsupported("Worker.cpuUsage");
 
-    #referenced = true;
-
     readonly #forwardMessage = (message: unknown) => this.emit("message", message);
     readonly #forwardMessageError = (error: unknown) => this.emit("messageerror", error);
 
     #setReferenced(referenced: boolean): void {
-      if (this.#exited || this.#referenced === referenced) return;
-      this.#referenced = referenced;
+      if (this.#exited || unreferenced.has(this) === !referenced) return;
+      if (referenced) unreferenced.delete(this);
+      else unreferenced.add(this);
       if (referenced) this.#port.ref();
       else this.#port.unref();
       this.#onReferenceChange();
@@ -271,7 +266,8 @@ export function createNodeWorkerThreadsWithPorts(
     }
 
     #stopRun(run: NodeWorkerRun): Promise<number> {
-      if (this.#exitCode !== undefined) return Promise.resolve(this.#exitCode);
+      const finished = this.#joinExit();
+      if (finished !== undefined) return finished;
       if (this.#stopPromise !== undefined) return this.#stopPromise;
       this.#stopPromise = ports
         .drain()
@@ -287,32 +283,49 @@ export function createNodeWorkerThreadsWithPorts(
       return this.#stopPromise;
     }
 
-    async #finishExit(exit: NodeWorkerExit): Promise<void> {
+    #joinExit(): Promise<number> | undefined {
+      if (this.#exitCode === undefined) return undefined;
+      const code = this.#exitCode;
+      return Promise.resolve(this.#finishPromise).then(() => code);
+    }
+
+    #finishExit(exit: NodeWorkerExit): Promise<void> {
       if (this.#finishPromise !== undefined) return this.#finishPromise;
+      const completion = Promise.withResolvers<void>();
+      this.#finishPromise = completion.promise;
+      finishing++;
       this.#exitCode = exit.code;
       this.#threadId = -1;
       this.#exited = true;
-      this.#port.off("message", this.#forwardMessage);
-      this.#port.off("messageerror", this.#forwardMessageError);
-      this.#port.close();
-      this.stdin?.destroy();
-      this.stdout?.end();
-      this.stderr?.end();
-      this.#onReferenceChange();
-      this.#finishPromise = (async () => {
+      unreferenced.add(this);
+      void (async () => {
         try {
-          await ports.drain();
-        } catch (error) {
-          this.#recordFailure(error);
+          this.#port.off("message", this.#forwardMessage);
+          this.#port.off("messageerror", this.#forwardMessageError);
+          this.#port.close();
+          this.stdin?.destroy();
+          this.stdout?.end();
+          this.stderr?.end();
+          this.#onReferenceChange();
+          try {
+            await ports.drain();
+          } catch (error) {
+            this.#recordFailure(error);
+          }
+          try {
+            this.emit("exit", exit.code);
+          } catch (error) {
+            this.#recordFailure(error);
+          }
+        } finally {
+          workers.delete(this);
+          finishing--;
+          this.#onReferenceChange();
         }
-        try {
-          this.emit("exit", exit.code);
-        } catch (error) {
-          this.#recordFailure(error);
-        }
-        workers.delete(this);
-        this.#onReferenceChange();
-      })();
+      })().then(completion.resolve, (error: unknown) => {
+        this.#recordFailure(error);
+        completion.reject(error);
+      });
       return this.#finishPromise;
     }
 
@@ -367,7 +380,6 @@ export function createNodeWorkerThreadsWithPorts(
     constructor(filename: string | URL, options?: NodeWorkerOptions) {
       super(filename, options);
       workers.add(this);
-      this.once("exit", () => workers.delete(this));
       referencesChanged();
     }
   };
@@ -379,7 +391,7 @@ export function createNodeWorkerThreadsWithPorts(
       for (;;) {
         const nextChange = changed.promise;
         await waitFor(ports.drain());
-        if (![...workers].some((worker) => worker.blocksDrain)) return;
+        if (finishing === 0 && ![...workers].some((worker) => !unreferenced.has(worker))) return;
         await waitFor(nextChange);
       }
     },
@@ -405,7 +417,7 @@ export function createNodeWorkerThreadsWithPorts(
       return disposePromise;
     },
     get referenced(): boolean {
-      return ports.referenced || [...workers].some((worker) => worker.hasRef());
+      return ports.referenced || [...workers].some((worker) => !unreferenced.has(worker));
     },
     failure: failure.promise,
   };

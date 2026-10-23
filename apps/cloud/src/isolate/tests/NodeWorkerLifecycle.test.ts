@@ -1,4 +1,5 @@
 import * as NodeV8 from "node:v8";
+import * as NodeWorkerThreads from "node:worker_threads";
 import { describe, expect, it } from "vite-plus/test";
 import {
   createNodeWorkerThreads,
@@ -6,7 +7,7 @@ import {
   type NodeWorkerExit,
 } from "../NodeWorkerThreads.ts";
 
-function controlledWorker(settleOnTerminate = true) {
+function controlledWorker(settleOnTerminate = true, beforeClose?: () => Promise<void>) {
   const broker = new NodeWorkerPortBroker();
   const watching = Promise.withResolvers<void>();
   const waiting = Promise.withResolvers<NodeWorkerExit>();
@@ -23,7 +24,16 @@ function controlledWorker(settleOnTerminate = true) {
     context: {
       ports: {
         owner: "lifecycle-main",
-        connect: async (receiver) => broker.connect("lifecycle-main", receiver),
+        connect: async (receiver) => {
+          const connection = broker.connect("lifecycle-main", receiver);
+          return {
+            ...connection,
+            close: async (address) => {
+              await beforeClose?.();
+              return connection.close(address);
+            },
+          };
+        },
         disconnect: () => broker.disconnect("lifecycle-main"),
       },
       isMainThread: true,
@@ -53,6 +63,51 @@ function controlledWorker(settleOnTerminate = true) {
 }
 
 describe("Node Worker facade lifetime", () => {
+  it("keeps finishing bookkeeping off the guest Worker prototype", async () => {
+    const h = controlledWorker();
+    const metadata = (Worker: { readonly prototype: object }) =>
+      JSON.stringify({
+        hasRef: "hasRef" in Worker.prototype,
+        blocksDrain: "blocksDrain" in Worker.prototype,
+      });
+    try {
+      expect(metadata(h.facade.module.Worker)).toBe(metadata(NodeWorkerThreads.Worker));
+    } finally {
+      await h.facade.dispose();
+      await h.broker.drain();
+    }
+  });
+
+  it("joins exit finalization when terminate follows an acknowledged stop", async () => {
+    const closing = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const h = controlledWorker(true, async () => {
+      closing.resolve();
+      await release.promise;
+    });
+    const worker = new h.facade.module.Worker("held-worker.mjs");
+    const order: string[] = [];
+    worker.on("exit", () => order.push("exit"));
+    try {
+      await h.watching.promise;
+      h.waiting.resolve({ code: 0, stopped: true });
+      await closing.promise;
+      const terminated = worker.terminate().then((code) => {
+        order.push("terminate");
+        return code;
+      });
+      await Promise.resolve();
+      expect(order).toEqual([]);
+      release.resolve();
+      expect(await terminated).toBe(0);
+      expect(order).toEqual(["exit", "terminate"]);
+    } finally {
+      release.resolve();
+      await h.facade.dispose();
+      await h.broker.drain();
+    }
+  });
+
   it("wakes an existing drain when its running Worker becomes unreferenced", async () => {
     const h = controlledWorker();
     const worker = new h.facade.module.Worker("held-worker.mjs");

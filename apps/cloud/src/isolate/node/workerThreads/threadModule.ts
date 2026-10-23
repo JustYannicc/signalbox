@@ -35,7 +35,6 @@ export interface NodeWorkerInstance extends NodeEvents.EventEmitter {
   postMessage(value: unknown, transferList?: readonly object[]): void;
   ref(): this;
   unref(): this;
-  hasRef(): boolean;
   terminate(): Promise<number>;
   startCpuProfile(...args: readonly unknown[]): never;
   startHeapProfile(...args: readonly unknown[]): never;
@@ -44,6 +43,7 @@ export interface NodeWorkerInstance extends NodeEvents.EventEmitter {
 }
 
 export interface NodeWorkerConstructor {
+  readonly prototype: NodeWorkerInstance;
   new (filename: string | URL, options?: NodeWorkerOptions): NodeWorkerInstance;
 }
 

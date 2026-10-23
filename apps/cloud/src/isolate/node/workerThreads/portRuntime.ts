@@ -64,7 +64,7 @@ export class NodeWorkerPorts implements NodeWorkerPortRuntime {
         context.connect({
           receive: async (event) => {
             try {
-              return this.#receive(event);
+              return await this.#receive(event);
             } catch (error) {
               this.#recordFailure(error);
               throw error;
@@ -220,7 +220,7 @@ export class NodeWorkerPorts implements NodeWorkerPortRuntime {
     return ports;
   }
 
-  #receive(event: NodeWorkerPortEvent): boolean {
+  async #receive(event: NodeWorkerPortEvent): Promise<boolean> {
     const port = this.#ports.get(event.port.id);
     if (port === undefined) return false;
     const current = getPortState(port);
@@ -234,6 +234,10 @@ export class NodeWorkerPorts implements NodeWorkerPortRuntime {
       this.#emitClose(port);
       this.referencesChanged();
       return true;
+    }
+    if (current.closed) {
+      await this.#tail;
+      return false;
     }
     const value = this.decode(event.message);
     const ports = event.message.ports.map(({ handle }) => {

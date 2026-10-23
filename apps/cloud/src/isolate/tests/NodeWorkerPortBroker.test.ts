@@ -42,6 +42,7 @@ function publicPortsRuntime(
   owner: string,
   broker: NodeWorkerPortBroker,
   beforeReceive?: (event: NodeWorkerPortEvent) => Promise<void>,
+  afterReceive?: (event: NodeWorkerPortEvent, accepted: boolean) => Promise<void>,
 ): PublicPortsRuntime {
   return {
     owner,
@@ -51,7 +52,9 @@ function publicPortsRuntime(
         broker.connect(owner, {
           receive: async (event) => {
             await beforeReceive?.(event);
-            return receiver.receive(event);
+            const accepted = await receiver.receive(event);
+            await afterReceive?.(event, accepted);
+            return accepted;
           },
         }),
       disconnect: () => broker.disconnect(owner),
@@ -233,6 +236,132 @@ describe("worker message port broker", () => {
     expect(broker.residentPorts).toBe(0);
   });
 
+  it("delivers a pending peer close to the endpoint's current owner", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let holdClose = true;
+    const source = publicPortsRuntime("close-source", broker, async (event) => {
+      if (holdClose && event.type === "close") {
+        holdClose = false;
+        entered.resolve();
+        await release.promise;
+      }
+    });
+    const destination = publicPortsRuntime("close-destination", broker);
+    const carrier = source.ports.channel();
+    let closeCount = 0;
+
+    try {
+      carrier.port1.close();
+      await entered.promise;
+      const moved = await transferPort(broker, source, destination, carrier.port2);
+      moved.on("close", () => closeCount++);
+      await destination.ports.drain();
+      release.resolve();
+      await broker.drain();
+
+      expect(closeCount).toBe(1);
+      expect(moved.hasRef()).toBe(false);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([source.ports.dispose(), destination.ports.dispose()]);
+      await broker.drain().catch(() => undefined);
+    }
+  });
+
+  it("retargets an in-flight message's nested ports before the old owner disconnects", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const source = publicPortsRuntime("move-source", broker, async (event) => {
+      if (event.type === "message") {
+        entered.resolve();
+        await release.promise;
+      }
+    });
+    const destination = publicPortsRuntime("move-destination", broker);
+    const carrier = source.ports.channel();
+    const nested = source.ports.channel();
+    const received: unknown[] = [];
+    carrier.port2.on("message", () => {
+      throw new Error("stale receiver ran");
+    });
+
+    try {
+      carrier.port1.postMessage({ nested: nested.port2 }, [nested.port2]);
+      await entered.promise;
+      const moved = await transferPort(broker, source, destination, carrier.port2);
+      moved.on("message", (value: unknown) => received.push(value));
+      await destination.ports.drain();
+      await source.ports.dispose();
+      release.resolve();
+
+      await expect(broker.drain()).resolves.toBeUndefined();
+      expect(received).toHaveLength(1);
+      expect((received[0] as { readonly nested: unknown }).nested).toBeInstanceOf(
+        NodeWorkerMessagePort,
+      );
+    } finally {
+      release.resolve();
+      await Promise.allSettled([source.ports.dispose(), destination.ports.dispose()]);
+      await broker.drain().catch(() => undefined);
+    }
+
+    expect(broker.residentPorts).toBe(0);
+  });
+
+  it("keeps an accepted old delivery consumed and disposes its nested transfers", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const source = publicPortsRuntime(
+      "accepted-source",
+      broker,
+      undefined,
+      async (event, accepted) => {
+        if (event.type === "message") {
+          expect(accepted).toBe(true);
+          entered.resolve();
+          await release.promise;
+        }
+      },
+    );
+    const destination = publicPortsRuntime("accepted-destination", broker);
+    const carrier = source.ports.channel();
+    const nested = source.ports.channel();
+    const oldMessages: unknown[] = [];
+    const newMessages: unknown[] = [];
+    let closeCount = 0;
+    carrier.port2.on("message", (value: unknown) => oldMessages.push(value));
+
+    try {
+      await source.ports.drain();
+      carrier.port1.postMessage({ nested: nested.port2 }, [nested.port2]);
+      await entered.promise;
+      expect(oldMessages).toHaveLength(1);
+
+      const moved = await transferPort(broker, source, destination, carrier.port2);
+      moved.on("message", (value: unknown) => newMessages.push(value));
+      moved.on("close", () => closeCount++);
+      await destination.ports.drain();
+      await source.ports.dispose();
+      release.resolve();
+
+      await expect(broker.drain()).resolves.toBeUndefined();
+      expect(oldMessages).toHaveLength(1);
+      expect(newMessages).toHaveLength(0);
+      expect(closeCount).toBe(1);
+      expect(moved.hasRef()).toBe(false);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([source.ports.dispose(), destination.ports.dispose()]);
+      await broker.drain().catch(() => undefined);
+    }
+
+    expect(broker.residentPorts).toBe(0);
+  });
+
   it("does not hold a broker lock while a message handler posts its reply", async () => {
     const broker = new NodeWorkerPortBroker();
     const replied = Promise.withResolvers<void>();
@@ -382,6 +511,36 @@ describe("worker message port broker", () => {
     await failed.promise;
     await expect(broker.failure).rejects.toThrow("receiver gone");
     await expect(broker.drain()).rejects.toThrow("receiver gone");
+  });
+
+  it("fails a live current lease when its receiver rejects a message", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const rejected = Promise.withResolvers<void>();
+    const connection = broker.connect("owner", {
+      async receive(event) {
+        if (event.type === "message") {
+          rejected.resolve();
+          return false;
+        }
+        return true;
+      },
+    });
+    const first = address("owner/a");
+    const second = address("owner/b");
+    await connection.open(first, second);
+    await connection.start(second);
+    await connection.post(first, message("reject current lease"));
+    await rejected.promise;
+
+    try {
+      await expect(broker.failure).rejects.toThrow("current lease");
+      await expect(broker.drain()).rejects.toThrow("current lease");
+    } finally {
+      await broker.disconnect("owner");
+      await broker.drain().catch(() => undefined);
+    }
+
+    expect(broker.residentPorts).toBe(0);
   });
 
   it("waits for an accepted callback to settle before reporting another delivery failure", async () => {
