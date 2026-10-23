@@ -223,7 +223,8 @@ function unqualifiedEnvironment(
       (key === "LANG" || key === "LANGUAGE" || key.startsWith("LC_")) &&
       value !== "" &&
       value !== "C" &&
-      value !== "POSIX"
+      value !== "POSIX" &&
+      !(program === "sed" && (value === "C.UTF-8" || value === "C.utf8"))
     ) {
       return `${key}=${value} changes locale-sensitive matching outside the qualified environment`;
     }

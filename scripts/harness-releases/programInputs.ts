@@ -6,7 +6,12 @@ const PROGRAM_MANIFEST = {
   url: "https://github.com/JustYannicc/signalbox/releases/download/kernel-programs-20261023-6aefd645-2d079609/program-inputs.json",
   sha256: "20dc9910665096cdb636ddc15b3606cbdc1bdc71d73858cc0e9621e406bfcae4",
 };
-const PROGRAM_FILES = { bash: "bash.wasm", busybox: "busybox.wasm", ripgrep: "rg.wasm" } as const;
+const PROGRAM_FILES = {
+  bash: "bash.wasm",
+  busybox: "busybox.wasm",
+  ripgrep: "rg.wasm",
+  sed: "sed.wasm",
+} as const;
 
 type Asset = { readonly url: string; readonly bytes: number; readonly sha256: string };
 
