@@ -12,6 +12,7 @@ export const layerDrives = (options: { readonly enabled: boolean }) =>
     Effect.map(UserDirectory, (users) => ({
       enabled: options.enabled,
       writes: (userId: string, driveId: string) =>
+        // Personal My Drive never goes away, so its owner needs no role lookup.
         driveId === myDriveId(PERSONAL_CONTEXT_ID, userId)
           ? Effect.succeed(true)
           : Effect.map(users.forUser(userId).driveAccess(driveId), canWrite),
