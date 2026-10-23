@@ -29,13 +29,28 @@ export class ChildHostLease {
 
   /** Releases one ref early, for a process that finished before its command did. */
   drop(ref: ChildHostRef<unknown>): void {
-    ref[release]();
-    this.#refs?.delete(ref);
+    try {
+      ref[release]();
+    } finally {
+      this.#refs?.delete(ref);
+    }
   }
 
   release(): void {
-    for (const ref of this.#refs ?? []) ref[release]();
+    const refs = this.#refs;
     this.#refs = undefined;
+    const failures: unknown[] = [];
+    for (const ref of refs ?? []) {
+      try {
+        ref[release]();
+      } catch (cause) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Child host references failed to release");
+    }
   }
 }
 

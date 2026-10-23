@@ -8,7 +8,11 @@ import {
   requireChildWorkerLoaderId,
 } from "./ChildWorkerLoaderRecovery.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
-import type { ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
+import {
+  disposeWorkerLoaderStubs,
+  workerLoaderQuotaFailure,
+  type ChildWorkerLoaderPort,
+} from "./WorkerLoaderDispatch.ts";
 
 export type CompiledChildWorkerRegistry = ReadonlyMap<string, WebAssembly.Module>;
 
@@ -117,15 +121,48 @@ export function createCompiledChildWorkerLoader(
       }
       // Installed workers-types predates compiled-module inputs supported by Worker Loader.
       // https://github.com/cloudflare/workerd/blob/fa8b9d343f00c200b8e8d314c541c33be9e1ee70/src/workerd/api/worker-loader.h#L73-L80
-      const worker = loader.get(loaderId, () => code as WorkerLoaderWorkerCode);
-      const child = worker.getEntrypoint<Entrypoint>(entrypoint, { limits });
+      let worker: ReturnType<WorkerLoader["get"]> | undefined;
+      let child: Entrypoint | undefined;
+      let outcome:
+        | { readonly kind: "exit"; readonly value: KernelCommandExit }
+        | { readonly kind: "error"; readonly cause: unknown }
+        | undefined;
+      const releaseLoaderStubs = () => {
+        const entrypoint = child;
+        const workerStub = worker;
+        child = undefined;
+        worker = undefined;
+        disposeWorkerLoaderStubs(entrypoint, workerStub);
+      };
       try {
-        return await child.run(input.command, target);
-      } catch (cause) {
-        if (!isChildWorkerMemoryLimitFailure(cause)) throw cause;
-        await acknowledgeChildWorkerMemoryLoss(target);
-        return CHILD_WORKER_KILLED_BY_SIGKILL;
+        try {
+          worker = loader.get(loaderId, () => code as WorkerLoaderWorkerCode);
+          child = worker.getEntrypoint<Entrypoint>(entrypoint, { limits }) as unknown as Entrypoint;
+        } catch (cause) {
+          const quotaFailure = workerLoaderQuotaFailure(cause);
+          if (quotaFailure === undefined) throw cause;
+          // A rejected Worker Loader acquisition has no child to wait for or retire.
+          releaseLoaderStubs();
+          const completion = target as typeof target & { stopped(): void | Promise<void> };
+          await completion.stopped();
+          throw quotaFailure;
+        }
+        if (child === undefined)
+          throw new Error("Child Worker Loader did not create an entrypoint");
+        try {
+          outcome = { kind: "exit", value: await child.run(input.command, target) };
+        } catch (cause) {
+          outcome = { kind: "error", cause };
+        }
+      } finally {
+        releaseLoaderStubs();
       }
+      if (outcome === undefined) throw new Error("Child Worker Loader returned without an outcome");
+      if (outcome.kind === "exit") return outcome.value;
+      // The caller that owns the lifecycle marker, not this RPC service, must classify run errors.
+      if (!isChildWorkerMemoryLimitFailure(outcome.cause)) throw outcome.cause;
+      await acknowledgeChildWorkerMemoryLoss(target);
+      return CHILD_WORKER_KILLED_BY_SIGKILL;
     },
   };
 }

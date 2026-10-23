@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { WORKER_LOADER_QUOTA_MESSAGES } from "../ChildWorkerDispatchError.ts";
 import type { ChildWorkerInvocation } from "../ChildWorkerProgram.ts";
 import { DEFAULT_CHILD_CPU_MS, type ChildWorkerLimits } from "../ChildWorkerLimits.ts";
 import {
@@ -16,6 +17,7 @@ const command = {
   env: {},
 };
 const exit = { exitCode: 0, signal: 0, coreDumped: false };
+const dynamicWorkerQuotaErrors = WORKER_LOADER_QUOTA_MESSAGES;
 
 function invocation(
   limits?: ChildWorkerLimits,
@@ -77,6 +79,128 @@ describe("WorkerLoader child CPU limits", () => {
     await dispatch.run(invocation(undefined, "slot-owner:17"), {});
 
     expect(fixture.get).toHaveBeenCalledWith("slot-owner:17", expect.any(Function));
+  });
+
+  it("disposes loader RPC handles before acknowledging memory loss", async () => {
+    const events: string[] = [];
+    const entrypoint = {
+      [Symbol.dispose]: vi.fn(() => events.push("entrypoint-disposed")),
+      async run(_command: unknown, target: unknown) {
+        const lifecycle = target as { stopped(): void };
+        const acknowledge = lifecycle.stopped.bind(target);
+        vi.spyOn(lifecycle, "stopped").mockImplementation(() => {
+          events.push("stopped");
+          acknowledge();
+        });
+        throw new Error("Worker exceeded memory limit");
+      },
+    };
+    const worker = {
+      [Symbol.dispose]: vi.fn(() => events.push("worker-disposed")),
+      getEntrypoint: vi.fn(() => entrypoint),
+      getDurableObjectClass: vi.fn(),
+    };
+    const get = vi.fn<WorkerLoader["get"]>().mockReturnValue(worker as unknown as WorkerStub);
+    const dispatch = createWorkerLoaderDispatch<object>({ get, load: vi.fn() });
+    const onMemoryLost = vi.fn(async () => {
+      events.push("retired");
+    });
+
+    await expect(dispatch.run(invocation(), {}, onMemoryLost)).resolves.toEqual({
+      exitCode: 0,
+      signal: 9,
+      coreDumped: false,
+    });
+
+    expect(events).toEqual(["entrypoint-disposed", "worker-disposed", "retired", "stopped"]);
+    expect(entrypoint[Symbol.dispose]).toHaveBeenCalledOnce();
+    expect(worker[Symbol.dispose]).toHaveBeenCalledOnce();
+  });
+
+  it.each(dynamicWorkerQuotaErrors)(
+    "classifies the exact pre-entrypoint quota failure as a stopped spawn: %s",
+    async (message) => {
+      const get = vi.fn<WorkerLoader["get"]>().mockImplementation(() => {
+        throw new Error(message);
+      });
+      const onMemoryLost = vi.fn(async () => {});
+      const dispatch = createWorkerLoaderDispatch<object>({ get, load: vi.fn() });
+
+      await expect(dispatch.run(invocation(), {}, onMemoryLost)).rejects.toMatchObject({
+        message,
+        code: "CHILD_EXECUTION_FAILED",
+        cause: { message, code: "EAGAIN" },
+        termination: { kind: "stopped" },
+      });
+
+      expect(get).toHaveBeenCalledOnce();
+      expect(onMemoryLost).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(dynamicWorkerQuotaErrors)(
+    "maps the exact runtime quota rejection from entrypoint run: %s",
+    async (message) => {
+      const events: string[] = [];
+      const entrypoint = {
+        [Symbol.dispose]: vi.fn(() => events.push("entrypoint-disposed")),
+        async run(_command: unknown, target: unknown) {
+          const lifecycle = target as { stopped(): void };
+          const acknowledge = lifecycle.stopped.bind(target);
+          vi.spyOn(lifecycle, "stopped").mockImplementation(() => {
+            events.push("stopped");
+            acknowledge();
+          });
+          throw new Error(message);
+        },
+      };
+      const worker = {
+        [Symbol.dispose]: vi.fn(() => events.push("worker-disposed")),
+        getEntrypoint: vi.fn(() => entrypoint),
+        getDurableObjectClass: vi.fn(),
+      };
+      const get = vi.fn<WorkerLoader["get"]>().mockReturnValue(worker as unknown as WorkerStub);
+      const onMemoryLost = vi.fn(async () => {});
+      const dispatch = createWorkerLoaderDispatch<object>({ get, load: vi.fn() });
+
+      await expect(dispatch.run(invocation(), {}, onMemoryLost)).rejects.toMatchObject({
+        message,
+        code: "CHILD_EXECUTION_FAILED",
+        cause: { message, code: "EAGAIN" },
+        termination: { kind: "stopped" },
+      });
+
+      expect(events).toEqual(["entrypoint-disposed", "worker-disposed", "stopped"]);
+      expect(onMemoryLost).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not map a guest error that imitates the quota message", async () => {
+    const message = dynamicWorkerQuotaErrors[0];
+    const run = vi.fn(async (_command: unknown, target: unknown) => {
+      const invocation = target as { host(): object; stopped(): void };
+      invocation.host();
+      invocation.stopped();
+      throw new Error(message);
+    });
+    const worker = {
+      getEntrypoint: vi.fn().mockReturnValue({ run }),
+      getDurableObjectClass: vi.fn(),
+    };
+    const dispatch = createWorkerLoaderDispatch<object>({
+      get: vi.fn<WorkerLoader["get"]>().mockReturnValue(worker as unknown as WorkerStub),
+      load: vi.fn(),
+    });
+
+    const failure = await dispatch.run(invocation(), {}).catch((cause: unknown) => cause);
+
+    expect(failure).toMatchObject({
+      message,
+      code: "CHILD_EXECUTION_FAILED",
+      cause: { message },
+      termination: { kind: "stopped" },
+    });
+    expect((failure as { cause: { code?: string } }).cause.code).toBeUndefined();
   });
 
   it("keeps concurrent calls with distinct slot IDs on separate loader entries", async () => {
