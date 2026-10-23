@@ -2,13 +2,10 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { KERNEL_BUSYBOX_ARTIFACT } from "../../../src/kernel/KernelBusyboxProgram.ts";
 
 const ARTIFACT = Object.freeze({
-  repository: "https://github.com/AshishKumar4/Nimbus",
-  revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
-  path: "packages/worker/wasm/bash/coreutils/busybox.wasm",
-  sha256: "7d1b34a31d74473be1fdb50706ed75e8ec765b68878b4fb2cf6ab486cbcb2631",
-  bytes: 241_159,
+  ...KERNEL_BUSYBOX_ARTIFACT,
   program: "BusyBox 1.37.0",
   license: "GPL-2.0-only",
 });
@@ -30,6 +27,7 @@ const IMPORTS = Object.freeze([
   "wasi_snapshot_preview1.fd_fdstat_get:function",
   "wasi_snapshot_preview1.fd_fdstat_set_flags:function",
   "wasi_snapshot_preview1.fd_filestat_get:function",
+  "wasi_snapshot_preview1.fd_pread:function",
   "wasi_snapshot_preview1.fd_prestat_dir_name:function",
   "wasi_snapshot_preview1.fd_prestat_get:function",
   "wasi_snapshot_preview1.fd_read:function",
@@ -55,10 +53,16 @@ const IMPORTS = Object.freeze([
 
 const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const outputDir = NodePath.resolve(process.argv[2] ?? scriptDir);
-const url = `https://raw.githubusercontent.com/AshishKumar4/Nimbus/${ARTIFACT.revision}/${ARTIFACT.path}`;
-const response = await fetch(url);
-if (!response.ok) throw new Error(`Could not fetch pinned BusyBox: ${response.status}`);
-const bytes = Buffer.from(await response.arrayBuffer());
+const source = process.argv[3] ?? NodePath.join(scriptDir, ARTIFACT.path);
+let bytes;
+try {
+  bytes = await NodeFSP.readFile(source);
+} catch (cause) {
+  throw new Error(
+    "Build BusyBox with build-busybox-buffered.sh, then run prepare-busybox.mjs <output directory> <built WASM>",
+    { cause },
+  );
+}
 const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 if (bytes.byteLength !== ARTIFACT.bytes || sha256 !== ARTIFACT.sha256) {
   throw new Error(`Nimbus BusyBox pin mismatch: ${bytes.byteLength} bytes ${sha256}`);

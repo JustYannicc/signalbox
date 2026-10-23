@@ -5,9 +5,11 @@ import { createKernelAsyncWasi } from "./KernelWasi.ts";
 export const KERNEL_BUSYBOX_ARTIFACT = Object.freeze({
   repository: "https://github.com/AshishKumar4/Nimbus",
   revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
-  path: "packages/worker/wasm/bash/coreutils/busybox.wasm",
-  sha256: "7d1b34a31d74473be1fdb50706ed75e8ec765b68878b4fb2cf6ab486cbcb2631",
-  bytes: 241_159,
+  path: "bin/busybox.wasm",
+  version: "1.37.0+nimbus.e9f019ab.io-buffer.1",
+  buildRecipe: "infra/kernelPrograms/coreutils/build-busybox-buffered.sh",
+  sha256: "6aefd645a67065f611b6cbdf78a5899def4404e01917375164a02426750d47ba",
+  bytes: 295_812,
 });
 
 export interface KernelBusyboxProgramOptions {

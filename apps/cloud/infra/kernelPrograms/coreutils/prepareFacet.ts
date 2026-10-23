@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as Esbuild from "esbuild";
+import { KERNEL_BUSYBOX_ARTIFACT } from "../../../src/kernel/KernelBusyboxProgram.ts";
 
 const BASH = Object.freeze({
   revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
@@ -12,13 +13,7 @@ const BASH = Object.freeze({
   sha256: "c3e8dc79b9660a21ed1873f8c900a0c1f195d274c183706cf5f68ff9e5fb9e00",
   bytes: 3_890_330,
 });
-const BUSYBOX = Object.freeze({
-  revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
-  path: "bin/busybox.wasm",
-  version: "1.37.0+nimbus.e9f019ab",
-  sha256: "7d1b34a31d74473be1fdb50706ed75e8ec765b68878b4fb2cf6ab486cbcb2631",
-  bytes: 241_159,
-});
+const BUSYBOX = KERNEL_BUSYBOX_ARTIFACT;
 const SOURCE_MARKER = "__KERNEL_COREUTILS_PROOF_SOURCE_INVENTORY__";
 const scriptDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const digest = (bytes: Uint8Array | string) =>

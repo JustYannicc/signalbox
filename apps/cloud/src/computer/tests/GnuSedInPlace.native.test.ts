@@ -6,6 +6,7 @@ import * as NodeProcess from "node:process";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import { createKernelBusyboxHost } from "../../kernel/KernelBusyboxHost.ts";
+import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
 import { createChildBusybox } from "../ChildBusybox.ts";
 import {
   GNU_SED,
@@ -37,9 +38,8 @@ let busyboxModule: WebAssembly.Module | undefined;
 if (artifactAvailable) {
   const bytes = new Uint8Array(NodeFS.readFileSync(artifact));
   if (
-    bytes.length !== 241_159 ||
-    NodeCrypto.createHash("sha256").update(bytes).digest("hex") !==
-      "7d1b34a31d74473be1fdb50706ed75e8ec765b68878b4fb2cf6ab486cbcb2631"
+    bytes.length !== KERNEL_BUSYBOX_ARTIFACT.bytes ||
+    NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== KERNEL_BUSYBOX_ARTIFACT.sha256
   ) {
     throw new Error("BusyBox test artifact does not match the pinned Nimbus image");
   }

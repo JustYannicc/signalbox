@@ -1,0 +1,11 @@
+diff --git a/libbb/Config.src b/libbb/Config.src
+--- a/libbb/Config.src
++++ b/libbb/Config.src
+@@ -130,6 +130,6 @@ config FEATURE_COPYBUF_KB
+ 	int "Copy buffer size, in kilobytes"
+ 	range 1 1024
+-	default 4
++	default 1024
+ 	help
+ 	Size of buffer used by cp, mv, install, wget etc.
+ 	Buffers which are 4 kb or less will be allocated on stack.

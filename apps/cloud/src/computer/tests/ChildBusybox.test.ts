@@ -62,7 +62,7 @@ describe.skipIf(!available)("actual pinned Nimbus BusyBox child", () => {
       for (const request of requests) {
         const copied = request.regions.reduce((size, region) => size + region.bytes.length, 0);
         expect(copied).toBeLessThan(request.memorySize);
-        expect(copied).toBeLessThan(128 * 1024);
+        expect(copied).toBeLessThanOrEqual(1024 * 1024 + 16);
       }
       await owner.close();
       expect(fixture.filesystem.descriptors.has(0)).toBe(true);
