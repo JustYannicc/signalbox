@@ -98,6 +98,15 @@ export function mapErrno(error: unknown): number {
     return error.errno;
   }
 
+  if (error instanceof Error) {
+    // Structured Error cloning keeps this message but drops WasiError's custom errno.
+    const match = /^WASI error: (-?\d+)$/.exec(error.message);
+    if (match !== null) {
+      const errno = Number(match[1]);
+      if (Number.isSafeInteger(errno)) return errno;
+    }
+  }
+
   if (typeof error === "object" && error !== null && "code" in error) {
     const code = (error as { code?: unknown }).code;
     if (typeof code === "string") {

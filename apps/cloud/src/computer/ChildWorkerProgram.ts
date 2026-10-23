@@ -54,6 +54,8 @@ export interface ChildWorkerProgramOptions<Host extends object> {
     readonly host: Host;
     /** Logical exit may precede dispatch completion when descendants retain the worker. */
     readonly exited?: Promise<KernelCommandExit>;
+    /** Preserve a confirmed spawn failure before closure completes the process placeholder. */
+    readonly onDispatchFailure?: (error: unknown) => Promise<void> | void;
     readonly close: () => Promise<void> | void;
     readonly onStopped?: () => Promise<void> | void;
   };
@@ -165,6 +167,7 @@ export function createChildWorkerRunner<Host extends object>(
                     stopped: new Promise<void>(() => {}),
                   });
             settle.reject(failure);
+            await owner.onDispatchFailure?.(failure);
           } finally {
             // Late child calls then fail with EBADF instead of reaching a process that is closing.
             try {

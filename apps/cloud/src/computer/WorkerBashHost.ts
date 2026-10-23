@@ -1,5 +1,6 @@
 import { RpcTarget } from "cloudflare:workers";
 import { WorkerBashSnapshot } from "./WorkerBashSnapshot.ts";
+import { isStoppedWorkerLoaderQuotaFailure } from "./ChildWorkerDispatchError.ts";
 import {
   createKernelBashHost,
   type KernelBashHostOptions,
@@ -103,6 +104,9 @@ export function createWorkerBashForkHost(
       bashCredentials(options),
       snapshot,
     ),
+    ...(owner.onDispatchFailure === undefined
+      ? {}
+      : { onDispatchFailure: owner.onDispatchFailure }),
     // Placement must wait for restoration before a logical exit can reach the parent.
     close: owner.close,
   };
@@ -110,7 +114,10 @@ export function createWorkerBashForkHost(
 
 /** Forked ports must remain RPC capabilities when they cross the child worker boundary. */
 export function createWorkerBashHost(options: KernelBashHostOptions, lease: ChildHostLease) {
-  const owner = createKernelBashHost(options);
+  const owner = createKernelBashHost({
+    ...options,
+    isStoppedQuotaFailure: isStoppedWorkerLoaderQuotaFailure,
+  });
   const credentials = bashCredentials(options);
   return {
     host: new WorkerBashPort(lease, owner.port, owner.pid, credentials),
