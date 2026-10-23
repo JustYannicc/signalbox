@@ -1,17 +1,21 @@
 // @effect-diagnostics cryptoRandomUUID:off - each durable holder needs a token unique across allocator recovery.
 import type {
+  ProcessSlotBlocker,
   ProcessSlotLease,
   ProcessSlotLeaseToken,
   ProcessSlotPermit,
+  ProcessSlotPressure,
   ProcessSlotRequest,
   ProcessSlotSignals,
-  ProcessSlotState,
   ProcessSlots,
   ProcessSlotsOptions,
 } from "./ProcessSlotTypes.ts";
 import { ProcessSlotJournal } from "./ProcessSlotJournal.ts";
+import { ProcessSlotLifecycle } from "./ProcessSlotLifecycle.ts";
+import { ProcessSlotListeners } from "./ProcessSlotListeners.ts";
 import { ProcessSlotQueue } from "./ProcessSlotQueue.ts";
 import {
+  availableSlot,
   bytes,
   codeId,
   counts,
@@ -25,19 +29,20 @@ import {
 export class ProcessSlotAllocator implements ProcessSlots {
   readonly signals: ProcessSlotSignals;
   readonly #queue: ProcessSlotQueue;
-  readonly #listeners = new Set<Parameters<ProcessSlotSignals["onPressure"]>[0]>();
+  readonly #listeners = new ProcessSlotListeners<ProcessSlotPressure>();
   readonly #parks = new Map<ProcessSlotLeaseToken, AbortController>();
-  readonly #inFlightLimit: number;
-  readonly journal: ProcessSlotJournal;
-  readonly options: ProcessSlotsOptions;
+  readonly #journal: ProcessSlotJournal;
+  readonly #options: ProcessSlotsOptions;
+  readonly #lifecycle: ProcessSlotLifecycle;
 
   constructor(journal: ProcessSlotJournal, options: ProcessSlotsOptions) {
-    this.journal = journal;
-    this.options = options;
-    this.#inFlightLimit = options.ioContext === "durable-object" ? 10 : 4;
-    this.#queue = new ProcessSlotQueue(options.scheduleQuantum, () => {
-      const state = { ...counts(journal.state), waiting: this.#queue.waiting };
-      for (const listener of this.#listeners) listener(state);
+    this.#journal = journal;
+    this.#options = options;
+    this.#queue = new ProcessSlotQueue(options.scheduleQuantum, (blocker) => {
+      this.#listeners.emit({ ...counts(journal.state), waiting: this.#queue.waiting, ...blocker });
+    });
+    this.#lifecycle = new ProcessSlotLifecycle(journal, this.#queue, options, (lease) => {
+      this.#parks.get(lease.token)?.abort(new Error("Stale process-slot lease"));
     });
     const queue = this.#queue;
     const listeners = this.#listeners;
@@ -54,62 +59,43 @@ export class ProcessSlotAllocator implements ProcessSlots {
       get lost() {
         return journal.state.lost;
       },
-      onPressure(listener) {
-        listeners.add(listener);
-        return () => {
-          listeners.delete(listener);
-        };
+      get fenced() {
+        return journal.fenced;
       },
+      onFenced: (listener) => journal.onFenced(listener),
+      onPressure: (listener) => listeners.subscribe(listener),
     });
   }
 
   async recover(): Promise<void> {
-    for (const slot of this.journal.state.slots) {
-      if (slot.invalidating !== undefined) await this.#invalidate(slot);
-      if (slot.holder === undefined) continue;
-      const lease = leaseFor(this.options.owner, slot);
-      const result = await this.options.reconcile(lease);
-      if ("lost" in result) await this.lose(lease, result.lost);
-      else await this.release(lease, result);
-    }
+    await this.#lifecycle.recover();
   }
 
   async acquire(request: ProcessSlotRequest) {
-    const { owner, codeId: code, residentBytes, signal } = request;
+    const captured = Object.freeze({ ...request });
+    const { owner, codeId: code, residentBytes, signal } = captured;
     signal.throwIfAborted();
-    if (owner !== this.options.owner) throw new TypeError("Process-slot request owner mismatch");
+    if (owner !== this.#options.owner) throw new TypeError("Process-slot request owner mismatch");
     codeId(code);
     bytes(residentBytes);
     return await this.#queue.enqueue(
       signal,
-      () => {
-        this.journal.check();
-        return this.#hasRoom(residentBytes);
-      },
+      () => this.#admission(residentBytes, { kind: "unplaceable", request: captured }),
       async () => {
-        const state = this.journal.state;
-        const matching = state.slots.filter((slot) => slot.codeId === code);
-        const free = matching
-          .filter((slot) => slot.holder === undefined && slot.invalidating === undefined)
-          .sort((a, b) => a.index - b.index)[0];
-        const index =
-          free?.index ?? matching.reduce((next, slot) => Math.max(next, slot.index + 1), 0);
-        bytes(index);
+        const state = this.#journal.state;
+        const free = availableSlot(state, code);
         const slot: Slot = {
-          codeId: code,
-          index,
-          generation: free?.generation ?? 0,
+          ...free,
           holder: {
             token: crypto.randomUUID() as ProcessSlotLeaseToken,
             residentBytes,
             permitted: true,
           },
         };
-        const next =
-          free === undefined
-            ? { ...state, slots: [...state.slots, slot] }
-            : replaceSlot(state, free, slot);
-        await this.journal.commit(next, signal);
+        const next = state.slots.includes(free)
+          ? replaceSlot(state, free, slot)
+          : { ...state, slots: [...state.slots, slot] };
+        await this.#journal.commit(next, signal);
         const lease = leaseFor(owner, slot);
         return { lease, permit: Object.freeze({ token: lease.token }) };
       },
@@ -125,13 +111,12 @@ export class ProcessSlotAllocator implements ProcessSlots {
     const cancelled = new AbortController();
     const parkedSignal = AbortSignal.any([signal, cancelled.signal]);
     await this.#queue.serial(async () => {
-      this.journal.check();
-      const slot = requireHolder(this.journal.state, lease);
-      if (permit.token !== lease.token || !slot.holder?.permitted) {
+      this.#journal.check();
+      const slot = requireHolder(this.#journal.state, lease);
+      if (permit.token !== lease.token || !slot.holder?.permitted)
         throw new Error("Stale process-slot permit");
-      }
-      await this.journal.commit(
-        replaceSlot(this.journal.state, slot, {
+      await this.#journal.commit(
+        replaceSlot(this.#journal.state, slot, {
           ...slot,
           holder: { ...slot.holder, permitted: false },
         }),
@@ -141,23 +126,23 @@ export class ProcessSlotAllocator implements ProcessSlots {
     });
     this.#queue.wake();
     try {
-      const result = await waitWhileParked(waitFor, parkedSignal).then(
-        (value) => ({ ok: true as const, value }),
-        (error: unknown) => ({ ok: false as const, error }),
-      );
+      const value = await waitWhileParked(waitFor, parkedSignal);
       const resumed = await this.#queue.enqueue(
         parkedSignal,
         () => {
-          this.journal.check();
-          const slot = requireHolder(this.journal.state, lease);
+          const slot = requireHolder(this.#journal.state, lease);
           if (slot.holder === undefined) throw new Error("Stale process-slot lease");
-          return this.#hasRoom(slot.holder.residentBytes);
+          const residentBytes = this.#journal.residentBytes(slot.holder);
+          return this.#admission(residentBytes, {
+            kind: "unplaceable",
+            lease: { ...lease, residentBytes },
+          });
         },
         async () => {
-          const slot = requireHolder(this.journal.state, lease);
+          const slot = requireHolder(this.#journal.state, lease);
           if (slot.holder === undefined) throw new Error("Stale process-slot lease");
-          await this.journal.commit(
-            replaceSlot(this.journal.state, slot, {
+          await this.#journal.commit(
+            replaceSlot(this.#journal.state, slot, {
               ...slot,
               holder: { ...slot.holder, permitted: true },
             }),
@@ -166,110 +151,43 @@ export class ProcessSlotAllocator implements ProcessSlots {
           return permit;
         },
       );
-      if (!result.ok) throw result.error;
-      return { value: result.value, permit: resumed };
+      return { value, permit: resumed };
     } finally {
       this.#parks.delete(lease.token);
     }
   }
 
   observe(lease: ProcessSlotLease, residentBytes: number): void {
-    if (findHolder(this.journal.state, lease) === undefined) return;
+    const slot = findHolder(this.#journal.state, lease);
+    if (slot?.holder === undefined) return;
     bytes(residentBytes);
-    // The void interface cannot report an async save error. Fence every subsequent operation on it.
-    void this.#queue
-      .serial(async () => {
-        this.journal.check();
-        const slot = findHolder(this.journal.state, lease);
-        if (slot?.holder === undefined) return;
-        await this.journal.commit(
-          replaceSlot(this.journal.state, slot, {
-            ...slot,
-            holder: { ...slot.holder, residentBytes },
-          }),
-        );
-      })
-      .catch((error: unknown) => {
-        this.journal.fail(error);
-      })
-      .finally(() => this.#queue.wake());
+    const previous = this.#journal.residentBytes(slot.holder);
+    this.#journal.observe(lease.token, residentBytes);
+    if (
+      previous <= this.#options.residentByteLimit !==
+      residentBytes <= this.#options.residentByteLimit
+    )
+      this.#queue.wake();
   }
 
   async release(lease: ProcessSlotLease, stopped: { readonly acknowledged: true }): Promise<void> {
-    if (stopped.acknowledged !== true) throw new TypeError("Process-slot stop is not acknowledged");
-    await this.#retire(lease, false);
+    await this.#lifecycle.release(lease, stopped);
   }
 
   async handoff(lease: ProcessSlotLease, stopped: { readonly acknowledged: true }): Promise<void> {
-    await this.release(lease, stopped);
+    await this.#lifecycle.release(lease, stopped);
   }
 
   async lose(lease: ProcessSlotLease, reason: "memory" | "isolate"): Promise<void> {
-    if (reason !== "memory" && reason !== "isolate")
-      throw new TypeError("Unknown process-slot loss");
-    await this.#retire(lease, true);
+    await this.#lifecycle.lose(lease, reason);
   }
 
-  async #retire(lease: ProcessSlotLease, lost: boolean): Promise<void> {
-    try {
-      await this.#queue.serial(async () => {
-        this.journal.check();
-        const state = this.journal.state;
-        const slot = requireHolder(state, lease);
-        const generation = slot.generation + Number(lost);
-        bytes(generation);
-        const next: ProcessSlotState = {
-          ...replaceSlot(state, slot, {
-            codeId: slot.codeId,
-            index: slot.index,
-            generation,
-            ...(lost ? { invalidating: slot.generation } : {}),
-          }),
-          lost: state.lost + Number(lost),
-        };
-        try {
-          await this.journal.commit(next);
-        } catch (error) {
-          // A known lost isolate must never become a warm slot after an unrelated normal release.
-          if (lost) this.journal.fail(error);
-          throw error;
-        }
-        this.#parks.get(lease.token)?.abort(new Error("Stale process-slot lease"));
-        if (lost) {
-          const retired = this.journal.state.slots.find(
-            (entry) => entry.codeId === slot.codeId && entry.index === slot.index,
-          )!;
-          try {
-            await this.#invalidate(retired);
-          } catch (error) {
-            this.journal.fail(error);
-            throw error;
-          }
-        }
-      });
-    } finally {
-      this.#queue.wake();
-    }
-  }
-
-  #hasRoom(residentBytes: number): boolean {
-    return (
-      residentBytes <= this.options.residentByteLimit &&
-      counts(this.journal.state).inFlight < this.#inFlightLimit
-    );
-  }
-
-  async #invalidate(slot: Slot): Promise<void> {
-    await this.options.invalidate(
-      `${this.options.owner}/${slot.codeId}/${slot.index}.${slot.invalidating}`,
-    );
-    await this.journal.commit(
-      replaceSlot(this.journal.state, slot, {
-        codeId: slot.codeId,
-        index: slot.index,
-        generation: slot.generation,
-      }),
-    );
+  #admission(residentBytes: number, unplaceable: ProcessSlotBlocker): "ready" | ProcessSlotBlocker {
+    this.#journal.check();
+    if (residentBytes > this.#options.residentByteLimit) return unplaceable;
+    return counts(this.#journal.state).inFlight < this.#options.inFlightLimit
+      ? "ready"
+      : { kind: "capacity" };
   }
 }
 

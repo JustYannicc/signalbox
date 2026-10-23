@@ -78,29 +78,40 @@ describe("process-slot failure races", () => {
     expect((await acquire()).lease.loaderId).toBe(first.lease.loaderId);
   });
 
-  it("rejects a wait after re-admission, retaining a usable permit for its caller", async () => {
-    const { slots, acquire } = await fixture();
+  it("rejects waitFor immediately even if the parked lease can no longer fit", async () => {
+    const { slots, acquire, scheduled } = await fixture();
     const first = await acquire();
     const failure = new Error("pipe closed");
-    await expect(
-      slots.park(
-        first.lease,
-        first.permit,
-        async () => {
-          throw failure;
-        },
-        new AbortController().signal,
-      ),
-    ).rejects.toBe(failure);
-    expect(slots.signals.inFlight).toBe(1);
-    const resumed = await slots.park(
+    const entered = Promise.withResolvers<void>();
+    const waiting = Promise.withResolvers<void>();
+    const abort = new AbortController();
+    const parked = slots.park(
       first.lease,
       first.permit,
-      async () => "recovered",
-      new AbortController().signal,
+      () => {
+        entered.resolve();
+        return waiting.promise;
+      },
+      abort.signal,
     );
-    expect(resumed.value).toBe("recovered");
-    await slots.release(first.lease, stopped);
+    const settled = parked.then(
+      () => "resolved",
+      () => "rejected",
+    );
+    await entered.promise;
+    slots.observe(first.lease, 150);
+    waiting.reject(failure);
+    const outcome = await Promise.race([settled, scheduled.then(() => "queued")]);
+    try {
+      expect(outcome).toBe("rejected");
+      await expect(parked).rejects.toBe(failure);
+      expect(slots.signals.inFlight).toBe(0);
+      expect(slots.signals.resident).toBe(1);
+    } finally {
+      abort.abort();
+      await settled;
+      await slots.release(first.lease, stopped);
+    }
   });
 
   it.each(["release", "lose"] as const)(
@@ -145,7 +156,7 @@ describe("process-slot failure races", () => {
     expect((await recovered.acquire()).lease.loaderId).toBe("supervisor/shard-a/bash/0.1");
   });
 
-  it("rejects the next operation if persisting a measurement fails", async () => {
+  it("keeps measurements in memory when storage is unavailable", async () => {
     const { slots, acquire, store } = await fixture();
     const { lease } = await acquire();
     const failure = new Error("measurement save failed");
@@ -156,6 +167,9 @@ describe("process-slot failure races", () => {
       cause: failure,
     });
     expect(slots.signals.resident).toBe(1);
+    store.failure = undefined;
+    await acquire();
+    expect((await store.load())?.slots[0]?.holder?.residentBytes).toBe(120);
   });
 
   it("preserves safe-point measurements ahead of admission while another save is in progress", async () => {

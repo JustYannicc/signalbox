@@ -44,13 +44,10 @@ describe("process-slot admission", () => {
     await Promise.all(parked);
   });
 
-  it.each([
-    ["worker-request", 4],
-    ["durable-object", 10],
-  ] as const)(
-    "enforces the %s in-flight cap independently of resident count",
-    async (ioContext, cap) => {
-      const { slots, acquire } = await fixture({ ioContext });
+  it.each([4, 10])(
+    "enforces the supplied in-flight limit %i independently of resident count",
+    async (cap) => {
+      const { slots, acquire } = await fixture({ inFlightLimit: cap });
       const held = await fill(acquire, cap);
       const waiting = acquire();
       expect(slots.signals.inFlight).toBe(cap);
@@ -95,7 +92,12 @@ describe("process-slot admission", () => {
     await scheduled;
     expect(listener).not.toHaveBeenCalled();
     quantum();
-    expect(listener).toHaveBeenCalledExactlyOnceWith({ inFlight: 4, resident: 4, waiting: 1 });
+    expect(listener).toHaveBeenCalledExactlyOnceWith({
+      kind: "capacity",
+      inFlight: 4,
+      resident: 4,
+      waiting: 1,
+    });
     unsubscribe();
     quantum();
     expect(listener).toHaveBeenCalledTimes(1);

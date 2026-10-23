@@ -1,10 +1,13 @@
+import type { ProcessSlotBlocker } from "./ProcessSlotTypes.ts";
+
 interface Waiter {
   readonly signal: AbortSignal;
-  readonly canAdmit: () => boolean;
+  readonly status: () => "ready" | ProcessSlotBlocker;
   readonly grant: () => Promise<void>;
   readonly reject: (error: unknown) => void;
   readonly onAbort: () => void;
   granting: boolean;
+  notified: boolean;
 }
 
 export class ProcessSlotQueue {
@@ -13,11 +16,13 @@ export class ProcessSlotQueue {
   #wakeAgain = false;
   readonly #waiters = new Set<Waiter>();
   #cancelQuantum: (() => void) | undefined;
-  #pressured: Waiter | undefined;
   readonly #scheduleQuantum: (callback: () => void) => () => void;
-  readonly #pressure: () => void;
+  readonly #pressure: (blocker: ProcessSlotBlocker) => void;
 
-  constructor(scheduleQuantum: (callback: () => void) => () => void, pressure: () => void) {
+  constructor(
+    scheduleQuantum: (callback: () => void) => () => void,
+    pressure: (blocker: ProcessSlotBlocker) => void,
+  ) {
     this.#scheduleQuantum = scheduleQuantum;
     this.#pressure = pressure;
   }
@@ -35,14 +40,19 @@ export class ProcessSlotQueue {
     return result;
   }
 
-  enqueue<T>(signal: AbortSignal, canAdmit: () => boolean, grant: () => Promise<T>): Promise<T> {
+  enqueue<T>(
+    signal: AbortSignal,
+    status: () => "ready" | ProcessSlotBlocker,
+    grant: () => Promise<T>,
+  ): Promise<T> {
     if (signal.aborted) return Promise.reject(signal.reason);
     return new Promise<T>((resolve, reject) => {
       const waiter: Waiter = {
         signal,
         reject,
-        canAdmit,
+        status,
         granting: false,
+        notified: false,
         grant: async () => {
           resolve(await grant());
         },
@@ -73,8 +83,8 @@ export class ProcessSlotQueue {
       for (const waiter of this.#waiters) {
         try {
           waiter.signal.throwIfAborted();
-          // Byte room belongs to each isolate. An oversized holder cannot block unrelated slots.
-          if (!waiter.canAdmit()) continue;
+          if (waiter.status() !== "ready") continue;
+          waiter.notified = false;
           waiter.granting = true;
           await waiter.grant();
           this.#remove(waiter);
@@ -84,32 +94,79 @@ export class ProcessSlotQueue {
         }
         return true;
       }
-      const first = this.#waiters.values().next().value;
-      if (first !== undefined) this.#schedulePressure(first);
+      this.#armPressure();
       return false;
-    }).then((progress) => {
-      this.#pumping = false;
-      if (progress || this.#wakeAgain) this.wake();
-    });
+    }).then(
+      (progress) => this.#finish(progress),
+      () => this.#finish(false),
+    );
+  }
+
+  #finish(progress: boolean): void {
+    this.#pumping = false;
+    if (progress || this.#wakeAgain) this.wake();
   }
 
   #remove(waiter: Waiter): void {
     this.#waiters.delete(waiter);
     waiter.signal.removeEventListener("abort", waiter.onAbort);
-    if (this.#pressured === waiter) {
-      this.#cancelQuantum?.();
+    if (this.#waiters.size === 0) {
+      const cancel = this.#cancelQuantum;
       this.#cancelQuantum = undefined;
-      this.#pressured = undefined;
+      try {
+        cancel?.();
+      } catch {
+        // A supervisor's cancellation callback cannot interrupt waiter cleanup.
+      }
     }
   }
 
-  #schedulePressure(waiter: Waiter): void {
-    if (this.#pressured === waiter) return;
-    this.#cancelQuantum?.();
-    this.#pressured = waiter;
-    this.#cancelQuantum = this.#scheduleQuantum(() => {
+  #blocked(): { waiter: Waiter; blocker: ProcessSlotBlocker }[] {
+    const blocked = [];
+    for (const waiter of this.#waiters) {
+      if (waiter.granting) continue;
+      try {
+        waiter.signal.throwIfAborted();
+        const status = waiter.status();
+        if (status === "ready") {
+          waiter.notified = false;
+          continue;
+        }
+        if (status.kind === "capacity") waiter.notified = false;
+        blocked.push({ waiter, blocker: status });
+      } catch (error) {
+        this.#remove(waiter);
+        waiter.reject(error);
+      }
+    }
+    return blocked;
+  }
+
+  #armPressure(): void {
+    if (this.#cancelQuantum !== undefined) return;
+    if (
+      !this.#blocked().some(
+        ({ waiter, blocker }) => blocker.kind === "capacity" || !waiter.notified,
+      )
+    )
+      return;
+    try {
+      this.#cancelQuantum = this.#scheduleQuantum(() => {
+        this.#cancelQuantum = undefined;
+        const blocked = this.#blocked();
+        for (const { waiter, blocker } of blocked) {
+          if (blocker.kind === "unplaceable" && !waiter.notified) {
+            waiter.notified = true;
+            this.#pressure(blocker);
+          }
+        }
+        if (this.#blocked().some(({ blocker }) => blocker.kind === "capacity"))
+          this.#pressure({ kind: "capacity" });
+        this.#armPressure();
+      });
+    } catch {
+      // A broken scheduler cannot poison permit admission; the next state change can retry it.
       this.#cancelQuantum = undefined;
-      if (this.#waiters.has(waiter)) this.#pressure();
-    });
+    }
   }
 }

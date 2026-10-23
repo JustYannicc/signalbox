@@ -49,6 +49,13 @@ export function validateState(state: ProcessSlotState, owner: string): void {
     keys.add(key);
     if (slot.holder === undefined) continue;
     const { token, residentBytes, permitted } = slot.holder;
+    if (
+      slot.holder.lost !== undefined &&
+      slot.holder.lost !== "memory" &&
+      slot.holder.lost !== "isolate"
+    ) {
+      throw new TypeError("Unknown durable process-slot loss");
+    }
     bytes(residentBytes);
     if (
       typeof token !== "string" ||
@@ -97,6 +104,17 @@ export function replaceSlot(
   replacement: Slot,
 ): ProcessSlotState {
   return { ...state, slots: state.slots.map((entry) => (entry === slot ? replacement : entry)) };
+}
+
+export function availableSlot(state: ProcessSlotState, code: string): Slot {
+  const slots = new Map(
+    state.slots.filter((slot) => slot.codeId === code).map((slot) => [slot.index, slot]),
+  );
+  let index = 0;
+  while (slots.get(index)?.holder !== undefined || slots.get(index)?.invalidating !== undefined)
+    index++;
+  bytes(index);
+  return slots.get(index) ?? { codeId: code, index, generation: 0 };
 }
 
 export function counts(state: ProcessSlotState) {

@@ -126,7 +126,7 @@ describe("durable process slots", () => {
     await expect(
       createProcessSlots({
         owner: "supervisor/shard",
-        ioContext: "worker-request",
+        inFlightLimit: 4,
         residentByteLimit: 100,
         store: {
           load: async () => {

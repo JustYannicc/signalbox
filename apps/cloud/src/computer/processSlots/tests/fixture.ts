@@ -9,7 +9,8 @@ export async function fixture(options: Partial<ProcessSlotsOptions> = {}) {
   const invalidate = vi.fn();
   const slots = await createProcessSlots({
     owner: "supervisor/shard-a",
-    ioContext: "worker-request",
+    // The fixture represents an adapter with four in-flight admissions in its request context.
+    inFlightLimit: 4,
     residentByteLimit: 100,
     store,
     invalidate,
