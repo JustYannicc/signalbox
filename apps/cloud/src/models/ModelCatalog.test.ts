@@ -318,6 +318,29 @@ describe("ModelCatalog public entry point", () => {
       }),
   );
 
+  it.effect("offers registered local models as ready without claiming OAuth", () =>
+    Effect.gen(function* () {
+      const model = {
+        id: "claude-sonnet-5-5",
+        ownedBy: "anthropic",
+        created: null,
+        registration: { kind: "local" as const, transportId: "local" },
+      };
+      const catalog = yield* view([poolEntry({ accounts: [], models: [model] })]);
+      const claude = provider(catalog.providers, "claude_hub");
+
+      expect(claude).toMatchObject({
+        status: "ready",
+        auth: { status: "unknown" },
+        models: [{ slug: model.id }],
+      });
+      expect(catalog.defaultModelSelection).toEqual({
+        instanceId: ProviderInstanceId.make("claude_hub"),
+        model: model.id,
+      });
+    }),
+  );
+
   it.effect(
     "has no providers, instances, or invented initial model when the user has no pools",
     () =>

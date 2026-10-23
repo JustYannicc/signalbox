@@ -37,6 +37,11 @@ import { observePoolCall, PoolTelemetry } from "./PoolTelemetry.ts";
 import * as PoolLimits from "./poolLimits.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolModels from "./poolModels.ts";
+import {
+  ActivePoolModelTransport,
+  requestedModelId,
+  type PoolModelTransport,
+} from "./PoolModelTransport.ts";
 import * as PoolUsageHistory from "./poolUsageHistory.ts";
 import * as PoolUsageLedger from "./PoolUsageLedger.ts";
 import * as PoolStore from "./poolStore.ts";
@@ -171,6 +176,11 @@ export class PoolEngine extends Context.Service<
     readonly models: (actor: PoolActor) => Effect.Effect<PoolModels.PoolModels, Failure>;
     /** Reads the last catalog without refreshing it, for a pool link's metadata endpoint. */
     readonly cachedModels: (actor: PoolActor) => Effect.Effect<PoolModels.PoolModels, Failure>;
+    /** Replaces the locally served model list after checking the pool admin grant. */
+    readonly registerLocalModelTransport: (
+      actor: PoolActor,
+      transport: Pick<PoolModelTransport, "id" | "models">,
+    ) => Effect.Effect<void, Failure>;
     /** Refreshes a stale catalog from an alarm, waking a managed pool for this read. */
     readonly refreshModelsAtAlarm: () => Effect.Effect<void, SqlError>;
     /** The next catalog refresh alarm for a pool with accounts or an external backing. */
@@ -221,8 +231,8 @@ export class PoolEngine extends Context.Service<
       accounts: PoolLinkMoveRequest["accounts"],
     ) => Effect.Effect<PoolLinkMoveResult, Failure>;
     /**
-     * A model request from a turn `actor` runs, sent to the pool's
-     * CLIProxyAPI. Checked against the grants on every request, so losing
+     * A model request from a turn `actor` runs on its registered local
+     * transport or the pool's CLIProxyAPI. Checked against the grants on every request, so losing
      * access stops the next one. `upstreamMs`: from handing it to the
      * CLIProxyAPI to its response headers. A request naming its `thread`
      * stays on that thread's account (`threadAccounts.ts`); `accountMoved`
@@ -334,6 +344,7 @@ const migrations = Migrator.fromRecord({
     const sql = yield* SqlClient.SqlClient;
     yield* sql`ALTER TABLE logged_out_accounts ADD COLUMN pending INTEGER NOT NULL DEFAULT 0`;
   }),
+  "0014_local_models": PoolModels.createLocalModelTable,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -437,6 +448,7 @@ const make = Effect.gen(function* () {
   const container = yield* PoolContainer.PoolContainer;
   const external = yield* ExternalFetch;
   const telemetry = yield* PoolTelemetry;
+  const localTransport = yield* ActivePoolModelTransport;
   const crypto = yield* Crypto.Crypto;
   const links = yield* PoolLinks.PoolLinks;
   const randomKey = PoolLinks.randomKey.pipe(Effect.provideService(Crypto.Crypto, crypto));
@@ -1141,6 +1153,37 @@ const make = Effect.gen(function* () {
   const cachedModelsForActor: PoolEngine["Service"]["cachedModels"] = (actor) =>
     Effect.as(access(actor, "member"), undefined).pipe(Effect.andThen(cachedModels));
 
+  const registerLocalModelTransport: PoolEngine["Service"]["registerLocalModelTransport"] = (
+    actor,
+    transport,
+  ) =>
+    Effect.gen(function* () {
+      const { row } = yield* access(actor, "admin");
+      if (row.personal !== 1 || row.backing !== "managed") {
+        return yield* reject(
+          "Local model transport can only be registered on a managed personal pool.",
+        );
+      }
+      if (transport.id.trim().length === 0 || localTransport?.id !== transport.id) {
+        return yield* reject("This local model transport is not available to the pool.");
+      }
+      const ids = new Set<string>();
+      for (const model of transport.models) {
+        if (
+          model.id.trim().length === 0 ||
+          model.ownedBy.trim().length === 0 ||
+          ids.has(model.id)
+        ) {
+          return yield* reject(
+            "Local model registrations need unique, non-empty model ids and owners.",
+          );
+        }
+        ids.add(model.id);
+      }
+      yield* withSql(PoolModels.storeLocal(transport.id, transport.models));
+      yield* audit(actor, "register-local-models", transport.id);
+    });
+
   const refreshModelsAtAlarm: PoolEngine["Service"]["refreshModelsAtAlarm"] = () =>
     Effect.gen(function* () {
       const row = yield* poolRow;
@@ -1413,6 +1456,32 @@ const make = Effect.gen(function* () {
       });
       const clock = yield* Clock.Clock;
       const sent = { at: clock.currentTimeMillisUnsafe() };
+      const requestedModel = yield* Effect.promise(() => requestedModelId(path, request));
+      if (localTransport !== null && requestedModel !== null) {
+        const catalog = yield* cachedModels;
+        const registered = catalog.localModels.find(
+          (model) =>
+            model.id === requestedModel && model.registration?.transportId === localTransport.id,
+        );
+        if (registered !== undefined) {
+          const response = yield* Effect.tryPromise({
+            try: () => localTransport.fetch(request),
+            catch: (cause) =>
+              new CliProxyApi.PoolBackendError({
+                detail: "The local model transport failed.",
+                cause,
+              }),
+          });
+          return {
+            response,
+            upstreamMs: clock.currentTimeMillisUnsafe() - sent.at,
+            accountMoved: null,
+          };
+        }
+        if (!catalog.accountModels.some((model) => model.id === requestedModel)) {
+          return yield* reject(`This pool does not serve model '${requestedModel}'.`);
+        }
+      }
       // Accounts that serve models: a pool without any has nothing to wait for on a cold start.
       const serving =
         yield* sql`SELECT 1 FROM accounts WHERE disabled = 0 AND signed_out = 0 LIMIT 1`;
@@ -1462,6 +1531,7 @@ const make = Effect.gen(function* () {
     advice,
     models,
     cachedModels: cachedModelsForActor,
+    registerLocalModelTransport,
     refreshModelsAtAlarm,
     nextModelsRefreshAt,
     refreshUsageAtAlarm,

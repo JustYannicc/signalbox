@@ -85,6 +85,10 @@ export class UserStore extends Context.Service<
   UserStore,
   {
     readonly recordSignIn: (profile: AccountProfile) => Effect.Effect<void, SqlError>;
+    /** Creates the local identity once, or reuses the profile already in this store. */
+    readonly ensureLocalProfile: (
+      input?: LocalProfileInput,
+    ) => Effect.Effect<AccountProfile, SqlError>;
     readonly profile: Effect.Effect<AccountProfile | null, SqlError>;
     readonly createSession: (input: {
       readonly method: ServerAuthSessionMethod;
@@ -164,6 +168,13 @@ export class UserStore extends Context.Service<
     >;
   }
 >()("@signalbox/cloud/user/UserStore") {}
+
+export interface LocalProfileInput {
+  readonly email?: string;
+  readonly firstName?: string;
+  readonly lastName?: string;
+  readonly avatarUrl?: string;
+}
 
 const migrations = Migrator.fromRecord({
   "0001_identity": Effect.gen(function* () {
@@ -339,6 +350,23 @@ const make = Effect.gen(function* () {
     }),
   );
 
+  const ensureLocalProfile: UserStore["Service"]["ensureLocalProfile"] = (input = {}) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        const existing = yield* profile;
+        if (existing !== null) return existing;
+        const created: AccountProfile = {
+          id: yield* randomUuid,
+          email: input.email ?? "",
+          ...(input.firstName === undefined ? {} : { firstName: input.firstName }),
+          ...(input.lastName === undefined ? {} : { lastName: input.lastName }),
+          ...(input.avatarUrl === undefined ? {} : { avatarUrl: input.avatarUrl }),
+        };
+        yield* recordSignIn(created);
+        return created;
+      }),
+    );
+
   const createSession: UserStore["Service"]["createSession"] = Effect.fn("UserStore.createSession")(
     function* (input) {
       const now = yield* Clock.currentTimeMillis;
@@ -513,6 +541,7 @@ const make = Effect.gen(function* () {
     threadRegistrations,
     replaceThreadIndex,
     recordSignIn,
+    ensureLocalProfile,
     profile,
     createSession,
     findSession,

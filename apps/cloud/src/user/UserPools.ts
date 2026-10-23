@@ -336,7 +336,9 @@ const make = Effect.gen(function* () {
       const readId = ++nextRead;
       const all = yield* rows.pipe(Effect.catchTags({ SqlError: storageFailed }));
       const now = yield* Clock.currentTimeMillis;
-      const state = yield* Effect.forEach(all, (pool) => timedOutEntry(pool, latest, now));
+      const state: PoolsState = yield* Effect.forEach(all, (pool) =>
+        timedOutEntry(pool, latest, now),
+      );
       return yield* SubscriptionRef.modify(current, (known) =>
         known !== observed && Option.isSome(known) && known.value.readId >= minimumRead
           ? [known.value.state, known]

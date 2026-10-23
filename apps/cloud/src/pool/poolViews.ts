@@ -144,16 +144,21 @@ const canRun = (source: UsageLimitSourceSnapshot, driver: ProviderDriverKind) =>
   running(source, driver).length > 0;
 
 /** Stale reads must not revive providers whose accounts were signed out or paused. */
-export const modelsForSnapshot = (entry: PoolEntry): ReadonlyArray<ServedModel> =>
-  entry.lastKnownOverview !== undefined
-    ? entry.models
-    : entry.models.filter((model) =>
-        CLOUD_POOL_KINDS.some(
-          (kind) =>
-            canRun(entry.source, POOL_INSTANCE_KINDS[kind].driver) &&
-            servesModel(kind, [model], model.id),
-        ),
-      );
+export const modelsForSnapshot = (entry: PoolEntry): ReadonlyArray<ServedModel> => {
+  const local = entry.models.filter((model) => model.registration?.kind === "local");
+  const account = entry.models.filter((model) => model.registration === undefined);
+  const retained =
+    entry.lastKnownOverview !== undefined
+      ? account
+      : account.filter((model) =>
+          CLOUD_POOL_KINDS.some(
+            (kind) =>
+              canRun(entry.source, POOL_INSTANCE_KINDS[kind].driver) &&
+              servesModel(kind, [model], model.id),
+          ),
+        );
+  return [...retained, ...local];
+};
 
 const instanceOf = (kind: (typeof CLOUD_POOL_KINDS)[number], pool: UserPool) =>
   poolInstanceEntry(kind, { id: pool.id, name: pool.personal ? undefined : pool.name });

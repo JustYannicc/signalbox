@@ -28,15 +28,18 @@ export function nativeFixture(
   systemIdentity: SystemIdentity,
   onExit?: () => void,
   queryNativeId: () => string = () => nativeId,
+  model?: string,
 ) {
   const outputs: string[] = [];
   let consumed = 0;
   let launched = false;
   let sdkIdentity: string | undefined;
+  const querySelections: Array<{ model: string | undefined; effort: string | undefined }> = [];
   let active: AbortController | undefined;
   let failure: unknown;
   const loadSdk = async (_bridge: NodeBridge): Promise<PreparedClaudeSdk> => ({
     query({ prompt, options }) {
+      querySelections.push({ model: options.model, effort: options.effort });
       sdkIdentity = options.resume ?? options.sessionId;
       NodeAssert.equal(sdkIdentity, queryNativeId());
       if (options.spawnClaudeCodeProcess === undefined) throw new Error("Missing native spawn");
@@ -133,7 +136,22 @@ export function nativeFixture(
           buffer = buffer.slice(end + 1);
           active = new AbortController();
           // @effect-diagnostics-next-line globalFetch:off - Exercise the installed model transport.
-          const rootResponse = await globalThis.fetch("https://recorded.invalid/root");
+          const rootResponse = await globalThis.fetch(
+            model === undefined
+              ? "https://recorded.invalid/root"
+              : "https://recorded.invalid/v1/messages?fixture=root",
+            model === undefined
+              ? undefined
+              : {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    model,
+                    max_tokens: 32,
+                    messages: [{ role: "user", content: "Run the controlled root request." }],
+                  }),
+                },
+          );
           NodeAssert.equal(await rootResponse.text(), "root response");
           for (const [executable, args] of [
             ["/usr/bin/git", ["status", "--short"]],
@@ -143,7 +161,22 @@ export function nativeFixture(
             outputs.push(await runChild(children, executable, args, active.signal));
           }
           // @effect-diagnostics-next-line globalFetch:off - A child response uses the same recorded route.
-          const childResponse = await globalThis.fetch("https://recorded.invalid/child");
+          const childResponse = await globalThis.fetch(
+            model === undefined
+              ? "https://recorded.invalid/child"
+              : "https://recorded.invalid/v1/messages?fixture=child",
+            model === undefined
+              ? undefined
+              : {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({
+                    model,
+                    max_tokens: 32,
+                    messages: [{ role: "user", content: "Run the controlled child request." }],
+                  }),
+                },
+          );
           NodeAssert.equal(await childResponse.text(), "child response");
           const frame: Message = {
             type: "result",
@@ -188,6 +221,9 @@ export function nativeFixture(
     },
     get sdkIdentity() {
       return sdkIdentity;
+    },
+    get querySelections() {
+      return [...querySelections];
     },
   };
 }

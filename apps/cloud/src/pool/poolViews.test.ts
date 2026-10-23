@@ -39,4 +39,34 @@ describe("modelsForSnapshot", () => {
       expect(modelsForSnapshot(entry)).toEqual([]);
     },
   );
+
+  it("keeps registered local models when the pool has no OAuth accounts", () => {
+    const local = {
+      id: "claude-local-model",
+      ownedBy: "anthropic",
+      created: null,
+      registration: { kind: "local" as const, transportId: "local" },
+    };
+    const entry: PoolEntry = {
+      pool: {
+        id: "personal",
+        objectName: "owner:personal",
+        name: "Personal",
+        personal: true,
+        backing: { mode: "managed" },
+      },
+      source: {
+        id: poolSourceId("personal"),
+        kind: "cliproxy",
+        label: "Personal",
+        checkedAt,
+        accounts: [],
+      },
+      models: [local],
+      role: "admin",
+      routing: null,
+    };
+
+    expect(modelsForSnapshot(entry)).toEqual([local]);
+  });
 });
