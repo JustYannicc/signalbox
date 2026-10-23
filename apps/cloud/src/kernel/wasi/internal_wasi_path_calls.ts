@@ -449,6 +449,7 @@ export class WasiPathCalls {
       capacity,
       encoded.byteLength,
       MAX_PATH_TRANSFER,
+      // signalbox: the readlink reply is a child transfer, so it fits the owner-issued credit.
       this.#memory.transferLimit,
     );
     this.#memory.writeRange(buffer, used).set(encoded.subarray(0, used));

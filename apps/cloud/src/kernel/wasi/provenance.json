@@ -50,6 +50,10 @@
     {
       "file": "internal_wasi_memory.ts",
       "reason": "writeRange/writeView mark bytes a call only overwrites, so child syscall memory can return exact output writes instead of diffing whole regions. fd, host, poll and path calls use them for out-pointers and read buffers; guest-visible results are unchanged."
+    },
+    {
+      "file": "internal_wasi_memory.ts, internal_wasi_fd_calls.ts, internal_wasi_path_calls.ts",
+      "reason": "transferLimit and copyIovecs bound each child syscall to the owner-issued byte credit: fd reads/writes and readdir transfer at most that many bytes as an ordinary short count, readlink replies are capped the same way, and syscall memory lends its owned input instead of copying it. Ordinary guest memory keeps the original unlimited behaviour."
     }
   ],
   "upstreamAlignment": {
