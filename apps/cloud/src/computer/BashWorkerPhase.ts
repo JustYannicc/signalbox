@@ -1,5 +1,6 @@
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
+import type { KernelExitStatus } from "../kernel/KernelProcessTable.ts";
 import type {
   KernelBashOperation,
   KernelBashOperationResult,
@@ -11,12 +12,15 @@ import { storeBashCheckpoint, type BashCheckpoint } from "./BashCheckpointStore.
 import type { WorkerBashPhase } from "./WorkerBashHost.ts";
 
 type Operations = ReturnType<typeof createKernelBashOperations>;
+type BashResume =
+  | { readonly kind: "resume"; readonly source: KernelBashForkSource }
+  | { readonly kind: "exit"; readonly status: KernelExitStatus };
 
 export interface ParkedBashProcess {
   readonly port: KernelBashPort;
   readonly pid: number;
   readonly checkpoint: BashCheckpoint;
-  resume(): Promise<KernelBashForkSource>;
+  resume(): Promise<BashResume>;
 }
 
 /** One physical RPC may pack several processes. None resumes until that RPC has stopped. */
@@ -76,14 +80,21 @@ export class BashWorkerPhase implements WorkerBashPhase {
         try {
           const completed =
             result ?? (pending === undefined ? undefined : await operations.take(pending));
-          return checkpoint.source((saved) =>
-            completed === undefined
-              ? saved
-              : {
-                  ...saved,
-                  continuation: { ...saved.continuation, result: completed },
-                },
-          );
+          // Successful exec replaced Bash. Restoring its old heap just to exit can deadlock a pipe.
+          if (completed?.kind === "exec" && completed.value.kind === "exit") {
+            return { kind: "exit", status: completed.value.status };
+          }
+          return {
+            kind: "resume",
+            source: checkpoint.source((saved) =>
+              completed === undefined
+                ? saved
+                : {
+                    ...saved,
+                    continuation: { ...saved.continuation, result: completed },
+                  },
+            ),
+          };
         } catch (error) {
           await checkpoint.close();
           throw error;
@@ -120,7 +131,12 @@ export class BashWorkerPhase implements WorkerBashPhase {
       if (parked.pid === this.#rootPid) continue;
       this.#startFork(async () => {
         try {
-          await parked.port.runFork(await parked.resume());
+          const resumed = await parked.resume();
+          if (resumed.kind === "exit") {
+            await parked.port.complete({ kind: "exit", status: resumed.status });
+          } else {
+            await parked.port.runFork(resumed.source);
+          }
         } finally {
           await parked.checkpoint.close();
         }

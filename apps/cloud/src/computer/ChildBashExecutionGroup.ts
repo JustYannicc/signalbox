@@ -4,8 +4,10 @@ import type { KernelBashCredentials } from "../kernel/KernelBashProgram.ts";
 import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
 import type { KernelExitStatus } from "../kernel/KernelProcessTable.ts";
+import type { BashCheckpoint } from "./BashCheckpointStore.ts";
 import { BashWorkerPhase } from "./BashWorkerPhase.ts";
 import type { createChildWorkerRunner } from "./ChildWorkerProgram.ts";
+import { isStoppedWorkerLoaderQuotaFailure } from "./ChildWorkerDispatchError.ts";
 import { createWorkerBashForkHost } from "./WorkerBashHost.ts";
 
 type Runner = ReturnType<typeof createChildWorkerRunner<KernelBashPort>>;
@@ -35,7 +37,14 @@ export class ChildBashExecutionGroup {
       try {
         return await this.#execute(context, owner, source, initial);
       } catch (error) {
-        await owner.close();
+        if (initial && isStoppedWorkerLoaderQuotaFailure(error)) {
+          await owner.port.complete({
+            kind: "failure",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } else {
+          await owner.close();
+        }
         throw error;
       }
     });
@@ -59,66 +68,82 @@ export class ChildBashExecutionGroup {
     source: KernelBashForkSource | undefined,
     initial: boolean,
   ): Promise<KernelExitStatus> {
-    for (;;) {
-      context.signal.throwIfAborted();
-      const phase = new BashWorkerPhase({
-        filesystem: context.filesystem,
-        rootPid: context.identity.pid,
-        startFork: (work) => {
-          this.#track(work);
-        },
-      });
-      const residentBytes = source === undefined ? 0 : (await source.state()).memoryBytes;
-      const runner = initial ? this.#initial : this.#continued;
-      initial = false;
-      const exit = await runner.run(
-        context,
-        (admitted, lease, execution) => {
-          const stopped = Promise.withResolvers<void>();
-          this.#stops.add(stopped.promise);
-          void stopped.promise.then(
-            () => this.#stops.delete(stopped.promise),
-            (error: unknown) => {
-              this.#failures.add(error);
-              this.#stops.delete(stopped.promise);
-            },
-          );
-          const bridge = createWorkerBashForkHost(
-            { context: admitted, credentials: this.#credentials },
-            lease,
-            owner,
-            source,
-            phase,
-            execution.residentByteLimit,
-          );
-          return {
-            host: bridge.host,
-            // The group keeps the kernel process and its descriptors through parked phases.
-            close() {},
-            async onStopped() {
-              try {
-                await phase.stopped(execution);
-                stopped.resolve();
-              } catch (error) {
-                stopped.reject(error);
-                throw error;
-              }
-            },
-          };
-        },
-        residentBytes,
-      );
-      const parked = phase.root;
-      if (exit.signal !== 0) {
-        await parked?.checkpoint.close();
-        await owner.close();
-        return exit;
+    let checkpoint: BashCheckpoint | undefined;
+    try {
+      for (;;) {
+        context.signal.throwIfAborted();
+        const phase = new BashWorkerPhase({
+          filesystem: context.filesystem,
+          rootPid: context.identity.pid,
+          startFork: (work) => {
+            this.#track(work);
+          },
+        });
+        const residentBytes = source === undefined ? 0 : (await source.state()).memoryBytes;
+        const runner = initial ? this.#initial : this.#continued;
+        initial = false;
+        const exit = await runner.run(
+          context,
+          (admitted, lease, execution) => {
+            const stopped = Promise.withResolvers<void>();
+            this.#stops.add(stopped.promise);
+            void stopped.promise.then(
+              () => this.#stops.delete(stopped.promise),
+              (error: unknown) => {
+                if (!isStoppedWorkerLoaderQuotaFailure(error)) this.#failures.add(error);
+                this.#stops.delete(stopped.promise);
+              },
+            );
+            const bridge = createWorkerBashForkHost(
+              { context: admitted, credentials: this.#credentials },
+              lease,
+              owner,
+              source,
+              phase,
+              execution.residentByteLimit,
+            );
+            return {
+              host: bridge.host,
+              ...(bridge.onDispatchFailure === undefined
+                ? {}
+                : { onDispatchFailure: bridge.onDispatchFailure }),
+              // The group keeps the kernel process and its descriptors through parked phases.
+              close() {},
+              async onStopped() {
+                try {
+                  await phase.stopped(execution);
+                  stopped.resolve();
+                } catch (error) {
+                  stopped.reject(error);
+                  throw error;
+                }
+              },
+            };
+          },
+          residentBytes,
+        );
+        const parked = phase.root;
+        if (exit.signal !== 0) {
+          await parked?.checkpoint.close();
+          await owner.close();
+          return exit;
+        }
+        if (parked === undefined) {
+          await owner.port.complete({ kind: "exit", status: exit });
+          return exit;
+        }
+        checkpoint = parked.checkpoint;
+        const resumed = await parked.resume();
+        if (resumed.kind === "exit") {
+          await checkpoint.close();
+          await owner.port.complete({ kind: "exit", status: resumed.status });
+          return resumed.status;
+        }
+        source = resumed.source;
       }
-      if (parked === undefined) {
-        await owner.port.complete({ kind: "exit", status: exit });
-        return exit;
-      }
-      source = await parked.resume();
+    } catch (error) {
+      await checkpoint?.close();
+      throw error;
     }
   }
 
@@ -128,7 +153,7 @@ export class ChildBashExecutionGroup {
     void pending.then(
       () => this.#tasks.delete(pending),
       (error: unknown) => {
-        this.#failures.add(error);
+        if (!isStoppedWorkerLoaderQuotaFailure(error)) this.#failures.add(error);
         this.#tasks.delete(pending);
       },
     );

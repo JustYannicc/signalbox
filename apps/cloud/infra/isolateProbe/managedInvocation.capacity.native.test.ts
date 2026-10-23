@@ -93,7 +93,7 @@ export default {async fetch(request){
   const settledBeforeAbort=queuedSettled;
   queuedAbort.abort(queuedReason);
   const waiting={settledBeforeAbort,...await queued};
-  for(const permit of additional)permit.release();
+  for(const permit of additional)await permit.release();
   const activeAfterOtherPermitsRelease=capacity.active;
   const final=await control("status");
   return Response.json({mode,limit:capacity.limit,started,activeWhileReading,during,activeBeforeAck,settledBeforeAck,result,activeAfterOutcome,after,additionalPermits:additional.length,activeAtLimit,waiting,generatedCalls,activeAfterOtherPermitsRelease,final});
@@ -158,7 +158,7 @@ async function run(mode: string) {
 }
 
 const common = {
-  limit: 10,
+  limit: 4,
   started: {
     runs: 1,
     readStarted: true,
@@ -178,7 +178,7 @@ const common = {
   },
   activeBeforeAck: 1,
   settledBeforeAck: false,
-  activeAtLimit: 10,
+  activeAtLimit: 4,
   waiting: { settledBeforeAbort: false, sameAbortReason: true },
   generatedCalls: 1,
 };
@@ -199,13 +199,13 @@ describe("native generated hook capacity retention", () => {
       result: { typedCleanupError: false, code: null, cause: null, sameAbortReason: true },
       activeAfterOutcome: 0,
       after: finished,
-      additionalPermits: 10,
+      additionalPermits: 4,
       activeAfterOtherPermitsRelease: 0,
       final: finished,
     });
   });
 
-  it("retains rejected real child cleanup in the ten-slot limit without starting another hook", async () => {
+  it("retains rejected real child cleanup in the four-slot limit without starting another hook", async () => {
     const unconfirmed = {
       runs: 1,
       readStarted: true,
@@ -225,7 +225,7 @@ describe("native generated hook capacity retention", () => {
       },
       activeAfterOutcome: 1,
       after: unconfirmed,
-      additionalPermits: 9,
+      additionalPermits: 3,
       activeAfterOtherPermitsRelease: 1,
       final: unconfirmed,
     });

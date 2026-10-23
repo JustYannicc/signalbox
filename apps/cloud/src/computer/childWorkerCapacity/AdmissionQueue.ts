@@ -9,6 +9,7 @@ import type {
 import type { ChildWorkerPermitHooks } from "./Execution.ts";
 import type {
   InternalChildWorkerPermit,
+  ChildWorkerSiblingFamily,
   ChildWorkerRequester,
   ChildWorkerSlotRequest,
 } from "./types.ts";
@@ -16,6 +17,8 @@ import type {
 interface Waiter {
   readonly signal: AbortSignal;
   readonly controller: AbortController;
+  readonly order: number;
+  readonly siblingFamily: ChildWorkerSiblingFamily | undefined;
   resolve?: (permit: InternalChildWorkerPermit) => void;
   reject?: (error: unknown) => void;
   result?: Promise<InternalChildWorkerPermit>;
@@ -24,6 +27,7 @@ interface Waiter {
   readonly onAbort: () => void;
   state: "queued" | "submitted" | "done";
   occupiesSlot: boolean;
+  occupiesSiblingFamily: boolean;
   unplaceable: boolean;
   failure?: unknown;
 }
@@ -41,6 +45,9 @@ export interface ChildWorkerAdmissionQueueOptions {
   readonly scheduleQuantum: ProcessSlotsOptions["scheduleQuantum"];
   readonly onCapacityPressure: (adapterWaiters: number) => void;
   readonly isNested: (requester: ChildWorkerRequester | undefined) => boolean;
+  readonly siblingFamily: (
+    requester: ChildWorkerRequester | undefined,
+  ) => ChildWorkerSiblingFamily | undefined;
   readonly makePermit: (
     slots: ProcessSlots,
     lease: ProcessSlotLease,
@@ -56,8 +63,10 @@ export class ChildWorkerAdmissionQueue {
   readonly #nested = new Set<Waiter>();
   readonly #roots = new Set<Waiter>();
   readonly #pending = new Set<Waiter>();
+  readonly #siblingSlots = new WeakMap<object, Map<number, number>>();
   #used = 0;
   #terminating = 0;
+  #nextOrder = 0;
   #draining = false;
   #failure: { readonly error: unknown } | undefined;
   #cancelQuantum: (() => void) | undefined;
@@ -94,9 +103,12 @@ export class ChildWorkerAdmissionQueue {
     waiter = {
       signal: ownedSignal,
       controller,
+      order: this.#nextOrder++,
+      siblingFamily: this.#options.siblingFamily(requester),
       onAbort,
       state: "queued",
       occupiesSlot: false,
+      occupiesSiblingFamily: false,
       unplaceable: false,
     };
     const queue = this.#queueFor(requester);
@@ -134,6 +146,7 @@ export class ChildWorkerAdmissionQueue {
     if (waiter.occupiesSlot) {
       waiter.occupiesSlot = false;
       this.#used--;
+      this.#retireSiblingFamily(waiter);
       this.#drain();
     }
   }
@@ -211,9 +224,9 @@ export class ChildWorkerAdmissionQueue {
         }
       }
       while (this.#used < this.#options.limit) {
-        const queue = this.#nested.size > 0 ? this.#nested : this.#roots;
-        const waiter = queue.values().next().value;
-        if (waiter === undefined) return;
+        const next = this.#nextWaiter();
+        if (next === undefined) return;
+        const { queue, waiter } = next;
         if (waiter.code === undefined) return;
         queue.delete(waiter);
         if (waiter.signal.aborted) {
@@ -226,6 +239,7 @@ export class ChildWorkerAdmissionQueue {
         waiter.signal.removeEventListener("abort", waiter.onAbort);
         waiter.occupiesSlot = true;
         this.#used++;
+        this.#occupySiblingFamily(waiter);
         this.#pending.add(waiter);
         void this.#submit(waiter);
       }
@@ -273,6 +287,68 @@ export class ChildWorkerAdmissionQueue {
     );
   }
 
+  #nextWaiter(): { readonly queue: Set<Waiter>; readonly waiter: Waiter } | undefined {
+    // Active siblings win first; existing nested ownership and arrival order break ties.
+    let selected:
+      | {
+          readonly queue: Set<Waiter>;
+          readonly waiter: Waiter;
+          readonly hasSibling: boolean;
+          readonly isNested: boolean;
+        }
+      | undefined;
+    for (const queue of [this.#nested, this.#roots]) {
+      for (const waiter of queue) {
+        const candidate = {
+          queue,
+          waiter,
+          hasSibling: this.#hasSiblingSlot(waiter.siblingFamily),
+          isNested: queue === this.#nested,
+        };
+        if (
+          selected === undefined ||
+          Number(candidate.hasSibling) > Number(selected.hasSibling) ||
+          (candidate.hasSibling === selected.hasSibling &&
+            Number(candidate.isNested) > Number(selected.isNested)) ||
+          (candidate.hasSibling === selected.hasSibling &&
+            candidate.isNested === selected.isNested &&
+            candidate.waiter.order < selected.waiter.order)
+        ) {
+          selected = candidate;
+        }
+      }
+    }
+    return selected;
+  }
+
+  #hasSiblingSlot(family: ChildWorkerSiblingFamily | undefined): boolean {
+    if (family === undefined) return false;
+    return (this.#siblingSlots.get(family.processes)?.get(family.parentPid) ?? 0) > 0;
+  }
+
+  #occupySiblingFamily(waiter: Waiter): void {
+    const family = waiter.siblingFamily;
+    if (family === undefined || waiter.occupiesSiblingFamily) return;
+    let families = this.#siblingSlots.get(family.processes);
+    if (families === undefined) {
+      families = new Map();
+      this.#siblingSlots.set(family.processes, families);
+    }
+    families.set(family.parentPid, (families.get(family.parentPid) ?? 0) + 1);
+    waiter.occupiesSiblingFamily = true;
+  }
+
+  #retireSiblingFamily(waiter: Waiter): void {
+    const family = waiter.siblingFamily;
+    if (family === undefined || !waiter.occupiesSiblingFamily) return;
+    waiter.occupiesSiblingFamily = false;
+    const families = this.#siblingSlots.get(family.processes);
+    const count = families?.get(family.parentPid);
+    if (families === undefined || count === undefined) return;
+    if (count <= 1) families.delete(family.parentPid);
+    else families.set(family.parentPid, count - 1);
+  }
+
   #cancelPressure(): void {
     const cancel = this.#cancelQuantum;
     this.#cancelQuantum = undefined;
@@ -290,6 +366,7 @@ export class ChildWorkerAdmissionQueue {
       const result = await slots.acquire(waiter.request!);
       this.#pending.delete(waiter);
       if (!waiter.occupiesSlot || waiter.unplaceable) {
+        this.#retireSiblingFamily(waiter);
         await slots.release(result.lease, { acknowledged: true });
         const error = new Error("ProcessSlots admitted a request marked unplaceable");
         waiter.state = "done";
@@ -310,6 +387,7 @@ export class ChildWorkerAdmissionQueue {
             ended: () => {
               this.#terminating--;
               this.#used--;
+              this.#retireSiblingFamily(waiter);
               this.#drain();
             },
             failed: () => {
@@ -321,6 +399,7 @@ export class ChildWorkerAdmissionQueue {
       );
     } catch (error) {
       this.#pending.delete(waiter);
+      this.#retireSiblingFamily(waiter);
       if (waiter.occupiesSlot) {
         waiter.occupiesSlot = false;
         this.#used--;

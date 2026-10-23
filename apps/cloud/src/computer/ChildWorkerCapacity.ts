@@ -31,6 +31,7 @@ import type {
   ChildWorkerPressureListener,
   ChildWorkerRequester,
   ChildWorkerReservation,
+  ChildWorkerSiblingFamily,
   ChildWorkerSlotRequest,
 } from "./childWorkerCapacity/types.ts";
 
@@ -128,6 +129,7 @@ export class ChildWorkerCapacity {
       scheduleQuantum: this.#scheduleQuantum,
       onCapacityPressure: (adapterWaiters) => this.#notifyCapacityPressure(adapterWaiters),
       isNested: (requester) => this.#isNested(requester),
+      siblingFamily: (requester) => this.#siblingFamily(requester),
       makePermit: (slots, lease, permit, hooks, byteLimit) =>
         this.#makePermit(slots, lease, permit, hooks, byteLimit),
     });
@@ -269,6 +271,20 @@ export class ChildWorkerCapacity {
   #isNested(requester: ChildWorkerRequester | undefined): boolean {
     const owner = requester?.processes.admissionOwner(requester.process);
     return owner?.status === "ok" && owner.value !== undefined && this.#owners.has(owner.value);
+  }
+
+  #siblingFamily(
+    requester: ChildWorkerRequester | undefined,
+  ): ChildWorkerSiblingFamily | undefined {
+    if (requester === undefined) return undefined;
+    const info =
+      requester.process === undefined ? undefined : requester.processes.info?.(requester.process);
+    let parentPid = requester.parentPid;
+    if (parentPid === undefined && info?.status === "ok") parentPid = info.value.parentPid;
+    if (parentPid === undefined || !Number.isSafeInteger(parentPid) || parentPid < 0) {
+      return undefined;
+    }
+    return { processes: requester.processes, parentPid };
   }
 
   #makePermit(

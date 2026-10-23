@@ -8,6 +8,7 @@ import {
   type ChildWorkerProgramOptions,
 } from "./ChildWorkerProgram.ts";
 import { ChildBashExecutionGroup } from "./ChildBashExecutionGroup.ts";
+import { isStoppedWorkerLoaderQuotaFailure } from "./ChildWorkerDispatchError.ts";
 import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
 
 export function createChildBashProgram(
@@ -27,6 +28,7 @@ export function createChildBashProgram(
       const owner = createKernelBashHost({
         context,
         credentials: options.credentials,
+        isStoppedQuotaFailure: isStoppedWorkerLoaderQuotaFailure,
         runFork: (forked, forkOwner, source) => group.run(forked, forkOwner, source),
       });
       group.run(context, owner, undefined, true);
