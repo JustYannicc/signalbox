@@ -23,6 +23,10 @@ class PortConnection extends RpcTarget implements NodeWorkerPortConnection {
     return this.#connection.open(first, second);
   }
 
+  adopt(addresses: readonly NodeWorkerPortAddress[]) {
+    return this.#connection.adopt(addresses);
+  }
+
   post(port: NodeWorkerPortAddress, message: NodeWorkerMessage) {
     return this.#connection.post(port, message);
   }

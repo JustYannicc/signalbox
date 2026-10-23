@@ -100,6 +100,7 @@ export class NodeWorkerPorts implements NodeWorkerPortRuntime {
 
   adopt(address: NodeWorkerPortAddress): NodeWorkerMessagePort {
     const [port] = this.#install([address]);
+    this.#enqueueAdoption([address]);
     return port!;
   }
 
@@ -154,7 +155,9 @@ export class NodeWorkerPorts implements NodeWorkerPortRuntime {
             throw dataCloneError("MessagePort transfer lease is invalid");
           addresses.push(addressFrom(handle));
         }
-        return this.#install(addresses);
+        const ports = this.#install(addresses);
+        this.#enqueueAdoption(addresses);
+        return ports;
       },
     });
   }
@@ -220,6 +223,11 @@ export class NodeWorkerPorts implements NodeWorkerPortRuntime {
     return ports;
   }
 
+  #enqueueAdoption(addresses: readonly NodeWorkerPortAddress[]): void {
+    if (addresses.length === 0) return;
+    this.enqueue((connection) => connection.adopt(addresses));
+  }
+
   async #receive(event: NodeWorkerPortEvent): Promise<boolean> {
     const port = this.#ports.get(event.port.id);
     if (port === undefined) return false;
@@ -233,6 +241,7 @@ export class NodeWorkerPorts implements NodeWorkerPortRuntime {
       this.retire(current.address);
       this.#emitClose(port);
       this.referencesChanged();
+      await this.#tail;
       return true;
     }
     if (current.closed) {

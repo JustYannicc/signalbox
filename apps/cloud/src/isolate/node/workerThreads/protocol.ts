@@ -31,6 +31,7 @@ export interface NodeWorkerPortReceiver {
 /** Each connection is bound to a process lease by the supervisor. */
 export interface NodeWorkerPortConnection {
   open(first: NodeWorkerPortAddress, second: NodeWorkerPortAddress): Promise<void>;
+  adopt(addresses: readonly NodeWorkerPortAddress[]): Promise<void>;
   post(port: NodeWorkerPortAddress, message: NodeWorkerMessage): Promise<void>;
   start(port: NodeWorkerPortAddress): Promise<void>;
   close(port: NodeWorkerPortAddress): Promise<void>;

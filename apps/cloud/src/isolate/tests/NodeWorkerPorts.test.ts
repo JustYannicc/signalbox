@@ -5,7 +5,11 @@ import {
   NodeWorkerPortBroker,
   NodeWorkerPorts,
 } from "../NodeWorkerThreads.ts";
-import type { NodeWorkerPortEvent } from "../NodeWorkerThreads.ts";
+import type {
+  NodeWorkerMessage,
+  NodeWorkerPortAddress,
+  NodeWorkerPortEvent,
+} from "../NodeWorkerThreads.ts";
 
 interface Runtime {
   readonly ports: NodeWorkerPorts;
@@ -19,6 +23,8 @@ function runtime(
     beforeReceive?: (event: NodeWorkerPortEvent) => Promise<void> | void;
     afterReceive?: (event: NodeWorkerPortEvent, result: Promise<boolean>) => void;
     beforeClose?: () => Promise<void> | void;
+    beforePost?: (message: NodeWorkerMessage) => Promise<void> | void;
+    onOpen?: (addresses: readonly [NodeWorkerPortAddress, NodeWorkerPortAddress]) => void;
     onReferenceChange?: () => void;
   }> = {},
 ): Runtime {
@@ -34,8 +40,15 @@ function runtime(
         },
       });
       return {
-        open: connection.open,
-        post: connection.post,
+        open: async (first, second) => {
+          options.onOpen?.([first, second]);
+          return connection.open(first, second);
+        },
+        adopt: connection.adopt,
+        post: async (address, message) => {
+          await options.beforePost?.(message);
+          return connection.post(address, message);
+        },
         start: connection.start,
         close: async (address) => {
           await options.beforeClose?.();
@@ -343,6 +356,7 @@ describe("worker message port facade", () => {
     expect(() => receiver.ports.adopt(handle)).toThrow(
       expect.objectContaining({ name: "DataCloneError" }),
     );
+    await receiver.ports.drain();
     const returned = receiver.ports.encode({ port: adopted }, [adopted]);
     expect(() => receiver.ports.adopt({ id: handle.id, lease: handle.lease })).toThrow(
       expect.objectContaining({ name: "DataCloneError" }),
@@ -352,6 +366,129 @@ describe("worker message port facade", () => {
     expect(returnedPort.port).toBeInstanceOf(NodeWorkerMessagePort);
     await Promise.all([source.ports.dispose(), receiver.ports.dispose()]);
     await broker.drain();
+  });
+
+  it("keeps a directly transferred port until its delayed adoption acknowledges the close", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const source = runtime("delayed-adopt-source", broker);
+    const target = runtime("delayed-adopt-target", broker);
+    const channel = source.ports.channel();
+    await Promise.all([source.ports.drain(), target.ports.drain()]);
+    const packet = source.ports.encode({ port: channel.port2 }, [channel.port2]);
+    await source.ports.drain();
+    await broker.transfer(source.owner, target.owner, packet);
+    channel.port1.close();
+    await source.ports.drain();
+    await broker.drain();
+
+    const moved = target.ports.decode(packet) as { port: NodeWorkerMessagePort };
+    let closeCount = 0;
+    moved.port.on("close", () => closeCount++);
+    await target.ports.drain();
+    await broker.drain();
+
+    expect(closeCount).toBe(1);
+    expect(moved.port.hasRef()).toBe(false);
+    expect(broker.residentPorts).toBe(0);
+    await Promise.all([source.ports.dispose(), target.ports.dispose()]);
+    await broker.drain();
+  });
+
+  it("retains a detached source lease when peer close arrives before its move", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const source = runtime("detached-source", broker);
+    const target = runtime("detached-target", broker);
+    const channel = source.ports.channel();
+    await Promise.all([source.ports.drain(), target.ports.drain()]);
+    const packet = source.ports.encode({ port: channel.port2 }, [channel.port2]);
+    channel.port1.close();
+    await source.ports.drain();
+    await broker.drain();
+
+    await broker.transfer(source.owner, target.owner, packet);
+    const moved = target.ports.decode(packet) as { port: NodeWorkerMessagePort };
+    let closeCount = 0;
+    moved.port.on("close", () => closeCount++);
+    await target.ports.drain();
+    await broker.drain();
+
+    expect(closeCount).toBe(1);
+    expect(moved.port.hasRef()).toBe(false);
+    expect(broker.residentPorts).toBe(0);
+    await Promise.all([source.ports.dispose(), target.ports.dispose()]);
+    await broker.drain();
+  });
+
+  it("joins a queued post before close ACK and closes its unadopted transfer", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const deliveryEntered = Promise.withResolvers<void>();
+    const releaseDelivery = Promise.withResolvers<void>();
+    const postEntered = Promise.withResolvers<void>();
+    const releasePost = Promise.withResolvers<void>();
+    const closeEntered = Promise.withResolvers<void>();
+    const releaseClose = Promise.withResolvers<void>();
+    const opened: Array<readonly [NodeWorkerPortAddress, NodeWorkerPortAddress]> = [];
+    const source = runtime("pending-adopt-source", broker, {
+      onOpen: (addresses) => opened.push(addresses),
+      beforeReceive: async (event) => {
+        if (event.type === "message") {
+          deliveryEntered.resolve();
+          await releaseDelivery.promise;
+        }
+        if (event.type === "close" && event.port.id === opened[1]?.[0]?.id) {
+          closeEntered.resolve();
+          await releaseClose.promise;
+        }
+      },
+      beforePost: async (message) => {
+        if ((message.value as { kind?: unknown }).kind === "late") {
+          postEntered.resolve();
+          await releasePost.promise;
+        }
+      },
+    });
+    const target = runtime("pending-adopt-target", broker);
+    const outer = source.ports.channel();
+    const nested = source.ports.channel();
+    const deep = source.ports.channel();
+    let deepCloses = 0;
+    deep.port1.on("message", () => undefined);
+    deep.port1.on("close", () => deepCloses++);
+    outer.port2.on("message", () => {
+      throw new Error("Retired outer receiver ran");
+    });
+
+    try {
+      outer.port1.postMessage({ nested: nested.port2 }, [nested.port2]);
+      await deliveryEntered.promise;
+      const packet = source.ports.encode({ port: outer.port2 }, [outer.port2]);
+      await Promise.all([source.ports.drain(), target.ports.drain()]);
+      await broker.transfer(source.owner, target.owner, packet);
+      const moved = target.ports.decode(packet) as { port: NodeWorkerMessagePort };
+      nested.port1.postMessage({ kind: "late", deep: deep.port2 }, [deep.port2]);
+      await postEntered.promise;
+      moved.port.close();
+      await target.ports.drain();
+      releaseDelivery.resolve();
+      await closeEntered.promise;
+
+      const sourceDrain = source.ports.drain();
+      void sourceDrain.catch(() => undefined);
+      releasePost.resolve();
+      await sourceDrain;
+      releaseClose.resolve();
+      await broker.drain();
+
+      expect(deepCloses).toBe(1);
+      expect(deep.port1.hasRef()).toBe(false);
+      expect(broker.residentPorts).toBe(0);
+    } finally {
+      releaseDelivery.resolve();
+      releasePost.resolve();
+      releaseClose.resolve();
+      await Promise.allSettled([source.ports.dispose(), target.ports.dispose()]);
+      await broker.drain().catch(() => undefined);
+    }
   });
 
   it("rejects a late delivery after lease transfer and delivers it to the new owner", async () => {

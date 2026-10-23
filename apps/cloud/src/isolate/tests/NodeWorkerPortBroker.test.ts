@@ -5,6 +5,7 @@ import {
   NodeWorkerPorts,
   type NodeWorkerMessage,
   type NodeWorkerPortAddress,
+  type NodeWorkerPortConnection,
   type NodeWorkerPortEvent,
   type NodeWorkerPortTransfer,
 } from "../NodeWorkerThreads.ts";
@@ -23,12 +24,16 @@ function fixture() {
   const connect = (owner: string) => {
     const received: NodeWorkerPortEvent[] = [];
     events.set(owner, received);
-    return broker.connect(owner, {
+    let connection!: NodeWorkerPortConnection;
+    connection = broker.connect(owner, {
       receive: async (event) => {
+        if (event.type === "message" && event.message.ports.length > 0)
+          await connection.adopt(event.message.ports.map(({ handle }) => handle));
         received.push(event);
         return true;
       },
     });
+    return connection;
   };
   return { broker, events, connect };
 }
@@ -109,6 +114,8 @@ describe("worker message port broker", () => {
     await parent.open(first, second);
     await f.broker.transfer("parent", "child", transfer(childPort));
     await f.broker.transfer("parent", "sibling", transfer(siblingPort));
+    await child.adopt([childPort]);
+    await sibling.adopt([siblingPort]);
     await f.broker.disconnect("parent");
     await sibling.start(siblingPort);
     await child.post(childPort, message(new Uint8Array([0, 127, 255])));
@@ -547,6 +554,7 @@ describe("worker message port broker", () => {
     await parent.post(first, message("still queued"));
     await entered.promise;
     await broker.transfer("parent", "child", transfer(moved));
+    await child.adopt([moved]);
     await child.start(moved);
     release.resolve(false);
     await broker.drain();
@@ -579,6 +587,65 @@ describe("worker message port broker", () => {
     expect(f.broker.residentPorts).toBe(0);
   });
 
+  it("validates a cancelled post transfer even when its destination is closed", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const connection = broker.connect("cancelled-post", { receive: async () => true });
+    const source = address("cancelled-post/source");
+    const closedPeer = address("cancelled-post/closed-peer");
+    const transferred = address("cancelled-post/transferred");
+    const transferPeer = address("cancelled-post/transfer-peer");
+    await connection.open(source, closedPeer);
+    await connection.open(transferred, transferPeer);
+    const closePeer = connection.close(closedPeer);
+
+    await expect(
+      connection.post(source, transfer(transferred, "invalid-previous-lease")),
+    ).rejects.toThrow("transfer lease is invalid");
+    await closePeer;
+
+    await connection.close(transferred);
+    await broker.drain();
+    expect(broker.residentPorts).toBe(0);
+  });
+
+  it("does not partially adopt a batch when a later address has a stale lease", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const source = broker.connect("adoption-source", { receive: async () => true });
+    let acceptClose = false;
+    let closeAttempts = 0;
+    let closeCount = 0;
+    const target = broker.connect("adoption-target", {
+      receive: async (event) => {
+        if (event.type !== "close") return true;
+        closeAttempts++;
+        if (acceptClose) closeCount++;
+        return acceptClose;
+      },
+    });
+    const moved = address("adoption-source/moved");
+    const peer = address("adoption-source/peer");
+    const targetLease = { ...moved, lease: "target-lease" };
+    await source.open(moved, peer);
+    await broker.transfer("adoption-source", "adoption-target", transfer(targetLease));
+    await target.adopt([targetLease]);
+    await source.close(peer);
+    await broker.drain();
+    expect(closeAttempts).toBe(1);
+
+    await expect(target.adopt([targetLease, peer])).rejects.toThrow("lease is stale");
+    acceptClose = true;
+    await target.start(targetLease);
+    await broker.drain();
+    expect(closeAttempts).toBe(1);
+    expect(closeCount).toBe(0);
+
+    await target.adopt([targetLease]);
+    await broker.drain();
+    expect(closeAttempts).toBe(2);
+    expect(closeCount).toBe(1);
+    expect(broker.residentPorts).toBe(0);
+  });
+
   it("rejects a delayed transfer after the port returns to the same owner", async () => {
     const f = fixture();
     const parent = f.connect("parent");
@@ -589,7 +656,9 @@ describe("worker message port broker", () => {
     const returned = { ...second, lease: "returned" };
     await parent.open(first, second);
     await f.broker.transfer("parent", "child", transfer(childLease));
+    await child.adopt([childLease]);
     await f.broker.transfer("child", "parent", transfer(returned, "child"));
+    await parent.adopt([returned]);
     await expect(
       f.broker.transfer("parent", "child", transfer({ ...second, lease: "delayed" })),
     ).rejects.toThrow("transfer lease is invalid");
@@ -613,6 +682,7 @@ describe("worker message port broker", () => {
     await parent.open(nested, peer);
     await parent.post(sender, transfer(nestedLease));
     await f.broker.transfer("parent", "child", transfer(receiverLease));
+    await child.adopt([receiverLease]);
     await child.start(receiverLease);
     await f.broker.drain();
     await child.post(nestedLease, message("nested still works"));
