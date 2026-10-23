@@ -24,7 +24,11 @@ import { commandLoader, programFixture } from "./commands.ts";
 import { machineFixture } from "./machine.ts";
 import { continuationNativeFixture } from "./continuationNative.ts";
 
-const makeContinuationHostInputs = (batch: boolean, opaque = false, bindSources = true) =>
+const makeContinuationHostInputs = (
+  batch: boolean,
+  opaque = false,
+  binding: "explicit" | "unjoined" | "native" = "explicit",
+) =>
   Effect.gen(function* () {
     const database = yield* Effect.acquireRelease(Effect.sync(hostSqlite), (value) =>
       Effect.sync(() => value.dispose()),
@@ -79,25 +83,29 @@ const makeContinuationHostInputs = (batch: boolean, opaque = false, bindSources 
       },
       batch,
       opaque,
+      binding === "native",
     );
     const batchBindings = [
       {
         sdkMessageId: native.batchUuid,
         blockIndex: 0,
-        sourceCallId: "controlled-source-call-a",
-        sourceOccurrenceId: "controlled-enqueue:410:fixture-a",
+        sourceCallId: binding === "native" ? native.batchCalls[0]! : "controlled-source-call-a",
+        sourceOccurrenceId:
+          binding === "native" ? native.batchTaskIds[0]! : "controlled-enqueue:410:fixture-a",
       },
       {
         sdkMessageId: native.batchUuid,
         blockIndex: 1,
-        sourceCallId: "controlled-source-call-b",
-        sourceOccurrenceId: "controlled-enqueue:409:fixture-b",
+        sourceCallId: binding === "native" ? native.batchCalls[1]! : "controlled-source-call-b",
+        sourceOccurrenceId:
+          binding === "native" ? native.batchTaskIds[1]! : "controlled-enqueue:409:fixture-b",
       },
       {
         sdkMessageId: native.batchUuid,
         blockIndex: 2,
-        sourceCallId: "controlled-source-call-c",
-        sourceOccurrenceId: "controlled-enqueue:411:fixture-c",
+        sourceCallId: binding === "native" ? native.batchCalls[2]! : "controlled-source-call-c",
+        sourceOccurrenceId:
+          binding === "native" ? native.batchTaskIds[2]! : "controlled-enqueue:411:fixture-c",
       },
     ];
     const commands = commandLoader();
@@ -194,7 +202,7 @@ const makeContinuationHostInputs = (batch: boolean, opaque = false, bindSources 
         adapter: ({ harness }) =>
           Effect.succeed({
             ...adapter(harness.computer.files, deps, instanceId),
-            ...(batch && bindSources
+            ...(batch && binding === "explicit"
               ? {
                   continuationOwnership: {
                     resolve: (observations) =>
@@ -284,7 +292,16 @@ const makeContinuationHostInputs = (batch: boolean, opaque = false, bindSources 
 export const continuationHostInputs = makeContinuationHostInputs(false);
 export const batchContinuationHostInputs = makeContinuationHostInputs(true);
 export const boundaryBatchContinuationHostInputs = makeContinuationHostInputs(true, true);
-export const unjoinedBatchContinuationHostInputs = makeContinuationHostInputs(true, false, false);
+export const unjoinedBatchContinuationHostInputs = makeContinuationHostInputs(
+  true,
+  false,
+  "unjoined",
+);
+export const nativeBoundBatchContinuationHostInputs = makeContinuationHostInputs(
+  true,
+  true,
+  "native",
+);
 
 export const continuationHostFixture = Effect.gen(function* () {
   const input = yield* continuationHostInputs;

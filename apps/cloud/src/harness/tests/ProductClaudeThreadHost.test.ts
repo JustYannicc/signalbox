@@ -3,7 +3,14 @@ import * as NodeWorkerThreads from "node:worker_threads";
 import { expect, it, onTestFinished } from "vite-plus/test";
 
 const scenario = async (
-  mode: "continue" | "revoke" | "startup-failure" | "batch" | "boundary-batch" | "unjoined-batch",
+  mode:
+    | "continue"
+    | "revoke"
+    | "startup-failure"
+    | "batch"
+    | "boundary-batch"
+    | "native-bound-batch"
+    | "unjoined-batch",
 ) => {
   const worker = new NodeWorkerThreads.Worker(
     new URL("./productHost/threadWorker.ts", import.meta.url),
@@ -39,3 +46,6 @@ it("hands a complete three-block batch through one continuation request and one 
 
 it("retains late SDK observations without inventing recorded source identities when no join is supplied", () =>
   scenario("unjoined-batch"));
+
+it("binds CLI task notifications to their producing calls without an injected ownership resolver", () =>
+  scenario("native-bound-batch"));
