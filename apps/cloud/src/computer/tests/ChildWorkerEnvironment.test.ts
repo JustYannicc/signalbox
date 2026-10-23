@@ -9,7 +9,9 @@ vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 describe("Child worker environment after admission", () => {
   it("claims the original context before deriving one environment for host and command", async () => {
     const fixture = childBusyboxFixture({ env: { PATH: "/bin", PWD: "/old" } });
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerenvironment-test-1",
+    });
     let reservation!: ChildWorkerReservation;
     const order: string[] = [];
     let hostEnvironment: Readonly<Record<string, string>> | undefined;
@@ -66,7 +68,9 @@ describe("Child worker environment after admission", () => {
 
   it("never derives an environment after a rejected claim", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerenvironment-test-2",
+    });
     let reservation!: ChildWorkerReservation;
     const childEnv = vi.fn(() => ({}));
     const createHost = vi.fn(() => ({ host: {}, close() {} }));
@@ -103,7 +107,9 @@ describe("Child worker environment after admission", () => {
 
   it("releases a claimed slot and reports environment preparation failure to its caller only", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerenvironment-test-3",
+    });
     let reservation!: ChildWorkerReservation;
     const failure = new Error("environment unavailable");
     const createHost = vi.fn(() => ({ host: {}, close() {} }));

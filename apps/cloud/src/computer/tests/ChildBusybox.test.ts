@@ -144,7 +144,9 @@ describe.skipIf(!available)("actual pinned BusyBox child", () => {
   it("runs through the shared child admission wrapper without a parent WASM module", async () => {
     const fixture = childBusyboxFixture({ args: ["cat", "from-facet"] });
     fixture.write("from-facet", "shared resources");
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childbusybox-test-1",
+    });
     let captured: KernelBusyboxPort | undefined;
     const program = createChildBusyboxProgram({
       executable: "/bin/cat",

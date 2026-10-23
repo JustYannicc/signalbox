@@ -34,7 +34,11 @@ export class CodeModeProof extends DurableObject<Environment> {
     if (sql.exec("SELECT 1 FROM code_mode_diagnostic LIMIT 1").toArray().length)
       return new Response("One attempt only", { status: 409 });
     mark("fetch-enter");
-    const capacity = new ChildWorkerCapacity(2);
+    // The 2026-10-23 probe measured ten live fetches per DO (see computer/README.md).
+    const capacity = new ChildWorkerCapacity(10, {
+      owner: `thread/${this.ctx.id.toString()}`,
+      storage: this.ctx.storage,
+    });
     const program = createCodeModeHostProgram({
       loader: createCodeModeWorkerLoader({ loader: this.env.LOADER, policy: { cpuMs: 1000 } }),
       capacity,

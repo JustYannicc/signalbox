@@ -1,4 +1,4 @@
-// @effect-diagnostics cryptoRandomUUID:off globalTimers:off - this portable Promise-based adapter creates per-instance namespaces and bounded pressure ticks without an Effect runtime.
+// @effect-diagnostics globalTimers:off - this portable Promise-based adapter creates bounded pressure ticks without an Effect runtime.
 import type {
   ProcessSlotLease,
   ProcessSlotPermit,
@@ -7,12 +7,17 @@ import type {
   ProcessSlots,
   ProcessSlotsOptions,
 } from "./ProcessSlots.ts";
-import { createProcessSlots } from "./ProcessSlots.ts";
-import { CommandProcessSlotStore } from "./CommandProcessSlotStore.ts";
 import {
-  ChildWorkerAdmissionQueue,
-  type InternalChildWorkerPermit,
-} from "./childWorkerCapacity/AdmissionQueue.ts";
+  createProcessSlots,
+  validateProcessSlotCodeId,
+  validateProcessSlotOwner,
+} from "./ProcessSlots.ts";
+import { CommandProcessSlotStore } from "./childWorkerCapacity/CommandProcessSlotStore.ts";
+import {
+  DurableProcessSlotStore,
+  type DurableProcessSlotStorage,
+} from "./childWorkerCapacity/DurableProcessSlotStore.ts";
+import { ChildWorkerAdmissionQueue } from "./childWorkerCapacity/AdmissionQueue.ts";
 import {
   ProcessSlotChildWorkerPermit,
   type ChildWorkerPermitHooks,
@@ -20,6 +25,8 @@ import {
 import { issueChildWorkerReservation } from "./childWorkerCapacity/Reservation.ts";
 import type {
   ChildWorkerExecution,
+  ChildWorkerAdmissionTicket,
+  InternalChildWorkerPermit,
   ChildWorkerPermit,
   ChildWorkerPressureListener,
   ChildWorkerRequester,
@@ -28,28 +35,34 @@ import type {
 } from "./childWorkerCapacity/types.ts";
 
 export type {
+  ChildWorkerAdmissionTicket,
   ChildWorkerExecution,
   ChildWorkerPermit,
   ChildWorkerRequester,
   ChildWorkerReservation,
   ChildWorkerSlotRequest,
 } from "./childWorkerCapacity/types.ts";
+export type { DurableProcessSlotStorage } from "./childWorkerCapacity/DurableProcessSlotStore.ts";
 export { isChildWorkerReservation } from "./childWorkerCapacity/Reservation.ts";
 
 // Bash packs under 64 MiB; this leaves growth room before a syscall checkpoint and 24 MiB for the runtime.
 const DEFAULT_RESIDENT_BYTE_LIMIT = 104 * 1024 * 1024;
 const DEFAULT_PRESSURE_QUANTUM_MS = 100;
-const LEGACY_REQUEST: ChildWorkerSlotRequest = Object.freeze({
+// Direct permit callers have no prepared executable identity to attach.
+const DEFAULT_REQUEST: ChildWorkerSlotRequest = Object.freeze({
   codeId: "legacy",
   residentBytes: 0,
 });
 
 export interface ChildWorkerCapacityOptions {
-  /** Required with externally supplied slots. Otherwise a unique lifetime-only namespace is made. */
-  readonly owner?: string;
+  /** Stable identity supplied by the caller, such as `thread/${ctx.id}`. */
+  readonly owner: string;
   /** Its inFlightLimit must equal `limit`; this adapter must be its sole acquire caller. */
   readonly slots?: ProcessSlots | Promise<ProcessSlots>;
+  /** Use for request-scoped callers that do not reconstruct capacity under the same owner. */
   readonly store?: ProcessSlotStore;
+  /** Durable caller storage, used to keep generations across capacity reconstruction. */
+  readonly storage?: DurableProcessSlotStorage;
   readonly residentByteLimit?: number;
   readonly scheduleQuantum?: ProcessSlotsOptions["scheduleQuantum"];
 }
@@ -67,9 +80,13 @@ export class ChildWorkerCapacity {
   readonly #pressureListeners = new Set<ChildWorkerPressureListener>();
   #failure: { readonly error: unknown } | undefined;
 
-  constructor(limit: number, options: ChildWorkerCapacityOptions = {}) {
+  constructor(limit: number, options: ChildWorkerCapacityOptions) {
     if (!Number.isSafeInteger(limit) || limit < 1) {
       throw new RangeError("Child worker capacity must be a positive safe integer");
+    }
+    validateProcessSlotOwner(options.owner);
+    if (options.store !== undefined && options.storage !== undefined) {
+      throw new TypeError("Supply either a process-slot store or durable storage");
     }
     const residentByteLimit = options.residentByteLimit ?? DEFAULT_RESIDENT_BYTE_LIMIT;
     if (!Number.isSafeInteger(residentByteLimit) || residentByteLimit < 1) {
@@ -78,21 +95,25 @@ export class ChildWorkerCapacity {
     this.limit = limit;
     this.residentByteLimit = residentByteLimit;
     this.#scheduleQuantum = options.scheduleQuantum ?? scheduleQuantum;
+    this.owner = options.owner;
     if (options.slots !== undefined) {
-      if (options.owner === undefined) {
-        throw new TypeError("An owner namespace is required with supplied ProcessSlots");
-      }
-      validateOwner(options.owner);
-      this.owner = options.owner;
-      this.#slots = Promise.resolve(options.slots);
+      this.#slots = Promise.resolve(options.slots).then((slots) => {
+        if (slots.inFlightLimit !== limit) {
+          throw new RangeError("Supplied ProcessSlots must use the capacity limit");
+        }
+        return slots;
+      });
     } else {
-      this.owner = options.owner ?? ephemeralOwner();
-      validateOwner(this.owner);
+      const store =
+        options.store ??
+        (options.storage === undefined
+          ? new CommandProcessSlotStore()
+          : new DurableProcessSlotStore(options.storage, this.owner));
       this.#slots = createProcessSlots({
         owner: this.owner,
         inFlightLimit: limit,
         residentByteLimit,
-        store: options.store ?? new CommandProcessSlotStore(),
+        store,
         scheduleQuantum: this.#scheduleQuantum,
         // Each generation has a distinct loader ID; this per-DO adapter keeps no stub cache.
         invalidate: () => {},
@@ -159,12 +180,41 @@ export class ChildWorkerCapacity {
     });
   }
 
-  acquire(
+  enqueue(
     signal: AbortSignal,
     requester: ChildWorkerRequester | undefined,
-    code: ChildWorkerSlotRequest = LEGACY_REQUEST,
+  ): ChildWorkerAdmissionTicket {
+    const queued = this.#admissions.enqueue(signal, requester);
+    let reserved = false;
+    return Object.freeze({
+      reserve: (code: ChildWorkerSlotRequest) => {
+        if (reserved) {
+          return Promise.reject(
+            new TypeError("Child worker admission ticket was already reserved"),
+          );
+        }
+        reserved = true;
+        const invalid = this.#requestError(code);
+        if (invalid !== undefined) {
+          queued.cancel();
+          return Promise.reject(invalid);
+        }
+        return queued
+          .acquire(code)
+          .then((permit) =>
+            issueChildWorkerReservation(permit, code, (error) => this.#fence(error)),
+          );
+      },
+      cancel: () => queued.cancel(),
+    });
+  }
+
+  async acquire(
+    signal: AbortSignal,
+    requester: ChildWorkerRequester | undefined,
+    code: ChildWorkerSlotRequest = DEFAULT_REQUEST,
   ): Promise<ChildWorkerPermit> {
-    return this.#acquire(signal, requester, code);
+    return await this.#acquire(signal, requester, code);
   }
 
   async reserve(
@@ -172,8 +222,7 @@ export class ChildWorkerCapacity {
     requester: ChildWorkerRequester,
     code: ChildWorkerSlotRequest,
   ): Promise<ChildWorkerReservation> {
-    const permit = await this.#acquire(signal, requester, code);
-    return issueChildWorkerReservation(permit, code, (error) => this.#fence(error));
+    return await this.enqueue(signal, requester).reserve(code);
   }
 
   async run<T>(
@@ -182,7 +231,7 @@ export class ChildWorkerCapacity {
     requester: ChildWorkerRequester,
     code: ChildWorkerSlotRequest,
   ): Promise<T> {
-    const permit = (await this.#acquire(signal, requester, code)) as InternalChildWorkerPermit;
+    const permit = await this.#acquire(signal, requester, code);
     try {
       signal.throwIfAborted();
       permit.bind(requester);
@@ -199,14 +248,22 @@ export class ChildWorkerCapacity {
   ): Promise<InternalChildWorkerPermit> {
     if (signal.aborted) return Promise.reject(signal.reason);
     if (this.#failure !== undefined) return Promise.reject(this.#failure.error);
-    if (!Object.isFrozen(code)) {
-      return Promise.reject(new TypeError("Child worker slot request must be immutable"));
+    const invalid = this.#requestError(code);
+    if (invalid !== undefined) return Promise.reject(invalid);
+    return this.#admissions.enqueue(signal, requester).acquire(code);
+  }
+
+  #requestError(code: ChildWorkerSlotRequest): Error | undefined {
+    if (!Object.isFrozen(code)) return new TypeError("Child worker slot request must be immutable");
+    try {
+      validateProcessSlotCodeId(code.codeId);
+    } catch (error) {
+      return error instanceof Error ? error : new Error(String(error));
     }
-    validateCodeId(code.codeId);
     if (!Number.isSafeInteger(code.residentBytes) || code.residentBytes < 0) {
-      return Promise.reject(new RangeError("Invalid child worker resident byte count"));
+      return new RangeError("Invalid child worker resident byte count");
     }
-    return this.#admissions.acquire(signal, requester, code);
+    return undefined;
   }
 
   #isNested(requester: ChildWorkerRequester | undefined): boolean {
@@ -259,33 +316,6 @@ export class ChildWorkerCapacity {
     this.#failure = { error };
     this.#admissions.fence(error);
   }
-}
-
-function validSegment(value: string): boolean {
-  return (
-    value.length > 0 &&
-    value !== "." &&
-    value !== ".." &&
-    !/[\s/\\]/u.test(value) &&
-    [...value].every((character) => character.charCodeAt(0) >= 32)
-  );
-}
-
-function validateCodeId(value: string): void {
-  if (!validSegment(value)) {
-    throw new TypeError("Code ID must be one nonempty namespace segment");
-  }
-}
-
-function validateOwner(value: string): void {
-  const parts = value.split("/");
-  if (parts.length < 2 || !parts.every(validSegment)) {
-    throw new TypeError("Process-slot owner must include supervisor and shard");
-  }
-}
-
-function ephemeralOwner(): string {
-  return `command-${crypto.randomUUID()}/capacity-${crypto.randomUUID()}`;
 }
 
 const scheduleQuantum: ProcessSlotsOptions["scheduleQuantum"] = (callback) => {

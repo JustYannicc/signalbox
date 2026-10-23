@@ -1,15 +1,11 @@
 import type {
-  ChildWorkerPermit,
   ChildWorkerExecution,
+  InternalChildWorkerPermit,
   ChildWorkerRequester,
   ChildWorkerReservation,
   ChildWorkerSlotRequest,
 } from "./types.ts";
 import { childWorkerReservationBrand } from "./types.ts";
-
-interface BoundPermit extends ChildWorkerPermit {
-  bind(requester: ChildWorkerRequester): void;
-}
 
 const issuer = Symbol("ChildWorkerReservationIssuer");
 const issued = new WeakSet<object>();
@@ -19,7 +15,7 @@ export function isChildWorkerReservation(value: unknown): value is ChildWorkerRe
 }
 
 export function issueChildWorkerReservation(
-  permit: BoundPermit,
+  permit: InternalChildWorkerPermit,
   code: ChildWorkerSlotRequest,
   onFailure: (error: unknown) => void,
 ): ChildWorkerReservation {
@@ -29,7 +25,7 @@ export function issueChildWorkerReservation(
 class ChildWorkerReservationImpl implements ChildWorkerReservation {
   readonly [childWorkerReservationBrand]: typeof childWorkerReservationBrand =
     childWorkerReservationBrand;
-  readonly #permit: BoundPermit;
+  readonly #permit: InternalChildWorkerPermit;
   readonly #code: ChildWorkerSlotRequest;
   readonly request: ChildWorkerSlotRequest;
   readonly #onFailure: (error: unknown) => void;
@@ -37,7 +33,7 @@ class ChildWorkerReservationImpl implements ChildWorkerReservation {
 
   constructor(
     token: typeof issuer,
-    permit: BoundPermit,
+    permit: InternalChildWorkerPermit,
     code: ChildWorkerSlotRequest,
     onFailure: (error: unknown) => void,
   ) {

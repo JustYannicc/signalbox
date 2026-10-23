@@ -27,6 +27,10 @@ export interface ChildWorkerPermit {
   release(): Promise<void>;
 }
 
+export interface InternalChildWorkerPermit extends ChildWorkerPermit {
+  bind(requester: ChildWorkerRequester): void;
+}
+
 export interface ChildWorkerReservation {
   readonly [childWorkerReservationBrand]: typeof childWorkerReservationBrand;
   /** The exact preflight object passed to reserve; it may key the runner's captured modules. */
@@ -37,6 +41,12 @@ export interface ChildWorkerReservation {
     requester: ChildWorkerRequester,
     code?: ChildWorkerSlotRequest,
   ): Promise<T>;
+  cancel(): void;
+}
+
+/** A queue position that does not consume a process slot until prepared code is supplied. */
+export interface ChildWorkerAdmissionTicket {
+  reserve(code: ChildWorkerSlotRequest): Promise<ChildWorkerReservation>;
   cancel(): void;
 }
 

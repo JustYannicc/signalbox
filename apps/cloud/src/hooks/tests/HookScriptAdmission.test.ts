@@ -6,7 +6,9 @@ import { bytes, readAll, setup, spawn, writeInput } from "./hookProgramFixture.t
 const syntheticRequest = Object.freeze({ codeId: "test-holder", residentBytes: 0 });
 
 it("runs a script hook after its invoking shell acknowledges stop", async () => {
-  const capacity = new ChildWorkerCapacity(1);
+  const capacity = new ChildWorkerCapacity(1, {
+    owner: "test/src-hooks-tests-hookscriptadmission-test-1",
+  });
   const controller = new AbortController();
   const attempted = Promise.withResolvers<void>();
   const stopAck = Promise.withResolvers<void>();

@@ -29,7 +29,7 @@ function fixture() {
   const runtime = createCodexHookRuntime(
     () => ({ bindings: new Map(), async drain() {} }),
     wakes,
-    new ChildWorkerCapacity(10),
+    new ChildWorkerCapacity(4, { owner: "test/infra-hooksproof-codexruntime-test-1" }),
   );
   return {
     database,

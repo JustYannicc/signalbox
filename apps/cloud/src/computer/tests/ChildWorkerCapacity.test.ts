@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { childBusyboxFixture } from "./ChildBusyboxFixture.ts";
 import { ChildWorkerCapacity, isChildWorkerReservation } from "../ChildWorkerCapacity.ts";
+import {
+  validateProcessSlotCodeId,
+  validateProcessSlotOwner,
+  type ProcessSlots,
+} from "../ProcessSlots.ts";
 
 const fixtures: ReturnType<typeof childBusyboxFixture>[] = [];
 function requester() {
@@ -44,7 +49,9 @@ afterEach(async () => {
 
 describe("ChildWorkerCapacity", () => {
   it("holds the strict limit and admits queued roots FIFO without a nested burst", async () => {
-    const capacity = new ChildWorkerCapacity(2);
+    const capacity = new ChildWorkerCapacity(2, {
+      owner: "test/src-computer-tests-childworkercapacity-test-1",
+    });
     const requests = [request("one"), request("two"), request("three"), request("four")];
     const first = await capacity.acquire(new AbortController().signal, undefined, requests[0]);
     const second = await capacity.acquire(new AbortController().signal, undefined, requests[1]);
@@ -75,7 +82,9 @@ describe("ChildWorkerCapacity", () => {
   });
 
   it("uses distinct lease IDs concurrently, then warm reuses an acknowledged slot", async () => {
-    const capacity = new ChildWorkerCapacity(2);
+    const capacity = new ChildWorkerCapacity(2, {
+      owner: "test/src-computer-tests-childworkercapacity-test-2",
+    });
     const code = request("warm-code");
     const first = await capacity.acquire(new AbortController().signal, undefined, code);
     const second = await capacity.acquire(new AbortController().signal, undefined, code);
@@ -89,7 +98,9 @@ describe("ChildWorkerCapacity", () => {
   });
 
   it("retires a lost slot generation before reusing its code ID", async () => {
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkercapacity-test-3",
+    });
     const code = request("lost-code");
     const first = await capacity.acquire(new AbortController().signal, undefined, code);
     const oldId = first.execution.loaderId;
@@ -102,7 +113,9 @@ describe("ChildWorkerCapacity", () => {
   });
 
   it("keeps nested waiters ahead of queued roots without exceeding the limit", async () => {
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkercapacity-test-4",
+    });
     const parent = requester();
     const done = deferred<void>();
     const started = deferred<void>();
@@ -133,7 +146,10 @@ describe("ChildWorkerCapacity", () => {
 
   it("reports queued-root capacity pressure each quantum and stops after abort", async () => {
     const quantum = manualQuantum();
-    const capacity = new ChildWorkerCapacity(1, { scheduleQuantum: quantum.scheduleQuantum });
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/capacity-pressure-quantum",
+      scheduleQuantum: quantum.scheduleQuantum,
+    });
     const held = await capacity.acquire(new AbortController().signal, undefined, request("held"));
     const controller = new AbortController();
     const pressures: { kind: string; inFlight: number; waiting: number }[] = [];
@@ -165,7 +181,10 @@ describe("ChildWorkerCapacity", () => {
 
   it("cancels queued-root pressure when the active slot drains", async () => {
     const quantum = manualQuantum();
-    const capacity = new ChildWorkerCapacity(1, { scheduleQuantum: quantum.scheduleQuantum });
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/capacity-pressure-drain",
+      scheduleQuantum: quantum.scheduleQuantum,
+    });
     const held = await capacity.acquire(new AbortController().signal, undefined, request("held"));
     const pressures: string[] = [];
     const unsubscribe = capacity.onPressure((pressure) => pressures.push(pressure.kind));
@@ -185,7 +204,9 @@ describe("ChildWorkerCapacity", () => {
   });
 
   it("sends unplaceable requests to pressure without blocking a fitting acquire", async () => {
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkercapacity-test-5",
+    });
     const pressured = deferred<void>();
     const unsubscribe = capacity.onPressure((pressure) => {
       if (pressure.kind === "unplaceable" && "request" in pressure) {
@@ -217,7 +238,10 @@ describe("ChildWorkerCapacity", () => {
   });
 
   it("preserves the exact prepared object on an opaque one-use reservation", async () => {
-    const capacity = new ChildWorkerCapacity(1, { residentByteLimit: 4096 });
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/capacity-prepared-request",
+      residentByteLimit: 4096,
+    });
     const code = request("prepared");
     const reservation = await capacity.reserve(new AbortController().signal, requester(), code);
     expect(isChildWorkerReservation(reservation)).toBe(true);
@@ -245,9 +269,41 @@ describe("ChildWorkerCapacity", () => {
   });
 
   it("requires an explicit positive in-flight limit", () => {
-    expect(new ChildWorkerCapacity(4).limit).toBe(4);
+    expect(
+      new ChildWorkerCapacity(4, { owner: "test/src-computer-tests-childworkercapacity-test-6" })
+        .limit,
+    ).toBe(4);
     for (const limit of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(() => new ChildWorkerCapacity(limit)).toThrow(RangeError);
+      expect(
+        () =>
+          new ChildWorkerCapacity(limit, {
+            owner: "test/src-computer-tests-childworkercapacity-test-7",
+          }),
+      ).toThrow(RangeError);
     }
+  });
+
+  it("exports and applies the process-slot identity validators", () => {
+    expect(() => validateProcessSlotOwner("thread/shard-1")).not.toThrow();
+    expect(() => validateProcessSlotCodeId("worker-code")).not.toThrow();
+    expect(() => validateProcessSlotOwner("shard-only")).toThrow(TypeError);
+    expect(() => validateProcessSlotCodeId("bad/code")).toThrow(TypeError);
+    expect(() => new ChildWorkerCapacity(1, { owner: "shard-only" })).toThrow(TypeError);
+  });
+
+  it("returns acquire validation failures through its promise and rejects mismatched slot limits", async () => {
+    const capacity = new ChildWorkerCapacity(1, { owner: "test/capacity-preconditions" });
+    const invalidCode = Object.freeze({ codeId: "bad/code", residentBytes: 0 });
+    await expect(
+      capacity.acquire(new AbortController().signal, undefined, invalidCode),
+    ).rejects.toThrow(TypeError);
+
+    const mismatched = new ChildWorkerCapacity(1, {
+      owner: "test/capacity-slot-limit",
+      slots: { inFlightLimit: 2 } as ProcessSlots,
+    });
+    await expect(
+      mismatched.acquire(new AbortController().signal, undefined, request("valid")),
+    ).rejects.toThrow("must use the capacity limit");
   });
 });

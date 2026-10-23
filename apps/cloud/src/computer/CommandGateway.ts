@@ -35,8 +35,12 @@ export interface CommandGatewayOptions {
   readonly filesystem: KernelFileSystem;
   readonly processes: KernelProcessTable;
   readonly wakes: KernelWakeRegistry;
-  /** The owning adapter supplies its I/O context's limit: ten for a DO, four for a Worker request. */
-  readonly capacity: Pick<ChildWorkerCapacity, "run" | "reserve">;
+  /**
+   * The context issuing the Dynamic Worker fetch owns its limit: ten for a DO, four for a Worker
+   * request. The 2026-10-23 deployed probe confirmed hard rejection at 11/5 distinct live fetches
+   * (see apps/cloud/src/computer/README.md).
+   */
+  readonly capacity: Pick<ChildWorkerCapacity, "enqueue" | "run" | "reserve">;
   readonly loader: ChildProgramCatalogOptions["loader"];
   readonly programs: CommandProgramCodes;
   readonly hostname: string;

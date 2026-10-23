@@ -6,6 +6,7 @@ import type { decodeProofSeed } from "./SeedProtocol.ts";
 import { INITIAL_FILE, RESULT_FILE, PROOF_COMMAND, runProofCommand, sameBytes } from "./Command.ts";
 import { openProofFilesystem, PROOF_INITIAL_REVISION } from "./Filesystem.ts";
 import type { ForkCommit } from "../../src/kernel/FilePersistencePorts.ts";
+import type { ChildWorkerCapacityOptions } from "../../src/computer/ChildWorkerCapacity.ts";
 import { createProofAdmittedCommands } from "./AdmittedCommands.ts";
 import { runLocalOnlyControl } from "./LocalOnlyControl.ts";
 import type { ChildWorkerLoaderPort } from "../../src/computer/WorkerLoaderDispatch.ts";
@@ -16,6 +17,10 @@ export function proofKernel(
   database: FacetStorage,
   loader: WorkerLoader | ChildWorkerLoaderPort,
   seed: Awaited<ReturnType<typeof decodeProofSeed>>,
+  capacity: Pick<ChildWorkerCapacityOptions, "owner" | "storage"> & { readonly limit?: number } = {
+    owner: "test/computer-boxd-proof-kernel",
+    limit: 4,
+  },
 ) {
   const state = openProofFilesystem(database);
   const { wakes, ports, persistence, filesystem, write, read } = state;
@@ -32,6 +37,7 @@ export function proofKernel(
     loader,
     programs: seed.programs,
     wakes,
+    ...capacity,
   });
   const host = admitted.host;
   const held = filesystem.open(

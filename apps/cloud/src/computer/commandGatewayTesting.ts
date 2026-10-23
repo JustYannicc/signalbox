@@ -40,7 +40,9 @@ export interface CommandGatewayFixtureOptions {
 
 export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}) {
   const kernel = childBusyboxFixture();
-  const capacity = new ChildWorkerCapacity(options.capacityLimit ?? 2);
+  const capacity = new ChildWorkerCapacity(options.capacityLimit ?? 2, {
+    owner: "test/command-gateway",
+  });
   const run =
     options.run ??
     (async (_input, invocation) => {

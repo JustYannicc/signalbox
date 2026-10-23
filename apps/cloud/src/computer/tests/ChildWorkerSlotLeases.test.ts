@@ -9,7 +9,9 @@ describe("command process slot leases", () => {
   it("separates concurrent identical programs and reuses an acknowledged warm slot", async () => {
     const first = childBusyboxFixture();
     const second = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(2);
+    const capacity = new ChildWorkerCapacity(2, {
+      owner: "test/src-computer-tests-childworkerslotleases-test-1",
+    });
     const entered = Promise.withResolvers<void>();
     const stopped = Promise.withResolvers<void>();
     const invocations: ChildWorkerInvocation[] = [];
@@ -50,7 +52,9 @@ describe("command process slot leases", () => {
 
   it("retires a memory-lost generation before dispatching the next process", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerslotleases-test-2",
+    });
     const ids: string[] = [];
     const killed = { exitCode: 0, signal: 9, coreDumped: false };
     let failing = true;
