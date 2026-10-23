@@ -3,10 +3,15 @@ import * as NodePath from "node:path";
 import { object, sha256 } from "./fixture.ts";
 
 const PROGRAM_MANIFEST = {
-  url: "https://github.com/JustYannicc/signalbox/releases/download/kernel-programs-20261023-6aefd645-2d079609/program-inputs.json",
-  sha256: "20dc9910665096cdb636ddc15b3606cbdc1bdc71d73858cc0e9621e406bfcae4",
+  url: "https://github.com/JustYannicc/signalbox/releases/download/kernel-programs-20261023-sed-40c8bb93/program-inputs.json",
+  sha256: "eefbaeac35faca9f993bc13e392a49412f3585c7abb16db7a27f21f0aff92ac5",
 };
-const PROGRAM_FILES = { bash: "bash.wasm", busybox: "busybox.wasm", ripgrep: "rg.wasm" } as const;
+const PROGRAM_FILES = {
+  bash: "bash.wasm",
+  busybox: "busybox.wasm",
+  ripgrep: "rg.wasm",
+  sed: "sed.wasm",
+} as const;
 
 type Asset = { readonly url: string; readonly bytes: number; readonly sha256: string };
 

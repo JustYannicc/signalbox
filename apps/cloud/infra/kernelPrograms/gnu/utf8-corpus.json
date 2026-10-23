@@ -1,0 +1,728 @@
+[
+  {
+    "name": "sed/codex-bare",
+    "program": "sed",
+    "args": ["-i", "s/BEFORE/AFTER/", "input"],
+    "inputHex": "4245464f52450a"
+  },
+  {
+    "name": "sed/literal/ascii",
+    "program": "sed",
+    "args": ["s/needle/thread/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/in-place/ascii",
+    "program": "sed",
+    "args": ["-i", "s/needle/thread/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/ere-backrefs/ascii",
+    "program": "sed",
+    "args": ["-E", "s/(needle|NEEDLE)/\\1_edited/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/dot/ascii",
+    "program": "sed",
+    "args": ["s/./X/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/dot-star/ascii",
+    "program": "sed",
+    "args": ["s/.*/X/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/empty-star/ascii",
+    "program": "sed",
+    "args": ["s/a*/X/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/alpha/ascii",
+    "program": "sed",
+    "args": ["s/[[:alpha:]]/X/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/bracket/ascii",
+    "program": "sed",
+    "args": ["s/[é雪]/X/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/transliterate/ascii",
+    "program": "sed",
+    "args": ["y/é雪😀/E中X/", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/ignore-case/ascii",
+    "program": "sed",
+    "args": ["s/é/X/Ig", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/ascii-ignore-case/ascii",
+    "program": "sed",
+    "args": ["s/k/X/Ig", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/word-class/ascii",
+    "program": "sed",
+    "args": ["s/\\w/X/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/literal/latin",
+    "program": "sed",
+    "args": ["s/needle/thread/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/in-place/latin",
+    "program": "sed",
+    "args": ["-i", "s/needle/thread/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/ere-backrefs/latin",
+    "program": "sed",
+    "args": ["-E", "s/(needle|NEEDLE)/\\1_edited/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/dot/latin",
+    "program": "sed",
+    "args": ["s/./X/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/dot-star/latin",
+    "program": "sed",
+    "args": ["s/.*/X/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/empty-star/latin",
+    "program": "sed",
+    "args": ["s/a*/X/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/alpha/latin",
+    "program": "sed",
+    "args": ["s/[[:alpha:]]/X/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/bracket/latin",
+    "program": "sed",
+    "args": ["s/[é雪]/X/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/transliterate/latin",
+    "program": "sed",
+    "args": ["y/é雪😀/E中X/", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/ignore-case/latin",
+    "program": "sed",
+    "args": ["s/é/X/Ig", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/ascii-ignore-case/latin",
+    "program": "sed",
+    "args": ["s/k/X/Ig", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/word-class/latin",
+    "program": "sed",
+    "args": ["s/\\w/X/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/literal/wide",
+    "program": "sed",
+    "args": ["s/needle/thread/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/in-place/wide",
+    "program": "sed",
+    "args": ["-i", "s/needle/thread/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/ere-backrefs/wide",
+    "program": "sed",
+    "args": ["-E", "s/(needle|NEEDLE)/\\1_edited/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/dot/wide",
+    "program": "sed",
+    "args": ["s/./X/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/dot-star/wide",
+    "program": "sed",
+    "args": ["s/.*/X/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/empty-star/wide",
+    "program": "sed",
+    "args": ["s/a*/X/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/alpha/wide",
+    "program": "sed",
+    "args": ["s/[[:alpha:]]/X/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/bracket/wide",
+    "program": "sed",
+    "args": ["s/[é雪]/X/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/transliterate/wide",
+    "program": "sed",
+    "args": ["y/é雪😀/E中X/", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/ignore-case/wide",
+    "program": "sed",
+    "args": ["s/é/X/Ig", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/ascii-ignore-case/wide",
+    "program": "sed",
+    "args": ["s/k/X/Ig", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/word-class/wide",
+    "program": "sed",
+    "args": ["s/\\w/X/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/literal/combining",
+    "program": "sed",
+    "args": ["s/needle/thread/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/in-place/combining",
+    "program": "sed",
+    "args": ["-i", "s/needle/thread/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/ere-backrefs/combining",
+    "program": "sed",
+    "args": ["-E", "s/(needle|NEEDLE)/\\1_edited/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/dot/combining",
+    "program": "sed",
+    "args": ["s/./X/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/dot-star/combining",
+    "program": "sed",
+    "args": ["s/.*/X/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/empty-star/combining",
+    "program": "sed",
+    "args": ["s/a*/X/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/alpha/combining",
+    "program": "sed",
+    "args": ["s/[[:alpha:]]/X/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/bracket/combining",
+    "program": "sed",
+    "args": ["s/[é雪]/X/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/transliterate/combining",
+    "program": "sed",
+    "args": ["y/é雪😀/E中X/", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/ignore-case/combining",
+    "program": "sed",
+    "args": ["s/é/X/Ig", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/ascii-ignore-case/combining",
+    "program": "sed",
+    "args": ["s/k/X/Ig", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/word-class/combining",
+    "program": "sed",
+    "args": ["s/\\w/X/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/literal/invalid",
+    "program": "sed",
+    "args": ["s/needle/thread/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/in-place/invalid",
+    "program": "sed",
+    "args": ["-i", "s/needle/thread/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/ere-backrefs/invalid",
+    "program": "sed",
+    "args": ["-E", "s/(needle|NEEDLE)/\\1_edited/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/dot/invalid",
+    "program": "sed",
+    "args": ["s/./X/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/dot-star/invalid",
+    "program": "sed",
+    "args": ["s/.*/X/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/empty-star/invalid",
+    "program": "sed",
+    "args": ["s/a*/X/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/alpha/invalid",
+    "program": "sed",
+    "args": ["s/[[:alpha:]]/X/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/bracket/invalid",
+    "program": "sed",
+    "args": ["s/[é雪]/X/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/transliterate/invalid",
+    "program": "sed",
+    "args": ["y/é雪😀/E中X/", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/ignore-case/invalid",
+    "program": "sed",
+    "args": ["s/é/X/Ig", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/ascii-ignore-case/invalid",
+    "program": "sed",
+    "args": ["s/k/X/Ig", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/word-class/invalid",
+    "program": "sed",
+    "args": ["s/\\w/X/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/anchored-prefix/ascii",
+    "program": "sed",
+    "args": ["s/^needle/thread/", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/anchored-suffix/ascii",
+    "program": "sed",
+    "args": ["s/needle$/thread/", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/literal-once/ascii",
+    "program": "sed",
+    "args": ["s/needle/thread/", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/ascii-proof/ascii",
+    "program": "sed",
+    "args": ["s/BEFORE/AFTER/", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/capture-swap/ascii",
+    "program": "sed",
+    "args": ["-E", "s/(.)(.)/\\2\\1/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/bre-capture-swap/ascii",
+    "program": "sed",
+    "args": ["s/\\(.\\)\\(.\\)/\\2\\1/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/ascii-transliterate/ascii",
+    "program": "sed",
+    "args": ["y/ae/AE/", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/single-utf8-transliterate/ascii",
+    "program": "sed",
+    "args": ["y/é/E/", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/space-class/ascii",
+    "program": "sed",
+    "args": ["s/[[:space:]]/_/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/print-first/ascii",
+    "program": "sed",
+    "args": ["-n", "1p", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/print-range/ascii",
+    "program": "sed",
+    "args": ["-n", "1,3p", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/inplace-two-scripts/ascii",
+    "program": "sed",
+    "args": ["-i", "-e", "s/needle/thread/g", "-e", "s/thread/ready/g", "input"],
+    "inputHex": "4245464f52450a6e6565646c650a4e4545444c450a776f72640a6e6565646c655f776f72640a31323320782d790a"
+  },
+  {
+    "name": "sed/anchored-prefix/latin",
+    "program": "sed",
+    "args": ["s/^needle/thread/", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/anchored-suffix/latin",
+    "program": "sed",
+    "args": ["s/needle$/thread/", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/literal-once/latin",
+    "program": "sed",
+    "args": ["s/needle/thread/", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/ascii-proof/latin",
+    "program": "sed",
+    "args": ["s/BEFORE/AFTER/", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/capture-swap/latin",
+    "program": "sed",
+    "args": ["-E", "s/(.)(.)/\\2\\1/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/bre-capture-swap/latin",
+    "program": "sed",
+    "args": ["s/\\(.\\)\\(.\\)/\\2\\1/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/ascii-transliterate/latin",
+    "program": "sed",
+    "args": ["y/ae/AE/", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/single-utf8-transliterate/latin",
+    "program": "sed",
+    "args": ["y/é/E/", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/space-class/latin",
+    "program": "sed",
+    "args": ["s/[[:space:]]/_/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/print-first/latin",
+    "program": "sed",
+    "args": ["-n", "1p", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/print-range/latin",
+    "program": "sed",
+    "args": ["-n", "1,3p", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/inplace-two-scripts/latin",
+    "program": "sed",
+    "args": ["-i", "-e", "s/needle/thread/g", "-e", "s/thread/ready/g", "input"],
+    "inputHex": "c3a90ac3890ac3b10ac3910ac3b80ac3980ac3bf0ac5b80ac4b00ac4b10ac5bf0a530ae284aa0a4b0a6b0a6e6565646c650ac3a96e6565646c650a6e6565646c65c3a90a"
+  },
+  {
+    "name": "sed/anchored-prefix/wide",
+    "program": "sed",
+    "args": ["s/^needle/thread/", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/anchored-suffix/wide",
+    "program": "sed",
+    "args": ["s/needle$/thread/", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/literal-once/wide",
+    "program": "sed",
+    "args": ["s/needle/thread/", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/ascii-proof/wide",
+    "program": "sed",
+    "args": ["s/BEFORE/AFTER/", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/capture-swap/wide",
+    "program": "sed",
+    "args": ["-E", "s/(.)(.)/\\2\\1/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/bre-capture-swap/wide",
+    "program": "sed",
+    "args": ["s/\\(.\\)\\(.\\)/\\2\\1/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/ascii-transliterate/wide",
+    "program": "sed",
+    "args": ["y/ae/AE/", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/single-utf8-transliterate/wide",
+    "program": "sed",
+    "args": ["y/é/E/", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/space-class/wide",
+    "program": "sed",
+    "args": ["s/[[:space:]]/_/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/print-first/wide",
+    "program": "sed",
+    "args": ["-n", "1p", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/print-range/wide",
+    "program": "sed",
+    "args": ["-n", "1,3p", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/inplace-two-scripts/wide",
+    "program": "sed",
+    "args": ["-i", "-e", "s/needle/thread/g", "-e", "s/thread/ready/g", "input"],
+    "inputHex": "e99baa0ae4b8ade696870af09f98800af09f91a9e2808df09f92bb0a6e6565646c65e99baa0ae99baa6e6565646c650a6e6565646c65f09f98800a"
+  },
+  {
+    "name": "sed/anchored-prefix/combining",
+    "program": "sed",
+    "args": ["s/^needle/thread/", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/anchored-suffix/combining",
+    "program": "sed",
+    "args": ["s/needle$/thread/", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/literal-once/combining",
+    "program": "sed",
+    "args": ["s/needle/thread/", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/ascii-proof/combining",
+    "program": "sed",
+    "args": ["s/BEFORE/AFTER/", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/capture-swap/combining",
+    "program": "sed",
+    "args": ["-E", "s/(.)(.)/\\2\\1/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/bre-capture-swap/combining",
+    "program": "sed",
+    "args": ["s/\\(.\\)\\(.\\)/\\2\\1/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/ascii-transliterate/combining",
+    "program": "sed",
+    "args": ["y/ae/AE/", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/single-utf8-transliterate/combining",
+    "program": "sed",
+    "args": ["y/é/E/", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/space-class/combining",
+    "program": "sed",
+    "args": ["s/[[:space:]]/_/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/print-first/combining",
+    "program": "sed",
+    "args": ["-n", "1p", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/print-range/combining",
+    "program": "sed",
+    "args": ["-n", "1,3p", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/inplace-two-scripts/combining",
+    "program": "sed",
+    "args": ["-i", "-e", "s/needle/thread/g", "-e", "s/thread/ready/g", "input"],
+    "inputHex": "65cc810ac3890a61cc880a6e6565646c65cc810a6e6565646c650a"
+  },
+  {
+    "name": "sed/anchored-prefix/invalid",
+    "program": "sed",
+    "args": ["s/^needle/thread/", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/anchored-suffix/invalid",
+    "program": "sed",
+    "args": ["s/needle$/thread/", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/literal-once/invalid",
+    "program": "sed",
+    "args": ["s/needle/thread/", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/ascii-proof/invalid",
+    "program": "sed",
+    "args": ["s/BEFORE/AFTER/", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/capture-swap/invalid",
+    "program": "sed",
+    "args": ["-E", "s/(.)(.)/\\2\\1/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/bre-capture-swap/invalid",
+    "program": "sed",
+    "args": ["s/\\(.\\)\\(.\\)/\\2\\1/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/ascii-transliterate/invalid",
+    "program": "sed",
+    "args": ["y/ae/AE/", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/single-utf8-transliterate/invalid",
+    "program": "sed",
+    "args": ["y/é/E/", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/space-class/invalid",
+    "program": "sed",
+    "args": ["s/[[:space:]]/_/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/print-first/invalid",
+    "program": "sed",
+    "args": ["-n", "1p", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/print-range/invalid",
+    "program": "sed",
+    "args": ["-n", "1,3p", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  },
+  {
+    "name": "sed/inplace-two-scripts/invalid",
+    "program": "sed",
+    "args": ["-i", "-e", "s/needle/thread/g", "-e", "s/thread/ready/g", "input"],
+    "inputHex": "6e6565646c65ff0aff6e6565646c650ac328206e6565646c650ae90a"
+  }
+]
