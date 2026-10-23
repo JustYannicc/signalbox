@@ -19,8 +19,8 @@ export class ChildHostLease {
     this.#onObserve?.(residentBytes);
   }
 
-  hold<Value>(value: Value): ChildHostRef<Value> {
-    const ref = new ChildHostRef(value);
+  hold<Value>(value: Value, onRelease?: (value: Value) => void): ChildHostRef<Value> {
+    const ref = new ChildHostRef(value, onRelease);
     // A fork can resolve after close; its port is born released.
     if (this.#refs === undefined) ref[release]();
     else this.#refs.add(ref);
@@ -43,9 +43,11 @@ const release = Symbol("release");
 
 export class ChildHostRef<Value> {
   #value: Value | undefined;
+  #onRelease: (() => void) | undefined;
 
-  constructor(value: Value) {
+  constructor(value: Value, onRelease?: (value: Value) => void) {
     this.#value = value;
+    this.#onRelease = onRelease === undefined ? undefined : () => onRelease(value);
   }
 
   get(): Value {
@@ -57,7 +59,10 @@ export class ChildHostRef<Value> {
 
   /** Only the lease clears a ref, so holders can't revoke each other's access. */
   [release](): void {
+    const onRelease = this.#onRelease;
+    this.#onRelease = undefined;
     this.#value = undefined;
+    onRelease?.();
   }
 }
 

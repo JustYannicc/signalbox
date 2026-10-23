@@ -1,4 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
+import { WorkerBashSnapshot } from "./WorkerBashSnapshot.ts";
 import {
   createKernelBashHost,
   type KernelBashHostOptions,
@@ -15,25 +16,6 @@ import type {
 import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
 import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
 import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
-
-class WorkerBashSnapshot extends RpcTarget implements KernelBashForkSource {
-  readonly #source: ChildHostRef<KernelBashForkSource>;
-
-  constructor(source: ChildHostRef<KernelBashForkSource>) {
-    super();
-    this.#source = source;
-  }
-
-  state() {
-    return this.#source.get().state();
-  }
-  read(offset: number, length: number) {
-    return this.#source.get().read(offset, length);
-  }
-  restored() {
-    return this.#source.get().restored();
-  }
-}
 
 export interface WorkerBashPhase {
   startOperation(
@@ -54,7 +36,7 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
   readonly #port: ChildHostRef<KernelBashPort>;
   readonly #pid: number;
   readonly #credentials: KernelBashCredentials;
-  readonly #snapshot: ChildHostRef<KernelBashForkSource> | undefined;
+  readonly #snapshot: WorkerBashSnapshot | undefined;
   readonly #wrapFork: (port: KernelBashPort, pid: number) => WorkerBashPort;
   readonly #residentByteLimit: number | undefined;
 
@@ -72,7 +54,7 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
     this.#port = lease.hold(port);
     this.#pid = pid;
     this.#credentials = credentials;
-    this.#snapshot = snapshot === undefined ? undefined : lease.hold(snapshot);
+    this.#snapshot = snapshot === undefined ? undefined : new WorkerBashSnapshot(lease, snapshot);
     this.#residentByteLimit = residentByteLimit;
     this.#wrapFork = (forkPort, forkPid) =>
       workerBashPort(lease, forkPort, forkPid, credentials, undefined, phase, residentByteLimit);
@@ -89,7 +71,7 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
   }
 
   forkSnapshot() {
-    return this.#snapshot === undefined ? undefined : new WorkerBashSnapshot(this.#snapshot);
+    return this.#snapshot;
   }
 
   async runFork(source: KernelBashForkSource) {
