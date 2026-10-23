@@ -2,109 +2,55 @@ export const syntheticFacetModule = `import { DurableObject } from "cloudflare:w
 
 let moduleNonce;
 const getModuleNonce = () => (moduleNonce ??= crypto.randomUUID());
-const joined = { invocationRpc: true, fetch: true, ports: true };
 
 export class SyntheticFacet extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    this.identityValue = {
-      shardOwner: env.HARNESS_PROCESS_SHARD_OWNER,
-      loaderId: env.HARNESS_PROCESS_LOADER_ID,
-      facetKey: env.HARNESS_PROCESS_FACET_KEY,
-      incarnationNonce: env.HARNESS_PROCESS_INCARNATION_NONCE,
-    };
-    this.constructorNonce = crypto.randomUUID();
+    this.env = env;
+    this.facetNonce = crypto.randomUUID();
     this.phases = [];
+    this.identityCalls = 0;
+    this.identityMismatchCall = Number(env.IDENTITY_MISMATCH_CALL ?? "0");
     this.disposalFailures = Number(env.DISPOSAL_FAILURES ?? "0");
+    this.invocationFailures = Number(env.INVOCATION_FAILURES ?? "0");
   }
 
-  async fetch(request) {
-    if (new URL(request.url).pathname !== "/identity")
-      return new Response("not found", { status: 404 });
-    return Response.json(await this.identity());
-  }
-
-  async identity() {
-    this.phases.push("identity");
+  identity() {
+    this.identityCalls++;
     return {
-      facetKey: this.identityValue.facetKey,
-      incarnationNonce: this.identityValue.incarnationNonce,
+      facetNonce:
+        this.identityCalls === this.identityMismatchCall
+          ? this.facetNonce + "-mismatch"
+          : this.facetNonce,
     };
   }
 
-  async prepareInert(input) {
-    if (
-      input.identity.shardOwner !== this.identityValue.shardOwner ||
-      input.identity.loaderId !== this.identityValue.loaderId ||
-      input.identity.facetKey !== this.identityValue.facetKey ||
-      input.identity.incarnationNonce !== this.identityValue.incarnationNonce ||
-      this.phases.join(",") !== "identity"
-    ) throw new Error("Facet preparation identity changed.");
-    this.prepared = {
-      nativeSessionId: input.nativeSessionId,
-      checkpointId: input.checkpointId,
-      manifestRevision: input.manifestRevision,
-    };
-    this.phases.push("prepare");
-    return {
-      ...this.prepared,
-      facetKey: this.identityValue.facetKey,
-      incarnationNonce: this.identityValue.incarnationNonce,
-      joined,
-    };
-  }
-
-  async activate(receipt) {
-    if (receipt.status !== "confirmed" || !this.prepared || this.phases.at(-1) !== "prepare")
-      throw new Error("Facet activation lacks confirmed preparation.");
-    this.phases.push("activate");
-  }
-
-  async invoke(input) {
-    if (
-      this.phases.at(-1) !== "activate" ||
-      !input.requestContextId ||
-      input.processId !== this.env.HARNESS_PROCESS_ID ||
-      input.loaderId !== this.identityValue.loaderId
-    ) throw new Error("Facet invocation does not match activated state.");
+  async run(input) {
     this.phases.push("invoke");
+    if (this.invocationFailures > 0) {
+      this.invocationFailures--;
+      throw new Error("Synthetic request failed before its result was observed.");
+    }
     return {
-      value: {
-        processId: input.processId,
-        requestContextId: input.requestContextId,
-        loaderId: this.identityValue.loaderId,
-        facetKey: this.identityValue.facetKey,
-        incarnationNonce: this.identityValue.incarnationNonce,
+      action: "committed",
+      snapshot: {
+        facetNonce: this.facetNonce,
         moduleNonce: getModuleNonce(),
-        constructorNonce: this.constructorNonce,
+        constructorNonce: this.facetNonce,
+        requestId: input.requestId,
+        generation: input.publisher.generation,
         phases: [...this.phases],
       },
-      stopAcknowledged: true,
-      joined,
     };
   }
 
-  async stop() {
-    if (!this.phases.includes("invoke"))
-      throw new Error("Facet stop lost its invocation state.");
-    if (!this.phases.includes("stop")) this.phases.push("stop");
-    return { acknowledged: true };
-  }
-
-  async join() {
-    if (!this.phases.includes("stop"))
-      throw new Error("Facet join lost its stop state.");
-    if (!this.phases.includes("join")) this.phases.push("join");
-    return joined;
-  }
-
-  async dispose() {
-    if (!this.phases.includes("join"))
-      throw new Error("Facet disposal lost its joined state.");
+  async dispose(expectedFacetNonce) {
+    if (expectedFacetNonce !== this.facetNonce)
+      throw new Error("Synthetic request facet disposal targeted another constructor.");
     this.phases.push("dispose");
     if (this.disposalFailures > 0) {
       this.disposalFailures--;
-      throw new Error("private-prompt-sentinel");
+      throw new Error("Synthetic facet disposal failed.");
     }
   }
 }`;

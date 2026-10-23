@@ -15,18 +15,23 @@ const harness = createTestHarness({
         worker_loaders: [{ binding: "LOADER" }],
         durable_objects: {
           bindings: [
-            { name: "PROCESS_EXECUTION_SHARDS", class_name: "HarnessProcessExecutionShardObject" },
+            {
+              name: "PROCESS_EXECUTION_SHARDS",
+              class_name: "TestHarnessProcessExecutionShardObject",
+            },
             { name: "PLACEMENT_STORES", class_name: "HarnessProcessPlacementStoreObject" },
             { name: "HARNESS_THREAD_SUPERVISOR", class_name: "ProcessPlacementSupervisor" },
+            { name: "PROCESS_TEST_FACETS", class_name: "TestHarnessProcessRequestFacetObject" },
           ],
         },
         migrations: [
           {
             tag: "v1",
             new_sqlite_classes: [
-              "HarnessProcessExecutionShardObject",
+              "TestHarnessProcessExecutionShardObject",
               "HarnessProcessPlacementStoreObject",
               "ProcessPlacementSupervisor",
+              "TestHarnessProcessRequestFacetObject",
             ],
           },
         ],
@@ -39,6 +44,76 @@ beforeAll(() => harness.listen(), 60_000);
 afterAll(() => harness.close());
 
 describe("process execution Worker entrypoint", () => {
+  it("routes a direct DO request with 21 held children through disjoint overflow identities", async () => {
+    const response = await harness.fetch("/do-overflow");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body) as {
+      readonly contexts: readonly { readonly requestContextId: string; readonly count: number }[];
+      readonly result: {
+        readonly processes: readonly {
+          readonly processId: string;
+          readonly requestContextId: string;
+          readonly identity: { readonly loaderId: string; readonly shardOwner: string } | null;
+          readonly status: string;
+        }[];
+      };
+    };
+    const contexts = result.contexts;
+    const processes = result.result.processes;
+    expect(processes).toHaveLength(21);
+    expect(contexts.reduce((total, { count }) => total + count, 0)).toBe(21);
+    expect(contexts).toHaveLength(5);
+    expect(processes.every((process) => process.status === "settled")).toBe(true);
+    expect(processes.every((process) => process.identity !== null)).toBe(true);
+    expect(new Set(processes.map((process) => process.identity!.loaderId)).size).toBe(21);
+    expect(new Set(processes.map((process) => process.identity!.shardOwner)).size).toBe(5);
+    expect(new Set(processes.map((process) => process.requestContextId)).size).toBe(5);
+    const perRequest = new Map<string, number>();
+    const perOwner = new Map<string, number>();
+    for (const process of processes)
+      perRequest.set(process.requestContextId, (perRequest.get(process.requestContextId) ?? 0) + 1);
+    for (const process of processes) {
+      const owner = process.identity!.shardOwner;
+      perOwner.set(owner, (perOwner.get(owner) ?? 0) + 1);
+    }
+    expect([...perRequest.values()].sort((left, right) => right - left)).toEqual([10, 4, 4, 2, 1]);
+    expect([...perOwner.values()].sort((left, right) => right - left)).toEqual([10, 4, 4, 2, 1]);
+  }, 120_000);
+
+  it("adapts the retained production Harness request facet through its constructor identity and scope", async () => {
+    const response = await harness.fetch("/production-facet");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body) as {
+      readonly constructorNonce: string;
+      readonly publishedNonce: string;
+      readonly action: string;
+      readonly disposed: boolean;
+      readonly inFlight: number;
+      readonly resident: number;
+    };
+    expect(result.constructorNonce).toBeTruthy();
+    expect(result.publishedNonce).toBe(result.constructorNonce);
+    expect(result.action).toBe("committed");
+    expect(result.disposed, body).toBe(true);
+    expect(result.inFlight).toBe(0);
+    expect(result.resident).toBe(0);
+  }, 120_000);
+
+  it("generates a new constructor nonce when the same request-facet key is reconstructed", async () => {
+    const response = await harness.fetch("/same-key-reconstruction");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body) as {
+      readonly originalNonce: string;
+      readonly replacementNonce: string;
+    };
+    expect(result.originalNonce).toBeTruthy();
+    expect(result.replacementNonce).toBeTruthy();
+    expect(result.replacementNonce).not.toBe(result.originalNonce);
+  }, 120_000);
+
   it("routes 105 processes through four-process entrypoint requests and keyed facets", async () => {
     const response = await harness.fetch("/", {
       method: "POST",
@@ -59,12 +134,11 @@ describe("process execution Worker entrypoint", () => {
           } | null;
           readonly settlement?: {
             readonly value: {
-              readonly moduleNonce: string;
-              readonly constructorNonce: string;
-              readonly loaderId: string;
-              readonly facetKey: string;
-              readonly requestContextId: string;
-              readonly phases: readonly string[];
+              readonly snapshot: {
+                readonly moduleNonce: string;
+                readonly constructorNonce: string;
+                readonly phases: readonly string[];
+              };
             };
           };
           readonly status: string;
@@ -80,6 +154,10 @@ describe("process execution Worker entrypoint", () => {
     expect(result.result.processes).toHaveLength(105);
     expect(
       result.result.processes.every((process) => process.status === "settled"),
+      JSON.stringify(result.result.processes.slice(0, 4)),
+    ).toBe(true);
+    expect(
+      result.result.processes.every((process) => process.settlement !== undefined),
       JSON.stringify(result.result.processes.slice(0, 4)),
     ).toBe(true);
     expect(result.result.processes.every((process) => process.identity !== null)).toBe(true);
@@ -98,11 +176,16 @@ describe("process execution Worker entrypoint", () => {
       new Set(result.result.processes.map((process) => process.identity!.incarnationNonce)).size,
     ).toBe(105);
     expect(
-      new Set(result.result.processes.map((process) => process.settlement!.value.moduleNonce)).size,
+      new Set(
+        result.result.processes.map((process) => process.settlement!.value.snapshot.moduleNonce),
+      ).size,
     ).toBe(105);
     expect(
-      new Set(result.result.processes.map((process) => process.settlement!.value.constructorNonce))
-        .size,
+      new Set(
+        result.result.processes.map(
+          (process) => process.settlement!.value.snapshot.constructorNonce,
+        ),
+      ).size,
     ).toBe(105);
 
     const perRequest = new Map<string, number>();
@@ -115,15 +198,10 @@ describe("process execution Worker entrypoint", () => {
     ]);
 
     for (const process of result.result.processes) {
-      expect(process.settlement!.value.phases).toEqual([
-        "identity",
-        "prepare",
-        "activate",
-        "invoke",
-      ]);
-      expect(process.settlement!.value.loaderId).toBe(process.identity!.loaderId);
-      expect(process.settlement!.value.facetKey).toBe(process.identity!.facetKey);
-      expect(process.settlement!.value.requestContextId).toBe(process.requestContextId);
+      expect(process.settlement!.value.snapshot.phases).toEqual(["invoke"]);
+      expect(process.settlement!.value.snapshot.constructorNonce).toBe(
+        process.identity!.incarnationNonce,
+      );
     }
     // Request group sizes prove routing only. They do not claim concurrent JavaScript execution.
   }, 120_000);
@@ -153,7 +231,7 @@ describe("process execution Worker entrypoint", () => {
     const startBody = await start.text();
     expect(start.status, startBody).toBe(200);
     expect(startBody).not.toContain("private-prompt-sentinel");
-    expect(JSON.parse(startBody)).toMatchObject({
+    expect(JSON.parse(startBody), startBody).toMatchObject({
       result: { processes: [{ status: "recoverable", recoveryId: expect.any(String) }] },
     });
 
@@ -171,6 +249,52 @@ describe("process execution Worker entrypoint", () => {
     expect(result.result.processes).toMatchObject([{ status: "recovered" }]);
   }, 120_000);
 
+  it("reconstructs terminal activation cleanup without replaying or dropping repair ownership", async () => {
+    const response = await harness.fetch("/terminal-recovery");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body) as {
+      readonly failed: {
+        readonly processes: readonly {
+          readonly status: string;
+          readonly error?: { readonly kind: string };
+        }[];
+      };
+      readonly repaired: {
+        readonly processes: readonly {
+          readonly status: string;
+          readonly error?: { readonly kind: string };
+        }[];
+      };
+      readonly slotsHeld: number;
+      readonly recovery: readonly {
+        readonly state: string;
+        readonly stopAcknowledged: boolean;
+        readonly joined: {
+          readonly invocationRpc: boolean;
+          readonly fetch: boolean;
+          readonly ports: boolean;
+        };
+        readonly terminalFailure?: { readonly code: string };
+      }[];
+    };
+    expect(result.failed.processes).toMatchObject([
+      { status: "recoverable", error: { kind: "activation-failed" } },
+    ]);
+    expect(result.repaired.processes).toMatchObject([
+      { status: "recovered", error: { kind: "activation-failed" } },
+    ]);
+    expect(result.slotsHeld).toBe(0);
+    expect(result.recovery).toMatchObject([
+      {
+        state: "activation-failed",
+        stopAcknowledged: true,
+        joined: { invocationRpc: true, fetch: true, ports: true },
+        terminalFailure: { code: "RPC_FAILED" },
+      },
+    ]);
+  }, 120_000);
+
   it("transactionally fences delayed writer A mutations after writer B claims the shard", async () => {
     const response = await harness.fetch("/fence");
     const body = await response.text();
@@ -185,5 +309,24 @@ describe("process execution Worker entrypoint", () => {
       stateUnchanged: true,
       recoveryUnchanged: true,
     });
+  }, 120_000);
+
+  it("reclaims a surviving store only after the same named execution DO is recreated", async () => {
+    const response = await harness.fetch("/recover-shard");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    expect(JSON.parse(body)).toMatchObject({
+      recoveryClaimed: true,
+      stateSurvived: true,
+      recoverySurvived: true,
+      oldWriterRejected: true,
+      liveDuplicateRejected: true,
+      exactRecoveryRemoved: true,
+    });
+    const result = JSON.parse(body) as {
+      readonly originalNonce: string;
+      readonly replacementNonce: string;
+    };
+    expect(result.replacementNonce).not.toBe(result.originalNonce);
   }, 120_000);
 });

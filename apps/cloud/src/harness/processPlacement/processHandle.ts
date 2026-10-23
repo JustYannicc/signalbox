@@ -115,6 +115,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         nativeSessionId: this.#request.nativeSessionId,
         checkpointId: this.#request.checkpointId,
         manifestRevision: this.#request.manifestRevision,
+        priorFacetNonce: this.#request.priorFacetNonce,
+        expectedFacetGeneration: this.#request.expectedFacetGeneration,
       });
       if (
         observed.nativeSessionId !== this.#request.nativeSessionId ||

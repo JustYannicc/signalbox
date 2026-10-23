@@ -10,13 +10,14 @@ import {
   type HarnessProcessHandle,
   type HarnessProcessPlacement,
   type HarnessProcessPlacementIdentity,
+  type HarnessProcessFacetLocator,
   type HarnessProcessPlacementOptions,
   type HarnessProcessPlacementRequest,
   type HarnessProcessPreparedFacet,
 } from "./contracts.ts";
 import { HarnessProcessHandleImpl } from "./processHandle.ts";
 import { DURABLE_OBJECT_INVOCATION_LIMIT, WORKER_REQUEST_INVOCATION_LIMIT } from "./limits.ts";
-import { failureRecord, sameClaim } from "./storeSchema.ts";
+import { sameClaim } from "./storeSchema.ts";
 
 interface ContextAllocator {
   readonly owner: string;
@@ -123,7 +124,7 @@ async function openPlacement(
     },
     async prepareInert<Input>(
       request: HarnessProcessPlacementRequest,
-      openFacet: (identity: HarnessProcessPlacementIdentity) => HarnessProcessPreparedFacet<Input>,
+      openFacet: (identity: HarnessProcessFacetLocator) => HarnessProcessPreparedFacet<Input>,
     ): Promise<HarnessProcessHandle<Input>> {
       if (
         !sameClaim(request.controllerClaim, controllerClaim) ||
@@ -132,7 +133,6 @@ async function openPlacement(
         !request.checkpointId ||
         !request.manifestRevision ||
         !request.priorFacetNonce ||
-        !request.preparedFacetNonce ||
         !request.operationId ||
         !request.codeId ||
         !Number.isSafeInteger(request.expectedFacetGeneration) ||
@@ -198,13 +198,36 @@ async function openPlacement(
       }
       removePressure();
 
-      const identity: HarnessProcessPlacementIdentity = Object.freeze({
+      const locator: HarnessProcessFacetLocator = Object.freeze({
         shardOwner: options.owner,
         loaderId: admission.lease.loaderId,
         facetKey: admission.lease.loaderId,
-        incarnationNonce: request.preparedFacetNonce,
       });
       let facet: HarnessProcessPreparedFacet<Input>;
+      let identity: HarnessProcessPlacementIdentity;
+      try {
+        facet = openFacet(locator);
+        const observed = await facet.identity();
+        if (observed.facetKey !== locator.facetKey || !observed.incarnationNonce)
+          throw new HarnessProcessPlacementError(
+            "prepare-failed",
+            "The constructed facet did not provide its actual constructor identity.",
+            true,
+            undefined,
+            { recoveryId: locator.loaderId, causeCode: "IDENTITY_MISMATCH" },
+          );
+        identity = Object.freeze({ ...locator, incarnationNonce: observed.incarnationNonce });
+      } catch (cause) {
+        await slots.release(admission.lease, { acknowledged: true });
+        throw new HarnessProcessPlacementError(
+          "prepare-failed",
+          "The fresh facet could not expose its constructor identity before preparation.",
+          false,
+          undefined,
+          { recoveryId: locator.loaderId },
+          { cause },
+        );
+      }
       const baseRecord = {
         version: 1 as const,
         shardOwner: options.owner,
@@ -227,47 +250,11 @@ async function openPlacement(
       try {
         await recovery.save(baseRecord);
       } catch (cause) {
+        await facet.dispose();
         await slots.release(admission.lease, { acknowledged: true });
         throw new HarnessProcessPlacementError(
           "prepare-failed",
           "The placement recovery record could not be saved before opening the facet.",
-          false,
-          identity,
-          { recoveryId: identity.loaderId },
-          { cause },
-        );
-      }
-
-      try {
-        // This factory must only construct a stub. Its first RPC/resource effect is prepareInert().
-        facet = openFacet(identity);
-      } catch (cause) {
-        try {
-          await slots.release(admission.lease, { acknowledged: true });
-          await recovery.remove(identity.loaderId);
-        } catch (cleanupCause) {
-          await recovery.save({
-            ...baseRecord,
-            state: "cleanup-required",
-            lastFailure: failureRecord("prepare", "RPC_FAILED"),
-          });
-          throw new HarnessProcessPlacementError(
-            "cleanup-incomplete",
-            "Facet stub construction failed and the slot needs durable recovery.",
-            true,
-            identity,
-            { recoveryId: identity.loaderId, causeCode: "RPC_FAILED" },
-            {
-              cause: new AggregateError(
-                [cause, cleanupCause],
-                "Facet construction cleanup failed.",
-              ),
-            },
-          );
-        }
-        throw new HarnessProcessPlacementError(
-          "prepare-failed",
-          "Facet stub construction failed before any RPC or resource effect.",
           false,
           identity,
           { recoveryId: identity.loaderId },

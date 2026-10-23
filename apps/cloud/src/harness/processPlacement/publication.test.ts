@@ -18,6 +18,7 @@ const controllerClaim: HarnessProcessControllerClaim = {
   controlKey: "control-key",
 };
 const joined = { invocationRpc: true, fetch: true, ports: true } as const;
+let nextFacetNonce = 0;
 type ReceiptChange = Omit<Partial<HarnessProcessPublicationReceipt>, "checkpoint"> & {
   readonly checkpoint?: Partial<HarnessProcessPublicationReceipt["checkpoint"]>;
 };
@@ -92,7 +93,6 @@ function requestFor(
     checkpointId: "checkpoint",
     manifestRevision: "a".repeat(64),
     priorFacetNonce: "prior-nonce",
-    preparedFacetNonce: "prepared-nonce",
     controllerClaim,
     operationId: "operation",
     expectedFacetGeneration: 3,
@@ -199,8 +199,12 @@ async function fixture() {
 
 function testFacet(
   overrides: Partial<HarnessProcessPreparedFacet<unknown>> = {},
-  identity: HarnessProcessPlacementIdentity,
+  locator: Omit<HarnessProcessPlacementIdentity, "incarnationNonce">,
 ): HarnessProcessPreparedFacet<unknown> {
+  const identity: HarnessProcessPlacementIdentity = {
+    ...locator,
+    incarnationNonce: `fixture-facet-${++nextFacetNonce}`,
+  };
   return {
     async identity() {
       return { facetKey: identity.facetKey, incarnationNonce: identity.incarnationNonce };

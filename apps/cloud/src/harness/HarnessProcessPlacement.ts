@@ -1,9 +1,11 @@
 export { createHarnessProcessPlacement } from "./processPlacement/service.ts";
+export { createHarnessProcessFacetAdapter } from "./HarnessProcessFacet.ts";
 export { deterministicShardOwner } from "./processPlacement/execution.ts";
 export { HarnessProcessPlacementError } from "./processPlacement/contracts.ts";
 export type { HarnessProcessPlacementWriter } from "./processPlacement/storeSchema.ts";
 export type {
   HarnessProcessControllerClaim,
+  HarnessProcessFacetLocator,
   HarnessProcessHandle,
   HarnessProcessInvocationSettlement,
   HarnessProcessJoined,
@@ -15,7 +17,10 @@ export type {
   HarnessProcessPlacementRecoveryRecord,
   HarnessProcessPlacementRecoveryStore,
   HarnessProcessPlacementRequest,
+  HarnessProcessPublicationRequest,
   HarnessProcessPublicationReceipt,
+  HarnessProcessPublicationPublisher,
+  HarnessProcessPublishedActivation,
   HarnessProcessPreparedFacet,
   HarnessProcessPublication,
 } from "./processPlacement/contracts.ts";

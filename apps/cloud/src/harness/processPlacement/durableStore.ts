@@ -8,11 +8,7 @@ import { parseRecoveryRecord } from "./storeSchema.ts";
 
 export interface HarnessProcessPlacementStoreClient {
   readWriter(owner: string): Promise<HarnessProcessPlacementWriter | undefined>;
-  claimWriter(
-    owner: string,
-    writer: HarnessProcessPlacementWriter,
-    previousWriter?: HarnessProcessPlacementWriter,
-  ): Promise<void>;
+  claimWriter(owner: string, writer: HarnessProcessPlacementWriter): Promise<void>;
   releaseWriter(owner: string, writer: HarnessProcessPlacementWriter): Promise<void>;
   load(owner: string, writer: HarnessProcessPlacementWriter): Promise<ProcessSlotState | undefined>;
   save(

@@ -7,6 +7,7 @@ import type {
   ProcessSlotsOptions,
   ProcessSlotStore,
 } from "../../computer/ProcessSlots.ts";
+import type { HarnessRequestPublisher } from "../HarnessRunStore.ts";
 
 export type HarnessProcessPlacementContext = "durable-object" | "worker-request";
 
@@ -16,6 +17,8 @@ export interface HarnessProcessPlacementIdentity {
   readonly facetKey: string;
   readonly incarnationNonce: string;
 }
+
+export type HarnessProcessFacetLocator = Omit<HarnessProcessPlacementIdentity, "incarnationNonce">;
 
 export interface HarnessProcessControllerClaim {
   readonly ownerId: string;
@@ -65,6 +68,30 @@ export interface HarnessProcessPublication {
   } | null;
 }
 
+/** The caller returns A's actual publication result and its authorized request publisher. */
+export interface HarnessProcessPublishedActivation {
+  readonly publication: HarnessProcessPublication;
+  readonly publisher: HarnessRequestPublisher;
+  readonly requestId: string;
+}
+
+export interface HarnessProcessPublicationRequest {
+  readonly identity: HarnessProcessPlacementIdentity;
+  readonly controllerClaim: HarnessProcessControllerClaim;
+  readonly operationId: string;
+  readonly nativeSessionId: string;
+  readonly checkpointId: string;
+  readonly manifestRevision: string;
+  readonly priorFacetNonce: string;
+  readonly expectedFacetGeneration: number;
+}
+
+export interface HarnessProcessPublicationPublisher {
+  publishProcessFacet(
+    input: HarnessProcessPublicationRequest,
+  ): Promise<HarnessProcessPublishedActivation>;
+}
+
 export interface HarnessProcessJoined {
   readonly invocationRpc: boolean;
   readonly fetch: boolean;
@@ -86,7 +113,7 @@ export interface HarnessProcessObservedFacet {
   readonly joined: HarnessProcessJoined;
 }
 
-/** The stub is synchronous. All resource-opening work starts in prepareInert(). */
+/** The stub is synchronous so the permit and facet identity can be claimed before any RPC. */
 export interface HarnessProcessPreparedFacet<Input = unknown> {
   /** Reads state owned by the constructed facet instead of trusting a request echo. */
   identity(): Promise<{ readonly facetKey: string; readonly incarnationNonce: string }>;
@@ -96,6 +123,8 @@ export interface HarnessProcessPreparedFacet<Input = unknown> {
     readonly nativeSessionId: string;
     readonly checkpointId: string;
     readonly manifestRevision: string;
+    readonly priorFacetNonce: string;
+    readonly expectedFacetGeneration: number;
   }): Promise<HarnessProcessObservedFacet>;
   activate(publication: HarnessProcessPublicationReceipt): Promise<void>;
   invoke(input: Input): Promise<HarnessProcessInvocationSettlement>;
@@ -113,7 +142,6 @@ export interface HarnessProcessPlacementRequest {
   readonly manifestRevision: string;
   /** The prior durable publisher's nonce, captured before preparing this process. */
   readonly priorFacetNonce: string;
-  readonly preparedFacetNonce: string;
   readonly controllerClaim: HarnessProcessControllerClaim;
   readonly operationId: string;
   readonly expectedFacetGeneration: number;
@@ -202,7 +230,7 @@ export interface HarnessProcessPlacement {
   readonly shardIncarnationNonce: string;
   prepareInert<Input = unknown>(
     request: HarnessProcessPlacementRequest,
-    openFacet: (identity: HarnessProcessPlacementIdentity) => HarnessProcessPreparedFacet<Input>,
+    openFacet: (identity: HarnessProcessFacetLocator) => HarnessProcessPreparedFacet<Input>,
   ): Promise<HarnessProcessHandle<Input>>;
   recoverable(): Promise<readonly HarnessProcessPlacementRecoveryRecord[]>;
 }

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ProcessSlotState, ProcessSlotStore } from "../../computer/ProcessSlots.ts";
+import type {
+  ProcessSlotLease,
+  ProcessSlotState,
+  ProcessSlotStore,
+} from "../../computer/ProcessSlots.ts";
 import {
   createHarnessProcessPlacement,
   HarnessProcessPlacementError,
   type HarnessProcessControllerClaim,
   type HarnessProcessInvocationSettlement,
+  type HarnessProcessFacetLocator,
   type HarnessProcessPlacementIdentity,
   type HarnessProcessPlacementRecoveryRecord,
   type HarnessProcessPlacementRequest,
@@ -20,6 +25,7 @@ const controllerClaim: HarnessProcessControllerClaim = {
 };
 const joined = { invocationRpc: true, fetch: true, ports: true } as const;
 const joinedNone = { invocationRpc: false, fetch: false, ports: false } as const;
+let nextFacetNonce = 0;
 
 describe("harness process placement", () => {
   it("admits ten open calls in a DO context while the eleventh retains only residency", async () => {
@@ -310,7 +316,7 @@ describe("harness process placement", () => {
     expect(placement.signals.resident).toBe(0);
   });
 
-  it("keeps a failed activation sticky after disposal retry and allocator reconstruction", async () => {
+  it("reconstructs to finish failed activation cleanup while keeping terminal publication sticky", async () => {
     const backing: FixtureBacking = {
       slotState: undefined,
       recovery: new Map(),
@@ -322,8 +328,9 @@ describe("harness process placement", () => {
     let invocationCalls = 0;
     let disposalCalls = 0;
     let failFirstDisposal = true;
-    const handle = await placement.prepareInert(request, (identity) =>
-      testFacet(
+    const retainedFacets = new Map<string, HarnessProcessPreparedFacet<unknown>>();
+    const handle = await placement.prepareInert(request, (locator) => {
+      const facet = testFacet(
         {
           async activate() {
             activationCalls++;
@@ -340,9 +347,11 @@ describe("harness process placement", () => {
             throw sentinel;
           },
         },
-        identity,
-      ),
-    );
+        locator,
+      );
+      retainedFacets.set(locator.loaderId, facet);
+      return facet;
+    });
 
     const failure = await handle.activate(publication(request, handle.identity)).then(
       () => undefined,
@@ -362,21 +371,34 @@ describe("harness process placement", () => {
       { state: "cleanup-required", terminalFailure: { code: "RPC_FAILED" } },
     ]);
 
-    await handle.cleanup();
-    await handle.cleanup();
+    expect(disposalCalls).toBe(1);
+    const reconstructed = await fixture("worker-request", undefined, backing, async (lease) => {
+      const record = [...recovery.values()].find(
+        (candidate) => candidate.lease.token === lease.token,
+      );
+      if (record === undefined || record.terminalFailure === undefined)
+        throw new Error("Reconstruction requires the sticky terminal publication record.");
+      const facet = retainedFacets.get(record.loaderId);
+      if (facet === undefined) throw new Error("Reconstruction lost its retained request facet.");
+      const stopped = await facet.stop();
+      if (!stopped.acknowledged) throw new Error("Reconstructed stop was not acknowledged.");
+      const joined = await facet.join();
+      if (!joined.invocationRpc || !joined.fetch || !joined.ports)
+        throw new Error("Reconstructed facet resources did not join.");
+      await facet.dispose();
+      return { acknowledged: true };
+    });
     expect(disposalCalls).toBe(2);
-    expect([...recovery.values()]).toMatchObject([
-      { state: "activation-failed", terminalFailure: { code: "RPC_FAILED" } },
-    ]);
-    expect(activationCalls).toBe(1);
-    expect(invocationCalls).toBe(0);
-
-    const reconstructed = await fixture("worker-request", undefined, backing);
+    expect(reconstructed.placement.signals.inFlight).toBe(0);
+    expect(reconstructed.placement.signals.resident).toBe(0);
     await expect(reconstructed.placement.recoverable()).resolves.toMatchObject([
-      { state: "activation-failed", terminalFailure: { code: "RPC_FAILED" } },
+      { state: "cleanup-required", terminalFailure: { code: "RPC_FAILED" } },
     ]);
     expect(activationCalls).toBe(1);
     expect(invocationCalls).toBe(0);
+    expect([...recovery.values()]).toMatchObject([
+      { state: "cleanup-required", terminalFailure: { code: "RPC_FAILED" } },
+    ]);
   });
 });
 
@@ -389,6 +411,13 @@ async function fixture(
   context: "durable-object" | "worker-request" = "worker-request",
   beforeRemove?: (loaderId: string) => void,
   backing: FixtureBacking = { slotState: undefined, recovery: new Map() },
+  reconcile: (
+    lease: ProcessSlotLease,
+  ) => Promise<
+    { readonly acknowledged: true } | { readonly lost: "memory" | "isolate" }
+  > = async () => ({
+    acknowledged: true,
+  }),
 ) {
   const store: ProcessSlotStore = {
     load: async () => backing.slotState,
@@ -425,7 +454,7 @@ async function fixture(
       };
     },
     invalidate() {},
-    reconcile: async () => ({ acknowledged: true }),
+    reconcile,
   });
   return { placement, state: placement, recovery, backing };
 }
@@ -439,7 +468,6 @@ function requestFor(index = 0): HarnessProcessPlacementRequest {
     checkpointId: `checkpoint-${index}`,
     manifestRevision: index.toString(16).padStart(64, "0"),
     priorFacetNonce: `prior-facet-nonce-${index}`,
-    preparedFacetNonce: `prepared-facet-nonce-${index}`,
     controllerClaim,
     operationId: `operation-${index}`,
     expectedFacetGeneration: 3,
@@ -500,8 +528,12 @@ function publication(
 
 function testFacet(
   overrides: Partial<HarnessProcessPreparedFacet<unknown>> = {},
-  identity: HarnessProcessPlacementIdentity,
+  locator: HarnessProcessFacetLocator,
 ): HarnessProcessPreparedFacet<unknown> {
+  const identity: HarnessProcessPlacementIdentity = {
+    ...locator,
+    incarnationNonce: `fixture-facet-${++nextFacetNonce}`,
+  };
   return {
     async identity() {
       return { facetKey: identity.facetKey, incarnationNonce: identity.incarnationNonce };

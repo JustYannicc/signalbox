@@ -16,10 +16,13 @@ import {
 } from "./storeSchema.ts";
 
 export class HarnessProcessPlacementStoreObject
-  extends DurableObject
+  extends DurableObject<HarnessProcessPlacementStoreEnvironment>
   implements HarnessProcessPlacementStoreClient
 {
-  readonly #activeWriter = new Map<string, string>();
+  readonly #activeWriter = new Map<
+    string,
+    { readonly identity: string; readonly incarnation: string }
+  >();
 
   async readWriter(owner: string): Promise<HarnessProcessPlacementWriter | undefined> {
     return await this.ctx.storage.transaction(async (transaction) => {
@@ -33,35 +36,31 @@ export class HarnessProcessPlacementStoreObject
     });
   }
 
-  async claimWriter(
-    owner: string,
-    writer: HarnessProcessPlacementWriter,
-    previousWriter?: HarnessProcessPlacementWriter,
-  ): Promise<void> {
+  async claimWriter(owner: string, writer: HarnessProcessPlacementWriter): Promise<void> {
     assertWriter(writer);
-    if (this.#activeWriter.has(owner))
-      throw new Error("Another execution still owns this process-placement shard.");
+    const actualIncarnation =
+      await this.env.PROCESS_EXECUTION_SHARDS.getByName(owner).executionIncarnationNonce();
+    if (!actualIncarnation || actualIncarnation !== writer.shardIncarnationNonce)
+      throw new Error("Process-placement writer did not match its live execution incarnation.");
+    const active = this.#activeWriter.get(owner);
+    if (active?.incarnation === actualIncarnation)
+      throw new Error("Another live execution still owns this process-placement shard.");
+    if (active !== undefined) this.#activeWriter.delete(owner);
     const identity = writerIdentityKey(writer);
-    this.#activeWriter.set(owner, identity);
+    this.#activeWriter.set(owner, { identity, incarnation: actualIncarnation });
     try {
       await this.ctx.storage.transaction(async (transaction) => {
         await this.#assertOwnerIn(transaction, owner, true);
         const current = await transaction.get<unknown>(WRITER_KEY);
-        if (current === undefined) {
-          if (previousWriter !== undefined)
-            throw new Error("Process-placement writer changed before recovery claim.");
-        } else {
+        if (current !== undefined) {
           assertWriter(current);
-          if (
-            !sameWriter(current, writer) &&
-            (previousWriter === undefined || !sameWriter(current, previousWriter))
-          )
-            throw new Error("Another ProcessSlots allocator still owns this durable shard.");
+          if (current.shardIncarnationNonce === actualIncarnation)
+            throw new Error("The current execution incarnation already owns this durable shard.");
         }
         await transaction.put(WRITER_KEY, writer);
       });
     } catch (error) {
-      if (this.#activeWriter.get(owner) === identity) this.#activeWriter.delete(owner);
+      if (this.#activeWriter.get(owner)?.identity === identity) this.#activeWriter.delete(owner);
       throw error;
     }
   }
@@ -80,7 +79,7 @@ export class HarnessProcessPlacementStoreObject
         await transaction.delete(WRITER_KEY);
       });
     } finally {
-      if (this.#activeWriter.get(owner) === identity) this.#activeWriter.delete(owner);
+      if (this.#activeWriter.get(owner)?.identity === identity) this.#activeWriter.delete(owner);
     }
   }
 
@@ -184,6 +183,16 @@ export class HarnessProcessPlacementStoreObject
     if (!sameWriter(current, writer))
       throw new Error("Process-placement mutation came from a stale writer.");
   }
+}
+
+interface HarnessProcessPlacementStoreEnvironment {
+  readonly PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<
+    HarnessProcessExecutionIncarnationClient & Rpc.DurableObjectBranded
+  >;
+}
+
+interface HarnessProcessExecutionIncarnationClient {
+  executionIncarnationNonce(): Promise<string>;
 }
 
 function sameTerminalFailure(

@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type {
+  HarnessProcessExecutionHooks,
   HarnessProcessExecutionEnvironment,
   HarnessProcessExecutionShardInput,
 } from "./processPlacement/execution.ts";
@@ -18,6 +19,16 @@ interface HarnessProcessExecutionShardExports {
 /** The DO I/O context owns the durable keyed Dynamic Worker facets it starts. */
 export class HarnessProcessExecutionShardObject extends DurableObject<HarnessProcessExecutionEnvironment> {
   #active = false;
+  // @effect-diagnostics-next-line cryptoRandomUUID:off - immutable identity for this DO construction.
+  readonly #executionIncarnationNonce = crypto.randomUUID();
+
+  executionIncarnationNonce() {
+    return this.#executionIncarnationNonce;
+  }
+
+  protected processExecutionHooks(): HarnessProcessExecutionHooks | undefined {
+    return undefined;
+  }
 
   async runShard(
     input: HarnessProcessExecutionShardInput,
@@ -44,7 +55,14 @@ export class HarnessProcessExecutionShardObject extends DurableObject<HarnessPro
         batches.map(({ shardIndex, processes }, index) => {
           const shard = { ...input, shardIndex, processes };
           return index === 0
-            ? runHarnessProcessExecutionShard(shard, requestContextId, this.ctx, this.env)
+            ? runHarnessProcessExecutionShard(
+                shard,
+                requestContextId,
+                this.ctx,
+                this.env,
+                this.#executionIncarnationNonce,
+                this.processExecutionHooks(),
+              )
             : this.#overflow(shard);
         }),
       );
@@ -61,6 +79,11 @@ export class HarnessProcessExecutionShardObject extends DurableObject<HarnessPro
     const exports = (
       this.ctx as unknown as { readonly exports: HarnessProcessExecutionShardExports }
     ).exports;
-    return exports.HarnessProcessExecutionEntrypoint({ props: {} }).runShard(input);
+    // Give each DO branch its own prefix before the Worker entrypoint allocates nested indices.
+    return exports.HarnessProcessExecutionEntrypoint({ props: {} }).runShard({
+      ...input,
+      shardOwner: `${input.shardOwner}/do-overflow-${input.shardIndex ?? 0}`,
+      shardIndex: 0,
+    });
   }
 }
