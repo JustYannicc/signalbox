@@ -568,7 +568,7 @@ export class WasiFdCalls {
         const scratch = new Uint8Array(size);
         let count: number;
         try {
-          // Once a pipe produces bytes, drain only immediately available data.
+          // signalbox: after a positive pipe read, only immediately available bytes may be drained.
           const flags = drain && total > 0 ? descriptor.flags | FDFLAGS.NONBLOCK : descriptor.flags;
           const result = readInto.call(descriptor.stdio, scratch, flags);
           count = yield* complete(nonblockingResult(result, flags));

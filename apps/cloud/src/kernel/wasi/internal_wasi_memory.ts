@@ -89,6 +89,7 @@ export class WasiMemory {
     return this.memory.buffer.byteLength;
   }
 
+  // signalbox: sparse RPC output must be validated before consuming input, without allocation.
   validateOutputRange(pointer: number, length: number): void {
     this.validateRange(pointer, length);
   }
@@ -119,7 +120,7 @@ export class WasiMemory {
     return this.range(pointer, length);
   }
 
-  // The caller relinquishes this scratch buffer after the read completes.
+  // signalbox: the caller relinquishes read scratch so sparse RPC output can retain it directly.
   writeOwnedBytes(pointer: number, bytes: Uint8Array): void {
     this.writeRange(pointer, bytes.byteLength).set(bytes);
   }
