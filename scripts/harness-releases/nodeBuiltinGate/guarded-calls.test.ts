@@ -25,6 +25,14 @@ const check = (source: string, runtime = inventory) =>
 
 describe("feature-tested builtin calls", () => {
   it.each([
+    "const process = globalThis.process.report; process.getReport?.()",
+    'const process = globalThis.process.report; typeof process.getReport === "function" && process.getReport()',
+    "const {report: process} = globalThis.process; process.getReport?.()",
+  ])("keeps member aliases spelled like the builtin root required: %s", async (source) => {
+    await expect(check(source)).rejects.toThrow("missing-functions=process.report.getReport");
+  });
+
+  it.each([
     ["absent receiver in optional call", "process.report.getReport?.()"],
     [
       "absent receiver in feature test",

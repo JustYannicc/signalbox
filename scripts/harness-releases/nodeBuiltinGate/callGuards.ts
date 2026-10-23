@@ -44,10 +44,16 @@ function memberChain(
 export function builtinCallGuard(
   call: ts.CallExpression | ts.NewExpression,
   builtinRoot: string,
+  resolvedMemberPath: readonly string[],
 ): NodeBuiltinFunctionCall["guard"] {
   if (!ts.isCallExpression(call)) return undefined;
   const callee = memberChain(call.expression, builtinRoot);
   if (!callee || callee.length === 1) return undefined;
+  // A member alias can share the builtin's name without being the builtin object.
+  const memberPath = callee
+    .slice(callee[0] === builtinRoot ? 1 : 3)
+    .filter((_part, index) => index % 2 === 1);
+  if (JSON.stringify(memberPath) !== JSON.stringify(resolvedMemberPath)) return undefined;
   const evidence = (node: ts.Node, kind: "feature-test" | "optional-call") => {
     const file = call.getSourceFile();
     const point = file.getLineAndCharacterOfPosition(node.getStart(file));

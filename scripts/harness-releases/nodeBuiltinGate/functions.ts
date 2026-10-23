@@ -60,7 +60,13 @@ export function scanBuiltinFunctionCalls(
         isBuiltinReference(callee) &&
         (callee.kind === "member" || callee.kind === "module" || callee.kind === "bundled-module")
       ) {
-        const guard = prototypeOperation ? undefined : builtinCallGuard(node, callee.specifier);
+        const guard = prototypeOperation
+          ? undefined
+          : builtinCallGuard(
+              node,
+              callee.specifier,
+              callee.kind === "member" ? callee.memberPath : [],
+            );
         functionCalls.push({
           specifier: callee.specifier,
           memberPath: callee.kind === "member" ? callee.memberPath : [],
