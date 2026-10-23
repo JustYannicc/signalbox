@@ -41,14 +41,28 @@ export type PlatformServices =
   | ThreadRunner.ThreadDrives
   | ThreadRunner.ThreadSecrets;
 
+/** Services the thread engine and runner need when the user domain owns turns. */
+export type EnginePlatformServices =
+  | CloudAttachments.CloudAttachments
+  | MachineBackend.MachineBackend
+  | PoolDirectory.PoolDirectory
+  | ThreadRunner.ThreadDrives
+  | ThreadRunner.ThreadSecrets;
+
 /**
  * Builds one thread's canonical storage, engine, runner, and public Threads service.
  * The caller owns the SQL database and supplies its actual platform policy and adapters.
  */
-export const layer = <SqlError, SqlRequirements, PlatformError, PlatformRequirements>(options: {
+const engineLayer = <
+  SqlError,
+  SqlRequirements,
+  PlatformError,
+  PlatformRequirements,
+  Services,
+>(options: {
   readonly threadId: ThreadId;
   readonly sql: Layer.Layer<SqlClient.SqlClient, SqlError, SqlRequirements>;
-  readonly platform: Layer.Layer<PlatformServices, PlatformError, PlatformRequirements>;
+  readonly platform: Layer.Layer<Services, PlatformError, PlatformRequirements>;
 }) => {
   const storage = Layer.mergeAll(
     ThreadStore.layer,
@@ -72,5 +86,22 @@ export const layer = <SqlError, SqlRequirements, PlatformError, PlatformRequirem
     Layer.provideMerge(runner),
   );
 
-  return ThreadsLive.layer.pipe(Layer.provideMerge(directory));
+  return directory;
 };
+
+export const layerEngine = <
+  SqlError,
+  SqlRequirements,
+  PlatformError,
+  PlatformRequirements,
+>(options: {
+  readonly threadId: ThreadId;
+  readonly sql: Layer.Layer<SqlClient.SqlClient, SqlError, SqlRequirements>;
+  readonly platform: Layer.Layer<EnginePlatformServices, PlatformError, PlatformRequirements>;
+}) => engineLayer(options);
+
+export const layer = <SqlError, SqlRequirements, PlatformError, PlatformRequirements>(options: {
+  readonly threadId: ThreadId;
+  readonly sql: Layer.Layer<SqlClient.SqlClient, SqlError, SqlRequirements>;
+  readonly platform: Layer.Layer<PlatformServices, PlatformError, PlatformRequirements>;
+}) => ThreadsLive.layer.pipe(Layer.provideMerge(engineLayer(options)));

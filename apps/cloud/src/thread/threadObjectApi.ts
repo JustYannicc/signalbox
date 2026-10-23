@@ -19,9 +19,10 @@ import * as ThreadFeedback from "./ThreadFeedback.ts";
 import type { ThreadLifecycleReceipt, ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
 import * as ThreadRunner from "./runner/ThreadRunner.ts";
-import { encodeBatchLine, jsonLine, type ThreadObjectReply, wire } from "./threadWire.ts";
+import { type ThreadObjectReply, wire } from "./threadWire.ts";
 import * as ThreadPulls from "./ThreadPulls.ts";
 import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
+import { makeThreadCommandObjectApi } from "./ThreadCommandApi.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -82,8 +83,10 @@ export const makeThreadObjectApi = (
       ),
     );
   const engine = ThreadEngine.ThreadEngine;
+  const commandApi = makeThreadCommandObjectApi(run, afterChange);
   return {
     ...makeTerminalObjectApi(run, afterChange),
+    ...commandApi,
     uploadFeedback: (actor, input) =>
       reply(ThreadFeedback.ThreadFeedback.use((service) => service.upload(actor, input))),
     trash: async (actor, input) => {
@@ -115,24 +118,6 @@ export const makeThreadObjectApi = (
       return result;
     },
     purge: (actor, input) => reply(engine.use((service) => service.purgeTrash(actor, input))),
-    subscribePreparation: (actor) =>
-      run(
-        engine.use((service) =>
-          service.subscribePreparation(actor).pipe(
-            Effect.map((stream) =>
-              stream.pipe(
-                Stream.map((snapshot) =>
-                  new TextEncoder().encode(
-                    `${JSON.stringify(wire.preparation.encode(snapshot))}\n`,
-                  ),
-                ),
-                Stream.toReadableStream(),
-              ),
-            ),
-            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
-          ),
-        ),
-      ),
     getWorkflowScript: (actor, input) =>
       reply(
         engine.use((service) =>
@@ -172,59 +157,6 @@ export const makeThreadObjectApi = (
       await afterChange();
       return result;
     },
-    commandOutput: (actor, input) =>
-      run(
-        engine.use((service) =>
-          service.commandOutput(actor, wire.commandOutputInput.decode(input)).pipe(
-            Effect.map((stream) =>
-              stream.pipe(Stream.map(jsonLine(wire.commandOutputFrame)), Stream.toReadableStream()),
-            ),
-            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
-          ),
-        ),
-      ),
-    cancelPreparation: (actor, input) =>
-      reply(
-        engine.use((service) =>
-          service.cancelPreparation(actor, input, Effect.promise(afterChange)).pipe(
-            Effect.catchTags({
-              WorktreeSetupError: (error) =>
-                Effect.fail(
-                  ThreadEngine.ThreadCommandRejectedError.forCommand(
-                    {
-                      id: `preparation:${input.runId}:${input.preparationGeneration}`,
-                      type: "worktreeSetup.cancel",
-                    },
-                    error.message,
-                  ),
-                ),
-            }),
-          ),
-        ),
-      ),
-    dispatch: async (actor, command, creation) => {
-      const result = await reply(
-        engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),
-      );
-      await afterChange();
-      return result;
-    },
-    launch: async (actor, input, creation) => {
-      const result = await reply(
-        engine.use((service) =>
-          Effect.map(
-            service.launch(actor, wire.launchInput.decode(input), creation),
-            wire.launchResult.encode,
-          ),
-        ),
-      );
-      await afterChange();
-      return result;
-    },
-    snapshot: (actor) =>
-      reply(engine.use((service) => Effect.map(service.snapshot(actor), wire.snapshot.encode))),
-    workspace: (actor) =>
-      reply(engine.use((service) => Effect.map(service.workspace(actor), wire.workspace.encode))),
     backfill: async (actor, requestKey) => {
       const value = await run(engine.use((service) => service.backfill(actor, requestKey)));
       if (value === null) return { _tag: "not_found" };
@@ -235,17 +167,6 @@ export const makeThreadObjectApi = (
       run(engine.use((service) => service.searchDocuments(actor, itemIds))),
     find: (actor, input) =>
       reply(engine.use((service) => service.find(actor, wire.findInput.decode(input)))),
-    subscribe: (actor, input) =>
-      run(
-        engine.use((service) =>
-          service.subscribe(actor, wire.subscribeInput.decode(input)).pipe(
-            Effect.map((stream) =>
-              stream.pipe(Stream.map(encodeBatchLine), Stream.toReadableStream()),
-            ),
-            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
-          ),
-        ),
-      ),
     diagnostics: (actor, key) =>
       run(
         Effect.gen(function* () {
@@ -392,14 +313,6 @@ export const makeThreadObjectApi = (
         ),
       );
     },
-    summary: (actor) =>
-      run(
-        engine.use((service) =>
-          Effect.map(service.summary(actor), (summary) =>
-            summary === null ? null : wire.summary.encode(summary),
-          ),
-        ),
-      ),
     authorizeExecutorTurn: (actor, input) =>
       run(
         engine

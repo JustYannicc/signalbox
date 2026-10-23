@@ -33,6 +33,10 @@ import {
 import * as ThreadUserServices from "./thread/ThreadUserServices.ts";
 import { onPool } from "./thread/turnPool.ts";
 import { createLocalUser } from "./user/LocalUser.ts";
+import type {
+  WorkerdLocalClaudeThreadHostOptions,
+  createWorkerdLocalClaudeThreadHost,
+} from "./LocalClaudeThreadHostWorkerd.ts";
 
 export interface LocalClaudeThreadMachine<G, SqlError, SqlRequirements> {
   readonly databases: Readonly<
@@ -146,7 +150,7 @@ const makeLocalClaudeThreadHost = <G, SqlError, SqlRequirements>(
     };
   });
 
-export const createLocalClaudeThreadHost = <G, SqlError, SqlRequirements>(
+const createNodeLocalClaudeThreadHost = <G, SqlError, SqlRequirements>(
   options: LocalClaudeThreadHostOptions<G, SqlError, SqlRequirements>,
 ) =>
   Effect.gen(function* () {
@@ -156,3 +160,30 @@ export const createLocalClaudeThreadHost = <G, SqlError, SqlRequirements>(
       Effect.onError(() => Scope.close(scope, Exit.void)),
     );
   });
+
+export function createLocalClaudeThreadHost<G, SqlError, SqlRequirements>(
+  options: LocalClaudeThreadHostOptions<G, SqlError, SqlRequirements>,
+): ReturnType<typeof createNodeLocalClaudeThreadHost<G, SqlError, SqlRequirements>>;
+export function createLocalClaudeThreadHost(
+  options: WorkerdLocalClaudeThreadHostOptions,
+): ReturnType<typeof createWorkerdLocalClaudeThreadHost>;
+export function createLocalClaudeThreadHost<G, SqlError, SqlRequirements>(
+  options:
+    | LocalClaudeThreadHostOptions<G, SqlError, SqlRequirements>
+    | WorkerdLocalClaudeThreadHostOptions,
+) {
+  if (isWorkerd(options)) {
+    return Effect.promise(() => import("./LocalClaudeThreadHostWorkerd.ts")).pipe(
+      Effect.flatMap(({ createWorkerdLocalClaudeThreadHost }) =>
+        createWorkerdLocalClaudeThreadHost(options),
+      ),
+    );
+  }
+  return createNodeLocalClaudeThreadHost(options);
+}
+
+const isWorkerd = <G, SqlError, SqlRequirements>(
+  options:
+    | LocalClaudeThreadHostOptions<G, SqlError, SqlRequirements>
+    | WorkerdLocalClaudeThreadHostOptions,
+): options is WorkerdLocalClaudeThreadHostOptions => "objects" in options.machine;

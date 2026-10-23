@@ -52,6 +52,7 @@ import type { SearchBackfillProgress, SearchThreadDocuments } from "./ThreadEngi
 import { browsingWire } from "./browsing/browsingWire.ts";
 import { ThreadObjectError } from "./ThreadAccess.ts";
 import type { PullInput } from "./threadWire.ts";
+import type { ThreadCommandObjectApi } from "./ThreadCommandApi.ts";
 import type { PreviewLinkResult } from "./preview/PreviewGateway.ts";
 import type { DriveAuthorization, RemoteAuthorization } from "./ThreadAuthorization.ts";
 import {
@@ -539,6 +540,178 @@ const lines = <A>(
     ),
   );
 
+export type ThreadCommandHandle = Pick<
+  ThreadHandle,
+  | "launch"
+  | "dispatch"
+  | "snapshot"
+  | "subscribe"
+  | "workspace"
+  | "commandOutput"
+  | "summary"
+  | "subscribePreparation"
+  | "cancelPreparation"
+>;
+
+/** Wraps only the command-facing methods, keeping their wire codecs canonical. */
+export function commandHandleFor(api: ThreadCommandObjectApi): ThreadCommandHandle {
+  return {
+    subscribePreparation: (actor) =>
+      lines(
+        "subscribePreparation",
+        () => api.subscribePreparation(actor),
+        (line) => wire.preparation.decode(line),
+      ),
+    cancelPreparation: (actor, input) =>
+      call("cancelPreparation", () => api.cancelPreparation(actor, input)).pipe(
+        Effect.flatMap(fromReply),
+      ),
+    dispatch: (actor, command, creation) =>
+      call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
+        Effect.flatMap(fromReply),
+      ),
+    launch: (actor, input, creation) =>
+      call("launch", () => api.launch(actor, wire.launchInput.encode(input), creation)).pipe(
+        Effect.flatMap(fromReply),
+        Effect.flatMap((value) => decodeIn("launch", () => wire.launchResult.decode(value))),
+      ),
+    snapshot: (actor) =>
+      call("snapshot", () => api.snapshot(actor)).pipe(
+        Effect.flatMap(fromReply),
+        // Reads decide no command, so a rejection here is a protocol bug.
+        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
+        Effect.flatMap((value) => decodeIn("snapshot", () => wire.snapshot.decode(value))),
+      ),
+    workspace: (actor) =>
+      call("workspace", () => api.workspace(actor)).pipe(
+        Effect.flatMap(fromReply),
+        Effect.catchTags({ ThreadCommandRejectedError: Effect.die }),
+        Effect.flatMap((value) => decodeIn("workspace", () => wire.workspace.decode(value))),
+      ),
+    subscribe: (actor, input) =>
+      lines(
+        "subscribe",
+        () => api.subscribe(actor, wire.subscribeInput.encode(input)),
+        (line) => wire.batch.decode(line),
+      ),
+    commandOutput: (actor, input) =>
+      lines(
+        "commandOutput",
+        () => api.commandOutput(actor, wire.commandOutputInput.encode(input)),
+        wire.commandOutputFrame.decode,
+      ),
+    summary: (actor) =>
+      call("summary", () => api.summary(actor)).pipe(
+        Effect.flatMap((value) =>
+          value === null
+            ? Effect.succeed(null)
+            : decodeIn("summary", () => wire.summary.decode(value)),
+        ),
+      ),
+  };
+}
+
+const unsupportedCommandHandle = () => {
+  const failure = <A>(operation: string): Effect.Effect<A, ThreadObjectError> =>
+    Effect.fail(
+      new ThreadObjectError({
+        operation,
+        cause: new Error("This local thread directory does not provide that operation."),
+      }),
+    );
+  const failureStream = <A>(operation: string): Stream.Stream<A, ThreadObjectError> =>
+    Stream.fail(
+      new ThreadObjectError({
+        operation,
+        cause: new Error("This local thread directory does not provide that operation."),
+      }),
+    );
+
+  return {
+    terminalOpen: () => failure("terminal.open"),
+    terminalWrite: () => failure("terminal.write"),
+    terminalClose: () => failure("terminal.close"),
+    terminalResize: () => failure("terminal.resize"),
+    terminalClear: () => failure("terminal.clear"),
+    terminalRestart: () => failure("terminal.restart"),
+    terminalAttach: () => failureStream("terminal.attach"),
+    uploadFeedback: () => failure("feedback.upload"),
+    trash: () => failure("thread.trash"),
+    restore: () => failure("thread.restore"),
+    purge: () => failure("thread.purge"),
+    getWorkflowScript: () => failure("workflow.getScript"),
+    stopWorkflow: () => failure("workflow.stop"),
+    answerSecret: () => failure("secret.answer"),
+    backfill: () => failure("search.backfill"),
+    searchDocuments: () => failure("search.documents"),
+    find: () => failure("search.find"),
+    authorizeExecutorTurn: () => failure("executor.authorizeTurn"),
+    requestPullRequestSync: () => failure("pullRequest.sync"),
+    diagnostics: () => failure("diagnostics.read"),
+    previews: () => failureStream("preview.subscribe"),
+    previewLink: () => failure("preview.link"),
+    browserWatch: () => failureStream("browser.watch"),
+    browserInput: () => failure("browser.input"),
+    browserTrail: () => failure("browser.trail"),
+    browserStep: () => failure("browser.step"),
+    contextMatch: () => failure("context.match"),
+    contextTurns: () => failure("context.turns"),
+    setMonitors: () => failure("monitor.set"),
+    browsing: () => failureStream("browsing.subscribe"),
+    browse: () => failure("browsing.dispatch"),
+    browsingRecord: () => failure("browsing.record"),
+    pullOwner: () => failure("pull.owner"),
+    pullTarget: () => failure("pull.target"),
+    reservePublication: () => failure("pull.reservePublication"),
+    releasePublication: () => failure("pull.releasePublication"),
+    pull: () => failure("pull.execute"),
+  } satisfies Omit<ThreadHandle, keyof ThreadCommandHandle>;
+};
+
+/** Provides one local thread through the user-domain directory without claiming other APIs. */
+export function commandDirectory(
+  threadId: ThreadId,
+  api: ThreadCommandObjectApi,
+): ThreadDirectory["Service"] {
+  return ThreadDirectory.of({
+    forThread: (requested) => {
+      const command = commandHandleFor(api);
+      const wrongThread = <A>(): Effect.Effect<A, ThreadNotFoundError> =>
+        Effect.fail(new ThreadNotFoundError());
+      const wrongSummary = () =>
+        Effect.fail(
+          new ThreadObjectError({
+            operation: "summary",
+            cause: new Error("This local thread directory does not provide another thread."),
+          }),
+        );
+      return {
+        ...unsupportedCommandHandle(),
+        launch: (...args) => (requested === threadId ? command.launch(...args) : wrongThread()),
+        dispatch: (...args) => (requested === threadId ? command.dispatch(...args) : wrongThread()),
+        snapshot: (...args) => (requested === threadId ? command.snapshot(...args) : wrongThread()),
+        subscribe: (...args) =>
+          requested === threadId
+            ? command.subscribe(...args)
+            : Stream.fail(new ThreadNotFoundError()),
+        workspace: (...args) =>
+          requested === threadId ? command.workspace(...args) : wrongThread(),
+        commandOutput: (...args) =>
+          requested === threadId
+            ? command.commandOutput(...args)
+            : Stream.fail(new ThreadNotFoundError()),
+        summary: (...args) => (requested === threadId ? command.summary(...args) : wrongSummary()),
+        subscribePreparation: (...args) =>
+          requested === threadId
+            ? command.subscribePreparation(...args)
+            : Stream.fail(new ThreadNotFoundError()),
+        cancelPreparation: (...args) =>
+          requested === threadId ? command.cancelPreparation(...args) : wrongThread(),
+      } satisfies ThreadHandle;
+    },
+  });
+}
+
 /** Wraps any `ThreadObjectApi` (a Durable Object stub, or a test double) as Effects. */
 export function handleFor(api: ThreadObjectApi): ThreadHandle {
   const lifecycle = (
@@ -551,6 +724,7 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
     );
   return {
     ...terminalHandleFor(api),
+    ...commandHandleFor(api),
     uploadFeedback: (actor, input) =>
       call("uploadFeedback", () => api.uploadFeedback(actor, input)).pipe(
         Effect.flatMap(fromReply),
@@ -559,16 +733,6 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
     trash: (actor, input) => lifecycle("trash", () => api.trash(actor, input)),
     restore: (actor, input) => lifecycle("restore", () => api.restore(actor, input)),
     purge: (actor, input) => lifecycle("purge", () => api.purge(actor, input)),
-    subscribePreparation: (actor) =>
-      lines(
-        "subscribePreparation",
-        () => api.subscribePreparation(actor),
-        (line) => wire.preparation.decode(line),
-      ),
-    cancelPreparation: (actor, input) =>
-      call("cancelPreparation", () => api.cancelPreparation(actor, input)).pipe(
-        Effect.flatMap(fromReply),
-      ),
     getWorkflowScript: (actor, input) =>
       call("getWorkflowScript", () =>
         api.getWorkflowScript(actor, wire.workflowScriptInput.encode(input)),
@@ -599,34 +763,6 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
           reason === null ? Effect.void : Effect.fail(new SecretRequestError({ reason })),
         ),
       ),
-    commandOutput: (actor, input) =>
-      lines(
-        "commandOutput",
-        () => api.commandOutput(actor, wire.commandOutputInput.encode(input)),
-        wire.commandOutputFrame.decode,
-      ),
-    dispatch: (actor, command, creation) =>
-      call("dispatch", () => api.dispatch(actor, wire.command.encode(command), creation)).pipe(
-        Effect.flatMap(fromReply),
-      ),
-    launch: (actor, input, creation) =>
-      call("launch", () => api.launch(actor, wire.launchInput.encode(input), creation)).pipe(
-        Effect.flatMap(fromReply),
-        Effect.flatMap((value) => decodeIn("launch", () => wire.launchResult.decode(value))),
-      ),
-    snapshot: (actor) =>
-      call("snapshot", () => api.snapshot(actor)).pipe(
-        Effect.flatMap(fromReply),
-        // Reads decide no command, so a rejection here is a protocol bug.
-        Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
-        Effect.flatMap((value) => decodeIn("snapshot", () => wire.snapshot.decode(value))),
-      ),
-    workspace: (actor) =>
-      call("workspace", () => api.workspace(actor)).pipe(
-        Effect.flatMap(fromReply),
-        Effect.catchTags({ ThreadCommandRejectedError: Effect.die }),
-        Effect.flatMap((value) => decodeIn("workspace", () => wire.workspace.decode(value))),
-      ),
     backfill: (actor, requestKey) =>
       call("backfill", () => api.backfill(actor, requestKey)).pipe(
         Effect.flatMap(fromReply),
@@ -639,12 +775,6 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
         Effect.flatMap(fromReply),
         Effect.catchTags({ ThreadCommandRejectedError: (error) => Effect.die(error) }),
         Effect.flatMap((value) => decodeIn("find", () => wire.findResult.decode(value))),
-      ),
-    subscribe: (actor, input) =>
-      lines(
-        "subscribe",
-        () => api.subscribe(actor, wire.subscribeInput.encode(input)),
-        (line) => wire.batch.decode(line),
       ),
     diagnostics: (actor, key) => call("diagnostics", () => api.diagnostics(actor, key)),
     requestPullRequestSync: (actor, key) =>
@@ -737,14 +867,6 @@ export function handleFor(api: ThreadObjectApi): ThreadHandle {
       call("pull", () => api.pull(actor, wire.pullInput.encode(input))).pipe(
         Effect.flatMap(fromReply),
         Effect.flatMap((value) => decodeIn("pull", () => wire.pullResult.decode(value))),
-      ),
-    summary: (actor) =>
-      call("summary", () => api.summary(actor)).pipe(
-        Effect.flatMap((value) =>
-          value === null
-            ? Effect.succeed(null)
-            : decodeIn("summary", () => wire.summary.decode(value)),
-        ),
       ),
     authorizeExecutorTurn: (actor, input) =>
       call("authorizeExecutorTurn", () => api.authorizeExecutorTurn(actor, input)),

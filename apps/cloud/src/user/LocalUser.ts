@@ -15,6 +15,7 @@ import * as ModelManifest from "../models/ModelManifest.ts";
 import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
+import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 import * as ThreadKindTurns from "../thread/ThreadKindTurns.ts";
 import * as KindClassifier from "../threadKinds/KindClassifier.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
@@ -30,6 +31,7 @@ import * as UserPools from "./UserPools.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as LocalChatArchiveAlarm from "./LocalChatArchiveAlarm.ts";
+import * as ChatArchive from "./chatArchive.ts";
 
 export interface LocalUserOptions<
   DatabaseError,
@@ -39,18 +41,23 @@ export interface LocalUserOptions<
 > {
   readonly sql: Layer.Layer<SqlClient.SqlClient, DatabaseError, DatabaseRequirements>;
   readonly profile?: UserStore.LocalProfileInput;
+  /** Durable Object hosts inject their storage-backed alarm; local tests use the scoped timer. */
+  readonly chatArchiveAlarm?: Layer.Layer<ChatArchive.ChatArchiveAlarm>;
   readonly pools: (
     ownerId: string,
   ) => Effect.Effect<PoolDirectory.PoolDirectory["Service"], PoolError, PoolRequirements>;
 }
 
-/** Provisions one real local user domain around a caller-owned pool directory. */
-export const createLocalUser = <DatabaseError, DatabaseRequirements, PoolError, PoolRequirements>(
-  options: LocalUserOptions<DatabaseError, DatabaseRequirements, PoolError, PoolRequirements>,
+type LocalUserStoreOptions<DatabaseError, DatabaseRequirements> = {
+  readonly sql: Layer.Layer<SqlClient.SqlClient, DatabaseError, DatabaseRequirements>;
+  readonly profile?: UserStore.LocalProfileInput;
+};
+
+const openLocalUserStore = <DatabaseError, DatabaseRequirements>(
+  scope: Scope.Scope,
+  options: LocalUserStoreOptions<DatabaseError, DatabaseRequirements>,
 ) =>
   Effect.gen(function* () {
-    const scope = yield* Scope.fork(yield* Scope.Scope);
-    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void).pipe(Effect.orDie));
     const sqlContext = yield* Layer.build(options.sql).pipe(Scope.provide(scope));
     const sql = Context.get(sqlContext, SqlClient.SqlClient);
     const sqlLayer = Layer.succeed(SqlClient.SqlClient, sql);
@@ -62,6 +69,29 @@ export const createLocalUser = <DatabaseError, DatabaseRequirements, PoolError, 
     ).pipe(Scope.provide(scope));
     const store = Context.get(storeContext, UserStore.UserStore);
     const profile = yield* store.ensureLocalProfile(options.profile);
+    return { sqlLayer, store, profile };
+  });
+
+/** Creates or reuses the real local profile before its pool object is configured. */
+export const initializeLocalUserProfile = <DatabaseError, DatabaseRequirements>(
+  options: LocalUserStoreOptions<DatabaseError, DatabaseRequirements>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const scope = yield* Scope.Scope;
+      const { profile } = yield* openLocalUserStore(scope, options);
+      return profile;
+    }),
+  );
+
+/** Provisions one real local user domain around a caller-owned pool directory. */
+export const createLocalUser = <DatabaseError, DatabaseRequirements, PoolError, PoolRequirements>(
+  options: LocalUserOptions<DatabaseError, DatabaseRequirements, PoolError, PoolRequirements>,
+) =>
+  Effect.gen(function* () {
+    const scope = yield* Scope.fork(yield* Scope.Scope);
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void).pipe(Effect.orDie));
+    const { sqlLayer, store, profile } = yield* openLocalUserStore(scope, options);
     const poolDirectory = yield* options.pools(profile.id);
     const poolActor = { userId: profile.id };
 
@@ -145,10 +175,12 @@ export const createLocalUser = <DatabaseError, DatabaseRequirements, PoolError, 
         if (readyDirectory !== undefined) {
           return Effect.die("A local user cannot be rebound to another thread directory.");
         }
-        const archiveAlarm = LocalChatArchiveAlarm.layer(
-          scope,
-          Effect.flatMap(Deferred.await(actualTurns), ({ kinds }) => kinds.alarm),
-        );
+        const archiveAlarm =
+          options.chatArchiveAlarm ??
+          LocalChatArchiveAlarm.layer(
+            scope,
+            Effect.flatMap(Deferred.await(actualTurns), ({ kinds }) => kinds.alarm),
+          );
         const kinds = UserThreadKinds.layerTurns.pipe(
           Layer.provideMerge(UserThreadKinds.layer),
           Layer.provide(
@@ -186,6 +218,11 @@ export const createLocalUser = <DatabaseError, DatabaseRequirements, PoolError, 
       return yield* actualModelCatalog.view({ pools, checkedAt });
     });
     const home = actualUserFolders.snapshot;
+    const recordSummary = (summary: ThreadSummary) =>
+      Effect.flatMap(Deferred.await(actualTurns), ({ kinds }) =>
+        kinds.recordSummary(summary, store.recordThreadSummary(summary)),
+      );
+    const alarm = Effect.flatMap(Deferred.await(actualTurns), ({ kinds }) => kinds.alarm);
     const platform = Layer.mergeAll(
       Layer.succeed(ThreadContexts.ThreadContexts, actualThreadContexts),
       Layer.succeed(UserDirectory.UserDirectory, directory),
@@ -201,5 +238,7 @@ export const createLocalUser = <DatabaseError, DatabaseRequirements, PoolError, 
       refreshPools,
       catalog: catalogView,
       home,
+      recordSummary,
+      alarm,
     };
   });

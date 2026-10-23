@@ -1,4 +1,5 @@
 import type { OrchestrationV2Command, OrchestrationV2ThreadLaunchInput } from "@t3tools/contracts";
+import { OrchestrationV2CommandOutputError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Console from "effect/Console";
 import * as Deferred from "effect/Deferred";
@@ -11,8 +12,8 @@ import * as Stream from "effect/Stream";
 import type * as SqlClient from "effect/sql/SqlClient";
 
 import { HarnessError } from "../harness/Harness.ts";
-import type { Actor } from "./ThreadAccess.ts";
-import { ThreadEngine } from "./ThreadEngine.ts";
+import { ThreadObjectError, type Actor } from "./ThreadAccess.ts";
+import { ThreadEngine, type ThreadSummary } from "./ThreadEngine.ts";
 import { ThreadDirectory } from "./ThreadDirectory.ts";
 import { Threads } from "./Threads.ts";
 import * as StandaloneThread from "./StandaloneThread.ts";
@@ -20,6 +21,7 @@ import { MachineBackend } from "./runner/MachineBackend.ts";
 import { ThreadRunner } from "./runner/ThreadRunner.ts";
 import { createClaudeFacetHost, type ClaudeFacetHostOptions } from "./facet/ClaudeFacetHost.ts";
 import { layerFacetMachineBackend, type FacetHostPort } from "./facet/FacetMachineBackend.ts";
+import { makeThreadCommandObjectApi } from "./ThreadCommandApi.ts";
 
 export type ProductClaudeThreadHostOptions<
   G,
@@ -29,17 +31,70 @@ export type ProductClaudeThreadHostOptions<
   PlatformRequirements,
 > = ClaudeFacetHostOptions<G> & {
   readonly sql: Layer.Layer<SqlClient.SqlClient, SqlError, SqlRequirements>;
-  readonly platform: Layer.Layer<
-    Exclude<StandaloneThread.PlatformServices, MachineBackend>,
-    PlatformError,
-    PlatformRequirements
-  >;
-};
+  readonly recordSummary?: (
+    ownerId: string,
+    summary: ThreadSummary,
+  ) => Effect.Effect<void, HarnessError>;
+} & (
+    | {
+        readonly platform: Layer.Layer<
+          Exclude<StandaloneThread.PlatformServices, MachineBackend>,
+          PlatformError,
+          PlatformRequirements
+        >;
+        readonly continuationDispatch?: undefined;
+      }
+    | {
+        readonly platform: Layer.Layer<
+          Exclude<StandaloneThread.EnginePlatformServices, MachineBackend>,
+          PlatformError,
+          PlatformRequirements
+        >;
+        readonly continuationDispatch: Threads["Service"]["dispatch"];
+      }
+  );
 
 export type ProductClaudeThreadMachine<G> = Pick<
   ClaudeFacetHostOptions<G>,
   "host" | "open" | "access"
 >;
+
+export type ProductClaudeThreadHostBinding<G> = Effect.Success<
+  ReturnType<typeof createProductClaudeThreadHost<G, never, never, never, never>>
+>;
+
+const continuationThreads = (dispatch: Threads["Service"]["dispatch"]) => {
+  const error = (operation: string) =>
+    new ThreadObjectError({
+      operation,
+      cause: new Error("This local thread runtime only accepts user-routed continuations."),
+    });
+  const fail = <A>(operation: string): Effect.Effect<A, ThreadObjectError> =>
+    Effect.fail(error(operation));
+  const failStream = <A>(operation: string): Stream.Stream<A, ThreadObjectError> =>
+    Stream.fail(error(operation));
+  return Threads.of({
+    syncAutomationAsk: () => fail("ask.syncAutomation"),
+    answerAskAsAssistant: () => fail("ask.answerAsAssistant"),
+    subscribePreparation: () => failStream("preparation.subscribe"),
+    cancelPreparation: () => fail("preparation.cancel"),
+    launch: () => fail("thread.launch"),
+    dispatch,
+    refreshRemoteWorkspace: () => fail("workspace.refreshRemote"),
+    getWorkflowScript: () => fail("workflow.getScript"),
+    stopWorkflow: () => fail("workflow.stop"),
+    snapshot: () => fail("thread.snapshot"),
+    history: () => fail("thread.history"),
+    commandOutput: (_actor, input) =>
+      Stream.fail(
+        new OrchestrationV2CommandOutputError({
+          threadId: input.threadId,
+          message: "Command output is unavailable in the local thread runtime.",
+        }),
+      ),
+    subscribe: () => failStream("thread.subscribe"),
+  });
+};
 
 const failed = (message: string, cause?: unknown) =>
   new HarnessError({ operation: "events", message, ...(cause === undefined ? {} : { cause }) });
@@ -70,17 +125,28 @@ export const createProductClaudeThreadHost = <
       stop: (...args) => Effect.flatMap(Deferred.await(port), (host) => host.stop(...args)),
       inspect: (...args) => Effect.flatMap(Deferred.await(port), (host) => host.inspect(...args)),
     });
-    const runtime = yield* Layer.build(
-      StandaloneThread.layer({
-        threadId: options.threadId,
-        sql: options.sql,
-        platform: Layer.mergeAll(
-          options.platform,
-          backend,
-          Layer.succeed(Console.Console, hostConsole),
-        ),
-      }),
-    ).pipe(Scope.provide(scope));
+    const platform = Layer.mergeAll(
+      options.platform,
+      backend,
+      Layer.succeed(Console.Console, hostConsole),
+    );
+    const runtimeLayer =
+      options.continuationDispatch === undefined
+        ? StandaloneThread.layer({
+            threadId: options.threadId,
+            sql: options.sql,
+            platform,
+          })
+        : StandaloneThread.layerEngine({
+            threadId: options.threadId,
+            sql: options.sql,
+            platform,
+          }).pipe(
+            Layer.provideMerge(
+              Layer.succeed(Threads, continuationThreads(options.continuationDispatch)),
+            ),
+          );
+    const runtime = yield* Layer.build(runtimeLayer).pipe(Scope.provide(scope));
     const threads = Context.get(runtime, Threads);
     const runner = Context.get(runtime, ThreadRunner);
     const engine = Context.get(runtime, ThreadEngine);
@@ -119,6 +185,13 @@ export const createProductClaudeThreadHost = <
             status,
           });
           if (status.actual === "running") yield* runner.ensured(plan.ensure.generation);
+        }
+        if (options.recordSummary !== undefined) {
+          const pending = yield* engine.pendingSummary;
+          if (pending !== null) {
+            yield* options.recordSummary(pending.ownerUserId, pending.summary);
+            yield* engine.acknowledgeSummary(pending.summary.revision);
+          }
         }
       }).pipe(
         Effect.catchCause((cause) =>
@@ -165,13 +238,25 @@ export const createProductClaudeThreadHost = <
         Effect.tap(() => activate),
         Effect.provideService(Console.Console, hostConsole),
       );
+    const afterChange = () => Effect.runPromise(activate.pipe(Effect.provide(runtime)));
+    const api = makeThreadCommandObjectApi(
+      <A, E>(effect: Effect.Effect<A, E, ThreadEngine>) =>
+        Effect.runPromise(effect.pipe(Effect.provide(runtime))),
+      afterChange,
+    );
     const dispose = Effect.gen(function* () {
       closed = true;
+      if (brokenError === undefined) {
+        brokenError = failed("The product thread host is closed.");
+        yield* Deferred.fail(broken, brokenError);
+      }
       yield* host.dispose.pipe(Effect.ensuring(Scope.close(scope, Exit.void)));
     });
     yield* Effect.addFinalizer(() => dispose.pipe(Effect.orDie));
     return {
+      api,
       directory: Context.get(runtime, ThreadDirectory),
+      engine,
       threads: {
         ...threads,
         launch,
@@ -182,6 +267,7 @@ export const createProductClaudeThreadHost = <
         commandOutput: (...args: Parameters<typeof threads.commandOutput>) =>
           threads.commandOutput(...args).pipe(Stream.provideService(Console.Console, hostConsole)),
       },
+      afterChange,
       launch,
       dispatch,
       host: Effect.raceFirst(host.host, Deferred.await(broken)),
