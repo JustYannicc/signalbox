@@ -1,5 +1,6 @@
 import ts from "typescript-legacy";
-import type { NodeBuiltinAmbiguity } from "./coverage.ts";
+import type { NodeBuiltinAmbiguity, NodeBuiltinFunctionCall } from "./coverage.ts";
+import { builtinCallGuard } from "./callGuards.ts";
 import {
   isBuiltinReference,
   resolveBuiltinFunctionReferences,
@@ -20,14 +21,6 @@ function withoutFunctionPrototypeOperation(
   if (reference.memberPath.length < 2) return undefined;
   const memberPath = reference.memberPath.slice(0, -1);
   return { operation, reference: { ...reference, memberPath } };
-}
-
-export interface NodeBuiltinFunctionCall {
-  readonly specifier: string;
-  readonly memberPath: readonly string[];
-  readonly module: string;
-  readonly line: number;
-  readonly column: number;
 }
 
 /** Scans direct builtin calls while retaining unresolved computed member calls. */
@@ -67,12 +60,14 @@ export function scanBuiltinFunctionCalls(
         isBuiltinReference(callee) &&
         (callee.kind === "member" || callee.kind === "module" || callee.kind === "bundled-module")
       ) {
+        const guard = builtinCallGuard(node, callee, reference);
         functionCalls.push({
           specifier: callee.specifier,
           memberPath: callee.kind === "member" ? callee.memberPath : [],
           module: file.fileName,
           line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
           column: file.getLineAndCharacterOfPosition(node.getStart(file)).character + 1,
+          ...(guard === undefined ? {} : { guard }),
         });
       } else if (
         prototypeOperation?.operation !== "bind" &&
