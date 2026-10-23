@@ -198,11 +198,17 @@ export class NodeWorkerPortBroker {
         this.#ports.get(port.address.id) !== port
       )
         throw new Error("Queued worker port transfer changed during delivery");
+    // The queue can grow through a peer while this packet's receiver awaits its ACK.
+    const unreadDescendants = new Set<Port>();
+    for (const port of transfers.keys()) this.#collectPending(port, from, unreadDescendants);
+    const retargeted = new Set([...transfers.keys(), ...unreadDescendants]);
+    // Late descendants keep the pins already owned by their own queued packets.
     for (const [port, lease] of transfers) {
       port.owner = to;
       lease.owner = to;
     }
-    this.#retargetPendingTransferOwners(new Set(transfers.keys()), from, to);
+    for (const port of unreadDescendants) port.owner = to;
+    this.#retargetPendingTransferOwners(retargeted, from, to);
   }
 
   #retargetPendingTransferOwners(ports: ReadonlySet<Port>, from: string, to: string): void {

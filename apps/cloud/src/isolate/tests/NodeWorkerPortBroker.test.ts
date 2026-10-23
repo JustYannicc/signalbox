@@ -433,6 +433,70 @@ describe("worker message port broker", () => {
     expect(broker.residentPorts).toBe(0);
   });
 
+  it("retargets a descendant queued while the carrier ACK is pending", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const source = publicPortsRuntime("late-descendant-source", broker, async (event) => {
+      if (event.type === "message") {
+        entered.resolve();
+        await release.promise;
+      }
+    });
+    const target = publicPortsRuntime("late-descendant-target", broker);
+    const outer = source.ports.channel();
+    const nested = source.ports.channel();
+    const deep = source.ports.channel();
+    const outerMessages: { readonly nested: NodeWorkerMessagePort }[] = [];
+    const nestedMessages: { readonly deep: NodeWorkerMessagePort }[] = [];
+    const replies: unknown[] = [];
+
+    try {
+      deep.port1.on("message", (value: unknown) => replies.push(value));
+      outer.port2.on("message", () => {
+        throw new Error("Retired outer receiver ran");
+      });
+      outer.port1.postMessage({ nested: nested.port2 }, [nested.port2]);
+      await entered.promise;
+
+      const movedOuter = await transferPort(broker, source, target, outer.port2);
+      movedOuter.on("message", (value: unknown) =>
+        outerMessages.push(value as { nested: NodeWorkerMessagePort }),
+      );
+      await target.ports.drain();
+
+      nested.port1.postMessage({ deep: deep.port2 }, [deep.port2]);
+      await source.ports.drain();
+      release.resolve();
+      await broker.drain();
+      expect(outerMessages).toHaveLength(1);
+
+      outerMessages[0]!.nested.on("message", (value: unknown) =>
+        nestedMessages.push(value as { deep: NodeWorkerMessagePort }),
+      );
+      await target.ports.drain();
+      await broker.drain();
+      expect(nestedMessages).toHaveLength(1);
+
+      nestedMessages[0]!.deep.postMessage("ping through adopted descendant", []);
+      let failure: unknown;
+      try {
+        await target.ports.drain();
+        await broker.drain();
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeUndefined();
+      expect(replies).toEqual(["ping through adopted descendant"]);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([source.ports.dispose(), target.ports.dispose()]);
+      await broker.drain().catch(() => undefined);
+    }
+
+    expect(broker.residentPorts).toBe(0);
+  });
+
   it("does not hold a broker lock while a message handler posts its reply", async () => {
     const broker = new NodeWorkerPortBroker();
     const replied = Promise.withResolvers<void>();
