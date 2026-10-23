@@ -1,3 +1,5 @@
+import { runSync } from "../wasi/internal_wasi_calls.ts";
+import { withKernelFileWrite } from "../KernelIoLock.ts";
 import {
   canonicalFileByteSelection,
   bindFileByteAccess,
@@ -475,8 +477,11 @@ export class KernelFileSystemPaths {
         : undefined;
     try {
       const access = descriptor?.byteAccess ?? temporary;
-      if (access) access.truncate(size);
-      else runKernelSync(mount.storage.truncate(inode, size));
+      runSync(
+        withKernelFileWrite(mount.storage, inode, () =>
+          access ? access.truncate(size) : mount.storage.truncate(inode, size),
+        ),
+      );
     } finally {
       temporary?.release();
     }

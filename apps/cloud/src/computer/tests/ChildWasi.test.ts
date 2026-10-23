@@ -398,6 +398,8 @@ describe("ChildWasi", () => {
       memory.grow(16);
       const view = new DataView(memory.buffer);
       view.setUint32(32, 128, true);
+      view.setUint32(36, 0, true);
+      expect(await child.run(guestRun(instance))).toBe(0);
       view.setUint32(36, 1_048_576, true);
       view.setUint32(16, 0, true);
       new Uint8Array(memory.buffer, 128, 1_048_576).fill(0xa7);

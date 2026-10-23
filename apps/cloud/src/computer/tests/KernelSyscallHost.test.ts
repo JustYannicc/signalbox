@@ -264,7 +264,7 @@ describe("createKernelSyscallHost", () => {
       ).resolves.toEqual({ kind: "exit", code: 37 });
     }));
 
-  it("rejects overlapping calls and close while a descriptor read is pending", () => {
+  it("rejects overlapping calls and lets close abort a pending descriptor read", () => {
     const readStarted = deferred<void>();
     const provideInput = deferred<Uint8Array>();
     const stdin: WasiStdio = {
@@ -293,8 +293,10 @@ describe("createKernelSyscallHost", () => {
         await expect(
           host.call({ name: "proc_exit", args: [0], memorySize: 0, regions: [] }),
         ).rejects.toThrow("already executing");
-        expect(() => host.close()).toThrow("still executing");
+        // Close must not wait for the guest's read, or a cancelled command keeps its payload credit.
+        host.close();
         provideInput.resolve(bytes(254));
+        // A read that ignores the abort still completes with the bytes it delivered.
         const response = returned(await pending);
         expect(region(response, 64)).toEqual(bytes(254));
         host.close();

@@ -41,7 +41,7 @@
     },
     {
       "file": "internal_wasi_calls.ts",
-      "reason": "An optional synchronous step wrapper lets kernel CPU accounting measure generator work without charging the Promises yielded for I/O. Yielded operations stay owned across step-wrapper failures, and iterator cleanup finishes before the original failure propagates. The default step runner preserves generic WASI behavior."
+      "reason": "An optional synchronous step wrapper lets kernel CPU accounting measure generator work without charging the Promises yielded for I/O. Yielded operations stay owned across step-wrapper failures, and iterator cleanup finishes before the original failure propagates. The default step runner preserves generic WASI behavior. The synchronous runner marks its generator steps as inline I/O so inode contention cannot force it to suspend."
     },
     {
       "file": "internal_wasi_path_calls.ts",
@@ -49,7 +49,15 @@
     },
     {
       "file": "internal_wasi_memory.ts",
-      "reason": "writeRange/writeView mark bytes a call only overwrites, so child syscall memory can return exact output writes instead of diffing whole regions. fd, host, poll and path calls use them for out-pointers and read buffers; guest-visible results are unchanged."
+      "reason": "writeRange/writeView mark bytes a call only overwrites, so child syscall memory can return exact output writes instead of diffing whole regions. Child output backing is allocated only for accessed bytes; validateOutputRange checks the active reply slice before stdio consumes input without allocating that backing. fd, host, poll and path calls use them for out-pointers and read buffers; guest-visible results are unchanged."
+    },
+    {
+      "file": "internal_wasi_memory.ts, internal_wasi_fd_calls.ts, internal_wasi_path_calls.ts",
+      "reason": "Child-internal transfer offsets assemble oversized regular-file reads and writes, directory entries, and readlink targets across fixed 1 MiB RPCs. Stdio reads stop after the first positive result. Without transfer metadata, the offset stays zero and read-once stays disabled."
+    },
+    {
+      "file": "internal_wasi_descriptors.ts, internal_wasi_open_description.ts",
+      "reason": "Only guest file calls larger than 1 MiB hold an open-description and, for writes, inode lock across continuation RPCs. Ordinary file writes share those locks for one owner call and release them before returning. Synchronous callers proceed when either lock is contended. Truncation shares the inode lock. Inline synchronous callers acquire it only when available and may interleave with child chunks; append chunks recheck EOF so a synchronous truncate cannot leave a hole. Cancellation removes queued lock requests and teardown releases held sequences after started work settles."
     }
   ],
   "upstreamAlignment": {
