@@ -58,9 +58,11 @@
         },
         "overrides": [
           {
-            // signalbox: Node personality adapters implement Node contracts with the platform's native modules.
-            "include": ["**/apps/cloud/src/isolate/**"],
-            "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
+            // signalbox: Node personality code and its fixtures preserve native module and Date contracts.
+            "include": ["apps/cloud/src/isolate/**/*.ts"],
+            "options": {
+              "diagnosticSeverity": { "nodeBuiltinImport": "off", "globalDate": "off" }
+            }
           },
           {
             // signalbox: native infrastructure fixtures and artifact packagers run outside Effect.
