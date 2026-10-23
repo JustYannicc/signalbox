@@ -38,6 +38,10 @@ export const createHarnessContinuationPublisher = (options: {
                 sourceRunId: request.sourceRunId,
                 providerThreadId: request.providerThreadId,
                 driver: request.driver,
+                ...(request.observations === undefined
+                  ? {}
+                  : { observations: request.observations }),
+                ...(request.completions === undefined ? {} : { completions: request.completions }),
               },
             } satisfies Extract<OrchestrationV2Command, { type: "message.dispatch" }>)
             .pipe(

@@ -364,6 +364,9 @@ export function routeProviderEvent(
   });
 
   switch (event.type) {
+    case "continuation.associated":
+      // signalbox: late continuation associations belong to the cloud ThreadRunner.
+      return [false, state];
     case "provider_session.updated":
       return [false, state];
     case "app_thread.created": {

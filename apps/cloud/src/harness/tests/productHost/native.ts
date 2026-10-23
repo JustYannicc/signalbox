@@ -27,6 +27,7 @@ export function nativeFixture(
   nativeId: string,
   systemIdentity: SystemIdentity,
   onExit?: () => void,
+  queryNativeId: () => string = () => nativeId,
 ) {
   const outputs: string[] = [];
   let consumed = 0;
@@ -37,7 +38,7 @@ export function nativeFixture(
   const loadSdk = async (_bridge: NodeBridge): Promise<PreparedClaudeSdk> => ({
     query({ prompt, options }) {
       sdkIdentity = options.resume ?? options.sessionId;
-      NodeAssert.equal(sdkIdentity, nativeId);
+      NodeAssert.equal(sdkIdentity, queryNativeId());
       if (options.spawnClaudeCodeProcess === undefined) throw new Error("Missing native spawn");
       const child = options.spawnClaudeCodeProcess({
         command: "/runtime/claude",
@@ -158,7 +159,7 @@ export function nativeFixture(
             modelUsage: {},
             permission_denials: [],
             uuid: "00000000-0000-4000-8000-000000000001",
-            session_id: nativeId,
+            session_id: queryNativeId(),
           };
           logicalProcess.stdout.write(`${JSON.stringify(frame)}\n`);
         }

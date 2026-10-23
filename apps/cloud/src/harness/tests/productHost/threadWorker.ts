@@ -1,0 +1,33 @@
+import * as NodeModule from "node:module";
+import * as NodeWorkerThreads from "node:worker_threads";
+import * as NodeUtil from "node:util";
+
+NodeModule.registerHooks({
+  resolve(specifier, context, next) {
+    if (specifier === "cloudflare:workers")
+      return { url: "data:text/javascript,export class RpcTarget {}", shortCircuit: true };
+    return next(specifier, context);
+  },
+});
+const port = NodeWorkerThreads.parentPort;
+if (port === null) throw new Error("Thread fixture needs its isolated Node realm");
+try {
+  const { run } = await import("./threadScenario.ts");
+  await run(
+    NodeWorkerThreads.workerData === "startup-failure"
+      ? "startup-failure"
+      : NodeWorkerThreads.workerData === "unjoined-batch"
+        ? "unjoined-batch"
+        : NodeWorkerThreads.workerData === "boundary-batch"
+          ? "boundary-batch"
+          : NodeWorkerThreads.workerData === "batch"
+            ? "batch"
+            : NodeWorkerThreads.workerData === "revoke"
+              ? "revoke"
+              : "continue",
+  );
+  port.postMessage({ ok: true });
+} catch (error) {
+  port.postMessage({ ok: false, error: NodeUtil.inspect(error, { depth: 15 }) });
+}
+port.close();

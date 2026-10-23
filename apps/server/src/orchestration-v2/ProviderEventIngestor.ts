@@ -520,6 +520,9 @@ export const layer: Layer.Layer<
     const normalize: ProviderEventIngestorV2Shape["normalize"] = (input) =>
       Effect.gen(function* () {
         switch (input.event.type) {
+          case "continuation.associated":
+            // signalbox: only the cloud publisher gives wake messages continuation lineage.
+            return [];
           case "app_thread.created": {
             const offered = input.event.appThread;
             const existing = yield* projections.getThread(offered.id).pipe(

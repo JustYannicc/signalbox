@@ -3,6 +3,7 @@ import {
   MessageId,
   ProviderDriverKind,
   ProviderThreadId,
+  type ProviderContinuation,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -17,6 +18,8 @@ export interface ProviderContinuationRequest {
   readonly providerThreadId: ProviderThreadId;
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
+  readonly completions?: NonNullable<ProviderContinuation["completions"]>;
+  readonly observations?: NonNullable<ProviderContinuation["observations"]>;
   readonly notification?: OrchestrationV2Notification;
   readonly delegatedCompletion?: {
     readonly parentRunId: RunId;

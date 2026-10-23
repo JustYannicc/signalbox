@@ -1,3 +1,4 @@
+import { continuationAssociationEvents } from "./continuationAssociation.ts";
 import { workflowNodes } from "../workflowControl.ts";
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
@@ -132,6 +133,8 @@ export function recordedEvents(
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
   const { event } = item;
   const eventType = stringField(event, "type");
+  if (eventType === "continuation.associated")
+    return continuationAssociationEvents(projection, item.runId, event, ctx);
   const recorded =
     eventType !== undefined && Object.hasOwn(RECORDED, eventType)
       ? RECORDED[eventType as keyof typeof RECORDED]

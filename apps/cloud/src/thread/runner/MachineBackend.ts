@@ -92,7 +92,7 @@ export interface MachineStatus {
 export const WAKE_KINDS = ["cold", "disk_resume", "memory_restore", "warm"] as const;
 export type WakeKind = (typeof WAKE_KINDS)[number];
 
-export const BACKEND_KINDS = ["none", "local", "boat", "cloudflare"] as const;
+export const BACKEND_KINDS = ["none", "local", "boat", "cloudflare", "facet"] as const;
 
 export interface MachineBackendShape {
   readonly kind: (typeof BACKEND_KINDS)[number];

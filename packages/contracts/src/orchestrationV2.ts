@@ -72,6 +72,7 @@ import {
   RuntimeMode,
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderContinuation } from "./providerContinuation.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import {
   TurnTokenUsage,
@@ -1127,6 +1128,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
       taskIds: Schema.Array(NodeId),
     }),
   ),
+  providerContinuation: Schema.optional(ProviderContinuation),
 });
 export type OrchestrationV2ConversationMessage = typeof OrchestrationV2ConversationMessage.Type;
 
@@ -2821,13 +2823,8 @@ export const OrchestrationV2Command = Schema.Union([
     text: Schema.String,
     context: Schema.optional(OrchestrationMessageContext),
     attachments: Schema.Array(ChatAttachment),
-    providerContinuation: Schema.optional(
-      Schema.Struct({
-        sourceRunId: RunId,
-        providerThreadId: ProviderThreadId,
-        driver: Schema.optional(ProviderDriverKind),
-      }),
-    ),
+    // signalbox: Source identity lets thread dispatch reject stale provider wakes.
+    providerContinuation: Schema.optional(ProviderContinuation),
     titleSeed: Schema.optional(TrimmedNonEmptyString),
     modelSelection: Schema.optional(ModelSelection),
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),

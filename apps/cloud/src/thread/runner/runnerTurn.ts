@@ -68,6 +68,9 @@ export const runnerMessageOf = (
   attachments: message.attachments,
   createdBy: message.createdBy,
   creationSource: message.creationSource,
+  ...(message.providerContinuation === undefined
+    ? {}
+    : { providerContinuation: message.providerContinuation }),
 });
 
 /**

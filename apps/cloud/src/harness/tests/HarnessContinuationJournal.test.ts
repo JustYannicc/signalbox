@@ -5,6 +5,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  type ProviderContinuationAssociation,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HarnessError } from "../Harness.ts";
@@ -28,6 +29,95 @@ const rows = (handle: ReturnType<ReturnType<typeof hostSqlite>["open"]>) =>
   handle.rows("SELECT message_id, request_json, published FROM harness_continuation_requests");
 
 describe("Harness continuation journal", () => {
+  it.effect(
+    "journals a late association once without republishing, and rejects conflicting owners",
+    () =>
+      Effect.gen(function* () {
+        const db = yield* database;
+        const handle = db.open();
+        let publications = 0;
+        const journal = yield* createContinuationJournal(
+          handle.storage,
+          {
+            publish: () =>
+              Effect.sync(() => {
+                publications++;
+              }),
+          },
+          new AbortController().signal,
+        );
+        const association = {
+          threadId: request.threadId,
+          runId: RunId.make("continuation-run"),
+          messageId: request.messageId,
+          providerContinuation: {
+            sourceRunId: request.sourceRunId,
+            providerThreadId: request.providerThreadId,
+            driver: request.driver,
+            observations: [
+              {
+                sdkMessageId: "controlled-sdk-message",
+                blockIndex: 0,
+                observedCallId: "native-observed-call",
+                block: {
+                  type: "text",
+                  text: "Exact completion.",
+                  cache_control: { type: "ephemeral" },
+                },
+              },
+            ],
+            completions: [
+              {
+                observation: { sdkMessageId: "controlled-sdk-message", blockIndex: 0 },
+                sourceCallId: "observed-call",
+                sourceOccurrenceId: "recorded-enqueue:131:digest",
+                block: {
+                  type: "text",
+                  text: "Exact completion.",
+                  cache_control: { type: "ephemeral" },
+                },
+              },
+            ],
+          },
+        } satisfies ProviderContinuationAssociation;
+        expect(yield* journal.associate(association).pipe(Effect.flip)).toBeInstanceOf(
+          HarnessError,
+        );
+        yield* journal.publish(request);
+        yield* journal.associate({
+          ...association,
+          providerContinuation: { ...association.providerContinuation, completions: undefined },
+        });
+        yield* journal.associate(association);
+        yield* journal.associate(association);
+        expect(publications).toBe(1);
+        const associations = handle.rows(
+          "SELECT association_json FROM harness_continuation_associations",
+        );
+        expect(associations).toHaveLength(1);
+        expect(
+          yield* journal
+            .associate({ ...association, runId: RunId.make("other-run") })
+            .pipe(Effect.flip),
+        ).toBeInstanceOf(HarnessError);
+        expect(
+          yield* journal
+            .associate({
+              ...association,
+              providerContinuation: {
+                ...association.providerContinuation,
+                sourceRunId: RunId.make("other-source"),
+              },
+            })
+            .pipe(Effect.flip),
+        ).toBeInstanceOf(HarnessError);
+        expect(
+          handle.rows("SELECT association_json FROM harness_continuation_associations"),
+        ).toEqual(associations);
+        expect(publications).toBe(1);
+      }),
+  );
+
   it.effect(
     "commits before publication and avoids duplicate publication after reconstruction",
     () =>

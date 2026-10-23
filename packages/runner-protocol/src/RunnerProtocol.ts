@@ -10,6 +10,7 @@ import {
   OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   PositiveInt,
+  ProviderContinuation,
   ProviderInteractionMode,
   ProviderSessionId,
   RunAttemptId,
@@ -92,6 +93,7 @@ export const RunnerMessageInput = Schema.Struct({
   attachments: Schema.Array(ChatAttachment),
   createdBy: OrchestrationV2ConversationMessage.fields.createdBy,
   creationSource: OrchestrationV2ConversationMessage.fields.creationSource,
+  providerContinuation: Schema.optional(ProviderContinuation),
 });
 export type RunnerMessageInput = typeof RunnerMessageInput.Type;
 

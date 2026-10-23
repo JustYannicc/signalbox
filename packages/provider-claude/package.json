@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./ClaudeContinuationBatch": {
+      "types": "./src/ClaudeContinuationBatch.ts",
+      "import": "./src/ClaudeContinuationBatch.ts"
+    },
     "./ClaudeAdapter": {
       "types": "./src/ClaudeAdapter.ts",
       "import": "./src/ClaudeAdapter.ts"

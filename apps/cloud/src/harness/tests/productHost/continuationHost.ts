@@ -12,7 +12,10 @@ import { ChildWorkerCapacity } from "../../../computer/ChildWorkerCapacity.ts";
 import { createMemoryFilePersistencePorts } from "../../../kernel/MemoryFilePersistencePorts.ts";
 import { createNodeFs } from "../../../isolate/NodeFs.ts";
 import type { HarnessContinuation } from "../../HarnessContinuations.ts";
-import { createProductClaudeHarnessSessionHost } from "../../ProductClaudeHarnessSessionHost.ts";
+import {
+  createProductClaudeHarnessSessionHost,
+  type ProductClaudeHarnessHostOptions,
+} from "../../ProductClaudeHarnessSessionHost.ts";
 import { claudeFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
 import { data } from "../../adapter/tests/data.ts";
 import { hostSqlite } from "../hostSqlite.ts";
@@ -21,191 +24,277 @@ import { commandLoader, programFixture } from "./commands.ts";
 import { machineFixture } from "./machine.ts";
 import { continuationNativeFixture } from "./continuationNative.ts";
 
-export const continuationHostFixture = Effect.gen(function* () {
-  const database = yield* Effect.acquireRelease(Effect.sync(hostSqlite), (value) =>
-    Effect.sync(() => value.dispose()),
-  );
-  const deps = yield* services;
-  const d = yield* data;
-  const instanceId = ProviderInstanceId.make("recorded-claude");
-  const driver = ProviderDriverKind.make("claudeAgent");
-  const providerSessionId = ProviderSessionId.make("original-recorded-session");
-  const nativeId = "12345678-1234-4234-8234-123456789abc";
-  const modelSelection = { instanceId, model: "claude-sonnet-4-6" };
-  const turn = {
-    ...d.turn,
-    modelSelection,
-    providerThread: {
-      ...d.turn.providerThread,
-      driver,
-      providerInstanceId: instanceId,
+const makeContinuationHostInputs = (batch: boolean, opaque = false, bindSources = true) =>
+  Effect.gen(function* () {
+    const database = yield* Effect.acquireRelease(Effect.sync(hostSqlite), (value) =>
+      Effect.sync(() => value.dispose()),
+    );
+    const deps = yield* services;
+    const d = yield* data;
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const providerSessionId = ProviderSessionId.make("original-recorded-session");
+    const nativeId = "12345678-1234-4234-8234-123456789abc";
+    const modelSelection = { instanceId, model: "claude-sonnet-4-6" };
+    const turn = {
+      ...d.turn,
+      modelSelection,
+      providerThread: {
+        ...d.turn.providerThread,
+        driver,
+        providerInstanceId: instanceId,
+        providerSessionId,
+        nativeThreadRef: { driver, nativeId, strength: "strong" as const },
+      },
+      appThread: { ...d.turn.appThread, modelSelection, providerInstanceId: instanceId },
+    };
+    const sessionInput = {
+      threadId: d.threadId,
       providerSessionId,
-      nativeThreadRef: { driver, nativeId, strength: "strong" as const },
-    },
-    appThread: { ...d.turn.appThread, modelSelection, providerInstanceId: instanceId },
-  };
-  const sessionInput = {
-    threadId: d.threadId,
-    providerSessionId,
-    modelSelection,
-    initialNativeThreadId: nativeId,
-    runtimePolicy: {
-      runtimeMode: "full-access" as const,
-      interactionMode: "default" as const,
-      cwd: "/workspace",
-    },
-  };
-  const systemIdentity = systemIdentityForThread(d.threadId, {
-    release: "6.12.8-production",
-    version: "#1 SMP_PREEMPT_DYNAMIC",
-    machine: "aarch64",
-    hostnamePolicy: "thread",
-    verification: "measured",
-  });
-  const native = continuationNativeFixture(nativeId, systemIdentity);
-  const commands = commandLoader();
-  const machine = machineFixture("turn", () => {});
-  const persistencePorts = createMemoryFilePersistencePorts();
-  const at = { repository: "product-test", fork: "thread", commit: "base" };
-  persistencePorts.seedFile(at, "/workspace/file.txt", new TextEncoder().encode("before\n"));
-  const databaseHandle = database.open();
-  const publishedRequests: HarnessContinuation[] = [];
-  const journalRowsAtPublish: unknown[][] = [];
-  let journalReadFailure: unknown;
-  const release = yield* Effect.promise(() => claudeFixture());
-  const programs = yield* Effect.promise(programFixture);
-
-  const host = yield* createProductClaudeHarnessSessionHost({
-    threadId: d.threadId,
-    release: release.options,
-    programs,
-    files: {
-      identity: "recorded-claude-files",
-      database: databaseHandle.storage,
-      nowNs: () => 0n,
-      persistencePorts,
-      rootMetadata: { mode: 0o755, uid: 1000, gid: 1000 },
-      posix: {
-        credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 },
-        umask: 0o022,
+      modelSelection,
+      initialNativeThreadId: nativeId,
+      runtimePolicy: {
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        cwd: "/workspace",
       },
-      cwd: "/workspace",
-      assetMode: 0o644,
-    },
-    commands: {
-      loader: commands.loader,
-      capacity: new ChildWorkerCapacity(2),
+    };
+    const systemIdentity = systemIdentityForThread(d.threadId, {
+      release: "6.12.8-production",
+      version: "#1 SMP_PREEMPT_DYNAMIC",
+      machine: "aarch64",
+      hostnamePolicy: "thread",
+      verification: "measured",
+    });
+    let appendTranscript: ((row: string, sessionId: string) => void) | undefined;
+    const native = continuationNativeFixture(
+      nativeId,
       systemIdentity,
-      machine: (identity) => {
-        NodeAssert.deepEqual(identity, systemIdentity);
-        return machine.port;
+      (message) => {
+        if (appendTranscript === undefined)
+          throw new Error("Native transcript files are not hydrated");
+        if (!("session_id" in message) || typeof message.session_id !== "string")
+          throw new Error("Controlled native transcript frame has no session identity");
+        appendTranscript(JSON.stringify(message), message.session_id);
       },
-    },
-    hydrate: async ({ files }) => {
-      const fs = createNodeFs(files).fs;
-      fs.mkdirSync("/home/recorded", { recursive: true });
-      fs.mkdirSync("/recorded/git", { recursive: true });
-      fs.writeFileSync("/workspace/.git", "gitdir: /recorded/git\n");
-      fs.writeFileSync("/workspace/file.txt", "before\n");
-      fs.writeFileSync("/home/recorded/session", nativeId);
-      fs.symlinkSync("/workspace", "/source-alias");
-    },
-    save: async ({ files, persistence, signal }) => {
-      const result = await persistence.commitTurn({
-        at,
-        turnId: turn.runId,
-        signal,
-        changedInodes: [
-          {
-            inode: files.resolve("/workspace/file.txt").inode,
-            paths: ["/workspace/file.txt"],
-            removedPaths: [],
+      batch,
+      opaque,
+    );
+    const batchBindings = [
+      {
+        sdkMessageId: native.batchUuid,
+        blockIndex: 0,
+        sourceCallId: "controlled-source-call-a",
+        sourceOccurrenceId: "controlled-enqueue:410:fixture-a",
+      },
+      {
+        sdkMessageId: native.batchUuid,
+        blockIndex: 1,
+        sourceCallId: "controlled-source-call-b",
+        sourceOccurrenceId: "controlled-enqueue:409:fixture-b",
+      },
+      {
+        sdkMessageId: native.batchUuid,
+        blockIndex: 2,
+        sourceCallId: "controlled-source-call-c",
+        sourceOccurrenceId: "controlled-enqueue:411:fixture-c",
+      },
+    ];
+    const commands = commandLoader();
+    const machine = machineFixture("turn", () => {});
+    const persistencePorts = createMemoryFilePersistencePorts();
+    let at = { repository: "product-test", fork: "thread", commit: "base" };
+    persistencePorts.seedFile(at, "/workspace/file.txt", new TextEncoder().encode("before\n"));
+    const databaseHandle = database.open();
+    const publishedRequests: HarnessContinuation[] = [];
+    const journalRowsAtPublish: unknown[][] = [];
+    let journalReadFailure: unknown;
+    const release = yield* Effect.promise(() => claudeFixture());
+    const programs = yield* Effect.promise(programFixture);
+
+    let currentRunId = turn.runId;
+    const hostOptions: ProductClaudeHarnessHostOptions<string> = {
+      threadId: d.threadId,
+      release: release.options,
+      programs,
+      files: {
+        identity: "recorded-claude-files",
+        database: databaseHandle.storage,
+        nowNs: () => 0n,
+        persistencePorts,
+        rootMetadata: { mode: 0o755, uid: 1000, gid: 1000 },
+        posix: {
+          credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 },
+          umask: 0o022,
+        },
+        cwd: "/workspace",
+        assetMode: 0o644,
+      },
+      commands: {
+        loader: commands.loader,
+        capacity: new ChildWorkerCapacity(2),
+        systemIdentity,
+        machine: (identity) => {
+          NodeAssert.deepEqual(identity, systemIdentity);
+          return machine.port;
+        },
+      },
+      hydrate: async ({ files }) => {
+        const fs = createNodeFs(files).fs;
+        fs.mkdirSync("/home/recorded", { recursive: true });
+        fs.mkdirSync("/recorded/git", { recursive: true });
+        fs.writeFileSync("/workspace/.git", "gitdir: /recorded/git\n");
+        fs.writeFileSync("/workspace/file.txt", "before\n");
+        fs.writeFileSync("/home/recorded/session", nativeId);
+        fs.mkdirSync("/home/recorded/.claude/projects/-workspace", { recursive: true });
+        appendTranscript = (row, sessionId) =>
+          fs.appendFileSync(
+            `/home/recorded/.claude/projects/-workspace/${sessionId}.jsonl`,
+            `${row}\n`,
+          );
+        fs.symlinkSync("/workspace", "/source-alias");
+      },
+      save: async ({ files, persistence, signal }) => {
+        const result = await persistence.commitTurn({
+          at,
+          turnId: currentRunId,
+          signal,
+          changedInodes: [
+            {
+              inode: files.resolve("/workspace/file.txt").inode,
+              paths: ["/workspace/file.txt"],
+              removedPaths: [],
+            },
+          ],
+        });
+        if (result.status !== "ok") throw new Error(result.error.message);
+        at = { ...at, commit: result.value.commit };
+        return result.value;
+      },
+      port: async () => ({ fetch: async () => new Response("machine service") }),
+      modelTransport: async (request) =>
+        new Response(request.url.endsWith("/root") ? "root response" : "child response"),
+      executor: { forward: async () => new Response("executor") },
+      continuations: {
+        publish: (request) =>
+          Effect.sync(() => {
+            publishedRequests.push(request);
+            try {
+              journalRowsAtPublish.push(
+                databaseHandle.rows(
+                  "SELECT message_id, request_json, published FROM harness_continuation_requests",
+                ),
+              );
+            } catch (error) {
+              journalReadFailure = error;
+            }
+          }),
+      },
+      native: {
+        adapter: ({ harness }) =>
+          Effect.succeed({
+            ...adapter(harness.computer.files, deps, instanceId),
+            ...(batch && bindSources
+              ? {
+                  continuationOwnership: {
+                    resolve: (observations) =>
+                      Effect.sync(() => {
+                        NodeAssert.deepEqual(
+                          observations,
+                          native.batchBlocks.map((block, index) => ({
+                            sdkMessageId: native.batchUuid,
+                            blockIndex: index,
+                            observedCallId: native.batchCalls[index],
+                            block,
+                          })),
+                        );
+                        return batchBindings;
+                      }),
+                  },
+                }
+              : {}),
+          }),
+        mcpSessions: deps.mcpSessions,
+        loadSdk: native.loadSdk,
+        process: {
+          identity: {
+            version: "v24.21.0",
+            versions: { node: "24.21.0", bun: "1.3.11" },
+            platform: "linux",
+            arch: "x64",
+            type: "Linux",
+            endianness: "LE",
+            availableParallelism: 1,
+            user: { username: "recorded", uid: 1000, gid: 1000, shell: "/bin/bash" },
+            homedir: "/home/recorded",
+            tmpdir: "/tmp",
+            pid: 1,
+            ppid: 0,
+            execPath: "/runtime/claude",
+            argv0: "claude",
+            argv: ["claude"],
           },
-        ],
-      });
-      if (result.status !== "ok") throw new Error(result.error.message);
-      return result.value;
-    },
-    port: async () => ({ fetch: async () => new Response("machine service") }),
-    modelTransport: async (request) =>
-      new Response(request.url.endsWith("/root") ? "root response" : "child response"),
-    executor: { forward: async () => new Response("executor") },
-    continuations: {
-      publish: (request) =>
-        Effect.sync(() => {
-          publishedRequests.push(request);
-          try {
-            journalRowsAtPublish.push(
-              databaseHandle.rows(
-                "SELECT message_id, request_json, published FROM harness_continuation_requests",
-              ),
-            );
-          } catch (error) {
-            journalReadFailure = error;
-          }
-        }),
-    },
-    native: {
-      adapter: ({ harness }) => Effect.succeed(adapter(harness.computer.files, deps, instanceId)),
-      mcpSessions: deps.mcpSessions,
-      loadSdk: native.loadSdk,
-      process: {
-        identity: {
-          version: "v24.21.0",
-          versions: { node: "24.21.0", bun: "1.3.11" },
-          platform: "linux",
-          arch: "x64",
-          type: "Linux",
-          endianness: "LE",
-          availableParallelism: 1,
-          user: { username: "recorded", uid: 1000, gid: 1000, shell: "/bin/bash" },
-          homedir: "/home/recorded",
-          tmpdir: "/tmp",
-          pid: 1,
-          ppid: 0,
-          execPath: "/runtime/claude",
-          argv0: "claude",
-          argv: ["claude"],
+          env: { HOME: "/home/recorded", PATH: "/bin:/usr/bin" },
+          nativeModules: {
+            buffer: NodeBuffer,
+            constants: NodeConstants,
+            fs: NodeFS,
+            child_process: NodeChildProcess,
+          },
+          loadPackages: async () => ({ yaml: Yaml }),
+          loadRelease: native.loadRelease,
+          bun: { main: "/release/cli", version: "1.3.11", revision: "controlled" },
         },
-        env: { HOME: "/home/recorded", PATH: "/bin:/usr/bin" },
-        nativeModules: {
-          buffer: NodeBuffer,
-          constants: NodeConstants,
-          fs: NodeFS,
-          child_process: NodeChildProcess,
-        },
-        loadPackages: async () => ({ yaml: Yaml }),
-        loadRelease: native.loadRelease,
-        bun: { main: "/release/cli", version: "1.3.11", revision: "controlled" },
       },
-    },
+    };
+
+    return {
+      hostOptions,
+      batchBindings,
+      sessionInput,
+      setRunId: (runId: typeof currentRunId) => {
+        currentRunId = runId;
+      },
+      turn,
+      threadId: d.threadId,
+      providerThreadId: d.providerThread.id,
+      nativeId,
+      native,
+      publishedRequests,
+      journalRowsAtPublish,
+      get journalReadFailure() {
+        return journalReadFailure;
+      },
+      readContinuationAssociations: () =>
+        databaseHandle.rows(
+          "SELECT message_id, association_json FROM harness_continuation_associations",
+        ),
+      readContinuationRows: () =>
+        databaseHandle.rows(
+          "SELECT message_id, request_json, published FROM harness_continuation_requests",
+        ),
+      access: {
+        grant: "recorded-grant",
+        signal: new AbortController().signal,
+        connections: { servers: [] },
+      },
+    };
   });
+
+export const continuationHostInputs = makeContinuationHostInputs(false);
+export const batchContinuationHostInputs = makeContinuationHostInputs(true);
+export const boundaryBatchContinuationHostInputs = makeContinuationHostInputs(true, true);
+export const unjoinedBatchContinuationHostInputs = makeContinuationHostInputs(true, false, false);
+
+export const continuationHostFixture = Effect.gen(function* () {
+  const input = yield* continuationHostInputs;
+  const host = yield* createProductClaudeHarnessSessionHost(input.hostOptions);
   yield* Effect.addFinalizer(() => host.dispose.pipe(Effect.orDie));
   yield* host.seed("assets");
   yield* host.seed("programs");
-  const session = yield* host.open({ session: sessionInput, bootAttemptId: "claude-continuation" });
-
-  return {
-    host,
-    session,
-    turn,
-    threadId: d.threadId,
-    providerThreadId: d.providerThread.id,
-    nativeId,
-    native,
-    publishedRequests,
-    journalRowsAtPublish,
-    get journalReadFailure() {
-      return journalReadFailure;
-    },
-    readContinuationRows: () =>
-      databaseHandle.rows(
-        "SELECT message_id, request_json, published FROM harness_continuation_requests",
-      ),
-    access: {
-      grant: "recorded-grant",
-      signal: new AbortController().signal,
-      connections: { servers: [] },
-    },
-  };
+  const session = yield* host.open({
+    session: input.sessionInput,
+    bootAttemptId: "claude-continuation",
+  });
+  return { ...input, host, session };
 });

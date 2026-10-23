@@ -35,6 +35,16 @@ export interface TurnState {
 export const belongsToTurn = (event: ProviderAdapterV2Event, active: ActiveTurn): boolean => {
   const { input, providerThread, nativeTurn } = active;
   switch (event.type) {
+    case "continuation.associated":
+      return (
+        event.association.threadId === input.threadId &&
+        event.association.runId === input.runId &&
+        event.association.messageId === input.message.messageId &&
+        event.association.providerContinuation.providerThreadId === providerThread.id &&
+        event.association.providerContinuation.sourceRunId ===
+          input.message.providerContinuation?.sourceRunId
+      );
+
     case "app_thread.created":
       return event.appThread.id === input.threadId;
     case "provider_session.updated":
