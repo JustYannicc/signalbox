@@ -6,6 +6,7 @@ const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
 interface MemoryRange {
   readonly start: number;
   readonly end: number;
+  readonly direction: NonNullable<KernelMemoryRegion["direction"]>;
 }
 
 /** Tracks only guest ranges named by one WASI call's ABI. */
@@ -17,15 +18,15 @@ export class MemoryRegions {
     this.#memory = memory;
   }
 
-  add(pointer: number, length: number): void {
+  add(pointer: number, length: number, direction: MemoryRange["direction"] = "inout"): void {
     const start = pointer >>> 0;
     const size = length >>> 0;
     const end = start + size;
     if (size === 0 || end > this.#memory.buffer.byteLength) return;
-    this.#ranges.push({ start, end });
+    this.#ranges.push({ start, end, direction });
   }
 
-  addIovecs(pointer: number, count: number): void {
+  addIovecs(pointer: number, count: number, direction: MemoryRange["direction"] = "inout"): void {
     const itemCount = count >>> 0;
     if (itemCount > MAX_IOVECS) return;
 
@@ -34,7 +35,7 @@ export class MemoryRegions {
     const end = start + tableSize;
     if (end > this.#memory.buffer.byteLength) return;
 
-    this.add(pointer, tableSize);
+    this.add(pointer, tableSize, "in");
     const table = new DataView(this.#memory.buffer, start, tableSize);
     let remaining = MAX_TRANSFER_BYTES;
     for (let index = 0; index < itemCount; index++) {
@@ -43,16 +44,21 @@ export class MemoryRegions {
       const length = table.getUint32(offset + 4, true);
       const copied = Math.min(remaining, length);
       // The owner validates every original range after descriptor rights, including uncopied suffixes.
-      if (pointer + length <= this.#memory.buffer.byteLength) this.add(pointer, copied);
+      if (pointer + length <= this.#memory.buffer.byteLength) this.add(pointer, copied, direction);
       remaining -= copied;
     }
   }
 
   snapshot(): KernelMemoryRegion[] {
     const buffer = this.#memory.buffer;
-    return this.#mergedRanges().map(({ start, end }) => ({
+    return this.#mergedRanges().map(({ start, end, direction }) => ({
       pointer: start,
-      bytes: new Uint8Array(buffer, start, end - start).slice(),
+      direction,
+      ...(direction === "out" ? { length: end - start } : {}),
+      bytes:
+        direction === "out"
+          ? new Uint8Array(0)
+          : new Uint8Array(buffer, start, end - start).slice(),
     }));
   }
 
@@ -72,7 +78,9 @@ export class MemoryRegions {
         pointer < previousEnd ||
         pointer < 0 ||
         end > buffer.byteLength ||
-        !allowed.some((range) => pointer >= range.start && end <= range.end)
+        !allowed.some(
+          (range) => range.direction !== "in" && pointer >= range.start && end <= range.end,
+        )
       ) {
         throw new TypeError("Invalid syscall memory response regions");
       }
@@ -87,10 +95,19 @@ export class MemoryRegions {
 
     for (const range of sorted) {
       const previous = merged.at(-1);
-      if (previous === undefined || range.start > previous.end) {
+      if (
+        previous === undefined ||
+        range.start > previous.end ||
+        (range.start === previous.end && range.direction !== previous.direction)
+      ) {
         merged.push({ ...range });
-      } else if (range.end > previous.end) {
-        merged[merged.length - 1] = { start: previous.start, end: range.end };
+      } else {
+        // Aliased inputs and outputs need one shared backing store with the original input bytes.
+        merged[merged.length - 1] = {
+          start: previous.start,
+          end: Math.max(previous.end, range.end),
+          direction: previous.direction === range.direction ? range.direction : "inout",
+        };
       }
     }
     return merged;

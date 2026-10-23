@@ -446,7 +446,7 @@ export class WasiPathCalls {
     const target = yield* complete(resolved.mount.storage.readlink(resolved.inode));
     const encoded = encoder.encode(target);
     const used = Math.min(capacity, encoded.byteLength, MAX_PATH_TRANSFER);
-    this.#memory.range(buffer, used).set(encoded.subarray(0, used));
+    this.#memory.writeRange(buffer, used).set(encoded.subarray(0, used));
     this.#memory.u32(bufused, used);
     return 0;
   }

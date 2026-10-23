@@ -77,7 +77,7 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
       expect(status.exitCode).toBe(0);
       expect(childExitCode).toBe(0);
       expect(parentEnvironment).toBe("PATH=/bin\0PWD=/workspace");
-      expect(childEnvironment).toBe("PATH=/bin\0PWD=/workspace");
+      expect(childEnvironment).toBe("PATH=/bin\0PWD=/workspace\0");
       expect(fixture.capacity.active).toBe(0);
       expect(reserve).toHaveBeenCalledOnce();
       expect(reacquire).not.toHaveBeenCalled();
@@ -149,7 +149,7 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
       expect(stderr).toHaveLength(0);
       expect(status.exitCode).toBe(0);
       expect(parentEnvironment).toBe("PATH=/bin\0PWD=/workspace");
-      expect(childEnvironment).toBe("PATH=/bin\0PWD=/workspace");
+      expect(childEnvironment).toBe("PATH=/bin\0PWD=/workspace\0");
       expect(fixture.capacity.active).toBe(0);
       expect(reserve).toHaveBeenCalledOnce();
       expect(reacquire).not.toHaveBeenCalled();

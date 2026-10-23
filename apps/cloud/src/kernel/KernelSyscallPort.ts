@@ -3,6 +3,9 @@ import type { KernelProcessSignalNumber } from "./KernelProcessSignal.ts";
 export interface KernelMemoryRegion {
   readonly pointer: number;
   readonly bytes: Uint8Array;
+  readonly direction?: "in" | "out" | "inout";
+  /** Output reservations carry their capacity without sending the previous contents. */
+  readonly length?: number;
 }
 
 export interface KernelSyscallRequest {

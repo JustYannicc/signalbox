@@ -442,7 +442,7 @@ export class WasiPoller {
   }
 
   #writeEvents(pointer: number, countPointer: number, events: PollEvent[]): void {
-    const output = this.#memory.range(pointer, events.length * 32);
+    const output = this.#memory.writeRange(pointer, events.length * 32);
     output.fill(0);
     const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
     for (const [index, event] of events.entries()) {
