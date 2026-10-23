@@ -167,15 +167,18 @@ export function createChildWorkerRunner<Host extends object>(
             settle.reject(failure);
           } finally {
             // Late child calls then fail with EBADF instead of reaching a process that is closing.
-            lease.release();
             try {
-              await owner.close();
+              lease.release();
             } finally {
-              if (failure?.termination.kind === "unconfirmed") {
-                // Capability cleanup cannot acknowledge a worker whose transport disappeared.
-                await failure.termination.stopped;
+              try {
+                await owner.close();
+              } finally {
+                if (failure?.termination.kind === "unconfirmed") {
+                  // Capability cleanup cannot acknowledge a worker whose transport disappeared.
+                  await failure.termination.stopped;
+                }
+                await owner.onStopped?.();
               }
-              await owner.onStopped?.();
             }
           }
           throw failure;
