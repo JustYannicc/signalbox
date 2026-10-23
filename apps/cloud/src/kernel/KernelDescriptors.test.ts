@@ -125,6 +125,43 @@ describe("KernelDescriptors", () => {
     }
   });
 
+  it("keeps runtime resources with their owner across exec while preserving explicit dup inheritance", () => {
+    const { filesystem, fixture } = fileSystem();
+    const wakes = new KernelWakeRegistry();
+    const descriptors = new KernelDescriptors(filesystem.descriptors, wakes);
+    const resource = new TestResource();
+    let childTable: typeof filesystem.descriptors | undefined;
+    try {
+      const fd = descriptors.register(resource);
+      const duplicate = descriptors.duplicate(fd);
+      childTable = filesystem.descriptors.fork(
+        [
+          { parentFd: fd, childFd: fd },
+          { parentFd: duplicate, childFd: duplicate },
+        ],
+        { exec: true },
+      );
+      expect(childTable.has(fd)).toBe(false);
+      const child = new KernelDescriptors(childTable, wakes);
+      expect(child.resource(duplicate)).toBe(resource);
+      child.close(duplicate);
+      expect(resource.closeCalls).toBe(0);
+      expect(descriptors.resource(fd)).toBe(resource);
+      descriptors.close(duplicate);
+      expect(resource.closeCalls).toBe(0);
+      descriptors.close(fd);
+      expect(resource.closeCalls).toBe(1);
+    } finally {
+      if (childTable !== undefined) {
+        const child = new KernelDescriptors(childTable, wakes);
+        for (const [fd] of childTable.entries()) child.close(fd);
+      }
+      filesystem.dispose();
+      fixture.close();
+      wakes.dispose();
+    }
+  });
+
   it("reports data and EOF through the public WASI poll_oneoff import", async () => {
     const { filesystem, fixture } = fileSystem();
     const wakes = new KernelWakeRegistry();
