@@ -4,164 +4,100 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { CODEX_MEMORY_CONFIG } from "@t3tools/contracts/harnessMemorySettings";
 import { assertCodexMemorySettings } from "./codexMemorySettings.ts";
-import { constantValue, tokenizeRust } from "./codexMemorySource.ts";
 
 const roots: string[] = [];
-const memorySettings = Object.entries(CODEX_MEMORY_CONFIG).filter(([key]) =>
-  key.startsWith("memories."),
-);
-const firstSortedMemoryKey = memorySettings.map(([key]) => key).sort()[0]!;
+const key = "project_doc_max_bytes";
+const projectValue = CODEX_MEMORY_CONFIG.project_doc_max_bytes;
 
-async function fixture(
-  options: {
-    omit?: string;
-    rename?: string;
-    renameAll?: boolean;
-    serdeRename?: string;
-    serdeField?: string;
-    serdeFieldOverride?: string;
-    serdeMemoryStructOverride?: string;
-    serdeConfigGroupOverride?: string;
-    removeMemoryDeserialize?: boolean;
-    changedConstant?: string;
-    packaged?: string;
-    schemaDefault?: number;
-    consumer?: "comment-string" | "write" | "shadow" | "nested-shadow";
-    clampDecoy?: boolean;
-  } = {},
-) {
+const validSources = {
+  "codex-rs/config/src/config_toml.rs": `
+pub const DEFAULT_PROJECT_DOC_MAX_BYTES: usize = 32 * 1024;
+
+const fn default_project_doc_max_bytes() -> Option<usize> {
+    Some(DEFAULT_PROJECT_DOC_MAX_BYTES)
+}
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ConfigToml {
+    #[serde(default = "default_project_doc_max_bytes")]
+    pub project_doc_max_bytes: Option<usize>,
+}
+`,
+  "codex-rs/config/defaults.toml": `project_doc_max_bytes = ${projectValue}
+
+[history]
+persistence = "save-all"
+`,
+  "codex-rs/config/src/loader/mod.rs": `
+pub async fn load_config_layers_state() {
+    let raw_toml = include_str!("../../defaults.toml");
+    let config = toml::from_str(raw_toml).map_err(|_| ())?;
+    ConfigLayerEntry::new_with_raw_toml(
+        ConfigLayerSource::PackagedDefaults { file },
+        config,
+        raw_toml.to_owned(),
+    );
+}
+`,
+  "codex-rs/core/src/config/mod.rs": `
+use codex_config::config_toml::DEFAULT_PROJECT_DOC_MAX_BYTES;
+pub(crate) const AGENTS_MD_MAX_BYTES: usize = DEFAULT_PROJECT_DOC_MAX_BYTES;
+pub struct Config {
+    pub project_doc_max_bytes: usize,
+}
+fn build(cfg: ConfigToml) {
+    let _config = Config {
+        model_providers,
+        project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(AGENTS_MD_MAX_BYTES),
+        project_doc_fallback_filenames: Vec::new(),
+    };
+}
+`,
+  "codex-rs/core/src/agents_md.rs": `
+pub(crate) async fn load_project_instructions(config: &Config) {
+    let mut remaining = config.project_doc_max_bytes;
+    match read_agents_md(
+        config,
+        remaining,
+        sandbox.as_ref(),
+    ) {
+        Ok(Some(entries)) => {
+            for entry in entries {
+                remaining = remaining.saturating_sub(entry.contents.len());
+            }
+        }
+        _ => {}
+    }
+}
+async fn read_agents_md(max_total: usize, fs: &FileSystem) {
+    if max_total == 0 {
+        return;
+    }
+    let mut remaining: u64 = max_total as u64;
+    let mut data = fs.read_file(&p, ReadFileOptions::default(), sandbox).await;
+    let size = data.len() as u64;
+    if size > remaining {
+        data.truncate(remaining as usize);
+    }
+}
+`,
+  "codex-rs/core/src/agents_md_manager.rs": `
+pub(crate) async fn refresh(&self, config: &Config, environments: &TurnEnvironmentSnapshot) {
+    let _loaded = load_project_instructions(config, None, environments).await?;
+}
+`,
+} as const;
+
+type SourcePath = keyof typeof validSources;
+
+async function fixture(overrides: Partial<Record<SourcePath, string>> = {}) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "codex-memory-settings-"));
   roots.push(root);
-  const write = async (path: string, content: string) => {
+  for (const [path, source] of Object.entries({ ...validSources, ...overrides })) {
     const target = NodePath.join(root, path);
     await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
-    await NodeFSP.writeFile(target, content);
-  };
-  const projectValue = CODEX_MEMORY_CONFIG.project_doc_max_bytes;
-  const selectedFields = memorySettings.map(([key]) => key.slice("memories.".length));
-  const fieldForSource = (field: string) => (field === options.rename ? `${field}_renamed` : field);
-  const memoryDeclarations = memorySettings
-    .filter(([key]) => key !== options.omit)
-    .map(([key, value]) => {
-      const field = key.slice("memories.".length);
-      const sourceField = fieldForSource(field);
-      const constant = `DEFAULT_MEMORIES_${field.toUpperCase()}`;
-      const type = field.endsWith("_days") ? "i64" : "usize";
-      const defaultValue = key === options.changedConstant ? value + 1 : value;
-      return { key, field, sourceField, constant, type, defaultValue };
-    });
-  const consts = memoryDeclarations
-    .map(({ constant, type, defaultValue }) => `pub const ${constant}: ${type} = ${defaultValue};`)
-    .join("\n");
-  const tomlFields = memoryDeclarations
-    .map(
-      ({ field, sourceField, type }) =>
-        `${field === options.serdeRename ? `#[serde(rename = "${field}_renamed")]` : ""}${field === options.serdeField ? `\n#[serde(${options.serdeFieldOverride})]` : ""}\npub ${sourceField}: Option<${type}>,`,
-    )
-    .join("\n");
-  const configFields = memoryDeclarations
-    .map(({ sourceField, type }) => `pub ${sourceField}: ${type},`)
-    .join("\n");
-  const defaults = memoryDeclarations
-    .map(({ sourceField, constant }) => `${sourceField}: ${constant},`)
-    .join("\n");
-  const conversions = memoryDeclarations
-    .map(
-      ({ sourceField }) =>
-        `${sourceField}: toml.${sourceField}.unwrap_or(defaults.${sourceField}).clamp(0, 1000),`,
-    )
-    .join("\n");
-  const consumers =
-    options.consumer === "comment-string"
-      ? `// config.memories.${selectedFields[0]}
-      let _comment: &str = "config.memories.${selectedFields[0]}";`
-      : options.consumer === "write"
-        ? `config.memories.${selectedFields[0]} = 3;`
-        : options.consumer === "shadow"
-          ? `let config: FakeConfig = fake_config(); let _shadow = config.memories.${selectedFields[0]};`
-          : options.consumer === "nested-shadow"
-            ? `fn fake(config: &FakeConfig) { let _shadow = config.memories.${selectedFields[0]}; }`
-            : selectedFields
-                .map((field) => `let _${field}: i64 = config.memories.${field};`)
-                .join("\n");
-  const packaged = options.packaged ?? `project_doc_max_bytes = ${projectValue}`;
-  const packagedSchemaDefault = options.schemaDefault ?? projectValue;
-
-  await write(
-    "codex-rs/config/src/config_toml.rs",
-    `
-pub const DEFAULT_PROJECT_DOC_MAX_BYTES: usize = ${projectValue};
-const fn default_project_doc_max_bytes() -> Option<usize> { Some(DEFAULT_PROJECT_DOC_MAX_BYTES) }
-#[derive(Clone, Debug, Default, Deserialize)]
-#[allow(non_camel_case_types)]
-pub struct ConfigToml {
-  #[serde(default = "default_project_doc_max_bytes")]
-  pub project_doc_max_bytes: Option<usize>,
-  ${options.serdeConfigGroupOverride ? `#[serde(${options.serdeConfigGroupOverride})]` : ""}
-  pub memories: Option<MemoriesToml>,
-}
-`,
-  );
-  await write(
-    "codex-rs/config/src/types.rs",
-    `
-#[derive(${options.removeMemoryDeserialize ? "Default" : "Deserialize, Default"})]
-  ${options.renameAll ? '#[serde(rename_all = "camelCase")]' : ""}
-  ${options.serdeMemoryStructOverride ? `#[serde(${options.serdeMemoryStructOverride})]` : ""}
-pub struct MemoriesToml { ${tomlFields} }
-pub struct MemoriesConfig { ${configFields} }
-${consts}
-${options.clampDecoy ? `fn decoy(toml: MemoriesToml, defaults: MemoriesConfig) { let _ = toml.${selectedFields[0]}.unwrap_or(defaults.${selectedFields[0]}).clamp(1, 2); }` : ""}
-impl Default for MemoriesConfig {
-  fn default() -> Self { Self { ${defaults} } }
-}
-impl From<MemoriesToml> for MemoriesConfig {
-  fn from(toml: MemoriesToml) -> Self {
-    let defaults = Self::default();
-    Self { ${conversions} }
+    await NodeFSP.writeFile(target, source);
   }
-}
-`,
-  );
-  await write(
-    "codex-rs/config/src/loader/mod.rs",
-    `let raw_toml = include_str!("../../defaults.toml");`,
-  );
-  await write("codex-rs/config/defaults.toml", `${packaged}\n`);
-  await write(
-    "codex-rs/core/src/config/mod.rs",
-    `
-pub struct Config { pub project_doc_max_bytes: usize, pub memories: MemoriesConfig }
-fn from_toml(cfg: ConfigToml) {
-  let memories_config: MemoriesConfig = cfg.memories.clone().unwrap_or_default().into();
-  let config = Config {
-    project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(AGENTS_MD_MAX_BYTES),
-    memories: memories_config,
-  };
-}
-`,
-  );
-  await write(
-    "codex-rs/core/src/agents_md.rs",
-    `fn load(config: &Config) { let _limit = config.project_doc_max_bytes; }`,
-  );
-  await write("codex-rs/memories/write/src/phase1.rs", `fn run(config: &Config) { ${consumers} }`);
-  await write(
-    "codex-rs/core/config.schema.json",
-    JSON.stringify({
-      properties: {
-        project_doc_max_bytes: { default: packagedSchemaDefault },
-        memories: { allOf: [{ $ref: "#/definitions/MemoriesToml" }] },
-      },
-      definitions: {
-        MemoriesToml: {
-          properties: Object.fromEntries(
-            selectedFields.map((field) => [field, { type: "integer" }]),
-          ),
-        },
-      },
-    }),
-  );
   return root;
 }
 
@@ -171,195 +107,202 @@ afterEach(async () => {
   );
 });
 
-describe("Codex release memory settings", () => {
-  it("proves native defaults, packaged defaults, and production reads from source", async () => {
-    const root = await fixture();
-    const evidence = await assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG);
+describe("Codex release memory setting", () => {
+  it("rejects unsupported nested comments around loader wiring", async () => {
+    const loader = "codex-rs/config/src/loader/mod.rs";
+    const root = await fixture({
+      [loader]: `pub async fn load_config_layers_state() {
+  /* outer /* inner */
+    let raw_toml = include_str!("../../defaults.toml");
+    let config = toml::from_str(raw_toml).map_err(|_| ())?;
+    ConfigLayerEntry::new_with_raw_toml(
+        ConfigLayerSource::PackagedDefaults { file },
+        config,
+        raw_toml.to_owned(),
+    );
+  */
+  Default::default()
+}
+`,
+    });
+    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
+      `RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: ${key}`,
+    );
+  });
 
-    expect(evidence.settings).toHaveLength(Object.keys(CODEX_MEMORY_CONFIG).length);
-    expect(evidence.settings.find(({ key }) => key === "project_doc_max_bytes")?.value).toBe(32768);
-    expect(
-      evidence.settings.find(({ key }) => key === memorySettings[0]![0])?.productionReads,
-    ).toEqual(
+  it("proves the pinned default reaches the production project document reader", async () => {
+    const evidence = await assertCodexMemorySettings(await fixture(), CODEX_MEMORY_CONFIG);
+
+    expect(evidence.settings).toHaveLength(1);
+    expect(evidence.settings[0]).toMatchObject({ key, value: projectValue });
+    expect(evidence.packagedDefaults).toMatchObject({
+      path: "codex-rs/config/defaults.toml",
+      loaderPath: "codex-rs/config/src/loader/mod.rs",
+    });
+    expect(evidence.settings[0]!.productionReads).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ path: "codex-rs/memories/write/src/phase1.rs" }),
+        expect.objectContaining({ path: "codex-rs/core/src/agents_md.rs" }),
+        expect.objectContaining({ path: "codex-rs/core/src/config/mod.rs" }),
       ]),
     );
-    expect(evidence.sources.map(({ path }) => path)).toContain("codex-rs/core/config.schema.json");
   });
 
-  it("fails closed when an upstream rename removes a pinned field", async () => {
-    const key = memorySettings[0]![0];
-    const root = await fixture({ rename: key.slice("memories.".length) });
+  it("rejects a missing or renamed ConfigToml key despite comment, string, and test decoys", async () => {
+    const source = validSources["codex-rs/config/src/config_toml.rs"].replace(
+      "pub project_doc_max_bytes: Option<usize>,",
+      "pub renamed_project_doc_max_bytes: Option<usize>,",
+    ).concat(`
+// pub project_doc_max_bytes: Option<usize>,
+const DECOY: &str = r#"pub struct ConfigToml {
+    #[serde(default = "default_project_doc_max_bytes")]
+    pub project_doc_max_bytes: Option<usize>,
+}"#;
+#[cfg(test)]
+mod tests { pub struct ConfigToml { pub project_doc_max_bytes: Option<usize> } }
+`);
 
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_MISSING: ${key}`,
+    await expect(
+      assertCodexMemorySettings(
+        await fixture({ "codex-rs/config/src/config_toml.rs": source }),
+        CODEX_MEMORY_CONFIG,
+      ),
+    ).rejects.toThrow(`RELEASE_MEMORY_SETTING_MISSING: ${key}`);
+  });
+
+  it("fails closed on a nested block comment that contains a fake ConfigToml field", async () => {
+    const source = validSources["codex-rs/config/src/config_toml.rs"].replace(
+      "pub project_doc_max_bytes: Option<usize>,",
+      "pub renamed_project_doc_max_bytes: Option<usize>,",
     );
+    const fakeConfigToml = `#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ConfigToml {
+    #[serde(default = "default_project_doc_max_bytes")]
+    pub project_doc_max_bytes: Option<usize>,
+}`;
+
+    await expect(
+      assertCodexMemorySettings(
+        await fixture({
+          "codex-rs/config/src/config_toml.rs": `/* outer /* inner */\n${fakeConfigToml}\n*/\n${source}`,
+        }),
+        CODEX_MEMORY_CONFIG,
+      ),
+    ).rejects.toThrow(`RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: ${key}`);
   });
 
-  it("does not assume the Rust identifier is the TOML key after struct serde renaming", async () => {
-    const root = await fixture({ renameAll: true });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: ${firstSortedMemoryKey}`,
-    );
-  });
-
-  it("rejects a serde rename on the pinned field", async () => {
-    const key = memorySettings[0]![0];
-    const root = await fixture({ serdeRename: key.slice("memories.".length) });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: ${key}`,
-    );
-  });
-
-  it("rejects a custom missing-field default on a pinned memory setting", async () => {
-    const key = memorySettings[0]![0];
-    const root = await fixture({
-      serdeField: key.slice("memories.".length),
-      serdeFieldOverride: 'default = "custom_default"',
-    });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: ${key}`,
-    );
-  });
-
-  it("rejects a custom missing-field default on MemoriesToml", async () => {
-    const root = await fixture({ serdeMemoryStructOverride: 'default = "custom_default"' });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: ${firstSortedMemoryKey}`,
-    );
-  });
-
-  it("rejects a custom deserializer on the ConfigToml memories group", async () => {
-    const root = await fixture({
-      serdeConfigGroupOverride: 'deserialize_with = "custom_memories"',
-    });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: ${firstSortedMemoryKey}`,
-    );
-  });
-
-  it("rejects loss of the MemoriesToml Deserialize derive", async () => {
-    const root = await fixture({ removeMemoryDeserialize: true });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: ${firstSortedMemoryKey}`,
-    );
-  });
-
-  it("does not count a test-only field reference as a production read", async () => {
-    const root = await fixture();
-    const path = NodePath.join(root, "codex-rs/memories/write/src/phase1.rs");
-    const testReads = memorySettings
-      .map(([setting]) => `let _ = config.memories.${setting.slice("memories.".length)};`)
-      .join("\n");
-    await NodeFSP.writeFile(
-      path,
-      `#[cfg(test)] mod tests { fn fake(config: &Config) { ${testReads} } }`,
+  it("does not take a pinned field from a later struct", async () => {
+    const source = validSources["codex-rs/config/src/config_toml.rs"].replace(
+      "    pub project_doc_max_bytes: Option<usize>,\n}",
+      `    pub renamed_project_doc_max_bytes: Option<usize>,
+}
+pub struct Decoy {
+    #[serde(default = "default_project_doc_max_bytes")]
+    pub project_doc_max_bytes: Option<usize>,
+}`,
     );
 
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_MISSING: ${firstSortedMemoryKey}`,
+    await expect(
+      assertCodexMemorySettings(
+        await fixture({ "codex-rs/config/src/config_toml.rs": source }),
+        CODEX_MEMORY_CONFIG,
+      ),
+    ).rejects.toThrow(`RELEASE_MEMORY_SETTING_MISSING: ${key}`);
+  });
+
+  it("rejects a changed Rust default", async () => {
+    const source = validSources["codex-rs/config/src/config_toml.rs"].replace(
+      "32 * 1024",
+      "64 * 1024",
     );
+
+    await expect(
+      assertCodexMemorySettings(
+        await fixture({ "codex-rs/config/src/config_toml.rs": source }),
+        CODEX_MEMORY_CONFIG,
+      ),
+    ).rejects.toThrow(`RELEASE_MEMORY_SETTING_DEFAULT_CHANGED: ${key}`);
   });
 
-  it("ignores comments and strings that resemble production reads", async () => {
-    const root = await fixture({ consumer: "comment-string" });
+  it("fails closed when the default function appears only in a comment, string, or test module", async () => {
+    const source = validSources["codex-rs/config/src/config_toml.rs"]
+      .replace(
+        `const fn default_project_doc_max_bytes() -> Option<usize> {
+    Some(DEFAULT_PROJECT_DOC_MAX_BYTES)
+}`,
+        `// const fn default_project_doc_max_bytes() -> Option<usize> { Some(DEFAULT_PROJECT_DOC_MAX_BYTES) }
+const DECOY: &str = r#"const fn default_project_doc_max_bytes() -> Option<usize> {
+    Some(DEFAULT_PROJECT_DOC_MAX_BYTES)
+}"#;`,
+      )
+      .concat(
+        `
+#[cfg(test)] mod tests { const fn default_project_doc_max_bytes() -> Option<usize> { Some(DEFAULT_PROJECT_DOC_MAX_BYTES) } }
+`,
+      );
 
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_MISSING: ${firstSortedMemoryKey}`,
+    await expect(
+      assertCodexMemorySettings(
+        await fixture({ "codex-rs/config/src/config_toml.rs": source }),
+        CODEX_MEMORY_CONFIG,
+      ),
+    ).rejects.toThrow(`RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: ${key}`);
+  });
+
+  it("detects a changed packaged default", async () => {
+    const defaults = `project_doc_max_bytes = ${projectValue + 1}\n`;
+
+    await expect(
+      assertCodexMemorySettings(
+        await fixture({ "codex-rs/config/defaults.toml": defaults }),
+        CODEX_MEMORY_CONFIG,
+      ),
+    ).rejects.toThrow(`RELEASE_MEMORY_SETTING_DEFAULT_CHANGED: ${key}`);
+  });
+
+  it("detects a changed effective Config fallback", async () => {
+    const source = validSources["codex-rs/core/src/config/mod.rs"].replace(
+      "unwrap_or(AGENTS_MD_MAX_BYTES)",
+      `unwrap_or(${projectValue + 1})`,
     );
+
+    await expect(
+      assertCodexMemorySettings(
+        await fixture({ "codex-rs/core/src/config/mod.rs": source }),
+        CODEX_MEMORY_CONFIG,
+      ),
+    ).rejects.toThrow(`RELEASE_MEMORY_SETTING_DEFAULT_CHANGED: ${key}`);
   });
 
-  it("does not count an assignment as a production read", async () => {
-    const root = await fixture({ consumer: "write" });
+  it("does not accept comment, string, or test-only loader and reader decoys", async () => {
+    const loader = `// pub async fn load_config_layers_state() { let raw_toml = include_str!("../../defaults.toml"); }
+const DECOY: &str = r#"pub async fn load_config_layers_state() {
+    let raw_toml = include_str!("../../defaults.toml");
+}"#;
+#[cfg(test)] mod tests { pub async fn load_config_layers_state() { let _ = include_str!("../../defaults.toml"); } }
+`;
+    const agents = `// pub(crate) async fn load_project_instructions(config: &Config) {}
+const DECOY: &str = r#"pub(crate) async fn load_project_instructions(config: &Config) {
+    let mut remaining = config.project_doc_max_bytes;
+    read_agents_md(config, remaining, sandbox.as_ref());
+}"#;
+#[cfg(test)] mod tests { async fn read_agents_md() { fs.read_file(&p, ReadFileOptions::default(), sandbox).await; } }
+`;
 
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_MISSING: ${firstSortedMemoryKey}`,
-    );
+    await expect(
+      assertCodexMemorySettings(
+        await fixture({
+          "codex-rs/config/src/loader/mod.rs": loader,
+          "codex-rs/core/src/agents_md.rs": agents,
+        }),
+        CODEX_MEMORY_CONFIG,
+      ),
+    ).rejects.toThrow(`RELEASE_MEMORY_SETTING_MISSING: ${key}`);
   });
 
-  it("does not count a shadowed config variable as a production read", async () => {
-    const root = await fixture({ consumer: "shadow" });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_MISSING: ${firstSortedMemoryKey}`,
-    );
-  });
-
-  it("does not count a same-named nested function parameter as a production read", async () => {
-    const root = await fixture({ consumer: "nested-shadow" });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_MISSING: ${firstSortedMemoryKey}`,
-    );
-  });
-
-  it("rejects a changed Rust fallback default", async () => {
-    const key = memorySettings[0]![0];
-    const root = await fixture({ changedConstant: key });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_CHANGED: ${key}`,
-    );
-  });
-
-  it("rejects a changed packaged memory default even when Rust fallback is unchanged", async () => {
-    const [key, value] = memorySettings[0]!;
-    const field = key.slice("memories.".length);
-    const root = await fixture({
-      packaged: `project_doc_max_bytes = ${CODEX_MEMORY_CONFIG.project_doc_max_bytes}\n\n[memories]\n${field} = ${value + 1}`,
-    });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_CHANGED: ${key}`,
-    );
-  });
-
-  it("reads quoted keys inside a multiline inline memory table", async () => {
-    const [key, value] = memorySettings[0]!;
-    const field = key.slice("memories.".length);
-    const root = await fixture({ packaged: `memories = {\n  "${field}" = ${value + 1},\n}` });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_CHANGED: ${key}`,
-    );
-  });
-
-  it("reads quoted section and field keys", async () => {
-    const [key, value] = memorySettings[0]!;
-    const field = key.slice("memories.".length);
-    const root = await fixture({ packaged: `["memories"]\n"${field}" = ${value + 1}` });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      `RELEASE_MEMORY_SETTING_DEFAULT_CHANGED: ${key}`,
-    );
-  });
-
-  it("uses the conversion implementation when proving a clamped default", async () => {
-    const root = await fixture({ clampDecoy: true });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).resolves.toMatchObject({
-      schemaVersion: 1,
-    });
-  });
-
-  it("rejects a changed static schema default", async () => {
-    const root = await fixture({ schemaDefault: CODEX_MEMORY_CONFIG.project_doc_max_bytes + 1 });
-
-    await expect(assertCodexMemorySettings(root, CODEX_MEMORY_CONFIG)).rejects.toThrow(
-      "RELEASE_MEMORY_SETTING_DEFAULT_CHANGED: project_doc_max_bytes",
-    );
-  });
-
-  it("fails closed on cyclic Rust default constants", () => {
-    const tokens = tokenizeRust("const FIRST: usize = SECOND; const SECOND: usize = FIRST;");
-
-    expect(constantValue(tokens, "FIRST")).toBeUndefined();
+  it("rejects pins outside the retained project document budget", async () => {
+    await expect(
+      assertCodexMemorySettings(await fixture(), { ...CODEX_MEMORY_CONFIG, "memories.other": 1 }),
+    ).rejects.toThrow("RELEASE_MEMORY_SETTING_DEFAULT_UNPROVEN: memories.other");
   });
 });

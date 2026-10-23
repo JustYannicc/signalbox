@@ -4,13 +4,22 @@ import { claudeHostEnvironment } from "../ClaudeHostConfig.ts";
 
 describe("Claude host memory defaults", () => {
   it("pins absent values without replacing the SDK's explicit environment", () => {
-    const input = { BASH_MAX_OUTPUT_LENGTH: "12000", CALLER_VALUE: "kept" };
+    const input = {
+      BASH_MAX_OUTPUT_LENGTH: "12000",
+      CLAUDE_CODE_TRANSCRIPT_LOCAL_GC: "0",
+      CALLER_VALUE: "kept",
+    };
     expect(claudeHostEnvironment(input)).toEqual({
       ...CLAUDE_MEMORY_ENV,
       BASH_MAX_OUTPUT_LENGTH: "12000",
+      CLAUDE_CODE_TRANSCRIPT_LOCAL_GC: "0",
       CALLER_VALUE: "kept",
     });
-    expect(input).toEqual({ BASH_MAX_OUTPUT_LENGTH: "12000", CALLER_VALUE: "kept" });
+    expect(input).toEqual({
+      BASH_MAX_OUTPUT_LENGTH: "12000",
+      CLAUDE_CODE_TRANSCRIPT_LOCAL_GC: "0",
+      CALLER_VALUE: "kept",
+    });
   });
 
   it("retains an explicit unset env value for the package's own fallback", () => {

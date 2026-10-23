@@ -9,6 +9,12 @@ import {
 
 type Parsed = { file: ts.SourceFile; bindings: ScopedBindings<never> };
 
+export interface PinnedEnvironmentAccess {
+  readonly key: string | undefined;
+  readonly start: number;
+  readonly end: number;
+}
+
 function isAssignment(kind: ts.SyntaxKind) {
   return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
 }
@@ -49,6 +55,10 @@ function isWrite(node: ts.Node): boolean {
       return isWriteTarget(node, parent.initializer);
   }
   return false;
+}
+
+export function isPinnedEnvironmentWrite(node: ts.Node): boolean {
+  return isWrite(node);
 }
 
 // `process` is also reachable as a property of the global object, so an unresolved global
@@ -432,10 +442,30 @@ export function createPinnedEnvironmentTransform(
       source = source.slice(0, edit.start) + edit.value + source.slice(edit.end);
     return source;
   };
+  const inspect = (source: string, name: string): PinnedEnvironmentAccess[] => {
+    if (!hasPinnedProperty) return [];
+    const module = parse(name, source);
+    if (!module) return [];
+    const accesses: PinnedEnvironmentAccess[] = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+        const key = property(node);
+        if (key !== undefined && Object.hasOwn(env, key) && !isWrite(node)) {
+          const base = origin(node.expression, module);
+          if (base?.join(".") === "env")
+            accesses.push({ key, start: node.getStart(module.file), end: node.end });
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(module.file);
+    return accesses;
+  };
   return {
     analyze,
     addSource,
     transform,
+    inspect,
     dropParseCache: () => {
       parsed.clear();
       mutations = new WeakMap();

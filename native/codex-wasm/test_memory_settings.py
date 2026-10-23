@@ -17,18 +17,14 @@ class MemorySettingPinsTests(unittest.TestCase):
             source = Path(temporary)
             defaults = source / "codex-rs/config/defaults.toml"
             defaults.parent.mkdir(parents=True)
-            defaults.write_text(
-                'project_doc_max_bytes = 32768\n[history]\npersistence = "save-all"\n'
-            )
+            defaults.write_text('[history]\npersistence = "save-all"\n')
             user_config = source / "home/config.toml"
             user_config.parent.mkdir()
-            user_config.write_text("[memories]\nmax_rollouts_per_startup = 7\n")
+            user_config.write_text("project_doc_max_bytes = 65536\n")
             evidence = {
                 "provider": "codex",
-                "pins": {"memories.max_rollouts_per_startup": 2},
-                "evidence": [
-                    {"key": "memories.max_rollouts_per_startup", "default": 2}
-                ],
+                "pins": {"project_doc_max_bytes": 32768},
+                "evidence": [{"key": "project_doc_max_bytes", "default": 32768}],
             }
             with patch(
                 "memory_settings.subprocess.run",
@@ -44,13 +40,12 @@ class MemorySettingPinsTests(unittest.TestCase):
                 {
                     "project_doc_max_bytes": 32768,
                     "history": {"persistence": "save-all"},
-                    "memories": {"max_rollouts_per_startup": 2},
                 },
             )
             self.assertEqual(
                 tomllib.loads(user_config.read_text()),
                 {
-                    "memories": {"max_rollouts_per_startup": 7},
+                    "project_doc_max_bytes": 65536,
                 },
             )
 

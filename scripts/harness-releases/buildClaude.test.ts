@@ -8,15 +8,29 @@ import * as NodeUtil from "node:util";
 import type { OfficialReleaseIdentity } from "./releaseIdentity.ts";
 import { claudeReleaseBase } from "./releaseIdentity.ts";
 import { buildClaudeRelease, parseBuiltinCapabilityManifest } from "./buildClaude.ts";
-import { CLAUDE_MEMORY_ENV } from "@t3tools/contracts/harnessMemorySettings";
+import { CLAUDE_MEMORY_DEFAULT_ENV } from "@t3tools/contracts/harnessMemorySettings";
 
 const digest = (value: Uint8Array | string) =>
   NodeCrypto.createHash("sha256").update(value).digest("hex");
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
-const nativeMemoryReads = Object.entries(CLAUDE_MEMORY_ENV)
-  .map(([key, value]) => `export const ${key} = Number(process.env.${key}) || ${value};`)
-  .join("\n");
+const nativeMemoryReads = [
+  ...Object.entries(CLAUDE_MEMORY_DEFAULT_ENV).map(
+    ([key, value]) => `export const ${key} = Number(process.env.${key}) || ${value};`,
+  ),
+  `class TranscriptStore {
+    localGcEnabled = false;
+    setLocalGcEnabled(value) { this.localGcEnabled = value; }
+    requestCompact() {
+      if (!this.localGcEnabled) return;
+      this.performCompactTranscript();
+    }
+    performCompactTranscript() {}
+  }
+  const transcriptStore = new TranscriptStore();
+  if (process.env.CLAUDE_CODE_TRANSCRIPT_LOCAL_GC === "1")
+    transcriptStore.setLocalGcEnabled(true);`,
+].join("\n");
 
 async function makeExtraction(
   root: string,
@@ -105,24 +119,48 @@ describe("Claude release build integration", () => {
       "renamed",
       nativeMemoryReads.replaceAll("BASH_MAX_OUTPUT_LENGTH", "RENAMED_OUTPUT_LENGTH"),
       "MISSING",
+      "BASH_MAX_OUTPUT_LENGTH",
     ],
-    ["changed", nativeMemoryReads.replace("|| 30000", "|| 30001"), "DEFAULT_CHANGED"],
-  ])("rejects %s memory settings before publishing any release", async (_name, reads, code) => {
-    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-memory-"));
-    try {
-      const input = await makeExtraction(root, "2.1.303", "export const marker = true;", reads);
-      const output = NodePath.join(root, "artifact");
-      await expect(buildClaudeRelease({ ...input, output })).rejects.toThrow(
-        `RELEASE_MEMORY_SETTING_${code}: BASH_MAX_OUTPUT_LENGTH`,
-      );
-      await expect(NodeFSP.stat(output)).rejects.toMatchObject({ code: "ENOENT" });
-      await expect(NodeFSP.stat(`${output}.provenance.json`)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    } finally {
-      await NodeFSP.rm(root, { recursive: true, force: true });
-    }
-  });
+    [
+      "changed",
+      nativeMemoryReads.replace("|| 30000", "|| 30001"),
+      "DEFAULT_CHANGED",
+      "BASH_MAX_OUTPUT_LENGTH",
+    ],
+    [
+      "renamed retention",
+      nativeMemoryReads.replaceAll("CLAUDE_CODE_TRANSCRIPT_LOCAL_GC", "RENAMED_TRANSCRIPT_GC"),
+      "MISSING",
+      "CLAUDE_CODE_TRANSCRIPT_LOCAL_GC",
+    ],
+    [
+      "ignored retention",
+      nativeMemoryReads.replace(
+        "transcriptStore.setLocalGcEnabled(true)",
+        "transcriptStore.setLocalGcEnabled(false)",
+      ),
+      "RETENTION_UNPROVEN",
+      "CLAUDE_CODE_TRANSCRIPT_LOCAL_GC",
+    ],
+  ])(
+    "rejects %s memory settings before publishing any release",
+    async (_name, reads, code, key) => {
+      const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-memory-"));
+      try {
+        const input = await makeExtraction(root, "2.1.303", "export const marker = true;", reads);
+        const output = NodePath.join(root, "artifact");
+        await expect(buildClaudeRelease({ ...input, output })).rejects.toThrow(
+          `RELEASE_MEMORY_SETTING_${code}: ${key}`,
+        );
+        await expect(NodeFSP.stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(NodeFSP.stat(`${output}.provenance.json`)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } finally {
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("validates capability snapshots before scanning a release", () => {
     expect(

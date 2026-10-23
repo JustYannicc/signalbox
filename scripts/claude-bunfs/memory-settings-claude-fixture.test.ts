@@ -2,7 +2,11 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { CLAUDE_MEMORY_ENV } from "@t3tools/contracts/harnessMemorySettings";
+import {
+  CLAUDE_MEMORY_DEFAULT_ENV,
+  CLAUDE_MEMORY_ENV,
+  CLAUDE_MEMORY_RETENTION_ENV,
+} from "@t3tools/contracts/harnessMemorySettings";
 import { describe, expect, it } from "vite-plus/test";
 import { readExtraction } from "./extracted-input.ts";
 import { assertClaudeMemorySettings } from "./memory-settings-claude.ts";
@@ -49,17 +53,19 @@ describe("Claude pinned release memory source proof", () => {
   actualFixture("proves the extracted source map and rejects source mutations", async () => {
     const sources = await readPinnedSources();
     expect(
-      assertClaudeMemorySettings(sources, CLAUDE_MEMORY_ENV).map(({ key, default: value }) => [
-        key,
-        value,
-      ]),
+      assertClaudeMemorySettings(sources, CLAUDE_MEMORY_ENV).map((evidence) =>
+        "default" in evidence
+          ? [evidence.key, evidence.default]
+          : [evidence.key, evidence.mode, evidence.explicitValue],
+      ),
     ).toEqual([
       ["BASH_MAX_OUTPUT_LENGTH", "30000"],
       ["CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS", "25000"],
       ["CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY", "10"],
+      ["CLAUDE_CODE_TRANSCRIPT_LOCAL_GC", "retention", "1"],
     ]);
 
-    for (const [key, pin] of Object.entries(CLAUDE_MEMORY_ENV)) {
+    for (const [key, pin] of Object.entries(CLAUDE_MEMORY_DEFAULT_ENV)) {
       expectMutationFailure(
         omitClaudeSettingSources(sources, key),
         key,
@@ -118,6 +124,21 @@ describe("Claude pinned release memory source proof", () => {
           "RELEASE_MEMORY_SETTING_DEFAULT_CHANGED",
         );
       }
+    }
+
+    for (const [key, pin] of Object.entries(CLAUDE_MEMORY_RETENTION_ENV)) {
+      expectMutationFailure(
+        omitClaudeSettingSources(sources, key),
+        key,
+        pin,
+        "RELEASE_MEMORY_SETTING_MISSING",
+      );
+      expectMutationFailure(
+        renameClaudeSettingSources(sources, key),
+        key,
+        pin,
+        "RELEASE_MEMORY_SETTING_MISSING",
+      );
     }
   });
 });

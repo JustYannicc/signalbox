@@ -1,6 +1,6 @@
 import ts from "typescript-legacy";
 import { ScopedBindings } from "./release-inventory-scope.ts";
-import { propertyName, staticProperty } from "./memory-settings-claude-graph.ts";
+import { propertyName, staticProperty } from "./memory-settings-claude-source.ts";
 
 type SourceSelector = (node: ts.Node, source: ts.SourceFile) => ts.Node | undefined;
 
