@@ -25,6 +25,7 @@ export interface ChildWorkerLoaderPort {
 }
 
 const enteredChildInvocations = new WeakSet<object>();
+const stoppedChildInvocations = new WeakSet<object>();
 
 /** Only these runtime quota errors prove that no dynamic child invocation was created. */
 export function workerLoaderQuotaFailure(cause: unknown): (Error & { code: "EAGAIN" }) | undefined {
@@ -48,6 +49,13 @@ export function hasChildWorkerInvocationEntered(invocation: unknown): boolean {
   return enteredChildInvocations.has(invocation);
 }
 
+/** The generated wrapper stops in finally after a guest failure; this marker cannot come from guest data. */
+export function hasChildWorkerInvocationStopped(invocation: unknown): boolean {
+  if ((typeof invocation !== "object" || invocation === null) && typeof invocation !== "function")
+    return false;
+  return stoppedChildInvocations.has(invocation);
+}
+
 class ChildInvocation<Host extends object> extends RpcTarget {
   readonly #host: Host;
   readonly #acknowledge: () => void;
@@ -67,6 +75,7 @@ class ChildInvocation<Host extends object> extends RpcTarget {
   }
 
   stopped() {
+    stoppedChildInvocations.add(this);
     this.#acknowledge();
   }
 
@@ -100,7 +109,6 @@ export function createWorkerLoaderDispatch<Host extends object>(
         onMemoryLost,
       );
       let submitted = false;
-      let invokingChild = false;
       try {
         const loaderId = requireChildWorkerLoaderId(input);
         const workerCode = createChildWorkerDispatchCode(input, limits);
@@ -121,7 +129,6 @@ export function createWorkerLoaderDispatch<Host extends object>(
             }
           }
           submitted = true;
-          invokingChild = true;
           const childInput: ChildWorkerInvocation = {
             ...code,
             loaderId,
@@ -142,7 +149,6 @@ export function createWorkerLoaderDispatch<Host extends object>(
             entrypoint = worker.getEntrypoint(undefined, {
               limits,
             }) as unknown as ChildEntrypoint<Host>;
-            invokingChild = true;
             exit = await entrypoint.run(input.command, invocation);
           } finally {
             disposeWorkerLoaderStubs(entrypoint, worker);
@@ -151,7 +157,10 @@ export function createWorkerLoaderDispatch<Host extends object>(
         await stopped.promise;
         return exit;
       } catch (cause) {
-        if (invokingChild && isChildWorkerMemoryLimitFailure(cause)) {
+        if (
+          !hasChildWorkerInvocationStopped(invocation) &&
+          isChildWorkerMemoryLimitFailure(cause)
+        ) {
           try {
             await acknowledgeChildWorkerMemoryLoss(invocation);
           } catch (retirementFailure) {

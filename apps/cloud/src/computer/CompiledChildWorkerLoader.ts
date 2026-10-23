@@ -1,12 +1,7 @@
 import type { WorkerEntrypoint } from "cloudflare:workers";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { ChildWorkerModules } from "./ChildWorkerProgram.ts";
-import {
-  acknowledgeChildWorkerMemoryLoss,
-  CHILD_WORKER_KILLED_BY_SIGKILL,
-  isChildWorkerMemoryLimitFailure,
-  requireChildWorkerLoaderId,
-} from "./ChildWorkerLoaderRecovery.ts";
+import { requireChildWorkerLoaderId } from "./ChildWorkerLoaderRecovery.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import {
   disposeWorkerLoaderStubs,
@@ -159,10 +154,8 @@ export function createCompiledChildWorkerLoader(
       }
       if (outcome === undefined) throw new Error("Child Worker Loader returned without an outcome");
       if (outcome.kind === "exit") return outcome.value;
-      // The caller that owns the lifecycle marker, not this RPC service, must classify run errors.
-      if (!isChildWorkerMemoryLimitFailure(outcome.cause)) throw outcome.cause;
-      await acknowledgeChildWorkerMemoryLoss(target);
-      return CHILD_WORKER_KILLED_BY_SIGKILL;
+      // The owning dispatch sees the original target; this adapter only owns loader handles.
+      throw outcome.cause;
     },
   };
 }
