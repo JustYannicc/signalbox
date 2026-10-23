@@ -58,6 +58,11 @@
         },
         "overrides": [
           {
+            // Node personality adapters implement Node contracts with the platform's native modules.
+            "include": ["**/apps/cloud/src/isolate/**"],
+            "options": { "diagnosticSeverity": { "nodeBuiltinImport": "off" } }
+          },
+          {
             // signalbox: native infrastructure fixtures and artifact packagers run outside Effect.
             "include": [
               "**/apps/cloud/infra/**/*.test.ts",
