@@ -15,7 +15,6 @@ import {
 } from "./operations.ts";
 import { publishFreshFacet } from "./publication.ts";
 import { reconcile } from "./reconciliation.ts";
-import { HarnessFilesStoreError } from "../HarnessFilesStore.ts";
 import { HarnessDurableStateError } from "./errors.ts";
 
 const privateSupervisorCommands = new Set([
@@ -40,7 +39,7 @@ export function createHarnessDurableState(
     filesStore: {
       execute: async (command: HarnessFilesPrivateCommand) => {
         if (command.type !== "readCheckpoint" && command.type !== "recoverCheckpoint")
-          throw new HarnessFilesStoreError("INVALID");
+          throw new HarnessDurableStateError({ code: "INVALID" });
         return filesStore.execute(command);
       },
     },

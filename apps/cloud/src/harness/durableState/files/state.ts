@@ -13,6 +13,13 @@ const Publisher = Schema.Struct({
   publisherKey: capability,
 });
 const CheckpointRef = Schema.Struct({ checkpointId: id, manifestSha256: digest });
+const AdmissionResolution = Schema.Struct({
+  evidenceId: id,
+  stepId: Schema.NullOr(id),
+  outcome: Schema.Literals(["notApplied", "completed"]),
+  expectedCheckpoint: CheckpointRef,
+  checkpoint: CheckpointRef,
+});
 const Publication = Schema.Struct({
   operationId: id,
   fromGeneration: positive,
@@ -39,10 +46,14 @@ export const State = Schema.Struct({
   ]),
   activeStepId: Schema.NullOr(id),
   lastCommittedStepId: Schema.NullOr(id),
+  lastCommittedFromCheckpoint: Schema.NullOr(CheckpointRef),
+  admissionResolution: Schema.NullOr(AdmissionResolution),
   pendingPublisher: Schema.NullOr(Publisher),
   lastPublication: Schema.NullOr(Publication),
   pendingPublication: Schema.NullOr(Publication),
   controlSyncOperationId: Schema.NullOr(id),
+  controlSyncFromEpoch: Schema.NullOr(positive),
+  controlSyncFromIncarnationId: Schema.NullOr(id),
   activationOperationId: Schema.NullOr(id),
 });
 export type State = typeof State.Type;

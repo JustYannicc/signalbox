@@ -1,38 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - Wrangler needs a filesystem entry point.
-import * as NodeURL from "node:url";
 import { afterEach, beforeEach, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
-
-const runId = "workerd-topology-proof";
-const makeHarness = () =>
-  createTestHarness({
-    workers: [
-      {
-        config: {
-          name: "harness-durable-state-main",
-          main: NodeURL.fileURLToPath(new URL("./harnessStateWorkerd.fixture.ts", import.meta.url)),
-          compatibility_date: "2026-10-01",
-          durable_objects: {
-            bindings: [
-              { name: "HARNESS_RUN_STORE", class_name: "HarnessRunStoreObject" },
-              { name: "HARNESS_FILES_STORE", class_name: "HarnessFilesStoreObject" },
-              { name: "HARNESS_THREAD_SUPERVISOR", class_name: "HarnessThreadSupervisorObject" },
-            ],
-          },
-          migrations: [
-            {
-              tag: "durable-state-v1",
-              new_sqlite_classes: [
-                "HarnessRunStoreObject",
-                "HarnessFilesStoreObject",
-                "HarnessThreadSupervisorObject",
-              ],
-            },
-          ],
-        },
-      },
-    ],
-  });
+import { makeHarness, topologyRunId } from "./harnessStateWorkerd.testSupport.ts";
 
 let harness: ReturnType<typeof makeHarness>;
 beforeEach(() => {
@@ -45,9 +12,9 @@ it("rehydrates separate run, files and supervisor DOs after eviction", async () 
   const main = harness.getWorker("harness-durable-state-main");
   const initialized = await main.fetch("http://proof/initialize");
   expect(initialized.status).toBe(200);
-  await main.evictDurableObject("HarnessRunStoreObject", { name: runId });
-  await main.evictDurableObject("HarnessFilesStoreObject", { name: runId });
-  await main.evictDurableObject("HarnessThreadSupervisorObject", { name: runId });
+  await main.evictDurableObject("HarnessRunStoreObject", { name: topologyRunId });
+  await main.evictDurableObject("HarnessFilesStoreObject", { name: topologyRunId });
+  await main.evictDurableObject("HarnessThreadSupervisorObject", { name: topologyRunId });
 
   const recoveredResponse = await main.fetch("http://proof/recover");
   expect(recoveredResponse.status).toBe(200);
@@ -75,6 +42,7 @@ it("activates, commits a step and publishes the next generation with the full cu
     initializationCode: "CONFLICT",
     filesSynchronousThrow: false,
     forbiddenFilesCode: "INVALID",
+    forbiddenFilesErrorName: "HarnessDurableStateError",
     reconcileSynchronousThrow: false,
     rawReconcileCode: "INVALID",
     wrongKeyCode: "STALE_CONTROL",

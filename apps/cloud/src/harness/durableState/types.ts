@@ -25,6 +25,7 @@ export type HarnessSupervisorPrivateCommand = Exclude<
     readonly type:
       | "initialize"
       | "beginDrain"
+      | "confirmControlSync"
       | "admitStep"
       | "commitCheckpoint"
       | "publishFreshFacet"
@@ -55,6 +56,15 @@ export interface HarnessDurableStateBindings {
   readonly HARNESS_RUN_STORE: DurableObjectNamespace<HarnessRunStoreObject>;
   readonly HARNESS_FILES_STORE: DurableObjectNamespace<HarnessFilesStoreObject>;
   readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<HarnessThreadSupervisorObject>;
+}
+
+export interface HarnessDurableStateStubs {
+  readonly runId: string;
+  readonly runStore: HarnessRunStoreClient;
+  readonly filesStore: { execute(command: unknown): Promise<HarnessFilesStoreResult> };
+  readonly threadSupervisor: {
+    execute(command: unknown): Promise<HarnessThreadSupervisorResult>;
+  };
 }
 
 export interface HarnessDurableStateInitializationInput {

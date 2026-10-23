@@ -291,6 +291,8 @@ describe("harness durable stores", () => {
           type: "syncControl",
           runId,
           control: control2,
+          fromEpoch: control1.epoch,
+          fromIncarnationId: control1.incarnationId,
           expectedGeneration: 1,
           operationId: "drain-1",
           publication: null,

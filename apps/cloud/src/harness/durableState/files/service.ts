@@ -176,6 +176,7 @@ export function createHarnessFilesStore(
               },
               parentCheckpointId: content.parentCheckpointId,
               activeStepId: stillCurrent.activeStepId,
+              admissionResolution: stillCurrent.admissionResolution,
               publication: visiblePublication(stillCurrent),
               files: content.files,
             } as const;
@@ -220,10 +221,14 @@ export function createHarnessFilesStore(
                 lifecycle: "accepting" as const,
                 activeStepId: null,
                 lastCommittedStepId: null,
+                lastCommittedFromCheckpoint: null,
+                admissionResolution: null,
                 pendingPublisher: null,
                 lastPublication: null,
                 pendingPublication: null,
                 controlSyncOperationId: null,
+                controlSyncFromEpoch: null,
+                controlSyncFromIncarnationId: null,
                 activationOperationId: null,
               };
               saveState(database, undefined, initial);
@@ -238,10 +243,17 @@ export function createHarnessFilesStore(
                   state.controlSyncOperationId === command.operationId
                 ) {
                   if (!controlSyncMatchesState(state, command)) return fail("CONFLICT");
+                  if (
+                    state.controlSyncFromEpoch !== command.fromEpoch ||
+                    state.controlSyncFromIncarnationId !== command.fromIncarnationId
+                  )
+                    return fail("CONFLICT");
                   return result(state, "unchanged");
                 }
                 if (
                   command.control.ownerId !== state.control.ownerId ||
+                  command.fromEpoch !== state.control.epoch ||
+                  command.fromIncarnationId !== state.control.incarnationId ||
                   command.control.epoch !== state.control.epoch + 1 ||
                   command.control.incarnationId === state.control.incarnationId ||
                   command.control.controlKey === state.control.controlKey ||
@@ -254,6 +266,8 @@ export function createHarnessFilesStore(
                   lifecycle:
                     state.lifecycle === "accepting" ? ("draining" as const) : state.lifecycle,
                   controlSyncOperationId: command.operationId,
+                  controlSyncFromEpoch: command.fromEpoch,
+                  controlSyncFromIncarnationId: command.fromIncarnationId,
                 };
                 saveState(database, current.row, next);
                 return result(next, "draining");
@@ -268,9 +282,59 @@ export function createHarnessFilesStore(
                 }
                 if (state.checkpoint.checkpointId !== command.expectedCheckpointId)
                   return fail("OUT_OF_ORDER");
-                const next = { ...state, activeStepId: command.stepId };
+                const next = { ...state, activeStepId: command.stepId, admissionResolution: null };
                 saveState(database, current.row, next);
                 return result(next, "admitted");
+              }
+              case "reconcileAdmission": {
+                requireControl(state, command.control);
+                requirePublisher(state, command.publisher);
+                if (command.expectedGeneration !== state.publisher.generation)
+                  return fail("STALE_PUBLISHER");
+                if ((command.outcome === "completed") !== (command.checkpoint !== null))
+                  return fail("INVALID");
+                const resolution = {
+                  evidenceId: command.evidenceId,
+                  stepId: command.stepId,
+                  outcome: command.outcome,
+                  expectedCheckpoint: command.expectedCheckpoint,
+                  checkpoint: command.checkpoint ?? state.checkpoint,
+                };
+                if (state.admissionResolution?.evidenceId === command.evidenceId) {
+                  if (!same(state.admissionResolution, resolution)) return fail("CONFLICT");
+                  return result(state, "unchanged");
+                }
+                if (command.outcome === "notApplied") {
+                  if (
+                    !same(state.checkpoint, command.expectedCheckpoint) ||
+                    (state.activeStepId !== null && state.activeStepId !== command.stepId) ||
+                    (state.activeStepId === null &&
+                      command.stepId !== null &&
+                      state.lastCommittedStepId === command.stepId)
+                  )
+                    return fail("CONFLICT");
+                  const next = {
+                    ...state,
+                    activeStepId: null,
+                    admissionResolution: resolution,
+                  };
+                  saveState(database, current.row, next);
+                  return result(next, "reconciled");
+                }
+                if (!command.checkpoint || !same(state.checkpoint, command.checkpoint))
+                  return fail("CONFLICT");
+                if (command.stepId === null) {
+                  if (state.activeStepId !== null) return fail("CONFLICT");
+                } else if (
+                  state.activeStepId !== null ||
+                  state.lastCommittedStepId !== command.stepId ||
+                  !same(state.lastCommittedFromCheckpoint, command.expectedCheckpoint)
+                ) {
+                  return fail("CONFLICT");
+                }
+                const next = { ...state, admissionResolution: resolution };
+                saveState(database, current.row, next);
+                return result(next, "reconciled");
               }
               case "writeCheckpoint": {
                 if (!prepared) return fail("INVALID");
@@ -299,6 +363,7 @@ export function createHarnessFilesStore(
                   },
                   activeStepId: null,
                   lastCommittedStepId: command.stepId,
+                  lastCommittedFromCheckpoint: state.checkpoint,
                 };
                 saveState(database, current.row, next);
                 return result(next, inserted, prepared.files, prepared.parentCheckpointId);
@@ -422,6 +487,8 @@ export function createHarnessFilesStore(
                   state,
                   publication.status === "pending" ? "pending" : "unchanged",
                   [],
+                  null,
+                  publication,
                 );
               }
               case "recordActivation": {
@@ -483,13 +550,15 @@ function result(
   action: HarnessFilesStoreResult["action"],
   files: HarnessFilesStoreResult["files"] = [],
   parentCheckpointId: string | null = null,
+  publicationOverride?: State["pendingPublication"],
 ): HarnessFilesStoreResult {
   return {
     action,
     checkpoint: state.checkpoint,
     parentCheckpointId,
     activeStepId: state.activeStepId,
-    publication: visiblePublication(state),
+    admissionResolution: state.admissionResolution,
+    publication: publicationOverride ?? visiblePublication(state),
     files,
   };
 }

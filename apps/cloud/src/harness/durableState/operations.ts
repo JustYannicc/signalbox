@@ -10,23 +10,16 @@ import type {
   HarnessDurableStateInitializationResult,
   HarnessDurableStateStepInput,
   HarnessDurableStateStepResult,
-  HarnessRunStoreClient,
+  HarnessDurableStateStubs,
 } from "./types.ts";
-import type { HarnessFilesStoreResult } from "../HarnessFilesStore.ts";
 import type { HarnessThreadSupervisorResult } from "../HarnessThreadSupervisor.ts";
 import { HarnessDurableStateError, failureOf, hasCode } from "./errors.ts";
-
-export interface DurableStateStubs {
-  readonly runId: string;
-  readonly runStore: HarnessRunStoreClient;
-  readonly filesStore: { execute(command: unknown): Promise<HarnessFilesStoreResult> };
-  readonly threadSupervisor: { execute(command: unknown): Promise<HarnessThreadSupervisorResult> };
-}
+import { syncPendingControl } from "./controlSync.ts";
 
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
 export async function initialize(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateInitializationInput,
 ): Promise<HarnessDurableStateInitializationResult> {
   if (input.run.seed.identity.runId !== stores.runId)
@@ -55,43 +48,46 @@ export async function initialize(
 }
 
 export async function beginDrain(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateDrainInput,
 ): Promise<HarnessDurableStateDrainResult> {
+  let current: HarnessThreadSupervisorResult | null = null;
+  try {
+    current = await stores.threadSupervisor.execute({
+      type: "read",
+      runId: stores.runId,
+      control: input.control,
+    });
+  } catch (error) {
+    if (!hasCode(error, "STALE_CONTROL")) throw error;
+  }
+  if (current?.snapshot.pendingControlSync) {
+    const repaired = await syncPendingControl(stores, input.control, current);
+    if (repaired.status === "files-pending")
+      return {
+        status: "files-pending",
+        supervisor: repaired.supervisor,
+        failure: repaired.failure,
+      };
+  }
+
   const supervisor = await stores.threadSupervisor.execute({
     type: "beginDrain",
     runId: stores.runId,
     ...input,
   });
-  const prepared = supervisor.snapshot.preparedFacet;
-  const preparedPublication = prepared
-    ? {
-        operationId: prepared.operationId,
-        fromGeneration: supervisor.snapshot.generation,
-        toGeneration: prepared.generation,
-        priorFacetNonce: supervisor.snapshot.facetNonce,
-        preparedFacetNonce: prepared.facetNonce,
-        checkpoint: prepared.checkpoint,
-      }
-    : null;
-  try {
-    const files = await stores.filesStore.execute({
-      type: "syncControl",
-      runId: stores.runId,
-      control: input.nextControl,
-      expectedGeneration: supervisor.snapshot.generation,
-      operationId: input.operationId,
-      publication: supervisor.snapshot.lastPublication,
-      preparedPublication,
-    });
-    return { status: "draining", supervisor, files };
-  } catch (error) {
-    return { status: "files-pending", supervisor, failure: failureOf(error) };
-  }
+  const synchronized = await syncPendingControl(stores, input.nextControl, supervisor);
+  if (synchronized.status === "files-pending")
+    return {
+      status: "files-pending",
+      supervisor: synchronized.supervisor,
+      failure: synchronized.failure,
+    };
+  return { status: "draining", supervisor: synchronized.supervisor, files: synchronized.files };
 }
 
 export async function admitStep(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateStepInput,
 ): Promise<HarnessDurableStateStepResult> {
   const current = await stores.threadSupervisor.execute({
@@ -126,7 +122,7 @@ export async function admitStep(
 }
 
 export async function commitCheckpoint(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateCheckpointInput,
 ): Promise<HarnessDurableStateCheckpointResult> {
   const files = await stores.filesStore.execute({
@@ -159,7 +155,7 @@ export async function commitCheckpoint(
 }
 
 export async function recordActivation(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateActivationInput,
 ): Promise<HarnessDurableStateActivationResult> {
   const current = await stores.threadSupervisor.execute({
@@ -208,7 +204,7 @@ export async function recordActivation(
 }
 
 export async function recordActivationFailure(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: {
     readonly control: HarnessDurableStateFailureInput["control"];
     readonly operationId: string;
@@ -241,7 +237,7 @@ export async function recordActivationFailure(
 }
 
 export async function recordPreparedFacetFailure(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateFailureInput,
 ) {
   const current = await stores.threadSupervisor.execute({

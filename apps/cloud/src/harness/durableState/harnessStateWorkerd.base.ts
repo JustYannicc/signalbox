@@ -153,9 +153,13 @@ export const errorCode = (error: unknown) =>
 export async function failed(operation: () => Promise<unknown>) {
   try {
     await operation();
-    return { code: null, message: "" };
+    return { code: null, name: "", message: "" };
   } catch (error) {
-    return { code: errorCode(error), message: error instanceof Error ? error.message : "" };
+    return {
+      code: errorCode(error),
+      name: error instanceof Error ? error.name : "",
+      message: error instanceof Error ? error.message : "",
+    };
   }
 }
 

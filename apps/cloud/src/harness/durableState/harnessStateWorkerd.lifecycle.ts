@@ -108,6 +108,7 @@ export async function lifecycle(env: WorkerdEnv) {
     initializationCode: initializationFailure.code,
     filesSynchronousThrow,
     forbiddenFilesCode: filesFailure.code,
+    forbiddenFilesErrorName: filesFailure.name,
     reconcileSynchronousThrow,
     rawReconcileCode: rawReconcileFailure.code,
     wrongKeyCode: wrongKeyFailure.code,
@@ -184,6 +185,8 @@ export async function handoff(env: WorkerdEnv) {
       type: "syncControl",
       runId,
       control: control3,
+      fromEpoch: control2.epoch,
+      fromIncarnationId: control2.incarnationId,
       expectedGeneration: 2,
       operationId: "wrong-handoff",
       publication: {

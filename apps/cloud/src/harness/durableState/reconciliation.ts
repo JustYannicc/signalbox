@@ -1,10 +1,10 @@
 import type {
   HarnessDurableStateReconcileInput,
   HarnessDurableStateReconcileResult,
+  HarnessDurableStateStubs,
 } from "./types.ts";
 import type { HarnessFilesStoreResult } from "../HarnessFilesStore.ts";
 import type { HarnessThreadSupervisorResult } from "../HarnessThreadSupervisor.ts";
-import type { DurableStateStubs } from "./operations.ts";
 import { HarnessDurableStateError, hasCode } from "./errors.ts";
 
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
@@ -39,7 +39,7 @@ function receiptMatchesPrepared(
 }
 
 export async function reconcile(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateReconcileInput,
 ): Promise<HarnessDurableStateReconcileResult> {
   const current = await stores.threadSupervisor.execute({
@@ -48,16 +48,27 @@ export async function reconcile(
     control: input.control,
   });
   const prepared = current.snapshot.preparedFacet;
-  const alreadyReconciled =
-    current.snapshot.reconciliationEvidenceId === input.evidenceId &&
-    current.snapshot.reconciliationOutcome === input.outcome;
+  const alreadyReconciled = current.snapshot.reconciliationEvidenceId === input.evidenceId;
+  if (alreadyReconciled) {
+    const supervisor = await stores.threadSupervisor.execute({
+      type: "reconcile",
+      runId: stores.runId,
+      control: input.control,
+      expectedGeneration: input.expectedGeneration,
+      evidenceId: input.evidenceId,
+      outcome: input.outcome,
+      checkpoint: input.checkpoint,
+      invocationSettlement: input.invocationSettlement,
+      preparedFacetCleanup: input.preparedFacetCleanup,
+      admissionResolution: current.snapshot.reconciliationAdmissionResolution,
+    });
+    return { supervisor, files: null };
+  }
   const settled = input.invocationSettlement !== null && allJoined(input.invocationSettlement);
 
   if (
     current.snapshot.generation !== input.expectedGeneration ||
-    (current.snapshot.lifecycle !== "indeterminate" &&
-      current.snapshot.lifecycle !== "recoverable" &&
-      !alreadyReconciled)
+    (current.snapshot.lifecycle !== "indeterminate" && current.snapshot.lifecycle !== "recoverable")
   )
     throw new HarnessDurableStateError({ code: "OUT_OF_ORDER" });
   if (input.outcome !== "unknown" && !settled)
@@ -70,7 +81,7 @@ export async function reconcile(
     throw new HarnessDurableStateError({ code: "CONFLICT" });
 
   let files: HarnessFilesStoreResult | null = null;
-  if (prepared !== null) {
+  if (prepared !== null && input.outcome !== "unknown") {
     let receipt: HarnessFilesStoreResult | null = null;
     try {
       receipt = await stores.filesStore.execute({
@@ -101,6 +112,24 @@ export async function reconcile(
     }
   }
 
+  let admissionResolution: HarnessFilesStoreResult["admissionResolution"] = null;
+  if (input.outcome !== "unknown") {
+    const admission = await stores.filesStore.execute({
+      type: "reconcileAdmission",
+      runId: stores.runId,
+      control: input.control,
+      publisher: current.currentPublisher,
+      expectedGeneration: current.snapshot.generation,
+      evidenceId: input.evidenceId,
+      stepId: current.snapshot.admittedStepId,
+      outcome: input.outcome,
+      expectedCheckpoint: current.snapshot.checkpoint,
+      checkpoint: input.checkpoint,
+    });
+    files = admission;
+    admissionResolution = admission.admissionResolution;
+  }
+
   const supervisor = await stores.threadSupervisor.execute({
     type: "reconcile",
     runId: stores.runId,
@@ -111,6 +140,7 @@ export async function reconcile(
     checkpoint: input.checkpoint,
     invocationSettlement: input.invocationSettlement,
     preparedFacetCleanup: input.preparedFacetCleanup,
+    admissionResolution,
   });
   return { supervisor, files };
 }

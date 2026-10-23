@@ -23,6 +23,13 @@ const Publication = Schema.Struct({
   ...PublicationReceiptFields,
   status: Schema.Literals(["pending", "confirmed"]),
 });
+const AdmissionResolution = Schema.Struct({
+  evidenceId: id,
+  stepId: Schema.NullOr(id),
+  outcome: Schema.Literals(["notApplied", "completed"]),
+  expectedCheckpoint: CheckpointRef,
+  checkpoint: CheckpointRef,
+});
 
 export const HarnessFilesStoreFile = Schema.Struct({
   path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
@@ -54,6 +61,8 @@ export const HarnessFilesStoreCommand = Schema.Union([
     type: Schema.Literal("syncControl"),
     runId: id,
     control: Control,
+    fromEpoch: positive,
+    fromIncarnationId: id,
     expectedGeneration: positive,
     operationId: id,
     publication: Schema.NullOr(PublicationReceipt),
@@ -65,6 +74,18 @@ export const HarnessFilesStoreCommand = Schema.Union([
     publisher: Publisher,
     stepId: id,
     expectedCheckpointId: id,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("reconcileAdmission"),
+    runId: id,
+    control: Control,
+    publisher: Publisher,
+    expectedGeneration: positive,
+    evidenceId: id,
+    stepId: Schema.NullOr(id),
+    outcome: Schema.Literals(["notApplied", "completed"]),
+    expectedCheckpoint: CheckpointRef,
+    checkpoint: Schema.NullOr(CheckpointRef),
   }),
   Schema.Struct({
     type: Schema.Literal("writeCheckpoint"),
@@ -146,6 +167,7 @@ export const HarnessFilesStoreResult = Schema.Struct({
     "recorded",
     "unchanged",
     "admitted",
+    "reconciled",
     "read",
     "recovered",
     "prepared",
@@ -159,6 +181,7 @@ export const HarnessFilesStoreResult = Schema.Struct({
   checkpoint: CheckpointRef,
   parentCheckpointId: Schema.NullOr(id),
   activeStepId: Schema.NullOr(id),
+  admissionResolution: Schema.NullOr(AdmissionResolution),
   publication: Schema.NullOr(HarnessFilesPublication),
   files: Schema.Array(HarnessFilesStoreFile),
 });
