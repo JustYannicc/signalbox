@@ -202,6 +202,8 @@ describe("worker release partitions", () => {
       const worker = built.manifest.workerEntries?.["hooks-worker"];
       expect(worker?.entry).toBe(`file://${WORKER_NAME}`);
       expect(worker?.module).toBe("signalbox/worker-hooks.js");
+      expect(worker?.export).toBe("instantiate");
+      expect(worker?.globals).not.toContain("Function");
       expect(worker?.inputs).toEqual(
         [
           `bun-graph:${LEGACY_NAME}`,
@@ -249,12 +251,12 @@ describe("worker release partitions", () => {
         Object.keys(built.manifest.modules).filter((path) => path.startsWith("signalbox/")),
       ).toHaveLength(2);
       await NodeFSP.writeFile(NodePath.join(output, "package.json"), '{"type":"module"}');
-      const probe = `import {launch as main} from "./claude.js"; import {launch as hooks} from "./signalbox/worker-hooks.js"; const a=main(), b=hooks(); console.log(JSON.stringify({shared:a.namedValue===b.namedValue,dynamic:(await b.dynamic()).default.value}));`;
+      const probe = `import {launch as main} from "./claude.js"; import {launch as facade} from "./${built.manifest.embeddedEntrypoints[WORKER_NAME]}"; import {instantiate} from "./signalbox/worker-hooks.js"; import {createRequire} from "node:module"; const require=createRequire(import.meta.url); const a=main(), b=instantiate({globals:{require},imports:{}}).launch(); console.log(JSON.stringify({shared:a.namedValue===facade().namedValue,isolated:a.namedValue!==b.namedValue,dynamic:(await b.dynamic()).default.value}));`;
       await NodeFSP.writeFile(NodePath.join(output, "probe.mjs"), probe);
       const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)(process.execPath, [
         NodePath.join(output, "probe.mjs"),
       ]);
-      expect(JSON.parse(stdout)).toEqual({ shared: true, dynamic: "legacy-cjs" });
+      expect(JSON.parse(stdout)).toEqual({ shared: true, isolated: true, dynamic: "legacy-cjs" });
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

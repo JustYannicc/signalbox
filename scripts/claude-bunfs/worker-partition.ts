@@ -5,6 +5,9 @@ import ts from "typescript-legacy";
 import type { BundleFile, WorkerReleaseEntry } from "./bundle-artifact.ts";
 import type { ExtractedModule } from "./extracted-input.ts";
 import type { planSingleModule } from "./single-module.ts";
+import { applySourceEdits } from "./source-edits.ts";
+import { createWorkerFactory } from "./worker-factory.ts";
+import { analyzeWorkerFactory } from "./worker-factory-analysis.ts";
 
 export const HOOKS_WORKER_ENTRY =
   "/$bunfs/root/src/plugins/functionHooks/hooks-worker/hooks-worker.js";
@@ -30,14 +33,7 @@ export function workerInputClosure(metafile: Esbuild.Metafile, entry: string) {
 
 const parse = (name: string, source: string) =>
   ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-const replace = (
-  source: string,
-  edits: readonly { start: number; end: number; text: string }[],
-) => {
-  for (const edit of [...edits].sort((a, b) => b.start - a.start))
-    source = source.slice(0, edit.start) + edit.text + source.slice(edit.end);
-  return source;
-};
+const replace = applySourceEdits;
 const wrongShape = () => new Error("BUNDLE_WORKER_PACK_SHAPE_CHANGED");
 
 /** Pack original inputs once. The main entry reaches every secondary, so the worker's entire
@@ -112,9 +108,6 @@ export async function packWorkerPartition(input: {
         bindings.set(item.name.text, (item.propertyName ?? item.name).text);
       sharedEdits.push({ start: statement.getStart(sharedFile), end: statement.end, text: "" });
     }
-  const aliases = new Map(
-    [...bindings.keys()].sort().map((name, index) => [name, `shared_${index}`]),
-  );
   const rootSource = files.get(paths.root)!.text;
   const banner = input.shared.banner?.js;
   if (banner && !rootSource.startsWith(`${banner}\n`)) throw wrongShape();
@@ -164,40 +157,18 @@ export async function packWorkerPartition(input: {
     } else throw wrongShape();
   }
   if (!launch) throw wrongShape();
-  const workerSource =
-    replace(sharedSource, sharedEdits) +
-    "\n" +
-    initializers.join("") +
-    `export {${[...bindings].map(([name, local]) => `${local} as ${aliases.get(name)!}`).join(",")},${launch} as launch};\n`;
-  const mainSource = files.get(paths.main)!.text;
-  const mainFile = parse(paths.main, mainSource);
-  const mainEdits: { start: number; end: number; text: string }[] = [];
-  for (const statement of mainFile.statements) {
-    if (
-      !ts.isImportDeclaration(statement) ||
-      !ts.isStringLiteral(statement.moduleSpecifier) ||
-      NodePath.resolve(NodePath.dirname(paths.main), statement.moduleSpecifier.text) !==
-        paths.worker
-    )
-      continue;
-    const clause = statement.importClause;
-    if (!clause || clause.name || !clause.namedBindings || !ts.isNamedImports(clause.namedBindings))
-      throw wrongShape();
-    mainEdits.push({
-      start: clause.namedBindings.getStart(mainFile),
-      end: clause.namedBindings.end,
-      text: `{${clause.namedBindings.elements
-        .map((item) => {
-          const name = aliases.get((item.propertyName ?? item.name).text);
-          if (!name) throw wrongShape();
-          return `${name} as ${item.name.text}`;
-        })
-        .join(",")}}`,
-    });
-  }
+  const factory = createWorkerFactory({
+    workerSource: replace(sharedSource, sharedEdits),
+    mainSource: files.get(paths.main)!.text,
+    ...(banner ? { banner } : {}),
+    workerImport: "./worker-hooks.js",
+    exports: bindings,
+    initializers,
+    launch,
+  });
   const encoder = new TextEncoder();
-  const mainBytes = encoder.encode(replace(mainSource, mainEdits)),
-    workerBytes = encoder.encode(workerSource);
+  const mainBytes = encoder.encode(factory.mainSource),
+    workerBytes = encoder.encode(factory.workerSource);
   const outputFiles = [
     { path: paths.main, contents: mainBytes },
     { path: paths.worker, contents: workerBytes },
@@ -212,27 +183,17 @@ export async function packWorkerPartition(input: {
     if (notices)
       outputFiles.push({ path: `${target}.LEGAL.txt`, contents: encoder.encode(notices) });
   }
-  const workerFacade = input.main.facades.find((file) => file.path === input.workerEntry);
-  if (!workerFacade) throw wrongShape();
-  const relative = NodePath.posix.relative(
-    NodePath.posix.dirname(input.workerEntry),
-    HOOKS_WORKER_MODULE,
-  );
-  const facades = input.main.facades.map((file) =>
-    file === workerFacade
-      ? {
-          ...file,
-          contents: encoder.encode(
-            `export {launch} from ${JSON.stringify(relative.startsWith(".") ? relative : `./${relative}`)};\n`,
-          ),
-        }
-      : file,
-  );
   const outputKey = (path: string) =>
     Object.keys(built.metafile!.outputs).find((name) => NodePath.resolve(name) === path)!;
   return {
     outputFiles,
-    facades,
+    facades: input.main.facades,
+    factory: {
+      globals: factory.globals,
+      imports: factory.imports,
+      computedGlobalAccess: factory.computedGlobalAccess,
+      functionConstructors: factory.functionConstructors,
+    },
     metafile: {
       inputs: built.metafile.inputs,
       partitions: {
@@ -250,7 +211,7 @@ export async function packWorkerPartition(input: {
         [outputKey(paths.worker)]: {
           ...workerOutput,
           inputs: { ...workerOutput.inputs, ...rootOutput.inputs },
-          exports: [...aliases.values(), "launch"].sort(),
+          exports: ["instantiate"],
           bytes: workerBytes.length,
         },
       },
@@ -262,12 +223,31 @@ export function hooksWorkerEntries(
   closure: ReadonlySet<string>,
   sources: ReadonlyMap<string, ExtractedModule>,
   modules: readonly BundleFile[],
+  factory: Pick<
+    WorkerReleaseEntry,
+    "globals" | "imports" | "computedGlobalAccess" | "functionConstructors"
+  >,
+  sourceByName: ReadonlyMap<string, string>,
 ): Readonly<Record<string, WorkerReleaseEntry>> {
   const inputs = [...closure].filter((name) => name.startsWith("bun-graph:")).sort();
+  const sourceReports = inputs.map((name) => {
+    const path = name.slice("bun-graph:".length);
+    return analyzeWorkerFactory(sourceByName.get(path)!, path);
+  });
+  const combine = (key: "computedGlobalAccess" | "functionConstructors") => {
+    const sites = sourceReports.flatMap((report) => report[key].sites);
+    return { count: sites.length, sites };
+  };
   return {
     "hooks-worker": {
       entry: `file://${HOOKS_WORKER_ENTRY}`,
       module: HOOKS_WORKER_MODULE,
+      export: "instantiate",
+      ...factory,
+      sourceAnalysis: {
+        computedGlobalAccess: combine("computedGlobalAccess"),
+        functionConstructors: combine("functionConstructors"),
+      },
       inputs,
       sourceBytes: inputs.reduce(
         (sum, name) =>

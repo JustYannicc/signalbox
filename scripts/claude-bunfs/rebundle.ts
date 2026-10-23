@@ -185,6 +185,7 @@ export async function rebundle(options: RebundleOptions) {
   if (options.partitionHooksWorker && !omission) retainWorker(split.metafile);
   let published: { metafile: Esbuild.Metafile; outputFiles: BundleFile[] } = split;
   let facades: BundleFile[] = [];
+  let workerFactory: Awaited<ReturnType<typeof packWorkerPartition>>["factory"] | undefined;
   if (options.partitionHooksWorker) {
     if (!deferred) throw new Error("BUNDLE_WORKER_DEFERRED_REQUIRED");
     const workerEntry = embeddedEntrypoints[HOOKS_WORKER_ENTRY];
@@ -205,6 +206,7 @@ export async function rebundle(options: RebundleOptions) {
       plugins: [single.plugin, deferred.plugin, graph.plugin],
     });
     packing = false;
+    workerFactory = packed.factory;
     published = packed;
     facades = packed.facades;
   } else if (deferred) {
@@ -250,7 +252,7 @@ export async function rebundle(options: RebundleOptions) {
   ];
   assertOneByteModules(modules);
   const workerEntries = options.partitionHooksWorker
-    ? hooksWorkerEntries(workerInputs, input.byName, modules)
+    ? hooksWorkerEntries(workerInputs, input.byName, modules, workerFactory!, sourceByName)
     : undefined;
   return publishBundle({
     output,

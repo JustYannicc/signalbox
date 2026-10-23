@@ -2,11 +2,13 @@
 import * as NodePath from "node:path";
 import * as Esbuild from "esbuild";
 import type { BuiltinSource } from "./source.ts";
+import { workerFactoryBuiltinSources } from "./workerFactory.ts";
 
 /** Resolve cross-partition builtin bindings for analysis without executing release code. */
 export async function linkPublishedSources(
   sources: readonly BuiltinSource[],
 ): Promise<BuiltinSource> {
+  sources = workerFactoryBuiltinSources(sources);
   const files = new Map(sources.map((source) => [source.name, source.source]));
   const root = "signalbox:published-analysis";
   const built = await Esbuild.build({

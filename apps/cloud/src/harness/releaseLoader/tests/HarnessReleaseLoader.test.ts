@@ -13,6 +13,18 @@ describe("loadHarnessRelease", () => {
     const entry = {
       entry: "file:///embedded/worker",
       module: "worker.cjs",
+      export: "instantiate",
+      globals: ["process"],
+      imports: ["node:worker_threads"],
+      computedGlobalAccess: { count: 0, sites: [] },
+      functionConstructors: {
+        count: 1,
+        sites: [{ source: "worker.js", line: 1, column: 3, kind: "call" }],
+      },
+      sourceAnalysis: {
+        computedGlobalAccess: { count: 0, sites: [] },
+        functionConstructors: { count: 0, sites: [] },
+      },
       inputs: ["bun-graph:/embedded/worker"],
       sourceBytes: 42,
       preparedBytes: new TextEncoder().encode("synthetic worker.cjs").length,

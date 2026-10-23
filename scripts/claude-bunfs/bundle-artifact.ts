@@ -16,9 +16,28 @@ export interface EmbeddedAsset extends BundleFile {
   readonly encoding: number;
 }
 
+export interface WorkerFactorySites {
+  readonly count: number;
+  readonly sites: readonly {
+    readonly source: string;
+    readonly line: number;
+    readonly column: number;
+    readonly kind: string;
+  }[];
+}
+
 export interface WorkerReleaseEntry {
   readonly entry: string;
   readonly module: string;
+  readonly export: "instantiate";
+  readonly globals: readonly string[];
+  readonly imports: readonly string[];
+  readonly computedGlobalAccess: WorkerFactorySites;
+  readonly functionConstructors: WorkerFactorySites;
+  readonly sourceAnalysis: {
+    readonly computedGlobalAccess: WorkerFactorySites;
+    readonly functionConstructors: WorkerFactorySites;
+  };
   readonly inputs: readonly string[];
   readonly sourceBytes: number;
   readonly preparedBytes: number;
@@ -90,6 +109,16 @@ export async function publishBundle(input: BundlePublication) {
       if (
         !module ||
         entry.preparedBytes !== module.bytes ||
+        entry.export !== "instantiate" ||
+        new Set(entry.globals).size !== entry.globals.length ||
+        entry.globals.includes("Function") ||
+        new Set(entry.imports).size !== entry.imports.length ||
+        entry.computedGlobalAccess.count !== entry.computedGlobalAccess.sites.length ||
+        entry.functionConstructors.count !== entry.functionConstructors.sites.length ||
+        entry.sourceAnalysis.computedGlobalAccess.count !==
+          entry.sourceAnalysis.computedGlobalAccess.sites.length ||
+        entry.sourceAnalysis.functionConstructors.count !==
+          entry.sourceAnalysis.functionConstructors.sites.length ||
         new Set(entry.inputs).size !== entry.inputs.length ||
         entry.inputs.length === 0 ||
         !Object.hasOwn(input.embeddedEntrypoints ?? {}, entry.entry.slice("file://".length))

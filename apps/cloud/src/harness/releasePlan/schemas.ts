@@ -35,6 +35,18 @@ export const decodeCodexManifest = Schema.decodeUnknownSync(
   }),
 );
 
+const WorkerFactorySites = Schema.Struct({
+  count: ByteCount,
+  sites: Schema.Array(
+    Schema.Struct({
+      source: NonEmpty,
+      line: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      column: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      kind: NonEmpty,
+    }),
+  ),
+});
+
 export const decodeCliManifest = Schema.decodeUnknownSync(
   Schema.Struct({
     schemaVersion: Schema.Literal(1),
@@ -55,6 +67,15 @@ export const decodeCliManifest = Schema.decodeUnknownSync(
         Schema.Struct({
           entry: NonEmpty,
           module: NonEmpty,
+          export: Schema.Literal("instantiate"),
+          globals: Schema.Array(NonEmpty),
+          imports: Schema.Array(NonEmpty),
+          computedGlobalAccess: WorkerFactorySites,
+          functionConstructors: WorkerFactorySites,
+          sourceAnalysis: Schema.Struct({
+            computedGlobalAccess: WorkerFactorySites,
+            functionConstructors: WorkerFactorySites,
+          }),
           inputs: Schema.Array(NonEmpty),
           sourceBytes: ByteCount,
           preparedBytes: ByteCount,

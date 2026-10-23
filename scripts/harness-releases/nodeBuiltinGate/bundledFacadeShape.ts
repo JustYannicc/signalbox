@@ -95,21 +95,44 @@ function bridgeInstallationGuard<T>(
   )
     return false;
   const [declaration, code, thrown] = statement.thenStatement.statements;
+  let assigned: ts.Expression | undefined;
+  let thrownValue: ts.Expression | undefined;
   if (
-    statement.thenStatement.statements.length !== 3 ||
+    statement.thenStatement.statements.length === 3 &&
+    code &&
+    ts.isExpressionStatement(code) &&
+    thrown &&
+    ts.isThrowStatement(thrown)
+  ) {
+    assigned = code.expression;
+    thrownValue = thrown.expression;
+  } else if (
+    statement.thenStatement.statements.length === 2 &&
+    code &&
+    ts.isThrowStatement(code) &&
+    code.expression
+  ) {
+    const expression = unwrapBundledExpression(code.expression);
+    if (
+      ts.isBinaryExpression(expression) &&
+      expression.operatorToken.kind === ts.SyntaxKind.CommaToken
+    ) {
+      assigned = expression.left;
+      thrownValue = expression.right;
+    }
+  }
+  if (
     !declaration ||
     !ts.isVariableStatement(declaration) ||
     declaration.declarationList.declarations.length !== 1 ||
-    !code ||
-    !ts.isExpressionStatement(code) ||
-    !thrown ||
-    !ts.isThrowStatement(thrown)
+    !assigned ||
+    !thrownValue
   )
     return false;
   const error = declaration.declarationList.declarations[0];
   if (!error || !ts.isIdentifier(error.name) || !error.initializer) return false;
   const created = unwrapBundledExpression(error.initializer);
-  const assignment = unwrapBundledExpression(code.expression);
+  const assignment = unwrapBundledExpression(assigned);
   const message = ts.isNewExpression(created) ? created.arguments?.[0] : undefined;
   return (
     bindingIdentity(error.name, bindings) === error.name &&
@@ -123,8 +146,8 @@ function bridgeInstallationGuard<T>(
     memberOnBinding(assignment.left, error.name, "code", bindings) &&
     ts.isStringLiteralLike(assignment.right) &&
     assignment.right.text === "NODE_BRIDGE_NOT_INSTALLED" &&
-    ts.isIdentifier(thrown.expression) &&
-    bindingIdentity(thrown.expression, bindings) === error.name
+    ts.isIdentifier(thrownValue) &&
+    bindingIdentity(thrownValue, bindings) === error.name
   );
 }
 
