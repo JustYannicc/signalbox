@@ -53,7 +53,7 @@
     },
     {
       "file": "internal_wasi_memory.ts, internal_wasi_fd_calls.ts, internal_wasi_path_calls.ts",
-      "reason": "transferLimit and copyIovecs bound each child syscall to the owner-issued byte credit: fd reads/writes and readdir transfer at most that many bytes as an ordinary short count, readlink replies are capped the same way, and syscall memory lends its owned input instead of copying it. Ordinary guest memory keeps the original unlimited behaviour."
+      "reason": "Child-internal transfer offsets assemble regular-file reads and writes, directory entries, and readlink targets across owner-credited calls while each call remains bounded. Stdio reads stop after the first positive result. Without transfer metadata, the offset stays zero and read-once stays disabled."
     }
   ],
   "upstreamAlignment": {

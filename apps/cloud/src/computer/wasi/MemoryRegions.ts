@@ -1,7 +1,6 @@
-import type { KernelMemoryRegion } from "../../kernel/KernelSyscallPort.ts";
+import { MAX_TRANSFER_BYTES, type KernelMemoryRegion } from "../../kernel/KernelSyscallPort.ts";
 
-const MAX_IOVECS = 1024;
-const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
+export const MAX_IOVECS = 1024;
 
 interface MemoryRange {
   readonly start: number;
@@ -28,7 +27,12 @@ export class MemoryRegions {
     this.#ranges.push({ start, end, direction });
   }
 
-  addIovecs(pointer: number, count: number, direction: MemoryRange["direction"] = "inout"): void {
+  addIovecs(
+    pointer: number,
+    count: number,
+    direction: MemoryRange["direction"] = "inout",
+    transfer: { readonly offset: number; readonly table?: Uint8Array } = { offset: 0 },
+  ): void {
     const itemCount = count >>> 0;
     if (itemCount > MAX_IOVECS) return;
 
@@ -38,33 +42,59 @@ export class MemoryRegions {
     if (end > this.#memory.buffer.byteLength) return;
 
     this.add(pointer, tableSize, "in");
-    const table = new DataView(this.#memory.buffer, start, tableSize);
+    const table =
+      transfer.table === undefined
+        ? new DataView(this.#memory.buffer, start, tableSize)
+        : new DataView(transfer.table.buffer, transfer.table.byteOffset, tableSize);
     let remaining = this.transferLimit;
+    let skip = transfer.offset;
     for (let index = 0; index < itemCount; index++) {
       const offset = index * 8;
       const pointer = table.getUint32(offset, true);
       const length = table.getUint32(offset + 4, true);
-      const copied = Math.min(remaining, length);
+      const skipped = Math.min(skip, length);
+      skip -= skipped;
+      const copied = Math.min(remaining, length - skipped);
       // The owner validates every original range after descriptor rights, including uncopied suffixes.
-      if (pointer + length <= this.#memory.buffer.byteLength) this.add(pointer, copied, direction);
+      if (pointer + length <= this.#memory.buffer.byteLength)
+        this.add(pointer + skipped, copied, direction);
       remaining -= copied;
     }
   }
 
-  snapshot(): KernelMemoryRegion[] {
+  snapshot(
+    inputs: readonly { readonly pointer: number; readonly bytes: Uint8Array }[] = [],
+  ): KernelMemoryRegion[] {
     const buffer = this.#memory.buffer;
-    return this.#mergedRanges().map(({ start, end, direction }) => ({
-      pointer: start,
-      direction,
-      ...(direction === "out" ? { length: end - start } : {}),
-      bytes:
+    return this.#mergedRanges().map(({ start, end, direction }) => {
+      const bytes =
         direction === "out"
           ? new Uint8Array(0)
-          : new Uint8Array(buffer, start, end - start).slice(),
-    }));
+          : new Uint8Array(buffer, start, end - start).slice();
+      if (direction !== "out") {
+        for (const input of inputs) {
+          const first = Math.max(start, input.pointer);
+          const last = Math.min(end, input.pointer + input.bytes.byteLength);
+          if (first < last)
+            bytes.set(
+              input.bytes.subarray(first - input.pointer, last - input.pointer),
+              first - start,
+            );
+        }
+      }
+      return {
+        pointer: start,
+        direction,
+        ...(direction === "out" ? { length: end - start } : {}),
+        bytes,
+      };
+    });
   }
 
-  apply(regions: readonly KernelMemoryRegion[]): void {
+  apply(
+    regions: readonly KernelMemoryRegion[],
+    deferred?: { readonly pointer: number; readonly length: number },
+  ): void {
     const buffer = this.#memory.buffer;
     const allowed = this.#mergedRanges();
     let previousEnd = 0;
@@ -86,7 +116,13 @@ export class MemoryRegions {
       ) {
         throw new TypeError("Invalid syscall memory response regions");
       }
-      new Uint8Array(buffer, pointer, bytes.byteLength).set(bytes);
+      const target = new Uint8Array(buffer, pointer, bytes.byteLength);
+      const first = Math.max(pointer, deferred?.pointer ?? end);
+      const last = Math.min(end, deferred === undefined ? end : deferred.pointer + deferred.length);
+      if (first < last) {
+        target.set(bytes.subarray(0, first - pointer));
+        target.set(bytes.subarray(last - pointer), last - pointer);
+      } else target.set(bytes);
       previousEnd = end;
     }
   }

@@ -3,7 +3,8 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type { CreateOptions, Inode } from "../storage.ts";
-import { WasiError, WasiMemory } from "./internal_wasi_memory.ts";
+import { MAX_TRANSFER_BYTES } from "../KernelSyscallPort.ts";
+import { utf8ByteLength, WasiError, WasiMemory } from "./internal_wasi_memory.ts";
 import { complete, type WasiCall } from "./internal_wasi_calls.ts";
 import {
   ALL_RIGHTS,
@@ -46,9 +47,6 @@ const ENOTSUP = 58;
 const EROFS = 69;
 const EXDEV = 75;
 const ENOTCAPABLE = 76;
-
-const MAX_PATH_TRANSFER = 16 * 1024 * 1024;
-const encoder = new TextEncoder();
 
 const OFLAGS = { CREATE: 1, DIRECTORY: 2, EXCLUSIVE: 4, TRUNCATE: 8 } as const;
 const DIRFLAGS_SYMLINK_FOLLOW = 1;
@@ -444,15 +442,17 @@ export class WasiPathCalls {
     const resolved = yield* this.#paths.resolve(this.#anchor(directory), path, false);
     if (resolved.stat.type !== "symlink") throw new WasiError(EINVAL);
     const target = yield* complete(resolved.mount.storage.readlink(resolved.inode));
-    const encoded = encoder.encode(target);
+    const transferOffset = this.#memory.transferOffset;
+    const targetLength = utf8ByteLength(target);
     const used = Math.min(
       capacity,
-      encoded.byteLength,
-      MAX_PATH_TRANSFER,
+      Math.max(0, targetLength - transferOffset),
+      Math.max(0, MAX_TRANSFER_BYTES - transferOffset),
       // signalbox: the readlink reply is a child transfer, so it fits the owner-issued credit.
       this.#memory.transferLimit,
     );
-    this.#memory.writeRange(buffer, used).set(encoded.subarray(0, used));
+    const copied = this.#memory.writeUtf8Slice(buffer, target, transferOffset, used);
+    if (copied !== used) throw new TypeError("Readlink UTF-8 slice was incomplete");
     this.#memory.u32(bufused, used);
     return 0;
   }
@@ -597,7 +597,7 @@ export class WasiPathCalls {
 
   #readPath(pointer: number, length: number): string {
     const size = length >>> 0;
-    if (size > MAX_PATH_TRANSFER) throw new WasiError(ENAMETOOLONG);
+    if (size > MAX_TRANSFER_BYTES) throw new WasiError(ENAMETOOLONG);
     return this.#memory.string(pointer, size);
   }
 }

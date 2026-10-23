@@ -1,12 +1,12 @@
 import { KernelWakeRegistry, type WakeSubscription } from "./KernelWakeRegistry.ts";
 import { isKernelPayloadOwned, kernelPayloadBudget } from "./KernelPayloadBudget.ts";
+import { MAX_TRANSFER_BYTES } from "./KernelSyscallPort.ts";
 
 type Direction = "read" | "write";
 type IoOptions = { nonblocking?: boolean; signal?: AbortSignal | undefined };
 
 const pipeError = (code: string, message: string) => Object.assign(new Error(message), { code });
 const PIPE_BUF_BYTES = 4096;
-const MAX_BLOCKING_WRITE_BYTES = 16 * 1024 * 1024;
 
 /** Distinguishes a missing pipe reader from an unrelated backend or host EPIPE. */
 export class KernelBrokenPipeError extends Error {
@@ -115,7 +115,7 @@ export class KernelPipe {
     options: Pick<IoOptions, "signal"> = {},
   ): Promise<number> {
     // WASI caps vectors here too; larger Node callers receive a bounded short write.
-    const reservation = kernelPayloadBudget.retainPipe(source, MAX_BLOCKING_WRITE_BYTES);
+    const reservation = kernelPayloadBudget.retainPipe(source, MAX_TRANSFER_BYTES);
     const size = reservation.bytes;
     if (size < Math.min(source.byteLength, this.#bytes.length)) {
       reservation.release();

@@ -6,7 +6,7 @@
 /* eslint-disable require-yield -- WASI handlers share a generator protocol for immediate and suspending calls. */
 
 import type { DirectoryEntry, Inode, Stat, Times } from "../storage.ts";
-import { WasiError, WasiMemory } from "./internal_wasi_memory.ts";
+import { utf8ByteLength, WasiError, WasiMemory } from "./internal_wasi_memory.ts";
 import { complete, mapErrno, type WasiCall } from "./internal_wasi_calls.ts";
 import type { WasiMountedStorage } from "./internal_wasi_paths.ts";
 import {
@@ -288,7 +288,8 @@ export class WasiFdCalls {
     this.#memory.range(nread, 4);
     const vectors = this.#memory.iovecs(iovs, iovsLen);
     const limit = vectorLimit(this.#memory, vectors);
-    const position = normalizeU64(offset);
+    // signalbox: child continuation offsets resume the original positional read.
+    const position = normalizeU64(offset) + BigInt(this.#memory.transferOffset);
     if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     yield* this.#syncBeforeRead(descriptor);
     const count = yield* this.#readVectors(
@@ -329,7 +330,8 @@ export class WasiFdCalls {
     this.#memory.range(nwritten, 4);
     const vectors = this.#memory.iovecs(iovs, iovsLen);
     const source = this.#memory.copyIovecs(vectors, vectorLimit(this.#memory, vectors));
-    const position = normalizeU64(offset);
+    // signalbox: child continuation offsets resume the original positional write.
+    const position = normalizeU64(offset) + BigInt(this.#memory.transferOffset);
     if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     this.#requireWritable(descriptor);
     const count = yield* this.#writeBytes(
@@ -555,6 +557,7 @@ export class WasiFdCalls {
         this.#memory.writeRange(vector.pointer + offset, count).set(scratch.subarray(0, count));
         offset += count;
         total += count;
+        if (this.#memory.readOnce) return total;
         if (count < size) return total;
       }
     }
@@ -586,7 +589,13 @@ export class WasiFdCalls {
         const size = Math.min(vector.length - offset, limit - total, IO_CHUNK_BYTES);
         if (position + BigInt(total) + BigInt(size) > MAX_FILE_SIZE) throw new WasiError(EOVERFLOW);
         const scratch = new Uint8Array(size);
-        const count = yield* this.#readInto(descriptor, position + BigInt(total), scratch);
+        let count: number;
+        try {
+          count = yield* this.#readInto(descriptor, position + BigInt(total), scratch);
+        } catch (error) {
+          if (total > 0) return total;
+          throw error;
+        }
         validateCount(count, size);
         if (count === 0) return total;
         this.#memory.writeRange(vector.pointer + offset, count).set(scratch.subarray(0, count));
@@ -630,13 +639,19 @@ export class WasiFdCalls {
       const size = Math.min(source.byteLength - total, IO_CHUNK_BYTES);
       const offset = position + BigInt(total);
       if (offset + BigInt(size) > MAX_FILE_SIZE) throw new WasiError(EFBIG);
-      const count = yield* complete(
-        descriptor.mount.storage.write(
-          descriptor.inode,
-          offset,
-          source.subarray(total, total + size),
-        ),
-      );
+      let count: number;
+      try {
+        count = yield* complete(
+          descriptor.mount.storage.write(
+            descriptor.inode,
+            offset,
+            source.subarray(total, total + size),
+          ),
+        );
+      } catch (error) {
+        if (total > 0) return total;
+        throw error;
+      }
       validateCount(count, size);
       if (count === 0) throw new WasiError(EIO);
       total += count;
@@ -790,6 +805,7 @@ function normalizeTime(value: bigint): bigint {
   return time;
 }
 
+// signalbox: serialize only the requested byte window for child-internal readdir continuation.
 function encodeDirectoryEntries(
   memory: WasiMemory,
   pointer: number,
@@ -800,27 +816,53 @@ function encodeDirectoryEntries(
   const start = BigInt.asUintN(64, cookie);
   if (start > DIR_COOKIE_MAX) return 0;
   let index = Number(start);
-  let offset = 0;
+  let skipped = memory.transferOffset;
+  let written = 0;
+  const header = new Uint8Array(24);
+  const view = new DataView(header.buffer);
   memory.range(pointer, capacity);
   while (index < entries.length) {
     const entry = entries[index];
     if (entry === undefined) throw new TypeError("Invalid directory entry");
-    const name = new TextEncoder().encode(entry.name);
-    const recordLength = 24 + name.byteLength;
-    const record = new Uint8Array(recordLength);
-    const view = new DataView(record.buffer);
+    const nameLength = utf8ByteLength(entry.name);
+    const recordLength = 24 + nameLength;
+    header.fill(0);
     view.setBigUint64(0, BigInt(index + 1), true);
     view.setBigUint64(8, BigInt.asUintN(64, entry.inode), true);
-    view.setUint32(16, name.byteLength, true);
+    view.setUint32(16, nameLength, true);
     view.setUint8(20, filetype(entry.type));
-    record.set(name, 24);
-    const used = Math.min(recordLength, capacity - offset);
-    memory.writeRange(pointer + offset, used).set(record.subarray(0, used));
-    offset += used;
-    if (used < recordLength) break;
+    if (skipped >= recordLength) {
+      skipped -= recordLength;
+      index++;
+      continue;
+    }
+
+    const recordOffset = skipped;
+    skipped = 0;
+    const count = Math.min(recordLength - recordOffset, capacity - written);
+    const headerBytes =
+      recordOffset < header.byteLength ? Math.min(count, header.byteLength - recordOffset) : 0;
+    if (headerBytes > 0) {
+      memory
+        .writeRange(pointer + written, headerBytes)
+        .set(header.subarray(recordOffset, recordOffset + headerBytes));
+    }
+    const nameBytes = count - headerBytes;
+    if (nameBytes > 0) {
+      const nameOffset = Math.max(0, recordOffset - header.byteLength);
+      const copied = memory.writeUtf8Slice(
+        pointer + written + headerBytes,
+        entry.name,
+        nameOffset,
+        nameBytes,
+      );
+      if (copied !== nameBytes) throw new TypeError("Directory entry UTF-8 slice was incomplete");
+    }
+    written += count;
+    if (count < recordLength - recordOffset) break;
     index++;
   }
-  return offset;
+  return written;
 }
 
 function nonblockingResult(result: number | Promise<number>, flags: number) {

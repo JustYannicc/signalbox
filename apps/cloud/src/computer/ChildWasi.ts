@@ -1,9 +1,12 @@
 import {
   KERNEL_SYSCALL_INITIAL_WINDOW,
+  MAX_TRANSFER_BYTES,
   type KernelSyscallPort,
+  type KernelSyscallResponse,
 } from "../kernel/KernelSyscallPort.ts";
 import { KernelProcessSignal, kernelProcessExitStatus } from "../kernel/KernelProcessSignal.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
+import { childWasiIo } from "./ChildWasiIo.ts";
 
 type WasmArgument = number | bigint;
 type WasiMemoryPlan = (
@@ -28,7 +31,6 @@ interface EncodedOptions {
 
 const WASI_NAMESPACES = new Set(["wasi_snapshot_preview1", "wasi_unstable"]);
 const encoder = new TextEncoder();
-const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
 
 const noMemory: WasiMemoryPlan = () => {};
 const pointer = (args: readonly WasmArgument[], index: number): number => {
@@ -233,6 +235,17 @@ export function createChildWasi(options: ChildWasiOptions) {
         }
         return 0;
       }
+      const io = await childWasiIo({
+        name: imported.name,
+        args,
+        memory,
+        syscalls: options.syscalls,
+        transferWindow: () => transferWindow,
+        returned,
+      });
+      if (typeof io === "number") return io;
+      if (io?.kind === "exit") throw new ChildWasiExit(io.code);
+      if (io?.kind === "signal") throw new KernelProcessSignal(io.signal);
       const regions = new MemoryRegions(memory, transferWindow);
       MEMORY_PLANS[imported.name]!(regions, args, encoded);
       const requestRegions = regions.snapshot();
@@ -241,6 +254,7 @@ export function createChildWasi(options: ChildWasiOptions) {
         args,
         memorySize: memory.buffer.byteLength,
         regions: requestRegions,
+        transferOffset: 0,
       });
       if (response.kind === "exit") throw new ChildWasiExit(response.code);
       if (response.kind === "signal") throw new KernelProcessSignal(response.signal);
@@ -248,18 +262,20 @@ export function createChildWasi(options: ChildWasiOptions) {
         throw new Error("WASI proc_exit returned without exiting the child");
       }
       regions.apply(response.regions);
-      if (response.transferWindow !== undefined) {
-        if (
-          !Number.isSafeInteger(response.transferWindow) ||
-          response.transferWindow < KERNEL_SYSCALL_INITIAL_WINDOW ||
-          response.transferWindow > MAX_TRANSFER_BYTES
-        ) {
-          throw new TypeError("Invalid syscall transfer window");
-        }
-        transferWindow = response.transferWindow;
-      }
+      returned(response);
       return response.value;
     });
+  }
+
+  function returned(response: Extract<KernelSyscallResponse, { kind: "return" }>): void {
+    if (response.transferWindow === undefined) return;
+    if (
+      !Number.isSafeInteger(response.transferWindow) ||
+      response.transferWindow < KERNEL_SYSCALL_INITIAL_WINDOW ||
+      response.transferWindow > MAX_TRANSFER_BYTES
+    )
+      throw new TypeError("Invalid syscall transfer window");
+    transferWindow = response.transferWindow;
   }
 
   function bind(candidate: WebAssembly.Instance): void {

@@ -1,6 +1,6 @@
 import * as NodeBuffer from "node:buffer";
 import { WasiMemory } from "../wasi/internal_wasi_memory.ts";
-import type { KernelMemoryRegion } from "../KernelSyscallPort.ts";
+import { MAX_TRANSFER_BYTES, type KernelMemoryRegion } from "../KernelSyscallPort.ts";
 import { ownKernelPayload } from "../KernelPayloadBudget.ts";
 
 interface BoundRegion {
@@ -17,23 +17,49 @@ interface BoundRegion {
 export class SyscallMemory extends WasiMemory {
   #size = 0;
   #regions: BoundRegion[] = [];
-  #transferLimit = 16 * 1024 * 1024;
+  #transferLimit = MAX_TRANSFER_BYTES;
+  #transferOffset = 0;
+  #readOnce = false;
   #credited = false;
 
   override get transferLimit(): number {
     return this.#transferLimit;
   }
 
+  override get transferOffset(): number {
+    return this.#transferOffset;
+  }
+
+  override get readOnce(): boolean {
+    return this.#readOnce;
+  }
+
   override get byteLength(): number {
     return this.#size;
   }
 
-  bind(size: number, regions: readonly KernelMemoryRegion[], transferLimit?: number) {
+  bind(
+    size: number,
+    regions: readonly KernelMemoryRegion[],
+    transferLimit?: number,
+    transfer?: { readonly offset: number; readonly readOnce: boolean },
+  ) {
     if (!Number.isSafeInteger(size) || size < 0 || size > 0x1_0000_0000) {
       throw new TypeError("Invalid guest memory size");
     }
     let previousEnd = 0;
-    this.#transferLimit = transferLimit ?? 16 * 1024 * 1024;
+    this.#transferLimit = transferLimit ?? MAX_TRANSFER_BYTES;
+    const transferOffset = transfer?.offset ?? 0;
+    const readOnce = transfer?.readOnce ?? false;
+    if (
+      !Number.isSafeInteger(transferOffset) ||
+      transferOffset < 0 ||
+      typeof readOnce !== "boolean"
+    ) {
+      throw new TypeError("Invalid syscall transfer metadata");
+    }
+    this.#transferOffset = transferOffset;
+    this.#readOnce = readOnce;
     this.#credited =
       transferLimit !== undefined && regions.every((region) => region.direction !== undefined);
     this.#regions = regions.map((region) => {
@@ -86,6 +112,25 @@ export class SyscallMemory extends WasiMemory {
     if (nonempty.length === 1)
       return ownKernelPayload(this.range(nonempty[0]!.pointer, totalLength));
     return ownKernelPayload(super.copyIovecs(vectors, totalLength));
+  }
+
+  override iovecs(pointer: number, count: number): Array<{ pointer: number; length: number }> {
+    const vectors = super.iovecs(pointer, count);
+    let skipped = this.#transferOffset;
+    const remaining: Array<{ pointer: number; length: number }> = [];
+    for (const vector of vectors) {
+      if (skipped > 0 && skipped >= vector.length) {
+        skipped -= vector.length;
+        continue;
+      }
+      if (skipped > 0) {
+        remaining.push({ pointer: vector.pointer + skipped, length: vector.length - skipped });
+        skipped = 0;
+      } else {
+        remaining.push(vector);
+      }
+    }
+    return remaining;
   }
 
   override range(pointer: number, length: number): Uint8Array<ArrayBuffer> {

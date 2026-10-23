@@ -120,7 +120,7 @@ export function createChildWorkerProgram<Host extends object>(
         let failure: ChildWorkerDispatchError | undefined;
         let dispatched = false;
         try {
-          // Admission reserves the first payload window before the child can send any bytes.
+          // Host setup must finish before the worker receives its capability.
           await owner.ready;
           context.signal.throwIfAborted();
           dispatched = true;

@@ -2,6 +2,8 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { MAX_TRANSFER_BYTES } from "../KernelSyscallPort.ts";
+
 const EFAULT = 21;
 const EILSEQ = 25;
 const EINVAL = 28;
@@ -35,9 +37,18 @@ export class WasiExit extends Error {
 export class WasiMemory {
   #memory: WebAssembly.Memory | undefined;
 
-  // signalbox: child RPC credits bound the prefix without changing the original iovec validation.
+  // signalbox: child transfer metadata stays private to RPCs and defaults off for ordinary WASI.
+  get transferOffset(): number {
+    return 0;
+  }
+
+  get readOnce(): boolean {
+    return false;
+  }
+
+  // signalbox: child RPC credits bound each prefix without changing original iovec validation.
   get transferLimit(): number {
-    return 16 * 1024 * 1024;
+    return MAX_TRANSFER_BYTES;
   }
 
   // signalbox: syscall memory can lend its owned input, while ordinary guest memory needs a copy.
@@ -150,6 +161,29 @@ export class WasiMemory {
     return result;
   }
 
+  // signalbox: directory/link windows avoid encoding complete names or targets into temporary buffers.
+  writeUtf8Slice(pointer: number, value: string, offset: number, length: number): number {
+    const totalBytes = utf8ByteLength(value);
+    if (offset >= totalBytes || length === 0) return 0;
+    const used = Math.min(length, totalBytes - offset);
+    const output = this.writeRange(pointer, used);
+    const end = offset + used;
+    let byteOffset = 0;
+    let written = 0;
+    for (const encoded of utf8Chunks(value)) {
+      const first = Math.max(offset, byteOffset);
+      const last = Math.min(end, byteOffset + encoded.byteLength);
+      if (first < last) {
+        output.set(encoded.subarray(first - byteOffset, last - byteOffset), written);
+        written += last - first;
+      }
+      byteOffset += encoded.byteLength;
+      if (byteOffset >= end) break;
+    }
+
+    return written;
+  }
+
   writeStrings(strings: string[], pointers: number, buffer: number): void {
     const encoded = strings.map((value) => {
       if (value.includes("\0")) {
@@ -180,6 +214,25 @@ export class WasiMemory {
 
   stringSizes(strings: string[]): { count: number; size: number } {
     return sizeEncodedStrings(strings.map((value) => encoder.encode(value)));
+  }
+}
+
+export function utf8ByteLength(value: string): number {
+  let size = 0;
+  for (const bytes of utf8Chunks(value)) size += bytes.byteLength;
+  return size;
+}
+
+function* utf8Chunks(value: string) {
+  const scratch = new Uint8Array(4096);
+  for (let offset = 0; offset < value.length;) {
+    let end = Math.min(offset + 1024, value.length);
+    const last = value.charCodeAt(end - 1);
+    // Keep a surrogate pair in one encoder invocation; encodeInto replaces isolated surrogates.
+    if (end < value.length && last >= 0xd800 && last <= 0xdbff) end--;
+    const { read, written } = encoder.encodeInto(value.slice(offset, end), scratch);
+    offset += read;
+    yield scratch.subarray(0, written);
   }
 }
 

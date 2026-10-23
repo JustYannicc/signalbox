@@ -183,7 +183,6 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
           );
           if (spawned.status !== "ok")
             return { kind: "error" as const, errno: resultErrno(spawned, "fork") };
-          await child!.ready;
           return { kind: "fork" as const, pid: spawned.value.pid, port: child!.port };
         }),
       wait: (pid, flags) =>

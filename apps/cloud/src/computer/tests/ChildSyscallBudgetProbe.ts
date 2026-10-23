@@ -25,13 +25,12 @@ const module = wasmImportReactor(
 const fixtures = Array.from({ length: count }, () => {
   const pipe = new KernelPipe(wakes);
   const entered = Promise.withResolvers<void>();
-  let reads = 0;
   const filesystem = new KernelFileSystem({
     mounts: [],
     stdio: [
       {
         readInto: (bytes) => {
-          if (++reads === 2) entered.resolve();
+          entered.resolve();
           return pipe.readInto(bytes);
         },
       },
@@ -76,11 +75,7 @@ const fixtures = Array.from({ length: count }, () => {
   for (let i = 0; i < data.length; i++) data[i] = i % 251;
   const expected = NodeCrypto.createHash("sha256").update(data).digest("hex");
   if (direction === "read") data.fill(0xa5);
-  pipe.tryWrite(
-    direction === "read"
-      ? Uint8Array.from({ length: 65_536 }, (_, i) => i % 251)
-      : new Uint8Array(65_536),
-  );
+  if (direction === "write") pipe.tryWrite(new Uint8Array(65_536));
   const view = new DataView(memory.buffer);
   async function warm() {
     await host.ready;
@@ -154,7 +149,7 @@ try {
         NodeAssert.equal(hash.digest("hex"), fixture.expected);
       } else {
         const chunk = new Uint8Array(65_536);
-        for (let offset = 65_536; offset < SIZE; offset += chunk.length) {
+        for (let offset = 0; offset < SIZE; offset += chunk.length) {
           for (let i = 0; i < chunk.length; i++) chunk[i] = (offset + i) % 251;
           let written = 0;
           while (written < chunk.length)
