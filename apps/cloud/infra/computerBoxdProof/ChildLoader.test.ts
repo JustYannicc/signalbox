@@ -29,6 +29,7 @@ async function invocation(program: (typeof programs)[number]): Promise<ChildWork
   if (typeof code.modules !== "function") throw new Error("Expected pinned module factory");
   return {
     ...code,
+    loaderId: `proof-pinned-child-loader-${program.path}`,
     modules: await code.modules(),
     command: { executable: program.path, argv: [program.path], cwd: "/workspace", env: {} },
   };

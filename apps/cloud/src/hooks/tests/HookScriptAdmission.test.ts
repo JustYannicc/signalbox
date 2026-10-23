@@ -47,7 +47,7 @@ it("runs a script hook after its invoking shell acknowledges stop", async () => 
     },
     capacity: {
       acquire(signal, requester) {
-        const pending = capacity.acquire(signal, requester);
+        const pending = capacity.acquire(signal, requester, syntheticRequest);
         attempted.resolve();
         return pending;
       },

@@ -161,7 +161,7 @@ describe("CodeMode framed protocol admission", () => {
 
   it.each(["cancel", "shutdown", "disconnect"])("cancels queued cells on %s", async (action) => {
     const capacity = new ChildWorkerCapacity(1);
-    const held = await capacity.acquire(new AbortController().signal, undefined);
+    const held = await capacity.acquire(new AbortController().signal, undefined, syntheticRequest);
     const queued = Promise.withResolvers<void>();
     const acquire = capacity.acquire.bind(capacity);
     vi.spyOn(capacity, "acquire").mockImplementation((...args) => {

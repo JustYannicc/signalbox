@@ -68,13 +68,17 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
   }
 
   async call(request: KernelSyscallRequest) {
-    this.#lease.observe(request.memorySize);
+    this.#lease.observe(request.residentWasmBytes ?? request.memorySize);
     return this.#port.get().call(request);
   }
 
   async callBash(request: KernelBashCall) {
-    this.#lease.observe(request.memorySize);
+    this.#lease.observe(request.residentWasmBytes ?? request.memorySize);
     return this.#port.get().callBash(request);
+  }
+
+  observeResident(bytes: number) {
+    this.#lease.observe(bytes);
   }
 
   async fork() {

@@ -19,7 +19,7 @@ const plans: Readonly<Record<string, NimbusMemoryPlan>> = {
 
 export function createChildBashImports(options: {
   readonly module: WebAssembly.Module;
-  readonly port: KernelBashPort;
+  readonly port: Pick<KernelBashPort, "callBash">;
 }) {
   const wasm = WebAssembly as unknown as {
     Suspending: new (handler: (...args: number[]) => Promise<number>) => WebAssembly.ImportValue;

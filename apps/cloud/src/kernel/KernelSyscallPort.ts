@@ -12,6 +12,8 @@ export interface KernelSyscallRequest {
   readonly name: string;
   readonly args: readonly (number | bigint)[];
   readonly memorySize: number;
+  /** A packed reactor reports all its live WASM memories; memorySize still bounds this call's ABI. */
+  readonly residentWasmBytes?: number;
   readonly regions: readonly KernelMemoryRegion[];
 }
 

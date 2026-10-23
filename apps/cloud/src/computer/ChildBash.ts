@@ -1,6 +1,7 @@
 import { createKernelBashReactor } from "../kernel/KernelBashReactor.ts";
 import type { KernelBashCredentials } from "../kernel/KernelBashProgram.ts";
-import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
+import type { KernelBashCall, KernelBashPort } from "../kernel/KernelBashPort.ts";
+import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
 import { createChildWasi } from "./ChildWasi.ts";
 import { createChildBashImports } from "./ChildBashImports.ts";
 import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
@@ -23,9 +24,15 @@ export function createChildBash(options: ChildBashOptions) {
     ...options,
     // Half of Workers' 128 MiB leaves room for JS, RPC buffers and guest growth.
     residentWasmBudgetBytes: options.residentWasmBudgetBytes ?? 64 * 1024 * 1024,
-    createBinding(port) {
-      const wasi = createChildWasi({ ...options, syscalls: port });
-      const bash = createChildBashImports({ module: options.module, port });
+    createBinding(port, residentWasmBytes) {
+      const observed = {
+        call: (request: KernelSyscallRequest) =>
+          port.call({ ...request, residentWasmBytes: residentWasmBytes() }),
+        callBash: (request: KernelBashCall) =>
+          port.callBash({ ...request, residentWasmBytes: residentWasmBytes() }),
+      };
+      const wasi = createChildWasi({ ...options, syscalls: observed });
+      const bash = createChildBashImports({ module: options.module, port: observed });
       return {
         imports: { ...wasi.imports, ...bash.imports },
         bind(instance) {

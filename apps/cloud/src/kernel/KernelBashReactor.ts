@@ -26,7 +26,10 @@ export interface KernelBashReactorOptions {
   readonly credentials: KernelBashCredentials;
   readonly pid: number;
   readonly port: KernelBashPort;
-  readonly createBinding: (port: KernelBashPort) => KernelBashReactorBinding;
+  readonly createBinding: (
+    port: KernelBashPort,
+    residentWasmBytes: () => number,
+  ) => KernelBashReactorBinding;
   readonly snapshot?: KernelBashForkSource | undefined;
   readonly createForkSource?: (source: KernelBashForkSource) => KernelBashForkSource;
 }
@@ -48,7 +51,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
   };
 
   function create(pid: number, port: KernelBashPort) {
-    const binding = options.createBinding(port);
+    const binding = options.createBinding(port, residentWasmBytes);
     // Instance construction needs these closures before exports exist. They run only after binding.
     const process = {
       stats: { mainHi: 0, captureBytesHi: 0, captureCompactions: 0, captureLiveHi: 0 },
@@ -88,7 +91,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
     const ex = process.exports;
     for (;;) {
       const result = await binding.run(ex._start);
-      residentWasmBytes();
+      await port.observeResident?.(residentWasmBytes());
       if (typeof result === "number") return status(result);
       const pending = process.pending;
       process.pending = undefined;

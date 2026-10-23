@@ -1,5 +1,6 @@
 import { RpcTarget } from "cloudflare:workers";
-import { childWorkerId } from "./ChildWorkerIdentity.ts";
+import { createChildWorkerDispatchCode } from "./ChildWorkerDispatchCode.ts";
+export { childWorkerDispatchCodeId } from "./ChildWorkerDispatchCode.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
 import {
   acknowledgeChildWorkerMemoryLoss,
@@ -7,7 +8,7 @@ import {
   isChildWorkerMemoryLimitFailure,
   requireChildWorkerLoaderId,
 } from "./ChildWorkerLoaderRecovery.ts";
-import { resolveChildWorkerLimits, type ResolvedChildWorkerLimits } from "./ChildWorkerLimits.ts";
+import { resolveChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import type { ChildWorkerDispatch, ChildWorkerInvocation } from "./ChildWorkerProgram.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 
@@ -53,59 +54,6 @@ class ChildInvocation<Host extends object> extends RpcTarget {
   }
 }
 
-function dispatchModules(
-  input: Omit<ChildWorkerInvocation, "loaderId">,
-  limits: ResolvedChildWorkerLimits,
-) {
-  let wrapper = "__signalbox_child_dispatch.js";
-  const paths = new Set(
-    Object.keys(input.modules).map((name) => new URL(name, "https://child.invalid/").pathname),
-  );
-  while (paths.has(`/${wrapper}`)) wrapper = `_${wrapper}`;
-  return {
-    mainModule: wrapper,
-    modules: {
-      ...input.modules,
-      [wrapper]: `import {WorkerEntrypoint} from "cloudflare:workers";
-export default class extends WorkerEntrypoint {
-  async run(command, invocation) {
-    try {
-      using host = await invocation.host();
-      const module = await import(${JSON.stringify(`./${input.mainModule}`)});
-      const User = module[${JSON.stringify(input.entrypoint ?? "default")}];
-      const user = new User(this.ctx, this.env);
-      return await user.run(command, host);
-    } finally {
-      await invocation.stopped();
-    }
-  }
-}
-`,
-    },
-    limits,
-  };
-}
-
-function workerCodeFor(
-  input: Omit<ChildWorkerInvocation, "loaderId">,
-  limits: ResolvedChildWorkerLimits,
-) {
-  return {
-    compatibilityDate: "2026-10-19",
-    compatibilityFlags: ["nodejs_compat"],
-    ...dispatchModules(input, limits),
-    globalOutbound: null,
-  };
-}
-
-/** The admission code ID describes wrapped modules and normalized Worker Loader policy. */
-export async function childWorkerDispatchCodeId(
-  input: Omit<ChildWorkerInvocation, "loaderId">,
-): Promise<string> {
-  const limits = resolveChildWorkerLimits(input.limits);
-  return childWorkerId(workerCodeFor(input, limits));
-}
-
 /** Code and syscalls are supplied by Computer; guest programs receive no outbound network binding. */
 export function createWorkerLoaderDispatch<Host extends object>(
   loader: WorkerLoader | ChildWorkerLoaderPort,
@@ -127,7 +75,7 @@ export function createWorkerLoaderDispatch<Host extends object>(
       let invokingChild = false;
       try {
         const loaderId = requireChildWorkerLoaderId(input);
-        const workerCode = workerCodeFor(input, limits);
+        const workerCode = createChildWorkerDispatchCode(input, limits);
         const code = {
           mainModule: workerCode.mainModule,
           modules: workerCode.modules,

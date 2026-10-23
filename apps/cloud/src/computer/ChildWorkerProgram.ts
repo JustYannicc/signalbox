@@ -1,5 +1,5 @@
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
-import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
+import type { KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import { ChildHostLease } from "./ChildHostLease.ts";
 import {
@@ -10,31 +10,18 @@ import {
   type ChildWorkerSlotRequest,
 } from "./ChildWorkerCapacity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
-import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
+import { resolveChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
 import { createChildWorkerPreparation } from "./ChildWorkerPreparation.ts";
 
-export type ChildWorkerModule =
-  | string
-  | { readonly js: string }
-  | { readonly wasm: ArrayBuffer | WebAssembly.Module }
-  | { readonly wasmReference: string };
-
-export type ChildWorkerModules = Readonly<Record<string, ChildWorkerModule>>;
-export type ChildWorkerModulesFactory = () => ChildWorkerModules | Promise<ChildWorkerModules>;
-
-export interface ChildWorkerCode {
-  readonly mainModule: string;
-  readonly modules: ChildWorkerModules | ChildWorkerModulesFactory;
-  readonly entrypoint?: string;
-  readonly limits?: ChildWorkerLimits;
-}
-
-export interface ChildWorkerInvocation extends Omit<ChildWorkerCode, "modules"> {
-  readonly loaderId: string;
-  readonly modules: ChildWorkerModules;
-  readonly command: KernelCommand;
-}
+import type { ChildWorkerCode, ChildWorkerInvocation } from "./ChildWorkerCode.ts";
+export type {
+  ChildWorkerModule,
+  ChildWorkerModules,
+  ChildWorkerModulesFactory,
+  ChildWorkerCode,
+  ChildWorkerInvocation,
+} from "./ChildWorkerCode.ts";
 
 export interface ChildWorkerDispatch<Host extends object> {
   /** The permit follows this promise, including any descendant continuations in the worker. */

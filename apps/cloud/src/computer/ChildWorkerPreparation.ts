@@ -1,6 +1,6 @@
 import type { ChildWorkerSlotRequest } from "./ChildWorkerCapacity.ts";
-import type { ChildWorkerCode, ChildWorkerModules } from "./ChildWorkerProgram.ts";
-import { childWorkerDispatchCodeId } from "./WorkerLoaderDispatch.ts";
+import type { ChildWorkerCode, ChildWorkerModules } from "./ChildWorkerCode.ts";
+import { childWorkerDispatchCodeId } from "./ChildWorkerDispatchCode.ts";
 
 /** Admission and execution must use the same captured modules, including factory output. */
 export function createChildWorkerPreparation(code: ChildWorkerCode) {

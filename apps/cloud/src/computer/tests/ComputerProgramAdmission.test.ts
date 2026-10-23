@@ -9,7 +9,7 @@ import { createComputerProgramAdmission } from "../ComputerProgramAdmission.ts";
 import { ComputerEscalationTable } from "../EscalationTable.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
 
-vi.mock("cloudflare:workers", () => ({ RpcTarget: class {} }));
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 function prepared() {
   return Object.freeze({ codeId: "admission-test", residentBytes: 0 });
