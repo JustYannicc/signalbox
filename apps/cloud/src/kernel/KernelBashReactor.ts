@@ -4,7 +4,7 @@ import type { KernelExitStatus } from "./KernelProcessTable.ts";
 import { KernelProcessSignal } from "./KernelProcessSignal.ts";
 import { createBashInstance } from "./bash/BashInstance.ts";
 import { createBashEnvironment } from "./bash/BashEnvironment.ts";
-import { range } from "./bash/BashMemory.ts";
+import { errno, range } from "./bash/BashMemory.ts";
 import type { KernelBashForkSource } from "./KernelBashFork.ts";
 import {
   type KernelBashCheckpointContinuation,
@@ -26,6 +26,15 @@ import {
 const MIB = 1024 * 1024;
 const DEFAULT_LOCAL_FORK_PACKING_BYTES = 64 * MIB;
 const PAGE_BYTES = 65_536;
+
+class BashForkStartError extends Error {
+  readonly errno: number;
+
+  constructor(errno: number, cause: unknown) {
+    super("Bash fork worker stopped before restoring its snapshot", { cause });
+    this.errno = errno;
+  }
+}
 
 export interface KernelBashReactorBinding {
   readonly imports: WebAssembly.Imports;
@@ -131,6 +140,27 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
   }
 
   type Process = ReturnType<typeof create>;
+
+  async function createInitialProcess(): Promise<Process> {
+    let current: Process | undefined;
+    try {
+      current = create(options.pid, options.port);
+      if (options.snapshot !== undefined) {
+        current.process.checkpoint = await restoreBashFork(current.process, options.snapshot);
+        current.placed = true;
+        await options.snapshot.restored();
+      }
+      return current;
+    } catch (error) {
+      if (current !== undefined) {
+        await current.port.complete({ kind: "failure", message: String(error) });
+        resident.delete(current.process.exports.memory);
+      }
+      throw error;
+    } finally {
+      if (options.snapshot !== undefined) disposeFork(options.snapshot);
+    }
+  }
 
   async function execute(current: Process): Promise<KernelExitStatus> {
     const { process, binding, pid, port } = current;
@@ -362,6 +392,13 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
       rewindBash(process);
       return false;
     } catch (error) {
+      if (error instanceof BashForkStartError) {
+        process.resume = -error.errno;
+        process.pending = undefined;
+        dispose();
+        rewindBash(process);
+        return false;
+      }
       try {
         await forked.port.complete({ kind: "failure", message: String(error) });
       } finally {
@@ -477,22 +514,35 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
     const snapshot = createBashForkSnapshot(current.process, continuation);
     const source = await forkSource(snapshot.source);
     const remote = Promise.resolve().then(() => forked.port.runFork(source));
-    const copied = remote.then(() => {
-      throw new Error("Bash fork worker stopped before restoring its snapshot");
-    });
     const completion = remote.finally(dispose).then(
       () => {},
       () => {},
     );
     children.add(completion);
     void completion.then(() => children.delete(completion));
+    const outcome = await Promise.race([
+      snapshot.copied.then(() => ({ kind: "copied" as const })),
+      remote.then(
+        (status) => ({ kind: "exit" as const, status }),
+        (error: unknown) => ({ kind: "failure" as const, error }),
+      ),
+    ]);
+    if (outcome.kind === "copied") return;
+    snapshot.discard();
+    if (outcome.kind === "exit" && outcome.status.signal !== 0) return;
+
+    const failure =
+      outcome.kind === "failure"
+        ? outcome.error
+        : Object.assign(new Error("Bash fork worker exited before restoring its snapshot"), {
+            code: "EIO",
+          });
     try {
-      await Promise.race([snapshot.copied, copied]);
-    } catch (error) {
-      snapshot.discard();
       await current.port.wait(forked.pid, 0);
-      throw error;
+    } catch {
+      // The remote completion is already observed; wait only removes its process-table entry.
     }
+    throw new BashForkStartError(errno(failure), failure);
   }
 
   async function forkSource(source: KernelBashForkSource): Promise<KernelBashForkSource> {
@@ -512,19 +562,26 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
   }
 
   async function runProcess(current: Process): Promise<KernelExitStatus> {
-    let result: KernelExitStatus;
     try {
-      result = await execute(current);
-    } catch (error) {
-      if (error instanceof KernelProcessSignal) result = error.exitStatus;
-      else {
-        if (!current.process.parked)
-          await current.port.complete({ kind: "failure", message: String(error) });
-        throw error;
+      let result: KernelExitStatus;
+      try {
+        result = await execute(current);
+      } catch (error) {
+        if (error instanceof KernelProcessSignal) result = error.exitStatus;
+        else {
+          if (!current.process.parked)
+            await current.port.complete({
+              kind: "failure",
+              message: error instanceof Error ? (error.stack ?? error.message) : String(error),
+            });
+          throw error;
+        }
       }
+      if (!current.process.parked) await current.port.complete({ kind: "exit", status: result });
+      return result;
+    } finally {
+      resident.delete(current.process.exports.memory);
     }
-    if (!current.process.parked) await current.port.complete({ kind: "exit", status: result });
-    return result;
   }
 
   return {
@@ -540,18 +597,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
     async run(): Promise<KernelExitStatus> {
       if (root !== undefined) throw new Error("GNU Bash reactor has already started");
       root = Promise.resolve().then(async () => {
-        const current = create(options.pid, options.port);
-        if (options.snapshot !== undefined) {
-          try {
-            current.process.checkpoint = await restoreBashFork(current.process, options.snapshot);
-            current.placed = true;
-            await options.snapshot.restored();
-          } catch (error) {
-            await current.port.complete({ kind: "failure", message: String(error) });
-            resident.delete(current.process.exports.memory);
-            throw error;
-          }
-        }
+        const current = await createInitialProcess();
         return run(current);
       });
       void root.catch(() => {});

@@ -6,7 +6,7 @@ export function bashMain(entrypoint: string): string {
     `export class ${entrypoint} extends WorkerEntrypoint {`,
     "  async run(command, owner) {",
     "    const { pid, credentials, residentByteLimit } = await owner.metadata();",
-    "    using snapshot = await owner.forkSnapshot();",
+    "    const snapshot = await owner.forkSnapshot();",
     "    const bash = createWorkerChildBash({ module, credentials, pid, port: owner, args: command.argv, env: command.env, snapshot, residentWasmBudgetBytes: residentByteLimit });",
     "    try { return await bash.run(); } finally { await bash.drain(); }",
     "  }",
