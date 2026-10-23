@@ -29,6 +29,7 @@ export function continuationNativeFixture(
   record?: (message: Message) => void,
   batch = false,
   opaque = false,
+  producerIdentities = false,
 ) {
   let selectedNativeId = nativeId;
   const native = nativeFixture(nativeId, identity, undefined, () => selectedNativeId);
@@ -62,6 +63,7 @@ export function continuationNativeFixture(
   const batchTasks = [1, 2, 3].map((index) => ({
     taskId: `background-task-${index}`,
     callId: `toolu_background_task_${index}`,
+    runId: `native-background-run-${index}`,
   }));
   const batchBlocks = batchTasks.map(({ taskId, callId }, index) => ({
     type: "text" as const,
@@ -159,6 +161,9 @@ export function continuationNativeFixture(
                   {
                     ...taskStarted,
                     ...(opaque ? { task_type: "local_bash" } : {}),
+                    ...(producerIdentities
+                      ? { task_type: "local_agent", is_backgrounded: true, run_id: task.runId }
+                      : {}),
                     task_id: task.taskId,
                     tool_use_id: task.callId,
                     uuid: `00000000-0000-4000-8000-00000000001${index}`,
@@ -185,6 +190,9 @@ export function continuationNativeFixture(
                     {
                       ...taskStarted,
                       task_type: "local_bash",
+                      ...(producerIdentities
+                        ? { task_type: "local_agent", is_backgrounded: true, run_id: task.runId }
+                        : {}),
                       task_id: task.taskId,
                       tool_use_id: task.callId,
                       uuid: `00000000-0000-4000-8000-00000000001${index}`,
@@ -197,6 +205,7 @@ export function continuationNativeFixture(
                     ...taskNotification,
                     task_id: task.taskId,
                     tool_use_id: task.callId,
+                    ...(producerIdentities ? { run_id: task.runId } : {}),
                     uuid: `00000000-0000-4000-8000-00000000002${index}`,
                   },
                 ]);
@@ -272,5 +281,6 @@ export function continuationNativeFixture(
     batchUuid,
     batchBlocks,
     batchCalls: batchTasks.map((task) => task.callId),
+    batchTaskIds: batchTasks.map((task) => task.taskId),
   };
 }

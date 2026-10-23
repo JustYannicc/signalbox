@@ -16,15 +16,17 @@ try {
   await run(
     NodeWorkerThreads.workerData === "startup-failure"
       ? "startup-failure"
-      : NodeWorkerThreads.workerData === "unjoined-batch"
-        ? "unjoined-batch"
-        : NodeWorkerThreads.workerData === "boundary-batch"
-          ? "boundary-batch"
-          : NodeWorkerThreads.workerData === "batch"
-            ? "batch"
-            : NodeWorkerThreads.workerData === "revoke"
-              ? "revoke"
-              : "continue",
+      : NodeWorkerThreads.workerData === "native-bound-batch"
+        ? "native-bound-batch"
+        : NodeWorkerThreads.workerData === "unjoined-batch"
+          ? "unjoined-batch"
+          : NodeWorkerThreads.workerData === "boundary-batch"
+            ? "boundary-batch"
+            : NodeWorkerThreads.workerData === "batch"
+              ? "batch"
+              : NodeWorkerThreads.workerData === "revoke"
+                ? "revoke"
+                : "continue",
   );
   port.postMessage({ ok: true });
 } catch (error) {

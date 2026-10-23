@@ -16,6 +16,7 @@ import { createProductClaudeThreadHost } from "../../../thread/ProductClaudeThre
 import {
   boundaryBatchContinuationHostInputs,
   unjoinedBatchContinuationHostInputs,
+  nativeBoundBatchContinuationHostInputs,
   batchContinuationHostInputs,
   continuationHostInputs,
 } from "./continuationHost.ts";
@@ -44,21 +45,27 @@ export const run = (
     | "startup-failure"
     | "batch"
     | "boundary-batch"
+    | "native-bound-batch"
     | "unjoined-batch" = "continue",
 ) =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const batchMode =
-          mode === "batch" || mode === "boundary-batch" || mode === "unjoined-batch";
+          mode === "batch" ||
+          mode === "boundary-batch" ||
+          mode === "native-bound-batch" ||
+          mode === "unjoined-batch";
         const knownAtDispatch = mode === "boundary-batch";
-        const input = yield* mode === "unjoined-batch"
-          ? unjoinedBatchContinuationHostInputs
-          : mode === "boundary-batch"
-            ? boundaryBatchContinuationHostInputs
-            : mode === "batch"
-              ? batchContinuationHostInputs
-              : continuationHostInputs;
+        const input = yield* mode === "native-bound-batch"
+          ? nativeBoundBatchContinuationHostInputs
+          : mode === "unjoined-batch"
+            ? unjoinedBatchContinuationHostInputs
+            : mode === "boundary-batch"
+              ? boundaryBatchContinuationHostInputs
+              : mode === "batch"
+                ? batchContinuationHostInputs
+                : continuationHostInputs;
         const { platform } = yield* threadPlatform;
         let actor = threadActor;
         let startupAttempts = 0;

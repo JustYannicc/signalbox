@@ -304,7 +304,7 @@
       "rpc": "automations.taskLifecycle",
       "access": "write",
       "input": "3213177c",
-      "output": "218c68eb"
+      "output": "172d107f"
     },
     {
       "name": "automations.validate",
@@ -1849,7 +1849,7 @@
       "rpc": "orchestration.launchThread",
       "access": "write",
       "input": "d5a4dd19",
-      "output": "d25d3a59"
+      "output": "278aa6ad"
     },
     {
       "name": "threads.delete",
@@ -1882,7 +1882,7 @@
       "rpc": "orchestration.getThreadProjection",
       "access": "read",
       "input": "1276a316",
-      "output": "13a511ad"
+      "output": "c7b02ce9"
     },
     {
       "name": "threads.getFullThreadDiff",
@@ -2122,7 +2122,7 @@
       "rpc": "orchestration.dispatchCommand",
       "command": "message.dispatch",
       "access": "write",
-      "input": "01f3a7a4",
+      "input": "86ce7a00",
       "output": "c5e5cd7a"
     },
     {
@@ -2169,7 +2169,7 @@
       "access": "read",
       "stream": "snapshot",
       "input": "438e44e7",
-      "output": "dc7ad24e"
+      "output": "ae4591c6"
     },
     {
       "name": "threads.subscribeArchived",

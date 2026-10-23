@@ -22,7 +22,7 @@ export const ProviderContinuationObservationRef = Schema.Struct({
 /** SDK observations carry no claim about the recorded source occurrence. */
 export const ProviderContinuationObservation = Schema.Struct({
   ...ProviderContinuationObservationRef.fields,
-  observedCallId: TrimmedNonEmptyString,
+  observedCallId: Schema.optional(TrimmedNonEmptyString),
   block: ProviderContinuationBlock,
 });
 export type ProviderContinuationObservation = typeof ProviderContinuationObservation.Type;
