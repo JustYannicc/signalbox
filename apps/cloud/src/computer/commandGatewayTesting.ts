@@ -209,6 +209,7 @@ function programCodes(): CommandProgramCodes {
     bash: code("bash"),
     busyboxCat: code("busybox-cat"),
     busyboxApplets: code("busybox-applets"),
+    sed: code("gnu-sed"),
     ripgrep: code("ripgrep"),
     coreutils,
     git: code("git"),

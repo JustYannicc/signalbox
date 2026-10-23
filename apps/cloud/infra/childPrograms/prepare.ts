@@ -4,7 +4,12 @@ import {
   CHILD_PROGRAM_PATHS,
   type ChildCoreutilsCommand,
 } from "../../src/computer/ChildProgramSet.ts";
-import { prepareMeasuredPrograms, type MeasuredChildProgramSources } from "./measured.ts";
+import {
+  prepareMeasuredPrograms,
+  readPinnedProgram,
+  type MeasuredChildProgramSources,
+} from "./measured.ts";
+import { KERNEL_GNU_SED_ARTIFACT } from "../../src/kernel/KernelGnuPrograms.ts";
 import { prepareBasePrograms } from "./basic.ts";
 import {
   readPinnedGitTemplates,
@@ -47,6 +52,7 @@ export interface FullChildProgramSources extends ChildProgramSources {
   readonly busyboxApplets: ChildProgramSourceCode;
   readonly coreutils: Readonly<Record<ChildCoreutilsCommand, ChildProgramSourceCode>>;
   readonly git: ChildProgramSourceCode;
+  readonly sed: ChildProgramSourceCode;
 }
 
 export type ChildProgramExecutablePath =
@@ -78,6 +84,7 @@ export interface PreparedChildPrograms extends ChildProgramSources {
   readonly busyboxApplets: ChildProgramSourceCode;
   readonly coreutils: Readonly<Record<ChildCoreutilsCommand, ChildProgramSourceCode>>;
   readonly git: ChildProgramSourceCode;
+  readonly sed: ChildProgramSourceCode;
   readonly programs: FullChildProgramSources;
   readonly executableFiles: readonly LegacyChildProgramExecutableFile[];
   readonly executableCatalog: LegacyChildProgramExecutableCatalog;
@@ -110,6 +117,12 @@ export async function prepareChildPrograms(
     ripgrepGraph,
   } = await prepareBasePrograms(options);
   const measured = await prepareMeasuredPrograms({ cloudRoot, programDir, sources, artifacts });
+  const sedArtifact = await readPinnedProgram(
+    programDir,
+    "sed.wasm",
+    KERNEL_GNU_SED_ARTIFACT,
+    artifacts,
+  );
   const gitTemplates = await readPinnedGitTemplates(programDir);
   for (const file of gitTemplates.dataFiles) {
     artifacts.set(file.path, {
@@ -137,6 +150,7 @@ export async function prepareChildPrograms(
     "src/kernel/KernelBashProgram.ts",
     "src/kernel/KernelBusyboxProgram.ts",
     "src/kernel/KernelBusyboxPrograms.ts",
+    "src/kernel/KernelGnuPrograms.ts",
     "src/kernel/KernelCoreutilsPrograms.ts",
     "src/kernel/KernelGitProgram.ts",
     "src/kernel/KernelRipgrepProgram.ts",
@@ -152,6 +166,7 @@ export async function prepareChildPrograms(
     ripgrep: ripgrepGraph.code,
     coreutils: measured.coreutils,
     git: measured.git,
+    sed: busyboxGraph.code,
   });
   const inventory: ChildProgramSourceInventory = Object.freeze({
     format: "signalbox-child-programs-v1",
@@ -164,6 +179,7 @@ export async function prepareChildPrograms(
       ripgrep: programInventory(ripgrepGraph),
       coreutils: programInventory(measured.graphs.coreutils),
       git: programInventory(measured.graphs.git),
+      sed: programInventory(busyboxGraph),
     }),
   });
   const commandExecutableFiles = Object.freeze([
@@ -175,6 +191,7 @@ export async function prepareChildPrograms(
       executableFile(CHILD_PROGRAM_PATHS[applet], busyboxArtifact),
     ),
     ...measured.files,
+    executableFile("/bin/sed", sedArtifact),
   ]);
   const commandExecutableCatalog = createChildProgramExecutableCatalog(commandExecutableFiles);
   const executableFiles = Object.freeze(

@@ -1,0 +1,183 @@
+{
+  "program": "GNU sed 4.9",
+  "version": "4.9+wasi.1",
+  "license": "GPL-3.0-or-later",
+  "image": "node@sha256:14078204b6bb268c107ceff6d3c43f45a888105e5c2b18b14c32b3409d93a1b0",
+  "recipeSha256": "cb0c9adc85c516e4effedc9f404634751b145013993720406ff70fffe3a2e725",
+  "source": {
+    "url": "https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz",
+    "sha256": "6e226b732e1cd739464ad6862bd1a1aba42d7982922da7a53519631d24975181"
+  },
+  "nimbus": {
+    "revision": "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
+    "archiveSha256": "f7024781c3dc2be1325efa1279aa9682cd84a2cd48f7782eb87ccd90ff0f1c12"
+  },
+  "toolchain": {
+    "wasiSdk": "25.0 arm64 Linux, clang 19.1.5",
+    "archiveSha256": "47fccad8b2498f2239e05e1115c3ffc652bf37e7de2f88fb64b2d663c976ce2d",
+    "jobs": 2
+  },
+  "patches": [
+    {
+      "path": "patches/0001-sed-wasi-fd-limit.patch",
+      "sha256": "c823831cb6856f153278584a7e76e967631e7f3d4e4c19405fbeed801e9004bf"
+    }
+  ],
+  "artifact": {
+    "file": "sed.wasm",
+    "bytes": 245369,
+    "sha256": "40c8bb93b7e43f501f7c7ddd5497a51fef0f5d88ec51d1b581f5efaae36af2c4"
+  },
+  "imports": [
+    {
+      "module": "nimbus_proc",
+      "name": "identity",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "chown",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "stat_metadata",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "chmod",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "fchmod",
+      "kind": "function"
+    },
+    {
+      "module": "nimbus_proc",
+      "name": "startup_cwd",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "args_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "args_sizes_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "environ_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "environ_sizes_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "clock_time_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_close",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_fdstat_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_fdstat_set_flags",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_filestat_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_prestat_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_prestat_dir_name",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_read",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_seek",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "fd_write",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_create_directory",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_filestat_get",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_open",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_readlink",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_remove_directory",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_rename",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "path_unlink_file",
+      "kind": "function"
+    },
+    {
+      "module": "wasi_snapshot_preview1",
+      "name": "proc_exit",
+      "kind": "function"
+    }
+  ],
+  "exports": [
+    {
+      "name": "memory",
+      "kind": "memory"
+    },
+    {
+      "name": "_start",
+      "kind": "function"
+    }
+  ]
+}
