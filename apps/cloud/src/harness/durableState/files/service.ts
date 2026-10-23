@@ -4,6 +4,13 @@ import { HarnessFilesStoreCommand } from "./contracts.ts";
 import type { HarnessFilesStoreResult } from "./contracts.ts";
 import { HarnessFilesStoreError, fail } from "./errors.ts";
 import { insertCheckpoint, prepareCheckpoint, readCheckpoint } from "./content.ts";
+import {
+  admissionReceiptMatches,
+  createAdmissionReceipt,
+  insertAdmissionReceipt,
+  readAdmissionReceipt,
+  resultWithAdmissionReceipt,
+} from "./admissionReceipts.ts";
 import { metaTable, requireOwnSchema } from "./sqlite.ts";
 import { decodeState, encodeState } from "./state.ts";
 import type { State } from "./state.ts";
@@ -183,7 +190,7 @@ export function createHarnessFilesStore(
           }
 
           return database.transactionSync(() => {
-            const pristine = requireOwnSchema(database, command.type === "initialize");
+            const { pristine } = requireOwnSchema(database, command.type === "initialize");
             const current = currentState(database, runId);
             if (!current.state && command.type !== "initialize") return fail("MISSING");
             const state = current.state;
@@ -291,6 +298,11 @@ export function createHarnessFilesStore(
                 requirePublisher(state, command.publisher);
                 if (command.expectedGeneration !== state.publisher.generation)
                   return fail("STALE_PUBLISHER");
+                const existing = readAdmissionReceipt(database, command.evidenceId);
+                if (existing) {
+                  if (!admissionReceiptMatches(existing, runId, command)) return fail("CONFLICT");
+                  return resultWithAdmissionReceipt(result(state, "unchanged"), existing);
+                }
                 if ((command.outcome === "completed") !== (command.checkpoint !== null))
                   return fail("INVALID");
                 const resolution = {
@@ -318,8 +330,12 @@ export function createHarnessFilesStore(
                     activeStepId: null,
                     admissionResolution: resolution,
                   };
-                  if (!command.validateOnly) saveState(database, current.row, next);
-                  return result(next, "reconciled");
+                  if (command.validateOnly)
+                    return { ...result(state, "reconciled"), admissionResolution: resolution };
+                  const receipt = createAdmissionReceipt(state, runId, command, resolution);
+                  insertAdmissionReceipt(database, receipt);
+                  saveState(database, current.row, next);
+                  return resultWithAdmissionReceipt(result(next, "reconciled"), receipt);
                 }
                 if (!command.checkpoint || !same(state.checkpoint, command.checkpoint))
                   return fail("CONFLICT");
@@ -333,8 +349,12 @@ export function createHarnessFilesStore(
                   return fail("CONFLICT");
                 }
                 const next = { ...state, admissionResolution: resolution };
-                if (!command.validateOnly) saveState(database, current.row, next);
-                return result(next, "reconciled");
+                if (command.validateOnly)
+                  return { ...result(state, "reconciled"), admissionResolution: resolution };
+                const receipt = createAdmissionReceipt(state, runId, command, resolution);
+                insertAdmissionReceipt(database, receipt);
+                saveState(database, current.row, next);
+                return resultWithAdmissionReceipt(result(next, "reconciled"), receipt);
               }
               case "writeCheckpoint": {
                 if (!prepared) return fail("INVALID");

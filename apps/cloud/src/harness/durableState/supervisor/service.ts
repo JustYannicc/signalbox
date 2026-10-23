@@ -14,12 +14,13 @@ import { result, transition, validateReconciliationRequest } from "./transition.
 import {
   commitPendingReceipt,
   createPendingReceipt,
-  insertPendingReceipt,
+  insertReconciliationReceipt,
   parseReconciliationRequest,
   pendingReconciliationReceipt,
   readReconciliationReceipt,
   receiptMatchesRequest,
   receiptMatchesSource,
+  seedLegacyReconciliationReceipt,
   sourceOf,
 } from "./reconciliationReceipts.ts";
 import type { HarnessThreadSupervisorReconciliationInput } from "./reconciliationReceipts.ts";
@@ -35,12 +36,13 @@ function readCurrent(
   runId: string,
   initialize: boolean,
 ) {
-  const pristine = requireOwnSchema(database, initialize);
+  const schema = requireOwnSchema(database, initialize);
   const row = first(
     database.sql.exec(`SELECT revision, state_json FROM ${stateTable} WHERE slot = 1`),
   );
   const format = first(database.sql.exec(`SELECT version FROM ${formatTable} WHERE slot = 1`));
-  if ((!pristine && (!row || !format)) || (format && format.version !== 2)) return fail("CORRUPT");
+  if ((!schema.pristine && (!row || !format)) || (format && format.version !== 2))
+    return fail("CORRUPT");
   if (
     row &&
     (typeof row.revision !== "number" ||
@@ -58,7 +60,8 @@ function readCurrent(
       throw new HarnessThreadSupervisorError("CORRUPT", { cause: error });
     }
   }
-  return { pristine, row, current };
+  if (schema.migrated && current) seedLegacyReconciliationReceipt(database, current);
+  return { ...schema, row, current };
 }
 
 function persistState(
@@ -169,7 +172,7 @@ export function reserveHarnessThreadSupervisorReconciliation(
           invocationSettlement: request.invocationSettlement,
           preparedFacetCleanup: request.preparedFacetCleanup,
         });
-        insertPendingReceipt(database, createPendingReceipt(current, request));
+        insertReconciliationReceipt(database, createPendingReceipt(current, request));
         return { status: "pending" as const, supervisor: result(current, "unchanged") };
       });
     },

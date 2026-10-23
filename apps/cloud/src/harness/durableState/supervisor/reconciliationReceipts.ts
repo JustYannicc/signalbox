@@ -58,8 +58,9 @@ const Receipt = Schema.Struct({
   version: Schema.Literal(1),
   request: Request,
   authority: Authority,
-  source: Source,
+  source: Schema.NullOr(Source),
   status: Schema.Literals(["pending", "committed"]),
+  legacy: Schema.optional(Schema.Boolean),
   admissionResolution: Schema.NullOr(AdmissionResolution),
 });
 
@@ -96,6 +97,20 @@ const clean = (value: ReconciliationReceipt["request"]["preparedFacetCleanup"]) 
 
 function validReceipt(receipt: ReconciliationReceipt) {
   const { request, source, admissionResolution } = receipt;
+  if (receipt.legacy) {
+    if (receipt.status !== "committed" || source !== null) return false;
+    if (request.outcome === "unknown") return admissionResolution === null;
+    return (
+      admissionResolution !== null &&
+      admissionResolution.evidenceId === request.evidenceId &&
+      admissionResolution.outcome === request.outcome &&
+      (request.outcome === "completed"
+        ? same(request.checkpoint, admissionResolution.checkpoint)
+        : request.checkpoint === null &&
+          same(admissionResolution.expectedCheckpoint, admissionResolution.checkpoint))
+    );
+  }
+  if (source === null) return false;
   if (
     (source.lifecycle !== "indeterminate" && source.lifecycle !== "recoverable") ||
     !same(receipt.authority, source.authority) ||
@@ -198,8 +213,41 @@ export function createPendingReceipt(
     authority: authorityOf(input.control),
     source: sourceOf(state),
     status: "pending",
+    legacy: false,
     admissionResolution: null,
   };
+}
+
+export function seedLegacyReconciliationReceipt(
+  database: HarnessThreadSupervisorDatabase,
+  state: State,
+) {
+  if (state.reconciliationEvidenceId === null) return;
+  const control = state.reconciliationControl;
+  if (
+    control === null ||
+    state.reconciliationExpectedGeneration === null ||
+    state.reconciliationOutcome === null
+  )
+    return fail("CORRUPT");
+  const receipt: ReconciliationReceipt = {
+    version: 1,
+    request: {
+      evidenceId: state.reconciliationEvidenceId,
+      expectedGeneration: state.reconciliationExpectedGeneration,
+      outcome: state.reconciliationOutcome,
+      checkpoint: state.reconciliationCheckpoint,
+      invocationSettlement: state.reconciliationInvocationSettlement,
+      preparedFacetCleanup: state.reconciliationPreparedFacetCleanup,
+    },
+    authority: authorityOf(control),
+    source: null,
+    status: "committed",
+    legacy: true,
+    admissionResolution: state.reconciliationAdmissionResolution,
+  };
+  if (!validReceipt(receipt)) return fail("CORRUPT");
+  insertReconciliationReceipt(database, receipt);
 }
 
 export function readReconciliationReceipt(
@@ -263,7 +311,7 @@ export function receiptMatchesSource(receipt: ReconciliationReceipt, state: Stat
   return same(receipt.source, sourceOf(state));
 }
 
-export function insertPendingReceipt(
+export function insertReconciliationReceipt(
   database: HarnessThreadSupervisorDatabase,
   receipt: ReconciliationReceipt,
 ) {

@@ -23,6 +23,17 @@ import {
   prepareReconciliationHistory,
   replayReconciliationHistory,
 } from "./harnessStateWorkerd.reconciliationHistory.ts";
+import {
+  continueLegacyReconciliation,
+  prepareLegacyReconciliation,
+  replayLegacyReconciliation,
+} from "./harnessStateWorkerd.reconciliationLegacyR4.ts";
+import {
+  inspectOverlappingReconciliation,
+  prepareOverlappingReconciliation,
+  replayFilesAdmissionAfterEviction,
+  runOverlappingReconciliation,
+} from "./harnessStateWorkerd.reconciliationOverlapR4.ts";
 
 export { HarnessFilesStoreObject, HarnessRunStoreObject, HarnessThreadSupervisorObject };
 
@@ -60,6 +71,20 @@ export default {
       return Response.json(await prepareReconciliationHistory(env));
     if (path === "/reconciliation-history-replay")
       return Response.json(await replayReconciliationHistory(env));
+    if (path === "/reconciliation-legacy-r4-prepare")
+      return Response.json(await prepareLegacyReconciliation(env));
+    if (path === "/reconciliation-legacy-r4-continue")
+      return Response.json(await continueLegacyReconciliation(env));
+    if (path === "/reconciliation-legacy-r4-replay")
+      return Response.json(await replayLegacyReconciliation(env));
+    if (path === "/reconciliation-overlap-r4-prepare")
+      return Response.json(await prepareOverlappingReconciliation(env));
+    if (path === "/reconciliation-overlap-r4-run")
+      return Response.json(await runOverlappingReconciliation(env));
+    if (path === "/reconciliation-overlap-r4-snapshot")
+      return Response.json(await inspectOverlappingReconciliation(env));
+    if (path === "/reconciliation-overlap-r4-files-replay")
+      return Response.json(await replayFilesAdmissionAfterEviction(env));
     return new Response("not found", { status: 404 });
   },
 };

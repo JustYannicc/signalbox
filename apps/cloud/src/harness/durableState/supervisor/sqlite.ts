@@ -7,6 +7,11 @@ export const reconciliationTable = "harness_thread_supervisor_reconciliation";
 const ownTables = [stateTable, formatTable, reconciliationTable];
 const baseTables = [stateTable, formatTable];
 
+export interface SupervisorSchemaStatus {
+  readonly pristine: boolean;
+  readonly migrated: boolean;
+}
+
 function createReconciliationTable(database: HarnessThreadSupervisorDatabase) {
   database.sql.exec(`CREATE TABLE ${reconciliationTable} (
     evidence_id TEXT PRIMARY KEY,
@@ -18,7 +23,10 @@ function createReconciliationTable(database: HarnessThreadSupervisorDatabase) {
   );
 }
 
-export function requireOwnSchema(database: HarnessThreadSupervisorDatabase, initialize: boolean) {
+export function requireOwnSchema(
+  database: HarnessThreadSupervisorDatabase,
+  initialize: boolean,
+): SupervisorSchemaStatus {
   const tables = [
     ...database.sql.exec(
       "SELECT name, type FROM sqlite_master WHERE name IN (?, ?, ?)",
@@ -35,7 +43,7 @@ export function requireOwnSchema(database: HarnessThreadSupervisorDatabase, init
       slot INTEGER PRIMARY KEY CHECK (slot = 1), version INTEGER NOT NULL
     )`);
     createReconciliationTable(database);
-    return true;
+    return { pristine: true, migrated: false };
   }
   const byName = new Map(tables.map((table) => [table.name, table.type]));
   if (
@@ -49,8 +57,8 @@ export function requireOwnSchema(database: HarnessThreadSupervisorDatabase, init
   if (version === 1 && !byName.has(reconciliationTable)) {
     createReconciliationTable(database);
     database.sql.exec(`UPDATE ${formatTable} SET version = 2 WHERE slot = 1 AND version = 1`);
-    return false;
+    return { pristine: false, migrated: true };
   }
   if (version !== 2 || !byName.has(reconciliationTable)) return fail("CORRUPT");
-  return false;
+  return { pristine: false, migrated: false };
 }

@@ -177,5 +177,8 @@ export async function reconcile(
     preparedFacetCleanup: input.preparedFacetCleanup,
     admissionResolution,
   });
-  return { supervisor, files };
+  return {
+    supervisor,
+    files: supervisor.snapshot.reconciliationEvidenceId === input.evidenceId ? files : null,
+  };
 }
