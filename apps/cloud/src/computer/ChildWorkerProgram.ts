@@ -72,13 +72,25 @@ export type ChildWorkerProgram = Extract<
 export function createChildWorkerProgram<Host extends object>(
   options: ChildWorkerProgramOptions<Host>,
 ): ChildWorkerProgram {
+  const runner = createChildWorkerRunner(options);
+  return Object.freeze({
+    kind: "async" as const,
+    ...(options.sigpipe === undefined ? {} : { sigpipe: options.sigpipe }),
+    run: (context: KernelAsyncProgramContext) => runner.run(context, options.createHost),
+    drain: runner.drain,
+  });
+}
+
+/** Fork placement supplies an existing process host while sharing invocation and cleanup rules. */
+export function createChildWorkerRunner<Host extends object>(
+  options: Omit<ChildWorkerProgramOptions<Host>, "createHost">,
+) {
   const {
     executable,
     capacity,
     reservationFor,
     childEnv,
     dispatch,
-    createHost,
     code: { mainModule, modules: moduleSource, entrypoint, limits, freshIsolate },
   } = options;
   const code = Object.freeze({
@@ -90,9 +102,10 @@ export function createChildWorkerProgram<Host extends object>(
   const loadModules = createModuleLoader(moduleSource);
   const lifetimes = options.lifetimes ?? new ChildWorkerLifetimes();
   return Object.freeze({
-    kind: "async" as const,
-    ...(options.sigpipe === undefined ? {} : { sigpipe: options.sigpipe }),
-    async run(context: KernelAsyncProgramContext) {
+    async run(
+      context: KernelAsyncProgramContext,
+      createHost: ChildWorkerProgramOptions<Host>["createHost"],
+    ) {
       const result = Promise.withResolvers<KernelCommandExit>();
       let settled = false;
       // Boxed so an unseen rejection with undefined never matches "nothing delivered".

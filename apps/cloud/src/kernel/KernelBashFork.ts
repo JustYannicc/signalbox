@@ -1,8 +1,6 @@
 import type { BashCaptureState } from "./bash/BashCaptureState.ts";
 
 export const BASH_FORK_CHUNK_BYTES = 64 * 1024;
-// Half of Workers' 128 MiB remains for compiled code, JS, RPC buffers and guest growth.
-export const BASH_RESIDENT_WASM_BYTES = 64 * 1024 * 1024;
 
 export interface KernelBashForkState {
   readonly memoryBytes: number;

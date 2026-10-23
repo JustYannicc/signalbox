@@ -4,8 +4,8 @@ import type { KernelExitStatus } from "./KernelProcessTable.ts";
 import { KernelProcessSignal } from "./KernelProcessSignal.ts";
 import { createBashInstance } from "./bash/BashInstance.ts";
 import { createBashEnvironment } from "./bash/BashEnvironment.ts";
-import { range } from "./bash/BashMemory.ts";
-import { BASH_RESIDENT_WASM_BYTES, type KernelBashForkSource } from "./KernelBashFork.ts";
+import { errno, range } from "./bash/BashMemory.ts";
+import type { KernelBashForkSource } from "./KernelBashFork.ts";
 import { createBashForkSnapshot, restoreBashFork } from "./bash/BashForkSnapshot.ts";
 import {
   bashTransitionImports,
@@ -22,6 +22,7 @@ export interface KernelBashReactorBinding {
 
 export interface KernelBashReactorOptions {
   readonly module: WebAssembly.Module;
+  readonly residentWasmBudgetBytes: number;
   readonly credentials: KernelBashCredentials;
   readonly pid: number;
   readonly port: KernelBashPort;
@@ -121,24 +122,11 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
               disposeFork(forked);
             };
             try {
-              if (residentWasmBytes() + ex.memory.buffer.byteLength > BASH_RESIDENT_WASM_BYTES) {
-                if (forked.port.runFork === undefined)
-                  throw new Error("Bash fork placement requires a child dispatcher");
-                const snapshot = createBashForkSnapshot(process);
-                const source = options.createForkSource?.(snapshot.source) ?? snapshot.source;
-                const remote = forked.port.runFork(source);
-                const copied = remote.then(() => {
-                  throw new Error("Bash fork worker stopped before restoring its snapshot");
-                });
-                const completion = remote.finally(dispose).then(
-                  () => {},
-                  () => {},
-                );
-                children.add(completion);
-                void completion.then(() => children.delete(completion));
-                // Returning from fork lets the parent mutate its memory. Wait only for the copy.
-                await Promise.race([snapshot.copied, copied]);
-                process.resume = forked.pid;
+              if (
+                residentWasmBytes() + ex.memory.buffer.byteLength >
+                options.residentWasmBudgetBytes
+              ) {
+                process.resume = await runRemoteFork(current, forked, dispose);
                 rewindBash(process);
                 break;
               }
@@ -200,6 +188,35 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
           rewindBash(process);
         }
       }
+    }
+  }
+
+  async function runRemoteFork(
+    current: Process,
+    forked: Extract<Awaited<ReturnType<KernelBashPort["fork"]>>, { kind: "fork" }>,
+    dispose: () => void,
+  ) {
+    const snapshot = createBashForkSnapshot(current.process);
+    const source = options.createForkSource?.(snapshot.source) ?? snapshot.source;
+    const remote = Promise.resolve().then(() => forked.port.runFork(source));
+    const copied = remote.then(() => {
+      throw new Error("Bash fork worker stopped before restoring its snapshot");
+    });
+    const completion = remote.finally(dispose).then(
+      () => {},
+      () => {},
+    );
+    children.add(completion);
+    void completion.then(() => children.delete(completion));
+    try {
+      // Returning from fork lets the parent mutate memory. Wait only for restoration.
+      await Promise.race([snapshot.copied, copied]);
+      return forked.pid;
+    } catch (error) {
+      snapshot.discard();
+      // runFork owns completion. A child that never restored is not a successful fork.
+      await current.port.wait(forked.pid, 0);
+      return -errno(error);
     }
   }
 

@@ -178,4 +178,36 @@ describe("compiled child worker loader", () => {
     expect(f.get).toHaveBeenCalledOnce();
     expect(f.target.stopped).not.toHaveBeenCalled();
   });
+
+  it("discards memory-limited named workers and uses a fresh handle across loader ports", async () => {
+    const failedRun = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error("Worker failed"), { outcome: "exceededMemory" }));
+    const recoveryRun = vi.fn(async (_command: unknown, target: { stopped(): void }) => {
+      target.stopped();
+      return exit;
+    });
+    const stub = (run: typeof failedRun | typeof recoveryRun) =>
+      ({
+        getEntrypoint: vi.fn().mockReturnValue({ run }),
+        getDurableObjectClass: vi.fn(),
+      }) as unknown as WorkerStub;
+    const get = vi.fn<WorkerLoader["get"]>().mockReturnValue(stub(failedRun));
+    const load = vi.fn<WorkerLoader["load"]>().mockImplementation(() => stub(recoveryRun));
+    const loader = { get, load };
+    const port = () => createCompiledChildWorkerLoader(loader, new Map([[hash, module]]));
+
+    await expect(port().run(invocation(), new Target())).resolves.toEqual({
+      exitCode: 0,
+      signal: 9,
+      coreDumped: false,
+    });
+    await expect(port().run(invocation(), new Target())).resolves.toEqual(exit);
+    await expect(port().run(invocation(), new Target())).resolves.toEqual(exit);
+
+    expect(failedRun).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledOnce();
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(recoveryRun).toHaveBeenCalledTimes(2);
+  });
 });

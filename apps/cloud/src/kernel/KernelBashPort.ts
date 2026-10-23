@@ -24,7 +24,7 @@ export type KernelBashAdmissionFailure = { readonly kind: "error"; readonly errn
 
 /** Each port is bound to one live process; callers cannot select another PID's resources. */
 export interface KernelBashPort extends Pick<KernelSyscallPort, "call"> {
-  runFork?(source: KernelBashForkSource): Promise<KernelExitStatus>;
+  runFork(source: KernelBashForkSource): Promise<KernelExitStatus>;
   callBash(request: KernelBashCall): Promise<KernelBashCallResult>;
   fork(): Promise<
     | { readonly kind: "fork"; readonly pid: number; readonly port: KernelBashPort }

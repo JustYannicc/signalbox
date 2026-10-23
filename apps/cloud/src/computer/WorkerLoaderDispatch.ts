@@ -1,6 +1,12 @@
 import { RpcTarget } from "cloudflare:workers";
 import { childWorkerId, childWorkerInstanceId } from "./ChildWorkerIdentity.ts";
 import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
+import {
+  CHILD_WORKER_KILLED_BY_SIGKILL,
+  childWorkerStubFor,
+  discardChildWorkerStub,
+  isChildWorkerMemoryLimitFailure,
+} from "./ChildWorkerLoaderRecovery.ts";
 import { resolveChildWorkerLimits, type ResolvedChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import type { ChildWorkerDispatch, ChildWorkerInvocation } from "./ChildWorkerProgram.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
@@ -77,6 +83,10 @@ export function createWorkerLoaderDispatch<Host extends object>(
         stopped.resolve();
       });
       let submitted = false;
+      let invokingChild = false;
+      let failedWorker:
+        | { readonly id: string; readonly freshIsolate: boolean | undefined }
+        | undefined;
       try {
         const code = dispatchModules(input, limits);
         let exit: KernelCommandExit;
@@ -91,6 +101,7 @@ export function createWorkerLoaderDispatch<Host extends object>(
             }
           }
           submitted = true;
+          invokingChild = true;
           exit = await loader.run(
             {
               ...code,
@@ -115,17 +126,30 @@ export function createWorkerLoaderDispatch<Host extends object>(
             await childWorkerId(workerCode, input.entrypoint),
             input.freshIsolate,
           );
+          failedWorker = { id: workerId, freshIsolate: input.freshIsolate };
           submitted = true;
           // Native Worker Loader supports compiled WASM inputs; installed types still require bytes.
-          const worker = loader.get(workerId, () => workerCode as WorkerLoaderWorkerCode);
+          const worker = childWorkerStubFor(loader, workerId, workerCode as WorkerLoaderWorkerCode);
           const entrypoint = worker.getEntrypoint(undefined, {
             limits,
           }) as unknown as ChildEntrypoint<Host>;
+          invokingChild = true;
           exit = await entrypoint.run(input.command, invocation);
         }
         await stopped.promise;
         return exit;
       } catch (cause) {
+        if (invokingChild && isChildWorkerMemoryLimitFailure(cause)) {
+          if (failedWorker !== undefined) {
+            discardChildWorkerStub(
+              loader as WorkerLoader,
+              failedWorker.id,
+              failedWorker.freshIsolate,
+            );
+          }
+          invocation.stopped();
+          return CHILD_WORKER_KILLED_BY_SIGKILL;
+        }
         if (!submitted) invocation.stopped();
         // RPC failure and host capability closure cannot prove that the child stopped.
         throw new ChildWorkerDispatchError(

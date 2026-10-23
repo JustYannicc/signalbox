@@ -37,7 +37,13 @@ export function createBashForkSnapshot(process: BashContinuation) {
       copied.resolve();
     },
   };
-  return { source, copied: copied.promise };
+  return {
+    source,
+    copied: copied.promise,
+    discard: () => {
+      memory = undefined;
+    },
+  };
 }
 
 export async function restoreBashFork(process: BashContinuation, source: KernelBashForkSource) {

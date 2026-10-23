@@ -2,6 +2,12 @@ import type { WorkerEntrypoint } from "cloudflare:workers";
 import { childWorkerId, childWorkerInstanceId } from "./ChildWorkerIdentity.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { ChildWorkerModules } from "./ChildWorkerProgram.ts";
+import {
+  CHILD_WORKER_KILLED_BY_SIGKILL,
+  childWorkerStubFor,
+  discardChildWorkerStub,
+  isChildWorkerMemoryLimitFailure,
+} from "./ChildWorkerLoaderRecovery.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import type { ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 
@@ -116,10 +122,17 @@ export function createCompiledChildWorkerLoader(
       }
       // Installed workers-types predates compiled-module inputs supported by Worker Loader.
       // https://github.com/cloudflare/workerd/blob/fa8b9d343f00c200b8e8d314c541c33be9e1ee70/src/workerd/api/worker-loader.h#L73-L80
-      const worker = loader.get(workerId, () => code as WorkerLoaderWorkerCode);
-      return await worker
-        .getEntrypoint<Entrypoint>(entrypoint, { limits })
-        .run(input.command, target);
+      const worker = childWorkerStubFor(loader, workerId, code as WorkerLoaderWorkerCode);
+      const child = worker.getEntrypoint<Entrypoint>(entrypoint, { limits });
+      try {
+        return await child.run(input.command, target);
+      } catch (cause) {
+        if (!isChildWorkerMemoryLimitFailure(cause)) throw cause;
+        discardChildWorkerStub(loader, workerId, input.freshIsolate);
+        const completion = target as typeof target & { stopped(): void | Promise<void> };
+        await completion.stopped();
+        return CHILD_WORKER_KILLED_BY_SIGKILL;
+      }
     },
   };
 }

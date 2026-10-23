@@ -1,5 +1,9 @@
 import { RpcTarget } from "cloudflare:workers";
-import { createKernelBashHost, type KernelBashHostOptions } from "../kernel/KernelBashHost.ts";
+import {
+  createKernelBashHost,
+  type KernelBashHostOptions,
+  type KernelBashForkHost,
+} from "../kernel/KernelBashHost.ts";
 import type { KernelBashCredentials } from "../kernel/KernelBashProgram.ts";
 import type {
   KernelBashCall,
@@ -41,9 +45,7 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
   }
 
   async runFork(source: KernelBashForkSource) {
-    const port = this.#port.get();
-    if (port.runFork === undefined) throw new Error("Bash fork dispatcher is unavailable");
-    return port.runFork(source);
+    return this.#port.get().runFork(source);
   }
 
   async call(request: KernelSyscallRequest) {
@@ -83,28 +85,36 @@ class WorkerBashPort extends RpcTarget implements KernelBashPort {
 export function createWorkerBashForkHost(
   options: KernelBashHostOptions,
   lease: ChildHostLease,
-  port: KernelBashPort,
+  owner: KernelBashForkHost,
   snapshot: KernelBashForkSource,
 ) {
-  return new WorkerBashPort(
-    lease,
-    port,
-    options.context.identity.pid,
-    options.credentials,
-    snapshot,
-  );
+  return {
+    host: new WorkerBashPort(
+      lease,
+      owner.port,
+      options.context.identity.pid,
+      bashCredentials(options),
+      snapshot,
+    ),
+    // Placement must wait for restoration before a logical exit can reach the parent.
+    close: owner.close,
+  };
 }
 
 /** Forked ports must remain RPC capabilities when they cross the child worker boundary. */
 export function createWorkerBashHost(options: KernelBashHostOptions, lease: ChildHostLease) {
   const owner = createKernelBashHost(options);
-  const credentials = {
-    ...options.credentials,
-    umask: options.context.filesystem.posixPolicy?.umask ?? options.credentials.umask,
-  };
+  const credentials = bashCredentials(options);
   return {
     host: new WorkerBashPort(lease, owner.port, owner.pid, credentials),
     exited: owner.exited,
     close: owner.close,
+  };
+}
+
+function bashCredentials(options: KernelBashHostOptions) {
+  return {
+    ...options.credentials,
+    umask: options.context.filesystem.posixPolicy?.umask ?? options.credentials.umask,
   };
 }

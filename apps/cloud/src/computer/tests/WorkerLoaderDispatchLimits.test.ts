@@ -135,4 +135,53 @@ describe("WorkerLoader child CPU limits", () => {
 
     expect(run).not.toHaveBeenCalled();
   });
+
+  it("returns SIGKILL after a memory limit and never reuses that worker handle", async () => {
+    const failedRun = vi.fn().mockRejectedValue(new Error("Worker exceeded memory limit"));
+    const recoveryRun = vi.fn(async (_command: unknown, target: { stopped(): void }) => {
+      target.stopped();
+      return exit;
+    });
+    const stub = (run: typeof failedRun | typeof recoveryRun) =>
+      ({
+        getEntrypoint: vi.fn().mockReturnValue({ run }),
+        getDurableObjectClass: vi.fn(),
+      }) as unknown as WorkerStub;
+    const failedStub = stub(failedRun);
+    const get = vi.fn<WorkerLoader["get"]>().mockReturnValue(failedStub);
+    const load = vi.fn<WorkerLoader["load"]>().mockImplementation(() => stub(recoveryRun));
+    const dispatch = createWorkerLoaderDispatch<object>({ get, load });
+
+    await expect(dispatch.run(invocation(), {})).resolves.toEqual({
+      exitCode: 0,
+      signal: 9,
+      coreDumped: false,
+    });
+    await expect(dispatch.run(invocation(), {})).resolves.toEqual(exit);
+    await expect(dispatch.run(invocation(), {})).resolves.toEqual(exit);
+
+    expect(failedRun).toHaveBeenCalledOnce();
+    expect(get).toHaveBeenCalledOnce();
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(recoveryRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps unknown worker failures unconfirmed without switching to an unnamed worker", async () => {
+    const failure = new Error("Worker call disconnected");
+    const run = vi.fn().mockRejectedValue(failure);
+    const get = vi.fn<WorkerLoader["get"]>().mockReturnValue({
+      getEntrypoint: vi.fn().mockReturnValue({ run }),
+      getDurableObjectClass: vi.fn(),
+    } as unknown as WorkerStub);
+    const load = vi.fn<WorkerLoader["load"]>();
+    const dispatch = createWorkerLoaderDispatch<object>({ get, load });
+
+    await expect(dispatch.run(invocation(), {})).rejects.toMatchObject({
+      cause: failure,
+      termination: { kind: "unconfirmed" },
+    });
+
+    expect(get).toHaveBeenCalledOnce();
+    expect(load).not.toHaveBeenCalled();
+  });
 });

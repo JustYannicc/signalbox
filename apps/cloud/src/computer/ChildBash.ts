@@ -7,6 +7,7 @@ import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
 
 export interface ChildBashOptions {
   readonly module: WebAssembly.Module;
+  readonly residentWasmBudgetBytes?: number;
   readonly credentials: KernelBashCredentials;
   readonly pid: number;
   readonly port: KernelBashPort;
@@ -20,6 +21,8 @@ export interface ChildBashOptions {
 export function createChildBash(options: ChildBashOptions) {
   return createKernelBashReactor({
     ...options,
+    // Half of Workers' 128 MiB leaves room for JS, RPC buffers and guest growth.
+    residentWasmBudgetBytes: options.residentWasmBudgetBytes ?? 64 * 1024 * 1024,
     createBinding(port) {
       const wasi = createChildWasi({ ...options, syscalls: port });
       const bash = createChildBashImports({ module: options.module, port });

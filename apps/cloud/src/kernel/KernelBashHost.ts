@@ -13,14 +13,20 @@ import { KernelProcessCancelledError } from "./process/KernelProcessCancellation
 import { KernelProcessSignal } from "./KernelProcessSignal.ts";
 import { SyscallMemory } from "./syscall/SyscallMemory.ts";
 import { runAsync } from "./wasi/internal_wasi_calls.ts";
+import { WasiError } from "./wasi/internal_wasi_memory.ts";
 import type { KernelBashForkSource } from "./KernelBashFork.ts";
+
+export interface KernelBashForkHost {
+  readonly port: KernelBashPort;
+  readonly close: () => Promise<void>;
+}
 
 export interface KernelBashHostOptions {
   readonly context: KernelBashProgramContext;
   readonly credentials: KernelBashCredentials;
   readonly runFork?: (
     context: KernelBashProgramContext,
-    port: KernelBashPort,
+    owner: KernelBashForkHost,
     source: KernelBashForkSource,
   ) => Promise<KernelExitStatus>;
 }
@@ -42,6 +48,11 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
   const nodes = new Set<BashHostNode>();
   let closed = false;
   let closing: Promise<void> | undefined;
+  const runFork =
+    options.runFork ??
+    (async () => {
+      throw new WasiError(58);
+    });
 
   function create(
     supplied: KernelBashProgramContext,
@@ -113,19 +124,21 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       }
     };
     const port: KernelBashPort = {
-      ...(options.runFork === undefined
-        ? {}
-        : {
-            runFork: (source: KernelBashForkSource) => {
-              if (closed || completed || remoteStarted)
-                return Promise.reject(new Error("Bash fork is no longer available for placement"));
-              remoteStarted = true;
-              return options.runFork!(context, port, source).catch((error: unknown) => {
-                finish({ kind: "failure", message: String(error) });
-                throw error;
-              });
-            },
-          }),
+      async runFork(source) {
+        if (closed || completed || remoteStarted)
+          throw Object.assign(new Error("Bash fork is no longer available for placement"), {
+            code: "EIO",
+          });
+        remoteStarted = true;
+        try {
+          const result = await runFork(context, { port, close: () => closeTree(node) }, source);
+          finish({ kind: "exit", status: result });
+          return result;
+        } catch (error) {
+          finish({ kind: "exit", status: { exitCode: 0, signal: 9, coreDumped: false } });
+          throw error;
+        }
+      },
       call: (request) =>
         operation(() =>
           syscalls.call({
@@ -265,7 +278,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       },
       async close() {
         abort();
-        finish({ kind: "failure", message: "GNU Bash child bridge closed" });
+        finish({ kind: "exit", status: { exitCode: 0, signal: 9, coreDumped: false } });
         await active?.catch(() => {});
         node.dispose();
       },
@@ -286,6 +299,17 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
     }
     return false;
   }
+  async function closeTree(root: BashHostNode) {
+    const owned = [...nodes].filter((node) => node === root || descendsFrom(node, root));
+    await Promise.all(owned.map((node) => node.close()));
+    for (const node of owned) {
+      if (node !== root)
+        await options.context.processes.terminateAndReap(node.context.identity.handle);
+      node.dispose();
+      if (node !== root) nodes.delete(node);
+    }
+  }
+
   const root = create(options.context, options.credentials);
   return {
     pid: options.context.identity.pid,
@@ -294,14 +318,8 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
     close(): Promise<void> {
       return (closing ??= (async () => {
         closed = true;
-        const owned = [...nodes];
-        await Promise.all(owned.map((node) => node.close()));
-        for (const node of owned) {
-          if (node !== root)
-            await options.context.processes.terminateAndReap(node.context.identity.handle);
-          node.dispose();
-          nodes.delete(node);
-        }
+        await closeTree(root);
+        nodes.clear();
       })());
     },
   };
