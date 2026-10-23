@@ -362,6 +362,77 @@ describe("worker message port broker", () => {
     expect(broker.residentPorts).toBe(0);
   });
 
+  it("retargets descendant queued leases when nested in-flight transfers move twice", async () => {
+    const broker = new NodeWorkerPortBroker();
+    const firstEntered = Promise.withResolvers<void>();
+    const firstRelease = Promise.withResolvers<void>();
+    const secondEntered = Promise.withResolvers<void>();
+    const secondRelease = Promise.withResolvers<void>();
+    const outerReceived = Promise.withResolvers<{ nested: NodeWorkerMessagePort }>();
+    const source = publicPortsRuntime("nested-move-source", broker, async (event) => {
+      if (event.type === "message") {
+        firstEntered.resolve();
+        await firstRelease.promise;
+      }
+    });
+    let middleMessages = 0;
+    const middle = publicPortsRuntime("nested-move-middle", broker, async (event) => {
+      if (event.type === "message" && ++middleMessages === 2) {
+        secondEntered.resolve();
+        await secondRelease.promise;
+      }
+    });
+    const target = publicPortsRuntime("nested-move-target", broker);
+    const outer = source.ports.channel();
+    const nestedChannel = source.ports.channel();
+    const deep = source.ports.channel();
+    const delivered: unknown[] = [];
+
+    try {
+      nestedChannel.port1.postMessage({ deep: deep.port2 }, [deep.port2]);
+      await source.ports.drain();
+      outer.port2.on("message", () => {
+        throw new Error("Retired outer receiver ran");
+      });
+      outer.port1.postMessage({ nested: nestedChannel.port2 }, [nestedChannel.port2]);
+      await firstEntered.promise;
+
+      const movedOuter = await transferPort(broker, source, middle, outer.port2);
+      movedOuter.once("message", (value: unknown) =>
+        outerReceived.resolve(value as { nested: NodeWorkerMessagePort }),
+      );
+      await middle.ports.drain();
+      firstRelease.resolve();
+
+      const firstDelivery = await outerReceived.promise;
+      firstDelivery.nested.on("message", (value: unknown) => delivered.push(value));
+      await middle.ports.drain();
+      await secondEntered.promise;
+
+      const movedNested = await transferPort(broker, middle, target, firstDelivery.nested);
+      movedNested.on("message", (value: unknown) => delivered.push(value));
+      await target.ports.drain();
+      secondRelease.resolve();
+
+      await expect(broker.drain()).resolves.toBeUndefined();
+      expect(delivered).toHaveLength(1);
+      expect((delivered[0] as { readonly deep: unknown }).deep).toBeInstanceOf(
+        NodeWorkerMessagePort,
+      );
+    } finally {
+      firstRelease.resolve();
+      secondRelease.resolve();
+      await Promise.allSettled([
+        source.ports.dispose(),
+        middle.ports.dispose(),
+        target.ports.dispose(),
+      ]);
+      await broker.drain().catch(() => undefined);
+    }
+
+    expect(broker.residentPorts).toBe(0);
+  });
+
   it("does not hold a broker lock while a message handler posts its reply", async () => {
     const broker = new NodeWorkerPortBroker();
     const replied = Promise.withResolvers<void>();

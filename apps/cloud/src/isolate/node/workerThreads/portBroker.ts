@@ -175,12 +175,7 @@ export class NodeWorkerPortBroker {
     }
     for (const port of nested) port.owner = to;
     const movedPorts = new Set([...ports.map(({ port }) => port), ...nested]);
-    for (const container of movedPorts)
-      for (const [message, transfers] of container.pendingTransfers) {
-        if (message === container.delivering) continue;
-        for (const [transferred, lease] of transfers)
-          if (movedPorts.has(transferred) && lease.owner === from) lease.owner = to;
-      }
+    this.#retargetPendingTransferOwners(movedPorts, from, to);
   }
 
   #pinTransfers(message: NodeWorkerMessage, owner: string): PendingTransfers {
@@ -206,6 +201,27 @@ export class NodeWorkerPortBroker {
     for (const [port, lease] of transfers) {
       port.owner = to;
       lease.owner = to;
+    }
+    this.#retargetPendingTransferOwners(new Set(transfers.keys()), from, to);
+  }
+
+  #retargetPendingTransferOwners(ports: ReadonlySet<Port>, from: string, to: string): void {
+    for (const container of ports) {
+      for (const [message, transfers] of container.pendingTransfers) {
+        if (message === container.delivering) continue;
+        for (const [port, lease] of transfers) {
+          if (!ports.has(port)) continue;
+          if (
+            port.owner !== to ||
+            port.address.lease !== lease.lease ||
+            this.#ports.get(port.address.id) !== port
+          )
+            throw new Error("Queued worker port transfer changed during delivery");
+          if (lease.owner === from) lease.owner = to;
+          else if (lease.owner !== to)
+            throw new Error("Queued worker port transfer changed during delivery");
+        }
+      }
     }
   }
 
