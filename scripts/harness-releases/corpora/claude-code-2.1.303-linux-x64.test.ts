@@ -2,7 +2,7 @@ import * as NodeFSP from "node:fs/promises";
 import { expect, it } from "vite-plus/test";
 import { parseReleaseCoverageCorpus } from "../../claude-bunfs/release-omission.ts";
 
-it("parses the pinned corpus and retains inputs reached by partial sessions", async () => {
+it("parses the pinned corpus and retains inputs reached by partial sessions and fresh-process recovery", async () => {
   const corpus = parseReleaseCoverageCorpus(
     JSON.parse(
       await NodeFSP.readFile(
@@ -11,6 +11,12 @@ it("parses the pinned corpus and retains inputs reached by partial sessions", as
       ),
     ),
   );
+
+  // Fresh-resume module #1070 hit in the omitted release.
+  expect(corpus.inputs).toContainEqual({
+    inputPath: "bun-graph:/$bunfs/root/chunk-6hh08p3q.js",
+    initialized: true,
+  });
 
   expect(corpus.binarySha256).toBe(
     "375988f457756524234695cf2d8f64ace99c5f68682e47ea24862a843c191450",
@@ -34,6 +40,15 @@ it("parses the pinned corpus and retains inputs reached by partial sessions", as
   for (const inputPath of [
     "bun-graph:/$bunfs/root/chunk-cc837y02.js",
     "bun-graph:/$bunfs/root/chunk-y4vjzwc0.js",
+    "bun-graph:/$bunfs/root/chunk-1xn1h09a.js",
+    "bun-graph:/$bunfs/root/chunk-1yk0b2ky.js",
+    "bun-graph:/$bunfs/root/chunk-e2derxke.js",
+    "bun-graph:/$bunfs/root/chunk-epvse6vk.js",
+    "bun-graph:/$bunfs/root/chunk-hfrg3wrg.js",
+    "bun-graph:/$bunfs/root/chunk-knvpnmph.js",
+    "bun-graph:/$bunfs/root/chunk-rea1e3db.js",
+    "bun-graph:/$bunfs/root/chunk-s22n3b79.js",
+    "bun-graph:/$bunfs/root/chunk-xj41x97a.js",
   ]) {
     expect(corpus.inputs).toContainEqual({ inputPath, initialized: true });
   }
@@ -61,10 +76,48 @@ it("parses the pinned corpus and retains inputs reached by partial sessions", as
   ]) {
     expect(corpus.provenance).toContainEqual(provenance);
   }
+  for (const provenance of [
+    {
+      name: "v6-unomitted-release.js",
+      sha256: "86e0f3676ea87b35e83606776a2bd67a9dd98b74e80d57efcccf8961921bb854",
+    },
+    {
+      name: "v6-capture-resume-r4/resume-checkpoint",
+      sha256: "68da316689763e634a99dc8e00c7b637d847b3a3c58fe7a731b1295150105495",
+    },
+    {
+      name: "v6-capture-resume-r4/continue-checkpoint",
+      sha256: "89385c1aa8a0743298e863aaadfafd2dad210f2561a84ab1fa11ad4806275e32",
+    },
+    {
+      name: "v6-interrupt-r2/interrupt-resume",
+      sha256: "cb83703e636da90016f8cd32334d497fb9a5906a896bd157e96258a4bd0ea85e",
+    },
+    {
+      name: "v6-interrupt-r2/interrupt-continue",
+      sha256: "cd6a7467c86d4c80af553e7c2e3600d419e6f835a28fc254cbaa649c7a79f0a5",
+    },
+  ]) {
+    expect(corpus.provenance).toContainEqual(provenance);
+  }
   expect(corpus.pending).toEqual([
     "session-C-from-1244",
     "session-A-from-1244",
     "session-B-from-1244",
     "WebSearch-completion",
+    "compaction-auto",
+    "compaction-slash",
+    "background-Bash-completion",
+    "Agent-Task-subagents",
+    "image-Read",
+    "MCP-stdio",
+    "MCP-http",
+    "plugin-hooks-PreToolUse-PostToolUse-SessionStart",
+    "TodoWrite",
+    "WebFetch-completion",
+    "permission-prompts-denials",
+    "slash-commands",
+    "settings-model-switching",
+    "output-styles",
   ]);
 });
