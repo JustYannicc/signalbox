@@ -10,10 +10,10 @@ import { JSPI_WASM } from "./wasmFixture.ts";
 const jspiHash = "3c82c5088c45f5acae60187e020c7f3fce285c2bb032323b318d0372b9c6ed50";
 
 function expectDispatchImports(
-  imports: readonly { specifier: string; external: boolean }[],
+  imports: readonly { specifier: string; external: boolean | undefined }[],
   specifiers: readonly string[],
 ) {
-  expect(imports.every((entry) => entry.external)).toBe(true);
+  expect(imports.every((entry) => entry.external === true)).toBe(true);
   expect(new Set(imports.map((entry) => entry.specifier))).toEqual(new Set(specifiers));
 }
 

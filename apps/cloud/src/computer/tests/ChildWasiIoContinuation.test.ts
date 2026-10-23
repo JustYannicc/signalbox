@@ -103,10 +103,11 @@ describe("child WASI I/O continuations", () => {
     });
     expect(first?.kind).toBe("continue");
     if (first?.kind !== "continue") throw new Error("Expected a resumed read window");
+    expect(first.request.transferOffset).toBe(WINDOW);
 
     const effect = () =>
       child.applyOperation(
-        { kind: "wasi", request: first.request },
+        first.request,
         {
           namespace: "wasi_snapshot_preview1",
           name: "fd_read",
