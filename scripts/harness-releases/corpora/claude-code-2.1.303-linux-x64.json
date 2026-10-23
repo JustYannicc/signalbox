@@ -225,13 +225,476 @@
     {
       "name": "session-A-r113-partial",
       "sha256": "f60c9f8546ad1e4fac1815c4aec78946d8db9d381bab523db801c720a6de0798"
+    },
+    {
+      "name": "v6-capture-resume-r1/continue-checkpoint",
+      "sha256": "5e4542ad28062b2d72a91dcd93ba7494ef04228110c7b93b642b752a2b0dbc0c"
+    },
+    {
+      "name": "v6-capture-resume-r1/resume-checkpoint-partial",
+      "sha256": "e79403fbc129a29bc3a15c6dabecaa5747793a391903ef736b39fd3baf855ffb"
+    },
+    {
+      "name": "v6-capture-resume-r2/continue-checkpoint-partial",
+      "sha256": "0b971ec8419d384a930347ca711104cd6d1d79bd930219b057cec715aeb464d2"
+    },
+    {
+      "name": "v6-capture-resume-r2/resume-checkpoint-partial",
+      "sha256": "248519df285ef1d9e7413f44b60388d8b20a0054b00e1779112482b5e9d65178"
+    },
+    {
+      "name": "v6-capture-resume-r3/continue-checkpoint-partial",
+      "sha256": "16e1182be40eb446249c054a2e0dd658859d1744c9aa51ae41798f74d5347949"
+    },
+    {
+      "name": "v6-capture-resume-r3/resume-checkpoint-partial",
+      "sha256": "d4c374601c25026f36cfa1ac9190b49f052618333a0e7b5e677cde8f9c90ea8d"
+    },
+    {
+      "name": "v6-capture-resume-r4/continue-checkpoint",
+      "sha256": "89385c1aa8a0743298e863aaadfafd2dad210f2561a84ab1fa11ad4806275e32"
+    },
+    {
+      "name": "v6-capture-resume-r4/resume-checkpoint",
+      "sha256": "68da316689763e634a99dc8e00c7b637d847b3a3c58fe7a731b1295150105495"
+    },
+    {
+      "name": "v6-interrupt-r1/interrupt-continue-partial",
+      "sha256": "8bc0eeddad499649a9a7f1ec36b136ac63a22b9c81e717d1d8cf8b2161cc5d96"
+    },
+    {
+      "name": "v6-interrupt-r1/interrupt-original-partial",
+      "sha256": "29505d7db76542a0e47cc5863312e02670ee2722fb28a0878e349f0c3e878d8f"
+    },
+    {
+      "name": "v6-interrupt-r1/interrupt-resume-partial",
+      "sha256": "5c83156556c0c38dd37a7cdfbc4c35ca32c44970d670768624b487323b867b1b"
+    },
+    {
+      "name": "v6-interrupt-r2/interrupt-continue",
+      "sha256": "cd6a7467c86d4c80af553e7c2e3600d419e6f835a28fc254cbaa649c7a79f0a5"
+    },
+    {
+      "name": "v6-interrupt-r2/interrupt-original-partial",
+      "sha256": "124154d559effa1cdce7718abe09455ff22c208e28b0ba65d496e10b7c033003"
+    },
+    {
+      "name": "v6-interrupt-r2/interrupt-resume",
+      "sha256": "cb83703e636da90016f8cd32334d497fb9a5906a896bd157e96258a4bd0ea85e"
+    },
+    {
+      "name": "v6-unomitted-release.js",
+      "sha256": "86e0f3676ea87b35e83606776a2bd67a9dd98b74e80d57efcccf8961921bb854"
+    },
+    {
+      "name": "v6-unomitted-chunk-spans.jsonl.gz",
+      "sha256": "c8412fe2def21d648968c352f18c6b22c8c8bbc7db1f102656b7a5b0aa07fe73"
+    },
+    {
+      "name": "v6-recovery-driver",
+      "sha256": "de0306639534ced599ba545771c546d65b4115a59edd926afecda723763172f2"
+    },
+    {
+      "name": "v6-node-cli-driver",
+      "sha256": "d5b2fa50b8a7b764ea15fb328ef6283e9961c192464bc55ebbed4a97da9719ec"
+    },
+    {
+      "name": "v6-interrupt-driver",
+      "sha256": "eb4081bdcadb47301743a62eb381dddf82f6276364a05e074b3c2c11ae016161"
+    },
+    {
+      "name": "v6-interrupt-node-cli-driver",
+      "sha256": "d5b2fa50b8a7b764ea15fb328ef6283e9961c192464bc55ebbed4a97da9719ec"
+    },
+    {
+      "name": "v6-initializer-mapper",
+      "sha256": "32667d156c74015f5f84a1605f997728f7cabcf3c35caa1675540281c0d2a6cc"
+    },
+    {
+      "name": "v7-agent-background/r2/coverage",
+      "sha256": "c9f07ecb2feda7d73556fbb37faa29b7e903ce738a0107de1c22d94a994353f9"
+    },
+    {
+      "name": "v7-agent-background/r2/coverage-gzip",
+      "sha256": "7796cbc127fa65e04de6c449e7907e3943ba000f8d3cf739aee0a1162fbd44cc"
+    },
+    {
+      "name": "v7-agent-background/r2/coverage-raw-0",
+      "sha256": "a34a8e506a679460c13f80a032bdc22396c26b3308834be97a7aba99d9ae1bbf"
+    },
+    {
+      "name": "v7-core/agent-subagent/coverage",
+      "sha256": "9a7015722f45c430894880d0c0713c3d018b219b2e2ec215ea6b6a2f8c121416"
+    },
+    {
+      "name": "v7-core/agent-subagent/coverage-gzip",
+      "sha256": "e96fc200161ae2b620a89621dfa75fbc364b901584d44b3275b3b83b232fd25c"
+    },
+    {
+      "name": "v7-core/agent-subagent/coverage-raw-0",
+      "sha256": "bacb6b7dd73a838452ebbd40b3f00aa9af38ccbfb3346fc50f3d0168698088a2"
+    },
+    {
+      "name": "v7-core/background-bash-notification/coverage",
+      "sha256": "ded688e859c61dd7542be63e3771f49094d149e1d980279ce1017841996e17ac"
+    },
+    {
+      "name": "v7-core/background-bash-notification/coverage-gzip",
+      "sha256": "ecbcb3c9886b8a1d1dc980dd56dab61ce166affce800997547b14bb433c5ec39"
+    },
+    {
+      "name": "v7-core/background-bash-notification/coverage-raw-0",
+      "sha256": "f39e5c4ed77f71933006811ea583c5a26ff78fd0d0aa13e487818783cc30c7b0"
+    },
+    {
+      "name": "v7-core/image-read/coverage",
+      "sha256": "ba7b7aaa6fc22628e8972b83f9f1508456b00bd8ec3f088a6a402f9a06c4f009"
+    },
+    {
+      "name": "v7-core/image-read/coverage-gzip",
+      "sha256": "9bc143263c543578f8796b13f552bde5725f2ad7ebf02bdea2d1dd00d6e6d962"
+    },
+    {
+      "name": "v7-core/image-read/coverage-raw-0",
+      "sha256": "21a24d8419fa6722bc18f37b846a5767e1e7514058a391b73901f0dd88a05da2"
+    },
+    {
+      "name": "v7-core/permission-prompt-denial/coverage",
+      "sha256": "3651be822224b63a7f087f8a86a42eec9fc47a592ba9846bf94c3aeea765fd4b"
+    },
+    {
+      "name": "v7-core/permission-prompt-denial/coverage-gzip",
+      "sha256": "e7925ca1e11ede9517c173a6c1bd5c1b874e3dd18a77e75188738cf7322ab8a0"
+    },
+    {
+      "name": "v7-core/permission-prompt-denial/coverage-raw-0",
+      "sha256": "5d97b0176a3eb89971537d6ba5067efc7199a0c5cfe1d5200d018ff055a569a8"
+    },
+    {
+      "name": "v7-core/todo-write/coverage",
+      "sha256": "c5ff2ff534cd54cf1be3a6fa8d2cf50340a4b92aa125649c2a5ad75fc4a4e7d3"
+    },
+    {
+      "name": "v7-core/todo-write/coverage-gzip",
+      "sha256": "9335f7f670a6a60cfeb3b1fbbce8edcfc94847e9c2aabde5f78eefcb3d98abc3"
+    },
+    {
+      "name": "v7-core/todo-write/coverage-raw-0",
+      "sha256": "6cc6584b4888f36493a9bfae276c2b28f7c147a578e7a6e25e760d162a1144c5"
+    },
+    {
+      "name": "v7-integrations/scenarios/hooks/coverage",
+      "sha256": "af3e927573d86b4eb1e961c8b66d2cb533efa8991fc253d67bce951ea52a3242"
+    },
+    {
+      "name": "v7-integrations/scenarios/hooks/coverage-gzip",
+      "sha256": "5623823938e20059a24ba2819f47017356208c2e8cdf23bc558dc38a8acce7ce"
+    },
+    {
+      "name": "v7-integrations/scenarios/hooks/coverage-raw-0",
+      "sha256": "23251418e15fa8fadc5398fb95948b71ea6fb47cd23120f43448b91b74c3aa73"
+    },
+    {
+      "name": "v7-integrations/scenarios/hooks/coverage-raw-1",
+      "sha256": "52701beb7d6ff7dbb7aa2783fb999fc79ddf6341fbbfe3394f691316a5005ae7"
+    },
+    {
+      "name": "v7-integrations/scenarios/hooks/coverage-raw-2",
+      "sha256": "2e6a6e523c8e011be915523a60c85302a6b2d323bd60d2222076ef41be40b919"
+    },
+    {
+      "name": "v7-integrations/scenarios/hooks/coverage-raw-3",
+      "sha256": "9b9c359ae3c207923651fe5bdaf55474fc50284cf1fe6b5dc8548944e38a1dc1"
+    },
+    {
+      "name": "v7-integrations/scenarios/hooks/coverage-raw-4",
+      "sha256": "245e89a9824d04d96d53c1d947ae90d9e290e942e49f924102b3a62a73023979"
+    },
+    {
+      "name": "v7-integrations/scenarios/mcp-http/coverage",
+      "sha256": "bd5a7684da331033169fe6bb9e4eca0bde330b17094fbb7ab6a2f349b46bc43a"
+    },
+    {
+      "name": "v7-integrations/scenarios/mcp-http/coverage-gzip",
+      "sha256": "4d3a55bbb626ffc5d9d28471f74db640932cef4f3727f512fc2212929855dc7a"
+    },
+    {
+      "name": "v7-integrations/scenarios/mcp-http/coverage-raw-0",
+      "sha256": "816f1aa405ae83a265daa652a2ffb8d3dd574cc46f5bf880dbc95836aedb91f4"
+    },
+    {
+      "name": "v7-integrations/scenarios/mcp-stdio/coverage",
+      "sha256": "baeac8bfde3c4d226850f7b11eb1c1bf28e1fce1f0275815ab0fcc8e58a4ebcb"
+    },
+    {
+      "name": "v7-integrations/scenarios/mcp-stdio/coverage-gzip",
+      "sha256": "bae06a1c3939da733aa10e97192bd865fc1656d52bbf60583dec8b3643567e4a"
+    },
+    {
+      "name": "v7-integrations/scenarios/mcp-stdio/coverage-raw-0",
+      "sha256": "88fae37759d27633829f0fecd1508ed7023d112e86c2457b0fa5df94cce9eca2"
+    },
+    {
+      "name": "v7-integrations/scenarios/mcp-stdio-first-attempt/coverage",
+      "sha256": "d12c8e06ea47e884dfe8881389bf11fe92bc9922b30ee0ed6d238cc74d9efa32"
+    },
+    {
+      "name": "v7-integrations/scenarios/mcp-stdio-first-attempt/coverage-gzip",
+      "sha256": "a18dba185a66a4b94f00b9c5c3a6ccce3e80f3501d8a24cb81a940a9280ba709"
+    },
+    {
+      "name": "v7-integrations/scenarios/mcp-stdio-first-attempt/coverage-raw-0",
+      "sha256": "67fb5abdea8cc808b175f98d3f0578e1979b384fbd5b8ed2d9e4704dc9ff39e3"
+    },
+    {
+      "name": "v7-integrations/scenarios/plugin/coverage",
+      "sha256": "ee9484b19dd1c0c3ba7547682ec0f9df779fbf5c39f039c38b640f3a8e287b73"
+    },
+    {
+      "name": "v7-integrations/scenarios/plugin/coverage-gzip",
+      "sha256": "592b668a9d2767a7c6de737ac20785b2cbb10701e36bfb3e6fb430b221e5df17"
+    },
+    {
+      "name": "v7-integrations/scenarios/plugin/coverage-raw-0",
+      "sha256": "bcbe4a74f5198d8160bfa45c1275ce486db3ca47aba7e51ccece02d41750ea94"
+    },
+    {
+      "name": "v7-integrations/scenarios/plugin/coverage-raw-1",
+      "sha256": "a2543d1d08ee0d413b8c63309363b6086bc2b6db028b0eac155cc87c9ede0a3b"
+    },
+    {
+      "name": "v7-integrations/scenarios/webfetch/coverage",
+      "sha256": "1b1d8d1feca0192a59516758251f393a4c21fda43e1efb4f54647abb24c0ed08"
+    },
+    {
+      "name": "v7-integrations/scenarios/webfetch/coverage-gzip",
+      "sha256": "388ddaac24e17c0b3daa1f8eaf101452780e3dc0c83e9573e9ea34d451f60844"
+    },
+    {
+      "name": "v7-integrations/scenarios/webfetch/coverage-raw-0",
+      "sha256": "0df8eea9553a293a5e85dd4e7810cdf25e756418c44d517642bac98ccc070fe1"
+    },
+    {
+      "name": "v7-integrations/scenarios/webfetch-https-retry/coverage",
+      "sha256": "44556faf047314db3b75c85331d3e0dc68fa2a8b5ba1def7b1393cae2930035e"
+    },
+    {
+      "name": "v7-integrations/scenarios/webfetch-https-retry/coverage-gzip",
+      "sha256": "49df4d0df87b73a34b5e6f36728f783702906996d26c2480f1f92cf30e1a8ee4"
+    },
+    {
+      "name": "v7-integrations/scenarios/webfetch-https-retry/coverage-raw-0",
+      "sha256": "9cc6e8bbdeee61ffe15248f619719be3aaefa2942740d02e093a79b4e39ef541"
+    },
+    {
+      "name": "v7-integrations/scenarios/websearch/coverage",
+      "sha256": "42ab87d02fbba2d972ff3df3f1136ab563292a94629890a8275dda1049b8174f"
+    },
+    {
+      "name": "v7-integrations/scenarios/websearch/coverage-gzip",
+      "sha256": "ecce1fde1280230d56e543eae259dd02375b4164771317a16add59eebf48f48b"
+    },
+    {
+      "name": "v7-integrations/scenarios/websearch/coverage-raw-0",
+      "sha256": "1ad5c5c7b6dde67842ea4d584baaa69cc646677764fdcfdbf228aabf6d628781"
+    },
+    {
+      "name": "v7-session/r1/auto-compact/coverage",
+      "sha256": "506067d48fef5124666fe5107a062a7ee149680ede299998ab8f33bb421dfce1"
+    },
+    {
+      "name": "v7-session/r1/auto-compact/coverage-gzip",
+      "sha256": "d1f556db10bb8cc9ccf21292ccc2380b8dc65b19037af363da8f46552af57443"
+    },
+    {
+      "name": "v7-session/r1/auto-compact/coverage-raw-0",
+      "sha256": "6632f5bce6129febdc8ca6b755fb92bfb3c3f43acc7ca2e2c8b9c0965b0d777c"
+    },
+    {
+      "name": "v7-session/r1/settings-model-style/coverage",
+      "sha256": "327cd5dcea9a4e29993bf1084665b403cc179ca1c8c92686dc66476f5220a449"
+    },
+    {
+      "name": "v7-session/r1/settings-model-style/coverage-gzip",
+      "sha256": "2a35072202067e746f26bf49f5a5c1098a903a2c56575746e06dd3d7e231b101"
+    },
+    {
+      "name": "v7-session/r1/settings-model-style/coverage-raw-0",
+      "sha256": "90c47ad7d2ac9290869005fb4d2fdbb811be7146d488061079641871bc709dd1"
+    },
+    {
+      "name": "v7-session/r1/slash-compact/coverage",
+      "sha256": "4ad08618f8f48d975dc4ac6de3033d4797d1c49e4b57070bde44e191b61d0287"
+    },
+    {
+      "name": "v7-session/r1/slash-compact/coverage-gzip",
+      "sha256": "372ba6c6f1560ded7a511125135d407d9ceb0a0400e770b0edb54a9fb27884b2"
+    },
+    {
+      "name": "v7-session/r1/slash-compact/coverage-raw-0",
+      "sha256": "b0edb893e058a1bbcf79d6bb457e53d05f435dab40b747f594b23decb0d0629a"
+    },
+    {
+      "name": "v7-session/r1/slash-context/coverage",
+      "sha256": "8c949acd68d8102e8597cafb263f37f08d3d0d07082e1696de0c7c54af927407"
+    },
+    {
+      "name": "v7-session/r1/slash-context/coverage-gzip",
+      "sha256": "5fc6f96da57e9b86e096b4b963b27ebf29eab7d31459e6e7eeb6655ed883a418"
+    },
+    {
+      "name": "v7-session/r1/slash-context/coverage-raw-0",
+      "sha256": "b8345ea5addbbb1790e6778a2f205099c7a02d354483d0866fba00d4762c6686"
+    },
+    {
+      "name": "v7-session/r2/custom-style/coverage",
+      "sha256": "443d5d04679216c573f27f579f78185d4226ea5f0aad2454229c7586abbaa0cb"
+    },
+    {
+      "name": "v7-session/r2/custom-style/coverage-gzip",
+      "sha256": "65c66097f1d2be7117323cfe06c1d4e7289139e8209385cd588d30530cb26c37"
+    },
+    {
+      "name": "v7-session/r2/custom-style/coverage-raw-0",
+      "sha256": "53b643ff3b6c6185f8208a96ee54109a173d8f6bd1ffe8a2e8218becf126309d"
+    },
+    {
+      "name": "v7-workers/attempt-2/coverage",
+      "sha256": "33688011596e5cf8c444acbf6e259f0b35856bf18e0cd547931f8a55f2b35f0a"
+    },
+    {
+      "name": "v7-workers/attempt-2/coverage-gzip",
+      "sha256": "41a61a82f24d7ba57aa783744deee8417b95e76c40893c2b5e59a360bd992607"
+    },
+    {
+      "name": "v7-workers/attempt-2/coverage-raw-0",
+      "sha256": "ba1d452e308f03181db677082208169297cf8380f49b606b602f8cbbef2b3cca"
+    },
+    {
+      "name": "v7-workers/attempt-2/coverage-raw-1",
+      "sha256": "4fab27253e81715bce5dedef0ce6c4a0c15bdbedd855f07dd6bc60736bd58403"
+    },
+    {
+      "name": "v7-workers/attempt-2/coverage-raw-2",
+      "sha256": "445b4c3ad9a5b6a714ffb628e981bdad0fcffc9241a05202d2227190041fdb52"
+    },
+    {
+      "name": "v7-workers/attempt-2/coverage-raw-3",
+      "sha256": "898250f41fd2069d5fd7c4daa2de8a6eba435007c20fb8c68991000af5695b7d"
+    },
+    {
+      "name": "v7-workers/coverage",
+      "sha256": "c559fa47341ffb93d6eef6f015a3a72fff8bd67e15b0e94ba500892ea54068f8"
+    },
+    {
+      "name": "v7-workers/coverage-gzip",
+      "sha256": "7259625578c4595d0557564687354da18e0874b8c0f10ed69fe5a901917b17b3"
+    },
+    {
+      "name": "v7-workers/coverage-raw-0",
+      "sha256": "0240e402336cb685034ea0de8f6128e0ef923dbaa3388680099e1ab07ac863f7"
+    },
+    {
+      "name": "v7-workers/coverage-raw-1",
+      "sha256": "2e11f2626b467154454b0bcb4b25b56574a2fc6ee4a1efbb5cb1210da065bf29"
+    },
+    {
+      "name": "v7-workers/coverage-raw-2",
+      "sha256": "b97d3711f486a3727172f25810b1d43847f31c4b71ee5582f1a50a85eaa0af57"
+    },
+    {
+      "name": "v7-workers/coverage-raw-3",
+      "sha256": "671ca97dc9594a5254f1ce71cfda4971e60f1c51d6b1e5f2866755768c35ef72"
+    },
+    {
+      "name": "v7-source-or-capture-unomitted-release.js",
+      "sha256": "86e0f3676ea87b35e83606776a2bd67a9dd98b74e80d57efcccf8961921bb854"
+    },
+    {
+      "name": "v7-source-or-capture-chunk-spans.jsonl.gz",
+      "sha256": "c8412fe2def21d648968c352f18c6b22c8c8bbc7db1f102656b7a5b0aa07fe73"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-agent-background-capture.mjs",
+      "sha256": "dfe7dd2713758071b459f57d0a39ca1875fc1fc48d6da40332d1e7373df6b55a"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-agent-background-node-cli.mjs",
+      "sha256": "f8ce4d98c676ce80a3e2428b46c85c2285cf7f4427be667f8a829334a452a3e9"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-core-capture.mjs",
+      "sha256": "6eefee00d54508cc82b1484498bb75c033ef541e9494c31847d438fd9c9d6971"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-integrations-node-cli.mjs",
+      "sha256": "d5b2fa50b8a7b764ea15fb328ef6283e9961c192464bc55ebbed4a97da9719ec"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-integrations.mjs",
+      "sha256": "17c3652a329ee2f4237457064f423c712f23e5908f592fbf1133e4456aa501a6"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-session-cli.mjs",
+      "sha256": "d5b2fa50b8a7b764ea15fb328ef6283e9961c192464bc55ebbed4a97da9719ec"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-session-r1.mjs",
+      "sha256": "e6a0aa17bed5986c75747f6e60094887164d320c28e99c2f64ba920efebc5cdb"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-session-r2.mjs",
+      "sha256": "874ed2691aaafa7be08df6c4685ac078947bc58c894b4c6e745a346a75f20ca8"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-session.mjs",
+      "sha256": "14c82fb53827d30cbd690d2159e06022decdbdda2bdafa9b59fe03f7606b9d81"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-workers-node-cli.mjs",
+      "sha256": "ebc049d6760655aea24d15ac9be6dcf2607efda32c93ada83eef8ccf56636b37"
+    },
+    {
+      "name": "v7-source-or-capture-tools/round2-workers.mjs",
+      "sha256": "02a1d57818389d07651c437fc2b718614d186bc7bd7f02257b5a067bb2074292"
+    },
+    {
+      "name": "v7-source-or-capture-round2/agent-background/assessment.json",
+      "sha256": "fd04d32e647c6adc7e8eafde1b4765c71b403e15d1b49c0ed7dfff1cbea6a11d"
+    },
+    {
+      "name": "v7-source-or-capture-round2/agent-background/r2/assessment.json",
+      "sha256": "40d6f38ee5900c45619c30e99f2d5e60fca802ddf76940053ea176636a280d01"
+    },
+    {
+      "name": "v7-source-or-capture-round2/core/assessment.json",
+      "sha256": "ab40bd53ee0757a19391025bf16b1a814d2cf1285760c4792f314ad26419ddfb"
+    },
+    {
+      "name": "v7-source-or-capture-round2/integrations/assessment-webfetch-https-retry.json",
+      "sha256": "77b77f81ea517e6218a8edb1941540b91340cd07bf3aa9301f300a91ac316db1"
+    },
+    {
+      "name": "v7-source-or-capture-round2/integrations/assessment.json",
+      "sha256": "d588d135180d618797c4026687fecd6e787641085e7416011b6e6f78ea90794e"
+    },
+    {
+      "name": "v7-source-or-capture-round2/session/assessment.json",
+      "sha256": "7d58ab0501d60ff37e8fd6d1552630b60e76764b4870b1627f5d7e1e6287f05b"
+    },
+    {
+      "name": "v7-source-or-capture-round2/workers/assessment.json",
+      "sha256": "b5859e12e92cd8b7c4cd748b5c1942bb6768c17228afe041fa41a2251d6c04d2"
     }
   ],
   "pending": [
     "session-C-from-1244",
     "session-A-from-1244",
     "session-B-from-1244",
-    "WebSearch-completion"
+    "WebSearch-completion",
+    "TodoWrite-unavailable-in-2.1.303-headless-toolset",
+    "output-style-prompt-application",
+    "plugin-function-hooks-worker: Worker is not defined (recapture after #1396)"
   ],
   "inputs": [
     {
@@ -356,7 +819,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-0d3k7c10.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-0d4yc7rk.js",
@@ -832,7 +1295,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-1xn1h09a.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-1yaynhrv.js",
@@ -840,7 +1303,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-1yk0b2ky.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-1ynv1rf9.js",
@@ -988,7 +1451,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-2gfdk5g7.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-2h2qnc80.js",
@@ -1384,11 +1847,11 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-3ra9kcfr.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-3rd1783e.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-3rfnbzz0.js",
@@ -1796,7 +2259,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-5befw1yz.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-5bm5asfk.js",
@@ -2132,7 +2595,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-6hh08p3q.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-6hjnenhz.js",
@@ -2488,7 +2951,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-7kqyz64t.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-7kt9ad5g.js",
@@ -2736,7 +3199,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-8crv3dwn.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-8cys9wff.js",
@@ -2840,7 +3303,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-8mp04ez5.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-8nhcjtv2.js",
@@ -3140,7 +3603,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-9hxmx5h0.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-9jtg07bw.js",
@@ -3836,7 +4299,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-bvd74m7c.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-bvgdq95e.js",
@@ -4008,7 +4471,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-cc7amj64.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-cc837y02.js",
@@ -4096,7 +4559,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-cnzzwgfw.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-cpjtxxrd.js",
@@ -4264,7 +4727,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-d8chec4f.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-d8h1xtnz.js",
@@ -4412,7 +4875,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-dnv50g9q.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-dq6vc9y9.js",
@@ -4528,7 +4991,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-e2derxke.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-e2hxvwnx.js",
@@ -4776,7 +5239,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-epvse6vk.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-eqdffg2v.js",
@@ -5276,7 +5739,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-gdnd7mmb.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-gdvkvrkd.js",
@@ -5476,7 +5939,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-h3madgmg.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-h42wney5.js",
@@ -5572,7 +6035,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-hfrg3wrg.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-hfvk3ys0.js",
@@ -6276,7 +6739,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-knvpnmph.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-kq8bvqwg.js",
@@ -7624,7 +8087,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-rea1e3db.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-rehtf1e3.js",
@@ -7660,7 +8123,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-rpgd9nph.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-rpgn74j8.js",
@@ -7768,7 +8231,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-s22n3b79.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-s23e5evk.js",
@@ -8636,7 +9099,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-vqa3vv4s.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-vqw7s5s3.js",
@@ -9212,7 +9675,7 @@
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-xj41x97a.js",
-      "initialized": false
+      "initialized": true
     },
     {
       "inputPath": "bun-graph:/$bunfs/root/chunk-xjat7wkv.js",
