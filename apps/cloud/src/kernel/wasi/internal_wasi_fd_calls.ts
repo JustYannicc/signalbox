@@ -30,7 +30,6 @@ const EROFS = 69;
 const ESPIPE = 70;
 const ENOTCAPABLE = 76;
 
-const MAX_TRANSFER_BYTES = 16 * 1024 * 1024;
 const IO_CHUNK_BYTES = 64 * 1024;
 const MAX_FILE_SIZE = (1n << 63n) - 1n;
 const DIR_COOKIE_MAX = BigInt(Number.MAX_SAFE_INTEGER);
@@ -288,7 +287,7 @@ export class WasiFdCalls {
     requireRight(descriptor, RIGHTS.FD_SEEK);
     this.#memory.range(nread, 4);
     const vectors = this.#memory.iovecs(iovs, iovsLen);
-    const limit = vectorLimit(vectors);
+    const limit = vectorLimit(this.#memory, vectors);
     const position = normalizeU64(offset);
     if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     yield* this.#syncBeforeRead(descriptor);
@@ -329,7 +328,7 @@ export class WasiFdCalls {
     requireRight(descriptor, RIGHTS.FD_SEEK);
     this.#memory.range(nwritten, 4);
     const vectors = this.#memory.iovecs(iovs, iovsLen);
-    const source = copyVectors(this.#memory, vectors, vectorLimit(vectors));
+    const source = this.#memory.copyIovecs(vectors, vectorLimit(this.#memory, vectors));
     const position = normalizeU64(offset);
     if (descriptor.kind === "stdio") throw new WasiError(ESPIPE);
     this.#requireWritable(descriptor);
@@ -362,7 +361,7 @@ export class WasiFdCalls {
     requireRight(descriptor, RIGHTS.FD_READ);
     this.#memory.range(nread, 4);
     const vectors = this.#memory.iovecs(iovs, iovsLen);
-    const limit = vectorLimit(vectors);
+    const limit = vectorLimit(this.#memory, vectors);
     yield* this.#syncBeforeRead(descriptor);
     const count =
       descriptor.kind === "stdio"
@@ -388,7 +387,7 @@ export class WasiFdCalls {
     const descriptor = this.#requireDirectory(fd, RIGHTS.FD_READDIR);
     const length = bufferLen >>> 0;
     this.#memory.validateRange(buffer, length);
-    const capacity = Math.min(length, MAX_TRANSFER_BYTES);
+    const capacity = Math.min(length, this.#memory.transferLimit);
     this.#memory.range(bufused, 4);
     const entries = yield* this.#getDirectoryEntries(descriptor);
     const used = encodeDirectoryEntries(this.#memory, buffer, capacity, cookie, entries);
@@ -471,7 +470,7 @@ export class WasiFdCalls {
     requireRight(descriptor, RIGHTS.FD_WRITE);
     this.#memory.range(nwritten, 4);
     const vectors = this.#memory.iovecs(iovs, iovsLen);
-    const source = copyVectors(this.#memory, vectors, vectorLimit(vectors));
+    const source = this.#memory.copyIovecs(vectors, vectorLimit(this.#memory, vectors));
     if (descriptor.kind !== "stdio") this.#requireWritable(descriptor);
     const count =
       descriptor.kind === "stdio"
@@ -707,31 +706,16 @@ function validateCount(count: number, maximum: number): void {
   if (!Number.isInteger(count) || count < 0 || count > maximum) throw new WasiError(EIO);
 }
 
-function vectorLimit(vectors: { length: number }[]): number {
+// signalbox: a short transfer obeys the owner-issued credit without rewriting the guest table.
+function vectorLimit(memory: WasiMemory, vectors: { length: number }[]): number {
   let total = 0;
   for (const vector of vectors) {
     total += vector.length;
     // A bounded partial transfer keeps copied write data within the host's
     // memory budget. The guest can retry the untransferred suffix.
-    if (total >= MAX_TRANSFER_BYTES) return MAX_TRANSFER_BYTES;
+    if (total >= memory.transferLimit) return memory.transferLimit;
   }
   return total;
-}
-
-function copyVectors(
-  memory: WasiMemory,
-  vectors: { pointer: number; length: number }[],
-  totalLength: number,
-): Uint8Array {
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const vector of vectors) {
-    const length = Math.min(vector.length, totalLength - offset);
-    result.set(memory.range(vector.pointer, length), offset);
-    offset += length;
-    if (offset === totalLength) break;
-  }
-  return result;
 }
 
 function normalizeU64(value: bigint): bigint {

@@ -32,5 +32,9 @@ export function createWorkerBusyboxHost(
   lease: ChildHostLease,
 ) {
   const owner = createKernelBusyboxHost(options);
-  return { host: new WorkerBusyboxPort(lease.hold(owner.port)), close: owner.close };
+  return {
+    host: new WorkerBusyboxPort(lease.hold(owner.port)),
+    ready: owner.ready,
+    close: owner.close,
+  };
 }

@@ -22,5 +22,5 @@ export class WorkerSyscalls extends RpcTarget implements KernelSyscallPort {
 
 export function createWorkerSyscalls(options: KernelSyscallHostOptions, lease: ChildHostLease) {
   const owner = createKernelSyscallHost(options);
-  return { host: new WorkerSyscalls(lease.hold(owner)), close: owner.close };
+  return { host: new WorkerSyscalls(lease.hold(owner)), ready: owner.ready, close: owner.close };
 }

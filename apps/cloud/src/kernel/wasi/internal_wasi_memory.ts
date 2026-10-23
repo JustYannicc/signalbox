@@ -35,6 +35,27 @@ export class WasiExit extends Error {
 export class WasiMemory {
   #memory: WebAssembly.Memory | undefined;
 
+  // signalbox: child RPC credits bound the prefix without changing the original iovec validation.
+  get transferLimit(): number {
+    return 16 * 1024 * 1024;
+  }
+
+  // signalbox: syscall memory can lend its owned input, while ordinary guest memory needs a copy.
+  copyIovecs(
+    vectors: readonly { pointer: number; length: number }[],
+    totalLength: number,
+  ): Uint8Array {
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const vector of vectors) {
+      const length = Math.min(vector.length, totalLength - offset);
+      result.set(this.range(vector.pointer, length), offset);
+      offset += length;
+      if (offset === totalLength) break;
+    }
+    return result;
+  }
+
   set(memory: WebAssembly.Memory): void {
     this.#memory = memory;
   }

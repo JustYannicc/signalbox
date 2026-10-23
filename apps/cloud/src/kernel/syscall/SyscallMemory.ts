@@ -1,6 +1,7 @@
 import * as NodeBuffer from "node:buffer";
 import { WasiMemory } from "../wasi/internal_wasi_memory.ts";
 import type { KernelMemoryRegion } from "../KernelSyscallPort.ts";
+import { ownKernelPayload } from "../KernelPayloadBudget.ts";
 
 interface BoundRegion {
   readonly pointer: number;
@@ -9,22 +10,32 @@ interface BoundRegion {
   readonly original: Uint8Array;
   bytes: Uint8Array<ArrayBuffer> | undefined;
   readonly writes: Array<{ start: number; end: number }>;
+  readonly tracked: boolean;
 }
 
 /** Only syscall arguments cross the RPC boundary. The child retains its complete linear memory. */
 export class SyscallMemory extends WasiMemory {
   #size = 0;
   #regions: BoundRegion[] = [];
+  #transferLimit = 16 * 1024 * 1024;
+  #credited = false;
+
+  override get transferLimit(): number {
+    return this.#transferLimit;
+  }
 
   override get byteLength(): number {
     return this.#size;
   }
 
-  bind(size: number, regions: readonly KernelMemoryRegion[]) {
+  bind(size: number, regions: readonly KernelMemoryRegion[], transferLimit?: number) {
     if (!Number.isSafeInteger(size) || size < 0 || size > 0x1_0000_0000) {
       throw new TypeError("Invalid guest memory size");
     }
     let previousEnd = 0;
+    this.#transferLimit = transferLimit ?? 16 * 1024 * 1024;
+    this.#credited =
+      transferLimit !== undefined && regions.every((region) => region.direction !== undefined);
     this.#regions = regions.map((region) => {
       const direction = region.direction ?? "inout";
       if (!(region.bytes instanceof Uint8Array))
@@ -43,16 +54,38 @@ export class SyscallMemory extends WasiMemory {
         throw new TypeError("Invalid syscall memory regions");
       }
       previousEnd = region.pointer + length;
+      const tracked = this.#credited;
+      const input =
+        region.bytes.buffer instanceof ArrayBuffer
+          ? new Uint8Array(region.bytes.buffer, region.bytes.byteOffset, region.bytes.byteLength)
+          : region.bytes.slice();
       return {
         pointer: region.pointer,
         length,
         direction,
         original: region.bytes,
-        bytes: direction === "out" ? undefined : region.bytes.slice(),
+        bytes:
+          direction === "out"
+            ? undefined
+            : tracked
+              ? ownKernelPayload(input)
+              : region.bytes.slice(),
         writes: [],
+        tracked,
       };
     });
     this.#size = size;
+  }
+
+  override copyIovecs(
+    vectors: readonly { pointer: number; length: number }[],
+    totalLength: number,
+  ): Uint8Array {
+    if (!this.#credited) return super.copyIovecs(vectors, totalLength);
+    const nonempty = vectors.filter((vector) => vector.length > 0);
+    if (nonempty.length === 1)
+      return ownKernelPayload(this.range(nonempty[0]!.pointer, totalLength));
+    return ownKernelPayload(super.copyIovecs(vectors, totalLength));
   }
 
   override range(pointer: number, length: number): Uint8Array<ArrayBuffer> {
@@ -70,7 +103,7 @@ export class SyscallMemory extends WasiMemory {
     if (bytes.length === 0) return bytes;
     const region = this.#region(pointer >>> 0, bytes.length);
     if (region.direction === "in") throw new Error("Syscall wrote to input-only memory");
-    if (region.direction === "out") {
+    if (region.direction === "out" || region.tracked) {
       const start = (pointer >>> 0) - region.pointer;
       region.writes.push({ start, end: start + bytes.length });
     }
@@ -81,7 +114,7 @@ export class SyscallMemory extends WasiMemory {
     return this.#regions.flatMap((region) => {
       const bytes = region.bytes;
       if (region.direction === "in" || bytes === undefined) return [];
-      if (region.direction === "out") {
+      if (region.direction === "out" || region.tracked) {
         const merged: Array<{ start: number; end: number }> = [];
         for (const range of region.writes.sort((a, b) => a.start - b.start)) {
           const previous = merged.at(-1);
@@ -91,7 +124,10 @@ export class SyscallMemory extends WasiMemory {
         }
         return merged.map(({ start, end }) => ({
           pointer: region.pointer + start,
-          bytes: bytes.slice(start, end),
+          bytes:
+            region.tracked && start === 0 && end === bytes.byteLength
+              ? bytes
+              : bytes.slice(start, end),
         }));
       }
       // Native comparison skips scalar scans of unchanged undirected or aliased in-out buffers.

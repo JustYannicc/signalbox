@@ -58,6 +58,10 @@ describe("directional child WASI transfers", () => {
       const memory = instance.exports.memory as WebAssembly.Memory;
       memory.grow(2);
       const view = new DataView(memory.buffer);
+      view.setUint32(32, 1024, true);
+      view.setUint32(36, 0, true);
+      expect(await child.run(instance.exports.run!, 0, 32, 1, 16)).toBe(0);
+      returned = [];
       view.setUint32(16, 0xeeeeeeee, true);
       view.setUint32(32, 1024, true);
       view.setUint32(36, 128 * 1024, true);
@@ -84,8 +88,8 @@ describe("directional child WASI transfers", () => {
   it.each([
     ["fd_read", MIB, MIB],
     ["fd_write", MIB, MIB],
-    ["fd_read", 17 * MIB, 16 * MIB],
-    ["fd_write", 17 * MIB, 16 * MIB],
+    ["fd_read", 17 * MIB, MIB],
+    ["fd_write", 17 * MIB, MIB],
     ["fd_write", MIB, 3],
   ] as const)(
     "%s with %i bytes returns %i bytes with one directional payload transfer",
@@ -152,6 +156,12 @@ describe("directional child WASI transfers", () => {
       memory.grow(size / 65_536);
       const view = new DataView(memory.buffer);
       view.setUint32(32, 1024, true);
+      view.setUint32(36, 0, true);
+      expect(await child.run(instance.exports.run!, name === "fd_read" ? 0 : 1, 32, 1, 16)).toBe(0);
+      sent = 0;
+      received = 0;
+      compared = 0;
+      view.setUint32(32, 1024, true);
       view.setUint32(36, size, true);
       const destination = new Uint8Array(memory.buffer, 1024, size);
       destination.fill(0xa5);
@@ -164,7 +174,7 @@ describe("directional child WASI transfers", () => {
           destination.subarray(0, count).every((b) => b === (name === "fd_read" ? 0x5a : 0xa5)),
         ).toBe(true);
         expect(destination.subarray(count).every((b) => b === 0xa5)).toBe(true);
-        expect(sent).toBe(name === "fd_read" ? 8 : Math.min(size, 16 * MIB) + 8);
+        expect(sent).toBe(name === "fd_read" ? 8 : Math.min(size, MIB) + 8);
         expect(received).toBe(name === "fd_read" ? count + 4 : 4);
         expect(compared).toBe(0);
       } finally {

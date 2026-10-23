@@ -75,6 +75,7 @@ export function createWorkerBashHost(options: KernelBashHostOptions, lease: Chil
   };
   return {
     host: new WorkerBashPort(lease, owner.port, owner.pid, credentials),
+    ready: owner.ready,
     exited: owner.exited,
     close: owner.close,
   };

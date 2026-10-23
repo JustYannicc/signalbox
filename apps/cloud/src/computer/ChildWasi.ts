@@ -1,4 +1,7 @@
-import type { KernelSyscallPort } from "../kernel/KernelSyscallPort.ts";
+import {
+  KERNEL_SYSCALL_INITIAL_WINDOW,
+  type KernelSyscallPort,
+} from "../kernel/KernelSyscallPort.ts";
 import { KernelProcessSignal, kernelProcessExitStatus } from "../kernel/KernelProcessSignal.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
 
@@ -106,7 +109,7 @@ const MEMORY_PLANS: Readonly<Record<string, WasiMemoryPlan>> = {
     regions.addIovecs(pointer(args, 1), pointer(args, 2), "out");
   },
   fd_readdir(regions, args) {
-    regions.add(pointer(args, 1), Math.min(pointer(args, 2) >>> 0, MAX_TRANSFER_BYTES), "out");
+    regions.add(pointer(args, 1), Math.min(pointer(args, 2) >>> 0, regions.transferLimit), "out");
     regions.add(pointer(args, 4), 4, "out");
   },
   fd_renumber: noMemory,
@@ -141,7 +144,7 @@ const MEMORY_PLANS: Readonly<Record<string, WasiMemoryPlan>> = {
   },
   path_readlink(regions, args) {
     regions.add(pointer(args, 1), pointer(args, 2), "in");
-    regions.add(pointer(args, 3), Math.min(pointer(args, 4) >>> 0, MAX_TRANSFER_BYTES), "out");
+    regions.add(pointer(args, 3), Math.min(pointer(args, 4) >>> 0, regions.transferLimit), "out");
     regions.add(pointer(args, 5), 4, "out");
   },
   path_remove_directory(regions, args) {
@@ -201,6 +204,7 @@ export function createChildWasi(options: ChildWasiOptions) {
 
   let instance: WebAssembly.Instance | undefined;
   let memory: WebAssembly.Memory | undefined;
+  let transferWindow = KERNEL_SYSCALL_INITIAL_WINDOW;
   const imports: WebAssembly.Imports = Object.create(null) as WebAssembly.Imports;
 
   for (const imported of WebAssembly.Module.imports(options.module)) {
@@ -229,7 +233,7 @@ export function createChildWasi(options: ChildWasiOptions) {
         }
         return 0;
       }
-      const regions = new MemoryRegions(memory);
+      const regions = new MemoryRegions(memory, transferWindow);
       MEMORY_PLANS[imported.name]!(regions, args, encoded);
       const requestRegions = regions.snapshot();
       const response = await options.syscalls.call({
@@ -244,6 +248,16 @@ export function createChildWasi(options: ChildWasiOptions) {
         throw new Error("WASI proc_exit returned without exiting the child");
       }
       regions.apply(response.regions);
+      if (response.transferWindow !== undefined) {
+        if (
+          !Number.isSafeInteger(response.transferWindow) ||
+          response.transferWindow < KERNEL_SYSCALL_INITIAL_WINDOW ||
+          response.transferWindow > MAX_TRANSFER_BYTES
+        ) {
+          throw new TypeError("Invalid syscall transfer window");
+        }
+        transferWindow = response.transferWindow;
+      }
       return response.value;
     });
   }

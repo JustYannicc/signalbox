@@ -28,5 +28,9 @@ export function createWorkerGitHost(
   lease: ChildHostLease,
 ) {
   const owner = createKernelGitHost(options);
-  return { host: new WorkerGitPort(lease.hold(owner.port)), close: owner.close };
+  return {
+    host: new WorkerGitPort(lease.hold(owner.port)),
+    ready: owner.ready,
+    close: owner.close,
+  };
 }

@@ -1,5 +1,7 @@
 import type { KernelProcessSignalNumber } from "./KernelProcessSignal.ts";
 
+export const KERNEL_SYSCALL_INITIAL_WINDOW = 64 * 1024;
+
 export interface KernelMemoryRegion {
   readonly pointer: number;
   readonly bytes: Uint8Array;
@@ -20,6 +22,7 @@ export type KernelSyscallResponse =
       readonly kind: "return";
       readonly value: number;
       readonly regions: readonly KernelMemoryRegion[];
+      readonly transferWindow?: number;
     }
   | { readonly kind: "exit"; readonly code: number }
   | { readonly kind: "signal"; readonly signal: KernelProcessSignalNumber };

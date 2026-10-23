@@ -13,9 +13,11 @@ interface MemoryRange {
 export class MemoryRegions {
   readonly #memory: WebAssembly.Memory;
   readonly #ranges: MemoryRange[] = [];
+  readonly transferLimit: number;
 
-  constructor(memory: WebAssembly.Memory) {
+  constructor(memory: WebAssembly.Memory, transferLimit = MAX_TRANSFER_BYTES) {
     this.#memory = memory;
+    this.transferLimit = transferLimit;
   }
 
   add(pointer: number, length: number, direction: MemoryRange["direction"] = "inout"): void {
@@ -37,7 +39,7 @@ export class MemoryRegions {
 
     this.add(pointer, tableSize, "in");
     const table = new DataView(this.#memory.buffer, start, tableSize);
-    let remaining = MAX_TRANSFER_BYTES;
+    let remaining = this.transferLimit;
     for (let index = 0; index < itemCount; index++) {
       const offset = index * 8;
       const pointer = table.getUint32(offset, true);
