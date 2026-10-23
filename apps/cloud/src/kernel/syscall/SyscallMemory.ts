@@ -21,6 +21,11 @@ export class SyscallMemory extends WasiMemory {
   #transferOffset = 0;
   #readOnce = false;
   #credited = false;
+  #ioOwner: object | undefined;
+
+  override get ioOwner(): object | undefined {
+    return this.#ioOwner;
+  }
 
   override get transferLimit(): number {
     return this.#transferLimit;
@@ -42,7 +47,7 @@ export class SyscallMemory extends WasiMemory {
     size: number,
     regions: readonly KernelMemoryRegion[],
     transferLimit?: number,
-    transfer?: { readonly offset: number; readonly readOnce: boolean },
+    transfer?: { readonly offset: number; readonly readOnce: boolean; readonly owner?: object },
   ) {
     if (!Number.isSafeInteger(size) || size < 0 || size > 0x1_0000_0000) {
       throw new TypeError("Invalid guest memory size");
@@ -60,6 +65,7 @@ export class SyscallMemory extends WasiMemory {
     }
     this.#transferOffset = transferOffset;
     this.#readOnce = readOnce;
+    this.#ioOwner = transfer?.owner;
     this.#credited =
       transferLimit !== undefined && regions.every((region) => region.direction !== undefined);
     this.#regions = regions.map((region) => {
@@ -191,6 +197,7 @@ export class SyscallMemory extends WasiMemory {
   clear() {
     this.#regions = [];
     this.#size = 0;
+    this.#ioOwner = undefined;
   }
 
   #region(start: number, size: number): BoundRegion {

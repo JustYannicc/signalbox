@@ -17,6 +17,7 @@ export function isKernelPayloadOwned(bytes: Uint8Array) {
 
 export interface KernelPayloadWindow {
   readonly bytes: number;
+  consume(bytes: number): void;
   release(): void;
 }
 
@@ -25,10 +26,14 @@ class KernelPayloadBudget {
   #reserved = 0;
   #pipeBytes = 0;
 
-  open(signal: AbortSignal, responseBytes = 0): Promise<KernelPayloadWindow> {
+  open(
+    signal: AbortSignal,
+    responseBytes = 0,
+    requestedWindow = MAX_WINDOW,
+  ): Promise<KernelPayloadWindow> {
     if (signal.aborted) return Promise.reject(signal.reason);
     const available = this.#available;
-    let bytes = MAX_WINDOW;
+    let bytes = Math.max(KERNEL_SYSCALL_INITIAL_WINDOW, Math.min(MAX_WINDOW, requestedWindow));
     // Before the next call acknowledges the reply, that reply can coexist with its input.
     // Afterwards the reservation covers input plus a coalesced copy, or output plus snapshot.
     const cost = () => Math.max(2 * bytes, responseBytes + bytes);
@@ -36,11 +41,19 @@ class KernelPayloadBudget {
       bytes = Math.max(KERNEL_SYSCALL_INITIAL_WINDOW, Math.floor(bytes / 2));
     // At saturation, each call still gets PIPE_BUF bytes without waiting on another process.
     // Only that fixed floor is unbudgeted; a preceding reply retains its existing charge.
-    const reserved = cost() <= available ? cost() : Math.min(responseBytes, available);
+    const funded = cost() <= available;
+    let reserved = funded ? cost() : Math.min(responseBytes, available);
     this.#reserved += reserved;
     let released = false;
     return Promise.resolve({
       bytes,
+      consume: (length) => {
+        if (released) throw new Error("Syscall credit was already released");
+        // The arrived request acknowledges the preceding reply and only retains its own prefix.
+        const used = funded ? 2 * Math.min(bytes, Math.max(0, length)) : 0;
+        this.#reserved += used - reserved;
+        reserved = used;
+      },
       release: () => {
         if (released) return;
         released = true;

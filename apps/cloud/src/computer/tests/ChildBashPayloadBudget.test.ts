@@ -117,9 +117,7 @@ function trackOpenCredits() {
     outstanding++;
     let released = false;
     return {
-      get bytes() {
-        return window.bytes;
-      },
+      ...window,
       release() {
         if (released) return;
         released = true;

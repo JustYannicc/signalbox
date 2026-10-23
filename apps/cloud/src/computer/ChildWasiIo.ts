@@ -104,7 +104,7 @@ export async function childWasiIo(
     if (
       count === 0 ||
       total >= length ||
-      (read && response.io?.descriptor !== "file") ||
+      (read && (response.io?.descriptor !== "file" || count < capacity)) ||
       (response.io?.descriptor === "stdio" && response.io.nonblocking) ||
       ((directory || link) && count < capacity)
     )

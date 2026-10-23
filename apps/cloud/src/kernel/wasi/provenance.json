@@ -54,6 +54,10 @@
     {
       "file": "internal_wasi_memory.ts, internal_wasi_fd_calls.ts, internal_wasi_path_calls.ts",
       "reason": "Child-internal transfer offsets assemble regular-file reads and writes, directory entries, and readlink targets across owner-credited calls while each call remains bounded. Stdio reads stop after the first positive result. Without transfer metadata, the offset stays zero and read-once stays disabled."
+    },
+    {
+      "file": "internal_wasi_descriptors.ts, internal_wasi_open_description.ts",
+      "reason": "Child I/O continuation RPCs re-enter an owner-held open-description lock. Regular-file writes additionally serialize by storage and inode across separate opens; APPEND resolves once and later chunks use the held offset. Cancellation removes queued lock requests and teardown releases held sequences after started work settles."
     }
   ],
   "upstreamAlignment": {

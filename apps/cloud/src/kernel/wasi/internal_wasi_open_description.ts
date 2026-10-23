@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type { Inode, DirectoryEntry } from "../storage.ts";
+import { KernelIoLock, kernelFileWriteLock } from "../KernelIoLock.ts";
 import type { KernelFileByteAccess, KernelFileByteView } from "../KernelFileBytes.ts";
 import { complete, type WasiCall } from "./internal_wasi_calls.ts";
 import { WasiError } from "./internal_wasi_memory.ts";
@@ -26,12 +27,6 @@ export interface WasiOpenDescriptionOptions {
   readonly onLastClose?: () => void | Promise<void>;
 }
 
-interface OffsetWaiter {
-  readonly promise: Promise<void>;
-  readonly resolve: () => void;
-  state: "queued" | "granted" | "cancelled" | "released";
-}
-
 /** State shared by descriptors that refer to the same open file. */
 export class WasiOpenDescription {
   readonly kind: WasiOpenDescriptionOptions["kind"];
@@ -48,8 +43,7 @@ export class WasiOpenDescription {
   readonly #onLastClose: (() => void | Promise<void>) | undefined;
   #references = 1;
   #released = false;
-  #offsetBusy = false;
-  #offsetWaiters: OffsetWaiter[] = [];
+  readonly #offsetLock = new KernelIoLock();
 
   constructor(options: WasiOpenDescriptionOptions) {
     if (options.kind !== "stdio" && (options.mount === undefined || options.inode === undefined)) {
@@ -148,58 +142,34 @@ export class WasiOpenDescription {
     }
   }
 
-  *withOffset<T>(operation: () => WasiCall<T>): WasiCall<T> {
-    if (!this.#offsetBusy) {
-      this.#offsetBusy = true;
-      try {
-        return yield* operation();
-      } finally {
-        this.#unlockOffset();
-      }
-    }
+  // signalbox: a child continuation re-enters the same open-description lock.
+  *withOffset<T>(operation: () => WasiCall<T>, owner?: object): WasiCall<T> {
+    return yield* this.#offsetLock.with(operation, owner);
+  }
 
-    const waiter = this.#enqueueOffsetWaiter();
-    let acquired = false;
+  *withWrite<T>(operation: () => WasiCall<T>, owner: object = {}): WasiCall<T> {
+    const release = yield* this.acquireIo(owner, true);
     try {
-      yield waiter.promise;
-      acquired = true;
       return yield* operation();
     } finally {
-      if (acquired || waiter.state === "granted") {
-        waiter.state = "released";
-        this.#unlockOffset();
-      } else {
-        this.#cancelOffsetWaiter(waiter);
-      }
+      release();
     }
   }
 
-  #enqueueOffsetWaiter(): OffsetWaiter {
-    let resolve!: () => void;
-    const promise = new Promise<void>((finish) => {
-      resolve = finish;
-    });
-    const waiter: OffsetWaiter = { promise, resolve, state: "queued" };
-    this.#offsetWaiters.push(waiter);
-    return waiter;
-  }
-
-  #cancelOffsetWaiter(waiter: OffsetWaiter): void {
-    if (waiter.state !== "queued") return;
-    waiter.state = "cancelled";
-    const index = this.#offsetWaiters.indexOf(waiter);
-    if (index !== -1) this.#offsetWaiters.splice(index, 1);
-  }
-
-  #unlockOffset(): void {
-    while (this.#offsetWaiters.length > 0) {
-      const waiter = this.#offsetWaiters.shift();
-      if (waiter === undefined) break;
-      if (waiter.state !== "queued") continue;
-      waiter.state = "granted";
-      waiter.resolve();
-      return;
+  *acquireIo(owner: object, write: boolean, signal?: AbortSignal): WasiCall<() => void> {
+    const releaseOffset = yield* this.#offsetLock.acquire(owner, signal);
+    try {
+      const releaseInode =
+        write && this.kind === "file" && this.mount !== undefined && this.inode !== undefined
+          ? yield* kernelFileWriteLock(this.mount.storage, this.inode).acquire(owner, signal)
+          : () => {};
+      return () => {
+        releaseInode();
+        releaseOffset();
+      };
+    } catch (error) {
+      releaseOffset();
+      throw error;
     }
-    this.#offsetBusy = false;
   }
 }

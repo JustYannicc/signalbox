@@ -37,6 +37,11 @@ export class WasiExit extends Error {
 export class WasiMemory {
   #memory: WebAssembly.Memory | undefined;
 
+  // signalbox: owner-held locks span the bounded RPCs of one guest I/O call.
+  get ioOwner(): object | undefined {
+    return undefined;
+  }
+
   // signalbox: child transfer metadata stays private to RPCs and defaults off for ordinary WASI.
   get transferOffset(): number {
     return 0;

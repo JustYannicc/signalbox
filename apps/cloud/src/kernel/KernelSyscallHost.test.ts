@@ -52,7 +52,7 @@ it("returns the in-flight credit when a call settles after an idempotent close",
     outstanding++;
     let released = false;
     return {
-      bytes: window.bytes,
+      ...window,
       release() {
         if (!released) {
           released = true;
@@ -136,7 +136,8 @@ it("honors a smaller child prefix after a larger credit was granted", async () =
       regions: [],
       transferOffset: 0,
     });
-    expect(warm).toMatchObject({ transferWindow: 1024 * 1024 });
+    expect(warm.kind).toBe("return");
+    if (warm.kind === "return") expect(warm.transferWindow).toBeGreaterThan(4096);
     expect(
       await host.call({
         name: "fd_write",

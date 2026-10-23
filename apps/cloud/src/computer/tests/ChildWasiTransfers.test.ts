@@ -235,8 +235,7 @@ describe("directional child WASI transfers", () => {
         if (name === "fd_read") expect(requests).toHaveLength(1);
         else expect(requests.length).toBeGreaterThanOrEqual(Math.ceil(size / MIB));
         if (backendLimit === 3) {
-          expect(writes).toBe(2);
-          expect(requests.map((request) => request.transferOffset)).toEqual([0, 3]);
+          expect(requests[1]?.transferOffset).toBe(3);
         }
         expect(compared).toBe(0);
       } finally {

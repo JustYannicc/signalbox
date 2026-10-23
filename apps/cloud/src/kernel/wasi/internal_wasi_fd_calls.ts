@@ -271,7 +271,7 @@ export class WasiFdCalls {
     const operation = (): WasiCall<number> =>
       this.#fdPread(descriptor, iovs, iovsLen, offset, nread);
     if ((descriptor.flags & FDFLAGS.RSYNC) !== 0) {
-      return yield* descriptor.withOffset(operation);
+      return yield* descriptor.withOffset(operation, this.#memory.ioOwner);
     }
     return yield* operation();
   }
@@ -312,8 +312,11 @@ export class WasiFdCalls {
     const descriptor = this.#descriptors.get(fd);
     const operation = (): WasiCall<number> =>
       this.#fdPwrite(descriptor, iovs, iovsLen, offset, nwritten);
+    if (descriptor.kind === "file") {
+      return yield* descriptor.withWrite(operation, this.#memory.ioOwner);
+    }
     if ((descriptor.flags & (FDFLAGS.SYNC | FDFLAGS.DSYNC)) !== 0) {
-      return yield* descriptor.withOffset(operation);
+      return yield* descriptor.withOffset(operation, this.#memory.ioOwner);
     }
     return yield* operation();
   }
@@ -351,7 +354,7 @@ export class WasiFdCalls {
     if (descriptor.kind === "stdio" && (descriptor.flags & FDFLAGS.NONBLOCK) !== 0) {
       return yield* operation();
     }
-    return yield* descriptor.withOffset(operation);
+    return yield* descriptor.withOffset(operation, this.#memory.ioOwner);
   }
 
   *#fdRead(
@@ -460,7 +463,9 @@ export class WasiFdCalls {
     if (descriptor.kind === "stdio" && (descriptor.flags & FDFLAGS.NONBLOCK) !== 0) {
       return yield* operation();
     }
-    return yield* descriptor.withOffset(operation);
+    return yield* descriptor.kind === "file"
+      ? descriptor.withWrite(operation, this.#memory.ioOwner)
+      : descriptor.withOffset(operation, this.#memory.ioOwner);
   }
 
   *#fdWrite(
@@ -481,9 +486,13 @@ export class WasiFdCalls {
             requireStorageDescriptor(descriptor),
             source,
             descriptor.offset,
-            true,
+            // signalbox: APPEND resolves once; the held offset continues contiguously.
+            this.#memory.transferOffset === 0,
           );
-    if (descriptor.kind !== "stdio" && (descriptor.flags & FDFLAGS.APPEND) === 0) {
+    if (
+      descriptor.kind !== "stdio" &&
+      ((descriptor.flags & FDFLAGS.APPEND) === 0 || this.#memory.transferOffset > 0)
+    ) {
       descriptor.offset += BigInt(count);
     }
     yield* this.#syncAfterWrite(descriptor);
@@ -601,7 +610,6 @@ export class WasiFdCalls {
         this.#memory.writeRange(vector.pointer + offset, count).set(scratch.subarray(0, count));
         total += count;
         offset += count;
-        if (count < size) return total;
       }
     }
     return total;
