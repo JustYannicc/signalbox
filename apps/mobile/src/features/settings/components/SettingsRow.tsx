@@ -37,7 +37,9 @@ export function SettingsRow(props: {
             params:
               props.target === "SettingsTrash"
                 ? { screen: props.target }
-                : { screen: props.target },
+                : props.target === "SettingsAutomationBlocks" // signalbox: block library
+                  ? { screen: props.target }
+                  : { screen: props.target },
           });
         } else if (props.fullScreenTarget) {
           navigation.navigate(props.fullScreenTarget);

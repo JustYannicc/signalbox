@@ -219,6 +219,14 @@
       "types": "./src/automations/runs.ts",
       "default": "./src/automations/runs.ts"
     },
+    "./automations/blockContract": {
+      "types": "./src/automations/blockContract.ts",
+      "default": "./src/automations/blockContract.ts"
+    },
+    "./automations/blockLibrary": {
+      "types": "./src/automations/blockLibrary.ts",
+      "default": "./src/automations/blockLibrary.ts"
+    },
     "./browsing": {
       "types": "./src/browsing/browsingRecord.ts",
       "default": "./src/browsing/browsingRecord.ts"

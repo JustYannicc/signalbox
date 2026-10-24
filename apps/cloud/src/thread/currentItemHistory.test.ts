@@ -76,6 +76,7 @@ const makeOwner = () => {
   const state = { down: false };
   const automations = CloudAutomations.CloudAutomations.of({
     answerAsk: () => Effect.die("not used"),
+    listBlocks: () => Effect.die("not in these tests"),
     receiveHook: () => Effect.die("not used"),
     save: () => Effect.die("not used"),
     threadEvents: (input) =>

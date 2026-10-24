@@ -83,6 +83,8 @@ export const makeAutomationHandlers = Effect.fn("makeAutomationHandlers")(functi
       engine.subscribeAutomation(input.automationId),
     [METHODS.automationsSubscribeRun]: (input: Payload<typeof METHODS.automationsSubscribeRun>) =>
       engine.subscribeRun(input.runId),
+    [METHODS.automationsListBlocks]: (input: Payload<typeof METHODS.automationsListBlocks>) =>
+      automations.listBlocks(input.projectId),
     [METHODS.automationsSetEnabled]: (input: Payload<typeof METHODS.automationsSetEnabled>) =>
       about({ "automation.id": input.automationId }).pipe(
         Effect.andThen(flushed(engine.setEnabled(input.automationId, input.enabled))),

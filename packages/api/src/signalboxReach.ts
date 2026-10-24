@@ -53,6 +53,11 @@ export const SIGNALBOX_RPC_REACH = {
     name: "automations.runs.get",
     summary: "Read one run of an automation: its graph and steps.",
   }),
+  "automations.listBlocks": read({
+    name: "automations.blocks.list",
+    summary:
+      "List the nearest saved block for each name in a folder and its ancestors, plus built-ins, with contracts and availability state.",
+  }),
   "automations.setEnabled": write(),
   "automations.delete": write({ destructive: true }),
   "automations.rotateWebhook": write(),
