@@ -197,7 +197,16 @@ describe("process execution Worker entrypoint", () => {
     const result = JSON.parse(body) as {
       readonly invocationReplyDropped: boolean;
       readonly fixtureDroppedInvocationReply: boolean;
+      readonly facetInvocationCalls: number;
       readonly invocationErrorKind: string;
+      readonly preDispatchDuplicateRejected: boolean;
+      readonly preDispatchParkBlocked: boolean;
+      readonly preDispatchCleanupBlocked: boolean;
+      readonly markerLeaseHeld: boolean;
+      readonly markerInvocationAttempt?: number;
+      readonly markerInvocationReply?: string;
+      readonly admittedBeforeFinish: boolean;
+      readonly duplicateDuringRuntimeRejected: boolean;
       readonly cleanupRetained: boolean;
       readonly actualRequestStatus?: string;
       readonly actualRequestFinish?: {
@@ -230,6 +239,7 @@ describe("process execution Worker entrypoint", () => {
           readonly preparedFacetNonce: string;
         };
         readonly invocationRequestId: string;
+        readonly invocationAttempt: number;
         readonly invocationReply: string;
         readonly lastFailureCode: string;
         readonly stopAcknowledged: boolean;
@@ -252,7 +262,16 @@ describe("process execution Worker entrypoint", () => {
     };
     expect(result.invocationReplyDropped, body).toBe(true);
     expect(result.fixtureDroppedInvocationReply, body).toBe(true);
+    expect(result.facetInvocationCalls, body).toBe(1);
     expect(result.invocationErrorKind, body).toBe("invocation-unsettled");
+    expect(result.preDispatchDuplicateRejected, body).toBe(true);
+    expect(result.preDispatchParkBlocked, body).toBe(true);
+    expect(result.preDispatchCleanupBlocked, body).toBe(true);
+    expect(result.markerLeaseHeld, body).toBe(true);
+    expect(result.markerInvocationAttempt, body).toBe(1);
+    expect(result.markerInvocationReply, body).toBe("unresolved");
+    expect(result.admittedBeforeFinish, body).toBe(true);
+    expect(result.duplicateDuringRuntimeRejected, body).toBe(true);
     expect(result.cleanupRetained).toBe(true);
     expect(result.actualRequestStatus, body).toBe("completed");
     expect(result.actualRequestFinish?.status).toBe("completed");
@@ -267,6 +286,7 @@ describe("process execution Worker entrypoint", () => {
       preparedRuntimeClosed: true,
       disposeAttempts: 1,
       disposed: true,
+      runAttempts: 1,
       runStoreActions: expect.arrayContaining([
         "read:unchanged",
         "request.admit:execute-once",
@@ -284,6 +304,7 @@ describe("process execution Worker entrypoint", () => {
       state: "cleanup-required",
       publicationState: "confirmed",
       invocationRequestId: "fixture-request-invocation-reply-loss-operation",
+      invocationAttempt: 1,
       invocationReply: "unresolved",
       lastFailureCode: "INVOCATION_OUTCOME_UNKNOWN",
       stopAcknowledged: true,
@@ -305,6 +326,89 @@ describe("process execution Worker entrypoint", () => {
     expect(result.finalLeaseStillHeld).toBe(true);
     expect(result.publisherCalls).toBe(1);
     expect(result.invocationCalls).toBe(1);
+  }, 120_000);
+
+  it("admits a new invocation attempt after park and rejects stale durable receipts", async () => {
+    const response = await harness.fetch("/invocation-readmission");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body) as {
+      readonly firstAttempt: {
+        readonly attempt?: number;
+        readonly requestId?: string;
+        readonly reply?: string;
+        readonly settled: boolean;
+      };
+      readonly firstRequestIdentityProtected: boolean;
+      readonly parkedInFlight: number;
+      readonly parkedResident: number;
+      readonly parkedPermitRetained?: boolean;
+      readonly resumeValue: string;
+      readonly readmittedInFlight: number;
+      readonly readmittedResident: number;
+      readonly unresolvedAttempt: {
+        readonly attempt?: number;
+        readonly requestId?: string;
+        readonly reply?: string;
+      };
+      readonly duplicateRejected: boolean;
+      readonly staleReceivedWriteRejected: boolean;
+      readonly staleWriteLeftCurrentAttemptUnresolved: boolean;
+      readonly leaseHeldWhileUnresolved: boolean;
+      readonly secondAttempt: {
+        readonly attempt?: number;
+        readonly requestId?: string;
+        readonly reply?: string;
+        readonly settled: boolean;
+      };
+      readonly stableIdentity: boolean;
+      readonly samePublication: boolean;
+      readonly publisherCalls: number;
+      readonly facetInvocations: readonly string[];
+      readonly finalInFlight: number;
+      readonly finalResident: number;
+      readonly finalRecoveryCount: number;
+      readonly firstSlotHeldBeforePark?: boolean;
+    };
+    expect(result.firstAttempt, body).toEqual({
+      attempt: 1,
+      requestId: "invocation-readmission-first",
+      reply: "received",
+      settled: true,
+    });
+    expect(result.firstRequestIdentityProtected, body).toBe(true);
+    expect(result.firstSlotHeldBeforePark, body).toBe(true);
+    expect(result.parkedInFlight, body).toBe(0);
+    expect(result.parkedResident, body).toBe(1);
+    expect(result.parkedPermitRetained, body).toBe(true);
+    expect(result.resumeValue, body).toBe("readmitted");
+    expect(result.readmittedInFlight, body).toBe(1);
+    expect(result.readmittedResident, body).toBe(1);
+    expect(result.unresolvedAttempt, body).toEqual({
+      attempt: 2,
+      requestId: "invocation-readmission-second",
+      reply: "unresolved",
+    });
+    expect(result.duplicateRejected, body).toBe(true);
+    expect(result.staleReceivedWriteRejected, body).toBe(true);
+    expect(result.staleWriteLeftCurrentAttemptUnresolved, body).toBe(true);
+    expect(result.leaseHeldWhileUnresolved, body).toBe(true);
+    expect(result.secondAttempt, body).toEqual({
+      attempt: 2,
+      requestId: "invocation-readmission-second",
+      reply: "received",
+      settled: true,
+    });
+    expect(result.stableIdentity, body).toBe(true);
+    expect(result.samePublication, body).toBe(true);
+    expect(result.publisherCalls, body).toBe(1);
+    expect(result.facetInvocations, body).toEqual([
+      "invocation-readmission-first",
+      "invocation-readmission-second",
+    ]);
+    expect(result.finalInFlight, body).toBe(0);
+    expect(result.finalResident, body).toBe(0);
+    expect(result.finalRecoveryCount, body).toBe(0);
   }, 120_000);
 
   it("keeps an honest provisional lease after the identity reply is lost and releases it on exact repair", async () => {

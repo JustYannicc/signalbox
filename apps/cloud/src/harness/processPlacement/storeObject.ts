@@ -136,13 +136,9 @@ export class HarnessProcessPlacementStoreObject
           throw new Error("A terminal activation failure requires an authorized repair.");
         if (current.identityState === "observed" && checked.identityState !== "observed")
           throw new Error("Observed process identity cannot return to unknown.");
-        if (current.invocationReply === "received" && checked.invocationReply !== "received")
-          throw new Error("An observed invocation reply cannot return to unresolved.");
-        if (
-          current.invocationRequestId !== undefined &&
-          checked.invocationRequestId !== current.invocationRequestId
-        )
-          throw new Error("The request tied to a process invocation cannot be replaced.");
+        if (current.invocationMayHaveStarted === true && checked.invocationMayHaveStarted !== true)
+          throw new Error("Invocation-start evidence cannot be forgotten.");
+        assertInvocationTransition(current, checked);
         if (
           current.publicationState === "confirmed" &&
           (checked.publicationState !== "confirmed" ||
@@ -217,6 +213,72 @@ export class HarnessProcessPlacementStoreObject
     if (!sameWriter(current, writer))
       throw new Error("Process-placement mutation came from a stale writer.");
   }
+}
+
+function assertInvocationTransition(
+  current: HarnessProcessPlacementRecoveryRecord,
+  checked: HarnessProcessPlacementRecoveryRecord,
+): void {
+  const currentAttempt = invocationAttempt(current);
+  const nextAttempt = invocationAttempt(checked);
+  const currentReply = invocationReply(current);
+  const nextReply = invocationReply(checked);
+  if (nextAttempt < currentAttempt || nextAttempt > currentAttempt + 1)
+    throw new Error("A process invocation attempt cannot move backwards or skip ahead.");
+
+  if (nextAttempt === currentAttempt) {
+    if (
+      current.invocationAttempt !== undefined &&
+      checked.invocationAttempt !== current.invocationAttempt
+    )
+      throw new Error("The current process invocation attempt cannot be forgotten.");
+    if (currentReply === "received" && nextReply !== "received")
+      throw new Error(
+        "An observed invocation reply cannot return to unresolved in the same attempt.",
+      );
+    if (
+      currentAttempt === 0 &&
+      current.invocationRequestId !== undefined &&
+      checked.invocationRequestId !== current.invocationRequestId
+    )
+      throw new Error("The published request for the first process invocation cannot change.");
+    if (currentAttempt > 0 && checked.invocationRequestId !== current.invocationRequestId)
+      throw new Error("A process invocation request cannot change within one attempt.");
+    return;
+  }
+
+  if (currentAttempt === 0) {
+    if (
+      nextAttempt !== 1 ||
+      nextReply !== "unresolved" ||
+      checked.invocationRequestId === undefined ||
+      (current.invocationRequestId !== undefined &&
+        checked.invocationRequestId !== current.invocationRequestId)
+    )
+      throw new Error("The first process invocation must persist its request as unresolved.");
+    return;
+  }
+  if (
+    currentReply !== "received" ||
+    nextReply !== "unresolved" ||
+    checked.invocationRequestId === undefined ||
+    checked.invocationRequestId === current.invocationRequestId
+  )
+    throw new Error(
+      "A new process invocation requires a received prior attempt and a new request.",
+    );
+}
+
+function invocationAttempt(record: HarnessProcessPlacementRecoveryRecord): number {
+  if (record.invocationAttempt !== undefined) return record.invocationAttempt;
+  return record.invocationMayHaveStarted === true || record.invocationReply !== undefined ? 1 : 0;
+}
+
+function invocationReply(
+  record: HarnessProcessPlacementRecoveryRecord,
+): "unresolved" | "received" | undefined {
+  if (record.invocationReply !== undefined) return record.invocationReply;
+  return record.invocationMayHaveStarted === true ? "unresolved" : undefined;
 }
 
 interface HarnessProcessPlacementStoreEnvironment {

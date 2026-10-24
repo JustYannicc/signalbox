@@ -131,6 +131,12 @@ export function parseRecoveryRecord(
     (value.publicationState === "confirmed" && value.publicationReceipt === undefined) ||
     (value.invocationMayHaveStarted !== undefined &&
       typeof value.invocationMayHaveStarted !== "boolean") ||
+    (value.invocationAttempt !== undefined &&
+      (!Number.isSafeInteger(value.invocationAttempt) ||
+        Number(value.invocationAttempt) < 1 ||
+        value.invocationMayHaveStarted !== true ||
+        !nonempty(value.invocationRequestId) ||
+        (value.invocationReply !== "unresolved" && value.invocationReply !== "received"))) ||
     (value.invocationRequestId !== undefined && !nonempty(value.invocationRequestId)) ||
     (value.invocationReply !== undefined &&
       value.invocationReply !== "unresolved" &&

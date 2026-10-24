@@ -24,6 +24,7 @@ import { confirmedProcessPublication } from "./publication.ts";
 import { failureRecord } from "./storeSchema.ts";
 
 interface Attempt {
+  dispatchStarted: boolean;
   rpcReturned: boolean;
   stopAcknowledged: boolean;
   joined: HarnessProcessJoined;
@@ -69,7 +70,9 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   #joined: HarnessProcessJoined = joinedNone;
   #disposed = false;
   #released = false;
+  #cleanupStarted = false;
   #invocationMayHaveStarted = false;
+  #invocationAttempt = 0;
   #invocationRequestId: string | undefined;
   #invocationReply: HarnessProcessPlacementRecoveryRecord["invocationReply"];
   #lastFailure: HarnessProcessFailureRecord | undefined;
@@ -351,7 +354,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
 
   async invoke(input: Input): Promise<HarnessProcessInvocationSettlement> {
     this.#requireState("active");
-    if (this.#permit === undefined || this.#released)
+    if (this.#permit === undefined || this.#released || this.#cleanupStarted)
       throw new HarnessProcessPlacementError(
         "stale-handle",
         "The process has no active invocation permit.",
@@ -359,8 +362,17 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         this.identity,
         { recoveryId: this.identity.loaderId },
       );
+    if (this.#attempts.size > 0)
+      throw new HarnessProcessPlacementError(
+        "invocation-unsettled",
+        "An invocation attempt already owns this process permit.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId, openInvocations: this.#attempts.size },
+      );
     const suppliedRequestId = invocationRequestId(input);
     if (
+      this.#invocationAttempt === 0 &&
       this.#invocationRequestId !== undefined &&
       suppliedRequestId !== undefined &&
       suppliedRequestId !== this.#invocationRequestId
@@ -372,8 +384,31 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         this.identity,
         { recoveryId: this.identity.loaderId },
       );
+    const requestId = suppliedRequestId ?? this.#invocationRequestId;
+    if (
+      this.#invocationAttempt > 0 &&
+      this.#invocationReply === "received" &&
+      requestId === this.#invocationRequestId
+    )
+      throw new HarnessProcessPlacementError(
+        "invocation-unsettled",
+        "A received request cannot start another process invocation attempt.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId },
+      );
+
+    const attempt: Attempt = {
+      dispatchStarted: false,
+      rpcReturned: false,
+      stopAcknowledged: false,
+      joined: joinedNone,
+    };
+    this.#attempts.add(attempt);
+    this.#invocationAttempt++;
     // Persist before the RPC so a restart never replays an invocation whose reply may be lost.
     this.#invocationMayHaveStarted = true;
+    this.#invocationRequestId = requestId;
     this.#invocationReply = "unresolved";
     try {
       await this.#persist("active");
@@ -390,8 +425,19 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         { cause },
       );
     }
-    const attempt: Attempt = { rpcReturned: false, stopAcknowledged: false, joined: joinedNone };
-    this.#attempts.add(attempt);
+    if (this.#cleanupStarted || this.#disposed || this.#released || this.#state !== "active") {
+      this.#state = "cleanup-required";
+      this.#lastFailure = failureRecord("invocation", "INVOCATION_OUTCOME_UNKNOWN");
+      await this.#persist("cleanup-required");
+      throw new HarnessProcessPlacementError(
+        "invocation-unsettled",
+        "The invocation marker was saved after cleanup began, so the facet was not dispatched.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId },
+      );
+    }
+    attempt.dispatchStarted = true;
     let settlement: HarnessProcessInvocationSettlement;
     try {
       settlement = await this.#facet.invoke(input);
@@ -416,7 +462,6 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     attempt.joined = settlement.joined;
     this.#joined = settlement.joined;
     this.#invocationReply = "received";
-    this.#pruneSettledAttempts();
     if (!attempt.stopAcknowledged || !allJoined(attempt.joined)) {
       this.#state = "cleanup-required";
       this.#lastFailure = failureRecord(
@@ -442,6 +487,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         { cause },
       );
     }
+    this.#pruneSettledAttempts();
     return settlement;
   }
 
@@ -453,7 +499,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     signal: AbortSignal,
   ): Promise<Value> {
     this.#requireState("active");
-    if (this.#attempts.size > 0)
+    if (this.#attempts.size > 0 || this.#cleanupStarted)
       throw new HarnessProcessPlacementError(
         "invocation-unsettled",
         "An open or unjoined invocation still owns this process permit.",
@@ -591,6 +637,14 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   }
 
   async cleanup(options: { readonly retainPublishedOwnership?: boolean } = {}): Promise<void> {
+    if ([...this.#attempts].some((attempt) => !attempt.dispatchStarted))
+      throw new HarnessProcessPlacementError(
+        "invocation-unsettled",
+        "An invocation attempt is still confirming its durable marker before dispatch.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId, openInvocations: this.#attempts.size },
+      );
     if (
       options.retainPublishedOwnership === true &&
       this.#publicationState === "confirmed" &&
@@ -659,6 +713,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   }
 
   async #cleanupInternal(keepActivationFailure: boolean): Promise<CleanupResult | undefined> {
+    this.#cleanupStarted = true;
     if (
       this.#publicationState === "in-progress" ||
       this.#publicationState === "unknown" ||
@@ -785,6 +840,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         ? {}
         : { publicationReceipt: this.#publicationReceipt }),
       invocationMayHaveStarted: this.#invocationMayHaveStarted,
+      ...(this.#invocationAttempt === 0 ? {} : { invocationAttempt: this.#invocationAttempt }),
       ...(this.#invocationRequestId === undefined
         ? {}
         : { invocationRequestId: this.#invocationRequestId }),

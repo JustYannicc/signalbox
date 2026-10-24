@@ -13,6 +13,11 @@ export interface RunStoreFacetEnvironment {
   readonly HARNESS_RUN_STORES: DurableObjectNamespace<
     HarnessRunStoreObject & Rpc.DurableObjectBranded
   >;
+  readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<
+    {
+      holdRequestRuntime(): Promise<void>;
+    } & Rpc.DurableObjectBranded
+  >;
 }
 
 export const processFacetArtifact: HarnessRunArtifact = {
@@ -122,6 +127,14 @@ const RunStoreRequestFacet = createHarnessRequestFacetClass<RunStoreFacetEnviron
                     new HarnessRequestFacetError("Fixture invocation count could not be stored.", {
                       cause,
                     }),
+                });
+                const supervisor = input.env.HARNESS_THREAD_SUPERVISOR.getByName(
+                  "process-invocation-reply-loss-run",
+                );
+                yield* Effect.tryPromise({
+                  try: () => supervisor.holdRequestRuntime(),
+                  catch: (cause) =>
+                    new HarnessRequestFacetError("Fixture runtime barrier failed.", { cause }),
                 });
                 return {
                   status: "completed" as const,

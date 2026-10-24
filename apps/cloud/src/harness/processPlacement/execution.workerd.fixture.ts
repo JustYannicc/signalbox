@@ -31,6 +31,7 @@ import {
   runInvocationReplyLossProof,
   type InvocationRecoveryEnvironment,
 } from "./invocationReplyLoss.workerd.fixture.ts";
+import { runInvocationReadmissionProof } from "./invocationReadmission.workerd.fixture.ts";
 import { TestHarnessProcessRunStoreRequestFacetObject } from "./runStoreFacet.workerd.fixture.ts";
 
 export {
@@ -69,6 +70,12 @@ export class ProcessPlacementSupervisor extends DurableObject {
         readonly release: PromiseWithResolvers<void>;
       }
     | undefined;
+  #requestRuntimeBarrier:
+    | {
+        readonly entered: PromiseWithResolvers<void>;
+        readonly release: PromiseWithResolvers<void>;
+      }
+    | undefined;
 
   blockNextRead() {
     if (this.#readBarrier !== undefined)
@@ -88,6 +95,36 @@ export class ProcessPlacementSupervisor extends DurableObject {
   releaseBlockedRead() {
     const barrier = this.#readBarrier;
     this.#readBarrier = undefined;
+    barrier?.release.resolve();
+  }
+
+  armRequestRuntimeBarrier() {
+    if (this.#requestRuntimeBarrier !== undefined)
+      throw new Error("A request-runtime barrier is already armed in this fixture.");
+    this.#requestRuntimeBarrier = {
+      entered: Promise.withResolvers<void>(),
+      release: Promise.withResolvers<void>(),
+    };
+  }
+
+  async holdRequestRuntime() {
+    const barrier = this.#requestRuntimeBarrier;
+    if (barrier === undefined) return;
+    barrier.entered.resolve();
+    await barrier.release.promise;
+    if (this.#requestRuntimeBarrier === barrier) this.#requestRuntimeBarrier = undefined;
+  }
+
+  async waitForRequestRuntime() {
+    const barrier = this.#requestRuntimeBarrier;
+    if (barrier === undefined) throw new Error("No request-runtime barrier is armed.");
+    await barrier.entered.promise;
+  }
+
+  releaseRequestRuntime() {
+    const barrier = this.#requestRuntimeBarrier;
+    this.#requestRuntimeBarrier = undefined;
+    barrier?.entered.resolve();
     barrier?.release.resolve();
   }
 
@@ -302,6 +339,8 @@ export default {
       );
       return await runInvocationReplyLossProof(env, ctx, controllerClaim, supervisor);
     }
+    if (path === "/invocation-readmission")
+      return await runInvocationReadmissionProof(env, ctx, controllerClaim);
     if (path === "/identity-reply-loss")
       return await runIdentityReplyLossProof(env, ctx, controllerClaim);
     if (path === "/same-key-reconstruction") return await sameKeyRequestFacetReconstruction(env);

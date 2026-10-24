@@ -200,6 +200,8 @@ export interface HarnessProcessPlacementRecoveryRecord {
   readonly publicationState?: "in-progress" | "unknown" | "pending" | "confirmed" | "not-published";
   readonly publicationReceipt?: HarnessProcessPublicationReceipt;
   readonly invocationMayHaveStarted?: boolean;
+  /** Monotonic within this process identity; reply disposition belongs to this attempt only. */
+  readonly invocationAttempt?: number;
   readonly invocationRequestId?: string;
   readonly invocationReply?: "unresolved" | "received";
   readonly lastFailure?: HarnessProcessFailureRecord;

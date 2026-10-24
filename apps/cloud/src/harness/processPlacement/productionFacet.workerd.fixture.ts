@@ -2,9 +2,8 @@ import * as Effect from "effect/Effect";
 import { createHarnessProcessFacetAdapter } from "../HarnessProcessFacet.ts";
 import { HarnessRequestFacetError } from "../HarnessRequestFacet.ts";
 import { createHarnessRequestFacetClass } from "../HarnessRequestFacetObject.ts";
-import type { HarnessProcessPlacementStoreClient } from "./durableStore.ts";
-import { createHarnessProcessPlacementStoreClient } from "./durableStore.ts";
 import {
+  createHarnessProcessPlacementStoreClient,
   createHarnessProcessPlacement,
   type HarnessProcessControllerClaim,
   type HarnessProcessPublicationPublisher,
@@ -12,6 +11,7 @@ import {
   type HarnessProcessPlacementRecoveryRecord,
   type HarnessProcessPlacementWriter,
   type HarnessProcessFacetLocator,
+  type HarnessProcessPlacementStoreClient,
 } from "../HarnessProcessPlacement.ts";
 import type {
   HarnessRequestCheckpoint,

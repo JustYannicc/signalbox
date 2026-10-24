@@ -2,6 +2,7 @@ import { createHarnessProcessFacetAdapter } from "../HarnessProcessFacet.ts";
 import {
   HarnessProcessPlacementError,
   createHarnessProcessPlacement,
+  createHarnessProcessPlacementStoreClient,
 } from "../HarnessProcessPlacement.ts";
 import type {
   HarnessProcessControllerClaim,
@@ -9,7 +10,6 @@ import type {
   HarnessProcessPlacementWriter,
 } from "../HarnessProcessPlacement.ts";
 import type { ProductionFacetEnvironment } from "./productionFacet.workerd.fixture.ts";
-import { createHarnessProcessPlacementStoreClient } from "./durableStore.ts";
 import {
   processFacetCheckpoint,
   processFacetNativeSessionId,

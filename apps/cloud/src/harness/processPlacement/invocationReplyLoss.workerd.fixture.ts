@@ -5,9 +5,11 @@ import {
 import {
   HarnessProcessPlacementError,
   createHarnessProcessPlacement,
+  createHarnessProcessPlacementStoreClient,
 } from "../HarnessProcessPlacement.ts";
 import type {
   HarnessProcessControllerClaim,
+  HarnessProcessPlacementRecoveryStore,
   HarnessProcessPlacementRequest,
   HarnessProcessPlacementWriter,
   HarnessProcessPublicationPublisher,
@@ -17,7 +19,6 @@ import type {
   RunStoreFacetEnvironment,
   TestHarnessProcessRunStoreRequestFacetObject,
 } from "./runStoreFacet.workerd.fixture.ts";
-import { createHarnessProcessPlacementStoreClient } from "./durableStore.ts";
 import {
   invocationReplyLossControlKey,
   invocationReplyLossRunId,
@@ -38,6 +39,9 @@ export async function runInvocationReplyLossProof(
   contextKey: object,
   controllerClaim: HarnessProcessControllerClaim,
   supervisor: HarnessProcessPublicationPublisher & {
+    armRequestRuntimeBarrier(): void;
+    waitForRequestRuntime(): Promise<void>;
+    releaseRequestRuntime(): void;
     noteProcessInvocation(): Promise<void>;
     publicationCallCount(): Promise<number>;
     processInvocationCount(): Promise<number>;
@@ -86,6 +90,25 @@ export async function runInvocationReplyLossProof(
   };
   await storeStub.claimWriter(owner, writer);
   const stores = createHarnessProcessPlacementStoreClient(storeStub, owner, writer);
+  const markerSaved = Promise.withResolvers<void>();
+  const releaseMarkerReply = Promise.withResolvers<void>();
+  let markerReplyPaused = false;
+  const recovery: HarnessProcessPlacementRecoveryStore = {
+    list: () => stores.recovery.list(),
+    async save(record) {
+      await stores.recovery.save(record);
+      if (
+        record.invocationAttempt === 1 &&
+        record.invocationReply === "unresolved" &&
+        !markerReplyPaused
+      ) {
+        markerReplyPaused = true;
+        markerSaved.resolve();
+        await releaseMarkerReply.promise;
+      }
+    },
+    remove: (loaderId) => stores.recovery.remove(loaderId),
+  };
   const placement = await createHarnessProcessPlacement({
     owner,
     contextKey,
@@ -94,7 +117,7 @@ export async function runInvocationReplyLossProof(
     controllerClaim,
     residentByteLimit: 1024,
     store: stores.processSlots,
-    recovery: stores.recovery,
+    recovery,
     scheduleQuantum(callback) {
       let cancelled = false;
       queueMicrotask(() => {
@@ -152,6 +175,7 @@ export async function runInvocationReplyLossProof(
     },
   };
   let fixtureDroppedInvocationReply = false;
+  let facetInvocationCalls = 0;
   const handle = await placement.prepareInert<HarnessProcessFacetInvokeInput>(
     request,
     (locator) => {
@@ -162,6 +186,7 @@ export async function runInvocationReplyLossProof(
       return {
         ...adapter,
         async invoke(input) {
+          facetInvocationCalls++;
           await adapter.invoke(input);
           await supervisor.noteProcessInvocation();
           fixtureDroppedInvocationReply = true;
@@ -171,11 +196,11 @@ export async function runInvocationReplyLossProof(
     },
   );
   const activation = await handle.activate(publicationPublisher);
+  supervisor.armRequestRuntimeBarrier();
+  const invocationInput = { publisher: activation.publisher, requestId: activation.requestId };
   let invocationReplyDropped = false;
   let invocationErrorKind = "none";
-  try {
-    await handle.invoke({ publisher: activation.publisher, requestId: activation.requestId });
-  } catch (cause) {
+  const running = handle.invoke(invocationInput).catch((cause: unknown) => {
     invocationReplyDropped = true;
     invocationErrorKind =
       cause instanceof HarnessProcessPlacementError
@@ -183,7 +208,68 @@ export async function runInvocationReplyLossProof(
         : cause instanceof Error
           ? cause.name
           : "unknown";
+  });
+  await markerSaved.promise;
+  const duplicateAtMarker = handle.invoke(invocationInput).then(
+    () => false,
+    (cause: unknown) =>
+      cause instanceof HarnessProcessPlacementError && cause.kind === "invocation-unsettled",
+  );
+  const beforeDispatch = await Promise.race([
+    duplicateAtMarker.then((rejected) => ({ kind: "duplicate" as const, rejected })),
+    supervisor.waitForRequestRuntime().then(() => ({ kind: "runtime" as const })),
+  ]);
+  const preDispatchDuplicateRejected =
+    beforeDispatch.kind === "duplicate" && beforeDispatch.rejected;
+  let preDispatchParkBlocked = false;
+  let preDispatchCleanupBlocked = false;
+  if (preDispatchDuplicateRejected) {
+    try {
+      await handle.park(
+        async () => ({ value: "unexpected-resume", publication: activation.publication }),
+        new AbortController().signal,
+      );
+    } catch (cause) {
+      preDispatchParkBlocked =
+        cause instanceof HarnessProcessPlacementError && cause.kind === "invocation-unsettled";
+    }
+    try {
+      await handle.cleanup();
+    } catch (cause) {
+      preDispatchCleanupBlocked =
+        cause instanceof HarnessProcessPlacementError && cause.kind === "invocation-unsettled";
+    }
   }
+  const markerRecord = (await stores.recovery.list()).find(
+    (candidate) => candidate.processId === processId,
+  );
+  const markerState = await stores.processSlots.load();
+  const markerLeaseHeld =
+    markerRecord !== undefined &&
+    markerState?.slots.some((slot) => slot.holder?.token === markerRecord.lease.token) === true;
+  let admittedBeforeFinish = false;
+  let duplicateDuringRuntimeRejected = false;
+  if (preDispatchDuplicateRejected) {
+    releaseMarkerReply.resolve();
+    await supervisor.waitForRequestRuntime();
+    const pausedFacet = env.PROCESS_RUN_STORE_FACETS.getByName(handle.identity.facetKey);
+    const pausedLifecycle = await pausedFacet.lifecycleObserved();
+    admittedBeforeFinish =
+      pausedLifecycle.runAttempts === 1 &&
+      pausedLifecycle.runStoreActions.includes("request.admit:execute-once");
+    const runtimeDuplicate = handle.invoke(invocationInput).then(
+      () => false,
+      (cause: unknown) =>
+        cause instanceof HarnessProcessPlacementError && cause.kind === "invocation-unsettled",
+    );
+    supervisor.releaseRequestRuntime();
+    duplicateDuringRuntimeRejected = await runtimeDuplicate;
+  } else {
+    releaseMarkerReply.resolve();
+    supervisor.releaseRequestRuntime();
+    await duplicateAtMarker;
+  }
+  await running;
   let cleanupRetained = false;
   try {
     await handle.cleanup({ retainPublishedOwnership: true });
@@ -258,6 +344,7 @@ export async function runInvocationReplyLossProof(
         );
         if (
           record?.publicationState !== "confirmed" ||
+          record.invocationAttempt !== 1 ||
           record.invocationReply !== "unresolved" ||
           record.invocationRequestId !== activation.requestId ||
           record.operationId !== operationId ||
@@ -285,7 +372,16 @@ export async function runInvocationReplyLossProof(
   return Response.json({
     invocationReplyDropped,
     fixtureDroppedInvocationReply,
+    facetInvocationCalls,
     invocationErrorKind,
+    preDispatchDuplicateRejected,
+    preDispatchParkBlocked,
+    preDispatchCleanupBlocked,
+    markerLeaseHeld,
+    markerInvocationAttempt: markerRecord?.invocationAttempt,
+    markerInvocationReply: markerRecord?.invocationReply,
+    admittedBeforeFinish,
+    duplicateDuringRuntimeRejected,
     cleanupRetained,
     actualRequestStatus: committedEntry?.status,
     actualRequestFinish: committedEntry?.finish,
@@ -301,6 +397,7 @@ export async function runInvocationReplyLossProof(
             publicationState: firstRecord.publicationState,
             publicationReceipt: firstRecord.publicationReceipt,
             invocationRequestId: firstRecord.invocationRequestId,
+            invocationAttempt: firstRecord.invocationAttempt,
             invocationReply: firstRecord.invocationReply,
             lastFailureCode: firstRecord.lastFailure?.code,
             stopAcknowledged: firstRecord.stopAcknowledged,
