@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ABI_VERSION,
   KernelProgramRegistry,
@@ -88,6 +88,63 @@ function spawn(host: KernelProgramHost, prepared: ReturnType<KernelProgramHost["
 }
 
 describe("KernelAsyncProgram", () => {
+  it.each(["valid", "invalid", "getter-error", "aborted"] as const)(
+    "consumes the program status reply on %s validation",
+    async (mode) => {
+      const entered = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      const dispose = vi.fn();
+      const controller = new AbortController();
+      const context = setup(
+        new Map([
+          [
+            "/bin/outer",
+            {
+              manifest: manifest("outer"),
+              implementation: {
+                kind: "async",
+                async run() {
+                  entered.resolve();
+                  await finish.promise;
+                  return {
+                    get exitCode() {
+                      if (mode === "getter-error") throw new Error("status decode failed");
+                      return mode === "invalid" ? -1 : 17;
+                    },
+                    signal: 0,
+                    coreDumped: false,
+                    [Symbol.dispose]: dispose,
+                  };
+                },
+              },
+            },
+          ],
+        ]),
+      );
+      try {
+        const prepared = context.host.prepare({
+          filesystem: context.filesystem,
+          signal: controller.signal,
+        });
+        const child = spawn(context.host, prepared);
+        await entered.promise;
+        if (mode === "aborted") controller.abort();
+        finish.resolve();
+        const result = await context.host.exitStatus(child);
+        expect(dispose).toHaveBeenCalledOnce();
+        if (mode === "valid")
+          expect(result).toEqual({
+            status: "ok",
+            value: { exitCode: 17, signal: 0, coreDumped: false },
+          });
+        else expect(result.status).toBe("error");
+      } finally {
+        finish.resolve();
+        await context.close();
+      }
+    },
+  );
+
   it("counts explicit user slices around awaited I/O when CPU accounting is enabled", async () => {
     const clock = makeClock();
     const started = deferred();

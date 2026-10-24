@@ -1,5 +1,6 @@
 import type { WorkerEntrypoint } from "cloudflare:workers";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
+import { copyKernelRpcRecord } from "../kernel/KernelRpcReply.ts";
 import type { ChildWorkerModules } from "./ChildWorkerProgram.ts";
 import { requireChildWorkerLoaderId } from "./ChildWorkerLoaderRecovery.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
@@ -145,7 +146,10 @@ export function createCompiledChildWorkerLoader(
         if (child === undefined)
           throw new Error("Child Worker Loader did not create an entrypoint");
         try {
-          outcome = { kind: "exit", value: await child.run(input.command, target) };
+          outcome = {
+            kind: "exit",
+            value: copyKernelRpcRecord(await child.run(input.command, target)),
+          };
         } catch (cause) {
           outcome = { kind: "error", cause };
         }

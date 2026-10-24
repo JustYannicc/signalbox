@@ -83,7 +83,7 @@ describe("child slot handoff", () => {
       const exported = bridge.host.forkSnapshot();
       expect(exported).toBeDefined();
       lease.release();
-      expect(() => exported!.state()).toThrow(expect.objectContaining({ code: "EBADF" }));
+      await expect(exported!.state()).rejects.toMatchObject({ code: "EBADF" });
       expect(source.state).not.toHaveBeenCalled();
     } finally {
       await owner.close();
@@ -114,7 +114,7 @@ describe("child slot handoff", () => {
       await exported!.restored();
       expect(restored).toHaveBeenCalledOnce();
       expect(dispose).toHaveBeenCalledOnce();
-      expect(() => exported!.state()).toThrow(expect.objectContaining({ code: "EBADF" }));
+      await expect(exported!.state()).rejects.toMatchObject({ code: "EBADF" });
       lease.release();
       expect(dispose).toHaveBeenCalledOnce();
     } finally {

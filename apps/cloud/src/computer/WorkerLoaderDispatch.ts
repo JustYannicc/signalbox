@@ -14,6 +14,7 @@ import {
 import { resolveChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import type { ChildWorkerDispatch, ChildWorkerInvocation } from "./ChildWorkerProgram.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
+import { copyKernelRpcRecord } from "../kernel/KernelRpcReply.ts";
 
 interface ChildEntrypoint<Host extends object> {
   run(command: KernelCommand, invocation: ChildInvocation<Host>): Promise<KernelCommandExit>;
@@ -134,7 +135,7 @@ export function createWorkerLoaderDispatch<Host extends object>(
             loaderId,
             command: input.command,
           };
-          exit = await loader.run(childInput, invocation);
+          exit = copyKernelRpcRecord(await loader.run(childInput, invocation));
         } else {
           for (const module of Object.values(code.modules)) {
             if (typeof module !== "string" && "wasmReference" in module) {
@@ -149,7 +150,7 @@ export function createWorkerLoaderDispatch<Host extends object>(
             entrypoint = worker.getEntrypoint(undefined, {
               limits,
             }) as unknown as ChildEntrypoint<Host>;
-            exit = await entrypoint.run(input.command, invocation);
+            exit = copyKernelRpcRecord(await entrypoint.run(input.command, invocation));
           } finally {
             disposeWorkerLoaderStubs(entrypoint, worker);
           }

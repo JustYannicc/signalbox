@@ -2,6 +2,7 @@ import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts"
 import type { KernelBashForkHost } from "../kernel/KernelBashHost.ts";
 import type { KernelBashCredentials } from "../kernel/KernelBashProgram.ts";
 import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
 import type { KernelExitStatus } from "../kernel/KernelProcessTable.ts";
 import { isKernelProcessCancelledError } from "../kernel/KernelProcessTable.ts";
@@ -85,7 +86,15 @@ export class ChildBashExecutionGroup {
             this.#track(work, context.signal);
           },
         });
-        const residentBytes = source === undefined ? 0 : (await source.state()).memoryBytes;
+        let residentBytes = 0;
+        if (source !== undefined) {
+          const state = await source.state();
+          try {
+            residentBytes = state.memoryBytes;
+          } finally {
+            disposeKernelRpcReply(state);
+          }
+        }
         const runner = initial ? this.#initial : this.#continued;
         initial = false;
         const exit = await runner.run(

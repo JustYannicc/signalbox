@@ -11,6 +11,7 @@ import { createChildWorkerRunner } from "../ChildWorkerProgram.ts";
 import { ChildWorkerLifetimes } from "../ChildWorkerLifetimes.ts";
 import { createWorkerLoaderDispatch } from "../WorkerLoaderDispatch.ts";
 import { bashCredentials, childBashFixture } from "./ChildBashFixture.ts";
+import { withRpcReplyDisposer } from "./helpers/rpcReply.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
@@ -45,26 +46,30 @@ it("keeps a fork killed before restore available for its parent's waitpid", asyn
     runFork: (context, forkOwner, snapshot) => group.run(context, forkOwner, snapshot),
   });
   const restored = vi.fn(async () => {});
+  const stateReplyDispose = vi.fn();
   const source: KernelBashForkSource = {
     async state() {
-      return {
-        version: 1,
-        memoryBytes: 0,
-        stackPointer: 0,
-        continuation: { resume: 0 },
-        captures: {
-          stack: { low: 0, high: 0, log: 0 },
-          base: 0,
-          size: 0,
-          names: [],
-          stackNames: [],
-          captures: [],
-          top: 0,
-          liveBytes: 0,
-          nextId: 1,
-          nextGeneration: 1,
+      return withRpcReplyDisposer(
+        {
+          version: 1,
+          memoryBytes: 0,
+          stackPointer: 0,
+          continuation: { resume: 0 },
+          captures: {
+            stack: { low: 0, high: 0, log: 0 },
+            base: 0,
+            size: 0,
+            names: [],
+            stackNames: [],
+            captures: [],
+            top: 0,
+            liveBytes: 0,
+            nextId: 1,
+            nextGeneration: 1,
+          },
         },
-      };
+        stateReplyDispose,
+      );
     },
     read: async () => new Uint8Array(),
     restored,
@@ -80,6 +85,7 @@ it("keeps a fork killed before restore available for its parent's waitpid", asyn
       status: killed,
     });
     await group.finish(owner.close);
+    expect(stateReplyDispose).toHaveBeenCalledOnce();
     expect(capacity.active).toBe(0);
   } finally {
     await owner.close();

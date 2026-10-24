@@ -1,7 +1,9 @@
 // @effect-diagnostics cryptoRandomUUID:off - anonymous checkpoint inode names must not collide with guest files.
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import {
   BASH_FORK_CHUNK_BYTES,
+  copyKernelBashForkState,
   type KernelBashForkSource,
   type KernelBashForkState,
 } from "../kernel/KernelBashFork.ts";
@@ -18,7 +20,13 @@ export async function storeBashCheckpoint(
   source: KernelBashForkSource,
   signal?: AbortSignal,
 ): Promise<BashCheckpoint> {
-  const state = await source.state();
+  const stateReply = await source.state();
+  let state: KernelBashForkState;
+  try {
+    state = copyKernelBashForkState(stateReply);
+  } finally {
+    disposeKernelRpcReply(stateReply);
+  }
   signal?.throwIfAborted();
   if (!Number.isSafeInteger(state.memoryBytes) || state.memoryBytes < 0) {
     throw new RangeError("Invalid Bash checkpoint size");
@@ -40,8 +48,14 @@ export async function storeBashCheckpoint(
     await storage.unlink(resolved.inode, name, { directory: false });
     for (let offset = 0; offset < state.memoryBytes; offset += BASH_FORK_CHUNK_BYTES) {
       const length = Math.min(BASH_FORK_CHUNK_BYTES, state.memoryBytes - offset);
-      const chunk = await source.read(offset, length);
-      if (chunk.byteLength !== length) throw new Error("Incomplete Bash checkpoint chunk");
+      const reply = await source.read(offset, length);
+      let chunk: Uint8Array;
+      try {
+        if (reply.byteLength !== length) throw new Error("Incomplete Bash checkpoint chunk");
+        chunk = reply.slice();
+      } finally {
+        disposeKernelRpcReply(reply);
+      }
       let written = 0;
       while (written < length) {
         const count = await storage.write(inode, BigInt(offset + written), chunk.subarray(written));

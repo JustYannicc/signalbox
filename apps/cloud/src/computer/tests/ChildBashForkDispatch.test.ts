@@ -7,6 +7,7 @@ import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { ChildWorkerDispatchError } from "../ChildWorkerDispatchError.ts";
 import { ChildWorkerLifetimes } from "../ChildWorkerLifetimes.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
+import { withRpcReplyDisposer } from "./helpers/rpcReply.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
@@ -15,9 +16,23 @@ const code = {
   modules: { "main.js": "export default {}" },
 };
 const snapshotState = Object.freeze({
-  revision: 7,
+  version: 1 as const,
   memoryBytes: 196_608,
-}) as unknown as KernelBashForkState;
+  stackPointer: 16,
+  continuation: { resume: 0 },
+  captures: {
+    stack: { low: 0, high: 0, log: 0 },
+    base: 0,
+    size: 0,
+    names: [],
+    stackNames: [],
+    captures: [],
+    top: 0,
+    liveBytes: 0,
+    nextId: 1,
+    nextGeneration: 1,
+  },
+}) satisfies KernelBashForkState;
 const source: KernelBashForkSource = {
   state: vi.fn(async () => snapshotState),
   read: vi.fn(async () => new Uint8Array([7, 8, 9])),
@@ -34,6 +49,12 @@ describe("Bash fork dispatch", () => {
     const lifetimes = new ChildWorkerLifetimes();
     const reason = new Error("Snapshot requires another execution destination");
     const pressures: number[] = [];
+    const stateReplyDispose = vi.fn();
+    const sourceState = { ...snapshotState };
+    withRpcReplyDisposer(sourceState, () => {
+      stateReplyDispose();
+      Object.assign(sourceState, { memoryBytes: 0 });
+    });
     const stop = capacity.onPressure((pressure) => {
       if (pressure.kind === "unplaceable" && "request" in pressure) {
         pressures.push(pressure.request.residentBytes);
@@ -50,9 +71,14 @@ describe("Bash fork dispatch", () => {
     });
     try {
       await expect(
-        dispatch(fixture.context, { port: fixture.owner.port, close: async () => {} }, source),
+        dispatch(
+          fixture.context,
+          { port: fixture.owner.port, close: async () => {} },
+          { ...source, state: async () => sourceState },
+        ),
       ).rejects.toBe(reason);
       expect(pressures).toEqual([snapshotState.memoryBytes]);
+      expect(stateReplyDispose).toHaveBeenCalledOnce();
       expect(run).not.toHaveBeenCalled();
       expect(capacity.active).toBe(0);
       expect(capacity.waiting).toBe(0);
@@ -63,7 +89,7 @@ describe("Bash fork dispatch", () => {
     }
   });
 
-  it("queues a fork and forwards snapshot state without copying it", async () => {
+  it("queues a fork and forwards a value copy of snapshot state", async () => {
     const fixture = childBashFixture();
     const capacity = new ChildWorkerCapacity(1, {
       owner: "test/src-computer-tests-childbashforkdispatch-test-1",
@@ -81,7 +107,9 @@ describe("Bash fork dispatch", () => {
       expect(snapshot).not.toBe(source);
       expect(source.state).toHaveBeenCalledOnce();
       expect(source.read).not.toHaveBeenCalled();
-      expect(await snapshot!.state()).toBe(snapshotState);
+      const copiedState = await snapshot!.state();
+      expect(copiedState).toEqual(snapshotState);
+      expect(copiedState).not.toBe(snapshotState);
       expect(source.state).toHaveBeenCalledTimes(2);
       return exited(17);
     });

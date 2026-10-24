@@ -7,6 +7,7 @@ import {
   kernelCoreutilsPointerLength,
   type KernelCoreutilsSparsePointer,
 } from "../kernel/KernelCoreutilsSparseMemory.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
 
 type WasmArgument = number | bigint;
@@ -51,7 +52,7 @@ function sparsePlan(pointers: readonly KernelCoreutilsSparsePointer[]): MemoryPl
 /** AgentOS imports keep their arguments sparse and execute against the parent's process port. */
 export function createChildCoreutilsImports(options: {
   readonly module: WebAssembly.Module;
-  readonly port: KernelCoreutilsPort;
+  readonly port: Pick<KernelCoreutilsPort, "callCoreutils">;
 }) {
   const wasm = WebAssembly as unknown as JSPI;
   if (typeof wasm.Suspending !== "function") {
@@ -82,8 +83,12 @@ export function createChildCoreutilsImports(options: {
         memorySize: memory.buffer.byteLength,
         regions: regions.snapshot(),
       });
-      regions.apply(response.regions);
-      return response.value;
+      try {
+        regions.apply(response.regions);
+        return response.value;
+      } finally {
+        disposeKernelRpcReply(response);
+      }
     });
   }
 

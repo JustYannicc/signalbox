@@ -1,5 +1,6 @@
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
-import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
+import type { KernelBashForkSource, KernelBashForkState } from "../kernel/KernelBashFork.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import type { KernelExitStatus } from "../kernel/KernelProcessTable.ts";
 import type {
   KernelBashOperation,
@@ -62,17 +63,23 @@ export class BashWorkerPhase implements WorkerBashPhase {
     operationId?: string,
   ) {
     if (this.#stopped || this.#parked.has(pid)) throw new Error("Bash process already parked");
-    const state = await source.state();
+    const stateReply = await source.state();
+    let continuation: KernelBashForkState["continuation"];
+    try {
+      continuation = structuredClone(stateReply.continuation);
+    } finally {
+      disposeKernelRpcReply(stateReply);
+    }
     const operations = this.#operationsFor(port);
     let result: KernelBashOperationResult | undefined;
-    let pending = operationId ?? state.continuation.operationId;
+    let pending = operationId ?? continuation.operationId;
     // Growth can move a continuation before its syscall has started.
     if (
       pending === undefined &&
-      state.continuation.result === undefined &&
-      state.continuation.pending?.kind === "operation"
+      continuation.result === undefined &&
+      continuation.pending?.kind === "operation"
     ) {
-      const started = await operations.start(state.continuation.pending.operation);
+      const started = await operations.start(continuation.pending.operation);
       if (started.kind === "ready") result = started.result;
       else pending = started.id;
     }
@@ -118,7 +125,7 @@ export class BashWorkerPhase implements WorkerBashPhase {
     const checkpoint = await storeBashCheckpoint(this.#filesystem, source, this.#signal);
     this.#startFork(async () => {
       try {
-        await port.runFork(checkpoint.source());
+        disposeKernelRpcReply(await port.runFork(checkpoint.source()));
       } finally {
         await checkpoint.close();
       }
@@ -154,7 +161,7 @@ export class BashWorkerPhase implements WorkerBashPhase {
           if (resumed.kind === "exit") {
             await parked.port.complete({ kind: "exit", status: resumed.status });
           } else {
-            await parked.port.runFork(resumed.source);
+            disposeKernelRpcReply(await parked.port.runFork(resumed.source));
           }
         } finally {
           await parked.checkpoint.close();

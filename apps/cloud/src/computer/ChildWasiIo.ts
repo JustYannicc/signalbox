@@ -5,6 +5,7 @@ import type {
   KernelSyscallRequest,
   KernelSyscallResponse,
 } from "../kernel/KernelSyscallPort.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import { MAX_IOVECS, MemoryRegions } from "./wasi/MemoryRegions.ts";
 
 type WasmArgument = number | bigint;
@@ -126,11 +127,26 @@ export async function childWasiIo(
 
   for (;;) {
     const response = await options.syscalls.call(request);
-    const progress = applyChildWasiIoWindow({ request, response, memory: options.memory });
+    let progress: ChildWasiIoProgress | undefined;
+    try {
+      const applied = applyChildWasiIoWindow({ request, response, memory: options.memory });
+      progress =
+        applied?.kind === "complete" && typeof applied.value !== "number"
+          ? { kind: "complete", value: copyTerminal(applied.value) }
+          : applied;
+    } finally {
+      disposeKernelRpcReply(response);
+    }
     if (progress === undefined) return undefined;
     if (progress.kind === "complete") return progress.value;
     request = progress.request;
   }
+}
+
+function copyTerminal(response: Terminal): Terminal {
+  return response.kind === "exit"
+    ? { kind: "exit", code: response.code }
+    : { kind: "signal", signal: response.signal };
 }
 
 function transferShape(options: TransferOptions): TransferShape | undefined {

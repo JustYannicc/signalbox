@@ -1,4 +1,5 @@
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import { nimbusPlans, type NimbusMemoryPlan } from "./nimbus/NimbusPlans.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
 import type {
@@ -80,8 +81,12 @@ export function createChildBashImports(options: {
         memorySize: memory.buffer.byteLength,
         regions: regions.snapshot(),
       });
-      regions.apply(response.regions);
-      return response.value;
+      try {
+        regions.apply(response.regions);
+        return response.value;
+      } finally {
+        disposeKernelRpcReply(response);
+      }
     });
   }
   return {

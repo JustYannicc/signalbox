@@ -2,6 +2,7 @@ import {
   KERNEL_SYSCALL_MAX_IO_BYTES,
   type KernelSyscallPort,
 } from "../kernel/KernelSyscallPort.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import { KernelProcessSignal, kernelProcessExitStatus } from "../kernel/KernelProcessSignal.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
 import { applyChildWasiIoWindow, childWasiIo, childWasiIoWindow } from "./ChildWasiIo.ts";
@@ -292,13 +293,17 @@ export function createChildWasi(options: ChildWasiOptions) {
         regions: requestRegions,
         transferOffset: 0,
       });
-      if (response.kind === "exit") throw new ChildWasiExit(response.code);
-      if (response.kind === "signal") throw new KernelProcessSignal(response.signal);
-      if (imported.name === "proc_exit") {
-        throw new Error("WASI proc_exit returned without exiting the child");
+      try {
+        if (response.kind === "exit") throw new ChildWasiExit(response.code);
+        if (response.kind === "signal") throw new KernelProcessSignal(response.signal);
+        if (imported.name === "proc_exit") {
+          throw new Error("WASI proc_exit returned without exiting the child");
+        }
+        regions.apply(response.regions);
+        return response.value;
+      } finally {
+        disposeKernelRpcReply(response);
       }
-      regions.apply(response.regions);
-      return response.value;
     });
   }
 

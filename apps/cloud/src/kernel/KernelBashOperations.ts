@@ -6,6 +6,7 @@ import type {
   KernelBashOperationStart,
 } from "./KernelBashCheckpoint.ts";
 import { runKernelSuspensionObserver } from "./KernelSuspension.ts";
+import { copyKernelRpcRecord } from "./KernelRpcReply.ts";
 
 type Port = Pick<KernelBashPort, "call" | "callBash" | "wait" | "exec">;
 
@@ -123,13 +124,21 @@ export function createKernelBashOperations(port: Port) {
 function invoke(port: Port, operation: KernelBashOperation): Promise<KernelBashOperationResult> {
   switch (operation.kind) {
     case "wasi":
-      return port.call(operation.request).then((value) => ({ kind: "wasi", value }));
+      return port
+        .call(operation.request)
+        .then((reply) => ({ kind: "wasi", value: copyKernelRpcRecord(reply) }));
     case "bash":
-      return port.callBash(operation.request).then((value) => ({ kind: "bash", value }));
+      return port
+        .callBash(operation.request)
+        .then((reply) => ({ kind: "bash", value: copyKernelRpcRecord(reply) }));
     case "wait":
-      return port.wait(operation.pid, operation.options).then((value) => ({ kind: "wait", value }));
+      return port
+        .wait(operation.pid, operation.options)
+        .then((reply) => ({ kind: "wait", value: copyKernelRpcRecord(reply) }));
     case "exec":
-      return port.exec(operation.request).then((value) => ({ kind: "exec", value }));
+      return port
+        .exec(operation.request)
+        .then((reply) => ({ kind: "exec", value: copyKernelRpcRecord(reply) }));
   }
 }
 

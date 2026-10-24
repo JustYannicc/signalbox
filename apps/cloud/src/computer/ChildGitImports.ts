@@ -1,5 +1,6 @@
 import type { KernelGitPort } from "../kernel/KernelGitPort.ts";
 import { hasKernelGitMemoryPlan, planKernelGitMemory } from "../kernel/KernelGitMemoryPlan.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
 
 type WasmArgument = number | bigint;
@@ -7,7 +8,7 @@ type WasmArgument = number | bigint;
 /** Routes only the pinned module's Nimbus ABI through sparse argument ranges. */
 export function createChildGitImports(options: {
   readonly module: WebAssembly.Module;
-  readonly port: KernelGitPort;
+  readonly port: Pick<KernelGitPort, "callGit">;
 }) {
   const wasm = WebAssembly as unknown as {
     Suspending: new (
@@ -55,8 +56,12 @@ export function createChildGitImports(options: {
         memorySize: memory.buffer.byteLength,
         regions: regions.snapshot(),
       });
-      regions.apply(result.regions);
-      return result.value;
+      try {
+        regions.apply(result.regions);
+        return result.value;
+      } finally {
+        disposeKernelRpcReply(result);
+      }
     });
   }
 

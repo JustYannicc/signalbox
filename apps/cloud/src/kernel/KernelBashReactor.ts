@@ -2,6 +2,7 @@ import type { KernelBashCredentials } from "./KernelBashProgram.ts";
 import type { KernelBashPort } from "./KernelBashPort.ts";
 import type { KernelExitStatus } from "./KernelProcessTable.ts";
 import { KernelProcessSignal } from "./KernelProcessSignal.ts";
+import { copyKernelRpcRecord, disposeKernelRpcReply } from "./KernelRpcReply.ts";
 import { createBashInstance } from "./bash/BashInstance.ts";
 import { createBashEnvironment } from "./bash/BashEnvironment.ts";
 import { errno, range } from "./bash/BashMemory.ts";
@@ -233,7 +234,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
           break;
         }
         case "wait": {
-          const waited = await port.wait(pending.pid, pending.options);
+          const waited = copyKernelRpcRecord(await port.wait(pending.pid, pending.options));
           process.resume = waited.kind === "error" ? -waited.errno : waited.pid;
           if (waited.kind === "wait" && waited.status !== undefined && pending.status !== 0) {
             const raw = waitStatus(waited.status);
@@ -245,11 +246,13 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
           break;
         }
         case "exec": {
-          const replacement = await port.exec({
-            path: pending.path,
-            args: pending.args,
-            env: pending.env,
-          });
+          const replacement = copyKernelRpcRecord(
+            await port.exec({
+              path: pending.path,
+              args: pending.args,
+              env: pending.env,
+            }),
+          );
           if (replacement.kind === "exit") return replacement.status;
           process.resume = -replacement.errno;
           process.pending = undefined;
@@ -342,19 +345,27 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
     if (parked) return true;
     await observeResident(current);
     const forked = await current.port.fork();
-    if (forked.kind === "error") {
-      process.resume = -forked.errno;
-      process.pending = undefined;
-      rewindBash(process);
-      return false;
-    }
-
     let disposed = false;
     const dispose = () => {
       if (disposed) return;
       disposed = true;
       disposeFork(forked);
     };
+    try {
+      if (forked.kind === "error") {
+        try {
+          process.resume = -forked.errno;
+          process.pending = undefined;
+          rewindBash(process);
+          return false;
+        } finally {
+          dispose();
+        }
+      }
+    } catch (error) {
+      dispose();
+      throw error;
+    }
     try {
       const projectedLocalBytes = residentWasmBytes() + process.exports.memory.buffer.byteLength;
       if (
@@ -488,27 +499,34 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
     port: KernelBashPort,
     operation: KernelBashOperation,
   ): Promise<KernelBashOperationStart> {
-    if (port.startOperation !== undefined) return port.startOperation(operation);
+    if (port.startOperation !== undefined)
+      return copyKernelRpcRecord(await port.startOperation(operation));
     switch (operation.kind) {
       case "wasi":
         return {
           kind: "ready",
-          result: { kind: "wasi", value: await port.call(operation.request) },
+          result: { kind: "wasi", value: copyKernelRpcRecord(await port.call(operation.request)) },
         };
       case "bash":
         return {
           kind: "ready",
-          result: { kind: "bash", value: await port.callBash(operation.request) },
+          result: {
+            kind: "bash",
+            value: copyKernelRpcRecord(await port.callBash(operation.request)),
+          },
         };
       case "wait":
         return {
           kind: "ready",
-          result: { kind: "wait", value: await port.wait(operation.pid, operation.options) },
+          result: {
+            kind: "wait",
+            value: copyKernelRpcRecord(await port.wait(operation.pid, operation.options)),
+          },
         };
       case "exec":
         return {
           kind: "ready",
-          result: { kind: "exec", value: await port.exec(operation.request) },
+          result: { kind: "exec", value: copyKernelRpcRecord(await port.exec(operation.request)) },
         };
     }
   }
@@ -521,7 +539,9 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
   ) {
     const snapshot = createBashForkSnapshot(current.process, continuation);
     const source = await forkSource(snapshot.source);
-    const remote = Promise.resolve().then(() => forked.port.runFork(source));
+    const remote = Promise.resolve()
+      .then(() => forked.port.runFork(source))
+      .then(copyKernelRpcRecord);
     const completion = remote.finally(dispose).then(
       () => {},
       () => {},
@@ -546,7 +566,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
             code: "EIO",
           });
     try {
-      await current.port.wait(forked.pid, 0);
+      disposeKernelRpcReply(await current.port.wait(forked.pid, 0));
     } catch {
       // The remote completion is already observed; wait only removes its process-table entry.
     }
@@ -678,7 +698,5 @@ class BashGuestRunGate {
 
 // RPC fork results own their returned port stubs; same-isolate results have no disposer.
 function disposeFork(result: object): void {
-  if (!(Symbol.dispose in result)) return;
-  const dispose = result[Symbol.dispose];
-  if (typeof dispose === "function") dispose.call(result);
+  disposeKernelRpcReply(result);
 }

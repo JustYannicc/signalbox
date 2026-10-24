@@ -56,6 +56,68 @@ async function withContext(run: (context: KernelAsyncProgramContext) => Promise<
 }
 
 describe("ChildWorkerProgram", () => {
+  it.each(["normal", "logical-first", "close-error", "aborted"] as const)(
+    "consumes the dispatch reply on %s completion",
+    (mode) =>
+      withContext(async (context) => {
+        const entered = Promise.withResolvers<void>();
+        const dispatch = Promise.withResolvers<{
+          exitCode: number;
+          signal: number;
+          coreDumped: boolean;
+          [Symbol.dispose](): void;
+        }>();
+        const controller = new AbortController();
+        const dispose = vi.fn();
+        const expected = { exitCode: 17, signal: 0, coreDumped: false };
+        const program = createChildWorkerProgram({
+          executable: "/bin/tool",
+          code: { mainModule: "entry.js", modules: {} },
+          capacity: new ChildWorkerCapacity(1, { owner: "test/rpc-dispatch-result" }),
+          dispatch: {
+            run: () => {
+              entered.resolve();
+              return dispatch.promise;
+            },
+          },
+          createHost: () => ({
+            host: {},
+            ...(mode === "logical-first"
+              ? { exited: Promise.resolve({ exitCode: 7, signal: 0, coreDumped: false }) }
+              : {}),
+            close() {
+              if (mode === "close-error") throw new Error("host close failed");
+            },
+          }),
+        });
+        const running = program.run({ ...context, signal: controller.signal });
+        const result = running.then(
+          (value) => ({ kind: "exit" as const, value }),
+          (error: unknown) => ({ kind: "error" as const, error }),
+        );
+        await entered.promise;
+        if (mode === "logical-first")
+          expect(await running).toEqual({ exitCode: 7, signal: 0, coreDumped: false });
+        if (mode === "aborted") controller.abort();
+        dispatch.resolve({ ...expected, [Symbol.dispose]: dispose });
+        const completed = await result;
+        await program.drain();
+        expect(dispose).toHaveBeenCalledOnce();
+        if (mode === "close-error")
+          expect(completed).toMatchObject({
+            kind: "error",
+            error: { message: "host close failed" },
+          });
+        else {
+          if (completed.kind !== "exit") throw new Error("Expected a completed command");
+          expect(completed.value).toEqual(
+            mode === "logical-first" ? { ...expected, exitCode: 7 } : expected,
+          );
+          expect(Symbol.dispose in completed.value).toBe(false);
+        }
+      }),
+  );
+
   it("leaves a host the child keeps after its command unable to reach the kernel process", () =>
     withContext(async (context) => {
       const argsSizes = {

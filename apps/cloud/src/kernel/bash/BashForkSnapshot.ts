@@ -1,11 +1,13 @@
 import {
   BASH_FORK_CHUNK_BYTES,
+  copyKernelBashForkState,
   type KernelBashForkSource,
   type KernelBashForkState,
 } from "../KernelBashFork.ts";
 import { BashCaptureStore } from "./BashCaptureStore.ts";
 import type { BashContinuation } from "./BashTransitions.ts";
 import type { KernelBashCheckpointContinuation } from "../KernelBashCheckpoint.ts";
+import { disposeKernelRpcReply } from "../KernelRpcReply.ts";
 
 export function createBashForkSnapshot(
   process: BashContinuation,
@@ -56,15 +58,27 @@ export async function restoreBashFork(
   process: BashContinuation,
   source: KernelBashForkSource,
 ): Promise<KernelBashCheckpointContinuation> {
-  const state = await source.state();
+  const stateReply = await source.state();
+  let state: KernelBashForkState;
+  try {
+    state = copyKernelBashForkState(stateReply);
+  } finally {
+    disposeKernelRpcReply(stateReply);
+  }
   if (state.version !== 1) throw new Error(`Unsupported Bash checkpoint version ${state.version}`);
   const memory = process.exports.memory;
   if (memory.buffer.byteLength < state.memoryBytes)
     memory.grow((state.memoryBytes - memory.buffer.byteLength) / 65_536);
   for (let offset = 0; offset < state.memoryBytes; offset += BASH_FORK_CHUNK_BYTES) {
     const length = Math.min(BASH_FORK_CHUNK_BYTES, state.memoryBytes - offset);
-    const chunk = await source.read(offset, length);
-    if (chunk.byteLength !== length) throw new Error("Incomplete Bash fork snapshot chunk");
+    const reply = await source.read(offset, length);
+    let chunk: Uint8Array;
+    try {
+      if (reply.byteLength !== length) throw new Error("Incomplete Bash fork snapshot chunk");
+      chunk = reply.slice();
+    } finally {
+      disposeKernelRpcReply(reply);
+    }
     new Uint8Array(memory.buffer, offset, length).set(chunk);
   }
   process.exports.__stack_pointer.value = state.stackPointer;

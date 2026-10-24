@@ -11,6 +11,17 @@ export interface KernelBashForkState {
   readonly continuation: KernelBashCheckpointContinuation;
 }
 
+/** Checkpoint metadata must survive releasing the transport reply that supplied it. */
+export function copyKernelBashForkState(state: KernelBashForkState): KernelBashForkState {
+  return {
+    version: state.version,
+    memoryBytes: state.memoryBytes,
+    stackPointer: state.stackPointer,
+    captures: structuredClone(state.captures),
+    continuation: structuredClone(state.continuation),
+  };
+}
+
 /** The parent stays suspended until restored, so reads need no second full memory image. */
 export interface KernelBashForkSource {
   state(): Promise<KernelBashForkState>;

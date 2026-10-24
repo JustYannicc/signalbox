@@ -1,5 +1,6 @@
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
 import type { KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
+import { copyKernelRpcRecord } from "../kernel/KernelRpcReply.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import { ChildHostLease } from "./ChildHostLease.ts";
 import {
@@ -146,20 +147,22 @@ export function createChildWorkerRunner<Host extends object>(
           try {
             context.signal.throwIfAborted();
             dispatched = true;
-            return await dispatch.run(
-              Object.freeze({
-                ...code,
-                loaderId: execution.lease.loaderId,
-                modules,
-                command: {
-                  executable,
-                  argv: [...context.args],
-                  cwd: context.filesystem.cwd,
-                  env,
-                },
-              }),
-              owner.host,
-              () => execution.lose("memory"),
+            return copyKernelRpcRecord(
+              await dispatch.run(
+                Object.freeze({
+                  ...code,
+                  loaderId: execution.lease.loaderId,
+                  modules,
+                  command: {
+                    executable,
+                    argv: [...context.args],
+                    cwd: context.filesystem.cwd,
+                    env,
+                  },
+                }),
+                owner.host,
+                () => execution.lose("memory"),
+              ),
             );
           } catch (error) {
             failure =

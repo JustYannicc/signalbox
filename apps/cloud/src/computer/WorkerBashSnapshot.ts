@@ -1,6 +1,11 @@
 import { RpcTarget } from "cloudflare:workers";
 import type { ChildHostLease, ChildHostRef } from "./ChildHostLease.ts";
-import type { KernelBashForkSource } from "../kernel/KernelBashFork.ts";
+import {
+  BASH_FORK_CHUNK_BYTES,
+  copyKernelBashForkState,
+  type KernelBashForkSource,
+} from "../kernel/KernelBashFork.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 
 export class WorkerBashSnapshot extends RpcTarget implements KernelBashForkSource {
   readonly #source: ChildHostRef<KernelBashForkSource>;
@@ -12,11 +17,23 @@ export class WorkerBashSnapshot extends RpcTarget implements KernelBashForkSourc
     this.#source = lease.hold(source, disposeSource);
   }
 
-  state() {
-    return this.#source.get().state();
+  async state() {
+    const reply = await this.#source.get().state();
+    try {
+      return copyKernelBashForkState(reply);
+    } finally {
+      disposeKernelRpcReply(reply);
+    }
   }
-  read(offset: number, length: number) {
-    return this.#source.get().read(offset, length);
+  async read(offset: number, length: number) {
+    const reply = await this.#source.get().read(offset, length);
+    try {
+      if (reply.byteLength > BASH_FORK_CHUNK_BYTES)
+        throw new RangeError("Bash snapshot chunk exceeds the RPC copy limit");
+      return reply.slice();
+    } finally {
+      disposeKernelRpcReply(reply);
+    }
   }
   async restored() {
     try {
