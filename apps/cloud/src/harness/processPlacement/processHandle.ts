@@ -15,6 +15,9 @@ import {
   type HarnessProcessPlacementRecoveryRecord,
   type HarnessProcessPreparedFacet,
   type HarnessProcessPublication,
+  type HarnessProcessPublicationRequest,
+  type HarnessProcessPublishedActivation,
+  type HarnessProcessPublicationPublisher,
   type HarnessProcessPlacementRequest,
 } from "./contracts.ts";
 import { confirmedProcessPublication } from "./publication.ts";
@@ -66,8 +69,11 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   #joined: HarnessProcessJoined = joinedNone;
   #disposed = false;
   #released = false;
+  #invocationMayHaveStarted = false;
   #lastFailure: HarnessProcessFailureRecord | undefined;
   #terminalFailure: HarnessProcessFailureRecord | undefined;
+  #publicationState: HarnessProcessPlacementRecoveryRecord["publicationState"];
+  #publicationReceipt: HarnessProcessPlacementRecoveryRecord["publicationReceipt"];
   #lastCause: unknown;
 
   constructor(input: {
@@ -110,8 +116,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         );
       facetFailureAt = "prepare";
       const observed = await this.#facet.prepareInert({
-        identity: this.identity,
         operationId: this.#request.operationId,
+        targetFacetNonce: this.identity.incarnationNonce,
         nativeSessionId: this.#request.nativeSessionId,
         checkpointId: this.#request.checkpointId,
         manifestRevision: this.#request.manifestRevision,
@@ -119,11 +125,11 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         expectedFacetGeneration: this.#request.expectedFacetGeneration,
       });
       if (
+        observed.facetNonce !== this.identity.incarnationNonce ||
         observed.nativeSessionId !== this.#request.nativeSessionId ||
-        observed.checkpointId !== this.#request.checkpointId ||
+        observed.checkpoint.native.id !== this.#request.checkpointId ||
+        observed.checkpoint.filesystem.sha256 !== this.#request.manifestRevision ||
         observed.manifestRevision !== this.#request.manifestRevision ||
-        observed.facetKey !== this.identity.facetKey ||
-        observed.incarnationNonce !== this.identity.incarnationNonce ||
         !allJoined(observed.joined)
       )
         throw new HarnessProcessPlacementError(
@@ -136,12 +142,11 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
             identityMismatch:
               observed.nativeSessionId !== this.#request.nativeSessionId
                 ? "native-session"
-                : observed.checkpointId !== this.#request.checkpointId ||
+                : observed.checkpoint.native.id !== this.#request.checkpointId ||
+                    observed.checkpoint.filesystem.sha256 !== this.#request.manifestRevision ||
                     observed.manifestRevision !== this.#request.manifestRevision
                   ? "checkpoint"
-                  : observed.facetKey !== this.identity.facetKey
-                    ? "facet-key"
-                    : "incarnation",
+                  : "incarnation",
             causeCode: "IDENTITY_MISMATCH",
           },
         );
@@ -181,19 +186,42 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   }
 
   async activate(
-    publication: HarnessProcessPublication | Promise<HarnessProcessPublication>,
-  ): Promise<void> {
+    publisher: HarnessProcessPublicationPublisher,
+  ): Promise<HarnessProcessPublishedActivation> {
     if (this.#state !== "prepared") this.#requireState("prepared");
-    let receipt: HarnessProcessPublication;
+    if (this.#publicationState !== undefined)
+      throw new HarnessProcessPlacementError(
+        "publication-unknown",
+        "This process already has a publication attempt and needs reconciliation.",
+        true,
+        this.identity,
+        {
+          recoveryId: this.identity.loaderId,
+          publicationState: this.#publicationState,
+        },
+      );
+
+    const request: HarnessProcessPublicationRequest = {
+      identity: this.identity,
+      controllerClaim: this.#options.controllerClaim,
+      operationId: this.#request.operationId,
+      nativeSessionId: this.#request.nativeSessionId,
+      checkpointId: this.#request.checkpointId,
+      manifestRevision: this.#request.manifestRevision,
+      priorFacetNonce: this.#request.priorFacetNonce,
+      expectedFacetGeneration: this.#request.expectedFacetGeneration,
+    };
+    this.#publicationState = "in-progress";
     try {
-      receipt = await publication;
+      await this.#persist("prepared");
     } catch (cause) {
+      this.#publicationState = undefined;
       const cleanup = await this.#cleanupInternal(false);
       throw new HarnessProcessPlacementError(
         "stale-publication",
         cleanup === undefined
-          ? "Facet publication failed; the prepared facet was retired."
-          : "Facet publication failed and its prepared facet needs recovery.",
+          ? "Publication could not be recorded before sending."
+          : "Publication could not be recorded; local cleanup needs recovery.",
         cleanup !== undefined,
         this.identity,
         {
@@ -204,21 +232,62 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       );
     }
 
-    const confirmed = this.#confirmPublication(receipt);
-    if (confirmed === undefined) {
-      const cleanup = await this.#cleanupInternal(false);
+    let activation: HarnessProcessPublishedActivation;
+    try {
+      activation = await publisher.publishProcessFacet(request);
+    } catch (cause) {
+      await this.#markPublicationUnresolved("unknown", cause);
       throw new HarnessProcessPlacementError(
-        "stale-publication",
-        cleanup === undefined
-          ? "The control claim changed before facet activation."
-          : "The control claim changed and prepared-facet cleanup needs recovery.",
-        cleanup !== undefined,
+        "publication-unknown",
+        "The publication reply was lost; ownership stays reserved for reconciliation.",
+        true,
         this.identity,
-        {
-          recoveryId: this.identity.loaderId,
-          ...(cleanup === undefined ? {} : { causeCode: cleanup.failure.code }),
-        },
-        cleanup === undefined ? undefined : { cause: cleanup.cause },
+        { recoveryId: this.identity.loaderId, publicationState: "unknown" },
+        { cause },
+      );
+    }
+
+    const confirmed = this.#confirmPublication(activation.publication);
+    if (
+      confirmed === undefined ||
+      activation.publisher.generation !== confirmed.toGeneration ||
+      activation.publisher.facetNonce !== this.identity.incarnationNonce ||
+      !activation.publisher.publisherKey ||
+      !activation.requestId
+    ) {
+      const pending =
+        activation.publication.status === "supervisor-pending" ||
+        activation.publication.status === "files-pending";
+      const state = pending ? "pending" : "unknown";
+      await this.#markPublicationUnresolved(
+        state,
+        new Error("Publication response was not authoritative."),
+      );
+      throw new HarnessProcessPlacementError(
+        "publication-unknown",
+        pending
+          ? "Publication is pending; ownership stays reserved for reconciliation."
+          : "Publication evidence was incomplete or stale; ownership stays reserved for reconciliation.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId, publicationState: state },
+      );
+    }
+
+    this.#publicationState = "confirmed";
+    this.#publicationReceipt = confirmed;
+    try {
+      await this.#persist("prepared");
+    } catch (cause) {
+      this.#publicationState = "unknown";
+      this.#publicationReceipt = undefined;
+      throw new HarnessProcessPlacementError(
+        "publication-unknown",
+        "Publication was confirmed, but its receipt could not be persisted. Ownership stays reserved.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId, publicationState: "unknown" },
+        { cause },
       );
     }
 
@@ -233,7 +302,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         { recoveryId: this.identity.loaderId },
       );
 
-    parkRelease(receipt);
+    parkRelease(activation.publication);
     const admitted = await parkOutcome;
     this.#parkRelease = undefined;
     this.#parkOutcome = undefined;
@@ -274,6 +343,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     }
     this.#state = "active";
     await this.#persist("active");
+    return activation;
   }
 
   async invoke(input: Input): Promise<HarnessProcessInvocationSettlement> {
@@ -286,6 +356,23 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         this.identity,
         { recoveryId: this.identity.loaderId },
       );
+    // Persist before the RPC so a restart never replays an invocation whose reply may be lost.
+    this.#invocationMayHaveStarted = true;
+    try {
+      await this.#persist("active");
+    } catch (cause) {
+      this.#state = "cleanup-required";
+      this.#lastCause = cause;
+      this.#lastFailure = failureRecord("recovery", "RPC_FAILED");
+      throw new HarnessProcessPlacementError(
+        "invocation-unsettled",
+        "The invocation may have started, but its attempt marker could not be confirmed.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId, causeCode: this.#lastFailure.code },
+        { cause },
+      );
+    }
     const attempt: Attempt = { rpcReturned: false, stopAcknowledged: false, joined: joinedNone };
     this.#attempts.add(attempt);
     try {
@@ -469,7 +556,24 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     }
   }
 
-  async cleanup(): Promise<void> {
+  async cleanup(options: { readonly retainPublishedOwnership?: boolean } = {}): Promise<void> {
+    if (
+      options.retainPublishedOwnership === true &&
+      this.#publicationState === "confirmed" &&
+      !this.#invocationMayHaveStarted &&
+      this.#terminalFailure === undefined
+    )
+      throw new HarnessProcessPlacementError(
+        "cleanup-incomplete",
+        "Confirmed publication ownership stays reserved until invocation or explicit repair.",
+        true,
+        this.identity,
+        {
+          recoveryId: this.identity.loaderId,
+          publicationState: "confirmed",
+          causeCode: "PUBLICATION_REQUIRES_REPAIR",
+        },
+      );
     const failure = await this.#cleanupInternal(false);
     if (failure !== undefined)
       throw new HarnessProcessPlacementError(
@@ -521,6 +625,15 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   }
 
   async #cleanupInternal(keepActivationFailure: boolean): Promise<CleanupResult | undefined> {
+    if (
+      this.#publicationState === "in-progress" ||
+      this.#publicationState === "unknown" ||
+      this.#publicationState === "pending"
+    )
+      return {
+        failure: failureRecord("recovery", "PUBLICATION_UNCONFIRMED"),
+        cause: this.#lastCause,
+      };
     if (this.#released) {
       if (keepActivationFailure || this.#terminalFailure !== undefined) return undefined;
       try {
@@ -610,14 +723,21 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       checkpointId: this.#request.checkpointId,
       manifestRevision: this.#request.manifestRevision,
       priorFacetNonce: this.#request.priorFacetNonce,
+      expectedFacetGeneration: this.#request.expectedFacetGeneration,
       programCodeId: this.#request.codeId,
       loaderId: this.identity.loaderId,
       facetKey: this.identity.facetKey,
+      identityState: "observed",
       incarnationNonce: this.identity.incarnationNonce,
       lease: this.lease,
       state,
       stopAcknowledged: this.#stopAcknowledged,
       joined: this.#joined,
+      ...(this.#publicationState === undefined ? {} : { publicationState: this.#publicationState }),
+      ...(this.#publicationReceipt === undefined
+        ? {}
+        : { publicationReceipt: this.#publicationReceipt }),
+      invocationMayHaveStarted: this.#invocationMayHaveStarted,
       ...(this.#lastFailure === undefined ? {} : { lastFailure: this.#lastFailure }),
       ...(this.#terminalFailure === undefined ? {} : { terminalFailure: this.#terminalFailure }),
     });
@@ -652,6 +772,19 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       expectedFacetGeneration: this.#request.expectedFacetGeneration,
       identity: this.identity,
     });
+  }
+
+  async #markPublicationUnresolved(state: "unknown" | "pending", cause: unknown): Promise<void> {
+    this.#publicationState = state;
+    this.#lastFailure = failureRecord("activation", "PUBLICATION_UNCONFIRMED");
+    this.#lastCause = cause;
+    try {
+      await this.#persist("prepared");
+    } catch (persistCause) {
+      // The durable in-progress marker still prevents cleanup if this write also lost its reply.
+      this.#lastCause = persistCause;
+      this.#publicationState = "unknown";
+    }
   }
 
   #failureStage(code: HarnessProcessFailureRecord["code"] | undefined): HarnessProcessFailureStage {

@@ -14,6 +14,8 @@ import {
   type HarnessProcessPlacementRecoveryRecord,
   type HarnessProcessPlacementRequest,
   type HarnessProcessPublication,
+  type HarnessProcessPublicationPublisher,
+  type HarnessProcessPublishedActivation,
   type HarnessProcessPreparedFacet,
 } from "../HarnessProcessPlacement.ts";
 
@@ -28,6 +30,16 @@ const joinedNone = { invocationRpc: false, fetch: false, ports: false } as const
 let nextFacetNonce = 0;
 
 describe("harness process placement", () => {
+  it("shares one allocator across nested calls in the same execution context", async () => {
+    const contextKey = {};
+    const backing: FixtureBacking = { slotState: undefined, recovery: new Map() };
+    const first = await fixture("durable-object", undefined, backing, undefined, contextKey);
+    const nested = await fixture("durable-object", undefined, backing, undefined, contextKey);
+
+    expect(nested.placement).toBe(first.placement);
+    expect(nested.state.signals).toBe(first.state.signals);
+  });
+
   it("admits ten open calls in a DO context while the eleventh retains only residency", async () => {
     const { placement, state } = await fixture("durable-object");
     const count = 11;
@@ -59,10 +71,10 @@ describe("harness process placement", () => {
     await Promise.all(
       handles
         .slice(0, 10)
-        .map((handle, index) => handle.activate(publication(requests[index]!, handle.identity))),
+        .map((handle, index) => handle.activate(publisherFor(requests[index]!, handle.identity))),
     );
     const activationEleven = handles[10]!.activate(
-      publication(requests[10]!, handles[10]!.identity),
+      publisherFor(requests[10]!, handles[10]!.identity),
     );
     const running = handles.slice(0, 10).map((handle, index) => handle.invoke({ index }));
     await Promise.all(entered.slice(0, 10).map((barrier) => barrier.promise));
@@ -100,7 +112,7 @@ describe("harness process placement", () => {
     );
     await Promise.all(
       handles.map((handle, index) =>
-        handle.activate(publication(requests[index]!, handle.identity)),
+        handle.activate(publisherFor(requests[index]!, handle.identity)),
       ),
     );
     const abort = new AbortController();
@@ -150,7 +162,7 @@ describe("harness process placement", () => {
 
     expect(state.signals.inFlight).toBe(0);
     expect(state.signals.resident).toBe(1);
-    await handle.activate(publication(request, handle.identity));
+    await handle.activate(publisherFor(request, handle.identity));
     expect(state.signals.inFlight).toBe(1);
 
     const running = handle.invoke({});
@@ -194,7 +206,7 @@ describe("harness process placement", () => {
         identity,
       ),
     );
-    await handle.activate(publication(request, handle.identity));
+    await handle.activate(publisherFor(request, handle.identity));
     expect(state.signals.inFlight).toBe(1);
 
     await expect(
@@ -253,7 +265,7 @@ describe("harness process placement", () => {
         identity,
       ),
     );
-    await handle.activate(publication(request, handle.identity));
+    await handle.activate(publisherFor(request, handle.identity));
 
     await expect(handle.cleanup()).rejects.toMatchObject({
       kind: "cleanup-incomplete",
@@ -281,7 +293,7 @@ describe("harness process placement", () => {
     });
     const request = requestFor();
     const handle = await placement.prepareInert(request, (identity) => testFacet({}, identity));
-    await handle.activate(publication(request, handle.identity));
+    await handle.activate(publisherFor(request, handle.identity));
 
     await expect(handle.cleanup()).rejects.toMatchObject({ kind: "cleanup-incomplete" });
     expect(placement.signals.inFlight).toBe(0);
@@ -306,7 +318,7 @@ describe("harness process placement", () => {
       ),
     );
 
-    await expect(handle.activate(publication(request, handle.identity))).rejects.toMatchObject({
+    await expect(handle.activate(publisherFor(request, handle.identity))).rejects.toMatchObject({
       kind: "activation-failed",
       recoverable: true,
     });
@@ -353,7 +365,7 @@ describe("harness process placement", () => {
       return facet;
     });
 
-    const failure = await handle.activate(publication(request, handle.identity)).then(
+    const failure = await handle.activate(publisherFor(request, handle.identity)).then(
       () => undefined,
       (error: unknown) => error,
     );
@@ -418,6 +430,7 @@ async function fixture(
   > = async () => ({
     acknowledged: true,
   }),
+  contextKey: object = {},
 ) {
   const store: ProcessSlotStore = {
     load: async () => backing.slotState,
@@ -428,7 +441,7 @@ async function fixture(
   const recovery = backing.recovery;
   const placement = await createHarnessProcessPlacement({
     owner: "test/shard",
-    contextKey: {},
+    contextKey,
     context,
     shardIncarnationNonce: "request-incarnation",
     controllerClaim,
@@ -526,6 +539,23 @@ function publication(
   };
 }
 
+function publisherFor(
+  request: HarnessProcessPlacementRequest,
+  identity: HarnessProcessPlacementIdentity,
+  result: HarnessProcessPublication = publication(request, identity),
+): HarnessProcessPublicationPublisher {
+  const activation: HarnessProcessPublishedActivation = {
+    publication: result,
+    publisher: {
+      generation: request.expectedFacetGeneration + 1,
+      facetNonce: identity.incarnationNonce,
+      publisherKey: `publisher-${request.operationId}`,
+    },
+    requestId: `request-${request.operationId}`,
+  };
+  return { publishProcessFacet: async () => activation };
+}
+
 function testFacet(
   overrides: Partial<HarnessProcessPreparedFacet<unknown>> = {},
   locator: HarnessProcessFacetLocator,
@@ -540,11 +570,17 @@ function testFacet(
     },
     async prepareInert(input) {
       return {
+        facetNonce: input.targetFacetNonce,
         nativeSessionId: input.nativeSessionId,
-        checkpointId: input.checkpointId,
+        checkpoint: {
+          native: { id: input.checkpointId, bytes: 0, sha256: "0".repeat(64) },
+          filesystem: {
+            id: `${input.checkpointId}-filesystem`,
+            bytes: 0,
+            sha256: input.manifestRevision,
+          },
+        },
         manifestRevision: input.manifestRevision,
-        facetKey: input.identity.facetKey,
-        incarnationNonce: input.identity.incarnationNonce,
         joined,
       };
     },

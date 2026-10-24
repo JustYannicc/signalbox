@@ -8,6 +8,9 @@ import {
   type HarnessFacetRequestRuntime,
   type HarnessRequestFacet,
   type HarnessRequestFacetOptions,
+  type HarnessRequestFacetPreparationEvidence,
+  type HarnessRequestFacetPreparationObservation,
+  type HarnessRequestFacetPreparationRequest,
 } from "./contracts.ts";
 import type {
   HarnessRequestCheckpoint,
@@ -31,6 +34,24 @@ const sameCheckpoint = (
   sameReference(left.native, right.native) &&
   sameReference(left.filesystem, right.filesystem);
 
+const samePreparation = (
+  left: HarnessRequestFacetPreparationRequest,
+  right: HarnessRequestFacetPreparationRequest,
+) =>
+  left.operationId === right.operationId &&
+  left.targetFacetNonce === right.targetFacetNonce &&
+  left.nativeSessionId === right.nativeSessionId &&
+  left.checkpointId === right.checkpointId &&
+  left.manifestRevision === right.manifestRevision &&
+  left.priorFacetNonce === right.priorFacetNonce &&
+  left.expectedFacetGeneration === right.expectedFacetGeneration;
+
+const joined = (value: HarnessRequestFacetPreparationEvidence["joined"]) =>
+  value !== undefined &&
+  value.invocationRpc === true &&
+  value.fetch === true &&
+  value.ports === true;
+
 export const createHarnessRequestFacet = (
   options: HarnessRequestFacetOptions,
 ): Effect.Effect<HarnessRequestFacet, HarnessRequestFacetError, Scope.Scope> =>
@@ -44,12 +65,25 @@ export const createHarnessRequestFacet = (
     let publisher: HarnessRequestPublisher | undefined;
     let checkpoint: HarnessRequestCheckpoint | undefined;
     let active: HarnessFacetRequestContext | undefined;
+    let preparation:
+      | {
+          readonly input: HarnessRequestFacetPreparationRequest;
+          readonly observation: HarnessRequestFacetPreparationObservation;
+          readonly runtime: HarnessFacetRequestRuntime;
+        }
+      | undefined;
+    let preparationFailure: HarnessRequestFacetError | undefined;
+    const preparationLock = yield* Semaphore.make(1);
     const ownerSignal = yield* Effect.abortSignal.pipe(Scope.provide(scope));
     const progressLock = yield* Semaphore.make(1);
     const dispose = yield* Effect.cached(
-      Effect.sync(() => {
-        disposed = true;
-      }).pipe(Effect.andThen(Scope.close(scope, Exit.void)), Effect.uninterruptible),
+      preparationLock
+        .withPermits(1)(
+          Effect.sync(() => {
+            disposed = true;
+          }).pipe(Effect.andThen(Scope.close(scope, Exit.void))),
+        )
+        .pipe(Effect.uninterruptible),
     );
     yield* Effect.addFinalizer(() => dispose);
     const execute = (command: unknown) =>
@@ -57,6 +91,126 @@ export const createHarnessRequestFacet = (
         try: () => options.store.execute(command),
         catch: (cause) => failure("Harness request store rejected the operation.", cause),
       });
+    const prepareInert: HarnessRequestFacet["prepareInert"] = (supplied) =>
+      preparationLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (disposed || poisoned)
+            return yield* Effect.fail(failure("Harness facet requires a fresh restoration."));
+          if (preparation !== undefined) {
+            if (!samePreparation(preparation.input, supplied))
+              return yield* Effect.fail(
+                failure("Harness facet preparation belongs to another operation."),
+              );
+            return preparation.observation;
+          }
+          if (preparationFailure !== undefined) return yield* Effect.fail(preparationFailure);
+          if (!options.prepareInert) {
+            preparationFailure = failure("Harness host does not support inert preparation.");
+            poisoned = true;
+            return yield* Effect.fail(preparationFailure);
+          }
+          if (
+            !supplied.operationId ||
+            supplied.targetFacetNonce !== options.facetNonce ||
+            !supplied.nativeSessionId ||
+            !supplied.checkpointId ||
+            !supplied.manifestRevision ||
+            !supplied.priorFacetNonce ||
+            !Number.isSafeInteger(supplied.expectedFacetGeneration) ||
+            supplied.expectedFacetGeneration < 0
+          )
+            return yield* Effect.fail(failure("Harness facet preparation identity is invalid."));
+
+          const preparationScope = yield* Scope.make();
+          const observed = yield* options
+            .prepareInert(supplied)
+            .pipe(
+              Scope.provide(preparationScope),
+              Effect.mapError((cause) =>
+                failure("Harness host could not prepare the committed checkpoint inert.", cause),
+              ),
+            )
+            .pipe(
+              Effect.catchCause((cause) =>
+                Scope.close(preparationScope, Exit.void).pipe(
+                  Effect.catchCause((cleanupCause) => {
+                    poisoned = true;
+                    preparationFailure = failure(
+                      "Harness preparation failed and its cleanup is unknown.",
+                      cleanupCause,
+                    );
+                    return Effect.fail(preparationFailure);
+                  }),
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      poisoned = true;
+                      preparationFailure ??= failure(
+                        "Harness host could not prepare the committed checkpoint inert.",
+                        cause,
+                      );
+                    }),
+                  ),
+                  Effect.andThen(Effect.fail(preparationFailure!)),
+                ),
+              ),
+            );
+
+          const accept = Effect.gen(function* () {
+            if (
+              observed.facetNonce !== supplied.targetFacetNonce ||
+              observed.nativeSessionId !== supplied.nativeSessionId ||
+              observed.checkpoint.native.id !== supplied.checkpointId ||
+              observed.checkpoint.filesystem.sha256 !== supplied.manifestRevision ||
+              observed.manifestRevision !== supplied.manifestRevision ||
+              !joined(observed.joined) ||
+              typeof observed.runtime?.run !== "function"
+            )
+              return yield* Effect.fail(
+                failure(
+                  "Harness host preparation did not observe the requested identity and checkpoint.",
+                ),
+              );
+            yield* options.verify(observed.checkpoint.native, "native");
+            yield* options.verify(observed.checkpoint.filesystem, "filesystem");
+            yield* Scope.addFinalizer(scope, Scope.close(preparationScope, Exit.void));
+            runtime = observed.runtime;
+            checkpoint = observed.checkpoint;
+            const observation: HarnessRequestFacetPreparationObservation = {
+              facetNonce: observed.facetNonce,
+              nativeSessionId: observed.nativeSessionId,
+              checkpoint: observed.checkpoint,
+              manifestRevision: observed.manifestRevision,
+              joined: observed.joined,
+            };
+            preparation = { input: { ...supplied }, observation, runtime: observed.runtime };
+            return observation;
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Scope.close(preparationScope, Exit.void).pipe(
+                Effect.catchCause((cleanupCause) => {
+                  poisoned = true;
+                  preparationFailure = failure(
+                    "Harness preparation cleanup is unknown.",
+                    cleanupCause,
+                  );
+                  return Effect.fail(preparationFailure);
+                }),
+                Effect.andThen(
+                  Effect.sync(() => {
+                    poisoned = true;
+                    preparationFailure ??= failure(
+                      "Harness host preparation did not complete with verified evidence.",
+                      cause,
+                    );
+                  }),
+                ),
+                Effect.andThen(Effect.fail(preparationFailure!)),
+              ),
+            ),
+          );
+          return yield* accept;
+        }),
+      );
     const run: HarnessRequestFacet["run"] = (supplied) =>
       Effect.gen(function* () {
         const input = { ...supplied, publisher: { ...supplied.publisher } };
@@ -67,12 +221,40 @@ export const createHarnessRequestFacet = (
           (publisher !== undefined && !samePublisher(publisher, input.publisher))
         )
           return yield* Effect.fail(failure("Harness facet requires a fresh restoration."));
+        if (
+          preparation !== undefined &&
+          (input.publisher.facetNonce !== preparation.input.targetFacetNonce ||
+            input.publisher.generation !== preparation.input.expectedFacetGeneration + 1)
+        )
+          return yield* Effect.fail(
+            failure("Published request does not match the inert facet preparation."),
+          );
         const admitted = yield* execute({
           type: "request.admit",
           runId: options.runId,
           publisher: input.publisher,
           requestId: input.requestId,
         });
+        if (preparation !== undefined) {
+          const requests = admitted.snapshot.requests;
+          const published = requests?.facets.find(
+            (candidate) =>
+              candidate.generation === input.publisher.generation &&
+              candidate.facetNonce === input.publisher.facetNonce,
+          );
+          if (
+            requests === undefined ||
+            published === undefined ||
+            published.operationId !== preparation.input.operationId ||
+            !sameCheckpoint(preparation.observation.checkpoint, requests.checkpoint) ||
+            !sameCheckpoint(preparation.observation.checkpoint, published.checkpoint)
+          ) {
+            poisoned = true;
+            return yield* Effect.fail(
+              failure("Published request checkpoint differs from inert preparation."),
+            );
+          }
+        }
         if (admitted.action !== "execute-once") return admitted;
         const requests = admitted.snapshot.requests;
         const entry = requests?.entries.find(
@@ -158,5 +340,5 @@ export const createHarnessRequestFacet = (
           ),
         );
       }).pipe(Effect.scoped);
-    return { facetNonce: options.facetNonce, run, dispose };
+    return { facetNonce: options.facetNonce, prepareInert, run, dispose };
   });

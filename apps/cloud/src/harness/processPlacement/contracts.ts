@@ -8,6 +8,7 @@ import type {
   ProcessSlotStore,
 } from "../../computer/ProcessSlots.ts";
 import type { HarnessRequestPublisher } from "../HarnessRunStore.ts";
+import type { HarnessRequestCheckpoint } from "../HarnessRunStore.ts";
 
 export type HarnessProcessPlacementContext = "durable-object" | "worker-request";
 
@@ -92,6 +93,27 @@ export interface HarnessProcessPublicationPublisher {
   ): Promise<HarnessProcessPublishedActivation>;
 }
 
+export type HarnessProcessPublicationReconciliation =
+  | { readonly status: "published"; readonly publication: HarnessProcessPublication }
+  | {
+      readonly status: "not-published";
+      readonly controllerClaim: HarnessProcessControllerClaim;
+      readonly operationId: string;
+      readonly currentPublisher: {
+        readonly generation: number;
+        readonly facetNonce: string;
+      };
+      readonly lastPublicationOperationId: string | null;
+    }
+  | { readonly status: "pending" | "unknown" };
+
+/** Reads the durable disposition of one exact publication operation without retrying it. */
+export interface HarnessProcessPublicationReconciler {
+  reconcileProcessFacetPublication(
+    input: HarnessProcessPublicationRequest,
+  ): Promise<HarnessProcessPublicationReconciliation>;
+}
+
 export interface HarnessProcessJoined {
   readonly invocationRpc: boolean;
   readonly fetch: boolean;
@@ -105,11 +127,10 @@ export interface HarnessProcessInvocationSettlement<Value = unknown> {
 }
 
 export interface HarnessProcessObservedFacet {
+  readonly facetNonce: string;
   readonly nativeSessionId: string;
-  readonly checkpointId: string;
+  readonly checkpoint: HarnessRequestCheckpoint;
   readonly manifestRevision: string;
-  readonly facetKey: string;
-  readonly incarnationNonce: string;
   readonly joined: HarnessProcessJoined;
 }
 
@@ -118,8 +139,8 @@ export interface HarnessProcessPreparedFacet<Input = unknown> {
   /** Reads state owned by the constructed facet instead of trusting a request echo. */
   identity(): Promise<{ readonly facetKey: string; readonly incarnationNonce: string }>;
   prepareInert(input: {
-    readonly identity: HarnessProcessPlacementIdentity;
     readonly operationId: string;
+    readonly targetFacetNonce: string;
     readonly nativeSessionId: string;
     readonly checkpointId: string;
     readonly manifestRevision: string;
@@ -158,20 +179,27 @@ export interface HarnessProcessPlacementRecoveryRecord {
   readonly checkpointId: string;
   readonly manifestRevision: string;
   readonly priorFacetNonce: string;
+  readonly expectedFacetGeneration?: number;
   readonly programCodeId: string;
   readonly loaderId: string;
   readonly facetKey: string;
-  readonly incarnationNonce: string;
+  readonly incarnationNonce?: string;
+  readonly identityState?: "unknown" | "observed";
   readonly lease: ProcessSlotLease;
   readonly state:
+    | "identity-unknown"
     | "preparing"
     | "prepared"
+    | "publication-confirmed"
     | "active"
     | "parked"
     | "cleanup-required"
     | "activation-failed";
   readonly stopAcknowledged: boolean;
   readonly joined: HarnessProcessJoined;
+  readonly publicationState?: "in-progress" | "unknown" | "pending" | "confirmed" | "not-published";
+  readonly publicationReceipt?: HarnessProcessPublicationReceipt;
+  readonly invocationMayHaveStarted?: boolean;
   readonly lastFailure?: HarnessProcessFailureRecord;
   /** Publication ownership stays sticky until a separate authorized repair accepts it. */
   readonly terminalFailure?: HarnessProcessFailureRecord;
@@ -193,6 +221,7 @@ export type HarnessProcessFailureCode =
   | "JOIN_INCOMPLETE"
   | "DISPOSE_FAILED"
   | "PUBLICATION_UNCONFIRMED"
+  | "PUBLICATION_REQUIRES_REPAIR"
   | "RECOVERY_UNKNOWN";
 
 export interface HarnessProcessFailureRecord {
@@ -238,9 +267,10 @@ export interface HarnessProcessPlacement {
 export interface HarnessProcessHandle<Input = unknown> {
   readonly identity: HarnessProcessPlacementIdentity;
   readonly lease: ProcessSlotLease;
+  /** Persists publication-in-progress before calling the publisher exactly once. */
   activate(
-    publication: HarnessProcessPublication | Promise<HarnessProcessPublication>,
-  ): Promise<void>;
+    publisher: HarnessProcessPublicationPublisher,
+  ): Promise<HarnessProcessPublishedActivation>;
   invoke(input: Input): Promise<HarnessProcessInvocationSettlement>;
   /** The returned promise resolves only after the wait completes and ProcessSlots re-admits. */
   park<Value>(
@@ -252,7 +282,7 @@ export interface HarnessProcessHandle<Input = unknown> {
   ): Promise<Value>;
   stop(): Promise<{ readonly acknowledged: boolean }>;
   join(): Promise<HarnessProcessJoined>;
-  cleanup(): Promise<void>;
+  cleanup(options?: { readonly retainPublishedOwnership?: boolean }): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -261,6 +291,7 @@ export class HarnessProcessPlacementError extends Error {
   readonly kind:
     | "unplaceable"
     | "stale-publication"
+    | "publication-unknown"
     | "prepare-failed"
     | "activation-failed"
     | "cleanup-incomplete"
@@ -298,6 +329,7 @@ export interface HarnessProcessPlacementErrorDetails {
   readonly identityMismatch?: "facet-key" | "incarnation" | "native-session" | "checkpoint";
   readonly causeCode?: HarnessProcessFailureCode;
   readonly facetFailureAt?: "identity" | "prepare" | "persist" | "park";
+  readonly publicationState?: "in-progress" | "unknown" | "pending" | "confirmed" | "not-published";
   readonly facetFailureCode?:
     | "type-error"
     | "range-error"

@@ -1,37 +1,35 @@
 import type { HarnessRequestPublisher } from "./HarnessRunStore.ts";
+import type {
+  HarnessRequestFacetPreparationRequest,
+  HarnessRequestFacetPreparationObservation,
+} from "./HarnessRequestFacet.ts";
 import type { HarnessRequestFacetObject } from "./HarnessRequestFacetObject.ts";
 import type {
   HarnessProcessFacetLocator,
-  HarnessProcessJoined,
   HarnessProcessPlacementIdentity,
   HarnessProcessPreparedFacet,
   HarnessProcessPublicationReceipt,
 } from "./processPlacement/contracts.ts";
 
-const joinedAll: HarnessProcessJoined = Object.freeze({
-  invocationRpc: true,
-  fetch: true,
-  ports: true,
-});
-const joinedInvocation: HarnessProcessJoined = Object.freeze({
+const joinedInvocation = Object.freeze({
   invocationRpc: true,
   fetch: false,
   ports: false,
 });
+const joinedAfterDispose = Object.freeze({
+  invocationRpc: true,
+  fetch: true,
+  ports: true,
+});
 
-export type HarnessProcessFacetRequestStub = Pick<HarnessRequestFacetObject, "run" | "dispose"> & {
+export type HarnessProcessFacetRequestStub = Pick<
+  HarnessRequestFacetObject,
+  "run" | "prepareInert" | "dispose"
+> & {
   identity(): Promise<{ readonly facetNonce: string }> | { readonly facetNonce: string };
 };
 
-export interface HarnessProcessFacetPrepareInput {
-  readonly identity: HarnessProcessPlacementIdentity;
-  readonly operationId: string;
-  readonly nativeSessionId: string;
-  readonly checkpointId: string;
-  readonly manifestRevision: string;
-  readonly priorFacetNonce: string;
-  readonly expectedFacetGeneration: number;
-}
+export type HarnessProcessFacetPrepareInput = HarnessRequestFacetPreparationRequest;
 
 export interface HarnessProcessFacetInvokeInput {
   readonly publisher: HarnessRequestPublisher;
@@ -43,16 +41,7 @@ export function createHarnessProcessFacetAdapter(
   locator: HarnessProcessFacetLocator,
   facet: HarnessProcessFacetRequestStub,
 ): HarnessProcessPreparedFacet<HarnessProcessFacetInvokeInput> {
-  let prepared:
-    | {
-        readonly operationId: string;
-        readonly nativeSessionId: string;
-        readonly checkpointId: string;
-        readonly manifestRevision: string;
-        readonly priorFacetNonce: string;
-        readonly expectedFacetGeneration: number;
-      }
-    | undefined;
+  let prepared: HarnessProcessFacetPrepareInput | undefined;
   let publication: HarnessProcessPublicationReceipt | undefined;
   let stopped = false;
   let stopAcknowledged = false;
@@ -99,10 +88,7 @@ export function createHarnessProcessFacetAdapter(
       if (
         stopped ||
         !actual.incarnationNonce ||
-        input.identity.shardOwner !== actual.shardOwner ||
-        input.identity.loaderId !== actual.loaderId ||
-        input.identity.facetKey !== actual.facetKey ||
-        input.identity.incarnationNonce !== actual.incarnationNonce ||
+        input.targetFacetNonce !== actual.incarnationNonce ||
         !input.operationId ||
         !input.nativeSessionId ||
         !input.checkpointId ||
@@ -113,24 +99,18 @@ export function createHarnessProcessFacetAdapter(
       )
         throw new Error("Process facet preparation does not match its constructor identity.");
 
-      const next = {
-        operationId: input.operationId,
-        nativeSessionId: input.nativeSessionId,
-        checkpointId: input.checkpointId,
-        manifestRevision: input.manifestRevision,
-        priorFacetNonce: input.priorFacetNonce,
-        expectedFacetGeneration: input.expectedFacetGeneration,
-      };
+      const next = { ...input };
       if (prepared !== undefined && !samePrepared(prepared, next))
         throw new Error("A process facet cannot be prepared for another operation.");
+      const observed = await facet.prepareInert(next);
+      validatePreparationObservation(next, actual.incarnationNonce, observed);
       prepared = next;
       return {
-        nativeSessionId: next.nativeSessionId,
-        checkpointId: next.checkpointId,
-        manifestRevision: next.manifestRevision,
-        facetKey: actual.facetKey,
-        incarnationNonce: actual.incarnationNonce,
-        joined: joinedAll,
+        facetNonce: observed.facetNonce,
+        nativeSessionId: observed.nativeSessionId,
+        checkpoint: observed.checkpoint,
+        manifestRevision: observed.manifestRevision,
+        joined: observed.joined,
       };
     },
     async activate(receipt) {
@@ -139,16 +119,17 @@ export function createHarnessProcessFacetAdapter(
       if (
         stopped ||
         current === undefined ||
+        actual.incarnationNonce !== current.targetFacetNonce ||
         receipt.status !== "confirmed" ||
         receipt.operationId !== current.operationId ||
         receipt.fromGeneration !== current.expectedFacetGeneration ||
         receipt.toGeneration !== current.expectedFacetGeneration + 1 ||
         receipt.priorFacetNonce !== current.priorFacetNonce ||
-        receipt.preparedFacetNonce !== actual.incarnationNonce ||
+        receipt.preparedFacetNonce !== current.targetFacetNonce ||
         receipt.checkpoint.checkpointId !== current.checkpointId ||
         receipt.checkpoint.manifestSha256 !== current.manifestRevision
       )
-        throw new Error("Process facet activation lacks its actual published identity.");
+        throw new Error("Process facet activation does not match its actual published identity.");
       publication = receipt;
     },
     async invoke(input) {
@@ -188,36 +169,44 @@ export function createHarnessProcessFacetAdapter(
     },
     async join() {
       await Promise.allSettled(active);
-      return disposed && stopAcknowledged && active.size === 0 ? joinedAll : joinedInvocation;
+      return disposed && stopAcknowledged && active.size === 0
+        ? joinedAfterDispose
+        : joinedInvocation;
     },
     dispose,
   };
 }
 
 function samePrepared(
-  left: {
-    readonly operationId: string;
-    readonly nativeSessionId: string;
-    readonly checkpointId: string;
-    readonly manifestRevision: string;
-    readonly priorFacetNonce: string;
-    readonly expectedFacetGeneration: number;
-  },
-  right: {
-    readonly operationId: string;
-    readonly nativeSessionId: string;
-    readonly checkpointId: string;
-    readonly manifestRevision: string;
-    readonly priorFacetNonce: string;
-    readonly expectedFacetGeneration: number;
-  },
+  left: HarnessProcessFacetPrepareInput,
+  right: HarnessProcessFacetPrepareInput,
 ): boolean {
   return (
     left.operationId === right.operationId &&
+    left.targetFacetNonce === right.targetFacetNonce &&
     left.nativeSessionId === right.nativeSessionId &&
     left.checkpointId === right.checkpointId &&
     left.manifestRevision === right.manifestRevision &&
     left.priorFacetNonce === right.priorFacetNonce &&
     left.expectedFacetGeneration === right.expectedFacetGeneration
   );
+}
+
+function validatePreparationObservation(
+  input: HarnessProcessFacetPrepareInput,
+  constructorNonce: string,
+  observed: HarnessRequestFacetPreparationObservation,
+): void {
+  if (
+    observed.facetNonce !== constructorNonce ||
+    observed.facetNonce !== input.targetFacetNonce ||
+    observed.nativeSessionId !== input.nativeSessionId ||
+    observed.checkpoint.native.id !== input.checkpointId ||
+    observed.checkpoint.filesystem.sha256 !== input.manifestRevision ||
+    observed.manifestRevision !== input.manifestRevision ||
+    observed.joined.invocationRpc !== true ||
+    observed.joined.fetch !== true ||
+    observed.joined.ports !== true
+  )
+    throw new Error("Harness host preparation did not observe the requested process checkpoint.");
 }

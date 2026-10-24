@@ -12,6 +12,7 @@ import {
   type HarnessProcessPlacementIdentity,
   type HarnessProcessFacetLocator,
   type HarnessProcessPlacementOptions,
+  type HarnessProcessPlacementRecoveryRecord,
   type HarnessProcessPlacementRequest,
   type HarnessProcessPreparedFacet,
 } from "./contracts.ts";
@@ -203,33 +204,8 @@ async function openPlacement(
         loaderId: admission.lease.loaderId,
         facetKey: admission.lease.loaderId,
       });
-      let facet: HarnessProcessPreparedFacet<Input>;
-      let identity: HarnessProcessPlacementIdentity;
-      try {
-        facet = openFacet(locator);
-        const observed = await facet.identity();
-        if (observed.facetKey !== locator.facetKey || !observed.incarnationNonce)
-          throw new HarnessProcessPlacementError(
-            "prepare-failed",
-            "The constructed facet did not provide its actual constructor identity.",
-            true,
-            undefined,
-            { recoveryId: locator.loaderId, causeCode: "IDENTITY_MISMATCH" },
-          );
-        identity = Object.freeze({ ...locator, incarnationNonce: observed.incarnationNonce });
-      } catch (cause) {
-        await slots.release(admission.lease, { acknowledged: true });
-        throw new HarnessProcessPlacementError(
-          "prepare-failed",
-          "The fresh facet could not expose its constructor identity before preparation.",
-          false,
-          undefined,
-          { recoveryId: locator.loaderId },
-          { cause },
-        );
-      }
-      const baseRecord = {
-        version: 1 as const,
+      const provisionalRecord: HarnessProcessPlacementRecoveryRecord = {
+        version: 1,
         shardOwner: options.owner,
         controllerClaim,
         operationId: request.operationId,
@@ -238,26 +214,106 @@ async function openPlacement(
         checkpointId: request.checkpointId,
         manifestRevision: request.manifestRevision,
         priorFacetNonce: request.priorFacetNonce,
+        expectedFacetGeneration: request.expectedFacetGeneration,
         programCodeId: request.codeId,
-        loaderId: identity.loaderId,
-        facetKey: identity.facetKey,
-        incarnationNonce: identity.incarnationNonce,
+        loaderId: locator.loaderId,
+        facetKey: locator.facetKey,
+        identityState: "unknown",
         lease: admission.lease,
-        state: "preparing" as const,
+        state: "identity-unknown",
         stopAcknowledged: false,
         joined: { invocationRpc: false, fetch: false, ports: false },
       };
       try {
-        await recovery.save(baseRecord);
+        await recovery.save(provisionalRecord);
       } catch (cause) {
-        await facet.dispose();
-        await slots.release(admission.lease, { acknowledged: true });
+        try {
+          await options.invalidate(locator.loaderId);
+          await slots.release(admission.lease, { acknowledged: true });
+        } catch (releaseCause) {
+          throw new HarnessProcessPlacementError(
+            "prepare-failed",
+            "Placement could not save provisional ownership or release its unopened slot.",
+            true,
+            undefined,
+            { recoveryId: locator.loaderId },
+            { cause: releaseCause },
+          );
+        }
         throw new HarnessProcessPlacementError(
           "prepare-failed",
-          "The placement recovery record could not be saved before opening the facet.",
+          "Placement could not save provisional ownership before opening the facet.",
           false,
+          undefined,
+          { recoveryId: locator.loaderId },
+          { cause },
+        );
+      }
+
+      let facet: HarnessProcessPreparedFacet<Input>;
+      let identity: HarnessProcessPlacementIdentity;
+      try {
+        facet = openFacet(locator);
+      } catch (cause) {
+        try {
+          await options.invalidate(locator.loaderId);
+          await slots.release(admission.lease, { acknowledged: true });
+          await recovery.remove(locator.loaderId);
+        } catch (releaseCause) {
+          throw new HarnessProcessPlacementError(
+            "prepare-failed",
+            "Facet stub construction failed before RPC, but local placement cleanup needs repair.",
+            true,
+            undefined,
+            { recoveryId: locator.loaderId },
+            { cause: releaseCause },
+          );
+        }
+        throw new HarnessProcessPlacementError(
+          "prepare-failed",
+          "The process facet stub could not be constructed before any RPC.",
+          false,
+          undefined,
+          { recoveryId: locator.loaderId },
+          { cause },
+        );
+      }
+
+      let observed: Awaited<ReturnType<typeof facet.identity>>;
+      try {
+        observed = await facet.identity();
+        if (observed.facetKey !== locator.facetKey || !observed.incarnationNonce)
+          throw new Error("The constructed facet did not provide its actual constructor identity.");
+      } catch (cause) {
+        throw new HarnessProcessPlacementError(
+          "prepare-failed",
+          "The identity RPC did not return usable constructor identity; ownership is retained.",
+          true,
+          undefined,
+          {
+            recoveryId: locator.loaderId,
+            causeCode: "IDENTITY_MISMATCH",
+            facetFailureAt: "identity",
+          },
+          { cause },
+        );
+      }
+
+      identity = Object.freeze({ ...locator, incarnationNonce: observed.incarnationNonce });
+      try {
+        await recovery.save({
+          ...provisionalRecord,
+          identityState: "observed",
+          incarnationNonce: identity.incarnationNonce,
+          state: "preparing",
+        });
+      } catch (cause) {
+        throw new HarnessProcessPlacementError(
+          "prepare-failed",
+          "The observed identity could not be persisted; provisional ownership is retained.",
+          true,
           identity,
-          { recoveryId: identity.loaderId },
+          { recoveryId: identity.loaderId, facetFailureAt: "persist" },
           { cause },
         );
       }

@@ -89,16 +89,74 @@ describe("process execution Worker entrypoint", () => {
       readonly constructorNonce: string;
       readonly publishedNonce: string;
       readonly action: string;
-      readonly disposed: boolean;
+      readonly lifecycle: {
+        readonly legacyOpenCalled: boolean;
+        readonly preparedRuntimeClosed: boolean;
+        readonly preparedRuntimeInvoked: boolean;
+        readonly requestFacetDisposed: boolean;
+        readonly prepareInertCalls: number;
+        readonly settled: {
+          readonly invocationRpc: boolean;
+          readonly fetch: boolean;
+          readonly ports: boolean;
+        };
+      };
       readonly inFlight: number;
       readonly resident: number;
     };
     expect(result.constructorNonce).toBeTruthy();
     expect(result.publishedNonce).toBe(result.constructorNonce);
     expect(result.action).toBe("committed");
-    expect(result.disposed, body).toBe(true);
+    expect(result.lifecycle.legacyOpenCalled, body).toBe(false);
+    expect(result.lifecycle.preparedRuntimeInvoked, body).toBe(true);
+    expect(result.lifecycle.preparedRuntimeClosed, body).toBe(true);
+    expect(result.lifecycle.requestFacetDisposed, body).toBe(true);
+    expect(result.lifecycle.prepareInertCalls, body).toBe(1);
+    expect(result.lifecycle.settled, body).toEqual({
+      invocationRpc: true,
+      fetch: true,
+      ports: true,
+    });
     expect(result.inFlight).toBe(0);
     expect(result.resident).toBe(0);
+  }, 120_000);
+
+  it("keeps an honest provisional lease after the identity reply is lost and releases it on exact repair", async () => {
+    const response = await harness.fetch("/identity-reply-loss");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body) as {
+      readonly identityReplyLost: boolean;
+      readonly remoteIdentityObserved: string;
+      readonly provisional: {
+        readonly identityState: string;
+        readonly noncePresent: boolean;
+        readonly state: string;
+      };
+      readonly heldAfterLostReply: { readonly inFlight: number; readonly resident: number };
+      readonly stopAcknowledged: boolean;
+      readonly joined: boolean;
+      readonly disposed: boolean;
+      readonly prepareCalls: number;
+      readonly recoveredInFlight: number;
+      readonly recoveredResident: number;
+      readonly remainingRecoveryRecords: number;
+    };
+    expect(result.identityReplyLost).toBe(true);
+    expect(result.remoteIdentityObserved).toBeTruthy();
+    expect(result.provisional).toEqual({
+      identityState: "unknown",
+      noncePresent: false,
+      state: "identity-unknown",
+    });
+    expect(result.heldAfterLostReply).toEqual({ inFlight: 1, resident: 1 });
+    expect(result.stopAcknowledged).toBe(true);
+    expect(result.joined).toBe(true);
+    expect(result.disposed).toBe(true);
+    expect(result.prepareCalls).toBe(0);
+    expect(result.recoveredInFlight).toBe(0);
+    expect(result.recoveredResident).toBe(0);
+    expect(result.remainingRecoveryRecords).toBe(0);
   }, 120_000);
 
   it("generates a new constructor nonce when the same request-facet key is reconstructed", async () => {
@@ -226,7 +284,7 @@ describe("process execution Worker entrypoint", () => {
     });
   }, 120_000);
 
-  it("repairs retained state under the current claim without replaying invocation", async () => {
+  it("keeps published state recoverable under the current claim without replaying invocation", async () => {
     const start = await harness.fetch("/recover/start");
     const startBody = await start.text();
     expect(start.status, startBody).toBe(200);
@@ -245,8 +303,12 @@ describe("process execution Worker entrypoint", () => {
     expect(retry.status, retryBody).toBe(200);
     const result = JSON.parse(retryBody) as {
       readonly result: { readonly processes: readonly { readonly status: string }[] };
+      readonly invocationCalls: number;
     };
-    expect(result.result.processes).toMatchObject([{ status: "recovered" }]);
+    expect(result.result.processes).toMatchObject([
+      { status: "recoverable", error: { kind: "recovery-unresolved" } },
+    ]);
+    expect(result.invocationCalls).toBe(1);
   }, 120_000);
 
   it("reconstructs terminal activation cleanup without replaying or dropping repair ownership", async () => {
@@ -293,6 +355,34 @@ describe("process execution Worker entrypoint", () => {
         terminalFailure: { code: "RPC_FAILED" },
       },
     ]);
+  }, 120_000);
+
+  it("persists and reconciles a committed publication whose reply was lost without invoking or retiring it", async () => {
+    const response = await harness.fetch("/publication-reply-loss");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body) as {
+      readonly firstStatus: string;
+      readonly firstKind: string;
+      readonly secondStatus: string;
+      readonly recoveryState: string;
+      readonly publicationState: string;
+      readonly receiptOperationId: string;
+      readonly leaseStillHeld: boolean;
+      readonly publisherCalls: number;
+      readonly invocationCalls: number;
+    };
+    expect(result).toEqual({
+      firstStatus: "recoverable",
+      firstKind: "publication-unknown",
+      secondStatus: "recoverable",
+      recoveryState: "publication-confirmed",
+      publicationState: "confirmed",
+      receiptOperationId: "publication-reply-loss-operation-0",
+      leaseStillHeld: true,
+      publisherCalls: 1,
+      invocationCalls: 0,
+    });
   }, 120_000);
 
   it("transactionally fences delayed writer A mutations after writer B claims the shard", async () => {

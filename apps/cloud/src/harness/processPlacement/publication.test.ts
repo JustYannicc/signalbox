@@ -8,6 +8,8 @@ import {
   type HarnessProcessPlacementRequest,
   type HarnessProcessPreparedFacet,
   type HarnessProcessPublication,
+  type HarnessProcessPublicationPublisher,
+  type HarnessProcessPublishedActivation,
   type HarnessProcessPublicationReceipt,
 } from "../HarnessProcessPlacement.ts";
 
@@ -48,10 +50,14 @@ const mismatches: readonly PublicationMismatch[] = [
 describe("composed process publication receipt", () => {
   it("accepts A's complete confirmed receipt and keeps its receipt object intact", async () => {
     const request = requestFor();
-    const placement = await fixture();
+    const { placement } = await fixture();
     const handle = await placement.prepareInert(request, (identity) => testFacet({}, identity));
     const publication = makePublication(request, handle.identity);
-    await expect(handle.activate(publication)).resolves.toBeUndefined();
+    await expect(
+      handle.activate(publisherFor(request, handle.identity, publication)),
+    ).resolves.toMatchObject({
+      requestId: "fixture-request",
+    });
     expect(publication.receipt?.status).toBe("confirmed");
     await handle.cleanup();
   });
@@ -61,7 +67,7 @@ describe("composed process publication receipt", () => {
       change.manifestRevision === undefined
         ? requestFor()
         : requestFor({ manifestRevision: change.manifestRevision });
-    const placement = await fixture();
+    const { placement, recovery } = await fixture();
     const activated = vi.fn();
     const handle = await placement.prepareInert(request, (identity) =>
       testFacet(
@@ -75,10 +81,72 @@ describe("composed process publication receipt", () => {
     );
     const publication = makePublication(request, handle.identity, change);
 
-    await expect(handle.activate(publication)).rejects.toMatchObject({ kind: "stale-publication" });
+    await expect(
+      handle.activate(publisherFor(request, handle.identity, publication)),
+    ).rejects.toMatchObject({ kind: "publication-unknown", recoverable: true });
     expect(activated).not.toHaveBeenCalled();
     expect(placement.signals.inFlight).toBe(0);
-    expect(placement.signals.resident).toBe(0);
+    expect(placement.signals.resident).toBe(1);
+    expect([...recovery.values()]).toMatchObject([
+      { publicationState: change.outerStatus === "supervisor-pending" ? "pending" : "unknown" },
+    ]);
+  });
+
+  it("persists publication-in-progress before the publisher and retains ownership on reply loss", async () => {
+    const request = requestFor();
+    const { placement, recovery } = await fixture();
+    let stopCalls = 0;
+    let disposeCalls = 0;
+    let publisherCalls = 0;
+    const handle = await placement.prepareInert(request, (identity) =>
+      testFacet(
+        {
+          async stop() {
+            stopCalls++;
+            return { acknowledged: true };
+          },
+          async dispose() {
+            disposeCalls++;
+          },
+        },
+        identity,
+      ),
+    );
+    const publisher: HarnessProcessPublicationPublisher = {
+      async publishProcessFacet(input) {
+        publisherCalls++;
+        expect(input.operationId).toBe(request.operationId);
+        expect([...recovery.values()]).toMatchObject([
+          { state: "prepared", publicationState: "in-progress" },
+        ]);
+        throw new Error("Committed publisher response was lost.");
+      },
+    };
+
+    await expect(handle.activate(publisher)).rejects.toMatchObject({
+      kind: "publication-unknown",
+      recoverable: true,
+      details: { publicationState: "unknown" },
+    });
+    await expect(handle.cleanup()).rejects.toMatchObject({
+      kind: "cleanup-incomplete",
+      recoverable: true,
+    });
+    expect({ publisherCalls, stopCalls, disposeCalls }).toEqual({
+      publisherCalls: 1,
+      stopCalls: 0,
+      disposeCalls: 0,
+    });
+    expect(placement.signals.resident).toBe(1);
+    expect(placement.signals.inFlight).toBe(0);
+    expect([...recovery.values()]).toMatchObject([
+      {
+        state: "prepared",
+        publicationState: "unknown",
+        identityState: "observed",
+        incarnationNonce: handle.identity.incarnationNonce,
+      },
+    ]);
   });
 });
 
@@ -166,7 +234,7 @@ async function fixture() {
     },
   };
   const recovery = new Map<string, HarnessProcessPlacementRecoveryRecord>();
-  return await createHarnessProcessPlacement({
+  const placement = await createHarnessProcessPlacement({
     owner: "test/shard",
     contextKey: {},
     context: "worker-request",
@@ -195,6 +263,24 @@ async function fixture() {
     invalidate() {},
     reconcile: async () => ({ acknowledged: true }),
   });
+  return { placement, recovery };
+}
+
+function publisherFor(
+  request: HarnessProcessPlacementRequest,
+  identity: HarnessProcessPlacementIdentity,
+  publication: HarnessProcessPublication,
+): HarnessProcessPublicationPublisher {
+  const activation: HarnessProcessPublishedActivation = {
+    publication,
+    publisher: {
+      generation: request.expectedFacetGeneration + 1,
+      facetNonce: identity.incarnationNonce,
+      publisherKey: "fixture-publisher-key",
+    },
+    requestId: "fixture-request",
+  };
+  return { publishProcessFacet: async () => activation };
 }
 
 function testFacet(
@@ -211,11 +297,17 @@ function testFacet(
     },
     async prepareInert(input) {
       return {
+        facetNonce: input.targetFacetNonce,
         nativeSessionId: input.nativeSessionId,
-        checkpointId: input.checkpointId,
+        checkpoint: {
+          native: { id: input.checkpointId, bytes: 0, sha256: "0".repeat(64) },
+          filesystem: {
+            id: `${input.checkpointId}-filesystem`,
+            bytes: 0,
+            sha256: input.manifestRevision,
+          },
+        },
         manifestRevision: input.manifestRevision,
-        facetKey: input.identity.facetKey,
-        incarnationNonce: input.identity.incarnationNonce,
         joined,
       };
     },

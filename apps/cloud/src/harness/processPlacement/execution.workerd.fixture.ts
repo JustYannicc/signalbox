@@ -13,11 +13,15 @@ import {
   type HarnessProcessPlacementRecoveryRecord,
   type HarnessProcessPlacementWriter,
   type HarnessProcessPublication,
+  type HarnessProcessPublicationReconciliation,
+  type HarnessProcessPublicationRequest,
+  type HarnessProcessPublishedActivation,
 } from "../HarnessProcessPlacement.ts";
 import type { ProcessSlotLeaseToken, ProcessSlotState } from "../../computer/ProcessSlots.ts";
 import { syntheticFacetModule } from "./execution.workerd.syntheticFacet.ts";
 import {
   runProductionFacetProof,
+  runIdentityReplyLossProof,
   sameKeyRequestFacetReconstruction,
   type ProductionFacetEnvironment,
   TestHarnessProcessRequestFacetObject,
@@ -38,6 +42,9 @@ const controllerClaim: HarnessProcessControllerClaim = {
 };
 
 export class ProcessPlacementSupervisor extends DurableObject {
+  #dropPublicationReply = false;
+  #publicationCalls = 0;
+  #processInvocationCalls = 0;
   #heldInvocationBarrier:
     | {
         readonly expected: number;
@@ -148,11 +155,13 @@ export class ProcessPlacementSupervisor extends DurableObject {
     readonly manifestRevision: string;
     readonly priorFacetNonce: string;
     readonly expectedFacetGeneration: number;
-  }) {
+  }): Promise<HarnessProcessPublishedActivation> {
+    this.#publicationCalls++;
     if (!sameClaim(input.controllerClaim, controllerClaim))
       throw new Error("The fixture A publisher rejected a stale controller claim.");
     const publication = makePublication({ ...input, claim: input.controllerClaim });
-    return {
+    await this.ctx.storage.put(`publication-${input.operationId}`, publication);
+    const activation = {
       publication,
       publisher: {
         generation: input.expectedFacetGeneration + 1,
@@ -160,6 +169,47 @@ export class ProcessPlacementSupervisor extends DurableObject {
         publisherKey: `fixture-publisher-${input.identity.incarnationNonce}`,
       },
       requestId: `fixture-request-${input.operationId}`,
+    };
+    if (this.#dropPublicationReply) {
+      this.#dropPublicationReply = false;
+      throw new Error("Fixture dropped the committed publication reply.");
+    }
+    return activation;
+  }
+
+  dropNextPublicationReply() {
+    this.#dropPublicationReply = true;
+  }
+
+  async noteProcessInvocation() {
+    this.#processInvocationCalls++;
+  }
+
+  async publicationCallCount() {
+    return this.#publicationCalls;
+  }
+
+  async processInvocationCount() {
+    return this.#processInvocationCalls;
+  }
+
+  async reconcileProcessFacetPublication(
+    input: HarnessProcessPublicationRequest,
+  ): Promise<HarnessProcessPublicationReconciliation> {
+    if (!sameClaim(input.controllerClaim, controllerClaim)) return { status: "unknown" };
+    const publication = await this.ctx.storage.get<HarnessProcessPublication>(
+      `publication-${input.operationId}`,
+    );
+    if (publication !== undefined) return { status: "published", publication };
+    return {
+      status: "not-published",
+      controllerClaim: input.controllerClaim,
+      operationId: input.operationId,
+      currentPublisher: {
+        generation: input.expectedFacetGeneration,
+        facetNonce: input.priorFacetNonce,
+      },
+      lastPublicationOperationId: null,
     };
   }
 }
@@ -178,10 +228,12 @@ export class TestHarnessProcessExecutionShardObject extends HarnessProcessExecut
         readonly processId: string;
         readonly requestContextId: string;
       }) => {
-        if (runId !== "direct-do-overflow") return;
-        await supervisor
-          .getByName("direct-do-overflow")
-          .holdInvocation(requestContextId, processId);
+        if (runId === "publication-reply-loss" || runId === "recovery-run") {
+          await supervisor.getByName(runId).noteProcessInvocation();
+          return;
+        }
+        if (runId === "direct-do-overflow")
+          await supervisor.getByName(runId).holdInvocation(requestContextId, processId);
       },
     };
   }
@@ -193,8 +245,12 @@ export class TestHarnessProcessExecutionShardObject extends HarnessProcessExecut
 
 interface ProcessPlacementEnvironment
   extends HarnessProcessExecutionEnvironment, ProductionFacetEnvironment {
-  readonly PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<TestHarnessProcessExecutionShardObject>;
-  readonly PLACEMENT_STORES: DurableObjectNamespace<HarnessProcessPlacementStoreObject>;
+  readonly PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<
+    TestHarnessProcessExecutionShardObject & Rpc.DurableObjectBranded
+  >;
+  readonly PLACEMENT_STORES: DurableObjectNamespace<
+    HarnessProcessPlacementStoreObject & Rpc.DurableObjectBranded
+  >;
   readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<ProcessPlacementSupervisor>;
 }
 
@@ -204,17 +260,34 @@ interface FixtureExports {
   }) => Pick<HarnessProcessExecutionEntrypoint, "runShard">;
 }
 
+interface PublicationLossShardClient {
+  runShard(
+    input: HarnessProcessExecutionShardInput,
+    requestContextId: string,
+  ): Promise<{
+    readonly requestContextId: string;
+    readonly processes: readonly {
+      readonly status: string;
+      readonly error?: { readonly kind: string };
+    }[];
+  }>;
+  executionIncarnationNonce(): Promise<string>;
+}
+
 export default {
   async fetch(request: Request, env: ProcessPlacementEnvironment, ctx: ExecutionContext) {
     const path = new URL(request.url).pathname;
     if (path === "/recover-shard") return await recreateExecutionShard(env);
     if (path === "/do-overflow") return await runDirectDoOverflow(env);
+    if (path === "/publication-reply-loss") return await publicationReplyLoss(env);
     if (path === "/production-facet") {
       const publisher = env.HARNESS_THREAD_SUPERVISOR.getByName(
         "production-process-facet-proof",
       ) as unknown as HarnessProcessPublicationPublisher;
       return await runProductionFacetProof(env, publisher, controllerClaim);
     }
+    if (path === "/identity-reply-loss")
+      return await runIdentityReplyLossProof(env, ctx, controllerClaim);
     if (path === "/same-key-reconstruction") return await sameKeyRequestFacetReconstruction(env);
     if (path === "/fence") return await fence(env);
     if (path === "/terminal-recovery") return await terminalRecovery(env, ctx);
@@ -252,6 +325,45 @@ async function runDirectDoOverflow(env: ProcessPlacementEnvironment) {
     supervisor.releaseHeldInvocations();
   }
   return Response.json({ result: await running, contexts });
+}
+
+async function publicationReplyLoss(env: ProcessPlacementEnvironment) {
+  const runId = "publication-reply-loss";
+  const operationId = "publication-reply-loss-execution";
+  const supervisor = env.HARNESS_THREAD_SUPERVISOR.getByName(runId);
+  supervisor.dropNextPublicationReply();
+  const input = makeInput(runId, operationId, "fixture/publication-reply-loss", [
+    makeProcess(0, runId),
+  ]);
+  const owner = await deterministicShardOwner(input.shardOwner, operationId, 0);
+  // The full fixture result carries an unknown settlement value; this route checks its status slice.
+  const shard = env.PROCESS_EXECUTION_SHARDS.getByName(
+    owner,
+  ) as unknown as PublicationLossShardClient;
+  const first = await shard.runShard(input, "first-publication-request");
+  const second = await shard.runShard(input, "reconcile-publication-request");
+
+  const shardNonce = await shard.executionIncarnationNonce();
+  const currentWriter = writer(operationId, shardNonce, 0);
+  const placementStore = env.PLACEMENT_STORES.getByName(owner);
+  await placementStore.claimWriter(owner, currentWriter);
+  const records = await placementStore.listRecovery(owner, currentWriter);
+  const slotState = await placementStore.load(owner, currentWriter);
+  await placementStore.releaseWriter(owner, currentWriter);
+  const record = records[0];
+  return Response.json({
+    firstStatus: first.processes[0]?.status,
+    firstKind: first.processes[0]?.error?.kind,
+    secondStatus: second.processes[0]?.status,
+    recoveryState: record?.state,
+    publicationState: record?.publicationState,
+    receiptOperationId: record?.publicationReceipt?.operationId,
+    leaseStillHeld:
+      record !== undefined &&
+      slotState?.slots.some((slot) => slot.holder?.token === record.lease.token) === true,
+    publisherCalls: await supervisor.publicationCallCount(),
+    invocationCalls: await supervisor.processInvocationCount(),
+  });
 }
 
 async function recreateExecutionShard(env: ProcessPlacementEnvironment) {
@@ -403,12 +515,21 @@ async function recover(
   );
   try {
     const result = await runPublic(ctx, input);
-    return Response.json({ action, result });
+    return Response.json({
+      action,
+      result,
+      invocationCalls: await env.HARNESS_THREAD_SUPERVISOR.getByName(
+        input.runId,
+      ).processInvocationCount(),
+    });
   } catch {
     return Response.json({
       action,
       staleRejected: action === "stale",
       recoverable: action === "retry",
+      invocationCalls: await env.HARNESS_THREAD_SUPERVISOR.getByName(
+        input.runId,
+      ).processInvocationCount(),
     });
   }
 }
@@ -565,9 +686,11 @@ function recoveryRecord(
     checkpointId: "fence-checkpoint",
     manifestRevision: "a".repeat(64),
     priorFacetNonce: "fence-prior-nonce",
+    expectedFacetGeneration: 1,
     programCodeId: "fence-program",
     loaderId,
     facetKey: loaderId,
+    identityState: "observed",
     incarnationNonce: "fence-incarnation",
     lease: {
       token: "fence-lease" as ProcessSlotLeaseToken,

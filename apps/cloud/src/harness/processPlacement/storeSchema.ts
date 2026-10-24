@@ -4,6 +4,7 @@ import type {
   HarnessProcessFailureCode,
   HarnessProcessFailureRecord,
   HarnessProcessFailureStage,
+  HarnessProcessPublicationReceipt,
   HarnessProcessPlacementRecoveryRecord,
 } from "./contracts.ts";
 
@@ -26,6 +27,7 @@ const failureMessages: Record<HarnessProcessFailureCode, string> = {
   JOIN_INCOMPLETE: "Facet settlement is incomplete.",
   DISPOSE_FAILED: "Facet disposal failed.",
   PUBLICATION_UNCONFIRMED: "Facet publication was not confirmed.",
+  PUBLICATION_REQUIRES_REPAIR: "Published process ownership requires explicit repair.",
   RECOVERY_UNKNOWN: "Facet recovery could not establish termination.",
 };
 
@@ -103,20 +105,42 @@ export function parseRecoveryRecord(
     !nonempty(value.checkpointId) ||
     !nonempty(value.manifestRevision) ||
     !nonempty(value.priorFacetNonce) ||
+    (value.expectedFacetGeneration !== undefined &&
+      (!Number.isSafeInteger(value.expectedFacetGeneration) ||
+        Number(value.expectedFacetGeneration) < 0)) ||
     !nonempty(value.programCodeId) ||
     !nonempty(value.loaderId) ||
     value.facetKey !== value.loaderId ||
-    !nonempty(value.incarnationNonce) ||
+    (value.incarnationNonce !== undefined && !nonempty(value.incarnationNonce)) ||
+    (value.identityState !== undefined &&
+      value.identityState !== "unknown" &&
+      value.identityState !== "observed") ||
+    (value.identityState === "observed" && !nonempty(value.incarnationNonce)) ||
+    (value.identityState === "unknown" && value.incarnationNonce !== undefined) ||
     !isLease(value.lease) ||
     value.lease.loaderId !== value.loaderId ||
     !isPlacementState(value.state) ||
     typeof value.stopAcknowledged !== "boolean" ||
     !isJoined(value.joined) ||
     (value.lastFailure !== undefined && !isFailureRecord(value.lastFailure)) ||
-    (value.terminalFailure !== undefined && !isFailureRecord(value.terminalFailure))
+    (value.terminalFailure !== undefined && !isFailureRecord(value.terminalFailure)) ||
+    (value.publicationState !== undefined && !isPublicationState(value.publicationState)) ||
+    (value.publicationReceipt !== undefined && !isPublicationReceipt(value.publicationReceipt)) ||
+    (value.publicationState === "confirmed" && value.publicationReceipt === undefined) ||
+    (value.invocationMayHaveStarted !== undefined &&
+      typeof value.invocationMayHaveStarted !== "boolean") ||
+    (value.publicationState !== undefined && value.expectedFacetGeneration === undefined)
   )
     throw new Error("Process-placement recovery record is invalid.");
-  return value as unknown as HarnessProcessPlacementRecoveryRecord;
+  return {
+    ...value,
+    identityState:
+      value.identityState === undefined
+        ? value.incarnationNonce === undefined
+          ? "unknown"
+          : "observed"
+        : value.identityState,
+  } as unknown as HarnessProcessPlacementRecoveryRecord;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -151,12 +175,42 @@ function isLease(value: unknown): value is ProcessSlotLease {
 
 function isPlacementState(value: unknown): value is HarnessProcessPlacementRecoveryRecord["state"] {
   return (
+    value === "identity-unknown" ||
     value === "preparing" ||
     value === "prepared" ||
+    value === "publication-confirmed" ||
     value === "active" ||
     value === "parked" ||
     value === "cleanup-required" ||
     value === "activation-failed"
+  );
+}
+
+function isPublicationState(
+  value: unknown,
+): value is NonNullable<HarnessProcessPlacementRecoveryRecord["publicationState"]> {
+  return (
+    value === "in-progress" ||
+    value === "unknown" ||
+    value === "pending" ||
+    value === "confirmed" ||
+    value === "not-published"
+  );
+}
+
+function isPublicationReceipt(value: unknown): value is HarnessProcessPublicationReceipt {
+  if (!isRecord(value) || !isRecord(value.checkpoint)) return false;
+  return (
+    nonempty(value.operationId) &&
+    Number.isSafeInteger(value.fromGeneration) &&
+    Number(value.fromGeneration) >= 0 &&
+    Number.isSafeInteger(value.toGeneration) &&
+    Number(value.toGeneration) === Number(value.fromGeneration) + 1 &&
+    nonempty(value.priorFacetNonce) &&
+    nonempty(value.preparedFacetNonce) &&
+    nonempty(value.checkpoint.checkpointId) &&
+    nonempty(value.checkpoint.manifestSha256) &&
+    value.status === "confirmed"
   );
 }
 

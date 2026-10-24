@@ -25,6 +25,24 @@ export class SyntheticFacet extends DurableObject {
     };
   }
 
+  prepareInert(input) {
+    // Synthetic routing fixture only. Production preparation comes from HarnessRequestFacet.
+    return {
+      facetNonce: this.facetNonce,
+      nativeSessionId: input.nativeSessionId,
+      checkpoint: {
+        native: { id: input.checkpointId, bytes: 0, sha256: "0".repeat(64) },
+        filesystem: {
+          id: input.checkpointId + "-filesystem",
+          bytes: 0,
+          sha256: input.manifestRevision,
+        },
+      },
+      manifestRevision: input.manifestRevision,
+      joined: { invocationRpc: true, fetch: true, ports: true },
+    };
+  }
+
   async run(input) {
     this.phases.push("invoke");
     if (this.invocationFailures > 0) {

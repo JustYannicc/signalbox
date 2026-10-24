@@ -20,6 +20,8 @@ export type {
   HarnessProcessPublicationRequest,
   HarnessProcessPublicationReceipt,
   HarnessProcessPublicationPublisher,
+  HarnessProcessPublicationReconciler,
+  HarnessProcessPublicationReconciliation,
   HarnessProcessPublishedActivation,
   HarnessProcessPreparedFacet,
   HarnessProcessPublication,

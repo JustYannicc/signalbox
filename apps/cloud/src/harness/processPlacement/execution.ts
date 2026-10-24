@@ -14,6 +14,7 @@ import {
   type HarnessProcessPlacementRecoveryRecord,
   type HarnessProcessPlacementRecoveryStore,
   type HarnessProcessPublicationPublisher,
+  type HarnessProcessPublicationReconciler,
 } from "./contracts.ts";
 import {
   createHarnessProcessFacetAdapter,
@@ -22,6 +23,8 @@ import {
 import { createHarnessProcessPlacement, forgetHarnessProcessPlacement } from "./service.ts";
 import { DURABLE_OBJECT_INVOCATION_LIMIT } from "./limits.ts";
 import { type HarnessProcessPlacementWriter } from "./storeSchema.ts";
+import { sameClaim } from "./storeSchema.ts";
+import { confirmedProcessPublication } from "./publication.ts";
 import type { ProcessSlotLease } from "../../computer/ProcessSlots.ts";
 import type { HarnessRequestFacetObject } from "../HarnessRequestFacetObject.ts";
 
@@ -94,7 +97,8 @@ export interface HarnessProcessExecutionControlSnapshot {
   readonly controlEpoch: number;
 }
 
-export interface HarnessProcessExecutionSupervisorClient extends HarnessProcessPublicationPublisher {
+export interface HarnessProcessExecutionSupervisorClient
+  extends HarnessProcessPublicationPublisher, HarnessProcessPublicationReconciler {
   execute(input: {
     readonly type: "read";
     readonly runId: string;
@@ -109,7 +113,10 @@ export interface HarnessProcessExecutionEnvironment {
   readonly RESIDENT_BYTE_LIMIT: string;
 }
 
-type HarnessProcessFacetStub = Pick<HarnessRequestFacetObject, "identity" | "run" | "dispose"> &
+type HarnessProcessFacetStub = Pick<
+  HarnessRequestFacetObject,
+  "identity" | "prepareInert" | "run" | "dispose"
+> &
   Rpc.DurableObjectBranded;
 
 /** Runs one shard in the DO context that owns its durable facets and ProcessSlots writer. */
@@ -230,6 +237,7 @@ async function runLocalShard(
             lease,
             records: priorRecords,
             processById,
+            reconciler: authority,
             context,
             environment,
             recovery: stores.recovery,
@@ -265,7 +273,11 @@ async function runLocalShard(
           [],
       );
       for (const record of priorRecords) {
-        if (!liveTokens.has(record.lease.token) && record.terminalFailure === undefined)
+        if (
+          !liveTokens.has(record.lease.token) &&
+          record.terminalFailure === undefined &&
+          (record.publicationState === undefined || record.publicationState === "not-published")
+        )
           await stores.recovery.remove(record.loaderId);
       }
       return {
@@ -273,12 +285,15 @@ async function runLocalShard(
         processes: priorRecords.map((record) => ({
           processId: record.processId,
           requestContextId,
-          identity: {
-            shardOwner: record.shardOwner,
-            loaderId: record.loaderId,
-            facetKey: record.facetKey,
-            incarnationNonce: record.incarnationNonce,
-          },
+          identity:
+            record.incarnationNonce === undefined
+              ? null
+              : {
+                  shardOwner: record.shardOwner,
+                  loaderId: record.loaderId,
+                  facetKey: record.facetKey,
+                  incarnationNonce: record.incarnationNonce,
+                },
           status: "recovered" as const,
           recoveryId: record.loaderId,
           ...(record.terminalFailure === undefined
@@ -315,17 +330,7 @@ async function runLocalShard(
             },
             (identity) => createFacet(context, environment, process, identity),
           );
-          const activation = await authority.publishProcessFacet({
-            identity: handle.identity,
-            controllerClaim: input.controllerClaim,
-            operationId: process.operationId,
-            nativeSessionId: process.nativeSessionId,
-            checkpointId: process.checkpointId,
-            manifestRevision: process.manifestRevision,
-            priorFacetNonce: process.priorFacetNonce,
-            expectedFacetGeneration: process.expectedFacetGeneration,
-          });
-          await handle.activate(activation.publication);
+          const activation = await handle.activate(authority);
           await hooks?.beforeInvoke?.({
             runId: input.runId,
             processId: process.processId,
@@ -347,7 +352,7 @@ async function runLocalShard(
           let cleanupError: unknown;
           if (handle !== undefined) {
             try {
-              await handle.cleanup();
+              await handle.cleanup({ retainPublishedOwnership: true });
             } catch (cause) {
               cleanupError = cause;
             }
@@ -399,6 +404,7 @@ async function reconcileFacet(input: {
   readonly lease: ProcessSlotLease;
   readonly records: readonly HarnessProcessPlacementRecoveryRecord[];
   readonly processById: ReadonlyMap<string, HarnessProcessExecutionProcessInput>;
+  readonly reconciler: HarnessProcessPublicationReconciler;
   readonly context: DurableObjectState;
   readonly environment: HarnessProcessExecutionEnvironment;
   readonly recovery: HarnessProcessPlacementRecoveryStore;
@@ -413,28 +419,43 @@ async function reconcileFacet(input: {
     process.nativeSessionId !== record.nativeSessionId ||
     process.checkpointId !== record.checkpointId ||
     process.manifestRevision !== record.manifestRevision ||
-    process.priorFacetNonce !== record.priorFacetNonce
+    process.priorFacetNonce !== record.priorFacetNonce ||
+    (record.expectedFacetGeneration !== undefined &&
+      process.expectedFacetGeneration !== record.expectedFacetGeneration)
   )
     throw new Error("Process recovery requires its exact process descriptor.");
 
-  const identity: HarnessProcessPlacementIdentity = {
+  const locator: HarnessProcessFacetLocator = {
     shardOwner: record.shardOwner,
     loaderId: record.loaderId,
     facetKey: record.facetKey,
-    incarnationNonce: record.incarnationNonce,
   };
-  const facet = createFacet(input.context, input.environment, process, identity);
+  const facet = createFacet(input.context, input.environment, process, locator);
   const actual = await facet.identity();
   if (
-    actual.facetKey !== identity.facetKey ||
-    actual.incarnationNonce !== identity.incarnationNonce
+    actual.facetKey !== locator.facetKey ||
+    (record.incarnationNonce !== undefined && actual.incarnationNonce !== record.incarnationNonce)
   ) {
     throw new Error("Process recovery cannot prove the retained facet's constructor identity.");
+  }
+  const identity: HarnessProcessPlacementIdentity = {
+    ...locator,
+    incarnationNonce: actual.incarnationNonce,
+  };
+  if (record.identityState !== "observed" || record.incarnationNonce === undefined) {
+    await input.recovery.save({
+      ...record,
+      identityState: "observed",
+      incarnationNonce: identity.incarnationNonce,
+      state: "cleanup-required",
+    });
   }
   if (record.terminalFailure !== undefined) {
     const joined = await stopAndDispose(facet);
     await input.recovery.save({
       ...record,
+      identityState: "observed",
+      incarnationNonce: identity.incarnationNonce,
       state: "activation-failed",
       stopAcknowledged: true,
       joined,
@@ -443,6 +464,82 @@ async function reconcileFacet(input: {
     input.context.facets.delete(identity.facetKey);
     return { acknowledged: true };
   }
+
+  if (
+    record.publicationState === "in-progress" ||
+    record.publicationState === "unknown" ||
+    record.publicationState === "pending" ||
+    record.publicationState === "confirmed"
+  ) {
+    const expectedFacetGeneration = record.expectedFacetGeneration;
+    if (expectedFacetGeneration === undefined)
+      throw new Error("Uncertain publication recovery has no saved generation fence.");
+    const request = {
+      identity,
+      controllerClaim: record.controllerClaim,
+      operationId: record.operationId,
+      nativeSessionId: record.nativeSessionId,
+      checkpointId: record.checkpointId,
+      manifestRevision: record.manifestRevision,
+      priorFacetNonce: record.priorFacetNonce,
+      expectedFacetGeneration,
+    };
+    const disposition = await input.reconciler.reconcileProcessFacetPublication(request);
+    if (disposition.status === "published") {
+      const receipt = confirmedProcessPublication(disposition.publication, {
+        controllerClaim: record.controllerClaim,
+        operationId: record.operationId,
+        nativeSessionId: record.nativeSessionId,
+        checkpointId: record.checkpointId,
+        manifestRevision: record.manifestRevision,
+        priorFacetNonce: record.priorFacetNonce,
+        expectedFacetGeneration,
+        identity,
+      });
+      if (receipt === undefined || !samePublicationReceipt(record.publicationReceipt, receipt))
+        throw new Error("Publication reconciliation did not confirm the exact stored operation.");
+      await input.recovery.save({
+        ...record,
+        identityState: "observed",
+        incarnationNonce: identity.incarnationNonce,
+        state: "publication-confirmed",
+        publicationState: "confirmed",
+        publicationReceipt: receipt,
+      });
+      throw new Error("Confirmed publication ownership stays reserved for explicit repair.");
+    }
+    if (disposition.status !== "not-published")
+      throw new Error("Publication disposition is pending or unknown; keep its lease reserved.");
+    if (
+      record.publicationState === "confirmed" ||
+      !sameClaim(disposition.controllerClaim, record.controllerClaim) ||
+      disposition.operationId !== record.operationId ||
+      disposition.currentPublisher.generation !== expectedFacetGeneration ||
+      disposition.currentPublisher.facetNonce !== record.priorFacetNonce ||
+      disposition.lastPublicationOperationId === record.operationId
+    )
+      throw new Error(
+        "Non-publication evidence did not match the exact prior owner and operation.",
+      );
+
+    const stopped = await facet.stop();
+    if (!stopped.acknowledged) throw new Error("Unpublished process stop is not acknowledged.");
+    const joined = await facet.join();
+    if (!allJoined(joined)) throw new Error("Unpublished process resources have not joined.");
+    await facet.dispose();
+    await input.recovery.save({
+      ...record,
+      identityState: "observed",
+      incarnationNonce: identity.incarnationNonce,
+      state: "cleanup-required",
+      publicationState: "not-published",
+      stopAcknowledged: true,
+      joined,
+    });
+    input.context.facets.delete(identity.facetKey);
+    return { acknowledged: true };
+  }
+
   const stopped = await facet.stop();
   if (!stopped.acknowledged) throw new Error("Process recovery stop is not acknowledged.");
   const joined = await facet.join();
@@ -450,6 +547,23 @@ async function reconcileFacet(input: {
   await facet.dispose();
   input.context.facets.delete(identity.facetKey);
   return { acknowledged: true };
+}
+
+function samePublicationReceipt(
+  left: HarnessProcessPlacementRecoveryRecord["publicationReceipt"],
+  right: NonNullable<HarnessProcessPlacementRecoveryRecord["publicationReceipt"]>,
+): boolean {
+  if (left === undefined) return true;
+  return (
+    left.operationId === right.operationId &&
+    left.fromGeneration === right.fromGeneration &&
+    left.toGeneration === right.toGeneration &&
+    left.priorFacetNonce === right.priorFacetNonce &&
+    left.preparedFacetNonce === right.preparedFacetNonce &&
+    left.checkpoint.checkpointId === right.checkpoint.checkpointId &&
+    left.checkpoint.manifestSha256 === right.checkpoint.manifestSha256 &&
+    left.status === right.status
+  );
 }
 
 async function stopAndDispose(

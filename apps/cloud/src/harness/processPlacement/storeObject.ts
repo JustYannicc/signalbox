@@ -134,6 +134,25 @@ export class HarnessProcessPlacementStoreObject
           !sameTerminalFailure(current.terminalFailure, checked.terminalFailure)
         )
           throw new Error("A terminal activation failure requires an authorized repair.");
+        if (current.identityState === "observed" && checked.identityState !== "observed")
+          throw new Error("Observed process identity cannot return to unknown.");
+        if (
+          current.publicationState === "confirmed" &&
+          (checked.publicationState !== "confirmed" ||
+            !samePublicationReceipt(current.publicationReceipt, checked.publicationReceipt))
+        )
+          throw new Error("Confirmed process publication cannot be replaced or forgotten.");
+        if (
+          current.publicationState !== undefined &&
+          current.publicationState !== "in-progress" &&
+          checked.publicationState === "in-progress"
+        )
+          throw new Error("Process publication reconciliation cannot move backwards.");
+        if (
+          current.publicationState === "not-published" &&
+          checked.publicationState !== "not-published"
+        )
+          throw new Error("A reconciled non-publication cannot become a publication attempt.");
       }
       await transaction.put(key, checked);
     });
@@ -152,6 +171,14 @@ export class HarnessProcessPlacementStoreObject
       const record = parseRecoveryRecord(value, owner);
       if (record.terminalFailure !== undefined)
         throw new Error("A terminal activation failure requires an authorized repair.");
+      if (
+        record.publicationState !== undefined &&
+        (!record.stopAcknowledged ||
+          !record.joined.invocationRpc ||
+          !record.joined.fetch ||
+          !record.joined.ports)
+      )
+        throw new Error("Published process ownership requires joined stop before record removal.");
       await transaction.delete(key);
     });
   }
@@ -201,5 +228,21 @@ function sameTerminalFailure(
 ): boolean {
   return (
     left?.stage === right?.stage && left?.code === right?.code && left?.message === right?.message
+  );
+}
+
+function samePublicationReceipt(
+  left: HarnessProcessPlacementRecoveryRecord["publicationReceipt"],
+  right: HarnessProcessPlacementRecoveryRecord["publicationReceipt"],
+): boolean {
+  return (
+    left?.operationId === right?.operationId &&
+    left?.fromGeneration === right?.fromGeneration &&
+    left?.toGeneration === right?.toGeneration &&
+    left?.priorFacetNonce === right?.priorFacetNonce &&
+    left?.preparedFacetNonce === right?.preparedFacetNonce &&
+    left?.checkpoint.checkpointId === right?.checkpoint.checkpointId &&
+    left?.checkpoint.manifestSha256 === right?.checkpoint.manifestSha256 &&
+    left?.status === right?.status
   );
 }
