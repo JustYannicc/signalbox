@@ -54,6 +54,11 @@ export function createHarnessRequestFacetClass<Env>(
       return this.runtime.runPromise(Facet.use((facet) => facet.run(input)));
     }
 
+    async prepareInert(input: Parameters<HarnessRequestFacet["prepareInert"]>[0]) {
+      if (this.closed) throw new HarnessRequestFacetError("Harness facet is disposed.");
+      return this.runtime.runPromise(Facet.use((facet) => facet.prepareInert(input)));
+    }
+
     async dispose(expectedFacetNonce: string) {
       if (expectedFacetNonce !== this.facetNonce)
         throw new HarnessRequestFacetError("Disposal targets another facet incarnation.");
