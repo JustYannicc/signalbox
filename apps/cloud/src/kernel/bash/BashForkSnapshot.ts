@@ -8,6 +8,7 @@ import { BashCaptureStore } from "./BashCaptureStore.ts";
 import type { BashContinuation } from "./BashTransitions.ts";
 import type { KernelBashCheckpointContinuation } from "../KernelBashCheckpoint.ts";
 import { disposeKernelRpcReply } from "../KernelRpcReply.ts";
+import { bashMemoryChunks, bashMemoryRanges, sparseBashMemoryRanges } from "../KernelBashMemory.ts";
 
 export function createBashForkSnapshot(
   process: BashContinuation,
@@ -22,10 +23,15 @@ export function createBashForkSnapshot(
     continuation,
   };
   const copied = Promise.withResolvers<void>();
+  let image: KernelBashForkState | undefined;
   const source: KernelBashForkSource = {
     async state() {
       if (memory === undefined) throw new Error("Bash fork snapshot has already been restored");
-      return state;
+      if (image === undefined) {
+        const memoryRanges = sparseBashMemoryRanges(new Uint8Array(memory.buffer));
+        image = memoryRanges === undefined ? state : { ...state, version: 2, memoryRanges };
+      }
+      return image;
     },
     async read(offset, length) {
       if (memory === undefined) throw new Error("Bash fork snapshot has already been restored");
@@ -65,12 +71,17 @@ export async function restoreBashFork(
   } finally {
     disposeKernelRpcReply(stateReply);
   }
-  if (state.version !== 1) throw new Error(`Unsupported Bash checkpoint version ${state.version}`);
+  const ranges = bashMemoryRanges(state);
   const memory = process.exports.memory;
+  if (
+    state.version === 2 &&
+    (state.memoryBytes % 65_536 !== 0 || memory.buffer.byteLength > state.memoryBytes)
+  )
+    throw new RangeError("Sparse Bash checkpoint requires an exactly sized guest memory");
   if (memory.buffer.byteLength < state.memoryBytes)
     memory.grow((state.memoryBytes - memory.buffer.byteLength) / 65_536);
-  for (let offset = 0; offset < state.memoryBytes; offset += BASH_FORK_CHUNK_BYTES) {
-    const length = Math.min(BASH_FORK_CHUNK_BYTES, state.memoryBytes - offset);
+  if (state.version === 2) new Uint8Array(memory.buffer).fill(0);
+  for (const { offset, length } of bashMemoryChunks(ranges)) {
     const reply = await source.read(offset, length);
     let chunk: Uint8Array;
     try {

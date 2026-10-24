@@ -11,7 +11,159 @@ const routeNotFound = () =>
   });
 
 describe("probe router readiness", () => {
-  it("retries the Cloudflare route 404 and accepts the no-session worker response", async () => {
+  it("requires the real DO handler after the router is ready and retains precreate failures", async () => {
+    const requests: Request[] = [];
+    const pending: string[] = [];
+    let now = 0;
+    await waitForProbeRouter(url, secret, {
+      now: () => now,
+      wait: async (milliseconds) => {
+        now += milliseconds;
+      },
+      onPending: (reason) => pending.push(reason),
+      fetch: async (request) => {
+        requests.push(request);
+        if (new URL(request.url).pathname === "/")
+          return new Response("Invalid session", { status: 400 });
+        return requests.length === 2
+          ? Response.json(
+              { error: "Error: Handler does not export a fetch() function." },
+              { status: 500 },
+            )
+          : Response.json({ retainedBytes: 0, memoryUsage: {}, heapStatistics: {} });
+      },
+    });
+    expect(requests).toHaveLength(3);
+    expect(new URL(requests[1]!.url).pathname).toBe("/root/status");
+    expect(new URL(requests[1]!.url).searchParams.get("session")).toBe("readiness");
+    expect(pending).toEqual(["durable-object-handler-missing"]);
+    expect(now).toBe(500);
+  });
+
+  it("does not accept unrelated successful JSON as the DO canary", async () => {
+    await expect(
+      waitForProbeRouter(url, secret, {
+        fetch: async (request) =>
+          new URL(request.url).pathname === "/"
+            ? new Response("Invalid session", { status: 400 })
+            : Response.json({ ok: true }),
+      }),
+    ).rejects.toThrow("unexpected DO canary response");
+  });
+
+  it.each([
+    Response.json({ error: "native startup failed" }, { status: 500 }),
+    new Response("Unauthorized", { status: 401 }),
+    new Response("not JSON", { headers: { "content-type": "application/json" } }),
+  ])("fails an unexpected DO response without retrying measurement", async (failure) => {
+    let requests = 0;
+    await expect(
+      waitForProbeRouter(url, secret, {
+        fetch: async () =>
+          ++requests === 1 ? new Response("Invalid session", { status: 400 }) : failure,
+      }),
+    ).rejects.toThrow("unexpected");
+    expect(requests).toBe(2);
+  });
+
+  it("bounds repeated missing-handler setup failures and records every one", async () => {
+    let now = 0;
+    let requests = 0;
+    const pending: string[] = [];
+    await expect(
+      waitForProbeRouter(url, secret, {
+        timeoutMs: 1_000,
+        retryIntervalMs: 500,
+        now: () => now,
+        wait: async (milliseconds) => {
+          now += milliseconds;
+        },
+        onPending: (reason) => pending.push(reason),
+        fetch: async () =>
+          ++requests === 1
+            ? new Response("Invalid session", { status: 400 })
+            : Response.json(
+                { error: "Error: Handler does not export a fetch() function." },
+                { status: 500 },
+              ),
+      }),
+    ).rejects.toThrow("Durable Object handler remained unavailable for 1000 ms");
+    expect(requests).toBe(3);
+    expect(pending).toEqual(["durable-object-handler-missing", "durable-object-handler-missing"]);
+  });
+
+  it("aborts an in-flight DO canary", async () => {
+    const controller = new AbortController();
+    const canaryStarted = Promise.withResolvers<Request>();
+    const pending = waitForProbeRouter(url, secret, {
+      signal: controller.signal,
+      fetch: async (request) => {
+        if (new URL(request.url).pathname === "/")
+          return new Response("Invalid session", { status: 400 });
+        canaryStarted.resolve(request);
+        return new Promise<Response>((_resolve, reject) =>
+          request.signal.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          }),
+        );
+      },
+    });
+    const request = await canaryStarted.promise;
+    controller.abort();
+    expect(request.signal.aborted).toBe(true);
+    await expect(pending).rejects.toThrow("interrupted");
+  });
+
+  it("rejects a canary response that arrives after cancellation", async () => {
+    const controller = new AbortController();
+    const canaryStarted = Promise.withResolvers<void>();
+    const releaseCanary = Promise.withResolvers<void>();
+    const readiness = waitForProbeRouter(url, secret, {
+      signal: controller.signal,
+      fetch: async (request) => {
+        if (new URL(request.url).pathname === "/")
+          return new Response("Invalid session", { status: 400 });
+        canaryStarted.resolve();
+        await releaseCanary.promise;
+        return Response.json({ retainedBytes: 0, memoryUsage: {}, heapStatistics: {} });
+      },
+    });
+    await canaryStarted.promise;
+    controller.abort();
+    const interrupted = expect(readiness).rejects.toThrow("interrupted");
+    releaseCanary.resolve();
+    await interrupted;
+  });
+
+  it("bounds an in-flight DO canary without retrying it", async () => {
+    vi.useFakeTimers();
+    try {
+      const canaryStarted = Promise.withResolvers<void>();
+      let requests = 0;
+      const readiness = waitForProbeRouter(url, secret, {
+        timeoutMs: 1_000,
+        requestTimeoutMs: 25,
+        fetch: async (request) => {
+          if (++requests === 1) return new Response("Invalid session", { status: 400 });
+          canaryStarted.resolve();
+          return new Promise<Response>((_, reject) => {
+            request.signal.addEventListener("abort", () => reject(new Error("aborted")), {
+              once: true,
+            });
+          });
+        },
+      });
+      const timedOut = expect(readiness).rejects.toThrow("request timed out after 25 ms");
+      await canaryStarted.promise;
+      await vi.advanceTimersByTimeAsync(25);
+      await timedOut;
+      expect(requests).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("requires a callable DO after the Cloudflare route and outer router are ready", async () => {
     const requests: Request[] = [];
     let now = 0;
     await waitForProbeRouter(url, secret, {
@@ -23,22 +175,23 @@ describe("probe router readiness", () => {
       },
       fetch: async (request) => {
         requests.push(request);
-        return requests.length === 1
-          ? routeNotFound()
-          : new Response("Invalid session", { status: 400 });
+        if (requests.length === 1) return routeNotFound();
+        return new URL(request.url).pathname === "/"
+          ? new Response("Invalid session", { status: 400 })
+          : Response.json({ retainedBytes: 0, memoryUsage: {}, heapStatistics: {} });
       },
     });
 
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(3);
     expect(requests[0]).not.toBe(requests[1]);
     expect(requests[0]?.signal).not.toBe(requests[1]?.signal);
-    for (const request of requests) {
-      expect(request.url).toBe(url);
+    for (const [index, request] of requests.entries()) {
+      expect(new URL(request.url).pathname).toBe(index === 2 ? "/root/status" : "/");
       expect(request.method).toBe("GET");
       expect(request.headers.get("authorization")).toBe(`Bearer ${secret}`);
       expect(request.redirect).toBe("error");
       expect(request.cache).toBe("no-store");
-      expect(new URL(request.url).search).toBe("");
+      expect(new URL(request.url).search).toBe(index === 2 ? "?session=readiness" : "");
     }
   });
 

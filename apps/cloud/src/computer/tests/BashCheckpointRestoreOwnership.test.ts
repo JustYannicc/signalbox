@@ -177,7 +177,7 @@ it("restores copied checkpoint bytes and continuation after disposing their repl
 });
 
 it("disposes an unsupported checkpoint reply when public reactor restore fails", async () => {
-  const reply = { ...makeState(0), version: 2 } as unknown as KernelBashForkState;
+  const reply = { ...makeState(0), version: 3 } as unknown as KernelBashForkState;
   const disposeReply = vi.fn(() => Object.assign(reply, { version: 1 }));
   const source: KernelBashForkSource = {
     state: async () => withRpcReplyDisposer(reply, disposeReply),
@@ -186,7 +186,7 @@ it("disposes an unsupported checkpoint reply when public reactor restore fails",
   };
   const { port, reactor } = createReactor(source, () => {});
 
-  await expect(reactor.run()).rejects.toThrow("Unsupported Bash checkpoint version 2");
+  await expect(reactor.run()).rejects.toThrow("Unsupported Bash checkpoint version 3");
 
   expect(disposeReply).toHaveBeenCalledOnce();
   expect(source.read).not.toHaveBeenCalled();
@@ -217,4 +217,37 @@ it("disposes checkpoint chunk replies when the public restore copy fails", async
   expect(disposeState).toHaveBeenCalledOnce();
   expect(disposeChunk).toHaveBeenCalledOnce();
   expect(restored).not.toHaveBeenCalled();
+});
+
+it("restores sparse bytes and clears omitted pages in reused guest memory", async () => {
+  const state = {
+    ...makeState(257 * 65_536),
+    version: 2 as const,
+    memoryRanges: [{ offset: 4096, length: 4096 }],
+  };
+  const bytes = new Uint8Array(4096).fill(0x51);
+  const disposeBytes = vi.fn(() => bytes.fill(0));
+  const source: KernelBashForkSource = {
+    state: async () => state,
+    read: vi.fn(async (offset, length) => {
+      expect([offset, length]).toEqual([4096, 4096]);
+      return withRpcReplyDisposer(bytes, disposeBytes);
+    }),
+    restored: vi.fn(async () => {}),
+  };
+  let instance: WebAssembly.Instance | undefined;
+  const { reactor } = createReactor(source, (value) => {
+    instance = value;
+    new Uint8Array((value.exports.memory as WebAssembly.Memory).buffer).fill(0xa7);
+  });
+
+  await expect(reactor.run()).resolves.toEqual({ exitCode: 0, signal: 0, coreDumped: false });
+
+  const memory = new Uint8Array((instance!.exports.memory as WebAssembly.Memory).buffer);
+  expect(memory.byteLength).toBe(state.memoryBytes);
+  expect(memory.subarray(4096, 8192)).toEqual(new Uint8Array(4096).fill(0x51));
+  expect(memory[8192]).toBe(0);
+  expect(memory.at(-1)).toBe(0);
+  expect(disposeBytes).toHaveBeenCalledOnce();
+  expect(source.restored).toHaveBeenCalledOnce();
 });

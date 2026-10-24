@@ -11,6 +11,57 @@ import { withDriver } from "./testing/runDriver.ts";
 const routerReady: typeof waitForProbeRouter = async () => {};
 
 describe("isolated deployed probe lifecycle", () => {
+  it("holds measurement until an authenticated real DO canary completes", async () => {
+    await withDriver("success", async ({ run, events }) => {
+      const canaryStarted = Promise.withResolvers<void>();
+      const releaseCanary = Promise.withResolvers<void>();
+      const phases: string[] = [];
+      const pending = runProbe(
+        {},
+        {
+          run: async (input) => {
+            phases.push(
+              input.args[0] === "deploy" || input.args[0] === "destroy" ? input.args[0] : "measure",
+            );
+            return run(input);
+          },
+          log: () => {},
+          routerReady: (url, secret, options) =>
+            waitForProbeRouter(url, secret, {
+              ...options,
+              fetch: async (request) => {
+                expect(request.headers.get("authorization")).toBe(`Bearer ${secret}`);
+                if (new URL(request.url).pathname === "/")
+                  return new Response("Invalid session", { status: 400 });
+                canaryStarted.resolve();
+                await releaseCanary.promise;
+                return Response.json({ retainedBytes: 0, memoryUsage: {}, heapStatistics: {} });
+              },
+            }),
+        },
+      );
+      try {
+        await Promise.race([
+          canaryStarted.promise,
+          pending.then(() => {
+            throw new Error("Measurement started before the real DO canary");
+          }),
+        ]);
+        expect(phases).toEqual(["deploy"]);
+        releaseCanary.resolve();
+        await pending;
+        expect((await events()).map((event) => event.phase)).toEqual([
+          "deploy",
+          "measure",
+          "destroy",
+        ]);
+      } finally {
+        releaseCanary.resolve();
+        await pending.catch(() => {});
+      }
+    });
+  });
+
   it("deploys, measures with private env, retains JSON, and destroys its owned resources", async () => {
     await withDriver("success", async ({ dir, logs, run, requests, events }) => {
       const output = NodePath.join(dir, "proof.json");

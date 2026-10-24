@@ -2,11 +2,12 @@
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import {
-  BASH_FORK_CHUNK_BYTES,
   copyKernelBashForkState,
   type KernelBashForkSource,
   type KernelBashForkState,
 } from "../kernel/KernelBashFork.ts";
+import { bashMemoryRanges } from "../kernel/KernelBashMemory.ts";
+import { createBashCheckpointMemory } from "./BashCheckpointMemory.ts";
 
 export interface BashCheckpoint {
   readonly memoryBytes: number;
@@ -28,13 +29,12 @@ export async function storeBashCheckpoint(
     disposeKernelRpcReply(stateReply);
   }
   signal?.throwIfAborted();
-  if (!Number.isSafeInteger(state.memoryBytes) || state.memoryBytes < 0) {
-    throw new RangeError("Invalid Bash checkpoint size");
-  }
+  bashMemoryRanges(state);
   const resolved = filesystem.resolve(filesystem.cwd);
   const storage = resolved.mount.storage;
   const name = `.signalbox-checkpoint-${crypto.randomUUID()}`;
   const inode = await storage.create(resolved.inode, name, { type: "file", exclusive: true });
+  const memory = createBashCheckpointMemory(storage, inode, state);
   let open = true;
   const close = async () => {
     if (!open) return;
@@ -46,25 +46,9 @@ export async function storeBashCheckpoint(
   };
   try {
     await storage.unlink(resolved.inode, name, { directory: false });
-    for (let offset = 0; offset < state.memoryBytes; offset += BASH_FORK_CHUNK_BYTES) {
-      const length = Math.min(BASH_FORK_CHUNK_BYTES, state.memoryBytes - offset);
-      const reply = await source.read(offset, length);
-      let chunk: Uint8Array;
-      try {
-        if (reply.byteLength !== length) throw new Error("Incomplete Bash checkpoint chunk");
-        chunk = reply.slice();
-      } finally {
-        disposeKernelRpcReply(reply);
-      }
-      let written = 0;
-      while (written < length) {
-        const count = await storage.write(inode, BigInt(offset + written), chunk.subarray(written));
-        if (count < 1 || count > length - written)
-          throw new Error("Incomplete Bash checkpoint write");
-        written += count;
-      }
-    }
+    await memory.write(source, signal);
     await storage.sync(inode, false);
+    signal?.throwIfAborted();
     await source.restored();
   } catch (error) {
     await close();
@@ -82,19 +66,7 @@ export async function storeBashCheckpoint(
         },
         async read(offset, length) {
           assertOpen();
-          if (
-            !Number.isSafeInteger(offset) ||
-            !Number.isSafeInteger(length) ||
-            offset < 0 ||
-            length < 1 ||
-            length > BASH_FORK_CHUNK_BYTES ||
-            offset + length > state.memoryBytes
-          )
-            throw new RangeError("Invalid Bash checkpoint chunk");
-          const bytes = new Uint8Array(length);
-          const count = await storage.readInto(inode, BigInt(offset), bytes);
-          if (count !== length) throw new Error("Incomplete stored Bash checkpoint chunk");
-          return bytes;
+          return memory.read(offset, length);
         },
         async restored() {
           await close();
