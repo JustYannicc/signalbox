@@ -49,6 +49,7 @@ import { SelectButton } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { SnapShotSetupDialog } from "./SnapShotSetupDialog";
+import { CaptureShortcutSettings } from "../capture/CaptureShortcutSettings";
 import { useSnapShotShortcutRecorder } from "./useSnapShotShortcutRecorder";
 import {
   captureSetupAccessReady,
@@ -393,6 +394,7 @@ export function SnapShotSettings() {
 
   return (
     <SettingsPageContainer>
+      <CaptureShortcutSettings />
       <SettingsSection id="snap-shot" title="SnapShots">
         <SettingsUnavailableGroup message={unavailableMessage}>
           <SettingsRow
