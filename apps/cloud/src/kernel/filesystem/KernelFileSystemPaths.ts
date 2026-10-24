@@ -1,4 +1,4 @@
-import { complete, runSync } from "../wasi/internal_wasi_calls.ts";
+import { complete, runSync, type WasiCall } from "../wasi/internal_wasi_calls.ts";
 import { withKernelFileWrite } from "../KernelIoLock.ts";
 import {
   canonicalFileByteSelection,
@@ -92,13 +92,13 @@ export class KernelFileSystemPaths {
   }
 
   stat(path: string): KernelStat {
-    return withKernelErrors(() => {
-      const device = virtualDevice(path);
-      if (device !== undefined) return deviceStat(device);
-      const alias = descriptorPathAlias(path);
-      if (alias !== undefined) return this.#statDescriptor(this.#getAlias(alias));
-      return this.#statResolved(this.resolve(path, this.#searchOptions(true)));
-    });
+    return withKernelErrors(() => runSync(this.#statPath(path, true, false)));
+  }
+
+  statAsync(path: string, followFinal = true): Promise<KernelStat> {
+    return withKernelErrorsAsync(() =>
+      this.resolver.runAsync(this.#statPath(path, followFinal, true)),
+    );
   }
 
   checkExecutable(path: string): Promise<KernelStat> {
@@ -123,18 +123,7 @@ export class KernelFileSystemPaths {
   }
 
   lstat(path: string): KernelStat {
-    return withKernelErrors(() => {
-      const device = virtualDevice(path);
-      if (device !== undefined) return deviceStat(device);
-      const alias = descriptorPathAlias(path);
-      if (alias !== undefined) return this.#statMagicLink(alias, this.#getAlias(alias));
-      return this.#statResolved(
-        this.resolver.resolve(path, {
-          followFinal: false,
-          ...this.#searchOptions(true),
-        }),
-      );
-    });
+    return withKernelErrors(() => runSync(this.#statPath(path, false, false)));
   }
 
   fstat(fd: number): KernelStat {
@@ -164,16 +153,11 @@ export class KernelFileSystemPaths {
   }
 
   readdir(path: string): string[] {
-    return withKernelErrors(() => {
-      if (virtualDevice(path) !== undefined) throw kernelError("ENOTDIR");
-      const resolved = this.resolve(path, this.#searchOptions(true));
-      if (resolved.stat.type !== "directory") throw kernelError("ENOTDIR");
-      if (this.#posix.credentials !== undefined)
-        this.#posix.checkAccess(resolved.mount.storage, resolved.inode, "directory", 4, true);
-      return runKernelSync(resolved.mount.storage.readdir(resolved.inode)).map(
-        (entry) => entry.name,
-      );
-    });
+    return withKernelErrors(() => runSync(this.#readDirectory(path, false)));
+  }
+
+  readdirAsync(path: string): Promise<string[]> {
+    return withKernelErrorsAsync(() => this.resolver.runAsync(this.#readDirectory(path, true)));
   }
 
   readlink(path: string): string {
@@ -381,11 +365,69 @@ export class KernelFileSystemPaths {
     });
   }
 
+  *#statPath(path: string, followFinal: boolean, asynchronous: boolean): WasiCall<KernelStat> {
+    const device = virtualDevice(path);
+    if (device !== undefined) return deviceStat(device);
+    const alias = descriptorPathAlias(path);
+    if (alias !== undefined)
+      return followFinal
+        ? this.#statDescriptor(this.#getAlias(alias))
+        : this.#statMagicLink(alias, this.#getAlias(alias));
+    const resolved = yield* this.#resolveReadPath(path, followFinal, asynchronous);
+    return yield* this.#readStat(resolved, undefined, asynchronous);
+  }
+
+  *#readDirectory(path: string, asynchronous: boolean): WasiCall<string[]> {
+    if (virtualDevice(path) !== undefined) throw kernelError("ENOTDIR");
+    const resolved = yield* this.#resolveReadPath(path, true, asynchronous);
+    if (resolved.stat.type !== "directory") throw kernelError("ENOTDIR");
+    if (this.#posix.credentials !== undefined) {
+      if (asynchronous)
+        yield* complete(
+          this.#posix.checkAccessAsync(
+            resolved.mount.storage,
+            resolved.inode,
+            "directory",
+            4,
+            true,
+          ),
+        );
+      else this.#posix.checkAccess(resolved.mount.storage, resolved.inode, "directory", 4, true);
+    }
+    return (yield* complete(resolved.mount.storage.readdir(resolved.inode))).map(
+      (entry) => entry.name,
+    );
+  }
+
+  *#resolveReadPath(
+    path: string,
+    followFinal: boolean,
+    asynchronous: boolean,
+  ): WasiCall<WasiResolvedPath> {
+    if (!asynchronous || descriptorPathAlias(path) !== undefined)
+      return this.resolve(path, { followFinal, ...this.#searchOptions(true) });
+    const options = { followFinal, ...this.#searchOptionsAsync(true) };
+    if (followFinal) yield* complete(this.#checkFinalAbsoluteSymlinkAsync(path, options));
+    return yield* complete(this.resolver.resolveAsync(path, options));
+  }
+
   #statResolved(resolved: WasiResolvedPath, descriptor?: WasiDescriptor): KernelStat {
+    return runSync(this.#readStat(resolved, descriptor, false));
+  }
+
+  *#readStat(
+    resolved: WasiResolvedPath,
+    descriptor: WasiDescriptor | undefined,
+    asynchronous: boolean,
+  ): WasiCall<KernelStat> {
     let posix: PosixMetadata | undefined;
     try {
       // Keep inode metadata in the same syscall snapshot so async clients cannot mix replacements.
-      posix = this.#posix.getMetadata(resolved.mount.storage, resolved.inode);
+      posix = yield* complete(
+        asynchronous
+          ? this.#posix.getMetadataAsync(resolved.mount.storage, resolved.inode)
+          : this.#posix.getMetadata(resolved.mount.storage, resolved.inode),
+      );
     } catch (error) {
       if (!isCode(error, "ENOTSUP")) throw error;
     }

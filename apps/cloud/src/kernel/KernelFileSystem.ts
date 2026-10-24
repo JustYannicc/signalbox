@@ -484,11 +484,19 @@ export class KernelFileSystem {
     });
   }
 
+  statAsync(path: string, signal?: AbortSignal): Promise<KernelStat> {
+    return this.#async(signal, () => this.#paths.statAsync(path));
+  }
+
   lstat(path: string): KernelStat {
     return this.#system(() => {
       this.#assertOpen();
       return this.#paths.lstat(path);
     });
+  }
+
+  lstatAsync(path: string, signal?: AbortSignal): Promise<KernelStat> {
+    return this.#async(signal, () => this.#paths.statAsync(path, false));
   }
 
   fstat(fd: number): KernelStat {
@@ -524,6 +532,10 @@ export class KernelFileSystem {
       this.#assertOpen();
       return this.#paths.readdir(path);
     });
+  }
+
+  readdirAsync(path: string, signal?: AbortSignal): Promise<string[]> {
+    return this.#async(signal, () => this.#paths.readdirAsync(path));
   }
 
   readlink(path: string): string {
@@ -672,6 +684,16 @@ export class KernelFileSystem {
 
   #system<T>(run: () => T): T {
     return runCurrentKernelCpuSystem(() => runKernelInlineExecution(currentKernelSignal(), run));
+  }
+
+  async #async<T>(signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+    this.#assertOpen();
+    const activeSignal = signal ?? currentKernelSignal() ?? new AbortController().signal;
+    activeSignal.throwIfAborted();
+    const result = await runKernelExecution(activeSignal, run);
+    activeSignal.throwIfAborted();
+    this.#assertOpen();
+    return result;
   }
 
   #assertOpen(): void {

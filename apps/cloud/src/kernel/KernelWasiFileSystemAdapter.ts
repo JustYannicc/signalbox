@@ -42,7 +42,7 @@ export function createKernelWasiFileSystemAdapter(
             fileSystemOptions.signal,
           ),
         );
-        return yield* imports.path_filestat_get(fd, flags, path, pathLen, output);
+        return yield* base.path_filestat_get(fd, flags, path, pathLen, output);
       },
       path_open: function* (
         fd,
@@ -62,7 +62,7 @@ export function createKernelWasiFileSystemAdapter(
             fileSystemOptions.signal,
           ),
         );
-        return yield* imports.path_open(
+        return yield* base.path_open(
           fd,
           dirflags,
           path,
