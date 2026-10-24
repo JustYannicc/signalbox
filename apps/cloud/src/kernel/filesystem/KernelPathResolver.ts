@@ -214,12 +214,20 @@ export class KernelPathResolver {
   }
 
   descriptorPath(descriptor: WasiDescriptor): string {
+    return this.#run(this.#descriptorPath(descriptor));
+  }
+
+  descriptorPathAsync(descriptor: WasiDescriptor): Promise<string> {
+    return this.#runAsyncCall(this.#descriptorPath(descriptor));
+  }
+
+  *#descriptorPath(descriptor: WasiDescriptor): WasiCall<string> {
     const device = deviceInfoForDescriptor(descriptor);
     if (device !== undefined) return virtualDevicePath(device.name);
     if (descriptor.mount === undefined)
       throw kernelError("ENOTSUP", "Descriptor has no filesystem path");
     if (descriptor.kind === "directory") {
-      const anchor = this.#validateAnchor(this.#descriptorAnchor(descriptor));
+      const anchor = yield* this.#resolver.validateAnchor(this.#descriptorAnchor(descriptor));
       return descriptor.preopenPath ?? joinGuestPath(anchor.mount.path, anchor.pathComponents);
     }
 
@@ -227,8 +235,8 @@ export class KernelPathResolver {
       throw kernelError("ENOTSUP", "Descriptor has no storage inode");
     const pathComponents = descriptor.pathComponents;
     if (pathComponents === undefined || pathComponents.length === 0) throw kernelError("ESTALE");
-    const parent = this.#validateAnchor(this.anchorForDescriptorParent(descriptor));
-    const entry = runKernelSync(parent.mount.storage.readdir(parent.inode)).find(
+    const parent = yield* this.#resolver.validateAnchor(this.anchorForDescriptorParent(descriptor));
+    const entry = (yield* complete(parent.mount.storage.readdir(parent.inode))).find(
       (candidate) => candidate.inode === descriptor.inode,
     );
     if (entry === undefined) throw kernelError("ESTALE");
@@ -244,10 +252,18 @@ export class KernelPathResolver {
   }
 
   resolvedDescriptor(descriptor: WasiDescriptor): WasiResolvedPath {
+    return this.#run(this.#resolvedDescriptor(descriptor));
+  }
+
+  resolvedDescriptorAsync(descriptor: WasiDescriptor): Promise<WasiResolvedPath> {
+    return this.#runAsyncCall(this.#resolvedDescriptor(descriptor));
+  }
+
+  *#resolvedDescriptor(descriptor: WasiDescriptor): WasiCall<WasiResolvedPath> {
     if (descriptor.mount === undefined || descriptor.inode === undefined) {
       throw kernelError("ENOTSUP", "Descriptor has no storage inode");
     }
-    const stat = runKernelSync(descriptor.mount.storage.stat(descriptor.inode));
+    const stat = yield* complete(descriptor.mount.storage.stat(descriptor.inode));
     return {
       mount: descriptor.mount,
       inode: descriptor.inode,

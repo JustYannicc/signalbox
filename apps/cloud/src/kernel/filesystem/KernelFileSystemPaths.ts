@@ -97,7 +97,9 @@ export class KernelFileSystemPaths {
 
   statAsync(path: string, followFinal = true): Promise<KernelStat> {
     return withKernelErrorsAsync(() =>
-      this.resolver.runAsync(this.#statPath(path, followFinal, true)),
+      this.resolver.runAsync(
+        this.#withRetainedPath(path, () => this.#statPath(path, followFinal, true)),
+      ),
     );
   }
 
@@ -127,7 +129,7 @@ export class KernelFileSystemPaths {
   }
 
   fstat(fd: number): KernelStat {
-    return withKernelErrors(() => this.#statDescriptor(this.#descriptors.get(fd)));
+    return withKernelErrors(() => runSync(this.#statDescriptor(this.#descriptors.get(fd), false)));
   }
 
   realpath(path: string): string {
@@ -157,7 +159,9 @@ export class KernelFileSystemPaths {
   }
 
   readdirAsync(path: string): Promise<string[]> {
-    return withKernelErrorsAsync(() => this.resolver.runAsync(this.#readDirectory(path, true)));
+    return withKernelErrorsAsync(() =>
+      this.resolver.runAsync(this.#withRetainedPath(path, () => this.#readDirectory(path, true))),
+    );
   }
 
   readlink(path: string): string {
@@ -365,14 +369,21 @@ export class KernelFileSystemPaths {
     });
   }
 
+  *#withRetainedPath<T>(path: string, operation: () => WasiCall<T>): WasiCall<T> {
+    const alias = descriptorPathAlias(path);
+    if (alias === undefined) return yield* operation();
+    this.#getAlias(alias);
+    return yield* this.#descriptors.withRetained(alias, operation);
+  }
+
   *#statPath(path: string, followFinal: boolean, asynchronous: boolean): WasiCall<KernelStat> {
     const device = virtualDevice(path);
     if (device !== undefined) return deviceStat(device);
     const alias = descriptorPathAlias(path);
     if (alias !== undefined)
       return followFinal
-        ? this.#statDescriptor(this.#getAlias(alias))
-        : this.#statMagicLink(alias, this.#getAlias(alias));
+        ? yield* this.#statDescriptor(this.#getAlias(alias), asynchronous)
+        : yield* this.#statMagicLink(alias, this.#getAlias(alias), asynchronous);
     const resolved = yield* this.#resolveReadPath(path, followFinal, asynchronous);
     return yield* this.#readStat(resolved, undefined, asynchronous);
   }
@@ -404,15 +415,15 @@ export class KernelFileSystemPaths {
     followFinal: boolean,
     asynchronous: boolean,
   ): WasiCall<WasiResolvedPath> {
-    if (!asynchronous || descriptorPathAlias(path) !== undefined)
-      return this.resolve(path, { followFinal, ...this.#searchOptions(true) });
+    if (!asynchronous) return this.resolve(path, { followFinal, ...this.#searchOptions(true) });
+    const alias = descriptorPathAlias(path);
+    if (alias !== undefined) {
+      if (!followFinal) throw kernelError("ENOTSUP", "Magic links are not storage paths");
+      return yield* complete(this.resolver.resolvedDescriptorAsync(this.#getAlias(alias)));
+    }
     const options = { followFinal, ...this.#searchOptionsAsync(true) };
     if (followFinal) yield* complete(this.#checkFinalAbsoluteSymlinkAsync(path, options));
     return yield* complete(this.resolver.resolveAsync(path, options));
-  }
-
-  #statResolved(resolved: WasiResolvedPath, descriptor?: WasiDescriptor): KernelStat {
-    return runSync(this.#readStat(resolved, descriptor, false));
   }
 
   *#readStat(
@@ -480,15 +491,28 @@ export class KernelFileSystemPaths {
     return checkSearch === undefined ? {} : { checkSearch };
   }
 
-  #statDescriptor(descriptor: WasiDescriptor): KernelStat {
+  *#statDescriptor(descriptor: WasiDescriptor, asynchronous: boolean): WasiCall<KernelStat> {
     const device = deviceInfoForDescriptor(descriptor);
     if (device !== undefined) return deviceStat(device);
     if (descriptor.kind === "stdio") throw kernelError("ENOTSUP", "Stream stat is unsupported");
-    return this.#statResolved(this.resolver.resolvedDescriptor(descriptor), descriptor);
+    const resolved = yield* complete(
+      asynchronous
+        ? this.resolver.resolvedDescriptorAsync(descriptor)
+        : this.resolver.resolvedDescriptor(descriptor),
+    );
+    return yield* this.#readStat(resolved, descriptor, asynchronous);
   }
 
-  #statMagicLink(fd: number, descriptor: WasiDescriptor): KernelStat {
-    const target = this.resolver.descriptorPath(descriptor);
+  *#statMagicLink(
+    fd: number,
+    descriptor: WasiDescriptor,
+    asynchronous: boolean,
+  ): WasiCall<KernelStat> {
+    const target = yield* complete(
+      asynchronous
+        ? this.resolver.descriptorPathAsync(descriptor)
+        : this.resolver.descriptorPath(descriptor),
+    );
     return {
       type: "symlink",
       size: BigInt(encoder.encode(target).byteLength),
