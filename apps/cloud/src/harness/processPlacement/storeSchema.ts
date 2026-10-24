@@ -28,6 +28,8 @@ const failureMessages: Record<HarnessProcessFailureCode, string> = {
   DISPOSE_FAILED: "Facet disposal failed.",
   PUBLICATION_UNCONFIRMED: "Facet publication was not confirmed.",
   PUBLICATION_REQUIRES_REPAIR: "Published process ownership requires explicit repair.",
+  INVOCATION_OUTCOME_UNKNOWN:
+    "Published process invocation outcome is unknown and requires repair.",
   RECOVERY_UNKNOWN: "Facet recovery could not establish termination.",
 };
 
@@ -129,6 +131,10 @@ export function parseRecoveryRecord(
     (value.publicationState === "confirmed" && value.publicationReceipt === undefined) ||
     (value.invocationMayHaveStarted !== undefined &&
       typeof value.invocationMayHaveStarted !== "boolean") ||
+    (value.invocationRequestId !== undefined && !nonempty(value.invocationRequestId)) ||
+    (value.invocationReply !== undefined &&
+      value.invocationReply !== "unresolved" &&
+      value.invocationReply !== "received") ||
     (value.publicationState !== undefined && value.expectedFacetGeneration === undefined)
   )
     throw new Error("Process-placement recovery record is invalid.");

@@ -72,6 +72,29 @@ const TestRequestFacet = createHarnessRequestFacetClass<Record<string, never>>((
           catch: () =>
             new HarnessRequestFacetError("Fixture preparation counter could not be stored."),
         });
+        if (request.operationId === "preparation-cleanup-failure-operation") {
+          yield* Effect.addFinalizer(() =>
+            Effect.gen(function* () {
+              yield* Effect.tryPromise({
+                try: async () => {
+                  const previous =
+                    (await input.ctx.storage.get<number>("preparation-finalizer-attempts")) ?? 0;
+                  await input.ctx.storage.put("preparation-finalizer-attempts", previous + 1);
+                },
+                catch: () =>
+                  new HarnessRequestFacetError("Fixture finalizer attempt could not be stored."),
+              });
+              return yield* Effect.die(
+                new HarnessRequestFacetError("Fixture preparation cleanup remains unknown."),
+              );
+            }).pipe(Effect.orDie),
+          );
+          return yield* Effect.fail(
+            new HarnessRequestFacetError(
+              "Fixture host preparation failed after opening resources.",
+            ),
+          );
+        }
         if (
           request.targetFacetNonce !== input.facetNonce ||
           request.checkpointId !== processFacetCheckpoint.native.id ||
@@ -170,6 +193,8 @@ const TestRequestFacet = createHarnessRequestFacetClass<Record<string, never>>((
 
 export class TestHarnessProcessRequestFacetObject extends TestRequestFacet {
   override async dispose(expectedFacetNonce: string) {
+    const attempts = (await this.ctx.storage.get<number>("request-facet-dispose-attempts")) ?? 0;
+    await this.ctx.storage.put("request-facet-dispose-attempts", attempts + 1);
     await super.dispose(expectedFacetNonce);
     await this.ctx.storage.put("request-facet-disposed", true);
   }
@@ -183,6 +208,9 @@ export class TestHarnessProcessRequestFacetObject extends TestRequestFacet {
         (await this.ctx.storage.get<boolean>("prepared-runtime-invoked")) === true,
       requestFacetDisposed:
         (await this.ctx.storage.get<boolean>("request-facet-disposed")) === true,
+      disposeAttempts: (await this.ctx.storage.get<number>("request-facet-dispose-attempts")) ?? 0,
+      preparationFinalizerAttempts:
+        (await this.ctx.storage.get<number>("preparation-finalizer-attempts")) ?? 0,
       prepareInertCalls: (await this.ctx.storage.get<number>("prepare-inert-calls")) ?? 0,
       settled: {
         invocationRpc:

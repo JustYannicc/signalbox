@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { HarnessProcessExecutionEntrypoint } from "../HarnessProcessExecutionEntrypoint.ts";
 import { HarnessProcessExecutionShardObject } from "../HarnessProcessExecutionShardObject.ts";
 import { HarnessProcessPlacementStoreObject } from "../HarnessProcessPlacementStoreObject.ts";
+import { HarnessRunStoreObject } from "../HarnessRunStoreObject.ts";
 import {
   deterministicShardOwner,
   type HarnessProcessControllerClaim,
@@ -23,15 +24,22 @@ import {
   runProductionFacetProof,
   runIdentityReplyLossProof,
   sameKeyRequestFacetReconstruction,
-  type ProductionFacetEnvironment,
   TestHarnessProcessRequestFacetObject,
 } from "./productionFacet.workerd.fixture.ts";
+import { runPreparationCleanupFailureProof } from "./preparationCleanup.workerd.fixture.ts";
+import {
+  runInvocationReplyLossProof,
+  type InvocationRecoveryEnvironment,
+} from "./invocationReplyLoss.workerd.fixture.ts";
+import { TestHarnessProcessRunStoreRequestFacetObject } from "./runStoreFacet.workerd.fixture.ts";
 
 export {
   HarnessProcessExecutionEntrypoint,
   HarnessProcessExecutionShardObject,
   HarnessProcessPlacementStoreObject,
+  HarnessRunStoreObject,
   TestHarnessProcessRequestFacetObject,
+  TestHarnessProcessRunStoreRequestFacetObject,
 };
 
 const controllerClaim: HarnessProcessControllerClaim = {
@@ -244,7 +252,7 @@ export class TestHarnessProcessExecutionShardObject extends HarnessProcessExecut
 }
 
 interface ProcessPlacementEnvironment
-  extends HarnessProcessExecutionEnvironment, ProductionFacetEnvironment {
+  extends HarnessProcessExecutionEnvironment, InvocationRecoveryEnvironment {
   readonly PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<
     TestHarnessProcessExecutionShardObject & Rpc.DurableObjectBranded
   >;
@@ -285,6 +293,14 @@ export default {
         "production-process-facet-proof",
       ) as unknown as HarnessProcessPublicationPublisher;
       return await runProductionFacetProof(env, publisher, controllerClaim);
+    }
+    if (path === "/preparation-cleanup-failure")
+      return await runPreparationCleanupFailureProof(env, ctx, controllerClaim);
+    if (path === "/invocation-reply-loss") {
+      const supervisor = env.HARNESS_THREAD_SUPERVISOR.getByName(
+        "process-invocation-reply-loss-run",
+      );
+      return await runInvocationReplyLossProof(env, ctx, controllerClaim, supervisor);
     }
     if (path === "/identity-reply-loss")
       return await runIdentityReplyLossProof(env, ctx, controllerClaim);

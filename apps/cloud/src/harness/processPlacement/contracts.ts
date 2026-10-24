@@ -200,6 +200,8 @@ export interface HarnessProcessPlacementRecoveryRecord {
   readonly publicationState?: "in-progress" | "unknown" | "pending" | "confirmed" | "not-published";
   readonly publicationReceipt?: HarnessProcessPublicationReceipt;
   readonly invocationMayHaveStarted?: boolean;
+  readonly invocationRequestId?: string;
+  readonly invocationReply?: "unresolved" | "received";
   readonly lastFailure?: HarnessProcessFailureRecord;
   /** Publication ownership stays sticky until a separate authorized repair accepts it. */
   readonly terminalFailure?: HarnessProcessFailureRecord;
@@ -222,6 +224,7 @@ export type HarnessProcessFailureCode =
   | "DISPOSE_FAILED"
   | "PUBLICATION_UNCONFIRMED"
   | "PUBLICATION_REQUIRES_REPAIR"
+  | "INVOCATION_OUTCOME_UNKNOWN"
   | "RECOVERY_UNKNOWN";
 
 export interface HarnessProcessFailureRecord {

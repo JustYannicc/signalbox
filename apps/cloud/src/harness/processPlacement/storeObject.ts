@@ -136,6 +136,13 @@ export class HarnessProcessPlacementStoreObject
           throw new Error("A terminal activation failure requires an authorized repair.");
         if (current.identityState === "observed" && checked.identityState !== "observed")
           throw new Error("Observed process identity cannot return to unknown.");
+        if (current.invocationReply === "received" && checked.invocationReply !== "received")
+          throw new Error("An observed invocation reply cannot return to unresolved.");
+        if (
+          current.invocationRequestId !== undefined &&
+          checked.invocationRequestId !== current.invocationRequestId
+        )
+          throw new Error("The request tied to a process invocation cannot be replaced.");
         if (
           current.publicationState === "confirmed" &&
           (checked.publicationState !== "confirmed" ||

@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Scope from "effect/Scope";
 import { HarnessRequestFacetError } from "../../HarnessRequestFacet.ts";
 import { type HarnessRequestCheckpoint } from "../../HarnessRunStore.ts";
 import { publisher, requestFacetFixture, runId, controlKey } from "./fixture.ts";
@@ -367,8 +368,12 @@ describe("request-scoped Harness facet", () => {
             }),
         },
       );
-      const mismatchResult = yield* Effect.exit(mismatch.prepareInert(input));
-      expect(Exit.isFailure(mismatchResult)).toBe(true);
+      const mismatchFailure = yield* Effect.flip(mismatch.prepareInert(input));
+      expect(mismatchFailure).toBeInstanceOf(HarnessRequestFacetError);
+      expect(mismatchFailure.message).toBe(
+        "Harness host preparation did not observe the requested identity and checkpoint.",
+      );
+      expect(mismatchFailure.cause).toBeUndefined();
       expect(openCalls).toBe(0);
       expect(cleanupCalls).toBe(1);
       yield* mismatch.dispose;
@@ -443,6 +448,7 @@ describe("request-scoped Harness facet", () => {
     Effect.gen(function* () {
       const f = yield* requestFacetFixture;
       const nextPublisher = publisher("prepared-failure", 2);
+      const callbackCause = new HarnessRequestFacetError("Host preparation callback failed.");
       let callbackCalls = 0;
       let cleanupCalls = 0;
       const facet = yield* f.create(
@@ -457,7 +463,7 @@ describe("request-scoped Harness facet", () => {
                   cleanupCalls++;
                 }),
               );
-              return yield* Effect.fail(new HarnessRequestFacetError("temporary prepare failure"));
+              return yield* Effect.fail(callbackCause);
             }),
         },
       );
@@ -470,9 +476,155 @@ describe("request-scoped Harness facet", () => {
         priorFacetNonce: publisher().facetNonce,
         expectedFacetGeneration: 1,
       };
-      expect(Exit.isFailure(yield* Effect.exit(facet.prepareInert(input)))).toBe(true);
+      const firstFailure = yield* Effect.flip(facet.prepareInert(input));
+      expect(firstFailure).toBeInstanceOf(HarnessRequestFacetError);
+      expect(firstFailure.message).toBe(
+        "Harness host could not prepare the committed checkpoint inert.",
+      );
+      expect(firstFailure.cause).toBe(callbackCause);
       expect(Exit.isFailure(yield* Effect.exit(facet.prepareInert(input)))).toBe(true);
       expect({ callbackCalls, cleanupCalls }).toEqual({ callbackCalls: 1, cleanupCalls: 1 });
+      yield* facet.dispose;
+    }),
+  );
+
+  it.effect("retains a failed preparation scope when its cleanup finalizer also fails", () =>
+    Effect.gen(function* () {
+      const f = yield* requestFacetFixture;
+      const nextPublisher = publisher("prepared-cleanup-failure", 2);
+      const callbackCause = new HarnessRequestFacetError("Host callback failed.");
+      const cleanupCause = new HarnessRequestFacetError("Host preparation cleanup failed.");
+      let callbackCalls = 0;
+      let cleanupCalls = 0;
+      const ownerScope = yield* Scope.make();
+      const facet = yield* Scope.provide(ownerScope)(
+        f.create(() => Effect.die("Failed inert preparation must not fall back to open."), {
+          facetNonce: nextPublisher.facetNonce,
+          prepareInert: () =>
+            Effect.gen(function* () {
+              callbackCalls++;
+              yield* Effect.addFinalizer(() =>
+                Effect.gen(function* () {
+                  cleanupCalls++;
+                  return yield* Effect.die(cleanupCause);
+                }),
+              );
+              return yield* Effect.fail(callbackCause);
+            }),
+        }),
+      );
+      const input = {
+        operationId: "replace-2",
+        targetFacetNonce: nextPublisher.facetNonce,
+        nativeSessionId: "observed-native-session",
+        checkpointId: f.initial.native.id,
+        manifestRevision: f.initial.filesystem.sha256,
+        priorFacetNonce: publisher().facetNonce,
+        expectedFacetGeneration: 1,
+      };
+
+      const firstFailure = yield* Effect.flip(facet.prepareInert(input));
+      expect(firstFailure).toBeInstanceOf(HarnessRequestFacetError);
+      expect(firstFailure.message).toBe("Harness preparation cleanup is unknown.");
+      expect(firstFailure.cause).toBe(cleanupCause);
+
+      const firstDisposeFailure = yield* Effect.exit(facet.dispose);
+      const secondDisposeFailure = yield* Effect.exit(facet.dispose);
+      expect(Exit.isFailure(firstDisposeFailure)).toBe(true);
+      expect(secondDisposeFailure).toEqual(firstDisposeFailure);
+      expect({ callbackCalls, cleanupCalls }).toEqual({ callbackCalls: 1, cleanupCalls: 1 });
+      const ownerScopeClose = yield* Effect.exit(Scope.close(ownerScope, Exit.void));
+      expect(Exit.isFailure(ownerScopeClose)).toBe(true);
+      expect({ callbackCalls, cleanupCalls }).toEqual({ callbackCalls: 1, cleanupCalls: 1 });
+    }),
+  );
+
+  it.effect("keeps one prepared runtime across checkpoint commits and cached-result retries", () =>
+    Effect.gen(function* () {
+      const f = yield* requestFacetFixture;
+      const nextPublisher = publisher("prepared-checkpoint-advance", 2);
+      yield* f.bind(nextPublisher);
+      const firstCheckpoint = f.checkpoint("prepared-first-finish");
+      const secondCheckpoint = f.checkpoint("prepared-second-finish");
+      let prepareCalls = 0;
+      let openCalls = 0;
+      let turns = 0;
+      const facet = yield* f.create(
+        () => {
+          openCalls++;
+          return Effect.die("Prepared execution must retain its original runtime.");
+        },
+        {
+          facetNonce: nextPublisher.facetNonce,
+          prepareInert: (input) =>
+            Effect.sync(() => {
+              prepareCalls++;
+              return {
+                facetNonce: input.targetFacetNonce,
+                nativeSessionId: input.nativeSessionId,
+                checkpoint: f.initial,
+                manifestRevision: f.initial.filesystem.sha256,
+                joined: { invocationRpc: true, fetch: true, ports: true },
+                runtime: {
+                  run: () =>
+                    Effect.sync(() => {
+                      turns++;
+                      return {
+                        status: "completed" as const,
+                        result: f.reference(`prepared-result-${turns}`),
+                        checkpoint: turns === 1 ? firstCheckpoint : secondCheckpoint,
+                      };
+                    }),
+                },
+              };
+            }),
+        },
+      );
+      const input = {
+        operationId: "replace-2",
+        targetFacetNonce: nextPublisher.facetNonce,
+        nativeSessionId: "prepared-native-session",
+        checkpointId: f.initial.native.id,
+        manifestRevision: f.initial.filesystem.sha256,
+        priorFacetNonce: publisher().facetNonce,
+        expectedFacetGeneration: 1,
+      };
+      yield* facet.prepareInert(input);
+
+      yield* f.offer("prepared-first-request");
+      const first = yield* facet.run({
+        publisher: nextPublisher,
+        requestId: "prepared-first-request",
+      });
+      expect(first.snapshot.requests?.checkpoint).toEqual(firstCheckpoint);
+      const cached = yield* facet.run({
+        publisher: nextPublisher,
+        requestId: "prepared-first-request",
+      });
+      expect(cached).toEqual(first);
+      expect(turns).toBe(1);
+
+      const stalePublication = yield* Effect.exit(
+        facet.run({
+          publisher: publisher(nextPublisher.facetNonce, nextPublisher.generation + 1),
+          requestId: "prepared-first-request",
+        }),
+      );
+      expect(Exit.isFailure(stalePublication)).toBe(true);
+      expect(turns).toBe(1);
+
+      yield* f.offer("prepared-second-request");
+      const second = yield* facet.run({
+        publisher: nextPublisher,
+        requestId: "prepared-second-request",
+      });
+      expect(second.action).toBe("committed");
+      expect(second.snapshot.requests?.checkpoint).toEqual(secondCheckpoint);
+      expect({ prepareCalls, openCalls, turns }).toEqual({
+        prepareCalls: 1,
+        openCalls: 0,
+        turns: 2,
+      });
       yield* facet.dispose;
     }),
   );

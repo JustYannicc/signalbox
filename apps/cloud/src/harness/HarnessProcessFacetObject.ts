@@ -66,15 +66,9 @@ export function createHarnessProcessFacetAdapter(
   const dispose = async () => {
     if (disposed) return;
     const expectedNonce = constructorNonce ?? (await identity()).incarnationNonce;
-    disposePromise ??= facet.dispose(expectedNonce).then(
-      () => {
-        disposed = true;
-      },
-      (cause: unknown) => {
-        disposePromise = undefined;
-        throw cause;
-      },
-    );
+    disposePromise ??= facet.dispose(expectedNonce).then(() => {
+      disposed = true;
+    });
     await disposePromise;
   };
 

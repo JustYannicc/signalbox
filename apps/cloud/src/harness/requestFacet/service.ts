@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import {
@@ -73,6 +74,12 @@ export const createHarnessRequestFacet = (
         }
       | undefined;
     let preparationFailure: HarnessRequestFacetError | undefined;
+    let unresolvedPreparationCleanup:
+      | {
+          readonly scope: Scope.Closeable;
+          readonly failure: HarnessRequestFacetError;
+        }
+      | undefined;
     const preparationLock = yield* Semaphore.make(1);
     const ownerSignal = yield* Effect.abortSignal.pipe(Scope.provide(scope));
     const progressLock = yield* Semaphore.make(1);
@@ -81,11 +88,47 @@ export const createHarnessRequestFacet = (
         .withPermits(1)(
           Effect.sync(() => {
             disposed = true;
-          }).pipe(Effect.andThen(Scope.close(scope, Exit.void))),
+          })
+            .pipe(Effect.andThen(Scope.close(scope, Exit.void)))
+            .pipe(
+              Effect.andThen(
+                Effect.suspend(() =>
+                  unresolvedPreparationCleanup === undefined
+                    ? Effect.void
+                    : Effect.die(unresolvedPreparationCleanup.failure),
+                ),
+              ),
+            ),
         )
         .pipe(Effect.uninterruptible),
     );
     yield* Effect.addFinalizer(() => dispose);
+    const failPreparation = (
+      preparationScope: Scope.Closeable,
+      cause: Cause.Cause<HarnessRequestFacetError>,
+      message: string,
+    ) =>
+      Effect.gen(function* () {
+        poisoned = true;
+        const cleanup = yield* Effect.exit(Scope.close(preparationScope, Exit.void));
+        if (Exit.isFailure(cleanup)) {
+          const cleanupFailure = failure(
+            "Harness preparation cleanup is unknown.",
+            Cause.squash(cleanup.cause),
+          );
+          unresolvedPreparationCleanup = { scope: preparationScope, failure: cleanupFailure };
+          preparationFailure = cleanupFailure;
+          return yield* Effect.fail(cleanupFailure);
+        }
+
+        const underlying = Cause.squash(cause);
+        const preparationError =
+          underlying instanceof HarnessRequestFacetError
+            ? underlying
+            : failure(message, underlying);
+        preparationFailure = preparationError;
+        return yield* Effect.fail(preparationError);
+      });
     const execute = (command: unknown) =>
       Effect.tryPromise({
         try: () => options.store.execute(command),
@@ -132,25 +175,10 @@ export const createHarnessRequestFacet = (
             )
             .pipe(
               Effect.catchCause((cause) =>
-                Scope.close(preparationScope, Exit.void).pipe(
-                  Effect.catchCause((cleanupCause) => {
-                    poisoned = true;
-                    preparationFailure = failure(
-                      "Harness preparation failed and its cleanup is unknown.",
-                      cleanupCause,
-                    );
-                    return Effect.fail(preparationFailure);
-                  }),
-                  Effect.andThen(
-                    Effect.sync(() => {
-                      poisoned = true;
-                      preparationFailure ??= failure(
-                        "Harness host could not prepare the committed checkpoint inert.",
-                        cause,
-                      );
-                    }),
-                  ),
-                  Effect.andThen(Effect.fail(preparationFailure!)),
+                failPreparation(
+                  preparationScope,
+                  cause,
+                  "Harness host could not prepare the committed checkpoint inert.",
                 ),
               ),
             );
@@ -186,25 +214,10 @@ export const createHarnessRequestFacet = (
             return observation;
           }).pipe(
             Effect.catchCause((cause) =>
-              Scope.close(preparationScope, Exit.void).pipe(
-                Effect.catchCause((cleanupCause) => {
-                  poisoned = true;
-                  preparationFailure = failure(
-                    "Harness preparation cleanup is unknown.",
-                    cleanupCause,
-                  );
-                  return Effect.fail(preparationFailure);
-                }),
-                Effect.andThen(
-                  Effect.sync(() => {
-                    poisoned = true;
-                    preparationFailure ??= failure(
-                      "Harness host preparation did not complete with verified evidence.",
-                      cause,
-                    );
-                  }),
-                ),
-                Effect.andThen(Effect.fail(preparationFailure!)),
+              failPreparation(
+                preparationScope,
+                cause,
+                "Harness host preparation did not complete with verified evidence.",
               ),
             ),
           );
@@ -246,7 +259,6 @@ export const createHarnessRequestFacet = (
             requests === undefined ||
             published === undefined ||
             published.operationId !== preparation.input.operationId ||
-            !sameCheckpoint(preparation.observation.checkpoint, requests.checkpoint) ||
             !sameCheckpoint(preparation.observation.checkpoint, published.checkpoint)
           ) {
             poisoned = true;
@@ -263,6 +275,10 @@ export const createHarnessRequestFacet = (
         if (!requests || !entry || active !== undefined) {
           poisoned = true;
           return yield* Effect.fail(failure("Harness request admission is inconsistent."));
+        }
+        if (checkpoint !== undefined && !sameCheckpoint(checkpoint, requests.checkpoint)) {
+          poisoned = true;
+          return yield* Effect.fail(failure("Harness heap differs from the durable checkpoint."));
         }
         publisher = input.publisher;
         let sequence = entry.progress?.sequence ?? 0;

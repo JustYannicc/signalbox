@@ -70,6 +70,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   #disposed = false;
   #released = false;
   #invocationMayHaveStarted = false;
+  #invocationRequestId: string | undefined;
+  #invocationReply: HarnessProcessPlacementRecoveryRecord["invocationReply"];
   #lastFailure: HarnessProcessFailureRecord | undefined;
   #terminalFailure: HarnessProcessFailureRecord | undefined;
   #publicationState: HarnessProcessPlacementRecoveryRecord["publicationState"];
@@ -276,6 +278,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
 
     this.#publicationState = "confirmed";
     this.#publicationReceipt = confirmed;
+    this.#invocationRequestId = activation.requestId;
     try {
       await this.#persist("prepared");
     } catch (cause) {
@@ -356,8 +359,22 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         this.identity,
         { recoveryId: this.identity.loaderId },
       );
+    const suppliedRequestId = invocationRequestId(input);
+    if (
+      this.#invocationRequestId !== undefined &&
+      suppliedRequestId !== undefined &&
+      suppliedRequestId !== this.#invocationRequestId
+    )
+      throw new HarnessProcessPlacementError(
+        "stale-publication",
+        "The invocation request does not match the prepared publisher response.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId },
+      );
     // Persist before the RPC so a restart never replays an invocation whose reply may be lost.
     this.#invocationMayHaveStarted = true;
+    this.#invocationReply = "unresolved";
     try {
       await this.#persist("active");
     } catch (cause) {
@@ -375,25 +392,9 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     }
     const attempt: Attempt = { rpcReturned: false, stopAcknowledged: false, joined: joinedNone };
     this.#attempts.add(attempt);
+    let settlement: HarnessProcessInvocationSettlement;
     try {
-      const settlement = await this.#facet.invoke(input);
-      attempt.rpcReturned = true;
-      attempt.stopAcknowledged = settlement.stopAcknowledged;
-      attempt.joined = settlement.joined;
-      this.#joined = settlement.joined;
-      this.#pruneSettledAttempts();
-      if (!attempt.stopAcknowledged || !allJoined(attempt.joined)) {
-        this.#state = "cleanup-required";
-        this.#lastFailure = failureRecord(
-          "invocation",
-          !attempt.stopAcknowledged ? "STOP_UNACKNOWLEDGED" : "JOIN_INCOMPLETE",
-        );
-        await this.#persist("cleanup-required");
-        return settlement;
-      }
-      this.#state = "active";
-      await this.#persist("active");
-      return settlement;
+      settlement = await this.#facet.invoke(input);
     } catch (cause) {
       attempt.rpcReturned = true;
       this.#state = "cleanup-required";
@@ -409,6 +410,39 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         { cause },
       );
     }
+
+    attempt.rpcReturned = true;
+    attempt.stopAcknowledged = settlement.stopAcknowledged;
+    attempt.joined = settlement.joined;
+    this.#joined = settlement.joined;
+    this.#invocationReply = "received";
+    this.#pruneSettledAttempts();
+    if (!attempt.stopAcknowledged || !allJoined(attempt.joined)) {
+      this.#state = "cleanup-required";
+      this.#lastFailure = failureRecord(
+        "invocation",
+        !attempt.stopAcknowledged ? "STOP_UNACKNOWLEDGED" : "JOIN_INCOMPLETE",
+      );
+      await this.#persist("cleanup-required");
+      return settlement;
+    }
+    this.#state = "active";
+    try {
+      await this.#persist("active");
+    } catch (cause) {
+      this.#state = "cleanup-required";
+      this.#lastCause = cause;
+      this.#lastFailure = failureRecord("recovery", "RPC_FAILED");
+      throw new HarnessProcessPlacementError(
+        "invocation-unsettled",
+        "The invocation reply arrived, but its placement state could not be recorded.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId, causeCode: this.#lastFailure.code },
+        { cause },
+      );
+    }
+    return settlement;
   }
 
   async park<Value>(
@@ -677,6 +711,19 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       cleanupCause ??= error;
     }
 
+    if (
+      this.#publicationState === "confirmed" &&
+      this.#invocationMayHaveStarted &&
+      this.#invocationReply !== "received" &&
+      this.#terminalFailure === undefined
+    ) {
+      this.#state = "cleanup-required";
+      this.#lastFailure = failureRecord("recovery", "INVOCATION_OUTCOME_UNKNOWN");
+      this.#lastCause ??= cleanupCause;
+      await this.#persist(this.#state);
+      return { failure: this.#lastFailure, cause: this.#lastCause };
+    }
+
     const settled = this.#stopAcknowledged && allJoined(this.#joined) && this.#attempts.size === 0;
     if (settled && this.#disposed) {
       try {
@@ -738,6 +785,10 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         ? {}
         : { publicationReceipt: this.#publicationReceipt }),
       invocationMayHaveStarted: this.#invocationMayHaveStarted,
+      ...(this.#invocationRequestId === undefined
+        ? {}
+        : { invocationRequestId: this.#invocationRequestId }),
+      ...(this.#invocationReply === undefined ? {} : { invocationReply: this.#invocationReply }),
       ...(this.#lastFailure === undefined ? {} : { lastFailure: this.#lastFailure }),
       ...(this.#terminalFailure === undefined ? {} : { terminalFailure: this.#terminalFailure }),
     });
@@ -793,6 +844,12 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     if (code === "DISPOSE_FAILED") return "dispose";
     return this.#terminalFailure === undefined ? "recovery" : "activation";
   }
+}
+
+function invocationRequestId(input: unknown): string | undefined {
+  if (typeof input !== "object" || input === null || !("requestId" in input)) return undefined;
+  const requestId = input.requestId;
+  return typeof requestId === "string" ? requestId : undefined;
 }
 
 function allJoined(joined: HarnessProcessJoined): boolean {
