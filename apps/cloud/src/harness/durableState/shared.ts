@@ -22,5 +22,26 @@ export const HarnessThreadSupervisorPublisher = Schema.Struct({
   publisherKey: capability,
 });
 
+const Authority = Schema.Struct({ ownerId: id, incarnationId: id, epoch: positive });
+const Checkpoint = Schema.Struct({ checkpointId: id, manifestSha256: digest });
+const AdmissionSource = Schema.Struct({
+  authority: Authority,
+  generation: positive,
+  facetNonce: id,
+  checkpoint: Checkpoint,
+  admittedStepId: Schema.NullOr(id),
+});
+
+export const HarnessDurableStateAdmissionBinding = Schema.Struct({
+  runId: id,
+  evidenceId: id,
+  authority: Authority,
+  expectedGeneration: positive,
+  outcome: Schema.Literals(["notApplied", "completed"]),
+  checkpoint: Schema.NullOr(Checkpoint),
+  source: AdmissionSource,
+});
+
 export type HarnessThreadSupervisorControlClaim = typeof HarnessThreadSupervisorControlClaim.Type;
 export type HarnessThreadSupervisorPublisher = typeof HarnessThreadSupervisorPublisher.Type;
+export type HarnessDurableStateAdmissionBinding = typeof HarnessDurableStateAdmissionBinding.Type;

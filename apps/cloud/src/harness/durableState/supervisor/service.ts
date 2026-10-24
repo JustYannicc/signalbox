@@ -14,6 +14,7 @@ import { result, transition, validateReconciliationRequest } from "./transition.
 import {
   commitPendingReceipt,
   createPendingReceipt,
+  admissionBindingFromReceipt,
   insertReconciliationReceipt,
   parseReconciliationRequest,
   pendingReconciliationReceipt,
@@ -126,6 +127,7 @@ function matchesLegacyLatest(state: State, input: HarnessThreadSupervisorReconci
 export interface HarnessThreadSupervisorReconciliationReservation {
   readonly status: "missing" | "pending" | "committed";
   readonly supervisor: HarnessThreadSupervisorResult;
+  readonly admissionBinding: import("../shared.ts").HarnessDurableStateAdmissionBinding | null;
 }
 
 export function reserveHarnessThreadSupervisorReconciliation(
@@ -151,17 +153,26 @@ export function reserveHarnessThreadSupervisorReconciliation(
           return {
             status: existing.status,
             supervisor: result(current, "unchanged"),
+            admissionBinding: admissionBindingFromReceipt(existing, runId),
           };
         }
 
         if (current.reconciliationEvidenceId === request.evidenceId) {
           if (!matchesLegacyLatest(current, request)) return fail("CONFLICT");
-          return { status: "committed", supervisor: result(current, "unchanged") };
+          return {
+            status: "committed",
+            supervisor: result(current, "unchanged"),
+            admissionBinding: null,
+          };
         }
 
         if (pendingReconciliationReceipt(database)) return fail("OUT_OF_ORDER");
         if (!request.reserve)
-          return { status: "missing", supervisor: result(current, "unchanged") };
+          return {
+            status: "missing",
+            supervisor: result(current, "unchanged"),
+            admissionBinding: null,
+          };
         validateReconciliationRequest(current, {
           type: "reconcile",
           control: request.control,
@@ -172,8 +183,13 @@ export function reserveHarnessThreadSupervisorReconciliation(
           invocationSettlement: request.invocationSettlement,
           preparedFacetCleanup: request.preparedFacetCleanup,
         });
-        insertReconciliationReceipt(database, createPendingReceipt(current, request));
-        return { status: "pending" as const, supervisor: result(current, "unchanged") };
+        const receipt = createPendingReceipt(current, request);
+        insertReconciliationReceipt(database, receipt);
+        return {
+          status: "pending" as const,
+          supervisor: result(current, "unchanged"),
+          admissionBinding: admissionBindingFromReceipt(receipt, runId),
+        };
       });
     },
     catch: (error) =>

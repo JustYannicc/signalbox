@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { digest, id, positive } from "../shared.ts";
+import { digest, HarnessDurableStateAdmissionBinding, id, positive } from "../shared.ts";
 import type { HarnessFilesStoreCommand } from "./contracts.ts";
 import type { HarnessFilesDatabase } from "./types.ts";
 import type { State } from "./state.ts";
@@ -22,6 +22,13 @@ const Request = Schema.Struct({
   expectedCheckpoint: Checkpoint,
   checkpoint: Schema.NullOr(Checkpoint),
 });
+const Resolution = Schema.Struct({
+  evidenceId: id,
+  stepId: Schema.NullOr(id),
+  outcome: Schema.Literals(["notApplied", "completed"]),
+  expectedCheckpoint: Checkpoint,
+  checkpoint: Checkpoint,
+});
 const Source = Schema.Struct({
   authority: Authority,
   publisher: Publisher,
@@ -36,13 +43,9 @@ const Source = Schema.Struct({
   activeStepId: Schema.NullOr(id),
   lastCommittedStepId: Schema.NullOr(id),
   lastCommittedFromCheckpoint: Schema.NullOr(Checkpoint),
-});
-const Resolution = Schema.Struct({
-  evidenceId: id,
-  stepId: Schema.NullOr(id),
-  outcome: Schema.Literals(["notApplied", "completed"]),
-  expectedCheckpoint: Checkpoint,
-  checkpoint: Checkpoint,
+  kind: Schema.optional(Schema.Literal("legacyResolution")),
+  legacyBinding: Schema.optional(HarnessDurableStateAdmissionBinding),
+  legacyResolution: Schema.optional(Resolution),
 });
 const Receipt = Schema.Struct({
   version: Schema.Literal(1),
@@ -78,6 +81,145 @@ function requestOf(runId: string, command: AdmissionCommand) {
   };
 }
 
+function sourceOf(state: State): AdmissionReceipt["source"] {
+  return {
+    authority: authorityOf(state.control),
+    publisher: publisherOf(state.publisher),
+    lifecycle: state.lifecycle,
+    checkpoint: state.checkpoint,
+    activeStepId: state.activeStepId,
+    lastCommittedStepId: state.lastCommittedStepId,
+    lastCommittedFromCheckpoint: state.lastCommittedFromCheckpoint,
+  };
+}
+
+function bindingMatchesRequest(
+  binding: HarnessDurableStateAdmissionBinding,
+  request: AdmissionReceipt["request"],
+) {
+  return (
+    binding.runId === request.runId &&
+    binding.evidenceId === request.evidenceId &&
+    same(binding.authority, request.authority) &&
+    binding.expectedGeneration === request.expectedGeneration &&
+    binding.outcome === request.outcome &&
+    same(binding.checkpoint, request.checkpoint) &&
+    same(binding.source.authority, binding.authority) &&
+    binding.source.generation === request.publisher.generation &&
+    binding.source.facetNonce === request.publisher.facetNonce &&
+    binding.source.generation === request.expectedGeneration &&
+    same(binding.source.checkpoint, request.expectedCheckpoint) &&
+    binding.source.admittedStepId === request.stepId
+  );
+}
+
+function resultMatchesRequest(
+  request: AdmissionReceipt["request"],
+  resolution: AdmissionReceipt["resolution"],
+) {
+  return (
+    resolution.evidenceId === request.evidenceId &&
+    resolution.stepId === request.stepId &&
+    resolution.outcome === request.outcome &&
+    same(resolution.expectedCheckpoint, request.expectedCheckpoint) &&
+    (request.outcome === "completed"
+      ? request.checkpoint !== null && same(resolution.checkpoint, request.checkpoint)
+      : request.checkpoint === null && same(resolution.checkpoint, request.expectedCheckpoint))
+  );
+}
+
+function currentSourceMatchesRequest(
+  source: AdmissionReceipt["source"],
+  request: AdmissionReceipt["request"],
+) {
+  if (
+    source.kind !== undefined ||
+    source.legacyBinding !== undefined ||
+    source.legacyResolution !== undefined ||
+    !same(request.authority, source.authority) ||
+    !same(request.publisher, source.publisher) ||
+    request.expectedGeneration !== source.publisher.generation
+  )
+    return false;
+
+  if (request.outcome === "notApplied")
+    return (
+      request.checkpoint === null &&
+      same(source.checkpoint, request.expectedCheckpoint) &&
+      (source.activeStepId === request.stepId ||
+        (source.activeStepId === null &&
+          (request.stepId === null || source.lastCommittedStepId !== request.stepId)))
+    );
+
+  if (request.checkpoint === null || !same(source.checkpoint, request.checkpoint)) return false;
+  if (source.activeStepId !== null) return false;
+  if (request.stepId === null) return same(request.expectedCheckpoint, request.checkpoint);
+  return (
+    source.lastCommittedStepId === request.stepId &&
+    same(source.lastCommittedFromCheckpoint, request.expectedCheckpoint) &&
+    source.checkpoint.checkpointId !== request.expectedCheckpoint.checkpointId
+  );
+}
+
+function legacySourceMatchesRequest(receipt: AdmissionReceipt) {
+  const { request, source, resolution } = receipt;
+  const binding = source.legacyBinding;
+  if (
+    source.kind !== "legacyResolution" ||
+    !binding ||
+    !source.legacyResolution ||
+    !same(source.legacyResolution, resolution) ||
+    !bindingMatchesRequest(binding, request) ||
+    !same(source.authority, request.authority) ||
+    !same(source.publisher, request.publisher) ||
+    source.activeStepId !== null
+  )
+    return false;
+
+  if (request.outcome === "notApplied")
+    return (
+      request.checkpoint === null &&
+      same(source.checkpoint, request.expectedCheckpoint) &&
+      same(resolution.checkpoint, request.expectedCheckpoint)
+    );
+
+  if (request.checkpoint === null || !same(source.checkpoint, request.checkpoint)) return false;
+  if (request.stepId === null) return same(request.expectedCheckpoint, request.checkpoint);
+  return (
+    source.lastCommittedStepId === request.stepId &&
+    same(source.lastCommittedFromCheckpoint, request.expectedCheckpoint) &&
+    source.checkpoint.checkpointId !== request.expectedCheckpoint.checkpointId
+  );
+}
+
+export function legacyAdmissionReceipt(
+  state: State,
+  runId: string,
+  command: AdmissionCommand,
+  binding: HarnessDurableStateAdmissionBinding | null | undefined,
+  resolution: AdmissionReceipt["resolution"],
+): AdmissionReceipt {
+  if (!binding) return fail("CONFLICT");
+  const source = {
+    ...sourceOf(state),
+    kind: "legacyResolution" as const,
+    legacyBinding: binding,
+    legacyResolution: resolution,
+  };
+  const receipt: AdmissionReceipt = {
+    version: 1,
+    request: requestOf(runId, command),
+    source,
+    resolution,
+  };
+  if (
+    !resultMatchesRequest(receipt.request, receipt.resolution) ||
+    !legacySourceMatchesRequest(receipt)
+  )
+    return fail("CONFLICT");
+  return receipt;
+}
+
 export function readAdmissionReceipt(
   database: HarnessFilesDatabase,
   evidenceId: string,
@@ -96,18 +238,10 @@ export function readAdmissionReceipt(
       receipt.request.evidenceId !== evidenceId ||
       receipt.request.expectedGeneration !== receipt.source.publisher.generation ||
       receipt.request.expectedGeneration !== receipt.request.publisher.generation ||
-      receipt.request.stepId !== receipt.source.activeStepId ||
-      !same(receipt.request.authority, receipt.source.authority) ||
-      !same(receipt.request.publisher, receipt.source.publisher) ||
-      !same(receipt.request.expectedCheckpoint, receipt.source.checkpoint) ||
-      receipt.resolution.evidenceId !== evidenceId ||
-      receipt.resolution.stepId !== receipt.request.stepId ||
-      receipt.resolution.outcome !== receipt.request.outcome ||
-      !same(receipt.resolution.expectedCheckpoint, receipt.request.expectedCheckpoint) ||
-      (receipt.request.outcome === "completed"
-        ? !same(receipt.resolution.checkpoint, receipt.request.checkpoint)
-        : receipt.request.checkpoint !== null ||
-          !same(receipt.resolution.checkpoint, receipt.request.expectedCheckpoint))
+      !resultMatchesRequest(receipt.request, receipt.resolution) ||
+      (receipt.source.kind === "legacyResolution"
+        ? !legacySourceMatchesRequest(receipt)
+        : !currentSourceMatchesRequest(receipt.source, receipt.request))
     )
       throw new Error("Admission receipt identity mismatch.");
     return receipt;
@@ -133,15 +267,7 @@ export function createAdmissionReceipt(
   return {
     version: 1,
     request: requestOf(runId, command),
-    source: {
-      authority: authorityOf(state.control),
-      publisher: publisherOf(state.publisher),
-      lifecycle: state.lifecycle,
-      checkpoint: state.checkpoint,
-      activeStepId: state.activeStepId,
-      lastCommittedStepId: state.lastCommittedStepId,
-      lastCommittedFromCheckpoint: state.lastCommittedFromCheckpoint,
-    },
+    source: sourceOf(state),
     resolution,
   };
 }

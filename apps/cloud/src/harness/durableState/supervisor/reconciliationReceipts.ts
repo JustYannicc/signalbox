@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { HarnessThreadSupervisorControlClaim, id, positive } from "../shared.ts";
+import type { HarnessDurableStateAdmissionBinding } from "../shared.ts";
 import {
   AdmissionResolution,
   Checkpoint,
@@ -215,6 +216,29 @@ export function createPendingReceipt(
     status: "pending",
     legacy: false,
     admissionResolution: null,
+  };
+}
+
+export function admissionBindingFromReceipt(
+  receipt: ReconciliationReceipt,
+  runId: string,
+): HarnessDurableStateAdmissionBinding | null {
+  const { request, source } = receipt;
+  if (receipt.status !== "pending" || source === null || request.outcome === "unknown") return null;
+  return {
+    runId,
+    evidenceId: request.evidenceId,
+    authority: receipt.authority,
+    expectedGeneration: request.expectedGeneration,
+    outcome: request.outcome,
+    checkpoint: request.checkpoint,
+    source: {
+      authority: source.authority,
+      generation: source.generation,
+      facetNonce: source.facetNonce,
+      checkpoint: source.checkpoint,
+      admittedStepId: source.admittedStepId,
+    },
   };
 }
 

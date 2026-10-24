@@ -45,6 +45,7 @@ export async function reconcile(
     reserve: false,
   });
   if (inspection.status === "committed") return { supervisor: inspection.supervisor, files: null };
+  const legacyBinding = inspection.status === "pending" ? inspection.admissionBinding : null;
 
   if (input.outcome === "completed" && input.checkpoint) {
     let files: HarnessFilesStoreResult;
@@ -71,6 +72,7 @@ export async function reconcile(
     await stores.filesStore.execute({
       type: "reconcileAdmission",
       validateOnly: true,
+      legacyBinding,
       runId: stores.runId,
       control: input.control,
       publisher: observed.currentPublisher,
@@ -112,6 +114,12 @@ export async function reconcile(
   });
   const current = reservation.supervisor;
   if (reservation.status === "committed") return { supervisor: current, files: null };
+  const reservedLegacyBinding =
+    legacyBinding !== null &&
+    reservation.status === "pending" &&
+    same(legacyBinding, reservation.admissionBinding)
+      ? reservation.admissionBinding
+      : null;
 
   const prepared = current.snapshot.preparedFacet;
 
@@ -151,6 +159,7 @@ export async function reconcile(
   if (input.outcome !== "unknown") {
     const admission = await stores.filesStore.execute({
       type: "reconcileAdmission",
+      legacyBinding: reservedLegacyBinding,
       runId: stores.runId,
       control: input.control,
       publisher: current.currentPublisher,

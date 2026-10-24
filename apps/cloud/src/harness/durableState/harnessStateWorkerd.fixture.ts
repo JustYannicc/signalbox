@@ -34,6 +34,21 @@ import {
   replayFilesAdmissionAfterEviction,
   runOverlappingReconciliation,
 } from "./harnessStateWorkerd.reconciliationOverlapR4.ts";
+import {
+  prepareCompletedR5LostReply,
+  reconcileCompletedNullStepR5,
+  replayCompletedR5AfterEviction,
+} from "./harnessStateWorkerd.reconciliationCompletedR5.ts";
+import {
+  attemptUnboundLegacyR5,
+  prepareLegacyR5Files,
+  prepareUnboundLegacyR5,
+  reserveLegacyR5Supervisor,
+} from "./harnessStateWorkerd.reconciliationLegacyR5.ts";
+import {
+  replayLegacyR5AfterEviction,
+  runLegacyR5Overlap,
+} from "./harnessStateWorkerd.reconciliationLegacyR5Overlap.ts";
 
 export { HarnessFilesStoreObject, HarnessRunStoreObject, HarnessThreadSupervisorObject };
 
@@ -85,6 +100,24 @@ export default {
       return Response.json(await inspectOverlappingReconciliation(env));
     if (path === "/reconciliation-overlap-r4-files-replay")
       return Response.json(await replayFilesAdmissionAfterEviction(env));
+    if (path === "/reconciliation-completed-r5-prepare")
+      return Response.json(await prepareCompletedR5LostReply(env));
+    if (path === "/reconciliation-completed-r5-replay")
+      return Response.json(await replayCompletedR5AfterEviction(env));
+    if (path === "/reconciliation-completed-null-r5")
+      return Response.json(await reconcileCompletedNullStepR5(env));
+    if (path === "/reconciliation-legacy-r5-prepare-files")
+      return Response.json(await prepareLegacyR5Files(env));
+    if (path === "/reconciliation-legacy-r5-reserve-supervisor")
+      return Response.json(await reserveLegacyR5Supervisor(env));
+    if (path === "/reconciliation-legacy-r5-run")
+      return Response.json(await runLegacyR5Overlap(env));
+    if (path === "/reconciliation-legacy-r5-replay")
+      return Response.json(await replayLegacyR5AfterEviction(env));
+    if (path === "/reconciliation-unbound-legacy-r5-prepare")
+      return Response.json(await prepareUnboundLegacyR5(env));
+    if (path === "/reconciliation-unbound-legacy-r5-attempt")
+      return Response.json(await attemptUnboundLegacyR5(env));
     return new Response("not found", { status: 404 });
   },
 };

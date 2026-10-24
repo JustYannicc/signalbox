@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import {
   digest,
+  HarnessDurableStateAdmissionBinding,
   HarnessThreadSupervisorControlClaim,
   HarnessThreadSupervisorPublisher,
   id,
@@ -78,6 +79,7 @@ export const HarnessFilesStoreCommand = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("reconcileAdmission"),
     validateOnly: Schema.optional(Schema.Boolean),
+    legacyBinding: Schema.optional(Schema.NullOr(HarnessDurableStateAdmissionBinding)),
     runId: id,
     control: Control,
     publisher: Publisher,

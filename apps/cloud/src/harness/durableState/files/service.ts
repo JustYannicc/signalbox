@@ -8,6 +8,7 @@ import {
   admissionReceiptMatches,
   createAdmissionReceipt,
   insertAdmissionReceipt,
+  legacyAdmissionReceipt,
   readAdmissionReceipt,
   resultWithAdmissionReceipt,
 } from "./admissionReceipts.ts";
@@ -314,7 +315,17 @@ export function createHarnessFilesStore(
                 };
                 if (state.admissionResolution?.evidenceId === command.evidenceId) {
                   if (!same(state.admissionResolution, resolution)) return fail("CONFLICT");
-                  return result(state, "unchanged");
+                  const legacyReceipt = legacyAdmissionReceipt(
+                    state,
+                    runId,
+                    command,
+                    command.legacyBinding,
+                    resolution,
+                  );
+                  if (command.validateOnly)
+                    return resultWithAdmissionReceipt(result(state, "unchanged"), legacyReceipt);
+                  insertAdmissionReceipt(database, legacyReceipt);
+                  return resultWithAdmissionReceipt(result(state, "unchanged"), legacyReceipt);
                 }
                 if (command.outcome === "notApplied") {
                   if (
@@ -340,11 +351,16 @@ export function createHarnessFilesStore(
                 if (!command.checkpoint || !same(state.checkpoint, command.checkpoint))
                   return fail("CONFLICT");
                 if (command.stepId === null) {
-                  if (state.activeStepId !== null) return fail("CONFLICT");
+                  if (
+                    state.activeStepId !== null ||
+                    !same(state.checkpoint, command.expectedCheckpoint)
+                  )
+                    return fail("CONFLICT");
                 } else if (
                   state.activeStepId !== null ||
                   state.lastCommittedStepId !== command.stepId ||
-                  !same(state.lastCommittedFromCheckpoint, command.expectedCheckpoint)
+                  !same(state.lastCommittedFromCheckpoint, command.expectedCheckpoint) ||
+                  state.checkpoint.checkpointId === command.expectedCheckpoint.checkpointId
                 ) {
                   return fail("CONFLICT");
                 }
