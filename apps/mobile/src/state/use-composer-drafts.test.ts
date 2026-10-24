@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { onTestFinished, vi } from "vite-plus/test";
 
 const composerDraftFileMocks = vi.hoisted(() => {
@@ -190,6 +191,7 @@ import {
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
   setComposerDraftText,
+  setNewTaskDraftFolderStart,
   insertComposerDraftContext,
   insertComposerDraftText,
   rememberComposerDraftSelection,
@@ -1921,6 +1923,69 @@ describe("mobile composer drafts", () => {
     expect(moved.project).toEqual({ ...to, createdAt });
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), from)).toEqual([]);
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
+  });
+
+  it("persists a folder start through restart and clears it when the draft changes project", async () => {
+    const from = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    };
+    const key = createNewTaskDraft(from);
+    const originalHome = {
+      ...from,
+      folderId: FolderId.make("shared-folder"),
+      name: "Shared folder",
+      file: true,
+      unfiledName: "Personal top level",
+    };
+    setComposerDraftText(key, "Keep this in the folder");
+    setNewTaskDraftFolderStart(key, originalHome);
+
+    await flushComposerDrafts();
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+    await waitForComposerDraftsLoaded();
+    expect(getComposerDraftSnapshot(key).project?.folderStart).toEqual({
+      folderId: FolderId.make("shared-folder"),
+      name: "Shared folder",
+      file: true,
+      unfiledName: "Personal top level",
+    });
+
+    const sameEnvironmentNewProject = {
+      environmentId: from.environmentId,
+      projectId: ProjectId.make("project-2"),
+    };
+    retargetNewTaskDraft(key, sameEnvironmentNewProject);
+    expect(getComposerDraftSnapshot(key).project?.folderStart).toBeUndefined();
+
+    const newEnvironment = {
+      environmentId: EnvironmentId.make("environment-2"),
+      projectId: ProjectId.make("project-3"),
+    };
+    retargetNewTaskDraft(key, newEnvironment);
+    setNewTaskDraftFolderStart(key, {
+      ...newEnvironment,
+      folderId: FolderId.make("new-folder"),
+      name: "New folder",
+      file: true,
+      unfiledName: "Top level",
+    });
+    retargetNewTaskDraft(key, {
+      environmentId: EnvironmentId.make("environment-3"),
+      projectId: ProjectId.make("project-4"),
+    });
+    expect(getComposerDraftSnapshot(key).project?.folderStart).toBeUndefined();
+
+    await flushComposerDrafts();
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+    await waitForComposerDraftsLoaded();
+    expect(getComposerDraftSnapshot(key).project).toMatchObject({
+      environmentId: "environment-3",
+      projectId: "project-4",
+    });
+    expect(getComposerDraftSnapshot(key).project?.folderStart).toBeUndefined();
   });
 
   it("hydrates the global sticky model selection", () => {

@@ -19,6 +19,7 @@ import {
   type ProviderOptionSelection,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { FolderId as FolderIdSchema, type FolderId } from "@t3tools/contracts/signalboxFolders";
 import * as Schema from "effect/Schema";
 import { useEffect } from "react";
 import { Atom } from "effect/reactivity";
@@ -339,6 +340,21 @@ export interface ComposerDraftProject {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly createdAt: string;
+  /** Missing until chosen; null means deliberately cleared. */
+  readonly folderStart?: ComposerDraftFolderStart | null;
+}
+
+/** The saved filing target; environment and project are already in the project stamp. */
+export interface ComposerDraftFolderStart {
+  readonly folderId: FolderId | null;
+  readonly name: string;
+  readonly file: boolean;
+  readonly unfiledName: string;
+}
+
+export interface ComposerDraftFolderStartInput extends ComposerDraftFolderStart {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
 }
 
 export interface ComposerDraftContent {
@@ -373,6 +389,16 @@ const ComposerDraftProjectSchema = Schema.Struct({
   environmentId: EnvironmentIdSchema,
   projectId: ProjectIdSchema,
   createdAt: Schema.String,
+  folderStart: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        folderId: Schema.NullOr(FolderIdSchema),
+        name: Schema.String,
+        file: Schema.Boolean,
+        unfiledName: Schema.String,
+      }),
+    ),
+  ),
 });
 
 // Recovery can merge two individually valid drafts beyond the send limit, just like
@@ -1920,6 +1946,37 @@ export function createNewTaskDraft(project: {
   return draftKey;
 }
 
+/** Saves the folder chosen for this draft when it still belongs to its stamped project. */
+export function setNewTaskDraftFolderStart(
+  draftKey: string,
+  start: ComposerDraftFolderStartInput | null,
+): void {
+  updateComposerDrafts((current) => {
+    const draft = current[draftKey];
+    const project = draft?.project;
+    if (!isNewTaskDraftKey(draftKey) || !draft || !project) return current;
+
+    const folderStart =
+      start !== null &&
+      start.environmentId === project.environmentId &&
+      start.projectId === project.projectId
+        ? {
+            folderId: start.folderId,
+            name: start.name,
+            file: start.file,
+            unfiledName: start.unfiledName,
+          }
+        : null;
+    if (JSON.stringify(project.folderStart) === JSON.stringify(folderStart)) {
+      return current;
+    }
+    return {
+      ...current,
+      [draftKey]: { ...draft, project: { ...project, folderStart } },
+    };
+  });
+}
+
 export function retargetNewTaskDraft(
   draftKey: string,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
@@ -1950,6 +2007,7 @@ export function retargetNewTaskDraft(
       [draftKey]: {
         ...retained,
         attachments,
+        // A folder start belongs to its project and must not follow a retarget.
         project: {
           environmentId: project.environmentId,
           projectId: project.projectId,
