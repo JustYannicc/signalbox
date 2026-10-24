@@ -3,7 +3,8 @@ import * as NodeFS from "node:fs";
 import * as NodeProcess from "node:process";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { coreutilsArtifactsAvailable, coreutilsModule } from "./CoreutilsArtifactFixture.ts";
-import { bashModule } from "./MachinePathFixture.ts";
+import { bashModule, type MachinePathFixtureOptions } from "./MachinePathFixture.ts";
+import { CHILD_PROGRAM_PATHS } from "../ChildProgramSet.ts";
 import { machinePathDockerFixture } from "./MachinePathDockerFixture.ts";
 import { writeUpperFile } from "./MachinePathFixtureSupport.ts";
 import type { MachineProgramInventory } from "../MachineProgramInventory.ts";
@@ -27,6 +28,38 @@ const inventory =
 const path = "/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin";
 
 describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux machine", () => {
+  it(
+    "matches native execution of a relative final symlink beneath the upper catalog directory",
+    () =>
+      withLinuxMachine(
+        async (fixture) => {
+          const command = "command -v py3versions; py3versions";
+          const native = fixture.native("/bin/bash", ["--noprofile", "--norc", "-c", command], {
+            PATH: "/bin",
+            HOME: "/home/node",
+            LC_ALL: "C",
+          });
+          expect(native.exitCode).not.toBe(127);
+          expect(native.stdout.startsWith("/bin/py3versions\n")).toBe(true);
+          const result = await fixture.run(command, "/bin");
+          expect(result.status.exitCode).toBe(native.exitCode);
+          expect(result.stdout).toBe(native.stdout);
+          expect(result.stderr).toBe(native.stderr);
+          expect(fixture.machineCalls).toContainEqual(
+            expect.objectContaining({
+              executable: "/bin/py3versions",
+              argv: ["py3versions"],
+            }),
+          );
+        },
+        (filesystem) => {
+          for (const path of Object.values(CHILD_PROGRAM_PATHS))
+            writeUpperFile(filesystem, path, "");
+        },
+      ),
+    120_000,
+  );
+
   it(
     "runs native commands and both pipeline stages",
     () =>
@@ -182,6 +215,7 @@ describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux m
 
 async function withLinuxMachine(
   run: (fixture: Awaited<ReturnType<typeof machinePathDockerFixture>>) => Promise<void>,
+  before?: MachinePathFixtureOptions["before"],
 ) {
   const fixture = await machinePathDockerFixture({
     inventory: inventory!,
@@ -189,9 +223,11 @@ async function withLinuxMachine(
     options: {
       threadId: "machine-path-native-docker-proof",
       home: "/home/node",
-      before(filesystem) {
-        writeUpperFile(filesystem, "/usr/bin/bash", "printf USER_BASH_ALIAS\n");
-      },
+      before:
+        before ??
+        ((filesystem) => {
+          writeUpperFile(filesystem, "/usr/bin/bash", "printf USER_BASH_ALIAS\n");
+        }),
       coreutilsModules: {
         head: coreutilsModule("head"),
         ls: coreutilsModule("ls"),

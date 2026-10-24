@@ -20,7 +20,10 @@ import type {
   Times,
 } from "./storage.ts";
 import { currentKernelSignal } from "./process/KernelExecution.ts";
-import type { WasiDirectoryEdgeStorage } from "./wasi/internal_wasi_paths.ts";
+import type {
+  WasiDirectoryEdgeStorage,
+  WasiSymlinkParentStorage,
+} from "./wasi/internal_wasi_paths.ts";
 import { kernelError } from "./filesystem/KernelFileSystemErrors.ts";
 import {
   basename,
@@ -34,7 +37,9 @@ const MAX_WASI_INODE = (1n << 64n) - 1n;
 const MAX_SYMLINKS = 40;
 
 /** Merges a live read-only source below one synchronous upper storage. */
-export class KernelLowerFileSystemStorage implements MaybeAsyncStorage, WasiDirectoryEdgeStorage {
+export class KernelLowerFileSystemStorage
+  implements MaybeAsyncStorage, WasiDirectoryEdgeStorage, WasiSymlinkParentStorage
+{
   readonly root: Inode;
   readonly #upper: Storage;
   readonly #upperPathByDirectory = new Map<Inode, string>();
@@ -158,6 +163,10 @@ export class KernelLowerFileSystemStorage implements MaybeAsyncStorage, WasiDire
       : this.#upper.readlink(inode);
   }
 
+  symlinkParent(inode: Inode): string | undefined {
+    return this.#sourceIndex?.symlinkParent(inode);
+  }
+
   readdir(inode: Inode): MaybePromise<DirectoryEntry[]> {
     const lowerPath = this.#lowerPath(inode);
     if (lowerPath !== undefined) {
@@ -270,8 +279,9 @@ export class KernelLowerFileSystemStorage implements MaybeAsyncStorage, WasiDire
         if (target.length === 0 || target.includes("\0")) throw kernelError("EINVAL");
         const targetComponents = target.split("/").filter((part) => part !== "");
         if (pending.length === 0 && pathRequiresDirectory(target)) requireDirectory = true;
-        if (target.startsWith("/")) stack.splice(1);
-        pending.unshift(...targetComponents);
+        const parentPath = target.startsWith("/") ? undefined : this.symlinkParent(inode);
+        if (target.startsWith("/") || parentPath !== undefined) stack.splice(1);
+        pending.unshift(...(parentPath?.split("/").filter(Boolean) ?? []), ...targetComponents);
         continue;
       }
       if (pending.length > 0 || requireDirectory) {

@@ -32,6 +32,11 @@ export interface WasiDirectoryEdgeStorage {
   directoryEntry(parent: Inode, child: Inode): MaybePromise<DirectoryEntry | undefined>;
 }
 
+/** An overlay may expose a lower symlink through a different logical directory. */
+export interface WasiSymlinkParentStorage {
+  symlinkParent(inode: Inode): string | undefined;
+}
+
 export interface WasiMountedStorage {
   readonly id: number;
   readonly path: string;
@@ -257,7 +262,9 @@ export class WasiPathResolver {
         if (++symlinkDepth > MAX_SYMLINKS) throw new WasiError(ELOOP);
         const target = yield* this.#complete(base.mount.storage.readlink(inode));
         if (target.length === 0 || target.includes("\0")) throw new WasiError(EINVAL);
-        if (target.startsWith("/")) {
+        const storage = base.mount.storage as WasiStorage & Partial<WasiSymlinkParentStorage>;
+        const parentPath = target.startsWith("/") ? undefined : storage.symlinkParent?.(inode);
+        if (target.startsWith("/") || parentPath !== undefined) {
           ancestors.splice(1);
           pathComponents.length = 0;
           const root = ancestors[0];
@@ -265,7 +272,10 @@ export class WasiPathResolver {
           current = root;
         }
         if (isLast) requireDirectory ||= pathRequiresDirectory(target);
-        const targetSegments = parseSymlinkTarget(target);
+        const targetSegments = [
+          ...(parentPath === undefined ? [] : parseSymlinkTarget(parentPath)),
+          ...parseSymlinkTarget(target),
+        ];
         pending.splice(index - 1, 1, ...targetSegments);
         index--;
         continue;

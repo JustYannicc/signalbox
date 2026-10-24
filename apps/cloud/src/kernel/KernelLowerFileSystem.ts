@@ -18,6 +18,8 @@ export interface KernelLowerFileSystemEntry {
   readonly metadata: PosixMetadata;
   readonly nativeIno?: bigint;
   readonly nativeDev?: bigint;
+  /** Physical lower parent for relative symlinks exposed through an ancestor alias. */
+  readonly symlinkParent?: string;
 }
 
 /** Read-only source for a lower POSIX filesystem. Paths are canonical absolute guest paths. */

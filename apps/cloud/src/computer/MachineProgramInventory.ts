@@ -57,7 +57,9 @@ export interface MachineProgramInventory {
 }
 
 /** Wire entry consumed by the lower filesystem adapter. It contains no file bytes. */
-export type MachineLowerFileSystemEntry = MachineProgramEntry;
+export type MachineLowerFileSystemEntry = MachineProgramEntry & {
+  readonly symlinkParent?: string;
+};
 
 export interface MachineProgramInventoryIndex {
   readonly path: readonly string[];
@@ -182,8 +184,14 @@ export function indexMachinePrograms(
   };
 }
 
-function atPath(entry: MachineProgramEntry, path: string): MachineProgramEntry {
-  return entry.path === path ? entry : { ...entry, path };
+function atPath(entry: MachineProgramEntry, path: string): MachineLowerFileSystemEntry {
+  return entry.path === path
+    ? entry
+    : {
+        ...entry,
+        path,
+        ...(entry.type === "symlink" ? { symlinkParent: parentPath(entry.path) } : {}),
+      };
 }
 
 function validateEnvelope(inventory: MachineProgramInventory): void {

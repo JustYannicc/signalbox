@@ -1,7 +1,9 @@
 import type { MachineFileStat } from "@signalbox/runner-protocol/MachineFilesProtocol";
 import type { KernelLowerFileSystemEntry } from "../kernel/KernelLowerFileSystem.ts";
 
-type MachineMetadata = Omit<MachineFileStat, "birthtimeNs">;
+type MachineMetadata = Omit<MachineFileStat, "birthtimeNs"> & {
+  readonly symlinkParent?: string;
+};
 
 /** Image and live metadata have the same kernel representation. */
 export function machineFileMetadata(
@@ -29,5 +31,6 @@ export function machineFileMetadata(
     },
     metadata: { mode: metadata.mode & 0o7777, uid: metadata.uid, gid: metadata.gid },
     ...(identity ? { nativeIno, nativeDev } : {}),
+    ...(metadata.symlinkParent === undefined ? {} : { symlinkParent: metadata.symlinkParent }),
   };
 }

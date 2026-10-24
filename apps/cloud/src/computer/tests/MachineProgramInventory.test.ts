@@ -79,7 +79,7 @@ it("follows ancestor symlinks while preserving final lstat and directory aliases
   const index = withEntries(symlink("/bin", "usr/bin"), symlink("/usr/bin/link", "tool"));
   expect(index.lookup(["/bin/tool", "/bin/link"])).toEqual([
     { ...inventory.entries[4], path: "/bin/tool" },
-    symlink("/bin/link", "tool"),
+    { ...symlink("/bin/link", "tool"), symlinkParent: "/usr/bin" },
   ]);
   expect(index.readlink("/bin/link")).toBe("tool");
   expect(index.readdir("/bin")?.map(({ path }) => path)).toEqual([

@@ -46,6 +46,11 @@ export class KernelLowerFileSystemSourceIndex {
     return this.#lowerPathsByInode.get(inode)?.values().next().value;
   }
 
+  symlinkParent(inode: Inode): string | undefined {
+    const path = this.pathForInode(inode);
+    return path === undefined ? undefined : this.#entryByPath.get(path)?.symlinkParent;
+  }
+
   cachedEntry(path: string): KernelLowerFileSystemEntry | undefined {
     return this.#entryByPath.get(path);
   }
@@ -171,8 +176,8 @@ export class KernelLowerFileSystemSourceIndex {
     const explicit = new Set<string>();
     const requested = new Set<string>();
     for (const path of paths) {
-      // Prefetch is only an optimization. Resolve dot segments lexically here;
-      // isLower() performs the POSIX walk and follows any symlink before `..`.
+      // Only the POSIX walk knows which parent follows a symlink before `..`.
+      if (typeof path === "string" && pathComponents(path).includes("..")) continue;
       const canonical = normalizePreparedPath(path);
       explicit.add(canonical);
       requested.add(canonical);
@@ -519,6 +524,10 @@ function validateEntry(path: string, entry: KernelLowerFileSystemEntry): void {
     throw new TypeError("Lower filesystem returned invalid entry metadata");
   }
   const stat = entry.stat;
+  if (entry.symlinkParent !== undefined) {
+    if (stat.type !== "symlink" || canonicalPath(entry.symlinkParent) !== entry.symlinkParent)
+      throw new TypeError("Lower filesystem returned invalid symlink parent");
+  }
   if (
     !["file", "directory", "symlink"].includes(stat.type) ||
     stat.size < 0n ||
