@@ -129,7 +129,7 @@ describe("native GitHub connect", () => {
 
         const authorize = new URL("/api/account/authorize", ORIGIN);
         authorize.search = new URLSearchParams({
-          provider: "email",
+          provider: "github",
           mode: "browser",
           origin: ORIGIN,
           returnTo: signinUrl.searchParams.get("returnTo")!,

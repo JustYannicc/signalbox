@@ -38,6 +38,7 @@ const AuthenticateErrorBody = Schema.Struct({
   code: Schema.optional(Schema.String),
   pending_authentication_token: Schema.optional(Schema.String),
   email: Schema.optional(Schema.String),
+  user: Schema.optional(WorkOSUserBody),
 });
 
 export interface WorkOSUser {
@@ -81,6 +82,18 @@ export class WorkOSEmailVerificationRequired extends Schema.TaggedError<WorkOSEm
   }
 }
 
+export class WorkOSOrganizationSelectionRequired extends Schema.TaggedError<WorkOSOrganizationSelectionRequired>()(
+  "WorkOSOrganizationSelectionRequired",
+  {
+    pendingToken: Schema.Redacted(Schema.String),
+    user: WorkOSUserBody,
+  },
+) {
+  override get message(): string {
+    return "WorkOS requires an organization to finish sign-in.";
+  }
+}
+
 export type WorkOSGrant =
   | { readonly kind: "authorization-code"; readonly code: string; readonly codeVerifier: string }
   /** A CLI's device code (RFC 8628) the person approved in their browser. */
@@ -89,10 +102,23 @@ export type WorkOSGrant =
       readonly kind: "email-verification";
       readonly code: string;
       readonly pendingToken: Redacted.Redacted<string>;
+    }
+  | {
+      readonly kind: "magic-auth";
+      readonly email: string;
+      readonly code: string;
+    }
+  | {
+      readonly kind: "organization-selection";
+      readonly organizationId: string;
+      readonly pendingToken: Redacted.Redacted<string>;
     };
 
 /** Either way a grant can fail. */
-export type WorkOSGrantError = WorkOSAuthenticateError | WorkOSEmailVerificationRequired;
+export type WorkOSGrantError =
+  | WorkOSAuthenticateError
+  | WorkOSEmailVerificationRequired
+  | WorkOSOrganizationSelectionRequired;
 
 /**
  * How a failed email-code exchange affects a paused sign-in. WorkOS does not
@@ -105,6 +131,7 @@ export const classifyEmailVerificationFailure = (
   error: WorkOSGrantError,
 ): "invalid-code" | "expired" | "failed" => {
   if (error._tag === "WorkOSEmailVerificationRequired") return "invalid-code";
+  if (error._tag === "WorkOSOrganizationSelectionRequired") return "failed";
   if (error.status === undefined || error.status >= 500) return "failed";
   return /expire|pending_authentication_token/i.test(`${error.code ?? ""} ${error.error ?? ""}`)
     ? "expired"
@@ -129,6 +156,18 @@ const grantBody = (grant: WorkOSGrant) => {
         grant_type: "urn:workos:oauth:grant-type:email-verification:code",
         code: grant.code,
         pending_authentication_token: Redacted.value(grant.pendingToken),
+      };
+    case "organization-selection":
+      return {
+        grant_type: "urn:workos:oauth:grant-type:organization-selection",
+        organization_id: grant.organizationId,
+        pending_authentication_token: Redacted.value(grant.pendingToken),
+      };
+    case "magic-auth":
+      return {
+        grant_type: "urn:workos:oauth:grant-type:magic-auth:code",
+        email: grant.email,
+        code: grant.code,
       };
   }
 };
@@ -161,6 +200,16 @@ export const authenticate = Effect.fn("WorkOS.authenticate")(function* (
     const body = yield* HttpClientResponse.schemaBodyJson(AuthenticateErrorBody)(response).pipe(
       Effect.orElseSucceed(() => ({}) as typeof AuthenticateErrorBody.Type),
     );
+    if (
+      body.code === "organization_selection_required" &&
+      body.pending_authentication_token &&
+      body.user
+    ) {
+      return yield* new WorkOSOrganizationSelectionRequired({
+        pendingToken: Redacted.make(body.pending_authentication_token),
+        user: body.user,
+      });
+    }
     if (
       body.code === "email_verification_required" &&
       body.pending_authentication_token &&

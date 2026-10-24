@@ -15,6 +15,7 @@ const ORIGIN = "http://127.0.0.1:5733";
 const dependencies = Layer.mergeAll(
   environmentAuthLayer,
   workosStubLayer({
+    "654321": { id: "user_magic", email: "magic@example.com" },
     "code-owner": { id: "user_owner", email: "owner@example.com" },
     "code-github": {
       verify: { code: "123456", user: { id: "user_github", email: "gh@example.com" } },
@@ -59,6 +60,36 @@ it.effect("browser sign-in, email verification and sign-out over HTTP", () =>
           );
 
         yield* Effect.promise(async () => {
+          const emailPath = `/api/account/authorize?provider=email&mode=browser&origin=${encodeURIComponent(ORIGIN)}&loginHint=magic%40example.com`;
+          for (const fetchSite of ["cross-site", "same-site"]) {
+            const blocked = await handler(
+              new Request(`${ORIGIN}${emailPath}`, {
+                headers: { "sec-fetch-site": fetchSite },
+              }),
+            );
+            expect(blocked.headers.get("location")).toContain("/sign-in?provider=email");
+            expect(blocked.headers.get("location")).not.toContain("verify=");
+          }
+          const firstParty = await handler(
+            new Request(`${ORIGIN}${emailPath}`, {
+              headers: { "sec-fetch-site": "same-origin" },
+            }),
+          );
+          expect(firstParty.headers.get("location")).toContain("/sign-in?verify=");
+          const nativeChallenge = "a".repeat(43);
+          const nativeEmail = await get(
+            `/api/account/authorize?provider=email&mode=native&origin=https%3A%2F%2Funregistered.example&returnUrl=signalbox%3A%2F%2Fauth%2Freturn&challenge=${nativeChallenge}&via=web`,
+          );
+          const nativeSignIn = nativeEmail.headers.get("location") ?? "";
+          const nativeSignInUrl = new URL(nativeSignIn, ORIGIN);
+          expect(nativeEmail.status).toBe(302);
+          expect(nativeSignIn.startsWith("/sign-in?")).toBe(true);
+          expect(nativeSignInUrl.origin).toBe(ORIGIN);
+          expect(nativeSignInUrl.searchParams.get("origin")).toBe("https://unregistered.example");
+          expect(nativeSignInUrl.searchParams.get("mode")).toBe("native");
+          expect(nativeSignInUrl.searchParams.get("challenge")).toBe(nativeChallenge);
+          expect(nativeSignInUrl.searchParams.get("via")).toBe("web");
+
           const invalid = await get(
             `/api/account/authorize?provider=google&mode=browser&origin=${ORIGIN}&returnTo=//evil.com`,
           );

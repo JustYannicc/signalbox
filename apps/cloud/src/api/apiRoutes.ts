@@ -1,5 +1,6 @@
 import { findOperation, jsonSchemaOf, type Operation, operations } from "@signalbox/api/catalog";
 import * as WorkOSClient from "@signalbox/account/WorkOSClient";
+import * as WorkOSPersonalAuthentication from "@signalbox/account/WorkOSPersonalAuthentication";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
@@ -99,7 +100,7 @@ const finishLogin = (request: Request) =>
     const body = decodeLoginToken(yield* Effect.promise(() => request.json().catch(() => null)));
     if (body._tag === "None") return problem(400, "invalid_input", "Send { deviceCode }.");
     const { accounts } = yield* CloudConfig.CloudConfig;
-    const user = yield* WorkOSClient.authenticate(accounts.workos, {
+    const user = yield* WorkOSPersonalAuthentication.authenticate(accounts.workos, {
       kind: "device-code",
       deviceCode: body.value.deviceCode,
     });

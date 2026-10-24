@@ -37,11 +37,21 @@ export class AccountVerificationCodeRejectedError extends Schema.TaggedError<Acc
 }
 
 interface PendingVerification<Attempt> {
-  readonly pendingToken: Redacted.Redacted<string>;
+  readonly grant:
+    | { readonly kind: "email-verification"; readonly pendingToken: Redacted.Redacted<string> }
+    | { readonly kind: "magic-auth"; readonly email: string };
   readonly email: string;
   readonly attempt: Attempt;
   readonly failures: number;
 }
+
+type VerificationGrant =
+  | {
+      readonly kind: "email-verification";
+      readonly pendingToken: Redacted.Redacted<string>;
+      readonly code: string;
+    }
+  | { readonly kind: "magic-auth"; readonly email: string; readonly code: string };
 
 export const makeAccountVerifications = <Attempt>() => {
   const store = makeExpiringStore<PendingVerification<Attempt>>({
@@ -51,7 +61,7 @@ export const makeAccountVerifications = <Attempt>() => {
 
   /** Parks a paused sign-in; returns the id the sign-in page posts back. */
   const issue = (input: {
-    readonly pendingToken: Redacted.Redacted<string>;
+    readonly grant: PendingVerification<Attempt>["grant"];
     readonly email: string;
     readonly attempt: Attempt;
   }) => {
@@ -62,13 +72,14 @@ export const makeAccountVerifications = <Attempt>() => {
   /** Exchanges `code` through `exchange` and, on success, closes the pause. */
   const verify = Effect.fn("AccountVerifications.verify")(function* (
     id: string,
+    code: string,
     exchange: (
-      pendingToken: Redacted.Redacted<string>,
+      grant: VerificationGrant,
     ) => Effect.Effect<WorkOSClient.WorkOSUser, WorkOSClient.WorkOSGrantError>,
   ) {
     const pending = yield* store.modify(id, (entry) => [entry, entry] as const);
     if (!pending) return yield* new AccountVerificationExpiredError();
-    const outcome = yield* exchange(pending.pendingToken).pipe(
+    const outcome = yield* exchange({ ...pending.grant, code }).pipe(
       Effect.map((user) => ({ _tag: "Verified", user }) as const),
       Effect.catch((error) => Effect.succeed({ _tag: "Failed", error } as const)),
     );

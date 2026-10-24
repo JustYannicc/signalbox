@@ -15,9 +15,17 @@
       "types": "./src/WorkOSClient.ts",
       "import": "./src/WorkOSClient.ts"
     },
+    "./WorkOSMagicAuth": {
+      "types": "./src/WorkOSMagicAuth.ts",
+      "import": "./src/WorkOSMagicAuth.ts"
+    },
     "./WorkOSOrganizations": {
       "types": "./src/WorkOSOrganizations.ts",
       "import": "./src/WorkOSOrganizations.ts"
+    },
+    "./WorkOSPersonalAuthentication": {
+      "types": "./src/WorkOSPersonalAuthentication.ts",
+      "import": "./src/WorkOSPersonalAuthentication.ts"
     },
     "./WorkOSPipes": {
       "types": "./src/WorkOSPipes.ts",
