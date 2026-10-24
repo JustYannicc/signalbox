@@ -63,6 +63,7 @@ export const sameAccess = <G>(a: TurnAccess<G> | undefined, b: TurnAccess<G> | u
 export const createHostSession = <G>(
   mcp: ReturnType<McpRoutes<G>["session"]>,
   continuations?: ContinuationJournal,
+  completeMcpTurn?: (epoch: number) => void,
 ) =>
   Effect.gen(function* () {
     const lock = yield* Semaphore.make(1);
@@ -152,6 +153,7 @@ export const createHostSession = <G>(
                     current.nativeOrdinal = event.providerTurn.ordinal;
                   }
                   if (matchesTerminal(event, current)) {
+                    completeMcpTurn?.(current.epoch);
                     mcp.retire(current.epoch);
                     current.finishing = true;
                     finishing = current;
