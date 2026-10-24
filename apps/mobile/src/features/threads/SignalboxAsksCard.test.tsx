@@ -24,7 +24,13 @@ vi.mock("../../state/use-thread-detail", () => ({
   useThreadProjection: () => (state.projection ? { projection: state.projection } : null),
 }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "answer-command" }));
+vi.mock("react-native-webview", () => ({ WebView: () => null }));
+vi.mock("expo-image", () => ({ Image: () => null }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../state/assets", () => ({ useAssetUrlState: () => ({ _tag: "Loading" }) }));
 vi.mock("react-native", () => ({
+  Platform: { OS: "ios", select: (options: { ios?: unknown; default?: unknown }) => options.ios },
+  PanResponder: { create: () => ({ panHandlers: {} }) },
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   ScrollView: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Pressable: ({
@@ -64,6 +70,7 @@ vi.mock("../../components/ui/AppText", () => ({
   ),
 }));
 
+import { nativeFontStyle } from "../asks/AskChoices";
 import { SignalboxAsksCard } from "./SignalboxAsksCard";
 
 const now = "2026-10-17T12:00:00.000Z";
@@ -144,6 +151,36 @@ function button(label: string) {
 }
 
 describe("mobile durable ask answering", () => {
+  it("answers an untouched slider in words only, and defers the other kit control", async () => {
+    const kit = (
+      id: string,
+      surface: SignalboxAskQuestion["surface"],
+      options: SignalboxAskQuestion["options"] = [],
+    ): SignalboxAskQuestion => ({ ...question(id), options, recommendation: null, surface });
+    const kitAsk: SignalboxAsk = {
+      ...ask,
+      questions: [
+        kit("one", { kind: "kit", component: "slider", props: { min: 0, max: 5, step: 1 } }),
+        kit("two", { kind: "kit", component: "ranking" }, [
+          { label: "A", value: "a" },
+          { label: "B", value: "b" },
+        ]),
+      ],
+    };
+    state.projection = { ...v2Projection, thread: { ...v2Projection.thread, asks: [kitAsk] } };
+    await render();
+    await typeAnswer("one", "Somewhere in the middle");
+    await act(() => button("Save answers, defer remainder").click());
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          answers: [{ questionId: "one", value: null, comment: "Somewhere in the middle" }],
+          deferredQuestionIds: ["two"],
+        }),
+      }),
+    );
+  });
+
   it("sends a round comment without inventing an answer", async () => {
     await render();
     const input = container.querySelector<HTMLTextAreaElement>(
@@ -243,4 +280,12 @@ describe("mobile durable ask answering", () => {
       }),
     );
   });
+});
+
+it("maps generic fonts but never takes a font name from Object's prototype", () => {
+  expect(nativeFontStyle("monospace")).toEqual({ fontFamily: "Menlo" });
+  expect(nativeFontStyle("system-ui")).toBeUndefined();
+  // A valid font name that is also an Object.prototype key stays a plain font name.
+  expect(nativeFontStyle("constructor")).toEqual({ fontFamily: "constructor" });
+  expect(nativeFontStyle("toString")).toEqual({ fontFamily: "toString" });
 });
