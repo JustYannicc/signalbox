@@ -1,9 +1,14 @@
-import { describe, expect, it, vi } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { RunId } from "@t3tools/contracts";
 import { POOL_LINK_PATH } from "@t3tools/contracts/accountHub";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
-import { isManagementRequest } from "./CliProxyApiRuntime.ts";
-import type { PoolCallEvent } from "./PoolTelemetry.ts";
+import { isManagementRequest, unknownRelease } from "./CliProxyApiRuntime.ts";
+import { observePoolCallEffect, type PoolCallEvent } from "./PoolTelemetry.ts";
 import { makeFakeCliProxyApi, makeMemoryPoolObject } from "./testing.ts";
 
 const actor = { userId: "user-1" };
@@ -30,6 +35,32 @@ const modelRequest = () =>
   });
 
 describe("pool release attribution", () => {
+  it.effect("measures Effect-backed calls with the active clock", () => {
+    const events: Array<PoolCallEvent> = [];
+    return Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const pending = yield* Effect.forkChild(
+        observePoolCallEffect({
+          request: new Request("https://pool.test/v1/messages"),
+          baseUrl: "https://pool.test",
+          backing: "managed",
+          release: () => unknownRelease,
+          submit: (event) => events.push(event),
+          send: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Effect.sleep(Duration.millis(37));
+              return new Response("ok");
+            }),
+        }),
+      );
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust(37);
+      expect((yield* Fiber.join(pending)).status).toBe(200);
+      expect(events[0]?.poolCall.headersMs).toBe(37);
+    });
+  });
+
   it("keeps link affinity working without exporting it as verified thread correlation", async () => {
     const events: Array<PoolCallEvent> = [];
     const pool = makeMemoryPoolObject(undefined, (event) => events.push(event));
@@ -80,11 +111,8 @@ describe("pool release attribution", () => {
     const paths: Array<string> = [];
     const serve = pool.cliProxyApi.serve;
     let failure: "http" | "transport" | null = null;
-    let clock = 0;
-    const time = vi.spyOn(performance, "now").mockImplementation(() => clock);
     pool.cliProxyApi.serve = async (request) => {
       paths.push(new URL(request.url).pathname);
-      clock += 37;
       if (!isManagementRequest(request) && failure === "transport") throw new Error(canary);
       const response =
         failure === "http" && !isManagementRequest(request)
@@ -129,7 +157,12 @@ describe("pool release attribution", () => {
         turn: { id: trace.runId, traceId: trace.traceId },
         cliProxyApi: known,
         status: 503,
-        poolCall: { backing: "managed", kind: "model", outcome: "http_error", headersMs: 37 },
+        poolCall: {
+          backing: "managed",
+          kind: "model",
+          outcome: "http_error",
+          headersMs: expect.any(Number),
+        },
       });
       failure = "transport";
       const transport = await pool.api.forwardModel(actor, "/v1/messages", modelRequest(), thread);
@@ -137,12 +170,11 @@ describe("pool release attribution", () => {
       expect(events.at(-1)).toMatchObject({
         cliProxyApi: known,
         status: 502,
-        poolCall: { headersMs: 37, outcome: "transport_error" },
+        poolCall: { headersMs: expect.any(Number), outcome: "transport_error" },
       });
       expect(paths).toEqual(["/v1/messages", "/v1/messages"]);
       expect(JSON.stringify(events)).not.toContain(canary);
     } finally {
-      time.mockRestore();
       await pool.runtime.dispose();
     }
   });
