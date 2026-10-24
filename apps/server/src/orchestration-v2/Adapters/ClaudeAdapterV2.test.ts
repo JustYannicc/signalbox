@@ -113,6 +113,39 @@ import {
 } from "../testkit/fixtures/shared.ts";
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
+const providerEventLatencyLogName = "orchestration-v2.provider-event-latency";
+type JsonRecord = Readonly<Record<string, unknown>>;
+type ProviderEventLatencyLogRecord = {
+  readonly name: typeof providerEventLatencyLogName;
+  readonly fields: JsonRecord;
+};
+
+const isJsonRecord = (value: unknown): value is JsonRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseProviderEventLatencyLogRecord = (
+  line: string,
+): ProviderEventLatencyLogRecord | undefined => {
+  const parsed: unknown = JSON.parse(line);
+  if (!isJsonRecord(parsed)) throw new Error("Expected a structured JSON log record.");
+  const message = parsed.message;
+  if (!Array.isArray(message) || message[0] !== providerEventLatencyLogName) return undefined;
+  if (message.length !== 2 || !isJsonRecord(message[1])) {
+    throw new Error("Expected provider event latency fields in the structured log message.");
+  }
+  return { name: providerEventLatencyLogName, fields: message[1] };
+};
+
+const latencyStringField = (record: ProviderEventLatencyLogRecord, key: string) => {
+  const value = record.fields[key];
+  return typeof value === "string" ? value : undefined;
+};
+
+const latencyNumberField = (record: ProviderEventLatencyLogRecord, key: string) => {
+  const value = record.fields[key];
+  return typeof value === "number" ? value : undefined;
+};
+
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
 });
@@ -2404,6 +2437,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
     readonly freshQueueOnReopen?: boolean;
+    // signalbox: Trace tests drive the SDK iterator and pause delivery to observe the real event queue.
     readonly useSdkQueryRunner?: boolean;
     readonly holdEventConsumer?: boolean;
   }) =>
@@ -2612,12 +2646,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         queryRunner,
       });
       const threadId = ThreadId.make("thread-claude-wake");
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
-        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
-      });
+      // signalbox: The trace lifecycle regression closes and reopens this runtime on the same adapter.
+      const runtimeScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const runtime = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        })
+        .pipe(Effect.provideService(Scope.Scope, runtimeScope));
       const providerThread =
         options?.initialSnapshot === undefined
           ? yield* runtime.ensureThread({
@@ -2668,6 +2708,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       return {
         adapter,
         runtime,
+        releaseSession: () => Scope.close(runtimeScope, Exit.void),
         providerThread,
         threadId,
         sdkMessages,
@@ -6673,14 +6714,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect("joins iterator yields to held replay and measures the real adapter queue", () => {
-    const logLines: string[] = [];
-    const logCapture = Logger.map(Logger.formatJson, (line) => void logLines.push(line));
-    const stringField = (line: string, key: string) =>
-      new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`).exec(line)?.[1];
-    const numberField = (line: string, key: string) => {
-      const value = new RegExp(`"${key}"\\s*:\\s*(\\d+)`).exec(line)?.[1];
-      return value === undefined ? undefined : Number(value);
-    };
+    const latencyRecords: Array<ProviderEventLatencyLogRecord> = [];
+    const logCapture = Logger.map(Logger.formatJson, (line) => {
+      const record = parseProviderEventLatencyLogRecord(line);
+      if (record !== undefined) latencyRecords.push(record);
+    });
     return Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarnessWithOptions({
@@ -6749,29 +6787,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual(harness.events, []);
 
-        const heldYield = logLines.find(
-          (line) => line.includes("sdk.yield") && line.includes(heldUuid),
+        const heldYield = latencyRecords.find(
+          (record) =>
+            latencyStringField(record, "stage") === "sdk.yield" &&
+            latencyStringField(record, "nativeFrameId") === heldUuid,
         );
         assert.isDefined(heldYield);
-        const sdkTraceId = stringField(heldYield!, "traceId");
+        const sdkTraceId = latencyStringField(heldYield!, "traceId");
         assert.isDefined(sdkTraceId);
         for (const stage of ["adapter.entry", "held-frame.release"]) {
-          const line = logLines.find(
-            (candidate) => candidate.includes(stage) && candidate.includes(heldUuid),
+          const record = latencyRecords.find(
+            (candidate) =>
+              latencyStringField(candidate, "stage") === stage &&
+              latencyStringField(candidate, "nativeFrameId") === heldUuid,
           );
-          assert.isDefined(line, `${stage} retained the held SDK frame`);
-          assert.equal(stringField(line!, "traceId"), sdkTraceId);
+          assert.isDefined(record, `${stage} retained the held SDK frame`);
+          assert.equal(latencyStringField(record!, "traceId"), sdkTraceId);
         }
 
-        const offered = logLines.find(
-          (line) => line.includes("provider.queue.offer") && line.includes(sdkTraceId!),
+        const offered = latencyRecords.find(
+          (record) =>
+            latencyStringField(record, "stage") === "provider.queue.offer" &&
+            latencyStringField(record, "sdkFrameTraceId") === sdkTraceId,
         );
         assert.isDefined(offered, "the held frame's provider event was queued");
-        const providerTraceId = stringField(offered!, "traceId");
+        const providerTraceId = latencyStringField(offered!, "traceId");
         assert.isDefined(providerTraceId);
-        assert.isTrue((numberField(offered!, "queueDepth") ?? 0) > 0);
-        assert.isTrue((numberField(offered!, "queueHighWaterObserved") ?? 0) > 0);
-        assert.isFalse(logLines.join("\n").includes("held private text"));
+        assert.isTrue((latencyNumberField(offered!, "queueDepth") ?? 0) > 0);
+        assert.isTrue((latencyNumberField(offered!, "queueHighWaterObserved") ?? 0) > 0);
+        assert.isFalse(JSON.stringify(latencyRecords).includes("held private text"));
 
         yield* harness.startEventConsumer();
         assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
@@ -6784,29 +6828,69 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ).length,
           1,
         );
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "assistant"
+              ? [event.message.text]
+              : [],
+          ),
+          ["Setup frame.", "held private text"],
+          "held assistant events keep their original order",
+        );
 
-        const taken = logLines.find(
-          (line) => line.includes("provider.queue.take") && line.includes(providerTraceId!),
+        const taken = latencyRecords.find(
+          (record) =>
+            latencyStringField(record, "stage") === "provider.queue.take" &&
+            latencyStringField(record, "traceId") === providerTraceId,
         );
         assert.isDefined(taken);
-        const drained = logLines.findLast(
-          (line) => line.includes("provider.queue.take") && numberField(line, "queueDepth") === 0,
+        const drained = latencyRecords.findLast(
+          (record) =>
+            latencyStringField(record, "stage") === "provider.queue.take" &&
+            latencyNumberField(record, "queueDepth") === 0,
         );
         assert.isDefined(drained, "the sampled queue depth returned to zero after draining");
         assert.isTrue(
-          (numberField(drained!, "queueHighWaterObserved") ?? 0) >=
-            (numberField(offered!, "queueHighWaterObserved") ?? 0),
+          (latencyNumberField(drained!, "queueHighWaterObserved") ?? 0) >=
+            (latencyNumberField(offered!, "queueHighWaterObserved") ?? 0),
           "draining resets depth while preserving the session high-water mark",
         );
 
-        const nextProviderSessionId = ProviderSessionId.make("provider-session-claude-trace-reset");
+        const firstSessionOffer = latencyRecords.find(
+          (record) =>
+            latencyStringField(record, "stage") === "provider.queue.offer" &&
+            latencyNumberField(record, "streamOrdinal") === 1,
+        );
+        assert.isDefined(firstSessionOffer, "the original adapter session emits traced events");
+        const firstSessionStreamId = latencyStringField(firstSessionOffer!, "streamId");
+        const firstSessionTraceId = latencyStringField(firstSessionOffer!, "traceId");
+        assert.isDefined(firstSessionStreamId);
+        assert.isDefined(firstSessionTraceId);
+        const previousHighWater = Math.max(
+          ...latencyRecords
+            .filter(
+              (record) =>
+                latencyStringField(record, "stage") === "provider.queue.offer" &&
+                latencyStringField(record, "streamId") === firstSessionStreamId,
+            )
+            .map((record) => latencyNumberField(record, "queueHighWaterObserved") ?? 0),
+        );
+
+        yield* harness.releaseSession();
+        const reopenedRecordStart = latencyRecords.length;
+        const nextProviderSessionId = harness.runtime.providerSessionId;
         const nextThreadId = ThreadId.make("thread-claude-trace-reset");
-        const nextSession = yield* harness.adapter.openSession({
-          threadId: nextThreadId,
-          providerSessionId: nextProviderSessionId,
-          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
-        });
+        const nextScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+          Scope.close(scope, Exit.void),
+        );
+        const nextSession = yield* harness.adapter
+          .openSession({
+            threadId: nextThreadId,
+            providerSessionId: nextProviderSessionId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          })
+          .pipe(Effect.provideService(Scope.Scope, nextScope));
         const nextProviderThread = yield* nextSession.ensureThread({
           threadId: nextThreadId,
           modelSelection: CLAUDE_TEST_MODEL_SELECTION,
@@ -6822,14 +6906,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        const resetOffer = logLines.find(
-          (line) => line.includes("provider.queue.offer") && line.includes(nextProviderSessionId),
-        );
-        assert.isDefined(resetOffer, "the new adapter session starts a new trace stream");
-        assert.equal(numberField(resetOffer!, "streamOrdinal"), 1);
+        const resetOffer = latencyRecords
+          .slice(reopenedRecordStart)
+          .find((record) => latencyStringField(record, "stage") === "provider.queue.offer");
+        assert.isDefined(resetOffer, "the reopened adapter session starts a trace stream");
+        assert.notEqual(latencyStringField(resetOffer!, "streamId"), firstSessionStreamId);
+        assert.notEqual(latencyStringField(resetOffer!, "traceId"), firstSessionTraceId);
+        assert.equal(latencyNumberField(resetOffer!, "streamOrdinal"), 1);
         assert.equal(
-          numberField(resetOffer!, "queueHighWaterObserved"),
-          numberField(resetOffer!, "queueDepth"),
+          latencyNumberField(resetOffer!, "queueHighWaterObserved"),
+          latencyNumberField(resetOffer!, "queueDepth"),
+          "the reopened stream starts a new queue high-water mark",
+        );
+        const reopenedHighWater = latencyNumberField(resetOffer!, "queueHighWaterObserved") ?? 0;
+        assert.isTrue(
+          previousHighWater > reopenedHighWater,
+          `expected queue high-water to reset from ${previousHighWater} to ${reopenedHighWater}`,
         );
       }).pipe(
         Effect.provide(

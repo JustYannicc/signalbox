@@ -1,3 +1,4 @@
+import { logProviderEventLatency } from "@t3tools/provider-core/server/ProviderEventLatencyTrace";
 import type {
   Query as ClaudeQuery,
   ForkSessionOptions,
@@ -13,11 +14,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import {
-  createClaudeSdkStreamId,
-  logClaudeEventLatency,
-  recordClaudeSdkYield,
-} from "./ClaudeEventLatencyTrace.ts";
+import { createClaudeSdkStreamId, recordClaudeSdkYield } from "./ClaudeEventLatencyTrace.ts";
 import {
   ClaudeAgentSdkQueryRunner,
   ClaudeAgentSdkQueryRunnerError,
@@ -365,31 +362,8 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
                 const trace = yield* Effect.sync(() =>
                   recordClaudeSdkYield(message, sdkStreamId, ++sdkStreamOrdinal),
                 );
-                yield* logClaudeEventLatency(
-                  "sdk.yield",
-                  {
-                    traceId: trace.traceId,
-                    streamId: trace.streamId,
-                    streamOrdinal: trace.streamOrdinal,
-                    sdkType: trace.sdkType,
-                    ...(trace.sdkSubtype === undefined ? {} : { sdkSubtype: trace.sdkSubtype }),
-                    ...(trace.nativeSessionId === undefined
-                      ? {}
-                      : { nativeSessionId: trace.nativeSessionId }),
-                    ...(trace.nativeFrameId === undefined
-                      ? {}
-                      : { nativeFrameId: trace.nativeFrameId }),
-                    ...(trace.nativeMessageId === undefined
-                      ? {}
-                      : { nativeMessageId: trace.nativeMessageId }),
-                    ...(trace.parentToolUseId === undefined
-                      ? {}
-                      : { parentToolUseId: trace.parentToolUseId }),
-                    ...(trace.toolUseId === undefined ? {} : { toolUseId: trace.toolUseId }),
-                    ...(trace.taskId === undefined ? {} : { taskId: trace.taskId }),
-                  },
-                  trace.yieldedAtMs,
-                );
+                const { yieldedAtMs, ...fields } = trace;
+                yield* logProviderEventLatency("sdk.yield", fields, yieldedAtMs);
               }
               yield* logProtocolEvent({
                 direction: "incoming",

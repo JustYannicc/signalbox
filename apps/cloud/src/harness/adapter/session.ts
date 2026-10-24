@@ -191,7 +191,8 @@ export const openAdapterSession = (
               if (!forwarded) return;
               const trace = providerEventLatencyTraceFor(event);
               if (trace !== undefined) {
-                yield* logProviderEventLatency("runner.host-forward", trace, {
+                yield* logProviderEventLatency("runner.host-forward", {
+                  ...trace,
                   runId,
                   threadId: input.session.threadId,
                   providerSessionId: input.session.providerSessionId,

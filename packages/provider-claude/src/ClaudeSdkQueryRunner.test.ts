@@ -243,7 +243,7 @@ describe("portable Claude SDK query lifecycle", () => {
 
         assert.deepEqual(received, [frame]);
         assert.isUndefined(claudeSdkFrameTraceFor(frame));
-        assert.notInclude(logs.join("\n"), "orchestration-v2.claude-event-latency");
+        assert.notInclude(logs.join("\n"), "orchestration-v2.provider-event-latency");
         yield* session.close;
       }),
     ),

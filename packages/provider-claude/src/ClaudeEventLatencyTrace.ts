@@ -2,14 +2,10 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   providerEventLatencyClock,
-  providerEventLatencyTraceFor,
-  rememberProviderEventLatencyTrace,
   type ProviderEventLatencyTrace,
 } from "@t3tools/provider-core/server/ProviderEventLatencyTrace";
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-
-const LOG_NAME = "orchestration-v2.claude-event-latency";
+import * as Predicate from "effect/Predicate";
 
 export interface ClaudeSdkFrameTrace {
   readonly traceId: string;
@@ -26,8 +22,6 @@ export interface ClaudeSdkFrameTrace {
   readonly yieldedAtMs: number;
 }
 
-export type ClaudeProviderEventTrace = ProviderEventLatencyTrace;
-
 export const CurrentClaudeSdkFrameTrace = Context.Reference<ClaudeSdkFrameTrace | undefined>(
   "@signalbox/provider-claude/ClaudeEventLatencyTrace/CurrentSdkFrameTrace",
   { defaultValue: () => undefined },
@@ -35,13 +29,14 @@ export const CurrentClaudeSdkFrameTrace = Context.Reference<ClaudeSdkFrameTrace 
 
 const sdkFrameTraces = new WeakMap<SDKMessage, ClaudeSdkFrameTrace>();
 let nextSdkQueryOrdinal = 0;
+let nextProviderOpenOrdinal = 0;
 // Native IDs are correlation hints, not an excuse to log unbounded SDK strings.
 const MAX_IDENTIFIER_LENGTH = 128;
 
-const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+const record = (value: unknown) => (Predicate.isObject(value) ? value : undefined);
+
+const optionalField = (name: string, value: string | number | undefined) =>
+  value === undefined ? {} : { [name]: value };
 
 const stringField = (value: unknown, key: string): string | undefined => {
   const field = record(value)?.[key];
@@ -56,32 +51,18 @@ const numberField = (value: unknown, key: string): number | undefined => {
 const sdkMessageIds = (message: SDKMessage) => {
   const sdkEvent = record(message)?.event;
   return {
-    ...(stringField(message, "session_id") === undefined
-      ? {}
-      : { nativeSessionId: stringField(message, "session_id")! }),
-    ...(stringField(message, "uuid") === undefined
-      ? {}
-      : { nativeFrameId: stringField(message, "uuid")! }),
-    ...(stringField(record(sdkEvent)?.message, "id") === undefined
-      ? {}
-      : { nativeMessageId: stringField(record(sdkEvent)?.message, "id")! }),
-    ...(stringField(message, "parent_tool_use_id") === undefined
-      ? {}
-      : { parentToolUseId: stringField(message, "parent_tool_use_id")! }),
-    ...(stringField(message, "tool_use_id") === undefined
-      ? {}
-      : { toolUseId: stringField(message, "tool_use_id")! }),
-    ...(stringField(message, "task_id") === undefined
-      ? {}
-      : { taskId: stringField(message, "task_id")! }),
+    ...optionalField("nativeSessionId", stringField(message, "session_id")),
+    ...optionalField("nativeFrameId", stringField(message, "uuid")),
+    ...optionalField("nativeMessageId", stringField(record(sdkEvent)?.message, "id")),
+    ...optionalField("parentToolUseId", stringField(message, "parent_tool_use_id")),
+    ...optionalField("toolUseId", stringField(message, "tool_use_id")),
+    ...optionalField("taskId", stringField(message, "task_id")),
   };
 };
 
 export const describeClaudeSdkFrame = (message: SDKMessage) => ({
   sdkType: message.type,
-  ...(stringField(message, "subtype") === undefined
-    ? {}
-    : { sdkSubtype: stringField(message, "subtype")! }),
+  ...optionalField("sdkSubtype", stringField(message, "subtype")),
   ...sdkMessageIds(message),
 });
 
@@ -90,7 +71,7 @@ export function createClaudeSdkStreamId(providerSessionId: string): string {
 }
 
 export const createClaudeProviderEventStreamId = (providerSessionId: string) =>
-  `${providerEventLatencyClock.realmId}/claude-provider/${providerSessionId}`;
+  `${providerEventLatencyClock.realmId}/claude-provider/${providerSessionId}/${++nextProviderOpenOrdinal}`;
 
 export function recordClaudeSdkYield(
   message: SDKMessage,
@@ -149,7 +130,7 @@ export function makeClaudeProviderEventTrace(input: {
   readonly streamId: string;
   readonly streamOrdinal: number;
   readonly sdkFrameTrace?: ClaudeSdkFrameTrace;
-}): ClaudeProviderEventTrace {
+}): ProviderEventLatencyTrace {
   const payload = eventPayload(input.event);
   const nativeRef =
     record(payload)?.nativeItemRef ??
@@ -160,13 +141,9 @@ export function makeClaudeProviderEventTrace(input: {
     streamId: input.streamId,
     streamOrdinal: input.streamOrdinal,
     eventType: input.event.type,
-    ...(stringField(payload, "id") === undefined ? {} : { entityId: stringField(payload, "id")! }),
-    ...(stringField(nativeRef, "nativeId") === undefined
-      ? {}
-      : { nativeId: stringField(nativeRef, "nativeId")! }),
-    ...(numberField(payload, "ordinal") === undefined
-      ? {}
-      : { entityOrdinal: numberField(payload, "ordinal")! }),
+    ...optionalField("entityId", stringField(payload, "id")),
+    ...optionalField("nativeId", stringField(nativeRef, "nativeId")),
+    ...optionalField("entityOrdinal", numberField(payload, "ordinal")),
     ...(input.sdkFrameTrace === undefined
       ? {}
       : {
@@ -176,29 +153,3 @@ export function makeClaudeProviderEventTrace(input: {
     createdAtMs: providerEventLatencyClock.nowMs(),
   };
 }
-
-export function rememberClaudeProviderEventTrace(
-  event: ProviderAdapterV2Event,
-  trace: ClaudeProviderEventTrace,
-): void {
-  rememberProviderEventLatencyTrace(event, trace);
-}
-
-export const claudeProviderEventTraceFor = (event: ProviderAdapterV2Event) =>
-  providerEventLatencyTraceFor(event);
-
-export const logClaudeEventLatency = (
-  stage: string,
-  fields: Readonly<Record<string, unknown>>,
-  monotonicMs?: number,
-) =>
-  Effect.suspend(() =>
-    Effect.logDebug(LOG_NAME, {
-      stage,
-      clockSource: providerEventLatencyClock.source,
-      clockRealmId: providerEventLatencyClock.realmId,
-      clockOriginMs: providerEventLatencyClock.originMs,
-      monotonicMs: monotonicMs ?? providerEventLatencyClock.nowMs(),
-      ...fields,
-    }),
-  );

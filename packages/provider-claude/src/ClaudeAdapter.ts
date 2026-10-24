@@ -1,3 +1,8 @@
+import {
+  logProviderEventLatency,
+  providerEventLatencyTraceFor,
+  rememberProviderEventLatencyTrace,
+} from "@t3tools/provider-core/server/ProviderEventLatencyTrace";
 import * as Base64 from "effect/encoding/Base64";
 import {
   claudeRecoveryAdmission,
@@ -137,14 +142,11 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import {
-  claudeProviderEventTraceFor,
   claudeSdkFrameTraceFor,
   createClaudeProviderEventStreamId,
   CurrentClaudeSdkFrameTrace,
   describeClaudeSdkFrame,
-  logClaudeEventLatency,
   makeClaudeProviderEventTrace,
-  rememberClaudeProviderEventTrace,
 } from "./ClaudeEventLatencyTrace.ts";
 
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
@@ -3163,9 +3165,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return [maximum, maximum] as const;
               },
             );
-            const trace = claudeProviderEventTraceFor(event);
+            const trace = providerEventLatencyTraceFor(event);
             if (trace !== undefined) {
-              yield* logClaudeEventLatency(stage, {
+              yield* logProviderEventLatency(stage, {
                 ...trace,
                 queueDepth,
                 queueHighWaterObserved,
@@ -3189,7 +3191,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 streamOrdinal,
                 ...(sdkFrameTrace === undefined ? {} : { sdkFrameTrace }),
               });
-              rememberClaudeProviderEventTrace(event, trace);
+              rememberProviderEventLatencyTrace(event, trace);
             }
             const offered = yield* Queue.offer(events, event);
             if (offered && eventLatencyTracingEnabled) {
@@ -7357,7 +7359,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           for (const message of held) {
             if (eventLatencyTracingEnabled) {
               const trace = claudeSdkFrameTraceFor(message);
-              yield* logClaudeEventLatency("held-frame.release", {
+              yield* logProviderEventLatency("held-frame.release", {
                 ...(trace === undefined ? {} : { ...trace }),
                 ...describeClaudeSdkFrame(message),
                 releaseOrdinal: ++releaseOrdinal,
@@ -7376,7 +7378,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const message = input.message;
           if (eventLatencyTracingEnabled) {
             const trace = claudeSdkFrameTraceFor(message);
-            yield* logClaudeEventLatency("adapter.entry", {
+            yield* logProviderEventLatency("adapter.entry", {
               ...(trace === undefined ? {} : { ...trace }),
               ...describeClaudeSdkFrame(message),
             });
