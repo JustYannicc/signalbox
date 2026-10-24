@@ -62,9 +62,11 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
@@ -111,6 +113,39 @@ import {
 } from "../testkit/fixtures/shared.ts";
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
+const providerEventLatencyLogName = "orchestration-v2.provider-event-latency";
+type JsonRecord = Readonly<Record<string, unknown>>;
+type ProviderEventLatencyLogRecord = {
+  readonly name: typeof providerEventLatencyLogName;
+  readonly fields: JsonRecord;
+};
+
+const isJsonRecord = (value: unknown): value is JsonRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseProviderEventLatencyLogRecord = (
+  line: string,
+): ProviderEventLatencyLogRecord | undefined => {
+  const parsed: unknown = JSON.parse(line);
+  if (!isJsonRecord(parsed)) throw new Error("Expected a structured JSON log record.");
+  const message = parsed.message;
+  if (!Array.isArray(message) || message[0] !== providerEventLatencyLogName) return undefined;
+  if (message.length !== 2 || !isJsonRecord(message[1])) {
+    throw new Error("Expected provider event latency fields in the structured log message.");
+  }
+  return { name: providerEventLatencyLogName, fields: message[1] };
+};
+
+const latencyStringField = (record: ProviderEventLatencyLogRecord, key: string) => {
+  const value = record.fields[key];
+  return typeof value === "string" ? value : undefined;
+};
+
+const latencyNumberField = (record: ProviderEventLatencyLogRecord, key: string) => {
+  const value = record.fields[key];
+  return typeof value === "number" ? value : undefined;
+};
+
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
 });
@@ -2402,6 +2437,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
     readonly freshQueueOnReopen?: boolean;
+    // signalbox: Trace tests drive the SDK iterator and pause delivery to observe the real event queue.
+    readonly useSdkQueryRunner?: boolean;
+    readonly holdEventConsumer?: boolean;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2412,15 +2450,48 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const sdkMessages = yield* Queue.unbounded<SDKMessage>();
       const processQueues: Array<Queue.Queue<SDKMessage>> = [];
       const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
+      const nativeSdkFrames: Array<SDKMessage> = [];
+      const nativeSdkFrameWaiters: Array<(message: SDKMessage | undefined) => void> = [];
+      const nativeSdkProcessing = new WeakMap<SDKMessage, Promise<void>>();
+      const nativeSdkProcessingComplete = new WeakMap<SDKMessage, () => void>();
+      let nativeSdkFramesClosed = false;
+      const offerNativeSdkFrame = (message: SDKMessage) => {
+        const waiter = nativeSdkFrameWaiters.shift();
+        if (waiter === undefined) nativeSdkFrames.push(message);
+        else waiter(message);
+      };
+      const takeNativeSdkFrame = () =>
+        new Promise<SDKMessage | undefined>((resolve) => {
+          const message = nativeSdkFrames.shift();
+          if (message !== undefined) resolve(message);
+          else if (nativeSdkFramesClosed) resolve(undefined);
+          else nativeSdkFrameWaiters.push(resolve);
+        });
+      const closeNativeSdkFrames = () => {
+        nativeSdkFramesClosed = true;
+        for (const waiter of nativeSdkFrameWaiters.splice(0)) waiter(undefined);
+      };
       const offerAndWait = Effect.fnUntraced(function* (
         message: SDKMessage,
         offered?: Deferred.Deferred<void>,
       ) {
         const processed = yield* Deferred.make<void>();
-        processedMessages.set(message, processed);
-        yield* Queue.offer(sdkMessages, message);
+        if (options?.useSdkQueryRunner) {
+          const processing = new Promise<void>((resolve) => {
+            nativeSdkProcessingComplete.set(message, resolve);
+          });
+          nativeSdkProcessing.set(message, processing);
+          offerNativeSdkFrame(message);
+        } else {
+          processedMessages.set(message, processed);
+          yield* Queue.offer(sdkMessages, message);
+        }
         if (offered !== undefined) yield* Deferred.succeed(offered, undefined);
-        yield* Deferred.await(processed);
+        if (options?.useSdkQueryRunner) {
+          yield* Effect.promise(() => nativeSdkProcessing.get(message)!);
+        } else {
+          yield* Deferred.await(processed);
+        }
       });
       const offeredMessages: Array<SDKUserMessage> = [];
       const permissionModeChanges: Array<string> = [];
@@ -2446,6 +2517,112 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
         >();
       let openedOptions: ClaudeTransport.ClaudeAgentSdkQueryOptions | undefined;
+      const fakeQueryRunner = {
+        allocateSessionId:
+          options?.allocateSessionId ??
+          Effect.succeed(options?.nativeSessionId ?? WAKE_NATIVE_SESSION),
+        open: (input: ClaudeTransport.ClaudeAgentSdkQueryOpenInput) =>
+          Effect.gen(function* () {
+            openedOptions = input.options;
+            if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
+              const processMessages = yield* Queue.unbounded<SDKMessage>();
+              processQueues.push(processMessages);
+              return {
+                messages: Stream.fromQueue(processMessages),
+                offer: (message: SDKUserMessage) =>
+                  Effect.sync(() => {
+                    offeredMessages.push(message);
+                  }),
+                setModel: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+                stopTask: options?.stopTask ?? (() => Effect.void),
+                interrupt: Effect.void,
+                close: Queue.shutdown(processMessages),
+              };
+            }
+            processQueues.push(sdkMessages);
+            return {
+              messages: Stream.fromQueue(sdkMessages).pipe(
+                Stream.flatMap((message) =>
+                  Stream.make(message).pipe(
+                    Stream.concat(
+                      Stream.fromEffect(
+                        Effect.suspend(() => {
+                          const processed = processedMessages.get(message);
+                          return processed === undefined
+                            ? Effect.void
+                            : Deferred.succeed(processed, undefined);
+                        }),
+                      ).pipe(Stream.drain),
+                    ),
+                  ),
+                ),
+              ),
+              offer: (message: SDKUserMessage) =>
+                Effect.sync(() => {
+                  offeredMessages.push(message);
+                }),
+              setModel: (model: string) =>
+                Effect.sync(() => {
+                  liveSelectionChanges.push({ model });
+                }),
+              applyFlagSettings: (settings: unknown) =>
+                Effect.sync(() => {
+                  liveSelectionChanges.push(settings);
+                }),
+              setPermissionMode: (mode: string) =>
+                Effect.sync(() => {
+                  permissionModeChanges.push(mode);
+                }),
+              backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
+              stopTask: options?.stopTask ?? (() => Effect.void),
+              interrupt: options?.interrupt ?? Effect.void,
+              close: options?.close?.(sdkMessages) ?? Effect.void,
+            };
+          }),
+        forkSession: () => Effect.die("unused forkSession"),
+        subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
+        assertComplete: Effect.void,
+      } satisfies ClaudeTransport.ClaudeAgentSdkQueryRunnerShape;
+      const queryRunner = options?.useSdkQueryRunner
+        ? ClaudeSdkQueryRunner.makeClaudeAgentSdkQueryRunner({
+            allocateSessionId:
+              options?.allocateSessionId ??
+              Effect.succeed(options?.nativeSessionId ?? WAKE_NATIVE_SESSION),
+            query: () =>
+              Effect.sync(() => {
+                async function* frames() {
+                  while (true) {
+                    const message = await takeNativeSdkFrame();
+                    if (message === undefined) return;
+                    yield message;
+                    nativeSdkProcessingComplete.get(message)?.();
+                  }
+                }
+                // The runner exercises this small control surface, not unrelated SDK query APIs.
+                return Object.assign(frames(), {
+                  close: async () => closeNativeSdkFrames(),
+                  setMcpServers: async () => ({ added: [], removed: [], errors: {} }),
+                  setModel: async () => {},
+                  applyFlagSettings: async () => {},
+                  setPermissionMode: async () => {},
+                  stopTask: async () => {},
+                  backgroundTasks: async () => false,
+                  interrupt: async () => undefined,
+                }) as unknown as ClaudeQuery;
+              }),
+            forkSession: async (sessionId) => ({ sessionId }),
+            subagentLaunchToolUseId: async () => options?.subagentLaunchToolUseId ?? null,
+            protocolLogger: () => (event) =>
+              Effect.sync(() => {
+                if (event.direction === "outgoing" && event.payload.type === "prompt.offer") {
+                  offeredMessages.push(event.payload.message);
+                }
+              }),
+          })
+        : fakeQueryRunner;
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         ...(options?.initialSnapshot === undefined
           ? {}
@@ -2466,83 +2643,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               continuationRequests.push(request);
             }).pipe(Effect.andThen(Queue.offer(continuationReceipts, request))),
         },
-        queryRunner: {
-          allocateSessionId:
-            options?.allocateSessionId ??
-            Effect.succeed(options?.nativeSessionId ?? WAKE_NATIVE_SESSION),
-          open: (input) =>
-            Effect.gen(function* () {
-              openedOptions = input.options;
-              if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
-                const processMessages = yield* Queue.unbounded<SDKMessage>();
-                processQueues.push(processMessages);
-                return {
-                  messages: Stream.fromQueue(processMessages),
-                  offer: (message: SDKUserMessage) =>
-                    Effect.sync(() => {
-                      offeredMessages.push(message);
-                    }),
-                  setModel: () => Effect.void,
-                  applyFlagSettings: () => Effect.void,
-                  setPermissionMode: () => Effect.void,
-                  backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
-                  stopTask: options?.stopTask ?? (() => Effect.void),
-                  interrupt: Effect.void,
-                  close: Queue.shutdown(processMessages),
-                };
-              }
-              processQueues.push(sdkMessages);
-              return {
-                messages: Stream.fromQueue(sdkMessages).pipe(
-                  Stream.flatMap((message) =>
-                    Stream.make(message).pipe(
-                      Stream.concat(
-                        Stream.fromEffect(
-                          Effect.suspend(() => {
-                            const processed = processedMessages.get(message);
-                            return processed === undefined
-                              ? Effect.void
-                              : Deferred.succeed(processed, undefined);
-                          }),
-                        ).pipe(Stream.drain),
-                      ),
-                    ),
-                  ),
-                ),
-                offer: (message) =>
-                  Effect.sync(() => {
-                    offeredMessages.push(message);
-                  }),
-                setModel: (model) =>
-                  Effect.sync(() => {
-                    liveSelectionChanges.push({ model });
-                  }),
-                applyFlagSettings: (settings) =>
-                  Effect.sync(() => {
-                    liveSelectionChanges.push(settings);
-                  }),
-                setPermissionMode: (mode) =>
-                  Effect.sync(() => {
-                    permissionModeChanges.push(mode);
-                  }),
-                backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
-                stopTask: options?.stopTask ?? (() => Effect.void),
-                interrupt: options?.interrupt ?? Effect.void,
-                close: options?.close?.(sdkMessages) ?? Effect.void,
-              };
-            }),
-          forkSession: () => Effect.die("unused forkSession"),
-          subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
-          assertComplete: Effect.void,
-        },
+        queryRunner,
       });
       const threadId = ThreadId.make("thread-claude-wake");
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
-        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
-      });
+      // signalbox: The trace lifecycle regression closes and reopens this runtime on the same adapter.
+      const runtimeScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+        Scope.close(scope, Exit.void),
+      );
+      const runtime = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        })
+        .pipe(Effect.provideService(Scope.Scope, runtimeScope));
       const providerThread =
         options?.initialSnapshot === undefined
           ? yield* runtime.ensureThread({
@@ -2555,26 +2670,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             })
           : yield* runtime.resumeThread({ providerThread: options.initialSnapshot.providerThread });
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-      yield* runtime.events.pipe(
-        Stream.runForEach((event) =>
-          Effect.gen(function* () {
-            events.push(event);
-            if (event.type === "subagent.updated") {
-              yield* Queue.offer(subagentReceipts, event);
-            }
-            if (event.type === "turn.terminal") {
-              yield* Queue.offer(terminalReceipts, event);
-            }
-            if (event.type === "command_output.delta") {
-              yield* Queue.offer(commandOutputReceipts, event);
-            }
-            if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") {
-              yield* Queue.offer(systemNoticeReceipts, event);
-            }
-          }),
-        ),
-        Effect.forkScoped,
-      );
+      const eventConsumerReady = yield* Deferred.make<void>();
+      if (!options?.holdEventConsumer) yield* Deferred.succeed(eventConsumerReady, undefined);
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(eventConsumerReady);
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.gen(function* () {
+              events.push(event);
+              if (event.type === "subagent.updated") {
+                yield* Queue.offer(subagentReceipts, event);
+              }
+              if (event.type === "turn.terminal") {
+                yield* Queue.offer(terminalReceipts, event);
+              }
+              if (event.type === "command_output.delta") {
+                yield* Queue.offer(commandOutputReceipts, event);
+              }
+              if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") {
+                yield* Queue.offer(systemNoticeReceipts, event);
+              }
+            }),
+          ),
+        );
+      }).pipe(Effect.forkScoped);
       if (runtime.hasPendingBackgroundWork === undefined) {
         throw new Error("Claude adapter runtime must expose hasPendingBackgroundWork.");
       }
@@ -2587,7 +2706,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.type === "turn.terminal",
         );
       return {
+        adapter,
         runtime,
+        releaseSession: () => Scope.close(runtimeScope, Exit.void),
         providerThread,
         threadId,
         sdkMessages,
@@ -2610,6 +2731,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         systemNoticeReceipts,
         getOpenedOptions: () => openedOptions,
         terminalEvents,
+        startEventConsumer: () => Deferred.succeed(eventConsumerReady, undefined),
         hasPendingBackgroundWork,
       };
     });
@@ -6590,6 +6712,226 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     ),
   );
+
+  it.effect("joins iterator yields to held replay and measures the real adapter queue", () => {
+    const latencyRecords: Array<ProviderEventLatencyLogRecord> = [];
+    const logCapture = Logger.map(Logger.formatJson, (line) => {
+      const record = parseProviderEventLatencyLogRecord(line);
+      if (record !== undefined) latencyRecords.push(record);
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          useSdkQueryRunner: true,
+          holdEventConsumer: true,
+        });
+        const now = yield* DateTime.now;
+        // A completed turn leaves the live query in early echo mode for the next turn.
+        const stampForPrompt = (frame: SDKMessage, promptIndex: number) =>
+          claudeSdkFrame({
+            ...frame,
+            user_message_uuid: harness.promptUuid(promptIndex),
+          });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-event-trace-setup"),
+            text: "Establish prompt echo mode.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          stampForPrompt(
+            makeAssistantTextFrame({
+              uuid: "00000000-0000-4000-8000-000000000740",
+              text: "Setup frame.",
+            }),
+            0,
+          ),
+        );
+        yield* harness.offerAndWait(
+          stampForPrompt(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000744",
+              result: "Setup complete.",
+            }),
+            0,
+          ),
+        );
+
+        const heldUuid = "00000000-0000-4000-8000-000000000741";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-event-trace"),
+            text: "Trace this turn.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: heldUuid, text: "held private text" }),
+        );
+        yield* harness.offerAndWait(
+          stampForPrompt(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000743",
+              result: "Completed.",
+            }),
+            1,
+          ),
+        );
+        assert.deepEqual(harness.events, []);
+
+        const heldYield = latencyRecords.find(
+          (record) =>
+            latencyStringField(record, "stage") === "sdk.yield" &&
+            latencyStringField(record, "nativeFrameId") === heldUuid,
+        );
+        assert.isDefined(heldYield);
+        const sdkTraceId = latencyStringField(heldYield!, "traceId");
+        assert.isDefined(sdkTraceId);
+        for (const stage of ["adapter.entry", "held-frame.release"]) {
+          const record = latencyRecords.find(
+            (candidate) =>
+              latencyStringField(candidate, "stage") === stage &&
+              latencyStringField(candidate, "nativeFrameId") === heldUuid,
+          );
+          assert.isDefined(record, `${stage} retained the held SDK frame`);
+          assert.equal(latencyStringField(record!, "traceId"), sdkTraceId);
+        }
+
+        const offered = latencyRecords.find(
+          (record) =>
+            latencyStringField(record, "stage") === "provider.queue.offer" &&
+            latencyStringField(record, "sdkFrameTraceId") === sdkTraceId,
+        );
+        assert.isDefined(offered, "the held frame's provider event was queued");
+        const providerTraceId = latencyStringField(offered!, "traceId");
+        assert.isDefined(providerTraceId);
+        assert.isTrue((latencyNumberField(offered!, "queueDepth") ?? 0) > 0);
+        assert.isTrue((latencyNumberField(offered!, "queueHighWaterObserved") ?? 0) > 0);
+        assert.isFalse(JSON.stringify(latencyRecords).includes("held private text"));
+
+        yield* harness.startEventConsumer();
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "completed");
+        assert.equal(
+          harness.events.filter(
+            (event) =>
+              event.type === "message.updated" && event.message.text === "held private text",
+          ).length,
+          1,
+        );
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "message.updated" && event.message.role === "assistant"
+              ? [event.message.text]
+              : [],
+          ),
+          ["Setup frame.", "held private text"],
+          "held assistant events keep their original order",
+        );
+
+        const taken = latencyRecords.find(
+          (record) =>
+            latencyStringField(record, "stage") === "provider.queue.take" &&
+            latencyStringField(record, "traceId") === providerTraceId,
+        );
+        assert.isDefined(taken);
+        const drained = latencyRecords.findLast(
+          (record) =>
+            latencyStringField(record, "stage") === "provider.queue.take" &&
+            latencyNumberField(record, "queueDepth") === 0,
+        );
+        assert.isDefined(drained, "the sampled queue depth returned to zero after draining");
+        assert.isTrue(
+          (latencyNumberField(drained!, "queueHighWaterObserved") ?? 0) >=
+            (latencyNumberField(offered!, "queueHighWaterObserved") ?? 0),
+          "draining resets depth while preserving the session high-water mark",
+        );
+
+        const firstSessionOffer = latencyRecords.find(
+          (record) =>
+            latencyStringField(record, "stage") === "provider.queue.offer" &&
+            latencyNumberField(record, "streamOrdinal") === 1,
+        );
+        assert.isDefined(firstSessionOffer, "the original adapter session emits traced events");
+        const firstSessionStreamId = latencyStringField(firstSessionOffer!, "streamId");
+        const firstSessionTraceId = latencyStringField(firstSessionOffer!, "traceId");
+        assert.isDefined(firstSessionStreamId);
+        assert.isDefined(firstSessionTraceId);
+        const previousHighWater = Math.max(
+          ...latencyRecords
+            .filter(
+              (record) =>
+                latencyStringField(record, "stage") === "provider.queue.offer" &&
+                latencyStringField(record, "streamId") === firstSessionStreamId,
+            )
+            .map((record) => latencyNumberField(record, "queueHighWaterObserved") ?? 0),
+        );
+
+        yield* harness.releaseSession();
+        const reopenedRecordStart = latencyRecords.length;
+        const nextProviderSessionId = harness.runtime.providerSessionId;
+        const nextThreadId = ThreadId.make("thread-claude-trace-reset");
+        const nextScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+          Scope.close(scope, Exit.void),
+        );
+        const nextSession = yield* harness.adapter
+          .openSession({
+            threadId: nextThreadId,
+            providerSessionId: nextProviderSessionId,
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          })
+          .pipe(Effect.provideService(Scope.Scope, nextScope));
+        const nextProviderThread = yield* nextSession.ensureThread({
+          threadId: nextThreadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* nextSession.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: nextThreadId,
+            providerThread: nextProviderThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-event-trace-reset"),
+            text: "Start a traced turn in the new session.",
+            attachments: [],
+          }),
+        );
+        const resetOffer = latencyRecords
+          .slice(reopenedRecordStart)
+          .find((record) => latencyStringField(record, "stage") === "provider.queue.offer");
+        assert.isDefined(resetOffer, "the reopened adapter session starts a trace stream");
+        assert.notEqual(latencyStringField(resetOffer!, "streamId"), firstSessionStreamId);
+        assert.notEqual(latencyStringField(resetOffer!, "traceId"), firstSessionTraceId);
+        assert.equal(latencyNumberField(resetOffer!, "streamOrdinal"), 1);
+        assert.equal(
+          latencyNumberField(resetOffer!, "queueHighWaterObserved"),
+          latencyNumberField(resetOffer!, "queueDepth"),
+          "the reopened stream starts a new queue high-water mark",
+        );
+        const reopenedHighWater = latencyNumberField(resetOffer!, "queueHighWaterObserved") ?? 0;
+        assert.isTrue(
+          previousHighWater > reopenedHighWater,
+          `expected queue high-water to reset from ${previousHighWater} to ${reopenedHighWater}`,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+        Effect.provideService(References.MinimumLogLevel, "Debug"),
+        Effect.provide(Logger.layer([logCapture], { mergeWithExisting: false })),
+      ),
+    );
+  });
 
   it.effect("releases output held for a prompt echo when the stream ends", () =>
     Effect.scoped(
