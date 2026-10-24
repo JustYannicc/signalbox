@@ -5,6 +5,11 @@ import {
   type ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { OrchestrationV2RuntimeRequest, RunId } from "@t3tools/contracts";
+import {
+  logProviderEventLatency,
+  providerEventLatencyClock,
+  providerEventLatencyTraceFor,
+} from "@t3tools/provider-core/server/ProviderEventLatencyTrace";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -37,6 +42,18 @@ import type { ActiveTurn } from "./state.ts";
 const isHarnessError = Schema.is(HarnessError);
 const encodeEventJson = Schema.encodeEffect(Schema.toCodecJson(ProviderAdapterV2Event));
 const eventRecord = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown));
+
+interface ConsumerEventTrace {
+  readonly enteredAtMs: number;
+  beganReadyAtMs?: number;
+  lockAcquiredAtMs?: number;
+  applyInterruptStartedAtMs?: number;
+  applyInterruptCompletedAtMs?: number;
+  publishStartedAtMs?: number;
+  encodedAtMs?: number;
+  interruptRequestedAtApplyStart?: boolean;
+  interruptAppliedAtApplyStart?: boolean;
+}
 
 export const openAdapterSession = (
   original: HarnessOpenInput,
@@ -163,7 +180,12 @@ export const openAdapterSession = (
           state.revision = saved.revision;
           return saved;
         });
-      const publish = (event: ProviderAdapterV2Event, runId: RunId, completed?: ActiveTurn) =>
+      const publish = (
+        event: ProviderAdapterV2Event,
+        runId: RunId,
+        completed?: ActiveTurn,
+        consumer?: ConsumerEventTrace,
+      ) =>
         encodeEventJson(event).pipe(
           Effect.flatMap(eventRecord),
           Effect.mapError(
@@ -175,13 +197,28 @@ export const openAdapterSession = (
               }),
           ),
           Effect.flatMap((encoded) =>
-            Effect.sync(() => {
-              if (disposed || closing || failure.current !== undefined) return;
-              if (completed !== undefined) {
-                state.last = completed;
-                state.active = undefined;
+            Effect.gen(function* () {
+              const forwarded = yield* Effect.sync(() => {
+                if (consumer !== undefined)
+                  consumer.encodedAtMs = providerEventLatencyClock.nowMs();
+                if (disposed || closing || failure.current !== undefined) return false;
+                if (completed !== undefined) {
+                  state.last = completed;
+                  state.active = undefined;
+                }
+                return Queue.offerUnsafe(output, { kind: "provider", runId, event: encoded });
+              });
+              if (!forwarded) return;
+              const trace = providerEventLatencyTraceFor(event);
+              if (trace !== undefined) {
+                yield* logProviderEventLatency("runner.host-forward", {
+                  ...trace,
+                  runId,
+                  threadId: input.session.threadId,
+                  providerSessionId: input.session.providerSessionId,
+                  ...(consumer === undefined ? {} : { consumer }),
+                });
               }
-              Queue.offerUnsafe(output, { kind: "provider", runId, event: encoded });
             }),
           ),
         );
@@ -190,7 +227,14 @@ export const openAdapterSession = (
           const current = state.active ?? state.last;
           if (current === undefined) return;
           if (event.type === "turn.terminal" && state.active !== current) return;
+          // Capture phases without awaiting extra loggers on the event path.
+          const consumer: ConsumerEventTrace | undefined =
+            event.type === "provider_turn.updated" &&
+            providerEventLatencyTraceFor(event) !== undefined
+              ? { enteredAtMs: providerEventLatencyClock.nowMs() }
+              : undefined;
           yield* Deferred.await(current.began);
+          if (consumer !== undefined) consumer.beganReadyAtMs = providerEventLatencyClock.nowMs();
           if (event.type === "turn.terminal") yield* Deferred.await(current.started);
           yield* lock.withPermits(1)(
             Effect.gen(function* () {
@@ -203,6 +247,8 @@ export const openAdapterSession = (
                 !belongsToTurn(event, current)
               )
                 return;
+              if (consumer !== undefined)
+                consumer.lockAcquiredAtMs = providerEventLatencyClock.nowMs();
               if (event.type === "turn_item.updated") {
                 current.nextItemOrdinal = Math.max(
                   current.nextItemOrdinal,
@@ -214,7 +260,16 @@ export const openAdapterSession = (
               }
               if (event.type === "provider_turn.updated") {
                 current.nativeTurn = event.providerTurn;
-                if (state.active === current) yield* applyInterrupt(runtime, current);
+                if (state.active === current) {
+                  if (consumer !== undefined) {
+                    consumer.interruptRequestedAtApplyStart = current.interruptRequested;
+                    consumer.interruptAppliedAtApplyStart = current.interruptApplied;
+                    consumer.applyInterruptStartedAtMs = providerEventLatencyClock.nowMs();
+                  }
+                  yield* applyInterrupt(runtime, current);
+                  if (consumer !== undefined)
+                    consumer.applyInterruptCompletedAtMs = providerEventLatencyClock.nowMs();
+                }
               }
               if (event.type === "runtime_request.updated") {
                 if (
@@ -254,10 +309,13 @@ export const openAdapterSession = (
               }
               // One process serves several turns. Only unpublished work belongs to a later
               // shutdown omission; publishing the terminal ends this turn's failure boundary.
+              if (consumer !== undefined)
+                consumer.publishStartedAtMs = providerEventLatencyClock.nowMs();
               yield* publish(
                 event,
                 current.input.runId,
                 event.type === "turn.terminal" ? current : undefined,
+                consumer,
               );
             }),
           );

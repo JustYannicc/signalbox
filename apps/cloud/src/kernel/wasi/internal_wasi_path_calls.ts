@@ -20,6 +20,7 @@ import {
   type WasiPathAnchor,
   type WasiResolvedPath,
   WasiPathResolver,
+  type WasiPathSearchCheck,
 } from "./internal_wasi_paths.ts";
 import { readTimes, writeFilestat } from "./internal_wasi_fd_calls.ts";
 import {
@@ -29,6 +30,7 @@ import {
   type KernelFileByteSelection,
   type KernelFileByteView,
 } from "../KernelFileBytes.ts";
+import { isKernelLowerFileSystemInode } from "../KernelLowerFileSystemStorage.ts";
 
 type WasiPathDirectoryDescriptor = WasiDescriptor & {
   readonly kind: "directory";
@@ -68,6 +70,7 @@ export class WasiPathCalls {
   readonly #paths: WasiPathResolver;
   readonly #creation: WasiCreationPolicy | undefined;
   readonly #fileBytes: (() => KernelFileByteSelection) | undefined;
+  readonly #pathSearch: WasiPathSearchCheck | undefined;
 
   readonly imports = {
     path_create_directory: (fd: number, path: number, pathLen: number): WasiCall<number> =>
@@ -156,12 +159,14 @@ export class WasiPathCalls {
     paths: WasiPathResolver,
     creation?: WasiCreationPolicy,
     fileBytes?: () => KernelFileByteSelection,
+    pathSearch?: WasiPathSearchCheck,
   ) {
     this.#memory = memory;
     this.#descriptors = descriptors;
     this.#paths = paths;
     this.#creation = creation;
     this.#fileBytes = fileBytes;
+    this.#pathSearch = pathSearch;
   }
 
   *pathCreateDirectory(fd: number, pathPointer: number, pathLength: number): WasiCall<number> {
@@ -201,6 +206,7 @@ export class WasiPathCalls {
       this.#anchor(directory),
       path,
       (flags & DIRFLAGS_SYMLINK_FOLLOW) !== 0,
+      this.#pathSearch,
     );
     let stat = resolved.stat;
     if (stat.type === "file") {
@@ -294,8 +300,8 @@ export class WasiPathCalls {
       this.#requireRight(directory, RIGHTS.FD_SYNC);
     }
     this.#memory.range(openedFd, 4);
-    const baseRights = normalizeRights(rightsBase);
-    const inheritingRights = normalizeRights(rightsInheriting);
+    let baseRights = normalizeRights(rightsBase);
+    let inheritingRights = normalizeRights(rightsInheriting);
     if (
       ((baseRights | inheritingRights) & ~ALL_RIGHTS) !== 0n ||
       (baseRights & ~directory.rightsInheriting) !== 0n ||
@@ -353,6 +359,13 @@ export class WasiPathCalls {
           throw new WasiError(ENOTDIR);
         }
         inode = resolved.inode;
+        if (isKernelLowerFileSystemInode(resolved.mount.storage, inode)) {
+          if ((oflags & OFLAGS.TRUNCATE) !== 0 || (baseRights & RIGHTS.FD_WRITE) !== 0n) {
+            throw new WasiError(EROFS);
+          }
+          baseRights &= READ_ONLY_RIGHTS;
+          inheritingRights &= READ_ONLY_RIGHTS;
+        }
         yield* complete(resolved.mount.storage.retain(inode));
         retained = { mount: resolved.mount, inode };
       }

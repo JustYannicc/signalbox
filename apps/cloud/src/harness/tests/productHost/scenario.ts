@@ -135,6 +135,7 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
           threadId: d.threadId,
           release: release.options,
           programs,
+          machineInventory: machine.inventory,
           files: {
             identity: "recorded-files",
             database: database.open().storage,

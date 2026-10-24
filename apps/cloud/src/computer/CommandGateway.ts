@@ -24,6 +24,7 @@ import {
 import { COMPUTER_ISOLATE_POLICY } from "./EscalationPolicy.ts";
 import { ComputerEscalationTable } from "./EscalationTable.ts";
 import { qualifyGnuCommand } from "./GnuCommandCompatibility.ts";
+import type { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
 
 export type CommandProgramCodes = ChildProgramCatalogOptions["programs"] & {
   readonly busyboxApplets: ChildWorkerCode;
@@ -42,6 +43,7 @@ export interface CommandGatewayOptions {
   readonly hostname: string;
   readonly systemIdentity?: SystemIdentity;
   readonly machine: KernelCommandForwarder;
+  readonly resolver?: ComputerProgramResolver;
   readonly evidence?: ComputerProgramAdmissionOptions["evidence"];
   readonly orderedMachineRules?: ConstructorParameters<typeof ComputerEscalationTable>[0];
   readonly parent?: KernelCommandExecutorOptions["parent"];
@@ -70,24 +72,32 @@ export function createCommandGateway(options: CommandGatewayOptions) {
     machine: KernelCommandForwarder,
     evidence?: ComputerProgramAdmissionOptions["evidence"],
   ) => {
+    const resolver = options.resolver;
+    const registry = new KernelProgramRegistry();
+    const reservationFor: NonNullable<ChildProgramCatalogOptions["reservationFor"]> = (...args) =>
+      admission.reservationFor(...args);
+    const catalog = createChildProgramCatalog({
+      registry,
+      filesystem: options.filesystem,
+      loader: options.loader,
+      capacity: options.capacity,
+      programs: options.programs,
+      hostname: options.systemIdentity?.hostname ?? options.hostname,
+      lifetimes,
+      reservationFor,
+    });
     const admission = createComputerProgramAdmission({
       escalation,
       machine,
       capacity: options.capacity,
+      ...(resolver === undefined
+        ? {}
+        : {
+            resolve: (request) => resolver.resolve({ ...request, catalog: catalog.bindings }),
+          }),
       ...(evidence === undefined ? {} : { evidence }),
     });
     try {
-      const registry = new KernelProgramRegistry();
-      const catalog = createChildProgramCatalog({
-        registry,
-        filesystem: options.filesystem,
-        loader: options.loader,
-        capacity: options.capacity,
-        programs: options.programs,
-        hostname: options.systemIdentity?.hostname ?? options.hostname,
-        lifetimes,
-        reservationFor: admission.reservationFor,
-      });
       const host = new KernelProgramHost({
         registry,
         programs: catalog.bindings,

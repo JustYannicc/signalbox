@@ -1,7 +1,12 @@
-import type { PosixMetadata, PosixStorage } from "../PosixStorage.ts";
-import type { CreateOptions, Inode, Storage } from "../storage.ts";
+import type { MaybePosixStorage, PosixMetadata } from "../PosixStorage.ts";
+import type { CreateOptions, Inode } from "../storage.ts";
 import type { WasiMountedStorage } from "../wasi/internal_wasi_paths.ts";
-import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
+import {
+  kernelError,
+  runKernelSync,
+  withKernelErrors,
+  withKernelErrorsAsync,
+} from "./KernelFileSystemErrors.ts";
 import type {
   KernelPosixCredentials,
   KernelPosixOptions,
@@ -68,13 +73,12 @@ export class KernelPosix {
   ): Inode {
     return withKernelErrors(() => {
       if (mount.readOnly) throw kernelError("EROFS");
-      const storage = mount.storage as Storage;
       if (this.#credentials === undefined) {
-        return runKernelSync(storage.create(parent, name, options));
+        return runKernelSync(mount.storage.create(parent, name, options));
       }
 
       validateMode(mode ?? defaultCreateMode(options.type), MODE_MASK);
-      const posix = requirePosixStorage(storage);
+      const posix = requirePosixStorage(mount.storage);
       const requestedMode = mode ?? defaultCreateMode(options.type);
       const effectiveMode =
         options.type === "symlink" ? 0o777 : requestedMode & ~this.#umask & MODE_MASK;
@@ -96,6 +100,10 @@ export class KernelPosix {
     return withKernelErrors(() => runKernelSync(requirePosixStorage(storage).get(inode)));
   }
 
+  getMetadataAsync(storage: WasiMountedStorage["storage"], inode: Inode): Promise<PosixMetadata> {
+    return withKernelErrorsAsync(async () => requirePosixStorage(storage).get(inode));
+  }
+
   checkAccess(
     storage: WasiMountedStorage["storage"],
     inode: Inode,
@@ -105,22 +113,20 @@ export class KernelPosix {
   ): void {
     const credentials = this.#requireCredentials();
     const metadata = this.getMetadata(storage, inode);
-    const uid = effectiveIds ? credentials.euid : credentials.uid;
-    const gid = effectiveIds ? credentials.egid : credentials.gid;
+    assertAccess(metadata, credentials, type, requested, effectiveIds);
+  }
 
-    if (uid === 0) {
-      // Linux root may traverse directories but still needs an execute bit on files.
-      if (type !== "directory" && (requested & 1) !== 0 && (metadata.mode & 0o111) === 0) {
-        throw kernelError("EACCES");
-      }
-      return;
-    }
-
-    const groups = credentials.groups ?? [];
-    const shift =
-      uid === metadata.uid ? 6 : gid === metadata.gid || groups.includes(metadata.gid) ? 3 : 0;
-    const allowed = (metadata.mode >>> shift) & 7;
-    if ((allowed & requested) !== requested) throw kernelError("EACCES");
+  async checkAccessAsync(
+    storage: WasiMountedStorage["storage"],
+    inode: Inode,
+    type: KernelStat["type"],
+    requested: number,
+    effectiveIds: boolean,
+  ): Promise<PosixMetadata> {
+    const credentials = this.#requireCredentials();
+    const metadata = await this.getMetadataAsync(storage, inode);
+    assertAccess(metadata, credentials, type, requested, effectiveIds);
+    return metadata;
   }
 
   chmod(storage: WasiMountedStorage, inode: Inode, mode: number): void {
@@ -169,12 +175,40 @@ export class KernelPosix {
   }
 }
 
-function requirePosixStorage(storage: unknown): PosixStorage["posix"] {
+function assertAccess(
+  metadata: PosixMetadata,
+  credentials: KernelPosixCredentials,
+  type: KernelStat["type"],
+  requested: number,
+  effectiveIds: boolean,
+): void {
+  const uid = effectiveIds ? credentials.euid : credentials.uid;
+  const gid = effectiveIds ? credentials.egid : credentials.gid;
+
+  if (uid === 0) {
+    // Linux root may traverse directories but still needs an execute bit on files.
+    if (type !== "directory" && (requested & 1) !== 0 && (metadata.mode & 0o111) === 0) {
+      throw kernelError("EACCES");
+    }
+    return;
+  }
+
+  const groups = credentials.groups ?? [];
+  const shift =
+    uid === metadata.uid ? 6 : gid === metadata.gid || groups.includes(metadata.gid) ? 3 : 0;
+  const allowed = (metadata.mode >>> shift) & 7;
+  if ((allowed & requested) !== requested) throw kernelError("EACCES");
+}
+
+function requirePosixStorage(storage: unknown): MaybePosixStorage["posix"] {
   if (typeof storage !== "object" || storage === null || !("posix" in storage)) {
     throw kernelError("ENOTSUP");
   }
-  const posix = (storage as PosixStorage).posix;
+  const posix = (storage as MaybePosixStorage).posix;
   if (typeof posix !== "object" || posix === null) throw kernelError("ENOTSUP");
+  for (const method of ["get", "initialize", "create", "chmod", "chown"] as const) {
+    if (typeof posix[method] !== "function") throw kernelError("ENOTSUP");
+  }
   return posix;
 }
 

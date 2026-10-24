@@ -21,7 +21,6 @@ export function proofKernel(
   const { wakes, ports, persistence, filesystem, write, read } = state;
   const initial = PROOF_INITIAL_REVISION;
   ports.seedFile(initial, "/out.bin", INITIAL_FILE);
-  persistence.storage.posix.initialize(persistence.storage.root, { mode: 0o755, uid: 0, gid: 0 });
   filesystem.mkdir("/bin");
   filesystem.mkdir("/workspace");
   filesystem.chdir("/workspace");

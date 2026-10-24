@@ -79,6 +79,8 @@ export interface NativeHostBinding {
     signal: AbortSignal,
     load: NativeThreadLoad,
   ) => Effect.Effect<void, HarnessError>;
+  /** Complete the matching native turn before the host retires its MCP route. */
+  readonly completeMcpTurn?: (epoch: number) => void;
 }
 export interface HarnessHostFilesOptions {
   readonly identity: string;

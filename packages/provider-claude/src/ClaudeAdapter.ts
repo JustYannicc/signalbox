@@ -1,3 +1,8 @@
+import {
+  logProviderEventLatency,
+  providerEventLatencyTraceFor,
+  rememberProviderEventLatencyTrace,
+} from "@t3tools/provider-core/server/ProviderEventLatencyTrace";
 import * as Base64 from "effect/encoding/Base64";
 import {
   claudeRecoveryAdmission,
@@ -123,6 +128,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as LogLevel from "effect/LogLevel";
 
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -134,6 +140,14 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+
+import {
+  claudeSdkFrameTraceFor,
+  createClaudeProviderEventStreamId,
+  CurrentClaudeSdkFrameTrace,
+  describeClaudeSdkFrame,
+  makeClaudeProviderEventTrace,
+} from "./ClaudeEventLatencyTrace.ts";
 
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
 
@@ -2863,6 +2877,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ] as const;
           }).pipe(Effect.flatMap(Effect.fromResult));
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const eventLatencyTracingEnabled = yield* LogLevel.isEnabled("Debug");
+        const providerEventStreamId = eventLatencyTracingEnabled
+          ? createClaudeProviderEventStreamId(input.providerSessionId)
+          : undefined;
+        const providerEventOrdinal = yield* Ref.make(0);
+        const providerEventQueueHighWater = yield* Ref.make(0);
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
         // Foreground Bash calls whose output file is being tailed, by tool_use_id.
         const taskOutputTails = new Map<
@@ -3131,11 +3151,53 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
+        const traceProviderQueueDepth = (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+          stage: "provider.queue.offer" | "provider.queue.take",
+        ) => {
+          if (!eventLatencyTracingEnabled) return Effect.void;
+          return Effect.gen(function* () {
+            const queueDepth = yield* Queue.size(events);
+            const queueHighWaterObserved = yield* Ref.modify(
+              providerEventQueueHighWater,
+              (previous) => {
+                const maximum = Math.max(previous, queueDepth);
+                return [maximum, maximum] as const;
+              },
+            );
+            const trace = providerEventLatencyTraceFor(event);
+            if (trace !== undefined) {
+              yield* logProviderEventLatency(stage, {
+                ...trace,
+                queueDepth,
+                queueHighWaterObserved,
+              });
+            }
+          });
+        };
+
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-          Ref.update(snapshots, (current) => collectClaudeSnapshotEvent(current, event)).pipe(
-            Effect.andThen(Queue.offer(events, event)),
-            Effect.asVoid,
-          );
+          Effect.gen(function* () {
+            yield* Ref.update(snapshots, (current) => collectClaudeSnapshotEvent(current, event));
+            if (providerEventStreamId !== undefined) {
+              const sdkFrameTrace = yield* CurrentClaudeSdkFrameTrace;
+              const streamOrdinal = yield* Ref.modify(providerEventOrdinal, (previous) => {
+                const next = previous + 1;
+                return [next, next] as const;
+              });
+              const trace = makeClaudeProviderEventTrace({
+                event,
+                streamId: providerEventStreamId,
+                streamOrdinal,
+                ...(sdkFrameTrace === undefined ? {} : { sdkFrameTrace }),
+              });
+              rememberProviderEventLatencyTrace(event, trace);
+            }
+            const offered = yield* Queue.offer(events, event);
+            if (offered && eventLatencyTracingEnabled) {
+              yield* traceProviderQueueDepth(event, "provider.queue.offer");
+            }
+          });
 
         const continuationObservationsFor = (
           observationInput: Parameters<typeof claudeContinuationObservations>[0],
@@ -7212,6 +7274,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
+        const handleSdkMessageFrameWithTrace = (input: {
+          readonly query: ClaudeAgentSdkQuerySession;
+          readonly message: SDKMessage;
+          readonly replayed?: boolean;
+        }) => {
+          if (!eventLatencyTracingEnabled) return handleSdkMessageFrame(input);
+          return Effect.provideService(
+            handleSdkMessageFrame(input),
+            CurrentClaudeSdkFrameTrace,
+            claudeSdkFrameTraceFor(input.message),
+          );
+        };
+
         const takeReleasableSubagentFrames = Effect.fnUntraced(function* (message: SDKMessage) {
           if (
             message.type !== "system" ||
@@ -7245,12 +7320,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         }) {
           if (input.message.type !== "system" || input.message.subtype !== "task_started") {
             for (const message of yield* takeReleasableSubagentFrames(input.message)) {
-              yield* handleSdkMessageFrame({ query: input.query, message, replayed: true });
+              yield* handleSdkMessageFrameWithTrace({
+                query: input.query,
+                message,
+                replayed: true,
+              });
             }
           }
-          yield* handleSdkMessageFrame(input);
+          yield* handleSdkMessageFrameWithTrace(input);
           for (const message of yield* takeReleasableSubagentFrames(input.message)) {
-            yield* handleSdkMessageFrame({ query: input.query, message, replayed: true });
+            yield* handleSdkMessageFrameWithTrace({
+              query: input.query,
+              message,
+              replayed: true,
+            });
           }
         });
 
@@ -7272,7 +7355,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (liveQuery === null) {
             return;
           }
+          let releaseOrdinal = 0;
           for (const message of held) {
+            if (eventLatencyTracingEnabled) {
+              const trace = claudeSdkFrameTraceFor(message);
+              yield* logProviderEventLatency("held-frame.release", {
+                ...(trace === undefined ? {} : { ...trace }),
+                ...describeClaudeSdkFrame(message),
+                releaseOrdinal: ++releaseOrdinal,
+                heldCount: held.length,
+                replayed: true,
+              });
+            }
             yield* handleRoutedSdkMessage({ query: liveQuery.query, message });
           }
         });
@@ -7282,6 +7376,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
         }) {
           const message = input.message;
+          if (eventLatencyTracingEnabled) {
+            const trace = claudeSdkFrameTraceFor(message);
+            yield* logProviderEventLatency("adapter.entry", {
+              ...(trace === undefined ? {} : { ...trace }),
+              ...describeClaudeSdkFrame(message),
+            });
+          }
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
           if (
@@ -8691,7 +8792,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           providerSession: session,
           getModelContextWindow: (selection) =>
             resolveClaudeCatalogContextWindowTokens(adapterOptions.modelCatalog, selection),
-          events: Stream.fromEffectRepeat(Queue.take(events)),
+          events: eventLatencyTracingEnabled
+            ? Stream.fromEffectRepeat(
+                Queue.take(events).pipe(
+                  Effect.tap((event) => traceProviderQueueDepth(event, "provider.queue.take")),
+                ),
+              )
+            : Stream.fromEffectRepeat(Queue.take(events)),
           backgroundTasksEndWithProcess: true,
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {

@@ -9,6 +9,7 @@ import {
 import { WasiDescriptorTable, type WasiDescriptor } from "../wasi/internal_wasi_descriptors.ts";
 import type { Stat } from "../storage.ts";
 import { FDFLAGS, RIGHTS } from "../wasi/internal_wasi_descriptors.ts";
+import { isKernelLowerFileSystemInode } from "../KernelLowerFileSystemStorage.ts";
 import type { WasiResolvedPath } from "../wasi/internal_wasi_paths.ts";
 import { descriptorPathAlias } from "./KernelPathAliases.ts";
 import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
@@ -178,6 +179,13 @@ export class KernelFileSystemOpen {
   ): number {
     const mount = resolved.mount;
     const inode = resolved.inode;
+    if (
+      isKernelLowerFileSystemInode(mount.storage, inode) &&
+      !parsed.pathOnly &&
+      (parsed.accessMode !== KernelOpenFlags.O_RDONLY || parsed.truncate)
+    ) {
+      throw kernelError("EROFS");
+    }
     let ownsPin = retained;
     let byteAccess: KernelFileByteAccess | undefined;
     try {

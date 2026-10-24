@@ -2,6 +2,7 @@ import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import { KernelProcessSignal } from "./KernelProcessSignal.ts";
 import {
   createKernelWasiFileSystemAdapter,
+  type KernelWasiFileSystemOptions,
   type KernelWasiSignalOptions,
 } from "./KernelWasiFileSystemAdapter.ts";
 import { createAgentOsWasiArgumentTransform } from "./AgentOsWasi.ts";
@@ -20,8 +21,11 @@ import {
   type KernelSyscallResponse,
 } from "./KernelSyscallPort.ts";
 import { FDFLAGS } from "./wasi/internal_wasi_descriptors.ts";
+import { KernelFileSystemUnavailable } from "./KernelLowerFileSystem.ts";
+import { createKernelFileSystemPathSearch } from "./KernelFileSystemPathSearch.ts";
 
-export interface KernelSyscallHostOptions extends KernelWasiSignalOptions {
+export interface KernelSyscallHostOptions
+  extends KernelWasiSignalOptions, KernelWasiFileSystemOptions {
   readonly filesystem: KernelFileSystem;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
@@ -38,6 +42,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
     ownership: "borrowed",
     fileBytes: () => options.filesystem.fileBytes,
     pathCheck: options.filesystem.assertWasiPathVisible.bind(options.filesystem),
+    pathSearch: options.filesystem.assertPathSearchAllowed.bind(options.filesystem),
     creation: {
       createInode: options.filesystem.createInode.bind(options.filesystem),
       takeCreateMode: options.filesystem.takeNextCreateMode.bind(options.filesystem),
@@ -59,7 +64,12 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
   const imports = new Map(
     Object.entries({
       ...system.imports,
-      ...createKernelWasiFileSystemAdapter(options.filesystem, options)(memory, filesystem.imports),
+      ...createKernelWasiFileSystemAdapter(options.filesystem, options, {
+        ...options,
+        preparePathSearch:
+          options.preparePathSearch ??
+          createKernelFileSystemPathSearch(options.filesystem, options.env.PATH),
+      })(memory, filesystem.imports),
     }),
   );
   const transform = options.agentOsPreopens
@@ -160,6 +170,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
             if (error instanceof KernelProcessSignal)
               response = { kind: "signal", signal: error.signal };
             else if (error instanceof WasiExit) response = { kind: "exit", code: error.code };
+            else if (error instanceof KernelFileSystemUnavailable) throw error;
             else {
               response = { kind: "return", value: mapErrno(error), regions: memory.snapshot() };
             }

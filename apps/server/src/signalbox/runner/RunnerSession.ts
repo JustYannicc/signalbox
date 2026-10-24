@@ -6,6 +6,7 @@ import {
   type ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { TerminalReport } from "@signalbox/runner-protocol/TerminalProtocol";
+import type { MachineFilesResult } from "@signalbox/runner-protocol/MachineFilesProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -23,6 +24,7 @@ import { runnerLog } from "./runnerLog.ts";
 import type { RunnerTurns } from "./RunnerTurns.ts";
 import type { RunnerTerminals } from "./RunnerTerminals.ts";
 import type { RunnerExecHost } from "./RunnerExecHost.ts";
+import * as RunnerMachineFiles from "./RunnerMachineFiles.ts";
 
 export { RunnerConnectionError };
 
@@ -106,7 +108,11 @@ const STOP_DRAIN_WITHIN = "25 seconds";
 
 export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
   input: RunnerSessionInput,
-): Effect.fn.Return<RunnerSession, never, Scope.Scope | Crypto.Crypto> {
+): Effect.fn.Return<
+  RunnerSession,
+  never,
+  Scope.Scope | Crypto.Crypto | RunnerMachineFiles.RunnerMachineFiles
+> {
   const items = yield* Queue.unbounded<RunnerItem>();
   const ended = yield* Deferred.make<string>();
   // Outbox order is wire order: appending and (re)sending share one lock.
@@ -141,6 +147,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
     turns.watchDrive,
   );
   const exec = input.makeExec === undefined ? null : yield* input.makeExec();
+  const machineFiles = yield* RunnerMachineFiles.RunnerMachineFiles;
   if (exec !== null) {
     yield* Stream.runForEach(exec.reports, (report) =>
       Effect.flatMap(Ref.get(current), (connection) =>
@@ -254,6 +261,30 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         return exec === null
           ? Effect.void
           : Effect.asVoid(Effect.forkIn(exec.handleCommand(message), scope));
+      case "machine.files.request":
+        if (message.generation !== input.generation) {
+          const result: MachineFilesResult = {
+            type: "machine.files.result",
+            generation: message.generation,
+            requestId: message.requestId,
+            outcome: {
+              status: "error",
+              code: "stale_generation",
+              message: "This Runner generation is stale.",
+            },
+          };
+          return connection.send(result).pipe(Effect.ignore);
+        }
+        return machineFiles.lookup(message).pipe(
+          Effect.catchTags({
+            RunnerMachineFilesError: () =>
+              Effect.succeed(RunnerMachineFiles.lookupFailedResult(message)),
+          }),
+          Effect.flatMap((result) => connection.send(result)),
+          Effect.catchCause(() => Effect.void),
+          Effect.forkIn(scope),
+          Effect.asVoid,
+        );
       case "preparation.cancel":
         return turns.cancelPreparation(message.runId, message.preparationGeneration);
       case "preparation.handoff":
@@ -313,6 +344,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         runtimeResponses: true,
         pulls: true,
         exec: exec !== null,
+        machineFileLookup: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
         takenPreparations: yield* turns.preparationsTaken,
