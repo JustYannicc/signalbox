@@ -5,6 +5,10 @@ import {
   type ProviderAdapterV2SessionRuntime,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { OrchestrationV2RuntimeRequest, RunId } from "@t3tools/contracts";
+import {
+  logProviderEventLatency,
+  providerEventLatencyTraceFor,
+} from "@t3tools/provider-core/server/ProviderEventLatencyTrace";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -175,13 +179,24 @@ export const openAdapterSession = (
               }),
           ),
           Effect.flatMap((encoded) =>
-            Effect.sync(() => {
-              if (disposed || closing || failure.current !== undefined) return;
-              if (completed !== undefined) {
-                state.last = completed;
-                state.active = undefined;
+            Effect.gen(function* () {
+              const forwarded = yield* Effect.sync(() => {
+                if (disposed || closing || failure.current !== undefined) return false;
+                if (completed !== undefined) {
+                  state.last = completed;
+                  state.active = undefined;
+                }
+                return Queue.offerUnsafe(output, { kind: "provider", runId, event: encoded });
+              });
+              if (!forwarded) return;
+              const trace = providerEventLatencyTraceFor(event);
+              if (trace !== undefined) {
+                yield* logProviderEventLatency("runner.host-forward", trace, {
+                  runId,
+                  threadId: input.session.threadId,
+                  providerSessionId: input.session.providerSessionId,
+                });
               }
-              Queue.offerUnsafe(output, { kind: "provider", runId, event: encoded });
             }),
           ),
         );

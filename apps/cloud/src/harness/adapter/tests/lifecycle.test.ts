@@ -1,13 +1,22 @@
 import { describe, expect, it } from "@effect/vitest";
 import { RunAttemptId, RunId } from "@t3tools/contracts";
-import { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  ProviderAdapterV2Event,
+  type ProviderAdapterV2Event as ProviderAdapterV2EventModel,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import {
+  providerEventLatencyClock,
+  rememberProviderEventLatencyTrace,
+} from "@t3tools/provider-core/server/ProviderEventLatencyTrace";
 
 import { fixture } from "./fixture.ts";
 
@@ -129,6 +138,41 @@ describe("AdapterHarness lifecycle", () => {
       ).toBe(true);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("logs host forwarding through the out-of-band event trace", () => {
+    const logs: string[] = [];
+    const capture = Logger.map(Logger.formatJson, (line) => void logs.push(line));
+    const traceId = "provider-event-trace:host-forward";
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* running;
+        yield* finish(f);
+        const event: ProviderAdapterV2EventModel = {
+          type: "provider_session.updated",
+          driver: f.runtime.driver,
+          providerSession: f.runtime.providerSession,
+        };
+        rememberProviderEventLatencyTrace(event, {
+          traceId,
+          streamId: "provider-session:test-host-forward",
+          streamOrdinal: 1,
+          eventType: event.type,
+          entityId: event.providerSession.id,
+          createdAtMs: providerEventLatencyClock.nowMs(),
+        });
+        yield* f.emit(event);
+        const forwarded = yield* f.next;
+
+        expect(forwarded.kind).toBe("provider");
+        expect(JSON.stringify(forwarded)).not.toContain(traceId);
+        expect(logs.join("\n")).toContain("runner.host-forward");
+        expect(logs.join("\n")).toContain(traceId);
+      }).pipe(
+        Effect.provideService(References.MinimumLogLevel, "Debug"),
+        Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+      ),
+    );
+  });
 
   it.effect(
     "shares concurrent duplicate starts, rejects conflicts and allows only one active turn",

@@ -5,8 +5,11 @@ import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import { makeClaudeUserMessage } from "@signalbox/provider-claude/ClaudeAdapter";
+import { claudeSdkFrameTraceFor } from "@signalbox/provider-claude/ClaudeEventLatencyTrace";
 import type { ClaudeAgentSdkProtocolLogEvent } from "@signalbox/provider-claude/ClaudeQueryProtocol";
 import { ClaudeAgentSdkQueryRunnerError } from "@signalbox/provider-claude/ClaudeQueryRunner";
 import {
@@ -159,6 +162,91 @@ describe("portable Claude SDK query lifecycle", () => {
       );
       yield* session.close;
     }),
+  );
+
+  it.effect("stamps a decoded SDK iterator yield with only bounded frame identity", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const frame: SDKMessage = {
+          type: "system",
+          subtype: "status",
+          status: "requesting",
+          uuid: "00000000-0000-4000-8000-000000000011",
+          session_id: "native-session-trace",
+        };
+        const oversizedId = "x".repeat(129);
+        // Runtime SDK input can violate its UUID type, so tracing must cap this field anyway.
+        const oversizedFrame = {
+          type: "system",
+          subtype: "status",
+          status: "requesting",
+          uuid: oversizedId,
+          session_id: "native-session-trace",
+        } as unknown as SDKMessage;
+        const logs: string[] = [];
+        const capture = Logger.map(Logger.formatJson, (line) => void logs.push(line));
+        const runner = makeClaudeAgentSdkQueryRunner({
+          allocateSessionId: Effect.succeed("allocated-session"),
+          query: () => Effect.succeed(fakeQuery([frame, oversizedFrame])),
+          forkSession: async () => ({ sessionId: "forked-session" }),
+          subagentLaunchToolUseId: async () => null,
+        });
+        const session = yield* runner
+          .open({ ...identity, options })
+          .pipe(Effect.provideService(References.MinimumLogLevel, "Debug"));
+        const received = yield* Stream.runCollect(session.messages).pipe(
+          Effect.provideService(References.MinimumLogLevel, "Debug"),
+          Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+        );
+        const trace = claudeSdkFrameTraceFor(frame);
+
+        assert.deepEqual(received, [frame, oversizedFrame]);
+        assert.isDefined(trace);
+        assert.equal(trace.streamOrdinal, 1);
+        assert.equal(trace.nativeFrameId, frame.uuid);
+        assert.equal(trace.nativeSessionId, frame.session_id);
+        assert.include(logs.join("\n"), trace.traceId);
+        assert.include(logs.join("\n"), "sdk.yield");
+        assert.include(logs.join("\n"), "performance.now");
+        assert.isUndefined(claudeSdkFrameTraceFor(oversizedFrame)?.nativeFrameId);
+        assert.notInclude(logs.join("\n"), oversizedId);
+        yield* session.close;
+      }),
+    ),
+  );
+
+  it.effect("keeps latency trace records out of the normal info log", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const frame: SDKMessage = {
+          type: "system",
+          subtype: "status",
+          status: "requesting",
+          uuid: "00000000-0000-4000-8000-000000000012",
+          session_id: "native-session-info",
+        };
+        const logs: string[] = [];
+        const capture = Logger.map(Logger.formatJson, (line) => void logs.push(line));
+        const runner = makeClaudeAgentSdkQueryRunner({
+          allocateSessionId: Effect.succeed("allocated-session"),
+          query: () => Effect.succeed(fakeQuery([frame])),
+          forkSession: async () => ({ sessionId: "forked-session" }),
+          subagentLaunchToolUseId: async () => null,
+        });
+        const session = yield* runner
+          .open({ ...identity, options })
+          .pipe(Effect.provideService(References.MinimumLogLevel, "Info"));
+        const received = yield* Stream.runCollect(session.messages).pipe(
+          Effect.provideService(References.MinimumLogLevel, "Info"),
+          Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+        );
+
+        assert.deepEqual(received, [frame]);
+        assert.isUndefined(claudeSdkFrameTraceFor(frame));
+        assert.notInclude(logs.join("\n"), "orchestration-v2.claude-event-latency");
+        yield* session.close;
+      }),
+    ),
   );
 
   it.effect("keeps launch preparation interruptible before acquiring the query", () =>
