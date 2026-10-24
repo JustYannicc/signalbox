@@ -82,8 +82,8 @@ describe("AdapterHarness consumer trace", () => {
             applyInterruptCompletedAtMs: 10,
             publishStartedAtMs: 10,
             encodedAtMs: 10,
-            interruptRequested: false,
-            interruptApplied: false,
+            interruptRequestedAtApplyStart: false,
+            interruptAppliedAtApplyStart: false,
           },
         });
         expect(f.calls).not.toContain("snapshot");
@@ -131,8 +131,8 @@ describe("AdapterHarness consumer trace", () => {
           applyInterruptCompletedAtMs: 100,
           publishStartedAtMs: 100,
           encodedAtMs: 100,
-          interruptRequested: true,
-          interruptApplied: false,
+          interruptRequestedAtApplyStart: true,
+          interruptAppliedAtApplyStart: false,
         },
       });
       expect(f.controls).toHaveLength(1);

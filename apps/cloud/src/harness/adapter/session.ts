@@ -51,8 +51,8 @@ interface ConsumerEventTrace {
   applyInterruptCompletedAtMs?: number;
   publishStartedAtMs?: number;
   encodedAtMs?: number;
-  interruptRequested?: boolean;
-  interruptApplied?: boolean;
+  interruptRequestedAtApplyStart?: boolean;
+  interruptAppliedAtApplyStart?: boolean;
 }
 
 export const openAdapterSession = (
@@ -262,8 +262,8 @@ export const openAdapterSession = (
                 current.nativeTurn = event.providerTurn;
                 if (state.active === current) {
                   if (consumer !== undefined) {
-                    consumer.interruptRequested = current.interruptRequested;
-                    consumer.interruptApplied = current.interruptApplied;
+                    consumer.interruptRequestedAtApplyStart = current.interruptRequested;
+                    consumer.interruptAppliedAtApplyStart = current.interruptApplied;
                     consumer.applyInterruptStartedAtMs = providerEventLatencyClock.nowMs();
                   }
                   yield* applyInterrupt(runtime, current);
