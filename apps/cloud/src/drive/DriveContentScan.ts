@@ -1,27 +1,26 @@
 import type { ProjectContentMatch, ProjectSearchContentsInput } from "@t3tools/contracts";
-import { EMPTY_TREE } from "@signalbox/runner-protocol/DriveProtocol";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import ignore from "ignore";
 
-import { DriveReadError, type DriveReader } from "./DriveReader.ts";
-import type { Oid, TreeEntry } from "./git/gitObjects.ts";
+import { DriveReadError } from "./DriveReader.ts";
+import { beginTreePage, TreePagePosition } from "./DriveTreePage.ts";
+import { beginIgnoreEvaluation, IgnoreEvaluationState, stepIgnoreRules } from "./DriveIgnore.ts";
 import { isKnownBinaryPath, makeContentMatcher } from "./contentSearch/matching.ts";
+import { metadataPages, type MetadataReader } from "./contentSearch/metadataPages.ts";
 
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_IGNORE_BYTES = 64 * 1024;
-const MAX_SAVED_IGNORE_BYTES = 512 * 1024;
-const MAX_MATCHING_LINES = 100;
-const decoder = new TextDecoder();
-const encoder = new TextEncoder();
-
+const Entry = Schema.Struct({
+  name: Schema.String,
+  oid: Schema.String,
+  mode: Schema.String,
+  kind: Schema.Literals(["file", "executable", "symlink", "directory", "submodule"]),
+});
 const Frame = Schema.Struct({
   tree: Schema.String,
   path: Schema.String,
-  nextEntry: Schema.Number,
-  nextRule: Schema.Number,
-  ruleOids: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.String))),
-  rules: Schema.Array(Schema.String),
+  position: TreePagePosition,
+  rulePosition: TreePagePosition,
+  rulesDiscovered: Schema.Boolean,
+  ruleOids: Schema.Array(Schema.NullOr(Schema.String)),
 });
 const FilePosition = Schema.Struct({
   oid: Schema.String,
@@ -31,163 +30,106 @@ const FilePosition = Schema.Struct({
   searchOffset: Schema.Number,
   matchingLines: Schema.Number,
 });
+const Candidate = Schema.Struct({
+  entry: Entry,
+  path: Schema.String,
+  scope: Schema.Number,
+  rule: Schema.Number,
+  evaluation: Schema.NullOr(IgnoreEvaluationState),
+  test: Schema.Struct({ ignored: Schema.Boolean, unignored: Schema.Boolean }),
+});
 
-/** Server-owned continuation state. Clients only receive an opaque lookup key. */
+/** Server-owned positions contain object ids and parser state, never accumulated rules. */
 export const DriveContentScanState = Schema.Struct({
+  version: Schema.Literal(2),
   commit: Schema.NullOr(Schema.String),
+  initialized: Schema.Boolean,
   stack: Schema.Array(Frame),
   file: Schema.NullOr(FilePosition),
+  candidate: Schema.NullOr(Candidate),
   omitted: Schema.Boolean,
 });
 export type DriveContentScanState = typeof DriveContentScanState.Type;
 
 export interface DriveContentScanBudget {
   readonly entries?: number;
-  /** Must fit one allowed file. The default is twelve MiB. */
   readonly bytes?: number;
   readonly excludePaths?: ReadonlyArray<string>;
 }
-
-type Reader = Pick<DriveReader, "treeOf" | "tree" | "blob" | "sizes">;
-type Failure = Effect.Error<ReturnType<DriveReader["object"]>>;
 type Input = Omit<ProjectSearchContentsInput, "cwd">;
+type Failure =
+  | Effect.Error<ReturnType<MetadataReader["metadata"]["bytes"]>>
+  | Effect.Error<ReturnType<MetadataReader["searchTreeOf"]>>
+  | Effect.Error<ReturnType<MetadataReader["sizes"]>>;
 export interface DriveContentScanPage {
   readonly matches: ProjectContentMatch[];
   readonly truncated: boolean;
   readonly nextState?: DriveContentScanState;
   readonly regexFallbackError?: string;
 }
+const frameAt = (tree: string, path: string) => {
+  const ruleOids: Array<string | null> = [null, null];
+  return {
+    tree,
+    path,
+    position: beginTreePage(),
+    rulePosition: beginTreePage(),
+    rulesDiscovered: false,
+    ruleOids,
+  };
+};
 
-/** Reads one bounded page from an immutable commit, preserving its DFS and file position. */
+/** A bounded DFS over immutable metadata pages. Ignore evaluation finishes before admission. */
 export const scanDriveContents = Effect.fn("scanDriveContents")(function* (
-  reader: Reader,
-  commit: Oid | null,
+  reader: MetadataReader,
+  commit: string | null,
   input: Input,
   previous: DriveContentScanState | null = null,
   budget: DriveContentScanBudget = {},
 ): Effect.fn.Return<DriveContentScanPage, Failure> {
-  const state = previous ?? {
+  const state: DriveContentScanState = previous ?? {
+    version: 2,
     commit,
-    stack: [
-      {
-        tree: yield* reader.treeOf(commit),
-        path: "",
-        nextEntry: 0,
-        nextRule: 0,
-        ruleOids: null,
-        rules: [],
-      },
-    ],
+    initialized: false,
+    stack: [],
     file: null,
+    candidate: null,
     omitted: false,
   };
-  const stack = state.stack.map((frame) => ({ ...frame, rules: [...frame.rules] }));
+  const stack = state.stack.map((frame) => ({ ...frame, ruleOids: [...frame.ruleOids] }));
+  let initialized = state.initialized;
   let file = state.file === null ? null : { ...state.file };
+  let candidate = state.candidate === null ? null : { ...state.candidate };
   let omitted = state.omitted;
-  let entriesRead = 0;
-  let bytesRead = 0;
-  const entryLimit = Math.max(1, budget.entries ?? 512);
-  const byteLimit = Math.max(1, budget.bytes ?? 12 * 1024 * 1024);
+  const pages = metadataPages(
+    reader,
+    Math.max(1, budget.entries ?? 512),
+    Math.max(1, budget.bytes ?? 12 * 1024 * 1024),
+  );
   const matches: ProjectContentMatch[] = [];
   const matcher = makeContentMatcher(input);
-  const trees = new Map<Oid, ReadonlyArray<TreeEntry>>();
-  const ignoreMatchers = new Map<string, ReturnType<typeof ignore>>();
-  const tree = (oid: Oid) =>
-    Effect.gen(function* () {
-      const cached = trees.get(oid);
-      if (cached !== undefined) return cached;
-      const size = oid === EMPTY_TREE ? 0 : (yield* reader.sizes([oid])).get(oid);
-      if (size === undefined || size === null || size > MAX_FILE_BYTES) {
-        return yield* new DriveReadError({
-          message: "Cannot search a directory tree of unknown size or above 10 MiB.",
-        });
-      }
-      if (size > byteLimit) {
-        return yield* new DriveReadError({
-          message: "The search byte budget cannot fit this directory tree.",
-        });
-      }
-      if (bytesRead + size > byteLimit) return null;
-      const entries = yield* reader.tree(oid);
-      bytesRead += size;
-      trees.set(oid, entries);
-      return entries;
-    });
   const excluded = (path: string) =>
     budget.excludePaths?.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)) ===
     true;
-  const ignored = (path: string, directory: boolean) => {
-    // Native fff resolves the closest matching scope first; .ignore wins within that scope.
-    for (let index = stack.length - 1; index >= 0; index--) {
-      const frame = stack[index]!;
-      if (frame.rules.every((contents) => contents.length === 0)) continue;
-      let scoped = ignoreMatchers.get(frame.path);
-      if (scoped === undefined) {
-        scoped = ignore({ ignorecase: false });
-        for (const contents of frame.rules) scoped.add(contents);
-        ignoreMatchers.set(frame.path, scoped);
-      }
-      const relative = path.slice(frame.path.length);
-      let rules = scoped;
-      if (relative.includes("/")) {
-        rules = ignore({ ignorecase: false }).add(scoped);
-        // DFS already admitted these parents, possibly through a closer scope's negation.
-        for (let end = relative.indexOf("/"); end !== -1; end = relative.indexOf("/", end + 1)) {
-          const parent = relative.slice(0, end + 1).replace(/[\\*?[\]#! ]/gu, "\\$&");
-          rules.add({ pattern: `!/${parent}` });
-        }
-      }
-      const test = rules.test(`${relative}${directory ? "/" : ""}`);
-      if (test.ignored || test.unignored) return test.ignored;
-    }
-    return false;
-  };
-  const load = Effect.fn("scanDriveContents.load")(function* (oid: Oid, rules: boolean) {
-    const size = oid === EMPTY_TREE ? 0 : (yield* reader.sizes([oid])).get(oid);
-    if (size === undefined || size === null) {
-      if (rules)
-        return yield* new DriveReadError({
-          message: "Cannot bound an ignore file of unknown size.",
-        });
-      omitted = true;
-      return { kind: "skip" as const };
-    }
-    if (rules && size > MAX_IGNORE_BYTES) {
-      return yield* new DriveReadError({
-        message: "An ignore file exceeds the 64 KiB search limit.",
-      });
-    }
-    if (size > MAX_FILE_BYTES || size === 0) return { kind: "skip" as const };
-    if (size > byteLimit) {
-      return yield* new DriveReadError({ message: "The search byte budget cannot fit this file." });
-    }
-    if (bytesRead + size > byteLimit) return { kind: "defer" as const };
-    const bytes = yield* reader.blob(oid);
-    bytesRead += bytes.length;
-    if (bytes.length > (rules ? MAX_IGNORE_BYTES : MAX_FILE_BYTES)) {
-      return yield* new DriveReadError({ message: "The file exceeds its recorded search size." });
-    }
-    return { kind: "bytes" as const, bytes };
-  });
 
-  while (stack.length > 0 || file !== null) {
-    if (matches.length >= input.limit || entriesRead >= entryLimit) break;
+  if (!initialized) {
+    const root = yield* reader.searchTreeOf(state.commit);
+    if (root.ready) {
+      stack.push(frameAt(root.tree, ""));
+      initialized = true;
+    }
+  }
+  while (pages.available() && matches.length < input.limit && (stack.length > 0 || file !== null)) {
     if (file !== null) {
-      if (excluded(file.path) || isKnownBinaryPath(file.path)) {
-        file = null;
-        continue;
-      }
-      const loaded = yield* load(file.oid, false);
+      const loaded = yield* pages.blob(file.oid);
       if (loaded.kind === "defer") break;
-      entriesRead++;
       if (loaded.kind === "skip" || loaded.bytes.includes(0)) {
         file = null;
         continue;
       }
-      const bytes = loaded.bytes;
       let paused = false;
-      for (const match of matcher.lines(bytes, file)) {
-        if (file.matchingLines >= MAX_MATCHING_LINES) {
+      for (const match of matcher.lines(loaded.bytes, file)) {
+        if (file.matchingLines >= 100) {
           omitted = true;
           file = null;
           break;
@@ -204,88 +146,112 @@ export const scanDriveContents = Effect.fn("scanDriveContents")(function* (
           break;
         }
       }
-      if (file !== null && (!paused || file.byteOffset >= bytes.length)) file = null;
+      if (file !== null && (!paused || file.byteOffset >= loaded.bytes.length)) file = null;
       continue;
     }
-
-    const frame = stack.at(-1)!;
-    if (frame.ruleOids === null) {
-      const entries = yield* tree(frame.tree);
-      if (entries === null) break;
-      frame.ruleOids = [".gitignore", ".ignore"].map(
-        (name) =>
-          entries.find(
-            (entry) =>
-              entry.name === name && (entry.kind === "file" || entry.kind === "executable"),
-          )?.oid ?? null,
-      );
-    }
-    if (frame.nextRule < 2) {
-      const oid = frame.ruleOids[frame.nextRule];
-      let contents = "";
-      if (oid !== undefined && oid !== null) {
-        const loaded = yield* load(oid, true);
-        if (loaded.kind === "defer") break;
-        entriesRead++;
-        if (loaded.kind === "bytes") {
-          const savedBytes = stack.reduce(
-            (total, item) =>
-              total + item.rules.reduce((sum, text) => sum + encoder.encode(text).length, 0),
-            0,
-          );
-          if (savedBytes + loaded.bytes.length > MAX_SAVED_IGNORE_BYTES) {
-            return yield* new DriveReadError({
-              message: "Nested ignore files exceed the 512 KiB search limit.",
-            });
-          }
-          contents = decoder.decode(loaded.bytes);
-        }
+    if (candidate !== null) {
+      if (candidate.scope < 0) {
+        if (candidate.entry.kind === "directory")
+          stack.push(frameAt(candidate.entry.oid, `${candidate.path}/`));
+        else
+          file = {
+            oid: candidate.entry.oid,
+            path: candidate.path,
+            byteOffset: 0,
+            lineNumber: 1,
+            searchOffset: 0,
+            matchingLines: 0,
+          };
+        candidate = null;
+        continue;
       }
-      frame.rules.push(contents);
-      frame.nextRule++;
-      continue;
-    }
-    const entries = yield* tree(frame.tree);
-    if (entries === null) break;
-    const entry = entries[frame.nextEntry];
-    if (entry === undefined) {
-      stack.pop();
-      continue;
-    }
-    frame.nextEntry++;
-    entriesRead++;
-    const path = `${frame.path}${entry.name}`;
-    if (entry.name === ".git" || excluded(path) || ignored(path, entry.kind === "directory"))
-      continue;
-    if (entry.kind === "directory") {
-      stack.push({
-        tree: entry.oid,
-        path: `${path}/`,
-        nextEntry: 0,
-        nextRule: 0,
-        ruleOids: null,
-        rules: [],
+      if (candidate.rule === 2) {
+        if (candidate.test.ignored) candidate = null;
+        else if (candidate.test.unignored) candidate.scope = -1;
+        else {
+          candidate.scope--;
+          candidate.rule = 0;
+          candidate.test = { ignored: false, unignored: false };
+        }
+        continue;
+      }
+      const scope = stack[candidate.scope]!;
+      const oid = scope.ruleOids[candidate.rule];
+      if (oid === null || oid === undefined) {
+        candidate.rule++;
+        continue;
+      }
+      const evaluation = candidate.evaluation ?? beginIgnoreEvaluation();
+      const page = yield* pages.chunk(oid, evaluation.byteOffset);
+      if (page === null) break;
+      const pending = candidate;
+      const checked = yield* Effect.try({
+        try: () =>
+          stepIgnoreRules({
+            state: evaluation,
+            bytes: page.bytes,
+            sourceEnded: page.complete,
+            path: pending.path.slice(scope.path.length),
+            directory: pending.entry.kind === "directory",
+          }),
+        catch: (cause) =>
+          new DriveReadError({ message: "The search ignore rules are invalid.", cause }),
       });
-    } else if ((entry.kind === "file" || entry.kind === "executable") && !isKnownBinaryPath(path)) {
-      file = {
-        oid: entry.oid,
-        path,
-        byteOffset: 0,
-        lineNumber: 1,
-        searchOffset: 0,
-        matchingLines: 0,
-      };
+      if (checked.done) {
+        if (checked.test.ignored || checked.test.unignored) candidate.test = checked.test;
+        candidate.evaluation = null;
+        candidate.rule++;
+      } else candidate.evaluation = checked.state;
+      continue;
     }
-  }
-  while (stack.length > 0) {
-    if (file !== null) break;
     const frame = stack.at(-1)!;
-    const entries = trees.get(frame.tree);
-    if (frame.nextRule < 2 || entries === undefined || frame.nextEntry < entries.length) break;
-    stack.pop();
+    const position = frame.rulesDiscovered ? frame.position : frame.rulePosition;
+    const next = yield* pages.entry(frame.tree, position);
+    if (next === null) break;
+    if (!frame.rulesDiscovered) {
+      frame.rulePosition = next.next;
+      if (next.entry === null) {
+        if (next.done) frame.rulesDiscovered = true;
+      } else if (next.entry.kind === "file" || next.entry.kind === "executable") {
+        const rule = [".gitignore", ".ignore"].indexOf(next.entry.name);
+        if (rule >= 0 && frame.ruleOids[rule] === null) frame.ruleOids[rule] = next.entry.oid;
+      }
+      continue;
+    }
+    frame.position = next.next;
+    if (next.entry === null) {
+      if (next.done) stack.pop();
+      continue;
+    }
+    const entry = next.entry;
+    const path = `${frame.path}${entry.name}`;
+    if (
+      entry.name === ".git" ||
+      excluded(path) ||
+      (entry.kind !== "directory" &&
+        ((entry.kind !== "file" && entry.kind !== "executable") || isKnownBinaryPath(path)))
+    )
+      continue;
+    candidate = {
+      entry,
+      path,
+      scope: stack.length - 1,
+      rule: 0,
+      evaluation: null,
+      test: { ignored: false, unignored: false },
+    };
+  }
+  if (file === null && candidate === null) {
+    while (stack.length > 0) {
+      const frame = stack.at(-1)!;
+      if (!frame.rulesDiscovered || !pages.finished(frame.tree, frame.position)) break;
+      stack.pop();
+    }
   }
   const nextState =
-    stack.length > 0 || file !== null ? { commit: state.commit, stack, file, omitted } : undefined;
+    !initialized || stack.length > 0 || file !== null || candidate !== null
+      ? { version: 2 as const, commit: state.commit, initialized, stack, file, candidate, omitted }
+      : undefined;
   return {
     matches,
     truncated: omitted || nextState !== undefined,

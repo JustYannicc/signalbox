@@ -3,6 +3,7 @@ import type * as Effect from "effect/Effect";
 import type { DriveObjectApi } from "./DriveDirectory.ts";
 import type * as DriveEvents from "./DriveEvents.ts";
 import * as DriveMembers from "./DriveMembers.ts";
+import * as DriveMetadata from "./DriveMetadata.ts";
 import * as DriveStore from "./DriveStore.ts";
 
 /**
@@ -15,13 +16,17 @@ export const makeDriveObjectApi = (
     effect: Effect.Effect<
       A,
       E,
-      DriveStore.DriveStore | DriveMembers.DriveMembers | DriveEvents.DriveEvents
+      | DriveStore.DriveStore
+      | DriveMembers.DriveMembers
+      | DriveEvents.DriveEvents
+      | DriveMetadata.DriveMetadata
     >,
   ) => Promise<A>,
   afterOutboxChange: () => Promise<void> = async () => {},
 ): DriveObjectApi => {
   const store = DriveStore.DriveStore;
   const members = DriveMembers.DriveMembers;
+  const metadata = DriveMetadata.DriveMetadata;
   const changingOutbox = async <A>(result: Promise<A>) => {
     const value = await result;
     await afterOutboxChange();
@@ -68,6 +73,11 @@ export const makeDriveObjectApi = (
     mirror: (writer, request) => changingOutbox(run(store.use((s) => s.mirror(writer, request)))),
     locate: (oids) => run(store.use((s) => s.locate(oids))),
     locateAt: (pack, offset) => run(store.use((s) => s.locateAt(pack, offset))),
+    metadataBegin: (oid, source) => run(metadata.use((m) => m.begin(oid, source))),
+    metadataStatus: (oid) => run(metadata.use((m) => m.status(oid))),
+    metadataAdvance: (input) => run(metadata.use((m) => m.advance(input))),
+    metadataBytes: (oid, offset, maxBytes) =>
+      run(metadata.use((m) => m.bytes(oid, offset, maxBytes))),
     commits: (oids) => run(store.use((s) => s.commits(oids))),
     log: (from, limit) => run(store.use((s) => s.log(from, limit))),
     replaceMain: (userId, request) =>

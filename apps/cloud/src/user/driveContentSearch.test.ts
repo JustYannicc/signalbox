@@ -15,9 +15,11 @@ import {
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { SIGNALBOX_DRIVES_WS_METHODS, SignalboxDriveId } from "@t3tools/contracts/signalboxDrives";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { DriveDirectory } from "../drive/DriveDirectory.ts";
 import { DriveFiles } from "../drive/DriveFiles.ts";
@@ -25,9 +27,12 @@ import { DriveReadError } from "../drive/DriveReader.ts";
 import { threadRef } from "../drive/DriveStore.ts";
 import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
+import * as GitHub from "../github/GitHub.ts";
+import * as GitHubConnection from "../github/GitHubConnection.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { driveRoot, remoteThreadWorktree } from "./contextProjects.ts";
+import * as ContentSearchCursors from "./ContentSearchCursors.ts";
 import * as DriveContentSearch from "./DriveContentSearch.ts";
 import * as CloudRpc from "./rpc.ts";
 import { UserDrives } from "./UserDrives.ts";
@@ -182,6 +187,10 @@ describe("cloud drive content search (#812)", () => {
       const first = yield* search(input(shared.id, 1));
       expect(first.matches.map((match) => match.path)).toEqual(["a.md"]);
       expect(first.nextCursor).toBeDefined();
+      if (first.nextCursor === undefined) return yield* Effect.die("Expected a continuation.");
+      const cachedEnd = yield* search({ ...input(shared.id, 1), cursor: first.nextCursor });
+      expect(cachedEnd.matches.map((match) => match.path)).toEqual(["b.md"]);
+      expect(cachedEnd.nextCursor).toBeUndefined();
       yield* alice[SIGNALBOX_DRIVES_WS_METHODS.unshare]({ driveId: shared.id, userId: "user_bob" });
       const before = [...reads];
       for (const cursor of [undefined, first.nextCursor]) {
@@ -354,7 +363,7 @@ describe("cloud drive content search (#812)", () => {
         const continuation = { ...request, cursor: first.nextCursor };
         const next = yield* resumed(continuation);
         const replay = yield* resumed(continuation);
-        expect(replay.matches).toEqual(next.matches);
+        expect(replay).toEqual(next);
         expect(next.matches.map((match) => match.path)).toEqual(["b.md"]);
         expect((yield* collect(resumed, continuation)).map((match) => match.path)).toEqual([
           "b.md",
@@ -426,8 +435,7 @@ describe("cloud drive content search (#812)", () => {
         yield* publish(cloud, target.id, "user_alice", git, git.commit("Change shortcut target"));
         const resumed = yield* searchFor(cloud, "user_bob");
         const replay = yield* resumed(queued);
-        expect(replay.matches).toEqual(firstTargetPage.matches);
-        expect(replay.truncated).toBe(firstTargetPage.truncated);
+        expect(replay).toEqual(firstTargetPage);
         expect(
           (yield* collect(resumed, queued)).map((match) => [match.path, match.lineContent]),
         ).toEqual([
@@ -441,6 +449,320 @@ describe("cloud drive content search (#812)", () => {
           ["shared/renamed.md", "needle changed"],
         ]);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("replays a cold zero-match page after hydration and service recreation", () =>
+    Effect.gen(function* () {
+      const { cloud } = yield* setup;
+      const driveId = "my/personal/user_alice";
+      yield* land(cloud, driveId, "user_alice", {
+        "a.md": "needle first\n",
+        "b.md": "needle second\n",
+      });
+      const request = input(driveId, 1);
+      const first = yield* (yield* searchFor(cloud, "user_alice"))(request);
+      if (first.nextCursor === undefined) return yield* Effect.die("Expected a continuation.");
+      const continuation = { ...request, cursor: first.nextCursor };
+      let scans = 0;
+      const cold = yield* searchFor(cloud, "user_alice", (files) => ({
+        ...files,
+        searchContents: (_drive, _input, _commit, state) =>
+          Effect.sync(() => {
+            scans++;
+            return {
+              matches: [],
+              truncated: true,
+              ...(state === undefined ? {} : { nextState: state }),
+            };
+          }),
+      }));
+      const page = yield* cold(continuation);
+      expect(page.matches).toEqual([]);
+      expect(page.truncated).toBe(true);
+      expect(page.nextCursor).toBeDefined();
+      const warm = yield* searchFor(cloud, "user_alice", (files) => ({
+        ...files,
+        searchContents: (...args) =>
+          Effect.sync(() => scans++).pipe(Effect.andThen(files.searchContents(...args))),
+      }));
+      expect(yield* warm(continuation)).toEqual(page);
+      expect(scans).toBe(1);
+      if (page.nextCursor === undefined) return yield* Effect.die("Expected hydration progress.");
+      const after = yield* warm({ ...request, cursor: page.nextCursor });
+      expect(after.matches.map((match) => match.path)).toEqual(["b.md"]);
+      expect(after.nextCursor).toBeUndefined();
+      const restarted = yield* searchFor(cloud, "user_alice", (files) => ({
+        ...files,
+        searchContents: () => Effect.die("A persisted end page must not scan again."),
+      }));
+      expect(yield* restarted({ ...request, cursor: page.nextCursor })).toEqual(after);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("returns one canonical page and next token to concurrent scans", () =>
+    Effect.gen(function* () {
+      const { cloud } = yield* setup;
+      const driveId = "my/personal/user_alice";
+      yield* land(cloud, driveId, "user_alice", {
+        "a.md": "needle first\n",
+        "b.md": "needle second\n",
+        "c.md": "needle third\n",
+      });
+      const request = input(driveId, 1);
+      const first = yield* (yield* searchFor(cloud, "user_alice"))(request);
+      if (first.nextCursor === undefined) return yield* Effect.die("Expected a continuation.");
+      const bothScanning = yield* Deferred.make<void>();
+      let scans = 0;
+      const search = yield* searchFor(cloud, "user_alice", (files) => ({
+        ...files,
+        searchContents: (...args) =>
+          Effect.gen(function* () {
+            const scan = ++scans;
+            if (scan === 2) yield* Deferred.succeed(bothScanning, undefined);
+            yield* Deferred.await(bothScanning);
+            const page = yield* files.searchContents(...args);
+            return {
+              ...page,
+              matches: page.matches.map((match) => ({
+                ...match,
+                lineContent: `needle scan ${scan}`,
+              })),
+            };
+          }),
+      }));
+      const continuation = { ...request, cursor: first.nextCursor };
+      const pages = yield* Effect.all([search(continuation), search(continuation)], {
+        concurrency: 2,
+      });
+      expect(scans).toBe(2);
+      expect(pages[0].matches).toHaveLength(1);
+      expect(pages[0].nextCursor).toBeDefined();
+      expect(pages[0]).toEqual(pages[1]);
+      const restarted = yield* searchFor(cloud, "user_alice");
+      expect(yield* restarted(continuation)).toEqual(pages[0]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "does not replay an end page after source access or its shortcut route is removed",
+    () =>
+      Effect.gen(function* () {
+        const { cloud, alice, bob } = yield* setup;
+        const own = SignalboxDriveId.make("my/org_acme/user_bob");
+        yield* land(cloud, own, "user_bob", { "own.md": "No match.\n" });
+        const target = yield* alice[SIGNALBOX_DRIVES_WS_METHODS.create]({
+          contextId: ACME,
+          name: "Target",
+        });
+        yield* alice[SIGNALBOX_DRIVES_WS_METHODS.share]({
+          driveId: target.id,
+          email: PEOPLE[1].email,
+          role: "viewer",
+        });
+        yield* land(cloud, target.id, "user_alice", { "secret.md": "needle shared\n" });
+        yield* bob[SIGNALBOX_DRIVES_WS_METHODS.addShortcut]({
+          driveId: own,
+          path: "shared",
+          target: target.id,
+        });
+        const request = input(own);
+        const search = yield* searchFor(cloud, "user_bob");
+        const first = yield* search(request);
+        if (first.nextCursor === undefined) return yield* Effect.die("Expected a queued shortcut.");
+        const continuation = { ...request, cursor: first.nextCursor };
+        const page = yield* search(continuation);
+        expect(page.matches.map((match) => match.path)).toEqual(["shared/secret.md"]);
+        expect(page.nextCursor).toBeUndefined();
+        yield* alice[SIGNALBOX_DRIVES_WS_METHODS.unshare]({
+          driveId: target.id,
+          userId: "user_bob",
+        });
+        expect(yield* search(continuation).pipe(Effect.flip)).toMatchObject({
+          _tag: "ContentSearchDenied",
+        });
+        yield* alice[SIGNALBOX_DRIVES_WS_METHODS.share]({
+          driveId: target.id,
+          email: PEOPLE[1].email,
+          role: "viewer",
+        });
+        expect(yield* search(continuation)).toEqual(page);
+        yield* bob[SIGNALBOX_DRIVES_WS_METHODS.removeShortcut]({ driveId: own, path: "shared" });
+        expect(yield* search(continuation).pipe(Effect.flip)).toMatchObject({
+          _tag: "ContentSearchDenied",
+        });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("rechecks shortcut exclusions before replaying a cached end page", () =>
+    Effect.gen(function* () {
+      const { cloud, alice } = yield* setup;
+      const own = SignalboxDriveId.make("my/org_acme/user_alice");
+      const { git } = yield* land(cloud, own, "user_alice", {
+        "a.md": "needle first\n",
+        "b.md": "needle original source\n",
+      });
+      const request = input(own, 1);
+      const search = yield* searchFor(cloud, "user_alice");
+      const first = yield* search(request);
+      if (first.nextCursor === undefined) return yield* Effect.die("Expected a continuation.");
+      const continuation = { ...request, cursor: first.nextCursor };
+      expect((yield* search(continuation)).matches.map((match) => match.path)).toEqual(["b.md"]);
+      const target = yield* alice[SIGNALBOX_DRIVES_WS_METHODS.create]({
+        contextId: ACME,
+        name: "New source",
+      });
+      git.git(["rm", "b.md"]);
+      yield* publish(cloud, own, "user_alice", git, git.commit("Replace the file with a shortcut"));
+      yield* alice[SIGNALBOX_DRIVES_WS_METHODS.addShortcut]({
+        driveId: own,
+        path: "b.md",
+        target: target.id,
+      });
+      expect(yield* search(continuation).pipe(Effect.flip)).toMatchObject({
+        _tag: "ContentSearchReferencesChanged",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "rejects a cached end page when a locally packed source is rebound to another repository",
+    () =>
+      Effect.gen(function* () {
+        const { cloud } = yield* setup;
+        const driveId = "my/personal/user_alice";
+        yield* land(cloud, driveId, "user_alice", {
+          "a.md": "needle first\n",
+          "b.md": "needle private old source\n",
+        });
+        yield* Effect.gen(function* () {
+          const github = yield* GitHub.GitHub;
+          const connection = yield* GitHubConnection.GitHubConnection;
+          const directory = yield* DriveDirectory;
+          const drives = yield* UserDrives;
+          const checked: string[] = [];
+          const service = yield* DriveContentSearch.DriveContentSearch.pipe(
+            Effect.provide(DriveContentSearch.layer),
+            Effect.provideService(GitHubConnection.GitHubConnection, {
+              ...connection,
+              accessToken: Effect.succeed("source-identity-test-token"),
+            }),
+            Effect.provideService(GitHub.GitHub, {
+              ...github,
+              api: {
+                ...github.api,
+                repository: (_token, repository) =>
+                  Effect.sync(() => {
+                    checked.push(repository);
+                    return {
+                      id: 1,
+                      full_name: repository,
+                      name: repository.split("/")[1]!,
+                      default_branch: "main",
+                      html_url: `https://github.test/${repository}`,
+                      clone_url: `https://github.test/${repository}.git`,
+                      ssh_url: `git@github.test:${repository}.git`,
+                    };
+                  }),
+              },
+            }),
+          );
+          const actor = { userId: "user_alice", contextIds: yield* drives.contextIds };
+          const request = input(driveId, 1);
+          const first = yield* service.query(actor, request);
+          if (first.nextCursor === undefined) return yield* Effect.die("Expected a continuation.");
+          const continuation = { ...request, cursor: first.nextCursor };
+          const page = yield* service.query(actor, continuation);
+          expect(page.matches.map((match) => match.lineContent)).toEqual([
+            "needle private old source",
+          ]);
+          expect(page.nextCursor).toBeUndefined();
+          yield* directory.forDrive(driveId).setRemote({
+            provider: "github",
+            repository: "acme/new-source",
+            defaultBranch: "main",
+          });
+          expect(yield* service.query(actor, continuation).pipe(Effect.flip)).toMatchObject({
+            _tag: "ContentSearchReferencesChanged",
+          });
+          expect(checked).toContain("acme/new-source");
+        }).pipe(Effect.provide(cloud.layerFor("user_alice")));
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("replays the exact page that skipped a revoked queued source", () =>
+    Effect.gen(function* () {
+      const { cloud, alice, bob } = yield* setup;
+      const own = SignalboxDriveId.make("my/org_acme/user_bob");
+      yield* land(cloud, own, "user_bob", { "own.md": "No match.\n" });
+      const targets = yield* Effect.forEach(["a", "z"], (path) =>
+        Effect.gen(function* () {
+          const target = yield* alice[SIGNALBOX_DRIVES_WS_METHODS.create]({
+            contextId: ACME,
+            name: path,
+          });
+          yield* alice[SIGNALBOX_DRIVES_WS_METHODS.share]({
+            driveId: target.id,
+            email: PEOPLE[1].email,
+            role: "viewer",
+          });
+          yield* land(cloud, target.id, "user_alice", { "file.md": `needle ${path}\n` });
+          yield* bob[SIGNALBOX_DRIVES_WS_METHODS.addShortcut]({
+            driveId: own,
+            path,
+            target: target.id,
+          });
+          return target;
+        }),
+      );
+      const request = input(own);
+      const search = yield* searchFor(cloud, "user_bob");
+      const first = yield* search(request);
+      if (first.nextCursor === undefined || targets[0] === undefined)
+        return yield* Effect.die("Expected queued source fixtures.");
+      yield* alice[SIGNALBOX_DRIVES_WS_METHODS.unshare]({
+        driveId: targets[0].id,
+        userId: "user_bob",
+      });
+      const continuation = { ...request, cursor: first.nextCursor };
+      const skipped = yield* search(continuation);
+      expect(skipped.matches).toEqual([]);
+      expect(skipped.nextCursor).toBeDefined();
+      const restarted = yield* searchFor(cloud, "user_bob");
+      expect(yield* restarted(continuation)).toEqual(skipped);
+      expect((yield* collect(restarted, continuation)).map((match) => match.path)).toEqual([
+        "z/file.md",
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("expires persisted pages with their cursor and removes them on cleanup", () =>
+    Effect.gen(function* () {
+      const { cloud } = yield* setup;
+      const { cursors, sql } = yield* Effect.all({
+        cursors: ContentSearchCursors.ContentSearchCursors,
+        sql: SqlClient.SqlClient,
+      }).pipe(
+        Effect.provide(
+          ContentSearchCursors.layerSql.pipe(Layer.provideMerge(cloud.layerFor("user_alice"))),
+        ),
+      );
+      const state = {
+        fingerprint: "legacy",
+        root: "drive",
+        sources: [],
+        seen: [],
+        truncated: false,
+      };
+      const token = yield* cursors.save(state);
+      const page = { response: { matches: [], truncated: false }, skippedSource: false };
+      expect(yield* cursors.commitPage(token, page)).toEqual(page);
+      yield* sql`UPDATE drive_content_search_cursors SET expires_at = 0 WHERE token = ${token}`;
+      expect(yield* cursors.readPage(token)).toBeNull();
+      expect(yield* cursors.commitPage(token, page)).toBeNull();
+      yield* cursors.save(state);
+      expect(yield* sql`SELECT token FROM drive_content_search_pages`).toEqual([]);
+      expect(yield* cursors.read(token)).toBeNull();
+    }).pipe(Effect.scoped),
   );
 
   it.effect(
