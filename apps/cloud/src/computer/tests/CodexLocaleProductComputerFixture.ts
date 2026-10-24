@@ -243,7 +243,8 @@ export function createCodexLocaleProductComputer(
     threadId: "codex-locale-public-product-computer",
     filesystem,
     wakes,
-    capacity: new ChildWorkerCapacity(4),
+    // The fixture models one plain Worker request, whose Dynamic Worker limit is four.
+    capacity: new ChildWorkerCapacity(4, { owner: "test/codex-locale-public-product-computer" }),
     loader,
     programs: {
       bash: programsByName("bash"),

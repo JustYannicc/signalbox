@@ -6,7 +6,7 @@ import type { KernelBusyboxPort } from "../kernel/KernelBusyboxPort.ts";
 import type { KernelSyscallPort } from "../kernel/KernelSyscallPort.ts";
 import { createChildWorkerProgram } from "./ChildWorkerProgram.ts";
 import { createWorkerLoaderDispatch, type ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
-import { createWorkerBashHost } from "./WorkerBashHost.ts";
+import { createChildBashProgram } from "./ChildBashProgram.ts";
 import { createChildBusyboxProgram } from "./ChildBusyboxProgram.ts";
 import { createChildCoreutilsProgram } from "./ChildCoreutilsProgram.ts";
 import { createWorkerSyscalls } from "./WorkerSyscalls.ts";
@@ -79,16 +79,17 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     return program;
   };
   const credentials = bashCredentials(options.filesystem, options.hostname);
+  const bashCode = options.programs.bash;
   const bashDispatch = createWorkerLoaderDispatch<KernelBashPort>(options.loader);
   const bash = child((admission) =>
-    createChildWorkerProgram({
+    createChildBashProgram({
       ...admission,
       executable: "/bin/bash",
-      code: options.programs.bash,
+      code: bashCode,
       capacity,
       lifetimes,
       dispatch: bashDispatch,
-      createHost: (context, lease) => createWorkerBashHost({ context, credentials }, lease),
+      credentials,
     }),
   );
 

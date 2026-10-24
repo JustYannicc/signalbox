@@ -1,9 +1,14 @@
 import type { WorkerEntrypoint } from "cloudflare:workers";
-import { childWorkerId } from "./ChildWorkerIdentity.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
+import { copyKernelRpcRecord } from "../kernel/KernelRpcReply.ts";
 import type { ChildWorkerModules } from "./ChildWorkerProgram.ts";
+import { requireChildWorkerLoaderId } from "./ChildWorkerLoaderRecovery.ts";
 import { resolveChildWorkerLimits, type ChildWorkerLimits } from "./ChildWorkerLimits.ts";
-import type { ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
+import {
+  disposeWorkerLoaderStubs,
+  workerLoaderQuotaFailure,
+  type ChildWorkerLoaderPort,
+} from "./WorkerLoaderDispatch.ts";
 
 export type CompiledChildWorkerRegistry = ReadonlyMap<string, WebAssembly.Module>;
 
@@ -74,7 +79,6 @@ export function createCompiledChildWorkerLoader(
       throw new TypeError("Expected pinned compiled child WASM modules");
     }
   }
-  const compiledHashes = new Map([...modulesByHash].map(([hash, module]) => [module, hash]));
   return {
     async run(input, target) {
       const mainModule = input.mainModule;
@@ -87,8 +91,9 @@ export function createCompiledChildWorkerLoader(
         readonly globalOutbound: null;
         readonly limits: ReturnType<typeof resolveChildWorkerLimits>;
       };
-      let workerId: string;
+      let loaderId: string;
       try {
+        loaderId = requireChildWorkerLoaderId(input);
         if (
           !input.mainModule ||
           !Object.hasOwn(input.modules, input.mainModule) ||
@@ -104,7 +109,6 @@ export function createCompiledChildWorkerLoader(
           throw new TypeError("Child main module must contain JavaScript");
         }
         code = { ...policy, mainModule, modules };
-        workerId = await childWorkerId(code, entrypoint, compiledHashes);
       } catch (error) {
         // No loader call happened, so this invocation cannot own a running child.
         const completion = target as typeof target & { stopped(): void | Promise<void> };
@@ -113,10 +117,49 @@ export function createCompiledChildWorkerLoader(
       }
       // Installed workers-types predates compiled-module inputs supported by Worker Loader.
       // https://github.com/cloudflare/workerd/blob/fa8b9d343f00c200b8e8d314c541c33be9e1ee70/src/workerd/api/worker-loader.h#L73-L80
-      const worker = loader.get(workerId, () => code as WorkerLoaderWorkerCode);
-      return await worker
-        .getEntrypoint<Entrypoint>(entrypoint, { limits })
-        .run(input.command, target);
+      let worker: ReturnType<WorkerLoader["get"]> | undefined;
+      let child: Entrypoint | undefined;
+      let outcome:
+        | { readonly kind: "exit"; readonly value: KernelCommandExit }
+        | { readonly kind: "error"; readonly cause: unknown }
+        | undefined;
+      const releaseLoaderStubs = () => {
+        const entrypoint = child;
+        const workerStub = worker;
+        child = undefined;
+        worker = undefined;
+        disposeWorkerLoaderStubs(entrypoint, workerStub);
+      };
+      try {
+        try {
+          worker = loader.get(loaderId, () => code as WorkerLoaderWorkerCode);
+          child = worker.getEntrypoint<Entrypoint>(entrypoint, { limits }) as unknown as Entrypoint;
+        } catch (cause) {
+          const quotaFailure = workerLoaderQuotaFailure(cause);
+          if (quotaFailure === undefined) throw cause;
+          // A rejected Worker Loader acquisition has no child to wait for or retire.
+          releaseLoaderStubs();
+          const completion = target as typeof target & { stopped(): void | Promise<void> };
+          await completion.stopped();
+          throw quotaFailure;
+        }
+        if (child === undefined)
+          throw new Error("Child Worker Loader did not create an entrypoint");
+        try {
+          outcome = {
+            kind: "exit",
+            value: copyKernelRpcRecord(await child.run(input.command, target)),
+          };
+        } catch (cause) {
+          outcome = { kind: "error", cause };
+        }
+      } finally {
+        releaseLoaderStubs();
+      }
+      if (outcome === undefined) throw new Error("Child Worker Loader returned without an outcome");
+      if (outcome.kind === "exit") return outcome.value;
+      // The owning dispatch sees the original target; this adapter only owns loader handles.
+      throw outcome.cause;
     },
   };
 }

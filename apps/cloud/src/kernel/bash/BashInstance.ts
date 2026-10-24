@@ -5,6 +5,8 @@ export function createBashInstance(module: WebAssembly.Module, imports: WebAssem
   const instance = new WebAssembly.Instance(module, imports);
   const ex = checkedExports(instance);
   const base = ex.memory.buffer.byteLength;
+  // Asyncify has no grow callback while unwinding. MIN_ROOM is a compaction threshold,
+  // not a bound on the next unwind, so lazy growth would reduce the supported stack depth.
   ex.memory.grow(ARENA_SIZE / 65_536);
   const captures = new BashCaptureStore(
     {

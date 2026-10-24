@@ -1,0 +1,30 @@
+import type { BashCaptureState } from "./bash/BashCaptureState.ts";
+import type { KernelBashCheckpointContinuation } from "./KernelBashCheckpoint.ts";
+
+export const BASH_FORK_CHUNK_BYTES = 64 * 1024;
+
+export interface KernelBashForkState {
+  readonly version: 1;
+  readonly memoryBytes: number;
+  readonly stackPointer: number;
+  readonly captures: BashCaptureState;
+  readonly continuation: KernelBashCheckpointContinuation;
+}
+
+/** Checkpoint metadata must survive releasing the transport reply that supplied it. */
+export function copyKernelBashForkState(state: KernelBashForkState): KernelBashForkState {
+  return {
+    version: state.version,
+    memoryBytes: state.memoryBytes,
+    stackPointer: state.stackPointer,
+    captures: structuredClone(state.captures),
+    continuation: structuredClone(state.continuation),
+  };
+}
+
+/** The parent stays suspended until restored, so reads need no second full memory image. */
+export interface KernelBashForkSource {
+  state(): Promise<KernelBashForkState>;
+  read(offset: number, length: number): Promise<Uint8Array>;
+  restored(): Promise<void>;
+}

@@ -8,6 +8,7 @@ import { createChildWorkerProgram } from "../ChildWorkerProgram.ts";
 import { createComputerProgramAdmission } from "../ComputerProgramAdmission.ts";
 import { ComputerEscalationTable } from "../EscalationTable.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
+import { observeTicketReservations } from "./ComputerProgramAdmissionTestSupport.ts";
 
 const command = (executable = "/bin/tool") => ({
   executable,
@@ -21,8 +22,10 @@ describe("Computer root admission", () => {
     "releases a real unused reservation after %s without leaking owner descriptors",
     async (failure) => {
       const fixture = childBusyboxFixture();
-      const capacity = new ChildWorkerCapacity(1);
-      const reserve = vi.spyOn(capacity, "reserve");
+      const capacity = new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-computerrootadmission-test-1",
+      });
+      const observed = observeTicketReservations(capacity);
       const machine = {
         async spawn(): Promise<never> {
           throw new Error("Unexpected machine");
@@ -36,6 +39,7 @@ describe("Computer root admission", () => {
       const admitted = Promise.withResolvers<void>();
       const resume = Promise.withResolvers<void>();
       const run = vi.fn(async () => exited());
+      const code = Object.freeze({ codeId: "computer-root-admission", residentBytes: 0 });
       const manifest = {
         name: "tool",
         version: "1",
@@ -49,7 +53,12 @@ describe("Computer root admission", () => {
         registry,
         wakes: fixture.context.wakes,
         processes: fixture.context.processes,
-        programs: new Map([["/bin/tool", { manifest, implementation: { kind: "async", run } }]]),
+        programs: new Map([
+          [
+            "/bin/tool",
+            { manifest, implementation: { kind: "async", prepare: async () => code, run } },
+          ],
+        ]),
         admit: async (request) => {
           const decision = await adapter.admit(request);
           admitted.resolve();
@@ -73,7 +82,9 @@ describe("Computer root admission", () => {
           error: { code: failure === "abort" ? "CANCELLED" : "IO_ERROR" },
         });
         expect(capacity.active).toBe(0);
-        expect(reserve).toHaveBeenCalledOnce();
+        expect(observed.enqueue).toHaveBeenCalledOnce();
+        expect(observed.requests).toEqual([code]);
+        expect(observed.requests[0]).toBe(code);
         expect(run).not.toHaveBeenCalled();
         expect([...fixture.filesystem.descriptors.entries()]).toEqual(before);
       } finally {
@@ -87,8 +98,10 @@ describe("Computer root admission", () => {
     "claims one real reservation with genuine parent = %s",
     async (withParent) => {
       const fixture = childBusyboxFixture();
-      const capacity = new ChildWorkerCapacity(1);
-      const reserve = vi.spyOn(capacity, "reserve");
+      const capacity = new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-computerrootadmission-test-2",
+      });
+      const observed = observeTicketReservations(capacity);
       const reacquire = vi.spyOn(capacity, "run");
       const machine = {
         spawn: vi.fn(async (): Promise<never> => {
@@ -168,7 +181,8 @@ describe("Computer root admission", () => {
           await child.dispose();
         }
         expect(dispatch).toHaveBeenCalledOnce();
-        expect(reserve).toHaveBeenCalledOnce();
+        expect(observed.enqueue).toHaveBeenCalledOnce();
+        expect(observed.requests).toHaveLength(1);
         expect(claim).toHaveBeenCalledOnce();
         expect(reacquire).not.toHaveBeenCalled();
         expect(capacity.active).toBe(0);
@@ -182,8 +196,10 @@ describe("Computer root admission", () => {
 
   it("previews replacement stdio without effects and forwards binary pipes exactly once", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
-    const reserve = vi.spyOn(capacity, "reserve");
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-computerrootadmission-test-3",
+    });
+    const observed = observeTicketReservations(capacity);
     const fork = vi.spyOn(fixture.filesystem.descriptors, "fork");
     const bytes = new Uint8Array([0, 255, 128, 10]);
     const input: Uint8Array[] = [];
@@ -279,7 +295,7 @@ describe("Computer root admission", () => {
       });
       fixture.filesystem.close(inherited);
       fixture.filesystem.close(extra);
-      expect(reserve).not.toHaveBeenCalled();
+      expect(observed.enqueue).not.toHaveBeenCalled();
       expect(capacity.active).toBe(0);
     } finally {
       adapter.close();

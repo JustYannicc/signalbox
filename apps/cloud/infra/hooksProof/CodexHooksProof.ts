@@ -86,7 +86,11 @@ export function createCodexHooksProofClass(
     async (wakes, owner) => {
       let capacity = capacities.get(owner.context);
       if (!capacity) {
-        capacity = new ChildWorkerCapacity();
+        // The DO gates ten CHILD_WORKERS RPCs, each with one child fetch in its Worker request (2026-10-23 probe, see computer/README.md).
+        capacity = new ChildWorkerCapacity(10, {
+          owner: `thread/${owner.context.id.toString()}`,
+          storage: owner.context.storage,
+        });
         capacities.set(owner.context, capacity);
       }
       await seedPrograms(owner.filesystem, owner.request, catalog, owner.context.storage);

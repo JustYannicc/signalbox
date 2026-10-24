@@ -15,7 +15,9 @@ export function childBashLifetimeFixture(
   cpuAccounting = false,
 ) {
   const files = childBashFixture();
-  const capacity = new ChildWorkerCapacity(1);
+  const capacity = new ChildWorkerCapacity(1, {
+    owner: "test/src-computer-tests-childbashlifetimefixture-1",
+  });
   const entered = Promise.withResolvers<KernelAsyncProgramContext>();
   const aborted = Promise.withResolvers<void>();
   const gate = Promise.withResolvers<void>();

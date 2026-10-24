@@ -5,9 +5,22 @@
  */
 export class ChildHostLease {
   #refs: Set<ChildHostRef<unknown>> | undefined = new Set();
+  readonly #onObserve: ((residentBytes: number) => void) | undefined;
 
-  hold<Value>(value: Value): ChildHostRef<Value> {
-    const ref = new ChildHostRef(value);
+  constructor(onObserve?: (residentBytes: number) => void) {
+    this.#onObserve = onObserve;
+  }
+
+  observe(residentBytes: number): void {
+    if (this.#refs === undefined) throw closedHostError();
+    if (!Number.isSafeInteger(residentBytes) || residentBytes < 0) {
+      throw new RangeError("Child host memory size must be a nonnegative safe integer");
+    }
+    this.#onObserve?.(residentBytes);
+  }
+
+  hold<Value>(value: Value, onRelease?: (value: Value) => void): ChildHostRef<Value> {
+    const ref = new ChildHostRef(value, onRelease);
     // A fork can resolve after close; its port is born released.
     if (this.#refs === undefined) ref[release]();
     else this.#refs.add(ref);
@@ -16,13 +29,28 @@ export class ChildHostLease {
 
   /** Releases one ref early, for a process that finished before its command did. */
   drop(ref: ChildHostRef<unknown>): void {
-    ref[release]();
-    this.#refs?.delete(ref);
+    try {
+      ref[release]();
+    } finally {
+      this.#refs?.delete(ref);
+    }
   }
 
   release(): void {
-    for (const ref of this.#refs ?? []) ref[release]();
+    const refs = this.#refs;
     this.#refs = undefined;
+    const failures: unknown[] = [];
+    for (const ref of refs ?? []) {
+      try {
+        ref[release]();
+      } catch (cause) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Child host references failed to release");
+    }
   }
 }
 
@@ -30,20 +58,29 @@ const release = Symbol("release");
 
 export class ChildHostRef<Value> {
   #value: Value | undefined;
+  #onRelease: (() => void) | undefined;
 
-  constructor(value: Value) {
+  constructor(value: Value, onRelease?: (value: Value) => void) {
     this.#value = value;
+    this.#onRelease = onRelease === undefined ? undefined : () => onRelease(value);
   }
 
   get(): Value {
     if (this.#value === undefined) {
-      throw Object.assign(new Error("Child host is closed"), { code: "EBADF" });
+      throw closedHostError();
     }
     return this.#value;
   }
 
   /** Only the lease clears a ref, so holders can't revoke each other's access. */
   [release](): void {
+    const onRelease = this.#onRelease;
+    this.#onRelease = undefined;
     this.#value = undefined;
+    onRelease?.();
   }
+}
+
+function closedHostError() {
+  return Object.assign(new Error("Child host is closed"), { code: "EBADF" });
 }

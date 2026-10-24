@@ -73,6 +73,7 @@ function fixture(limits?: ChildWorkerLimits) {
 }
 
 const command = { executable: "/bin/cat", argv: ["cat", "input"], cwd: "/work", env: {} };
+const loaderId = "child-cpu-limits-test-slot";
 const program = { mainModule: "main.js", modules: { "main.js": "export default {};" } };
 const envelope = { id: "input", ...program, input: { text: "unchanged input" } };
 const exit = { exitCode: 0, signal: 0, coreDumped: false };
@@ -151,7 +152,10 @@ function composedProgramFixture(sourceKind: "static" | "lazy-factory") {
       return createChildWorkerProgram({
         executable: "/bin/program",
         code: this.code(modules),
-        capacity: new ChildWorkerCapacity(),
+        // No DO context is available; the 2026-10-23 probe measured four fetches (see computer/README.md).
+        capacity: new ChildWorkerCapacity(4, {
+          owner: "test/infra-isolateprobe-childcpulimits-test-1",
+        }),
         dispatch,
         createHost: () => ({ host, close }),
       });
@@ -170,7 +174,7 @@ describe("host-selected child CPU limits", () => {
     async ({ limits, expected }) => {
       const f = fixture(limits);
       const host = new Host();
-      await f.child.run({ ...program, entrypoint: "Child", command }, host);
+      await f.child.run({ ...program, loaderId, entrypoint: "Child", command }, host);
       await f.generated.fetch(request());
       await f.generated.open(JSON.stringify(envelope));
       const codes = await Promise.all(f.codes);
@@ -202,7 +206,7 @@ describe("host-selected child CPU limits", () => {
   ])("rejects invalid host configuration %s before calling the loader", async (json) => {
     const limits = JSON.parse(json);
     const f = fixture(limits);
-    await expect(f.child.run({ ...program, command }, new Host())).rejects.toThrow();
+    await expect(f.child.run({ ...program, loaderId, command }, new Host())).rejects.toThrow();
     await expect(f.generated.fetch(request())).rejects.toThrow();
     await expect(f.generated.open(JSON.stringify(envelope))).rejects.toThrow();
     expect(f.get).not.toHaveBeenCalled();
@@ -220,7 +224,7 @@ describe("host-selected child CPU limits", () => {
       props: { namespace: "namespace", limits: { cpuMs: 600_000 } },
     });
     const f = fixture({ cpuMs: 1_000 });
-    const untrusted = { ...program, command, limits: { cpuMs: 600_000 } };
+    const untrusted = { ...program, loaderId, command, limits: { cpuMs: 600_000 } };
     await f.child.run(untrusted, new Host());
     expect((await Promise.all(f.codes))[0]?.limits).toEqual({ cpuMs: 1_000 });
     const extra = { ...envelope, limits: { cpuMs: 600_000 } };
@@ -247,7 +251,7 @@ describe("host-selected child CPU limits", () => {
   it("preserves raw public probe targets while acknowledging registry preflight failures", async () => {
     const f = fixture();
     const host = new Host();
-    await expect(f.child.run({ ...program, command }, host)).resolves.toEqual({
+    await expect(f.child.run({ ...program, loaderId, command }, host)).resolves.toEqual({
       exitCode: 0,
       signal: 0,
       coreDumped: false,
@@ -259,6 +263,7 @@ describe("host-selected child CPU limits", () => {
       f.child.run(
         {
           ...program,
+          loaderId,
           modules: { ...program.modules, "missing.wasm": { wasmReference: "a".repeat(64) } },
           command,
         },
@@ -354,6 +359,7 @@ describe("host-selected child CPU limits", () => {
       core.run(
         {
           ...program,
+          loaderId,
           command,
           limits: { cpuMs: 600_000 },
         },
@@ -372,6 +378,7 @@ describe("host-selected child CPU limits", () => {
       await core.run(
         {
           ...program,
+          loaderId,
           modules: {
             ...program.modules,
             "missing.wasm": { wasmReference: "b".repeat(64) },

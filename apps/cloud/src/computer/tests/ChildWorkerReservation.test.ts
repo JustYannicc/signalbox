@@ -10,6 +10,8 @@ import { ChildWorkerDispatchError } from "../ChildWorkerDispatchError.ts";
 import { createChildWorkerProgram } from "../ChildWorkerProgram.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
 
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+
 type Fixture = ReturnType<typeof childBusyboxFixture>;
 
 function deferred<T>() {
@@ -18,6 +20,10 @@ function deferred<T>() {
     resolve = complete;
   });
   return { promise, resolve };
+}
+
+function prepared(codeId: string) {
+  return Object.freeze({ codeId, residentBytes: 0 });
 }
 
 async function withFixture(run: (fixture: Fixture) => Promise<void>) {
@@ -41,9 +47,11 @@ afterEach(async () => {
 
 describe("ChildWorkerReservation", () => {
   it("is capacity-owned, shares queued admission, and cancels once", async () => {
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerreservation-test-1",
+    });
     const signal = new AbortController().signal;
-    const reservation = await capacity.reserve(signal, requester());
+    const reservation = await capacity.reserve(signal, requester(), prepared("reservation-one"));
     expect(isChildWorkerReservation(reservation)).toBe(true);
     expect(capacity.active).toBe(1);
 
@@ -51,11 +59,11 @@ describe("ChildWorkerReservation", () => {
     expect(isChildWorkerReservation(forged)).toBe(false);
     const permitLike = { release: vi.fn() };
     const implementation = Object.getPrototypeOf(reservation).constructor;
-    expect(() => Reflect.construct(implementation, [permitLike])).toThrow("issued by capacity");
-    const queued = capacity.reserve(signal, requester());
+    expect(() => Reflect.construct(implementation, [permitLike])).toThrow("capacity-owned");
+    const queued = capacity.reserve(signal, requester(), prepared("reservation-two"));
     reservation.cancel();
     reservation.cancel();
-    expect(capacity.active).toBe(1);
+    expect(capacity.active).toBe(0);
     const nextReservation = await queued;
     expect(capacity.active).toBe(1);
     nextReservation.cancel();
@@ -63,9 +71,11 @@ describe("ChildWorkerReservation", () => {
   });
 
   it("consumes synchronously, ignores cancel after handoff, and releases on settlement", async () => {
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerreservation-test-2",
+    });
     const signal = new AbortController().signal;
-    const reservation = await capacity.reserve(signal, requester());
+    const reservation = await capacity.reserve(signal, requester(), prepared("reservation-run"));
     const started = deferred<void>();
     const finished = deferred<number>();
     let starts = 0;
@@ -89,9 +99,15 @@ describe("ChildWorkerReservation", () => {
   });
 
   it("releases an unconsumed reservation when run observes an aborted signal", async () => {
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkerreservation-test-3",
+    });
     const controller = new AbortController();
-    const reservation = await capacity.reserve(controller.signal, requester());
+    const reservation = await capacity.reserve(
+      controller.signal,
+      requester(),
+      prepared("reservation-abort"),
+    );
     const reason = new Error("cancelled before dispatch");
     const work = vi.fn(async () => undefined);
 
@@ -103,11 +119,10 @@ describe("ChildWorkerReservation", () => {
 
   it("dispatches with its reserved slot at full capacity without reacquiring", () =>
     withFixture(async (fixture) => {
-      const capacity = new ChildWorkerCapacity(1);
-      const reservation = await capacity.reserve(fixture.context.signal, {
-        processes: fixture.context.processes,
-        process: fixture.context.identity.handle,
+      const capacity = new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-childworkerreservation-test-4",
       });
+      let reservation!: ChildWorkerReservation;
       const capacityRun = vi.spyOn(capacity, "run");
       const modules = vi.fn(() => ({ "entry.js": "export default 0" }));
       const dispatch = vi.fn(async () => {
@@ -126,6 +141,15 @@ describe("ChildWorkerReservation", () => {
         dispatch: { run: dispatch },
         createHost,
       });
+      const request = await program.prepare();
+      reservation = await capacity.reserve(
+        fixture.context.signal,
+        {
+          processes: fixture.context.processes,
+          process: fixture.context.identity.handle,
+        },
+        request,
+      );
 
       expect(capacity.active).toBe(1);
       await expect(program.run(fixture.context)).resolves.toEqual(exited(17));
@@ -136,19 +160,16 @@ describe("ChildWorkerReservation", () => {
       expect(capacity.active).toBe(0);
     }));
 
-  it("rejects cancelled and duplicate tokens before modules, host creation, or dispatch", () =>
+  it("rejects cancelled and duplicate tokens before host creation or dispatch", () =>
     withFixture(async (fixture) => {
-      const capacity = new ChildWorkerCapacity(1);
+      const capacity = new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-childworkerreservation-test-5",
+      });
       const capacityRun = vi.spyOn(capacity, "run");
       const modules = vi.fn(() => ({ "entry.js": "export default 0" }));
       const dispatch = vi.fn(async () => exited());
       const createHost = vi.fn(() => ({ host: {}, close() {} }));
-      let reservation = await capacity.reserve(fixture.context.signal, {
-        processes: fixture.context.processes,
-        process: fixture.context.identity.handle,
-      });
-      reservation.cancel();
-      reservation.cancel();
+      let reservation!: ChildWorkerReservation;
       const program = createChildWorkerProgram({
         executable: "/bin/tool",
         code: { mainModule: "entry.js", modules },
@@ -157,17 +178,35 @@ describe("ChildWorkerReservation", () => {
         dispatch: { run: dispatch },
         createHost,
       });
+      const request = await program.prepare();
+      reservation = await capacity.reserve(
+        fixture.context.signal,
+        {
+          processes: fixture.context.processes,
+          process: fixture.context.identity.handle,
+        },
+        request,
+      );
+      reservation.cancel();
+      reservation.cancel();
 
       await expect(program.run(fixture.context)).rejects.toThrow("no longer available");
-      reservation = await capacity.reserve(fixture.context.signal, {
-        processes: fixture.context.processes,
-        process: fixture.context.identity.handle,
-      });
+      const retryRequest = await program.prepare();
+      reservation = await capacity.reserve(
+        fixture.context.signal,
+        {
+          processes: fixture.context.processes,
+          process: fixture.context.identity.handle,
+        },
+        retryRequest,
+      );
       await expect(program.run(fixture.context)).resolves.toEqual(exited());
-      await expect(program.run(fixture.context)).rejects.toThrow("no longer available");
+      await expect(program.run(fixture.context)).rejects.toThrow(
+        "does not belong to this prepared program",
+      );
 
       expect(capacityRun).not.toHaveBeenCalled();
-      expect(modules).toHaveBeenCalledOnce();
+      expect(modules).toHaveBeenCalledTimes(2);
       expect(createHost).toHaveBeenCalledOnce();
       expect(dispatch).toHaveBeenCalledOnce();
       expect(capacity.active).toBe(0);
@@ -198,7 +237,9 @@ describe("ChildWorkerReservation", () => {
       ];
 
       for (const { reservationFor, expected } of cases) {
-        const capacity = new ChildWorkerCapacity(1);
+        const capacity = new ChildWorkerCapacity(1, {
+          owner: "test/src-computer-tests-childworkerreservation-test-6",
+        });
         const capacityRun = vi.spyOn(capacity, "run");
         const modules = vi.fn(() => ({ "entry.js": "export default 0" }));
         const dispatch = vi.fn(async () => exited());
@@ -225,12 +266,10 @@ describe("ChildWorkerReservation", () => {
       }
     }));
 
-  it("releases after module loading fails before host creation", () =>
-    withFixture(async (fixture) => {
-      const capacity = new ChildWorkerCapacity(1);
-      const reservation = await capacity.reserve(fixture.context.signal, {
-        processes: fixture.context.processes,
-        process: fixture.context.identity.handle,
+  it("fails preparation before reserving or dispatching when module loading fails", () =>
+    withFixture(async () => {
+      const capacity = new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-childworkerreservation-test-7",
       });
       const failure = new Error("module source unavailable");
       const modules = vi.fn(async () => {
@@ -242,29 +281,28 @@ describe("ChildWorkerReservation", () => {
         executable: "/bin/tool",
         code: { mainModule: "entry.js", modules },
         capacity,
-        reservationFor: () => reservation,
+        reservationFor: () => {
+          throw new Error("Preparation failure should happen before reservation lookup");
+        },
         dispatch: { run: dispatch },
         createHost,
       });
 
-      await expect(program.run(fixture.context)).rejects.toBe(failure);
+      await expect(program.prepare()).rejects.toBe(failure);
       expect(modules).toHaveBeenCalledOnce();
+      expect(capacity.active).toBe(0);
       expect(createHost).not.toHaveBeenCalled();
       expect(dispatch).not.toHaveBeenCalled();
-      expect(capacity.active).toBe(0);
     }));
 
   it.effect("holds the reservation through descendants, host close, and unconfirmed stop ACK", () =>
     Effect.gen(function* () {
       const fixture = childBusyboxFixture();
       try {
-        const capacity = new ChildWorkerCapacity(1);
-        const reservation = yield* Effect.promise(() =>
-          capacity.reserve(fixture.context.signal, {
-            processes: fixture.context.processes,
-            process: fixture.context.identity.handle,
-          }),
-        );
+        const capacity = new ChildWorkerCapacity(1, {
+          owner: "test/src-computer-tests-childworkerreservation-test-8",
+        });
+        let reservation!: ChildWorkerReservation;
         const descendant = Promise.withResolvers<ReturnType<typeof exited>>();
         const exitedEarly = deferred<ReturnType<typeof exited>>();
         const closeStarted = deferred<void>();
@@ -301,6 +339,18 @@ describe("ChildWorkerReservation", () => {
           }),
         });
 
+        const request = yield* Effect.promise(() => program.prepare());
+        reservation = yield* Effect.promise(() =>
+          capacity.reserve(
+            fixture.context.signal,
+            {
+              processes: fixture.context.processes,
+              process: fixture.context.identity.handle,
+            },
+            request,
+          ),
+        );
+
         const result = program.run(fixture.context);
         const status = exited(17);
         exitedEarly.resolve(status);
@@ -319,9 +369,9 @@ describe("ChildWorkerReservation", () => {
         expect(capacity.active).toBe(capacity.limit);
 
         stopped.resolve(undefined);
-        const next = capacity.acquire(fixture.context.signal, undefined);
+        const next = capacity.acquire(fixture.context.signal, undefined, prepared("after-stop"));
         const permit = yield* Effect.promise(() => next);
-        permit.release();
+        yield* Effect.promise(() => permit.release());
         yield* Effect.promise(() => draining);
         expect(capacity.active).toBe(0);
         expect(yield* Effect.promise(() => result)).toEqual(status);

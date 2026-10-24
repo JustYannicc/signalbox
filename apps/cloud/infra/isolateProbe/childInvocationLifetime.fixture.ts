@@ -96,6 +96,7 @@ export class ChildInvocationProbe extends DurableObject<Env> {
     try {
       const exit = await dispatch.run(
         {
+          loaderId: "child-invocation-lifetime-test-slot",
           mainModule: "child.js",
           modules: { "child.js": source },
           command: {

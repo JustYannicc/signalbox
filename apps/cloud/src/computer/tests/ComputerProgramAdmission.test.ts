@@ -1,67 +1,64 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { KernelAsyncProgramContext } from "../../kernel/KernelAsyncProgram.ts";
-import type { KernelProgramAdmissionRequest } from "../../kernel/KernelProgramAdmission.ts";
-import type { KernelProgramImplementation } from "../../kernel/KernelProgramHost.ts";
-import { ABI_VERSION, KernelProgramRegistry } from "../../kernel/KernelAbi.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { createChildWorkerProgram } from "../ChildWorkerProgram.ts";
 import { createComputerProgramAdmission } from "../ComputerProgramAdmission.ts";
 import { ComputerEscalationTable } from "../EscalationTable.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
+import {
+  machinePort,
+  observeTicketReservations,
+  prepared,
+  requestFor,
+} from "./ComputerProgramAdmissionTestSupport.ts";
 
-function requestFor(
-  context: KernelAsyncProgramContext,
-  implementation: KernelProgramImplementation,
-): KernelProgramAdmissionRequest {
-  const manifest = {
-    name: "tool",
-    version: "1",
-    abiVersion: ABI_VERSION,
-    requiredCapabilities: [],
-    entrypoint: "tool",
-  };
-  const registry = new KernelProgramRegistry();
-  registry.register(manifest);
-  const resolved = registry.resolve("tool", "1", [ABI_VERSION], {});
-  if (resolved.status !== "ok") throw new Error("Could not resolve test program");
-  return Object.freeze({
-    kind: "exec",
-    command: Object.freeze({
-      executable: "/bin/tool",
-      argv: Object.freeze([...context.args]),
-      env: Object.freeze({ ...context.env }),
-      cwd: context.filesystem.cwd,
-    }),
-    baseCwd: context.filesystem.cwd,
-    actions: [],
-    attributes: undefined,
-    filesystem: context.filesystem,
-    processes: context.processes,
-    signal: context.signal,
-    identity: context.identity,
-    target: {
-      kind: "resolved" as const,
-      program: resolved.value,
-      binding: {
-        manifest,
-        implementation,
-      },
-    },
-  });
-}
-
-function machinePort() {
-  return {
-    spawn: vi.fn(async () => {
-      throw new Error("Unexpected machine dispatch");
-    }),
-  };
-}
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 describe("Computer program admission", () => {
+  it("queues before preparing and reserves the same prepared request object", async () => {
+    const fixture = childBusyboxFixture();
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-computerprogramadmission-test-1",
+    });
+    const order: string[] = [];
+    const preparedRequest = prepared();
+    const implementation = {
+      kind: "async" as const,
+      prepare: async () => {
+        order.push("prepare");
+        return preparedRequest;
+      },
+      run: async () => exited(),
+    };
+    const observed = observeTicketReservations(
+      capacity,
+      () => order.push("enqueue"),
+      () => order.push("reserve"),
+    );
+    const admission = createComputerProgramAdmission({
+      capacity,
+      escalation: new ComputerEscalationTable(),
+      machine: machinePort(),
+    });
+    try {
+      const decision = await admission.admit(requestFor(fixture.context, implementation));
+      expect(order).toEqual(["enqueue", "prepare", "reserve"]);
+      expect(observed.enqueue).toHaveBeenCalledOnce();
+      expect(observed.requests).toEqual([preparedRequest]);
+      expect(observed.requests[0]).toBe(preparedRequest);
+      expect(observed.granted).toEqual([preparedRequest.codeId]);
+      decision.cancel?.();
+      expect(capacity.active).toBe(0);
+    } finally {
+      admission.close();
+      await fixture.close();
+    }
+  });
+
   it("consumes the captured binding's slot once at full capacity without reacquisition", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-computerprogramadmission-test-2",
+    });
     const capacityRun = vi.spyOn(capacity, "run");
     const admission = createComputerProgramAdmission({
       capacity,
@@ -100,7 +97,7 @@ describe("Computer program admission", () => {
       await expect(program.run(context)).resolves.toEqual(exited(17));
       await expect(program.run(context)).rejects.toThrow("does not belong");
       expect(capacityRun).not.toHaveBeenCalled();
-      expect(modules).toHaveBeenCalledOnce();
+      expect(modules).toHaveBeenCalledTimes(2);
       const next = await queued;
       expect(capacity.active).toBe(1);
       next.cancel?.();
@@ -115,7 +112,9 @@ describe("Computer program admission", () => {
     "rejects a changed %s before module loading and cancels the unused grant",
     async (mismatch) => {
       const fixture = childBusyboxFixture();
-      const capacity = new ChildWorkerCapacity(1);
+      const capacity = new ChildWorkerCapacity(1, {
+        owner: "test/src-computer-tests-computerprogramadmission-test-3",
+      });
       const options = {
         capacity,
         escalation: new ComputerEscalationTable(),
@@ -123,7 +122,11 @@ describe("Computer program admission", () => {
       };
       const admission = createComputerProgramAdmission(options);
       const other = createComputerProgramAdmission(options);
-      const program = { kind: "async" as const, run: async () => exited() };
+      const program = {
+        kind: "async" as const,
+        prepare: async () => prepared(),
+        run: async () => exited(),
+      };
       try {
         const decision = await admission.admit(requestFor(fixture.context, program));
         if (decision.admission === undefined) throw new Error("Expected a reserved dispatch");
@@ -148,7 +151,9 @@ describe("Computer program admission", () => {
 
   it("invalidates pending evidence and unconsumed grants when the Computer closes", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(2);
+    const capacity = new ChildWorkerCapacity(2, {
+      owner: "test/src-computer-tests-computerprogramadmission-test-4",
+    });
     const gate = Promise.withResolvers<{ workspaceBytes: number }>();
     const entered = Promise.withResolvers<void>();
     const admission = createComputerProgramAdmission({
@@ -161,7 +166,11 @@ describe("Computer program admission", () => {
       },
     });
     try {
-      const program = { kind: "async" as const, run: async () => exited() };
+      const program = {
+        kind: "async" as const,
+        prepare: async () => prepared(),
+        run: async () => exited(),
+      };
       const pending = admission.admit(requestFor(fixture.context, program));
       const rejected = expect(pending).rejects.toMatchObject({ code: "ECANCELED" });
       await entered.promise;
@@ -177,14 +186,20 @@ describe("Computer program admission", () => {
 
   it("releases a grant and rejects its precommit assertion after owner shutdown", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-computerprogramadmission-test-5",
+    });
     const admission = createComputerProgramAdmission({
       capacity,
       escalation: new ComputerEscalationTable(),
       machine: machinePort(),
     });
     try {
-      const program = { kind: "async" as const, run: async () => exited() };
+      const program = {
+        kind: "async" as const,
+        prepare: async () => prepared(),
+        run: async () => exited(),
+      };
       const decision = await admission.admit(requestFor(fixture.context, program));
       expect(capacity.active).toBe(1);
       admission.close();
@@ -199,34 +214,40 @@ describe("Computer program admission", () => {
 
   it("cancels queued reservations on owner shutdown without leaking the next slot", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-computerprogramadmission-test-6",
+    });
     const admission = createComputerProgramAdmission({
       capacity,
       escalation: new ComputerEscalationTable(),
       machine: machinePort(),
     });
-    const program = { kind: "async" as const, run: async () => exited() };
+    const program = {
+      kind: "async" as const,
+      prepare: async () => prepared(),
+      run: async () => exited(),
+    };
     try {
-      const held = await capacity.acquire(fixture.context.signal, undefined);
+      const held = await capacity.acquire(fixture.context.signal, undefined, prepared());
       const reserving = Promise.withResolvers<void>();
-      const reserve = capacity.reserve.bind(capacity);
-      vi.spyOn(capacity, "reserve").mockImplementation((...args) => {
-        const pending = reserve(...args);
-        reserving.resolve();
-        return pending;
-      });
+      observeTicketReservations(capacity, undefined, () => reserving.resolve());
       const queued = admission.admit(requestFor(fixture.context, program));
       const rejected = expect(queued).rejects.toMatchObject({ code: "ECANCELED" });
       await reserving.promise;
       admission.close();
       await rejected;
       expect(capacity.active).toBe(1);
-      held.release();
+      await held.release();
       await expect(
-        capacity.run(fixture.context.signal, async () => 23, {
-          processes: fixture.context.processes,
-          process: fixture.context.identity.handle,
-        }),
+        capacity.run(
+          fixture.context.signal,
+          async () => 23,
+          {
+            processes: fixture.context.processes,
+            process: fixture.context.identity.handle,
+          },
+          prepared(),
+        ),
       ).resolves.toBe(23);
       expect(capacity.active).toBe(0);
     } finally {

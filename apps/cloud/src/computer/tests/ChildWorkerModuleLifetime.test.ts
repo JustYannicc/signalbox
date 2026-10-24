@@ -3,6 +3,8 @@ import { createChildWorkerProgram, type ChildWorkerInvocation } from "../ChildWo
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
 
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+
 describe("child program module lifetime", () => {
   it("shares module bytes without copying them at registration or dispatch", async () => {
     const f = childBusyboxFixture();
@@ -25,7 +27,9 @@ describe("child program module lifetime", () => {
           mainModule: "main.js",
           modules: () => ({ "program.wasm": { wasm } }),
         },
-        capacity: new ChildWorkerCapacity(),
+        capacity: new ChildWorkerCapacity(4, {
+          owner: "test/src-computer-tests-childworkermodulelifetime-test-1",
+        }),
         dispatch: { run },
         createHost: () => ({ host: {}, close() {} }),
       });
@@ -38,12 +42,14 @@ describe("child program module lifetime", () => {
     }
   });
 
-  it("loads and freezes a fresh module map inside each admitted dispatch", async () => {
+  it("loads and freezes a fresh module map for each dispatch before capacity acquisition", async () => {
     const f = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkermodulelifetime-test-2",
+    });
     let loadCount = 0;
     const loadModules = vi.fn(async () => {
-      expect(capacity.active).toBe(1);
+      expect(capacity.active).toBe(0);
       loadCount += 1;
       return { "entry.js": `export default ${loadCount}` };
     });
@@ -74,9 +80,11 @@ describe("child program module lifetime", () => {
     }
   });
 
-  it("fails a module load before creating the host or dispatching and releases capacity", async () => {
+  it("fails module preparation before creating the host, reserving capacity, or dispatching", async () => {
     const f = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity();
+    const capacity = new ChildWorkerCapacity(4, {
+      owner: "test/src-computer-tests-childworkermodulelifetime-test-3",
+    });
     const failure = new Error("module source unavailable");
     const createHost = vi.fn(() => ({ host: {}, close() {} }));
     const run = vi.fn(async () => exited());
@@ -107,7 +115,9 @@ describe("child program module lifetime", () => {
     const f = childBusyboxFixture();
     const started = Promise.withResolvers<void>();
     const loaded = Promise.withResolvers<Readonly<Record<string, string>>>();
-    const capacity = new ChildWorkerCapacity();
+    const capacity = new ChildWorkerCapacity(4, {
+      owner: "test/src-computer-tests-childworkermodulelifetime-test-4",
+    });
     const createHost = vi.fn(() => ({ host: {}, close() {} }));
     const run = vi.fn(async () => exited());
     try {
@@ -162,7 +172,9 @@ describe("child program module lifetime", () => {
       const program = createChildWorkerProgram({
         executable: "/bin/program",
         code: { mainModule: "main.js", modules },
-        capacity: new ChildWorkerCapacity(),
+        capacity: new ChildWorkerCapacity(4, {
+          owner: "test/src-computer-tests-childworkermodulelifetime-test-5",
+        }),
         dispatch: { run },
         createHost: () => ({ host: {}, close() {} }),
       });

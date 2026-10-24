@@ -3,10 +3,17 @@ import { ChildWorkerCapacity } from "../../computer/ChildWorkerCapacity.ts";
 import { createHookService } from "../HookService.ts";
 import { bytes, readAll, setup, spawn, writeInput } from "./hookProgramFixture.ts";
 
-it("runs a script hook while its invoking shell holds the one-slot pool", async () => {
-  const capacity = new ChildWorkerCapacity(1);
+const syntheticRequest = Object.freeze({ codeId: "test-holder", residentBytes: 0 });
+
+it("runs a script hook after its invoking shell acknowledges stop", async () => {
+  const capacity = new ChildWorkerCapacity(1, {
+    owner: "test/src-hooks-tests-hookscriptadmission-test-1",
+  });
   const controller = new AbortController();
   const attempted = Promise.withResolvers<void>();
+  const stopAck = Promise.withResolvers<void>();
+  const scriptStarted = Promise.withResolvers<void>();
+  const scriptResponse = Promise.withResolvers<Response>();
   const shellExit = Promise.withResolvers<{
     exitCode: number;
     signal: number;
@@ -34,10 +41,15 @@ it("runs a script hook while its invoking shell holds the one-slot pool", async 
         throw new Error("Wrong hook route");
       },
     },
-    generated: { invoke: async () => new Response("script ran") },
+    generated: {
+      invoke: async () => {
+        scriptStarted.resolve();
+        return scriptResponse.promise;
+      },
+    },
     capacity: {
       acquire(signal, requester) {
-        const pending = capacity.acquire(signal, requester);
+        const pending = capacity.acquire(signal, requester, syntheticRequest);
         attempted.resolve();
         return pending;
       },
@@ -56,13 +68,18 @@ it("runs a script hook while its invoking shell holds the one-slot pool", async 
   let piped: ReturnType<typeof test.host.preparePiped> | undefined;
   const running = capacity.run(
     controller.signal,
-    async () => {
+    async (execution) => {
       piped = test.host.preparePiped(
         { filesystem: test.filesystem, parent: shell.value.handle, signal: controller.signal },
         { cwd: "/work" },
       );
       const child = spawn(test, piped, ["signalbox-hook", "script"]);
       await writeInput(piped.stdin, bytes("{}\n"));
+      await attempted.promise;
+      // The test driver acknowledges stop after the script admission request is queued.
+      await stopAck.promise;
+      await execution.handoff();
+      await scriptStarted.promise;
       const [stdout, stderr, exited] = await Promise.all([
         readAll(piped.stdout),
         readAll(piped.stderr),
@@ -72,17 +89,23 @@ it("runs a script hook while its invoking shell holds the one-slot pool", async 
       return { stdout, stderr, exited };
     },
     { processes: test.host.processes, process: shell.value.handle },
+    syntheticRequest,
   );
   void running.catch(() => undefined);
   try {
     await attempted.promise;
-    expect(capacity.active).toBe(2);
+    stopAck.resolve();
+    await scriptStarted.promise;
+    expect(capacity.active).toBe(1);
+    scriptResponse.resolve(new Response("script ran"));
     const result = await running;
     expect(result.exited).toMatchObject({ status: "ok", value: { exitCode: 0 } });
     expect(result.stdout).toEqual(bytes("script ran"));
     expect(capacity.active).toBe(0);
   } finally {
     controller.abort();
+    stopAck.resolve();
+    scriptResponse.resolve(new Response("script ran"));
     await running.catch(() => undefined);
     shellExit.resolve({ exitCode: 0, signal: 0, coreDumped: false });
     await test.close(piped);

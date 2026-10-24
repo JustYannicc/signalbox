@@ -8,9 +8,11 @@ import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import {
+  type ChildWorkerAdmissionTicket,
   isChildWorkerReservation,
   type ChildWorkerCapacity,
   type ChildWorkerReservation,
+  type ChildWorkerSlotRequest,
 } from "./ChildWorkerCapacity.ts";
 import {
   assertComputerForwardingSupported,
@@ -20,7 +22,7 @@ import type { ComputerEscalationEvidence, ComputerEscalationTable } from "./Esca
 
 export interface ComputerProgramAdmissionOptions {
   readonly escalation: ComputerEscalationTable;
-  readonly capacity: Pick<ChildWorkerCapacity, "reserve">;
+  readonly capacity: Pick<ChildWorkerCapacity, "enqueue">;
   readonly machine: KernelCommandForwarder;
   readonly evidence?: (
     command: KernelCommand,
@@ -65,96 +67,130 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
     async admit(request: KernelProgramAdmissionRequest): Promise<KernelProgramAdmissionDecision> {
       assertOpen();
       const admittedGeneration = generation;
-      request.signal.throwIfAborted();
-      const evidence = await options.evidence?.(request.command, request.signal);
-      request.signal.throwIfAborted();
-      assertOpen(admittedGeneration);
-      const decision = options.escalation.decide(request.command, evidence);
-      if (decision.kind === "machine") {
-        assertComputerForwardingSupported(request);
-        return Object.freeze({
-          kind: "forward" as const,
-          implementation: createComputerForwardedProgram(options.machine, request.command),
-          assertCurrent: () => {
-            assertOpen(admittedGeneration);
-            request.signal.throwIfAborted();
-            assertComputerForwardingSupported(request);
-          },
-        });
-      }
-      if (request.target.kind !== "resolved") {
-        throw new KernelProgramExecAdmissionError(request.target.code, request.target.message);
-      }
-      const implementation = request.target.binding.implementation;
-      if (implementation.kind !== "async") {
-        throw new KernelProgramExecAdmissionError("ENOTSUP", "Computer requires a child program");
-      }
-      // close() aborts queued reserves; removable links avoid AbortSignal.any retaining the session signal.
       const controller = new AbortController();
       const onAbort = () => controller.abort(request.signal.reason);
       reserves.add(controller);
-      let reservation: ChildWorkerReservation;
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      if (request.signal.aborted) onAbort();
+
+      let ticket: ChildWorkerAdmissionTicket | undefined;
+      let reservation: ChildWorkerReservation | undefined;
+      let transferred = false;
       try {
-        request.signal.addEventListener("abort", onAbort, { once: true });
-        if (request.signal.aborted) onAbort();
-        reservation = await options.capacity.reserve(controller.signal, {
+        controller.signal.throwIfAborted();
+        const evidencePromise = options.evidence?.(request.command, controller.signal);
+        const evidence =
+          evidencePromise === undefined
+            ? undefined
+            : await awaitWithAbort(evidencePromise, controller.signal);
+        controller.signal.throwIfAborted();
+        assertOpen(admittedGeneration);
+        const decision = options.escalation.decide(request.command, evidence);
+        if (decision.kind === "machine") {
+          assertComputerForwardingSupported(request);
+          return Object.freeze({
+            kind: "forward" as const,
+            implementation: createComputerForwardedProgram(options.machine, request.command),
+            assertCurrent: () => {
+              assertOpen(admittedGeneration);
+              request.signal.throwIfAborted();
+              assertComputerForwardingSupported(request);
+            },
+          });
+        }
+        if (request.target.kind !== "resolved") {
+          throw new KernelProgramExecAdmissionError(request.target.code, request.target.message);
+        }
+        const implementation = request.target.binding.implementation;
+        if (implementation.kind !== "async") {
+          throw new KernelProgramExecAdmissionError("ENOTSUP", "Computer requires a child program");
+        }
+        const prepare = (
+          implementation as KernelProgramImplementation & {
+            readonly prepare?: () => Promise<ChildWorkerSlotRequest>;
+          }
+        ).prepare;
+        if (typeof prepare !== "function") {
+          throw new TypeError("Child worker implementation must prepare its ProcessSlot request");
+        }
+
+        // Claim FIFO/nested priority before hashing; this ticket holds no process permit.
+        const process = request.kind === "exec" ? request.identity?.handle : request.parent;
+        const parent =
+          request.kind === "exec" && process === undefined
+            ? undefined
+            : request.processes.info(process);
+        const parentPid =
+          parent?.status === "ok"
+            ? request.kind === "exec"
+              ? parent.value.parentPid
+              : parent.value.pid
+            : undefined;
+        ticket = options.capacity.enqueue(controller.signal, {
           processes: request.processes,
-          process: request.kind === "exec" ? request.identity?.handle : request.parent,
+          process,
+          ...(parentPid === undefined ? {} : { parentPid }),
+        });
+        const prepared = await awaitWithAbort(prepare.call(implementation), controller.signal);
+        controller.signal.throwIfAborted();
+        reservation = await ticket.reserve(prepared);
+        if (!isChildWorkerReservation(reservation)) {
+          throw new TypeError("Computer capacity did not issue a child worker reservation");
+        }
+        assertOpen(admittedGeneration);
+        controller.signal.throwIfAborted();
+        const record: AdmissionRecord = {
+          owner,
+          generation: admittedGeneration,
+          request,
+          implementation,
+          reservation,
+          state: "available",
+        };
+        const admission = Object.freeze({});
+        grants.set(admission, record);
+        unused.add(record);
+        transferred = true;
+        return Object.freeze({
+          kind: "local" as const,
+          admission,
+          assertCurrent: () => {
+            assertOpen(admittedGeneration);
+            request.signal.throwIfAborted();
+            if (record.state !== "available") {
+              throw new KernelProgramExecAdmissionError(
+                "ECANCELED",
+                "Computer grant was cancelled",
+              );
+            }
+          },
+          cancel: () => cancel(record),
+          onDispatch: (context: KernelAsyncProgramContext) => {
+            assertOpen(admittedGeneration);
+            if (record.state !== "available" || record.bound !== undefined) {
+              throw new TypeError("Computer grant was already bound");
+            }
+            try {
+              validateContext(request, context);
+              record.bound = {
+                context,
+                cwd: context.filesystem.cwd,
+                identity: Object.freeze({ ...context.identity }),
+              };
+            } catch (error) {
+              cancel(record);
+              throw error;
+            }
+          },
         });
       } finally {
         request.signal.removeEventListener("abort", onAbort);
         reserves.delete(controller);
+        if (!transferred) {
+          reservation?.cancel();
+          ticket?.cancel();
+        }
       }
-      if (!isChildWorkerReservation(reservation)) {
-        throw new TypeError("Computer capacity did not issue a child worker reservation");
-      }
-      try {
-        assertOpen(admittedGeneration);
-        request.signal.throwIfAborted();
-      } catch (error) {
-        reservation.cancel();
-        throw error;
-      }
-      const record: AdmissionRecord = {
-        owner,
-        generation: admittedGeneration,
-        request,
-        implementation,
-        reservation,
-        state: "available",
-      };
-      const admission = Object.freeze({});
-      grants.set(admission, record);
-      unused.add(record);
-      return Object.freeze({
-        kind: "local" as const,
-        admission,
-        assertCurrent: () => {
-          assertOpen(admittedGeneration);
-          request.signal.throwIfAborted();
-          if (record.state !== "available") {
-            throw new KernelProgramExecAdmissionError("ECANCELED", "Computer grant was cancelled");
-          }
-        },
-        cancel: () => cancel(record),
-        onDispatch: (context: KernelAsyncProgramContext) => {
-          assertOpen(admittedGeneration);
-          if (record.state !== "available" || record.bound !== undefined) {
-            throw new TypeError("Computer grant was already bound");
-          }
-          try {
-            validateContext(request, context);
-            record.bound = {
-              context,
-              cwd: context.filesystem.cwd,
-              identity: Object.freeze({ ...context.identity }),
-            };
-          } catch (error) {
-            cancel(record);
-            throw error;
-          }
-        },
-      });
     },
     reservationFor(
       context: KernelAsyncProgramContext,
@@ -198,6 +234,36 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
       for (const controller of reserves) controller.abort(reason);
       for (const record of unused) cancel(record);
     },
+  });
+}
+
+function awaitWithAbort<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      cleanup();
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending.then(
+      (value) => {
+        if (settled) return;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        cleanup();
+        reject(error);
+      },
+    );
+    if (signal.aborted) onAbort();
   });
 }
 

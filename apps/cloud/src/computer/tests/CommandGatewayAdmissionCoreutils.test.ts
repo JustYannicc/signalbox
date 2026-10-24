@@ -5,6 +5,7 @@ import type { KernelSyscallPort, KernelSyscallResponse } from "../../kernel/Kern
 import { createChildCoreutils } from "../ChildCoreutils.ts";
 import { createChildWasi } from "../ChildWasi.ts";
 import { commandGatewayFixture, readAll } from "./CommandGatewayAdmissionFixture.ts";
+import { observeTicketReservations } from "./ComputerProgramAdmissionTestSupport.ts";
 import { wasmEnvironmentGetCommand } from "./CoreutilsWasmImportFixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
@@ -53,7 +54,7 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
         }
       },
     });
-    const reserve = vi.spyOn(fixture.capacity, "reserve");
+    const reservations = observeTicketReservations(fixture.capacity);
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let child: KernelCommandChild | undefined;
     try {
@@ -79,7 +80,8 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
       expect(parentEnvironment).toBe("PATH=/bin\0PWD=/workspace");
       expect(childEnvironment).toBe("PATH=/bin\0PWD=/workspace\0");
       expect(fixture.capacity.active).toBe(0);
-      expect(reserve).toHaveBeenCalledOnce();
+      expect(reservations.requests).toHaveLength(1);
+      expect(reservations.granted).toEqual(reservations.requests.map((request) => request.codeId));
       expect(reacquire).not.toHaveBeenCalled();
       expect(fixture.machineSpawn).not.toHaveBeenCalled();
     } finally {
@@ -126,7 +128,7 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
         }
       },
     });
-    const reserve = vi.spyOn(fixture.capacity, "reserve");
+    const reservations = observeTicketReservations(fixture.capacity);
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let child: KernelCommandChild | undefined;
     try {
@@ -151,7 +153,8 @@ describe.each(cases)("uniform gateway with %s", (_label, env) => {
       expect(parentEnvironment).toBe("PATH=/bin\0PWD=/workspace");
       expect(childEnvironment).toBe("PATH=/bin\0PWD=/workspace\0");
       expect(fixture.capacity.active).toBe(0);
-      expect(reserve).toHaveBeenCalledOnce();
+      expect(reservations.requests).toHaveLength(1);
+      expect(reservations.granted).toEqual(reservations.requests.map((request) => request.codeId));
       expect(reacquire).not.toHaveBeenCalled();
       expect(fixture.machineSpawn).not.toHaveBeenCalled();
     } finally {

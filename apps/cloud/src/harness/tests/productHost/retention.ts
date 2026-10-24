@@ -24,7 +24,9 @@ async function runtimePorts(): Promise<
   return {
     commands: {
       loader: commandLoader().loader,
-      capacity: new ChildWorkerCapacity(2),
+      capacity: new ChildWorkerCapacity(2, {
+        owner: "test/src-harness-tests-producthost-retention-1",
+      }),
       machine: () => ({
         spawn: async () => {
           throw new Error("Unused machine");

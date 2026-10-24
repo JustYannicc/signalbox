@@ -92,7 +92,7 @@ function fixture() {
       };
     },
     wakes,
-    new ChildWorkerCapacity(),
+    new ChildWorkerCapacity(4, { owner: "test/infra-hooksproof-proofcommandfilesystem-test-1" }),
   );
   return {
     database,

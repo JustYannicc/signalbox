@@ -1,5 +1,5 @@
 import type { ComputerExecPort } from "../computer/Computer.ts";
-import type { ChildWorkerCapacity, ChildWorkerRequester } from "../computer/ChildWorkerCapacity.ts";
+import type { ChildWorkerRequester } from "../computer/ChildWorkerCapacity.ts";
 import {
   NodeGeneratedCodeCleanupError,
   type NodeGeneratedCode,
@@ -41,7 +41,12 @@ export interface HookServiceOptions {
   readonly commands: ComputerExecPort;
   readonly generated: Pick<NodeGeneratedCode, "invoke">;
   /** The same admission pool used by every child program in this DO. */
-  readonly capacity: Pick<ChildWorkerCapacity, "acquire">;
+  readonly capacity: {
+    readonly acquire: (
+      signal: AbortSignal,
+      requester: ChildWorkerRequester,
+    ) => Promise<{ readonly release: () => void | Promise<void> }>;
+  };
 }
 
 const encoder = new TextEncoder();
@@ -108,7 +113,7 @@ export function createHookService(options: HookServiceOptions) {
         cleanupConfirmed = !(error instanceof NodeGeneratedCodeCleanupError);
         throw error;
       } finally {
-        if (cleanupConfirmed) permit.release();
+        if (cleanupConfirmed) await permit.release();
       }
     },
   };

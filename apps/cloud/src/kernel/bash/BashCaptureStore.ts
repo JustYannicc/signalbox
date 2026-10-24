@@ -1,5 +1,6 @@
 // Adapted from Nimbus packages/core/src/runtime/bash/capture-store.ts at e9f019ab4e40cb6037aff7e1a0eaf20842578ed3.
 // Copyright (c) 2026 Ashish Kumar Singh and Nimbus contributors; MIT, see NIMBUS-LICENSE.
+import type { BashCaptureState } from "./BashCaptureState.ts";
 
 /**
  * A wasm bash process's unwind arena, and the setjmp captures it holds, for
@@ -136,6 +137,33 @@ export class BashCaptureStore {
   /** A forked child's: the same captures, buffers and counts, at the same places in the child's copy of the memory. */
   fork(): BashCaptureStore {
     return new BashCaptureStore(this.#stack, this.base, this.size, this);
+  }
+
+  snapshot(): BashCaptureState {
+    return {
+      stack: this.#stack,
+      base: this.base,
+      size: this.size,
+      names: [...this.#names],
+      stackNames: [...this.#stackNames],
+      captures: [...this.#captures].map(([id, capture]) => [id, { ...capture }] as const),
+      top: this.#top,
+      liveBytes: this.#liveBytes,
+      nextId: this.#nextId,
+      nextGeneration: this.#nextGeneration,
+    };
+  }
+
+  static restore(state: BashCaptureState): BashCaptureStore {
+    const store = new BashCaptureStore(state.stack, state.base, state.size);
+    for (const [at, id] of state.names) store.#names.set(at, id);
+    store.#stackNames.push(...state.stackNames);
+    for (const [id, capture] of state.captures) store.#captures.set(id, { ...capture });
+    store.#top = state.top;
+    store.#liveBytes = state.liveBytes;
+    store.#nextId = state.nextId;
+    store.#nextGeneration = state.nextGeneration;
+    return store;
   }
 
   /** An empty store for the same arena: an exited process's instance, kept for reuse, holds no captures. */

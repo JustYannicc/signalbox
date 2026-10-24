@@ -5,6 +5,7 @@ import type {
   KernelSyscallRequest,
   KernelSyscallResponse,
 } from "../../kernel/KernelSyscallPort.ts";
+import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
 import { createChildWasi } from "../ChildWasi.ts";
 import { wasmImportReactor } from "./CoreutilsWasmImportFixture.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
@@ -178,10 +179,24 @@ describe("one guest file operation across child transfers", () => {
       const b = guest(fixture.filesystem, "fd_write", 3);
       a.bytes.fill(0x41);
       b.bytes.fill(0x42);
+      a.view.setUint32(16, 0xeeeeeeee, true);
+      const cancelled = new Error("Writer cancelled between transfers");
+      let prefix = 0;
       const first = Promise.withResolvers<void>();
       const resume = Promise.withResolvers<void>();
-      a.after(async (request) => {
+      a.after(async (request, response) => {
         if (request.transferOffset === 0) {
+          if (response.kind !== "return" || response.value !== 0)
+            throw new Error("The first write window did not complete");
+          const count = response.regions.find(
+            (region) => region.pointer <= 16 && region.pointer + region.bytes.byteLength >= 20,
+          );
+          if (count === undefined) throw new Error("The first write window has no count");
+          prefix = new DataView(
+            count.bytes.buffer,
+            count.bytes.byteOffset + 16 - count.pointer,
+            4,
+          ).getUint32(0, true);
           first.resolve();
           await resume.promise;
         }
@@ -189,12 +204,17 @@ describe("one guest file operation across child transfers", () => {
       const writingA = a.run(fd);
       try {
         await first.promise;
-        if (ending === "abort") a.controller.abort();
+        if (ending === "abort") a.controller.abort(cancelled);
         else a.close();
         expect(await b.run(otherFd)).toBe(0);
         resume.resolve();
-        expect(await writingA).toBe(0);
-        const prefix = a.view.getUint32(16, true);
+        if (ending === "abort") await expect(writingA).rejects.toBe(cancelled);
+        else
+          await expect(writingA).rejects.toThrow(
+            "Syscall owner is unavailable or already executing",
+          );
+        expect(a.view.getUint32(16, true)).toBe(0xeeeeeeee);
+        expect(prefix).toBe(KERNEL_SYSCALL_MAX_IO_BYTES);
         expect(prefix).toBeGreaterThan(0);
         expect(prefix).toBeLessThan(SIZE);
         const result = readFile(fixture.filesystem, "/output", prefix + 3);

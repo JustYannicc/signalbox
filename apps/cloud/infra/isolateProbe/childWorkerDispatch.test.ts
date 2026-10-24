@@ -81,6 +81,7 @@ export class ProbeFacet extends DurableObject {
     const host = new Host(this.ctx.storage);
     try {
       const exit = await this.env.CHILD_WORKERS.run({
+        loaderId:${JSON.stringify(`proof/${reference}/0.0`)},
         mainModule:"child.js",entrypoint:"Child",command,
         modules:{"child.js":child,"suspend.wasm":{wasmReference:${JSON.stringify(reference)}}},
       },host);

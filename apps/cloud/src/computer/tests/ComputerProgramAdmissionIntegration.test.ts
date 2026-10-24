@@ -32,7 +32,9 @@ function spawnRequest(
 describe("Computer admission through the public kernel host", () => {
   it("binds the actual prepared child context and spends its reservation without reacquiring", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-computerprogramadmissionintegration-test-1",
+    });
     const capacityRun = vi.spyOn(capacity, "run");
     const machine = {
       spawn: vi.fn(async () => {
@@ -111,7 +113,9 @@ describe("Computer admission through the public kernel host", () => {
 
   it("forwards once using prepared redirection and refuses extra fds before truncation", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-computerprogramadmissionintegration-test-2",
+    });
     const disposed = vi.fn(async () => {});
     const received: unknown[] = [];
     const machine = {

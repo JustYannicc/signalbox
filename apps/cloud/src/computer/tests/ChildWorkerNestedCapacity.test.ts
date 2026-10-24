@@ -4,6 +4,8 @@ import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { ChildWorkerCapacity, type ChildWorkerRequester } from "../ChildWorkerCapacity.ts";
 
+const syntheticRequest = Object.freeze({ codeId: "test-holder", residentBytes: 0 });
+
 function processTree() {
   const wakes = new KernelWakeRegistry();
   const processes = new KernelProcessTable({ wakes });
@@ -44,6 +46,7 @@ async function hold(capacity: ChildWorkerCapacity, requester: ChildWorkerRequest
       await finish.promise;
     },
     requester,
+    syntheticRequest,
   );
   await entered.promise;
   return async () => {
@@ -53,47 +56,60 @@ async function hold(capacity: ChildWorkerCapacity, requester: ChildWorkerRequest
 }
 
 describe("nested child worker capacity", () => {
-  it("completes when every soft-limit holder waits for its own child", async () => {
+  it("keeps nested requests under the strict cap and admits them before queued roots", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity();
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-1",
+    });
     const signal = new AbortController().signal;
-    const full = Promise.withResolvers<void>();
-    let roots = 0;
-    let children = 0;
+    const parent = tree.spawn();
+    const release = await hold(capacity, parent);
+    const child = tree.spawn(parent.identity);
+    const order: string[] = [];
     try {
-      const commands = Array.from({ length: capacity.limit }, (_, index) => {
-        const parent = tree.spawn();
-        return capacity.run(
+      const nested = capacity
+        .acquire(
           signal,
-          async () => {
-            if (++roots === capacity.limit) full.resolve();
-            await full.promise;
-            const child = tree.spawn(parent.identity);
-            return capacity.run(
-              signal,
-              async () => {
-                children++;
-                return index;
-              },
-              child,
-            );
+          {
+            processes: tree.processes,
+            process: child.identity.handle,
           },
-          parent,
-        );
+          syntheticRequest,
+        )
+        .then((permit) => {
+          order.push("nested");
+          return permit;
+        });
+      const root = capacity.acquire(signal, undefined, syntheticRequest).then((permit) => {
+        order.push("root");
+        return permit;
       });
-      expect(await Promise.all(commands)).toEqual(
-        Array.from({ length: capacity.limit }, (_, index) => index),
-      );
-      expect(children).toBe(capacity.limit);
+
+      expect(capacity.active).toBe(capacity.limit);
+      expect(order).toEqual([]);
+      await release();
+
+      const nestedPermit = await nested;
+      expect(capacity.active).toBeLessThanOrEqual(capacity.limit);
+      expect(order).toEqual(["nested"]);
+      nestedPermit.release();
+
+      const rootPermit = await root;
+      expect(capacity.active).toBeLessThanOrEqual(capacity.limit);
+      expect(order).toEqual(["nested", "root"]);
+      rootPermit.release();
       expect(capacity.active).toBe(0);
     } finally {
+      await release();
       await tree.close();
     }
   });
 
   it("admits a background continuation after its subshell exits and is reaped", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-2",
+    });
     const holder = tree.spawn();
     const release = await hold(capacity, holder);
     const subshellExit = Promise.withResolvers<{
@@ -115,9 +131,10 @@ describe("nested child worker capacity", () => {
         status: "ok",
         value: { parentPid: 1 },
       });
-      running = capacity.run(controller.signal, async () => 17, continuation);
+      running = capacity.run(controller.signal, async () => 17, continuation, syntheticRequest);
       void running.catch(() => undefined);
-      expect(capacity.active).toBe(2);
+      expect(capacity.active).toBe(capacity.limit);
+      await release();
       await expect(running).resolves.toBe(17);
     } finally {
       controller.abort();
@@ -129,21 +146,32 @@ describe("nested child worker capacity", () => {
 
   it("inherits worker ownership through an unpermitted process", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-3",
+    });
     const holder = tree.spawn();
     const release = await hold(capacity, holder);
     const middle = tree.spawn(holder.identity);
     const child = tree.spawn(middle.identity);
+    let started = false;
+    let queued: Promise<void> | undefined;
     try {
-      await capacity.run(
+      queued = capacity.run(
         new AbortController().signal,
         async () => {
-          expect(capacity.active).toBe(2);
+          started = true;
         },
         child,
+        syntheticRequest,
       );
+      expect(started).toBe(false);
+      expect(capacity.active).toBe(capacity.limit);
+      await release();
+      await queued;
+      expect(started).toBe(true);
     } finally {
       await release();
+      await queued?.catch(() => undefined);
       await tree.close();
     }
     expect(capacity.active).toBe(0);
@@ -151,28 +179,41 @@ describe("nested child worker capacity", () => {
 
   it("gives an exec replacement its own owner until that worker settles", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-4",
+    });
     const signal = new AbortController().signal;
     const holder = tree.spawn();
     const release = await hold(capacity, holder);
     const finish = Promise.withResolvers<void>();
     let running: Promise<void> | undefined;
     try {
-      const replacement = await capacity.reserve(signal, holder);
-      running = replacement.run(signal, () => finish.promise, holder);
+      const replacementQueued = capacity.reserve(signal, holder, syntheticRequest);
       const child = tree.spawn(holder.identity);
-      expect(capacity.active).toBe(2);
-      await release();
-      await capacity.run(
+      let childStarted = false;
+      const childQueued = capacity.run(
         signal,
         async () => {
-          expect(capacity.active).toBe(2);
+          childStarted = true;
         },
         child,
+        syntheticRequest,
       );
-    } finally {
+      expect(capacity.active).toBe(capacity.limit);
+      await release();
+      const replacement = await replacementQueued;
+      running = replacement.run(signal, () => finish.promise, holder);
+      await Promise.resolve();
+      expect(childStarted).toBe(false);
+      expect(capacity.active).toBe(capacity.limit);
       finish.resolve();
       await running;
+      await childQueued;
+      expect(childStarted).toBe(true);
+      expect(capacity.active).toBe(0);
+    } finally {
+      finish.resolve();
+      await running?.catch(() => undefined);
       await release();
       await tree.close();
     }
@@ -182,13 +223,15 @@ describe("nested child worker capacity", () => {
   it("does not mistake another process table's matching pid for a permit holder", async () => {
     const first = processTree();
     const second = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-5",
+    });
     const holder = first.spawn();
     const unrelated = second.spawn();
     expect(unrelated.identity.pid).toBe(holder.identity.pid);
     const release = await hold(capacity, holder);
     try {
-      const next = capacity.acquire(new AbortController().signal, unrelated);
+      const next = capacity.acquire(new AbortController().signal, unrelated, syntheticRequest);
       expect(capacity.active).toBe(1);
       await release();
       const permit = await next;
@@ -203,14 +246,16 @@ describe("nested child worker capacity", () => {
 
   it("treats descendants of a stopped worker as roots", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-6",
+    });
     const holder = tree.spawn();
     const release = await hold(capacity, holder);
     const child = tree.spawn(holder.identity);
     await release();
-    const held = await capacity.acquire(new AbortController().signal, undefined);
+    const held = await capacity.acquire(new AbortController().signal, undefined, syntheticRequest);
     const controller = new AbortController();
-    const queued = capacity.acquire(controller.signal, child);
+    const queued = capacity.acquire(controller.signal, child, syntheticRequest);
     const reason = new Error("cancel stale owner request");
     const rejected = expect(queued).rejects.toBe(reason);
     try {
@@ -223,47 +268,46 @@ describe("nested child worker capacity", () => {
     }
   });
 
-  it("queues past the hard limit FIFO and gives descendants priority over queued roots", async () => {
+  it("keeps the strict cap and serves queued descendants before roots", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1, { hardLimit: 3 });
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-7",
+    });
     const signal = new AbortController().signal;
     const parent = tree.spawn();
-    const requester = { processes: tree.processes, process: parent.identity.handle };
     try {
       const release = await hold(capacity, parent);
-      const [firstOverflow, secondOverflow] = await Promise.all([
-        capacity.acquire(signal, requester),
-        capacity.acquire(signal, requester),
-      ]);
+      const child = tree.spawn(parent.identity);
+      const nestedRequester = { processes: tree.processes, process: child.identity.handle };
       const order: string[] = [];
-      const root = capacity.acquire(signal, undefined).then((permit) => {
+      const root = capacity.acquire(signal, undefined, syntheticRequest).then((permit) => {
         order.push("root");
         return permit;
       });
-      const first = capacity.acquire(signal, requester).then((permit) => {
-        order.push("first");
+      const first = capacity.acquire(signal, nestedRequester, syntheticRequest).then((permit) => {
+        order.push("first descendant");
         return permit;
       });
-      const second = capacity.acquire(signal, requester).then((permit) => {
-        order.push("second");
+      const secondChild = tree.spawn(parent.identity);
+      const secondRequester = { processes: tree.processes, process: secondChild.identity.handle };
+      const second = capacity.acquire(signal, secondRequester, syntheticRequest).then((permit) => {
+        order.push("second descendant");
         return permit;
       });
-      expect(capacity.active).toBe(3);
+      expect(capacity.active).toBe(capacity.limit);
       expect(order).toEqual([]);
-      firstOverflow.release();
+
+      await release();
       const firstPermit = await first;
-      expect(capacity.active).toBe(3);
-      expect(order).toEqual(["first"]);
+      expect(capacity.active).toBeLessThanOrEqual(capacity.limit);
+      expect(order).toEqual(["first descendant"]);
       firstPermit.release();
       const secondPermit = await second;
-      expect(capacity.active).toBe(3);
-      expect(order).toEqual(["first", "second"]);
+      expect(capacity.active).toBeLessThanOrEqual(capacity.limit);
+      expect(order).toEqual(["first descendant", "second descendant"]);
       secondPermit.release();
-      secondOverflow.release();
-      expect(capacity.active).toBe(1);
-      await release();
       const rootPermit = await root;
-      expect(order).toEqual(["first", "second", "root"]);
+      expect(order).toEqual(["first descendant", "second descendant", "root"]);
       rootPermit.release();
       expect(capacity.active).toBe(0);
     } finally {
@@ -271,24 +315,28 @@ describe("nested child worker capacity", () => {
     }
   });
 
-  it("removes an aborted descendant from the hard-limit queue without blocking its successor", async () => {
+  it("removes an aborted descendant from the strict-cap queue without blocking its successor", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1, { hardLimit: 1 });
+    const capacity = new ChildWorkerCapacity(1, {
+      owner: "test/src-computer-tests-childworkernestedcapacity-test-8",
+    });
     const parent = tree.spawn();
     const requester = { processes: tree.processes, process: parent.identity.handle };
     const signal = new AbortController().signal;
     try {
       const release = await hold(capacity, parent);
       const controller = new AbortController();
-      const cancelled = capacity.reserve(controller.signal, requester);
-      const next = capacity.reserve(signal, requester);
+      const cancelled = capacity.reserve(controller.signal, requester, syntheticRequest);
+      const next = capacity.reserve(signal, requester, syntheticRequest);
       const reason = { cancelled: "nested request" };
       const rejected = expect(cancelled).rejects.toBe(reason);
       controller.abort(reason);
       await rejected;
       await release();
       const reservation = await next;
-      await expect(reservation.run(signal, async () => 17, parent)).resolves.toBe(17);
+      await expect(reservation.run(signal, async () => 17, parent, syntheticRequest)).resolves.toBe(
+        17,
+      );
       expect(capacity.active).toBe(0);
     } finally {
       await tree.close();

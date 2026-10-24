@@ -99,7 +99,10 @@ export function createStandardProofCommandViewHost(input: {
     umask: posix.umask,
     hostname: "signalbox-command-view-proof",
   };
-  const capacity = new ChildWorkerCapacity(6);
+  // No DO context is available; the 2026-10-23 probe measured a four-fetch Worker ceiling (see computer/README.md).
+  const capacity = new ChildWorkerCapacity(4, {
+    owner: "test/infra-hooksproof-standardproofcommandviewfixture-1",
+  });
   const registry = new KernelProgramRegistry();
   const bindings = new Map<string, KernelProgramBinding>();
   const bashManifest = Object.freeze({
