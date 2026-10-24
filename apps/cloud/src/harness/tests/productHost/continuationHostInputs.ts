@@ -76,16 +76,19 @@ export const makeContinuationHostInputs = (
       hostnamePolicy: "thread",
       verification: "measured",
     });
-    let appendTranscript: ((row: string, sessionId: string) => void) | undefined;
+    let appendTranscript:
+      | ((row: string, sessionId: string, signal: AbortSignal) => Promise<void>)
+      | undefined;
+    const transcriptRows = new Map<string, string[]>();
     const native = continuationNativeFixture(
       nativeId,
       systemIdentity,
-      (message) => {
+      async (message, signal) => {
         if (appendTranscript === undefined)
           throw new Error("Native transcript files are not hydrated");
         if (!("session_id" in message) || typeof message.session_id !== "string")
           throw new Error("Controlled native transcript frame has no session identity");
-        appendTranscript(JSON.stringify(message), message.session_id);
+        await appendTranscript(JSON.stringify(message), message.session_id, signal);
       },
       batch,
       opaque,
@@ -131,6 +134,7 @@ export const makeContinuationHostInputs = (
       threadId: d.threadId,
       release: release.options,
       programs,
+      machineInventory: machine.inventory,
       files: {
         identity: "recorded-claude-files",
         database: databaseHandle.storage,
@@ -161,11 +165,14 @@ export const makeContinuationHostInputs = (
         fs.writeFileSync("/workspace/file.txt", "before\n");
         fs.writeFileSync("/home/recorded/session", nativeId);
         fs.mkdirSync("/home/recorded/.claude/projects/-workspace", { recursive: true });
-        appendTranscript = (row, sessionId) =>
-          fs.appendFileSync(
-            `/home/recorded/.claude/projects/-workspace/${sessionId}.jsonl`,
-            `${row}\n`,
-          );
+        appendTranscript = async (row, sessionId, signal) => {
+          const path = `/home/recorded/.claude/projects/-workspace/${sessionId}.jsonl`;
+          await files.prepareLowerPaths([path], signal);
+          await fs.promises.appendFile(path, `${row}\n`, { signal });
+          const rows = [...(transcriptRows.get(sessionId) ?? []), row];
+          NodeAssert.equal(fs.readFileSync(path, "utf8"), `${rows.join("\n")}\n`);
+          transcriptRows.set(sessionId, rows);
+        };
         fs.symlinkSync("/workspace", "/source-alias");
       },
       save: async ({ files, persistence, signal }) => {

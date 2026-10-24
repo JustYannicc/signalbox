@@ -2,6 +2,7 @@ import type { CommitInode, FileHydrationPort, ForkCommit } from "./FilePersisten
 import type { FacetStorage } from "./FacetSqliteStorage.ts";
 import type { createFacetFilePersistence } from "./FacetFilePersistence.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
+import { kernelFileByteViewStorage } from "./KernelLowerFileSystemStorage.ts";
 import { applyRevision } from "./revision/RevisionApply.ts";
 import { KernelRevisionWorkspaceError, persistenceError } from "./revision/RevisionErrors.ts";
 import {
@@ -60,7 +61,7 @@ export function createKernelRevisionWorkspace(
   const mountPath = normalizeMountPath(options.mountPath);
   const rootEntry = filesystem.lstat(mountPath);
   const root = filesystem.resolve(mountPath);
-  if (root.mount.storage !== storage) {
+  if (kernelFileByteViewStorage(root.mount.storage, root.inode) !== storage) {
     throw new KernelRevisionWorkspaceError(
       "EINVAL",
       "The revision root must use the persistence owner's storage",

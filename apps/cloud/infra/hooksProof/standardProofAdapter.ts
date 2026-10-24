@@ -4,6 +4,7 @@ import { createStandardHarnessHookCallback } from "../../src/hooks/StandardHarne
 import type { FacetStorage } from "../../src/kernel/FacetSqliteStorage.ts";
 import type { KernelCommandChild } from "../../src/kernel/KernelCommandForwarder.ts";
 import { canonicalFileByteSelection } from "../../src/kernel/KernelFileBytes.ts";
+import { kernelFileByteViewStorage } from "../../src/kernel/KernelLowerFileSystemStorage.ts";
 import type { KernelProgramFileByteSelector } from "../../src/kernel/KernelProgramHost.ts";
 import type { Storage } from "../../src/kernel/storage.ts";
 import { createHookSecretBoundary } from "../../src/models/HookSecrets.ts";
@@ -154,7 +155,11 @@ export function createStandardProofAdapter(
     }
     state.assertActive(lifetime.signal);
     if (!ready || registered.size !== 2) throw new Error("Execution file bindings are not ready");
-    if (fileStorage === undefined || filesystem.resolve("/").mount.storage !== fileStorage) {
+    const root = filesystem.resolve("/");
+    if (
+      fileStorage === undefined ||
+      kernelFileByteViewStorage(root.mount.storage, root.inode) !== fileStorage
+    ) {
       throw new Error("Execution files must use the proof persistence owner's storage");
     }
     const storage = fileStorage;

@@ -5,6 +5,8 @@ export type KernelStat = Omit<Stat, "type"> & {
   type: Stat["type"] | "character";
   ino: Inode;
   dev: bigint;
+  readonly nativeIno?: bigint;
+  readonly nativeDev?: bigint;
   readonly posix?: PosixMetadata;
 };
 

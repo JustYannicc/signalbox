@@ -43,6 +43,8 @@ import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { runRunnerHost } from "./RunnerHost.ts";
 import { runRunnerMachine } from "./RunnerMachine.ts";
 import { makeSecretMask, maskingLogger } from "./secretMask.ts";
+import * as RunnerMachineFiles from "./RunnerMachineFiles.ts";
+import * as RunnerNativeFileSystem from "./RunnerNativeFileSystem.ts";
 
 const { values, positionals } = NodeUtil.parseArgs({
   allowPositionals: true,
@@ -120,6 +122,7 @@ program.pipe(
     Layer.mergeAll(
       NodeServices.layer,
       McpProviderSessions.layer,
+      RunnerMachineFiles.layer.pipe(Layer.provide(RunnerNativeFileSystem.layer)),
       Logger.layer([maskingLogger(secretMask)]),
     ),
   ),

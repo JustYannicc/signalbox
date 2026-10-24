@@ -34,6 +34,7 @@ on:
       - packages/automations/**
       - apps/cloud/infra/runner-images.alchemy.ts
       - apps/cloud/infra/runnerImagePublication.ts
+      - apps/cloud/infra/kernelPrograms/machine-files/**
       - .github/workflows/runner-image.yml
   workflow_call:
     inputs:
@@ -54,8 +55,11 @@ on:
         type: boolean
     outputs:
       image:
-        description: The published image
+        description: The published image pinned by digest
         value: ${{ jobs.image.outputs.image }}
+      machine_file_inventory:
+        description: The generated machine file inventory artifact name
+        value: ${{ jobs.image.outputs.machine_file_inventory }}
   workflow_dispatch:
     inputs:
       channel:
@@ -93,7 +97,8 @@ jobs:
       contents: read
       packages: write
     outputs:
-      image: ${{ steps.tags.outputs.first }}
+      image: ${{ steps.inventory.outputs.image_ref }}
+      machine_file_inventory: ${{ steps.inventory.outputs.artifact_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -196,6 +201,22 @@ jobs:
           docker rm --force runner-smoke >/dev/null 2>&1 || true
           test "$status" -eq 124
 
+      - name: Capture machine file metadata
+        id: capture
+        env:
+          RUNNER_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          PLATFORM: linux/amd64
+          SIGNALBOX_RUNNER_REVISION: ${{ github.sha }}
+        run: |
+          docker run --rm --read-only --platform "$PLATFORM" --network none --user 0:0 \
+            --entrypoint node \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/apps/cloud/infra/kernelPrograms/machine-files,dst=/tmp/capture,readonly" \
+            --env SIGNALBOX_RUNNER_IMAGE_ID="$RUNNER_IMAGE_ID" \
+            --env SIGNALBOX_RUNNER_PLATFORM="$PLATFORM" \
+            --env SIGNALBOX_RUNNER_REVISION="$SIGNALBOX_RUNNER_REVISION" \
+            "$RUNNER_IMAGE_ID" /tmp/capture/capture.mjs \
+            > "$RUNNER_TEMP/runner-machine-files.snapshot.json"
+
       # The pull request's previous image, which this push untags.
       - name: Find the image this replaces
         id: previous
@@ -237,6 +258,52 @@ jobs:
             exit 1
           fi
           echo "$IMAGE_TAG runs $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Pin the machine file inventory
+        id: inventory
+        if: steps.tags.outputs.push == 'true'
+        env:
+          IMAGE_TAG: ${{ steps.tags.outputs.first }}
+          IMAGE_REPOSITORY: ${{ env.IMAGE }}
+          RUNNER_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          PLATFORM: linux/amd64
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          digest="$(docker buildx imagetools inspect "$IMAGE_TAG" --format '{{.Digest}}')"
+          if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Could not resolve a published image digest for $IMAGE_TAG."
+            exit 1
+          fi
+          image_ref="$IMAGE_REPOSITORY@$digest"
+          docker pull --quiet --platform "$PLATFORM" "$image_ref"
+          published_id="$(docker image inspect "$image_ref" --format '{{.Id}}')"
+          if [[ "$published_id" != "$RUNNER_IMAGE_ID" ]]; then
+            echo "::error::$image_ref resolves to $published_id, not the captured build $RUNNER_IMAGE_ID."
+            exit 1
+          fi
+          node apps/cloud/infra/kernelPrograms/machine-files/prepare.mjs \
+            --snapshot "$RUNNER_TEMP/runner-machine-files.snapshot.json" \
+            --image-repository "$IMAGE_REPOSITORY" \
+            --image-ref "$image_ref" \
+            --source-image-id "$RUNNER_IMAGE_ID" \
+            --source-revision "$SOURCE_REVISION" \
+            --platform "$PLATFORM" \
+            --dockerfile apps/server/src/signalbox/runner/image/Dockerfile \
+            --output apps/cloud/infra/kernelPrograms/machine-files/build/runner.json
+          artifact_name="runner-machine-files-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "image_ref=$image_ref"
+            echo "artifact_name=$artifact_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload machine file inventory
+        if: steps.tags.outputs.push == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.inventory.outputs.artifact_name }}
+          path: apps/cloud/infra/kernelPrograms/machine-files/build/runner.json
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Delete the image this replaced
         if: steps.previous.outputs.ids != ''
