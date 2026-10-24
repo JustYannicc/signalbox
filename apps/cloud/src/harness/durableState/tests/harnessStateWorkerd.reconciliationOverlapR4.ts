@@ -12,8 +12,7 @@ import {
   publisher2,
 } from "./harnessStateWorkerd.base.ts";
 import type { WorkerdEnv } from "./harnessStateWorkerd.base.ts";
-import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
-import type { HarnessThreadSupervisorReconciliationRequest } from "./supervisor/reconciliationReceipts.ts";
+import type { HarnessThreadSupervisorPublisher } from "../../HarnessThreadSupervisor.ts";
 
 export const overlappingReconciliationRunId = "workerd-reconciliation-overlap-r4";
 const evidenceE = "overlap-r4-evidence-e";
@@ -48,6 +47,20 @@ function createReservationGate(): ReservationGate {
   };
 }
 
+function isReservationForEvidence(
+  input: unknown,
+  evidenceId: string,
+): input is { readonly evidenceId: string; readonly reserve: boolean } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    "evidenceId" in input &&
+    input.evidenceId === evidenceId &&
+    "reserve" in input &&
+    typeof input.reserve === "boolean"
+  );
+}
+
 function gatedBindings(env: WorkerdEnv, gate: ReservationGate): WorkerdEnv {
   const namespace = env.HARNESS_THREAD_SUPERVISOR;
   const supervisorNamespace = new Proxy(namespace, {
@@ -63,8 +76,11 @@ function gatedBindings(env: WorkerdEnv, gate: ReservationGate): WorkerdEnv {
               return Reflect.get(stubTarget, method, stubReceiver);
             return async (...args: Parameters<typeof reserve>) => {
               const reservation = await reserve(...args);
-              const request = args[0] as HarnessThreadSupervisorReconciliationRequest;
-              if (name === overlappingReconciliationRunId && request.evidenceId === evidenceE) {
+              const request = args[0];
+              if (
+                name === overlappingReconciliationRunId &&
+                isReservationForEvidence(request, evidenceE)
+              ) {
                 gate.reservationStatus = reservation.status;
                 if (request.reserve) {
                   gate.signalReached();

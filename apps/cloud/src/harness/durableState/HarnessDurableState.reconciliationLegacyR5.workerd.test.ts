@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, expect, it } from "vite-plus/test";
-import { makeHarness } from "./harnessStateWorkerd.testSupport.ts";
-import {
-  legacyR5EvidenceId,
-  legacyR5UnboundEvidenceId,
-} from "./harnessStateWorkerd.reconciliationLegacyR5.ts";
+import { makeHarness } from "./tests/harnessStateWorkerd.testSupport.ts";
+
+const legacyR5EvidenceId = "overlap-r4-evidence-e";
+const legacyR5UnboundEvidenceId = "unbound-legacy-r5-evidence-e";
 
 let harness: ReturnType<typeof makeHarness>;
 type HarnessWorker = ReturnType<ReturnType<typeof makeHarness>["getWorker"]>;

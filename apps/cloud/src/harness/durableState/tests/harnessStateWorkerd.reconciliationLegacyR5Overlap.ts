@@ -8,7 +8,7 @@ import {
   publisher1,
 } from "./harnessStateWorkerd.base.ts";
 import type { WorkerdEnv } from "./harnessStateWorkerd.base.ts";
-import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
+import type { HarnessThreadSupervisorPublisher } from "../../HarnessThreadSupervisor.ts";
 import {
   inspectOverlappingReconciliation,
   overlappingReconciliationRunId,

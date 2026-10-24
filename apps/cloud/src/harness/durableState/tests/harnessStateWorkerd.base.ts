@@ -1,9 +1,12 @@
-import { createHarnessDurableState } from "../HarnessDurableState.ts";
-import type { HarnessDurableState, HarnessDurableStateBindings } from "../HarnessDurableState.ts";
+import { createHarnessDurableState } from "../../HarnessDurableState.ts";
+import type {
+  HarnessDurableState,
+  HarnessDurableStateBindings,
+} from "../../HarnessDurableState.ts";
 import type {
   HarnessThreadSupervisorControlClaim,
   HarnessThreadSupervisorPublisher,
-} from "../HarnessThreadSupervisor.ts";
+} from "../../HarnessThreadSupervisor.ts";
 
 export type WorkerdEnv = HarnessDurableStateBindings;
 export const topologyRunId = "workerd-topology-proof";

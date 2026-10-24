@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { failureOf, HarnessDurableStateError } from "./errors.ts";
+import { failureOf, HarnessDurableStateError } from "../HarnessDurableState.ts";
 
 describe("harness durable state errors", () => {
   it("keeps arbitrary failure text only as an error cause", () => {

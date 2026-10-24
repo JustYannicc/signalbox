@@ -11,7 +11,7 @@ import {
   incomplete,
 } from "./harnessStateWorkerd.base.ts";
 import type { WorkerdEnv } from "./harnessStateWorkerd.base.ts";
-import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
+import type { HarnessThreadSupervisorPublisher } from "../../HarnessThreadSupervisor.ts";
 
 export const legacyReconciliationRunId = "workerd-reconciliation-legacy-r4";
 

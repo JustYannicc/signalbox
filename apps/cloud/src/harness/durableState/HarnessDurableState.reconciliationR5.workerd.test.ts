@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, expect, it } from "vite-plus/test";
-import { makeHarness } from "./harnessStateWorkerd.testSupport.ts";
-import {
-  completedR5EvidenceId,
-  completedR5RunId,
-} from "./harnessStateWorkerd.reconciliationCompletedR5.ts";
+import { makeHarness } from "./tests/harnessStateWorkerd.testSupport.ts";
+
+const completedR5RunId = "workerd-completed-reconciliation-r5";
+const completedR5EvidenceId = "completed-r5-evidence-e";
 
 let harness: ReturnType<typeof makeHarness>;
 beforeEach(() => {

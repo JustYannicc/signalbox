@@ -1,4 +1,6 @@
 export { createHarnessDurableState } from "./durableState/composition.ts";
+export { failureOf, HarnessDurableStateError } from "./durableState/errors.ts";
+export type { HarnessDurableStateErrorCode } from "./durableState/errors.ts";
 export type {
   HarnessDurableState,
   HarnessDurableStateActivationInput,

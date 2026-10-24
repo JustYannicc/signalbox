@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from "vite-plus/test";
-import { makeHarness, topologyRunId } from "./harnessStateWorkerd.testSupport.ts";
+import { makeHarness, topologyRunId } from "./tests/harnessStateWorkerd.testSupport.ts";
 
 let harness: ReturnType<typeof makeHarness>;
 beforeEach(() => {

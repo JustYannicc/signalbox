@@ -14,11 +14,29 @@ import {
   overlappingReconciliationRunId,
   prepareOverlappingReconciliation,
 } from "./harnessStateWorkerd.reconciliationOverlapR4.ts";
-import { sourceFromSnapshot } from "./supervisor/reconciliationReceipts.ts";
+import type { HarnessThreadSupervisorResult } from "../../HarnessThreadSupervisor.ts";
 
 export const legacyR5EvidenceId = "overlap-r4-evidence-e";
 export const legacyR5UnboundRunId = "workerd-unbound-legacy-r5";
 export const legacyR5UnboundEvidenceId = "unbound-legacy-r5-evidence-e";
+
+function sourceFromSnapshot(snapshot: HarnessThreadSupervisorResult["snapshot"]) {
+  return {
+    lifecycle: snapshot.lifecycle,
+    nativeSessionId: snapshot.nativeSessionId,
+    authority: {
+      ownerId: snapshot.ownerId,
+      incarnationId: snapshot.controlIncarnationId,
+      epoch: snapshot.controlEpoch,
+    },
+    generation: snapshot.generation,
+    facetNonce: snapshot.facetNonce,
+    checkpoint: snapshot.checkpoint,
+    admittedStepId: snapshot.admittedStepId,
+    settlement: snapshot.settlement,
+    preparedFacet: snapshot.preparedFacet,
+  };
+}
 
 export function legacyR5Input(
   evidenceId: string,

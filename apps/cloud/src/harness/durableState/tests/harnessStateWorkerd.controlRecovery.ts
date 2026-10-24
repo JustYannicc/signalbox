@@ -8,7 +8,7 @@ import {
   publisher1,
 } from "./harnessStateWorkerd.base.ts";
 import type { WorkerdEnv } from "./harnessStateWorkerd.base.ts";
-import type { HarnessThreadSupervisorControlClaim } from "../HarnessThreadSupervisor.ts";
+import type { HarnessThreadSupervisorControlClaim } from "../../HarnessThreadSupervisor.ts";
 import { failNextFilesBefore, failNextSupervisorBefore } from "./harnessStateWorkerd.faults.ts";
 
 const hasType = (command: unknown, type: string) =>

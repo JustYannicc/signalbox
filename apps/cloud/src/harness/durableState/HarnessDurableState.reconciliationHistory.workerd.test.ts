@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from "vite-plus/test";
-import { makeHarness } from "./harnessStateWorkerd.testSupport.ts";
+import { makeHarness } from "./tests/harnessStateWorkerd.testSupport.ts";
 
 const legacyReconciliationRunId = "workerd-reconciliation-legacy-r4";
 const overlappingReconciliationRunId = "workerd-reconciliation-overlap-r4";
