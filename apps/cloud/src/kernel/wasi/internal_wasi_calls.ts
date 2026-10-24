@@ -2,7 +2,13 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import {
+  currentKernelIoMode,
+  currentKernelSignal,
+  runKernelInlineExecution,
+} from "../process/KernelExecution.ts";
 import { WasiError } from "./internal_wasi_memory.ts";
+import { KernelFileSystemUnavailable } from "../KernelLowerFileSystem.ts";
 
 export type WasiCall<T> = Generator<unknown, T, unknown>;
 
@@ -11,6 +17,12 @@ export function* complete<T>(value: T | Promise<T>): WasiCall<T> {
 }
 
 export function runSync<T>(call: WasiCall<T>): T {
+  return currentKernelIoMode() === "sync"
+    ? runSyncCall(call)
+    : runKernelInlineExecution(currentKernelSignal(), () => runSyncCall(call));
+}
+
+function runSyncCall<T>(call: WasiCall<T>): T {
   let result = call.next();
   while (!result.done) {
     if (isPromiseLike(result.value)) {
@@ -94,6 +106,7 @@ export async function runAsync<T>(
 }
 
 export function mapErrno(error: unknown): number {
+  if (error instanceof KernelFileSystemUnavailable) throw error;
   if (error instanceof WasiError) {
     return error.errno;
   }

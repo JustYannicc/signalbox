@@ -115,6 +115,7 @@ export default {
         "infra/hooksProof/CodexHooksProof.ts",
         "infra/kernelPrograms/*/*.{ts,mjs}",
         "src/kernel/tests/gitProgramProof.ts", // signalbox: standalone real-WASM proof runner.
+        "src/computer/tests/ChildSyscallBudgetProbe.ts", // signalbox: bundled by path into the owner-budget probe.
         "src/kernel/tests/coreutilsProgramProof.mjs", // signalbox: standalone real-WASM proof runner.
         "src/kernel/KernelPipeProof.ts", // Loaded by the static pipe fixture's generated entry.
         "src/kernel/KernelRuntimeProof.ts", // Loaded by the static runtime fixture's generated entry.

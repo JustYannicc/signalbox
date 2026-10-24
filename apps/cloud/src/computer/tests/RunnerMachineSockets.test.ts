@@ -8,6 +8,10 @@ import {
   type RunnerHello,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { RunnerCommandConfig } from "@signalbox/runner-protocol/RunnerCommandProtocol";
+import type {
+  MachineFilesRequest,
+  MachineFilesResult,
+} from "@signalbox/runner-protocol/MachineFilesProtocol";
 import {
   systemIdentityForThread,
   type SystemIdentity,
@@ -124,6 +128,7 @@ function fixture(
   const socketHost: RunnerExecSocketHost = {
     connected: vi.fn(),
     report: vi.fn(),
+    machineFileResult: vi.fn(),
     disconnected: vi.fn(),
     generationEnded: vi.fn(),
   };
@@ -139,12 +144,86 @@ function fixture(
       token: config.token,
       lastAckedSequence: 0,
       exec: true,
+      machineFileLookup: true,
       ...patch,
     });
   return { adapter, launched, quiesce, socketHost, input, hello, context };
 }
 
 describe("RunnerMachineSockets", () => {
+  it("requires machine file capability before admitting an older Runner", async () => {
+    const f = fixture();
+    const pending = f.adapter.connect(f.input);
+    const config = await f.launched.promise;
+    const live = socketFixture();
+    f.adapter.accept(live.socket);
+    f.adapter.message(live.socket, f.hello(config, { machineFileLookup: false }));
+
+    await expect(pending).rejects.toMatchObject({
+      name: "MachineFileLookupError",
+      code: "BACKEND_UPGRADE_REQUIRED",
+    });
+    expect(f.socketHost.connected).not.toHaveBeenCalled();
+    expect(live.socket.close).toHaveBeenCalledWith(1008, "Machine file lookup capability required");
+
+    await f.adapter.quiesce(f.input);
+  });
+
+  it("negotiates machine file support and routes request/results on the accepted socket", async () => {
+    const f = fixture();
+    const pending = f.adapter.connect(f.input);
+    const config = await f.launched.promise;
+    const live = socketFixture();
+    f.adapter.accept(live.socket);
+    f.adapter.message(live.socket, f.hello(config, { machineFileLookup: true }));
+    const connected = await pending;
+    const socketConnection = vi.mocked(f.socketHost.connected).mock.calls[0]![1];
+    expect(socketConnection.machineFileLookup).toBe(true);
+
+    const request: MachineFilesRequest = {
+      type: "machine.files.request",
+      generation: 4,
+      requestId: "lookup-1",
+      operations: [{ id: "root", op: "stat", path: "/" }],
+    };
+    socketConnection.send(request);
+    expect(threadFrame.decode(live.sent.at(-1)!)).toEqual(request);
+
+    const result: MachineFilesResult = {
+      type: "machine.files.result",
+      generation: 4,
+      requestId: "lookup-1",
+      outcome: {
+        status: "ok",
+        results: [
+          {
+            id: "root",
+            op: "stat",
+            stat: {
+              mode: 0o40755,
+              type: "directory",
+              size: "4096",
+              uid: 1000,
+              gid: 1000,
+              dev: "1",
+              ino: "2",
+              nlink: "2",
+              atimeNs: "1",
+              mtimeNs: "2",
+              ctimeNs: "3",
+              birthtimeNs: "4",
+            },
+          },
+        ],
+      },
+    };
+    f.adapter.message(live.socket, runnerFrame.encode(result));
+    expect(f.socketHost.machineFileResult).toHaveBeenCalledWith(live.socket, 4, 1, result);
+
+    await f.adapter.quiesce(f.input);
+    await connected.dispose();
+  });
+
   it("binds each private launch to the same thread identity used by Product Computer", async () => {
     const systemIdentityConfig: SystemIdentityConfig = {
       release: "6.12.0-measured",

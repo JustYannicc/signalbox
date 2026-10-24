@@ -2,8 +2,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
+import {
+  KernelFileSystemUnavailable,
+  type KernelLowerFileSystemEntry,
+} from "../kernel/KernelLowerFileSystem.ts";
 import { createFacetSqliteStorage } from "../kernel/FacetSqliteStorage.ts";
 import { createNodeFs } from "../isolate/NodeFs.ts";
 import { createThreadClaudeSessions } from "./ThreadClaudeSessions.ts";
@@ -37,10 +42,113 @@ const fixture = Effect.gen(function* () {
     files,
     configurationDirectory: "/home/.claude",
   });
-  return { fs, persistence, sessions: yield* SessionRows.SessionRows };
+  return { files, fs, persistence, sessions: yield* SessionRows.SessionRows };
 });
 
 describe("ThreadClaudeSessions", () => {
+  it.effect("persists upper transcripts while lower directory metadata is asynchronous", () =>
+    Effect.gen(function* () {
+      const { files, persistence, sessions } = yield* fixture;
+      const requests: string[] = [];
+      const entries = new Map<string, KernelLowerFileSystemEntry>(
+        ["/home/.claude/projects", "/home/.claude/projects/other"].map((path) => [
+          path,
+          {
+            path,
+            stat: { type: "directory", size: 0n, nlink: 2n, atimeNs: 1n, mtimeNs: 2n, ctimeNs: 3n },
+            metadata: { mode: 0o755, uid: 1000, gid: 1000 },
+          },
+        ]),
+      );
+      const lower = files.installLowerFileSystem({
+        lookupKnown: () => undefined,
+        lookup: async (paths) => {
+          requests.push(...paths);
+          return paths.map((path) => entries.get(path));
+        },
+        readdir: async (path) =>
+          [...entries.values()].filter(
+            (entry) =>
+              entry.path !== path && entry.path.slice(0, entry.path.lastIndexOf("/")) === path,
+          ),
+        read: async () => {
+          throw new Error("Upper transcripts must keep their stored bytes");
+        },
+        readlink: async () => {
+          throw new Error("No lower symlinks in this fixture");
+        },
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => lower.dispose()));
+      yield* persistence.persist(thread);
+      expect(requests).toContain("/home/.claude/projects");
+      expect(requests).toContain("/home/.claude/projects/other/native-session.jsonl");
+      expect((yield* sessions.rows("claude/native-session", 0)).rows).toEqual([first]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("rejects failed lower directory reads without saving a transcript", () =>
+    Effect.gen(function* () {
+      const { files, persistence, sessions } = yield* fixture;
+      const unavailable = new KernelFileSystemUnavailable("transcript directory backend failed");
+      const lower = files.installLowerFileSystem({
+        lookup: async (paths) =>
+          paths.map((path) => ({
+            path,
+            stat: {
+              type: "directory" as const,
+              size: 0n,
+              nlink: 2n,
+              atimeNs: 1n,
+              mtimeNs: 1n,
+              ctimeNs: 1n,
+            },
+            metadata: { mode: 0o755, uid: 0, gid: 0 },
+          })),
+        readdir: async () => {
+          throw unavailable;
+        },
+        read: async () => {
+          throw new Error("No transcript bytes should be read");
+        },
+        readlink: async () => {
+          throw new Error("No transcript links should be read");
+        },
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => lower.dispose()));
+      const error = yield* persistence.persist(thread).pipe(Effect.flip);
+      expect(error.message).toBe("Could not locate the facet's Claude transcripts.");
+      expect(error.cause).toBe(unavailable);
+      expect(yield* sessions.streams("claude/")).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("cancels an in-flight lower lookup without saving canonical rows", () =>
+    Effect.gen(function* () {
+      const { files, persistence, sessions } = yield* fixture;
+      const started = Promise.withResolvers<AbortSignal | undefined>();
+      const lower = files.installLowerFileSystem({
+        lookup: (_paths, signal) =>
+          new Promise((_resolve, reject) => {
+            started.resolve(signal);
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+        readdir: async () => [],
+        read: async () => {
+          throw new Error("Cancelled lookup must not read transcript bytes");
+        },
+        readlink: async () => {
+          throw new Error("No transcript links should be read");
+        },
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => lower.dispose()));
+      const running = yield* persistence.persist(thread).pipe(Effect.forkChild);
+      const signal = yield* Effect.promise(() => started.promise);
+      yield* Fiber.interrupt(running);
+      expect(signal?.aborted).toBe(true);
+      expect(yield* sessions.streams("claude/")).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect("stores actual main and sidecar rows, then appends only the new prefix tail", () =>
     Effect.gen(function* () {
       const { fs, persistence, sessions } = yield* fixture;

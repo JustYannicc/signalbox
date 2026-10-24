@@ -139,6 +139,7 @@ export class ComputerEscalationTable {
   decide(
     command: KernelCommand,
     evidence?: ComputerEscalationEvidence,
+    catalogCommand: KernelCommand = command,
   ): ComputerEscalationDecision {
     const workspaceBytes = readWorkspaceBytes(evidence);
     const args = command.argv.slice(1);
@@ -159,10 +160,10 @@ export class ComputerEscalationTable {
     }
 
     if (this.#policy === undefined) return { kind: "isolate" };
-    if (!this.#policy.isolateExecutables.includes(command.executable)) {
+    if (!this.#policy.isolateExecutables.includes(catalogCommand.executable)) {
       return { kind: "machine", reason: "unsupported-executable" };
     }
-    const qualification = this.#qualify?.(command);
+    const qualification = this.#qualify?.(catalogCommand);
     return qualification?.kind === "machine" ? qualification : { kind: "isolate" };
   }
 }

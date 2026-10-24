@@ -2,8 +2,10 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { withKernelFileWrite } from "../KernelIoLock.ts";
 import type { CreateOptions, Inode } from "../storage.ts";
-import { WasiError, WasiMemory } from "./internal_wasi_memory.ts";
+import { MAX_TRANSFER_BYTES } from "../KernelSyscallPort.ts";
+import { utf8ByteLength, WasiError, WasiMemory } from "./internal_wasi_memory.ts";
 import { complete, type WasiCall } from "./internal_wasi_calls.ts";
 import {
   ALL_RIGHTS,
@@ -18,6 +20,7 @@ import {
   type WasiPathAnchor,
   type WasiResolvedPath,
   WasiPathResolver,
+  type WasiPathSearchCheck,
 } from "./internal_wasi_paths.ts";
 import { readTimes, writeFilestat } from "./internal_wasi_fd_calls.ts";
 import {
@@ -27,6 +30,7 @@ import {
   type KernelFileByteSelection,
   type KernelFileByteView,
 } from "../KernelFileBytes.ts";
+import { isKernelLowerFileSystemInode } from "../KernelLowerFileSystemStorage.ts";
 
 type WasiPathDirectoryDescriptor = WasiDescriptor & {
   readonly kind: "directory";
@@ -42,13 +46,9 @@ const EISDIR = 31;
 const ENAMETOOLONG = 37;
 const ENOENT = 44;
 const ENOTDIR = 54;
-const ENOTSUP = 58;
 const EROFS = 69;
 const EXDEV = 75;
 const ENOTCAPABLE = 76;
-
-const MAX_PATH_TRANSFER = 16 * 1024 * 1024;
-const encoder = new TextEncoder();
 
 const OFLAGS = { CREATE: 1, DIRECTORY: 2, EXCLUSIVE: 4, TRUNCATE: 8 } as const;
 const DIRFLAGS_SYMLINK_FOLLOW = 1;
@@ -70,6 +70,7 @@ export class WasiPathCalls {
   readonly #paths: WasiPathResolver;
   readonly #creation: WasiCreationPolicy | undefined;
   readonly #fileBytes: (() => KernelFileByteSelection) | undefined;
+  readonly #pathSearch: WasiPathSearchCheck | undefined;
 
   readonly imports = {
     path_create_directory: (fd: number, path: number, pathLen: number): WasiCall<number> =>
@@ -158,12 +159,14 @@ export class WasiPathCalls {
     paths: WasiPathResolver,
     creation?: WasiCreationPolicy,
     fileBytes?: () => KernelFileByteSelection,
+    pathSearch?: WasiPathSearchCheck,
   ) {
     this.#memory = memory;
     this.#descriptors = descriptors;
     this.#paths = paths;
     this.#creation = creation;
     this.#fileBytes = fileBytes;
+    this.#pathSearch = pathSearch;
   }
 
   *pathCreateDirectory(fd: number, pathPointer: number, pathLength: number): WasiCall<number> {
@@ -203,6 +206,7 @@ export class WasiPathCalls {
       this.#anchor(directory),
       path,
       (flags & DIRFLAGS_SYMLINK_FOLLOW) !== 0,
+      this.#pathSearch,
     );
     let stat = resolved.stat;
     if (stat.type === "file") {
@@ -296,8 +300,8 @@ export class WasiPathCalls {
       this.#requireRight(directory, RIGHTS.FD_SYNC);
     }
     this.#memory.range(openedFd, 4);
-    const baseRights = normalizeRights(rightsBase);
-    const inheritingRights = normalizeRights(rightsInheriting);
+    let baseRights = normalizeRights(rightsBase);
+    let inheritingRights = normalizeRights(rightsInheriting);
     if (
       ((baseRights | inheritingRights) & ~ALL_RIGHTS) !== 0n ||
       (baseRights & ~directory.rightsInheriting) !== 0n ||
@@ -355,6 +359,13 @@ export class WasiPathCalls {
           throw new WasiError(ENOTDIR);
         }
         inode = resolved.inode;
+        if (isKernelLowerFileSystemInode(resolved.mount.storage, inode)) {
+          if ((oflags & OFLAGS.TRUNCATE) !== 0 || (baseRights & RIGHTS.FD_WRITE) !== 0n) {
+            throw new WasiError(EROFS);
+          }
+          baseRights &= READ_ONLY_RIGHTS;
+          inheritingRights &= READ_ONLY_RIGHTS;
+        }
         yield* complete(resolved.mount.storage.retain(inode));
         retained = { mount: resolved.mount, inode };
       }
@@ -372,11 +383,10 @@ export class WasiPathCalls {
         if (byteAccess !== undefined && selection.kind === "view") byteView = selection.view;
       }
       if (truncate) {
-        if (byteAccess !== undefined) {
-          byteAccess.truncate(0n);
-        } else {
-          yield* complete(resolved.mount.storage.truncate(inode, 0n));
-        }
+        const storage = resolved.mount.storage;
+        yield* withKernelFileWrite(storage, inode, () =>
+          byteAccess !== undefined ? byteAccess.truncate(0n) : storage.truncate(inode, 0n),
+        );
       }
       childFd = this.#descriptors.allocate({
         kind: resolved.stat.type,
@@ -444,9 +454,17 @@ export class WasiPathCalls {
     const resolved = yield* this.#paths.resolve(this.#anchor(directory), path, false);
     if (resolved.stat.type !== "symlink") throw new WasiError(EINVAL);
     const target = yield* complete(resolved.mount.storage.readlink(resolved.inode));
-    const encoded = encoder.encode(target);
-    const used = Math.min(capacity, encoded.byteLength, MAX_PATH_TRANSFER);
-    this.#memory.writeRange(buffer, used).set(encoded.subarray(0, used));
+    const transferOffset = this.#memory.transferOffset;
+    const targetLength = utf8ByteLength(target);
+    const used = Math.min(
+      capacity,
+      Math.max(0, targetLength - transferOffset),
+      Math.max(0, MAX_TRANSFER_BYTES - transferOffset),
+      // signalbox: readlink replies use the same fixed cap as other child I/O.
+      this.#memory.transferLimit,
+    );
+    const copied = this.#memory.writeUtf8Slice(buffer, target, transferOffset, used);
+    if (copied !== used) throw new TypeError("Readlink UTF-8 slice was incomplete");
     this.#memory.u32(bufused, used);
     return 0;
   }
@@ -591,7 +609,7 @@ export class WasiPathCalls {
 
   #readPath(pointer: number, length: number): string {
     const size = length >>> 0;
-    if (size > MAX_PATH_TRANSFER) throw new WasiError(ENAMETOOLONG);
+    if (size > MAX_TRANSFER_BYTES) throw new WasiError(ENAMETOOLONG);
     return this.#memory.string(pointer, size);
   }
 }

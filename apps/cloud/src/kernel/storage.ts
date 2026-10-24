@@ -78,6 +78,15 @@ export interface Storage {
   ): void;
 }
 
+export type MaybePromise<T> = T | Promise<T>;
+
+/** Storage whose operations may suspend only when a backend lookup needs I/O. */
+export type MaybeAsyncStorage = {
+  readonly [K in keyof Storage]: Storage[K] extends (...args: infer A) => infer R
+    ? (...args: A) => MaybePromise<Awaited<R>>
+    : Storage[K];
+};
+
 /** Identical operations with explicit asynchronous completion. */
 export type AsyncStorage = {
   readonly [K in keyof Storage]: Storage[K] extends (

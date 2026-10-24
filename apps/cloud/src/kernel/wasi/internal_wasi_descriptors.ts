@@ -8,6 +8,7 @@ import { WasiError } from "./internal_wasi_memory.ts";
 import type { WasiCall } from "./internal_wasi_calls.ts";
 import type { WasiMountedStorage } from "./internal_wasi_paths.ts";
 import { WasiOpenDescription } from "./internal_wasi_open_description.ts";
+import { currentKernelSignal } from "../process/KernelExecution.ts";
 import type { WasiStdio } from "./internal_wasi_stdio.ts";
 
 export type { WasiPollResult, WasiStdio } from "./internal_wasi_stdio.ts";
@@ -122,7 +123,9 @@ export interface WasiDescriptor {
   flags: number;
   closeOnExec: boolean;
   directorySnapshot?: { name: string; inode: Inode; type: Stat["type"] }[] | undefined;
-  withOffset<T>(operation: () => WasiCall<T>): WasiCall<T>;
+  withOffset<T>(operation: () => WasiCall<T>, owner?: object): WasiCall<T>;
+  withWrite<T>(operation: () => WasiCall<T>, owner?: object): WasiCall<T>;
+  acquireIo(owner: object, write: boolean, signal?: AbortSignal): WasiCall<() => void>;
 }
 
 export interface WasiDescriptorDupOptions {
@@ -280,8 +283,17 @@ class WasiDescriptorHandle implements WasiDescriptor {
     this.#description.directorySnapshot = value;
   }
 
-  *withOffset<T>(operation: () => WasiCall<T>): WasiCall<T> {
-    return yield* this.#description.withOffset(operation);
+  *withOffset<T>(operation: () => WasiCall<T>, owner?: object): WasiCall<T> {
+    return yield* this.#description.withOffset(operation, owner);
+  }
+
+  // signalbox: regular-file writes share an inode lock across separate open descriptions.
+  *withWrite<T>(operation: () => WasiCall<T>, owner?: object): WasiCall<T> {
+    return yield* this.#description.withWrite(operation, owner);
+  }
+
+  *acquireIo(owner: object, write: boolean, signal?: AbortSignal): WasiCall<() => void> {
+    return yield* this.#description.acquireIo(owner, write, signal);
   }
 
   get description(): WasiOpenDescription {
@@ -369,6 +381,38 @@ export class WasiDescriptorTable {
     const descriptor = this.#descriptors.get(normalized);
     if (descriptor === undefined) throw new WasiError(EBADF);
     return descriptor;
+  }
+
+  *withRetained<T>(
+    fd: number,
+    operation: (descriptor: WasiDescriptor) => WasiCall<T>,
+  ): WasiCall<T> {
+    const signal = currentKernelSignal();
+    const descriptor = this.get(fd) as WasiDescriptorHandle;
+    descriptor.description.retain();
+    let failed = false;
+    try {
+      const result = yield* operation(descriptor);
+      signal?.throwIfAborted();
+      return result;
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      if (failed) {
+        // Cleanup must not replace the metadata or cancellation failure.
+        try {
+          yield* descriptor.description.release();
+        } catch {}
+      } else {
+        try {
+          yield* descriptor.description.release();
+        } catch (error) {
+          signal?.throwIfAborted();
+          throw error;
+        }
+      }
+    }
   }
 
   has(fd: number): boolean {

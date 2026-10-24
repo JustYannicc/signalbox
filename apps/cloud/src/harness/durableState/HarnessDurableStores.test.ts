@@ -4,8 +4,10 @@ import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { createHarnessFilesStore } from "../HarnessFilesStore.ts";
 import { createHarnessThreadSupervisor } from "../HarnessThreadSupervisor.ts";
-import type { HarnessFilesDatabase } from "./files/types.ts";
-import type { HarnessThreadSupervisorDatabase } from "./supervisor/types.ts";
+import {
+  downgradeSupervisorSchemaToV1,
+  readSupervisorSchema,
+} from "./tests/HarnessDurableStores.fixture.ts";
 
 const runId = "durable-run";
 const checkpoint0 = { checkpointId: "checkpoint-0", parentCheckpointId: null, files: [] };
@@ -73,7 +75,7 @@ describe("harness durable stores", () => {
     "stores checkpoint bytes outside a facet and reads them after service reconstruction",
     () =>
       Effect.gen(function* () {
-        const fileDb = database() as ReturnType<typeof database> & HarnessFilesDatabase;
+        const fileDb = database();
         dbs.add(fileDb);
         const first = createHarnessFilesStore(fileDb, runId);
         const initialized = yield* first.execute({
@@ -113,8 +115,7 @@ describe("harness durable stores", () => {
     "keeps stop acknowledgement separate from joined settlement and preserves native identity",
     () =>
       Effect.gen(function* () {
-        const supervisorDb = database() as ReturnType<typeof database> &
-          HarnessThreadSupervisorDatabase;
+        const supervisorDb = database();
         dbs.add(supervisorDb);
         const first = createHarnessThreadSupervisor(supervisorDb, runId);
         yield* first.execute({
@@ -183,12 +184,42 @@ describe("harness durable stores", () => {
       }),
   );
 
+  it.effect("adds the reconciliation lookup table to an existing supervisor database", () =>
+    Effect.gen(function* () {
+      const supervisorDb = database();
+      dbs.add(supervisorDb);
+      const first = createHarnessThreadSupervisor(supervisorDb, runId);
+      yield* first.execute({
+        type: "initialize",
+        runId,
+        nativeSessionId: "native-session-fixed",
+        control: control1,
+        publisher: publisher1,
+        checkpoint: manifest0,
+      });
+
+      downgradeSupervisorSchemaToV1(supervisorDb);
+
+      const migrated = yield* createHarnessThreadSupervisor(supervisorDb, runId).execute({
+        type: "read",
+        runId,
+        control: control1,
+      });
+      const { version, reconciliationTable } = readSupervisorSchema(supervisorDb);
+      expect(migrated.snapshot).toMatchObject({
+        nativeSessionId: "native-session-fixed",
+        lifecycle: "accepting",
+      });
+      expect(version).toEqual(2);
+      expect(reconciliationTable).toBe(true);
+    }),
+  );
+
   it.effect(
     "keeps lost drain retries idempotent without returning prepared authority to the old claim",
     () =>
       Effect.gen(function* () {
-        const supervisorDb = database() as ReturnType<typeof database> &
-          HarnessThreadSupervisorDatabase;
+        const supervisorDb = database();
         dbs.add(supervisorDb);
         const store = createHarnessThreadSupervisor(supervisorDb, runId);
         yield* store.execute({
@@ -276,7 +307,7 @@ describe("harness durable stores", () => {
     "rejects a mismatched files generation and retires the prior publisher after publication",
     () =>
       Effect.gen(function* () {
-        const fileDb = database() as ReturnType<typeof database> & HarnessFilesDatabase;
+        const fileDb = database();
         dbs.add(fileDb);
         const files = createHarnessFilesStore(fileDb, runId);
         const initialized = yield* files.execute({
@@ -291,8 +322,12 @@ describe("harness durable stores", () => {
           type: "syncControl",
           runId,
           control: control2,
+          fromEpoch: control1.epoch,
+          fromIncarnationId: control1.incarnationId,
           expectedGeneration: 1,
           operationId: "drain-1",
+          publication: null,
+          preparedPublication: null,
         });
         const wrongGeneration = yield* Effect.flip(
           files.execute({

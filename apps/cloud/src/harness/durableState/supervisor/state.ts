@@ -28,6 +28,11 @@ const Settlement = Schema.Struct({
   fetchJoined: Schema.Boolean,
   callbackPortsJoined: Schema.Boolean,
 });
+const InvocationSettlementEvidence = Schema.Struct({
+  invocationRpcJoined: Schema.Boolean,
+  fetchJoined: Schema.Boolean,
+  callbackPortsJoined: Schema.Boolean,
+});
 const LastFailure = Schema.Struct({
   phase: Schema.Literals(["prepare", "publish", "activate"]),
   operationId: id,
@@ -46,6 +51,21 @@ const Publication = Schema.Struct({
   priorFacetNonce: id,
   preparedFacetNonce: id,
   checkpoint: Checkpoint,
+});
+const PreparedPublication = Publication;
+const AdmissionResolution = Schema.Struct({
+  evidenceId: id,
+  stepId: Schema.NullOr(id),
+  outcome: Schema.Literals(["notApplied", "completed"]),
+  expectedCheckpoint: Checkpoint,
+  checkpoint: Checkpoint,
+});
+const PendingControlSync = Schema.Struct({
+  fromControl: Control,
+  operationId: id,
+  expectedGeneration: positive,
+  publication: Schema.NullOr(Publication),
+  preparedPublication: Schema.NullOr(PreparedPublication),
 });
 const StopAcknowledgement = Schema.Struct({ requestId: id, acknowledgementId: id });
 
@@ -74,11 +94,18 @@ export const State = Schema.Struct({
   drainOperationId: Schema.NullOr(id),
   lastPublication: Schema.NullOr(Publication),
   lastPublicationOperationId: Schema.NullOr(id),
+  pendingControlSync: Schema.NullOr(PendingControlSync),
   stopAcknowledgement: Schema.NullOr(StopAcknowledgement),
   settlement: Schema.NullOr(Settlement),
   lastFailure: Schema.NullOr(LastFailure),
   reconciliationEvidenceId: Schema.NullOr(id),
+  reconciliationControl: Schema.NullOr(Control),
+  reconciliationExpectedGeneration: Schema.NullOr(positive),
   reconciliationOutcome: Schema.NullOr(Schema.Literals(["notApplied", "completed", "unknown"])),
+  reconciliationCheckpoint: Schema.NullOr(Checkpoint),
+  reconciliationInvocationSettlement: Schema.NullOr(InvocationSettlementEvidence),
+  reconciliationPreparedFacetCleanup: Schema.NullOr(Cleanup),
+  reconciliationAdmissionResolution: Schema.NullOr(AdmissionResolution),
 });
 export type State = typeof State.Type;
 
@@ -111,6 +138,14 @@ export function decodeState(value: unknown, runId: string): State {
     }
     if ((state.lifecycle === "settled" || state.lifecycle === "stopped") && state.admittedStepId)
       throw new Error("Settled state retains admitted work.");
+    if (
+      state.pendingControlSync &&
+      (state.pendingControlSync.fromControl.ownerId !== state.control.ownerId ||
+        state.pendingControlSync.fromControl.epoch + 1 !== state.control.epoch ||
+        state.pendingControlSync.fromControl.incarnationId === state.control.incarnationId ||
+        state.pendingControlSync.expectedGeneration !== state.publisher.generation)
+    )
+      throw new Error("Pending controller synchronization does not match current authority.");
     return state;
   } catch (error) {
     throw new Error("Harness thread supervisor state is corrupt.", { cause: error });

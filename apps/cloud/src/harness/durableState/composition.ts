@@ -3,7 +3,7 @@ import type {
   HarnessDurableStateBindings,
   HarnessFilesPrivateCommand,
   HarnessSupervisorPrivateCommand,
-} from "../HarnessDurableState.ts";
+} from "./types.ts";
 import {
   admitStep,
   beginDrain,
@@ -14,12 +14,21 @@ import {
   recordPreparedFacetFailure,
 } from "./operations.ts";
 import { publishFreshFacet } from "./publication.ts";
-import { HarnessFilesStoreError } from "../HarnessFilesStore.ts";
+import { reconcile } from "./reconciliation.ts";
+import { HarnessDurableStateError } from "./errors.ts";
+
+const privateSupervisorCommands = new Set([
+  "read",
+  "recordStopAcknowledgement",
+  "settleInvocation",
+  "prepareFreshFacet",
+]);
 
 export function createHarnessDurableState(
   bindings: HarnessDurableStateBindings,
   runId: string,
 ): HarnessDurableState {
+  if (!runId) throw new HarnessDurableStateError({ code: "INVALID" });
   const runStore = bindings.HARNESS_RUN_STORE.getByName(runId);
   const filesStore = bindings.HARNESS_FILES_STORE.getByName(runId);
   const threadSupervisor = bindings.HARNESS_THREAD_SUPERVISOR.getByName(runId);
@@ -28,14 +37,22 @@ export function createHarnessDurableState(
   return {
     runStore,
     filesStore: {
-      execute: (command: HarnessFilesPrivateCommand) => {
+      execute: async (command: HarnessFilesPrivateCommand) => {
         if (command.type !== "readCheckpoint" && command.type !== "recoverCheckpoint")
-          throw new HarnessFilesStoreError("INVALID");
+          throw new HarnessDurableStateError({ code: "INVALID" });
         return filesStore.execute(command);
       },
     },
     threadSupervisor: {
-      execute: (command: HarnessSupervisorPrivateCommand) => threadSupervisor.execute(command),
+      execute: async (command: HarnessSupervisorPrivateCommand) => {
+        if (
+          typeof command !== "object" ||
+          command === null ||
+          !privateSupervisorCommands.has(command.type)
+        )
+          throw new HarnessDurableStateError({ code: "INVALID" });
+        return threadSupervisor.execute(command);
+      },
     },
     initialize: (input) => initialize(stores, input),
     beginDrain: (input) => beginDrain(stores, input),
@@ -45,6 +62,7 @@ export function createHarnessDurableState(
     recordActivation: (input) => recordActivation(stores, input),
     recordActivationFailure: (input) => recordActivationFailure(stores, input),
     recordPreparedFacetFailure: (input) => recordPreparedFacetFailure(stores, input),
+    reconcile: (input) => reconcile(stores, input),
     readPublication: async ({ control, operationId }) => {
       await threadSupervisor.execute({ type: "read", runId, control });
       return filesStore.execute({ type: "readPublication", runId, control, operationId });

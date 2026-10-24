@@ -10,32 +10,20 @@ import type {
   HarnessDurableStateInitializationResult,
   HarnessDurableStateStepInput,
   HarnessDurableStateStepResult,
-} from "../HarnessDurableState.ts";
-import type { HarnessFilesStoreResult } from "../HarnessFilesStore.ts";
+  HarnessDurableStateStubs,
+} from "./types.ts";
 import type { HarnessThreadSupervisorResult } from "../HarnessThreadSupervisor.ts";
-
-export interface DurableStateStubs {
-  readonly runId: string;
-  readonly runStore: { execute(command: unknown): Promise<unknown> };
-  readonly filesStore: { execute(command: unknown): Promise<HarnessFilesStoreResult> };
-  readonly threadSupervisor: { execute(command: unknown): Promise<HarnessThreadSupervisorResult> };
-}
-
-const failureOf = (error: unknown) => {
-  if (error instanceof Error && "code" in error && typeof error.code === "string")
-    return { code: error.code, message: error.message.slice(0, 512) };
-  if (error instanceof Error) return { code: "STORAGE", message: error.message.slice(0, 512) };
-  return { code: "STORAGE", message: "Durable state operation failed." };
-};
+import { HarnessDurableStateError, failureOf, hasCode } from "./errors.ts";
+import { syncPendingControl } from "./controlSync.ts";
 
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
 export async function initialize(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateInitializationInput,
 ): Promise<HarnessDurableStateInitializationResult> {
   if (input.run.seed.identity.runId !== stores.runId)
-    throw new Error("Run journal initialization targets another run.");
+    throw new HarnessDurableStateError({ code: "CONFLICT" });
   const journal = await stores.runStore.execute(input.run);
   const files = await stores.filesStore.execute({
     type: "initialize",
@@ -53,37 +41,53 @@ export async function initialize(
     checkpoint: files.checkpoint,
   });
   return {
-    journal: journal as HarnessDurableStateInitializationResult["journal"],
+    journal,
     files,
     supervisor,
   };
 }
 
 export async function beginDrain(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateDrainInput,
 ): Promise<HarnessDurableStateDrainResult> {
+  let current: HarnessThreadSupervisorResult | null = null;
+  try {
+    current = await stores.threadSupervisor.execute({
+      type: "read",
+      runId: stores.runId,
+      control: input.control,
+    });
+  } catch (error) {
+    if (!hasCode(error, "STALE_CONTROL")) throw error;
+  }
+  if (current?.snapshot.pendingControlSync) {
+    const repaired = await syncPendingControl(stores, input.control, current);
+    if (repaired.status === "files-pending")
+      return {
+        status: "files-pending",
+        supervisor: repaired.supervisor,
+        failure: repaired.failure,
+      };
+  }
+
   const supervisor = await stores.threadSupervisor.execute({
     type: "beginDrain",
     runId: stores.runId,
     ...input,
   });
-  try {
-    const files = await stores.filesStore.execute({
-      type: "syncControl",
-      runId: stores.runId,
-      control: input.nextControl,
-      expectedGeneration: input.expectedGeneration,
-      operationId: input.operationId,
-    });
-    return { status: "draining", supervisor, files };
-  } catch (error) {
-    return { status: "files-pending", supervisor, failure: failureOf(error) };
-  }
+  const synchronized = await syncPendingControl(stores, input.nextControl, supervisor);
+  if (synchronized.status === "files-pending")
+    return {
+      status: "files-pending",
+      supervisor: synchronized.supervisor,
+      failure: synchronized.failure,
+    };
+  return { status: "draining", supervisor: synchronized.supervisor, files: synchronized.files };
 }
 
 export async function admitStep(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateStepInput,
 ): Promise<HarnessDurableStateStepResult> {
   const current = await stores.threadSupervisor.execute({
@@ -95,7 +99,7 @@ export async function admitStep(
     current.snapshot.lifecycle !== "accepting" ||
     current.snapshot.checkpoint.checkpointId !== input.expectedCheckpointId
   )
-    throw new Error("The supervisor is not accepting this step.");
+    throw new HarnessDurableStateError({ code: "OUT_OF_ORDER" });
   const supervisor = await stores.threadSupervisor.execute({
     type: "admitStep",
     runId: stores.runId,
@@ -118,7 +122,7 @@ export async function admitStep(
 }
 
 export async function commitCheckpoint(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateCheckpointInput,
 ): Promise<HarnessDurableStateCheckpointResult> {
   const files = await stores.filesStore.execute({
@@ -151,7 +155,7 @@ export async function commitCheckpoint(
 }
 
 export async function recordActivation(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateActivationInput,
 ): Promise<HarnessDurableStateActivationResult> {
   const current = await stores.threadSupervisor.execute({
@@ -165,7 +169,7 @@ export async function recordActivation(
       current.snapshot.lifecycle !== "activation-failed" &&
       current.snapshot.lifecycle !== "accepting")
   )
-    throw new Error("The current claim has no matching published facet.");
+    throw new HarnessDurableStateError({ code: "OUT_OF_ORDER" });
   const files = await stores.filesStore.execute({
     type: "recordActivation",
     runId: stores.runId,
@@ -200,7 +204,7 @@ export async function recordActivation(
 }
 
 export async function recordActivationFailure(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: {
     readonly control: HarnessDurableStateFailureInput["control"];
     readonly operationId: string;
@@ -233,7 +237,7 @@ export async function recordActivationFailure(
 }
 
 export async function recordPreparedFacetFailure(
-  stores: DurableStateStubs,
+  stores: HarnessDurableStateStubs,
   input: HarnessDurableStateFailureInput,
 ) {
   const current = await stores.threadSupervisor.execute({
@@ -247,7 +251,7 @@ export async function recordPreparedFacetFailure(
     current.snapshot.preparedFacet?.operationId !== input.operationId ||
     preparedPublisher === null
   )
-    throw new Error("The current claim has no matching inert facet.");
+    throw new HarnessDurableStateError({ code: "OUT_OF_ORDER" });
   if (
     input.cleanup.stopAcknowledged &&
     input.cleanup.invocationRpcJoined &&
@@ -263,7 +267,7 @@ export async function recordPreparedFacetFailure(
         operationId: input.operationId,
       });
       if (receipt.publication?.status === "confirmed")
-        throw new Error("Published file authority cannot be rolled back.");
+        throw new HarnessDurableStateError({ code: "CONFLICT" });
       if (receipt.publication?.status === "pending")
         await stores.filesStore.execute({
           type: "abortFacetPublication",
@@ -274,7 +278,7 @@ export async function recordPreparedFacetFailure(
           operationId: input.operationId,
         });
     } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "MISSING")) throw error;
+      if (!hasCode(error, "MISSING")) throw error;
     }
   }
   return stores.threadSupervisor.execute({

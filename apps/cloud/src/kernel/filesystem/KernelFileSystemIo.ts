@@ -1,3 +1,4 @@
+import { withKernelFileWrite } from "../KernelIoLock.ts";
 import {
   FDFLAGS,
   RIGHTS,
@@ -42,7 +43,9 @@ export class KernelFileSystemIo {
       return this.#run(
         descriptor.kind === "stdio" && (descriptor.flags & FDFLAGS.NONBLOCK) !== 0
           ? operation()
-          : descriptor.withOffset(operation),
+          : descriptor.kind === "file"
+            ? descriptor.withWrite(operation)
+            : descriptor.withOffset(operation),
       );
     });
   }
@@ -59,8 +62,13 @@ export class KernelFileSystemIo {
       if (stat.type === "directory") throw kernelError("EISDIR");
       if (stat.type !== "file") throw kernelError("EINVAL");
       const length = this.#size(size);
-      if (storage.byteAccess) storage.byteAccess.truncate(length);
-      else runKernelSync(storage.mount.storage.truncate(storage.inode, length));
+      runSync(
+        withKernelFileWrite(storage.mount.storage, storage.inode, () =>
+          storage.byteAccess
+            ? storage.byteAccess.truncate(length)
+            : storage.mount.storage.truncate(storage.inode, length),
+        ),
+      );
     });
   }
 

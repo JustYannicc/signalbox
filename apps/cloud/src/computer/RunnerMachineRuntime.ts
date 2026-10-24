@@ -4,6 +4,8 @@ import {
   type ThreadExecLease,
 } from "../thread/ThreadExecForwarder.ts";
 import type { MachineHandle, MachineOwnershipAttestation } from "./Machine.ts";
+import { RunnerMachineFileLookupForwarder } from "./MachineFileLookupForwarder.ts";
+import type { MachineFileSourceAttestation } from "./MachineFilesPort.ts";
 import type {
   MachineCommandRuntime,
   MachineProcessClosureAttestation,
@@ -34,9 +36,18 @@ export interface MachineRunnerTransport {
   ) => Promise<MachineProcessClosureAttestation>;
 }
 
+export interface RunnerMachineRuntimeOptions {
+  /** Supplies lifecycle-owned state that remains authoritative across Computer reopen. */
+  readonly machineFileSource?: (
+    owner: MachineRunnerOwner,
+  ) => MachineFileSourceAttestation | undefined;
+  readonly machineFileLookupTimeoutMs?: number;
+}
+
 /** Keeps the proven non-PTY transport while requiring provider authority for process closure. */
 export function createRunnerMachineRuntime(
   transport: MachineRunnerTransport,
+  options: RunnerMachineRuntimeOptions = {},
 ): MachineCommandRuntime {
   return {
     async attach(input) {
@@ -45,46 +56,76 @@ export function createRunnerMachineRuntime(
       let connection: MachineRunnerConnection | undefined;
       let admissionClosed = false;
       let spawnStarted = false;
+      const acquireLease: ThreadExecLease["acquire"] = async (signal) => {
+        if (admissionClosed || connection === undefined) {
+          throw new Error("Machine Runner admission is closed");
+        }
+        const lease = await connection.lease.acquire(signal);
+        if (admissionClosed || lease.generation !== owner.generation) {
+          await lease.release();
+          throw new Error("Machine Runner lease belongs to another generation");
+        }
+        return lease;
+      };
+      const machineFileSource = options.machineFileSource?.(input);
+      const machineFiles = new RunnerMachineFileLookupForwarder({
+        ...(machineFileSource === undefined ? {} : { source: machineFileSource }),
+        ...(options.machineFileLookupTimeoutMs === undefined
+          ? {}
+          : { timeoutMs: options.machineFileLookupTimeoutMs }),
+      });
       const forwarder = makeThreadExecForwarder({
         workspace: input.workspace,
         policy: input.policy,
-        lease: {
-          async acquire(signal) {
-            if (admissionClosed || connection === undefined) {
-              throw new Error("Machine Runner admission is closed");
-            }
-            const lease = await connection.lease.acquire(signal);
-            if (admissionClosed || lease.generation !== owner.generation) {
-              await lease.release();
-              throw new Error("Machine Runner lease belongs to another generation");
-            }
-            return lease;
-          },
+        beforeStart: async (generation, _command, signal) => {
+          signal.throwIfAborted();
+          if (generation !== owner.generation) {
+            throw new Error("Machine Runner command belongs to another generation");
+          }
+          await machineFiles.markExecuted(generation);
+          signal.throwIfAborted();
         },
+        lease: { acquire: acquireLease },
       });
       try {
         connection = await transport.connect({
           ...input,
           socketHost: {
-            ...forwarder.socketHost,
             connected(socket, candidate) {
               if (candidate.generation !== owner.generation)
                 throw new Error("Unexpected Runner generation");
-              forwarder.socketHost.connected(socket, {
+              const wrapped: typeof candidate = {
                 ...candidate,
                 send(message) {
-                  if (admissionClosed && message.command.type === "start") {
+                  if (
+                    admissionClosed &&
+                    (message.type === "machine.files.request" ||
+                      (message.type === "exec.command" && message.command.type === "start"))
+                  ) {
                     throw new Error("Machine Runner admission is closed");
                   }
                   candidate.send(message);
                 },
-              });
+              };
+              forwarder.socketHost.connected(socket, wrapped);
+              machineFiles.socketHost.connected(socket, wrapped);
+            },
+            report: forwarder.socketHost.report,
+            machineFileResult: machineFiles.socketHost.result,
+            disconnected(socket, generation, candidateConnection) {
+              forwarder.socketHost.disconnected(socket, generation, candidateConnection);
+              machineFiles.socketHost.disconnected(socket, generation, candidateConnection);
+            },
+            generationEnded(generation) {
+              forwarder.socketHost.generationEnded(generation);
+              machineFiles.socketHost.generationEnded(generation);
             },
           },
         });
         assertOwner(owner, connection.owner);
       } catch (error) {
         admissionClosed = true;
+        await machineFiles.dispose();
         await forwarder.dispose();
         await connection?.dispose();
         throw error;
@@ -94,6 +135,7 @@ export function createRunnerMachineRuntime(
       let closing: Promise<MachineProcessClosureAttestation> | undefined;
       return {
         owner,
+        machineFiles,
         spawn: (command, signal) => {
           if (admissionClosed || spawnStarted)
             return Promise.reject(new Error("Machine Runner admission is closed"));
@@ -103,6 +145,7 @@ export function createRunnerMachineRuntime(
         quiesce(signal) {
           admissionClosed = true;
           closing ??= (async () => {
+            await machineFiles.dispose();
             closure ??= await transport.quiesce({
               operationId: input.operationId,
               machine: input.machine,
@@ -122,6 +165,7 @@ export function createRunnerMachineRuntime(
         },
         async dispose() {
           admissionClosed = true;
+          await machineFiles.dispose();
           await forwarder.dispose();
           await connected.dispose();
         },

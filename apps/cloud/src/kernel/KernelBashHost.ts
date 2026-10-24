@@ -54,7 +54,14 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
       umask: supplied.filesystem.posixPolicy?.umask ?? inherited.umask,
     };
     const preopens = new BashPreopens(context.filesystem.descriptors, parentPreopens);
-    const syscalls = createKernelSyscallHost({ ...context, process: context });
+    const syscalls = createKernelSyscallHost({
+      ...context,
+      process: context,
+      nimbusStatMetadata: true,
+      ...(context.preparePathSearch === undefined
+        ? {}
+        : { preparePathSearch: context.preparePathSearch }),
+    });
     const memory = new SyscallMemory();
     const namespaces = createBashHostImports(context, credentials, () => memory, preopens);
     const imports = new Map<string, (...args: number[]) => number | Promise<number>>(
@@ -127,7 +134,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
           }
         }),
       fork: () =>
-        operation(() => {
+        operation(async () => {
           const table = context.filesystem.descriptors.fork(
             [...context.filesystem.descriptors.entries()].map(([fd]) => ({
               parentFd: fd,

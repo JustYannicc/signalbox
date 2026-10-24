@@ -3,6 +3,7 @@ import {
   type RunnerBuild,
   type ThreadMessage,
 } from "@signalbox/runner-protocol/RunnerProtocol";
+import type { MachineFilesResult } from "@signalbox/runner-protocol/MachineFilesProtocol";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as Stream from "effect/Stream";
 import type { RunnerConnection, RunnerTransport } from "./RunnerSession.ts";
 import { RunnerConnectionError } from "./RunnerConnectionError.ts";
 import { makeRunnerExecHost, type RunnerExecWorkspaceAttestation } from "./RunnerExecHost.ts";
+import * as RunnerMachineFiles from "./RunnerMachineFiles.ts";
 
 export interface RunnerCommandSessionInput {
   readonly threadId: ThreadId;
@@ -32,9 +34,10 @@ const rejectConnection = (connection: RunnerConnection, reason: string) =>
 /** One command-only session. A lost socket ends this session; commands are never replayed. */
 export const runRunnerCommandSession = Effect.fn("runRunnerCommandSession")(function* (
   input: RunnerCommandSessionInput,
-): Effect.fn.Return<void, RunnerConnectionError> {
+): Effect.fn.Return<void, RunnerConnectionError, RunnerMachineFiles.RunnerMachineFiles> {
   yield* Effect.scoped(
     Effect.gen(function* () {
+      const machineFiles = yield* RunnerMachineFiles.RunnerMachineFiles;
       const connection = yield* input.transport.connect;
 
       yield* connection.send({
@@ -48,6 +51,7 @@ export const runRunnerCommandSession = Effect.fn("runRunnerCommandSession")(func
         lastAckedSequence: 0,
         build: input.build,
         exec: true,
+        machineFileLookup: true,
       });
 
       const firstMessage = yield* connection.receive;
@@ -71,7 +75,6 @@ export const runRunnerCommandSession = Effect.fn("runRunnerCommandSession")(func
         generation: input.generation,
         workspace: input.workspace,
       });
-
       // A report-send failure must interrupt the receive loop, even when the peer sends nothing.
       const sessionFailure = yield* Deferred.make<RunnerConnectionError>();
       yield* Stream.runForEach(host.reports, (report) =>
@@ -110,6 +113,40 @@ export const runRunnerCommandSession = Effect.fn("runRunnerCommandSession")(func
                 Deferred.succeed(
                   sessionFailure,
                   new RunnerConnectionError({ message: "Failed to apply an exec command.", cause }),
+                ),
+              ),
+              Effect.forkScoped({ startImmediately: true }),
+              Effect.asVoid,
+            );
+            break;
+          case "machine.files.request":
+            if (message.generation !== input.generation) {
+              const result: MachineFilesResult = {
+                type: "machine.files.result",
+                generation: message.generation,
+                requestId: message.requestId,
+                outcome: {
+                  status: "error",
+                  code: "stale_generation",
+                  message: "This Runner generation is stale.",
+                },
+              };
+              yield* connection.send(result);
+              break;
+            }
+            yield* machineFiles.lookup(message).pipe(
+              Effect.catchTags({
+                RunnerMachineFilesError: () =>
+                  Effect.succeed(RunnerMachineFiles.lookupFailedResult(message)),
+              }),
+              Effect.flatMap((result) => connection.send(result)),
+              Effect.catchCause((cause) =>
+                Deferred.succeed(
+                  sessionFailure,
+                  new RunnerConnectionError({
+                    message: "Failed to answer a machine file lookup.",
+                    cause,
+                  }),
                 ),
               ),
               Effect.forkScoped({ startImmediately: true }),

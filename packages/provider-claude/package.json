@@ -55,6 +55,10 @@
       "types": "./src/ClaudeSdkQueryRunner.ts",
       "import": "./src/ClaudeSdkQueryRunner.ts"
     },
+    "./ClaudeEventLatencyTrace": {
+      "types": "./src/ClaudeEventLatencyTrace.ts",
+      "import": "./src/ClaudeEventLatencyTrace.ts"
+    },
     "./ClaudeQueryProtocol": {
       "types": "./src/ClaudeQueryProtocol.ts",
       "import": "./src/ClaudeQueryProtocol.ts"

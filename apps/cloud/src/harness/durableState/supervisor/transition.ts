@@ -44,6 +44,28 @@ const requireGeneration = (state: State, generation: number) => {
   if (state.publisher.generation !== generation) return fail("OUT_OF_ORDER");
 };
 
+export type ReconciliationRequest = Omit<
+  Extract<HarnessThreadSupervisorCommand, { readonly type: "reconcile" }>,
+  "runId" | "admissionResolution"
+>;
+
+export function validateReconciliationRequest(state: State, command: ReconciliationRequest) {
+  requireControl(state, command.control);
+  requireGeneration(state, command.expectedGeneration);
+  if (state.lifecycle !== "indeterminate" && state.lifecycle !== "recoverable")
+    return fail("OUT_OF_ORDER");
+  if (state.pendingControlSync) return fail("OUT_OF_ORDER");
+  if (
+    command.outcome !== "unknown" &&
+    (!command.invocationSettlement || !allJoined(command.invocationSettlement))
+  )
+    return fail("INDETERMINATE");
+  if (state.prepared && (!command.preparedFacetCleanup || !allClean(command.preparedFacetCleanup)))
+    return fail("INDETERMINATE");
+  if (!state.prepared && command.preparedFacetCleanup !== null) return fail("CONFLICT");
+  if ((command.outcome === "completed") !== (command.checkpoint !== null)) return fail("INVALID");
+}
+
 export function transition(state: State | null, command: HarnessThreadSupervisorCommand): Decision {
   if (command.type === "initialize") {
     if (state) {
@@ -77,11 +99,18 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
       drainOperationId: null,
       lastPublication: null,
       lastPublicationOperationId: null,
+      pendingControlSync: null,
       stopAcknowledgement: null,
       settlement: null,
       lastFailure: null,
       reconciliationEvidenceId: null,
+      reconciliationControl: null,
+      reconciliationExpectedGeneration: null,
       reconciliationOutcome: null,
+      reconciliationCheckpoint: null,
+      reconciliationInvocationSettlement: null,
+      reconciliationPreparedFacetCleanup: null,
+      reconciliationAdmissionResolution: null,
     });
   }
 
@@ -94,12 +123,15 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
   switch (command.type) {
     case "beginDrain": {
       if (
+        state.pendingControlSync &&
         state.drainOperationId === command.operationId &&
+        same(state.pendingControlSync.fromControl, command.control) &&
         same(state.control, command.nextControl) &&
         state.publisher.generation === command.expectedGeneration &&
         same(state.publisher, command.publisher)
       )
         return decide(state, "unchanged", false);
+      if (state.pendingControlSync) return fail("OUT_OF_ORDER");
       requireControl(state, command.control);
       requirePublisher(state, command.publisher);
       requireGeneration(state, command.expectedGeneration);
@@ -117,11 +149,42 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
           control: command.nextControl,
           lifecycle: state.lifecycle === "accepting" ? "draining" : state.lifecycle,
           drainOperationId: command.operationId,
+          pendingControlSync: {
+            fromControl: state.control,
+            operationId: command.operationId,
+            expectedGeneration: command.expectedGeneration,
+            publication: state.lastPublication,
+            preparedPublication: state.prepared
+              ? {
+                  operationId: state.prepared.operationId,
+                  fromGeneration: state.publisher.generation,
+                  toGeneration: state.prepared.publisher.generation,
+                  priorFacetNonce: state.publisher.facetNonce,
+                  preparedFacetNonce: state.prepared.publisher.facetNonce,
+                  checkpoint: state.prepared.checkpoint,
+                }
+              : null,
+          },
           stopAcknowledgement: null,
           settlement: null,
         },
         "draining",
       );
+    }
+    case "confirmControlSync": {
+      requireControl(state, command.control);
+      const pending = state.pendingControlSync;
+      if (
+        !pending ||
+        pending.operationId !== command.operationId ||
+        pending.fromControl.epoch !== command.fromEpoch ||
+        pending.fromControl.incarnationId !== command.fromIncarnationId ||
+        pending.expectedGeneration !== command.expectedGeneration ||
+        !same(pending.publication, command.publication) ||
+        !same(pending.preparedPublication, command.preparedPublication)
+      )
+        return fail("CONFLICT");
+      return decide({ ...state, pendingControlSync: null }, "control-synced");
     }
     case "admitStep": {
       requirePublisher(state, command.publisher);
@@ -233,6 +296,19 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
             publisher: command.preparedPublisher,
             checkpoint: state.checkpoint,
           },
+          pendingControlSync: state.pendingControlSync
+            ? {
+                ...state.pendingControlSync,
+                preparedPublication: {
+                  operationId: command.operationId,
+                  fromGeneration: state.publisher.generation,
+                  toGeneration: command.preparedPublisher.generation,
+                  priorFacetNonce: state.publisher.facetNonce,
+                  preparedFacetNonce: command.preparedPublisher.facetNonce,
+                  checkpoint: state.checkpoint,
+                },
+              }
+            : null,
           lastFailure: null,
         },
         "prepared",
@@ -240,6 +316,7 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
     }
     case "publishFreshFacet": {
       requireControl(state, command.control);
+      if (state.pendingControlSync) return fail("OUT_OF_ORDER");
       if (
         (state.lifecycle === "published" ||
           state.lifecycle === "activation-failed" ||
@@ -285,6 +362,7 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
     }
     case "recordActivation": {
       requireControl(state, command.control);
+      if (state.pendingControlSync) return fail("OUT_OF_ORDER");
       requirePublisher(state, command.publisher);
       requireGeneration(state, command.expectedGeneration);
       if (
@@ -301,6 +379,7 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
     }
     case "recordActivationFailure": {
       requireControl(state, command.control);
+      if (state.pendingControlSync) return fail("OUT_OF_ORDER");
       requirePublisher(state, command.publisher);
       requireGeneration(state, command.expectedGeneration);
       if (state.lifecycle !== "published" && state.lifecycle !== "activation-failed")
@@ -317,6 +396,7 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
     }
     case "recordPreparedFacetFailure": {
       requireControl(state, command.control);
+      if (state.pendingControlSync) return fail("OUT_OF_ORDER");
       requirePublisher(state, command.publisher);
       requireGeneration(state, command.expectedGeneration);
       if (
@@ -344,17 +424,46 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
     case "reconcile": {
       requireControl(state, command.control);
       requireGeneration(state, command.expectedGeneration);
-      if (state.lifecycle !== "indeterminate" && state.lifecycle !== "recoverable")
-        return fail("OUT_OF_ORDER");
-      if (
-        state.reconciliationEvidenceId === command.evidenceId &&
-        state.reconciliationOutcome === command.outcome
-      )
+      if (state.reconciliationEvidenceId === command.evidenceId) {
+        if (
+          !same(state.reconciliationControl, command.control) ||
+          state.reconciliationExpectedGeneration !== command.expectedGeneration ||
+          state.reconciliationOutcome !== command.outcome ||
+          !same(state.reconciliationCheckpoint, command.checkpoint) ||
+          !same(state.reconciliationInvocationSettlement, command.invocationSettlement) ||
+          !same(state.reconciliationPreparedFacetCleanup, command.preparedFacetCleanup) ||
+          !same(state.reconciliationAdmissionResolution, command.admissionResolution)
+        )
+          return fail("CONFLICT");
         return decide(state, "unchanged");
-      if (state.prepared && (!command.cleanup || !allClean(command.cleanup)))
-        return fail("INDETERMINATE");
-      if (command.outcome === "completed" && command.checkpoint === null) return fail("INVALID");
-      if (command.outcome !== "completed" && command.checkpoint !== null) return fail("INVALID");
+      }
+      validateReconciliationRequest(state, command);
+      if (command.outcome === "unknown") {
+        if (command.admissionResolution !== null) return fail("CONFLICT");
+      } else {
+        const resolution = command.admissionResolution;
+        if (
+          !resolution ||
+          resolution.evidenceId !== command.evidenceId ||
+          resolution.outcome !== command.outcome ||
+          resolution.stepId !== state.admittedStepId ||
+          !same(resolution.expectedCheckpoint, state.checkpoint) ||
+          (command.outcome === "notApplied" && !same(resolution.checkpoint, state.checkpoint)) ||
+          (command.outcome === "completed" && !same(resolution.checkpoint, command.checkpoint))
+        )
+          return fail("CONFLICT");
+      }
+      const settlement = command.invocationSettlement
+        ? {
+            outcome:
+              command.outcome === "completed"
+                ? ("settled" as const)
+                : command.outcome === "notApplied"
+                  ? ("stopped" as const)
+                  : ("indeterminate" as const),
+            ...command.invocationSettlement,
+          }
+        : state.settlement;
       return decide(
         {
           ...state,
@@ -364,18 +473,21 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
             : command.outcome === "notApplied"
               ? { admittedStepId: null }
               : {}),
-          prepared: command.cleanup && allClean(command.cleanup) ? null : state.prepared,
+          prepared:
+            command.outcome !== "unknown" &&
+            command.preparedFacetCleanup &&
+            allClean(command.preparedFacetCleanup)
+              ? null
+              : state.prepared,
           reconciliationEvidenceId: command.evidenceId,
+          reconciliationControl: command.control,
+          reconciliationExpectedGeneration: command.expectedGeneration,
           reconciliationOutcome: command.outcome,
-          settlement:
-            command.outcome === "unknown"
-              ? state.settlement
-              : {
-                  outcome: command.outcome === "completed" ? "settled" : "stopped",
-                  invocationRpcJoined: true,
-                  fetchJoined: true,
-                  callbackPortsJoined: true,
-                },
+          reconciliationCheckpoint: command.checkpoint,
+          reconciliationInvocationSettlement: command.invocationSettlement,
+          reconciliationPreparedFacetCleanup: command.preparedFacetCleanup,
+          reconciliationAdmissionResolution: command.admissionResolution,
+          settlement,
         },
         "reconciled",
       );
@@ -405,11 +517,30 @@ export function snapshot(state: State) {
             checkpoint: state.prepared.checkpoint,
           },
     lastPublication: state.lastPublication,
+    pendingControlSync:
+      state.pendingControlSync === null
+        ? null
+        : {
+            operationId: state.pendingControlSync.operationId,
+            fromEpoch: state.pendingControlSync.fromControl.epoch,
+            fromIncarnationId: state.pendingControlSync.fromControl.incarnationId,
+            toEpoch: state.control.epoch,
+            toIncarnationId: state.control.incarnationId,
+            expectedGeneration: state.pendingControlSync.expectedGeneration,
+            publication: state.pendingControlSync.publication,
+            preparedPublication: state.pendingControlSync.preparedPublication,
+          },
     lastPublicationOperationId: state.lastPublicationOperationId,
     stopAcknowledgementId: state.stopAcknowledgement?.acknowledgementId ?? null,
     settlement: state.settlement,
     lastFailure: state.lastFailure,
     reconciliationEvidenceId: state.reconciliationEvidenceId,
+    reconciliationExpectedGeneration: state.reconciliationExpectedGeneration,
+    reconciliationAdmissionResolution: state.reconciliationAdmissionResolution,
+    reconciliationOutcome: state.reconciliationOutcome,
+    reconciliationCheckpoint: state.reconciliationCheckpoint,
+    reconciliationInvocationSettlement: state.reconciliationInvocationSettlement,
+    reconciliationPreparedFacetCleanup: state.reconciliationPreparedFacetCleanup,
   };
 }
 

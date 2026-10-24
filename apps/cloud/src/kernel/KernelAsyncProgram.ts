@@ -7,6 +7,7 @@ import type {
   KernelProcessTable,
 } from "./KernelProcessTable.ts";
 import type { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
+import type { KernelLowerFileSystemPathSearch } from "./KernelLowerFileSystem.ts";
 
 export interface KernelAsyncProgramExecRequest {
   readonly filesystem: KernelFileSystem;
@@ -36,6 +37,7 @@ export interface KernelAsyncProgramContext {
   readonly env: Readonly<Record<string, string>>;
   readonly identity: KernelProcessIdentity;
   readonly signal: AbortSignal;
+  readonly preparePathSearch?: KernelLowerFileSystemPathSearch;
   readonly processes: KernelProcessTable;
   readonly wakes: KernelWakeRegistry;
   readonly cpu?: KernelAsyncProgramCpu;

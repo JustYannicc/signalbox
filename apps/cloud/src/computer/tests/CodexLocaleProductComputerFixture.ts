@@ -28,6 +28,7 @@ import { createChildBusybox } from "../ChildBusybox.ts";
 import { createChildGit } from "../ChildGit.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { KernelCommandForwarder } from "../../kernel/KernelCommandForwarder.ts";
+import { emptyMachineFilesFixture, machineInventoryFixture } from "../machineInventoryTesting.ts";
 import { sqliteFixture } from "./helpers/sqliteFixture.ts";
 
 // Codex 0.162.1's exact UNIFIED_EXEC_ENV array is pinned at
@@ -265,7 +266,11 @@ export function createCodexLocaleProductComputer(
       git: programsByName("git"),
       sed: programsByName("sed"),
     },
-    machine: () => machine,
+    machineInventory: machineInventoryFixture(),
+    machine: () => ({
+      ...machine,
+      files: emptyMachineFilesFixture(),
+    }),
     ...(options.orderedMachineRules === undefined
       ? {}
       : { orderedMachineRules: options.orderedMachineRules }),

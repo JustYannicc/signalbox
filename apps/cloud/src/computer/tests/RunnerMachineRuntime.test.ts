@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { ExecCommand } from "@signalbox/runner-protocol/ExecProtocol";
+import type {
+  MachineFilesRequest,
+  MachineFilesResult,
+} from "@signalbox/runner-protocol/MachineFilesProtocol";
 import type { MachineHandle } from "../Machine.ts";
 import type { RunnerExecSocketHost } from "../../thread/ThreadExecForwarder.ts";
 import {
   createRunnerMachineRuntime,
   type MachineRunnerTransport,
 } from "../RunnerMachineRuntime.ts";
+import type { MachineFileSourceAttestation } from "../MachineFilesPort.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -35,7 +40,10 @@ function fixture() {
       connection: 2,
       protocolVersion: 8,
       exec: true,
-      send: ({ command: frame }) => {
+      machineFileLookup: true,
+      send: (message) => {
+        if (message.type !== "exec.command") return;
+        const frame = message.command;
         sent.push(frame);
         if (frame.type === "start")
           socketHost.report(socket, 4, 2, {
@@ -71,6 +79,114 @@ function fixture() {
 }
 
 describe("RunnerMachineRuntime", () => {
+  it("exposes a callable file port and dirties lifecycle state before sending a process start", async () => {
+    const socket = {} as WebSocket;
+    const release = vi.fn(async () => undefined);
+    const disconnect = vi.fn(async () => undefined);
+    const frames: Array<ExecCommand | MachineFilesRequest> = [];
+    let state = { generation: 4, pristine: true };
+    const source: MachineFileSourceAttestation = {
+      current: () => state,
+      markExecuted: vi.fn(async (generation) => {
+        if (generation !== state.generation) throw new Error("stale generation");
+        state = { ...state, pristine: false };
+      }),
+    };
+    let socketHost!: RunnerExecSocketHost;
+    const runtime = createRunnerMachineRuntime(
+      {
+        connect: async (input) => {
+          socketHost = input.socketHost;
+          socketHost.connected(socket, {
+            generation: 4,
+            connection: 2,
+            protocolVersion: 8,
+            exec: true,
+            machineFileLookup: true,
+            send(message) {
+              if (message.type === "machine.files.request") {
+                frames.push(message);
+                const result: MachineFilesResult = {
+                  type: "machine.files.result",
+                  generation: 4,
+                  requestId: message.requestId,
+                  outcome: {
+                    status: "ok",
+                    results: [
+                      {
+                        id: "stat-1",
+                        op: "stat",
+                        stat: {
+                          mode: 0o100755,
+                          type: "file",
+                          size: "12",
+                          uid: 1000,
+                          gid: 1000,
+                          dev: "1",
+                          ino: "2",
+                          nlink: "1",
+                          atimeNs: "1",
+                          mtimeNs: "2",
+                          ctimeNs: "3",
+                          birthtimeNs: "4",
+                        },
+                      },
+                    ],
+                  },
+                };
+                socketHost.machineFileResult?.(socket, 4, 2, result);
+                return;
+              }
+              if (message.type !== "exec.command") return;
+              frames.push(message.command);
+              expect(state.pristine).toBe(false);
+              if (message.command.type === "start") {
+                socketHost.report(socket, 4, 2, {
+                  type: "ack",
+                  operation: "start",
+                  generation: 4,
+                  processId: message.command.processId,
+                  requestId: message.command.requestId,
+                  applied: false,
+                  error: { code: "process_error", message: "fixture stopped after send" },
+                });
+              }
+            },
+          });
+          return {
+            owner,
+            lease: { acquire: async () => ({ generation: 4, connection: 2, release }) },
+            dispose: disconnect,
+          };
+        },
+        quiesce: async () => ({ ...owner, closed: true }),
+      },
+      { machineFileSource: () => source },
+    );
+    const input = fixture().input;
+    const binding = await runtime.attach(input);
+
+    expect(binding.machineFiles.current()).toEqual({ generation: 4, pristine: true });
+    const lookup = await binding.machineFiles.lookup(
+      {
+        generation: 4,
+        operations: [{ id: "stat-1", op: "stat", path: "/usr/bin/probe" }],
+      },
+      input.signal,
+    );
+    expect(lookup.results).toMatchObject([{ id: "stat-1", op: "stat", stat: { type: "file" } }]);
+    expect(frames[0]).toMatchObject({ type: "machine.files.request", generation: 4 });
+
+    await expect(binding.spawn(command, input.signal)).rejects.toThrow(
+      "Runner rejected process command (process_error)",
+    );
+    expect(source.markExecuted).toHaveBeenCalledWith(4);
+    expect(binding.machineFiles.current()).toEqual({ generation: 4, pristine: false });
+    await binding.quiesce(input.signal);
+    await binding.dispose();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it("retains an uncertain start lease until exact provider closure is verified", async () => {
     const started = deferred<Extract<ExecCommand, { type: "start" }>>();
     const release = vi.fn(async () => undefined);
@@ -90,7 +206,10 @@ describe("RunnerMachineRuntime", () => {
           connection: 2,
           protocolVersion: 8,
           exec: true,
-          send: ({ command: frame }) => {
+          machineFileLookup: true,
+          send: (message) => {
+            if (message.type !== "exec.command") return;
+            const frame = message.command;
             if (frame.type === "start") started.resolve(frame);
           },
         });

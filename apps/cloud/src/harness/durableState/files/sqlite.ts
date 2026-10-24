@@ -5,21 +5,32 @@ export const metaTable = "harness_files_meta";
 export const checkpointTable = "harness_files_checkpoint";
 export const entryTable = "harness_files_entry";
 export const blobTable = "harness_files_blob";
-const ownTables = [metaTable, checkpointTable, entryTable, blobTable];
+export const admissionReceiptTable = "harness_files_admission_receipt";
+const baseTables = [metaTable, checkpointTable, entryTable, blobTable];
+const ownTables = [...baseTables, admissionReceiptTable];
 
-export function requireOwnSchema(database: HarnessFilesDatabase, initialize: boolean) {
+export interface FilesSchemaStatus {
+  readonly pristine: boolean;
+  readonly migrated: boolean;
+}
+
+function createAdmissionReceiptTable(database: HarnessFilesDatabase) {
+  database.sql.exec(`CREATE TABLE ${admissionReceiptTable} (
+    evidence_id TEXT PRIMARY KEY, receipt_json TEXT NOT NULL
+  )`);
+}
+
+export function requireOwnSchema(
+  database: HarnessFilesDatabase,
+  initialize: boolean,
+): FilesSchemaStatus {
   const tables = [
     ...database.sql.exec(
-      "SELECT name, type FROM sqlite_master WHERE name IN (?, ?, ?, ?)",
+      "SELECT name, type FROM sqlite_master WHERE name IN (?, ?, ?, ?, ?)",
       ...ownTables,
     ),
   ];
   const pristine = tables.length === 0;
-  if (
-    !pristine &&
-    (tables.length !== ownTables.length || tables.some((table) => table.type !== "table"))
-  )
-    return fail("CORRUPT");
   if (pristine) {
     if (!initialize) return fail("MISSING");
     database.sql.exec(`CREATE TABLE ${metaTable} (
@@ -37,6 +48,18 @@ export function requireOwnSchema(database: HarnessFilesDatabase, initialize: boo
     database.sql.exec(`CREATE TABLE ${blobTable} (
       sha256 TEXT PRIMARY KEY, byte_length INTEGER NOT NULL, bytes BLOB NOT NULL
     )`);
+    createAdmissionReceiptTable(database);
+    return { pristine: true, migrated: false };
   }
-  return pristine;
+  const byName = new Map(tables.map((table) => [table.name, table.type]));
+  if (
+    baseTables.some((table) => byName.get(table) !== "table") ||
+    tables.some((table) => table.type !== "table")
+  )
+    return fail("CORRUPT");
+  if (!byName.has(admissionReceiptTable)) {
+    createAdmissionReceiptTable(database);
+    return { pristine: false, migrated: true };
+  }
+  return { pristine: false, migrated: false };
 }

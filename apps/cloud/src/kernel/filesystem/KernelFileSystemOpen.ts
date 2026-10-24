@@ -1,3 +1,5 @@
+import { runSync } from "../wasi/internal_wasi_calls.ts";
+import { withKernelFileWrite } from "../KernelIoLock.ts";
 import {
   canonicalFileByteSelection,
   bindFileByteAccess,
@@ -7,6 +9,7 @@ import {
 import { WasiDescriptorTable, type WasiDescriptor } from "../wasi/internal_wasi_descriptors.ts";
 import type { Stat } from "../storage.ts";
 import { FDFLAGS, RIGHTS } from "../wasi/internal_wasi_descriptors.ts";
+import { isKernelLowerFileSystemInode } from "../KernelLowerFileSystemStorage.ts";
 import type { WasiResolvedPath } from "../wasi/internal_wasi_paths.ts";
 import { descriptorPathAlias } from "./KernelPathAliases.ts";
 import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
@@ -176,6 +179,13 @@ export class KernelFileSystemOpen {
   ): number {
     const mount = resolved.mount;
     const inode = resolved.inode;
+    if (
+      isKernelLowerFileSystemInode(mount.storage, inode) &&
+      !parsed.pathOnly &&
+      (parsed.accessMode !== KernelOpenFlags.O_RDONLY || parsed.truncate)
+    ) {
+      throw kernelError("EROFS");
+    }
     let ownsPin = retained;
     let byteAccess: KernelFileByteAccess | undefined;
     try {
@@ -208,8 +218,11 @@ export class KernelFileSystemOpen {
         byteAccess = bindFileByteAccess(selection, mount.storage, inode);
       }
       if (parsed.truncate) {
-        if (byteAccess) byteAccess.truncate(0n);
-        else runKernelSync(mount.storage.truncate(inode, 0n));
+        runSync(
+          withKernelFileWrite(mount.storage, inode, () =>
+            byteAccess ? byteAccess.truncate(0n) : mount.storage.truncate(inode, 0n),
+          ),
+        );
       }
       const rights = descriptorRights(parsed, resolved.stat.type, mount.readOnly);
       const fd = this.#descriptors.allocate({
