@@ -28,11 +28,19 @@ const inventory =
 const path = "/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin";
 
 describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux machine", () => {
-  it(
-    "matches native execution of a relative final symlink beneath the upper catalog directory",
-    () =>
+  it.each(["pristine", "dirty", "unattested"])(
+    "matches native execution of a relative final symlink beneath the upper catalog directory on the %s machine",
+    (state) =>
       withLinuxMachine(
         async (fixture) => {
+          if (state === "dirty") {
+            const warmup = await fixture.direct("/usr/bin/jq", ["jq", "--version"], "/bin");
+            expect(warmup.status.exitCode).toBe(0);
+            expect(warmup.stderr).toBe("");
+            expect(fixture.files.current().pristine).toBe(false);
+          } else if (state === "unattested") {
+            expect(fixture.files.current().imageDigest).toBeUndefined();
+          }
           const command = "command -v py3versions; py3versions";
           const native = fixture.native("/bin/bash", ["--noprofile", "--norc", "-c", command], {
             PATH: "/bin",
@@ -56,6 +64,7 @@ describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux m
           for (const path of Object.values(CHILD_PROGRAM_PATHS))
             writeUpperFile(filesystem, path, "");
         },
+        state !== "unattested",
       ),
     120_000,
   );
@@ -216,10 +225,12 @@ describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux m
 async function withLinuxMachine(
   run: (fixture: Awaited<ReturnType<typeof machinePathDockerFixture>>) => Promise<void>,
   before?: MachinePathFixtureOptions["before"],
+  attestImage = true,
 ) {
   const fixture = await machinePathDockerFixture({
     inventory: inventory!,
     bashModule: bashModule!,
+    attestImage,
     options: {
       threadId: "machine-path-native-docker-proof",
       home: "/home/node",

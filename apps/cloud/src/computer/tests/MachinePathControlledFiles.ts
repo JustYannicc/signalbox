@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - controlled protocol fixtures encode file-link bytes.
 import * as NodeBuffer from "node:buffer";
 import {
+  MACHINE_FILES_MAX_READDIR_ENTRIES,
   type MachineFileOperation,
   type MachineFileOperationResult,
   type MachineFileStat,
@@ -72,7 +73,7 @@ function operationResult(
           : children.filter(
               (entry) => entry.path.slice(entry.path.lastIndexOf("/") + 1) > operation.cursor!,
             );
-      const page = afterCursor.slice(0, operation.limit ?? afterCursor.length);
+      const page = afterCursor.slice(0, operation.limit ?? MACHINE_FILES_MAX_READDIR_ENTRIES);
       return {
         id: operation.id,
         op: "readdir",
@@ -81,7 +82,10 @@ function operationResult(
           type: entry.type,
           ...(operation.withStat ? { stat: stat(entry) } : {}),
         })),
-        nextCursor: null,
+        nextCursor:
+          afterCursor.length > page.length
+            ? page.at(-1)!.path.slice(page.at(-1)!.path.lastIndexOf("/") + 1)
+            : null,
       };
     }
     case "readlink": {

@@ -1,17 +1,14 @@
-import {
-  MACHINE_FILES_MAX_CONTENT_BYTES,
-  MACHINE_FILES_MAX_OPERATIONS,
-  type MachineFileOperation,
-  type MachineFileOperationResult,
-} from "@signalbox/runner-protocol/MachineFilesProtocol";
+import { MACHINE_FILES_MAX_CONTENT_BYTES } from "@signalbox/runner-protocol/MachineFilesProtocol";
 import {
   KernelFileSystemUnavailable,
   type KernelLowerFileSystemEntry,
   type KernelLowerFileSystemSource,
 } from "../kernel/KernelLowerFileSystem.ts";
 import { machineFileMetadata } from "./MachineFileMetadata.ts";
-import { MachineFileLookupError, type MachineFilesPort } from "./MachineFilesPort.ts";
+import type { MachineFilesPort } from "./MachineFilesPort.ts";
 import { indexMachinePrograms, type MachineProgramInventory } from "./MachineProgramInventory.ts";
+import { liveSymlinkParents } from "./machineFiles/LiveSymlinkParents.ts";
+import { machineFileRequest } from "./machineFiles/MachineFileRequest.ts";
 
 export interface ComputerMachineFileSystemOptions {
   readonly inventory: MachineProgramInventory;
@@ -32,51 +29,34 @@ export function createComputerMachineFileSystem(
       !inventory.isExcluded(path)
     );
   };
-  const batch = async (operations: readonly MachineFileOperation[], signal?: AbortSignal) => {
-    const owned = signal === undefined ? options.signal : AbortSignal.any([options.signal, signal]);
-    owned.throwIfAborted();
-    if (operations.length === 0) return [];
-    const generation = options.files.current().generation;
-    if (generation === null)
-      throw new KernelFileSystemUnavailable(
-        "A machine generation is required for live file lookup",
-      );
-    const results: MachineFileOperationResult[] = [];
-    try {
-      for (let offset = 0; offset < operations.length; offset += MACHINE_FILES_MAX_OPERATIONS) {
-        const part = operations.slice(offset, offset + MACHINE_FILES_MAX_OPERATIONS);
-        const response = await options.files.lookup({ generation, operations: part }, owned);
-        if (response.generation !== generation)
-          throw new MachineFileLookupError(
-            "STALE_GENERATION",
-            "Machine changed during filesystem lookup",
-          );
-        const byId = new Map(response.results.map((result) => [result.id, result]));
-        for (const operation of part) {
-          const result = byId.get(operation.id);
-          if (result === undefined || result.op !== operation.op)
-            throw new MachineFileLookupError(
-              "LOOKUP_FAILED",
-              "Machine file response is incomplete",
+  const liveParents = (request: ReturnType<typeof machineFileRequest>) =>
+    liveSymlinkParents({
+      async lstat(path) {
+        const result = await request.single({ id: "parent", op: "lstat", path });
+        if ("error" in result) {
+          if (absent(result.error.code))
+            throw new KernelFileSystemUnavailable(
+              "Machine symlink parent disappeared during lookup",
             );
-          results.push(result);
+          throw posixError(result.error);
         }
-      }
-      owned.throwIfAborted();
-      return results;
-    } catch (cause) {
-      if (owned.aborted) throw owned.reason;
-      throw new KernelFileSystemUnavailable("The machine could not answer a filesystem lookup", {
-        cause,
-      });
-    }
-  };
-  const single = async (operation: MachineFileOperation, signal?: AbortSignal) => {
-    const result = (await batch([operation], signal))[0];
-    if (result === undefined)
-      throw new KernelFileSystemUnavailable("Machine file response is missing");
-    return result;
-  };
+        if (result.op !== "lstat")
+          throw new KernelFileSystemUnavailable("Machine returned the wrong ancestor operation");
+        return result.stat;
+      },
+      async readlink(path) {
+        try {
+          return await request.readlink(path);
+        } catch (error) {
+          if (error instanceof Error && "code" in error && absent(String(error.code)))
+            throw new KernelFileSystemUnavailable(
+              "Machine ancestor symlink disappeared during lookup",
+              { cause: error },
+            );
+          throw error;
+        }
+      },
+    });
   return {
     lookupKnown(paths) {
       options.signal.throwIfAborted();
@@ -88,49 +68,62 @@ export function createComputerMachineFileSystem(
         );
     },
     async lookup(paths, signal) {
+      const request = machineFileRequest(options.files, options.signal, signal);
+      const parent = liveParents(request);
       const captured = paths.map((path) => ({ path, image: pristine(path) }));
       const imagePaths = captured.filter((entry) => entry.image).map((entry) => entry.path);
       const image = imagePaths.length === 0 ? [] : inventory.lookup(imagePaths);
       const live = captured.filter((entry) => !entry.image);
-      const results = await batch(
+      const results = await request.batch(
         live.map(({ path }, index) => ({ id: String(index), op: "lstat", path })),
-        signal,
       );
       let imageIndex = 0;
       let liveIndex = 0;
-      return captured.map(({ path, image: useImage }) => {
+      const entries: (KernelLowerFileSystemEntry | undefined)[] = [];
+      for (const { path, image: useImage } of captured) {
         if (useImage) {
           const entry = image[imageIndex++];
-          return entry === undefined ? undefined : machineFileMetadata(path, entry);
+          entries.push(entry === undefined ? undefined : machineFileMetadata(path, entry));
+          continue;
         }
         const result = results[liveIndex++];
         if (result === undefined)
           throw new KernelFileSystemUnavailable("Machine file response is incomplete");
         if ("error" in result) {
-          if (absent(result.error.code)) return undefined;
+          if (absent(result.error.code)) {
+            entries.push(undefined);
+            continue;
+          }
           throw posixError(result.error);
         }
         if (result.op !== "lstat")
           throw new KernelFileSystemUnavailable("Machine returned the wrong file operation");
-        return machineFileMetadata(path, result.stat);
-      });
+        const symlinkParent = result.stat.type === "symlink" ? await parent(path) : undefined;
+        entries.push(
+          machineFileMetadata(path, {
+            ...result.stat,
+            ...(symlinkParent === undefined ? {} : { symlinkParent }),
+          }),
+        );
+      }
+      if (live.length > 0) request.check();
+      return entries;
     },
     async readdir(path, signal) {
       if (pristine(path) && !inventory.needsLiveDirectory(path))
         return inventory.readdir(path)?.map((entry) => machineFileMetadata(entry.path, entry));
       const entries: KernelLowerFileSystemEntry[] = [];
+      const request = machineFileRequest(options.files, options.signal, signal);
+      const parent = liveParents(request);
       let cursor: string | undefined;
       do {
-        const result = await single(
-          {
-            id: "directory",
-            op: "readdir",
-            path,
-            withStat: true,
-            ...(cursor === undefined ? {} : { cursor }),
-          },
-          signal,
-        );
+        const result = await request.single({
+          id: "directory",
+          op: "readdir",
+          path,
+          withStat: true,
+          ...(cursor === undefined ? {} : { cursor }),
+        });
         if ("error" in result) {
           if (absent(result.error.code)) return undefined;
           throw posixError(result.error);
@@ -140,12 +133,18 @@ export function createComputerMachineFileSystem(
         for (const entry of result.entries) {
           if (entry.stat === undefined)
             throw new KernelFileSystemUnavailable("Machine omitted directory metadata");
+          const child = `${path === "/" ? "" : path}/${entry.name}`;
+          const symlinkParent = entry.stat.type === "symlink" ? await parent(child) : undefined;
           entries.push(
-            machineFileMetadata(`${path === "/" ? "" : path}/${entry.name}`, entry.stat),
+            machineFileMetadata(child, {
+              ...entry.stat,
+              ...(symlinkParent === undefined ? {} : { symlinkParent }),
+            }),
           );
         }
         cursor = result.nextCursor ?? undefined;
       } while (cursor !== undefined);
+      request.check();
       return entries;
     },
     async readlink(path, signal) {
@@ -154,11 +153,7 @@ export function createComputerMachineFileSystem(
         if (target !== undefined) return target;
         throw posixError({ code: "EINVAL", message: "Machine path is not a symbolic link" });
       }
-      const result = await single({ id: "link", op: "readlink", path }, signal);
-      if ("error" in result) throw posixError(result.error);
-      if (result.op !== "readlink")
-        throw new KernelFileSystemUnavailable("Machine returned the wrong link operation");
-      return new TextDecoder("utf-8", { fatal: true }).decode(decodeBase64(result.targetBase64));
+      return machineFileRequest(options.files, options.signal, signal).readlink(path);
     },
     async read(path, offset, length, signal) {
       if (offset < 0n || offset > BigInt(Number.MAX_SAFE_INTEGER))
@@ -166,16 +161,13 @@ export function createComputerMachineFileSystem(
           code: "EOVERFLOW",
           message: "Machine file offset is outside the supported range",
         });
-      const result = await single(
-        {
-          id: "bytes",
-          op: "readRange",
-          path,
-          offset: Number(offset),
-          length: Math.min(length, MACHINE_FILES_MAX_CONTENT_BYTES),
-        },
-        signal,
-      );
+      const result = await machineFileRequest(options.files, options.signal, signal).single({
+        id: "bytes",
+        op: "readRange",
+        path,
+        offset: Number(offset),
+        length: Math.min(length, MACHINE_FILES_MAX_CONTENT_BYTES),
+      });
       if ("error" in result) throw posixError(result.error);
       if (result.op !== "readRange")
         throw new KernelFileSystemUnavailable("Machine returned the wrong read operation");

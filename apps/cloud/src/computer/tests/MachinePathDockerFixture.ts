@@ -26,6 +26,7 @@ interface PendingLookup {
 export async function machinePathDockerFixture(input: {
   readonly inventory: MachineProgramInventory;
   readonly bashModule: WebAssembly.Module;
+  readonly attestImage?: boolean;
   readonly options?: Omit<MachinePathFixtureOptions, "inventory" | "files" | "spawn">;
 }) {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "signalbox-machine-path-"));
@@ -129,7 +130,9 @@ export async function machinePathDockerFixture(input: {
     current: () => ({
       generation,
       pristine,
-      ...(pristine ? { imageDigest: input.inventory.imageDigest } : {}),
+      ...(pristine && input.attestImage !== false
+        ? { imageDigest: input.inventory.imageDigest }
+        : {}),
     }),
     async markExecuted(requestedGeneration) {
       if (requestedGeneration !== generation)
