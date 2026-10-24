@@ -11,6 +11,7 @@ import {
   layer,
 } from "./nativeLoadIntegrationFixture.ts";
 import { runId } from "../../runStore/tests/fixture.ts";
+import { install } from "../../runStore/tests/requestFixture.ts";
 
 describe("request-turn native load through the real Codex binding", () => {
   it.effect.each(["thread/start", "thread/resume"] as const)(

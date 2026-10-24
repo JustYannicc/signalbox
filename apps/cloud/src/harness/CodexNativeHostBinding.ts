@@ -188,136 +188,141 @@ export function makeCodexNativeHostBinding(
       if (attempt?.configuration.epoch === epoch && attempt.phase === "started")
         attempt.phase = "completed";
     },
-    configureMcp: (configuration, signal, load) => {
-      const previous = current;
-      if (
-        previous !== undefined &&
-        (previous.phase !== "completed" ||
-          !previous.signal.aborted ||
-          configuration.epoch <= previous.configuration.epoch)
-      )
-        return Effect.fail(unavailableInstallation());
+    configureMcp: (configuration, signal, load) =>
+      Effect.suspend(() => {
+        const previous = current;
+        if (
+          previous !== undefined &&
+          (previous.phase !== "completed" ||
+            !previous.signal.aborted ||
+            configuration.epoch <= previous.configuration.epoch)
+        )
+          return Effect.fail(unavailableInstallation());
 
-      const attempt: McpAttempt = {
-        configuration,
-        signal,
-        handoffRequired: previous === undefined,
-        servers: Object.freeze({}),
-        phase: "configuring",
-        mapReads: 0,
-        installed: undefined,
-        handedOff: false,
-      };
-      current = attempt;
-      return Effect.gen(function* () {
-        const runtime = native;
-        const input = harness;
-        if (runtime === undefined || input === undefined || signal.aborted)
-          return yield* Effect.fail(unavailableInstallation());
-        if (!Number.isSafeInteger(configuration.epoch) || configuration.epoch <= 0)
-          return yield* Effect.fail(
-            new HarnessError({ operation: "turn", message: "Codex MCP epoch is invalid." }),
-          );
-        const requested =
-          load.method === "ensureThread"
-            ? load.input.existingProviderThread
-            : load.input.providerThread;
-        if (
-          (load.input.threadId ?? requested?.appThreadId) !== input.session.threadId ||
-          (requested !== undefined &&
-            (requested.appThreadId !== input.session.threadId ||
-              requested.providerSessionId !== input.session.providerSessionId ||
-              requested.providerInstanceId !== runtime.instanceId ||
-              requested.driver !== runtime.driver)) ||
-          (input.checkpoint !== undefined &&
-            (load.method !== "resumeThread" ||
-              requested?.nativeThreadRef?.nativeId !==
-                input.checkpoint.snapshot.providerThread.nativeThreadRef?.nativeId))
-        )
-          return yield* Effect.fail(
-            new HarnessError({
-              operation: "turn",
-              message: "Codex native setup belongs to another thread.",
-            }),
-          );
-        attempt.servers = yield* Effect.try({
-          try: () =>
-            Object.freeze(
-              Object.fromEntries(
-                Object.entries(configuration.servers).map(([name, server]) => [
-                  name,
-                  Object.freeze({ url: server.url }),
-                ]),
+        const attempt: McpAttempt = {
+          configuration,
+          signal,
+          handoffRequired: previous === undefined,
+          servers: Object.freeze({}),
+          phase: "configuring",
+          mapReads: 0,
+          installed: undefined,
+          handedOff: false,
+        };
+        current = attempt;
+        return Effect.gen(function* () {
+          const runtime = native;
+          const input = harness;
+          if (runtime === undefined || input === undefined || signal.aborted)
+            return yield* Effect.fail(unavailableInstallation());
+          if (!Number.isSafeInteger(configuration.epoch) || configuration.epoch <= 0)
+            return yield* Effect.fail(
+              new HarnessError({ operation: "turn", message: "Codex MCP epoch is invalid." }),
+            );
+          const requested =
+            load.method === "ensureThread"
+              ? load.input.existingProviderThread
+              : load.input.providerThread;
+          if (
+            (load.input.threadId ?? requested?.appThreadId) !== input.session.threadId ||
+            (requested !== undefined &&
+              (requested.appThreadId !== input.session.threadId ||
+                requested.providerSessionId !== input.session.providerSessionId ||
+                requested.providerInstanceId !== runtime.instanceId ||
+                requested.driver !== runtime.driver)) ||
+            (input.checkpoint !== undefined &&
+              (load.method !== "resumeThread" ||
+                requested?.nativeThreadRef?.nativeId !==
+                  input.checkpoint.snapshot.providerThread.nativeThreadRef?.nativeId))
+          )
+            return yield* Effect.fail(
+              new HarnessError({
+                operation: "turn",
+                message: "Codex native setup belongs to another thread.",
+              }),
+            );
+          attempt.servers = yield* Effect.try({
+            try: () =>
+              Object.freeze(
+                Object.fromEntries(
+                  Object.entries(configuration.servers).map(([name, server]) => [
+                    name,
+                    Object.freeze({ url: server.url }),
+                  ]),
+                ),
               ),
+            catch: (cause) =>
+              new HarnessError({
+                operation: "turn",
+                message: "Codex MCP configuration is invalid.",
+                cause,
+              }),
+          });
+          const key = yield* Effect.try({
+            try: () => loadKey(load),
+            catch: (cause) =>
+              new HarnessError({
+                operation: "turn",
+                message: "Codex native setup is invalid.",
+                cause,
+              }),
+          });
+          const settings = yield* Effect.try({
+            try: () =>
+              stableStringify({
+                modelSelection: load.input.modelSelection,
+                runtimePolicy: load.input.runtimePolicy,
+              }),
+            catch: (cause) =>
+              new HarnessError({
+                operation: "turn",
+                message: "Codex native setup is invalid.",
+                cause,
+              }),
+          });
+          const thread = yield* (
+            load.method === "ensureThread"
+              ? runtime.ensureThread(load.input)
+              : runtime.resumeThread(load.input)
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new HarnessError({
+                  operation: "turn",
+                  message: "Codex native setup failed.",
+                  cause,
+                }),
             ),
-          catch: (cause) =>
-            new HarnessError({
-              operation: "turn",
-              message: "Codex MCP configuration is invalid.",
-              cause,
-            }),
-        });
-        const key = yield* Effect.try({
-          try: () => loadKey(load),
-          catch: (cause) =>
-            new HarnessError({
-              operation: "turn",
-              message: "Codex native setup is invalid.",
-              cause,
-            }),
-        });
-        const settings = yield* Effect.try({
-          try: () =>
-            stableStringify({
-              modelSelection: load.input.modelSelection,
-              runtimePolicy: load.input.runtimePolicy,
-            }),
-          catch: (cause) =>
-            new HarnessError({
-              operation: "turn",
-              message: "Codex native setup is invalid.",
-              cause,
-            }),
-        });
-        const thread = yield* (
-          load.method === "ensureThread"
-            ? runtime.ensureThread(load.input)
-            : runtime.resumeThread(load.input)
-        ).pipe(
-          Effect.mapError(
-            (cause) =>
-              new HarnessError({ operation: "turn", message: "Codex native setup failed.", cause }),
-          ),
-          Effect.raceFirst(mcpAborted(signal)),
-        );
-        if (
-          signal.aborted ||
-          attempt.mapReads !== 1 ||
-          thread.appThreadId !== input.session.threadId ||
-          thread.providerSessionId !== input.session.providerSessionId ||
-          thread.providerInstanceId !== runtime.instanceId ||
-          thread.driver !== runtime.driver ||
-          thread.nativeThreadRef?.strength !== "strong" ||
-          (requested !== undefined && thread.id !== requested.id) ||
-          (requested?.nativeThreadRef !== null &&
-            requested?.nativeThreadRef !== undefined &&
-            requested.nativeThreadRef.nativeId !== thread.nativeThreadRef.nativeId)
-        )
-          return yield* Effect.fail(
-            new HarnessError({
-              operation: "turn",
-              message: "Codex native setup did not preserve the bound identity.",
-            }),
+            Effect.raceFirst(mcpAborted(signal)),
           );
-        attempt.installed = { key, settings, thread };
-        attempt.phase = "ready";
-      }).pipe(
-        Effect.onExit((exit) =>
-          Effect.sync(() => {
-            if (Exit.isFailure(exit) && current === attempt) attempt.phase = "failed";
-          }),
-        ),
-      );
-    },
+          if (
+            signal.aborted ||
+            attempt.mapReads !== 1 ||
+            thread.appThreadId !== input.session.threadId ||
+            thread.providerSessionId !== input.session.providerSessionId ||
+            thread.providerInstanceId !== runtime.instanceId ||
+            thread.driver !== runtime.driver ||
+            thread.nativeThreadRef?.strength !== "strong" ||
+            (requested !== undefined && thread.id !== requested.id) ||
+            (requested?.nativeThreadRef !== null &&
+              requested?.nativeThreadRef !== undefined &&
+              requested.nativeThreadRef.nativeId !== thread.nativeThreadRef.nativeId)
+          )
+            return yield* Effect.fail(
+              new HarnessError({
+                operation: "turn",
+                message: "Codex native setup did not preserve the bound identity.",
+              }),
+            );
+          attempt.installed = { key, settings, thread };
+          attempt.phase = "ready";
+        }).pipe(
+          Effect.onExit((exit) =>
+            Effect.sync(() => {
+              if (Exit.isFailure(exit) && current === attempt) attempt.phase = "failed";
+            }),
+          ),
+        );
+      }),
   };
 }
