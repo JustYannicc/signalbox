@@ -132,7 +132,7 @@ describe("NodeFS async hydration", () => {
       fixture.mark("/gate", "g");
       const gate = fs.openSync("/gate", "r");
       fs.writeFileSync("/target", "old contents");
-      const open = vi.spyOn(kernelFs, "open");
+      const open = vi.spyOn(kernelFs, "openAsync");
       const truncate = vi.spyOn(fixture.persistence.storage, "truncate");
       const close = vi.spyOn(kernelFs, "close");
       const original = kernelFs.write.bind(kernelFs);
@@ -145,16 +145,20 @@ describe("NodeFS async hydration", () => {
       });
       const writing = fs.promises.writeFile("/target", "abcdef");
       await fixture.started.promise;
-      expect(open).toHaveBeenCalledTimes(1);
+      expect(open.mock.calls.filter(([path]) => path === "/target")).toHaveLength(1);
+      const targetOpenIndex = open.mock.calls.findIndex(([path]) => path === "/target");
+      const targetFd = await open.mock.results[targetOpenIndex]?.value;
+      expect(targetFd).toEqual(expect.any(Number));
       expect(fs.readFileSync("/target", "utf8")).toBe("ab");
       expect(truncate).toHaveBeenCalledTimes(1);
+      expect(close.mock.calls.filter(([fd]) => fd === targetFd)).toHaveLength(0);
       fixture.release.resolve();
       await writing;
       expect(fs.readFileSync("/target", "utf8")).toBe("abcdef");
-      expect(open.mock.calls.filter(([path]) => path === "/target")).toHaveLength(3);
+      expect(open.mock.calls.filter(([path]) => path === "/target")).toHaveLength(1);
       expect(truncate).toHaveBeenCalledTimes(1);
       expect(writes).toBe(3);
-      expect(close.mock.calls.filter(([fd]) => fd !== gate)).toHaveLength(3);
+      expect(close.mock.calls.filter(([fd]) => fd === targetFd)).toHaveLength(1);
       fs.closeSync(gate);
     } finally {
       await fixture.close();

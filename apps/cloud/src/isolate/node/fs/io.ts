@@ -29,7 +29,7 @@ export function* openFdAsyncOperation(
   return yield* fsOperation(
     "open",
     path,
-    asyncLeaf(() => kernelFs.openAsync(path, flags, mode)),
+    asyncLeaf((signal) => kernelFs.openAsync(path, flags, mode, signal)),
   );
 }
 

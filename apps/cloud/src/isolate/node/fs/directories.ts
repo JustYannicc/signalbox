@@ -153,7 +153,7 @@ export function* renameOperation(
     "rename",
     source,
     asyncRename
-      ? asyncLeaf(() => kernelFs.renameAsync(source, destination))
+      ? asyncLeaf((signal) => kernelFs.renameAsync(source, destination, signal))
       : leaf(() => kernelFs.rename(source, destination)),
     destination,
   );

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import * as NodeBuffer from "node:buffer";
+import type {
+  KernelLowerFileSystemEntry,
+  KernelLowerFileSystemSource,
+} from "../../../kernel/KernelLowerFileSystem.ts";
 import { delayedFixture, hydrationFixture, milestone } from "./NodeFsHydrationFixture.ts";
 
 async function collect(stream: AsyncIterable<unknown>) {
@@ -188,27 +192,80 @@ export function testHydratedStreams() {
       }
     });
 
-    it("destroy interrupts hydration in open without leaking a late owned descriptor", async () => {
+    it("destroy cancels a pending lower-file append open without leaking its descriptor", async () => {
       const fixture = delayedFixture();
+      const bytes = new TextEncoder().encode("base");
+      const readStarted = Promise.withResolvers<AbortSignal | undefined>();
+      const releaseRead = milestone();
+      const readPaths: string[] = [];
+      const entry: KernelLowerFileSystemEntry = {
+        path: "/lazy",
+        stat: {
+          type: "file",
+          size: BigInt(bytes.byteLength),
+          nlink: 1n,
+          atimeNs: 1n,
+          mtimeNs: 2n,
+          ctimeNs: 3n,
+        },
+        metadata: { mode: 0o644, uid: 1000, gid: 1000 },
+      };
+      const source: KernelLowerFileSystemSource = {
+        lookup(paths) {
+          return paths.map((path) => (path === entry.path ? entry : undefined));
+        },
+        async readdir() {
+          return undefined;
+        },
+        async readlink() {
+          throw Object.assign(new Error("Not a symlink"), { code: "EINVAL" });
+        },
+        async read(path, offset, length, signal) {
+          readPaths.push(path);
+          if (readPaths.length === 1) {
+            readStarted.resolve(signal);
+            await releaseRead.promise;
+          }
+          const start = Number(offset);
+          return bytes.slice(start, start + length);
+        },
+      };
+      const lower = fixture.kernelFs.installLowerFileSystem(source);
+      const descriptorNumbers = () =>
+        [...fixture.kernelFs.descriptors.entries()]
+          .map(([fd]) => fd)
+          .sort((left, right) => left - right);
+      const descriptorsBefore = descriptorNumbers();
+      const closed = milestone();
+      let stream: ReturnType<typeof fixture.fs.createWriteStream> | undefined;
       try {
-        fixture.mark("/lazy", "base");
-        const stream = fixture.fs.createWriteStream("/lazy", { flags: "w" });
-        const closed = milestone();
+        stream = fixture.fs.createWriteStream("/lazy", { flags: "a" });
         const opened = vi.fn();
+        const errors: Error[] = [];
         stream.on("open", opened);
         stream.once("close", closed.resolve);
-        // Destroying without an error keeps the stream's ordinary close contract.
-        stream.on("error", () => {});
-        stream.end("replacement");
-        await fixture.started.promise;
+        stream.on("error", (error) => errors.push(error));
+        stream.end("!");
+        const signal = await readStarted.promise;
+        expect(signal).toBeDefined();
+        expect(signal?.aborted).toBe(false);
         stream.destroy();
+        expect(signal?.aborted).toBe(true);
+        releaseRead.resolve();
         await closed.promise;
         expect(stream.fd).toBeNull();
         expect(opened).not.toHaveBeenCalled();
+        expect(errors).toEqual([]);
+        expect(descriptorNumbers()).toEqual(descriptorsBefore);
         expect(fixture.wakes.size).toBe(0);
-        fixture.release.resolve();
-        await expect(fixture.fs.promises.readFile("/lazy", "utf8")).resolves.toBe("base");
+        expect(readPaths).toEqual(["/lazy"]);
+        await expect(lower.isLower("/lazy")).resolves.toBe(true);
+        await expect(source.read("/lazy", 0n, bytes.byteLength)).resolves.toEqual(bytes);
       } finally {
+        stream?.destroy();
+        releaseRead.resolve();
+        await closed.promise;
+        lower.dispose();
         await fixture.close();
       }
     });
