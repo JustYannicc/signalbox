@@ -61,10 +61,15 @@ describe("Computer machine filesystem sources", () => {
     expect(files.lookup).not.toHaveBeenCalled();
   });
 
-  it("knows excluded runtime paths are absent only before a machine generation exists", async () => {
+  it("knows excluded runtime paths are absent only with lifecycle attestation", async () => {
     let generation: number | null = null;
     const files: MachineFilesPort = {
-      current: () => ({ generation, pristine: true, imageDigest: inventory.imageDigest }),
+      current: () => ({
+        generation,
+        ...(generation === null ? { generationAbsent: true } : {}),
+        pristine: true,
+        imageDigest: inventory.imageDigest,
+      }),
       markExecuted: async () => {},
       lookup: vi.fn<MachineFilesPort["lookup"]>(async (input) => ({
         generation: input.generation,

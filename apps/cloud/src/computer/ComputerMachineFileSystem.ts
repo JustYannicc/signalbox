@@ -34,8 +34,9 @@ export function createComputerMachineFileSystem(
     options.signal.throwIfAborted();
     signal?.throwIfAborted();
     const state = options.files.current();
-    // Runtime mounts have no lower entries until a machine generation exists.
-    return state.generation === null && inventory.isExcluded(path);
+    return (
+      state.generation === null && state.generationAbsent === true && inventory.isExcluded(path)
+    );
   };
   const liveParents = (request: ReturnType<typeof machineFileRequest>) =>
     liveSymlinkParents({
