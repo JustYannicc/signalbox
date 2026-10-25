@@ -30,6 +30,14 @@ export function createComputerMachineFileSystem(
       state.pristine && state.imageDigest === options.inventory.imageDigest;
     return (noGeneration || pristineGeneration) && !inventory.isExcluded(path);
   };
+  const runtimePathIsAbsent = (path: string, signal?: AbortSignal) => {
+    options.signal.throwIfAborted();
+    signal?.throwIfAborted();
+    const state = options.files.current();
+    return (
+      state.generation === null && state.generationAbsent === true && inventory.isExcluded(path)
+    );
+  };
   const liveParents = (request: ReturnType<typeof machineFileRequest>) =>
     liveSymlinkParents({
       async lstat(path) {
@@ -61,7 +69,8 @@ export function createComputerMachineFileSystem(
   return {
     lookupKnown(paths) {
       options.signal.throwIfAborted();
-      if (paths.some((path) => !imageIsAuthoritative(path))) return undefined;
+      if (paths.some((path) => !imageIsAuthoritative(path) && !runtimePathIsAbsent(path)))
+        return undefined;
       return inventory
         .lookup(paths)
         .map((entry, index) =>
@@ -81,7 +90,10 @@ export function createComputerMachineFileSystem(
     async lookup(paths, signal) {
       const request = machineFileRequest(options.files, options.signal, signal);
       const parent = liveParents(request);
-      const captured = paths.map((path) => ({ path, image: imageIsAuthoritative(path) }));
+      const captured = paths.map((path) => ({
+        path,
+        image: imageIsAuthoritative(path) || runtimePathIsAbsent(path),
+      }));
       const imagePaths = captured.filter((entry) => entry.image).map((entry) => entry.path);
       const image = imagePaths.length === 0 ? [] : inventory.lookup(imagePaths);
       const live = captured.filter((entry) => !entry.image);
@@ -121,6 +133,7 @@ export function createComputerMachineFileSystem(
       return entries;
     },
     async readdir(path, signal) {
+      if (runtimePathIsAbsent(path, signal)) return undefined;
       if (imageIsAuthoritative(path) && !inventory.needsLiveDirectory(path))
         return inventory.readdir(path)?.map((entry) => machineFileMetadata(entry.path, entry));
       const entries: KernelLowerFileSystemEntry[] = [];
@@ -159,6 +172,8 @@ export function createComputerMachineFileSystem(
       return entries;
     },
     async readlink(path, signal) {
+      if (runtimePathIsAbsent(path, signal))
+        throw posixError({ code: "ENOENT", message: "Machine runtime path is absent" });
       if (imageIsAuthoritative(path)) {
         const target = inventory.readlink(path);
         if (target !== undefined) return target;

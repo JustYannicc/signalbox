@@ -86,6 +86,7 @@ export interface CodexNativeReceipt {
 }
 
 export interface CodexNativeRecoveryBinding {
+  /** One admission for one logical run and input. */
   readonly mode:
     | { readonly type: "new-turn"; readonly admission: CodexNativeAdmission }
     | { readonly type: "resume-unfinished"; readonly plan: CodexNativeRecoveryPlan };
