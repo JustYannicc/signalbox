@@ -103,6 +103,10 @@
       "types": "./src/server/ProviderAdapter.ts",
       "import": "./src/server/ProviderAdapter.ts"
     },
+    "./server/ProviderEventLatencyTrace": {
+      "types": "./src/server/ProviderEventLatencyTrace.ts",
+      "import": "./src/server/ProviderEventLatencyTrace.ts"
+    },
     "./server/providerAuthFlow": {
       "types": "./src/server/providerAuthFlow.ts",
       "import": "./src/server/providerAuthFlow.ts"

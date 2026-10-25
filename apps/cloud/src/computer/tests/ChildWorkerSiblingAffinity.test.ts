@@ -148,7 +148,10 @@ function controlledProcessSlots(limit: number, delayedCodeId: string) {
 describe("ChildWorkerCapacity sibling affinity", () => {
   it("admits a later sibling ahead of an earlier unrelated waiter", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(2, { owner: "test/sibling-affinity-priority" });
+    const capacity = new ChildWorkerCapacity(2, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/sibling-affinity-priority",
+    });
     const familyA = tree.spawn();
     const activeChildA = tree.spawn(familyA);
     const siblingA = tree.spawn(familyA);
@@ -196,7 +199,10 @@ describe("ChildWorkerCapacity sibling affinity", () => {
 
   it("keeps FIFO order when no queued family has an active child", async () => {
     const tree = processTree();
-    const capacity = new ChildWorkerCapacity(1, { owner: "test/sibling-affinity-fifo" });
+    const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/sibling-affinity-fifo",
+    });
     const holder = tree.spawn(tree.spawn());
     const first = tree.spawn(tree.spawn());
     const second = tree.spawn(tree.spawn());
@@ -228,7 +234,10 @@ describe("ChildWorkerCapacity sibling affinity", () => {
   it("does not match a same-PID family from another process table", async () => {
     const activeTree = processTree();
     const unrelatedTree = processTree();
-    const capacity = new ChildWorkerCapacity(2, { owner: "test/sibling-affinity-table-key" });
+    const capacity = new ChildWorkerCapacity(2, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/sibling-affinity-table-key",
+    });
     const activeParent = activeTree.spawn();
     const activeChild = activeTree.spawn(activeParent);
     const unrelatedParent = activeTree.spawn();
@@ -283,6 +292,7 @@ describe("ChildWorkerCapacity sibling affinity", () => {
     const tree = processTree();
     const underlying = controlledProcessSlots(2, "sibling-a-one");
     const capacity = new ChildWorkerCapacity(2, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/sibling-affinity-submitted",
       slots: underlying.slots,
     });
@@ -374,6 +384,7 @@ describe("ChildWorkerCapacity sibling affinity", () => {
     const tree = processTree();
     const underlying = controlledProcessSlots(2, "never-delayed");
     const capacity = new ChildWorkerCapacity(2, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/sibling-affinity-acquire-failure",
       slots: underlying.slots,
     });
@@ -467,6 +478,7 @@ describe("ChildWorkerCapacity sibling affinity", () => {
     async (kind) => {
       const fixture = childBusyboxFixture();
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: `test/sibling-affinity-computer-${kind}`,
       });
       const implementation = {

@@ -10,6 +10,7 @@ describe("command process slot leases", () => {
     const first = childBusyboxFixture();
     const second = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(2, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerslotleases-test-1",
     });
     const entered = Promise.withResolvers<void>();
@@ -53,6 +54,7 @@ describe("command process slot leases", () => {
   it("retires a memory-lost generation before dispatching the next process", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerslotleases-test-2",
     });
     const ids: string[] = [];

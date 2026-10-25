@@ -19,6 +19,7 @@ describe("CodeMode registered process", () => {
     const preparedCode = await prepareCodeModeHost();
     const workers = vmWorkerLoader();
     const capacity = new ChildWorkerCapacity(2, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-harness-codemode-tests-codemodeprocess-test-1",
     });
     const program = createCodeModeHostProgram({

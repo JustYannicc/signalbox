@@ -47,6 +47,9 @@ export const DURABLE_OBJECT_BINDINGS = {
   DRIVES: "DriveObject",
   PREVIEW_LINKS: "PreviewLinkRegistry",
   EXECUTOR_TOKEN_BINDINGS: "ExecutorTokenBindingObject",
+  HARNESS_RUN_STORE: "HarnessRunStoreObject",
+  HARNESS_FILES_STORE: "HarnessFilesStoreObject",
+  HARNESS_THREAD_SUPERVISOR: "HarnessThreadSupervisorObject",
 } as const;
 
 /**

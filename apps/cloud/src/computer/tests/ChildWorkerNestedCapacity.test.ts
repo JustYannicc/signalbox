@@ -59,6 +59,7 @@ describe("nested child worker capacity", () => {
   it("keeps nested requests under the strict cap and admits them before queued roots", async () => {
     const tree = processTree();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkernestedcapacity-test-1",
     });
     const signal = new AbortController().signal;
@@ -108,6 +109,7 @@ describe("nested child worker capacity", () => {
   it("admits a background continuation after its subshell exits and is reaped", async () => {
     const tree = processTree();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkernestedcapacity-test-2",
     });
     const holder = tree.spawn();
@@ -147,6 +149,7 @@ describe("nested child worker capacity", () => {
   it("inherits worker ownership through an unpermitted process", async () => {
     const tree = processTree();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkernestedcapacity-test-3",
     });
     const holder = tree.spawn();
@@ -180,6 +183,7 @@ describe("nested child worker capacity", () => {
   it("gives an exec replacement its own owner until that worker settles", async () => {
     const tree = processTree();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkernestedcapacity-test-4",
     });
     const signal = new AbortController().signal;
@@ -224,6 +228,7 @@ describe("nested child worker capacity", () => {
     const first = processTree();
     const second = processTree();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkernestedcapacity-test-5",
     });
     const holder = first.spawn();
@@ -247,6 +252,7 @@ describe("nested child worker capacity", () => {
   it("treats descendants of a stopped worker as roots", async () => {
     const tree = processTree();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkernestedcapacity-test-6",
     });
     const holder = tree.spawn();
@@ -271,6 +277,7 @@ describe("nested child worker capacity", () => {
   it("keeps the strict cap and serves queued descendants before roots", async () => {
     const tree = processTree();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkernestedcapacity-test-7",
     });
     const signal = new AbortController().signal;
@@ -318,6 +325,7 @@ describe("nested child worker capacity", () => {
   it("removes an aborted descendant from the strict-cap queue without blocking its successor", async () => {
     const tree = processTree();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkernestedcapacity-test-8",
     });
     const parent = tree.spawn();

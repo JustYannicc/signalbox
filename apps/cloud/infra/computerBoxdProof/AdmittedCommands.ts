@@ -34,6 +34,7 @@ export function createProofAdmittedCommands(
 ) {
   // Unknown callers use the measured four-fetch Worker ceiling; DO callers pass ten explicitly.
   const capacity = new ChildWorkerCapacity(options.limit ?? 4, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
     owner: options.owner,
     ...(options.storage === undefined ? {} : { storage: options.storage }),
   });

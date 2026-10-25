@@ -27,6 +27,7 @@ describe("CodeMode framed protocol admission", () => {
     const nextCompletion = Promise.withResolvers<void>();
     const completion = Promise.withResolvers<CodeModeCellCompletion>();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-harness-codemode-tests-codemodeprotocol-test-1",
     });
     let runs = 0;
@@ -102,9 +103,11 @@ describe("CodeMode framed protocol admission", () => {
 
   it("completes limit plus one cells that each wait for a command", async () => {
     const commands = new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-harness-codemode-tests-codemodeprotocol-test-2",
     });
     const cells = new ChildWorkerCapacity(commands.limit, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-harness-codemode-tests-codemodeprotocol-test-3",
     });
     const ready = Promise.withResolvers<void>();
@@ -167,6 +170,7 @@ describe("CodeMode framed protocol admission", () => {
 
   it.each(["cancel", "shutdown", "disconnect"])("cancels queued cells on %s", async (action) => {
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-harness-codemode-tests-codemodeprotocol-test-4",
     });
     const held = await capacity.acquire(new AbortController().signal, undefined, syntheticRequest);
@@ -278,6 +282,7 @@ function fromBytes(bytes: Uint8Array) {
     loader,
     code,
     cellCapacity: new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-harness-codemode-tests-codemodeprotocol-test-5",
     }),
   });

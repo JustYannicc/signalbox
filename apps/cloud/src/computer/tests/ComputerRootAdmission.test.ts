@@ -23,6 +23,7 @@ describe("Computer root admission", () => {
     async (failure) => {
       const fixture = childBusyboxFixture();
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-computerrootadmission-test-1",
       });
       const observed = observeTicketReservations(capacity);
@@ -99,6 +100,7 @@ describe("Computer root admission", () => {
     async (withParent) => {
       const fixture = childBusyboxFixture();
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-computerrootadmission-test-2",
       });
       const observed = observeTicketReservations(capacity);
@@ -197,6 +199,7 @@ describe("Computer root admission", () => {
   it("previews replacement stdio without effects and forwards binary pipes exactly once", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-computerrootadmission-test-3",
     });
     const observed = observeTicketReservations(capacity);

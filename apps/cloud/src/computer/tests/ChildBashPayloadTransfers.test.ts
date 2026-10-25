@@ -41,6 +41,7 @@ const bashArgs = (script: string) => ["bash", "--noprofile", "--norc", "-c", scr
 
 function bridge(fixture: ReturnType<typeof childBashFixture>, port = fixture.owner.port) {
   return createChildBash({
+    residentByteLimit: 104 * 1024 * 1024,
     module,
     credentials: bashCredentials,
     pid: fixture.owner.pid,

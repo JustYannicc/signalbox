@@ -17,6 +17,7 @@ import {
 function fixture() {
   const database = createProofTestStorage();
   const storage = createFacetSqliteStorage(database.storage, () => 1n);
+  storage.posix.initialize(storage.root, { mode: 0o755, uid: 1000, gid: 1000 });
   const filesystem = new KernelFileSystem({
     mounts: [{ path: "/", storage }],
     posix: {
@@ -29,7 +30,10 @@ function fixture() {
   const runtime = createCodexHookRuntime(
     () => ({ bindings: new Map(), async drain() {} }),
     wakes,
-    new ChildWorkerCapacity(4, { owner: "test/infra-hooksproof-codexruntime-test-1" }),
+    new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/infra-hooksproof-codexruntime-test-1",
+    }),
   );
   return {
     database,

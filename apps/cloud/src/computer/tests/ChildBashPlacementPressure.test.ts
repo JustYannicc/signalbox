@@ -15,7 +15,10 @@ const bashArgs = (script: string) => ["bash", "--noprofile", "--norc", "-c", scr
 type Unplaceable = Extract<ProcessSlotPressure, { kind: "unplaceable" }>;
 
 async function replayCapturedContinuation(captured: ProcessSlotRequest) {
-  const capacity = new ChildWorkerCapacity(4, { owner: "test/bash-captured-continuation" });
+  const capacity = new ChildWorkerCapacity(4, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+    owner: "test/bash-captured-continuation",
+  });
   const controller = new AbortController();
   const cancelled = new Error("Placement replay finished");
   const pressured = Promise.withResolvers<Unplaceable>();

@@ -29,6 +29,7 @@ import { SessionAccess } from "./SessionProtocol.ts";
 import { TerminalCommandMessage, TerminalReportMessage } from "./TerminalProtocol.ts";
 import { FeedbackRequest, FeedbackResponse } from "./FeedbackProtocol.ts";
 import { ExecCommandMessage, ExecReportMessage } from "./ExecProtocol.ts";
+import { MachineFilesRequest, MachineFilesResult } from "./MachineFilesProtocol.ts";
 
 /**
  * The wire protocol between a thread's Durable Object and the Runner driving
@@ -392,6 +393,8 @@ export const RunnerHello = Schema.Struct({
   pulls: Schema.optional(Schema.Boolean),
   /** Runs non-PTY processes for the hosted kernel. */
   exec: Schema.optional(Schema.Boolean),
+  /** Answers generic machine file lookups and ranged reads. */
+  machineFileLookup: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
@@ -407,6 +410,7 @@ export const RunnerMessage = Schema.Union([
   }),
   TerminalReportMessage,
   ExecReportMessage,
+  MachineFilesResult,
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
 ]);
 export type RunnerMessage = typeof RunnerMessage.Type;
@@ -439,6 +443,7 @@ export const ThreadMessage = Schema.Union([
   Schema.Struct({ type: Schema.Literal("ack"), sequence: PositiveInt }),
   TerminalCommandMessage,
   ExecCommandMessage,
+  MachineFilesRequest,
   /** A committed response to a native request this live run observed on its harness session. */
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),

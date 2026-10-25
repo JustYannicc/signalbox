@@ -1,4 +1,5 @@
-import type { AsyncStorage, Inode, Stat, Storage } from "./storage.ts";
+import type { Inode, MaybeAsyncStorage, Stat, Storage } from "./storage.ts";
+import { kernelFileByteViewStorage } from "./KernelLowerFileSystemStorage.ts";
 
 /** Synchronous byte operations for one inode in a selected file view. */
 export interface KernelFileByteAccess {
@@ -29,11 +30,13 @@ export const canonicalFileByteSelection: KernelFileByteSelection = Object.freeze
 /** Binds a view only to the exact synchronous storage object it was built for. */
 export function bindFileByteAccess(
   selection: KernelFileByteSelection,
-  storage: Storage | AsyncStorage,
+  storage: Storage | MaybeAsyncStorage,
   inode: Inode,
 ): KernelFileByteAccess | undefined {
   if (selection.kind === "canonical") return undefined;
-  if (selection.view.completion !== "sync" || selection.view.storage !== storage) {
+  const viewStorage = kernelFileByteViewStorage(storage, inode);
+  if (viewStorage === undefined) return undefined;
+  if (selection.view.completion !== "sync" || selection.view.storage !== viewStorage) {
     throw posixError("ENOTSUP");
   }
   return selection.view.bind(inode);

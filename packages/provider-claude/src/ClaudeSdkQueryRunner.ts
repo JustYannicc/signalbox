@@ -1,3 +1,4 @@
+import { logProviderEventLatency } from "@t3tools/provider-core/server/ProviderEventLatencyTrace";
 import type {
   Query as ClaudeQuery,
   ForkSessionOptions,
@@ -8,10 +9,12 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as LogLevel from "effect/LogLevel";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { createClaudeSdkStreamId, recordClaudeSdkYield } from "./ClaudeEventLatencyTrace.ts";
 import {
   ClaudeAgentSdkQueryRunner,
   ClaudeAgentSdkQueryRunnerError,
@@ -175,6 +178,11 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
       const protocolLogger = options.protocolLogger?.(input);
       const logProtocolEvent = (event: ClaudeAgentSdkProtocolLogEvent) =>
         protocolLogger === undefined ? Effect.void : protocolLogger(event);
+      const eventLatencyTracingEnabled = yield* LogLevel.isEnabled("Debug");
+      const sdkStreamId = eventLatencyTracingEnabled
+        ? createClaudeSdkStreamId(input.providerSessionId)
+        : undefined;
+      let sdkStreamOrdinal = 0;
       const { mcpServers: providerMcpServers, ...queryOptions } = input.options;
       const nativeMcp =
         options.resolveMcpServers === undefined
@@ -349,10 +357,19 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
           queryRunnerError(cause, "fromAsyncIterable"),
         ).pipe(
           Stream.tap((message) =>
-            logProtocolEvent({
-              direction: "incoming",
-              stage: "decoded",
-              payload: message,
+            Effect.gen(function* () {
+              if (sdkStreamId !== undefined) {
+                const trace = yield* Effect.sync(() =>
+                  recordClaudeSdkYield(message, sdkStreamId, ++sdkStreamOrdinal),
+                );
+                const { yieldedAtMs, ...fields } = trace;
+                yield* logProviderEventLatency("sdk.yield", fields, yieldedAtMs);
+              }
+              yield* logProtocolEvent({
+                direction: "incoming",
+                stage: "decoded",
+                payload: message,
+              });
             }),
           ),
         ),

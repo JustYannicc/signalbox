@@ -187,6 +187,7 @@ function hello(config: RunnerCommandConfig) {
     token: config.token,
     lastAckedSequence: 0,
     exec: true,
+    machineFileLookup: true,
   };
   return runnerFrame.encode(frame);
 }

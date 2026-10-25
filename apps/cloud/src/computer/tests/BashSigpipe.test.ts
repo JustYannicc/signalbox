@@ -33,6 +33,7 @@ function program(fixture: ReturnType<typeof childBashFixture>, child: boolean) {
   const module = bashModule();
   return child
     ? createChildBash({
+        residentByteLimit: 104 * 1024 * 1024,
         module,
         credentials: bashCredentials,
         pid: fixture.owner.pid,

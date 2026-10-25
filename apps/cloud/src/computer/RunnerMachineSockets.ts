@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts/systemIdentity";
 import type { MachineOwnershipAttestation } from "./Machine.ts";
 import type { MachineProcessClosureAttestation } from "./MachineWorkspace.ts";
+import { MachineFileLookupError } from "./MachineFilesPort.ts";
 import type {
   MachineRunnerConnection,
   MachineRunnerOwner,
@@ -263,6 +264,16 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
         if (!registration || registration.socket || registration.admissionClosed)
           throw new Error("Command Runner is not registered");
         assertCommandRunnerHello(message, this.#options.threadId, registration.owner);
+        if (message.machineFileLookup !== true) {
+          const error = new MachineFileLookupError(
+            "BACKEND_UPGRADE_REQUIRED",
+            "This Runner does not support machine file lookup. Upgrade the machine backend.",
+          );
+          registration.admissionClosed = true;
+          registration.reject(error);
+          this.#closeSocket(socket, 1008, "Machine file lookup capability required");
+          return;
+        }
         this.#clearHelloTimeout(socket);
         this.#tokens.delete(registration.token);
         registration.socket = socket;
@@ -272,8 +283,13 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
           connection: 1,
           protocolVersion: message.protocolVersion,
           exec: true,
+          machineFileLookup: message.machineFileLookup === true,
           send: (frame) => {
-            if (registration.admissionClosed && frame.command.type === "start")
+            if (
+              registration.admissionClosed &&
+              (frame.type === "machine.files.request" ||
+                (frame.type === "exec.command" && frame.command.type === "start"))
+            )
               throw new Error("Command Runner admission is closed");
             if (registration.socket !== socket || socket.readyState !== WebSocket.OPEN)
               throw new Error("Command Runner socket is closed");
@@ -296,6 +312,13 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
         message.report.generation === current.owner.generation
       ) {
         current.socketHost.report(socket, current.owner.generation, 1, message.report);
+        return;
+      }
+      if (
+        message.type === "machine.files.result" &&
+        message.generation === current.owner.generation
+      ) {
+        current.socketHost.machineFileResult?.(socket, current.owner.generation, 1, message);
         return;
       }
       if (message.type === "end") {

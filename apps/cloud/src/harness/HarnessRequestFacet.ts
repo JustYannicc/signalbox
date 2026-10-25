@@ -3,6 +3,9 @@ export { HarnessRequestFacetError } from "./requestFacet/contracts.ts";
 export type {
   HarnessFacetRequestContext,
   HarnessFacetRequestRuntime,
+  HarnessRequestFacetPreparationEvidence,
+  HarnessRequestFacetPreparationObservation,
+  HarnessRequestFacetPreparationRequest,
   HarnessRequestFacetOptions,
   HarnessRequestFacet,
 } from "./requestFacet/contracts.ts";

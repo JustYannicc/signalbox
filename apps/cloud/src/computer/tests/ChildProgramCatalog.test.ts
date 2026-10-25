@@ -17,6 +17,7 @@ function acknowledgement(value: object): asserts value is { stopped(): void } {
 function fixture(failure?: Error, afterStop?: (input: ChildWorkerInvocation) => Promise<void>) {
   const kernel = childBusyboxFixture();
   const capacity = new ChildWorkerCapacity(4, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
     owner: "test/src-computer-tests-childprogramcatalog-test-1",
   });
   const started = Promise.withResolvers<void>();

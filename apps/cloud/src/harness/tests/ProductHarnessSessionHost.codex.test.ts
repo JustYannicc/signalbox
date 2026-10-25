@@ -1,4 +1,5 @@
 import { expect, vi } from "vite-plus/test";
+import type { ProductComputerOptions } from "../../computer/ProductComputer.ts";
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -20,7 +21,7 @@ const launch = vi.hoisted(() =>
   vi.fn<(input: CodexHarnessProcessOptions) => Promise<CodexHarnessProcess>>(),
 );
 const captureProductComputer = vi.hoisted(() =>
-  vi.fn<(options: { readonly home?: string }) => void>(),
+  vi.fn<(options: Pick<ProductComputerOptions, "home" | "machineInventory">) => void>(),
 );
 vi.mock("../CodexHarnessProcess.ts", () => ({ startCodexHarnessProcess: launch }));
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
@@ -85,6 +86,7 @@ it.effect(
 
       const computerOptions = captureProductComputer.mock.calls.at(-1)?.[0];
       expect(computerOptions?.home).toBe("/home/product-codex");
+      expect(computerOptions?.machineInventory).toBe(product.options.machineInventory);
       const native = product.options.native;
       if (native.harness !== "codex") throw new Error("Expected Codex native options");
       expect(computerOptions?.home).toBe(native.process.environment.HOME);

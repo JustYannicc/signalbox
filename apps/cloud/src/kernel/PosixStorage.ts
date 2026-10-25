@@ -1,4 +1,4 @@
-import type { CreateOptions, Inode, Storage } from "./storage.ts";
+import type { CreateOptions, Inode, MaybePromise, Storage } from "./storage.ts";
 
 /** File type stays in Stat.type; mode contains only permission and special bits. */
 export interface PosixMetadata {
@@ -41,5 +41,20 @@ export interface PosixStorage extends Storage {
     chmod(inode: Inode, mode: number): void;
     /** A regular file loses setuid/setgid when its owner or group changes. */
     chown(inode: Inode, owner: Pick<PosixMetadata, "uid" | "gid">): void;
+  };
+}
+
+/** POSIX metadata operations exposed by storage that may resolve through remote lower filesystems. */
+export interface MaybePosixStorage {
+  readonly posix: {
+    get(inode: Inode): MaybePromise<PosixMetadata>;
+    initialize(inode: Inode, metadata: PosixMetadata): MaybePromise<void>;
+    create(
+      parent: Inode,
+      name: string,
+      options: CreateOptions & { metadata: PosixMetadata },
+    ): MaybePromise<Inode>;
+    chmod(inode: Inode, mode: number): MaybePromise<void>;
+    chown(inode: Inode, owner: Pick<PosixMetadata, "uid" | "gid">): MaybePromise<void>;
   };
 }

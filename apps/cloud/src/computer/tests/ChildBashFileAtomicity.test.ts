@@ -61,7 +61,9 @@ function hashRuns(first: string, second: string, size: number) {
 }
 
 async function run(script: string, path: string, residentByteLimit?: number) {
-  const run = createBashGateway(residentByteLimit === undefined ? {} : { residentByteLimit });
+  const run = createBashGateway(
+    residentByteLimit === undefined ? {} : { RESIDENT_BYTE_LIMIT: String(residentByteLimit) },
+  );
   const { fixture } = run;
   const pressure = Promise.withResolvers<never>();
   const unsubscribe = fixture.capacity.onPressure((value) => {
@@ -218,6 +220,7 @@ describe.skipIf(!available)("pinned GNU Bash file write atomicity", () => {
       },
     });
     const running = createChildBash({
+      residentByteLimit: 104 * 1024 * 1024,
       module,
       credentials: bashCredentials,
       pid: fixture.owner.pid,

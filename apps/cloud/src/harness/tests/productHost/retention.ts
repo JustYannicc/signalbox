@@ -14,20 +14,30 @@ import { claudeFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
 import { hostSqlite } from "../hostSqlite.ts";
 import { commandLoader, programFixture } from "./commands.ts";
 import { services } from "./adapter.ts";
+import {
+  emptyMachineFilesFixture,
+  machineInventoryFixture,
+} from "../../../computer/machineInventoryTesting.ts";
 
 type HostKind = "direct" | "product";
 
 async function runtimePorts(): Promise<
-  Pick<ProductClaudeHarnessHostOptions<unknown>, "commands" | "save" | "port" | "native">
+  Pick<
+    ProductClaudeHarnessHostOptions<unknown>,
+    "commands" | "save" | "port" | "native" | "machineInventory"
+  >
 > {
   const deps = await Effect.runPromise(services);
   return {
+    machineInventory: machineInventoryFixture(),
     commands: {
       loader: commandLoader().loader,
       capacity: new ChildWorkerCapacity(2, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-harness-tests-producthost-retention-1",
       }),
       machine: () => ({
+        files: emptyMachineFilesFixture(),
         spawn: async () => {
           throw new Error("Unused machine");
         },

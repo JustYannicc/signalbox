@@ -28,6 +28,7 @@ import { createChildBusybox } from "../ChildBusybox.ts";
 import { createChildGit } from "../ChildGit.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { KernelCommandForwarder } from "../../kernel/KernelCommandForwarder.ts";
+import { emptyMachineFilesFixture, machineInventoryFixture } from "../machineInventoryTesting.ts";
 import { sqliteFixture } from "./helpers/sqliteFixture.ts";
 
 // Codex 0.162.1's exact UNIFIED_EXEC_ENV array is pinned at
@@ -195,6 +196,7 @@ export function createCodexLocaleProductComputer(
               throw new Error(`Unexpected Bash executable path: ${command.executable}`);
             }
             result = await createChildBash({
+              residentByteLimit: 104 * 1024 * 1024,
               module: programs.bash,
               credentials: metadata.credentials,
               pid: metadata.pid,
@@ -244,7 +246,10 @@ export function createCodexLocaleProductComputer(
     filesystem,
     wakes,
     // The fixture models one plain Worker request, whose Dynamic Worker limit is four.
-    capacity: new ChildWorkerCapacity(4, { owner: "test/codex-locale-public-product-computer" }),
+    capacity: new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/codex-locale-public-product-computer",
+    }),
     loader,
     programs: {
       bash: programsByName("bash"),
@@ -266,7 +271,11 @@ export function createCodexLocaleProductComputer(
       git: programsByName("git"),
       sed: programsByName("sed"),
     },
-    machine: () => machine,
+    machineInventory: machineInventoryFixture(),
+    machine: () => ({
+      ...machine,
+      files: emptyMachineFilesFixture(),
+    }),
     ...(options.orderedMachineRules === undefined
       ? {}
       : { orderedMachineRules: options.orderedMachineRules }),

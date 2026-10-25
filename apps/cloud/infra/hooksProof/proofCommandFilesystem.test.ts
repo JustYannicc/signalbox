@@ -35,6 +35,7 @@ function trackPins(storage: Storage) {
 function fixture() {
   const database = createProofTestStorage();
   const rawStorage = createFacetSqliteStorage(database.storage, () => 1n);
+  rawStorage.posix.initialize(rawStorage.root, { mode: 0o755, uid: 1000, gid: 1000 });
   const tracked = trackPins(rawStorage);
   const storage = tracked.storage;
   const filesystem = new KernelFileSystem({
@@ -92,7 +93,10 @@ function fixture() {
       };
     },
     wakes,
-    new ChildWorkerCapacity(4, { owner: "test/infra-hooksproof-proofcommandfilesystem-test-1" }),
+    new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/infra-hooksproof-proofcommandfilesystem-test-1",
+    }),
   );
   return {
     database,

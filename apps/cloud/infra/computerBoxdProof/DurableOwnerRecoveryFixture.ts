@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import type { BaseLease, DriveRef, RecipeHash } from "../../src/computer/Computer.ts";
 import { MachineCommands } from "../../src/computer/MachineCommands.ts";
+import { RunnerMachineFileLookupForwarder } from "../../src/computer/MachineFileLookupForwarder.ts";
 import { createRecoveryMachine } from "./RecoveryMachine.ts";
 import {
   makeBoxdMachines,
@@ -217,6 +218,7 @@ function machineRuntime(external: DurableOwnerExternalState): MachineCommandRunt
     async attach(input) {
       return {
         ...settlement(input),
+        machineFiles: new RunnerMachineFileLookupForwarder(),
         async spawn() {
           external.commandStarts++;
           external.commandClosed = false;

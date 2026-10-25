@@ -44,7 +44,7 @@ describe("generated Bash worker metadata ownership", () => {
       expect.objectContaining({
         pid: 17,
         credentials: { uid: 1000 },
-        residentWasmBudgetBytes: 104,
+        residentByteLimit: 104,
       }),
     );
     expect(f.dispose).toHaveBeenCalledOnce();

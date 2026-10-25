@@ -30,6 +30,7 @@ function nestedErrors(error: unknown, visited = new Set<unknown>()): unknown[] {
 it("keeps a fork killed before restore available for its parent's waitpid", async () => {
   const fixture = childBashFixture();
   const capacity = new ChildWorkerCapacity(1, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
     owner: "test/bash-execution-group-killed-before-restore",
   });
   const killed = { exitCode: 0, signal: 9, coreDumped: false };
@@ -110,7 +111,10 @@ function createQuotaProgram(
     invocation: LoaderInvocation,
   ) => Promise<{ exitCode: number; signal: number; coreDumped: boolean }>,
 ) {
-  const capacity = new ChildWorkerCapacity(2, { owner });
+  const capacity = new ChildWorkerCapacity(2, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+    owner,
+  });
   const lifetimes = new ChildWorkerLifetimes();
   const dispatch = createWorkerLoaderDispatch<KernelBashPort>({
     run: async (_input, invocation) => run(invocation as unknown as LoaderInvocation),

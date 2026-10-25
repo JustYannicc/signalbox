@@ -93,15 +93,24 @@ export function withKernelErrors<T>(operation: () => T): T {
   try {
     return operation();
   } catch (error) {
-    if (error instanceof WasiError) {
-      throw kernelError(WASI_ERRNO_CODES[error.errno] ?? "EIO", error.message);
-    }
-    if (
-      error instanceof TypeError &&
-      error.message === "WASI call requires asynchronous execution"
-    ) {
-      throw kernelError("ENOTSUP", error.message);
-    }
-    throw error;
+    throw normalizeKernelError(error);
   }
+}
+
+export async function withKernelErrorsAsync<T>(operation: () => PromiseLike<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw normalizeKernelError(error);
+  }
+}
+
+function normalizeKernelError(error: unknown): unknown {
+  if (error instanceof WasiError) {
+    return kernelError(WASI_ERRNO_CODES[error.errno] ?? "EIO", error.message);
+  }
+  if (error instanceof TypeError && error.message === "WASI call requires asynchronous execution") {
+    return kernelError("ENOTSUP", error.message);
+  }
+  return error;
 }

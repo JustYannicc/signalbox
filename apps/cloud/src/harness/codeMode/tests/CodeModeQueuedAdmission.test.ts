@@ -79,6 +79,7 @@ function executeRequest(yield_time_ms: number) {
 
 async function queuedFixture() {
   const capacity = new ChildWorkerCapacity(1, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
     owner: "test/src-harness-codemode-tests-codemodequeuedadmission-test-1",
   });
   const held = await capacity.acquire(new AbortController().signal, undefined);

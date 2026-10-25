@@ -46,8 +46,6 @@ export type {
 export type { DurableProcessSlotStorage } from "./childWorkerCapacity/DurableProcessSlotStore.ts";
 export { isChildWorkerReservation } from "./childWorkerCapacity/Reservation.ts";
 
-// Bash packs under 64 MiB; this leaves growth room before a syscall checkpoint and 24 MiB for the runtime.
-const DEFAULT_RESIDENT_BYTE_LIMIT = 104 * 1024 * 1024;
 const DEFAULT_PRESSURE_QUANTUM_MS = 100;
 // Direct permit callers have no prepared executable identity to attach.
 const DEFAULT_REQUEST: ChildWorkerSlotRequest = Object.freeze({
@@ -64,7 +62,8 @@ export interface ChildWorkerCapacityOptions {
   readonly store?: ProcessSlotStore;
   /** Durable caller storage, used to keep generations across capacity reconstruction. */
   readonly storage?: DurableProcessSlotStorage;
-  readonly residentByteLimit?: number;
+  /** Per-loader isolate residency from the deployment's single process setting. */
+  readonly RESIDENT_BYTE_LIMIT: string;
   readonly scheduleQuantum?: ProcessSlotsOptions["scheduleQuantum"];
 }
 
@@ -89,7 +88,7 @@ export class ChildWorkerCapacity {
     if (options.store !== undefined && options.storage !== undefined) {
       throw new TypeError("Supply either a process-slot store or durable storage");
     }
-    const residentByteLimit = options.residentByteLimit ?? DEFAULT_RESIDENT_BYTE_LIMIT;
+    const residentByteLimit = Number(options.RESIDENT_BYTE_LIMIT);
     if (!Number.isSafeInteger(residentByteLimit) || residentByteLimit < 1) {
       throw new RangeError("Child worker resident byte limit must be a positive safe integer");
     }

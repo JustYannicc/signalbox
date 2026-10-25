@@ -24,7 +24,7 @@ async function fixture() {
   const manifest = {
     schemaVersion: 1,
     programs: Object.fromEntries(
-      ["bash", "busybox", "ripgrep", "sed"].map((name) => [
+      ["bash", "busybox", "ripgrep", "sed", "coreutils"].map((name) => [
         name,
         { ...entry(name, `wasm:${name}`), provenance: entry(`${name}.json`, `source:${name}`) },
       ]),
@@ -54,6 +54,9 @@ it("downloads exact program and provenance bytes from the pinned manifest", asyn
   expect(await NodeFSP.readFile(result.busybox!, "utf8")).toBe("wasm:busybox");
   expect(await NodeFSP.readFile(result.ripgrep!, "utf8")).toBe("wasm:ripgrep");
   expect(await NodeFSP.readFile(result.sed!, "utf8")).toBe("wasm:sed");
+  expect(await NodeFSP.readFile(NodePath.join(input.output, "coreutils.tar"), "utf8")).toBe(
+    "wasm:coreutils",
+  );
   expect(await NodeFSP.readFile(NodePath.join(input.output, "bash.provenance.json"), "utf8")).toBe(
     "source:bash",
   );
@@ -61,7 +64,13 @@ it("downloads exact program and provenance bytes from the pinned manifest", asyn
     JSON.parse(await NodeFSP.readFile(NodePath.join(input.output, "verified-inputs.json"), "utf8")),
   ).toMatchObject({
     manifest: input.manifestPin,
-    programs: [{ name: "bash" }, { name: "busybox" }, { name: "ripgrep" }, { name: "sed" }],
+    programs: [
+      { name: "bash" },
+      { name: "busybox" },
+      { name: "ripgrep" },
+      { name: "sed" },
+      { name: "coreutils" },
+    ],
   });
 });
 

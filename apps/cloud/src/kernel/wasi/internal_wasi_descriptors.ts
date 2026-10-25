@@ -8,6 +8,7 @@ import { WasiError } from "./internal_wasi_memory.ts";
 import type { WasiCall } from "./internal_wasi_calls.ts";
 import type { WasiMountedStorage } from "./internal_wasi_paths.ts";
 import { WasiOpenDescription } from "./internal_wasi_open_description.ts";
+import { currentKernelSignal } from "../process/KernelExecution.ts";
 import type { WasiStdio } from "./internal_wasi_stdio.ts";
 
 export type { WasiPollResult, WasiStdio } from "./internal_wasi_stdio.ts";
@@ -380,6 +381,38 @@ export class WasiDescriptorTable {
     const descriptor = this.#descriptors.get(normalized);
     if (descriptor === undefined) throw new WasiError(EBADF);
     return descriptor;
+  }
+
+  *withRetained<T>(
+    fd: number,
+    operation: (descriptor: WasiDescriptor) => WasiCall<T>,
+  ): WasiCall<T> {
+    const signal = currentKernelSignal();
+    const descriptor = this.get(fd) as WasiDescriptorHandle;
+    descriptor.description.retain();
+    let failed = false;
+    try {
+      const result = yield* operation(descriptor);
+      signal?.throwIfAborted();
+      return result;
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      if (failed) {
+        // Cleanup must not replace the metadata or cancellation failure.
+        try {
+          yield* descriptor.description.release();
+        } catch {}
+      } else {
+        try {
+          yield* descriptor.description.release();
+        } catch (error) {
+          signal?.throwIfAborted();
+          throw error;
+        }
+      }
+    }
   }
 
   has(fd: number): boolean {

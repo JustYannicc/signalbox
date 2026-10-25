@@ -5,6 +5,7 @@ import type {
   ThreadExecForwarder,
 } from "../thread/ThreadExecForwarder.ts";
 import type { MachineHandle, MachineOwnershipAttestation } from "./Machine.ts";
+import type { MachineFilesPort } from "./MachineFilesPort.ts";
 
 export interface MachineWorkspaceMount extends ThreadExecWorkspace {
   /** Read immutable post-command bytes until the FileCommitPort call settles. */
@@ -61,6 +62,7 @@ export interface MachineRuntimeSettlement {
 
 export interface MachineCommandRuntimeBinding extends MachineRuntimeSettlement {
   readonly spawn: ThreadExecForwarder["spawn"];
+  readonly machineFiles: MachineFilesPort;
 }
 
 export interface MachineCommandRuntime {

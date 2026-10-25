@@ -35,6 +35,24 @@ const resume = {
 };
 
 describe("Codex native binding", () => {
+  it.effect("reserves an MCP attempt only when its configuration effect runs", () =>
+    Effect.gen(function* () {
+      const f = yield* bindingFixture();
+      launch.mockResolvedValue(f.peer.process);
+      const runtime = yield* f.binding.factory.open(f.harness, reporter);
+      const dormant = f.binding.configureMcp(
+        { epoch: 1, servers },
+        new AbortController().signal,
+        ensure,
+      );
+      expect(f.peer.sent).toEqual([]);
+      yield* f.binding.configureMcp({ epoch: 1, servers }, new AbortController().signal, ensure);
+      yield* runtime.ensureThread(session);
+      expect(Exit.isFailure(yield* Effect.exit(dormant))).toBe(true);
+      expect(f.peer.sent).toEqual(["thread/start"]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect.each([ensure, resume])("awaits real $method and hands off its result once", (load) =>
     Effect.gen(function* () {
       const entered = Promise.withResolvers<void>();

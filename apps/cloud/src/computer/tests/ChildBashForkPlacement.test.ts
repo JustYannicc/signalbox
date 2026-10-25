@@ -68,6 +68,7 @@ describe.skipIf(!available || !coreutilsArtifactsAvailable)("GNU Bash fork place
               >();
               const { pid } = await port.metadata();
               const reactor = createChildBash({
+                residentByteLimit: 104 * 1024 * 1024,
                 module: bash!,
                 credentials: bashCredentials,
                 pid,

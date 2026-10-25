@@ -38,6 +38,35 @@ export interface HarnessFacetRequestRuntime {
   >;
 }
 
+export interface HarnessRequestFacetPreparationRequest {
+  readonly operationId: string;
+  readonly targetFacetNonce: string;
+  readonly nativeSessionId: string;
+  readonly checkpointId: string;
+  readonly manifestRevision: string;
+  readonly priorFacetNonce: string;
+  readonly expectedFacetGeneration: number;
+}
+
+export interface HarnessRequestFacetPreparationEvidence {
+  readonly facetNonce: string;
+  readonly nativeSessionId: string;
+  readonly checkpoint: HarnessRequestCheckpoint;
+  readonly manifestRevision: string;
+  readonly joined: {
+    readonly invocationRpc: boolean;
+    readonly fetch: boolean;
+    readonly ports: boolean;
+  };
+  /** Returned by the host callback, retained inside the facet, never sent over RPC. */
+  readonly runtime: HarnessFacetRequestRuntime;
+}
+
+export type HarnessRequestFacetPreparationObservation = Omit<
+  HarnessRequestFacetPreparationEvidence,
+  "runtime"
+>;
+
 export interface HarnessRequestFacetOptions {
   readonly runId: string;
   /** Created once by the real facet constructor, never supplied by a recovered parent. */
@@ -54,6 +83,10 @@ export interface HarnessRequestFacetOptions {
     checkpoint: HarnessRequestCheckpoint,
     context: HarnessFacetRequestContext,
   ) => Effect.Effect<HarnessFacetRequestRuntime, HarnessRequestFacetError, Scope.Scope>;
+  /** Restores the exact committed checkpoint without admitting a request or starting a model turn. */
+  readonly prepareInert?: (
+    input: HarnessRequestFacetPreparationRequest,
+  ) => Effect.Effect<HarnessRequestFacetPreparationEvidence, HarnessRequestFacetError, Scope.Scope>;
 }
 
 export interface HarnessRequestFacet {
@@ -63,5 +96,9 @@ export interface HarnessRequestFacet {
     readonly publisher: HarnessRequestPublisher;
     readonly requestId: string;
   }) => Effect.Effect<HarnessRunStoreResult, HarnessRequestFacetError>;
+  /** The runtime stays inside this facet; only serializable observed evidence crosses RPC. */
+  readonly prepareInert: (
+    input: HarnessRequestFacetPreparationRequest,
+  ) => Effect.Effect<HarnessRequestFacetPreparationObservation, HarnessRequestFacetError>;
   readonly dispose: Effect.Effect<void>;
 }

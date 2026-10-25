@@ -298,6 +298,20 @@ describe("KernelFileByteSelection", () => {
       expect(fileStat).toMatchObject({ kind: "return", value: 0 });
       expect(u64At(fileStat, 1024 + 32)).toBe(70_001n);
 
+      filesystem.setFileBytes(canonicalFileByteSelection);
+      await expect(filesystem.statAsync(`/proc/self/fd/${fd}`)).resolves.toMatchObject({
+        size: 70_001n,
+        ino: inode,
+      });
+      await expect(filesystem.statAsync(`/dev/fd/${alias}`)).resolves.toMatchObject({
+        size: 70_001n,
+        ino: inode,
+      });
+      expect(storage.stat(inode).size).toBe(9n);
+      expect(calls.binds).toBe(2);
+      expect(calls.releases).toBe(1);
+      filesystem.setFileBytes(selection);
+
       const sync = await host.call({ name: "fd_sync", args: [fd], memorySize: 0, regions: [] });
       const datasync = await host.call({
         name: "fd_datasync",

@@ -57,6 +57,7 @@ export function createClaudeTurnProofClass(
   return class ClaudeHooksProof extends DurableObject {
     // The DO gates ten CHILD_WORKERS RPCs, each with one child fetch in its Worker request (2026-10-23 probe, see computer/README.md).
     private readonly capacity = new ChildWorkerCapacity(10, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: `thread/${this.ctx.id.toString()}`,
       storage: this.ctx.storage,
     });

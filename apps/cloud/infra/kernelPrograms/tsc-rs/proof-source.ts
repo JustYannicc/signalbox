@@ -39,7 +39,7 @@ export class ProbeFacet extends DurableObject {
     const observations = [];
     const counters = {syscalls:0,filesystem:0};
     // Each CHILD_WORKERS RPC gets one plain Worker request and one child fetch; this DO gates ten RPCs (2026-10-23 probe, see computer/README.md).
-    const capacity = new ChildWorkerCapacity(10, {
+    const capacity = new ChildWorkerCapacity(10, { RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "thread/" + this.ctx.id.toString(),
       storage: this.ctx.storage,
     });

@@ -193,7 +193,9 @@ export const createHostLifecycle = <G>(
               scope,
               Effect.sync(() => sessionRoutes.close()),
             );
-            const session = yield* createHostSession(sessionRoutes, continuations);
+            const session = yield* createHostSession(sessionRoutes, continuations, (epoch) =>
+              native?.binding.completeMcpTurn?.(epoch),
+            );
             if (continuations !== undefined) yield* continuations.replay;
             const binding = yield* Effect.suspend(() =>
               options.buildRuntime({

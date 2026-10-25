@@ -26,7 +26,7 @@ const frameIds: ReadonlyArray<ProcessedFrame> = [
 export function continuationNativeFixture(
   nativeId: string,
   identity: SystemIdentity,
-  record?: (message: Message) => void,
+  record?: (message: Message, signal: AbortSignal) => Promise<void>,
   batch = false,
   opaque = false,
   producerIdentities = false,
@@ -105,7 +105,7 @@ export function continuationNativeFixture(
     },
   } satisfies Message;
 
-  const loadSdk = async (bridge: NodeBridge, _signal: AbortSignal): Promise<PreparedClaudeSdk> => {
+  const loadSdk = async (bridge: NodeBridge, signal: AbortSignal): Promise<PreparedClaudeSdk> => {
     const sdk = await native.loadSdk(bridge);
     return {
       ...sdk,
@@ -131,9 +131,9 @@ export function continuationNativeFixture(
           processed.get(pending)!.resolve();
           pending = undefined;
         };
-        const deliver = (id: ProcessedFrame, value: Message) => {
+        const deliver = async (id: ProcessedFrame, value: Message) => {
           const frame = { ...value, session_id: selectedNativeId };
-          record?.(frame);
+          await record?.(frame, signal);
           pending = id;
           return { done: false as const, value: frame };
         };

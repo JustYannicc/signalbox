@@ -28,6 +28,82 @@ function readFile(fs: KernelFileSystem, path: string): string {
 }
 
 describe("KernelFileSystem descriptor-relative paths", () => {
+  it.each(["/proc/self/fd", "/dev/fd"])(
+    "lists an exact %s directory alias through the public sync and async APIs",
+    async (prefix) => {
+      const fixture = sqliteFixture();
+      const storage = createFacetSqliteStorage(fixture.storage, now);
+      storage.posix.initialize(storage.root, { mode: 0o755, uid: 1000, gid: 1000 });
+      const fs = new KernelFileSystem({
+        mounts: [{ path: "/", storage }],
+        posix: { credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 }, umask: 0o022 },
+      });
+      try {
+        fs.mkdir("/work");
+        writeFile(fs, "/work/upper", "upper transcript");
+        const directory = fs.open("/work", KernelOpenFlags.O_PATH | KernelOpenFlags.O_DIRECTORY);
+        const alias = `${prefix}/${directory}`;
+        expect(fs.readdir(alias)).toEqual(["upper"]);
+        await expect(fs.readdirAsync(alias)).resolves.toEqual(["upper"]);
+
+        const lower = fs.installLowerFileSystem({
+          lookup: async (paths) =>
+            paths.map((path) =>
+              path === "/work"
+                ? {
+                    path,
+                    stat: {
+                      type: "directory",
+                      size: 0n,
+                      nlink: 2n,
+                      atimeNs: 1n,
+                      mtimeNs: 1n,
+                      ctimeNs: 1n,
+                    },
+                    metadata: { mode: 0o755, uid: 1000, gid: 1000 },
+                  }
+                : undefined,
+            ),
+          readdir: async () => [
+            {
+              path: "/work/lower",
+              stat: { type: "file", size: 1n, nlink: 1n, atimeNs: 1n, mtimeNs: 1n, ctimeNs: 1n },
+              metadata: { mode: 0o644, uid: 1000, gid: 1000 },
+            },
+          ],
+          read: async () => {
+            throw new Error("Directory listing must not read file bytes");
+          },
+          readlink: async () => {
+            throw new Error("No lower symlinks");
+          },
+        });
+        try {
+          await expect(fs.readdirAsync(alias).then((entries) => entries.sort())).resolves.toEqual([
+            "lower",
+            "upper",
+          ]);
+          fs.chmod("/work", 0o111);
+          await expect(fs.readdirAsync(alias)).rejects.toMatchObject({ code: "EACCES" });
+          expect(() => fs.readdir(alias)).toThrow(expect.objectContaining({ code: "EACCES" }));
+        } finally {
+          lower.dispose();
+        }
+
+        const file = fs.open("/work/upper", KernelOpenFlags.O_PATH);
+        await expect(fs.readdirAsync(`${prefix}/${file}`)).rejects.toMatchObject({
+          code: "ENOTDIR",
+        });
+        fs.close(file);
+        fs.close(directory);
+        await expect(fs.readdirAsync(alias)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        fs.dispose();
+        fixture.close();
+      }
+    },
+  );
+
   it("reads, creates, stats, renames, and unlinks through procfd and devfd suffixes", () => {
     const fixture = sqliteFixture();
     const storage = createFacetSqliteStorage(fixture.storage, now);

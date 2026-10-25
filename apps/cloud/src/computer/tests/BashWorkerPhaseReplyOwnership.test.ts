@@ -57,7 +57,10 @@ it.each(["placed", "parked"] as const)(
       if (mode === "placed") await phase.placeFork(port, 13, source);
       else {
         await phase.park(port, 13, source);
-        const capacity = new ChildWorkerCapacity(1, { owner: "test/phase-reply-drop" });
+        const capacity = new ChildWorkerCapacity(1, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+          owner: "test/phase-reply-drop",
+        });
         const permit = await capacity.acquire(controller.signal, undefined);
         try {
           await phase.stopped(permit.execution);

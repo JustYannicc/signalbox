@@ -48,6 +48,7 @@ afterEach(async () => {
 describe("ChildWorkerReservation", () => {
   it("is capacity-owned, shares queued admission, and cancels once", async () => {
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerreservation-test-1",
     });
     const signal = new AbortController().signal;
@@ -72,6 +73,7 @@ describe("ChildWorkerReservation", () => {
 
   it("consumes synchronously, ignores cancel after handoff, and releases on settlement", async () => {
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerreservation-test-2",
     });
     const signal = new AbortController().signal;
@@ -100,6 +102,7 @@ describe("ChildWorkerReservation", () => {
 
   it("releases an unconsumed reservation when run observes an aborted signal", async () => {
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerreservation-test-3",
     });
     const controller = new AbortController();
@@ -120,6 +123,7 @@ describe("ChildWorkerReservation", () => {
   it("dispatches with its reserved slot at full capacity without reacquiring", () =>
     withFixture(async (fixture) => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerreservation-test-4",
       });
       let reservation!: ChildWorkerReservation;
@@ -163,6 +167,7 @@ describe("ChildWorkerReservation", () => {
   it("rejects cancelled and duplicate tokens before host creation or dispatch", () =>
     withFixture(async (fixture) => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerreservation-test-5",
       });
       const capacityRun = vi.spyOn(capacity, "run");
@@ -238,6 +243,7 @@ describe("ChildWorkerReservation", () => {
 
       for (const { reservationFor, expected } of cases) {
         const capacity = new ChildWorkerCapacity(1, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: "test/src-computer-tests-childworkerreservation-test-6",
         });
         const capacityRun = vi.spyOn(capacity, "run");
@@ -269,6 +275,7 @@ describe("ChildWorkerReservation", () => {
   it("fails preparation before reserving or dispatching when module loading fails", () =>
     withFixture(async () => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerreservation-test-7",
       });
       const failure = new Error("module source unavailable");
@@ -300,6 +307,7 @@ describe("ChildWorkerReservation", () => {
       const fixture = childBusyboxFixture();
       try {
         const capacity = new ChildWorkerCapacity(1, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: "test/src-computer-tests-childworkerreservation-test-8",
         });
         let reservation!: ChildWorkerReservation;

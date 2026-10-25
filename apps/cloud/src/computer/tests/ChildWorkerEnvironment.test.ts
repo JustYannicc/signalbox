@@ -10,6 +10,7 @@ describe("Child worker environment after admission", () => {
   it("claims the original context before deriving one environment for host and command", async () => {
     const fixture = childBusyboxFixture({ env: { PATH: "/bin", PWD: "/old" } });
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerenvironment-test-1",
     });
     let reservation!: ChildWorkerReservation;
@@ -69,6 +70,7 @@ describe("Child worker environment after admission", () => {
   it("never derives an environment after a rejected claim", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerenvironment-test-2",
     });
     let reservation!: ChildWorkerReservation;
@@ -108,6 +110,7 @@ describe("Child worker environment after admission", () => {
   it("releases a claimed slot and reports environment preparation failure to its caller only", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerenvironment-test-3",
     });
     let reservation!: ChildWorkerReservation;

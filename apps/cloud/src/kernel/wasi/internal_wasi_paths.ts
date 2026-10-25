@@ -2,7 +2,14 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { AsyncStorage, DirectoryEntry, Inode, Mount, Stat, Storage } from "../storage.ts";
+import type {
+  DirectoryEntry,
+  Inode,
+  MaybeAsyncStorage,
+  MaybePromise,
+  Mount,
+  Stat,
+} from "../storage.ts";
 import { WasiError } from "./internal_wasi_memory.ts";
 import { complete, mapErrno, type WasiCall } from "./internal_wasi_calls.ts";
 
@@ -18,7 +25,17 @@ const MAX_PATH_BYTES = 4096;
 
 const encoder = new TextEncoder();
 
-export type WasiStorage = Storage | AsyncStorage;
+export type WasiStorage = MaybeAsyncStorage;
+
+/** Optional edge check keeps upper-only directory anchors independent of lower I/O. */
+export interface WasiDirectoryEdgeStorage {
+  directoryEntry(parent: Inode, child: Inode): MaybePromise<DirectoryEntry | undefined>;
+}
+
+/** An overlay may expose a lower symlink through a different logical directory. */
+export interface WasiSymlinkParentStorage {
+  symlinkParent(inode: Inode): string | undefined;
+}
 
 export interface WasiMountedStorage {
   readonly id: number;
@@ -38,7 +55,10 @@ export interface WasiPathAnchor {
   readonly pathComponents: readonly string[];
 }
 
-export type WasiPathSearchCheck = (mount: WasiMountedStorage, directory: Inode) => void;
+export type WasiPathSearchCheck = (
+  mount: WasiMountedStorage,
+  directory: Inode,
+) => MaybePromise<void>;
 export type WasiPathCheck = (mount: WasiMountedStorage, components: readonly string[]) => void;
 // signalbox: a kernel device can terminate a missing lookup without inventing a storage inode.
 export type WasiMissingPathCheck = (
@@ -122,9 +142,9 @@ export class WasiPathResolver {
       const parent = ancestors[index - 1];
       const child = ancestors[index];
       if (parent === undefined || child === undefined) throw new WasiError(EINVAL);
-      let entries: DirectoryEntry[];
+      let entry: DirectoryEntry | undefined;
       try {
-        entries = yield* this.#complete(mount.storage.readdir(parent));
+        entry = yield* this.#directoryEntry(mount, parent, child);
       } catch (error) {
         const errno = mapErrno(error);
         if (errno === ENOENT || errno === ENOTDIR || errno === ESTALE) {
@@ -132,9 +152,6 @@ export class WasiPathResolver {
         }
         throw error;
       }
-      const entry = entries.find(
-        (candidate) => candidate.inode === child && candidate.type === "directory",
-      );
       // Storage has no authoritative parent lookup. A moved or unlinked edge
       // cannot be used to reconstruct a path inside this capability.
       if (entry === undefined) throw new WasiError(ESTALE);
@@ -178,11 +195,15 @@ export class WasiPathResolver {
       if (name === undefined) continue;
       if (name === "") continue;
       if (name === ".") {
-        checkSearch?.(base.mount, current);
+        if (checkSearch !== undefined) {
+          yield* this.#complete(checkSearch(base.mount, current));
+        }
         continue;
       }
       if (name === "..") {
-        checkSearch?.(base.mount, current);
+        if (checkSearch !== undefined) {
+          yield* this.#complete(checkSearch(base.mount, current));
+        }
         if (pathComponents.length === 0 || ancestors.length <= 1) {
           throw new WasiError(ENOTCAPABLE);
         }
@@ -190,8 +211,7 @@ export class WasiPathResolver {
         if (parent === undefined) throw new WasiError(ENOTCAPABLE);
         // Route snapshots cannot establish a directory's parent after a move.
         // Reject a stale edge instead of resolving under the old parent.
-        const entries = yield* this.#complete(base.mount.storage.readdir(parent));
-        if (!entries.some((entry) => entry.inode === current && entry.type === "directory")) {
+        if ((yield* this.#directoryEntry(base.mount, parent, current)) === undefined) {
           throw new WasiError(ESTALE);
         }
         pathComponents.pop();
@@ -202,7 +222,9 @@ export class WasiPathResolver {
 
       const parentStat = yield* this.#complete(base.mount.storage.stat(current));
       if (parentStat.type !== "directory") throw new WasiError(ENOTDIR);
-      checkSearch?.(base.mount, current);
+      if (checkSearch !== undefined) {
+        yield* this.#complete(checkSearch(base.mount, current));
+      }
 
       const isLast = index === pending.length;
       this.#checkPath?.(base.mount, [...pathComponents, name]);
@@ -240,7 +262,9 @@ export class WasiPathResolver {
         if (++symlinkDepth > MAX_SYMLINKS) throw new WasiError(ELOOP);
         const target = yield* this.#complete(base.mount.storage.readlink(inode));
         if (target.length === 0 || target.includes("\0")) throw new WasiError(EINVAL);
-        if (target.startsWith("/")) {
+        const storage = base.mount.storage as WasiStorage & Partial<WasiSymlinkParentStorage>;
+        const parentPath = target.startsWith("/") ? undefined : storage.symlinkParent?.(inode);
+        if (target.startsWith("/") || parentPath !== undefined) {
           ancestors.splice(1);
           pathComponents.length = 0;
           const root = ancestors[0];
@@ -248,7 +272,10 @@ export class WasiPathResolver {
           current = root;
         }
         if (isLast) requireDirectory ||= pathRequiresDirectory(target);
-        const targetSegments = parseSymlinkTarget(target);
+        const targetSegments = [
+          ...(parentPath === undefined ? [] : parseSymlinkTarget(parentPath)),
+          ...parseSymlinkTarget(target),
+        ];
         pending.splice(index - 1, 1, ...targetSegments);
         index--;
         continue;
@@ -291,6 +318,19 @@ export class WasiPathResolver {
         ancestors,
       },
     };
+  }
+
+  *#directoryEntry(
+    mount: WasiMountedStorage,
+    parent: Inode,
+    child: Inode,
+  ): WasiCall<DirectoryEntry | undefined> {
+    const storage = mount.storage as WasiStorage & Partial<WasiDirectoryEdgeStorage>;
+    if (typeof storage.directoryEntry === "function") {
+      return yield* this.#complete(storage.directoryEntry(parent, child));
+    }
+    const entries = yield* this.#complete(storage.readdir(parent));
+    return entries.find((entry) => entry.inode === child && entry.type === "directory");
   }
 
   *resolveParent(base: WasiPathAnchor, path: string): WasiCall<WasiResolvedParent> {

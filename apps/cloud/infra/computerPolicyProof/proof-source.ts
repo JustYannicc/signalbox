@@ -45,7 +45,10 @@ export async function proveComputerPolicy(input: ComputerPolicyProofInput) {
   const registry = new KernelProgramRegistry();
   const wakes = new KernelWakeRegistry();
   // The 2026-10-23 probe confirmed a plain Worker rejects its 5th distinct fetch (see computer/README.md).
-  const capacity = new ChildWorkerCapacity(4, { owner: input.capacityOwner });
+  const capacity = new ChildWorkerCapacity(4, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+    owner: input.capacityOwner,
+  });
   const catalog = createSeededChildProgramCatalog({
     registry,
     filesystem: input.filesystem,

@@ -42,6 +42,7 @@ describe.skipIf(!available)("Bash reactor RPC reply ownership", () => {
     const dispose = vi.fn();
     const parked = vi.fn();
     const reactor = createChildBash({
+      residentByteLimit: 104 * 1024 * 1024,
       module: module!,
       credentials: bashCredentials,
       pid: fixture.owner.pid,
@@ -76,6 +77,7 @@ describe.skipIf(!available)("Bash reactor RPC reply ownership", () => {
     void fixture.owner.exited.catch(() => {});
     const dispose = vi.fn();
     const reactor = createChildBash({
+      residentByteLimit: 104 * 1024 * 1024,
       module: module!,
       credentials: bashCredentials,
       pid: fixture.owner.pid,
@@ -155,6 +157,7 @@ describe.skipIf(!available)("Bash reactor RPC reply ownership", () => {
       return wrapped;
     }
     const reactor = createChildBash({
+      residentByteLimit: 104 * 1024 * 1024,
       module: module!,
       credentials: bashCredentials,
       pid: fixture.owner.pid,
@@ -192,6 +195,7 @@ describe.skipIf(!available)("Bash reactor RPC reply ownership", () => {
     const fixture = childBashFixture({ args: ["bash", "-c", "(true)"] });
     const { received, own } = replies();
     const reactor = createChildBash({
+      residentByteLimit: 104 * 1024 * 1024,
       module: module!,
       credentials: bashCredentials,
       pid: fixture.owner.pid,
@@ -225,6 +229,7 @@ describe.skipIf(!available)("Bash reactor RPC reply ownership", () => {
       [Symbol.dispose]: dispose,
     };
     const reactor = createChildBash({
+      residentByteLimit: 104 * 1024 * 1024,
       module: module!,
       credentials: bashCredentials,
       pid: fixture.owner.pid,
@@ -268,6 +273,7 @@ describe.skipIf(!available)("Bash reactor RPC reply ownership", () => {
         };
       }
       const reactor = createChildBash({
+        residentByteLimit: 104 * 1024 * 1024,
         module: module!,
         credentials: bashCredentials,
         pid: fixture.owner.pid,
@@ -300,6 +306,7 @@ describe.skipIf(!available)("Bash reactor RPC reply ownership", () => {
       let remoteFinished = false;
       let cleanupWaits = 0;
       const reactor = createChildBash({
+        residentByteLimit: 104 * 1024 * 1024,
         module: module!,
         credentials: bashCredentials,
         pid: fixture.owner.pid,

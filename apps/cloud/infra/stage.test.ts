@@ -222,8 +222,11 @@ describe("wrangler.jsonc", () => {
     expect(wrangler.vars.EXECUTOR_TOKEN_ISSUER).toBe("http://localhost");
   });
 
-  it("retains the token binding before the additive search migration", () => {
-    expect(wrangler.migrations.slice(-2)).toEqual([
+  it("keeps durable harness state after the existing migrations", () => {
+    const tokenBindingIndex = wrangler.migrations.findIndex(({ tag }) => tag === "v6");
+
+    expect(tokenBindingIndex).toBeGreaterThanOrEqual(0);
+    expect(wrangler.migrations.slice(tokenBindingIndex, tokenBindingIndex + 3)).toEqual([
       {
         tag: "v6",
         new_sqlite_classes: [DURABLE_OBJECT_BINDINGS.EXECUTOR_TOKEN_BINDINGS],
@@ -231,6 +234,14 @@ describe("wrangler.jsonc", () => {
       {
         tag: "search-index-v1",
         new_sqlite_classes: [DURABLE_OBJECT_BINDINGS.SEARCH_INDEX],
+      },
+      {
+        tag: "durable-harness-state-v1",
+        new_sqlite_classes: [
+          "HarnessRunStoreObject",
+          "HarnessFilesStoreObject",
+          "HarnessThreadSupervisorObject",
+        ],
       },
     ]);
   });

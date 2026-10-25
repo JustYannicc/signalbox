@@ -16,6 +16,26 @@ const command = (executable: string, argv: readonly string[] = ["argv0"]): Kerne
 });
 
 describe("ComputerEscalationTable", () => {
+  it("matches rules against the requested path while qualifying its selected catalog implementation", () => {
+    const requested = command("/usr/bin/grep");
+    const catalog = command("/bin/grep");
+    const table = new ComputerEscalationTable(
+      [{ id: "machine-alias", executable: "/usr/bin/grep" }],
+      COMPUTER_ISOLATE_POLICY,
+    );
+    expect(table.decide(requested, undefined, catalog)).toEqual({
+      kind: "machine",
+      ruleId: "machine-alias",
+    });
+    expect(
+      new ComputerEscalationTable([], COMPUTER_ISOLATE_POLICY).decide(
+        requested,
+        undefined,
+        catalog,
+      ),
+    ).toEqual({ kind: "isolate" });
+  });
+
   it("isolates every command when the table is empty", () => {
     const table = new ComputerEscalationTable();
 

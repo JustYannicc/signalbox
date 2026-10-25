@@ -19,6 +19,7 @@ export function openProofFilesystem(database: FacetStorage) {
     wakes,
     ports,
   });
+  initializeProofRoot(persistence.storage);
   const filesystem = new KernelFileSystem({
     mounts: [{ path: "/", storage: persistence.storage }],
     posix: { credentials: { uid: 0, gid: 0, euid: 0, egid: 0 }, umask: 0o022 },
@@ -50,4 +51,16 @@ export function openProofFilesystem(database: FacetStorage) {
       wakes.dispose();
     },
   };
+}
+
+function initializeProofRoot(storage: ReturnType<typeof createFacetFilePersistence>["storage"]) {
+  try {
+    storage.posix.get(storage.root);
+  } catch (error) {
+    if (
+      !(typeof error === "object" && error !== null && "code" in error && error.code === "ENOTSUP")
+    )
+      throw error;
+    storage.posix.initialize(storage.root, { mode: 0o755, uid: 0, gid: 0 });
+  }
 }

@@ -76,7 +76,7 @@ export default {async fetch(request){
   }));
   const control=async operation=>JSON.parse((await invoke({...program,input:{operation}})).headers.get("x-state"));
   // Plain Worker ceiling from the 2026-10-23 probe; see apps/cloud/src/computer/README.md.
-  const capacity=new ChildWorkerCapacity(4,{owner:"test/managed-invocation-intrinsics"});
+  const capacity=new ChildWorkerCapacity(4,{ RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),owner:"test/managed-invocation-intrinsics"});
   const service=createHookService({capacity,commands:{exec(){throw new Error("wrong path")}},
     registrations:new Map([["script",{kind:"script",harness:"claude-code",event:"pre-tool-use",sessionId:"intrinsics",program}]]),
     generated:{invoke(input,options){return invoke(input,options?.signal)}},

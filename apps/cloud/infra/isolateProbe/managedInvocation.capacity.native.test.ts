@@ -57,7 +57,7 @@ export default {async fetch(request){
   }));
   const control=async operation=>await(await invoke({...program,input:{operation}})).json();
   // Plain Worker ceiling from the 2026-10-23 probe; see apps/cloud/src/computer/README.md.
-  const capacity=new ChildWorkerCapacity(4,{owner:"test/managed-invocation-capacity"});
+  const capacity=new ChildWorkerCapacity(4,{ RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),owner:"test/managed-invocation-capacity"});
   let generatedCalls=0;
   // Only this public invoke-to-Fetcher bridge is test code; no generated cache or SQLite is exercised.
   const service=createHookService({

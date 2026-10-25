@@ -103,6 +103,7 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
         );
         const commands = commandLoader();
         const capacity = new ChildWorkerCapacity(2, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: "test/src-harness-tests-producthost-scenario-1",
         });
         const persistencePorts = createMemoryFilePersistencePorts();
@@ -137,6 +138,7 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
           threadId: d.threadId,
           release: release.options,
           programs,
+          machineInventory: machine.inventory,
           files: {
             identity: "recorded-files",
             database: database.open().storage,

@@ -44,7 +44,7 @@ describe("Bash fork dispatch", () => {
     const fixture = childBashFixture();
     const capacity = new ChildWorkerCapacity(1, {
       owner: "test/fork-residency",
-      residentByteLimit: snapshotState.memoryBytes - 1,
+      RESIDENT_BYTE_LIMIT: String(snapshotState.memoryBytes - 1),
     });
     const lifetimes = new ChildWorkerLifetimes();
     const reason = new Error("Snapshot requires another execution destination");
@@ -92,6 +92,7 @@ describe("Bash fork dispatch", () => {
   it("queues a fork and forwards a value copy of snapshot state", async () => {
     const fixture = childBashFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childbashforkdispatch-test-1",
     });
     const lifetimes = new ChildWorkerLifetimes();
@@ -144,6 +145,7 @@ describe("Bash fork dispatch", () => {
   it("reports a lost transport while keeping its physical permit until stop acknowledgement", async () => {
     const fixture = childBashFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childbashforkdispatch-test-2",
     });
     const lifetimes = new ChildWorkerLifetimes();
@@ -191,6 +193,7 @@ describe("Bash fork dispatch", () => {
   it("closes the fork owner but retains capacity when an untyped transport failure has no stop ACK", async () => {
     const fixture = childBashFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childbashforkdispatch-test-3",
     });
     const lifetimes = new ChildWorkerLifetimes();
@@ -223,6 +226,7 @@ describe("Bash fork dispatch", () => {
   it("captures modules and uses the fork's current umask while joining owner cleanup", async () => {
     const fixture = childBashFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childbashforkdispatch-test-4",
     });
     const lifetimes = new ChildWorkerLifetimes();

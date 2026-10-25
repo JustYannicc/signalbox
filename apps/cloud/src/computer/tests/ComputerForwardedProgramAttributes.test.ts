@@ -39,6 +39,7 @@ describe("machine process attributes", () => {
     const machine = machinePort();
     const admission = createComputerProgramAdmission({
       capacity: new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-computerforwardedprogramattributes-test-1",
       }),
       machine,
@@ -101,6 +102,7 @@ describe("machine process attributes", () => {
     const machine = machinePort();
     const admission = createComputerProgramAdmission({
       capacity: new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-computerforwardedprogramattributes-test-2",
       }),
       machine,

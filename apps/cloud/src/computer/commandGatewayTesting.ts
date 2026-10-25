@@ -36,7 +36,7 @@ export interface CommandGatewayFixtureOptions {
     readonly minimumWorkspaceBytes?: number;
   }[];
   readonly capacityLimit?: number;
-  readonly residentByteLimit?: number;
+  readonly RESIDENT_BYTE_LIMIT?: string;
   readonly cpuAccounting?: KernelCpuAccounting;
 }
 
@@ -44,9 +44,7 @@ export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}
   const kernel = childBusyboxFixture();
   const capacity = new ChildWorkerCapacity(options.capacityLimit ?? 2, {
     owner: "test/command-gateway",
-    ...(options.residentByteLimit === undefined
-      ? {}
-      : { residentByteLimit: options.residentByteLimit }),
+    RESIDENT_BYTE_LIMIT: options.RESIDENT_BYTE_LIMIT ?? String(104 * 1024 * 1024),
   });
   const run =
     options.run ??

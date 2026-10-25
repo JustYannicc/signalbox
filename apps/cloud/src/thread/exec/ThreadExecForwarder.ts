@@ -3,6 +3,10 @@ import {
   type ExecReport,
   type ExecCommandMessage,
 } from "@signalbox/runner-protocol/ExecProtocol";
+import type {
+  MachineFilesRequest,
+  MachineFilesResult,
+} from "@signalbox/runner-protocol/MachineFilesProtocol";
 import type { KernelCommand, KernelCommandForwarder } from "../../kernel/KernelCommandForwarder.ts";
 import { KernelForwardingUnavailable } from "../../kernel/KernelCommandForwarder.ts";
 import { RunnerExecChild } from "./RunnerExecChild.ts";
@@ -40,7 +44,8 @@ export interface RunnerExecConnection {
   readonly connection: number;
   readonly protocolVersion: number;
   readonly exec: boolean;
-  readonly send: (message: ExecCommandMessage) => void;
+  readonly machineFileLookup?: boolean;
+  readonly send: (message: ExecCommandMessage | MachineFilesRequest) => void;
 }
 
 /** Called by runnerSockets after the existing lease hello has been accepted. */
@@ -51,6 +56,13 @@ export interface RunnerExecSocketHost {
     generation: number,
     connection: number,
     report: ExecReport,
+  ) => void;
+  /** Machine file replies share the socket while keeping their own request IDs and results. */
+  readonly machineFileResult?: (
+    socket: WebSocket,
+    generation: number,
+    connection: number,
+    result: MachineFilesResult,
   ) => void;
   readonly disconnected: (socket: WebSocket, generation: number, connection: number) => void;
   /** The machine owner confirms native execution has ended, rather than merely disconnecting. */
@@ -65,6 +77,12 @@ export interface ThreadExecForwarderOptions {
   /** Absent until ThreadRunner can hold a light machine through its reconcile path. */
   readonly lease?: ThreadExecLease | undefined;
   readonly acknowledgementTimeoutMs?: number | undefined;
+  /** Persist the machine's dirty transition before sending its first native process start. */
+  readonly beforeStart?: (
+    generation: number,
+    command: KernelCommand,
+    signal: AbortSignal,
+  ) => Promise<void>;
 }
 
 interface TrackedLeaseRelease {
@@ -252,6 +270,7 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
           connection.value.send({ type: "exec.command", command: execCommand });
         },
       });
+      await this.#options.beforeStart?.(lease.generation, command, signal);
       leaseOwned = false;
       this.#children.set(child.processId, child);
       await child.start(command, canonicalCwd, signal);

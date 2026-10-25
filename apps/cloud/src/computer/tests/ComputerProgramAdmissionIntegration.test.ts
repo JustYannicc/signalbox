@@ -30,9 +30,10 @@ function spawnRequest(
 }
 
 describe("Computer admission through the public kernel host", () => {
-  it("binds the actual prepared child context and spends its reservation without reacquiring", async () => {
+  it.each([false, true])("spends one local reservation with catalog alias=%s", async (alias) => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-computerprogramadmissionintegration-test-1",
     });
     const capacityRun = vi.spyOn(capacity, "run");
@@ -45,9 +46,20 @@ describe("Computer admission through the public kernel host", () => {
       capacity,
       machine,
       escalation: new ComputerEscalationTable(),
+      ...(alias
+        ? {
+            resolve: async (request) => ({
+              command: request.command,
+              catalog: {
+                command: { ...request.command, executable: "/bin/tool" },
+                binding: { manifest, implementation: program },
+              },
+            }),
+          }
+        : {}),
     });
     let program: ReturnType<typeof createChildWorkerProgram>;
-    const request = spawnRequest("/bin/tool");
+    const request = spawnRequest(alias ? "/usr/bin/tool" : "/bin/tool");
     const dispatch = vi.fn(async (input: { command: unknown }) => {
       expect(input.command).toEqual({
         executable: "/bin/tool",
@@ -114,6 +126,7 @@ describe("Computer admission through the public kernel host", () => {
   it("forwards once using prepared redirection and refuses extra fds before truncation", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-computerprogramadmissionintegration-test-2",
     });
     const disposed = vi.fn(async () => {});

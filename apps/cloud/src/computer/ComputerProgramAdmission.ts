@@ -6,7 +6,10 @@ import type {
 } from "../kernel/KernelProgramAdmission.ts";
 import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
-import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
+import type {
+  KernelProgramBinding,
+  KernelProgramImplementation,
+} from "../kernel/KernelProgramHost.ts";
 import {
   type ChildWorkerAdmissionTicket,
   isChildWorkerReservation,
@@ -24,10 +27,19 @@ export interface ComputerProgramAdmissionOptions {
   readonly escalation: ComputerEscalationTable;
   readonly capacity: Pick<ChildWorkerCapacity, "enqueue">;
   readonly machine: KernelCommandForwarder;
+  readonly resolve?: (request: KernelProgramAdmissionRequest) => Promise<ComputerProgramResolution>;
   readonly evidence?: (
     command: KernelCommand,
     signal: AbortSignal,
   ) => Promise<ComputerEscalationEvidence>;
+}
+
+export interface ComputerProgramResolution {
+  readonly command: KernelCommand;
+  readonly catalog?: {
+    readonly command: KernelCommand;
+    readonly binding: KernelProgramBinding;
+  };
 }
 
 interface AdmissionRecord {
@@ -78,19 +90,28 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
       let transferred = false;
       try {
         controller.signal.throwIfAborted();
-        const evidencePromise = options.evidence?.(request.command, controller.signal);
+        const resolutionPromise = options.resolve?.({ ...request, signal: controller.signal });
+        const resolution =
+          resolutionPromise === undefined
+            ? { command: request.command }
+            : await awaitWithAbort(resolutionPromise, controller.signal);
+        const evidencePromise = options.evidence?.(resolution.command, controller.signal);
         const evidence =
           evidencePromise === undefined
             ? undefined
             : await awaitWithAbort(evidencePromise, controller.signal);
         controller.signal.throwIfAborted();
         assertOpen(admittedGeneration);
-        const decision = options.escalation.decide(request.command, evidence);
+        const decision = options.escalation.decide(
+          resolution.command,
+          evidence,
+          resolution.catalog?.command,
+        );
         if (decision.kind === "machine") {
           assertComputerForwardingSupported(request);
           return Object.freeze({
             kind: "forward" as const,
-            implementation: createComputerForwardedProgram(options.machine, request.command),
+            implementation: createComputerForwardedProgram(options.machine, resolution.command),
             assertCurrent: () => {
               assertOpen(admittedGeneration);
               request.signal.throwIfAborted();
@@ -98,10 +119,14 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
             },
           });
         }
-        if (request.target.kind !== "resolved") {
+        if (request.target.kind !== "resolved" && resolution.catalog === undefined) {
           throw new KernelProgramExecAdmissionError(request.target.code, request.target.message);
         }
-        const implementation = request.target.binding.implementation;
+        const implementation =
+          resolution.catalog?.binding.implementation ??
+          (request.target.kind === "resolved" ? request.target.binding.implementation : undefined);
+        if (implementation === undefined)
+          throw new TypeError("Resolved program has no implementation");
         if (implementation.kind !== "async") {
           throw new KernelProgramExecAdmissionError("ENOTSUP", "Computer requires a child program");
         }
@@ -152,7 +177,18 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
         unused.add(record);
         transferred = true;
         return Object.freeze({
-          kind: "local" as const,
+          ...(resolution.catalog === undefined
+            ? { kind: "local" as const }
+            : {
+                kind: "forward" as const,
+                implementation: {
+                  kind: "async" as const,
+                  run: implementation.run,
+                  ...(implementation.sigpipe === undefined
+                    ? {}
+                    : { sigpipe: implementation.sigpipe }),
+                },
+              }),
           admission,
           assertCurrent: () => {
             assertOpen(admittedGeneration);

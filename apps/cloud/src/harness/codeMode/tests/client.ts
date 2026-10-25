@@ -9,7 +9,10 @@ import { ChildWorkerCapacity } from "../../../computer/ChildWorkerCapacity.ts";
 export function hostClient(
   loader: CodeModeCellLoaderPort,
   code: CodeModeCellCode,
-  capacity = new ChildWorkerCapacity(2, { owner: "test/src-harness-codemode-tests-client-1" }),
+  capacity = new ChildWorkerCapacity(2, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+    owner: "test/src-harness-codemode-tests-client-1",
+  }),
 ) {
   let enqueue: ReadableStreamDefaultController<Uint8Array>;
   const input = new ReadableStream<Uint8Array>({

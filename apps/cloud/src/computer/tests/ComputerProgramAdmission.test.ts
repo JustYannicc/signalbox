@@ -17,6 +17,7 @@ describe("Computer program admission", () => {
   it("queues before preparing and reserves the same prepared request object", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-computerprogramadmission-test-1",
     });
     const order: string[] = [];
@@ -57,6 +58,7 @@ describe("Computer program admission", () => {
   it("consumes the captured binding's slot once at full capacity without reacquisition", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-computerprogramadmission-test-2",
     });
     const capacityRun = vi.spyOn(capacity, "run");
@@ -113,6 +115,7 @@ describe("Computer program admission", () => {
     async (mismatch) => {
       const fixture = childBusyboxFixture();
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-computerprogramadmission-test-3",
       });
       const options = {
@@ -152,6 +155,7 @@ describe("Computer program admission", () => {
   it("invalidates pending evidence and unconsumed grants when the Computer closes", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(2, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-computerprogramadmission-test-4",
     });
     const gate = Promise.withResolvers<{ workspaceBytes: number }>();
@@ -187,6 +191,7 @@ describe("Computer program admission", () => {
   it("releases a grant and rejects its precommit assertion after owner shutdown", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-computerprogramadmission-test-5",
     });
     const admission = createComputerProgramAdmission({
@@ -215,6 +220,7 @@ describe("Computer program admission", () => {
   it("cancels queued reservations on owner shutdown without leaking the next slot", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-computerprogramadmission-test-6",
     });
     const admission = createComputerProgramAdmission({

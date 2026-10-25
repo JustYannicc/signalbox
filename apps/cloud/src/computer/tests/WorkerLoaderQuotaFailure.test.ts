@@ -132,6 +132,7 @@ describe("Worker Loader quota failures", () => {
               : throughWorkerLoaderRpcProxy(compiledLoader, events);
         const dispatch = createWorkerLoaderDispatch<object>(loader);
         const capacity = new ChildWorkerCapacity(1, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: `test/worker-loader-quota-${kind}-${message.includes("10 concurrent") ? "10" : "4"}`,
         });
         const close = vi.fn();
@@ -228,6 +229,7 @@ describe("Worker Loader quota failures", () => {
               : throughWorkerLoaderRpcProxy(compiledLoader, events);
         const dispatch = createWorkerLoaderDispatch<object>(loader);
         const capacity = new ChildWorkerCapacity(1, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: `test/worker-loader-run-quota-${kind}-${message.includes("10 concurrent") ? "10" : "4"}`,
         });
         const close = vi.fn();
@@ -301,7 +303,10 @@ describe("Worker Loader quota failures", () => {
       const dispatch = createWorkerLoaderDispatch<object>(
         throughWorkerLoaderRpcProxy(compiledLoader, events),
       );
-      const capacity = new ChildWorkerCapacity(1, { owner: "test/worker-loader-rpc-guest-quota" });
+      const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+        owner: "test/worker-loader-rpc-guest-quota",
+      });
       const close = vi.fn();
       const createProgram = () =>
         createChildWorkerProgram({

@@ -13,7 +13,10 @@ import {
 describe("Computer program admission tickets", () => {
   it("removes its FIFO ticket and rejects when the Computer closes during preparation", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1, { owner: "test/admission-close-during-prepare" });
+    const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/admission-close-during-prepare",
+    });
     const prepareEntered = Promise.withResolvers<void>();
     const pendingPrepare = Promise.withResolvers<ChildWorkerSlotRequest>();
     const admission = createComputerProgramAdmission({
@@ -47,7 +50,10 @@ describe("Computer program admission tickets", () => {
 
   it("rejects request abort during preparation without waiting for the prepared request", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1, { owner: "test/admission-abort-during-prepare" });
+    const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/admission-abort-during-prepare",
+    });
     const prepareEntered = Promise.withResolvers<void>();
     const pendingPrepare = Promise.withResolvers<ChildWorkerSlotRequest>();
     const controller = new AbortController();
@@ -86,7 +92,10 @@ describe("Computer program admission tickets", () => {
 
   it("removes its ticket after preparation fails", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1, { owner: "test/admission-prepare-failure" });
+    const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/admission-prepare-failure",
+    });
     const failure = new Error("module hash failed");
     const admission = createComputerProgramAdmission({
       capacity,
@@ -114,7 +123,10 @@ describe("Computer program admission tickets", () => {
 
   it("keeps prepared roots FIFO without holding a permit during delayed preparation", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1, { owner: "test/admission-delayed-prepare-fifo" });
+    const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/admission-delayed-prepare-fifo",
+    });
     const firstPrepared = Promise.withResolvers<ChildWorkerSlotRequest>();
     const firstEntered = Promise.withResolvers<void>();
     const secondEntered = Promise.withResolvers<void>();
@@ -178,7 +190,10 @@ describe("Computer program admission tickets", () => {
 
   it("records nested priority before its preparation finishes", async () => {
     const fixture = childBusyboxFixture();
-    const capacity = new ChildWorkerCapacity(1, { owner: "test/admission-nested-ticket" });
+    const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/admission-nested-ticket",
+    });
     const parentEntered = Promise.withResolvers<void>();
     const parentFinished = Promise.withResolvers<void>();
     const nestedEntered = Promise.withResolvers<void>();

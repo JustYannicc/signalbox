@@ -61,7 +61,7 @@ export default {async fetch(request,env){
   // A Worker request allows four distinct children with in-flight calls.
   // Plain Worker ceiling from the 2026-10-23 probe; see apps/cloud/src/computer/README.md.
   const capacityOwner="worker/warm-state-"+kind+"-"+(concurrent?"concurrent":"sequential");
-  const capacity=new ChildWorkerCapacity(4,{owner:capacityOwner}),observations=[],stdout=[],pending=[];
+  const capacity=new ChildWorkerCapacity(4,{ RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),owner:capacityOwner}),observations=[],stdout=[],pending=[];
   const peers=Promise.withResolvers();let entered=0;
   const join=()=>{if(!concurrent)return Promise.resolve();if(++entered===2)peers.resolve();return peers.promise;};
   for(const [marker,secret]of [["first","one"],["second","two"]]){

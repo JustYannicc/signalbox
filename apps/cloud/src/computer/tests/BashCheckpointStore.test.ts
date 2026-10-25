@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { storeBashCheckpoint } from "../BashCheckpointStore.ts";
 import { BASH_FORK_CHUNK_BYTES, type KernelBashForkState } from "../../kernel/KernelBashFork.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
+import { kernelFileByteViewStorage } from "../../kernel/KernelLowerFileSystemStorage.ts";
 import { withRpcReplyDisposer } from "./helpers/rpcReply.ts";
 
 const state = (memoryBytes: number): KernelBashForkState => ({
@@ -133,7 +134,9 @@ describe("Bash checkpoint backing", () => {
     let stateDisposals = 0;
     let chunkDisposals = 0;
     const restored = vi.fn(async () => {});
-    const storage = fixture.filesystem.resolve(fixture.filesystem.cwd).mount.storage;
+    const mounted = fixture.filesystem.resolve(fixture.filesystem.cwd);
+    const storage = kernelFileByteViewStorage(mounted.mount.storage, mounted.mount.storage.root);
+    if (storage === undefined) throw new Error("Expected local checkpoint backing");
     const write = vi.spyOn(storage, "write").mockRejectedValueOnce(failure);
     try {
       await expect(

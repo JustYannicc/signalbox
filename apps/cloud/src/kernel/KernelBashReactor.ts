@@ -53,7 +53,7 @@ export interface KernelBashReactorBinding {
 export interface KernelBashReactorOptions {
   readonly module: WebAssembly.Module;
   /** Maximum tracked Bash linear memory assigned to one loader slot. */
-  readonly residentWasmBudgetBytes: number;
+  readonly residentByteLimit: number;
   /** Local fork packing threshold; separate from a slot's placement budget. */
   readonly localForkPackingBytes?: number;
   readonly credentials: KernelBashCredentials;
@@ -78,7 +78,7 @@ export function createKernelBashReactor(options: KernelBashReactorOptions) {
   const resident = new Set<WebAssembly.Memory>();
   const guestRuns = new BashGuestRunGate();
   const localForkPackingBytes = options.localForkPackingBytes ?? DEFAULT_LOCAL_FORK_PACKING_BYTES;
-  const slotWasmBudgetBytes = options.residentWasmBudgetBytes;
+  const slotWasmBudgetBytes = options.residentByteLimit;
   let peakObservedResidentWasmBytes = 0;
   let peakPostEnforcementResidentWasmBytes = 0;
   let root: Promise<KernelExitStatus> | undefined;

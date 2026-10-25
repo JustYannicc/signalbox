@@ -6,7 +6,10 @@ import { childBusyboxFixture, exited } from "./ChildBusyboxFixture.ts";
 
 it("closes owned descriptors and finishes stop handling when a host disposer fails", async () => {
   const fixture = childBusyboxFixture();
-  const capacity = new ChildWorkerCapacity(1, { owner: "test/failed-host-disposer" });
+  const capacity = new ChildWorkerCapacity(1, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+    owner: "test/failed-host-disposer",
+  });
   const failure = new Error("Host capability disposal failed");
   const fd = fixture.filesystem.open(
     "cleanup-output",

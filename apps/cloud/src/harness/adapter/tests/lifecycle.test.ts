@@ -1,17 +1,48 @@
 import { describe, expect, it } from "@effect/vitest";
 import { RunAttemptId, RunId } from "@t3tools/contracts";
-import { ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  ProviderAdapterV2Event,
+  type ProviderAdapterV2Event as ProviderAdapterV2EventModel,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import {
+  providerEventLatencyClock,
+  rememberProviderEventLatencyTrace,
+} from "@t3tools/provider-core/server/ProviderEventLatencyTrace";
 
 import { fixture } from "./fixture.ts";
 
 const decodeEvent = Schema.decodeUnknownSync(Schema.toCodecJson(ProviderAdapterV2Event));
+const providerEventLatencyLogName = "orchestration-v2.provider-event-latency";
+type JsonRecord = Readonly<Record<string, unknown>>;
+type ProviderEventLatencyLogRecord = {
+  readonly name: typeof providerEventLatencyLogName;
+  readonly fields: JsonRecord;
+};
+
+const isJsonRecord = (value: unknown): value is JsonRecord =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const parseProviderEventLatencyLogRecord = (
+  line: string,
+): ProviderEventLatencyLogRecord | undefined => {
+  const parsed: unknown = JSON.parse(line);
+  if (!isJsonRecord(parsed)) throw new Error("Expected a structured JSON log record.");
+  const message = parsed.message;
+  if (!Array.isArray(message) || message[0] !== providerEventLatencyLogName) return undefined;
+  if (message.length !== 2 || !isJsonRecord(message[1])) {
+    throw new Error("Expected provider event latency fields in the structured log message.");
+  }
+  return { name: providerEventLatencyLogName, fields: message[1] };
+};
 
 const running = Effect.gen(function* () {
   const f = yield* fixture;
@@ -129,6 +160,50 @@ describe("AdapterHarness lifecycle", () => {
       ).toBe(true);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("logs host forwarding through the out-of-band event trace", () => {
+    const logs: Array<ProviderEventLatencyLogRecord> = [];
+    const capture = Logger.map(Logger.formatJson, (line) => {
+      const record = parseProviderEventLatencyLogRecord(line);
+      if (record !== undefined) logs.push(record);
+    });
+    const traceId = "provider-event-trace:host-forward";
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* running;
+        yield* finish(f);
+        const event: ProviderAdapterV2EventModel = {
+          type: "provider_session.updated",
+          driver: f.runtime.driver,
+          providerSession: f.runtime.providerSession,
+        };
+        rememberProviderEventLatencyTrace(event, {
+          traceId,
+          streamId: "provider-session:test-host-forward",
+          streamOrdinal: 1,
+          eventType: event.type,
+          entityId: event.providerSession.id,
+          createdAtMs: providerEventLatencyClock.nowMs(),
+        });
+        yield* f.emit(event);
+        const forwarded = yield* f.next;
+
+        expect(forwarded.kind).toBe("provider");
+        expect(JSON.stringify(forwarded)).not.toContain(traceId);
+        expect(
+          logs.some(
+            (record) =>
+              record.name === providerEventLatencyLogName &&
+              record.fields.stage === "runner.host-forward" &&
+              record.fields.traceId === traceId,
+          ),
+        ).toBe(true);
+      }).pipe(
+        Effect.provideService(References.MinimumLogLevel, "Debug"),
+        Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+      ),
+    );
+  });
 
   it.effect(
     "shares concurrent duplicate starts, rejects conflicts and allows only one active turn",

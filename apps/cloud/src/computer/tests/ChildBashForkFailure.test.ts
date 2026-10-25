@@ -48,7 +48,8 @@ describe.skipIf(!available)("Bash fork placement failure", () => {
       port: owner.port,
       args: fixture.context.args,
       env: fixture.context.env,
-      residentWasmBudgetBytes: 0,
+      residentByteLimit: 104 * 1024 * 1024,
+      localForkPackingBytes: 0,
     });
     try {
       await expect(reactor.run()).resolves.toEqual(exited());
@@ -79,7 +80,8 @@ describe.skipIf(!available)("Bash fork placement failure", () => {
       port: owner.port,
       args: fixture.context.args,
       env: fixture.context.env,
-      residentWasmBudgetBytes: 0,
+      residentByteLimit: 104 * 1024 * 1024,
+      localForkPackingBytes: 0,
       createForkSource(source) {
         return {
           state: () => source.state(),
@@ -121,6 +123,7 @@ describe.skipIf(!available)("Bash fork placement failure", () => {
       [Symbol.dispose]: dispose,
     };
     const reactor = createChildBash({
+      residentByteLimit: 104 * 1024 * 1024,
       module: module!,
       credentials: bashCredentials,
       pid: owner.pid,
@@ -179,7 +182,8 @@ describe.skipIf(!available)("Bash fork placement failure", () => {
       port,
       args: fixture.context.args,
       env: fixture.context.env,
-      residentWasmBudgetBytes: 0,
+      residentByteLimit: 104 * 1024 * 1024,
+      localForkPackingBytes: 0,
       createForkSource(source) {
         abandoned = source;
         return source;
@@ -190,6 +194,7 @@ describe.skipIf(!available)("Bash fork placement failure", () => {
       const control = childBashFixture({ args: fixture.context.args });
       try {
         const reference = createChildBash({
+          residentByteLimit: 104 * 1024 * 1024,
           module: module!,
           credentials: bashCredentials,
           pid: control.owner.pid,

@@ -1,135 +1,17 @@
-import { describe, expect, vi } from "vite-plus/test";
+import { describe, expect } from "vite-plus/test";
 import { it } from "@effect/vitest";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
-import type { CodexHarnessProcess, CodexHarnessProcessOptions } from "../../CodexHarnessProcess.ts";
-import { makeCodexNativeHostBinding } from "../../CodexNativeHostBinding.ts";
-import { createHarnessRequestFacet, HarnessRequestFacetError } from "../../HarnessRequestFacet.ts";
-import { createHarnessRequestTurn } from "../../HarnessRequestTurn.ts";
-import { fixture as kernelFixture } from "../../codex/tests/fixture.ts";
 import {
-  adapterOptions,
-  processFixture,
-  readyLine,
-} from "../../codex/tests/preinitializedFixture.ts";
-import { echoEngine } from "../../codex/tests/wasm.ts";
-import {
-  controlKey,
-  fixture as runStoreFixture,
-  initial,
-  supervisor,
-  runId,
-} from "../../runStore/tests/fixture.ts";
-import { install, requestPublisher } from "../../runStore/tests/requestFixture.ts";
-import { requestFixture } from "./fixture.ts";
-
-const launch = vi.hoisted(() =>
-  vi.fn<(input: CodexHarnessProcessOptions) => Promise<CodexHarnessProcess>>(),
-);
-vi.mock("../../CodexHarnessProcess.ts", () => ({ startCodexHarnessProcess: launch }));
-
-const layer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer);
-const encodeFrame = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
-const isNativeTurnStart = Schema.is(
-  Schema.Struct({
-    type: Schema.Literal("provider_turn.updated"),
-    providerTurn: Schema.Struct({
-      status: Schema.Literal("running"),
-      nativeTurnRef: Schema.Struct({
-        nativeId: Schema.Literal("preinitialized-turn"),
-        strength: Schema.Literal("strong"),
-      }),
-    }),
-  }),
-);
-
-const integration = (
-  setup: "thread/start" | "thread/resume",
-  beforeReply: (method: string) => Promise<void>,
-) =>
-  Effect.gen(function* () {
-    const driver = yield* requestFixture;
-    const database = runStoreFixture();
-    const client = database.open();
-    const call = (command: unknown) =>
-      Effect.tryPromise({
-        try: () => client.call(command),
-        catch: (cause) => new HarnessRequestFacetError("Integration store failed", { cause }),
-      });
-    yield* call(initial);
-    yield* call({
-      type: "request.mode",
-      runId,
-      controlKey,
-      requestId: "request-mode",
-      checkpoint: driver.initial,
-    });
-    yield* call(install());
-
-    const context = kernelFixture(echoEngine(), driver.instance.adapter.input.session.threadId);
-    const peer = processFixture(beforeReply);
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(async () => {
-        await peer.process.abort();
-        await context.close();
-      }),
-    );
-    (yield* Effect.promise(() => peer.output)).enqueue(new TextEncoder().encode(readyLine));
-    launch.mockReset();
-    launch.mockResolvedValue(peer.process);
-    const release = yield* Effect.promise(() => driver.f.codexRelease());
-    const adapter = yield* adapterOptions();
-    driver.setHost({
-      release,
-      buildRuntime: ({ harness }) =>
-        Effect.sync(() =>
-          makeCodexNativeHostBinding({
-            process: { ...context.options, computer: harness.computer },
-            adapter,
-            modelOrigins: ["https://harness-mcp.invalid"],
-            mcpSessions: {
-              set: () => Effect.die("Unexpected app MCP fallback"),
-              read: () => Effect.succeed(undefined),
-              clear: () => Effect.die("Unexpected app MCP fallback"),
-            },
-          }),
-        ),
-    });
-
-    const requestId = "native-load-turn";
-    const turn =
-      setup === "thread/start"
-        ? driver.instance.adapter.turn
-        : {
-            ...driver.instance.adapter.turn,
-            providerThread: {
-              ...driver.instance.adapter.turn.providerThread,
-              nativeThreadRef: {
-                driver: driver.instance.adapter.runtime.driver,
-                nativeId: "preinitialized-native-thread",
-                strength: "strong" as const,
-              },
-            },
-          };
-    const input = yield* driver.input("native-load-input", turn);
-    yield* call({ type: "request.offer", runId, supervisor, request: { requestId, input } });
-    const facet = yield* createHarnessRequestFacet({
-      runId,
-      facetNonce: requestPublisher().facetNonce,
-      store: { execute: (command) => client.call(command) },
-      verify: driver.verify,
-      open: createHarnessRequestTurn(driver.options),
-    });
-    yield* Effect.addFinalizer(() => facet.dispose);
-    const run = facet.run({ publisher: requestPublisher(), requestId });
-    return { driver, call, facet, peer, run };
-  });
+  completeNativeTurn,
+  integration,
+  isNativeTurnStart,
+  layer,
+} from "./nativeLoadIntegrationFixture.ts";
+import { runId } from "../../runStore/tests/fixture.ts";
+import { install } from "../../runStore/tests/requestFixture.ts";
 
 describe("request-turn native load through the real Codex binding", () => {
   it.effect.each(["thread/start", "thread/resume"] as const)(
@@ -198,23 +80,7 @@ describe("request-turn native load through the real Codex binding", () => {
         releaseTurnStart.resolve();
         yield* Deferred.await(publishedStart);
 
-        const output = yield* Effect.promise(() => calibrated.peer.output);
-        output.enqueue(
-          new TextEncoder().encode(
-            encodeFrame({
-              method: "turn/completed",
-              params: {
-                threadId: "preinitialized-native-thread",
-                turn: {
-                  id: "preinitialized-turn",
-                  status: "completed",
-                  items: [],
-                  error: null,
-                },
-              },
-            }) + "\n",
-          ),
-        );
+        yield* completeNativeTurn(calibrated.peer, "preinitialized-turn");
         const completed = yield* Fiber.join(running);
         if (Result.isFailure(completed)) return yield* Effect.fail(completed.failure);
         expect(completed.success.action).toBe("committed");
@@ -224,7 +90,7 @@ describe("request-turn native load through the real Codex binding", () => {
           setup,
           "turn/start",
         ]);
-        expect(launch).toHaveBeenCalledTimes(1);
+        expect(calibrated.launchCount).toBe(1);
         expect(calibrated.driver.exports).toHaveLength(1);
         expect(calibrated.driver.terminals).toHaveLength(1);
       }).pipe(Effect.scoped, Effect.provide(layer)),

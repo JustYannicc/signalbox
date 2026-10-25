@@ -106,6 +106,7 @@ describe("Coreutils child bridge", () => {
       async (_name, env) => {
         const fixture = childBusyboxFixture({ args: ["pwd"], env });
         const capacity = new ChildWorkerCapacity(1, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: "test/src-computer-tests-childcoreutils-test-1",
         });
         let reservation!: ChildWorkerReservation;

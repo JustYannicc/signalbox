@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { AsyncStorage, Mount, Storage } from "../storage.ts";
+import type { MaybeAsyncStorage, Mount } from "../storage.ts";
 import { WasiError, WasiMemory } from "./internal_wasi_memory.ts";
 import { complete, type WasiCall } from "./internal_wasi_calls.ts";
 import {
@@ -17,6 +17,7 @@ import {
   type WasiMountedStorage,
   WasiPathResolver,
   type WasiPathCheck,
+  type WasiPathSearchCheck,
 } from "./internal_wasi_paths.ts";
 import { WasiFdCalls } from "./internal_wasi_fd_calls.ts";
 import { WasiPathCalls, type WasiCreationPolicy } from "./internal_wasi_path_calls.ts";
@@ -35,6 +36,7 @@ export interface WasiDescriptorContext {
   readonly ownership: "owned" | "borrowed";
   readonly creation?: WasiCreationPolicy;
   readonly pathCheck?: WasiPathCheck;
+  readonly pathSearch?: WasiPathSearchCheck;
   readonly fileBytes?: () => KernelFileByteSelection;
 }
 
@@ -53,7 +55,7 @@ export class WasiFileSystem {
 
   constructor(
     memory: WasiMemory,
-    mounts: Mount<Storage | AsyncStorage>[],
+    mounts: Mount<MaybeAsyncStorage>[],
     stdio: WasiStdio[],
     descriptorContext?: WasiDescriptorContext,
   ) {
@@ -68,6 +70,7 @@ export class WasiFileSystem {
       this.#paths,
       descriptorContext?.creation,
       descriptorContext?.fileBytes,
+      descriptorContext?.pathSearch,
     );
     this.imports = Object.assign(
       Object.create(null) as Record<string, unknown>,

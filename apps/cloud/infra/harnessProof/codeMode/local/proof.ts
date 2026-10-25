@@ -36,6 +36,7 @@ export class CodeModeProof extends DurableObject<Environment> {
     mark("fetch-enter");
     // The 2026-10-23 probe measured ten live fetches per DO (see computer/README.md).
     const capacity = new ChildWorkerCapacity(10, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: `thread/${this.ctx.id.toString()}`,
       storage: this.ctx.storage,
     });

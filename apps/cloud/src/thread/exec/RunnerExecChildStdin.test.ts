@@ -34,7 +34,9 @@ async function fixture() {
     connection: 1,
     protocolVersion: EXEC_PROTOCOL_VERSION,
     exec: true,
-    send({ command }) {
+    send(message) {
+      if (message.type !== "exec.command") return;
+      const { command } = message;
       processId = command.processId;
       if (command.type === "stdin.close") closeRequest.resolve(command);
       else if (command.type === "stdin.write" && !acknowledgeWrites) writeRequest.resolve(command);

@@ -154,6 +154,7 @@ function composedProgramFixture(sourceKind: "static" | "lazy-factory") {
         code: this.code(modules),
         // No DO context is available; the 2026-10-23 probe measured four fetches (see computer/README.md).
         capacity: new ChildWorkerCapacity(4, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: "test/infra-isolateprobe-childcpulimits-test-1",
         }),
         dispatch,

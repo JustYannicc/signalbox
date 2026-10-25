@@ -22,25 +22,40 @@ describe("ChildWorkerCapacity identities", () => {
     const storage = durableStorage();
     const owner = "thread/durable-capacity";
     const code = request("durable-code");
-    const firstCapacity = new ChildWorkerCapacity(4, { owner, storage });
+    const firstCapacity = new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner,
+      storage,
+    });
     const first = await firstCapacity.acquire(new AbortController().signal, undefined, code);
     const firstId = first.execution.loaderId;
     await first.release();
 
-    const reconstructed = new ChildWorkerCapacity(4, { owner, storage });
+    const reconstructed = new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner,
+      storage,
+    });
     const warm = await reconstructed.acquire(new AbortController().signal, undefined, code);
     expect(warm.execution.loaderId).toBe(firstId);
     await warm.execution.lose("memory");
     await warm.release();
 
-    const afterLoss = new ChildWorkerCapacity(4, { owner, storage });
+    const afterLoss = new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner,
+      storage,
+    });
     const fresh = await afterLoss.acquire(new AbortController().signal, undefined, code);
     expect(fresh.execution.loaderId).not.toBe(firstId);
     await fresh.release();
   });
 
   it("caps four concurrent Worker-context IDs and reuses one only after release", async () => {
-    const capacity = new ChildWorkerCapacity(4, { owner: "worker/concurrent-cap-test" });
+    const capacity = new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "worker/concurrent-cap-test",
+    });
     const code = request("same-program");
     const running = await Promise.all(
       Array.from({ length: 4 }, () =>

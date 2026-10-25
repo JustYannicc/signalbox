@@ -38,6 +38,9 @@ import {
 import type {
   DriveObject,
   ExecutorTokenBindingObject,
+  HarnessFilesStoreObject,
+  HarnessRunStoreObject,
+  HarnessThreadSupervisorObject,
   ModelGrants,
   PoolObject,
   PreviewLinkRegistry,
@@ -290,6 +293,13 @@ function deploy(
         SEARCH_INDEX: Cloudflare.DurableObject<SearchIndexObject>(DO.SEARCH_INDEX),
         EXECUTOR_TOKEN_BINDINGS: Cloudflare.DurableObject<ExecutorTokenBindingObject>(
           DO.EXECUTOR_TOKEN_BINDINGS,
+        ),
+        HARNESS_RUN_STORE: Cloudflare.DurableObject<HarnessRunStoreObject>(DO.HARNESS_RUN_STORE),
+        HARNESS_FILES_STORE: Cloudflare.DurableObject<HarnessFilesStoreObject>(
+          DO.HARNESS_FILES_STORE,
+        ),
+        HARNESS_THREAD_SUPERVISOR: Cloudflare.DurableObject<HarnessThreadSupervisorObject>(
+          DO.HARNESS_THREAD_SUPERVISOR,
         ),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
         PREVIEW_LINKS: Cloudflare.DurableObject<PreviewLinkRegistry>(DO.PREVIEW_LINKS),

@@ -73,7 +73,10 @@ describe("ChildWorkerProgram", () => {
         const program = createChildWorkerProgram({
           executable: "/bin/tool",
           code: { mainModule: "entry.js", modules: {} },
-          capacity: new ChildWorkerCapacity(1, { owner: "test/rpc-dispatch-result" }),
+          capacity: new ChildWorkerCapacity(1, {
+            RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+            owner: "test/rpc-dispatch-result",
+          }),
           dispatch: {
             run: () => {
               entered.resolve();
@@ -131,6 +134,7 @@ describe("ChildWorkerProgram", () => {
         executable: "/bin/tool",
         code: { mainModule: "entry.js", modules: {} },
         capacity: new ChildWorkerCapacity(1, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: "test/src-computer-tests-childworkerprogram-test-1",
         }),
         createHost: (admitted, lease) =>
@@ -158,6 +162,7 @@ describe("ChildWorkerProgram", () => {
   it("releases a disconnected invocation only after both host cleanup and its late stop ACK", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerprogram-test-2",
       });
       const cleaned = deferred<void>();
@@ -196,6 +201,7 @@ describe("ChildWorkerProgram", () => {
   it("retains admission when the stop ACK itself rejects", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerprogram-test-3",
       });
       const stopped = Promise.withResolvers<void>();
@@ -222,6 +228,7 @@ describe("ChildWorkerProgram", () => {
   it("retains admission after a disconnected dispatch even after host cleanup finishes", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerprogram-test-4",
       });
       const closing = deferred<void>();
@@ -252,6 +259,7 @@ describe("ChildWorkerProgram", () => {
   it("returns logical exit while retaining admission through a late dispatch failure and gated close", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerprogram-test-5",
       });
       const exited = Promise.withResolvers<{
@@ -299,6 +307,7 @@ describe("ChildWorkerProgram", () => {
   it("reports dispatch failure before logical exit even while physical close remains blocked", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerprogram-test-6",
       });
       const exited = Promise.withResolvers<{
@@ -351,6 +360,7 @@ describe("ChildWorkerProgram", () => {
         executable: "/bin/tool",
         code: { mainModule: "entry.js", modules: {} },
         capacity: new ChildWorkerCapacity(1, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: "test/src-computer-tests-childworkerprogram-test-7",
         }),
         dispatch: { run: async () => status },
@@ -367,6 +377,7 @@ describe("ChildWorkerProgram", () => {
   it("reports a closing failure when no logical exit was published", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerprogram-test-8",
       });
       const exited = Promise.withResolvers<{
@@ -404,6 +415,7 @@ describe("ChildWorkerProgram", () => {
   it("captures code and exact command while keeping process resources at the owner", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(4, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerprogram-test-9",
       });
       const wasm = new Uint8Array([0, 97, 115, 109]);
@@ -456,6 +468,7 @@ describe("ChildWorkerProgram", () => {
 
   it("rejects invalid limits before capacity, host creation, or dispatch", () => {
     const capacity = new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerprogram-test-10",
     });
     const runCapacity = vi.spyOn(capacity, "run");
@@ -480,6 +493,7 @@ describe("ChildWorkerProgram", () => {
   it("holds admission through actual dispatch and host close after cancellation", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(1, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerprogram-test-11",
       });
       const controller = new AbortController();
@@ -521,6 +535,7 @@ describe("ChildWorkerProgram", () => {
   it("closes the owner on dispatch failure and releases admission on setup failure", () =>
     withContext(async (context) => {
       const capacity = new ChildWorkerCapacity(4, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         owner: "test/src-computer-tests-childworkerprogram-test-12",
       });
       const close = vi.fn();

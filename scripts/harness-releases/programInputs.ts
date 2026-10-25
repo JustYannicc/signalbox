@@ -11,6 +11,7 @@ const PROGRAM_FILES = {
   busybox: "busybox.wasm",
   ripgrep: "rg.wasm",
   sed: "sed.wasm",
+  coreutils: "coreutils.tar",
 } as const;
 
 type Asset = { readonly url: string; readonly bytes: number; readonly sha256: string };

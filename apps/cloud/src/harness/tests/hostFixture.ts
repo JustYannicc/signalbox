@@ -5,6 +5,7 @@ import * as Scope from "effect/Scope";
 import type { Computer } from "../../computer/Computer.ts";
 import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem, KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
+import { kernelFileByteViewStorage } from "../../kernel/KernelLowerFileSystemStorage.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { createMemoryFilePersistencePorts } from "../../kernel/MemoryFilePersistencePorts.ts";
 import {
@@ -110,7 +111,10 @@ export const hostFixture = Effect.gen(function* () {
         bindComputer: ({ files, persistence, signal }) =>
           Effect.gen(function* () {
             computers.push(files);
-            persistenceBindings.push(files.resolve("/").mount.storage === persistence.storage);
+            const root = files.resolve("/");
+            persistenceBindings.push(
+              kernelFileByteViewStorage(root.mount.storage, root.inode) === persistence.storage,
+            );
             yield* Effect.addFinalizer(() =>
               Effect.sync(() => {
                 if (!signal.aborted) throw new Error("Computer closed before owner cancellation");

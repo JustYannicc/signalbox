@@ -1,6 +1,11 @@
 import { canonicalFileByteSelection, type KernelFileByteSelection } from "./KernelFileBytes.ts";
-import type { Mount, Storage, Times } from "./storage.ts";
+import type { MaybeAsyncStorage, MaybePromise, Mount, Storage, Times } from "./storage.ts";
 import type { CreateOptions, Inode } from "./storage.ts";
+import { KernelLowerFileSystemStorage } from "./KernelLowerFileSystemStorage.ts";
+import type {
+  KernelLowerFileSystem,
+  KernelLowerFileSystemSource,
+} from "./KernelLowerFileSystem.ts";
 import { hasChangeGeneration } from "./ChangeGenerationStorage.ts";
 import { descriptorPathAlias, descriptorPathSuffix } from "./filesystem/KernelPathAliases.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
@@ -13,6 +18,12 @@ import type {
   WasiResolvedPath,
 } from "./wasi/internal_wasi_paths.ts";
 import { KernelFileSystemIo } from "./filesystem/KernelFileSystemIo.ts";
+import {
+  currentKernelIoMode,
+  currentKernelSignal,
+  runKernelInlineExecution,
+  runKernelExecution,
+} from "./process/KernelExecution.ts";
 import { runCurrentKernelCpuSystem } from "./KernelCpuExecution.ts";
 import { KernelFileSystemOpen } from "./filesystem/KernelFileSystemOpen.ts";
 import { KernelFileSystemPaths } from "./filesystem/KernelFileSystemPaths.ts";
@@ -56,7 +67,8 @@ interface KernelFileSystemForkContext {
   readonly posix?: KernelPosixOptions;
 }
 
-type KernelFileSystemInternalConfig = KernelFileSystemConfig & {
+type KernelFileSystemInternalConfig = Omit<KernelFileSystemConfig, "mounts"> & {
+  readonly mounts: Mount<MaybeAsyncStorage>[];
   readonly [forkContextSymbol]?: KernelFileSystemForkContext;
 };
 
@@ -68,7 +80,9 @@ export class KernelFileSystem {
   readonly #open: KernelFileSystemOpen;
   readonly #io: KernelFileSystemIo;
   readonly #posix: KernelPosix;
-  readonly #mounts: Mount<Storage>[];
+  readonly #mounts: Mount<MaybeAsyncStorage>[];
+  readonly #lowerFileSystemStorage: KernelLowerFileSystemStorage | undefined;
+  readonly #unregisterLowerInvalidation: (() => void) | undefined;
   readonly #mountedMounts: readonly WasiMountedStorage[];
   readonly #ownsDescriptors: boolean;
   #cwdAnchor: WasiPathAnchor | undefined;
@@ -76,10 +90,22 @@ export class KernelFileSystem {
   readonly #disposeListeners = new Set<() => void>();
   #fileBytes: KernelFileByteSelection;
 
-  constructor(config: KernelFileSystemConfig) {
+  constructor(config: KernelFileSystemConfig | KernelFileSystemInternalConfig) {
     const forkContext = (config as KernelFileSystemInternalConfig)[forkContextSymbol];
     this.#fileBytes = config.fileBytes ?? canonicalFileByteSelection;
-    this.#mounts = config.mounts.map((mount) => ({ ...mount }));
+    const mounts = (config as KernelFileSystemInternalConfig).mounts;
+    let lowerFileSystemStorage: KernelLowerFileSystemStorage | undefined;
+    this.#mounts = mounts.map((mount) => {
+      if (mount.path !== "/") return { ...mount };
+      if (mount.storage instanceof KernelLowerFileSystemStorage) {
+        lowerFileSystemStorage = mount.storage;
+        return { ...mount };
+      }
+      const overlay = new KernelLowerFileSystemStorage(mount.storage as Storage);
+      lowerFileSystemStorage = overlay;
+      return { ...mount, storage: overlay };
+    });
+    this.#lowerFileSystemStorage = lowerFileSystemStorage;
     this.#posix = new KernelPosix(forkContext?.posix ?? config.posix);
     this.#ownsDescriptors = config.descriptors === undefined;
     this.#wasi = new WasiFileSystem(
@@ -88,9 +114,28 @@ export class KernelFileSystem {
       config.stdio === undefined ? [] : [...config.stdio],
       config.descriptors === undefined
         ? undefined
-        : { table: config.descriptors, ownership: "borrowed" },
+        : {
+            table: config.descriptors,
+            ownership: "borrowed",
+            pathCheck: this.assertWasiPathVisible.bind(this),
+            pathSearch: this.assertPathSearchAllowed.bind(this),
+            fileBytes: () => this.#fileBytes,
+            creation: {
+              createInode: this.createInode.bind(this),
+              takeCreateMode: this.takeNextCreateMode.bind(this),
+            },
+          },
     );
     this.descriptors = this.#wasi.descriptors;
+    this.#unregisterLowerInvalidation = this.#lowerFileSystemStorage?.registerInvalidationHook(
+      () => {
+        for (const [, descriptor] of this.descriptors.entries()) {
+          if (descriptor.mount?.storage === this.#lowerFileSystemStorage) {
+            delete descriptor.directorySnapshot;
+          }
+        }
+      },
+    );
 
     try {
       if (this.#ownsDescriptors) withKernelErrors(() => runSync(this.#wasi.initialize()));
@@ -183,10 +228,49 @@ export class KernelFileSystem {
       // Each part never decreases, so an equal sum means every part is unchanged.
       let generation = 0;
       for (const mount of this.#mounts) {
+        if (mount.storage instanceof KernelLowerFileSystemStorage) {
+          const upperGeneration = mount.storage.changeGeneration();
+          if (upperGeneration === undefined) return undefined;
+          generation += upperGeneration;
+          continue;
+        }
         if (!hasChangeGeneration(mount.storage)) return undefined;
         generation += mount.storage.changeGeneration();
       }
       return generation;
+    });
+  }
+
+  prepareLowerPaths(paths: readonly string[], signal?: AbortSignal): Promise<void> {
+    this.#assertOpen();
+    const rootMount = this.#paths.resolver.mountForPath("/");
+    const visible = paths.filter((path) => this.#paths.resolver.mountForPath(path) === rootMount);
+    return this.#lowerFileSystemStorage?.prepare(visible, signal) ?? Promise.resolve();
+  }
+
+  /** Attaches a lower machine filesystem without reading it or touching upper storage. */
+  installLowerFileSystem(source: KernelLowerFileSystemSource): KernelLowerFileSystem {
+    return this.#system(() => {
+      this.#assertOpen();
+      const storage = this.#lowerFileSystemStorage;
+      if (storage === undefined) throw kernelError("ENOTSUP", "A root mount is required");
+      const attachment = storage.attach(source);
+      return {
+        prepare: (paths, signal) => {
+          const rootMount = this.#paths.resolver.mountForPath("/");
+          const visible = paths.filter(
+            (path) => this.#paths.resolver.mountForPath(path) === rootMount,
+          );
+          return attachment.prepare(visible, signal);
+        },
+        isLower: async (path, signal) => {
+          const rootMount = this.#paths.resolver.mountForPath("/");
+          if (this.#paths.resolver.mountForPath(path) !== rootMount) return false;
+          return attachment.isLower(path, signal);
+        },
+        invalidate: () => attachment.invalidate(),
+        dispose: () => attachment.dispose(),
+      };
     });
   }
 
@@ -239,6 +323,19 @@ export class KernelFileSystem {
       this.#assertOpen();
       this.#paths.resolver.assertPathVisible(mount, pathComponents);
     });
+  }
+
+  assertPathSearchAllowed(mount: WasiMountedStorage, directory: Inode): MaybePromise<void> {
+    this.#assertOpen();
+    if (this.#posix.credentials === undefined) return;
+    if (currentKernelIoMode() === "sync") {
+      return this.#system(() =>
+        this.#posix.checkAccess(mount.storage, directory, "directory", 1, true),
+      );
+    }
+    return this.#posix
+      .checkAccessAsync(mount.storage, directory, "directory", 1, true)
+      .then(() => undefined);
   }
 
   open(path: string, flags: number, mode?: number): number {
@@ -348,6 +445,17 @@ export class KernelFileSystem {
     });
   }
 
+  /** Resolves a command path with live filesystem metadata and effective execute checks. */
+  checkExecutable(path: string, signal?: AbortSignal): Promise<KernelStat> {
+    this.#assertOpen();
+    const activeSignal = signal ?? currentKernelSignal() ?? new AbortController().signal;
+    activeSignal.throwIfAborted();
+    return runKernelExecution(activeSignal, () => {
+      activeSignal.throwIfAborted();
+      return this.#paths.checkExecutable(path);
+    });
+  }
+
   close(fd: number): void {
     this.#system(() => {
       this.#assertOpen();
@@ -376,11 +484,19 @@ export class KernelFileSystem {
     });
   }
 
+  statAsync(path: string, signal?: AbortSignal): Promise<KernelStat> {
+    return this.#async(signal, () => this.#paths.statAsync(path));
+  }
+
   lstat(path: string): KernelStat {
     return this.#system(() => {
       this.#assertOpen();
       return this.#paths.lstat(path);
     });
+  }
+
+  lstatAsync(path: string, signal?: AbortSignal): Promise<KernelStat> {
+    return this.#async(signal, () => this.#paths.statAsync(path, false));
   }
 
   fstat(fd: number): KernelStat {
@@ -416,6 +532,10 @@ export class KernelFileSystem {
       this.#assertOpen();
       return this.#paths.readdir(path);
     });
+  }
+
+  readdirAsync(path: string, signal?: AbortSignal): Promise<string[]> {
+    return this.#async(signal, () => this.#paths.readdirAsync(path));
   }
 
   readlink(path: string): string {
@@ -531,6 +651,7 @@ export class KernelFileSystem {
     this.#system(() => {
       if (this.#disposed) return;
       this.#disposed = true;
+      this.#unregisterLowerInvalidation?.();
       const errors: unknown[] = [];
       for (const listener of this.#disposeListeners) {
         try {
@@ -562,7 +683,17 @@ export class KernelFileSystem {
   }
 
   #system<T>(run: () => T): T {
-    return runCurrentKernelCpuSystem(run);
+    return runCurrentKernelCpuSystem(() => runKernelInlineExecution(currentKernelSignal(), run));
+  }
+
+  async #async<T>(signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+    this.#assertOpen();
+    const activeSignal = signal ?? currentKernelSignal() ?? new AbortController().signal;
+    activeSignal.throwIfAborted();
+    const result = await runKernelExecution(activeSignal, run);
+    activeSignal.throwIfAborted();
+    this.#assertOpen();
+    return result;
   }
 
   #assertOpen(): void {

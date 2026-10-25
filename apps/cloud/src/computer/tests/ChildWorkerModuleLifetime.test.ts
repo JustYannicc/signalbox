@@ -28,6 +28,7 @@ describe("child program module lifetime", () => {
           modules: () => ({ "program.wasm": { wasm } }),
         },
         capacity: new ChildWorkerCapacity(4, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: "test/src-computer-tests-childworkermodulelifetime-test-1",
         }),
         dispatch: { run },
@@ -45,6 +46,7 @@ describe("child program module lifetime", () => {
   it("loads and freezes a fresh module map for each dispatch before capacity acquisition", async () => {
     const f = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkermodulelifetime-test-2",
     });
     let loadCount = 0;
@@ -83,6 +85,7 @@ describe("child program module lifetime", () => {
   it("fails module preparation before creating the host, reserving capacity, or dispatching", async () => {
     const f = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkermodulelifetime-test-3",
     });
     const failure = new Error("module source unavailable");
@@ -116,6 +119,7 @@ describe("child program module lifetime", () => {
     const started = Promise.withResolvers<void>();
     const loaded = Promise.withResolvers<Readonly<Record<string, string>>>();
     const capacity = new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkermodulelifetime-test-4",
     });
     const createHost = vi.fn(() => ({ host: {}, close() {} }));
@@ -173,6 +177,7 @@ describe("child program module lifetime", () => {
         executable: "/bin/program",
         code: { mainModule: "main.js", modules },
         capacity: new ChildWorkerCapacity(4, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
           owner: "test/src-computer-tests-childworkermodulelifetime-test-5",
         }),
         dispatch: { run },

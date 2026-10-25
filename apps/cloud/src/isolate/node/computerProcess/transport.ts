@@ -149,8 +149,8 @@ async function runComputerCommand(
     pumps = [
       // The descriptor signal owns cancellation; Workerd drops a second cancel's rejection.
       stdin.pipeTo(child.stdin, { signal: input.signal, preventCancel: true }),
-      child.stdout.pipeTo(streams.stdout, { signal: output.signal }),
-      child.stderr.pipeTo(streams.stderr, { signal: output.signal }),
+      child.stdout.pipeTo(streams.stdout, { signal: output.signal, preventCancel: true }),
+      child.stderr.pipeTo(streams.stderr, { signal: output.signal, preventCancel: true }),
     ];
     const failed = new Promise<never>((_, reject) => {
       for (const pump of pumps)

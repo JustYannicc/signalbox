@@ -16,6 +16,7 @@ export function childBashLifetimeFixture(
 ) {
   const files = childBashFixture();
   const capacity = new ChildWorkerCapacity(1, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
     owner: "test/src-computer-tests-childbashlifetimefixture-1",
   });
   const entered = Promise.withResolvers<KernelAsyncProgramContext>();
@@ -43,6 +44,7 @@ export function childBashLifetimeFixture(
         dispatch: {
           async run(input, owner) {
             const bash = createChildBash({
+              residentByteLimit: 104 * 1024 * 1024,
               module,
               credentials: bashCredentials,
               pid: owner.pid,

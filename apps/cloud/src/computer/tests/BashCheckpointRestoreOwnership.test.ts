@@ -125,7 +125,7 @@ function createReactor(
   const port = { complete: vi.fn(async () => {}) } as unknown as KernelBashPort;
   const reactor = createKernelBashReactor({
     module: makeForkLandingModule(),
-    residentWasmBudgetBytes: 64 << 20,
+    residentByteLimit: 64 << 20,
     credentials: {
       uid: 1,
       gid: 1,

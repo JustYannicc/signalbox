@@ -1,4 +1,5 @@
 import type { KernelFileSystem } from "../KernelFileSystem.ts";
+import { kernelFileByteViewStorage } from "../KernelLowerFileSystemStorage.ts";
 import { KernelRevisionWorkspaceError, errorCode } from "./RevisionErrors.ts";
 import type { Persistence } from "./RevisionTypes.ts";
 
@@ -29,7 +30,7 @@ export function assertOwnedResolvedPath(
   resolved: ReturnType<KernelFileSystem["resolve"]>,
   storage: Persistence["storage"],
 ): void {
-  if (resolved.mount.storage !== storage)
+  if (kernelFileByteViewStorage(resolved.mount.storage, resolved.inode) !== storage)
     throw new KernelRevisionWorkspaceError(
       "EINVAL",
       "A revision path resolves outside the persistence storage",

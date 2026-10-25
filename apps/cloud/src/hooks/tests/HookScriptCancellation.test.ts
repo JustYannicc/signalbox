@@ -33,6 +33,7 @@ function service(generated: HookServiceOptions["generated"], capacity: ChildWork
 describe("script hook cancellation", () => {
   it("runs queued hooks after the previous invocation releases its permit", async () => {
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-hooks-tests-hookscriptcancellation-test-1",
     });
     const started = Promise.withResolvers<void>();
@@ -64,6 +65,7 @@ describe("script hook cancellation", () => {
 
   it("retains admission when native invocation cleanup cannot be confirmed", async () => {
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-hooks-tests-hookscriptcancellation-test-2",
     });
     const failure = new NodeGeneratedCodeCleanupError(
@@ -94,6 +96,7 @@ describe("script hook cancellation", () => {
 
   it("retains admission when response cancellation returns an unconfirmed cleanup failure", async () => {
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-hooks-tests-hookscriptcancellation-test-3",
     });
     const reading = Promise.withResolvers<void>();
@@ -134,6 +137,7 @@ describe("script hook cancellation", () => {
 
   it("cancels the response body and holds admission until its cancellation finishes", async () => {
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-hooks-tests-hookscriptcancellation-test-4",
     });
     const reading = Promise.withResolvers<void>();
@@ -188,6 +192,7 @@ describe("script hook cancellation", () => {
 
   it("holds admission until an aborted invocation cleans up before producing a response", async () => {
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-hooks-tests-hookscriptcancellation-test-5",
     });
     const started = Promise.withResolvers<void>();

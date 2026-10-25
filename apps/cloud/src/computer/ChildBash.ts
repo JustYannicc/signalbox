@@ -13,7 +13,7 @@ import type {
 
 export interface ChildBashOptions {
   readonly module: WebAssembly.Module;
-  readonly residentWasmBudgetBytes?: number;
+  readonly residentByteLimit: number;
   readonly localForkPackingBytes?: number;
   readonly credentials: KernelBashCredentials;
   readonly pid: number;
@@ -28,10 +28,10 @@ export interface ChildBashOptions {
 
 /** Run the unchanged GNU Bash image in the child, including its Nimbus Asyncify ABI. */
 export function createChildBash(options: ChildBashOptions) {
+  if (!Number.isSafeInteger(options.residentByteLimit) || options.residentByteLimit <= 0)
+    throw new RangeError("Child Bash requires a positive safe integer resident byte limit");
   return createKernelBashReactor({
     ...options,
-    residentWasmBudgetBytes: options.residentWasmBudgetBytes ?? 104 * 1024 * 1024,
-    localForkPackingBytes: options.localForkPackingBytes ?? 64 * 1024 * 1024,
     createForkSource: async (source) => {
       const transformed = (await options.createForkSource?.(source)) ?? source;
       const { RpcTarget } = await import("cloudflare:workers");

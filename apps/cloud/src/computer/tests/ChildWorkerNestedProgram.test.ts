@@ -10,6 +10,7 @@ describe("child programs without reservations", () => {
   it("admits a nested child without exceeding the strict worker cap", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(2, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkernestedprogram-test-1",
     });
     const childStarted = Promise.withResolvers<void>();

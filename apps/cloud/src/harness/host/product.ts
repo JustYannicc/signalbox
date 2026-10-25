@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import type { Computer } from "../../computer/Computer.ts";
+import type { MachineProgramInventory } from "../../computer/MachineProgramInventory.ts";
 import {
   createProductComputer,
   type ProductComputer,
@@ -33,9 +34,18 @@ export interface ProductHostOptions<G, Native> extends Omit<
     /** Includes executable bytes and data files such as Git templates, each with its own mode. */
     readonly seed: HarnessHostOptions<G>["programs"];
   };
+  /** Inventory for the exact machine image paired with this host during preparation. */
+  readonly machineInventory: MachineProgramInventory;
   readonly commands: Omit<
     ProductComputerOptions,
-    "filesystem" | "wakes" | "programs" | "signal" | "home" | "parent" | "threadId"
+    | "filesystem"
+    | "wakes"
+    | "programs"
+    | "machineInventory"
+    | "signal"
+    | "home"
+    | "parent"
+    | "threadId"
   >;
   readonly hydrate?: (input: BindingInput<G>) => Promise<void>;
   readonly observeOutput?: KernelSessionOutputObserver;
@@ -85,7 +95,10 @@ function acquireStdio(
 
 // Runtime callbacks share a V8 context, so this scope must never receive release sources.
 function createProductBindings<G, Native>(
-  options: Pick<ProductHostOptions<G, Native>, "commands" | "native" | "hydrate" | "port" | "save">,
+  options: Pick<
+    ProductHostOptions<G, Native>,
+    "commands" | "machineInventory" | "native" | "hydrate" | "port" | "save"
+  >,
   binding: ProductNativeBinding<G, Native>,
   codes: ProductComputerOptions["programs"],
   wakes: KernelWakeRegistry,
@@ -103,6 +116,7 @@ function createProductBindings<G, Native>(
             try: () =>
               createProductComputer({
                 ...options.commands,
+                machineInventory: options.machineInventory,
                 threadId: input.threadId,
                 filesystem: input.files,
                 wakes,

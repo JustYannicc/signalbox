@@ -52,7 +52,10 @@ type DispatchOutcome =
   | { readonly kind: "success" };
 
 function workerForkHarness(owner: string, initialOutcome: DispatchOutcome) {
-  const capacity = new ChildWorkerCapacity(1, { owner });
+  const capacity = new ChildWorkerCapacity(1, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+    owner,
+  });
   const lifetimes = new ChildWorkerLifetimes();
   const loaderIds: string[] = [];
   const quotaClassifications: boolean[] = [];
@@ -136,7 +139,8 @@ function startGuest(
     port: owner.port,
     args: fixture.context.args,
     env: fixture.context.env,
-    residentWasmBudgetBytes: 0,
+    residentByteLimit: 104 * 1024 * 1024,
+    localForkPackingBytes: 0,
   });
   return { owner, reactor };
 }
@@ -154,6 +158,7 @@ describe.skipIf(!available)("Bash Dynamic Worker quota fork failure", () => {
 
       const control = childBashFixture({ args: command });
       const reference = createChildBash({
+        residentByteLimit: 104 * 1024 * 1024,
         module: module!,
         credentials: bashCredentials,
         pid: control.owner.pid,

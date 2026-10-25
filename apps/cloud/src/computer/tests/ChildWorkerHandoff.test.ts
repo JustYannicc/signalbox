@@ -15,6 +15,7 @@ describe("child slot handoff", () => {
   it("waits for a disconnected Worker's stop ACK before handing its slot off", async () => {
     const fixture = childBusyboxFixture();
     const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
       owner: "test/src-computer-tests-childworkerhandoff-test-1",
     });
     const cleaned = Promise.withResolvers<void>();

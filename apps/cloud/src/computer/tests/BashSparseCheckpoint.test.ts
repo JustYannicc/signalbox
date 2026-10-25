@@ -3,6 +3,14 @@ import type { KernelBashForkState } from "../../kernel/KernelBashFork.ts";
 import { storeBashCheckpoint } from "../BashCheckpointStore.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
 import { withRpcReplyDisposer } from "./helpers/rpcReply.ts";
+import { kernelFileByteViewStorage } from "../../kernel/KernelLowerFileSystemStorage.ts";
+
+function checkpointStorage(fixture: ReturnType<typeof createTestFilesystem>) {
+  const mounted = fixture.filesystem.resolve("/");
+  const storage = kernelFileByteViewStorage(mounted.mount.storage, mounted.mount.storage.root);
+  if (storage === undefined) throw new Error("Expected local checkpoint backing");
+  return storage;
+}
 
 const sparseState = (): KernelBashForkState => ({
   version: 2,
@@ -38,7 +46,7 @@ it("stores sparse ranges without fetching holes and serves old logical reads wit
     const bytes = (offset === 4096 ? first : second).slice();
     return withRpcReplyDisposer(bytes, () => bytes.fill(0));
   });
-  const storage = fixture.filesystem.resolve("/").mount.storage;
+  const storage = checkpointStorage(fixture);
   const write = vi.spyOn(storage, "write");
   const restored = vi.fn(async () => {});
   try {
@@ -72,7 +80,7 @@ it("copies sparse metadata before disposal and streams partial storage writes an
   const state = sparseState();
   let stateDisposals = 0;
   let chunkDisposals = 0;
-  const storage = fixture.filesystem.resolve("/").mount.storage;
+  const storage = checkpointStorage(fixture);
   const write = storage.write.bind(storage);
   const readInto = storage.readInto.bind(storage);
   const partialWrite = vi
@@ -119,7 +127,7 @@ it.each(["short-read", "bad-write", "sync", "abort"])(
   async (failureKind) => {
     const fixture = createTestFilesystem();
     const controller = new AbortController();
-    const storage = fixture.filesystem.resolve("/").mount.storage;
+    const storage = checkpointStorage(fixture);
     const release = vi.spyOn(storage, "release");
     const restored = vi.fn(async () => {});
     let disposals = 0;
@@ -165,7 +173,7 @@ it.each(["short-read", "bad-write", "sync", "abort"])(
 
 it("does not manufacture zero bytes when selected stored payload is missing", async () => {
   const fixture = createTestFilesystem();
-  const storage = fixture.filesystem.resolve("/").mount.storage;
+  const storage = checkpointStorage(fixture);
   try {
     const checkpoint = await storeBashCheckpoint(fixture.filesystem, {
       state: async () => sparseState(),

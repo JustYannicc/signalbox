@@ -8,6 +8,11 @@ export interface ChangeGenerationStorage extends Storage {
   changeGeneration(): number;
 }
 
-export function hasChangeGeneration(storage: Storage): storage is ChangeGenerationStorage {
-  return "changeGeneration" in storage && typeof storage.changeGeneration === "function";
+export function hasChangeGeneration(storage: unknown): storage is ChangeGenerationStorage {
+  return (
+    typeof storage === "object" &&
+    storage !== null &&
+    "changeGeneration" in storage &&
+    typeof storage.changeGeneration === "function"
+  );
 }

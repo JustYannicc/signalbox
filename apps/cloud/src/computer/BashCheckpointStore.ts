@@ -1,5 +1,6 @@
 // @effect-diagnostics cryptoRandomUUID:off - anonymous checkpoint inode names must not collide with guest files.
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
+import { kernelFileByteViewStorage } from "../kernel/KernelLowerFileSystemStorage.ts";
 import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import {
   copyKernelBashForkState,
@@ -31,9 +32,11 @@ export async function storeBashCheckpoint(
   signal?.throwIfAborted();
   bashMemoryRanges(state);
   const resolved = filesystem.resolve(filesystem.cwd);
-  const storage = resolved.mount.storage;
+  // Checkpoint bytes belong to the mount's local backing, not its guest overlay namespace.
+  const storage = kernelFileByteViewStorage(resolved.mount.storage, resolved.mount.storage.root);
+  if (storage === undefined) throw new Error("Bash checkpoint storage is unavailable");
   const name = `.signalbox-checkpoint-${crypto.randomUUID()}`;
-  const inode = await storage.create(resolved.inode, name, { type: "file", exclusive: true });
+  const inode = await storage.create(storage.root, name, { type: "file", exclusive: true });
   const memory = createBashCheckpointMemory(storage, inode, state);
   let open = true;
   const close = async () => {
@@ -45,7 +48,7 @@ export async function storeBashCheckpoint(
     if (!open) throw new Error("Bash checkpoint is closed");
   };
   try {
-    await storage.unlink(resolved.inode, name, { directory: false });
+    await storage.unlink(storage.root, name, { directory: false });
     await memory.write(source, signal);
     await storage.sync(inode, false);
     signal?.throwIfAborted();

@@ -25,14 +25,32 @@ export const createThreadClaudeSessions = (options: {
     const lock = yield* Semaphore.make(1);
     const fs = createNodeFs(options.files).fs;
     const projects = `${options.configurationDirectory.replace(/\/$/, "")}/projects`;
-    const filesFor = (nativeId: string) => {
+    const statIfPresent = async (path: string, signal: AbortSignal) => {
+      try {
+        return await options.files.statAsync(path, signal);
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "ENOENT"
+        )
+          return undefined;
+        throw error;
+      }
+    };
+    const filesFor = async (nativeId: string, signal: AbortSignal) => {
       if (!/^[a-zA-Z0-9-]+$/.test(nativeId)) throw failure("Claude native session id is invalid.");
       const matches: string[] = [];
-      if (fs.existsSync(projects)) {
-        for (const entry of fs.readdirSync(projects)) {
+      if (await statIfPresent(projects, signal)) {
+        const entries = await options.files.readdirAsync(projects, signal);
+        for (const entry of entries) {
           const directory = `${projects}/${String(entry)}`;
           const path = `${directory}/${nativeId}.jsonl`;
-          if (fs.statSync(directory).isDirectory() && fs.existsSync(path)) matches.push(path);
+          const directoryStat = await options.files.statAsync(directory, signal);
+          const fileStat =
+            directoryStat.type === "directory" ? await statIfPresent(path, signal) : undefined;
+          if (directoryStat.type === "directory" && fileStat) matches.push(path);
         }
       }
       if (matches.length !== 1)
@@ -40,18 +58,18 @@ export const createThreadClaudeSessions = (options: {
       const main = matches[0]!;
       const result = [{ stream: `${CLAUDE_STREAM_PREFIX}${nativeId}`, path: main }];
       const sidecars = main.slice(0, -".jsonl".length);
-      const visit = (directory: string, relative: string) => {
-        for (const entry of fs.readdirSync(directory)) {
+      const visit = async (directory: string, relative: string) => {
+        for (const entry of await options.files.readdirAsync(directory, signal)) {
           const name = String(entry);
           const path = `${directory}/${name}`;
           const subpath = relative === "" ? name : `${relative}/${name}`;
-          const stat = fs.lstatSync(path);
-          if (stat.isDirectory()) visit(path, subpath);
-          else if (stat.isFile() && name.endsWith(".jsonl"))
+          const stat = await options.files.lstatAsync(path, signal);
+          if (stat.type === "directory") await visit(path, subpath);
+          else if (stat.type === "file" && name.endsWith(".jsonl"))
             result.push({ stream: `${CLAUDE_STREAM_PREFIX}${nativeId}/${subpath}`, path });
         }
       };
-      if (fs.existsSync(sidecars)) visit(sidecars, "");
+      if (await statIfPresent(sidecars, signal)) await visit(sidecars, "");
       return result;
     };
     const persist = (thread: Pick<OrchestrationV2ProviderThread, "driver" | "nativeThreadRef">) =>
@@ -60,8 +78,8 @@ export const createThreadClaudeSessions = (options: {
           const nativeId = thread.nativeThreadRef?.nativeId;
           if (thread.driver !== "claudeAgent" || nativeId == null)
             return yield* failure("The checkpoint does not name a Claude native session.");
-          const files = yield* Effect.try({
-            try: () => filesFor(nativeId),
+          const files = yield* Effect.tryPromise({
+            try: (signal) => filesFor(nativeId, signal),
             catch: (cause) => failure("Could not locate the facet's Claude transcripts.", cause),
           });
           for (const file of files) {

@@ -16,6 +16,7 @@ import type { BaseLease, DriveRef, RecipeHash } from "../../Computer.ts";
 import { MachineCommands } from "../../MachineCommands.ts";
 import type { Machine, MachineHandle } from "../../Machine.ts";
 import type { MachineCommandJournal, MachineCommandRecord } from "../../MachineCommandJournal.ts";
+import type { MachineFilesPort } from "../../MachineFilesPort.ts";
 import type {
   MachineCommandRuntime,
   MachineWorkspace,
@@ -411,6 +412,13 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
           machineId: input.machine.id,
           generation: input.machine.generation,
         },
+        machineFiles: {
+          current: () => ({ generation: input.machine.generation, pristine: false }),
+          markExecuted: async () => undefined,
+          lookup: async () => {
+            throw new Error("Machine file lookup is unavailable in this fixture");
+          },
+        } satisfies MachineFilesPort,
         async quiesce(_signal: AbortSignal) {
           events.push("runtime.quiesce");
           await options.runtimeDispose?.();

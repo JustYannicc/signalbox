@@ -67,6 +67,7 @@ describe.skipIf(!available)("Bash Asyncify syscall trace", () => {
       },
     };
     const reactor = createChildBash({
+      residentByteLimit: 104 * 1024 * 1024,
       module: module!,
       credentials: bashCredentials,
       pid: fixture.owner.pid,

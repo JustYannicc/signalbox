@@ -10,7 +10,7 @@ export function bashMain(entrypoint: string): string {
     "    try { ({ pid, credentials, residentByteLimit } = metadata); } finally { metadata[Symbol.dispose]?.(); }",
     "    const snapshot = await owner.forkSnapshot();",
     "    let bash;",
-    "    try { bash = createWorkerChildBash({ module, credentials, pid, port: owner, args: command.argv, env: command.env, snapshot, residentWasmBudgetBytes: residentByteLimit }); } catch (error) { snapshot?.[Symbol.dispose]?.(); throw error; }",
+    "    try { bash = createWorkerChildBash({ module, credentials, pid, port: owner, args: command.argv, env: command.env, snapshot, residentByteLimit }); } catch (error) { snapshot?.[Symbol.dispose]?.(); throw error; }",
     "    try { return await bash.run(); } finally { await bash.drain(); }",
     "  }",
     "}",

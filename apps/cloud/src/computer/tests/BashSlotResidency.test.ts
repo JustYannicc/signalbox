@@ -30,7 +30,7 @@ const GROWTH_SCRIPT = [
 ].join("\n");
 
 async function runGrowthScenario(options: {
-  readonly residentWasmBudgetBytes: number;
+  readonly residentByteLimit: number;
   readonly localForkPackingBytes: number;
   readonly script?: string;
 }) {
@@ -60,7 +60,7 @@ async function runGrowthScenario(options: {
       args: fixture.context.args,
       env: fixture.context.env,
       snapshot: source,
-      residentWasmBudgetBytes: options.residentWasmBudgetBytes,
+      residentByteLimit: options.residentByteLimit,
       localForkPackingBytes: options.localForkPackingBytes,
     });
     const task = (async () => {
@@ -112,7 +112,7 @@ async function runGrowthScenario(options: {
     owner,
     undefined,
     phase,
-    options.residentWasmBudgetBytes,
+    options.residentByteLimit,
   );
   const reactor = createChildBash({
     module,
@@ -121,7 +121,7 @@ async function runGrowthScenario(options: {
     port: worker.host,
     args: fixture.context.args,
     env: fixture.context.env,
-    residentWasmBudgetBytes: options.residentWasmBudgetBytes,
+    residentByteLimit: options.residentByteLimit,
     localForkPackingBytes: options.localForkPackingBytes,
   });
   try {
@@ -162,6 +162,7 @@ describe.skipIf(!available)("Bash slot residency", () => {
       lease,
     );
     const reactor = createChildBash({
+      residentByteLimit: 104 * 1024 * 1024,
       module: new WebAssembly.Module(bytes),
       credentials: bashCredentials,
       pid: fixture.owner.pid,
@@ -184,7 +185,7 @@ describe.skipIf(!available)("Bash slot residency", () => {
 
   it("moves the second 25,000,000-byte Bash string before raw slot residency exceeds 104 MiB", async () => {
     const baseline = await runGrowthScenario({
-      residentWasmBudgetBytes: 512 * 1024 * 1024,
+      residentByteLimit: 512 * 1024 * 1024,
       localForkPackingBytes: 512 * 1024 * 1024,
     });
     expect(baseline.stderr).toBe("");
@@ -194,7 +195,7 @@ describe.skipIf(!available)("Bash slot residency", () => {
     expect(baseline.resident).toBe(152_109_056);
 
     const placed = await runGrowthScenario({
-      residentWasmBudgetBytes: 104 * 1024 * 1024,
+      residentByteLimit: 104 * 1024 * 1024,
       localForkPackingBytes: 64 * 1024 * 1024,
     });
     const slotBudget = 104 * 1024 * 1024;
@@ -211,7 +212,7 @@ describe.skipIf(!available)("Bash slot residency", () => {
 
   it("lets one unplaceable Bash process exceed a slot budget without a guest memory error", async () => {
     const scenario = await runGrowthScenario({
-      residentWasmBudgetBytes: 104 * 1024 * 1024,
+      residentByteLimit: 104 * 1024 * 1024,
       localForkPackingBytes: 64 * 1024 * 1024,
       script: "printf -v x '%*s' 50000000 ''; printf '%s\\n' \"${#x}\"",
     });

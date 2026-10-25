@@ -36,7 +36,7 @@ type DisposableForkSource = KernelBashForkSource & {
 
 interface BashGatewayOptions {
   readonly capacityLimit?: number;
-  readonly residentByteLimit?: number;
+  readonly RESIDENT_BYTE_LIMIT?: string;
   readonly localForkPackingBytes?: number;
   readonly beforeRpcReturn?: (details: {
     readonly pid: number;
@@ -123,7 +123,7 @@ export function createBashGateway(options: BashGatewayOptions = {}) {
         args: input.command.argv,
         env: input.command.env,
         snapshot,
-        residentWasmBudgetBytes: residentByteLimit,
+        residentByteLimit: residentByteLimit,
         ...(options.localForkPackingBytes === undefined
           ? {}
           : { localForkPackingBytes: options.localForkPackingBytes }),
@@ -196,9 +196,9 @@ export function createBashGateway(options: BashGatewayOptions = {}) {
 
   const fixture = commandGatewayFixture({
     capacityLimit: options.capacityLimit ?? SLOT_COUNT,
-    ...(options.residentByteLimit === undefined
+    ...(options.RESIDENT_BYTE_LIMIT === undefined
       ? {}
-      : { residentByteLimit: options.residentByteLimit }),
+      : { RESIDENT_BYTE_LIMIT: options.RESIDENT_BYTE_LIMIT }),
     run,
     async onRpcReturn(input) {
       const pid = pidByLoaderId.get(input.loaderId);

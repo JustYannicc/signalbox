@@ -7,6 +7,7 @@ const syntheticRequest = Object.freeze({ codeId: "test-holder", residentBytes: 0
 
 it("runs a script hook after its invoking shell acknowledges stop", async () => {
   const capacity = new ChildWorkerCapacity(1, {
+    RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
     owner: "test/src-hooks-tests-hookscriptadmission-test-1",
   });
   const controller = new AbortController();

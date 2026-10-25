@@ -1,4 +1,4 @@
-import type { AsyncStorage, Inode, Storage } from "../kernel/storage.ts";
+import type { Inode, MaybeAsyncStorage } from "../kernel/storage.ts";
 import {
   BASH_FORK_CHUNK_BYTES,
   type KernelBashForkSource,
@@ -7,7 +7,7 @@ import {
 import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import { bashMemoryChunks, bashMemoryRanges } from "../kernel/KernelBashMemory.ts";
 
-type ImageStorage = Pick<Storage | AsyncStorage, "write" | "readInto">;
+type ImageStorage = Pick<MaybeAsyncStorage, "write" | "readInto">;
 
 /** Packed payload avoids expanding a 4 KiB selected page into a 64 KiB filesystem hole. */
 export function createBashCheckpointMemory(
