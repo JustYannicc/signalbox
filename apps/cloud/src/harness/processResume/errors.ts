@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 export type HarnessProcessResumeReason =
+  | "cancelled"
   | "invalid-input"
   | "driver-failed"
   | "indeterminate"
@@ -11,6 +12,25 @@ export type HarnessProcessResumeReason =
   | "activation-failed"
   | "cleanup-failed"
   | "recovery-write-failed";
+
+export class HarnessProcessResumeRunStoreError extends Schema.TaggedError<HarnessProcessResumeRunStoreError>()(
+  "HarnessProcessResumeRunStoreError",
+  {
+    stage: Schema.Literals(["input", "preflight", "drain", "replacement"]),
+    reason: Schema.Literals([
+      "invalid-input",
+      "authority-changed",
+      "publisher-changed",
+      "request-changed",
+      "checkpoint-changed",
+      "unknown",
+    ]),
+  },
+) {
+  override get message(): string {
+    return "RunStore resume authority or request state could not be confirmed.";
+  }
+}
 
 export class HarnessProcessResumeDriverError extends Schema.TaggedError<HarnessProcessResumeDriverError>()(
   "HarnessProcessResumeDriverError",
@@ -51,6 +71,7 @@ export class HarnessProcessResumeError extends Schema.TaggedError<HarnessProcess
       "recovery",
     ]),
     reason: Schema.Literals([
+      "cancelled",
       "invalid-input",
       "driver-failed",
       "indeterminate",

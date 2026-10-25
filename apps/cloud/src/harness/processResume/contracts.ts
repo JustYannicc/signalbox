@@ -1,8 +1,14 @@
 import type * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleaseLedger.ts";
 import type { HarnessDurableStatePublicationResult } from "../HarnessDurableState.ts";
-import type { HarnessProcessPlacementIdentity } from "../HarnessProcessPlacement.ts";
+import type { HarnessProcessPlacementIdentity } from "../processPlacement/contracts.ts";
 import type { HarnessReleasePlan } from "../HarnessReleasePlan.ts";
+import type {
+  HarnessRequestCheckpoint,
+  HarnessRequestOffer,
+  HarnessRequestPublisher,
+} from "../HarnessRunStore.ts";
 import type {
   HarnessThreadSupervisorControlClaim,
   HarnessThreadSupervisorPublisher,
@@ -44,12 +50,68 @@ export interface HarnessProcessResumeFacetCode {
   readonly entrypoint: string;
 }
 
+const id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
+const capability = Schema.String.check(Schema.isMinLength(32), Schema.isMaxLength(128));
+const positive = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+);
+const artifact = Schema.Struct({
+  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
+  sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  bytes: Schema.Number.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(0),
+    Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+  ),
+});
+const requestCheckpoint = Schema.Struct({ native: artifact, filesystem: artifact });
+const requestPublisher = Schema.Struct({
+  generation: positive,
+  facetNonce: id,
+  publisherKey: capability,
+});
+const requestOffer = Schema.Struct({ requestId: id, input: artifact });
+
+/** Separate RunStore capabilities and the exact active request owned by the caller. */
+export const HarnessProcessResumeRunStoreBindingSchema = Schema.Struct({
+  runId: id,
+  processId: id,
+  processOperationId: id,
+  transitionOperationId: id,
+  controlKey: capability,
+  supervisor: Schema.Struct({ supervisorKey: capability, epoch: positive, claimId: id }),
+  currentPublisher: requestPublisher,
+  /** The caller supplies the next RunStore publisher; C never substitutes an A claim. */
+  nextPublisherKey: capability,
+  request: requestOffer,
+  /** The request journal checkpoint observed by the caller before C drains the process. */
+  checkpoint: requestCheckpoint,
+});
+
+export type HarnessProcessResumeRunStoreBinding = Omit<
+  typeof HarnessProcessResumeRunStoreBindingSchema.Type,
+  "currentPublisher" | "request" | "checkpoint"
+> & {
+  readonly currentPublisher: HarnessRequestPublisher;
+  readonly request: HarnessRequestOffer;
+  readonly checkpoint: HarnessRequestCheckpoint;
+};
+
+/** The RunStore owner supplies separate journal capabilities for the initial publication too. */
+export interface HarnessProcessExecutionJournal {
+  readonly publisher: HarnessThreadSupervisorPublisher;
+  readonly runStore: HarnessProcessResumeRunStoreBinding;
+}
+
 /** Serializable input to the shard DO. It cannot choose or supply a runtime context or handle. */
 export interface HarnessProcessResumeOperationInput {
   readonly runId: string;
   readonly previousProcessId: string;
   readonly previousOperationId: string;
   readonly previousStepId: string;
+  readonly runStore: HarnessProcessResumeRunStoreBinding;
   readonly transition: HarnessProcessResumeInput;
   readonly facet: HarnessProcessResumeFacetCode;
 }

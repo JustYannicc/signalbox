@@ -1,17 +1,21 @@
-import * as Effect from "effect/Effect";
 import type {
   HarnessDurableState,
   HarnessDurableStateBindings,
   HarnessDurableStateDrainResult,
-  HarnessDurableStateFailureInput,
   HarnessDurableStatePublicationResult,
 } from "../HarnessDurableState.ts";
+import type { HarnessRunStoreResult } from "../HarnessRunStore.ts";
+import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
 import type {
   HarnessProcessHandle,
   HarnessProcessPublicationPublisher,
+  HarnessProcessPublishedActivation,
 } from "../HarnessProcessPlacement.ts";
 import type { HarnessProcessFacetInvokeInput } from "../HarnessProcessFacet.ts";
-import type { HarnessProcessExecutionEnvironment } from "../processPlacement/execution.ts";
+import type {
+  HarnessProcessExecutionEnvironment,
+  HarnessProcessExecutionSupervisorClient,
+} from "../processPlacement/execution.ts";
 import { prepareHarnessProcessExecutionResumeFacet } from "../processPlacement/execution.ts";
 import type {
   HarnessProcessResumeCheckpointOutcome,
@@ -20,18 +24,23 @@ import type {
   HarnessProcessResumeInput,
   HarnessProcessResumeOperationInput,
   HarnessProcessResumePreparedFacet,
-  HarnessProcessResumePreparedRelease,
   HarnessProcessResumePublicationResult,
-  HarnessProcessResumeRecovery,
 } from "./contracts.ts";
-import { HarnessProcessResumeDriverError } from "./errors.ts";
+import { samePreparedRelease, snapshotPreparedRelease } from "./identity.ts";
 import type { HarnessProcessResumePreDrainSnapshot } from "./terminalEvidence.ts";
+import { replaceHarnessProcessResumeRunStoreFacet } from "./runStore.ts";
+import { authorizePublication, sameControl } from "./authority.ts";
+import { ownedPromise } from "./ownedEffect.ts";
+import type {
+  HarnessProcessResumeDurableRecord,
+  HarnessProcessResumePlacementPin,
+} from "./durableState.ts";
 
 interface ResumeDrain {
   readonly preDrain: HarnessProcessResumePreDrainSnapshot;
   readonly result: HarnessDurableStateDrainResult;
+  runStoreResult?: HarnessRunStoreResult;
 }
-
 interface CleanupEvidence {
   readonly stopAcknowledged: boolean;
   readonly invocationRpcJoined: boolean;
@@ -39,22 +48,16 @@ interface CleanupEvidence {
   readonly callbackPortsJoined: boolean;
   readonly disposed: boolean;
 }
-
-interface PreparedProcessFacet extends HarnessProcessResumePreparedFacet {
+export interface HarnessProcessResumePreparedFacetInstance extends HarnessProcessResumePreparedFacet {
   readonly handle: HarnessProcessHandle<HarnessProcessFacetInvokeInput>;
   readonly releasePlacementWriter: () => Promise<void>;
+  readonly preparedPublisher: HarnessThreadSupervisorPublisher;
   activation?: Awaited<
     ReturnType<HarnessProcessHandle<HarnessProcessFacetInvokeInput>["activate"]>
   >;
-  readonly preparedPublisher: {
-    readonly generation: number;
-    readonly facetNonce: string;
-    readonly publisherKey: string;
-  };
   bActivated: boolean;
   activationFailure?: unknown;
 }
-
 export interface HarnessProcessResumeHandoff {
   readonly beginDrain: (
     input: HarnessProcessResumeInput,
@@ -65,54 +68,87 @@ export interface HarnessProcessResumeHandoff {
   ) => Promise<HarnessProcessResumeCheckpointOutcome<HarnessProcessResumeCheckpointReference>>;
   readonly retainOwnership: () => void;
 }
-
 export function createHarnessProcessResumePlacementDriver(input: {
   readonly operation: HarnessProcessResumeOperationInput;
+  readonly shard: HarnessProcessResumePlacementPin;
   readonly context: DurableObjectState;
   readonly environment: HarnessProcessExecutionEnvironment & HarnessDurableStateBindings;
-  readonly shardIncarnationNonce: string;
   readonly durable: HarnessDurableState;
   readonly handoff: HarnessProcessResumeHandoff;
+  readonly controller: AbortController;
+  readonly save: (
+    changes: Partial<
+      Pick<HarnessProcessResumeDurableRecord, "phase" | "prepared" | "publication" | "failure">
+    >,
+  ) => Promise<void>;
 }): HarnessProcessResumeDriver<
   ResumeDrain,
   HarnessProcessResumeCheckpointReference,
-  PreparedProcessFacet,
+  HarnessProcessResumePreparedFacetInstance,
   HarnessProcessResumePublicationResult,
   CleanupEvidence
 > {
-  const operation = input.operation;
+  const { operation, durable, controller } = input;
   const { transition } = operation;
+  const check = () => controller.signal.throwIfAborted();
+  const effect = <A>(
+    stage: Parameters<typeof ownedPromise>[0],
+    run: () => Promise<A>,
+    allowCancelled = false,
+  ) => ownedPromise(stage, controller, run, allowCancelled);
   let publicationResult: HarnessDurableStatePublicationResult | undefined;
-
+  const authorityRead: HarnessProcessExecutionSupervisorClient = {
+    execute: (command) => durable.threadSupervisor.execute(command),
+    publishProcessFacet: async () => {
+      throw new Error("Resume publication is owned by the prepared transition.");
+    },
+    authorizeProcessFacetActivation: async () => {
+      throw new Error("Resume authorization is owned by the prepared transition.");
+    },
+    reconcileProcessFacetPublication: async (request) => {
+      await durable.threadSupervisor.execute({
+        type: "read",
+        runId: operation.runId,
+        control: request.controllerClaim,
+      });
+      return { status: "unknown" };
+    },
+  };
   return {
-    beginDrain: (resumeInput) =>
-      effect("fence", () => input.handoff.beginDrain(resumeInput, input.durable)),
+    beginDrain: (request) => effect("fence", () => input.handoff.beginDrain(request, durable)),
     awaitDrain: (drain) => effect("drain", () => input.handoff.awaitDrain(drain)),
     isCurrentControl: ({ control }) =>
-      effect("drain", async () => {
-        const current = await input.durable.threadSupervisor.execute({
-          type: "read",
-          runId: operation.runId,
-          control,
-        });
-        return (
-          current.snapshot.ownerId === control.ownerId &&
-          current.snapshot.controlIncarnationId === control.incarnationId &&
-          current.snapshot.controlEpoch === control.epoch
-        );
-      }),
+      effect(
+        "drain",
+        async () => {
+          const current = await durable.threadSupervisor.execute({
+            type: "read",
+            runId: operation.runId,
+            control,
+          });
+          return (
+            current.snapshot.ownerId === control.ownerId &&
+            current.snapshot.controlEpoch === control.epoch &&
+            current.snapshot.controlIncarnationId === control.incarnationId
+          );
+        },
+        true,
+      ),
     readNativeSessionId: ({ control }) =>
-      effect("checkpoint", async () => {
-        const current = await input.durable.threadSupervisor.execute({
-          type: "read",
-          runId: operation.runId,
-          control,
-        });
-        return current.snapshot.nativeSessionId;
-      }),
+      effect(
+        "checkpoint",
+        async () =>
+          (
+            await durable.threadSupervisor.execute({
+              type: "read",
+              runId: operation.runId,
+              control,
+            })
+          ).snapshot.nativeSessionId,
+      ),
     verifyCheckpoint: ({ checkpoint, nativeSessionId }) =>
       effect("checkpoint", async () => {
-        const current = await input.durable.threadSupervisor.execute({
+        const current = await durable.threadSupervisor.execute({
           type: "read",
           runId: operation.runId,
           control: transition.nextControl,
@@ -125,7 +161,7 @@ export function createHarnessProcessResumePlacementDriver(input: {
           current.snapshot.lifecycle !== "stopped"
         )
           throw new Error("The durable checkpoint does not match the settled process.");
-        const stored = await input.durable.filesStore.execute({
+        const stored = await durable.filesStore.execute({
           type: "readCheckpoint",
           runId: operation.runId,
           publisher: transition.publisher,
@@ -139,50 +175,52 @@ export function createHarnessProcessResumePlacementDriver(input: {
       }),
     prepareInert: (prepare) =>
       effect("fresh-open", async () => {
-        if (
-          prepare.nativeSessionId !== prepare.checkpoint.nativeSessionId ||
-          prepare.control.ownerId !== transition.nextControl.ownerId ||
-          prepare.control.incarnationId !== transition.nextControl.incarnationId ||
-          prepare.expectedFacetGeneration !== transition.expectedFacetGeneration
-        )
-          throw new Error("Fresh facet preparation lost its durable identity binding.");
-
+        check();
         const process = {
-          ...input.operation.facet,
+          ...operation.facet,
           nativeSessionId: prepare.nativeSessionId,
           checkpointId: prepare.checkpoint.checkpointId,
           manifestRevision: prepare.checkpoint.manifestSha256,
           operationId: prepare.operationId,
           priorFacetNonce: prepare.publisher.facetNonce,
           expectedFacetGeneration: prepare.expectedFacetGeneration,
+          runStorePublisher: {
+            generation: operation.runStore.currentPublisher.generation + 1,
+            publisherKey: operation.runStore.nextPublisherKey,
+          },
           facetEnv: {
             HARNESS_RESUME_RUN_ID: operation.runId,
             HARNESS_RESUME_CONTROL: transition.nextControl,
             HARNESS_RESUME_PUBLISHER: prepare.publisher,
-            HARNESS_RUN_STORE: input.environment.HARNESS_RUN_STORE,
-            HARNESS_FILES_STORE: input.environment.HARNESS_FILES_STORE,
-            HARNESS_THREAD_SUPERVISOR: input.environment.HARNESS_THREAD_SUPERVISOR,
+            HARNESS_RESUME_RUN_STORE: input.environment.HARNESS_RUN_STORE.getByName(
+              operation.runId,
+            ),
+            HARNESS_RESUME_FILES_STORE: input.environment.HARNESS_FILES_STORE.getByName(
+              operation.runId,
+            ),
+            HARNESS_RESUME_SUPERVISOR: input.environment.HARNESS_THREAD_SUPERVISOR.getByName(
+              operation.runId,
+            ),
           },
         };
         const opened = await prepareHarnessProcessExecutionResumeFacet({
           runId: operation.runId,
-          executionOperationId: transition.operationId,
-          shardOwner: `resume/${operation.runId}`,
+          executionOperationId: input.shard.executionOperationId,
+          shardOwner: input.shard.shardOwner,
+          placementOwner: input.shard.owner,
           controllerClaim: transition.nextControl,
-          shardIndex: 0,
+          shardIndex: input.shard.shardIndex,
           process,
           context: input.context,
           environment: input.environment,
-          shardIncarnationNonce: input.shardIncarnationNonce,
+          shardIncarnationNonce: input.shard.shardIncarnationNonce,
+          signal: controller.signal,
+          authority: authorityRead,
         });
         const observed = await opened.readLoadedPreparedRelease();
-        const preparedRelease = observed as HarnessProcessResumePreparedRelease | undefined;
-        const preparedPublisher = {
-          generation: prepare.expectedFacetGeneration + 1,
-          facetNonce: opened.handle.identity.incarnationNonce,
-          // @effect-diagnostics-next-line cryptoRandomUUID:off - A publisher capability is per prepared facet.
-          publisherKey: crypto.randomUUID().replaceAll("-", ""),
-        };
+        const preparedRelease = snapshotPreparedRelease(
+          observed as Parameters<typeof snapshotPreparedRelease>[0],
+        );
         return {
           identity: {
             ...opened.handle.identity,
@@ -190,55 +228,71 @@ export function createHarnessProcessResumePlacementDriver(input: {
           },
           handle: opened.handle,
           releasePlacementWriter: opened.releaseWriter,
-          preparedPublisher,
+          preparedPublisher: {
+            generation: prepare.expectedFacetGeneration + 1,
+            facetNonce: opened.handle.identity.incarnationNonce,
+            // @effect-diagnostics-next-line cryptoRandomUUID:off - each prepared A publisher receives a fresh capability.
+            publisherKey: crypto.randomUUID().replaceAll("-", ""),
+          },
           bActivated: false,
         };
       }),
     verifyPrepared: ({ prepared, checkpoint, nativeSessionId, targetPreparedRelease }) =>
       effect("fresh-verification", async () => {
-        const current = await input.durable.threadSupervisor.execute({
+        const current = await durable.threadSupervisor.execute({
           type: "read",
           runId: operation.runId,
           control: transition.nextControl,
         });
-        const loaded = await prepared.handle.identity;
         if (
-          loaded.incarnationNonce !== prepared.identity.incarnationNonce ||
           current.snapshot.nativeSessionId !== nativeSessionId ||
           current.snapshot.checkpoint.checkpointId !== checkpoint.checkpointId ||
           current.snapshot.checkpoint.manifestSha256 !== checkpoint.manifestSha256 ||
           current.snapshot.lifecycle !== "stopped" ||
-          !sameRelease(prepared.identity.preparedRelease, targetPreparedRelease)
+          !samePreparedRelease(prepared.identity.preparedRelease, targetPreparedRelease)
         )
-          throw new Error("The fresh facet did not restore the target durable identity.");
+          throw new Error("The fresh facet did not restore the selected release and checkpoint.");
+        check();
       }),
-    persistPrepared: ({ control, publisher, operationId, prepared, expectedFacetGeneration }) =>
+    persistPrepared: (prepared) =>
       effect("fresh-verification", async () => {
+        const observed = prepared.prepared.identity.preparedRelease;
         if (
-          control.ownerId !== transition.nextControl.ownerId ||
-          control.incarnationId !== transition.nextControl.incarnationId ||
-          control.epoch !== transition.nextControl.epoch ||
-          control.controlKey !== transition.nextControl.controlKey ||
-          publisher.generation !== expectedFacetGeneration ||
-          prepared.preparedPublisher.generation !== expectedFacetGeneration + 1 ||
-          prepared.preparedPublisher.facetNonce !== prepared.identity.incarnationNonce
+          observed === undefined ||
+          !samePreparedRelease(observed, prepared.targetPreparedRelease) ||
+          !sameControl(prepared.control, transition.nextControl)
         )
-          throw new Error("The prepared publisher does not match the settled process identity.");
-        await input.durable.threadSupervisor.execute({
+          throw new Error("The complete observed target is required before prepared persistence.");
+        check();
+        await input.save({
+          phase: "prepared",
+          prepared: {
+            requested: prepared.targetPreparedRelease,
+            observed,
+            publisher: prepared.prepared.preparedPublisher,
+            identity: prepared.prepared.identity,
+            checkpoint: prepared.checkpoint,
+          },
+        });
+        check();
+        await durable.threadSupervisor.execute({
           type: "prepareFreshFacet",
           runId: operation.runId,
-          control,
-          publisher,
-          expectedGeneration: expectedFacetGeneration,
-          operationId,
-          preparedPublisher: prepared.preparedPublisher,
+          control: prepared.control,
+          publisher: prepared.publisher,
+          expectedGeneration: prepared.expectedFacetGeneration,
+          operationId: prepared.operationId,
+          preparedPublisher: prepared.prepared.preparedPublisher,
         });
       }),
     publishFreshFacet: (publish) =>
       effect("publication", async () => {
-        let activationFailure: unknown;
-        const authority: HarnessProcessPublicationPublisher = {
+        check();
+        await input.save({ phase: "publication-attempted" });
+        check();
+        const authority: HarnessProcessPublicationPublisher<HarnessProcessPublishedActivation> = {
           publishProcessFacet: async (request) => {
+            check();
             if (
               request.operationId !== publish.operationId ||
               request.identity.incarnationNonce !== publish.prepared.identity.incarnationNonce ||
@@ -246,10 +300,10 @@ export function createHarnessProcessResumePlacementDriver(input: {
               request.checkpointId !== publish.checkpoint.checkpointId ||
               request.manifestRevision !== publish.checkpoint.manifestSha256 ||
               request.expectedFacetGeneration !== publish.expectedFacetGeneration ||
-              request.controllerClaim.controlKey !== transition.nextControl.controlKey
+              !sameControl(request.controllerClaim, transition.nextControl)
             )
-              throw new Error("The process placement requested another durable publication.");
-            publicationResult = await input.durable.publishFreshFacet({
+              throw new Error("B requested another process publication.");
+            publicationResult = await durable.publishFreshFacet({
               control: transition.nextControl,
               operationId: publish.operationId,
               verifiedNativeSessionId: publish.nativeSessionId,
@@ -258,186 +312,146 @@ export function createHarnessProcessResumePlacementDriver(input: {
                 manifestSha256: publish.checkpoint.manifestSha256,
               },
             });
+            await input.save({
+              phase:
+                publicationResult.status === "published" ? "published" : "publication-attempted",
+              publication: publicationResult,
+            });
             if (publicationResult.status !== "published")
-              throw new Error("Durable process publication remains pending.");
+              throw new Error("Durable publication remains pending.");
+            check();
             return {
               publication: publicationResult,
-              publisher: publicationResult.supervisor.currentPublisher,
-              requestId: operation.previousStepId,
+              publisher: {
+                generation: publish.prepared.preparedPublisher.generation,
+                facetNonce: publish.prepared.identity.incarnationNonce,
+                publisherKey: operation.runStore.nextPublisherKey,
+              },
+              requestMode: "awaiting-next-request",
             };
           },
+          authorizeProcessFacetActivation: async (request, receipt) => {
+            check();
+            if (
+              publicationResult?.status !== "published" ||
+              publicationResult.receipt !== receipt ||
+              publish.drain.runStoreResult === undefined
+            )
+              throw new Error("B activation has no exact publication and journal receipts.");
+            await replaceHarnessProcessResumeRunStoreFacet({
+              store: durable.runStore,
+              operation,
+              expectedJournal: publish.drain.runStoreResult,
+              checkpoint: publish.checkpoint,
+              preparedFacetNonce: publish.prepared.identity.incarnationNonce,
+              publication: publicationResult,
+            });
+            check();
+            await authorizePublication({
+              durable,
+              runId: operation.runId,
+              publication: publicationResult,
+              request,
+              lifecycle: "published",
+            });
+            check();
+          },
         };
-
         try {
           publish.prepared.activation = await publish.prepared.handle.activate(authority);
           publish.prepared.bActivated = true;
         } catch (cause) {
-          activationFailure = cause;
           publish.prepared.activationFailure = cause;
         }
         if (publicationResult !== undefined) return publicationResult;
-        throw (
-          activationFailure ?? new Error("Process placement did not return a publication receipt.")
-        );
+        throw publish.prepared.activationFailure ?? new Error("B returned no publication result.");
       }),
     activate: ({ control, operationId, prepared }) =>
       effect("activation", async () => {
         if (prepared.activationFailure !== undefined) throw prepared.activationFailure;
-        if (!prepared.bActivated)
-          throw new Error("B has not activated the published process facet.");
-        const activated = await input.durable.recordActivation({ control, operationId });
-        if (activated.status !== "accepting")
-          throw new Error("Durable process activation remains pending.");
+        if (!prepared.bActivated) throw new Error("B has not activated this process.");
+        check();
+        const result = await durable.recordActivation({ control, operationId });
+        if (result.status !== "accepting") throw new Error("A activation is pending.");
+        check();
+        await input.save({ phase: "active" });
       }),
     cleanupPrepared: (prepared) =>
-      effect("cleanup", async () => {
-        const stopped = await prepared.handle.stop();
-        const joined = await prepared.handle.join();
-        const complete = stopped.acknowledged && allJoined(joined);
-        const evidence = {
-          stopAcknowledged: stopped.acknowledged,
-          invocationRpcJoined: joined.invocationRpc,
-          fetchJoined: joined.fetch,
-          callbackPortsJoined: joined.ports,
-          disposed: false as boolean,
-        };
-        if (!complete) {
-          input.handoff.retainOwnership();
-          return { _tag: "incomplete", evidence };
-        }
-        try {
-          await prepared.handle.cleanup();
-          evidence.disposed = true;
-          await prepared.releasePlacementWriter();
-          return { _tag: "complete", evidence };
-        } catch {
-          input.handoff.retainOwnership();
-          return { _tag: "incomplete", evidence };
-        }
-      }),
+      effect(
+        "cleanup",
+        async () => {
+          const stopped = await prepared.handle.stop();
+          const joined = await prepared.handle.join();
+          const evidence = {
+            stopAcknowledged: stopped.acknowledged,
+            invocationRpcJoined: joined.invocationRpc,
+            fetchJoined: joined.fetch,
+            callbackPortsJoined: joined.ports,
+            disposed: false,
+          };
+          if (
+            controller.signal.aborted ||
+            !stopped.acknowledged ||
+            !joined.invocationRpc ||
+            !joined.fetch ||
+            !joined.ports
+          ) {
+            input.handoff.retainOwnership();
+            return { _tag: "incomplete", evidence };
+          }
+          try {
+            await prepared.handle.cleanup();
+            evidence.disposed = true;
+            await prepared.releasePlacementWriter();
+            return { _tag: "complete", evidence };
+          } catch {
+            input.handoff.retainOwnership();
+            return { _tag: "incomplete", evidence };
+          }
+        },
+        true,
+      ),
     recordFailure: (failure) =>
       effect(
         "recovery",
-        async () => await recordFailure(input.durable, operation.runId, transition, failure),
+        async () => {
+          input.handoff.retainOwnership();
+          await input.save({
+            phase: "retained",
+            failure: { stage: failure.stage, reason: failure.reason },
+          });
+          const current = await durable.threadSupervisor.execute({
+            type: "read",
+            runId: operation.runId,
+            control: transition.nextControl,
+          });
+          if (
+            current.snapshot.lastPublicationOperationId === failure.operationId &&
+            ["published", "activation-failed", "accepting"].includes(current.snapshot.lifecycle)
+          ) {
+            await durable.recordActivationFailure({
+              control: transition.nextControl,
+              operationId: failure.operationId,
+              failure: {
+                kind: failure.reason,
+                message: "The process resume requires explicit repair.",
+              },
+            });
+          } else if (current.snapshot.lifecycle === "preparing" && failure.cleanup !== null) {
+            await durable.recordPreparedFacetFailure({
+              control: transition.nextControl,
+              operationId: failure.operationId,
+              phase: "prepare",
+              failure: {
+                kind: failure.reason,
+                message: "The prepared process requires explicit repair.",
+              },
+              cleanup: failure.cleanup.evidence,
+            });
+          }
+          return "recorded" as const;
+        },
+        true,
       ),
   };
-}
-
-async function recordFailure(
-  durable: HarnessDurableState,
-  runId: string,
-  transition: HarnessProcessResumeInput,
-  input: Parameters<
-    HarnessProcessResumeDriver<
-      ResumeDrain,
-      HarnessProcessResumeCheckpointReference,
-      PreparedProcessFacet,
-      HarnessProcessResumePublicationResult,
-      CleanupEvidence
-    >["recordFailure"]
-  >[0],
-): Promise<HarnessProcessResumeRecovery> {
-  let current;
-  try {
-    current = await durable.threadSupervisor.execute({
-      type: "read",
-      runId,
-      control: transition.nextControl,
-    });
-  } catch {
-    return "claim-changed";
-  }
-
-  if (
-    (current.snapshot.lifecycle === "published" ||
-      current.snapshot.lifecycle === "activation-failed" ||
-      current.snapshot.lifecycle === "accepting") &&
-    current.snapshot.lastPublicationOperationId === input.operationId
-  ) {
-    try {
-      await durable.recordActivationFailure({
-        control: transition.nextControl,
-        operationId: input.operationId,
-        failure: { kind: input.reason, message: "Process resume activation failed." },
-      });
-      return "recorded";
-    } catch {
-      return "record-failed";
-    }
-  }
-
-  if (
-    current.snapshot.lifecycle === "preparing" &&
-    current.snapshot.preparedFacet?.operationId === input.operationId &&
-    input.cleanup !== null
-  ) {
-    try {
-      const failure: HarnessDurableStateFailureInput = {
-        control: transition.nextControl,
-        operationId: input.operationId,
-        phase: "prepare",
-        failure: { kind: input.reason, message: "Fresh facet preparation failed." },
-        cleanup: {
-          stopAcknowledged: input.cleanup.evidence.stopAcknowledged,
-          invocationRpcJoined: input.cleanup.evidence.invocationRpcJoined,
-          fetchJoined: input.cleanup.evidence.fetchJoined,
-          callbackPortsJoined: input.cleanup.evidence.callbackPortsJoined,
-          disposed: input.cleanup.evidence.disposed,
-        },
-      };
-      await durable.recordPreparedFacetFailure(failure);
-      return "recorded";
-    } catch {
-      return "record-failed";
-    }
-  }
-
-  if (
-    current.snapshot.lifecycle === "indeterminate" ||
-    (current.snapshot.lifecycle === "stopped" && input.prepared === undefined)
-  )
-    return "recorded";
-
-  if (input.publication !== undefined && input.publication.status !== "published")
-    return "recorded";
-  return "not-recorded";
-}
-
-function effect<A>(
-  operation: HarnessProcessResumeDriverError["operation"],
-  run: () => Promise<A>,
-): Effect.Effect<A, HarnessProcessResumeDriverError> {
-  return Effect.tryPromise({
-    try: run,
-    catch: (cause) => new HarnessProcessResumeDriverError({ operation, cause }),
-  });
-}
-
-function sameRelease(
-  left: HarnessProcessResumePreparedRelease | undefined,
-  right: HarnessProcessResumePreparedRelease,
-): boolean {
-  if (left === undefined) return false;
-  return (
-    left.artifact.provider === right.artifact.provider &&
-    left.artifact.releaseId === right.artifact.releaseId &&
-    left.artifact.artifactHash === right.artifact.artifactHash &&
-    left.artifact.artifactRef === right.artifact.artifactRef &&
-    left.artifact.sourceIdentity === right.artifact.sourceIdentity &&
-    left.artifact.fixtureIdentity === right.artifact.fixtureIdentity &&
-    left.artifact.createdAt === right.artifact.createdAt &&
-    JSON.stringify(left.plan.release) === JSON.stringify(right.plan.release) &&
-    left.plan.sourceIdentity === right.plan.sourceIdentity &&
-    left.plan.computer.sourceIdentity === right.plan.computer.sourceIdentity &&
-    left.plan.computer.manifestSha256 === right.plan.computer.manifestSha256 &&
-    JSON.stringify(left.plan.preparedModules) === JSON.stringify(right.plan.preparedModules)
-  );
-}
-
-function allJoined(joined: {
-  readonly invocationRpc: boolean;
-  readonly fetch: boolean;
-  readonly ports: boolean;
-}) {
-  return joined.invocationRpc && joined.fetch && joined.ports;
 }

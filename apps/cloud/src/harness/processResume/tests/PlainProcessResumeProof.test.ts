@@ -12,15 +12,15 @@ import {
 } from "../../../computer/ProcessSlots.ts";
 import {
   controlKey,
-  fixture as runStoreFixture,
+  runStoreFixture,
   initial,
   reference,
   replacement,
   runId,
   supervisor,
   takeover,
-} from "../../runStore/tests/fixture.ts";
-import { install, requestPublisher } from "../../runStore/tests/requestFixture.ts";
+} from "./plainRunStore.fixture.ts";
+import { install, requestPublisher } from "./plainRunStore.fixture.ts";
 import {
   createPlainCheckpointFiles,
   createPlainGitWorkspace,

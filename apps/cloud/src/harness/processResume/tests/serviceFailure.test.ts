@@ -1,4 +1,6 @@
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -824,5 +826,30 @@ describe("harness process resume failure handling", () => {
           },
         ]);
       }),
+  );
+  it.effect("records interrupted owned preparation without publishing or retiring it", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const finalized = yield* Deferred.make<void>();
+      const { driver, events, failures } = makeDriver(() => ({
+        verifyPrepared: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(entered, undefined);
+            return yield* Effect.never;
+          }).pipe(Effect.ensuring(Deferred.succeed(finalized, undefined))),
+      }));
+      const running = yield* createHarnessProcessResume(driver)
+        .resume(input)
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(running);
+      yield* Deferred.await(finalized);
+      expect(events).not.toContain("publishFreshFacet");
+      expect(events).not.toContain("activate");
+      expect(events).not.toContain("cleanupPrepared");
+      expect(failures).toMatchObject([
+        { stage: "fresh-verification", reason: "cancelled", cleanup: null },
+      ]);
+    }),
   );
 });

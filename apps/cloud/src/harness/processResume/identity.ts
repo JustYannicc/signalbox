@@ -77,7 +77,7 @@ export const samePreparedRelease = (
   }
 };
 
-const snapshotPreparedRelease = (
+export const snapshotPreparedRelease = (
   value: HarnessProcessResumePreparedRelease,
 ): HarnessProcessResumePreparedRelease | undefined => {
   try {

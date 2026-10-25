@@ -1,4 +1,6 @@
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import {
   HarnessProcessResumeDriverError,
   HarnessProcessResumeError,
@@ -154,29 +156,38 @@ export const createHarnessProcessResume = <
     let publication: Extract<Publication, { readonly status: "published" }> | undefined;
     let publicationResult: Publication | undefined;
     let publicationAttempted = false;
+    let currentStage: HarnessProcessResumeStage = "fence";
+    const at = <A>(
+      stage: HarnessProcessResumeStage,
+      operation: Effect.Effect<A, HarnessProcessResumeDriverError>,
+      reason: HarnessProcessResumeReason = "driver-failed",
+    ) =>
+      Effect.sync(() => {
+        currentStage = stage;
+      }).pipe(Effect.andThen(runAt(stage, operation, reason)));
 
     const operation = Effect.gen(function* () {
-      drain = yield* runAt("fence", driver.beginDrain(input));
-      const drained = yield* runAt("drain", driver.awaitDrain(drain));
+      drain = yield* at("fence", driver.beginDrain(input));
+      const drained = yield* at("drain", driver.awaitDrain(drain));
       if (drained._tag === "stale-control") return yield* failure("drain", "stale-control");
       if (drained._tag === "indeterminate") return yield* failure("settlement", "indeterminate");
 
-      const current = yield* runAt(
+      const current = yield* at(
         "drain",
         driver.isCurrentControl({ drain, control: input.nextControl }),
       );
       if (!current) return yield* failure("drain", "stale-control");
 
-      const nativeSessionId = yield* runAt(
+      const nativeSessionId = yield* at(
         "checkpoint",
         driver.readNativeSessionId({ drain, control: input.nextControl }),
       );
-      yield* runAt(
+      yield* at(
         "checkpoint",
         driver.verifyCheckpoint({ checkpoint: drained.checkpoint, nativeSessionId }),
       );
 
-      prepared = yield* runAt(
+      prepared = yield* at(
         "fresh-open",
         driver.prepareInert({
           drain,
@@ -191,7 +202,7 @@ export const createHarnessProcessResume = <
       );
       if (!samePreparedRelease(prepared.identity.preparedRelease, input.targetPreparedRelease))
         return yield* failure("fresh-verification", "prepared-release-mismatch");
-      yield* runAt(
+      yield* at(
         "fresh-verification",
         driver.verifyPrepared({
           drain,
@@ -204,7 +215,7 @@ export const createHarnessProcessResume = <
       if (!samePreparedRelease(prepared.identity.preparedRelease, input.targetPreparedRelease))
         return yield* failure("fresh-verification", "prepared-release-mismatch");
 
-      yield* runAt(
+      yield* at(
         "fresh-verification",
         driver.persistPrepared({
           drain,
@@ -224,7 +235,7 @@ export const createHarnessProcessResume = <
       if (!samePreparedRelease(prepared.identity.preparedRelease, input.targetPreparedRelease))
         return yield* failure("fresh-verification", "prepared-release-mismatch");
       publicationAttempted = true;
-      const attempt = yield* runAt(
+      const attempt = yield* at(
         "publication",
         driver.publishFreshFacet({
           drain,
@@ -249,7 +260,7 @@ export const createHarnessProcessResume = <
         return yield* failure("publication", "identity-or-checkpoint-mismatch");
       publication = attempt;
 
-      yield* runAt(
+      yield* at(
         "activation",
         driver.activate({
           drain,
@@ -266,96 +277,109 @@ export const createHarnessProcessResume = <
       };
     });
 
-    return operation.pipe(
-      Effect.catch((original) =>
-        Effect.gen(function* () {
-          let cleanup: HarnessProcessResumeCleanup<CleanupEvidence> | null = null;
-          let cleanupCallCause: unknown;
-          if (prepared !== undefined && !publicationAttempted) {
-            const cleanupResult = yield* Effect.uninterruptible(
-              driver.cleanupPrepared(prepared).pipe(
-                Effect.map((evidence) => ({ ok: true as const, evidence })),
-                Effect.catch((cause) => Effect.succeed({ ok: false as const, cause })),
-              ),
-            );
-            if (cleanupResult.ok) cleanup = cleanupResult.evidence;
-            else cleanupCallCause = cleanupResult.cause;
-          }
-
-          const cleanupFailed = cleanupCallCause !== undefined || cleanup?._tag === "incomplete";
-          const finalStage = cleanupFailed ? "cleanup" : original.stage;
-          const finalReason = cleanupFailed ? "cleanup-failed" : original.reason;
-          const finalCause = cleanupCallCause ?? original.cause;
-          const priorCause = cleanupFailed ? original.cause : undefined;
-          let recovery: "recorded" | "claim-changed" | "record-failed" | "not-recorded" =
-            "not-recorded";
-          let failedStage: HarnessProcessResumeStage | undefined;
-          let recoveryCause: unknown;
-
-          if (drain !== undefined) {
-            const current = yield* driver
-              .isCurrentControl({ drain, control: input.nextControl })
-              .pipe(
-                Effect.map((value) => ({ value })),
-                Effect.catch((cause) => Effect.succeed({ cause })),
-              );
-            if ("value" in current && current.value) {
-              const recorded = yield* driver
-                .recordFailure({
-                  drain,
-                  control: input.nextControl,
-                  operationId: input.operationId,
-                  expectedFacetGeneration: input.expectedFacetGeneration,
-                  targetPreparedRelease: input.targetPreparedRelease,
-                  stage: finalStage,
-                  ...(cleanupFailed ? { failedStage: original.stage } : {}),
-                  reason: finalReason,
-                  ...(cleanupFailed ? { priorReason: original.reason } : {}),
-                  ...(prepared === undefined ? {} : { prepared }),
-                  ...(publicationResult === undefined ? {} : { publication: publicationResult }),
-                  cleanup,
-                })
-                .pipe(
-                  Effect.map((value) => ({ ok: true as const, recovery: value })),
-                  Effect.catch((cause) => Effect.succeed({ ok: false as const, cause })),
+    return Effect.uninterruptibleMask((restore) =>
+      restore(operation).pipe(
+        Effect.catchCause((cause) => {
+          const interrupted = Cause.hasInterrupts(cause);
+          const original = Option.getOrElse(Cause.findErrorOption(cause), () =>
+            failure(currentStage, interrupted ? "cancelled" : "driver-failed", cause),
+          );
+          return Effect.uninterruptible(
+            Effect.gen(function* () {
+              let cleanup: HarnessProcessResumeCleanup<CleanupEvidence> | null = null;
+              let cleanupCallCause: unknown;
+              if (prepared !== undefined && !publicationAttempted && !interrupted) {
+                const cleanupResult = yield* Effect.uninterruptible(
+                  driver.cleanupPrepared(prepared).pipe(
+                    Effect.map((evidence) => ({ ok: true as const, evidence })),
+                    Effect.catch((cause) => Effect.succeed({ ok: false as const, cause })),
+                  ),
                 );
-              if (recorded.ok) recovery = recorded.recovery;
-              else {
-                recovery = "record-failed";
-                failedStage = original.stage;
-                recoveryCause = recorded.cause;
+                if (cleanupResult.ok) cleanup = cleanupResult.evidence;
+                else cleanupCallCause = cleanupResult.cause;
               }
-            } else if ("cause" in current) {
-              recovery = "record-failed";
-              failedStage = original.stage;
-              recoveryCause = current.cause;
-            } else recovery = "claim-changed";
-          }
 
-          if (recovery === "record-failed")
-            return yield* new HarnessProcessResumeError({
-              stage: "recovery",
-              reason: "recovery-write-failed",
-              recoverable: true,
-              recovery,
-              ...(failedStage === undefined ? {} : { failedStage }),
-              ...(cleanupFailed ? { priorReason: original.reason } : {}),
-              ...(recoveryCause === undefined ? {} : { cause: recoveryCause }),
-              ...((original.cause ?? cleanupCallCause) === undefined
-                ? {}
-                : { priorCause: original.cause ?? cleanupCallCause }),
-            });
+              const cleanupFailed =
+                cleanupCallCause !== undefined || cleanup?._tag === "incomplete";
+              const finalStage = cleanupFailed ? "cleanup" : original.stage;
+              const finalReason = cleanupFailed ? "cleanup-failed" : original.reason;
+              const finalCause = cleanupCallCause ?? original.cause;
+              const priorCause = cleanupFailed ? original.cause : undefined;
+              let recovery: "recorded" | "claim-changed" | "record-failed" | "not-recorded" =
+                "not-recorded";
+              let failedStage: HarnessProcessResumeStage | undefined;
+              let recoveryCause: unknown;
 
-          return yield* new HarnessProcessResumeError({
-            stage: finalStage,
-            reason: finalReason,
-            recoverable: true,
-            recovery,
-            ...(cleanupFailed ? { failedStage: original.stage } : {}),
-            ...(cleanupFailed ? { priorReason: original.reason } : {}),
-            ...(finalCause === undefined ? {} : { cause: finalCause }),
-            ...(priorCause === undefined ? {} : { priorCause }),
-          });
+              if (drain !== undefined) {
+                const current = yield* driver
+                  .isCurrentControl({ drain, control: input.nextControl })
+                  .pipe(
+                    Effect.map((value) => ({ value })),
+                    Effect.catch((cause) => Effect.succeed({ cause })),
+                  );
+                if ("value" in current && current.value) {
+                  const recorded = yield* driver
+                    .recordFailure({
+                      drain,
+                      control: input.nextControl,
+                      operationId: input.operationId,
+                      expectedFacetGeneration: input.expectedFacetGeneration,
+                      targetPreparedRelease: input.targetPreparedRelease,
+                      stage: finalStage,
+                      ...(cleanupFailed ? { failedStage: original.stage } : {}),
+                      reason: finalReason,
+                      ...(cleanupFailed ? { priorReason: original.reason } : {}),
+                      ...(prepared === undefined ? {} : { prepared }),
+                      ...(publicationResult === undefined
+                        ? {}
+                        : { publication: publicationResult }),
+                      cleanup,
+                    })
+                    .pipe(
+                      Effect.map((value) => ({ ok: true as const, recovery: value })),
+                      Effect.catch((cause) => Effect.succeed({ ok: false as const, cause })),
+                    );
+                  if (recorded.ok) recovery = recorded.recovery;
+                  else {
+                    recovery = "record-failed";
+                    failedStage = original.stage;
+                    recoveryCause = recorded.cause;
+                  }
+                } else if ("cause" in current) {
+                  recovery = "record-failed";
+                  failedStage = original.stage;
+                  recoveryCause = current.cause;
+                } else recovery = "claim-changed";
+              }
+
+              if (interrupted) return yield* Effect.failCause(cause);
+
+              if (recovery === "record-failed")
+                return yield* new HarnessProcessResumeError({
+                  stage: "recovery",
+                  reason: "recovery-write-failed",
+                  recoverable: true,
+                  recovery,
+                  ...(failedStage === undefined ? {} : { failedStage }),
+                  ...(cleanupFailed ? { priorReason: original.reason } : {}),
+                  ...(recoveryCause === undefined ? {} : { cause: recoveryCause }),
+                  ...((original.cause ?? cleanupCallCause) === undefined
+                    ? {}
+                    : { priorCause: original.cause ?? cleanupCallCause }),
+                });
+
+              return yield* new HarnessProcessResumeError({
+                stage: finalStage,
+                reason: finalReason,
+                recoverable: true,
+                recovery,
+                ...(cleanupFailed ? { failedStage: original.stage } : {}),
+                ...(cleanupFailed ? { priorReason: original.reason } : {}),
+                ...(finalCause === undefined ? {} : { cause: finalCause }),
+                ...(priorCause === undefined ? {} : { priorCause }),
+              });
+            }),
+          );
         }),
       ),
     );
