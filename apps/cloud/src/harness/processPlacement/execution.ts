@@ -5,6 +5,7 @@ import {
 } from "./durableStore.ts";
 import {
   HarnessProcessPlacementError,
+  type HarnessProcessHandle,
   type HarnessProcessControllerClaim,
   type HarnessProcessFacetLocator,
   type HarnessProcessInvocationSettlement,
@@ -15,6 +16,7 @@ import {
   type HarnessProcessPlacementRecoveryStore,
   type HarnessProcessPublicationPublisher,
   type HarnessProcessPublicationReconciler,
+  type HarnessProcessPlacement,
 } from "./contracts.ts";
 import {
   createHarnessProcessFacetAdapter,
@@ -89,6 +91,16 @@ export interface HarnessProcessExecutionHooks {
     readonly processId: string;
     readonly requestContextId: string;
   }) => Promise<void>;
+  /** Gives the shard owner one chance to persist a terminal handoff before B releases its lease. */
+  readonly beforeCleanup?: (input: {
+    readonly runId: string;
+    readonly process: HarnessProcessExecutionProcessInput;
+    readonly requestContextId: string;
+    readonly requestId?: string;
+    readonly handle: HarnessProcessHandle<FacetInvokeInput>;
+    readonly settlement?: HarnessProcessInvocationSettlement;
+    readonly failure?: unknown;
+  }) => Promise<"cleanup" | "retain">;
 }
 
 export interface HarnessProcessExecutionControlSnapshot {
@@ -110,6 +122,8 @@ export interface HarnessProcessExecutionEnvironment {
   readonly LOADER: WorkerLoader;
   readonly PLACEMENT_STORES: DurableObjectNamespace;
   readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace;
+  readonly HARNESS_RUN_STORE?: DurableObjectNamespace;
+  readonly HARNESS_FILES_STORE?: DurableObjectNamespace;
   readonly RESIDENT_BYTE_LIMIT: string;
 }
 
@@ -117,7 +131,18 @@ type HarnessProcessFacetStub = Pick<
   HarnessRequestFacetObject,
   "identity" | "prepareInert" | "run" | "dispose"
 > &
-  Rpc.DurableObjectBranded;
+  Rpc.DurableObjectBranded & {
+    /** Implemented only by a host that can observe its verified prepared artifact load. */
+    loadedPreparedRelease?: () => Promise<unknown>;
+  };
+
+export interface HarnessProcessExecutionResumeHandle {
+  readonly handle: HarnessProcessHandle<FacetInvokeInput>;
+  readonly readLoadedPreparedRelease: () => Promise<unknown>;
+  readonly placementOwner: string;
+  readonly writer: HarnessProcessPlacementWriter;
+  readonly releaseWriter: () => Promise<void>;
+}
 
 /** Runs one shard in the DO context that owns its durable facets and ProcessSlots writer. */
 export async function runHarnessProcessExecutionShard(
@@ -153,14 +178,23 @@ export async function deterministicShardOwner(
   return `${prefix}/exec-${operationKey}/shard-${shardIndex}`;
 }
 
-async function runLocalShard(
+interface HarnessProcessExecutionPlacementSession {
+  readonly owner: string;
+  readonly storesStub: HarnessProcessPlacementStoreClient;
+  readonly authority: HarnessProcessExecutionSupervisorClient;
+  readonly writer: HarnessProcessPlacementWriter;
+  readonly stores: ReturnType<typeof createHarnessProcessPlacementStoreClient>;
+  readonly priorRecords: readonly HarnessProcessPlacementRecoveryRecord[];
+  readonly placement: HarnessProcessPlacement;
+  readonly close: () => Promise<void>;
+}
+
+async function openPlacementSession(
   input: HarnessProcessExecutionShardInput & { readonly shardIndex: number },
-  requestContextId: string,
   context: DurableObjectState,
   environment: HarnessProcessExecutionEnvironment,
   shardIncarnationNonce: string,
-  hooks?: HarnessProcessExecutionHooks,
-): Promise<HarnessProcessExecutionShardResult> {
+): Promise<HarnessProcessExecutionPlacementSession> {
   const owner = await deterministicShardOwner(
     input.shardOwner,
     input.executionOperationId,
@@ -172,8 +206,6 @@ async function runLocalShard(
   const authority = environment.HARNESS_THREAD_SUPERVISOR.getByName(
     input.runId,
   ) as unknown as HarnessProcessExecutionSupervisorClient;
-
-  // A successful authoritative read checks the full control key even though the snapshot omits it.
   const control = await authority.execute({
     type: "read",
     runId: input.runId,
@@ -198,74 +230,175 @@ async function runLocalShard(
   };
   await storesStub.claimWriter(owner, writer);
   const stores = createHarnessProcessPlacementStoreClient(storesStub, owner, writer);
-  let priorRecords: readonly HarnessProcessPlacementRecoveryRecord[] = [];
   let placementPromise: ReturnType<typeof createHarnessProcessPlacement> | undefined;
   try {
-    priorRecords = await stores.recovery.list();
+    const priorRecords = await stores.recovery.list();
     const processById = new Map(input.processes.map((process) => [process.processId, process]));
     const byteLimit = Number(environment.RESIDENT_BYTE_LIMIT);
     if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0)
       throw new RangeError("Process execution shard resident-byte limit is invalid.");
-
-    let placement;
-    try {
-      placementPromise = createHarnessProcessPlacement({
-        owner,
-        // The DurableObjectState owns one allocator while this runShard request is active.
-        contextKey: context,
-        context: "durable-object",
-        shardIncarnationNonce,
-        controllerClaim: input.controllerClaim,
-        store: stores.processSlots,
-        recovery: stores.recovery,
-        residentByteLimit: byteLimit,
-        scheduleQuantum(callback) {
-          let cancelled = false;
-          queueMicrotask(() => {
-            if (!cancelled) callback();
-          });
-          return () => {
-            cancelled = true;
-          };
-        },
-        invalidate(loaderId) {
-          context.facets.abort(loaderId, "The process-slot lease was retired.");
-          context.facets.delete(loaderId);
-        },
-        reconcile: (lease) =>
-          reconcileFacet({
-            lease,
-            records: priorRecords,
-            processById,
-            reconciler: authority,
-            context,
-            environment,
-            recovery: stores.recovery,
-          }),
-      });
-      placement = await placementPromise;
-    } catch (cause) {
-      return {
-        requestContextId,
-        processes: input.processes.map((process) => {
-          const recoveryId = priorRecords.find(
-            (record) => record.processId === process.processId,
-          )?.loaderId;
-          return {
-            processId: process.processId,
-            requestContextId,
-            identity: null,
-            status: "recoverable" as const,
-            ...(recoveryId === undefined ? {} : { recoveryId }),
-            error: {
-              kind: recoveryFailureKind(cause),
-              message: "Existing process state needs repair.",
-            },
-          };
+    placementPromise = createHarnessProcessPlacement({
+      owner,
+      contextKey: context,
+      context: "durable-object",
+      shardIncarnationNonce,
+      controllerClaim: input.controllerClaim,
+      store: stores.processSlots,
+      recovery: stores.recovery,
+      residentByteLimit: byteLimit,
+      scheduleQuantum(callback) {
+        let cancelled = false;
+        queueMicrotask(() => {
+          if (!cancelled) callback();
+        });
+        return () => {
+          cancelled = true;
+        };
+      },
+      invalidate(loaderId) {
+        context.facets.abort(loaderId, "The process-slot lease was retired.");
+        context.facets.delete(loaderId);
+      },
+      reconcile: (lease) =>
+        reconcileFacet({
+          lease,
+          records: priorRecords,
+          processById,
+          reconciler: authority,
+          context,
+          environment,
+          recovery: stores.recovery,
         }),
-      };
-    }
+    });
+    const placement = await placementPromise;
+    let closed = false;
+    return {
+      owner,
+      storesStub,
+      authority,
+      writer,
+      stores,
+      priorRecords,
+      placement,
+      async close() {
+        if (closed) return;
+        await storesStub.releaseWriter(owner, writer);
+        if (placementPromise !== undefined)
+          forgetHarnessProcessPlacement(context, placementPromise);
+        closed = true;
+      },
+    };
+  } catch (error) {
+    await storesStub.releaseWriter(owner, writer);
+    if (placementPromise !== undefined) forgetHarnessProcessPlacement(context, placementPromise);
+    throw error;
+  }
+}
 
+/** Opens one fresh facet through the same actual keyed placement and writer path as runShard. */
+export async function prepareHarnessProcessExecutionResumeFacet(input: {
+  readonly runId: string;
+  readonly executionOperationId: string;
+  readonly shardOwner: string;
+  readonly controllerClaim: HarnessProcessControllerClaim;
+  readonly shardIndex: number;
+  readonly process: HarnessProcessExecutionProcessInput;
+  readonly context: DurableObjectState;
+  readonly environment: HarnessProcessExecutionEnvironment;
+  readonly shardIncarnationNonce: string;
+}): Promise<HarnessProcessExecutionResumeHandle> {
+  const session = await openPlacementSession(
+    {
+      runId: input.runId,
+      executionOperationId: input.executionOperationId,
+      shardOwner: input.shardOwner,
+      controllerClaim: input.controllerClaim,
+      shardIndex: input.shardIndex,
+      processes: [input.process],
+    },
+    input.context,
+    input.environment,
+    input.shardIncarnationNonce,
+  );
+  if (session.priorRecords.length !== 0) {
+    await session.close();
+    throw new HarnessProcessPlacementError(
+      "prepare-failed",
+      "A process resume shard already has retained placement records.",
+      true,
+    );
+  }
+  let loadedPreparedRelease: unknown;
+  const process = input.process;
+  try {
+    const handle = await session.placement.prepareInert<FacetInvokeInput>(
+      {
+        processId: process.processId,
+        codeId: process.codeId,
+        residentBytes: process.residentBytes,
+        nativeSessionId: process.nativeSessionId,
+        checkpointId: process.checkpointId,
+        manifestRevision: process.manifestRevision,
+        priorFacetNonce: process.priorFacetNonce,
+        operationId: process.operationId,
+        controllerClaim: input.controllerClaim,
+        expectedFacetGeneration: process.expectedFacetGeneration,
+        signal: new AbortController().signal,
+      },
+      (identity) => {
+        const facet = createFacet(input.context, input.environment, process, identity);
+        return {
+          ...facet,
+          async prepareInert(request) {
+            const observation = await facet.prepareInert(request);
+            loadedPreparedRelease = await facet.readLoadedPreparedRelease();
+            return observation;
+          },
+        };
+      },
+    );
+    return {
+      handle,
+      readLoadedPreparedRelease: async () => loadedPreparedRelease,
+      placementOwner: session.owner,
+      writer: session.writer,
+      releaseWriter: session.close,
+    };
+  } catch (error) {
+    await session.close();
+    throw error;
+  }
+}
+
+async function runLocalShard(
+  input: HarnessProcessExecutionShardInput & { readonly shardIndex: number },
+  requestContextId: string,
+  context: DurableObjectState,
+  environment: HarnessProcessExecutionEnvironment,
+  shardIncarnationNonce: string,
+  hooks?: HarnessProcessExecutionHooks,
+): Promise<HarnessProcessExecutionShardResult> {
+  let session: HarnessProcessExecutionPlacementSession;
+  try {
+    session = await openPlacementSession(input, context, environment, shardIncarnationNonce);
+  } catch (cause) {
+    return {
+      requestContextId,
+      processes: input.processes.map((process) => ({
+        processId: process.processId,
+        requestContextId,
+        identity: null,
+        status: "recoverable" as const,
+        error: {
+          kind: recoveryFailureKind(cause),
+          message: "Existing process state needs repair.",
+        },
+      })),
+    };
+  }
+  const { stores, priorRecords, placement, authority } = session;
+  let retainWriter = false;
+  try {
     if (priorRecords.length > 0) {
       const state = await stores.processSlots.load();
       const liveTokens = new Set(
@@ -313,6 +446,9 @@ async function runLocalShard(
         let handle:
           | Awaited<ReturnType<typeof placement.prepareInert<FacetInvokeInput>>>
           | undefined;
+        let requestId: string | undefined;
+        let cleanupAttempted = false;
+        let cleanupFailure: unknown;
         try {
           handle = await placement.prepareInert<FacetInvokeInput>(
             {
@@ -331,6 +467,7 @@ async function runLocalShard(
             (identity) => createFacet(context, environment, process, identity),
           );
           const activation = await handle.activate(authority);
+          requestId = activation.requestId;
           await hooks?.beforeInvoke?.({
             runId: input.runId,
             processId: process.processId,
@@ -340,7 +477,36 @@ async function runLocalShard(
             publisher: activation.publisher,
             requestId: activation.requestId,
           });
-          await handle.cleanup();
+          if (
+            (await beforeCleanup(hooks, {
+              runId: input.runId,
+              process,
+              requestContextId,
+              requestId,
+              handle,
+              settlement,
+            })) === "retain"
+          ) {
+            retainWriter = true;
+            return {
+              processId: process.processId,
+              requestContextId,
+              identity: handle.identity,
+              status: "recoverable" as const,
+              recoveryId: handle.identity.loaderId,
+              error: {
+                kind: "resume-evidence-unavailable",
+                message: "Process termination evidence is incomplete or not durable.",
+              },
+            };
+          }
+          cleanupAttempted = true;
+          try {
+            await handle.cleanup();
+          } catch (cause) {
+            cleanupFailure = cause;
+            throw cause;
+          }
           return {
             processId: process.processId,
             requestContextId,
@@ -349,14 +515,40 @@ async function runLocalShard(
             settlement,
           };
         } catch (error) {
-          let cleanupError: unknown;
-          if (handle !== undefined) {
+          if (handle !== undefined && !cleanupAttempted) {
+            const disposition = await beforeCleanup(hooks, {
+              runId: input.runId,
+              process,
+              requestContextId,
+              ...(requestId === undefined ? {} : { requestId }),
+              handle,
+              failure: error,
+            });
+            if (disposition === "retain") {
+              retainWriter = true;
+              return {
+                processId: process.processId,
+                requestContextId,
+                identity: handle.identity,
+                status: "recoverable" as const,
+                recoveryId: handle.identity.loaderId,
+                error: {
+                  kind: "resume-evidence-unavailable",
+                  message: "Process termination evidence is incomplete or not durable.",
+                },
+              };
+            }
+          }
+          let cleanupError: unknown = cleanupFailure;
+          if (handle !== undefined && !cleanupAttempted) {
             try {
+              cleanupAttempted = true;
               await handle.cleanup({ retainPublishedOwnership: true });
             } catch (cause) {
               cleanupError = cause;
             }
           }
+          if (cleanupAttempted && cleanupFailure !== undefined) retainWriter = true;
           const failure = error instanceof HarnessProcessPlacementError ? error : undefined;
           const recoverable = failure?.recoverable === true || cleanupError !== undefined;
           return {
@@ -394,9 +586,22 @@ async function runLocalShard(
     );
     return { requestContextId, processes };
   } finally {
-    // Completed requests release writer ownership even when a lease remains for explicit repair.
-    await storesStub.releaseWriter(owner, writer);
-    if (placementPromise !== undefined) forgetHarnessProcessPlacement(context, placementPromise);
+    if (!retainWriter) await session.close();
+  }
+}
+
+async function beforeCleanup(
+  hooks: HarnessProcessExecutionHooks | undefined,
+  input: NonNullable<HarnessProcessExecutionHooks["beforeCleanup"]> extends (
+    value: infer Input,
+  ) => Promise<unknown>
+    ? Input
+    : never,
+): Promise<"cleanup" | "retain"> {
+  try {
+    return (await hooks?.beforeCleanup?.(input)) ?? "cleanup";
+  } catch {
+    return "retain";
   }
 }
 
@@ -582,7 +787,9 @@ function createFacet(
   environment: HarnessProcessExecutionEnvironment,
   process: HarnessProcessExecutionProcessInput,
   identity: HarnessProcessFacetLocator,
-): HarnessProcessPreparedFacet<FacetInvokeInput> {
+): HarnessProcessPreparedFacet<FacetInvokeInput> & {
+  readonly readLoadedPreparedRelease: () => Promise<unknown>;
+} {
   if (
     !process.mainModule ||
     !Object.hasOwn(process.modules, process.mainModule) ||
@@ -616,7 +823,14 @@ function createFacet(
   const facet = context.facets.get<HarnessProcessFacetStub>(identity.facetKey, () => ({
     class: facetClass,
   }));
-  return createHarnessProcessFacetAdapter(identity, facet);
+  return {
+    ...createHarnessProcessFacetAdapter(identity, facet),
+    async readLoadedPreparedRelease() {
+      const observe = facet.loadedPreparedRelease;
+      if (typeof observe !== "function") return undefined;
+      return await observe.call(facet);
+    },
+  };
 }
 
 function validateShard(input: HarnessProcessExecutionShardInput) {
