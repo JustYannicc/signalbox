@@ -14,6 +14,7 @@ import {
   isBuiltinReference,
   type BuiltinFunctionAnalysisOrigin,
 } from "./functionReferences.ts";
+import { verifiedRequireFallbacks } from "./requireFallback.ts";
 
 const moduleLoaders = [
   { specifier: "module", origin: "module", member: "createRequire", memberOrigin: "factory" },
@@ -167,13 +168,19 @@ export function scanBuiltinSource(input: BuiltinSource) {
     ts.forEachChild(node, collect);
   };
   collect(file);
-  for (let pass = 0; pass <= declarations.length + callbacks.length; pass++) {
-    changed = false;
-    for (const callback of callbacks) assign(callback.parameter, origin(callback.receiver));
-    for (const declaration of declarations)
-      if (declaration.initializer) assign(declaration.name, origin(declaration.initializer));
-    if (!changed) break;
-  }
+  const propagate = () => {
+    for (let pass = 0; pass <= declarations.length + callbacks.length; pass++) {
+      changed = false;
+      for (const callback of callbacks) assign(callback.parameter, origin(callback.receiver));
+      for (const declaration of declarations)
+        if (declaration.initializer) assign(declaration.name, origin(declaration.initializer));
+      if (!changed) break;
+    }
+  };
+  propagate();
+  const fallbacks = verifiedRequireFallbacks(file, bindings, requires);
+  for (const loader of fallbacks.loaders) requires.setOrigin(loader, true);
+  propagate();
   const add = (node: ts.Node, argument: ts.Expression | undefined, kind: string) => {
     const specifier = literal(argument);
     if (specifier !== undefined) {
@@ -195,6 +202,7 @@ export function scanBuiltinSource(input: BuiltinSource) {
     }
   };
   const visit = (node: ts.Node): void => {
+    if (fallbacks.initializers.has(node)) return;
     if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier)
       add(node, node.moduleSpecifier as ts.Expression, "static-import");
     else if (ts.isCallExpression(node)) {
@@ -208,7 +216,12 @@ export function scanBuiltinSource(input: BuiltinSource) {
     ts.forEachChild(node, visit);
   };
   visit(file);
-  const functionInventory = scanBuiltinFunctionCalls(file, bindings, requires);
+  const functionInventory = scanBuiltinFunctionCalls(
+    file,
+    bindings,
+    requires,
+    fallbacks.initializers,
+  );
   return {
     name: input.name,
     bytes: Buffer.byteLength(input.source),

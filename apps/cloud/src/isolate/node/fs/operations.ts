@@ -2,10 +2,20 @@ import { nodeFsError } from "./errors.ts";
 
 /** Receives exactly one raw kernel syscall, before Node error conversion. */
 export type AsyncLeafRunner = <T>(operation: () => T, signal?: AbortSignal) => Promise<T>;
-type FsLeaf = { readonly call: () => unknown; readonly cleanup: boolean };
+type FsLeaf = {
+  readonly call: (signal?: AbortSignal) => unknown;
+  readonly cleanup: boolean;
+};
 export type FsOperation<T> = Generator<FsLeaf, T, unknown>;
 
 export function* leaf<T>(operation: () => T, cleanup = false): FsOperation<T> {
+  return (yield { call: operation, cleanup }) as T;
+}
+
+export function* asyncLeaf<T>(
+  operation: (signal?: AbortSignal) => Promise<T>,
+  cleanup = false,
+): FsOperation<T> {
   return (yield { call: operation, cleanup }) as T;
 }
 
@@ -35,7 +45,8 @@ export async function runAsync<T>(
     try {
       const step = next.value;
       if (!step.cleanup) signal?.throwIfAborted();
-      value = runLeaf && !step.cleanup ? await runLeaf(step.call, signal) : step.call();
+      const call = () => step.call(signal);
+      value = runLeaf && !step.cleanup ? await runLeaf(call, signal) : await call();
     } catch (error) {
       next = operation.throw(error);
       continue;

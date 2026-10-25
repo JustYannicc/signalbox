@@ -34,6 +34,24 @@ const previewHost = (tag: string) => `*-${tag}.${PREVIEW_ZONE.name}`;
  * ThreadObject or PoolObject isn't evicted while its container still works.
  */
 export const COMPATIBILITY_DATE = "2026-10-01";
+export const CTX_EXPORTS_COMPATIBILITY_FLAG = "enable_ctx_exports";
+export const CLOUD_COMPATIBILITY_FLAGS = [
+  "nodejs_compat",
+  "legacy_module_registry",
+  CTX_EXPORTS_COMPATIBILITY_FLAG,
+] as const;
+export const MODEL_GATEWAY_COMPATIBILITY_FLAGS = [
+  "nodejs_compat",
+  "legacy_module_registry",
+] as const;
+
+/**
+ * Hosting policy: 128,000,000 decimal bytes per slot, equal to Cloudflare's documented 128 MB
+ * per-isolate envelope (https://developers.cloudflare.com/workers/platform/limits/#memory). It
+ * adds no cap beyond that platform limit and is not measured usable headroom. Revisit when #1255
+ * validates JS/Wasm/external/cache/buffer accounting and an accepted baseline maximum plus margin.
+ */
+export const RESIDENT_BYTE_LIMIT = "128000000";
 
 /**
  * Durable Object bindings and the classes behind them. A binding is its
@@ -50,6 +68,8 @@ export const DURABLE_OBJECT_BINDINGS = {
   HARNESS_RUN_STORE: "HarnessRunStoreObject",
   HARNESS_FILES_STORE: "HarnessFilesStoreObject",
   HARNESS_THREAD_SUPERVISOR: "HarnessThreadSupervisorObject",
+  PROCESS_EXECUTION_SHARDS: "HarnessProcessExecutionShardObject",
+  PLACEMENT_STORES: "HarnessProcessPlacementStoreObject",
 } as const;
 
 /**
@@ -139,6 +159,7 @@ export const cloudStage = (stage: string): CloudStage => {
       automationWorkflow: "signalbox-cloud-automations",
       vars: {
         SIGNALBOX_STAGE: PRODUCTION_STAGE,
+        RESIDENT_BYTE_LIMIT,
         // Production identity. Never reuse it for another deployment.
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         ENVIRONMENT_LABEL: "Signalbox Cloud",
@@ -171,6 +192,7 @@ export const cloudStage = (stage: string): CloudStage => {
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
     vars: {
       SIGNALBOX_STAGE: stage,
+      RESIDENT_BYTE_LIMIT,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
       EXECUTOR_TOKEN_ISSUER: `https://${cloudDomain}`,

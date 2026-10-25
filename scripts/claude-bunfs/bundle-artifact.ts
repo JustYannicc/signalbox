@@ -16,6 +16,33 @@ export interface EmbeddedAsset extends BundleFile {
   readonly encoding: number;
 }
 
+export interface WorkerFactorySites {
+  readonly count: number;
+  readonly sites: readonly {
+    readonly source: string;
+    readonly line: number;
+    readonly column: number;
+    readonly kind: string;
+  }[];
+}
+
+export interface WorkerReleaseEntry {
+  readonly entry: string;
+  readonly module: string;
+  readonly export: "instantiate";
+  readonly globals: readonly string[];
+  readonly imports: readonly string[];
+  readonly computedGlobalAccess: WorkerFactorySites;
+  readonly functionConstructors: WorkerFactorySites;
+  readonly sourceAnalysis: {
+    readonly computedGlobalAccess: WorkerFactorySites;
+    readonly functionConstructors: WorkerFactorySites;
+  };
+  readonly inputs: readonly string[];
+  readonly sourceBytes: number;
+  readonly preparedBytes: number;
+}
+
 export interface BundlePublication {
   readonly output: string;
   readonly release: {
@@ -24,6 +51,7 @@ export interface BundlePublication {
     readonly platform: string;
     readonly binarySha256: string;
   };
+  readonly workerEntries?: Readonly<Record<string, WorkerReleaseEntry>>;
   readonly mainModule: string;
   readonly mainExport?: "launch";
   readonly embeddedEntrypointExport?: "launch";
@@ -76,6 +104,27 @@ export async function publishBundle(input: BundlePublication) {
         throw new Error(`BUNDLE_EMBEDDED_ENTRY_MISSING: ${module}`);
     for (const module of Object.values(input.hostEntrypoints ?? {}))
       if (!Object.hasOwn(modules, module)) throw new Error(`BUNDLE_HOST_ENTRY_MISSING: ${module}`);
+    for (const [id, entry] of Object.entries(input.workerEntries ?? {})) {
+      const module = modules[entry.module];
+      if (
+        !module ||
+        entry.preparedBytes !== module.bytes ||
+        entry.export !== "instantiate" ||
+        new Set(entry.globals).size !== entry.globals.length ||
+        entry.globals.includes("Function") ||
+        new Set(entry.imports).size !== entry.imports.length ||
+        entry.computedGlobalAccess.count !== entry.computedGlobalAccess.sites.length ||
+        entry.functionConstructors.count !== entry.functionConstructors.sites.length ||
+        entry.sourceAnalysis.computedGlobalAccess.count !==
+          entry.sourceAnalysis.computedGlobalAccess.sites.length ||
+        entry.sourceAnalysis.functionConstructors.count !==
+          entry.sourceAnalysis.functionConstructors.sites.length ||
+        new Set(entry.inputs).size !== entry.inputs.length ||
+        entry.inputs.length === 0 ||
+        !Object.hasOwn(input.embeddedEntrypoints ?? {}, entry.entry.slice("file://".length))
+      )
+        throw new Error(`BUNDLE_WORKER_METADATA_INVALID: ${id}`);
+    }
     const assets: Record<
       string,
       { path: string; bytes: number; sha256: string; key: string; loader: number; encoding: number }
@@ -101,6 +150,7 @@ export async function publishBundle(input: BundlePublication) {
       schemaVersion: 1,
       release: input.release,
       mainModule: input.mainModule,
+      ...(input.workerEntries ? { workerEntries: input.workerEntries } : {}),
       ...(input.mainExport ? { mainExport: input.mainExport } : {}),
       ...(input.embeddedEntrypointExport
         ? { embeddedEntrypointExport: input.embeddedEntrypointExport }

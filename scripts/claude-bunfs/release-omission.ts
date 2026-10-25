@@ -43,6 +43,8 @@ export interface ReleaseOmissionManifest {
     readonly pending: ReleaseCoverageCorpus["pending"];
   } | null;
   readonly omittedModules: readonly OmittedReleaseModule[];
+  /** Worker coverage is pending; these inputs stay hot regardless of the main corpus. */
+  readonly retainedInputs?: { readonly worker: readonly string[] };
 }
 
 export const releaseSourceHash = (source: string) =>

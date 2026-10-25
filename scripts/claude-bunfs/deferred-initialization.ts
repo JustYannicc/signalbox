@@ -104,5 +104,31 @@ export function createDeferredInitialization() {
     return output;
   };
 
-  return { entry, transform, plugin };
+  const linkDynamicImports = (source: string, name: string) => {
+    if (!source.includes(PREFIX)) return source;
+    const file = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const edits: { start: number; end: number; text: string }[] = [];
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments.length === 1
+      ) {
+        const argument = node.arguments[0]!;
+        if (ts.isStringLiteral(argument) && modules.get(argument.text)?.kind === "facade")
+          edits.push({
+            start: node.getStart(file),
+            end: node.end,
+            text: `(async()=>{await 0;return require(${JSON.stringify(argument.text)})})()`,
+          });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    let result = source;
+    for (const edit of edits.sort((a, b) => b.start - a.start))
+      result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
+    return result;
+  };
+  return { entry, transform, plugin, linkDynamicImports };
 }

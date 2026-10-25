@@ -1,5 +1,6 @@
 import type { PosixStorage } from "../PosixStorage.ts";
 import type { ChangeGenerationStorage } from "../ChangeGenerationStorage.ts";
+import type { KernelLowerFileSystemUpperStorage } from "../KernelLowerFileSystemUpperStorage.ts";
 import { SqliteChunks } from "./SqliteChunks.ts";
 import { SqliteInodes } from "./SqliteInodes.ts";
 import { type FacetStorage, firstRow } from "./SqliteDatabase.ts";
@@ -21,12 +22,25 @@ export function createSqliteFileSystem(storage: FacetStorage, nowNs: () => bigin
   const inodes = new SqliteInodes(storage, nowNs);
   const chunks = new SqliteChunks(inodes);
   const hydration = new SqliteHydration(storage);
+  const posix = new SqlitePosixMetadata(inodes);
   const ready = (inode: bigint) => {
     inodes.stat(inode);
     if (hydration.pending(inode)) throw new PendingContentError(inode);
   };
-  const fs: PosixStorage & ChangeGenerationStorage = {
-    posix: new SqlitePosixMetadata(inodes),
+  const fs: PosixStorage & ChangeGenerationStorage & KernelLowerFileSystemUpperStorage = {
+    posix,
+    lowerOverlay: {
+      isLowerPathHidden: inodes.isLowerPathHidden.bind(inodes),
+      isStagingPath: inodes.isStagingPath.bind(inodes),
+      createStagingFile: (parent, name, path, metadata) =>
+        posix.createStagingFile(parent, name, path, metadata),
+      publishStagingFile: (input) => inodes.publishStagingFile(input),
+      discardStagingFile: (parent, name, path) => inodes.discardStagingFile(parent, name, path),
+      renameFileWithWhiteout: (fromParent, fromName, toParent, toName, hiddenLowerPath) =>
+        inodes.renameFileWithWhiteout(fromParent, fromName, toParent, toName, hiddenLowerPath),
+      unlinkFileWithWhiteout: (parent, name, hiddenLowerPath) =>
+        inodes.unlinkFileWithWhiteout(parent, name, hiddenLowerPath),
+    },
     root: inodes.root,
     lookup: inodes.lookup.bind(inodes),
     stat: inodes.stat.bind(inodes),

@@ -37,8 +37,8 @@ describe("NodeGit checkout failures", () => {
         undefined,
         (filesystem) => {
           processFilesystem = filesystem;
-          const originalOpen = filesystem.open.bind(filesystem);
-          filesystem.open = (path, flags, mode) => {
+          const originalOpenAsync = filesystem.openAsync.bind(filesystem);
+          filesystem.openAsync = async (path, flags, mode, signal) => {
             if (path.endsWith("checkout-fails/README.md") && (flags & 3) !== 0) {
               deniedCheckoutWrite = true;
               filesystem.chmod("/work/checkout-fails", 0o755);
@@ -49,7 +49,7 @@ describe("NodeGit checkout failures", () => {
                 },
               );
             }
-            return originalOpen(path, flags, mode);
+            return originalOpenAsync(path, flags, mode, signal);
           };
         },
       );

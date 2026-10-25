@@ -9,6 +9,34 @@ import {
 } from "./artifactFixtures.ts";
 
 describe("loadHarnessRelease", () => {
+  it("preserves worker selection through the verified public loader", async () => {
+    const entry = {
+      entry: "file:///embedded/worker",
+      module: "worker.cjs",
+      export: "instantiate",
+      globals: ["process"],
+      imports: ["node:worker_threads"],
+      computedGlobalAccess: { count: 0, sites: [] },
+      functionConstructors: {
+        count: 1,
+        sites: [{ source: "worker.js", line: 1, column: 3, kind: "call" }],
+      },
+      sourceAnalysis: {
+        computedGlobalAccess: { count: 0, sites: [] },
+        functionConstructors: { count: 0, sites: [] },
+      },
+      inputs: ["bun-graph:/embedded/worker"],
+      sourceBytes: 42,
+      preparedBytes: new TextEncoder().encode("synthetic worker.cjs").length,
+    };
+    const fixture = await claudeFixture({ workerEntries: { "hooks-worker": entry } });
+    const ready = await loadHarnessRelease(fixture.options);
+    expect(
+      ready.plan.harness === "claude-code" && ready.plan.workerEntries["hooks-worker"],
+    ).toEqual(entry);
+    expect(fixture.reads.filter((path) => path === "cli/worker.cjs")).toHaveLength(1);
+    expect(ready.payloads.has("cli/worker.cjs")).toBe(false);
+  });
   it("verifies Codex modules without retaining bytes and leaves Cargo.lock out of native inputs", async () => {
     const fixture = await codexFixture();
     const ready = await loadHarnessRelease(fixture.options);

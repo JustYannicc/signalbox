@@ -9,7 +9,10 @@ import {
 import { WasiDescriptorTable, type WasiDescriptor } from "../wasi/internal_wasi_descriptors.ts";
 import type { Stat } from "../storage.ts";
 import { FDFLAGS, RIGHTS } from "../wasi/internal_wasi_descriptors.ts";
-import { isKernelLowerFileSystemInode } from "../KernelLowerFileSystemStorage.ts";
+import {
+  isKernelLowerFileSystemInode,
+  KernelLowerFileSystemStorage,
+} from "../KernelLowerFileSystemStorage.ts";
 import type { WasiResolvedPath } from "../wasi/internal_wasi_paths.ts";
 import { descriptorPathAlias } from "./KernelPathAliases.ts";
 import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
@@ -90,6 +93,34 @@ export class KernelFileSystemOpen {
       if (parsed.create && parsed.exclusive) throw kernelError("EEXIST");
       return this.#openResolved(lookup.path, parsed, false);
     });
+  }
+
+  async openAsync(path: string, flags: number, mode = 0o666): Promise<number> {
+    const parsed = parseOpenFlags(flags);
+    if (
+      virtualDevice(path) !== undefined ||
+      descriptorPathAlias(path) !== undefined ||
+      parsed.pathOnly ||
+      (parsed.accessMode === KernelOpenFlags.O_RDONLY && !parsed.truncate)
+    ) {
+      return this.open(path, flags, mode);
+    }
+
+    const followFinal = !parsed.noFollow && !(parsed.create && parsed.exclusive);
+    const lookup = await this.#paths.resolveOrCreateAsync(path, { followFinal });
+    if (lookup.kind === "existing" && !(parsed.create && parsed.exclusive)) {
+      const resolved = lookup.path;
+      if (
+        isKernelLowerFileSystemInode(resolved.mount.storage, resolved.inode) &&
+        resolved.stat.type === "file"
+      ) {
+        if (resolved.mount.readOnly) throw kernelError("EROFS");
+        if (!(resolved.mount.storage instanceof KernelLowerFileSystemStorage))
+          throw kernelError("EIO");
+        await resolved.mount.storage.copyUpFile(resolved.inode, !parsed.truncate);
+      }
+    }
+    return this.open(path, flags, mode);
   }
 
   close(fd: number): void {
@@ -178,13 +209,21 @@ export class KernelFileSystemOpen {
     selection: KernelFileByteSelection = this.#fileBytes(),
   ): number {
     const mount = resolved.mount;
-    const inode = resolved.inode;
+    let inode = resolved.inode;
     if (
       isKernelLowerFileSystemInode(mount.storage, inode) &&
       !parsed.pathOnly &&
       (parsed.accessMode !== KernelOpenFlags.O_RDONLY || parsed.truncate)
     ) {
-      throw kernelError("EROFS");
+      if (resolved.stat.type === "directory") throw kernelError("EISDIR");
+      if (resolved.stat.type === "symlink") throw kernelError("ELOOP");
+      if (resolved.stat.type !== "file") throw kernelError("EINVAL");
+      if (mount.readOnly) throw kernelError("EROFS");
+      if (!parsed.truncate || !(mount.storage instanceof KernelLowerFileSystemStorage)) {
+        throw kernelError("ENOTSUP", "Lower file writes require asynchronous execution");
+      }
+      inode = mount.storage.copyUpFileSync(inode);
+      resolved = { ...resolved, inode, stat: runKernelSync(mount.storage.stat(inode)) };
     }
     let ownsPin = retained;
     let byteAccess: KernelFileByteAccess | undefined;

@@ -3,7 +3,7 @@
  */
 import * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
+import { asyncLeaf, fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
 
 export const IO_CHUNK_BYTES = 64 * 1024;
 
@@ -17,6 +17,19 @@ export function* openFdOperation(
     "open",
     path,
     leaf(() => kernelFs.open(path, flags, mode)),
+  );
+}
+
+export function* openFdAsyncOperation(
+  kernelFs: KernelFileSystem,
+  path: string,
+  flags: number,
+  mode?: number,
+): FsOperation<number> {
+  return yield* fsOperation(
+    "open",
+    path,
+    asyncLeaf((signal) => kernelFs.openAsync(path, flags, mode, signal)),
   );
 }
 

@@ -13,6 +13,7 @@ import type {
   HarnessProcessPlacementRequest,
   HarnessProcessPlacementWriter,
   HarnessProcessPublicationPublisher,
+  HarnessProcessPublishedActivation,
 } from "../HarnessProcessPlacement.ts";
 import type { ProductionFacetEnvironment } from "./productionFacet.workerd.fixture.ts";
 import type {
@@ -145,6 +146,7 @@ export async function runInvocationReplyLossProof(
     expectedFacetGeneration: 0,
     signal: new AbortController().signal,
   };
+  let publishedActivation: HarnessProcessPublishedActivation | undefined;
   const publicationPublisher: HarnessProcessPublicationPublisher = {
     async publishProcessFacet(input) {
       const activation = await supervisor.publishProcessFacet(input);
@@ -171,7 +173,43 @@ export async function runInvocationReplyLossProof(
       });
       if (offered.action !== "recorded" && offered.action !== "unchanged")
         throw new Error("Fixture RunStore did not record the offered request.");
+      publishedActivation = activation;
       return activation;
+    },
+    async authorizeProcessFacetActivation(input, confirmedReceipt) {
+      const current = await runStore.execute({ type: "read", runId });
+      const mode = current.snapshot.requests;
+      const facet = mode?.facets.at(-1);
+      const entry = mode?.entries.find(
+        (candidate) => candidate.request.requestId === publishedActivation?.requestId,
+      );
+      if (
+        publishedActivation === undefined ||
+        mode === undefined ||
+        facet === undefined ||
+        entry === undefined ||
+        entry.status !== "offered" ||
+        facet.operationId !== input.operationId ||
+        facet.generation !== confirmedReceipt.toGeneration ||
+        facet.facetNonce !== input.identity.incarnationNonce ||
+        facet.checkpoint.native.id !== input.checkpointId ||
+        facet.checkpoint.filesystem.sha256 !== input.manifestRevision ||
+        mode.checkpoint.native.id !== input.checkpointId ||
+        mode.checkpoint.filesystem.sha256 !== input.manifestRevision
+      )
+        throw new Error("Fixture RunStore no longer owns the exact offered facet request.");
+      const authenticated = await runStore.execute({
+        type: "request.replaceFacet",
+        runId,
+        controlKey: invocationReplyLossControlKey,
+        expectedGeneration: facet.generation - 1,
+        operationId: facet.operationId,
+        facetNonce: facet.facetNonce,
+        publisherKey: publishedActivation.publisher.publisherKey,
+      });
+      if (authenticated.action !== "unchanged")
+        throw new Error("Fixture publisher capability changed.");
+      await supervisor.authorizeProcessFacetActivation(input, confirmedReceipt);
     },
   };
   let fixtureDroppedInvocationReply = false;

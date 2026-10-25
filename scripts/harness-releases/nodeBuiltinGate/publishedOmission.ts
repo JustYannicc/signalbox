@@ -37,6 +37,7 @@ function hashList(value: unknown) {
 /** Keep the final artifact's omission evidence intact, but reject unknown or partial shapes. */
 export function readPublishedOmission(value: unknown): ReleaseOmissionManifest | undefined {
   if (value === undefined) return undefined;
+  const raw = record(value, invalid);
   const omission = exactRecord(value, [
     "schemaVersion",
     "configuration",
@@ -44,6 +45,7 @@ export function readPublishedOmission(value: unknown): ReleaseOmissionManifest |
     "configurationRemoved",
     "corpus",
     "omittedModules",
+    ...(Object.hasOwn(raw, "retainedInputs") ? ["retainedInputs"] : []),
   ]);
   if (omission.schemaVersion !== 1) throw new Error(invalid);
 
@@ -62,6 +64,15 @@ export function readPublishedOmission(value: unknown): ReleaseOmissionManifest |
     throw new Error(invalid);
   stringList(omission.configurationRemoved);
 
+  const retainedInputs = new Set<string>();
+  if (omission.retainedInputs !== undefined) {
+    const tiers = exactRecord(omission.retainedInputs, ["worker"]);
+    stringList(tiers.worker);
+    for (const name of tiers.worker as string[]) {
+      if (retainedInputs.has(name)) throw new Error(invalid);
+      retainedInputs.add(name);
+    }
+  }
   let hasCorpus = false;
   if (omission.corpus !== null) {
     hasCorpus = true;
@@ -84,6 +95,7 @@ export function readPublishedOmission(value: unknown): ReleaseOmissionManifest |
     const inputPath = text(module.inputPath, invalid);
     if (
       seen.has(inputPath) ||
+      retainedInputs.has(inputPath) ||
       (module.tier !== "configuration" && module.tier !== "corpus") ||
       (module.tier === "corpus" && !hasCorpus) ||
       typeof module.sourceBytes !== "number" ||

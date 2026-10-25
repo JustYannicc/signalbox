@@ -61,6 +61,7 @@ export const fixtureForDriver = (selectedDriver: ProviderDriverKind) =>
     let resumeFailure = false;
     let startGate: Effect.Effect<void> = Effect.void;
     let responseEffect: Effect.Effect<void, ProviderAdapterV2Error> = Effect.void;
+    let interruptEffect: Effect.Effect<void, ProviderAdapterV2Error> = Effect.void;
     let cleanup: Effect.Effect<void> = Effect.void;
     let saveGate: Promise<void> = Promise.resolve();
     let saving = Promise.withResolvers<void>();
@@ -103,6 +104,7 @@ export const fixtureForDriver = (selectedDriver: ProviderDriverKind) =>
         Effect.gen(function* () {
           controls.push(input);
           yield* Queue.offer(interrupted, input);
+          yield* interruptEffect;
         }),
       respondToRuntimeRequest: (input) =>
         Effect.sync(() => {
@@ -284,6 +286,9 @@ export const fixtureForDriver = (selectedDriver: ProviderDriverKind) =>
       },
       setResponseEffect: (effect: Effect.Effect<void, ProviderAdapterV2Error>) => {
         responseEffect = effect;
+      },
+      setInterruptEffect: (effect: Effect.Effect<void, ProviderAdapterV2Error>) => {
+        interruptEffect = effect;
       },
       setCleanup: (effect: Effect.Effect<void>) => {
         cleanup = effect;

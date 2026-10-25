@@ -91,11 +91,15 @@ export async function runInvocationReadmissionProof(
     });
   });
   let publisherCalls = 0;
+  let published: HarnessProcessPublishedActivation | undefined;
+  let activationAuthorizationCalls = 0;
   const activation = await handle.activate({
-    async publishProcessFacet(input): Promise<HarnessProcessPublishedActivation> {
+    async publishProcessFacet(
+      input,
+    ): Promise<HarnessProcessPublishedActivation & { readonly requestId: string }> {
       publisherCalls++;
       const publication = readmissionPublicationFor(input);
-      return {
+      published = {
         publication,
         publisher: {
           generation: input.expectedFacetGeneration + 1,
@@ -104,6 +108,24 @@ export async function runInvocationReadmissionProof(
         },
         requestId: firstRequestId,
       };
+      return published;
+    },
+    async authorizeProcessFacetActivation(input, confirmedReceipt) {
+      activationAuthorizationCalls++;
+      const receipt = published?.publication.receipt;
+      if (
+        receipt === null ||
+        receipt === undefined ||
+        receipt.operationId !== confirmedReceipt.operationId ||
+        receipt.toGeneration !== confirmedReceipt.toGeneration ||
+        receipt.preparedFacetNonce !== confirmedReceipt.preparedFacetNonce ||
+        receipt.checkpoint.checkpointId !== confirmedReceipt.checkpoint.checkpointId ||
+        receipt.checkpoint.manifestSha256 !== confirmedReceipt.checkpoint.manifestSha256 ||
+        input.operationId !== operationId ||
+        input.identity.incarnationNonce !== constructorNonce ||
+        input.controllerClaim.controlKey !== controllerClaim.controlKey
+      )
+        throw new Error("The fixture rejected a changed readmission authorization tuple.");
     },
   });
 
@@ -221,6 +243,7 @@ export async function runInvocationReadmissionProof(
     stableIdentity,
     samePublication,
     publisherCalls,
+    activationAuthorizationCalls,
     facetInvocations: invocations,
     finalInFlight: placement.signals.inFlight,
     finalResident: placement.signals.resident,

@@ -232,7 +232,30 @@ describe("public asynchronous filesystem metadata", () => {
     }
   });
 
-  it.each(["prepare failure", "prepare abort", "append read-only failure"])(
+  it("appends to an empty lower transcript without fetching lower bytes", async () => {
+    const test = fixture();
+    test.fs.mkdirSync("/transcripts");
+    const directory = test.files.resolve("/transcripts").inode;
+    const path = "/transcripts/selected.jsonl";
+    const row = '{"type":"user"}\n';
+    test.entries.set(path, entry(path, "file"));
+    const lower = test.files.installLowerFileSystem(test.source);
+    try {
+      await test.files.prepareLowerPaths([path]);
+      await test.fs.promises.appendFile(path, row);
+
+      expect(test.requests).toContain(path);
+      expect(test.fs.readFileSync(path, "utf8")).toBe(row);
+      expect(test.storage.stat(test.storage.lookup(directory, "selected.jsonl")).size).toBe(
+        BigInt(new TextEncoder().encode(row).byteLength),
+      );
+    } finally {
+      lower.dispose();
+      test.close();
+    }
+  });
+
+  it.each(["prepare failure", "prepare abort"])(
     "does not create a transcript after %s",
     async (kind) => {
       const test = fixture();

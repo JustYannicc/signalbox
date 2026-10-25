@@ -45,5 +45,10 @@ export async function readPublishedBuiltinSources(directory: string) {
   }
   if (sources.length === 0 || !Object.hasOwn(modules, text(manifest.mainModule, invalid)))
     throw new Error(invalid);
-  return { sources, artifact, ...(omission === undefined ? {} : { omission }) };
+  return {
+    sources,
+    artifact,
+    partitioned: manifest.workerEntries !== undefined,
+    ...(omission === undefined ? {} : { omission }),
+  };
 }
