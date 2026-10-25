@@ -14,10 +14,31 @@ export function machineFileRequest(
 ) {
   const owned = signal === undefined ? owner : AbortSignal.any([owner, signal]);
   const generation = files.current().generation;
-  const check = () => {
+  let lastBatchOperations: readonly MachineFileOperation[] = [];
+  const unavailable = (
+    message: string,
+    operations: readonly MachineFileOperation[],
+    options?: ErrorOptions,
+  ) => {
+    const current = files.current();
+    return new KernelFileSystemUnavailable(message, {
+      ...options,
+      filesystemContext: {
+        operations: operations.map(({ op, path }) => ({ operation: op, path })),
+        generationState: {
+          requested: generation,
+          current: current.generation,
+          generationAbsent: current.generationAbsent === true,
+          pristine: current.pristine,
+          ...(current.imageDigest === undefined ? {} : { imageDigest: current.imageDigest }),
+        },
+      },
+    });
+  };
+  const check = (operations: readonly MachineFileOperation[] = lastBatchOperations) => {
     owned.throwIfAborted();
     if (files.current().generation !== generation)
-      throw new KernelFileSystemUnavailable("The machine could not answer a filesystem lookup", {
+      throw unavailable("The machine could not answer a filesystem lookup", operations, {
         cause: new MachineFileLookupError(
           "STALE_GENERATION",
           "Machine changed during filesystem lookup",
@@ -27,17 +48,17 @@ export function machineFileRequest(
   const batch = async (operations: readonly MachineFileOperation[]) => {
     owned.throwIfAborted();
     if (operations.length === 0) return [];
+    lastBatchOperations = operations;
     if (generation === null)
-      throw new KernelFileSystemUnavailable(
-        "A machine generation is required for live file lookup",
-      );
+      throw unavailable("A machine generation is required for live file lookup", operations);
     const results: MachineFileOperationResult[] = [];
+    let part = operations;
     try {
       for (let offset = 0; offset < operations.length; offset += MACHINE_FILES_MAX_OPERATIONS) {
-        check();
-        const part = operations.slice(offset, offset + MACHINE_FILES_MAX_OPERATIONS);
+        part = operations.slice(offset, offset + MACHINE_FILES_MAX_OPERATIONS);
+        check(part);
         const response = await files.lookup({ generation, operations: part }, owned);
-        check();
+        check(part);
         if (response.generation !== generation)
           throw new MachineFileLookupError(
             "STALE_GENERATION",
@@ -54,19 +75,18 @@ export function machineFileRequest(
           results.push(result);
         }
       }
-      check();
+      check(operations);
       return results;
     } catch (cause) {
       if (owned.aborted) throw owned.reason;
-      throw new KernelFileSystemUnavailable("The machine could not answer a filesystem lookup", {
-        cause,
-      });
+      if (cause instanceof KernelFileSystemUnavailable && cause.filesystemContext !== undefined)
+        throw cause;
+      throw unavailable("The machine could not answer a filesystem lookup", part, { cause });
     }
   };
   const single = async (operation: MachineFileOperation) => {
     const result = (await batch([operation]))[0];
-    if (result === undefined)
-      throw new KernelFileSystemUnavailable("Machine file response is missing");
+    if (result === undefined) throw unavailable("Machine file response is missing", [operation]);
     return result;
   };
   return {
@@ -78,7 +98,9 @@ export function machineFileRequest(
       if ("error" in result)
         throw Object.assign(new Error(result.error.message), { code: result.error.code });
       if (result.op !== "readlink")
-        throw new KernelFileSystemUnavailable("Machine returned the wrong link operation");
+        throw unavailable("Machine returned the wrong link operation", [
+          { id: "link", op: "readlink", path },
+        ]);
       const bytes = Uint8Array.from(atob(result.targetBase64), (character) =>
         character.charCodeAt(0),
       );
