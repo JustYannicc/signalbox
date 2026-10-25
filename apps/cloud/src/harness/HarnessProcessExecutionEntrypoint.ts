@@ -31,6 +31,9 @@ export class HarnessProcessExecutionEntrypoint extends WorkerEntrypoint<HarnessP
   async runShard(
     input: HarnessProcessExecutionShardInput,
   ): Promise<HarnessProcessExecutionShardResult> {
+    if (!this.env.RESIDENT_BYTE_LIMIT)
+      throw new Error("Process execution is disabled until RESIDENT_BYTE_LIMIT is configured.");
+
     const firstIndex = input.shardIndex ?? 0;
     const batches = [];
     for (let start = 0; start < input.processes.length; start += WORKER_REQUEST_INVOCATION_LIMIT) {
