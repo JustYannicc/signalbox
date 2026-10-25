@@ -27,6 +27,7 @@ import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
   COMPATIBILITY_DATE,
+  CTX_EXPORTS_COMPATIBILITY_FLAG,
   type CloudStage,
   cloudStage,
   DURABLE_OBJECT_BINDINGS as DO,
@@ -39,6 +40,8 @@ import type {
   DriveObject,
   ExecutorTokenBindingObject,
   HarnessFilesStoreObject,
+  HarnessProcessExecutionShardObject,
+  HarnessProcessPlacementStoreObject,
   HarnessRunStoreObject,
   HarnessThreadSupervisorObject,
   ModelGrants,
@@ -54,7 +57,7 @@ const here = (path: string) => `${import.meta.dirname}/${path}`;
 const compatibility = {
   date: COMPATIBILITY_DATE,
   // Alchemy otherwise adds `new_module_registry`; keep what wrangler ran.
-  flags: ["nodejs_compat", "legacy_module_registry"],
+  flags: ["nodejs_compat", "legacy_module_registry", CTX_EXPORTS_COMPATIBILITY_FLAG],
 };
 
 // Each request's wide event (`evlog.config.ts`) is its log line, so Cloudflare's own would repeat it.
@@ -300,6 +303,12 @@ function deploy(
         ),
         HARNESS_THREAD_SUPERVISOR: Cloudflare.DurableObject<HarnessThreadSupervisorObject>(
           DO.HARNESS_THREAD_SUPERVISOR,
+        ),
+        PROCESS_EXECUTION_SHARDS: Cloudflare.DurableObject<HarnessProcessExecutionShardObject>(
+          DO.PROCESS_EXECUTION_SHARDS,
+        ),
+        PLACEMENT_STORES: Cloudflare.DurableObject<HarnessProcessPlacementStoreObject>(
+          DO.PLACEMENT_STORES,
         ),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
         PREVIEW_LINKS: Cloudflare.DurableObject<PreviewLinkRegistry>(DO.PREVIEW_LINKS),

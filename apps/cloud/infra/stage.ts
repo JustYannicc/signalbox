@@ -34,6 +34,7 @@ const previewHost = (tag: string) => `*-${tag}.${PREVIEW_ZONE.name}`;
  * ThreadObject or PoolObject isn't evicted while its container still works.
  */
 export const COMPATIBILITY_DATE = "2026-10-01";
+export const CTX_EXPORTS_COMPATIBILITY_FLAG = "enable_ctx_exports";
 
 /**
  * Durable Object bindings and the classes behind them. A binding is its
@@ -50,6 +51,8 @@ export const DURABLE_OBJECT_BINDINGS = {
   HARNESS_RUN_STORE: "HarnessRunStoreObject",
   HARNESS_FILES_STORE: "HarnessFilesStoreObject",
   HARNESS_THREAD_SUPERVISOR: "HarnessThreadSupervisorObject",
+  PROCESS_EXECUTION_SHARDS: "HarnessProcessExecutionShardObject",
+  PLACEMENT_STORES: "HarnessProcessPlacementStoreObject",
 } as const;
 
 /**

@@ -53,6 +53,9 @@ export { AutomationHost, AutomationWorkflow } from "./automations/automationWork
 export { HarnessRunStoreObject } from "./harness/HarnessRunStoreObject.ts";
 export { HarnessFilesStoreObject } from "./harness/HarnessFilesStoreObject.ts";
 export { HarnessThreadSupervisorObject } from "./harness/HarnessThreadSupervisorObject.ts";
+export { HarnessProcessExecutionEntrypoint } from "./harness/HarnessProcessExecutionEntrypoint.ts";
+export { HarnessProcessExecutionShardObject } from "./harness/HarnessProcessExecutionShardObject.ts";
+export { HarnessProcessPlacementStoreObject } from "./harness/HarnessProcessPlacementStoreObject.ts";
 
 /**
  * Signalbox Cloud: an environment that runs on Cloudflare. Clients connect to

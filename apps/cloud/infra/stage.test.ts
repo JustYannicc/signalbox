@@ -13,6 +13,7 @@ import {
   AUTOMATION_BINDINGS,
   COMPATIBILITY_DATE,
   cloudStage,
+  CTX_EXPORTS_COMPATIBILITY_FLAG,
   DURABLE_OBJECT_BINDINGS,
   previewStageNumber,
   stageWorkerRouting,
@@ -21,6 +22,7 @@ import { TRACES_PATH } from "../src/observability/nativeTracesWorker.ts";
 
 interface WranglerConfig {
   readonly compatibility_date: string;
+  readonly compatibility_flags: ReadonlyArray<string>;
   readonly durable_objects: {
     readonly bindings: ReadonlyArray<{ name: string; class_name: string }>;
   };
@@ -171,6 +173,10 @@ describe("cloudStage", () => {
 
 // `wrangler dev` runs wrangler.jsonc; deploys run the stack. They must agree.
 describe("wrangler.jsonc", () => {
+  it("enables ctx.exports for deployed and local process-shard overflow", () => {
+    expect(wrangler.compatibility_flags).toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+  });
+
   it("runs the deployed Durable Objects and containers", () => {
     expect(
       Object.fromEntries(
@@ -222,7 +228,7 @@ describe("wrangler.jsonc", () => {
     expect(wrangler.vars.EXECUTOR_TOKEN_ISSUER).toBe("http://localhost");
   });
 
-  it("keeps durable harness state after the existing migrations", () => {
+  it("keeps durable harness state and appends process-execution migrations", () => {
     const tokenBindingIndex = wrangler.migrations.findIndex(({ tag }) => tag === "v6");
 
     expect(tokenBindingIndex).toBeGreaterThanOrEqual(0);
@@ -244,5 +250,12 @@ describe("wrangler.jsonc", () => {
         ],
       },
     ]);
+    expect(wrangler.migrations.at(-1)).toEqual({
+      tag: "harness-process-execution-v1",
+      new_sqlite_classes: [
+        DURABLE_OBJECT_BINDINGS.PROCESS_EXECUTION_SHARDS,
+        DURABLE_OBJECT_BINDINGS.PLACEMENT_STORES,
+      ],
+    });
   });
 });

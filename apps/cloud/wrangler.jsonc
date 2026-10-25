@@ -7,7 +7,11 @@
   "name": "signalbox-cloud",
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-01",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    // B's Worker Entrypoint uses this flag to redispatch overflow through ctx.exports.
+    "enable_ctx_exports",
+  ],
   // Local dev only; deployed Workers take theirs from alchemy.run.ts (`limits` there too).
   "limits": { "cpu_ms": 300000 },
   // One origin: sign-in callbacks, cookies and saved connections all key on it.
@@ -36,6 +40,8 @@
       { "name": "HARNESS_RUN_STORE", "class_name": "HarnessRunStoreObject" },
       { "name": "HARNESS_FILES_STORE", "class_name": "HarnessFilesStoreObject" },
       { "name": "HARNESS_THREAD_SUPERVISOR", "class_name": "HarnessThreadSupervisorObject" },
+      { "name": "PROCESS_EXECUTION_SHARDS", "class_name": "HarnessProcessExecutionShardObject" },
+      { "name": "PLACEMENT_STORES", "class_name": "HarnessProcessPlacementStoreObject" },
     ],
   },
   "migrations": [
@@ -52,6 +58,13 @@
         "HarnessRunStoreObject",
         "HarnessFilesStoreObject",
         "HarnessThreadSupervisorObject",
+      ],
+    },
+    {
+      "tag": "harness-process-execution-v1",
+      "new_sqlite_classes": [
+        "HarnessProcessExecutionShardObject",
+        "HarnessProcessPlacementStoreObject",
       ],
     },
   ],
@@ -148,6 +161,11 @@
           { "name": "HARNESS_RUN_STORE", "class_name": "HarnessRunStoreObject" },
           { "name": "HARNESS_FILES_STORE", "class_name": "HarnessFilesStoreObject" },
           { "name": "HARNESS_THREAD_SUPERVISOR", "class_name": "HarnessThreadSupervisorObject" },
+          {
+            "name": "PROCESS_EXECUTION_SHARDS",
+            "class_name": "HarnessProcessExecutionShardObject",
+          },
+          { "name": "PLACEMENT_STORES", "class_name": "HarnessProcessPlacementStoreObject" },
         ],
       },
       // Local only: `wrangler dev` simulates the bucket under .wrangler/.
