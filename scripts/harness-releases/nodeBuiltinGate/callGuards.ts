@@ -69,7 +69,7 @@ function optionalBufferConstant(call: ts.CallExpression, builtinRoot: string) {
     assignment.left.name.text !== "kStringMaxLength"
   )
     return undefined;
-  return assignment;
+  return { assignment, receiver: assignment.left.expression.text };
 }
 
 /** Only immediate guards qualify; aliases and deferred execution stay required. */
@@ -104,18 +104,34 @@ export function builtinCallGuard(
     resolvedMemberPath.length === 1 && resolvedMemberPath[0] === "binding"
       ? optionalBufferConstant(call, builtinRoot)
       : undefined;
-  const statement = lookup?.parent;
-  if (statement && ts.isExpressionStatement(statement) && ts.isBlock(statement.parent)) {
+  const statement = lookup?.assignment.parent;
+  if (lookup && statement && ts.isExpressionStatement(statement) && ts.isBlock(statement.parent)) {
     const block = statement.parent,
-      attempt = block.parent;
+      attempt = block.parent,
+      guard = attempt.parent;
+    const condition =
+      ts.isIfStatement(guard) && guard.thenStatement === attempt
+        ? unparen(guard.expression)
+        : undefined;
+    const missing =
+      condition &&
+      ts.isPrefixUnaryExpression(condition) &&
+      condition.operator === ts.SyntaxKind.ExclamationToken
+        ? unparen(condition.operand)
+        : undefined;
     if (
       block.statements.length === 1 &&
       ts.isTryStatement(attempt) &&
       attempt.tryBlock === block &&
       attempt.catchClause?.block.statements.length === 0 &&
-      !attempt.finallyBlock
+      !attempt.finallyBlock &&
+      missing &&
+      ts.isPropertyAccessExpression(missing) &&
+      ts.isIdentifier(missing.expression) &&
+      missing.expression.text === lookup.receiver &&
+      missing.name.text === "kStringMaxLength"
     )
-      return evidence(attempt, "caught-call");
+      return evidence(guard, "caught-call");
   }
 
   let consequent: ts.Expression = call;

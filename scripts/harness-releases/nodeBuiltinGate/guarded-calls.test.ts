@@ -48,6 +48,11 @@ describe("feature-tested builtin calls", () => {
       }),
     ]);
     for (const source of [
+      'try{Buffer.kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}',
+      'if(!Buffer.other)try{Buffer.kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}',
+      'if(!Other.kStringMaxLength)try{Buffer.kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}',
+      'if(Buffer.kStringMaxLength)try{Buffer.kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}',
+      'if(!Buffer.kStringMaxLength){work();try{Buffer.kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}}',
       'try{process.binding("buffer")}catch{}',
       'try{value=process.binding("buffer")}catch{}',
       'try{Buffer.kStringMaxLength=process.binding("other").kStringMaxLength}catch{}',
