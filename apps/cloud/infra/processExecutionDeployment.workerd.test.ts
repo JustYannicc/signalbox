@@ -4,24 +4,14 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
+import { createTestHarness, unstable_readConfig } from "wrangler";
 
 import type {
   HarnessProcessExecutionShardInput,
   HarnessProcessExecutionShardResult,
 } from "../src/harness/HarnessProcessPlacement.ts";
-import { parseJsonc } from "../../../scripts/cloud-migrations/check.ts";
+import type { CloudEnv } from "../src/worker.ts";
 import { COMPATIBILITY_DATE, cloudStage } from "./stage.ts";
-
-interface ProcessSupervisorNamespace {
-  getByName(name: string): {
-    execute(command: unknown): Promise<unknown>;
-  };
-}
-
-interface CloudEnvironment {
-  readonly HARNESS_THREAD_SUPERVISOR: ProcessSupervisorNamespace;
-}
 
 const control = {
   ownerId: "deployment-reachability-owner",
@@ -42,66 +32,72 @@ const checkpoint = {
 };
 
 const cloudName = cloudStage("production").cloudWorker;
-type JsonObject = Record<string, unknown>;
-const normalConfig = parseJsonc(
-  NodeFS.readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
-) as JsonObject;
-const configuredEnvironments = normalConfig.env as Record<string, JsonObject>;
-const configuredDev = configuredEnvironments.dev;
-if (configuredDev === undefined) throw new Error("The normal Wrangler config has no dev env.");
+const missingLimitCloudName = "signalbox-cloud-missing-resident-limit";
+const normalConfig = unstable_readConfig(
+  {
+    config: NodeURL.fileURLToPath(new URL("../wrangler.jsonc", import.meta.url)),
+    env: "dev",
+  },
+  { hideWarnings: true },
+);
 const testConfigDirectory = NodeFS.mkdtempSync(
   NodePath.join(NodeOS.tmpdir(), "signalbox-process-execution-deployment-"),
 );
 const testAssetsDirectory = NodePath.join(testConfigDirectory, "assets");
-const testConfigPath = NodePath.join(testConfigDirectory, "wrangler.json");
 NodeFS.mkdirSync(testAssetsDirectory);
 const {
-  env: _environments,
   assets: configuredAssets,
   containers: _containers,
-  $schema: _schema,
-  ...baseConfig
+  configPath: _configPath,
+  definedEnvironments: _definedEnvironments,
+  env: _env,
+  targetEnvironment: _targetEnvironment,
+  topLevelName: _topLevelName,
+  triggers: _triggers,
+  userConfigPath: _userConfigPath,
+  ...normalDevConfig
 } = normalConfig;
-const { dev: _dev, ...otherEnvironments } = configuredEnvironments;
-const { containers: _devContainers, ...devConfig } = configuredDev;
-// Keep the real root Worker, bindings, migrations and dev overrides; this RPC proof never needs containers or built web assets.
-NodeFS.writeFileSync(
-  testConfigPath,
-  JSON.stringify({
-    ...baseConfig,
-    main: NodeURL.fileURLToPath(new URL("../src/worker.ts", import.meta.url)),
-    assets: { ...(configuredAssets as JsonObject), directory: testAssetsDirectory },
-    containers: [],
-    env: {
-      ...otherEnvironments,
-      dev: { ...devConfig, containers: [] },
+// The normal Wrangler reader supplies the Worker graph; only unused containers and built assets are replaced for this local RPC proof.
+const cloudConfig = {
+  ...normalDevConfig,
+  name: cloudName,
+  assets: { ...configuredAssets, directory: testAssetsDirectory },
+  containers: [],
+};
+const processExecutionProbeConfig = (name: string, service: string) => ({
+  name,
+  main: NodeURL.fileURLToPath(
+    new URL("./processExecutionDeploymentProbe.worker.ts", import.meta.url),
+  ),
+  compatibility_date: COMPATIBILITY_DATE,
+  services: [
+    {
+      binding: "PROCESS_EXECUTION",
+      service,
+      entrypoint: "HarnessProcessExecutionEntrypoint",
     },
-  }),
-);
+  ],
+});
 
 const harness = createTestHarness({
   root: NodeURL.fileURLToPath(new URL("../", import.meta.url)),
   workers: [
     {
-      configPath: testConfigPath,
-      env: "dev",
+      config: cloudConfig,
       vars: { LOCAL_WORKERD: "1", RESIDENT_BYTE_LIMIT: "1" },
     },
     {
-      config: {
-        name: "process-execution-deployment-probe",
-        main: NodeURL.fileURLToPath(
-          new URL("./processExecutionDeploymentProbe.worker.ts", import.meta.url),
-        ),
-        compatibility_date: COMPATIBILITY_DATE,
-        services: [
-          {
-            binding: "PROCESS_EXECUTION",
-            service: cloudName,
-            entrypoint: "HarnessProcessExecutionEntrypoint",
-          },
-        ],
-      },
+      config: { ...cloudConfig, name: missingLimitCloudName },
+      vars: { LOCAL_WORKERD: "1" },
+    },
+    {
+      config: processExecutionProbeConfig("process-execution-deployment-probe", cloudName),
+    },
+    {
+      config: processExecutionProbeConfig(
+        "process-execution-deployment-missing-limit-probe",
+        missingLimitCloudName,
+      ),
     },
   ],
 });
@@ -115,8 +111,9 @@ afterAll(async () => {
 describe("normal process-execution deployment wiring", () => {
   it("routes the named entrypoint through the real shard namespace and ctx.exports overflow", async () => {
     const runId = "deployment-reachability-run";
-    const cloud = harness.getWorker<CloudEnvironment>(cloudName);
+    const cloud = harness.getWorker<CloudEnv>(cloudName);
     const env = await cloud.getEnv();
+    expect(env.RESIDENT_BYTE_LIMIT).toBe("1");
     await env.HARNESS_THREAD_SUPERVISOR.getByName(runId).execute({
       type: "initialize",
       runId,
@@ -126,26 +123,7 @@ describe("normal process-execution deployment wiring", () => {
       checkpoint,
     });
 
-    const input: HarnessProcessExecutionShardInput = {
-      runId,
-      executionOperationId: "deployment-reachability-operation",
-      shardOwner: "deployment-reachability",
-      controllerClaim: control,
-      processes: Array.from({ length: 5 }, (_, index) => ({
-        processId: `deployment-process-${index}`,
-        codeId: `deployment-code-${index}`,
-        residentBytes: 2,
-        nativeSessionId: "deployment-reachability-session",
-        checkpointId: checkpoint.checkpointId,
-        manifestRevision: "deployment-reachability-manifest",
-        operationId: `deployment-operation-${index}`,
-        priorFacetNonce: publisher.facetNonce,
-        expectedFacetGeneration: publisher.generation,
-        mainModule: "main.js",
-        modules: { "main.js": "export default () => 1;" },
-        entrypoint: "HarnessProcessFacetObject",
-      })),
-    };
+    const input = executionInput(runId, 5);
 
     const probe = harness.getWorker("process-execution-deployment-probe");
     const response = await probe.fetch("http://probe/run", {
@@ -167,4 +145,52 @@ describe("normal process-execution deployment wiring", () => {
     ]);
     expect(new Set(result.processes.map(({ requestContextId }) => requestContextId)).size).toBe(2);
   }, 120_000);
+
+  it("rejects a missing resident-byte limit at execution before placement", async () => {
+    const runId = "deployment-missing-resident-limit-run";
+    const cloud = harness.getWorker<CloudEnv>(missingLimitCloudName);
+    const env = await cloud.getEnv();
+    expect(env.RESIDENT_BYTE_LIMIT).toBeUndefined();
+    await env.HARNESS_THREAD_SUPERVISOR.getByName(runId).execute({
+      type: "initialize",
+      runId,
+      nativeSessionId: "deployment-reachability-session",
+      control,
+      publisher,
+      checkpoint,
+    });
+
+    const probe = harness.getWorker("process-execution-deployment-missing-limit-probe");
+    const response = await probe.fetch("http://probe/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(executionInput(runId, 1)),
+    });
+    const body = (await response.json()) as { error: string };
+    expect(response.status).toBe(500);
+    expect(body.error).toContain("Process execution shard resident-byte limit is invalid.");
+  }, 120_000);
 });
+
+function executionInput(runId: string, processCount: number): HarnessProcessExecutionShardInput {
+  return {
+    runId,
+    executionOperationId: `deployment-reachability-operation-${runId}`,
+    shardOwner: `deployment-reachability-${runId}`,
+    controllerClaim: control,
+    processes: Array.from({ length: processCount }, (_, index) => ({
+      processId: `deployment-${runId}-process-${index}`,
+      codeId: `deployment-code-${index}`,
+      residentBytes: 2,
+      nativeSessionId: "deployment-reachability-session",
+      checkpointId: checkpoint.checkpointId,
+      manifestRevision: "deployment-reachability-manifest",
+      operationId: `deployment-operation-${index}`,
+      priorFacetNonce: publisher.facetNonce,
+      expectedFacetGeneration: publisher.generation,
+      mainModule: "main.js",
+      modules: { "main.js": "export default () => 1;" },
+      entrypoint: "HarnessProcessFacetObject",
+    })),
+  };
+}

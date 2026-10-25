@@ -1,20 +1,21 @@
-// @effect-diagnostics nodeBuiltinImport:off - reads wrangler.jsonc from disk.
-import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 
 import { ThreadId } from "@t3tools/contracts";
 import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
+import { unstable_readConfig } from "wrangler";
 
 import { previewLabel } from "@t3tools/shared/preview";
 import { previewOrigin, previewSettings } from "../src/thread/preview/previewHost.ts";
 
-import { parseJsonc } from "../../../scripts/cloud-migrations/check.ts";
 import {
   AUTOMATION_BINDINGS,
+  CLOUD_COMPATIBILITY_FLAGS,
   COMPATIBILITY_DATE,
   cloudStage,
   CTX_EXPORTS_COMPATIBILITY_FLAG,
   DURABLE_OBJECT_BINDINGS,
+  MODEL_GATEWAY_COMPATIBILITY_FLAGS,
   previewStageNumber,
   stageWorkerRouting,
 } from "./stage.ts";
@@ -31,16 +32,20 @@ interface WranglerConfig {
   readonly worker_loaders: ReadonlyArray<{ binding: string }>;
   readonly migrations: ReadonlyArray<{ tag: string; new_sqlite_classes?: ReadonlyArray<string> }>;
   readonly vars: Readonly<Record<string, string>>;
-  readonly env: {
-    readonly dev: Pick<WranglerConfig, "durable_objects" | "workflows" | "worker_loaders">;
-  };
 }
 
-const readWrangler = (file: string) =>
-  parseJsonc(NodeFS.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"));
+const readWrangler = (file: string, env?: string) =>
+  unstable_readConfig(
+    {
+      config: NodeURL.fileURLToPath(new URL(`../${file}`, import.meta.url)),
+      ...(env === undefined ? {} : { env }),
+    },
+    { hideWarnings: true },
+  ) as WranglerConfig;
 
-const wrangler = readWrangler("wrangler.jsonc") as WranglerConfig;
-
+const wrangler = readWrangler("wrangler.jsonc");
+const wranglerDev = readWrangler("wrangler.jsonc", "dev");
+const modelGatewayWrangler = readWrangler("wrangler.model-gateway.jsonc");
 describe("cloudStage", () => {
   it("keeps production's wrangler-made names", () => {
     const production = cloudStage("production");
@@ -173,8 +178,12 @@ describe("cloudStage", () => {
 
 // `wrangler dev` runs wrangler.jsonc; deploys run the stack. They must agree.
 describe("wrangler.jsonc", () => {
-  it("enables ctx.exports for deployed and local process-shard overflow", () => {
+  it("keeps ctx.exports on Cloud and out of the ModelGateway", () => {
     expect(wrangler.compatibility_flags).toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+    expect(wranglerDev.compatibility_flags).toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+    expect(modelGatewayWrangler.compatibility_flags).not.toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+    expect(CLOUD_COMPATIBILITY_FLAGS).toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+    expect(MODEL_GATEWAY_COMPATIBILITY_FLAGS).not.toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
   });
 
   it("runs the deployed Durable Objects and containers", () => {
@@ -185,10 +194,7 @@ describe("wrangler.jsonc", () => {
     ).toEqual(DURABLE_OBJECT_BINDINGS);
     expect(
       Object.fromEntries(
-        wrangler.env.dev.durable_objects.bindings.map((binding) => [
-          binding.name,
-          binding.class_name,
-        ]),
+        wranglerDev.durable_objects.bindings.map((binding) => [binding.name, binding.class_name]),
       ),
     ).toEqual(DURABLE_OBJECT_BINDINGS);
     expect(wrangler.containers.map((container) => container.class_name).sort()).toEqual([
@@ -207,7 +213,7 @@ describe("wrangler.jsonc", () => {
   });
 
   it("runs the automation Workflow and loader, in dev too", () => {
-    for (const config of [wrangler, wrangler.env.dev]) {
+    for (const config of [wrangler, wranglerDev]) {
       expect(config.workflows).toEqual([
         {
           binding: AUTOMATION_BINDINGS.workflow,
@@ -221,9 +227,7 @@ describe("wrangler.jsonc", () => {
 
   it("runs production's compatibility date and identity", () => {
     expect(wrangler.compatibility_date).toBe(COMPATIBILITY_DATE);
-    expect(
-      (readWrangler("wrangler.model-gateway.jsonc") as WranglerConfig).compatibility_date,
-    ).toBe(COMPATIBILITY_DATE);
+    expect(modelGatewayWrangler.compatibility_date).toBe(COMPATIBILITY_DATE);
     expect(wrangler.vars.ENVIRONMENT_ID).toBe(cloudStage("production").vars.ENVIRONMENT_ID);
     expect(wrangler.vars.EXECUTOR_TOKEN_ISSUER).toBe("http://localhost");
   });

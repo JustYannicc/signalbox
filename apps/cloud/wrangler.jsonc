@@ -9,7 +9,7 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": [
     "nodejs_compat",
-    // B's Worker Entrypoint uses this flag to redispatch overflow through ctx.exports.
+    // The Cloud Worker's process entrypoint redispatches overflow through ctx.exports.
     "enable_ctx_exports",
   ],
   // Local dev only; deployed Workers take theirs from alchemy.run.ts (`limits` there too).
@@ -197,7 +197,11 @@
       "worker_loaders": [{ "binding": "LOADER" }],
       // The scripted provider: a reply without a model, for trying the cloud locally.
       // The idle-chat test clock (`http/threadKindRoutes.ts`).
-      "vars": { "SIGNALBOX_STAGE": "dev", "SCRIPTED_PROVIDER": "1", "THREAD_KIND_TEST_CLOCK": "1" },
+      "vars": {
+        "SIGNALBOX_STAGE": "dev",
+        "SCRIPTED_PROVIDER": "1",
+        "THREAD_KIND_TEST_CLOCK": "1",
+      },
     },
   },
 }

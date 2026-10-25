@@ -16,7 +16,14 @@ interface ProcessExecutionProbeEnvironment {
 export default class ProcessExecutionDeploymentProbe extends WorkerEntrypoint<ProcessExecutionProbeEnvironment> {
   override async fetch(request: Request): Promise<Response> {
     const input = (await request.json()) as HarnessProcessExecutionShardInput;
-    const result = await this.env.PROCESS_EXECUTION.runShard(input);
-    return Response.json(result);
+    try {
+      const result = await this.env.PROCESS_EXECUTION.runShard(input);
+      return Response.json(result);
+    } catch (error) {
+      return Response.json(
+        { error: error instanceof Error ? error.message : String(error) },
+        { status: 500 },
+      );
+    }
   }
 }

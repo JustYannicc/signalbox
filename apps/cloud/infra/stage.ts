@@ -35,6 +35,15 @@ const previewHost = (tag: string) => `*-${tag}.${PREVIEW_ZONE.name}`;
  */
 export const COMPATIBILITY_DATE = "2026-10-01";
 export const CTX_EXPORTS_COMPATIBILITY_FLAG = "enable_ctx_exports";
+export const CLOUD_COMPATIBILITY_FLAGS = [
+  "nodejs_compat",
+  "legacy_module_registry",
+  CTX_EXPORTS_COMPATIBILITY_FLAG,
+] as const;
+export const MODEL_GATEWAY_COMPATIBILITY_FLAGS = [
+  "nodejs_compat",
+  "legacy_module_registry",
+] as const;
 
 /**
  * Durable Object bindings and the classes behind them. A binding is its
