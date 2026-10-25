@@ -269,5 +269,44 @@ export function testHydratedStreams() {
         await fixture.close();
       }
     });
+
+    it("closes a descriptor when cancellation wins after async open allocates it", async () => {
+      const fixture = hydrationFixture();
+      const { fs, kernelFs } = fixture;
+      const userController = new AbortController();
+      const reason = new Error("cancel after descriptor allocation");
+      const close = vi.spyOn(kernelFs.descriptors, "close");
+      try {
+        fs.writeFileSync("/target", "original");
+        close.mockClear();
+        const handle = await fs.promises.open("/target", "r");
+        const successfulFd = handle.fd;
+        expect(kernelFs.descriptors.has(successfulFd)).toBe(true);
+        await Promise.all([handle.close(), handle.close()]);
+        expect(close).toHaveBeenCalledExactlyOnceWith(successfulFd);
+        close.mockClear();
+
+        const before = [...kernelFs.descriptors.entries()].map(([fd]) => fd);
+        const allocated: number[] = [];
+        const allocate = kernelFs.descriptors.allocate.bind(kernelFs.descriptors);
+        vi.spyOn(kernelFs.descriptors, "allocate").mockImplementation((spec) => {
+          const fd = allocate(spec);
+          allocated.push(fd);
+          userController.abort(reason);
+          return fd;
+        });
+
+        const error = await fs.promises
+          .writeFile("/target", "replacement", { signal: userController.signal })
+          .catch((cause: unknown) => cause);
+
+        expect(allocated).toHaveLength(1);
+        expect(error).toMatchObject({ name: "AbortError", code: "ABORT_ERR", cause: reason });
+        expect([...kernelFs.descriptors.entries()].map(([fd]) => fd)).toEqual(before);
+        expect(close).toHaveBeenCalledExactlyOnceWith(allocated[0]);
+      } finally {
+        await fixture.close();
+      }
+    });
   });
 }

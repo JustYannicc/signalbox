@@ -65,6 +65,10 @@ describe("KernelLowerFileSystemDirectoryLayer", () => {
       async readlink() {
         throw Object.assign(new Error("Not a symlink"), { code: "EINVAL" });
       },
+      readSync(path, offset, length) {
+        calls.read.push(path);
+        return originalBytes.slice(Number(offset), Number(offset) + length);
+      },
       async read(path, offset, length) {
         calls.read.push(path);
         return originalBytes.slice(Number(offset), Number(offset) + length);
@@ -145,7 +149,8 @@ describe("KernelLowerFileSystemDirectoryLayer", () => {
       expect(filesystem.read(upperSettings, actualWrittenBytes, 0n)).toBe(writtenBytes.byteLength);
       expect(actualWrittenBytes).toEqual(writtenBytes);
 
-      const actualLowerBytes = await source.read(lowerPath, 0n, originalBytes.byteLength);
+      const actualLowerBytes = new Uint8Array(originalBytes.byteLength);
+      expect(filesystem.read(lowerFile, actualLowerBytes, 0n)).toBe(originalBytes.byteLength);
       expect(actualLowerBytes).toEqual(originalBytes);
       expect(originalBytes).toEqual(originalBefore);
       expect(calls.read).toEqual([lowerPath]);

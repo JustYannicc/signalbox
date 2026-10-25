@@ -47,6 +47,8 @@ export interface KernelLowerFileSystemSource {
     signal?: AbortSignal,
   ): Promise<readonly KernelLowerFileSystemEntry[] | undefined>;
   readlink(path: string, signal?: AbortSignal): Promise<string>;
+  /** Returns bytes only when the source can serve this range without suspension. */
+  readSync?(path: string, offset: bigint, length: number): Uint8Array | undefined;
   /** Reads at most `length` bytes from `offset`; file contents are fetched only on demand. */
   read(path: string, offset: bigint, length: number, signal?: AbortSignal): Promise<Uint8Array>;
 }

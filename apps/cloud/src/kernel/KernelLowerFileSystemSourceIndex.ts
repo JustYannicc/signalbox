@@ -152,7 +152,22 @@ export class KernelLowerFileSystemSourceIndex {
     if (offset < 0n) throw kernelError("EINVAL");
     if (target.byteLength === 0) return 0;
     if (currentKernelIoMode() === "sync") {
-      throw kernelError("ENOTSUP", "Lower file bytes require asynchronous execution");
+      const signal = currentKernelSignal();
+      signal?.throwIfAborted();
+      if (this.#source.readSync === undefined) {
+        throw kernelError("ENOTSUP", "Lower file bytes require asynchronous execution");
+      }
+      let bytes: Uint8Array | undefined;
+      try {
+        bytes = this.#source.readSync(path, offset, target.byteLength);
+      } catch (error) {
+        throw sourceFailure(error);
+      }
+      if (bytes === undefined) {
+        throw kernelError("ENOTSUP", "Lower file bytes are not available synchronously");
+      }
+      signal?.throwIfAborted();
+      return copyReadBytes(target, bytes);
     }
     return this.#readBytes(path, offset, target, currentKernelSignal());
   }
@@ -460,14 +475,7 @@ export class KernelLowerFileSystemSourceIndex {
       (bytes) => {
         activeSignal?.throwIfAborted();
         if (epoch !== this.#epoch) return retry();
-        if (!(bytes instanceof Uint8Array)) {
-          throw new KernelFileSystemUnavailable("Lower read returned invalid bytes");
-        }
-        if (bytes.byteLength > target.byteLength) {
-          throw new KernelFileSystemUnavailable("Lower read exceeded the requested length");
-        }
-        target.set(bytes);
-        return bytes.byteLength;
+        return copyReadBytes(target, bytes);
       },
       (error) => {
         activeSignal?.throwIfAborted();
@@ -637,4 +645,15 @@ function sourceFailure(error: unknown, lookup = false): Error {
 
 function isPromiseLike<T>(value: MaybePromise<T>): value is Promise<T> {
   return typeof value === "object" && value !== null && "then" in value;
+}
+
+function copyReadBytes(target: Uint8Array, bytes: Uint8Array): number {
+  if (!(bytes instanceof Uint8Array)) {
+    throw new KernelFileSystemUnavailable("Lower read returned invalid bytes");
+  }
+  if (bytes.byteLength > target.byteLength) {
+    throw new KernelFileSystemUnavailable("Lower read exceeded the requested length");
+  }
+  target.set(bytes);
+  return bytes.byteLength;
 }

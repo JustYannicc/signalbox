@@ -359,7 +359,20 @@ export class KernelFileSystem {
   }
 
   openAsync(path: string, flags: number, mode?: number, signal?: AbortSignal): Promise<number> {
-    return this.#async(signal, () => this.#open.openAsync(path, flags, mode));
+    let opened: number | undefined;
+    return this.#async(signal, async () => {
+      opened = await this.#open.openAsync(path, flags, mode);
+      return opened;
+    }).catch((error: unknown) => {
+      if (opened !== undefined) {
+        try {
+          this.#open.close(opened);
+        } catch {
+          // Preserve cancellation or disposal errors after releasing the descriptor.
+        }
+      }
+      throw error;
+    });
   }
 
   createInode(
