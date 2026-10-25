@@ -138,76 +138,86 @@ describe("Claude release build integration", () => {
     ).toThrow("CLAUDE_CAPABILITY_BUN_API_INVALID");
   });
 
-  it("builds identical source for two exact release identities and leaves proof checks pending", async () => {
-    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-inputs-"));
-    try {
-      const source = `
+  it.each(["baseline", "hooks"] as const)(
+    "builds %s packing for exact release identities and leaves proof checks pending",
+    async (variant) => {
+      const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-inputs-"));
+      try {
+        const source = `
         function unused() { process.getBuiltinModule('cluster'); }
         export const sourceMarker = "same-code";
       `;
-      const first = await makeExtraction(root, "2.1.302", source);
-      const second = await makeExtraction(root, "2.1.303", source);
-      const firstOutput = NodePath.join(root, "artifact-2.1.302");
-      const secondOutput = NodePath.join(root, "artifact-2.1.303");
-      const identityFile = NodePath.join(root, "identity-2.1.302.json");
-      const firstResultPath = NodePath.join(root, "result-2.1.302.json");
-      await NodeFSP.writeFile(identityFile, JSON.stringify(first.identity));
-      await execFile(
-        process.execPath,
-        [
-          NodePath.resolve(import.meta.dirname, "buildClaude.ts"),
-          "--identity",
-          identityFile,
-          "--extracted",
-          first.extracted,
-          "--output",
-          firstOutput,
-          "--result",
-          firstResultPath,
-        ],
-        { cwd: NodePath.resolve(import.meta.dirname, "../..") },
-      );
-      const firstResult = JSON.parse(await NodeFSP.readFile(firstResultPath, "utf8"));
-      const secondResult = await buildClaudeRelease({
-        ...second,
-        output: secondOutput,
-        result: NodePath.join(root, "result-2.1.303.json"),
-      });
+        const first = await makeExtraction(root, "2.1.302", source);
+        const second = await makeExtraction(root, "2.1.303", source);
+        const firstOutput = NodePath.join(root, "artifact-2.1.302");
+        const secondOutput = NodePath.join(root, "artifact-2.1.303");
+        const identityFile = NodePath.join(root, "identity-2.1.302.json");
+        const firstResultPath = NodePath.join(root, "result-2.1.302.json");
+        await NodeFSP.writeFile(identityFile, JSON.stringify(first.identity));
+        await execFile(
+          process.execPath,
+          [
+            NodePath.resolve(import.meta.dirname, "buildClaude.ts"),
+            "--identity",
+            identityFile,
+            "--extracted",
+            first.extracted,
+            "--output",
+            firstOutput,
+            "--result",
+            firstResultPath,
+            "--variant",
+            variant,
+          ],
+          { cwd: NodePath.resolve(import.meta.dirname, "../..") },
+        );
+        const firstResult = JSON.parse(await NodeFSP.readFile(firstResultPath, "utf8"));
+        const secondResult = await buildClaudeRelease({
+          ...second,
+          variant,
+          output: secondOutput,
+          result: NodePath.join(root, "result-2.1.303.json"),
+        });
 
-      const firstManifest = JSON.parse(
-        await NodeFSP.readFile(NodePath.join(firstOutput, "manifest.json"), "utf8"),
-      );
-      const secondManifest = JSON.parse(
-        await NodeFSP.readFile(NodePath.join(secondOutput, "manifest.json"), "utf8"),
-      );
-      expect(firstManifest.release.version).toBe("2.1.302");
-      expect(secondManifest.release.version).toBe("2.1.303");
-      expect(firstManifest.release.binarySha256).not.toBe(secondManifest.release.binarySha256);
-      expect(firstManifest.moduleMap.sha256).toBe(secondManifest.moduleMap.sha256);
-      expect(await NodeFSP.readFile(NodePath.join(firstOutput, "claude.js"), "utf8")).toBe(
-        await NodeFSP.readFile(NodePath.join(secondOutput, "claude.js"), "utf8"),
-      );
-      expect(firstResult.artifact.sha256).not.toBe(secondResult.artifact.sha256);
-      expect(firstResult.report.checks.extraction.status).toBe("pass");
-      expect(firstResult.report.checks.rebundle.status).toBe("pass");
-      expect(firstResult.report.checks.builtinGaps.status).toBe("pending");
-      expect(firstResult.report.checks.localWorkerd.status).toBe("pending");
-      expect(firstResult.report.checks.deployedDO.status).toBe("pending");
-      expect(firstResult.report.checks.updateProof.status).toBe("pending");
-      expect(
-        JSON.parse(await NodeFSP.readFile(NodePath.join(root, "result-2.1.303.json"), "utf8"))
-          .artifact,
-      ).toEqual(secondResult.artifact);
-      expect(await NodeFSP.stat(`${secondOutput}.provenance.json`)).toBeDefined();
-      const provenance = JSON.parse(
-        await NodeFSP.readFile(`${secondOutput}.provenance.json`, "utf8"),
-      );
-      expect(provenance.builtinCoverage.artifact.sha256).toBe(secondResult.artifact.sha256);
-      expect(provenance.builtinCoverage.requiredBuiltins).not.toContain("cluster");
-    } finally {
-      await NodeFSP.rm(root, { recursive: true, force: true });
-    }
-  });
+        const firstManifest = JSON.parse(
+          await NodeFSP.readFile(NodePath.join(firstOutput, "manifest.json"), "utf8"),
+        );
+        const secondManifest = JSON.parse(
+          await NodeFSP.readFile(NodePath.join(secondOutput, "manifest.json"), "utf8"),
+        );
+        expect(firstManifest.release.version).toBe("2.1.302");
+        expect(secondManifest.release.version).toBe("2.1.303");
+        expect(Object.keys(secondManifest.workerEntries ?? {})).toEqual(
+          variant === "hooks" ? ["hooks-worker"] : [],
+        );
+        expect(secondResult.provenance.build).toMatchObject({ variant });
+        expect(firstManifest.release.binarySha256).not.toBe(secondManifest.release.binarySha256);
+        expect(firstManifest.moduleMap.sha256).toBe(secondManifest.moduleMap.sha256);
+        expect(await NodeFSP.readFile(NodePath.join(firstOutput, "claude.js"), "utf8")).toBe(
+          await NodeFSP.readFile(NodePath.join(secondOutput, "claude.js"), "utf8"),
+        );
+        expect(firstResult.artifact.sha256).not.toBe(secondResult.artifact.sha256);
+        expect(firstResult.report.checks.extraction.status).toBe("pass");
+        expect(firstResult.report.checks.rebundle.status).toBe("pass");
+        expect(firstResult.report.checks.builtinGaps.status).toBe("pending");
+        expect(firstResult.report.checks.localWorkerd.status).toBe("pending");
+        expect(firstResult.report.checks.deployedDO.status).toBe("pending");
+        expect(firstResult.report.checks.updateProof.status).toBe("pending");
+        expect(
+          JSON.parse(await NodeFSP.readFile(NodePath.join(root, "result-2.1.303.json"), "utf8"))
+            .artifact,
+        ).toEqual(secondResult.artifact);
+        expect(await NodeFSP.stat(`${secondOutput}.provenance.json`)).toBeDefined();
+        const provenance = JSON.parse(
+          await NodeFSP.readFile(`${secondOutput}.provenance.json`, "utf8"),
+        );
+        expect(provenance.builtinCoverage.artifact.sha256).toBe(secondResult.artifact.sha256);
+        expect(provenance.builtinCoverage.requiredBuiltins).not.toContain("cluster");
+      } finally {
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects builtin-only process loads before publishing a Claude build", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-builtin-"));

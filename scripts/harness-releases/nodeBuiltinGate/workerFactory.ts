@@ -39,23 +39,40 @@ function boundImport(node: ts.Expression, parameter: string) {
     : undefined;
 }
 
+function assertParentGlobals(file: ts.SourceFile) {
+  const helper = file.statements[1];
+  if (
+    file.statements.length !== 2 ||
+    !helper ||
+    !ts.isFunctionDeclaration(helper) ||
+    helper.name?.text !== "parentGlobals" ||
+    helper.parameters.length !== 0 ||
+    helper.body?.statements.length !== 1
+  )
+    throw invalid();
+  const returned = helper.body.statements[0];
+  if (
+    !returned ||
+    !ts.isReturnStatement(returned) ||
+    !returned.expression ||
+    !ts.isIdentifier(returned.expression) ||
+    returned.expression.text !== "globalThis"
+  )
+    throw invalid();
+}
+
 /** Undo only the generated factory plumbing for the existing builtin data-flow scanner.
  * Every analyzed body is sliced from verified published bytes, including deferred functions. */
 export function workerFactoryBuiltinSources(sources: readonly BuiltinSource[]) {
   const worker = sources.find((source) => source.name === "signalbox/worker-hooks.js");
   if (!worker) return sources;
   const file = parse(worker);
+  assertParentGlobals(file);
   const factory = file.statements[0];
   if (!factory || !ts.isFunctionDeclaration(factory) || factory.name?.text !== "instantiate")
     throw invalid();
   const parameter = factory.parameters[0]?.name;
-  if (
-    file.statements.length !== 1 ||
-    !factory.body ||
-    factory.parameters.length !== 1 ||
-    !parameter ||
-    !ts.isIdentifier(parameter)
-  )
+  if (!factory.body || factory.parameters.length !== 1 || !parameter || !ts.isIdentifier(parameter))
     throw invalid();
   const returned = factory.body.statements.at(-1);
   if (
@@ -194,12 +211,26 @@ export function workerFactoryBuiltinSources(sources: readonly BuiltinSource[]) {
       (item) => (item.propertyName ?? item.name).text === "instantiate",
     );
     if (!imported) throw invalid();
+    const parentGlobals = clause.namedBindings.elements.find(
+      (item) => (item.propertyName ?? item.name).text === "parentGlobals",
+    );
+    if (!parentGlobals || clause.namedBindings.elements.length !== 2) throw invalid();
     const mainEdits = [{ start: factoryImport.getStart(main), end: factoryImport.end, text: "" }];
     let instance: string | undefined;
     for (const statement of main.statements) {
       if (!ts.isVariableStatement(statement) || statement.declarationList.declarations.length !== 1)
         continue;
       const declaration = statement.declarationList.declarations[0]!;
+      if (
+        declaration.initializer &&
+        ts.isCallExpression(declaration.initializer) &&
+        ts.isIdentifier(declaration.initializer.expression) &&
+        declaration.initializer.expression.text === parentGlobals.name.text
+      ) {
+        if (declaration.initializer.arguments.length !== 0) throw invalid();
+        mainEdits.push({ start: statement.getStart(main), end: statement.end, text: "" });
+        continue;
+      }
       if (
         declaration.initializer &&
         ts.isCallExpression(declaration.initializer) &&

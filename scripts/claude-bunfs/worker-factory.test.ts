@@ -7,6 +7,44 @@ import * as NodeUtil from "node:util";
 import { expect, it } from "vite-plus/test";
 import { createWorkerFactory } from "./worker-factory.ts";
 
+it("binds parent realm values when the main module declares the same names", async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "worker-realm-"));
+  try {
+    const generated = createWorkerFactory({
+      workerSource: "function launch(){return [K,dn,globalThis.marker,require('marker')]}",
+      mainSource: `import {launch} from "./worker-hooks.js";
+const K="local K",dn="local dn",globalThis={marker:"local global"},Object="local Object";
+export {K,dn};export function run(){return launch()}`,
+      workerImport: "./worker-hooks.js",
+      exports: new Map([["launch", "launch"]]),
+      initializers: [],
+      launch: "launch",
+    });
+    await NodeFSP.writeFile(NodePath.join(root, "package.json"), '{"type":"module"}');
+    await NodeFSP.writeFile(NodePath.join(root, "worker-hooks.js"), generated.workerSource);
+    await NodeFSP.writeFile(
+      NodePath.join(root, "main.js"),
+      `const require=()=>"parent require";\n${generated.mainSource}`,
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(root, "probe.mjs"),
+      `
+globalThis.K="realm K";globalThis.dn="realm dn";globalThis.marker="realm global";
+const main=await import('./main.js');
+console.log(JSON.stringify({result:main.run(),locals:[main.K,main.dn]}));`,
+    );
+    const result = await NodeUtil.promisify(NodeChildProcess.execFile)(process.execPath, [
+      NodePath.join(root, "probe.mjs"),
+    ]);
+    expect(JSON.parse(result.stdout)).toEqual({
+      result: ["realm K", "realm dn", "realm global", "parent require"],
+      locals: ["local K", "local dn"],
+    });
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
+
 it("shares compiled factory code with fresh state and preserves live references and call receivers", async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "worker-factory-"));
   try {

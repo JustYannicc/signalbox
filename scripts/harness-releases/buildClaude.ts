@@ -35,6 +35,7 @@ export interface BuildClaudeReleaseOptions {
   readonly repository?: string;
   readonly capabilities?: BuiltinCapabilityManifest;
   readonly omission?: ReleaseOmissionOptions;
+  readonly variant?: "baseline" | "hooks";
 }
 
 function stringList(value: unknown, code: string): string[] {
@@ -138,6 +139,9 @@ async function loadReleaseScanner(repository: string) {
 export async function buildClaudeRelease(
   options: BuildClaudeReleaseOptions,
 ): Promise<BuildClaudeReleaseResult> {
+  const variant = options.variant ?? "hooks";
+  if (variant !== "baseline" && variant !== "hooks")
+    throw new Error("CLAUDE_BUILD_VARIANT_INVALID");
   const version = options.identity.version;
   const platform = options.identity.binary?.platform ?? "";
   const repository = await NodeFSP.realpath(
@@ -177,7 +181,7 @@ export async function buildClaudeRelease(
       environmentPackageModules: inputs.environmentPackageModules,
       requireBootstrap: inputs.requireBootstrap,
       deferInitialization: true,
-      partitionHooksWorker: true,
+      partitionHooksWorker: variant === "hooks",
       ...(options.omission ? { omission: options.omission } : {}),
     });
     if (
@@ -246,6 +250,7 @@ export async function buildClaudeRelease(
         ? { status: "supplied", sha256: sha256(JSON.stringify(options.capabilities)) }
         : { status: "missing" },
       build: {
+        variant,
         node: process.versions.node,
         esbuild: inputs.provenance.packageMapRebinding.bundlerVersion,
         ajv: built.ajv,
@@ -285,6 +290,7 @@ async function main() {
       "omit-unreachable": { type: "boolean" },
       "coverage-corpus": { type: "string" },
       "host-configuration": { type: "string" },
+      variant: { type: "string" },
     },
     allowPositionals: false,
     strict: true,
@@ -293,9 +299,11 @@ async function main() {
   const extracted = values.extracted;
   const output = values.output;
   const result = values.result;
+  if (values.variant !== undefined && values.variant !== "baseline" && values.variant !== "hooks")
+    throw new Error("CLAUDE_BUILD_VARIANT_INVALID");
   if (!identityPath || !extracted || !output || !result)
     throw new Error(
-      "Usage: buildClaude.ts --identity <identity.json> --extracted <directory> --output <new-directory> --result <new-result.json> [--capabilities <runtime-capabilities.json>] [--omit-unreachable] [--coverage-corpus <corpus.json>] [--host-configuration product|qualification]",
+      "Usage: buildClaude.ts --identity <identity.json> --extracted <directory> --output <new-directory> --result <new-result.json> [--variant baseline|hooks] [--capabilities <runtime-capabilities.json>] [--omit-unreachable] [--coverage-corpus <corpus.json>] [--host-configuration product|qualification]",
     );
   const identity = parseOfficialReleaseIdentity(
     JSON.parse(await NodeFSP.readFile(identityPath, "utf8")),
@@ -315,6 +323,7 @@ async function main() {
     extracted,
     output,
     result,
+    ...(values.variant ? { variant: values.variant } : {}),
     ...(capabilities ? { capabilities } : {}),
     ...(omission ? { omission } : {}),
   });

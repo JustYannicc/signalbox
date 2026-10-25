@@ -9,6 +9,7 @@ import {
 } from "./functionReferences.ts";
 import type { RequireBindings } from "../../claude-bunfs/release-inventory-require.ts";
 import { ScopedBindings } from "../../claude-bunfs/release-inventory-scope.ts";
+import { unusedRequireFallbacks } from "./unusedRequireFallback.ts";
 
 function withoutFunctionPrototypeOperation(
   reference: BuiltinReference,
@@ -32,6 +33,7 @@ export function scanBuiltinFunctionCalls(
   const { reference } = resolveBuiltinFunctionReferences(file, bindings, requires);
   const functionCalls: NodeBuiltinFunctionCall[] = [];
   const ambiguities: NodeBuiltinAmbiguity[] = [];
+  const unusedFallbacks = unusedRequireFallbacks(file, bindings);
 
   const addAmbiguity = (
     node: ts.Node,
@@ -50,6 +52,7 @@ export function scanBuiltinFunctionCalls(
   };
 
   const visit = (node: ts.Node): void => {
+    if (unusedFallbacks.has(node)) return;
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       let callee = reference(node.expression);
       const prototypeOperation = callee && withoutFunctionPrototypeOperation(callee);

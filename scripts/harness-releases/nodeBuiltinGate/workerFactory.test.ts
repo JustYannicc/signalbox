@@ -42,3 +42,26 @@ it("rejects an unknown factory shape when the worker module exists", () => {
     ]),
   ).toThrow("NODE_BUILTIN_WORKER_FACTORY_SHAPE_CHANGED");
 });
+
+it.each([
+  'export function parentGlobals(){return {"process":globalThis.other}};',
+  'export function parentGlobals(){return {"process":process}};',
+  'export function parentGlobals(){sideEffect();return {"process":globalThis.process}};',
+])("rejects unverified realm-global helper code: %s", (helper) => {
+  const factory = createWorkerFactory({
+    workerSource: "function launch(){return process.cwd()}",
+    mainSource: 'import {launch} from "./worker-hooks.js"; export function run(){return launch()}',
+    workerImport: "./worker-hooks.js",
+    exports: new Map([["launch", "launch"]]),
+    initializers: [],
+    launch: "launch",
+  });
+  expect(() =>
+    workerFactoryBuiltinSources([
+      {
+        name: "signalbox/worker-hooks.js",
+        source: factory.workerSource.replace(/export function parentGlobals\(\)[\s\S]*$/, helper),
+      },
+    ]),
+  ).toThrow("NODE_BUILTIN_WORKER_FACTORY_SHAPE_CHANGED");
+});

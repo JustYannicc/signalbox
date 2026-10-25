@@ -64,6 +64,7 @@ export function createWorkerFactory(input: {
   const bindings = unique(input.workerSource, "__signalboxBindings");
   const instance = unique(input.mainSource, "__signalboxWorker");
   const instantiate = unique(input.mainSource, "__signalboxInstantiate");
+  const parentGlobals = unique(input.mainSource, "__signalboxParentGlobals");
   let body = input.workerSource;
   if (input.banner) {
     if (!body.startsWith(`${input.banner}\n`)) throw shape();
@@ -152,7 +153,9 @@ export function createWorkerFactory(input: {
     body +
     "\n" +
     input.initializers.join("") +
-    `return {get launch(){return ${input.launch}},read(${index}){switch(${index}){${exported.map(([, local], position) => `case ${position}:return ${local};`).join("")}default:throw new RangeError("BUNDLE_WORKER_EXPORT_INVALID");}}};\n}\n`;
+    `return {get launch(){return ${input.launch}},read(${index}){switch(${index}){${exported.map(([, local], position) => `case ${position}:return ${local};`).join("")}default:throw new RangeError("BUNDLE_WORKER_EXPORT_INVALID");}}};\n}\n` +
+    // The main module can declare the same names as realm globals; its lexical scope cannot read them.
+    `export function parentGlobals(){return globalThis;}\n`;
   const mainFile = parse(input.mainSource);
   const replacements = new Map<string, string>();
   const mainEdits: { start: number; end: number; text: string }[] = [];
@@ -202,11 +205,13 @@ export function createWorkerFactory(input: {
   if (mainEdits.length !== 1) throw shape();
   const namespace = unique(mainSource, "__signalboxNamespace");
   const namespaces = unique(mainSource, "__signalboxImports");
+  const realm = unique(mainSource, "__signalboxRealm");
   const prefix =
-    `import {instantiate as ${instantiate}} from ${JSON.stringify(input.workerImport)};\n` +
-    `const ${namespace}=value=>{const ns=Object.create(null);Object.defineProperty(ns,"default",{value,enumerable:true});for(const key of Object.keys(value))if(key!=="default")Object.defineProperty(ns,key,{get:()=>value[key],enumerable:true});return ns;};\n` +
-    `const ${namespaces}=Object.create(null);\n` +
-    `const ${instance}=${instantiate}({globals:{${globals.map((name) => `${JSON.stringify(name)}:typeof ${name}==="undefined"?undefined:${name}`).join(",")}},imports:{${[
+    `import {instantiate as ${instantiate},parentGlobals as ${parentGlobals}} from ${JSON.stringify(input.workerImport)};\n` +
+    `const ${realm}=${parentGlobals}();\n` +
+    `const ${namespace}=value=>{const ns=${realm}.Object.create(null);${realm}.Object.defineProperty(ns,"default",{value,enumerable:true});for(const key of ${realm}.Object.keys(value))if(key!=="default")${realm}.Object.defineProperty(ns,key,{get:()=>value[key],enumerable:true});return ns;};\n` +
+    `const ${namespaces}=${realm}.Object.create(null);\n` +
+    `const ${instance}=${instantiate}({globals:{${globals.map((name) => `[${JSON.stringify(name)}]:${name === "require" ? 'typeof require==="undefined"?undefined:require' : `${realm}.${name}`}`).join(",")}},imports:{${[
       ...imports,
     ]
       .sort()
