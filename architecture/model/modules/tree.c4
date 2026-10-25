@@ -1,0 +1,54 @@
+model {
+  extend signalbox {
+    tree = module 'Tree' {
+      #deep #v1
+      icon bootstrap:diagram-3
+      description 'resolve · change · view · can'
+      technology 'pure resolver on Level and Person actors'
+      metadata {
+        interface '4'
+        deletion 'every module re-walks chains and invents scoping'
+      }
+
+      api = iface 'Tree · interface' {
+        description '4 verbs: resolve · change · view · can'
+        technology 'Deletion test: without it, every module re-walks chains and invents scoping'
+      }
+
+      resolver = part 'Resolver' {
+        #publishable
+        icon bootstrap:signpost-split
+        description 'chain · nearest · union · cascade'
+      }
+      kinds = part 'Kind registry' {
+        icon bootstrap:list-check
+        description 'merge rule · reach default · who places'
+        metadata { placementKinds 'pool · connection · secret · skill · AGENTS.md · automation · drive · source · device · setting · baseRecipe · app · binding' }
+      }
+      viaCheck = part 'Mount check' {
+        icon bootstrap:folder-symlink
+        description 'via must be in creator tree'
+      }
+      lenses = part 'Lenses' {
+        icon bootstrap:eye
+        description 'children · catalog · placements · access · people · costs'
+      }
+      memo = store 'Resolution memo' {
+        icon bootstrap:database
+        description 'keyed (ownRev, parentRev)'
+      }
+
+      resolver -> kinds 'merge rules'
+      resolver -> memo 'read'
+      lenses -> resolver 'access lens'
+    }
+
+    tree.resolver -> signalbox.actorhost.api 'actor calls'
+
+    // Interface → hidden parts (the only way in)
+    tree.api -> tree.resolver 'resolve · can'
+    tree.api -> tree.lenses 'view'
+    tree.api -> tree.viaCheck 'change (mount)'
+    tree.api -> tree.levelActor 'change'
+  }
+}

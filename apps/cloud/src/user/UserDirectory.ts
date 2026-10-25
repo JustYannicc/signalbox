@@ -1,8 +1,14 @@
 import {
   type AuthEnvironmentScope,
   OrchestrationV2ShellSnapshot,
+  type PullRequestDiffInput,
+  type PullRequestDiffResult,
+  type PullRequestUnavailableReason,
+  type SourceControlProviderKind,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
+import type { ThreadSearchInput, ThreadSearchResult } from "@t3tools/contracts/signalboxSearch";
+import type * as ThreadSearch from "../search/ThreadSearch.ts";
 import type { WorkOSOrganization } from "@signalbox/account/WorkOSClient";
 import type { ToolResult } from "@signalbox/runner-protocol/AutomationProtocol";
 import type { PublishRequest, PublishResult } from "@signalbox/runner-protocol/BranchProtocol";
@@ -21,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { AutomationHostCall } from "../automations/CloudAutomations.ts";
+import type { HookAnswer, HookRequest } from "../automations/webhookRequest.ts";
 import type { ConnectionLink, CreatedLink } from "../connections/ConnectionLinks.ts";
 import type {
   LinkedConnections,
@@ -28,12 +35,14 @@ import type {
   LinkedToken,
 } from "../connections/linkedConnections.ts";
 import type { ConnectResult, ConnectStart } from "../github/GitHubConnection.ts";
-import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiObject.ts";
+import { API_HEADER, type ApiCredential, encodeApiCredential } from "../api/apiCredential.ts";
 import type { CreatedKey, KeyOptions } from "../localKeys/LocalKeys.ts";
-import type { LocalKeysView, LocalModelAuthorization } from "../localKeys/localModelAccess.ts";
-import type { ModelUsage } from "../modelGateway/modelGatewayRecord.ts";
+import type { LocalKeysView } from "../localKeys/localModelAccess.ts";
+import type { LocalModelAuthorization } from "../models/ModelProtocol.ts";
+import type { ModelUsage } from "../models/ModelRecords.ts";
 import type { PreviewSetup } from "../previewSetup/previewSetupWire.ts";
 import type { SignInCheck } from "../signIn/SignInGrants.ts";
+import type { ExecutorTokenBinding } from "../executor/ExecutorTokenBindings.ts";
 import type {
   PreviewSetupApplied,
   PreviewSetupRedemption,
@@ -73,8 +82,47 @@ export class UserObjectError extends Schema.TaggedError<UserObjectError>()("User
 /** The shell crosses Durable Object RPC in its JSON encoding, which keeps its dates. */
 export const shellSnapshotWire = jsonCodec(OrchestrationV2ShellSnapshot);
 
+export interface ClientTraceDimension {
+  readonly threadId: string;
+  readonly folderId: string | null;
+  readonly orgId: string | null;
+}
+
+export interface ClientFolderDimension {
+  readonly folderId: string;
+  readonly orgId: string | null;
+}
+
+/** A PR diff response that keeps service failures typed across Durable Object RPC. */
+export type PullRequestDiffReply =
+  | { readonly _tag: "success"; readonly value: PullRequestDiffResult }
+  | {
+      readonly _tag: "unavailable";
+      readonly reason: PullRequestUnavailableReason;
+      readonly provider?: SourceControlProviderKind;
+    }
+  | {
+      readonly _tag: "operation-error";
+      readonly operation: string;
+      readonly detail: string;
+      readonly reason?: "not-found";
+    };
+
 /** What a user's object answers. `UserObject` implements it method for method. */
 export interface UserObjectApi {
+  readonly trashProgress: (
+    id: string,
+  ) => Promise<import("../trash/TrashWorkflow.ts").TrashProgress>;
+  readonly searchThreads: (
+    actor: ThreadSearch.SearchActor,
+    input: ThreadSearchInput,
+  ) => Promise<ThreadSearchResult>;
+  readonly readSearchItem: (
+    actor: ThreadSearch.SearchActor,
+    threadId: Parameters<ThreadSearch.ThreadSearch["Service"]["readItem"]>[1],
+    itemId: string,
+  ) => Promise<Effect.Success<ReturnType<ThreadSearch.ThreadSearch["Service"]["readItem"]>>>;
+  readonly receiveHook: (request: HookRequest) => Promise<HookAnswer>;
   readonly recordSignIn: (profile: AccountProfile) => Promise<void>;
   readonly profile: () => Promise<AccountProfile | null>;
   readonly createSession: (input: {
@@ -104,6 +152,13 @@ export interface UserObjectApi {
   }) => Promise<SessionRecord | null>;
   /** Makes the user's work contexts exactly these organizations (see `UserContexts`). */
   readonly syncOrganizations: (organizations: ReadonlyArray<WorkOSOrganization>) => Promise<void>;
+  /** Reserves ordering before a WorkOS snapshot starts fetching. */
+  readonly reserveOrganizationRefresh: () => Promise<number>;
+  /** Applies only the newest reserved snapshot, including an unchanged one. */
+  readonly completeOrganizationRefresh: (
+    sequence: number,
+    organizations: ReadonlyArray<WorkOSOrganization>,
+  ) => Promise<boolean>;
   /**
    * The user's sidebar, as `GET /api/orchestration/shell` and `subscribeShell`
    * serve it, in its JSON encoding (`shellSnapshotWire`).
@@ -111,6 +166,8 @@ export interface UserObjectApi {
   readonly shellSnapshot: () => Promise<unknown>;
   /** A thread object's summary outbox delivery, in its JSON encoding. */
   readonly recordThreadSummary: (summary: unknown) => Promise<void>;
+  /** A thread object's terminal outbox delivery, in `terminalSync.wire.delivery` encoding. */
+  readonly recordTerminalEvents: (encoded: unknown) => Promise<void>;
   /**
    * A thread object's event outbox delivery (`thread/eventOutbox.ts`): the
    * user's thread's next domain events with their sequence, in order and in
@@ -138,6 +195,7 @@ export interface UserObjectApi {
     readonly returnTo: string;
   }) => Promise<ConnectStart>;
   readonly completeGitHubConnect: (grantId: string) => Promise<ConnectResult>;
+  readonly cancelGitHubConnect: (grantId: string) => Promise<boolean>;
   /** Ends a connect attempt that came back in another browser, and what it connected. */
   readonly abortGitHubConnect: (grantId: string) => Promise<void>;
   readonly disconnectGitHub: () => Promise<void>;
@@ -180,6 +238,8 @@ export interface UserObjectApi {
   }) => Promise<PreviewSetupApplied>;
   /** Who the user's agents commit as, from their GitHub connection; null when not connected. */
   readonly githubCommitAuthor: () => Promise<CommitAuthor | null>;
+  /** A PR diff from the user's authorized GitHub repository and connection. */
+  readonly pullRequestDiff: (input: PullRequestDiffInput) => Promise<PullRequestDiffReply>;
   /**
    * The user's 1Password service account token, or null when none is
    * connected: only for their thread's machine (`ThreadRunner`'s `ThreadSecrets`).
@@ -187,6 +247,14 @@ export interface UserObjectApi {
   readonly onePasswordToken: () => Promise<string | null>;
   /** The user's current contexts, which every thread call acts within. */
   readonly contextIds: () => Promise<ReadonlyArray<SignalboxContextId>>;
+  /** Resolves trusted, currently visible context and folder ids for telemetry threads. */
+  readonly clientTraceDimensions: (
+    threadIds: ReadonlyArray<string>,
+  ) => Promise<ReadonlyArray<ClientTraceDimension>>;
+  /** Resolves folder-only telemetry context from this user's current folder tree. */
+  readonly clientFolderDimensions: (
+    folderIds: ReadonlyArray<string>,
+  ) => Promise<ReadonlyArray<ClientFolderDimension>>;
   /** A drive object's membership delivery (`drive/driveAccessOutbox.ts`). Idempotent. */
   readonly recordDriveAccess: (entry: DriveAccessEntry) => Promise<void>;
   /** The user's role in a drive right now, or null when they can't open it (`UserDrives`). */
@@ -207,6 +275,8 @@ export interface UserObjectApi {
    * thread (`drive/automationRoutes.ts`). The engine's refusal is an answer.
    */
   readonly automationTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
+  /** The thread token fixes the learner level; tool inputs never choose one. */
+  readonly learnerTool: (threadId: string, name: string, input: unknown) => Promise<ToolResult>;
   /**
    * What's going on in a thread's home folder, for its agent
    * (`drive/statusLineRoutes.ts`, `UserThreadStatus`), as `statusLineJson.folder` text.
@@ -241,6 +311,11 @@ export interface UserObjectApi {
     readonly source: SignInSource;
     readonly origin: string;
   }) => Promise<SignInCheck>;
+  /** Rechecks a JTI's source grant and current role authority for Executor. */
+  readonly authorizeExecutorToken: (
+    claims: unknown,
+    binding: ExecutorTokenBinding,
+  ) => Promise<boolean>;
   /** Ends the thread's session in the person's browser, which saves its profile. */
   readonly endBrowser: (input: {
     readonly threadId: string;
@@ -296,8 +371,26 @@ export class UserDirectory extends Context.Service<
   }
 >()("@signalbox/cloud/user/UserDirectory") {}
 
+export interface LocalUserDirectoryMethods<Error> {
+  readonly profile: Effect.Effect<AccountProfile | null, Error>;
+  readonly githubCommitAuthor: Effect.Effect<CommitAuthor | null, Error>;
+  readonly onePasswordToken: Effect.Effect<string | null, Error>;
+  readonly contextIds: Effect.Effect<ReadonlyArray<SignalboxContextId>, Error>;
+  readonly driveAccess: (driveId: string) => Effect.Effect<SignalboxDriveRole | null, Error>;
+  readonly readableDrives: Effect.Effect<
+    {
+      readonly contexts: ReadonlyArray<SignalboxContext>;
+      readonly drives: ReadonlyArray<SignalboxDrive>;
+    },
+    Error
+  >;
+}
+
 // A record, so adding a method to `UserObjectApi` without wrapping it fails to compile.
 const METHODS = Object.keys({
+  trashProgress: true,
+  searchThreads: true,
+  readSearchItem: true,
   recordSignIn: true,
   profile: true,
   createSession: true,
@@ -307,13 +400,18 @@ const METHODS = Object.keys({
   redeemHandoff: true,
   exchangeCredential: true,
   syncOrganizations: true,
+  reserveOrganizationRefresh: true,
+  completeOrganizationRefresh: true,
   shellSnapshot: true,
   recordThreadSummary: true,
+  recordTerminalEvents: true,
   threadEvents: true,
   driveEvents: true,
+  receiveHook: true,
   rebuildThreadIndex: true,
   beginGitHubConnect: true,
   completeGitHubConnect: true,
+  cancelGitHubConnect: true,
   abortGitHubConnect: true,
   disconnectGitHub: true,
   githubAccessToken: true,
@@ -331,17 +429,22 @@ const METHODS = Object.keys({
   redeemPreviewSetup: true,
   importPreviewSetup: true,
   githubCommitAuthor: true,
+  pullRequestDiff: true,
   onePasswordToken: true,
   contextIds: true,
+  clientTraceDimensions: true,
+  clientFolderDimensions: true,
   recordDriveAccess: true,
   driveAccess: true,
   readableDrives: true,
   publishBranch: true,
   automationTool: true,
   folderStatus: true,
+  learnerTool: true,
   browserSession: true,
   browserSignIn: true,
   checkSignIn: true,
+  authorizeExecutorToken: true,
   endBrowser: true,
   automationHost: true,
   automationWorkerModule: true,
@@ -370,6 +473,53 @@ export function handleFor(api: UserObjectApi): UserHandle {
       });
   return Object.fromEntries(METHODS.map((method) => [method, call(method)])) as UserHandle;
 }
+
+const unavailableHandle = (reason: string): UserHandle =>
+  Object.fromEntries(
+    METHODS.map(
+      (method) =>
+        [
+          method,
+          (..._args: ReadonlyArray<unknown>) =>
+            Effect.fail(
+              new UserObjectError({
+                operation: method,
+                cause: new Error(`${method} is unavailable: ${reason}`),
+              }),
+            ),
+        ] as const,
+    ),
+  ) as unknown as UserHandle;
+
+const localEffect = <A, Error>(operation: Method, effect: Effect.Effect<A, Error>) =>
+  effect.pipe(Effect.mapError((cause) => new UserObjectError({ operation, cause })));
+
+/** A local domain owns exactly one user and rejects calls outside its real surface. */
+export const local = <Error>(userId: string, methods: LocalUserDirectoryMethods<Error>) => {
+  const unowned = unavailableHandle("the user is outside this local domain");
+  const unsupported = unavailableHandle("unsupported in the local domain");
+  const owned: UserHandle = {
+    ...unsupported,
+    profile: () => localEffect("profile", methods.profile),
+    githubCommitAuthor: () => localEffect("githubCommitAuthor", methods.githubCommitAuthor),
+    onePasswordToken: () => localEffect("onePasswordToken", methods.onePasswordToken),
+    contextIds: () => localEffect("contextIds", methods.contextIds),
+    driveAccess: (driveId) => localEffect("driveAccess", methods.driveAccess(driveId)),
+    readableDrives: () => localEffect("readableDrives", methods.readableDrives),
+  };
+  const unavailable = (operation: "connect" | "callApi") =>
+    Effect.fail(
+      new UserObjectError({
+        operation,
+        cause: new Error(`${operation} is unavailable in the local domain.`),
+      }),
+    );
+  return UserDirectory.of({
+    forUser: (requestedUserId) => (requestedUserId === userId ? owned : unowned),
+    connect: () => unavailable("connect"),
+    callApi: () => unavailable("callApi"),
+  });
+};
 
 /** The `fetch` and RPC surface of a user object stub, as the Worker sees it. */
 export type UserObjectStub = UserObjectApi & {

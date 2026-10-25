@@ -200,13 +200,17 @@ finish() {
 #
 # Signalbox owner setup: the clicks only Yannic can make (his identity, his
 # payment, his accounts). Everything a secret touches goes straight from the
-# browser or ~/Downloads into GitHub or EAS; nothing is printed or written to
-# .env. Agents do the rest from those secrets. Run one section at a time:
+# browser or ~/Downloads into GitHub or EAS; nothing is printed, and only keys
+# local dev needs go to .env. Agents do the rest from those secrets. Run one
+# section at a time:
 #
 #   scripts/owner-setup/owner-setup.sh workos    # own sign-in keys (#35, #221), ~12 min
 #   scripts/owner-setup/owner-setup.sh apple     # iOS distribution (#44), ~10 min after enrollment
 #   scripts/owner-setup/owner-setup.sh android   # Android push (#44), ~6 min
 #   scripts/owner-setup/owner-setup.sh expo      # CI builds through EAS (#44), ~1 min
+#   scripts/owner-setup/owner-setup.sh kernel    # agents' real browsers (Kernel), ~1 min
+#   scripts/owner-setup/owner-setup.sh typesafe  # Jev chat/task classifier, also into .env, ~1 min
+#   scripts/owner-setup/owner-setup.sh boat      # Boat deployment key for Alchemy (#298), ~3 min
 #
 # See docs/operations/app-distribution.md and docs/operations/accounts-setup.md.
 
@@ -239,6 +243,20 @@ secret_from_download() {
   [[ " ${WRITTEN_SECRET[*]} " == *" $name "* ]] || return 0
   note "GitHub can't show it again. Keep a copy in 1Password before deleting."
   if confirm "Delete $(basename "$file") from Downloads now?"; then rm -f "$file"; fi
+}
+
+# set_cloud_secret NAME VALUE sets NAME on both Signalbox Cloud GitHub environments.
+set_cloud_secret() {
+  local name="$1" value="$2" env
+  for env in cloud-preview cloud-production; do
+    if printf '%s' "$value" | gh secret set "$name" --env "$env" >/dev/null 2>&1; then
+      WRITTEN_SECRET+=("$env/$name")
+      printf '  %s✓ set%s %s on %s\n' "$GREEN" "$RESET" "$name" "$env"
+    else
+      SKIPPED+=("$env secret $name (gh secret set $name --env $env)")
+      warn "couldn't set $name on $env; set it later"
+    fi
+  done
 }
 
 # ask_key_id KEY "Prompt" asks for an Apple Key ID: 10 uppercase letters and digits.
@@ -392,8 +410,52 @@ ask_secret EXPO_TOKEN "Paste the token (hidden):"
 set_secret EXPO_TOKEN "$EXPO_TOKEN"
 ;;
 
+kernel)
+TOTAL_STAGES=1
+banner "Agents browse real sites through Kernel"
+
+stage "Kernel API key"
+open_url "https://dashboard.onkernel.com/api-keys"
+step "Create an API key → copy it."
+ask_secret KERNEL_API_KEY "Paste the Kernel API key (hidden):"
+[[ -n "$KERNEL_API_KEY" ]] || { warn "No key entered."; exit 1; }
+set_cloud_secret KERNEL_API_KEY "$KERNEL_API_KEY"
+;;
+
+typesafe)
+TOTAL_STAGES=1
+banner "Jev tells chats from tasks"
+
+stage "TypeSafe API key"
+say "The cloud reads it from both GitHub environments; local dev reads it from $ENV_FILE."
+ask_secret TYPESAFE_API_KEY "Paste your Jev/TypeSafe API key (hidden):"
+[[ -n "$TYPESAFE_API_KEY" ]] || { warn "No key entered."; exit 1; }
+write_env TYPESAFE_API_KEY "$TYPESAFE_API_KEY"
+set_cloud_secret TYPESAFE_API_KEY "$TYPESAFE_API_KEY"
+;;
+
+boat)
+TOTAL_STAGES=2
+banner "Boat deployment key for Alchemy (#298)"
+
+stage "Create a deployment key"
+open_url "https://boat.dev/dashboard"
+step "Open the API Keys tab. Create a new key named signalbox-alchemy-deploy."
+step "Use the admin preset and a 90-day expiry. Alchemy needs it to create a separate scoped runtime key as well as snapshots and environments."
+say "The deployment key stays in CI. It is never bound into the app Worker or a VM."
+say "Leave signalbox-cloud alone: it stays the runtime credential (BOAT_API_KEY)."
+step "Copy the secret Boat shows once."
+ask_secret BOAT_DEPLOY_API_KEY "Paste the new deployment key (hidden):"
+[[ -n "$BOAT_DEPLOY_API_KEY" ]] || { warn "No key entered."; exit 1; }
+
+stage "Store it for the preview and production plans"
+say "This adds BOAT_DEPLOY_API_KEY to both GitHub environments. It doesn't deploy anything."
+set_cloud_secret BOAT_DEPLOY_API_KEY "$BOAT_DEPLOY_API_KEY"
+unset BOAT_DEPLOY_API_KEY
+;;
+
 *)
-printf 'Usage: %s workos|apple|android|expo\n' "$0"
+printf 'Usage: %s workos|apple|android|expo|kernel|typesafe|boat\n' "$0"
 exit 1
 ;;
 esac

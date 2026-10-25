@@ -16,13 +16,7 @@ import type { RunLogs } from "./runLog.ts";
 import type { StartStep } from "./startStep.ts";
 import type { AutomationRow, RunRow, StepRow, WorkflowStore } from "./WorkflowStore.ts";
 
-/**
- * What runs an automation's code: the part of the engine that isn't the
- * catalog, triggers, waits and step executors around it. The server replays
- * runs in QuickJS (replayDriver.ts); the cloud hands each run to a durable
- * workflow backend (runner/). Both drive the same store, so clients, tools and
- * built-ins see one engine.
- */
+/** Drives automation runs through Cloudflare Workflows while the host owns their records. */
 export interface RunDriver {
   /** A step settled from outside its run (an answer, an event, a finished agent): wake the run. */
   readonly settled: (
@@ -59,6 +53,8 @@ export interface EngineInternals {
   readonly notices: PubSub.PubSub<AutomationNotice>;
   readonly scope: Scope.Scope;
   readonly startStep: StartStep;
+  readonly pruneChildren: Effect.Effect<void, AutomationError>;
+  readonly settleChild: (runId: string) => Effect.Effect<void, AutomationError>;
   readonly changed: (change: Change) => Effect.Effect<void>;
   readonly runChanged: (runId: string, summary: boolean) => Effect.Effect<void, AutomationError>;
   /** Tells people once, on a step's one move into waiting or done. */

@@ -7,7 +7,11 @@
   "name": "signalbox-cloud",
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-01",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat",
+    // The Cloud Worker's process entrypoint redispatches overflow through ctx.exports.
+    "enable_ctx_exports",
+  ],
   // Local dev only; deployed Workers take theirs from alchemy.run.ts (`limits` there too).
   "limits": { "cpu_ms": 300000 },
   // One origin: sign-in callbacks, cookies and saved connections all key on it.
@@ -27,10 +31,17 @@
   "durable_objects": {
     "bindings": [
       { "name": "USERS", "class_name": "UserObject" },
+      { "name": "SEARCH_INDEX", "class_name": "SearchIndexObject" },
       { "name": "THREADS", "class_name": "ThreadObject" },
       { "name": "POOLS", "class_name": "PoolObject" },
       { "name": "DRIVES", "class_name": "DriveObject" },
       { "name": "PREVIEW_LINKS", "class_name": "PreviewLinkRegistry" },
+      { "name": "EXECUTOR_TOKEN_BINDINGS", "class_name": "ExecutorTokenBindingObject" },
+      { "name": "HARNESS_RUN_STORE", "class_name": "HarnessRunStoreObject" },
+      { "name": "HARNESS_FILES_STORE", "class_name": "HarnessFilesStoreObject" },
+      { "name": "HARNESS_THREAD_SUPERVISOR", "class_name": "HarnessThreadSupervisorObject" },
+      { "name": "PROCESS_EXECUTION_SHARDS", "class_name": "HarnessProcessExecutionShardObject" },
+      { "name": "PLACEMENT_STORES", "class_name": "HarnessProcessPlacementStoreObject" },
     ],
   },
   "migrations": [
@@ -39,6 +50,23 @@
     { "tag": "v3", "new_sqlite_classes": ["DriveObject"] },
     { "tag": "v4", "new_sqlite_classes": ["PoolObject"] },
     { "tag": "v5", "new_sqlite_classes": ["PreviewLinkRegistry"] },
+    { "tag": "v6", "new_sqlite_classes": ["ExecutorTokenBindingObject"] },
+    { "tag": "search-index-v1", "new_sqlite_classes": ["SearchIndexObject"] },
+    {
+      "tag": "durable-harness-state-v1",
+      "new_sqlite_classes": [
+        "HarnessRunStoreObject",
+        "HarnessFilesStoreObject",
+        "HarnessThreadSupervisorObject",
+      ],
+    },
+    {
+      "tag": "harness-process-execution-v1",
+      "new_sqlite_classes": [
+        "HarnessProcessExecutionShardObject",
+        "HarnessProcessPlacementStoreObject",
+      ],
+    },
   ],
   // Containers bound to Durable Objects. One entry per class: each object of
   // `class_name` gets its own container from `image`, started and stopped
@@ -88,11 +116,21 @@
       "class_name": "AutomationWorkflow",
     },
   ],
+  "ratelimits": [
+    {
+      "name": "CLIENT_TRACE_LIMITER",
+      "namespace_id": "866",
+      "simple": { "limit": 300, "period": 60 },
+    },
+  ],
   "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {
+    "SIGNALBOX_STAGE": "production",
+    "RESIDENT_BYTE_LIMIT": "128000000",
     // Production identity. Never reuse it for another deployment.
     "ENVIRONMENT_ID": "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
     "ENVIRONMENT_LABEL": "Signalbox Cloud",
+    "EXECUTOR_TOKEN_ISSUER": "http://localhost",
     // Previews that may take a signed-in user's setup (`src/previewSetup/`).
     "PREVIEW_SETUP_ORIGINS": "https://preview-*.signalbox.run",
   },
@@ -105,13 +143,30 @@
     "dev": {
       "name": "signalbox-cloud",
       "routes": [],
+      "ratelimits": [
+        {
+          "name": "CLIENT_TRACE_LIMITER",
+          "namespace_id": "866",
+          "simple": { "limit": 300, "period": 60 },
+        },
+      ],
       "durable_objects": {
         "bindings": [
           { "name": "USERS", "class_name": "UserObject" },
+          { "name": "SEARCH_INDEX", "class_name": "SearchIndexObject" },
           { "name": "THREADS", "class_name": "ThreadObject" },
           { "name": "POOLS", "class_name": "PoolObject" },
           { "name": "DRIVES", "class_name": "DriveObject" },
           { "name": "PREVIEW_LINKS", "class_name": "PreviewLinkRegistry" },
+          { "name": "EXECUTOR_TOKEN_BINDINGS", "class_name": "ExecutorTokenBindingObject" },
+          { "name": "HARNESS_RUN_STORE", "class_name": "HarnessRunStoreObject" },
+          { "name": "HARNESS_FILES_STORE", "class_name": "HarnessFilesStoreObject" },
+          { "name": "HARNESS_THREAD_SUPERVISOR", "class_name": "HarnessThreadSupervisorObject" },
+          {
+            "name": "PROCESS_EXECUTION_SHARDS",
+            "class_name": "HarnessProcessExecutionShardObject",
+          },
+          { "name": "PLACEMENT_STORES", "class_name": "HarnessProcessPlacementStoreObject" },
         ],
       },
       // Local only: `wrangler dev` simulates the bucket under .wrangler/.
@@ -143,7 +198,12 @@
       "worker_loaders": [{ "binding": "LOADER" }],
       // The scripted provider: a reply without a model, for trying the cloud locally.
       // The idle-chat test clock (`http/threadKindRoutes.ts`).
-      "vars": { "SCRIPTED_PROVIDER": "1", "THREAD_KIND_TEST_CLOCK": "1" },
+      "vars": {
+        "SIGNALBOX_STAGE": "dev",
+        "RESIDENT_BYTE_LIMIT": "128000000",
+        "SCRIPTED_PROVIDER": "1",
+        "THREAD_KIND_TEST_CLOCK": "1",
+      },
     },
   },
 }

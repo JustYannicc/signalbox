@@ -276,6 +276,7 @@ export interface Receiver {
   readonly notify: Verb;
   readonly sleep: Verb;
   readonly waitFor: Verb;
+  readonly eventCursor: Verb;
   readonly hook: Verb;
   readonly recall: Verb;
   readonly remember: Verb;

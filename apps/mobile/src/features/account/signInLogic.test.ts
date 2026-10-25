@@ -1,7 +1,3 @@
-/// <reference types="node" />
-
-import * as NodeCrypto from "node:crypto";
-
 import { buildAccountAuthorizeUrl, parseAccountReturn } from "@t3tools/client-runtime/account";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -16,10 +12,13 @@ import {
   type PkceCrypto,
 } from "./signInLogic";
 
-const nodeCrypto: PkceCrypto = {
-  randomBytes: (byteCount) => new Uint8Array(NodeCrypto.randomBytes(byteCount)),
-  sha256: (data) =>
-    Promise.resolve(new Uint8Array(NodeCrypto.createHash("sha256").update(data).digest())),
+const webCrypto: PkceCrypto = {
+  randomBytes: (byteCount) => globalThis.crypto.getRandomValues(new Uint8Array(byteCount)),
+  sha256: async (data) => {
+    const buffer = new ArrayBuffer(data.byteLength);
+    new Uint8Array(buffer).set(data);
+    return new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", buffer));
+  },
 };
 
 describe("sign-in server", () => {
@@ -70,15 +69,15 @@ describe("accountReturnUrl", () => {
 describe("PKCE", () => {
   it("matches the RFC 7636 S256 example", async () => {
     await expect(
-      pkceChallenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk", nodeCrypto),
+      pkceChallenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk", webCrypto),
     ).resolves.toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
   });
 
   it("creates an unpadded base64url verifier bound to its challenge", async () => {
-    const pair = await createPkcePair(nodeCrypto);
+    const pair = await createPkcePair(webCrypto);
     expect(pair.verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(pair.challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    await expect(pkceChallenge(pair.verifier, nodeCrypto)).resolves.toBe(pair.challenge);
+    await expect(pkceChallenge(pair.verifier, webCrypto)).resolves.toBe(pair.challenge);
   });
 });
 

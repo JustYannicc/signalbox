@@ -1,4 +1,4 @@
-import type { ModelSelection } from "@t3tools/contracts";
+import type { ModelSelection, ProjectId } from "@t3tools/contracts";
 import {
   type NoteAcceptInput,
   type NoteCreateInput,
@@ -37,7 +37,7 @@ const noteCall = <A>(
  * accepted note's task runs on when the client names no model.
  */
 export const makeNotesHandlers = Effect.fn("makeNotesHandlers")(function* (options: {
-  readonly newThreadModel: Effect.Effect<ModelSelection | null>;
+  readonly newThreadModel: (projectId?: ProjectId) => Effect.Effect<ModelSelection | null>;
 }) {
   const notes = yield* UserNotes;
   const methods = SIGNALBOX_NOTES_WS_METHODS;
@@ -55,7 +55,7 @@ export const makeNotesHandlers = Effect.fn("makeNotesHandlers")(function* (optio
     [methods.accept]: (request: NoteAcceptInput) =>
       noteCall(
         Effect.gen(function* () {
-          const modelSelection = request.modelSelection ?? (yield* options.newThreadModel);
+          const modelSelection = request.modelSelection ?? (yield* options.newThreadModel());
           if (modelSelection === null) {
             return yield* new NoteRefusedError({
               message: "Add an account to a pool first: the task runs on your pool.",

@@ -1,0 +1,44 @@
+--- a/toolchain/vendor/uu_mkdir/src/mkdir.rs
++++ b/toolchain/vendor/uu_mkdir/src/mkdir.rs
+@@ -288,7 +288,23 @@
+     std::fs::DirBuilder::new().mode(mode).create(path)
+ }
+ 
+-#[cfg(not(unix))]
++#[cfg(target_os = "wasi")]
++fn create_dir_with_mode(path: &Path, mode: u32) -> std::io::Result<()> {
++    use std::ffi::CString;
++    use std::os::wasi::ffi::OsStrExt;
++
++    std::fs::create_dir(path)?;
++    let path = CString::new(path.as_os_str().as_bytes())
++        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
++    let result = unsafe { uucore::libc::chmod(path.as_ptr(), mode as uucore::libc::mode_t) };
++    if result == 0 {
++        Ok(())
++    } else {
++        Err(std::io::Error::last_os_error())
++    }
++}
++
++#[cfg(all(not(unix), not(target_os = "wasi")))]
+ fn create_dir_with_mode(path: &Path, _mode: u32) -> std::io::Result<()> {
+     std::fs::create_dir(path)
+ }
+@@ -300,14 +316,14 @@
+     let path_exists = path.exists();
+ 
+     // Calculate the mode to use for directory creation
+-    #[cfg(unix)]
++    #[cfg(any(unix, target_os = "wasi"))]
+     let create_mode = if is_parent {
+         // For parent directories with -p, use umask-derived mode with u+wx
+         (!mode::get_umask() & 0o777) | 0o300
+     } else {
+         config.mode
+     };
+-    #[cfg(not(unix))]
++    #[cfg(all(not(unix), not(target_os = "wasi")))]
+     let create_mode = config.mode;
+ 
+     match create_dir_with_mode(path, create_mode) {

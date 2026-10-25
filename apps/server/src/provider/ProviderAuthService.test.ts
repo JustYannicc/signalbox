@@ -347,6 +347,17 @@ const makeStreamingController = Effect.fn("ProviderAuthService.test.makeStreamin
   },
 );
 
+it.effect("does not widen an account-scoped logout into native instance logout", () =>
+  Effect.gen(function* () {
+    const { service, actions, released } = yield* makeHarness();
+    const error = yield* Effect.flip(service.logout({ instanceId, accountId: "chosen.json" }));
+    assert.strictEqual(error.operation, "logout");
+    assert.strictEqual(error.detail, "Account-scoped logout is only supported by cloud pools.");
+    assert.deepStrictEqual(actions, []);
+    assert.deepStrictEqual(released, []);
+  }),
+);
+
 const makeSubscriptionHarness = Effect.fn("ProviderAuthService.test.makeSubscriptionHarness")(
   function* (initial: ProviderInstance, replaceDuringFirstLookup?: ProviderInstance) {
     const changes = yield* PubSub.unbounded<void>();

@@ -55,6 +55,7 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
+import type { RunContinuationSummary } from "@t3tools/client-runtime/state/thread-execution";
 import {
   resolveT3McpToolDefinition,
   resolveT3McpToolPresentation,
@@ -469,8 +470,16 @@ export interface TimelineDurationMessage {
 
 export type TimelineLatestRun = Pick<
   ThreadRunSummary,
-  "runId" | "status" | "startedAt" | "completedAt"
->;
+  "runId" | "status" | "startedAt" | "workStartedAt" | "completedAt"
+> & {
+  /**
+   * signalbox: the thread's settled runs, each with its own status and times
+   * (settledRunSummaries). They ride on the latest run so the timeline
+   * component needs no prop of its own.
+   */
+  readonly settledRuns?: ReadonlyMap<RunId, TimelineLatestRun> | undefined;
+  readonly runContinuations?: ReadonlyMap<RunId, RunContinuationSummary> | undefined;
+};
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
@@ -492,6 +501,7 @@ type MessagesTimelineRowContent =
       createdAt: string;
       groupedEntries: WorkLogEntry[];
       isExpandedToolGroup: boolean;
+      groupId?: string;
       displayLabel?: string;
     }
   | {
@@ -647,6 +657,7 @@ function expandedWorkGroupRow(
   return {
     kind: "work",
     id: `${groupId}:details`,
+    groupId,
     createdAt,
     groupedEntries,
     isExpandedToolGroup: true,
@@ -961,6 +972,9 @@ function deriveTurnFolds(input: {
   completeSupersededReplyEntryIds: ReadonlySet<string>;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
+  const continuations = input.latestRun?.runContinuations;
+  const logicalRunId = (runId: RunId) => continuations?.get(runId)?.rootRunId ?? runId;
+  const unfoldedRunIds = new Set([...input.unfoldedRunIds].map(logicalRunId));
   const promptIndexByRunId = new Map<RunId, number>();
   for (const [index, entry] of input.timelineEntries.entries()) {
     if (timelineEntryStartsResponse(entry)) {
@@ -973,7 +987,7 @@ function deriveTurnFolds(input: {
       (entry.projectedItem.item.type === "run_interrupt_request" ||
         entry.projectedItem.item.type === "run_interrupt_result")
     ) {
-      interruptedRunIds.add(entry.projectedItem.item.runId);
+      interruptedRunIds.add(logicalRunId(entry.projectedItem.item.runId));
     }
   }
 
@@ -988,6 +1002,7 @@ function deriveTurnFolds(input: {
      */
     startBoundary: string | null;
     anchorEntryId: string;
+    continuationAnchorEntryId: string | null;
   }
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
@@ -997,16 +1012,20 @@ function deriveTurnFolds(input: {
   // first V2 run must not unfold every imported turn above it.
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
-  let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
+  let pendingBoundary: {
+    createdAt: string;
+    anchorEntryId: string;
+    runId: RunId | null;
+  } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
     if (timelineEntryStartsResponse(entry)) {
       const nextEntry = input.timelineEntries[index + 1];
-      pendingBoundary = nextEntry
-        ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
-        : null;
       const boundaryRunId = responseBoundaryRunId(entry);
       runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
       responseKey = boundaryRunId ?? runlessKey;
+      pendingBoundary = nextEntry
+        ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id, runId: responseKey }
+        : null;
       continue;
     }
     const ownRunId = timelineEntryFoldRunId(entry, runlessKey);
@@ -1016,10 +1035,11 @@ function deriveTurnFolds(input: {
     // Resuming a subagent moves its item to the resuming run, but the item
     // keeps its place in the turn that started it. It folds with that turn,
     // so the later run's fold still opens under its own prompt.
-    const runId =
+    const attributedRunId =
       responseKey !== null && (promptIndexByRunId.get(ownRunId) ?? -1) > index
         ? responseKey
         : ownRunId;
+    const runId = logicalRunId(attributedRunId);
     if (runId === runlessKey && timelineEntryFailedItem(entry) !== null) {
       runlessFailedKeys.add(runId);
     }
@@ -1031,9 +1051,20 @@ function deriveTurnFolds(input: {
         hasStreamingMessage: false,
         startBoundary: pendingBoundary?.createdAt ?? null,
         anchorEntryId: pendingBoundary?.anchorEntryId ?? entry.id,
+        continuationAnchorEntryId: null,
       };
       pendingBoundary = null;
       groupsByRunId.set(runId, group);
+    } else if (pendingBoundary !== null) {
+      if (
+        pendingBoundary.runId !== null &&
+        pendingBoundary.runId !== runId &&
+        logicalRunId(pendingBoundary.runId) === runId
+      ) {
+        // The recovery prompt is a visible user row; keep the combined fold after it.
+        group.continuationAnchorEntryId = entry.id;
+      }
+      pendingBoundary = null;
     }
     group.entries.push(entry);
     if (entry.kind === "message") {
@@ -1049,7 +1080,7 @@ function deriveTurnFolds(input: {
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [runId, group] of groupsByRunId) {
     if (
-      input.unfoldedRunIds.has(runId) ||
+      unfoldedRunIds.has(runId) ||
       interruptedRunIds.has(runId) ||
       runlessFailedKeys.has(runId) ||
       (input.runlessWorkActive && runId === runlessKey)
@@ -1104,22 +1135,29 @@ function deriveTurnFolds(input: {
       continue;
     }
 
-    const isLatestInterruptedTurn =
-      input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
+    // A turn's own settled run says how it ended and how long it took, from when it left the
+    // queue, even once a newer turn is latest.
+    const run =
+      input.latestRun?.runContinuations?.get(runId) ??
+      input.latestRun?.settledRuns?.get(runId) ??
+      (input.latestRun?.runId === runId ? input.latestRun : null);
+    const isInterruptedTurn = run?.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd =
       lastEntry.kind === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
+    const workStartedAt =
+      run && "workStartedAt" in run ? (run.workStartedAt ?? run.startedAt) : run?.startedAt;
     const elapsedMs =
-      input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
-        ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
+      workStartedAt && run?.completedAt
+        ? computeElapsedMs(workStartedAt, run.completedAt)
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
-    const label = isLatestInterruptedTurn
+    const label = isInterruptedTurn
       ? duration
         ? `You stopped after ${duration}`
         : "You stopped this response"
@@ -1127,9 +1165,9 @@ function deriveTurnFolds(input: {
         ? `Worked for ${duration}`
         : "Worked";
 
-    foldsByAnchorEntryId.set(group.anchorEntryId, {
+    foldsByAnchorEntryId.set(group.continuationAnchorEntryId ?? group.anchorEntryId, {
       runId,
-      anchorEntryId: group.anchorEntryId,
+      anchorEntryId: group.continuationAnchorEntryId ?? group.anchorEntryId,
       createdAt: group.startBoundary ?? firstEntry.createdAt,
       hiddenEntryIds,
       label,
@@ -1320,6 +1358,7 @@ export function deriveMessagesTimelineRows(input: {
   expandedRunIds?: ReadonlySet<RunId>;
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
+  findEntryId?: string | undefined;
   isWorking: boolean;
   /**
    * The live work has no app run (a provider-native subagent thread), so
@@ -1375,9 +1414,15 @@ export function deriveMessagesTimelineRows(input: {
     liveSubagentEntryIds,
     completeSupersededReplyEntryIds: completeSupersededReplyIds,
   });
+  const expandedRunIds = input.expandedRunIds;
+  const runContinuations = input.latestRun?.runContinuations;
+  const logicalExpandedRunIds =
+    expandedRunIds && expandedRunIds.size > 0 && runContinuations
+      ? new Set([...expandedRunIds].map((runId) => runContinuations.get(runId)?.rootRunId ?? runId))
+      : expandedRunIds;
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
-    if (!input.expandedRunIds?.has(fold.runId)) {
+    if (!logicalExpandedRunIds?.has(fold.runId)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
       }
@@ -1466,7 +1511,9 @@ export function deriveMessagesTimelineRows(input: {
             entry: (latestRunningToolEntry ?? latestVisibleToolEntry).entry,
             groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
             groupId,
-            expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
+            expanded:
+              (input.expandedWorkGroupIds?.has(groupId) ?? false) ||
+              visibleActiveToolEntries.some((entry) => entry.id === input.findEntryId),
             active: latestToolKeepsActivityLive,
             ...(latestThoughtEntry ? { thought: latestThoughtEntry.entry } : {}),
           };
@@ -1527,7 +1574,7 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: turnFold.createdAt,
         runId: turnFold.runId,
         label: turnFold.label,
-        expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
+        expanded: logicalExpandedRunIds?.has(turnFold.runId) ?? false,
       });
     }
 
@@ -1623,7 +1670,9 @@ export function deriveMessagesTimelineRows(input: {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded =
+            (input.expandedWorkGroupIds?.has(groupId) ?? false) ||
+            groupedEntries.some((entry) => entry.id === input.findEntryId);
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
           nextRows.push({
             kind: "work-live",
@@ -1659,7 +1708,9 @@ export function deriveMessagesTimelineRows(input: {
           });
         } else {
           const groupId = workGroupId(timelineEntry.id);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded =
+            (input.expandedWorkGroupIds?.has(groupId) ?? false) ||
+            groupedEntries.some((entry) => entry.id === input.findEntryId);
           const summaryKind = toolGroupSummaryKind(visibleGroupedEntries);
           const primarySourceEntry = visibleGroupedEntries.find(
             (entry) => entry.toolSource !== undefined,
@@ -1831,7 +1882,8 @@ export function deriveMessagesTimelineRows(input: {
       snapshot: input.worktreeSetup,
       embedded: setupHandedOff,
     } as const;
-    const firstUserRowIndex = nextRows.findIndex(
+    // The setup belongs to the latest message: a cloud thread prepares every run.
+    const setupUserRowIndex = nextRows.findLastIndex(
       (row) => row.kind === "message" && row.message.role === "user",
     );
     const workingRowIndex = setupOwnsWorkingSlot
@@ -1840,7 +1892,7 @@ export function deriveMessagesTimelineRows(input: {
     if (workingRowIndex >= 0) {
       nextRows.splice(workingRowIndex + 1, 0, setupRow);
     } else {
-      const insertAt = firstUserRowIndex >= 0 ? firstUserRowIndex + 1 : nextRows.length;
+      const insertAt = setupUserRowIndex >= 0 ? setupUserRowIndex + 1 : nextRows.length;
       nextRows.splice(
         insertAt,
         0,
@@ -1871,7 +1923,9 @@ export function deriveMessagesTimelineRows(input: {
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
       const groupId = workGroupId(failedGroupAnchor.id);
-      const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+      const expanded =
+        (input.expandedWorkGroupIds?.has(groupId) ?? false) ||
+        visibleActiveToolEntries.some((entry) => entry.id === input.findEntryId);
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
@@ -2192,6 +2246,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       const bw = b as typeof a;
       return (
         a.isExpandedToolGroup === bw.isExpandedToolGroup &&
+        a.groupId === bw.groupId &&
         a.displayLabel === bw.displayLabel &&
         Equal.equals(a.groupedEntries, bw.groupedEntries)
       );

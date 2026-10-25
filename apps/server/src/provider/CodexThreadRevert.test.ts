@@ -3,7 +3,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as Effect from "effect/Effect";
 
-import { revertCodexThread } from "./CodexThreadRevert.ts";
+import { revertCodexThread } from "@signalbox/provider-codex/threadRevert";
 
 const page = (
   id: number,

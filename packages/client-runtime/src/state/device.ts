@@ -1,4 +1,4 @@
-import { type DeviceToolVersions, WS_METHODS } from "@t3tools/contracts";
+import { type DeviceSession, type DeviceToolVersions, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -7,6 +7,34 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
+
+export function agentDeviceSessionIdForPanelSession(
+  activeSession: DeviceSession | undefined,
+  sessions: ReadonlyArray<DeviceSession>,
+): string | null {
+  if (!activeSession) return null;
+  if ("ownerKind" in activeSession && activeSession.ownerKind === "agent") {
+    return "sessionId" in activeSession && typeof activeSession.sessionId === "string"
+      ? activeSession.sessionId
+      : null;
+  }
+  if ("ownerKind" in activeSession && activeSession.ownerKind !== "panel") return null;
+  if (!("leaseId" in activeSession) || typeof activeSession.leaseId !== "string") return null;
+
+  const agentSession = sessions.find(
+    (session) =>
+      "ownerKind" in session &&
+      session.ownerKind === "agent" &&
+      "leaseId" in session &&
+      session.leaseId === activeSession.leaseId &&
+      session.threadId === activeSession.threadId &&
+      session.hostId === activeSession.hostId &&
+      session.deviceId === activeSession.deviceId,
+  );
+  return agentSession && "sessionId" in agentSession && typeof agentSession.sessionId === "string"
+    ? agentSession.sessionId
+    : null;
+}
 
 export function createDeviceEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -20,6 +48,10 @@ export function createDeviceEnvironmentAtoms<R, E>(
     state: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:device:state",
       tag: WS_METHODS.subscribeDeviceState,
+    }),
+    agentDiagnostics: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:device:agent-diagnostics",
+      tag: WS_METHODS.subscribeDeviceAgentDiagnostics,
     }),
     configure: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:configure",
@@ -42,6 +74,11 @@ export function createDeviceEnvironmentAtoms<R, E>(
       tag: WS_METHODS.deviceOpen,
       scheduler,
       concurrency,
+    }),
+    // Cancellation must remain dispatchable while open is still running.
+    cancelOpen: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:cancel-open",
+      tag: WS_METHODS.deviceCancelOpen,
     }),
     close: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:close",

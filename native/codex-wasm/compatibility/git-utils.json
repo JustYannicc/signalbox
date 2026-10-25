@@ -1,0 +1,45 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "wasi-ext",
+      "path": "codex-rs/git-utils/src/lib.rs",
+      "before": ["mod apply;", "mod baseline;", "mod branch;"],
+      "after": [
+        "#![cfg_attr(target_os = \"wasi\", feature(wasi_ext))]",
+        "mod apply;",
+        "mod baseline;",
+        "mod branch;"
+      ]
+    },
+    {
+      "rule": "symlink-arm",
+      "path": "codex-rs/git-utils/src/platform.rs",
+      "before": [
+        "    Ok(())",
+        "}",
+        "",
+        "#[cfg(not(any(unix, windows)))]",
+        "compile_error!(\"codex-git symlink support is only implemented for Unix and Windows\");"
+      ],
+      "after": [
+        "    Ok(())",
+        "}",
+        "",
+        "// agentOS wasm32-wasip1: WASI has path_symlink (the VM backs it).",
+        "#[cfg(target_os = \"wasi\")]",
+        "pub fn create_symlink(",
+        "    _source: &Path,",
+        "    link_target: &Path,",
+        "    destination: &Path,",
+        ") -> Result<(), GitToolingError> {",
+        "    std::os::wasi::fs::symlink_path(link_target, destination)?;",
+        "    Ok(())",
+        "}",
+        "",
+        "#[cfg(not(any(unix, windows, target_os = \"wasi\")))]",
+        "compile_error!(\"codex-git symlink support is only implemented for Unix and Windows\");"
+      ]
+    }
+  ]
+}

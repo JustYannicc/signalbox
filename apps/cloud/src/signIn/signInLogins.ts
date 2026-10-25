@@ -86,5 +86,7 @@ export const makeSignInLogins = Effect.gen(function* () {
       sql`UPDATE signalbox_sign_in_logins SET failure = ${failure} WHERE site = ${site}`,
     /** Kernel no longer has the connection: nothing to keep signed in. */
     forget: (site: string) => sql`DELETE FROM signalbox_sign_in_logins WHERE site = ${site}`,
+    /** A person cleared the profile; the sweep must not restore its sign-ins. */
+    clear: () => sql`DELETE FROM signalbox_sign_in_logins`,
   };
 });

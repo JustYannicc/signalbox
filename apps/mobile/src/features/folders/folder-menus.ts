@@ -29,6 +29,8 @@ export function folderMenuActions(input: {
   readonly pools: ReadonlyArray<PoolChoice>;
   /** The environment keeps notes (`capabilities.notes`). */
   readonly notes?: boolean;
+  /** The user manages this folder's own files, so may publish them to GitHub. */
+  readonly publishable?: boolean;
 }): MenuAction[] {
   const { snapshot, folder } = input;
   const actions: MenuAction[] = [
@@ -89,6 +91,7 @@ export function folderMenuActions(input: {
       state: folder.githubLend ? "on" : undefined,
     });
   }
+  if (input.publishable) actions.push({ id: "folder:publish", title: "Publish to GitHub…" });
   // Phases by position: names can hold anything an id can't (#677).
   actions.push(
     folder.phase === undefined
@@ -123,6 +126,7 @@ export type FolderMenuChoice =
   | { readonly _tag: "phase"; readonly current: string }
   | { readonly _tag: "phases" }
   | { readonly _tag: "githubLend"; readonly lent: boolean }
+  | { readonly _tag: "publish" }
   | { readonly _tag: "instructions" }
   | { readonly _tag: "notes" }
   | { readonly _tag: "delete" };
@@ -147,6 +151,7 @@ export function parseFolderMenuEvent(input: {
   }
   // A switch: choosing it flips the lend.
   if (event === "folder:github-lend") return { _tag: "githubLend", lent: !folder.githubLend };
+  if (event === "folder:publish") return { _tag: "publish" };
   if (event === "folder:notes") return { _tag: "notes" };
   if (event === "folder:delete") return { _tag: "delete" };
   if (event === "folder:up" || event === "folder:down") {

@@ -53,8 +53,6 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
-import * as ServerAutomations from "../workflows/serverHost.ts"; // signalbox: automations
-import * as AutomationConnections from "../workflows/connectionSettings.ts"; // signalbox: automations
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -366,12 +364,6 @@ export const layerProduction = Layer.mergeAll(
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,
-  ServerAutomations.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(layerThreadLaunchProvided, layerThreadManagementProvided, layerProjectService),
-    ),
-  ), // signalbox: automations
-  AutomationConnections.layer, // signalbox: automations
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided)),
   ),

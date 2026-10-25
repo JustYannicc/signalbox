@@ -103,6 +103,7 @@ import { editPendingThreadMessage } from "../../state/edit-pending-thread-messag
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
+import { ThreadFindBar } from "./find/ThreadFindBar"; // signalbox: thread find
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import { useThreadBrowsingTabCount } from "../../state/browsing";
@@ -127,6 +128,7 @@ import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
+import { SignalboxAsksCard } from "./SignalboxAsksCard";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
 import {
@@ -154,6 +156,7 @@ import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import type { ThreadFindRevealRequest } from "./find/thread-find-model";
 
 export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
@@ -377,15 +380,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // Android can swallow the IME hide callbacks when the app is backgrounded mid keyboard-hide
   // (the reported repro: send — which blurs and starts the hide — then Home within a second). The
   // keyboard library's height AND visibility then stay frozen open, so gating the sticky
-  // translation on visibility alone still strands the composer after resume.
+  // translation on visibility alone still strands the composer after resume. An input that kept
+  // focus through the switch is exempt: Android restores its keyboard unchanged, so no keyboard
+  // or focus event would ever lift the quarantine. Hiding the keyboard with Back keeps focus, so
+  // Back then Home mid-hide takes the exemption and can still strand the composer.
   const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(false);
+  const ownedInputFocusedRef = useRef(false);
   useEffect(() => {
     if (Platform.OS !== "android") {
       return;
     }
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
-        setKeyboardStateSuspect(true);
+        setKeyboardStateSuspect(!ownedInputFocusedRef.current);
       }
     });
     return () => {
@@ -396,6 +403,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     setKeyboardStateSuspect(false);
   }, [isKeyboardVisible, liveKeyboardHeight]);
   const handleOwnedInputFocusChange = useCallback((focused: boolean) => {
+    ownedInputFocusedRef.current = focused;
     if (focused) {
       setKeyboardStateSuspect(false);
     }
@@ -408,6 +416,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const controlInsets = deriveBottomControlInsets(nativeMetrics);
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const [findRevealRequest, setFindRevealRequest] = useState<ThreadFindRevealRequest | null>(null);
+  const handleFindRevealRequestChange = useCallback(
+    (request: ThreadFindRevealRequest | null) => setFindRevealRequest(request),
+    [],
+  );
   const childThreadInputs = useChildThreadInputs({
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
@@ -1086,6 +1099,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               threadId={props.selectedThread.id}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
+              findRevealRequest={findRevealRequest}
               pendingHandoff={props.pendingHandoff}
               worktreeSetup={props.worktreeSetup}
               setupWorkingStartedAt={props.setupWorkingStartedAt}
@@ -1126,6 +1140,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         <View className="flex-1" />
       )}
 
+      {showContent ? ( // signalbox: thread find (#792)
+        <ThreadFindBar
+          key={`find:${selectedThreadKey}`}
+          environmentId={props.environmentId}
+          threadId={props.selectedThread.id}
+          onRevealRequestChange={handleFindRevealRequestChange}
+          top={navigationHeaderHeight}
+        />
+      ) : null}
       {showContent ? (
         <ThreadBrowserFloat
           key={selectedThreadKey}
@@ -1224,6 +1247,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     thread={props.selectedThread}
                     environmentId={props.environmentId}
                   />
+                  <SignalboxAsksCard
+                    threadRef={props.selectedThreadDetailRef}
+                    maxHeight={Math.max(120, pendingUserInputMaxHeight - COMPOSER_EXPANDED_CHROME)}
+                    onInputFocusChange={handleOwnedInputFocusChange}
+                  />
                   {props.feedbackSubmissions.map((submission) => (
                     <ComposerFeedback
                       key={submission.id}
@@ -1238,7 +1266,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       exiting={FadeOut.duration(120)}
                     >
                       <ComposerErrorNotice
-                        message={composerError}
+                        message={environmentCopy(composerError)} // signalbox: one-environment copy for restored message errors
                         onDismiss={() => clearThreadComposerError(selectedThreadKey)}
                       />
                     </Animated.View>
@@ -1264,7 +1292,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       exiting={FadeOut.duration(140)}
                     >
                       <ThreadCreationFailedCard
-                        reason={props.creationState.reason}
+                        reason={environmentCopy(props.creationState.reason)} // signalbox: one-environment copy for failed task errors
                         onEditTask={props.creationState.onEditTask}
                       />
                     </Animated.View>

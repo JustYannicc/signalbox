@@ -1,0 +1,21 @@
+{
+  "reference": "openai/codex@092d3acd6bec3e3a14bdc7e7a2810ab628ab759d; time@0.3.47 WASI local-offset implementation",
+  "rules": [
+    {
+      "rule": "rollout-clock",
+      "path": "codex-rs/rollout/src/recorder.rs",
+      "before": [
+        "    let timestamp = OffsetDateTime::now_local()",
+        "        .map_err(|e| IoError::other(format!(\"failed to get local time: {e}\")))?;"
+      ],
+      "after": [
+        "    // WASI has no local timezone API; rollout timestamps use the host UTC clock.",
+        "    #[cfg(target_os = \"wasi\")]",
+        "    let timestamp = OffsetDateTime::now_utc();",
+        "    #[cfg(not(target_os = \"wasi\"))]",
+        "    let timestamp = OffsetDateTime::now_local()",
+        "        .map_err(|e| IoError::other(format!(\"failed to get local time: {e}\")))?;"
+      ]
+    }
+  ]
+}

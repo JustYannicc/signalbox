@@ -51,8 +51,8 @@ import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 
-import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { ClaudeProviderCapabilitiesV2 } from "@signalbox/provider-claude/ClaudeAdapter";
+import { CodexProviderCapabilitiesV2 } from "@signalbox/provider-codex/defaults";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import { threadShellFromProjection } from "../orchestration-v2/ProjectionStore.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -84,7 +84,13 @@ import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
-  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(
+    Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+      // signalbox: The shared MCP toolkit now consults the fork model-selection service.
+      initialModelSelection: () =>
+        Effect.succeed({ instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" }),
+    }),
+  ),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 
@@ -177,6 +183,7 @@ function makeProviderSnapshot(input: {
         slug: input.model,
         name: input.model,
         isCustom: false,
+        pricing: { inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 2 }, // signalbox: Default selection requires model pricing metadata.
         capabilities:
           input.optionDescriptors === undefined
             ? null

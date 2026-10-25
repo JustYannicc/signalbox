@@ -1,0 +1,199 @@
+# Destroys one Signalbox Cloud stage by hand: `production` or `pr-<number>`,
+# whatever the state of its pull request. Everything the stage holds is lost.
+#
+# Alchemy only drops production from its state (production is retained, see
+# apps/cloud/alchemy.run.ts), so the checks after the destroy delete what is
+# named for the stage either way. Buckets and the shared preview DNS record
+# stay: no stage owns them alone. The job lists them so their cost is visible.
+name: Destroy a Signalbox Cloud stage
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "Stage to destroy: production or pr-<number>"
+        required: true
+        type: string
+      confirm:
+        description: "Type the stage again to confirm"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  ALCHEMY_TELEMETRY_DISABLED: "1"
+
+jobs:
+  destroy:
+    name: Destroy ${{ inputs.stage }}
+    # Only main's code ever sees the token: dispatches from another ref skip.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Shares production's deploy lock, and each preview's own.
+    concurrency:
+      group: cloud-${{ inputs.stage }}
+      cancel-in-progress: false
+    environment:
+      name: ${{ inputs.stage == 'production' && 'cloud-production' || 'cloud-preview' }}
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      STAGE: ${{ inputs.stage }}
+      CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Check the confirmation
+        run: |
+          if [[ ! "$STAGE" =~ ^(production|pr-[1-9][0-9]*)$ ]]; then
+            echo "::error::Unknown stage \"$STAGE\": use production or pr-<number>."
+            exit 1
+          fi
+          if [[ "$CONFIRM" != "$STAGE" ]]; then
+            echo "::error::confirm must repeat the stage exactly."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # Keep the default persist-credentials: with false, checkout runs
+          # `git submodule foreach`, which dies on the vendored gitlink under .repos/.
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        id: setup
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@signalbox/cloud...
+
+      # Destroy evaluates the stack, which reads the Worker's config; nothing
+      # is uploaded, so placeholders do.
+      - name: Destroy the Alchemy stage
+        working-directory: apps/cloud
+        env:
+          T3CODE_WORKOS_CLIENT_ID: destroy-only
+          T3CODE_WORKOS_API_KEY: destroy-only
+          SESSION_SECRET: destroy-only
+          PREVIEW_CLEANUP_TOKEN: destroy-only
+        run: ./node_modules/.bin/alchemy destroy --stage "$STAGE" --yes --no-input
+
+      # Runs after a failed destroy too: it catches what wrangler made before
+      # the stack existed, what a destroy left, and everything production retains.
+      - name: Delete what is left
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          # Report every failure, then fail the job at the end.
+          set +e
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
+          auth=(--header "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          wrangler=apps/cloud/node_modules/.bin/wrangler
+          failed=0
+
+          # Every name comes from apps/cloud/infra/stage.ts, as the deploy gives it.
+          # shellcheck disable=SC2016 # JavaScript template literals, not shell.
+          names="$(node --input-type=module -e '
+            import { cloudStage } from "./apps/cloud/infra/stage.ts";
+            const s = cloudStage(process.env.STAGE);
+            console.log(JSON.stringify({
+              workers: [s.gatewayWorker, `${s.cloudWorker}-traces`, s.cloudWorker],
+              destination: `${s.cloudWorker}-sentry-traces`,
+              workflow: s.automationWorkflow,
+              containers: [s.poolContainer.name, s.threadContainer.name],
+              buckets: [...new Set([s.drivePacksBucket, "signalbox-drives-preview"])],
+            }));')"
+          workers="$(jq -r '.workers[]' <<< "$names")"
+
+          # Paged Cloudflare lists, one JSON array of results.
+          list() {
+            local page=1 all='[]' result
+            while true; do
+              result="$(curl --fail --silent --show-error --get "${auth[@]}" \
+                --data-urlencode 'per_page=1000' --data-urlencode "page=$page" "$api/$1")" || return 1
+              all="$(jq -c --argjson all "$all" '$all + (.result // [])' <<< "$result")"
+              (( page >= $(jq -r '.result_info.total_pages // 1' <<< "$result") )) && break
+              ((page += 1))
+            done
+            echo "$all"
+          }
+          delete() {
+            if curl --fail --silent --show-error --request DELETE --output /dev/null "${auth[@]}" "$api/$1"; then
+              echo "Deleted $2."
+            else
+              echo "::error::Could not delete $2."
+              failed=1
+            fi
+          }
+
+          # Custom domains outlive their Worker, so they go first.
+          domains="$(list workers/domains)" || { echo "::error::Could not list Worker domains."; failed=1; domains='[]'; }
+          while IFS=$'\t' read -r id hostname; do
+            [[ -n "$id" ]] && delete "workers/domains/$id" "the domain $hostname"
+          done < <(jq -r --arg w "$workers" '.[] | select(.service as $s | $w | split("\n") | index($s)) | [.id, .hostname] | @tsv' <<< "$domains")
+
+          scripts="$(list workers/scripts | jq -r '.[].id')" || { echo "::error::Could not list Workers."; failed=1; }
+          for name in $workers; do
+            if ! grep -Fxq "$name" <<< "$scripts"; then
+              echo "No Worker $name."
+            elif ! "$wrangler" delete --name "$name" --force; then
+              echo "::error::Could not delete the Worker $name."
+              failed=1
+            fi
+          done
+
+          destination="$(jq -r '.destination' <<< "$names")"
+          if found="$(list workers/observability/destinations)"; then
+            for slug in $(jq -r --arg n "$destination" '.[] | select(.name == $n) | .slug | @uri' <<< "$found"); do
+              delete "workers/observability/destinations/$slug" "the trace destination $destination"
+            done
+          else
+            echo "::error::Could not list trace destinations."
+            failed=1
+          fi
+
+          workflow="$(jq -r '.workflow' <<< "$names")"
+          workflow_exists() { curl --fail --silent --output /dev/null "${auth[@]}" "$api/workflows/$workflow"; }
+          if workflow_exists; then
+            delete "workflows/$workflow" "the Workflow $workflow"
+          else
+            echo "No Workflow $workflow."
+          fi
+
+          containers="$("$wrangler" containers list --json)" || { echo "::error::Could not list container apps."; failed=1; containers='[]'; }
+          for app in $(jq -r '.containers[]' <<< "$names"); do
+            id="$(jq -r --arg n "$app" '.[] | select(.name == $n) | .id' <<< "$containers")"
+            if [[ -z "$id" ]]; then
+              echo "No container app $app."
+            elif ! "$wrangler" containers delete "$id"; then
+              echo "::error::Could not delete the container app $app."
+              failed=1
+            fi
+          done
+
+          # Kept on purpose; listed so what they hold, and cost, is visible.
+          for bucket in $(jq -r '.buckets[]' <<< "$names"); do
+            echo "Kept R2 bucket $bucket:"
+            "$wrangler" r2 bucket info "$bucket" --jurisdiction eu || echo "::warning::Could not read $bucket."
+          done
+
+          # What is still named for the stage after all of the above.
+          left="$(
+            list workers/scripts | jq -r '.[].id' | grep -Fx "$workers"
+            workflow_exists && echo "$workflow"
+            "$wrangler" containers list --json | jq -r --argjson n "$names" '.[] | select(.name as $a | $n.containers | index($a)) | .name'
+          )"
+          if [[ -n "$left" ]]; then
+            echo "::error::Still deployed for $STAGE: $(tr '\n' ' ' <<< "$left")"
+            failed=1
+          else
+            echo "Nothing named for $STAGE is left."
+          fi
+          exit "$failed"

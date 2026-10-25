@@ -73,6 +73,8 @@ import {
   RelayLinkProofRequest,
 } from "./relay.ts";
 
+import { ClientIssuesHttpApi } from "./clientIssues.ts";
+
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
   dpop: Schema.optionalKey(Schema.String),
@@ -758,4 +760,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentWebhooksHttpApi) {}
+  .add(EnvironmentWebhooksHttpApi)
+  .add(ClientIssuesHttpApi) {}

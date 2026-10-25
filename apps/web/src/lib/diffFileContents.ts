@@ -7,6 +7,7 @@ import type {
   EnvironmentId,
   PullRequestDiffFileContentsInput,
   PullRequestDiffFileContentsResult,
+  PullRequestDiffRevision,
   PullRequestRef,
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
@@ -27,6 +28,7 @@ interface GitDiffFileContentsSource {
 interface PullRequestDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
+  readonly revision?: PullRequestDiffRevision;
   readonly commit: string | null;
   readonly cacheKey: string;
 }
@@ -102,11 +104,15 @@ export function createPullRequestDiffFileContentsLoader<E>(
   getDiffFileContents: GetPullRequestDiffFileContents<E>,
   source: PullRequestDiffFileContentsSource,
 ): FileDiffContentsLoader {
+  const revisionCacheKey = source.revision
+    ? `${source.cacheKey}:revision:${source.revision.baseSha}:${source.revision.headSha}`
+    : source.cacheKey;
   return createDiffFileContentsLoader(async ({ changeType, oldPath, newPath }) => {
     const result = await getDiffFileContents({
       environmentId: source.environmentId,
       input: {
         ...source.reference,
+        ...(source.revision === undefined ? {} : { revision: source.revision }),
         ...(source.commit === null ? {} : { commit: source.commit }),
         changeType,
         oldPath,
@@ -117,5 +123,5 @@ export function createPullRequestDiffFileContentsLoader<E>(
       throw squashAtomCommandFailure(result);
     }
     return result.value;
-  }, source.cacheKey);
+  }, revisionCacheKey);
 }

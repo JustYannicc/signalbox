@@ -5,13 +5,14 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
+  buildReviewGuidePromptFromDiff,
   buildThreadTitlePrompt,
-} from "./textGenerationPrompts.ts";
+} from "@t3tools/provider-core/server/textGenerationPrompts";
 import {
   normalizeCliError,
   sanitizeThreadTitle,
   toJsonSchemaObject,
-} from "./textGenerationUtils.ts";
+} from "@t3tools/provider-core/server/textGenerationUtils";
 import { TextGenerationError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -233,6 +234,28 @@ describe("buildReviewGuidePrompt", () => {
     expect(buildReviewGuidePrompt({ ...input, instructions: "  " }).prompt).not.toContain(
       "preferences for guides",
     );
+  });
+
+  it("reviews a supplied immutable remote diff without assuming a checkout or tools", () => {
+    const { prompt } = buildReviewGuidePromptFromDiff({
+      ...input,
+      headCommit: "def456",
+      diff: "diff --git a/src/search.ts b/src/search.ts\n@@ -1 +1 @@\n-old\n+new",
+    });
+
+    expect(prompt).toContain(
+      "immutable remote comparison from base commit abc123 to head commit def456",
+    );
+    expect(prompt).toContain("The supplied patch is the complete diff for this exact revision");
+    expect(prompt).toContain(
+      "Do not use tools, fetch source control data, or check out a revision",
+    );
+    expect(prompt).toContain("Every excerpt must come from one supplied hunk");
+    expect(prompt).toContain("<changed_files_diff>");
+    expect(prompt).toContain("diff --git a/src/search.ts b/src/search.ts");
+    expect(prompt).toContain("Coverage: every changed file is accounted for");
+    expect(prompt).not.toContain("checked out in the current directory");
+    expect(prompt).not.toContain("git diff --stat");
   });
 });
 

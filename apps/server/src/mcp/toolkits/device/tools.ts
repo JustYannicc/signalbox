@@ -76,7 +76,7 @@ export const DeviceScreenshotTool = Tool.make("device_screenshot", {
 
 const DeviceCloseTool = Tool.make("device_close", {
   description:
-    "Remove a device from this thread's Device panel. Pass shutdown=true to also power the simulator or emulator off.",
+    "Remove a device from this thread's Device panel. Pass shutdown=true to power it off when no other walk owns or is waiting for it.",
   parameters: DeviceToolCloseInput,
   success: Schema.Record(Schema.String, Schema.Never).annotate({
     description: "The device was closed.",

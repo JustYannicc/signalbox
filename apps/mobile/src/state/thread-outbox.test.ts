@@ -392,6 +392,7 @@ describe("thread outbox", () => {
     });
     const selectedMessage = {
       ...legacyMessage,
+      sourceDraftRevision: "draft-revision-1",
       modelSelection: {
         instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.4",
@@ -1450,6 +1451,13 @@ describe("thread outbox", () => {
         }),
       ),
     ).toBe(false);
+    expect(
+      shouldRetryThreadOutboxDelivery({
+        _tag: "ComposerDraftPersistenceError",
+        operation: "write",
+        message: "Composer draft persistence failed",
+      }),
+    ).toBe(true);
   });
 
   it("retries every in-flight transport failure by tag, not by message text", () => {

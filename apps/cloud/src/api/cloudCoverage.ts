@@ -31,72 +31,45 @@ const poolHarnesses = exempt("Pools run each harness; nothing installs per user.
 /** Keys are operation names, or `prefix.*` for every operation under a prefix. */
 export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "settings.get": gap("#440"),
-  "keybindings.*": gap("#440"),
-  "analytics.*": gap("#284"),
-
-  // Waiting on you: approvals, questions and secret requests.
-  "threads.respond": gap("#410"),
-  "threads.dismissQuestion": gap("#410"),
-  "secrets.answer": gap("#410"),
 
   // The rest of a thread's lifecycle.
   "threads.delete": gap("#439"),
-  "threads.settle": gap("#439"),
-  "threads.unsettle": gap("#439"),
-  "threads.autoSettle.set": gap("#439"),
   "threads.snooze": gap("#439"),
   "threads.unsnooze": gap("#439"),
-  "threads.pin": gap("#439"),
-  "threads.unpin": gap("#439"),
-  "threads.pin.reorder": gap("#439"),
   "threads.active.reorder": gap("#439"),
   "threads.markUnread": gap("#439"),
   "threads.fork": gap("#439"),
   "threads.mergeBack": gap("#439"),
-  "threads.queuedRun.edit": gap("#439"),
-  "threads.queuedRun.reorder": gap("#439"),
-  "threads.switchProvider": gap("#439"),
   "threads.stopSubagent": gap("#439"),
-  "threads.retryPreparation": gap("#439"),
-  "threads.subscribeArchived": gap("#439"),
-  "threads.commandOutput": gap("#439"),
   "threads.getTurnItem": gap("#439"),
-  "threads.getWorkflowScript": gap("#439"),
-  "threads.stopWorkflow": gap("#439"),
   "threads.rollback": gap("#398"),
-  "threads.search": gap("#334"),
-  "threads.searchOne": gap("#334"),
 
-  // Pull requests, linked and followed (`pr.*` for automations).
-  "pullRequests.*": gap("#397"),
-  "threads.pullRequest.watch": gap("#397"),
-  "git.preparePullRequestThread": gap("#397"),
-  "git.resolvePullRequest": gap("#397"),
+  // Pull-request reads are served by `github/CloudPullRequests.ts` (#814).
+  // The later slices own writes and personal review state.
+  "pullRequests.runAction": gap("#817"),
+  "pullRequests.update": gap("#817"),
+  "pullRequests.reviewerCandidates": gap("#817"),
+  "pullRequests.requestReviewers": gap("#817"),
+  "pullRequests.labelCandidates": gap("#817"),
+  "pullRequests.setLabels": gap("#817"),
+  "threads.pullRequest.watch": gap("#818"),
+  "git.preparePullRequestThread": gap("#818"),
 
   // Git beyond the thread's own branch.
-  "vcs.listRefs": gap("#394"),
-  "review.getDiffFileContents": gap("#394"),
   "sourceControl.cloneRepository": githubImports,
-  "sourceControl.publishRepository": gap("#394"),
 
   // Files in folders without a machine.
   "projects.writeFile": gap("#439"),
-  "projects.searchContents": gap("#439"),
   "projects.createNew": exempt("Folders hold projects; create one with folders.create."),
   "projects.mutate": exempt("Folders hold projects; change them with folders.*."),
-  "assets.persistChatAttachments": gap("#399"),
 
   // Pools: the cloud signs in Claude and ChatGPT accounts only.
-  "pools.advice": gap("#197"),
-  "provider.auth.respond": gap("#205"),
-  "provider.auth.logout": gap("#205"),
   "provider.chatgpt.*": exempt("A self-hosted server's ChatGPT desktop handoff."),
   "provider.codex.authCallback.subscribe": exempt(
     "A self-hosted server's localhost sign-in callback.",
   ),
-  "provider.consumeResetCredit": gap("#197"),
+  "provider.consumeResetCredit": gap("#820"),
   "provider.install.*": poolHarnesses,
-  "provider.uploadFeedback": gap("#15"),
   "server.updateProvider": poolHarnesses,
 
   "acpRegistry.*": exempt("ACP agents install on a host; cloud threads run on pool harnesses."),
@@ -105,6 +78,7 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "backgroundPolicy.subscribe": noHost,
   "device.*": noHost,
   "deviceState.subscribe": noHost,
+  "deviceAgentDiagnostics.subscribe": noHost,
   "diagnostics.*": noHost,
   "discoveredLocalServers.subscribe": noHost,
   "filesystem.*": noHost,
@@ -116,16 +90,12 @@ export const CLOUD_UNSERVED: Readonly<Record<string, Unserved>> = {
   "server.updateServer": selfDeploying,
   "server.updateServerWithProgress": selfDeploying,
   "storage.*": noHost,
-  "terminal.*": gap("#744"),
-  "terminalEvents.subscribe": gap("#744"),
-  "terminalMetadata.subscribe": gap("#744"),
-  "usage.*": exempt("Pools report usage per account (`pool/poolViews.ts`)."),
+  "usage.*": gap("#786"),
   "vcs.createRef": ownBranch,
   "vcs.switchRef": ownBranch,
   "vcs.createWorktree": ownBranch,
   "vcs.removeWorktree": ownBranch,
   "vcs.init": githubImports,
-  "worktreeSetup.*": ownBranch,
 };
 
 /** Whether `name` falls under `key`, an operation name or a `prefix.*`. */

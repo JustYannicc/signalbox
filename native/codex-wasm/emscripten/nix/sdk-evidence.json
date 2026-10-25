@@ -1,0 +1,25 @@
+{
+  "sdk": "4.0.10",
+  "sha256": {
+    "cache/sysroot/include/signal.h": "18a55cd40db16c4ee993521d53f288e1a4537b9ccb31ab43c35c9a1e2a24f947",
+    "cache/sysroot/include/unistd.h": "7167ff608601a519c99c9beba65f956d4d4d6911def339513b1f235bbd5ee49f",
+    "cache/sysroot/lib/wasm32-emscripten/libc.a": "bdbc44915c29277aad023ea89835ce30889a0f15af23ed38c2b93a9982a50cbb",
+    "system/lib/libc/pthread_sigmask.c": "70f75a83a597b1fb689ee7aa0dd80ad5129c22c7d8779d824741cc3aa77ceb20",
+    "system/lib/libc/sigtimedwait.c": "a1063a15f9180ceb388bc32fd2050045eb66060dfdf1ccff8b34898b0488dccc",
+    "system/lib/libc/musl/src/signal/sigwait.c": "ec40a2bae533387834432bd0267ffefe93a368148337d8bf303486a11032878b",
+    "system/lib/libc/musl/src/unistd/faccessat.c": "938531c0c04bd17b82e511bd7980b48420a98ecf5a1fd1aed71f359af92e85dc",
+    "src/lib/libsyscall.js": "91c17685e4d60e2cb8a8de8c2f6939aefadd668b97508b494165bb214809f835",
+    "tools/system_libs.py": "4aa13b137f62d4253bf84b1f6b36758ed3e80041a4f0eb4b06b2c2d5acb9f2da"
+  },
+  "definedSymbols": [
+    "00000001 T faccessat",
+    "00000015 T pthread_sigmask",
+    "00000001 T sigtimedwait",
+    "00000001 T sigwait"
+  ],
+  "caveats": [
+    "sigwait delegates to sigtimedwait; Emscripten returns EINVAL when no pending signal instead of blocking",
+    "pthread_sigmask uses emulated signal masks; implementation dereferences set even for query-only calls",
+    "faccessat forwards to the Emscripten FS implementation of __syscall_faccessat"
+  ]
+}

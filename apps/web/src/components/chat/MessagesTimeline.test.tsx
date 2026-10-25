@@ -93,6 +93,7 @@ const legendListTestState = vi.hoisted(() => ({
 }));
 
 vi.mock("@legendapp/list/react", async () => {
+  const { useLayoutEffect } = await import("react");
   const legendListTestId = "legend-list";
 
   const LegendList = (props: {
@@ -130,8 +131,10 @@ vi.mock("@legendapp/list/react", async () => {
     onScroll?: () => void;
     ref?: Ref<LegendListRef>;
   }) => {
-    legendListTestState.data = props.data;
-    legendListTestState.onScroll = props.onScroll;
+    useLayoutEffect(() => {
+      legendListTestState.data = props.data;
+      legendListTestState.onScroll = props.onScroll;
+    });
     if (props.anchoredEndSpace) {
       props.anchoredEndSpace.onSizeChanged?.(240);
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
@@ -227,9 +230,8 @@ function matchMedia() {
 }
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
-let resolvePreviewAnnotationImage: typeof import("./MessagesTimeline").resolvePreviewAnnotationImage;
 
-const ElementStub = class ElementStub {};
+const ElementStub = function ElementStub() {};
 function stubDomGlobals() {
   const classList = {
     add: () => {},
@@ -271,7 +273,7 @@ beforeEach(stubDomGlobals);
 // Cold transformation of the full chat dependency graph needs extra time on slower CI workers.
 beforeAll(async () => {
   Object.defineProperty(window, "matchMedia", { value: matchMedia, configurable: true });
-  ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
+  ({ MessagesTimeline } = await import("./MessagesTimeline"));
 }, 120_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -402,7 +404,6 @@ function buildProps() {
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
     turnDiffSummaries: [],
-    providerStatuses: [],
     runs: [],
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
@@ -428,6 +429,72 @@ function buildProps() {
     onManualNavigation: () => {},
   };
 }
+
+it("Find opens the selected tool group and item details without expanding its sibling", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("requestAnimationFrame", () => 0);
+  vi.stubGlobal("cancelAnimationFrame", () => {});
+  const entries = ["first", "second"].map((id) => ({
+    id,
+    kind: "work" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    entry: {
+      id,
+      createdAt: MESSAGE_CREATED_AT,
+      label: id,
+      tone: "tool" as const,
+      itemType: "command_execution" as const,
+      toolLifecycleStatus: "completed" as const,
+      command: `printf ${id}_needle`,
+      detail: `${id}_output`,
+    },
+  }));
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(() => {
+      renderer = create(<MessagesTimeline {...buildProps()} timelineEntries={entries} />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("second_output");
+    await act(() => {
+      renderer!.update(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={entries}
+          findExpanded
+          findQuery="needle"
+          findNavigationId={1}
+          activeFindMatch={{ entryId: "second", runId: null, occurrence: 0 }}
+        />,
+      );
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain("second_output");
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("first_output");
+    const target = renderer!.root.findByProps({ "data-thread-find-entry-id": "second" });
+    expect(target.props["aria-expanded"]).toBe(true);
+    await act(() => target.props.onClick());
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("second_output");
+    await act(() => {
+      renderer!.update(<MessagesTimeline {...buildProps()} timelineEntries={entries} />);
+    });
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("second_output");
+    await act(() => {
+      renderer!.update(
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={entries}
+          findExpanded
+          findQuery="needle"
+          findNavigationId={1}
+          activeFindMatch={{ entryId: "second", runId: null, occurrence: 0 }}
+        />,
+      );
+    });
+    expect(JSON.stringify(renderer!.toJSON())).toContain("second_output");
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("first_output");
+  } finally {
+    await act(() => renderer?.unmount());
+  }
+});
 
 function buildLongUserMessageText(tail = "deep hidden detail only after expand") {
   return Array.from({ length: 9 }, (_, index) =>
@@ -790,16 +857,14 @@ describe("MessagesTimeline", () => {
     const { readTimelinePosition } = await import("./timelineScrollAnchoring");
     const timeline = stubFollowTimeline("environment-local:manual-departure");
     const { props } = timeline;
-    let navigateManually = () => {};
     function ChatProbe() {
       const [liveFollowEnabled, setLiveFollowEnabled] = useState(true);
-      navigateManually = () => setLiveFollowEnabled(false);
       return (
         <MessagesTimeline
           {...props}
           timelineEntries={[buildUserTimelineEntry("First prompt")]}
           liveFollowEnabled={liveFollowEnabled}
-          onManualNavigation={navigateManually}
+          onManualNavigation={() => setLiveFollowEnabled(false)}
         />
       );
     }
@@ -813,7 +878,7 @@ describe("MessagesTimeline", () => {
 
       timeline.scrollTop = 1300;
       await act(() => {
-        navigateManually();
+        renderer?.root.findByType(MessagesTimeline).props.onManualNavigation?.();
         legendListTestState.onScroll?.();
       });
       await act(() => renderer?.unmount());
@@ -1975,10 +2040,21 @@ describe("MessagesTimeline", () => {
       } as never,
     });
 
-    const markup = renderToStaticMarkup(
+    const { RegistryProvider } = await import("@effect/atom-react");
+    const { serverEnvironment } = await import("../../state/server");
+    const renderWithProviders = (element: ReactElement) =>
+      renderToStaticMarkup(
+        <RegistryProvider
+          initialValues={[
+            [serverEnvironment.providersValueAtom(ACTIVE_THREAD_ENVIRONMENT_ID), providerStatuses],
+          ]}
+        >
+          {element}
+        </RegistryProvider>,
+      );
+    const markup = renderWithProviders(
       <MessagesTimeline
         {...buildProps()}
-        providerStatuses={providerStatuses}
         timelineEntries={[
           buildHandoffEntry({
             fromProviderInstanceIds: ["codex_personal"],
@@ -2010,10 +2086,9 @@ describe("MessagesTimeline", () => {
         modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5" },
       },
     ] as never;
-    const legacyMarkup = renderToStaticMarkup(
+    const legacyMarkup = renderWithProviders(
       <MessagesTimeline
         {...buildProps()}
-        providerStatuses={providerStatuses}
         runs={legacyRuns}
         timelineEntries={[
           buildHandoffEntry({
@@ -2028,10 +2103,9 @@ describe("MessagesTimeline", () => {
     expect(legacyMarkup).toContain("Claude Fable 5");
     expect(legacyMarkup).not.toContain("Full conversation context");
 
-    const bareMarkup = renderToStaticMarkup(
+    const bareMarkup = renderWithProviders(
       <MessagesTimeline
         {...buildProps()}
-        providerStatuses={providerStatuses}
         timelineEntries={[
           buildHandoffEntry({
             fromProviderInstanceIds: ["codex_personal"],
@@ -2233,7 +2307,7 @@ describe("MessagesTimeline", () => {
       activityTestState.expandedRuns = true;
       activityTestState.subagentTooltips = true;
       vi.stubGlobal("HTMLElement", ElementStub);
-      window.HTMLElement = ElementStub as typeof HTMLElement;
+      window.HTMLElement = ElementStub as unknown as typeof HTMLElement;
       vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
       vi.stubGlobal("requestAnimationFrame", () => 0);
       vi.stubGlobal("cancelAnimationFrame", () => {});

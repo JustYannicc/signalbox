@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderDriverKind, type UsageLimitSourceAccount } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
 import { HubProviderRateLimited, makeHubProbeCache } from "./hubProbeCache.ts";
@@ -15,6 +17,47 @@ const account = (usedPercent: number): UsageLimitSourceAccount => ({
 });
 
 describe("hub usage probes", () => {
+  it.effect.each(["failure", "rate limited", "missing numbers"] as const)(
+    "drops a fallback that expires while a slow probe returns %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const probes = yield* makeHubProbeCache;
+        yield* probes.read("hub:slow", Effect.succeed(account(10)));
+        yield* TestClock.adjust("14 minutes");
+        const started = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const unavailable: UsageLimitSourceAccount = {
+          ...account(0),
+          usageLimits: {
+            checkedAt: "2026-10-06T12:15:00.000Z",
+            windows: [],
+            unavailable: { reason: "probeFailed", message: "No usage numbers." },
+          },
+        };
+        const error =
+          outcome === "rate limited"
+            ? new HubProviderRateLimited({ detail: "rate limited" })
+            : "probe failed";
+        const slow = Effect.gen(function* () {
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(finish);
+          return yield* outcome === "missing numbers"
+            ? Effect.succeed(unavailable)
+            : Effect.fail(error);
+        });
+        const reading = yield* probes.read("hub:slow", slow).pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("1 minute");
+        yield* Deferred.succeed(finish, undefined);
+        const result = yield* Fiber.join(reading);
+        if (outcome === "missing numbers") {
+          expect(result).toMatchObject({ _tag: "Success", success: unavailable });
+        } else {
+          expect(result).toMatchObject({ _tag: "Failure", failure: error });
+        }
+      }),
+  );
+
   it.effect("probe at most once a minute, and keep the last good read through a 429", () =>
     Effect.gen(function* () {
       const probes = yield* makeHubProbeCache;

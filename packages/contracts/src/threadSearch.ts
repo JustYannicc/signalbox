@@ -25,6 +25,7 @@ export const OrchestrationThreadSearchMatch = Schema.Struct({
   source: OrchestrationThreadSearchSource,
   snippet: Schema.String.check(Schema.isMaxLength(240)),
   messageCreatedAt: Schema.NullOr(IsoDateTime),
+  archived: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationThreadSearchMatch = typeof OrchestrationThreadSearchMatch.Type;
 

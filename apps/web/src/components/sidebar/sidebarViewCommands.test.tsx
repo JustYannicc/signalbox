@@ -1,0 +1,249 @@
+// @vitest-environment jsdom
+import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+  mergeWithDefaultKeybindings,
+} from "@t3tools/shared/keybindings";
+import { act, createContext, useContext, useEffect } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+const state = vi.hoisted(() => ({
+  keybindings: [] as ResolvedKeybindingsConfig,
+  terminalFocus: false,
+  paletteOpen: false,
+  navigate: vi.fn(),
+}));
+
+// Route changes must reach subscribers even when the compiler reuses child JSX.
+const RoutePathContext = createContext("/env/thread");
+const selectedParams = new WeakMap<object, Map<string, unknown>>();
+
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.keybindings }));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => state.navigate,
+  useParams: ({ select }: { select: (params: Record<string, string>) => unknown }) => {
+    const pathname = useContext(RoutePathContext);
+    // The real hook keeps a selection stable until the route changes.
+    const byPath = selectedParams.get(select) ?? new Map<string, unknown>();
+    selectedParams.set(select, byPath);
+    if (!byPath.has(pathname)) {
+      byPath.set(
+        pathname,
+        select(pathname === "/env/thread" ? { environmentId: "env", threadId: "thread" } : {}),
+      );
+    }
+    return byPath.get(pathname);
+  },
+  useLocation: ({
+    select,
+  }: {
+    select: (location: { pathname: string; href: string }) => unknown;
+  }) => {
+    const pathname = useContext(RoutePathContext);
+    return select({ pathname, href: pathname });
+  },
+}));
+vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("../../lib/terminalFocus", () => ({ isTerminalFocused: () => state.terminalFocus }));
+vi.mock("../../commandPaletteBus", () => ({ isCommandPaletteOpen: () => state.paletteOpen }));
+
+import { MainAppLocationTracker } from "./mainAppLocation";
+import { filterCommandPaletteGroups, type CommandPaletteActionItem } from "../CommandPalette.logic";
+import { SidebarViewShortcuts, useSidebarViewPaletteItems } from "./sidebarViewCommands";
+
+let paletteItems: CommandPaletteActionItem[] = [];
+
+function PaletteActions() {
+  const items = useSidebarViewPaletteItems();
+  useEffect(() => {
+    paletteItems = items;
+  });
+  return items.map((item) => (
+    <button key={item.value} onClick={item.run}>
+      {item.title}
+    </button>
+  ));
+}
+
+function Harness({ pathname = "/env/thread" }: { pathname?: string }) {
+  return (
+    <RoutePathContext value={pathname}>
+      <MainAppLocationTracker />
+      <SidebarViewShortcuts />
+      <PaletteActions />
+    </RoutePathContext>
+  );
+}
+
+let renderer: ReactTestRenderer;
+const storageKey = "t3code:sidebar:view";
+
+function press(overrides: KeyboardEventInit = {}, target: HTMLElement = document.body) {
+  const event = new KeyboardEvent("keydown", {
+    key: "1",
+    code: "Digit1",
+    metaKey: true,
+    altKey: true,
+    bubbles: true,
+    cancelable: true,
+    ...overrides,
+  });
+  act(() => target.dispatchEvent(event));
+  return event;
+}
+
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("desktopBridge", undefined);
+  vi.spyOn(window.navigator, "platform", "get").mockReturnValue("MacIntel");
+  state.keybindings = DEFAULT_RESOLVED_KEYBINDINGS;
+  state.terminalFocus = false;
+  state.paletteOpen = false;
+  state.navigate.mockReset();
+  localStorage.clear();
+});
+
+afterEach(() => {
+  if (renderer) act(() => renderer.unmount());
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  document.body.replaceChildren();
+});
+
+describe("sidebar view commands", () => {
+  it.each(["MacIntel", "Linux"])("opens Home without leaving the thread on %s", (platform) => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(platform);
+    localStorage.setItem(storageKey, JSON.stringify("pipeline"));
+    act(() => {
+      renderer = create(<Harness />);
+    });
+
+    const event = press({
+      key: platform === "MacIntel" ? "¡" : "1",
+      metaKey: platform === "MacIntel",
+      ctrlKey: platform === "Linux",
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(localStorage.getItem(storageKey)).toBe(JSON.stringify("home"));
+    expect(state.navigate).not.toHaveBeenCalled();
+  });
+
+  it("returns from Settings to the last thread like the rail", () => {
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    act(() => renderer.update(<Harness pathname="/settings/keybindings" />));
+
+    press();
+
+    expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ href: "/env/thread" });
+  });
+
+  it("opens Home from the palette on a utility page", async () => {
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    act(() => renderer.update(<Harness pathname="/usage" />));
+
+    await act(async () => renderer.root.findByType("button").props.onClick());
+
+    expect(localStorage.getItem(storageKey)).toBe(JSON.stringify("home"));
+    expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ href: "/env/thread" });
+  });
+
+  it("is found when searching the palette for Home", () => {
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    const search = (query: string) =>
+      filterCommandPaletteGroups({
+        activeGroups: [{ value: "actions", label: "Actions", items: paletteItems }],
+        query,
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems: [],
+      }).flatMap((group) => group.items.map((item) => item.value));
+
+    expect(search("home")).toContain("action:go-home");
+    expect(search("go to home")).toContain("action:go-home");
+  });
+
+  it("uses the configured shortcut instead of the default", () => {
+    state.keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "mod+alt+g", command: "sidebar.home", when: "!terminalFocus" },
+      ]),
+    );
+    act(() => {
+      renderer = create(<Harness />);
+    });
+
+    expect(press().defaultPrevented).toBe(false);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    expect(press({ key: "g", code: "KeyG" }).defaultPrevented).toBe(true);
+    expect(localStorage.getItem(storageKey)).toBe(JSON.stringify("home"));
+  });
+
+  it("honors !editableFocus while typing in a Settings input", () => {
+    state.keybindings = compileResolvedKeybindingsConfig([
+      { key: "h", command: "sidebar.home", when: "!editableFocus" },
+    ]);
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    act(() => renderer.update(<Harness pathname="/settings/keybindings" />));
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+    const chord = { key: "h", code: "KeyH", metaKey: false, altKey: false };
+
+    expect(press(chord, input).defaultPrevented).toBe(false);
+    expect(state.navigate).not.toHaveBeenCalled();
+    expect(localStorage.getItem(storageKey)).toBeNull();
+
+    input.blur();
+    expect(press(chord).defaultPrevented).toBe(true);
+    expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ href: "/env/thread" });
+  });
+
+  it("handles Home forwarded from Electron's focused browser and unsubscribes", () => {
+    let menuAction: ((command: string) => void) | undefined;
+    const unsubscribe = vi.fn();
+    vi.stubGlobal("desktopBridge", {
+      onMenuAction: (listener: typeof menuAction) => {
+        menuAction = listener;
+        return unsubscribe;
+      },
+    });
+    act(() => {
+      renderer = create(<Harness />);
+    });
+
+    act(() => menuAction?.("sidebar.home"));
+
+    expect(localStorage.getItem(storageKey)).toBe(JSON.stringify("home"));
+    act(() => renderer.unmount());
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("leaves terminal input, palette input, repeats and shortcut capture alone", () => {
+    act(() => {
+      renderer = create(<Harness />);
+    });
+    state.terminalFocus = true;
+    expect(press().defaultPrevented).toBe(false);
+    state.terminalFocus = false;
+    state.paletteOpen = true;
+    expect(press().defaultPrevented).toBe(false);
+    state.paletteOpen = false;
+    expect(press({ repeat: true }).defaultPrevented).toBe(false);
+    const input = document.createElement("input");
+    input.setAttribute("data-keybinding-capture", "");
+    document.body.append(input);
+    expect(press({}, input).defaultPrevented).toBe(false);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+  });
+});

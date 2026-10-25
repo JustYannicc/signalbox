@@ -6,7 +6,12 @@
  * policies and adapter checks; Signalbox Cloud reads the catalogs to label
  * the models its pools serve.
  */
-import { ModelCapabilities, TrimmedNonEmptyString } from "@t3tools/contracts";
+import {
+  ModelCapabilities,
+  ModelDefaultSelection,
+  ModelPricing,
+  TrimmedNonEmptyString,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 /** Where the manifest lives upstream; a server refreshes its bundled copy from here. */
@@ -29,6 +34,8 @@ const ManifestProviderModel = Schema.Struct({
   status: ManifestModelStatus,
   badge: Schema.optional(Schema.Literal("new")),
   profile: Schema.optional(TrimmedNonEmptyString),
+  pricing: Schema.optional(ModelPricing),
+  defaultSelection: Schema.optional(ModelDefaultSelection),
   adapter: Schema.optional(Schema.Unknown),
 });
 

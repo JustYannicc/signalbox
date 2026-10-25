@@ -1,0 +1,13 @@
+diff --git a/packages/worker/wasm/bash/coreutils/build-busybox.sh b/packages/worker/wasm/bash/coreutils/build-busybox.sh
+index b93e0f8..e1c2990 100755
+--- a/packages/worker/wasm/bash/coreutils/build-busybox.sh
++++ b/packages/worker/wasm/bash/coreutils/build-busybox.sh
+@@ -67,7 +67,7 @@ fi
+ 
+ # Compile everything (the kbuild link step needs --start-group, which
+ # wasm-ld lacks — the final link below is explicit instead).
+-make -j"$(nproc)" CC="$CC" HOSTCC=gcc SKIP_STRIP=y busybox_unstripped || true
++make -j"$(nproc)" CC="$CC" AR="${AR:-${CROSS_COMPILE}ar}" HOSTCC=gcc SKIP_STRIP=y busybox_unstripped || true
+ for a in */lib.a libbb/lib.a coreutils/libcoreutils/lib.a; do
+   [ -f "$a" ] || { echo "missing $a — compile stage failed; re-run make without -s to see errors" >&2; exit 1; }
+ done

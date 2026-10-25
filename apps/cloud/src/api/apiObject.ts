@@ -1,5 +1,4 @@
 import { findOperation } from "@signalbox/api/catalog";
-import { AuthEnvironmentScopes } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -10,28 +9,13 @@ import { NO_STORE_HEADERS } from "../http/credentials.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import { type ApiAnswer, type ApiCaller, callOperation, dimensionsOf } from "./apiCall.ts";
 import { API_PREFIX } from "./apiPaths.ts";
+import type { ApiCredential } from "./apiCredential.ts";
 
 /**
  * The public API inside a user's object. The Worker checked only that the
  * credential is the cloud's (a key's signature, an MCP token's issuer); the
  * object holds the record, so a revoked key stops at the next call.
  */
-
-/** Carries a call's credential from the Worker. Objects aren't reachable from the internet. */
-export const API_HEADER = "x-signalbox-api";
-
-export const ApiCredential = Schema.Union([
-  /**
-   * A personal key; the object looks up its scopes. `agent`: an agent is using
-   * the person's key (`signalbox mcp`), so the call gets an agent's limits.
-   */
-  Schema.TaggedStruct("key", { secret: Schema.String, agent: Schema.optionalKey(Schema.Boolean) }),
-  /** An agent acting for the person, as the Worker verified (MCP). */
-  Schema.TaggedStruct("agent", { sid: Schema.String, scopes: AuthEnvironmentScopes }),
-]);
-export type ApiCredential = typeof ApiCredential.Type;
-export const encodeApiCredential = Schema.encodeSync(Schema.fromJsonString(ApiCredential));
-export const decodeApiCredential = Schema.decodeUnknownOption(Schema.fromJsonString(ApiCredential));
 
 const respond = (answer: ApiAnswer): Response =>
   answer._tag === "json"

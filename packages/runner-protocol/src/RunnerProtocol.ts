@@ -8,10 +8,14 @@ import {
   OrchestrationV2ConversationMessage,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
+  OrchestrationV2RuntimeRequest,
   PositiveInt,
+  ProviderContinuation,
   ProviderInteractionMode,
+  ProviderSessionId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -19,8 +23,13 @@ import * as Schema from "effect/Schema";
 
 import { jsonCodec as frameCodec } from "./jsonCodec.ts";
 import { DriveAccess, DriveFileChange, Oid, SkippedFolder } from "./DriveProtocol.ts";
+import { PullOperation, PullResult } from "./PullProtocol.ts";
 import { SecretsAccess } from "./SecretsProtocol.ts";
 import { SessionAccess } from "./SessionProtocol.ts";
+import { TerminalCommandMessage, TerminalReportMessage } from "./TerminalProtocol.ts";
+import { FeedbackRequest, FeedbackResponse } from "./FeedbackProtocol.ts";
+import { ExecCommandMessage, ExecReportMessage } from "./ExecProtocol.ts";
+import { MachineFilesRequest, MachineFilesResult } from "./MachineFilesProtocol.ts";
 
 /**
  * The wire protocol between a thread's Durable Object and the Runner driving
@@ -64,11 +73,13 @@ import { SessionAccess } from "./SessionProtocol.ts";
  *
  * A turn in a folder that names 1Password Environments also carries the
  * owner's service account token for them (`SecretsProtocol.ts`): the Runner
- * reads the values as a harness session starts, and masks them in every
- * frame it sends.
+ * reads the values as a harness session starts, and masks them in its
+ * text-bearing frames.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 5;
+export const RUNNER_PROTOCOL_VERSION = 8;
+/** Versions 5 through 7 remain readable while existing machines finish their image rollout. */
+export const MIN_RUNNER_PROTOCOL_VERSION = 5;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
 export const RUNNER_HEARTBEAT_PONG = "pong";
@@ -83,11 +94,14 @@ export const RunnerMessageInput = Schema.Struct({
   attachments: Schema.Array(ChatAttachment),
   createdBy: OrchestrationV2ConversationMessage.fields.createdBy,
   creationSource: OrchestrationV2ConversationMessage.fields.creationSource,
+  providerContinuation: Schema.optional(ProviderContinuation),
 });
 export type RunnerMessageInput = typeof RunnerMessageInput.Type;
 
 /** One turn the thread hands to the Runner. Everything the adapter's `startTurn` needs. */
 export const RunnerTurn = Schema.Struct({
+  /** Present when checkout and provider handoff are fenced by the thread. */
+  preparationGeneration: Schema.optional(PositiveInt),
   threadId: ThreadId,
   runId: RunId,
   /** The turn's trace id (32 hex), on everything the Runner logs about it. */
@@ -113,7 +127,8 @@ export const RunnerTurn = Schema.Struct({
    * `message`'s text for a new harness session: the conversation so far, then
    * the message. Set on a turn that resumes a session natively, so a Runner
    * whose resume fails starts fresh on it (`onFreshSession`) rather than with
-   * no conversation (#653).
+   * no conversation (#653). Omitted when no safe handoff fits; a later native
+   * turn must then fail if its resume fails.
    */
   freshSessionText: Schema.optional(Schema.String),
 });
@@ -155,6 +170,20 @@ export type MachineUsage = typeof MachineUsage.Type;
 export const RunnerLogLevel = Schema.Literals(["info", "warning", "error"]);
 export type RunnerLogLevel = typeof RunnerLogLevel.Type;
 
+/** One dependency root's setup state, keyed to its checkout-relative path. */
+export const DependencyProgress = Schema.Struct({
+  root: Schema.String.check(
+    Schema.isPattern(/^(?![\\/])(?![A-Za-z]:)(?!.*(?:^|[\\/])\.\.(?:[\\/]|$)).*$/),
+  ),
+  status: Schema.Literals(["installing", "installed", "reused", "failed"]),
+  message: Schema.String,
+  durationMs: Schema.optional(NonNegativeInt),
+  reason: Schema.optional(
+    Schema.Literals(["new", "lockfile", "toolchain", "unfinished", "adopted"]),
+  ),
+});
+export type DependencyProgress = typeof DependencyProgress.Type;
+
 /** What the Runner is built from, so a turn's diagnostics name the exact software it ran on. */
 export const RunnerBuild = Schema.Struct({
   /** The image's content digest (`…@sha256:…`), when the machine knows it. */
@@ -167,10 +196,58 @@ export const RunnerBuild = Schema.Struct({
 export type RunnerBuild = typeof RunnerBuild.Type;
 
 /** Something that happened on the machine, in the order it happened. */
+export const RetainedWorkflowScript = Schema.Struct({
+  subagentId: NodeId,
+  runId: RunId,
+  scriptPath: Schema.String,
+  revision: Schema.String,
+  contents: Schema.String.check(Schema.isMaxLength(256 * 1024)),
+  truncated: Schema.Boolean,
+});
+export type RetainedWorkflowScript = typeof RetainedWorkflowScript.Type;
+
+export const WorkflowStopRequest = Schema.Struct({
+  attempt: Schema.optional(PositiveInt),
+  subagentId: NodeId,
+  runId: RunId,
+  generation: PositiveInt,
+  taskId: Schema.String,
+});
+export type WorkflowStopRequest = typeof WorkflowStopRequest.Type;
+
 export const RunnerItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("preparation.progress"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+    stage: Schema.Literals(["fetch", "checkout"]),
+    status: Schema.Literals(["running", "done", "skipped"]),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("preparation.ready"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("preparation.cancelled"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("preparation.failed"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+    message: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("workflow.stopped"),
+    ...WorkflowStopRequest.fields,
+    ok: Schema.Boolean,
+  }),
   /** The harness has the turn: its session and provider thread as loaded. */
   Schema.Struct({
     kind: Schema.Literal("turn.started"),
+    preparationGeneration: Schema.optional(PositiveInt),
     runId: RunId,
     providerSession: OrchestrationV2ProviderSession,
     providerThread: OrchestrationV2ProviderThread,
@@ -178,6 +255,7 @@ export const RunnerItem = Schema.Union([
   /** The turn never reached the harness. */
   Schema.Struct({
     kind: Schema.Literal("turn.failed"),
+    preparationGeneration: Schema.optional(PositiveInt),
     runId: RunId,
     message: Schema.String,
   }),
@@ -201,6 +279,13 @@ export const RunnerItem = Schema.Union([
     runId: RunId,
     message: Schema.String,
   }),
+  /** Dependency preparation is progress until it fails; keep each root in one stable row. */
+  Schema.Struct({
+    kind: Schema.Literal("dependencies.progress"),
+    preparationGeneration: Schema.optional(PositiveInt),
+    runId: RunId,
+    ...DependencyProgress.fields,
+  }),
   /**
    * The harness's session could not be saved, so the Runner stopped the turn
    * rather than go on with rows that would be lost with the machine.
@@ -210,6 +295,10 @@ export const RunnerItem = Schema.Union([
     runId: RunId,
     message: Schema.String,
   }),
+  /** The result of applying one persisted pull operation to the thread's drive. */
+  Schema.Struct({ kind: Schema.Literal("git.pull.result"), result: PullResult }),
+  /** A pull had no durable result yet, so the thread may replay the same operation id. */
+  Schema.Struct({ kind: Schema.Literal("git.pull.interrupted"), id: Schema.String }),
   /** The folder's secrets could not all be loaded: the turn runs without the ones missing. */
   Schema.Struct({
     kind: Schema.Literal("secrets.notice"),
@@ -276,6 +365,8 @@ export const RunnerHello = Schema.Struct({
   machineId: Schema.String,
   threadId: ThreadId,
   generation: PositiveInt,
+  /** Fresh for each terminal host process, stable across its socket reconnects. */
+  terminalProcessId: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
   token: Schema.String,
   lastAckedSequence: NonNegativeInt,
   /** Absent from Runners built before diagnostics. */
@@ -288,20 +379,38 @@ export const RunnerHello = Schema.Struct({
    * Absent from Runners built before it: the thread can't tell.
    */
   takenRunIds: Schema.optional(Schema.Array(RunId)),
+  takenPreparations: Schema.optional(
+    Schema.Array(Schema.Struct({ runId: RunId, preparationGeneration: PositiveInt })),
+  ),
   /** The Runner takes `steer` (#562). Absent: an older one, which closes on frames it can't read. */
   steers: Schema.optional(Schema.Boolean),
+  /** Accepts one-shot provider feedback requests. Older runners must never receive them. */
+  feedback: Schema.optional(Schema.Boolean),
+  workflowStops: Schema.optional(Schema.Boolean),
+  /** The Runner can answer a pending native provider request. */
+  runtimeResponses: Schema.optional(Schema.Boolean),
+  /** The Runner takes `git.pull`; protocol 6 images shipped before Pull may lack it. */
+  pulls: Schema.optional(Schema.Boolean),
+  /** Runs non-PTY processes for the hosted kernel. */
+  exec: Schema.optional(Schema.Boolean),
+  /** Answers generic machine file lookups and ranged reads. */
+  machineFileLookup: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 
 /** Runner to thread. */
 export const RunnerMessage = Schema.Union([
   RunnerHello,
+  FeedbackResponse,
   Schema.Struct({
     type: Schema.Literal("batch"),
     /** Counts from 1 within a generation, with no gaps. */
     sequence: PositiveInt,
     items: Schema.Array(RunnerItem),
   }),
+  TerminalReportMessage,
+  ExecReportMessage,
+  MachineFilesResult,
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
 ]);
 export type RunnerMessage = typeof RunnerMessage.Type;
@@ -317,6 +426,8 @@ export type RunnerRefusal = typeof RunnerRefusal.Type;
 
 /** Thread to Runner. */
 export const ThreadMessage = Schema.Union([
+  FeedbackRequest,
+  Schema.Struct({ type: Schema.Literal("workflow.stop"), ...WorkflowStopRequest.fields }),
   Schema.Struct({
     type: Schema.Literal("welcome"),
     generation: PositiveInt,
@@ -330,6 +441,19 @@ export const ThreadMessage = Schema.Union([
     message: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("ack"), sequence: PositiveInt }),
+  TerminalCommandMessage,
+  ExecCommandMessage,
+  MachineFilesRequest,
+  /** A committed response to a native request this live run observed on its harness session. */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.respond"),
+    runId: RunId,
+    attemptId: RunAttemptId,
+    providerSessionId: ProviderSessionId,
+    requestId: RuntimeRequestId,
+    decision: OrchestrationV2RuntimeRequest.fields.decision,
+    answers: OrchestrationV2RuntimeRequest.fields.answers,
+  }),
   Schema.Struct({
     type: Schema.Literal("turn.start"),
     turn: RunnerTurn,
@@ -342,7 +466,21 @@ export const ThreadMessage = Schema.Union([
     /** The secrets of the thread's folders. Absent: none, or a cloud older than this field. */
     secrets: Schema.optionalKey(SecretsAccess),
   }),
-  Schema.Struct({ type: Schema.Literal("interrupt"), runId: RunId }),
+  Schema.Struct({
+    type: Schema.Literal("preparation.cancel"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("preparation.handoff"),
+    runId: RunId,
+    preparationGeneration: PositiveInt,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("interrupt"),
+    runId: RunId,
+    preparationGeneration: Schema.optional(PositiveInt),
+  }),
   /**
    * A message the person sent into `runId` while it runs (#562). Sent again on
    * each reconnect while the run is live; the Runner takes each message once.
@@ -356,6 +494,8 @@ export const ThreadMessage = Schema.Union([
    * `hello` said it `drains`.
    */
   Schema.Struct({ type: Schema.Literal("drain"), id: NonNegativeInt }),
+  /** Applies a selected remote commit to the thread branch, preserving its WIP. */
+  Schema.Struct({ type: Schema.Literal("git.pull"), operation: PullOperation, drive: DriveAccess }),
   Schema.Struct({ type: Schema.Literal("end"), reason: Schema.String }),
 ]);
 export type ThreadMessage = typeof ThreadMessage.Type;
@@ -367,6 +507,10 @@ export type ThreadMessage = typeof ThreadMessage.Type;
  */
 export const MachineClass = Schema.Literals(["light", "heavy"]);
 export type MachineClass = typeof MachineClass.Type;
+
+/** A harmless shell command that asks a light Runner to move the turn to heavy. */
+export const REQUEST_HEAVY_MACHINE_COMMAND = ": request-heavy-machine";
+export const REQUEST_HEAVY_MACHINE_REASON = "The agent requested a heavy machine.";
 
 /**
  * What a thread asks a machine backend for: a Runner for this thread at this
@@ -390,10 +534,11 @@ export type MachineEnsureRequest = typeof MachineEnsureRequest.Type;
 
 /**
  * Where the Runner keeps threads' working directories and machine state
- * (`workspaces/<thread>/drive`, `machines/<thread>/home`) on every machine
- * class. A thread moves between classes mid-run, and its agent must find its
- * checkout, home and folder instructions at the paths it already knows
- * (#620). The Runner image creates it; a boat VM mounts its disk there.
+ * (`workspaces/<thread-key>/drive`, `machines/<thread-key>/home`) on every
+ * machine class. A thread moves between classes mid-run, and its agent must
+ * find its checkout, home and folder instructions at the paths it already
+ * knows (#620). Unsafe IDs use an encoded key; legacy aliases keep saved
+ * absolute paths working. The Runner image creates it; a boat VM mounts its disk there.
  */
 export const MACHINE_HOME = "/home/user/signalbox";
 

@@ -64,7 +64,6 @@ import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { AutomationToolkit } from "../workflows/mcp/tools.ts"; // signalbox: automations
 import * as AutomationHandlers from "../workflows/mcp/handlers.ts"; // signalbox: automations
-import * as AutomationBuiltinTools from "../workflows/builtinTools/layer.ts"; // signalbox: automations
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   HttpServerRequest.toURL(request).pipe(
@@ -857,5 +856,4 @@ export const layer = Layer.mergeAll(
   layerDeviceToolkit,
   layerHtmlToolkit,
   toolkitRegistration(AutomationToolkit, AutomationHandlers.layer), // signalbox: automations
-  AutomationBuiltinTools.layer, // signalbox: automations call Signalbox's tools as steps
 ).pipe(Layer.provideMerge(layerMcpTransport));

@@ -1,10 +1,12 @@
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
 
+import { withTraceUrlScrubbing } from "@t3tools/shared/traceUrlScrubbing";
+
 let delegate: Tracer.Tracer | null = null;
 
 export function setDelegate(next: Tracer.Tracer | null): void {
-  delegate = next;
+  delegate = next ? withTraceUrlScrubbing(next) : null;
 }
 
 export function hasDelegate(): boolean {

@@ -28,7 +28,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { create } from "zustand";
 
 import {
@@ -155,20 +155,16 @@ export function useThreadKind(
       ? null
       : threadArchiveDueAtMs(shell, kind, view.archiveChatsAfterDays);
   const { environmentId, threadId } = threadRef;
-  return useMemo(
-    () =>
-      kind === null
-        ? null
-        : {
-            threadRef: { environmentId, threadId },
-            kind,
-            switchedByWork,
-            workStartedAt,
-            archiveDueAtMs,
-            canChange,
-          },
-    [archiveDueAtMs, canChange, environmentId, kind, switchedByWork, threadId, workStartedAt],
-  );
+  return kind === null
+    ? null
+    : {
+        threadRef: { environmentId, threadId },
+        kind,
+        switchedByWork,
+        workStartedAt,
+        archiveDueAtMs,
+        canChange,
+      };
 }
 
 /** A thread's kind right now, for menus built at open time; null where none is kept. */

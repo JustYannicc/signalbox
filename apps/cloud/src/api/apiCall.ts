@@ -62,7 +62,7 @@ const jsonCodec = (schema: WireSchema) => Schema.toCodecJson(schema);
 const agentRefusal = (operation: Operation) =>
   operation.humanOnly
     ? "Only you can do this. Answer it in Signalbox."
-    : operation.destructive
+    : !operation.agentCallable
       ? "Agents can't delete things yet; that needs a decision gate (#335)."
       : undefined;
 

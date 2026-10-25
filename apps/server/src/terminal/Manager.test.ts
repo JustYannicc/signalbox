@@ -44,6 +44,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
+import * as ServerTerminalManager from "./ServerTerminalManager.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
@@ -2337,7 +2338,7 @@ it.layer(
         subscribeChanges: Effect.succeed(Stream.empty),
       });
 
-      const error = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+      const error = yield* ServerTerminalManager.resolveProviderInstanceTerminalEnvironment({
         serverSettings,
         path,
         rawProviderInstanceId: providerInstanceId,
@@ -2380,7 +2381,7 @@ it.layer(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+      const environment = yield* ServerTerminalManager.resolveProviderInstanceTerminalEnvironment({
         serverSettings,
         path,
         rawProviderInstanceId: "configured_home",
@@ -2407,7 +2408,7 @@ it.layer(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+      const environment = yield* ServerTerminalManager.resolveProviderInstanceTerminalEnvironment({
         serverSettings,
         path,
         rawProviderInstanceId: "codex",
@@ -2433,7 +2434,7 @@ it.layer(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+      const environment = yield* ServerTerminalManager.resolveProviderInstanceTerminalEnvironment({
         serverSettings,
         path,
         rawProviderInstanceId: "claudeAgent",
@@ -2459,7 +2460,7 @@ it.layer(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+      const environment = yield* ServerTerminalManager.resolveProviderInstanceTerminalEnvironment({
         serverSettings,
         path,
         rawProviderInstanceId: "codex",
@@ -2476,7 +2477,7 @@ it.layer(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const error = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+      const error = yield* ServerTerminalManager.resolveProviderInstanceTerminalEnvironment({
         serverSettings,
         path,
         rawProviderInstanceId: "codex_unknown",
@@ -2517,7 +2518,7 @@ it.layer(
       const { manager, ptyAdapter, logsDir } = yield* createManager(2, {
         historyByteLimit: 8,
         resolveProviderInstanceEnvironment: (rawProviderInstanceId, env) =>
-          TerminalManager.resolveProviderInstanceTerminalEnvironment({
+          ServerTerminalManager.resolveProviderInstanceTerminalEnvironment({
             serverSettings,
             path,
             rawProviderInstanceId,

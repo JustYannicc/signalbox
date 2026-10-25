@@ -130,6 +130,44 @@ describe("mobile model options", () => {
     ).toBe("Model unavailable");
   });
 
+  it("keeps served pool models selectable while a failed refresh leaves auth unknown", () => {
+    const instanceId = ProviderInstanceId.make("codex_hub_work");
+    const config = {
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            config: { setupMode: "hub", poolId: "work" },
+          },
+        },
+      },
+      providers: [
+        {
+          instanceId,
+          driver: "codex",
+          enabled: true,
+          installed: true,
+          status: "error",
+          auth: { status: "unknown" },
+          unavailableReason: "Pool account status could not be refreshed.",
+          models: [
+            {
+              slug: "gpt-6-astra",
+              name: "GPT-6 Astra",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const [option] = buildModelOptions(config, null, undefined, null);
+    expect(option?.selection).toMatchObject({ instanceId, model: "gpt-6-astra" });
+    expect(option?.isUnavailable).not.toBe(true);
+  });
+
   it("carries configured ACP identity into model and provider catalogs", () => {
     const iconUrl = "https://cdn.agentclientprotocol.com/registry/v1/latest/antigravity-acp.svg";
     const config = {

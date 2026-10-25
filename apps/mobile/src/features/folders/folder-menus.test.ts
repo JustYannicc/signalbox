@@ -63,6 +63,16 @@ describe("a folder's menu", () => {
     expect(has("clients")).toBe(false);
   });
 
+  it("offers publishing to GitHub only to someone who may publish the folder", () => {
+    const has = (publishable: boolean) =>
+      folderMenuActions({ snapshot, folder: byId("work"), pools, publishable }).some(
+        (action) => action.id === "folder:publish",
+      );
+    expect(has(true)).toBe(true);
+    expect(has(false)).toBe(false);
+    expect(parse("work", "folder:publish")).toEqual({ _tag: "publish" });
+  });
+
   it("ends with instructions and delete", () => {
     const actions = folderMenuActions({ snapshot, folder: byId("notes"), pools });
     expect(actions.slice(-2).map((action) => action.title)).toEqual([

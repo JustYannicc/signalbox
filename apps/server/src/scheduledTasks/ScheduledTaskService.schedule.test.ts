@@ -15,6 +15,8 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
+const layerSqliteAt = (time: number) =>
+  Layer.unwrap(TestClock.setTime(time).pipe(Effect.as(SqlitePersistence.layerMemory)));
 
 it.effect("rejects a stale form save after deletion while preserving explicit-id creates", () =>
   Effect.gen(function* () {
@@ -53,14 +55,12 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("preserves a due run when a save only pads the scheduled hour", () =>
-  Effect.gen(function* () {
-    const dueAt = DateTime.makeZonedUnsafe(
-      { year: 2026, month: 7, day: 1, hour: 9, minute: 0, second: 0, millisecond: 0 },
-      { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
-    );
-    yield* TestClock.setTime(DateTime.toEpochMillis(dueAt) - 1_000);
-
+it.effect("preserves a due run when a save only pads the scheduled hour", () => {
+  const dueAt = DateTime.makeZonedUnsafe(
+    { year: 2026, month: 7, day: 1, hour: 9, minute: 0, second: 0, millisecond: 0 },
+    { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+  );
+  return Effect.gen(function* () {
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Scheduler.layer,
@@ -87,7 +87,7 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
       const expectedDueAt = DateTime.formatIso(DateTime.toUtc(dueAt));
       expect(created.task.nextRunAt).toBe(expectedDueAt);
 
-      yield* TestClock.setTime(DateTime.toEpochMillis(dueAt) + 1_000);
+      yield* TestClock.adjust("2 seconds");
       const update = yield* decodeUpsertInput({
         ...input,
         id: created.task.id,
@@ -105,5 +105,5 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
         DateTime.formatIso(DateTime.toUtc(DateTime.add(dueAt, { minutes: 30 }))),
       );
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
-);
+  }).pipe(Effect.provide(layerSqliteAt(DateTime.toEpochMillis(dueAt) - 1_000)));
+});

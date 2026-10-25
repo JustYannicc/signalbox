@@ -1,0 +1,36 @@
+model {
+  extend signalbox {
+    judge = module 'Judge' {
+      #passthrough #publishable
+      icon bootstrap:signpost-split
+      description 'decide'
+      technology 'typed value or Insufficient, with p'
+      metadata {
+        interface '1'
+        deletion 'each feature calls a model with its own parsing'
+      }
+
+      api = iface 'Judge · interface' {
+        description '1 verb: decide'
+        technology 'Deletion test: without it, each feature calls a model with its own parsing'
+      }
+
+      backend = part 'Judge seam · 2 adapters' {
+        metadata { adapters '2' }
+        jev = adapter 'TypeSafe Jev' {
+          icon bootstrap:braces
+        }
+        directCall = adapter 'Direct model call' {
+          icon bootstrap:cpu
+          description 'evals · fallback'
+        }
+      }
+    }
+
+    judge.backend.jev -> platform.typesafe 'judgment'
+    judge.backend.directCall -[model]-> signalbox.gateway.modelGateway 'model wire'
+
+    // Interface → hidden parts (the only way in)
+    judge.api -> judge.backend 'decide'
+  }
+}

@@ -9,9 +9,13 @@ import { SAVE_FAILED_NOTICE, SAVED_AGAIN_NOTICE, watchChanges } from "./RunnerDr
 const fakeDrive = () => {
   const state = { changed: false, failing: null as string | null, saves: 0 };
   const notices: Array<string> = [];
+  let savedAgain = 0;
   return {
     state,
     notices,
+    get savedAgain() {
+      return savedAgain;
+    },
     watch: watchChanges({
       interval: "2 seconds",
       changed: Effect.sync(() => state.changed),
@@ -22,6 +26,7 @@ const fakeDrive = () => {
         return Effect.void;
       }),
       notice: (message) => Effect.sync(() => void notices.push(message)),
+      onSavedAgain: Effect.sync(() => void (savedAgain += 1)),
     }),
   };
 };
@@ -56,6 +61,7 @@ describe("watchChanges", () => {
 
       drive.state.failing = null;
       yield* TestClock.adjust("2 seconds");
+      expect(drive.savedAgain).toBe(1);
       expect(drive.notices).toEqual([
         `${SAVE_FAILED_NOTICE} the drive is unreachable`,
         SAVED_AGAIN_NOTICE,

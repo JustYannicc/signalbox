@@ -1,0 +1,268 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JustYannicc/signalbox/claude-release-diff/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "baselineVersion",
+    "candidateVersion",
+    "addedBunMembers",
+    "removedBunMembers",
+    "addedBuiltinImports",
+    "removedBuiltinImports",
+    "addedNapiModules",
+    "removedNapiModules",
+    "addedCodegenOperations",
+    "removedCodegenOperations",
+    "addedProcPaths",
+    "removedProcPaths",
+    "moduleCountChanges",
+    "binaryBytesChange",
+    "bunVersionChange",
+    "newUnguardedNames",
+    "unresolvedReferences",
+    "unresolvedBareReferences"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "baselineVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "candidateVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "addedBunMembers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "removedBunMembers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "addedBuiltinImports": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "removedBuiltinImports": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "addedNapiModules": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "removedNapiModules": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "addedCodegenOperations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "removedCodegenOperations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "addedProcPaths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "removedProcPaths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "moduleCountChanges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "baseline", "candidate"],
+        "properties": {
+          "field": {
+            "enum": [
+              "count",
+              "bytes",
+              "javascriptCount",
+              "javascriptBytes",
+              "reachableCount",
+              "reachableJavascriptCount",
+              "reachableJavascriptBytes"
+            ]
+          },
+          "baseline": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "candidate": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "binaryBytesChange": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["baseline", "candidate"],
+          "properties": {
+            "baseline": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "candidate": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "bunVersionChange": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["baseline", "candidate"],
+          "properties": {
+            "baseline": {
+              "type": ["string", "null"]
+            },
+            "candidate": {
+              "type": ["string", "null"]
+            }
+          }
+        }
+      ]
+    },
+    "newUnguardedNames": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/gap"
+      }
+    },
+    "unresolvedReferences": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/unresolvedReference"
+      }
+    },
+    "unresolvedBareReferences": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/unresolvedReference"
+      }
+    }
+  },
+  "definitions": {
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "module", "line", "column", "offset", "reason", "guarded"],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": ["bun-api", "node-builtin"]
+        },
+        "name": {
+          "type": "string"
+        },
+        "specifier": {
+          "type": "string"
+        },
+        "canonicalBuiltin": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "enum": ["implemented", "host", "headless", "unsupported"]
+        },
+        "guarded": {
+          "type": "boolean"
+        }
+      }
+    },
+    "unresolvedReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "key", "line", "column", "offset", "kind", "specifier"],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "specifier": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

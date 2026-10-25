@@ -3,6 +3,7 @@ import {
   ModelFavorites,
   ModelSelection,
   ProviderModelPreferences,
+  TrimmedString,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -16,11 +17,17 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-/** The model-specific server settings one person shares across their clients. */
+/** The model and review-guide settings one person shares across their clients. */
 const ModelSettings = Schema.Struct({
   favorites: Schema.NullOr(ModelFavorites),
   providerModelPreferences: Schema.NullOr(ProviderModelPreferences),
   defaultModelSelection: Schema.NullOr(ModelSelection),
+  // These defaults let rows written before review guides existed keep decoding.
+  reviewGuidesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  reviewGuideModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  reviewGuideInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
 const ModelSettingsJson = Schema.fromJsonString(ModelSettings);
 
@@ -31,6 +38,9 @@ export const EMPTY_MODEL_SETTINGS: ModelSettingsSnapshot = {
   favorites: null,
   providerModelPreferences: null,
   defaultModelSelection: null,
+  reviewGuidesEnabled: false,
+  reviewGuideModelSelection: null,
+  reviewGuideInstructions: "",
 };
 
 /** Out-of-catalog models are hidden from snapshots until they return. */
@@ -38,6 +48,8 @@ export const filterAvailableModels = (
   settings: ModelSettingsSnapshot,
   available: AvailableModels,
 ): ModelSettingsSnapshot => ({
+  reviewGuidesEnabled: settings.reviewGuidesEnabled,
+  reviewGuideInstructions: settings.reviewGuideInstructions,
   favorites:
     settings.favorites === null
       ? null
@@ -69,6 +81,13 @@ export const filterAvailableModels = (
       ?.has(settings.defaultModelSelection.model)
       ? settings.defaultModelSelection
       : null,
+  reviewGuideModelSelection:
+    settings.reviewGuideModelSelection !== null &&
+    available
+      .get(settings.reviewGuideModelSelection.instanceId)
+      ?.has(settings.reviewGuideModelSelection.model)
+      ? settings.reviewGuideModelSelection
+      : null,
 });
 
 export class ModelSettingsWriteError extends Schema.TaggedError<ModelSettingsWriteError>()(
@@ -77,7 +96,7 @@ export class ModelSettingsWriteError extends Schema.TaggedError<ModelSettingsWri
 ) {
   override get message(): string {
     return this.reason === "setting-not-supported"
-      ? "Cloud model settings only accept model preferences and a default model."
+      ? "Cloud settings only accept model preferences, a default model, and review guide preferences."
       : "A model setting refers to a model outside the current catalog.";
   }
 }
@@ -90,6 +109,9 @@ const ALLOWED_PATCH_KEYS = new Set([
   "providerModelPreferences",
   "migrateModelPreferences",
   "defaultModelSelection",
+  "reviewGuidesEnabled",
+  "reviewGuideModelSelection",
+  "reviewGuideInstructions",
 ]);
 
 const withAvailableMigration = (patch: ServerSettingsPatch, available: AvailableModels) => {
@@ -98,9 +120,9 @@ const withAvailableMigration = (patch: ServerSettingsPatch, available: Available
   // Legacy browser preferences can belong to another environment. They must not block a valid write.
   const filtered = filterAvailableModels(
     {
+      ...EMPTY_MODEL_SETTINGS,
       favorites: migration.favorites ?? null,
       providerModelPreferences: migration.providerModelPreferences ?? null,
-      defaultModelSelection: null,
     },
     available,
   );
@@ -131,6 +153,12 @@ const validatePatch = (patch: ServerSettingsPatch, available: AvailableModels) =
       yield* requireAvailable(
         patch.defaultModelSelection.instanceId,
         patch.defaultModelSelection.model,
+      );
+    }
+    if (patch.reviewGuideModelSelection !== undefined && patch.reviewGuideModelSelection !== null) {
+      yield* requireAvailable(
+        patch.reviewGuideModelSelection.instanceId,
+        patch.reviewGuideModelSelection.model,
       );
     }
     for (const favorite of patch.favorites ?? []) {
@@ -209,6 +237,9 @@ const make = Effect.gen(function* () {
             favorites: settings.favorites,
             providerModelPreferences: settings.providerModelPreferences,
             defaultModelSelection: settings.defaultModelSelection,
+            reviewGuidesEnabled: settings.reviewGuidesEnabled,
+            reviewGuideModelSelection: settings.reviewGuideModelSelection,
+            reviewGuideInstructions: settings.reviewGuideInstructions,
           };
           if (Equal.equals(current, next)) return [next, false] as const;
           const value = yield* encodeSettings(next).pipe(Effect.orDie);

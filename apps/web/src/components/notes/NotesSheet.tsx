@@ -37,7 +37,7 @@ import {
   Trash2Icon,
   UsersIcon,
 } from "lucide-react";
-import { memo, useCallback, useMemo, useState, type KeyboardEvent } from "react";
+import { memo, useState, type KeyboardEvent } from "react";
 
 import { formatEnvironmentQueryError } from "../../state/query";
 import { environmentContextsAtom } from "../../state/signalboxContexts";
@@ -248,25 +248,17 @@ function NotesPadView(props: { pad: NotesPad }) {
     result._tag === "Failure" && snapshot === null
       ? formatEnvironmentQueryError(result.cause)
       : null;
-  const notes = useMemo(
-    () => (snapshot === null ? null : notesShown(padNotes(snapshot, home), shareable, visibility)),
-    [home, shareable, snapshot, visibility],
-  );
+  const notes =
+    snapshot === null ? null : notesShown(padNotes(snapshot, home), shareable, visibility);
   const folderId = home._tag === "folder" ? home.folderId : null;
-  const startModel = useCallback(
-    () => homeModelSelection(environmentId, folderId),
-    [environmentId, folderId, homeModelSelection],
-  );
-  const openThread = useCallback(
-    (threadId: ThreadId) => {
-      closeNotes();
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
-      });
-    },
-    [environmentId, navigate],
-  );
+  const startModel = () => homeModelSelection(environmentId, folderId);
+  const openThread = (threadId: ThreadId) => {
+    closeNotes();
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+    });
+  };
 
   const add = async () => {
     const text = draft.trim();

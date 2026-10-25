@@ -37,6 +37,14 @@ const PULL_REQUEST = {
   headBranch: "",
   baseBranch: "",
   headSha: "head commit while upstream's PR watch records it, else null",
+  checks: "all head checks, or null when unread; populated by GitHub deliveries",
+  openThreads: "unresolved review thread count, or null when unread",
+  labels: "label names, or null when unread",
+  reviews:
+    "latest review records with author, state, submittedAt, body and url, or null when unread",
+  baseSha: "base commit, or null when unread",
+  baseRepository: "base owner/repo, or null when unread",
+  headRepository: "head owner/repo, or null when unread",
 } as const;
 /** Comments or reviews on a pull request, on top of its facts. */
 const REMARKS = {
@@ -55,7 +63,7 @@ const SOURCE = {
 const DRIVE = {
   driveId: "the drive's id",
   before: "the commit it moved from, or null for the first",
-  after: "the commit it moved to",
+  after: "the commit it moved to, or null when the branch was removed",
   commits:
     "[{ oid, author, message (up to 4k chars), parents }] new since before, newest first, up to 20",
   commitsTruncated: "true when there were more",
@@ -122,11 +130,47 @@ export const AUTOMATION_EVENTS = [
     fields: { title: "", runtimeMode: "", interactionMode: "" },
   },
   {
+    name: "pr.opened",
+    when: "When a pull request opens",
+    description: "A pull request opened or reopened in a connected GitHub repository.",
+    fields: PULL_REQUEST,
+  },
+  {
+    name: "pr.checks.completed",
+    when: "When a pull request check finishes",
+    description: "A check run or suite completed on a pull request's head commit.",
+    fields: PULL_REQUEST,
+  },
+  {
+    name: "release.published",
+    when: "When a release is published",
+    description: "A release was published in a connected GitHub repository.",
+    fields: {
+      repository: "owner/repo",
+      release: "{ id, tag, name, url, prerelease, publishedAt }",
+    },
+  },
+  {
+    name: "issue.opened",
+    when: "When an issue opens",
+    description: "An issue opened in a connected GitHub repository.",
+    fields: {
+      repository: "owner/repo",
+      number: "",
+      title: "",
+      body: "",
+      url: "",
+      labels: "label names",
+      author: "GitHub login, or null",
+    },
+  },
+  {
     name: "pr.updated",
     when: "When a thread's pull requests change",
-    description: "Pull requests linked to a thread were synced: linked, opened, merged, closed.",
+    description:
+      "A connected GitHub pull request changed, or a thread's linked pull requests were synced.",
     fields: {
-      ...THREAD,
+      ...PULL_REQUEST,
       pullRequests:
         "[{ repository, number, url, source, …pull request facts }], facts null until first synced",
       branchPullRequest: "{ repository, number, url } found from the branch, or null",
@@ -392,9 +436,9 @@ export const AUTOMATION_EVENTS = [
   },
   {
     name: "drive.branch-saved",
-    when: "When a thread saves its work",
+    when: "When a thread's branch changes",
     description:
-      "A thread saved its work to its branch in a cloud drive, before it lands: a new revision to check.",
+      "A thread saved, restored or removed its branch in a cloud drive, before it lands.",
     fields: { ...DRIVE, ref: "threads/<thread id>" },
   },
   {

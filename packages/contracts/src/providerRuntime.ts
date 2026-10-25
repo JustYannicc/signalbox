@@ -16,6 +16,7 @@ import {
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 import { ProviderUsageLimitsUpdate } from "./providerUsageLimits.ts";
 import { ProviderApprovalOption } from "./providerPolicy.ts";
+import { NativeQuestionMetadata, NativeQuestionOptionPreview } from "./nativeQuestions.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
@@ -472,10 +473,12 @@ const UserInputQuestionOption = Schema.Struct({
   label: TrimmedNonEmptyStringSchema,
   description: Schema.String,
   value: Schema.optional(Schema.String),
+  preview: Schema.optional(NativeQuestionOptionPreview),
 });
 export type UserInputQuestionOption = typeof UserInputQuestionOption.Type;
 
 export const UserInputQuestion = Schema.Struct({
+  native: Schema.optional(NativeQuestionMetadata),
   id: TrimmedNonEmptyStringSchema,
   header: TrimmedNonEmptyStringSchema,
   question: TrimmedNonEmptyStringSchema,

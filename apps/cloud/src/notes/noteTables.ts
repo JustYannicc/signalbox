@@ -1,4 +1,3 @@
-import type { FolderId } from "@t3tools/contracts/signalboxFolders";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -27,26 +26,3 @@ export const createTables = Effect.gen(function* () {
   )`;
   yield* sql`INSERT INTO notes_state (id, revision) VALUES (1, 0)`;
 });
-
-/**
- * A deleted folder's notes go up to its parent, as its threads do. Run in the
- * folder delete's transaction. A note landing at the top level becomes
- * private, and a team reading of one still on the pad goes with it: its
- * reader was the folder's agent, who can't see it anymore.
- */
-export const moveNotesUp = (folderId: FolderId, parentId: FolderId | null) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const moving = yield* sql<{
-      readonly n: number;
-    }>`SELECT COUNT(*) AS n FROM notes WHERE folder_id = ${folderId}`;
-    if ((moving[0]?.n ?? 0) === 0) return;
-    if (parentId === null) {
-      yield* sql`UPDATE notes SET visibility = 'private',
-          reading = CASE WHEN visibility = 'team' AND accepted_thread_id IS NULL
-            THEN NULL ELSE reading END
-        WHERE folder_id = ${folderId}`;
-    }
-    yield* sql`UPDATE notes SET folder_id = ${parentId} WHERE folder_id = ${folderId}`;
-    yield* sql`UPDATE notes_state SET revision = revision + 1 WHERE id = 1`;
-  });

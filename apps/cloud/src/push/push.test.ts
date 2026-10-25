@@ -9,6 +9,7 @@ import {
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
 import { SIGNALBOX_PUSH_WS_METHODS } from "@t3tools/contracts/signalboxPush";
 import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -19,6 +20,7 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as TestClock from "effect/testing/TestClock";
+import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { layerMemoryStore, makeMemoryCloud } from "../testing.ts";
@@ -98,6 +100,57 @@ describe("pushFor", () => {
     next: OrchestrationV2ThreadShell,
     now = T0 + 70_000,
   ) => pushFor({ environmentId, previous, next, now });
+
+  const blocker = (id = "ask", round = 1): SignalboxAsk => ({
+    id,
+    kind: "blocker",
+    status: "pending",
+    source: { kind: "agent" },
+    createdAt: "2026-10-15T12:00:00.000Z",
+    updatedAt: "2026-10-15T12:00:00.000Z",
+    questions: [
+      {
+        id: "question",
+        question: "Proceed?",
+        why: "Need your decision",
+        unblocks: "Delivery",
+        recommendation: "Yes",
+        options: [],
+        blocking: true,
+        decisionOwner: "You",
+        surface: { kind: "kit", component: "choice" },
+      },
+    ],
+    rounds: [
+      {
+        number: round,
+        questionIds: ["question"],
+        answers: [],
+        deferredQuestionIds: [],
+        openedAt: "2026-10-15T12:00:00.000Z",
+        closedAt: null,
+      },
+    ],
+  });
+
+  it("deduplicates durable blockers by ask and round after the turn has finished", () => {
+    const finished = ended("completed", 70_000);
+    const first = { ...finished, asks: [blocker()] };
+    expect(push(finished, first)?.phase).toBe("waiting_for_input");
+    expect(push(first, { ...first, updatedAt: at(80_000) })).toBeNull();
+    expect(push(first, { ...first, asks: [blocker("ask", 2)] })?.phase).toBe("waiting_for_input");
+    expect(push(first, { ...first, asks: [blocker("other")] })?.phase).toBe("waiting_for_input");
+  });
+
+  it("does not push Ready, Considering, or nonblocking asks", () => {
+    for (const ask of [
+      { ...blocker(), kind: "ready" },
+      { ...blocker(), kind: "considering" },
+      { ...blocker(), questions: [{ ...blocker().questions[0], blocking: false }] },
+    ] satisfies SignalboxAsk[]) {
+      expect(push(running, shell({ asks: [ask] }))).toBeNull();
+    }
+  });
 
   it("pushes a thread that starts waiting for an answer or an approval, once", () => {
     expect(push(running, waiting("user_input"))).toEqual({
@@ -221,8 +274,20 @@ const registration = {
   },
 };
 
-const layerPushes = (http: Layer.Layer<HttpClient.HttpClient>, env: Record<string, string>) =>
-  PushNotifier.layerWithDevices(environmentId).pipe(
+const layerPushes = (
+  http: Layer.Layer<HttpClient.HttpClient>,
+  env: Record<string, string>,
+  isSessionActive?: Parameters<typeof PushNotifier.layerWithDevices>[1],
+) =>
+  Layer.unwrap(
+    Effect.map(UserStore.UserStore, (store) =>
+      PushNotifier.layerWithDevices(
+        environmentId,
+        isSessionActive ??
+          ((sid) => Effect.map(store.findSession(sid), (session) => session !== null)),
+      ),
+    ),
+  ).pipe(
     Layer.provide(Layer.mergeAll(http, ConfigProvider.layer(ConfigProvider.fromEnv({ env })))),
     Layer.provideMerge(layerMemoryStore),
   );
@@ -339,6 +404,63 @@ describe("PushNotifier", () => {
       );
       expect(apple.sent).toEqual([]);
       expect(left).toEqual([]);
+    }),
+  );
+
+  it.effect("stops pushing when the registering session expires", () =>
+    Effect.gen(function* () {
+      const key = yield* apnsKey;
+      const apple = fakeApple(200);
+      const left = yield* Effect.gen(function* () {
+        const { notifier, devices } = yield* withPhone;
+        yield* TestClock.adjust("1 hour");
+        yield* notifier.threadChanged({ previous: running, next: waiting("user_input") });
+        return yield* devices.list;
+      }).pipe(
+        Effect.provide(
+          layerPushes(apple.layer, {
+            APNS_TEAM_ID: "TEAM123456",
+            APNS_KEY_ID: "KEY1234567",
+            APNS_PRIVATE_KEY: key.pem,
+          }),
+        ),
+      );
+      expect(apple.sent).toEqual([]);
+      expect(left).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps registrations and skips delivery when the session check fails", () =>
+    Effect.gen(function* () {
+      const key = yield* apnsKey;
+      const apple = fakeApple(200);
+      const checked: Array<string> = [];
+      const left = yield* Effect.gen(function* () {
+        const { notifier, devices, session } = yield* withPhone;
+        yield* notifier.threadChanged({ previous: running, next: waiting("user_input") });
+        expect(checked).toEqual([session.sid]);
+        return yield* devices.list;
+      }).pipe(
+        Effect.provide(
+          layerPushes(
+            apple.layer,
+            {
+              APNS_TEAM_ID: "TEAM123456",
+              APNS_KEY_ID: "KEY1234567",
+              APNS_PRIVATE_KEY: key.pem,
+            },
+            (sid) =>
+              Effect.gen(function* () {
+                checked.push(sid);
+                return yield* new SqlError({
+                  reason: new ConnectionError({ cause: new Error("session unavailable") }),
+                });
+              }),
+          ),
+        ),
+      );
+      expect(apple.sent).toEqual([]);
+      expect(left).toHaveLength(1);
     }),
   );
 

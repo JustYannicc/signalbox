@@ -2,6 +2,7 @@ import type { AuthEnvironmentScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Tracer from "effect/Tracer";
 import {
   type FromClientEncoded,
   type FromServerEncoded,
@@ -11,6 +12,7 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as RpcServer from "effect/rpc/RpcServer";
 
 import type * as Environment from "../environment.ts";
+import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
 import * as CloudRpc from "./rpc.ts";
 
 /**
@@ -43,11 +45,13 @@ export const openConnection = (input: {
   /** Sends one encoded frame, along with the message it encodes. */
   readonly send: (frame: string, message: FromServerEncoded) => void;
   /** Sees every message the client sends, just before the server gets it. */
-  readonly receiving?: (message: FromClientEncoded) => void;
+  readonly receiving?: (message: FromClientEncoded) => Effect.Effect<void>;
   readonly replay?: ReadonlyArray<FromClientEncoded>;
 }) =>
   Effect.gen(function* () {
     const serialization = yield* RpcSerialization.RpcSerialization;
+    const traceSink = yield* ClientRpcTracing.ClientRpcTraceSink;
+    const tracer = ClientRpcTracing.makeClientRpcTracer(input.userId, traceSink.submit);
     const parser = serialization.makeUnsafe();
     const send = (message: FromServerEncoded) =>
       Effect.sync(() => {
@@ -79,7 +83,7 @@ export const openConnection = (input: {
         };
       });
     });
-    yield* RpcServer.make(CloudRpc.CloudRpcGroup, { disableTracing: true }).pipe(
+    yield* RpcServer.make(CloudRpc.CloudRpcGroup, { spanPrefix: "RpcServer" }).pipe(
       Effect.provideService(RpcServer.Protocol, protocol),
       Effect.provide(
         Layer.mergeAll(
@@ -93,9 +97,12 @@ export const openConnection = (input: {
           CloudRpc.layerScopeAuthorization(input.scopes),
         ),
       ),
+      Effect.provideService(Tracer.Tracer, tracer),
       Effect.forkScoped,
     );
-    for (const message of input.replay ?? []) yield* write(CLIENT_ID, message);
+    for (const message of input.replay ?? []) {
+      yield* Effect.provideService(write(CLIENT_ID, message), Tracer.Tracer, tracer);
+    }
 
     const receive = (frame: string | ArrayBuffer) =>
       Effect.suspend(() => {
@@ -111,8 +118,8 @@ export const openConnection = (input: {
           messages,
           (message) =>
             Effect.andThen(
-              Effect.sync(() => input.receiving?.(message)),
-              write(CLIENT_ID, message),
+              input.receiving?.(message) ?? Effect.void,
+              Effect.provideService(write(CLIENT_ID, message), Tracer.Tracer, tracer),
             ),
           { discard: true },
         );

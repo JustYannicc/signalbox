@@ -11,7 +11,8 @@ export const EXAMPLES: Readonly<Record<string, string>> = {
   "watch-pull-request.ts": WATCH_PULL_REQUEST,
   "wait-for.ts": WAIT_FOR,
   "merge-gate.ts": MERGE_GATE,
-  "rss-digest.ts": `import Parser from "rss-parser";
+  "rss-digest.ts": `// Requires a GitHub folder, the Signalbox step workflow, and a lent GitHub account.
+import Parser from "rss-parser";
 
 export const meta = {
   name: "Morning reading digest",
@@ -38,7 +39,7 @@ async function readFeeds(urls: string[]) {
 }
 
 export default workflow(async (w) => {
-  const items = await w.run("Read the feeds", readFeeds, FEEDS);
+  const items = await w.run("Read the feeds", { on: "github-actions" }, readFeeds, FEEDS);
   const seen: string[] = (await w.recall("What I've already sent", "seen")) ?? [];
   const fresh = items.filter((item) => !seen.includes(item.id));
   // Anything new?
@@ -58,9 +59,9 @@ export default workflow(async (w) => {
 });
 `,
   "support-email.ts": `export const meta = {
-  name: "Triage support emails",
-  description: "Sort each support email, draft a reply, and ask me before sending.",
-  intent: "when a support email comes in, sort it and draft a reply I can approve",
+  name: "Draft support replies",
+  description: "Sort each support email and prepare a reply I can edit and send.",
+  intent: "when a support email comes in, sort it and prepare a reply for me to send",
   triggers: [{ webhook: true }],
 } as const;
 
@@ -69,70 +70,23 @@ export default workflow(async (w, email: { from: string; subject: string; body: 
   if (kind === "spam") return "ignored";
 
   const draft = await w.llm("Draft a reply", { prompt: \`Write a short, friendly reply to:\\n\${email.body}\` });
-  // Send it? The user can edit the draft first.
-  const answer = await w.ask("Send this reply?", {
+  // The user can edit the draft before keeping it.
+  const answer = await w.ask("Keep this reply?", {
     fields: { reply: { type: "longText", default: draft, required: true } },
-    options: ["send", "skip"],
+    options: ["keep", "skip"],
   });
-  if (answer.choice === "send") {
-    await w.call("Send the reply", "gmail.users.messages.send", { userId: "me", to: email.from, text: answer.values.reply });
+  if (answer.choice === "keep") {
+    await w.notify("Reply ready to send", \`To: \${email.from}\\n\${answer.values.reply}\`);
   }
   if (kind === "bug") {
     await w.agent("Look into the bug", { prompt: \`A customer reported: \${email.body}\`, worktree: "main" });
   }
 });
 `,
-  "sync-stripe-to-sheet.ts": `export const meta = {
-  name: "Log new Stripe payments",
-  description: "Every hour, appends new Stripe payments to the finance sheet and flags large ones.",
-  intent: "put every new stripe payment in the finance sheet and tell me about big ones",
-  triggers: [{ cron: "15 * * * *", timezone: "Europe/Zurich" }],
-} as const;
-
-const SHEET = "1AbCdEfGhIjKlMnOpQrStUvWxYz";
-
-export default workflow(async (w, _input, trigger: { at: string }) => {
-  const since: number = (await w.recall("Last payment time", "since")) ?? Math.floor(Date.parse(trigger.at) / 1000) - 3600;
-  const payments: Array<{ id: string; amount: number; currency: string; created: number; description: string | null }> = [];
-  let startingAfter: string | null = null;
-  // More pages?
-  for (let page = 0; page < 20; page++) {
-    const result = await w.call("List payments", "stripe.charges.list", {
-      created: { gt: since },
-      limit: 100,
-      ...(startingAfter ? { starting_after: startingAfter } : {}),
-    });
-    payments.push(...result.data);
-    if (!result.has_more) break;
-    startingAfter = result.data[result.data.length - 1].id;
-  }
-  // Any new payments?
-  if (payments.length === 0) return "no new payments";
-
-  await w.call("Append to the sheet", "google_sheets.spreadsheets.values.append", {
-    spreadsheetId: SHEET,
-    range: "Payments!A:E",
-    valueInputOption: "USER_ENTERED",
-    requestBody: {
-      values: payments.map((p) => [
-        new Date(p.created * 1000).toISOString().slice(0, 10),
-        p.id,
-        p.amount / 100,
-        p.currency.toUpperCase(),
-        p.description ?? "",
-      ]),
-    },
-  });
-  const large = payments.filter((p) => p.amount >= 100_000);
-  // Any big ones?
-  if (large.length > 0) {
-    await w.notify("Large payments", large.map((p) => \`\${p.amount / 100} \${p.currency.toUpperCase()}: \${p.description ?? p.id}\`).join("\\n"), { importance: "high" });
-  }
-  await w.remember("Save the time", "since", Math.max(...payments.map((p) => p.created)));
-  return { logged: payments.length, large: large.length };
-});
-`,
-  "work-through-tickets.ts": `import { execFileSync } from "node:child_process";
+  "work-through-tickets.ts": `// Requires a GitHub folder, the Signalbox step workflow, and a lent GitHub account.
+// Add a repository secret named GH_TOKEN with access to the target repository:
+// issues and pull requests read/write, checks and Actions read, contents write for merging and deleting branches.
+import { execFileSync } from "node:child_process";
 
 export const meta = {
   name: "Work through GitHub tickets",
@@ -174,7 +128,7 @@ type Landing = { merged: true } | { merged: false; why: string };
 const DEFAULT_BUILDER = { provider: "claudeAgent", model: "claude-opus-5-5", effort: "high" };
 const DEFAULT_REVIEWER = { provider: "codex", model: "gpt-6-astra", effort: "high" };
 
-// ---------- Runs on the machine, through w.run ----------
+// ---------- Runs on GitHub Actions, through w.run ----------
 
 function gh(args: string[]): string {
   try {
@@ -330,7 +284,7 @@ function slots(size: number) {
 }
 
 export default workflow(async (w, settings: Settings) => {
-  const tickets = await w.run("Read the tickets and their blockers", readTickets, settings.repo, settings.tickets);
+  const tickets = await w.run("Read the tickets and their blockers", { on: "github-actions", secrets: ["GH_TOKEN"] }, readTickets, settings.repo, settings.tickets);
   const external = new Set(settings.external ?? []);
   // Each ticket settles once: true when it merged (or was already closed).
   const finish = new Map<number, (merged: boolean) => void>();
@@ -406,11 +360,11 @@ async function land(w, settings: Settings, ticket: Ticket, external: boolean, st
   const repo = settings.repo;
   const check = settings.check ?? "Check";
   const branch = \`tickets/\${ticket.number}\`;
-  let pr = await w.run(\`Look for #\${ticket.number}'s pull request\`, findPullRequest, repo, ticket.number, branch);
+  let pr = await w.run(\`Look for #\${ticket.number}'s pull request\`, { on: "github-actions", secrets: ["GH_TOKEN"] }, findPullRequest, repo, ticket.number, branch);
   // Another thread is building it?
   if (!pr && external) {
     const waited = await w.repeat("Wait for the other thread's pull request", { max: 48 }, async (w) => {
-      const found = await w.run("Look again", waitForPullRequest, repo, ticket.number, branch, 14);
+      const found = await w.run("Look again", { on: "github-actions", secrets: ["GH_TOKEN"] }, waitForPullRequest, repo, ticket.number, branch, 14);
       if (found) return w.done(found);
     });
     pr = waited.done ? waited.value : null;
@@ -424,14 +378,14 @@ async function land(w, settings: Settings, ticket: Ticket, external: boolean, st
       timeout: { hours: 24 },
     });
     state.thread = built.threadId;
-    pr = await w.run("Find its pull request", findPullRequest, repo, ticket.number, branch);
+    pr = await w.run("Find its pull request", { on: "github-actions", secrets: ["GH_TOKEN"] }, findPullRequest, repo, ticket.number, branch);
     // Did it forget to open one?
     if (!pr) {
       await w.agent("Ask for the pull request", {
         prompt: \`Push \\\`\${branch}\\\` and open the pull request against main with "Closes #\${ticket.number}" in the body.\`,
         thread: state.thread,
       });
-      pr = await w.run("Find it again", findPullRequest, repo, ticket.number, branch);
+      pr = await w.run("Find it again", { on: "github-actions", secrets: ["GH_TOKEN"] }, findPullRequest, repo, ticket.number, branch);
     }
     // Still none?
     if (!pr) return { merged: false, why: "Its agent finished without opening a pull request." };
@@ -441,7 +395,7 @@ async function land(w, settings: Settings, ticket: Ticket, external: boolean, st
 
   const landed = await w.repeat(\`Land \${pr.url}\`, { max: 5 }, async (w, round) => {
     const ci = await w.repeat("Wait for CI", { max: 24 }, async (w) => {
-      const status = await w.run("Check CI", checkPullRequest, repo, pr.number, check, 14);
+      const status = await w.run("Check CI", { on: "github-actions", secrets: ["GH_TOKEN"] }, checkPullRequest, repo, pr.number, check, 14);
       // Settled?
       if (status.state !== "pending") return w.done(status);
     });
@@ -473,7 +427,7 @@ async function land(w, settings: Settings, ticket: Ticket, external: boolean, st
       await fix(w, settings, ticket, pr, state, round, \`A reviewer asked for changes:\\n\\n\${review.text}\`);
       return;
     }
-    const merge = await w.run(\`Merge \${pr.url}\`, mergePullRequest, repo, pr.number);
+    const merge = await w.run(\`Merge \${pr.url}\`, { on: "github-actions", secrets: ["GH_TOKEN"] }, mergePullRequest, repo, pr.number);
     // Did GitHub take it?
     if (merge.ok) return w.done({ merged: true });
     await fix(w, settings, ticket, pr, state, round, \`GitHub refused the merge: \${merge.error}\`);

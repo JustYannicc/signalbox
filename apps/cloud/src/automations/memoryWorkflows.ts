@@ -43,6 +43,7 @@ interface Instance {
 
 export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Service"]) => {
   const instances = new Map<string, Instance>();
+  const eventDeliveries = new Map<string, number>();
   /** How many of the next events the backend refuses, as in an outage. */
   let refusing = 0;
   /** Host calls in flight; `idle` waits for them. */
@@ -93,6 +94,7 @@ export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Se
           ).pipe(
             Effect.andThen(
               Effect.sync(() => {
+                eventDeliveries.set(runId, (eventDeliveries.get(runId) ?? 0) + 1);
                 const instance = instances.get(runId);
                 if (instance && !instance.terminated)
                   instance.workflows.sendEvent(type, payload as Settlement);
@@ -142,5 +144,7 @@ export const makeMemoryWorkflows = (users: () => UserDirectory.UserDirectory["Se
     },
     /** A run's instance: its journal and what it's blocked on. */
     instance: (runId: string) => instances.get(runId),
+    /** How many events reached a run's instance, for retry and deduplication assertions. */
+    eventDeliveries: (runId: string) => eventDeliveries.get(runId) ?? 0,
   };
 };

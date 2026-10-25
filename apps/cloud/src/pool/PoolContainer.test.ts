@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PoolContainer from "./PoolContainer.ts";
 
@@ -9,8 +11,10 @@ import * as PoolContainer from "./PoolContainer.ts";
  * `models` answers CLIProxyAPI's `/v1/models` when a test needs it.
  */
 const fakeContainer = (
-  respond: () => Promise<Response>,
+  respond: (request: Request) => Promise<Response>,
   models?: (request: Request) => Promise<Response>,
+  ready: (request: Request) => Promise<Response> = () =>
+    Promise.resolve(new Response(null, { status: 404 })),
 ) => {
   const calls: Array<string> = [];
   let running = false;
@@ -35,8 +39,10 @@ const fakeContainer = (
       fetch: (input: RequestInfo) => {
         const request = typeof input === "string" ? new Request(input) : input;
         const { pathname } = new URL(request.url);
-        if (pathname === "/") return Promise.resolve(new Response(null, { status: 404 }));
-        return pathname === "/v1/models" && models !== undefined ? models(request) : respond();
+        if (pathname === "/") return ready(request);
+        return pathname === "/v1/models" && models !== undefined
+          ? models(request)
+          : respond(request);
       },
     }),
   } as unknown as Container;
@@ -47,17 +53,18 @@ const store = { accessKey: "a", secretKey: "s" };
 const T0 = Date.UTC(2026, 9, 8, 9, 0, 0);
 const IDLE = PoolContainer.IDLE_TIMEOUT_MS;
 
-const makePool = (respond: () => Promise<Response>, running = false) => {
+const makePool = (respond: (request: Request) => Promise<Response>, running = false) => {
   const fake = fakeContainer(respond);
   if (running) fake.container.start({ enableInternet: true });
   const wakes: Array<number> = [];
+  const events: Array<{ readonly action: string; readonly fields: Record<string, unknown> }> = [];
   const layer = PoolContainer.layerCloudflare({
     container: fake.container,
     storeGateway: {} as Fetcher,
     wakeAt: (at) => wakes.push(at),
-    log: () => {},
+    log: (action, fields) => events.push({ action, fields }),
   });
-  return { ...fake, wakes, layer };
+  return { ...fake, wakes, events, layer };
 };
 
 const send = (path: string) =>
@@ -88,6 +95,75 @@ describe("PoolContainer", () => {
         `start http://${PoolContainer.STORE_HOST}`,
       ]);
     }).pipe(Effect.provide(pool.layer));
+  });
+
+  it.effect("returns a tagged error when CLIProxyAPI never becomes ready", () => {
+    let probes = 0;
+    const fake = fakeContainer(
+      async () => new Response("unused"),
+      undefined,
+      async () => {
+        probes += 1;
+        throw new Error("not listening");
+      },
+    );
+    fake.container.start({ enableInternet: true });
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(PoolContainer.waitUntilReady(fake.container));
+      yield* TestClock.adjust(PoolContainer.READY_TIMEOUT_MS);
+      const error = yield* Effect.flip(Fiber.join(fiber));
+      expect(error._tag).toBe("PoolContainerReadinessTimeoutError");
+      expect(probes).toBeGreaterThan(1);
+    });
+  });
+
+  it.effect("uses only the readiness budget left after startup setup", () => {
+    let probes = 0;
+    const fake = fakeContainer(
+      async () => new Response("unused"),
+      undefined,
+      async () => {
+        probes += 1;
+        throw new Error("not listening");
+      },
+    );
+    fake.container.start({ enableInternet: true });
+    const setupMs = 20_000;
+    return Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      yield* TestClock.adjust(setupMs);
+      const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
+      const remainingMs = Math.max(0, PoolContainer.READY_TIMEOUT_MS - elapsedMs);
+      const fiber = yield* Effect.forkChild(
+        PoolContainer.waitUntilReady(fake.container, remainingMs),
+      );
+      yield* TestClock.adjust(remainingMs);
+      const error = yield* Effect.flip(Fiber.join(fiber));
+      expect(error._tag).toBe("PoolContainerReadinessTimeoutError");
+      expect(probes).toBeGreaterThan(1);
+    });
+  });
+
+  it.effect("does not probe when startup setup has exhausted the readiness budget", () => {
+    let probes = 0;
+    const fake = fakeContainer(
+      async () => new Response("unused"),
+      undefined,
+      async () => {
+        probes += 1;
+        throw new Error("not listening");
+      },
+    );
+    fake.container.start({ enableInternet: true });
+    return Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      yield* TestClock.adjust(PoolContainer.READY_TIMEOUT_MS);
+      const elapsedMs = (yield* Clock.currentTimeMillis) - startedAt;
+      const remainingMs = Math.max(0, PoolContainer.READY_TIMEOUT_MS - elapsedMs);
+      const error = yield* Effect.flip(PoolContainer.waitUntilReady(fake.container, remainingMs));
+      expect(error._tag).toBe("PoolContainerReadinessTimeoutError");
+      expect(probes).toBe(0);
+    });
   });
 
   it.effect("sleeps once nothing has reached it for the idle timeout, never mid-request", () => {
@@ -169,5 +245,93 @@ describe("PoolContainer", () => {
       expect(yield* sleepIfIdle(T0)).toBeNull();
       expect(pool.calls).toContain("destroy");
     }).pipe(Effect.provide(pool.layer));
+  });
+
+  it.effect(
+    "identifies a surviving container only from management replies, even refused ones",
+    () => {
+      let metadata = true;
+      const pool = makePool(
+        async () =>
+          new Response("unread body", {
+            status: 403,
+            headers: metadata ? { "x-cpa-version": "8.0.31" } : {},
+          }),
+        true,
+      );
+      return PoolContainer.PoolContainer.use((container) =>
+        Effect.gen(function* () {
+          expect(container.release().source).toBe("unknown");
+          const model = yield* send("/v1/messages");
+          expect(container.release().source).toBe("unknown");
+          yield* Effect.promise(() => model.text());
+          const management = yield* send("/v8/management/config");
+          expect(container.release()).toMatchObject({
+            source: "management-headers",
+            version: "8.0.31",
+          });
+          expect(yield* Effect.promise(() => management.text())).toBe("unread body");
+          expect(pool.events).toContainEqual({
+            action: "pool.container.release_observed",
+            fields: { cliProxyApi: container.release() },
+          });
+          metadata = false;
+          const unsupported = yield* send("/v8/management/config");
+          yield* Effect.promise(() => unsupported.text());
+          expect(container.release().source).toBe("unknown");
+          metadata = true;
+          const identified = yield* send("/v8/management/config");
+          yield* Effect.promise(() => identified.text());
+          yield* sleepIfIdle(T0 + IDLE);
+          expect(container.release().source).toBe("unknown");
+          expect(pool.events.at(-1)).toMatchObject({
+            action: "pool.container.slept",
+            fields: { cliProxyApi: { version: "8.0.31" } },
+          });
+        }),
+      ).pipe(Effect.provide(pool.layer));
+    },
+  );
+
+  it.effect("does not revive evidence from a management reply that outlived its container", () => {
+    const entered = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<Response>();
+    let late = false;
+    const pool = makePool(async (request) => {
+      if (new URL(request.url).pathname.startsWith("/v8/management/")) {
+        if (late) {
+          entered.resolve();
+          return pending.promise;
+        }
+        return new Response(null, { headers: { "x-cpa-version": "8.0.31" } });
+      }
+      return new Response(null);
+    });
+    return PoolContainer.PoolContainer.use((container) =>
+      Effect.gen(function* () {
+        yield* send("/v8/management/config");
+        expect(container.release().version).toBe("8.0.31");
+        late = true;
+        const old = yield* Effect.forkChild(send("/v8/management/credentials"));
+        yield* Effect.promise(() => entered.promise);
+        yield* container.stop;
+        yield* send("/v1/messages");
+        expect(container.release().source).toBe("unknown");
+        pending.resolve(new Response(null, { headers: { "x-cpa-version": "8.0.31" } }));
+        yield* Fiber.join(old);
+        expect(container.release().source).toBe("unknown");
+        const starts = pool.events.filter((event) => event.action === "pool.container.started");
+        expect(starts).toHaveLength(2);
+        for (const event of starts) {
+          expect(event.fields.cliProxyApi).toMatchObject({ source: "unknown", version: null });
+        }
+        late = false;
+        yield* send("/v8/management/config");
+        yield* Effect.promise(() => pool.container.destroy());
+        expect(container.release().source).toBe("unknown");
+        yield* send("/v1/messages");
+        expect(container.release().source).toBe("unknown");
+      }),
+    ).pipe(Effect.provide(pool.layer));
   });
 });

@@ -17,6 +17,44 @@ const makeEndpoint = (
 });
 
 describe("CLIProxyAPI model discovery", () => {
+  it.effect("reads a linked pool's cached catalog without waiting for live model discovery", () =>
+    Effect.gen(function* () {
+      const paths: Array<string> = [];
+      const known = [{ id: "claude-model", ownedBy: "anthropic", created: 1 }];
+      const endpoint = makeEndpoint(
+        "https://app.signalbox.test/api/pool-link",
+        async (request) => {
+          const path = new URL(request.url).pathname;
+          paths.push(path);
+          if (path.endsWith("/models") && !path.endsWith("/v1/models")) {
+            return Response.json({ models: known });
+          }
+          return Response.json({ error: "Live discovery is unavailable" }, { status: 503 });
+        },
+        true,
+      );
+
+      expect(yield* CliProxyApi.listModels(endpoint)).toEqual(known);
+      expect(paths).toEqual(["/api/pool-link/models"]);
+    }),
+  );
+
+  it.effect("discovers served models when a linked catalog has not populated yet", () =>
+    Effect.gen(function* () {
+      const endpoint = makeEndpoint(
+        "https://app.signalbox.test/api/pool-link",
+        async (request) =>
+          new URL(request.url).pathname.endsWith("/v1/models")
+            ? Response.json({ data: [{ id: "claude-model", owned_by: "anthropic", created: 1 }] })
+            : Response.json({ models: [] }),
+        true,
+      );
+      expect(yield* CliProxyApi.listModels(endpoint)).toEqual([
+        { id: "claude-model", ownedBy: "anthropic", created: 1, provider: "claude" },
+      ]);
+    }),
+  );
+
   it.effect("reads each provider channel once regardless of its account count", () =>
     Effect.gen(function* () {
       const fake = makeFakeCliProxyApi();
@@ -160,7 +198,7 @@ describe("CLIProxyAPI model discovery", () => {
       expect(models).toEqual([
         { id: "served-model", ownedBy: "anthropic", created: 1, provider: "claude" },
       ]);
-      expect(paths).toEqual(["/api/pool-link/v1/models", "/api/pool-link/models"]);
+      expect(paths).toEqual(["/api/pool-link/models", "/api/pool-link/v1/models"]);
     }),
   );
 });

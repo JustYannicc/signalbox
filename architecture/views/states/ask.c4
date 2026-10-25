@@ -1,0 +1,32 @@
+// State machine for one ask. The walk through it with people and modules is the dynamic view state_ask.
+model {
+  smAsk = state 'Ask lifecycle' {
+    raised = state 'Raised' { description 'committed in its thread' }
+    routed = state 'Routed' { description 'agents first, then people' }
+    inLanes = state 'In lanes' { description 'per-person projection' }
+    deferred = state 'Deferred' { description 'per-person snooze' }
+    resolved = state 'Resolved' { description 'first receipt wins' }
+    dropped = state 'Dropped' { description 'thread trashed' }
+
+    raised -[transition]-> routed 'route'
+    routed -[transition]-> resolved 'assistant answers (delegated)'
+    routed -[transition]-> inLanes 'project to deciders'
+    inLanes -[transition]-> deferred 'defer'
+    deferred -[transition]-> inLanes 'unsnooze · condition'
+    inLanes -[transition]-> resolved 'answer'
+    deferred -[transition]-> resolved 'someone else answers'
+    inLanes -[transition]-> dropped 'thread trashed'
+  }
+}
+views {
+  view state-ask of smAsk {
+    title 'States/Ask/State machine'
+    description 'How does one ask go from raised in its thread to answered or dropped, and who sees it on the way? Start: green. End: gray. Click the frame for the walk with people and modules (state_ask).'
+    include *
+    include smAsk with { navigateTo state_ask }
+    style smAsk.raised { color green }
+    style smAsk.resolved { color gray }
+    style smAsk.dropped { color gray }
+    autoLayout TopBottom
+  }
+}

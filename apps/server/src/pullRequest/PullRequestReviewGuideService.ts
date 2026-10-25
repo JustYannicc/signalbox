@@ -22,7 +22,12 @@ import {
   type RepositoryIdentity,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
+import {
+  normalizeReviewGuide,
+  parseReviewGuideChange,
+} from "@t3tools/provider-core/server/reviewGuideNormalize";
 import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGeneration";
+import { reviewGuideInputFromPullRequest } from "@t3tools/provider-core/server/reviewGuideInput";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
@@ -36,8 +41,6 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
-import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
-import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
 
@@ -158,7 +161,7 @@ const make = Effect.gen(function* () {
       git.execute({
         operation: "PullRequestReviewGuideService.fetch",
         cwd: workspaceRoot,
-        args: ["fetch", "--quiet", "--no-tags", remote, ...args],
+        args: ["fetch", "--quiet", "--no-tags", "--", remote, ...args],
         timeoutMs: 5 * 60_000,
       });
     // The host names the base branch. A name git rejects, or one that would change the refspec

@@ -2,7 +2,7 @@
 import { createSignalboxAgentBrowserAtoms } from "@t3tools/client-runtime/state/signalboxAgentBrowser";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useThreadShell } from "./entities";
@@ -21,10 +21,7 @@ export function useAgentBrowserTrail(environmentId: EnvironmentId, threadId: Thr
   const query = useEnvironmentQuery(
     supported ? signalboxAgentBrowser.trail({ environmentId, input: { threadId } }) : null,
   );
-  const threadRef = useMemo(
-    () => scopeThreadRef(environmentId, threadId),
-    [environmentId, threadId],
-  );
+  const threadRef = scopeThreadRef(environmentId, threadId);
   const run = useThreadShell(supported ? threadRef : null)?.latestRun;
   const runKey = run ? `${run.runId}:${run.status}` : null;
   const { refresh } = query;

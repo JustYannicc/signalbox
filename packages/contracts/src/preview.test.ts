@@ -220,6 +220,52 @@ describe("PreviewAutomationStatus", () => {
         viewport: { width: 412, height: 915 },
       }).viewport,
     ).toEqual({ width: 412, height: 915 });
+    expect(
+      decodeAutomationStatus({
+        ...base,
+        serverTabCapacity: {
+          used: 24,
+          limit: 32,
+          agentOwned: 18,
+          humanControlled: 4,
+          unclaimed: 2,
+          pendingOpens: 0,
+          lastCleanupClosed: 8,
+          lastCleanupUnreadableThreads: 0,
+          lastCleanupBlocked: {
+            humanControlled: 1,
+            visible: 1,
+            activeOperation: 1,
+            loading: 1,
+            pendingInteraction: 1,
+            recording: 1,
+            lifecycleUnavailable: 1,
+            activeThread: 1,
+            idleWindow: 1,
+          },
+        },
+      }).serverTabCapacity,
+    ).toEqual({
+      used: 24,
+      limit: 32,
+      agentOwned: 18,
+      humanControlled: 4,
+      unclaimed: 2,
+      pendingOpens: 0,
+      lastCleanupClosed: 8,
+      lastCleanupUnreadableThreads: 0,
+      lastCleanupBlocked: {
+        humanControlled: 1,
+        visible: 1,
+        activeOperation: 1,
+        loading: 1,
+        pendingInteraction: 1,
+        recording: 1,
+        lifecycleUnavailable: 1,
+        activeThread: 1,
+        idleWindow: 1,
+      },
+    });
   });
 });
 

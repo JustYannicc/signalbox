@@ -1,0 +1,97 @@
+/** Workerd exposes web APIs which the official bare V8 context does not provide. */
+export function restrictCodeModeGlobals() {
+  const allowed = new Set([
+    "globalThis",
+    "Infinity",
+    "NaN",
+    "undefined",
+    "Object",
+    "Function",
+    "Boolean",
+    "Symbol",
+    "Number",
+    "BigInt",
+    "Math",
+    "Date",
+    "String",
+    "RegExp",
+    "Array",
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "WeakRef",
+    "FinalizationRegistry",
+    "Promise",
+    "Proxy",
+    "Reflect",
+    "JSON",
+    "Intl",
+    "ArrayBuffer",
+    "DataView",
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float16Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+    "Error",
+    "AggregateError",
+    "EvalError",
+    "RangeError",
+    "ReferenceError",
+    "SyntaxError",
+    "TypeError",
+    "URIError",
+    "eval",
+    "parseInt",
+    "parseFloat",
+    "isNaN",
+    "isFinite",
+    "decodeURI",
+    "decodeURIComponent",
+    "encodeURI",
+    "encodeURIComponent",
+    "escape",
+    "unescape",
+    "Iterator",
+    "AsyncIterator",
+    "DisposableStack",
+    "AsyncDisposableStack",
+    "SuppressedError",
+    "tools",
+    "ALL_TOOLS",
+    "text",
+    "image",
+    "audio",
+    "generatedImage",
+    "store",
+    "load",
+    "notify",
+    "setTimeout",
+    "clearTimeout",
+    "yield_control",
+    "exit",
+    "as_settled",
+    "stream_settled",
+  ]);
+  // Walk the web-global prototypes too, so fetch cannot be recovered through self's prototype.
+  for (
+    let target: object | null = globalThis;
+    target !== null && target !== Object.prototype;
+    target = Object.getPrototypeOf(target)
+  ) {
+    for (const key of Object.getOwnPropertyNames(target)) {
+      if (allowed.has(key) || key === "constructor") continue;
+      const descriptor = Object.getOwnPropertyDescriptor(target, key);
+      if (descriptor?.configurable) Reflect.deleteProperty(target, key);
+      else if (descriptor?.writable || descriptor?.set) Reflect.set(target, key, undefined);
+    }
+  }
+}

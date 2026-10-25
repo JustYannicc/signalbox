@@ -1,0 +1,813 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/JustYannicc/signalbox/claude-release-report/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "release",
+    "inventory",
+    "builtinGaps",
+    "codegenFindings",
+    "artifact",
+    "checks"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "version", "platform", "binarySha256", "bunVersion"],
+      "properties": {
+        "provider": {
+          "const": "claude-code"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "binarySha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "bunVersion": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "inventory": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/definitions/inventory"
+        }
+      ]
+    },
+    "builtinGaps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/gap"
+      }
+    },
+    "codegenFindings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/codegenFinding"
+      }
+    },
+    "artifact": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["manifest", "moduleMap", "sha256", "bytes"],
+          "properties": {
+            "manifest": {
+              "type": "string",
+              "minLength": 1
+            },
+            "moduleMap": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "#/definitions/sha256"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "extraction",
+        "inventory",
+        "bunCapabilities",
+        "builtinGaps",
+        "codegen",
+        "rebundle",
+        "localWorkerd",
+        "deployedDO",
+        "updateProof"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "extraction": {
+          "$ref": "#/definitions/check"
+        },
+        "inventory": {
+          "$ref": "#/definitions/check"
+        },
+        "bunCapabilities": {
+          "$ref": "#/definitions/check"
+        },
+        "builtinGaps": {
+          "$ref": "#/definitions/check"
+        },
+        "codegen": {
+          "$ref": "#/definitions/check"
+        },
+        "rebundle": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/check"
+            },
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                }
+              },
+              "then": {
+                "required": ["artifactSha256"]
+              }
+            }
+          ]
+        },
+        "localWorkerd": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/check"
+            },
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                }
+              },
+              "then": {
+                "required": ["artifactSha256"]
+              }
+            }
+          ]
+        },
+        "deployedDO": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/check"
+            },
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                }
+              },
+              "then": {
+                "required": ["artifactSha256"]
+              }
+            }
+          ]
+        },
+        "updateProof": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/check"
+            },
+            {
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                }
+              },
+              "then": {
+                "required": ["artifactSha256"]
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "definitions": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "diagnostics"],
+      "properties": {
+        "status": {
+          "enum": ["pass", "fail", "pending"]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "artifactSha256": {
+          "$ref": "#/definitions/sha256"
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "key", "line", "column", "offset"],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "bunOccurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "line", "column", "offset", "access"],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "access": {
+          "enum": ["read", "call", "construct"]
+        }
+      }
+    },
+    "bunApis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["members", "dynamicAccesses"],
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "occurrences"],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "occurrences": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/bunOccurrence"
+                }
+              }
+            }
+          }
+        },
+        "dynamicAccesses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["module", "line", "column", "offset", "basePath", "access"],
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "column": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "basePath": {
+                "type": "string"
+              },
+              "access": {
+                "enum": ["read", "call", "construct"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "builtinImport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "key", "line", "column", "offset", "kind", "imported", "local"],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": ["named", "default", "namespace", "side-effect", "require"]
+        },
+        "imported": {
+          "type": "string"
+        },
+        "local": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "memberUse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module",
+        "key",
+        "line",
+        "column",
+        "offset",
+        "member",
+        "access",
+        "via",
+        "guarded"
+      ],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "member": {
+          "type": "string"
+        },
+        "access": {
+          "type": "string"
+        },
+        "via": {
+          "type": "string"
+        },
+        "guarded": {
+          "type": "boolean"
+        }
+      }
+    },
+    "dynamicMemberUse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "key", "line", "column", "offset", "via", "guarded"],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "via": {
+          "type": "string"
+        },
+        "guarded": {
+          "type": "boolean"
+        }
+      }
+    },
+    "builtin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "specifier",
+        "canonicalBuiltin",
+        "module",
+        "key",
+        "imports",
+        "memberUses",
+        "dynamicMemberUses"
+      ],
+      "properties": {
+        "specifier": {
+          "type": "string"
+        },
+        "canonicalBuiltin": {
+          "type": "string"
+        },
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "imports": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/builtinImport"
+          }
+        },
+        "memberUses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/memberUse"
+          }
+        },
+        "dynamicMemberUses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/dynamicMemberUse"
+          }
+        }
+      }
+    },
+    "unresolvedReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "key", "line", "column", "offset", "kind", "specifier"],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "specifier": {
+          "type": "string"
+        }
+      }
+    },
+    "codegenFinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "key", "line", "column", "offset", "kind", "operation"],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": [
+            "Function",
+            "eval",
+            "vm",
+            "WebAssembly",
+            "WebAssembly.compile",
+            "WebAssembly.instantiate",
+            "WebAssembly.Module",
+            "WebAssembly.compileStreaming",
+            "WebAssembly.instantiateStreaming",
+            "proc-path"
+          ]
+        },
+        "operation": {
+          "type": "string"
+        },
+        "literal": {
+          "type": "string"
+        }
+      }
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "module", "line", "column", "offset", "reason", "guarded"],
+      "properties": {
+        "module": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": ["bun-api", "node-builtin"]
+        },
+        "name": {
+          "type": "string"
+        },
+        "specifier": {
+          "type": "string"
+        },
+        "canonicalBuiltin": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "status": {
+          "enum": ["implemented", "host", "headless", "unsupported"]
+        },
+        "guarded": {
+          "type": "boolean"
+        }
+      }
+    },
+    "inventoryRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "platform", "bunVersion"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bunVersion": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "release",
+        "binary",
+        "graph",
+        "modules",
+        "bunApis",
+        "builtins",
+        "napiModules",
+        "unresolvedReferences",
+        "unresolvedBareReferences",
+        "codegenFindings",
+        "builtinGaps",
+        "bunCapabilityGaps"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "release": {
+          "$ref": "#/definitions/inventoryRelease"
+        },
+        "binary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bytes", "sha256"],
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "sha256": {
+              "$ref": "#/definitions/sha256"
+            }
+          }
+        },
+        "graph": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entry", "flags", "recordSize"],
+          "properties": {
+            "entry": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "flags": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "recordSize": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "modules": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "bytes",
+            "javascriptCount",
+            "javascriptBytes",
+            "reachableCount",
+            "reachableJavascriptCount",
+            "reachableJavascriptBytes"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "javascriptCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "javascriptBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reachableCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reachableJavascriptCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reachableJavascriptBytes": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "bunApis": {
+          "$ref": "#/definitions/bunApis"
+        },
+        "builtins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/builtin"
+          }
+        },
+        "napiModules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "key", "name", "bytes"],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "key": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "unresolvedReferences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/unresolvedReference"
+          }
+        },
+        "unresolvedBareReferences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/unresolvedReference"
+          }
+        },
+        "codegenFindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/codegenFinding"
+          }
+        },
+        "builtinGaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/gap"
+          }
+        },
+        "bunCapabilityGaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/gap"
+          }
+        }
+      }
+    }
+  }
+}

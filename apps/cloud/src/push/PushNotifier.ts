@@ -7,11 +7,11 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type { SqlError } from "effect/sql/SqlError";
 
-import * as UserStore from "../user/UserStore.ts";
 import * as PushDevices from "./PushDevices.ts";
 import { pushFor, pushForNotice, type PushMessage, wants } from "./pushRules.ts";
-import * as PushSender from "./PushSender.ts";
+import * as PushSender from "./adapters/PushSender.ts";
 
 /**
  * Pushes a person's thread changes and automation notices to their phones.
@@ -33,12 +33,14 @@ export class PushNotifier extends Context.Service<
   }
 >()("@signalbox/cloud/push/PushNotifier") {}
 
+/** The registering session must still represent this person at delivery time. */
+type IsSessionActive = (sid: string) => Effect.Effect<boolean, SqlError>;
+
 /** `environmentId` is the user object's own, which deep links name. */
-const make = (environmentId: EnvironmentId) =>
+const make = (environmentId: EnvironmentId, isSessionActive: IsSessionActive) =>
   Effect.gen(function* () {
     const devices = yield* PushDevices.PushDevices;
     const sender = yield* PushSender.PushSender;
-    const store = yield* UserStore.UserStore;
 
     /** Sends `message` to every phone that wants its phase. */
     const deliver = Effect.fn("PushNotifier.deliver")(
@@ -51,7 +53,7 @@ const make = (environmentId: EnvironmentId) =>
           (device) =>
             Effect.gen(function* () {
               // Signed out or revoked: the phone no longer speaks for this person.
-              if ((yield* store.findSession(device.sid)) === null) {
+              if (!(yield* isSessionActive(device.sid))) {
                 yield* devices.remove(device.deviceId);
                 return "signed-out";
               }
@@ -122,7 +124,8 @@ const make = (environmentId: EnvironmentId) =>
  * senders and the environment id. Needs an `HttpClient`, the Worker's config
  * and the user's storage.
  */
-export const layerWithDevices = (environmentId: EnvironmentId) =>
-  Layer.effect(PushNotifier, make(environmentId)).pipe(
-    Layer.provideMerge(Layer.mergeAll(PushDevices.layer, PushSender.layer)),
+export const layerWithDevices = (environmentId: EnvironmentId, isSessionActive: IsSessionActive) =>
+  Layer.effect(PushNotifier, make(environmentId, isSessionActive)).pipe(
+    Layer.provideMerge(PushDevices.layer),
+    Layer.provide(PushSender.layer),
   );

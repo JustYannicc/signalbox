@@ -49,9 +49,11 @@ export function ThreadCommandOutput(props: {
       ? `Couldn't load output: ${error}`
       : data === null
         ? "Loading output…"
-        : data.running
-          ? null
-          : "No output.";
+        : data.output.truncated
+          ? "Output is no longer available."
+          : data.running
+            ? null
+            : "No output.";
     return message === null ? null : (
       <Text className="pt-1.5 font-mono text-2xs leading-normal text-foreground-muted">
         {message}
@@ -94,6 +96,11 @@ export function ThreadCommandOutput(props: {
           )}
         </Text>
       </ScrollView>
+      {error ? (
+        <Text className="pt-1 font-mono text-2xs leading-normal text-danger-foreground">
+          {`Couldn't load output: ${error}`}
+        </Text>
+      ) : null}
     </View>
   );
 }

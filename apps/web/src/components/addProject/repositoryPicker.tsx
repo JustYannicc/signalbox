@@ -1,6 +1,6 @@
 import { matchRepositories } from "@t3tools/client-runtime/state/signalboxRepositories";
 import type { EnvironmentId, SourceControlProviderKind } from "@t3tools/contracts";
-import { type ReactNode, useEffect, useMemo, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 import { useRepositoriesToPick } from "../../state/signalboxRepositories";
 import type { CommandPaletteGroup } from "../CommandPalette.logic";
@@ -34,7 +34,7 @@ export function useRepositoryPickerGroups(input: {
   useEffect(() => {
     onPick.current = input.onPick;
   });
-  return useMemo(() => {
+  return (() => {
     if (repositories === null) return NO_GROUPS;
     const matches = matchRepositories(repositories, query).slice(0, MAX_SHOWN);
     if (matches.length === 0) return NO_GROUPS;
@@ -53,5 +53,5 @@ export function useRepositoryPickerGroups(input: {
         })),
       },
     ];
-  }, [icon, query, repositories]);
+  })();
 }

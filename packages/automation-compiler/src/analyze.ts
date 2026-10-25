@@ -237,13 +237,27 @@ export class WorkflowAnalyzer {
   }
 
   /** Passes the site id to the runtime as the verb's first argument. */
-  private tagSite(call: CallExpression, site: string) {
+  private tagSite(call: CallExpression, site: string, startName?: Node) {
     const first = call.arguments[0];
     if (first) {
       this.edits.set(`site:${first.start}`, {
         start: first.start,
         end: first.start,
         text: `${JSON.stringify(site)}, `,
+      });
+    }
+    const input = call.arguments[1];
+    if (startName && input) {
+      this.edits.set(`start-name:${input.start}`, {
+        start: input.start,
+        end: input.start,
+        text: `${this.source.slice(startName)}, `,
+      });
+    } else if (startName) {
+      this.edits.set(`start-name:${startName.end}`, {
+        start: startName.end,
+        end: startName.end,
+        text: `, ${this.source.slice(startName)}`,
       });
     }
   }
@@ -1095,7 +1109,7 @@ export class WorkflowAnalyzer {
     for (const [index, argument] of call.arguments.entries())
       if (index > 0 && index !== fnIndex) this.scan(argument, scope, null, out);
     const detail = readStepDetail(this.source, verb, call);
-    this.tagSite(call, site);
+    this.tagSite(call, site, verb === "start" ? call.arguments[0] : undefined);
     if (!label || !detail || (verb === "run" && !runTarget)) return;
     if (detail.outcomes && detail.decision !== null) {
       this.decisions.set(`${scope.prefix}${site}`, detail.decision ?? "value");

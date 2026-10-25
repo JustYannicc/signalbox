@@ -1,8 +1,9 @@
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./provider/ClaudeModelCatalog.ts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 
-import { compileClaudeModelSelection } from "./claudeModelOptions.ts";
+import { compileClaudeModelSelection } from "@signalbox/provider-claude/claudeModelOptions";
 
 const selection = (
   model: string,
@@ -22,6 +23,7 @@ describe("compileClaudeModelSelection", () => {
           { id: "effort", value: "max" },
           { id: "fastMode", value: true },
         ]),
+        BUNDLED_CLAUDE_MODEL_CATALOG,
       ),
     ).toMatchObject({
       apiModelId: "claude-opus-4-6[1m]",
@@ -32,12 +34,16 @@ describe("compileClaudeModelSelection", () => {
 
   it("compiles fast mode only for models that expose it", () => {
     expect(
-      compileClaudeModelSelection(selection("claude-opus-4-6", [{ id: "fastMode", value: true }]))
-        .settings,
+      compileClaudeModelSelection(
+        selection("claude-opus-4-6", [{ id: "fastMode", value: true }]),
+        BUNDLED_CLAUDE_MODEL_CATALOG,
+      ).settings,
     ).toEqual({ fastMode: true });
     expect(
-      compileClaudeModelSelection(selection("claude-opus-4-6", [{ id: "fastMode", value: false }]))
-        .settings,
+      compileClaudeModelSelection(
+        selection("claude-opus-4-6", [{ id: "fastMode", value: false }]),
+        BUNDLED_CLAUDE_MODEL_CATALOG,
+      ).settings,
     ).toEqual({ fastMode: false });
   });
 
@@ -45,6 +51,7 @@ describe("compileClaudeModelSelection", () => {
     expect(
       compileClaudeModelSelection(
         selection("claude-sonnet-4-6", [{ id: "effort", value: "ultrathink" }]),
+        BUNDLED_CLAUDE_MODEL_CATALOG,
       ),
     ).toMatchObject({ effort: "high", promptEffort: "ultrathink" });
   });
@@ -53,10 +60,14 @@ describe("compileClaudeModelSelection", () => {
     expect(
       compileClaudeModelSelection(
         selection("claude-pool-model-not-in-catalog", [{ id: "effort", value: "max" }]),
+        BUNDLED_CLAUDE_MODEL_CATALOG,
       ).effort,
     ).toBe("max");
     expect(
-      compileClaudeModelSelection(selection("claude-pool-model-not-in-catalog", [])).effort,
+      compileClaudeModelSelection(
+        selection("claude-pool-model-not-in-catalog", []),
+        BUNDLED_CLAUDE_MODEL_CATALOG,
+      ).effort,
     ).toBeUndefined();
   });
 
@@ -64,14 +75,17 @@ describe("compileClaudeModelSelection", () => {
     expect(
       compileClaudeModelSelection(
         selection("claude-pool-model-not-in-catalog", [{ id: "effort", value: "brutal" }]),
+        BUNDLED_CLAUDE_MODEL_CATALOG,
       ).effort,
     ).toBeUndefined();
   });
 
   it("compiles the thinking toggle for models that expose it", () => {
     expect(
-      compileClaudeModelSelection(selection("claude-haiku-4-5", [{ id: "thinking", value: false }]))
-        .settings,
+      compileClaudeModelSelection(
+        selection("claude-haiku-4-5", [{ id: "thinking", value: false }]),
+        BUNDLED_CLAUDE_MODEL_CATALOG,
+      ).settings,
     ).toEqual({ alwaysThinkingEnabled: false });
   });
 });

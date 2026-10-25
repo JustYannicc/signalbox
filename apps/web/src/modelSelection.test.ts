@@ -9,6 +9,7 @@ import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contrac
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@t3tools/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
+import { deriveSignalboxComposerModelState } from "./lib/composerModelStatePolicy"; // signalbox: cover refreshed defaults while preserving explicit picks and thread pins.
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "./providerInstances";
 import {
@@ -597,6 +598,147 @@ describe("instance-scoped model selection", () => {
 
     expect(state.selectedModel).toBe("gpt-5.6-sol");
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
+  });
+
+  // signalbox: implicit defaults refresh while explicit picks and existing thread pins retain priority.
+  it("refreshes an implicit new-thread model from the folder or person default", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const providers = [
+      {
+        ...provider({
+          provider: driver,
+          instanceId,
+          models: ["claude-fable-5-1", "claude-haiku-5-5"],
+        }),
+        models: [
+          {
+            slug: "claude-fable-5-1",
+            name: "Claude Fable 5.1",
+            isDefault: true,
+            isCustom: false,
+            capabilities: null,
+          },
+          {
+            slug: "claude-haiku-5-5",
+            name: "Claude Haiku 5.5",
+            isCustom: false,
+            capabilities: null,
+          },
+        ],
+      },
+    ];
+    const settings = settingsWithProviderInstances();
+    const staleImplicitDraft = {
+      modelSelectionExplicit: false,
+      activeProvider: instanceId,
+      modelSelectionByProvider: {
+        [instanceId]: createModelSelection(instanceId, "claude-fable-5-1"),
+      },
+    };
+    const personDefault = createModelSelection(instanceId, "claude-haiku-5-5", [
+      { id: "effort", value: "max" },
+    ]);
+    const projectDefault = createModelSelection(instanceId, "claude-fable-5-1");
+    const legacyState = deriveEffectiveComposerModelState({
+      draft: staleImplicitDraft,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings,
+    });
+
+    const personDefaultState = deriveSignalboxComposerModelState({
+      legacyState,
+      composerDraft: staleImplicitDraft,
+      isNewThreadDraft: true,
+      initialModelSelection: personDefault,
+      selectedInstanceId: instanceId,
+    });
+    expect(personDefaultState.selectedModel).toBe("claude-haiku-5-5");
+    expect(personDefaultState.modelOptions?.[instanceId]).toEqual(personDefault.options);
+
+    expect(
+      deriveSignalboxComposerModelState({
+        legacyState,
+        composerDraft: staleImplicitDraft,
+        isNewThreadDraft: true,
+        initialModelSelection: projectDefault,
+        selectedInstanceId: instanceId,
+      }).selectedModel,
+    ).toBe("claude-fable-5-1");
+
+    expect(
+      deriveSignalboxComposerModelState({
+        legacyState,
+        composerDraft: staleImplicitDraft,
+        isNewThreadDraft: true,
+        initialModelSelection: null,
+        selectedInstanceId: instanceId,
+      }).selectedModel,
+    ).toBe("");
+  });
+
+  it("keeps explicit new-thread picks and existing thread pins", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const fable = createModelSelection(instanceId, "claude-fable-5-1", [
+      { id: "effort", value: "max" },
+    ]);
+    const providers = [
+      provider({
+        provider: driver,
+        instanceId,
+        models: ["claude-fable-5-1", "claude-haiku-5-5"],
+      }),
+    ];
+    const settings = settingsWithProviderInstances();
+
+    const explicitDraft = {
+      activeProvider: instanceId,
+      modelSelectionByProvider: { [instanceId]: fable },
+      modelSelectionExplicit: true,
+    };
+    const explicitLegacyState = deriveEffectiveComposerModelState({
+      draft: explicitDraft,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: null,
+      projectModelSelection: createModelSelection(instanceId, "claude-haiku-5-5"),
+      settings,
+    });
+
+    const explicitState = deriveSignalboxComposerModelState({
+      legacyState: explicitLegacyState,
+      composerDraft: explicitDraft,
+      isNewThreadDraft: true,
+      initialModelSelection: createModelSelection(instanceId, "claude-haiku-5-5"),
+      selectedInstanceId: instanceId,
+    });
+    expect(explicitState.selectedModel).toBe("claude-fable-5-1");
+    expect(explicitState.modelOptions?.[instanceId]).toEqual(fable.options);
+
+    const existingThreadLegacyState = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: fable,
+      projectModelSelection: createModelSelection(instanceId, "claude-haiku-5-5"),
+      settings,
+    });
+    expect(
+      deriveSignalboxComposerModelState({
+        legacyState: existingThreadLegacyState,
+        composerDraft: { modelSelectionExplicit: false },
+        isNewThreadDraft: false,
+        initialModelSelection: createModelSelection(instanceId, "claude-haiku-5-5"),
+        selectedInstanceId: instanceId,
+      }).selectedModel,
+    ).toBe("claude-fable-5-1");
   });
 
   it("preserves an explicit draft OpenCode selection while the catalog is empty", () => {

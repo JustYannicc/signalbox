@@ -1,0 +1,47 @@
+model {
+  extend signalbox {
+    marketplace = module 'Marketplace' {
+      #deep
+      icon bootstrap:shop
+      description 'publish · list · install · update · withdraw'
+      technology 'listings per folder scope · install = placement'
+      metadata {
+        interface '5'
+        deletion 'every kind grows its own share and install path'
+      }
+
+      api = iface 'Marketplace · interface' {
+        description '5 verbs: publish · list · install · update · withdraw'
+        technology 'Deletion test: without it, every kind grows its own share and install path'
+      }
+
+      listings = store 'Listings' {
+        icon bootstrap:card-list
+        description 'code or text plus the shape of its needs · never data'
+      }
+      review = part 'Version review' {
+        icon bootstrap:patch-check
+        description 'static checks · scan · evals'
+      }
+      install = part 'Install' {
+        icon bootstrap:box-arrow-in-down
+        description 'Use (copy) or Keep updated · into one folder'
+      }
+
+      review -> listings 'verdicts'
+      install -> listings 'reads'
+    }
+
+    marketplace.install -> signalbox.tree.api 'place into folder'
+    marketplace.review -> signalbox.judge.api 'evals'
+    marketplace -> upstreams.skillsSh 'skills · audits'
+    marketplace -> upstreams.claudePlugins 'harness plugins'
+    marketplace -> upstreams.codexPlugins 'harness plugins'
+    marketplace.install -> signalbox.apps.api 'new app in folder'
+
+    // Interface → hidden parts (the only way in)
+    marketplace.api -> marketplace.listings 'list · withdraw'
+    marketplace.api -> marketplace.review 'publish · update'
+    marketplace.api -> marketplace.install 'install'
+  }
+}

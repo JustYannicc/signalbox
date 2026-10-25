@@ -1,10 +1,19 @@
-// @effect-diagnostics globalTimers:off globalDate:off - the container lifecycle is promise code on the Durable Object's own clock.
+// @effect-diagnostics globalTimers:off globalDate:off - model loading polls in the container boundary; activity uses the Durable Object's wall clock.
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import { CLI_PROXY_API_PORT, listModels, type PoolEndpoint } from "./cliProxyApi.ts";
+import {
+  makeReleaseObserver,
+  unknownRelease,
+  type CliProxyApiRelease,
+} from "./CliProxyApiRuntime.ts";
 import { POOL_STORE_BUCKET } from "./poolStore.ts";
 
 /**
@@ -35,7 +44,7 @@ export const IDLE_TIMEOUT_MS = 2 * 60_000;
 const BACKSTOP_TIMEOUT_MS = IDLE_TIMEOUT_MS + 60_000;
 
 /** How long a cold start may take before a request fails. */
-const READY_TIMEOUT_MS = 30_000;
+export const READY_TIMEOUT_MS = 30_000;
 const READY_POLL_MS = 100;
 
 /**
@@ -72,6 +81,8 @@ export class PoolContainer extends Context.Service<
      * it up: for reads that must never wake it or delay its sleep.
      */
     readonly peek: (request: Request) => Promise<Response>;
+    /** Evidence from this running container, or unknown until a management reply identifies it. */
+    readonly release: () => CliProxyApiRelease;
     readonly running: Effect.Effect<boolean>;
     readonly stop: Effect.Effect<void>;
     /**
@@ -90,6 +101,60 @@ const containerEnv = (store: StoreCredentials): Record<string, string> => ({
   OBJECTSTORE_SECRET_KEY: store.secretKey,
   OBJECTSTORE_LOCAL_PATH: "/tmp/cliproxyapi",
 });
+
+class PoolContainerReadinessProbeError extends Schema.TaggedError<PoolContainerReadinessProbeError>()(
+  "PoolContainerReadinessProbeError",
+  { cause: Schema.Defect() },
+) {
+  override get message() {
+    return "The pool's container is not ready yet.";
+  }
+}
+
+class PoolContainerExitedDuringStartError extends Schema.TaggedError<PoolContainerExitedDuringStartError>()(
+  "PoolContainerExitedDuringStartError",
+  {},
+) {
+  override get message() {
+    return "The pool's container exited while starting.";
+  }
+}
+
+class PoolContainerReadinessTimeoutError extends Schema.TaggedError<PoolContainerReadinessTimeoutError>()(
+  "PoolContainerReadinessTimeoutError",
+  {},
+) {
+  override get message() {
+    return "The pool's container did not start in time.";
+  }
+}
+
+/** A failed startup probe retries on the Effect clock and keeps its failure typed. */
+export const waitUntilReady = (container: Container, timeoutMs = READY_TIMEOUT_MS) =>
+  Effect.gen(function* () {
+    if (timeoutMs <= 0) return yield* new PoolContainerReadinessTimeoutError();
+
+    const port = container.getTcpPort(CLI_PROXY_API_PORT);
+    const probe = Effect.gen(function* () {
+      if (!container.running) return yield* new PoolContainerExitedDuringStartError();
+      yield* Effect.tryPromise({
+        try: async (signal) => {
+          const response = await port.fetch(new Request(`${CONTAINER_ORIGIN}/`, { signal }));
+          await response.body?.cancel();
+        },
+        catch: (cause) => new PoolContainerReadinessProbeError({ cause }),
+      });
+    });
+
+    const ready = yield* probe.pipe(
+      Effect.retry({
+        schedule: Schedule.spaced(Duration.millis(READY_POLL_MS)),
+        while: Schema.is(PoolContainerReadinessProbeError),
+      }),
+      Effect.timeoutOption(Duration.millis(timeoutMs)),
+    );
+    if (Option.isNone(ready)) return yield* new PoolContainerReadinessTimeoutError();
+  });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -176,6 +241,11 @@ export const layerCloudflare = (input: {
   const { container, storeGateway, wakeAt, log } = input;
   let starting: Promise<void> | undefined;
   let stopping: Promise<void> | undefined;
+  const release = makeReleaseObserver((cliProxyApi) =>
+    log("pool.container.release_observed", { cliProxyApi }),
+  );
+  const currentRelease = () =>
+    container.running && !starting && !stopping ? release.current() : unknownRelease;
   const activity = makeActivity((at) => wakeAt(at + IDLE_TIMEOUT_MS));
 
   /**
@@ -209,36 +279,27 @@ export const layerCloudflare = (input: {
       await sleep(READY_POLL_MS);
     }
     log("pool.container.models_not_ready", {
+      cliProxyApi: currentRelease(),
       waitedMs: Math.round(performance.now() - startedAt),
       stopped: !container.running || stopping !== undefined,
     });
   };
 
-  const waitUntilReady = async (startedAt: number) => {
-    const port = container.getTcpPort(CLI_PROXY_API_PORT);
-    while (performance.now() - startedAt < READY_TIMEOUT_MS) {
-      if (!container.running) throw new Error("The pool's container exited while starting.");
-      try {
-        // Any answer means CLIProxyAPI pulled its store and is listening.
-        const response = await port.fetch(`${CONTAINER_ORIGIN}/`);
-        await response.body?.cancel();
-        return;
-      } catch {
-        await sleep(READY_POLL_MS);
-      }
-    }
-    throw new Error("The pool's container did not start in time.");
-  };
-
   const start = async (store: StoreCredentials) => {
     const startedAt = performance.now();
+    release.reset();
     // Intercepts last until the container stops, so every start sets them again.
     await container.interceptOutboundHttp(STORE_HOST, storeGateway);
     modelsReady = undefined;
     container.start({ enableInternet: true, env: containerEnv(store) });
     await container.setInactivityTimeout(BACKSTOP_TIMEOUT_MS);
-    await waitUntilReady(startedAt);
-    log("pool.container.started", { readyMs: Math.round(performance.now() - startedAt) });
+    // This promise-shaped fetch adapter bridges Cloudflare's Container API to the Effect schedule.
+    const remainingReadyMs = Math.max(0, READY_TIMEOUT_MS - (performance.now() - startedAt));
+    await Effect.runPromise(waitUntilReady(container, remainingReadyMs));
+    log("pool.container.started", {
+      cliProxyApi: unknownRelease,
+      readyMs: Math.round(performance.now() - startedAt),
+    });
   };
 
   const ensure = async (store: StoreCredentials) => {
@@ -254,6 +315,7 @@ export const layerCloudflare = (input: {
 
   /** Destroying rejects with the container's exit, which is the point. */
   const destroy = () => {
+    release.reset();
     stopping ??= container
       .destroy()
       .catch(() => {})
@@ -278,14 +340,19 @@ export const layerCloudflare = (input: {
             await modelsReady;
           }
           onSend?.();
-          return container.getTcpPort(CLI_PROXY_API_PORT).fetch(request);
+          return release.observe(request, () =>
+            container.getTcpPort(CLI_PROXY_API_PORT).fetch(request),
+          );
         }),
       peek: async (request) => {
         if (starting || stopping || !container.running) {
           throw new Error("The pool's container is asleep.");
         }
-        return container.getTcpPort(CLI_PROXY_API_PORT).fetch(request);
+        return release.observe(request, () =>
+          container.getTcpPort(CLI_PROXY_API_PORT).fetch(request),
+        );
       },
+      release: currentRelease,
       running: Effect.sync(() => container.running && !stopping),
       stop: Effect.promise(async () => {
         if (container.running) await destroy();
@@ -298,8 +365,9 @@ export const layerCloudflare = (input: {
           if (at === null) return now + IDLE_TIMEOUT_MS;
           if (at > now) return at;
           // CLIProxyAPI has written every change to the store already.
+          const cliProxyApi = currentRelease();
           await destroy();
-          log("pool.container.slept", {});
+          log("pool.container.slept", { cliProxyApi });
           return null;
         }),
     }),
@@ -316,6 +384,7 @@ export const layerUnavailable = Layer.succeed(
   PoolContainer.of({
     fetch: () => Promise.reject(new Error("Pool containers are not available here.")),
     peek: () => Promise.reject(new Error("Pool containers are not available here.")),
+    release: () => unknownRelease,
     running: Effect.succeed(false),
     stop: Effect.void,
     sleepIfIdle: () => Effect.succeed(null),
@@ -330,24 +399,28 @@ export const makeFake = (
   serve: (request: Request, store: StoreCredentials) => Promise<Response>,
 ) => {
   let running = false;
+  const release = makeReleaseObserver();
   const state = { starts: 0 };
   const layer = Layer.succeed(
     PoolContainer,
     PoolContainer.of({
       fetch: (request, { store, onSend }) => {
         if (!running) {
+          release.reset();
           running = true;
           state.starts += 1;
         }
         onSend?.();
-        return serve(request, store);
+        return release.observe(request, () => serve(request, store));
       },
       peek: (request) =>
         running
-          ? serve(request, { accessKey: "", secretKey: "" })
+          ? release.observe(request, () => serve(request, { accessKey: "", secretKey: "" }))
           : Promise.reject(new Error("The pool's container is asleep.")),
+      release: () => (running ? release.current() : unknownRelease),
       running: Effect.sync(() => running),
       stop: Effect.sync(() => {
+        release.reset();
         running = false;
       }),
       sleepIfIdle: () => Effect.succeed(null),

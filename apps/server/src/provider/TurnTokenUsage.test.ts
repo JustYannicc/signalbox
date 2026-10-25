@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { normalizeClaudeTurnTokenUsage } from "./ClaudeTurnTokenUsage.ts";
+import { normalizeClaudeTurnTokenUsage } from "@signalbox/provider-claude/ClaudeTurnTokenUsage";
 import {
   accumulateCodexTurnTokenUsage,
   completeCodexTurnTokenUsage,
   getCodexTurnAccumulator,
   makeCodexTurnTokenUsageState,
-} from "./CodexTurnTokenUsage.ts";
+} from "@signalbox/provider-codex/turnTokenUsage";
 
 const breakdown = (input: number, cached: number, output: number) => ({
   totalTokens: input + output,

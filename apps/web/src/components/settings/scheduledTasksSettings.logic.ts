@@ -8,15 +8,9 @@ import {
   type ModelSelection,
   type RuntimeMode,
   type ProviderInteractionMode,
-  type ServerSettings,
 } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
-
-import {
-  resolveProjectSettings,
-  type LegacyProjectSettingsFields,
-} from "@t3tools/shared/projectSettings";
-import type { ProviderInstanceEntry } from "../../providerInstances";
+import { resolveScheduledTaskDefaultModelSelection } from "../../lib/defaultModelSelectionPolicy"; // signalbox: share model precedence with new-task drafts.
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -175,35 +169,10 @@ export function taskToDraft(task: ScheduledTask): DraftState {
 }
 
 export function scheduledTaskDefaultModel(
-  settings: ServerSettings,
-  project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
-  entries: readonly ProviderInstanceEntry[],
+  settings: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[0],
+  project: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[1],
+  entries: Parameters<typeof resolveScheduledTaskDefaultModelSelection>[2],
 ): ModelSelection | null {
-  const available = entries.filter(
-    (entry) =>
-      entry.enabled &&
-      entry.installed &&
-      entry.isAvailable &&
-      entry.snapshot.auth.status !== "unauthenticated",
-  );
-  const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
-    .defaultModelSelection;
-  for (const selection of [configured, settings.defaultModelSelection]) {
-    if (
-      selection &&
-      available.some(
-        (entry) =>
-          entry.instanceId === selection.instanceId &&
-          entry.models.find((model) => model.slug === selection.model)?.isLegacy !== true,
-      )
-    )
-      return selection;
-  }
-  const models = available.flatMap((entry) =>
-    entry.models
-      .filter((model) => !model.isLegacy)
-      .map((model) => ({ instanceId: entry.instanceId, model })),
-  );
-  const fallback = models.find(({ model }) => model.isDefault) ?? models[0];
-  return fallback ? { instanceId: fallback.instanceId, model: fallback.model.slug } : null;
+  // signalbox: scheduled tasks use the same folder, person, and catalog defaults as new tasks.
+  return resolveScheduledTaskDefaultModelSelection(settings, project, entries);
 }

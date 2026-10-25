@@ -204,14 +204,6 @@ const make = Effect.gen(function* () {
       return did;
     });
 
-  const requireNote = (id: NoteId) =>
-    rowOf(id).pipe(
-      Effect.filterOrElse(
-        (row): row is NoteRow => row !== null,
-        () => refuse("That note no longer exists."),
-      ),
-    );
-
   /** The folder a note lives in, when it's one of the user's current folders; null is the top level. */
   const folderOf = (current: UserFolders.FolderState, folderId: FolderId | null) => {
     if (folderId === null) return Effect.succeed(null);
@@ -229,6 +221,14 @@ const make = Effect.gen(function* () {
           ? refuse("Only notes in an organization's folders can be shared with its team.")
           : Effect.void;
 
+  const requireNote = (id: NoteId) =>
+    Effect.gen(function* () {
+      const row = yield* rowOf(id);
+      if (row === null) return yield* refuse("That note no longer exists.");
+      if (row.folder_id !== null) yield* folderOf(yield* folders.state, row.folder_id);
+      return row;
+    });
+
   /**
    * The other notes on `row`'s pad its reader may see, newest first: a team
    * read sees only the team's. Same folder, so as visible as `row` itself.
@@ -245,7 +245,7 @@ const make = Effect.gen(function* () {
 
   /**
    * Reads `row` in the background, replacing any read of it still running,
-   * and stopping it if its folder goes (its notes move up). The reading is
+   * and stopping it if its folder goes into the trash. The reading is
    * written only if the note still exists, is in the same place, says the
    * same and has the same reader, and hasn't become a task.
    */
@@ -275,6 +275,8 @@ const make = Effect.gen(function* () {
             sql`UPDATE notes SET reading = ${json}
               WHERE id = ${row.id} AND folder_id IS ${row.folder_id} AND text = ${row.text}
                 AND visibility = ${row.visibility} AND accepted_thread_id IS NULL
+                AND (folder_id IS NULL OR folder_id IN
+                  (SELECT id FROM folders WHERE trash_id IS NULL))
               RETURNING id`,
             (rows) => rows.length > 0,
           ),
@@ -305,13 +307,17 @@ const make = Effect.gen(function* () {
       const visibility = input.visibility ?? "private";
       yield* checkVisibility(folder, visibility);
       const now = yield* Clock.currentTimeMillis;
-      yield* changedWith(
-        Effect.as(
+      const created = yield* changedWith(
+        Effect.map(
           sql`INSERT INTO notes (id, folder_id, author_id, visibility, text, created_at)
-            VALUES (${id}, ${folderId}, ${author}, ${visibility}, ${input.text}, ${now})`,
-          true,
+            SELECT ${id}, ${folderId}, ${author}, ${visibility}, ${input.text}, ${now}
+            WHERE ${folderId} IS NULL OR ${folderId} IN
+              (SELECT id FROM folders WHERE trash_id IS NULL)
+            RETURNING id`,
+          (rows) => rows.length > 0,
         ),
       );
+      if (!created) return yield* refuse("That folder no longer exists.");
       yield* Effect.annotateCurrentSpan({ "note.id": id, "note.length": input.text.length });
       yield* readInBackground(
         {
@@ -326,7 +332,7 @@ const make = Effect.gen(function* () {
         },
         current,
       );
-      return yield* snapshotWith(current);
+      return yield* snapshot;
     }).pipe(
       traced("UserNotes.create", {
         "folder.id": input.home._tag === "top" ? "top" : input.home.folderId,
@@ -343,20 +349,25 @@ const make = Effect.gen(function* () {
       const row = yield* requireNote(input.id);
       yield* requireOnPad(row);
       const current = yield* folders.state;
+      const folder = yield* folderOf(current, row.folder_id);
       const text = input.text ?? row.text;
       const visibility = input.visibility ?? row.visibility;
-      if (text === row.text && visibility === row.visibility) return yield* snapshotWith(current);
-      yield* checkVisibility(yield* folderOf(current, row.folder_id), visibility);
+      if (text === row.text && visibility === row.visibility) return yield* snapshot;
+      yield* checkVisibility(folder, visibility);
       // New words or a new reader: what was made of the old ones no longer holds.
-      yield* changedWith(
-        Effect.as(
+      const updated = yield* changedWith(
+        Effect.map(
           sql`UPDATE notes SET text = ${text}, visibility = ${visibility}, reading = NULL
-            WHERE id = ${row.id}`,
-          true,
+            WHERE id = ${row.id}
+              AND (folder_id IS NULL OR folder_id IN
+                (SELECT id FROM folders WHERE trash_id IS NULL))
+            RETURNING id`,
+          (rows) => rows.length > 0,
         ),
       );
+      if (!updated) return yield* snapshot;
       yield* readInBackground({ ...row, text, visibility, reading: null }, current);
-      return yield* snapshotWith(current);
+      return yield* snapshot;
     }).pipe(
       traced("UserNotes.update", {
         "note.id": input.id,
@@ -369,10 +380,13 @@ const make = Effect.gen(function* () {
 
   const remove: UserNotes["Service"]["delete"] = (input) =>
     Effect.gen(function* () {
+      yield* requireNote(input.id);
       yield* FiberMap.remove(reads, input.id);
       yield* changedWith(
         Effect.map(
-          sql`DELETE FROM notes WHERE id = ${input.id} RETURNING id`,
+          sql`DELETE FROM notes WHERE id = ${input.id}
+            AND (folder_id IS NULL OR folder_id IN (SELECT id FROM folders WHERE trash_id IS NULL))
+            RETURNING id`,
           (rows) => rows.length > 0,
         ),
       );
@@ -387,12 +401,20 @@ const make = Effect.gen(function* () {
       yield* changedWith(
         Effect.map(
           sql`UPDATE notes SET reading = NULL WHERE id = ${row.id} AND reading IS NOT NULL
+            AND (folder_id IS NULL OR folder_id IN
+              (SELECT id FROM folders WHERE trash_id IS NULL))
             RETURNING id`,
           (rows) => rows.length > 0,
         ),
       );
-      yield* readInBackground({ ...row, reading: null }, current);
-      return yield* snapshotWith(current);
+      if (row.folder_id !== null) {
+        const latest = yield* folders.state;
+        yield* folderOf(latest, row.folder_id);
+        yield* readInBackground({ ...row, reading: null }, latest);
+      } else {
+        yield* readInBackground({ ...row, reading: null }, current);
+      }
+      return yield* snapshot;
     }).pipe(traced("UserNotes.readAgain", { "note.id": input.id }));
 
   const dismissReading: UserNotes["Service"]["dismissReading"] = (input) =>
@@ -406,6 +428,8 @@ const make = Effect.gen(function* () {
             sql`UPDATE notes SET reading = ${encodeReading({ ...offer, dismissed: true })}
               WHERE id = ${row.id} AND reading = ${encodeReading(offer)}
                 AND accepted_thread_id IS NULL
+                AND (folder_id IS NULL OR folder_id IN
+                  (SELECT id FROM folders WHERE trash_id IS NULL))
               RETURNING id`,
             (rows) => rows.length > 0,
           ),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveEnvironmentUiState } from "./environmentCapabilities";
+import { resolveCapabilitiesKnown, resolveEnvironmentUiState } from "./environmentCapabilities";
 
 const cloud = { otherEnvironments: false };
 
@@ -29,6 +29,26 @@ describe("resolveEnvironmentUiState", () => {
   it("hides them on the desktop gateway before anything connects", () => {
     expect(resolveEnvironmentUiState({ gateway: true, hasPrimary: false, reported: [] })).toBe(
       "hidden",
+    );
+  });
+});
+
+describe("resolveCapabilitiesKnown", () => {
+  it("waits on the desktop gateway until the cloud reports, even though environments are hidden", () => {
+    expect(resolveCapabilitiesKnown({ gateway: true, hasPrimary: false, reportedCount: 0 })).toBe(
+      false,
+    );
+    expect(resolveCapabilitiesKnown({ gateway: true, hasPrimary: false, reportedCount: 1 })).toBe(
+      true,
+    );
+  });
+
+  it("waits for the serving environment and not for a client with none", () => {
+    expect(resolveCapabilitiesKnown({ gateway: false, hasPrimary: true, reportedCount: 0 })).toBe(
+      false,
+    );
+    expect(resolveCapabilitiesKnown({ gateway: false, hasPrimary: false, reportedCount: 0 })).toBe(
+      true,
     );
   });
 });

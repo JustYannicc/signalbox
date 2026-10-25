@@ -1,37 +1,58 @@
-// @effect-diagnostics nodeBuiltinImport:off - reads wrangler.jsonc from disk.
+// @effect-diagnostics nodeBuiltinImport:off - reads the checked-in local vars example.
 import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 
 import { ThreadId } from "@t3tools/contracts";
+import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
 import { describe, expect, it } from "@effect/vitest";
+import { unstable_readConfig } from "wrangler";
 
-import { previewLabel, previewOrigin, previewSettings } from "../src/thread/preview/previewHost.ts";
+import { previewLabel } from "@t3tools/shared/preview";
+import { previewOrigin, previewSettings } from "../src/thread/preview/previewHost.ts";
 
-import { parseJsonc } from "../../../scripts/cloud-migrations/check.ts";
 import {
   AUTOMATION_BINDINGS,
+  CLOUD_COMPATIBILITY_FLAGS,
   COMPATIBILITY_DATE,
   cloudStage,
+  CTX_EXPORTS_COMPATIBILITY_FLAG,
   DURABLE_OBJECT_BINDINGS,
+  MODEL_GATEWAY_COMPATIBILITY_FLAGS,
   previewStageNumber,
+  RESIDENT_BYTE_LIMIT,
+  stageWorkerRouting,
 } from "./stage.ts";
+import { TRACES_PATH } from "../src/observability/nativeTracesWorker.ts";
 
 interface WranglerConfig {
   readonly compatibility_date: string;
+  readonly compatibility_flags: ReadonlyArray<string>;
   readonly durable_objects: {
     readonly bindings: ReadonlyArray<{ name: string; class_name: string }>;
   };
   readonly containers: ReadonlyArray<{ class_name: string; max_instances: number }>;
   readonly workflows: ReadonlyArray<{ binding: string; name: string; class_name: string }>;
   readonly worker_loaders: ReadonlyArray<{ binding: string }>;
+  readonly migrations: ReadonlyArray<{ tag: string; new_sqlite_classes?: ReadonlyArray<string> }>;
   readonly vars: Readonly<Record<string, string>>;
-  readonly env: { readonly dev: Pick<WranglerConfig, "workflows" | "worker_loaders"> };
 }
 
-const readWrangler = (file: string) =>
-  parseJsonc(NodeFS.readFileSync(new URL(`../${file}`, import.meta.url), "utf8"));
+const readWrangler = (file: string, env?: string) =>
+  unstable_readConfig(
+    {
+      config: NodeURL.fileURLToPath(new URL(`../${file}`, import.meta.url)),
+      ...(env === undefined ? {} : { env }),
+    },
+    { hideWarnings: true },
+  ) as WranglerConfig;
 
-const wrangler = readWrangler("wrangler.jsonc") as WranglerConfig;
-
+const wrangler = readWrangler("wrangler.jsonc");
+const wranglerDev = readWrangler("wrangler.jsonc", "dev");
+const modelGatewayWrangler = readWrangler("wrangler.model-gateway.jsonc");
+const devVarsExample = NodeFS.readFileSync(
+  new URL("../.dev.vars.example", import.meta.url),
+  "utf8",
+);
 describe("cloudStage", () => {
   it("keeps production's wrangler-made names", () => {
     const production = cloudStage("production");
@@ -47,7 +68,9 @@ describe("cloudStage", () => {
       drivePacksBucket: "signalbox-drives",
       automationWorkflow: "signalbox-cloud-automations",
       vars: {
+        SIGNALBOX_STAGE: "production",
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
+        EXECUTOR_TOKEN_ISSUER: "https://app.signalbox.run",
         CLOUD_URL: "https://app.signalbox.run",
         MODEL_GATEWAY_URL: "https://gateway.signalbox.run",
         PREVIEW_DOMAIN: "*-app.signalbox-preview.dev",
@@ -68,13 +91,70 @@ describe("cloudStage", () => {
       drivePacksBucket: "signalbox-drives-preview",
       automationWorkflow: "signalbox-cloud-pr-298-automations",
       vars: {
+        SIGNALBOX_STAGE: "pr-298",
         ENVIRONMENT_ID: "cloud-preview-298",
+        EXECUTOR_TOKEN_ISSUER: "https://preview-298.signalbox.run",
         DRIVE_PACKS_PREFIX: "pr-298/",
-        MODEL_GATEWAY_URL: "https://gateway-preview-298.signalbox.run",
+        MODEL_GATEWAY_URL: "https://preview-298.signalbox.run",
         PREVIEW_DOMAIN: "*-pr298.signalbox-preview.dev",
         PREVIEW_SETUP_SOURCE: "https://app.signalbox.run",
       },
     });
+  });
+
+  it("routes preview gateway and trace paths through the app origin", () => {
+    const preview = cloudStage("pr-298");
+    const gateway = stageWorkerRouting(preview, preview.gatewayDomain, [
+      MODEL_GATEWAY_PATHS.anthropic,
+      MODEL_GATEWAY_PATHS.openai,
+    ]);
+    const traces = stageWorkerRouting(preview, `traces-${preview.cloudDomain}`, [TRACES_PATH]);
+    expect(gateway).toEqual({
+      domain: null,
+      routes: [
+        {
+          pattern: `${preview.cloudDomain}${MODEL_GATEWAY_PATHS.anthropic}*`,
+          zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
+        },
+        {
+          pattern: `${preview.cloudDomain}${MODEL_GATEWAY_PATHS.openai}*`,
+          zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
+        },
+      ],
+    });
+    expect(traces).toEqual({
+      domain: null,
+      routes: [
+        {
+          pattern: `${preview.cloudDomain}${TRACES_PATH}*`,
+          zoneId: "e817cf0e17e849a0aab7a0bf92c0a053",
+        },
+      ],
+    });
+    expect(
+      [MODEL_GATEWAY_PATHS.anthropic, MODEL_GATEWAY_PATHS.openai].map(
+        (path) => new URL(path, preview.vars.MODEL_GATEWAY_URL).origin,
+      ),
+    ).toEqual([`https://${preview.cloudDomain}`, `https://${preview.cloudDomain}`]);
+  });
+
+  it("keeps production Worker domains and omits preview route props", () => {
+    const production = cloudStage("production");
+    const gateway = stageWorkerRouting(production, production.gatewayDomain, [
+      MODEL_GATEWAY_PATHS.anthropic,
+      MODEL_GATEWAY_PATHS.openai,
+    ]);
+    const traces = stageWorkerRouting(production, `traces-${production.cloudDomain}`, [
+      TRACES_PATH,
+    ]);
+    expect(gateway).toEqual({
+      domain: { name: "gateway.signalbox.run", zoneId: "e817cf0e17e849a0aab7a0bf92c0a053" },
+    });
+    expect(traces).toEqual({
+      domain: { name: "traces-app.signalbox.run", zoneId: "e817cf0e17e849a0aab7a0bf92c0a053" },
+    });
+    expect("routes" in gateway).toBe(false);
+    expect("routes" in traces).toBe(false);
   });
 
   it("routes each stage's dev-server previews to it alone", async () => {
@@ -105,10 +185,23 @@ describe("cloudStage", () => {
 
 // `wrangler dev` runs wrangler.jsonc; deploys run the stack. They must agree.
 describe("wrangler.jsonc", () => {
+  it("keeps ctx.exports on Cloud and out of the ModelGateway", () => {
+    expect(wrangler.compatibility_flags).toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+    expect(wranglerDev.compatibility_flags).toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+    expect(modelGatewayWrangler.compatibility_flags).not.toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+    expect(CLOUD_COMPATIBILITY_FLAGS).toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+    expect(MODEL_GATEWAY_COMPATIBILITY_FLAGS).not.toContain(CTX_EXPORTS_COMPATIBILITY_FLAG);
+  });
+
   it("runs the deployed Durable Objects and containers", () => {
     expect(
       Object.fromEntries(
         wrangler.durable_objects.bindings.map((binding) => [binding.name, binding.class_name]),
+      ),
+    ).toEqual(DURABLE_OBJECT_BINDINGS);
+    expect(
+      Object.fromEntries(
+        wranglerDev.durable_objects.bindings.map((binding) => [binding.name, binding.class_name]),
       ),
     ).toEqual(DURABLE_OBJECT_BINDINGS);
     expect(wrangler.containers.map((container) => container.class_name).sort()).toEqual([
@@ -127,7 +220,7 @@ describe("wrangler.jsonc", () => {
   });
 
   it("runs the automation Workflow and loader, in dev too", () => {
-    for (const config of [wrangler, wrangler.env.dev]) {
+    for (const config of [wrangler, wranglerDev]) {
       expect(config.workflows).toEqual([
         {
           binding: AUTOMATION_BINDINGS.workflow,
@@ -141,9 +234,48 @@ describe("wrangler.jsonc", () => {
 
   it("runs production's compatibility date and identity", () => {
     expect(wrangler.compatibility_date).toBe(COMPATIBILITY_DATE);
-    expect(
-      (readWrangler("wrangler.model-gateway.jsonc") as WranglerConfig).compatibility_date,
-    ).toBe(COMPATIBILITY_DATE);
+    expect(modelGatewayWrangler.compatibility_date).toBe(COMPATIBILITY_DATE);
     expect(wrangler.vars.ENVIRONMENT_ID).toBe(cloudStage("production").vars.ENVIRONMENT_ID);
+    expect(wrangler.vars.EXECUTOR_TOKEN_ISSUER).toBe("http://localhost");
+  });
+
+  it("sets the explicit per-slot product policy in Alchemy, Wrangler and local dev", () => {
+    expect(RESIDENT_BYTE_LIMIT).toBe("128000000");
+    expect(cloudStage("production").vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
+    expect(cloudStage("pr-298").vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
+    expect(wrangler.vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
+    expect(wranglerDev.vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
+    expect(devVarsExample).toMatch(/^RESIDENT_BYTE_LIMIT=128000000$/m);
+  });
+
+  it("keeps durable harness state and appends process-execution migrations", () => {
+    const tokenBindingIndex = wrangler.migrations.findIndex(({ tag }) => tag === "v6");
+
+    expect(tokenBindingIndex).toBeGreaterThanOrEqual(0);
+    expect(wrangler.migrations.slice(tokenBindingIndex, tokenBindingIndex + 3)).toEqual([
+      {
+        tag: "v6",
+        new_sqlite_classes: [DURABLE_OBJECT_BINDINGS.EXECUTOR_TOKEN_BINDINGS],
+      },
+      {
+        tag: "search-index-v1",
+        new_sqlite_classes: [DURABLE_OBJECT_BINDINGS.SEARCH_INDEX],
+      },
+      {
+        tag: "durable-harness-state-v1",
+        new_sqlite_classes: [
+          "HarnessRunStoreObject",
+          "HarnessFilesStoreObject",
+          "HarnessThreadSupervisorObject",
+        ],
+      },
+    ]);
+    expect(wrangler.migrations.at(-1)).toEqual({
+      tag: "harness-process-execution-v1",
+      new_sqlite_classes: [
+        DURABLE_OBJECT_BINDINGS.PROCESS_EXECUTION_SHARDS,
+        DURABLE_OBJECT_BINDINGS.PLACEMENT_STORES,
+      ],
+    });
   });
 });

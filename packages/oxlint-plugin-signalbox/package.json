@@ -1,0 +1,19 @@
+{
+  "name": "@t3tools/oxlint-plugin-signalbox",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@oxlint/plugins": "1.68.0"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "effect": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

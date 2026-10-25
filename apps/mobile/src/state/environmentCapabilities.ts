@@ -11,6 +11,7 @@ import { SIGNALBOX_APP_URL } from "@t3tools/shared/signalboxAppUrl";
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
+import { appAtomRegistry } from "./atom-registry";
 import { useEnvironmentServerConfig, useServerConfigs } from "./entities";
 import { environmentServerConfigsAtom } from "./server";
 import { savedConnectionsByIdAtom } from "./use-remote-environment-registry";
@@ -26,25 +27,34 @@ export function useEnvironmentSupports(
 
 /**
  * For controls that aren't tied to one environment: shown while any known
- * environment can do `capability`, or while none has reported yet.
+ * environment can do `capability`. Before any has reported, `whileUnknown` decides.
  */
 export function anyEnvironmentSupports(
   configs: Iterable<{
     readonly environment: { readonly capabilities: ExecutionEnvironmentCapabilities };
   }>,
   capability: SignalboxEnvironmentCapability,
+  whileUnknown = true,
 ): boolean {
   let known = false;
   for (const config of configs) {
     if (environmentSupports(config.environment.capabilities, capability)) return true;
     known = true;
   }
-  return !known;
+  return known ? false : whileUnknown;
 }
 
+/**
+ * Self-hosted shows a control until its environment says otherwise. Signalbox Cloud waits for
+ * its config instead, so a control it doesn't serve never flashes while it connects.
+ */
 export function useAnyEnvironmentSupports(capability: SignalboxEnvironmentCapability): boolean {
   const configs = useServerConfigs();
-  return useMemo(() => anyEnvironmentSupports(configs.values(), capability), [configs, capability]);
+  const showsEnvironments = useShowsEnvironmentUi();
+  return useMemo(
+    () => anyEnvironmentSupports(configs.values(), capability, showsEnvironments),
+    [configs, capability, showsEnvironments],
+  );
 }
 
 const SIGNALBOX_CLOUD_HOST = new URL(SIGNALBOX_APP_URL).host;
@@ -93,4 +103,9 @@ const showsEnvironmentUiAtom = Atom.make((get) =>
  */
 export function useShowsEnvironmentUi(): boolean {
   return useAtomValue(showsEnvironmentUiAtom);
+}
+
+/** `useShowsEnvironmentUi` outside React, for alerts and queued-message errors. */
+export function readShowsEnvironmentUi(): boolean {
+  return appAtomRegistry.get(showsEnvironmentUiAtom);
 }

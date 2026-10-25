@@ -2,22 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 import * as Tool from "effect/ai/Tool";
 
-import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
-import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectService from "../../project/ProjectService.ts";
-import * as ServerSettings from "../../serverSettings.ts";
-import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
-
-/** How every automation tool is declared: its services, failure and annotations. */
-
-const dependencies = [
-  McpInvocationContext.McpInvocationContext,
-  ThreadManagement.ThreadManagementService,
-  WorkflowEngine.WorkflowEngine,
-  // automation_save picks a model for callers without a thread.
-  ProjectService.ProjectService,
-  ServerSettings.ServerSettingsService,
-];
+/** Shared automation declarations; self-hosted handlers fail with the cloud-only outcome. */
 
 export const tool = <
   Name extends string,
@@ -41,7 +26,6 @@ export const tool = <
     success: options.success,
     failure: OrchestratorMcpFailure,
     failureMode: "return",
-    dependencies,
   })
     .annotate(Tool.Title, options.title)
     .annotate(Tool.Readonly, options.readonly)

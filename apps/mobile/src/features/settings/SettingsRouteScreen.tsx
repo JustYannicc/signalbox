@@ -19,11 +19,18 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
-import { targetsSupporting, targetsWithRepositoryIdentity } from "./signalboxSettingsTargets"; // signalbox
+import {
+  targetsSupporting,
+  targetsWithProviderAccounts,
+  targetsWithRepositoryIdentity,
+} from "./signalboxSettingsTargets"; // signalbox: settings targets by capability
 import { AutomationsSettingsRows } from "../automations/AutomationsSettingsRows"; // signalbox: automations
 import { SignInSettingsRow } from "../signIn/SignInSettingsRow"; // signalbox: sign-in grants
+import { TrashSettingsRow } from "../trash/TrashSettingsRow"; // signalbox: trash
 import { OnlyEnvironmentAccountSections } from "../account/EnvironmentAccountSection"; // signalbox
 import { useShowsEnvironmentUi } from "../../state/environmentCapabilities"; // signalbox
+import { useAtomValue } from "@effect/atom-react"; // signalbox: provider accounts gate
+import { environmentPresentations } from "../../state/presentation"; // signalbox: provider accounts gate
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
@@ -154,6 +161,8 @@ function LocalSettingsRouteScreen() {
 function SettingsIndexSections() {
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const showsEnvironments = useShowsEnvironmentUi();
+  // signalbox: Provider accounts only shows where an ACP agent can sign in
+  const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const noServerTargets = selectedTargets.length === 0;
   // signalbox: connected, but none of them takes server settings (Signalbox Cloud).
   const serverSettingsTargets = targetsSupporting(selectedTargets, "serverSettingsWrite");
@@ -181,6 +190,14 @@ function SettingsIndexSections() {
     <>
       <SettingsSection title="Interface">
         <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
+        {targetsSupporting(selectedTargets, "personTimezone").length === 0 &&
+        !(noServerTargets && showsEnvironments) ? null : (
+          <SettingsRow
+            /* signalbox: person timezone */ icon="globe"
+            label="Time zone"
+            target="SettingsTimeZone"
+          />
+        )}
         {Platform.OS === "ios" ? (
           <>
             <SettingsRow icon="keyboard" label="Keyboard" target="SettingsKeyboard" />
@@ -194,9 +211,10 @@ function SettingsIndexSections() {
         <AutomationsSettingsRows />
         {/* signalbox: sign-in grants */}
         <SignInSettingsRow />
-        {/* signalbox: hidden where no selected environment runs them. */}
-        {!noServerTargets &&
-        targetsSupporting(selectedTargets, "scheduledTasks").length === 0 ? null : (
+        {/* signalbox: hidden where no selected environment runs them, and on the cloud. */}
+        {(noServerTargets && !showsEnvironments) ||
+        (!noServerTargets &&
+          targetsSupporting(selectedTargets, "scheduledTasks").length === 0) ? null : (
           <SettingsRow icon="clock" label="Scheduled tasks" target="SettingsScheduledTasks" />
         )}
       </SettingsSection>
@@ -216,6 +234,8 @@ function SettingsIndexSections() {
         <SettingsRow icon="text.bubble" label="Thread behavior" target="SettingsThreads" />
         <SettingsRow icon="arrow.turn.left.up" label="Follow-ups" target="SettingsFollowUp" />
         <SettingsRow icon="archivebox" label="Archived Threads" target="SettingsArchive" />
+        {/* signalbox: trash */}
+        <TrashSettingsRow />
       </SettingsSection>
 
       {hidesServerSettings ? null : (
@@ -255,7 +275,9 @@ function SettingsIndexSections() {
 
       <SettingsSection title="App">
         <UsageSettingsRow />
-        {hidesServerSettings && !noServerTargets ? (
+        {/* signalbox: only ACP agents sign in here, and the cloud runs none */}
+        {hidesServerSettings &&
+        targetsWithProviderAccounts(selectedTargets, providersByEnvironment).length > 0 ? (
           <SettingsRow
             icon="person.crop.circle"
             label="Provider accounts"

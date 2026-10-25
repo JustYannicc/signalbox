@@ -12,9 +12,12 @@ import type { DecisionContext } from "./threadEvents.ts";
 const ctx = { now: "2026-10-14T18:00:00.000Z" } as unknown as DecisionContext;
 const stored = {
   id: "provider-thread:t1",
+  driver: "claudeAgent",
   providerInstanceId: ProviderInstanceId.make("claudeAgent"),
   nativeThreadRef: { driver: "claudeAgent", nativeId: "claude-session-1", strength: "strong" },
   firstRunOrdinal: 1,
+  lastRunOrdinal: 1,
+  ownerNodeId: null,
   createdAt: "2026-10-14T17:00:00.000Z",
 } as unknown as OrchestrationV2ProviderThread;
 const projection = {
@@ -35,6 +38,22 @@ describe("providerThreadFor", () => {
   it("starts over when the thread really moved to another harness", () => {
     const next = providerThreadFor(projection, runOn("codex_hub"), "active", ctx);
     expect(next.nativeThreadRef).toBeNull();
-    expect(next.firstRunOrdinal).toBe(1);
+    expect(next.firstRunOrdinal).toBe(2);
+    expect(next.id).not.toBe(stored.id);
+  });
+
+  it("refuses a native reference from another driver even when the instance id matches", () => {
+    const mismatched = {
+      ...stored,
+      nativeThreadRef: { ...stored.nativeThreadRef!, driver: "codex" },
+    };
+    const next = providerThreadFor(
+      { ...projection, providerThreads: [mismatched as OrchestrationV2ProviderThread] },
+      runOn("claude_hub"),
+      "active",
+      ctx,
+    );
+    expect(next.nativeThreadRef).toBeNull();
+    expect(next.id).not.toBe(stored.id);
   });
 });

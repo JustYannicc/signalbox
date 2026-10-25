@@ -1,15 +1,22 @@
-import { type RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
+import {
+  REQUEST_HEAVY_MACHINE_COMMAND,
+  MIN_RUNNER_PROTOCOL_VERSION,
+  RUNNER_PROTOCOL_VERSION,
+  type RunnerItem,
+} from "@signalbox/runner-protocol/RunnerProtocol";
 import { CommandId, MessageId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { PERSONAL_CONTEXT_ID, SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import { UserObjectError } from "../../user/UserDirectory.ts";
-import { HARNESS_MODES_UNSUPPORTED } from "../threadDecider.ts";
-import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS } from "./MachineBackend.ts";
+import { remoteThreadWorktree } from "../../user/contextProjects.ts";
+import { threadEvent } from "../threadEvents.ts";
+import { CONNECT_TIMEOUT_MS, IDLE_TAIL_MS, MachineBackend } from "./MachineBackend.ts";
 import { DRAIN_TIMEOUT_MS } from "./ThreadRunner.ts";
 import { CONTINUE_PROMPT, MAX_CONTINUATIONS } from "./runRecovery.ts";
 import {
@@ -30,14 +37,122 @@ import {
   threadId,
   turnReport,
   withObject,
-} from "./runnerTestKit.ts";
+} from "../runnerTesting.ts";
 
 const POOL_CLAUDE = {
   instanceId: ProviderInstanceId.make("claude_hub"),
   model: "claude-fable-5-1",
 };
 
+const startupBackend = {
+  kind: "boat" as const,
+  shape: "small",
+  image: "runner:test",
+  connectTimeoutMs: 300_000,
+  idleTailMs: IDLE_TAIL_MS,
+  ensure: () => Effect.die("the object, not the lease, calls the backend"),
+  stop: () => Effect.die("the object, not the lease, calls the backend"),
+  destroy: () => Effect.die("the object, not the lease, calls the backend"),
+  inspect: () => Effect.die("the object, not the lease, calls the backend"),
+  refresh: () => Effect.void,
+  refreshEveryMs: null,
+  pending: Effect.succeed(false),
+};
+
 describe("ThreadRunner", () => {
+  it.effect(
+    "keeps a saved native session and checkpoints across publication and object restart",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const driveId = "folder/personal/publication";
+        const place = { ...personal, place: { ...personal.place, driveId } };
+        const before = yield* withObject(filename, (engine, runner, context) =>
+          Effect.gen(function* () {
+            yield* launch(engine, "launch-1", place, {
+              projectId: ProjectId.make(`drive:${driveId}`),
+            });
+            const machine = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [
+                report.started,
+                {
+                  kind: "drive.checkpoint",
+                  runId: turn.runId,
+                  start: null,
+                  commit: "a".repeat(40),
+                  files: [{ path: "work.txt", kind: "added", additions: 1, deletions: 0 }],
+                },
+                report.full,
+                report.terminal,
+              ],
+            });
+            yield* saveSession(context, "claude-session-1");
+            yield* runner.ended(machine.generation, "test");
+            return yield* snapshot(engine);
+          }),
+        );
+        yield* withObject(filename, (engine, runner) =>
+          Effect.gen(function* () {
+            const worktree = remoteThreadWorktree(driveId, threadId);
+            yield* engine.dispatch(
+              owner,
+              {
+                type: "thread.metadata.update",
+                commandId: CommandId.make("adopt-publication"),
+                threadId,
+              },
+              { place: null, pools: null, worktree },
+            );
+            const adopted = yield* snapshot(engine);
+            expect(adopted.projection.providerThreads).toEqual(before.projection.providerThreads);
+            expect(adopted.projection.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(
+              "claude-session-1",
+            );
+            expect(adopted.projection.checkpoints).toEqual(before.projection.checkpoints);
+            expect(adopted.projection.checkpoints).toHaveLength(1);
+            expect(adopted.projection.messages).toEqual(before.projection.messages);
+            yield* send(engine, 2, "Continue after publication");
+            yield* connect(runner);
+            expect(yield* liveTurn(runner)).toMatchObject({
+              providerTurnOrdinal: 2,
+              providerThread: { nativeThreadRef: { nativeId: "claude-session-1" } },
+            });
+            expect((yield* snapshot(engine)).projection.thread).toMatchObject({
+              branch: worktree.branch,
+              worktreePath: worktree.path,
+            });
+          }),
+        );
+      }),
+  );
+
+  it.effect("accepts legacy runner images during rollout and refuses unsupported protocols", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const plan = yield* runner.reconcile;
+        if (plan.ensure === null) throw new Error("Expected a machine request");
+        const request = hello(plan.ensure.generation, plan.ensure.token);
+        for (const protocolVersion of [
+          MIN_RUNNER_PROTOCOL_VERSION - 1,
+          RUNNER_PROTOCOL_VERSION + 1,
+        ]) {
+          expect(yield* runner.hello({ ...request, protocolVersion })).toMatchObject({
+            _tag: "refused",
+            reason: "protocol_version",
+          });
+        }
+        expect(
+          yield* runner.hello({ ...request, protocolVersion: MIN_RUNNER_PROTOCOL_VERSION }),
+        ).toMatchObject({ _tag: "welcome" });
+      }),
+    ),
+  );
   it.effect("answers for a thread that does not exist without touching storage", () =>
     withObject(freshDatabase(), (_engine, runner) =>
       Effect.gen(function* () {
@@ -123,7 +238,7 @@ describe("ThreadRunner", () => {
     withObject(freshDatabase(), (engine, runner, context) =>
       Effect.gen(function* () {
         // As in the cloud: the thread runs on a pool's instance, the Runner on the harness's.
-        yield* launch(engine, "launch-1", personal, ProjectId.make("scratch"), POOL_CLAUDE);
+        yield* launch(engine, "launch-1", personal, { modelSelection: POOL_CLAUDE });
         const first = yield* connect(runner);
         const turn = yield* liveTurn(runner);
         const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
@@ -165,7 +280,7 @@ describe("ThreadRunner", () => {
   it.effect("starts a new harness session when the thread holds none to resume", () =>
     withObject(freshDatabase(), (engine, runner) =>
       Effect.gen(function* () {
-        yield* launch(engine, "launch-1", personal, ProjectId.make("scratch"), POOL_CLAUDE);
+        yield* launch(engine, "launch-1", personal, { modelSelection: POOL_CLAUDE });
         const first = yield* connect(runner);
         const turn = yield* liveTurn(runner);
         const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
@@ -409,13 +524,207 @@ describe("ThreadRunner", () => {
         expect(projection.runs.map((run) => run.status)).toEqual(["failed"]);
         const error = projection.turnItems.find((item) => item.type === "error");
         expect(error).toMatchObject({
-          failure: { message: "No machine came up to run this turn." },
+          failure: { code: "machine_backend_not_configured", retryable: false },
         });
         expect(yield* runner.hello(hello(1, plan.ensure?.token ?? ""))).toMatchObject({
           reason: "stale_generation",
         });
       }),
     ),
+  );
+
+  it.effect("retries a Boat startup timeout before any Runner takes the turn", () => {
+    return withObject(
+      freshDatabase(),
+      (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const first = yield* runner.reconcile;
+          const preparation = yield* engine.preparation;
+          yield* TestClock.adjust(startupBackend.connectTimeoutMs);
+          const retry = yield* runner.reconcile;
+          expect(retry).toMatchObject({ release: null, stop: false, ensure: first.ensure });
+          expect(yield* engine.preparation).toEqual(preparation);
+          expect((yield* snapshot(engine)).projection.runs.map((run) => run.status)).toEqual([
+            "starting",
+          ]);
+          yield* runner.ensured(first.ensure!.generation);
+          expect(
+            yield* runner.hello({
+              ...hello(first.ensure!.generation, first.ensure!.token),
+              protocolVersion: RUNNER_PROTOCOL_VERSION,
+            }),
+          ).toMatchObject({
+            _tag: "welcome",
+          });
+          expect((yield* runner.work).turn?.message.text).toBe("Hi");
+          expect(yield* engine.preparation).toMatchObject({
+            generation: preparation!.generation,
+            machineGeneration: first.ensure!.generation,
+            status: "preparing",
+            snapshot: { turnStarted: false },
+          });
+          const target = {
+            threadId,
+            runId: preparation!.runId,
+            preparationGeneration: preparation!.generation,
+          };
+          expect(
+            yield* engine.cancelPreparation(
+              owner,
+              target,
+              runner
+                .batch({
+                  generation: first.ensure!.generation,
+                  sequence: 1,
+                  items: [{ kind: "preparation.cancelled", ...target }],
+                })
+                .pipe(Effect.asVoid),
+            ),
+          ).toEqual({ cancelled: true });
+        }),
+      { machines: Layer.succeed(MachineBackend, { light: startupBackend, heavy: startupBackend }) },
+    );
+  });
+
+  it.effect(
+    "persists the startup retry limit and backend reason across object reconstruction",
+    () =>
+      Effect.gen(function* () {
+        const filename = freshDatabase();
+        const machines = Layer.succeed(MachineBackend, {
+          light: startupBackend,
+          heavy: startupBackend,
+        });
+        const problem = {
+          code: "machine_disk_restore",
+          message: "Boat is still restoring the machine's disk.",
+          retryable: true,
+        };
+        const first = yield* withObject(
+          filename,
+          (engine, runner) =>
+            Effect.gen(function* () {
+              yield* launch(engine);
+              const plan = yield* runner.reconcile;
+              yield* runner.machineReported({
+                generation: plan.ensure!.generation,
+                runId: plan.runId,
+                operation: "ensure",
+                status: {
+                  desired: "running",
+                  actual: "starting",
+                  machineId: "boat-1",
+                  startupProblem: problem,
+                },
+              });
+              yield* TestClock.adjust(startupBackend.connectTimeoutMs);
+              expect((yield* runner.reconcile).release).toBeNull();
+              return plan;
+            }),
+          { machines },
+        );
+        yield* withObject(
+          filename,
+          (engine, runner) =>
+            Effect.gen(function* () {
+              expect((yield* runner.reconcile).ensure).toEqual(first.ensure);
+              // A late report from another generation cannot erase this attempt's reason.
+              yield* runner.machineReported({
+                generation: first.ensure!.generation - 1,
+                runId: first.runId,
+                operation: "ensure",
+                status: { desired: "running", actual: "running", machineId: "old" },
+              });
+              yield* TestClock.adjust(startupBackend.connectTimeoutMs);
+              expect(yield* runner.reconcile).toMatchObject({ release: 1, stop: true });
+              const failed = yield* snapshot(engine);
+              const preparation = yield* engine.preparation;
+              expect(preparation).toMatchObject({
+                status: "failed",
+                snapshot: { phase: "failed", turnStarted: false },
+              });
+              expect(failed.projection.runs.map((run) => run.status)).toEqual(["failed"]);
+              expect(
+                failed.projection.turnItems.find((item) => item.type === "error"),
+              ).toMatchObject({
+                failure: {
+                  code: problem.code,
+                  message: expect.stringContaining(problem.message),
+                  retryable: true,
+                },
+              });
+              yield* runner.reconcile;
+              expect((yield* snapshot(engine)).head).toBe(failed.head);
+              expect(
+                yield* runner.hello(hello(first.ensure!.generation, first.ensure!.token)),
+              ).toMatchObject({
+                reason: "stale_generation",
+              });
+              yield* engine.dispatch(
+                owner,
+                {
+                  type: "prepared-run.retry",
+                  commandId: CommandId.make("retry-exhausted-startup"),
+                  threadId,
+                  runId: preparation!.runId,
+                  preparationGeneration: preparation!.generation,
+                },
+                personal,
+              );
+              const next = (yield* runner.reconcile).ensure!;
+              expect(next.generation).toBe(first.ensure!.generation + 1);
+              yield* runner.hello({
+                ...hello(next.generation, next.token),
+                protocolVersion: RUNNER_PROTOCOL_VERSION,
+              });
+              expect((yield* runner.work).turn).toMatchObject({
+                runId: preparation!.runId,
+                preparationGeneration: preparation!.generation + 1,
+              });
+              expect(yield* engine.preparation).toMatchObject({
+                status: "preparing",
+                machineGeneration: next.generation,
+              });
+            }),
+          { machines },
+        );
+      }),
+  );
+
+  it.effect(
+    "fails a permanent machine rejection without retrying or exposing the provider body",
+    () =>
+      withObject(
+        freshDatabase(),
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const first = yield* runner.reconcile;
+            yield* runner.machineReported({
+              generation: first.ensure!.generation,
+              runId: first.runId,
+              operation: "ensure",
+              error: "opaque provider response body",
+              startupProblem: {
+                code: "machine_access_denied",
+                message: "Boat rejected this server's machine credentials or access.",
+                retryable: false,
+              },
+            });
+            expect(yield* runner.reconcile).toMatchObject({ release: 1, stop: true });
+            const error = (yield* snapshot(engine)).projection.turnItems.find(
+              (item) => item.type === "error",
+            );
+            expect(error).toMatchObject({
+              failure: { code: "machine_access_denied", retryable: false },
+            });
+            expect(JSON.stringify(error)).not.toContain("opaque provider response body");
+          }),
+        {
+          machines: Layer.succeed(MachineBackend, { light: startupBackend, heavy: startupBackend }),
+        },
+      ),
   );
 
   it.effect("drains an idle machine after its tail, and lets it go once its saves land", () =>
@@ -553,6 +862,58 @@ describe("ThreadRunner", () => {
           items: [{ kind: "machine.drained", id: asked.drain!.id, unsaved: [] }],
         });
         expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null });
+      }),
+    ),
+  );
+
+  it.effect("drops a settled task's drain when a new message reopens it", () =>
+    withObject(freshDatabase(), (engine, runner) =>
+      Effect.gen(function* () {
+        yield* launch(engine);
+        const machine = yield* connect(runner);
+        const turn = yield* liveTurn(runner);
+        const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 1,
+          items: [report.started, report.full, report.terminal],
+        });
+        // A settled task is archived too (#671), so its machine drains straight away.
+        yield* engine.apply((projection, ctx) =>
+          Effect.succeed({
+            events: [
+              threadEvent(ctx, "thread.settled", {
+                ...projection!.thread,
+                archivedAt: ctx.now,
+                settledOverride: "settled",
+                settledAt: ctx.now,
+                updatedAt: ctx.now,
+              }),
+            ],
+            result: undefined,
+          }),
+        );
+        const drain = yield* runner.reconcile;
+        expect(drain.drain?.generation).toBe(machine.generation);
+
+        yield* send(engine, 2, "Please continue");
+        expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null, stop: false });
+        // The answer to the old drain lets nothing go: the reopened task is working again.
+        yield* runner.batch({
+          generation: machine.generation,
+          sequence: 2,
+          items: [{ kind: "machine.drained", id: drain.drain!.id, unsaved: [] }],
+        });
+        expect(yield* runner.reconcile).toMatchObject({ busy: true, release: null, stop: false });
+        const work = yield* runner.work;
+        expect(work.drain).toBeNull();
+        expect(work.turn?.message.text).toContain("Please continue");
+        const { thread } = (yield* snapshot(engine)).projection;
+        expect([thread.settledOverride, thread.settledAt, thread.archivedAt]).toEqual([
+          null,
+          null,
+          null,
+        ]);
       }),
     ),
   );
@@ -746,7 +1107,9 @@ describe("ThreadRunner", () => {
             providerThread: { nativeThreadRef: null },
           });
           expect(next.restartContinuationOfRunId).toBeUndefined();
-          expect(next.message.text).toContain("User:\nHi\n\nAssistant:\nHel\n\n");
+          expect(next.message.text).toContain("[Historical user;");
+          expect(next.message.text).toContain("]\nHi\n\n[Historical assistant;");
+          expect(next.message.text).toContain("]\nHel\n\n");
           expect(next.message.text.endsWith(`User message:\n${CONTINUE_PROMPT}`)).toBe(true);
         }),
       ),
@@ -773,7 +1136,9 @@ describe("ThreadRunner", () => {
           providerTurnOrdinal: 1,
           providerThread: { nativeThreadRef: null },
         });
-        expect(fresh.message.text).toContain("User:\nHi\n\nAssistant:\nHello!\n\n");
+        expect(fresh.message.text).toContain("[Historical user;");
+        expect(fresh.message.text).toContain("]\nHi\n\n[Historical assistant;");
+        expect(fresh.message.text).toContain("]\nHello!\n\n");
         expect(fresh.message.text.endsWith("User message:\nAgain")).toBe(true);
 
         // The fresh session is the one the thread resumes from then on.
@@ -896,11 +1261,12 @@ describe("ThreadRunner", () => {
     ),
   );
 
-  it.effect("refuses a Claude turn that could stop to ask for approval", () =>
-    withObject(freshDatabase(), (engine) =>
-      Effect.gen(function* () {
-        const refused = yield* Effect.flip(
-          engine.launch(
+  it.effect.each(["approval-required", "auto-accept-edits"] as const)(
+    "starts a Claude turn in %s mode",
+    (runtimeMode) =>
+      withObject(freshDatabase(), (engine) =>
+        Effect.gen(function* () {
+          const accepted = yield* engine.launch(
             owner,
             {
               commandId: CommandId.make("launch-approval"),
@@ -908,7 +1274,7 @@ describe("ThreadRunner", () => {
               projectId: ProjectId.make("scratch"),
               title: "Ask first",
               modelSelection: claude,
-              runtimeMode: "approval-required",
+              runtimeMode,
               interactionMode: "default",
               workspaceStrategy: { type: "root" },
               initialMessage: {
@@ -918,11 +1284,10 @@ describe("ThreadRunner", () => {
               },
             },
             personal,
-          ),
-        );
-        expect(refused).toMatchObject({ reason: HARNESS_MODES_UNSUPPORTED });
-      }),
-    ),
+          );
+          expect(accepted.threadId).toBe(threadId);
+        }),
+      ),
   );
 
   it.effect("stops a machine's drive calls once its owner can't change the thread's drive", () => {
@@ -998,7 +1363,12 @@ describe("ThreadRunner", () => {
           });
           yield* connect(runner);
           const work = yield* runner.work;
-          expect(work.drive?.instructions).toEqual(levels);
+          expect(work.drive?.instructions).toEqual([
+            ...levels,
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
+          ]);
         }),
       { drives: true },
     ),
@@ -1036,7 +1406,12 @@ describe("ThreadRunner", () => {
           const work = yield* runner.work;
           // The continuation: a run of its own.
           expect(work.turn?.runId).not.toBe(turn.runId);
-          expect(work.drive?.instructions).toEqual(levels);
+          expect(work.drive?.instructions).toEqual([
+            ...levels,
+            expect.objectContaining({
+              text: expect.stringContaining(REQUEST_HEAVY_MACHINE_COMMAND),
+            }),
+          ]);
         }),
       { drives: true },
     ),
@@ -1154,6 +1529,7 @@ describe("ThreadRunner", () => {
             driveId: "my/personal/user_1",
             generation: machine.generation,
             live: true,
+            pullOperationId: null,
           });
           expect((yield* runner.authorizeDrive(`${token}x`))._tag).toBe("denied");
           expect((yield* runner.authorizeDrive(machine.token))._tag).toBe("denied");
@@ -1237,7 +1613,7 @@ describe("ThreadRunner", () => {
           });
           expect(yield* runner.authorizeRemote(remoteToken)).toMatchObject({
             _tag: "denied",
-            reason: "No turn is running on this thread.",
+            reason: "This token is not for a live turn or terminal on this machine.",
           });
         }),
       { drives: true },
@@ -1451,4 +1827,199 @@ describe("ThreadRunner", () => {
       { drives: true, previews },
     );
   });
+});
+
+describe("cloud lifecycle machine release", () => {
+  it.effect.each(["thread.archive", "thread.settle"] as const)(
+    "%s waits for a preview-only machine to connect and save",
+    (type) => {
+      const previews = { held: false, lastActiveAt: null };
+      return withObject(
+        freshDatabase(),
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const first = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: first.generation,
+              sequence: 1,
+              items: [report.started, report.full, report.terminal],
+            });
+            yield* runner.ended(first.generation, "The first machine stopped.");
+            previews.held = true;
+            const requested = yield* runner.reconcile;
+            const machine = requested.ensure!;
+            yield* runner.ensured(machine.generation);
+            expect(yield* runner.previewDrive).not.toBeNull();
+            yield* engine.dispatch(
+              owner,
+              { type, commandId: CommandId.make("close-preview-boot"), threadId },
+              personal,
+            );
+            yield* TestClock.adjust(120_000);
+            const waiting = yield* runner.reconcile;
+            expect(waiting.release).toBeNull();
+            expect(waiting.stop).toBe(false);
+            expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
+            yield* runner.hello(hello(machine.generation, machine.token));
+            const asked = yield* runner.reconcile;
+            expect(asked.drain).toMatchObject({ generation: machine.generation });
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [{ kind: "machine.drained", id: asked.drain!.id, unsaved: [] }],
+            });
+            expect((yield* runner.reconcile).release).toBe(machine.generation);
+            expect((yield* runner.reconcile).ensure).toBeNull();
+          }),
+        { previews, drives: true },
+      );
+    },
+  );
+  it.effect.each(["thread.archive", "thread.settle"] as const)(
+    "%s keeps a disconnected machine until its save is confirmed",
+    (type) =>
+      withObject(freshDatabase(), (engine, runner) =>
+        Effect.gen(function* () {
+          yield* launch(engine);
+          const machine = yield* connect(runner);
+          const turn = yield* liveTurn(runner);
+          const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 1,
+            items: [report.started, report.full, report.terminal],
+          });
+          yield* engine.dispatch(
+            owner,
+            { type, commandId: CommandId.make("close-disconnected"), threadId },
+            personal,
+          );
+          expect((yield* runner.reconcile).drain).not.toBeNull();
+          yield* runner.disconnected({
+            generation: machine.generation,
+            connection: 1,
+            detail: "1006",
+          });
+          yield* TestClock.adjust(120_000);
+          const disconnected = yield* runner.reconcile;
+          expect(disconnected.release).toBeNull();
+          expect(disconnected.stop).toBe(false);
+          expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
+          yield* runner.hello(hello(machine.generation, machine.token));
+          const retry = yield* runner.reconcile;
+          expect(retry.drain).not.toBeNull();
+          yield* runner.batch({
+            generation: machine.generation,
+            sequence: 2,
+            items: [{ kind: "machine.drained", id: retry.drain!.id, unsaved: [] }],
+          });
+          expect((yield* runner.reconcile).release).toBe(machine.generation);
+        }),
+      ),
+  );
+  it.effect.each(["thread.archive", "thread.settle"] as const)(
+    "%s releases only after a saved drain, even with a preview open",
+    (type) => {
+      const previews = { held: false, lastActiveAt: null };
+      return withObject(
+        freshDatabase(),
+        (engine, runner) =>
+          Effect.gen(function* () {
+            yield* launch(engine);
+            const machine = yield* connect(runner);
+            const turn = yield* liveTurn(runner);
+            const report = turnReport(turn.runId, turn.runOrdinal, turn.providerThread);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 1,
+              items: [report.started, report.full, report.terminal],
+            });
+            previews.held = true;
+            yield* engine.dispatch(
+              owner,
+              { type, commandId: CommandId.make("close"), threadId },
+              personal,
+            );
+            const asked = yield* runner.reconcile;
+            expect(asked).toMatchObject({
+              release: null,
+              drain: { generation: machine.generation },
+            });
+            yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
+            const timeout = yield* runner.reconcile;
+            expect(timeout.release).toBeNull();
+            expect(timeout.drain!.id).not.toBe(asked.drain!.id);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 2,
+              items: [
+                {
+                  kind: "machine.drained",
+                  id: timeout.drain!.id,
+                  unsaved: ["Files are still saving"],
+                },
+              ],
+            });
+            yield* TestClock.adjust(1);
+            const retryAt = timeout.drain!.id + DRAIN_TIMEOUT_MS;
+            expect(yield* runner.reconcile).toMatchObject({
+              release: null,
+              drain: null,
+              wakeAt: retryAt,
+            });
+            yield* TestClock.adjust(DRAIN_TIMEOUT_MS - 2);
+            expect(yield* runner.reconcile).toMatchObject({
+              release: null,
+              drain: null,
+              wakeAt: retryAt,
+            });
+            expect(yield* runner.leaseToken(machine.generation)).toBe(machine.token);
+            expect((yield* runner.work).drain).toBeNull();
+            yield* TestClock.adjust(1);
+            const retry = yield* runner.reconcile;
+            expect(retry.drain).not.toBeNull();
+            expect((yield* runner.work).needsUpkeep).toBe(false);
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 3,
+              items: [
+                {
+                  kind: "machine.drained",
+                  id: retry.drain!.id,
+                  unsaved: ["Files are still saving"],
+                },
+              ],
+            });
+            expect(yield* runner.reconcile).toMatchObject({
+              release: null,
+              drain: null,
+              wakeAt: retry.drain!.id + DRAIN_TIMEOUT_MS,
+            });
+            yield* TestClock.adjust(DRAIN_TIMEOUT_MS);
+            const saved = yield* runner.reconcile;
+            yield* runner.batch({
+              generation: machine.generation,
+              sequence: 4,
+              items: [{ kind: "machine.drained", id: saved.drain!.id, unsaved: [] }],
+            });
+            expect((yield* runner.reconcile).release).toBe(machine.generation);
+            expect(yield* runner.leaseToken(machine.generation)).toBeNull();
+            expect((yield* runner.reconcile).ensure).toBeNull();
+            expect((yield* runner.work).needsUpkeep).toBe(false);
+            const snapshot = yield* engine.snapshot(owner);
+            expect(snapshot.projection.turnItems).toContainEqual(
+              expect.objectContaining({
+                type: "assistant_message",
+                text: "Hello!",
+                status: "completed",
+              }),
+            );
+          }),
+        { previews },
+      );
+    },
+  );
 });

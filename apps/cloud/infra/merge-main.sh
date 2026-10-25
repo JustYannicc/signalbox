@@ -5,10 +5,10 @@
 #
 #   bash apps/cloud/infra/merge-main.sh origin/main
 #
-# A pull request's checkout is GitHub's merge of it into its base when the run
-# was queued. After a wait in the queue, or for a pull request stacked on
-# another branch, that lags main, and production already runs what main added
-# since: planning it reads as removing all of that.
+# The preview first merges the pinned PR head and base, without depending on
+# GitHub's replaceable merge ref. After a wait in the queue, or for a pull
+# request stacked on another branch, that can lag main. Production already
+# runs what main added since: planning it reads as removing all of that.
 #
 # Writes `merged=true` to GITHUB_OUTPUT when main brought anything, so the
 # caller rebuilds. Fails when main doesn't merge cleanly.

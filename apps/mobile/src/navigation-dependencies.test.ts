@@ -1,6 +1,4 @@
-import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
-import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 /**
@@ -15,18 +13,24 @@ const NAVIGATION_SCOPE = "@react-navigation/";
 interface InstalledPackage {
   readonly name: string;
   readonly version: string;
-  readonly dir: string;
+  readonly manifestPath: string;
   readonly dependencies: Readonly<Record<string, string>>;
 }
 
-function readInstalled(name: string, fromDir: string): InstalledPackage {
-  const require = NodeModule.createRequire(NodePath.join(fromDir, "package.json"));
-  const manifestPath = NodeFS.realpathSync(require.resolve(`${name}/package.json`));
-  const manifest = JSON.parse(NodeFS.readFileSync(manifestPath, "utf8"));
+interface PackageManifest {
+  readonly version: string;
+  readonly dependencies?: Readonly<Record<string, string>>;
+  readonly peerDependencies?: Readonly<Record<string, string>>;
+}
+
+function readInstalled(name: string, fromManifestPath: string): InstalledPackage {
+  const require = NodeModule.createRequire(fromManifestPath);
+  const manifestPath = require.resolve(`${name}/package.json`);
+  const manifest = require(manifestPath) as PackageManifest;
   return {
     name,
     version: manifest.version,
-    dir: NodePath.dirname(manifestPath),
+    manifestPath,
     dependencies: { ...manifest.dependencies, ...manifest.peerDependencies },
   };
 }
@@ -47,19 +51,21 @@ function satisfiesCaret(version: string, range: string): boolean {
 }
 
 function collectNavigationGraph(): InstalledPackage[] {
-  const appManifest = JSON.parse(
-    NodeFS.readFileSync(NodePath.join(__dirname, "../package.json"), "utf8"),
-  );
-  const queue = Object.keys(appManifest.dependencies)
+  const appRequire = NodeModule.createRequire(import.meta.url);
+  const appManifestPath = appRequire.resolve("../package.json");
+  const appManifest = appRequire(appManifestPath) as PackageManifest;
+  const queue = Object.keys(appManifest.dependencies ?? {})
     .filter((name) => name.startsWith(NAVIGATION_SCOPE))
-    .map((name) => readInstalled(name, NodePath.join(__dirname, "..")));
+    .map((name) => readInstalled(name, appManifestPath));
   const seen = new Map<string, InstalledPackage>();
   while (queue.length > 0) {
     const pkg = queue.shift()!;
-    if (seen.has(pkg.dir)) continue;
-    seen.set(pkg.dir, pkg);
+    if (seen.has(pkg.manifestPath)) continue;
+    seen.set(pkg.manifestPath, pkg);
     for (const dependency of Object.keys(pkg.dependencies)) {
-      if (dependency.startsWith(NAVIGATION_SCOPE)) queue.push(readInstalled(dependency, pkg.dir));
+      if (dependency.startsWith(NAVIGATION_SCOPE)) {
+        queue.push(readInstalled(dependency, pkg.manifestPath));
+      }
     }
   }
   return [...seen.values()];
@@ -71,7 +77,7 @@ describe("React Navigation install", () => {
     for (const pkg of collectNavigationGraph()) {
       for (const [dependency, range] of Object.entries(pkg.dependencies)) {
         if (!dependency.startsWith(NAVIGATION_SCOPE) || !range.startsWith("^")) continue;
-        const installed = readInstalled(dependency, pkg.dir);
+        const installed = readInstalled(dependency, pkg.manifestPath);
         if (!satisfiesCaret(installed.version, range)) {
           violations.push(
             `${pkg.name}@${pkg.version} wants ${dependency}@${range}, got ${installed.version}`,

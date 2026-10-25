@@ -1,0 +1,17 @@
+codex-wasi-agentos
+Copyright 2026 DigiBugCat
+
+This repository contains experiment harnesses, notes and patches. It does not contain
+any third-party binaries or extracted third-party source code.
+
+The patches under scripts/codex-latest/patches/codex/ modify OpenAI Codex
+(https://github.com/openai/codex), licensed under the Apache License 2.0. They port
+work from Rivet's fork (https://github.com/rivet-dev/codex), also Apache-2.0.
+
+agentOS (https://github.com/rivet-dev/agentos) is by Rivet and licensed under the
+Apache License 2.0. Std/wasi-libc patch tooling is adapted from its toolchain.
+
+Claude Code is proprietary software of Anthropic PBC. Nothing from it is included
+here. The scripts under scripts/claude-bunfs/ operate on a copy of the Claude Code
+binary that you obtain yourself, and the extracted output is never committed.
+This project is not affiliated with or endorsed by Anthropic, OpenAI or Rivet.

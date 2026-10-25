@@ -11,6 +11,7 @@ import {
   useThreadGitCenterHeaderItems,
   useThreadGitRightHeaderItems,
 } from "./ThreadGitControls";
+import { useThreadFindNativeHeaderItems } from "./find/thread-find-header"; // signalbox: thread find
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
@@ -28,7 +29,16 @@ export function useThreadHeaderOptions(props: {
   const navigation = useNavigation();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
-  const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
+  const gitRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
+  // signalbox: thread find
+  const findHeaderItems = useThreadFindNativeHeaderItems(
+    props.gitControls.environmentId,
+    props.gitControls.threadId,
+  );
+  const compactRightHeaderItems = useMemo(
+    () => [...findHeaderItems, ...gitRightHeaderItems],
+    [findHeaderItems, gitRightHeaderItems],
+  );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       ...(!usesDuoHeader
@@ -135,9 +145,9 @@ export function useThreadHeaderOptions(props: {
         : () => compactHomeHeaderItems,
     unstable_headerRightItems: () =>
       usesDuoHeader
-        ? duoRightHeaderItems
+        ? [...findHeaderItems, ...duoRightHeaderItems] // signalbox: thread find
         : layout.usesSplitView
-          ? threadCenterHeaderItems
+          ? [...findHeaderItems, ...threadCenterHeaderItems] // signalbox: thread find
           : compactRightHeaderItems,
     unstable_headerToolbarItems: () => [],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
@@ -155,6 +165,7 @@ export function useThreadHeaderOptions(props: {
       threadCenterHeaderItems,
       compactRightHeaderItems,
       duoRightHeaderItems,
+      findHeaderItems, // signalbox: thread find
       usesDuoHeader,
       environmentId,
       threadId,

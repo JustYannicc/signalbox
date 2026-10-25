@@ -2,7 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 import type { PullRequestReviewGuideStop } from "@t3tools/contracts";
 import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/textGeneration";
 
-import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
+import {
+  normalizeReviewGuide,
+  parseReviewGuideChange,
+} from "@t3tools/provider-core/server/reviewGuideNormalize";
 
 const patch = [
   "diff --git a/src/a.ts b/src/a.ts",

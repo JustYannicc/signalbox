@@ -5,6 +5,7 @@ import { ExecutionEnvironmentCapabilities } from "./environment.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
 import {
   environmentCanWriteModelSettings,
+  environmentCanWriteKeybindings,
   environmentImportsFrom,
   environmentSupports,
   showsEnvironmentUi,
@@ -48,6 +49,20 @@ describe("environmentCanWriteModelSettings", () => {
         modelSettingsWrite: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("environmentCanWriteKeybindings", () => {
+  it("accepts restricted keybinding writers while keeping general cloud settings read-only", () => {
+    expect(
+      environmentCanWriteKeybindings({ serverSettingsWrite: false, keybindingsWrite: true }),
+    ).toBe(true);
+    expect(environmentCanWriteKeybindings({ serverSettingsWrite: false })).toBe(false);
+    expect(
+      environmentCanWriteKeybindings({ serverSettingsWrite: false, keybindingsWrite: false }),
+    ).toBe(false);
+    expect(environmentCanWriteKeybindings({ serverSettingsWrite: true })).toBe(true);
+    expect(environmentCanWriteKeybindings({})).toBe(true);
   });
 });
 

@@ -48,27 +48,35 @@ function load() {
   })();
   return loading;
 }
-async function persist() {
+async function persist(): Promise<boolean> {
   if (timer) clearTimeout(timer);
   timer = null;
-  await queue.run(async () => {
+  return queue.run(async () => {
     const current = appAtomRegistry.get(state);
-    if (!current.ready || current.drafts === savedDrafts) return;
+    if (!current.ready) return false;
+    if (current.drafts === savedDrafts) return true;
     try {
       const drafts = Object.fromEntries(
         Object.entries(current.drafts).filter(
-          ([, draft]) => draft.summary || draft.comment || draft.comments.length,
+          ([, draft]) =>
+            draft.summary ||
+            draft.comment ||
+            draft.comments.length ||
+            draft.reviewWriteAttempt !== undefined ||
+            draft.commentWriteAttempt !== undefined,
         ),
       );
       await writeFileAtomically(await draftFile(), JSON.stringify({ version: 1, drafts }));
       savedDrafts = current.drafts;
       if (appAtomRegistry.get(state).error)
         appAtomRegistry.set(state, { ...appAtomRegistry.get(state), error: null });
+      return true;
     } catch {
       appAtomRegistry.set(state, {
         ...appAtomRegistry.get(state),
         error: "Drafts are kept in this session, but could not be saved on this device.",
       });
+      return false;
     }
   });
 }

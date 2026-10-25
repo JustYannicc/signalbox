@@ -6,19 +6,39 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { Oid } from "./git/gitObjects.ts";
+import type {
+  HistoryOrigin,
+  HistoryResult,
+  HistorySnapshot,
+  HistoryStartResult,
+} from "./DriveHistory.ts";
 import type { AccessDelivery, DrivePerson, MembershipChange } from "./DriveMembers.ts";
 import type {
   DriveWriter,
+  CheckpointOperationResult,
+  ForkCheckpointRequest,
   ObjectLocation,
   PackRegistration,
   PromisedFile,
   RefWrite,
+  RestoreCheckpointRequest,
+  UndoRestoreRequest,
   Shortcut,
   ShortcutChange,
   StoredCommit,
+  UpdateToLatestRequest,
   UnreconciledWork,
   ThreadRefs,
 } from "./DriveStore.ts";
+import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullResult, PullSaveRequest } from "@signalbox/runner-protocol/PullProtocol";
+
+import type {
+  DrivePublicationRequest,
+  DrivePublicationResult,
+  RecordPublicationCreatedRequest,
+  BindPublicationRequest,
+} from "./DrivePublicationTypes.ts";
 
 /**
  * How the Worker, thread and user objects reach drive objects. Every drive
@@ -32,6 +52,31 @@ export const DRIVE_OBJECT_JURISDICTION = "eu";
 
 /** What a drive object answers. `DriveObject` implements it method for method. */
 export interface DriveObjectApi {
+  readonly beginPublication: (
+    userId: string,
+    request: DrivePublicationRequest,
+  ) => Promise<DrivePublicationResult>;
+  readonly markPublicationCreating: (userId: string, id: string) => Promise<DrivePublicationResult>;
+  readonly releasePublicationCreating: (
+    userId: string,
+    id: string,
+  ) => Promise<DrivePublicationResult>;
+  readonly recordPublicationCreated: (
+    userId: string,
+    request: RecordPublicationCreatedRequest,
+  ) => Promise<DrivePublicationResult>;
+  readonly bindPublication: (
+    userId: string,
+    request: BindPublicationRequest,
+  ) => Promise<DrivePublicationResult>;
+  readonly finishPublication: (userId: string, id: string) => Promise<DrivePublicationResult>;
+  readonly packStorage: (name: string) => Promise<string | null>;
+  readonly history: (userId: string) => Promise<HistoryResult>;
+  readonly historyOrigin: (userId: string) => Promise<HistoryOrigin | null>;
+  readonly startFromHistory: (
+    userId: string,
+    history: HistorySnapshot,
+  ) => Promise<HistoryStartResult>;
   readonly open: (writer: DriveWriter) => Promise<RefWrite>;
   readonly refs: (threadId: string | null, packsAfter?: number) => Promise<ThreadRefs>;
   readonly ref: (name: string) => Promise<Oid | null>;
@@ -49,6 +94,8 @@ export interface DriveObjectApi {
     writer: DriveWriter,
     updates: ReadonlyArray<{ readonly name: string; readonly old: Oid | null; readonly new: Oid }>,
   ) => Promise<RefWrite>;
+  readonly savePull: (writer: DriveWriter, request: PullSaveRequest) => Promise<PullResult>;
+  readonly pullReceipt: (writer: DriveWriter, id: string) => Promise<PullResult | null>;
   readonly reconcile: (
     writer: DriveWriter,
     request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
@@ -98,6 +145,27 @@ export interface DriveObjectApi {
   ) => Promise<{ readonly _tag: "ok" } | { readonly _tag: "refused"; readonly reason: string }>;
   /** Membership changes not yet in their people's indexes. */
   readonly pendingAccess: () => Promise<ReadonlyArray<AccessDelivery>>;
+  readonly recordCheckpoint: (
+    writer: DriveWriter,
+    record: DriveCheckpointRecord,
+  ) => Promise<RefWrite>;
+  readonly checkpoint: (threadId: string, runId: string) => Promise<DriveCheckpointRecord | null>;
+  readonly forkCheckpoint: (
+    userId: string,
+    request: ForkCheckpointRequest,
+  ) => Promise<CheckpointOperationResult>;
+  readonly restoreCheckpoint: (
+    userId: string,
+    request: RestoreCheckpointRequest,
+  ) => Promise<CheckpointOperationResult>;
+  readonly undoRestore: (
+    userId: string,
+    request: UndoRestoreRequest,
+  ) => Promise<CheckpointOperationResult>;
+  readonly updateToLatest: (
+    userId: string,
+    request: UpdateToLatestRequest,
+  ) => Promise<CheckpointOperationResult>;
 }
 
 export class DriveObjectError extends Schema.TaggedError<DriveObjectError>()("DriveObjectError", {
@@ -126,6 +194,16 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
         catch: (cause) => new DriveObjectError({ operation, cause }),
       });
   return {
+    beginPublication: wrap("beginPublication"),
+    markPublicationCreating: wrap("markPublicationCreating"),
+    releasePublicationCreating: wrap("releasePublicationCreating"),
+    recordPublicationCreated: wrap("recordPublicationCreated"),
+    bindPublication: wrap("bindPublication"),
+    finishPublication: wrap("finishPublication"),
+    packStorage: wrap("packStorage"),
+    history: wrap("history"),
+    historyOrigin: wrap("historyOrigin"),
+    startFromHistory: wrap("startFromHistory"),
     open: wrap("open"),
     refs: wrap("refs"),
     ref: wrap("ref"),
@@ -133,6 +211,8 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     promised: wrap("promised"),
     registerPack: wrap("registerPack"),
     updateRefs: wrap("updateRefs"),
+    savePull: wrap("savePull"),
+    pullReceipt: wrap("pullReceipt"),
     reconcile: wrap("reconcile"),
     setRemote: wrap("setRemote"),
     remote: wrap("remote"),
@@ -153,6 +233,12 @@ export function handleFor(api: DriveObjectApi): DriveHandle {
     share: wrap("share"),
     unshare: wrap("unshare"),
     pendingAccess: wrap("pendingAccess"),
+    recordCheckpoint: wrap("recordCheckpoint"),
+    checkpoint: wrap("checkpoint"),
+    forkCheckpoint: wrap("forkCheckpoint"),
+    restoreCheckpoint: wrap("restoreCheckpoint"),
+    undoRestore: wrap("undoRestore"),
+    updateToLatest: wrap("updateToLatest"),
   } as DriveHandle;
 }
 

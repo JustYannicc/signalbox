@@ -3,8 +3,15 @@
 SESSION_SECRET=
 # A WorkOS staging client id whose redirect URIs include http://localhost:*.
 T3CODE_WORKOS_CLIENT_ID=
+# Hosting policy per slot equals the Cloudflare 128 MB per-isolate envelope; not measured headroom.
+RESIDENT_BYTE_LIMIT=128000000
 # Optional, but GitHub sign-ins need it to finish email verification.
 T3CODE_WORKOS_API_KEY=
+# Optional unattended UI tests. Use a dedicated WorkOS sandbox and a separate
+# random signing secret of 32+ characters. These bindings never deploy to production.
+# E2E_WORKOS_CLIENT_ID=
+# E2E_WORKOS_API_KEY=
+# E2E_SIGN_IN_SECRET=
 # Optional: Claude and Codex turns. A local Runner host (see
 # docs/operations/cloud.md) and the ModelGateway that holds the provider keys.
 # LOCAL_RUNNER_URL=http://127.0.0.1:8790

@@ -70,6 +70,8 @@ const layerDatabase = SqlitePersistence.layerMemory.pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "project-deletion-test-" })),
   Layer.provideMerge(NodeServices.layer),
 );
+const layerDatabaseAt = (time: number) =>
+  Layer.unwrap(TestClock.setTime(time).pipe(Effect.as(layerDatabase)));
 const decodeEffectRequest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationEffectRequestV2),
 );
@@ -130,7 +132,6 @@ it.effect("retries a partial project deletion without repeating child events or 
     const threadIds = [ThreadId.make("thread:delete-a"), ThreadId.make("thread:delete-b")] as const;
     const commandId = CommandId.make("command:partial-project-delete");
     yield* seedProject(projectId);
-    yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00.000Z"));
 
     yield* Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
@@ -252,7 +253,7 @@ it.effect("retries a partial project deletion without repeating child events or 
         );
       }
     }).pipe(Effect.provide(layerServices));
-  }).pipe(Effect.provide(layerDatabase)),
+  }).pipe(Effect.provide(layerDatabaseAt(Date.parse("2026-09-04T12:00:00.000Z")))),
 );
 
 it.effect(
@@ -298,7 +299,6 @@ it.effect(
           0, '2026-01-04T01:00:00.000Z', '2026-01-04T01:00:00.000Z'
         )
     `;
-      yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00.000Z"));
 
       yield* Effect.gen(function* () {
         const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
@@ -365,7 +365,7 @@ it.effect(
           attachmentIds: ["legacy_screenshot"],
         });
       }).pipe(Effect.provide(layerServices));
-    }).pipe(Effect.provide(layerDatabase)),
+    }).pipe(Effect.provide(layerDatabaseAt(Date.parse("2026-09-04T12:00:00.000Z")))),
 );
 
 it.effect("rejects a child deletion command ID already accepted for an unrelated thread", () =>
@@ -435,7 +435,6 @@ it.effect("deletes a project without force once its imported threads were delete
         '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, NULL
       )
     `;
-    yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00.000Z"));
 
     yield* Effect.gen(function* () {
       const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
@@ -490,7 +489,7 @@ it.effect("deletes a project without force once its imported threads were delete
       assert.isNotNull(deleted.deletedAt);
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
     }).pipe(Effect.provide(layerServices));
-  }).pipe(Effect.provide(layerDatabase)),
+  }).pipe(Effect.provide(layerDatabaseAt(Date.parse("2026-09-04T12:00:00.000Z")))),
 );
 
 it.effect(

@@ -4,7 +4,6 @@ import {
   previewPortsToOffer,
 } from "@t3tools/client-runtime/state/signalboxPreviews";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useServerConfigs } from "./entities";
@@ -31,6 +30,6 @@ export function useThreadPreviews(environmentId: EnvironmentId, threadId: Thread
   const previews = useEnvironmentQuery(
     supported ? signalboxPreviews.thread({ environmentId, input: { threadId } }) : null,
   ).data;
-  const ports = useMemo(() => previewPortsToOffer(previews), [previews]);
+  const ports = previewPortsToOffer(previews);
   return { ports, browsed: previews?.browsed === true };
 }

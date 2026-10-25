@@ -1,3 +1,5 @@
+import { withTerminalCommandId } from "./terminalCommandId.ts";
+import { clientThreadAttributes } from "@t3tools/shared/clientTraceSafety";
 import {
   EnvironmentAuthorizationError,
   clientRpcRequiredScopes,
@@ -82,6 +84,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribePreviewEvents
   | typeof WS_METHODS.subscribeDiscoveredLocalServers
   | typeof WS_METHODS.subscribeDeviceState
+  | typeof WS_METHODS.subscribeDeviceAgentDiagnostics
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
   | typeof WS_METHODS.sectionsSubscribe
@@ -215,12 +218,13 @@ const authorizeRequest = Effect.fn("EnvironmentRpc.authorize")(function* (
   yield* guard.authorize(supervisor.target.environmentId, method, input);
 });
 
-export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
+const sendRequest = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
 >(tag: TTag, input: EnvironmentRpcInput<TTag>) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   yield* Effect.annotateCurrentSpan({
     "environment.id": supervisor.target.environmentId,
+    ...clientThreadAttributes(input),
     "rpc.method": tag,
   });
   const session = yield* currentSession();
@@ -235,6 +239,11 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
+
+export const requestGuarded = <TTag extends EnvironmentUnaryRpcTag>(
+  tag: TTag,
+  input: EnvironmentRpcInput<TTag>,
+) => withTerminalCommandId(tag, input, (keyed) => sendRequest(tag, keyed));
 
 export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
   tag: TTag,
@@ -258,12 +267,16 @@ export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
     ),
   ).pipe(
     Stream.withSpan("EnvironmentRpc.runStream", {
-      attributes: { "rpc.method": tag },
+      attributes: { "rpc.method": tag, ...clientThreadAttributes(input) },
     }),
   );
 }
 
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
+  readonly transform?: (
+    stream: Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>>,
+    input: EnvironmentRpcInput<TTag>,
+  ) => Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>>;
   readonly onDefect?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
@@ -327,14 +340,23 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         method: tag,
                         input,
                       });
-                      const stream = mapStream(session, method(input)).pipe(
+                      const source = method(input);
+                      const stream = mapStream(
+                        session,
+                        options?.transform?.(source, input) ?? source,
+                      ).pipe(
                         Stream.onFirst(() =>
                           Effect.sync(() => {
                             expectedFailureRetries = 0;
                           }),
                         ),
                       );
-                      return stream.pipe(Stream.ensuring(completeObservation));
+                      return stream.pipe(
+                        Stream.ensuring(completeObservation),
+                        Stream.withSpan("EnvironmentRpc.subscribe", {
+                          attributes: { "rpc.method": tag, ...clientThreadAttributes(input) },
+                        }),
+                      );
                     }),
                   ).pipe(
                     Stream.tapCause((cause) =>
@@ -408,10 +430,6 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
           }),
         ),
       );
-    }),
-  ).pipe(
-    Stream.withSpan("EnvironmentRpc.subscribe", {
-      attributes: { "rpc.method": tag },
     }),
   );
 }

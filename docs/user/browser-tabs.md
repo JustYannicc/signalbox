@@ -15,9 +15,9 @@ on the device you used them on.
 
 - **Desktop:** open the right panel in a thread and choose **Browser**.
 - **Phone:** when a thread has tabs, tap the globe at the bottom of the thread.
-- **Web:** web browsers can't show other sites inside Signalbox. The panel lists
-  the thread's tabs, and picking one switches the tab on your other devices.
-  Choose **Open in desktop app** to browse.
+- **Web:** open **Browser** from the thread's right panel, then choose
+  **Thread tabs** in the agent browser panel. Pick a tab to switch it on your
+  other devices. Choose **Open in desktop app** to browse.
 
 Your place in a page comes back on the other device even when the screen is a
 different size. If the page changed since, Signalbox scrolls to about the same
@@ -26,8 +26,8 @@ spot instead.
 ## Sharing a tab
 
 Your tabs are private: nobody else in the thread sees them, not even in the
-list. To share one, choose the people icon in the browser bar on desktop, next
-to the tab in the list on web, or **Tabs → Share with this thread** on your
+list. To share one, choose the people icon in the browser bar on desktop, beside
+the tab in **Thread tabs** on web, or **Tabs → Share with this thread** on your
 phone. Share it until you stop, or for a day, three days or a week. The menu
 says who can see it and until when, and **Stop sharing** ends it right away.
 A share also ends on its own when its time is up.

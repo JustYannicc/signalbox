@@ -1,3 +1,5 @@
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import {
   scopedProjectKey,
   scopedThreadKey,
@@ -76,6 +78,7 @@ import {
   partializeComposerDraftStoreState,
   useComposerDraftStore,
   DraftId,
+  recoverComposerSubmission,
 } from "./composerDraftStore";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 import { insertInlineContextReference } from "./lib/composerContextReferences";
@@ -377,6 +380,106 @@ describe("composerDraftStore clearComposerContent", () => {
   afterEach(() => {
     URL.revokeObjectURL = originalRevokeObjectUrl;
   });
+
+  it.each(["clearComposerContent", "clearComposerPromptAndImages"] as const)(
+    "%s does not restore a sent prompt when reloaded before the persistence debounce",
+    async (clear) => {
+      vi.useFakeTimers();
+      try {
+        const store = useComposerDraftStore.getState();
+        store.setPrompt(threadRef, "This message has already been sent.");
+        await vi.advanceTimersByTimeAsync(300);
+
+        store[clear](threadRef);
+        await useComposerDraftStore.persist.rehydrate();
+
+        expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt ?? "").toBe("");
+      } finally {
+        await useComposerDraftStore.persist.clearStorage();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([
+    { newerDraft: false, errorTag: "RpcClientError" },
+    { newerDraft: true, errorTag: "RpcClientError" },
+    { newerDraft: false, errorTag: "OrchestrationV2ThreadLaunchError" },
+  ])(
+    "keeps an accepted prompt cleared after an uncertain response and reload (%o)",
+    async ({ newerDraft, errorTag }) => {
+      vi.useFakeTimers();
+      try {
+        const store = useComposerDraftStore.getState();
+        store.setPrompt(threadRef, "Already accepted by the server");
+        const content = store.getComposerDraft(threadRef)!;
+        await vi.advanceTimersByTimeAsync(300);
+        store.clearComposerContent(threadRef);
+        if (newerDraft) store.setPrompt(threadRef, "A new unsent thought");
+        const result = AsyncResult.failure(
+          Cause.fail({ _tag: errorTag, message: "Failed to launch thread" }),
+        );
+        recoverComposerSubmission({ target: threadRef, result, requestStarted: true, content });
+        await vi.advanceTimersByTimeAsync(300);
+        await useComposerDraftStore.persist.rehydrate();
+        expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt ?? "").toBe(
+          newerDraft ? "A new unsent thought" : "",
+        );
+      } finally {
+        await useComposerDraftStore.persist.clearStorage();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([
+    "EnvironmentRpcUnavailableError",
+    "EnvironmentNotRegisteredError",
+    "ConnectionTransientError",
+  ])("restores a prompt after %s before dispatch and retains it across reload", async (_tag) => {
+    vi.useFakeTimers();
+    try {
+      const store = useComposerDraftStore.getState();
+      store.setPrompt(threadRef, "Keep this offline prompt");
+      const content = store.getComposerDraft(threadRef)!;
+      await vi.advanceTimersByTimeAsync(300);
+      store.clearComposerContent(threadRef);
+      recoverComposerSubmission({
+        target: threadRef,
+        result: AsyncResult.failure(Cause.fail({ _tag, message: "Socket is not connected" })),
+        requestStarted: true,
+        content,
+      });
+      await vi.advanceTimersByTimeAsync(300);
+      await useComposerDraftStore.persist.rehydrate();
+      expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt).toBe(
+        "Keep this offline prompt",
+      );
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([false, true])(
+    "restores a rejected prompt without overwriting newer work (%s)",
+    (newerDraft) => {
+      const store = useComposerDraftStore.getState();
+      store.setPrompt(threadRef, "Rejected by the server");
+      const content = store.getComposerDraft(threadRef)!;
+      store.clearComposerContent(threadRef);
+      if (newerDraft) store.setPrompt(threadRef, "Keep this new draft");
+      recoverComposerSubmission({
+        target: threadRef,
+        result: AsyncResult.failure(Cause.fail({ _tag: "OrchestrationDispatchCommandError" })),
+        requestStarted: true,
+        content,
+      });
+      expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt).toBe(
+        newerDraft ? "Keep this new draft" : "Rejected by the server",
+      );
+    },
+  );
 
   it("does not revoke blob preview URLs when clearing composer content", () => {
     const first = makeImage({

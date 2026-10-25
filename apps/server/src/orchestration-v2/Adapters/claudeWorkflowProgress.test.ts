@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   mergeClaudeWorkflowProgress,
   parseClaudeWorkflowRunHandles,
-} from "./claudeWorkflowProgress.ts";
+} from "@signalbox/provider-claude/claudeWorkflowProgress";
 
 const startFrame = {
   type: "system",

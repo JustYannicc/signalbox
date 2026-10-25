@@ -1,13 +1,19 @@
-import type {
-  OrchestrationV2DomainEvent,
-  OrchestrationV2ProviderThread,
-  OrchestrationV2Run,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
-  OrchestrationV2UserMessageInputIntent,
+import {
+  orchestrationV2RunWorkStartedAt,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
+  type OrchestrationV2UserMessageInputIntent,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
-import { driverFor, runnerInstanceFor } from "./providerCatalog.ts";
+import { driverFor, runnerInstanceFor } from "../models/ModelRouting.ts";
+import { queuedRunsInDeliveryOrder } from "./queuedRunCommands.ts";
+import { expireRuntimeRequests } from "./runtimeRequests.ts";
+import { isLiveRun } from "./runState.ts";
 import {
   attemptEvent,
   type DecisionContext,
@@ -18,6 +24,7 @@ import {
   providerThreadEvent,
   runEvent,
   turnItemEvent,
+  threadEvent,
 } from "./threadEvents.ts";
 
 /**
@@ -30,23 +37,34 @@ import {
 type Projection = OrchestrationV2ThreadProjection;
 type Run = OrchestrationV2Run;
 
-type LiveRun = Run & { readonly status: "preparing" | "starting" | "running" | "waiting" };
-
-/** A run the provider is (or is about to be) working on. */
-export const isLiveRun = (run: Run): run is LiveRun =>
-  run.status === "preparing" ||
-  run.status === "starting" ||
-  run.status === "running" ||
-  run.status === "waiting";
+function wakeWorkStartedAt(
+  runs: ReadonlyArray<Run>,
+  run: Run,
+  message: OrchestrationV2ConversationMessage | undefined,
+): DateTime.Utc | undefined {
+  if (
+    message?.notification === undefined &&
+    message?.delegatedCompletion === undefined &&
+    run.restartContinuationOfRunId === undefined
+  ) {
+    return undefined;
+  }
+  const previous = runs
+    .flatMap((candidate) =>
+      candidate.startedAt === null ? [] : [{ run: candidate, startedAt: candidate.startedAt }],
+    )
+    .toSorted(
+      (left, right) =>
+        DateTime.Order(right.startedAt, left.startedAt) || right.run.ordinal - left.run.ordinal,
+    )[0]?.run;
+  return previous === undefined ? undefined : orchestrationV2RunWorkStartedAt(previous);
+}
 
 /** The run the provider is working on, if any. */
 export const activeRun = (projection: Projection): Run | undefined =>
   projection.runs.filter(isLiveRun).toSorted((left, right) => right.ordinal - left.ordinal)[0];
 
-const queuedRuns = (projection: Projection): ReadonlyArray<Run> =>
-  projection.runs
-    .filter((run) => run.status === "queued")
-    .toSorted((left, right) => left.ordinal - right.ordinal);
+const queuedRuns = queuedRunsInDeliveryOrder;
 
 /** The first queued run that may start once nothing is live. */
 export const nextQueuedRun = (projection: Projection): Run | undefined =>
@@ -55,7 +73,7 @@ export const nextQueuedRun = (projection: Projection): Run | undefined =>
 /**
  * The thread's provider thread as of `run`. A record on the same provider
  * keeps what the harness put there (its native session ref above all); a new
- * one, or one the thread switched provider on, starts without native state.
+ * one starts without native state and leaves previous provider threads intact.
  */
 export const providerThreadFor = (
   projection: Projection,
@@ -63,13 +81,18 @@ export const providerThreadFor = (
   status: OrchestrationV2ProviderThread["status"],
   ctx: DecisionContext,
 ): OrchestrationV2ProviderThread => {
-  const id = ids.providerThread(projection.thread.id);
-  const current = projection.providerThreads.find((candidate) => candidate.id === id);
+  const current =
+    projection.providerThreads.find((candidate) => candidate.id === run.providerThreadId) ??
+    projection.providerThreads
+      .filter((candidate) => candidate.ownerNodeId === null)
+      .toSorted((left, right) => (right.lastRunOrdinal ?? 0) - (left.lastRunOrdinal ?? 0))[0];
   // A record stored on the harness's own instance (`claudeAgent` for a pool's
   // `claude_hub`) is the same provider: threads saved before the instance was
   // kept keep their session.
   const sameProvider =
     current !== undefined &&
+    current.driver === driverFor(run.providerInstanceId) &&
+    (current.nativeThreadRef === null || current.nativeThreadRef.driver === current.driver) &&
     (current.providerInstanceId === run.providerInstanceId ||
       current.providerInstanceId === runnerInstanceFor(run.providerInstanceId));
   if (current !== undefined && sameProvider) {
@@ -82,7 +105,10 @@ export const providerThreadFor = (
     };
   }
   return {
-    id,
+    id:
+      projection.providerThreads.length === 0
+        ? ids.providerThread(projection.thread.id)
+        : ids.providerThreadForRun(run.id),
     driver: driverFor(run.providerInstanceId),
     providerInstanceId: run.providerInstanceId,
     providerSessionId: null,
@@ -91,7 +117,7 @@ export const providerThreadFor = (
     nativeThreadRef: null,
     nativeConversationHeadRef: null,
     status,
-    firstRunOrdinal: current?.firstRunOrdinal ?? run.ordinal,
+    firstRunOrdinal: run.ordinal,
     lastRunOrdinal: run.ordinal,
     handoffIds: [],
     forkedFrom: null,
@@ -99,7 +125,7 @@ export const providerThreadFor = (
     contextUsage: null,
     nativeMetadata: null,
     goal: null,
-    createdAt: current?.createdAt ?? ctx.now,
+    createdAt: ctx.now,
     updatedAt: ctx.now,
   };
 };
@@ -117,11 +143,16 @@ export function startRunEvents(
   const threadId = projection.thread.id;
   const attemptId = ids.attempt(run.id);
   const rootNodeId = ids.rootNode(run.id);
-  const providerThreadId = ids.providerThread(threadId);
+  const providerThread = providerThreadFor(projection, run, "active", ctx);
+  const providerThreadId = providerThread.id;
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  // The timer starts on activation, after any queue wait, and before provider startup.
+  const workStartedAt =
+    run.workStartedAt ?? wakeWorkStartedAt(projection.runs, run, message) ?? ctx.now;
   const started: Run = {
     ...run,
     status: "starting",
+    workStartedAt,
     providerThreadId,
     rootNodeId,
     activeAttemptId: attemptId,
@@ -152,7 +183,16 @@ export function startRunEvents(
     ...(message?.context === undefined ? {} : { context: message.context }),
   };
   return [
-    providerThreadEvent(ctx, threadId, providerThreadFor(projection, run, "active", ctx)),
+    providerThreadEvent(ctx, threadId, providerThread),
+    ...(projection.thread.activeProviderThreadId === providerThreadId
+      ? []
+      : [
+          threadEvent(ctx, "thread.metadata-updated", {
+            ...projection.thread,
+            activeProviderThreadId: providerThreadId,
+            updatedAt: ctx.now,
+          }),
+        ]),
     runEvent(
       ctx,
       projection.runs.some((candidate) => candidate.id === run.id) ? "run.updated" : "run.created",
@@ -189,7 +229,10 @@ export function startRunEvents(
       completedAt: null,
     }),
     ...(message === undefined ? [] : [messageEvent(ctx, { ...message, nodeId: rootNodeId })]),
-    turnItemEvent(ctx, userItem),
+    // The system prompt for a machine continuation is provider input, not a transcript row.
+    ...(run.restartContinuationOfRunId !== undefined && message?.role === "system"
+      ? []
+      : [turnItemEvent(ctx, userItem)]),
   ];
 }
 
@@ -217,12 +260,33 @@ export function finishRunEvents(
   const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
   const queued = queuedRuns(projection);
   const holdQueue = options.queue === "hold";
-  const [next, ...rest] =
-    (options.queue ?? "advance") === "advance"
-      ? queued.filter((candidate) => candidate.queueHeld !== true)
-      : [];
+  const advanceQueue = (options.queue ?? "advance") === "advance";
+  const next = advanceQueue ? queued.find((candidate) => candidate.queueHeld !== true) : undefined;
+  // Held runs keep their place when a newer unheld run leaves the queue.
+  const remaining = advanceQueue ? queued.filter((candidate) => candidate.id !== next?.id) : [];
   return [
     ...(options.leading ?? []),
+    ...expireRuntimeRequests(projection, run.id, ctx, status === "completed"),
+    ...projection.turnItems.flatMap((item) =>
+      item.runId === run.id &&
+      item.id.startsWith(`turn-item:${run.id}:dependencies:`) &&
+      item.type === "notification" &&
+      (item.status === "running" || item.status === "pending")
+        ? [
+            turnItemEvent(ctx, {
+              ...item,
+              status: status === "failed" ? "failed" : "interrupted",
+              outcome: status === "failed" ? "failed" : "cancelled",
+              summary:
+                status === "failed"
+                  ? "Dependency setup did not finish before the turn failed."
+                  : "This turn ended before dependency setup finished.",
+              completedAt: ctx.now,
+              updatedAt: ctx.now,
+            }),
+          ]
+        : [],
+    ),
     ...(attempt === undefined
       ? []
       : [
@@ -239,7 +303,7 @@ export function finishRunEvents(
       ? queued.map((candidate) => runEvent(ctx, "run.updated", { ...candidate, queueHeld: true }))
       : []),
     ...(next === undefined ? [] : startRunEvents(projection, next, "queued_turn", ctx)),
-    ...rest.map((candidate, index) =>
+    ...remaining.map((candidate, index) =>
       runEvent(ctx, "run.updated", { ...candidate, queuePosition: index + 1 }),
     ),
   ];

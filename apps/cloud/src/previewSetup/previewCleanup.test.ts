@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 
 import {
-  listPreviewPackNumbers,
-  removeLegacyPreviewPacks,
-  removePreviewPackPrefix,
+  layer as previewCleanupLayer,
+  PreviewCleanupService,
+  type PreviewCleanupDependencies,
+  type PreviewCleanupCommand,
 } from "./PreviewCleanupService.ts";
 import { handlePreviewCleanup } from "./previewCleanup.ts";
 import type {
@@ -71,50 +73,100 @@ const untouchedRegistry: PreviewLinkRegistryApi = {
   listOrigins: async () => expect.unreachable(),
 };
 
-const cleanupEnv = (bucket: ReturnType<typeof memoryBucket>) => ({
-  PREVIEW_CLEANUP_TOKEN: "cleanup-token",
-  PREVIEW_DRIVE_PACKS: bucket,
-  PREVIEW_LINKS: {
+const emptyRegistry: PreviewLinkRegistryApi = {
+  registerPool: async () => true,
+  cleanupOrigin: async () => 0,
+  activateOrigin: async () => {},
+  listOrigins: async () => [],
+};
+
+const cleanupDependencies = (
+  bucket: NonNullable<PreviewCleanupDependencies["drivePacks"]>,
+  registry: PreviewLinkRegistryApi = emptyRegistry,
+): PreviewCleanupDependencies => ({
+  drivePacks: bucket,
+  links: {
     idFromName: () => ({}) as DurableObjectId,
-    get: () => untouchedRegistry,
+    get: () => registry,
   } as PreviewLinkRegistryNamespace,
 });
 
-describe("preview drive pack cleanup", () => {
-  it("lists PR prefixes and deletes only the requested prefix", async () => {
-    const bucket = memoryBucket(
-      [
-        "pr-21/drive/packs/pack-a.idx",
-        "pr-21/drive/packs/pack-a.pack",
-        "pr-212/drive/packs/pack-b.pack",
-        "pr-212/drive/packs/pack-b.idx",
-        "drive/packs/pack-old.pack",
-      ],
-      1,
-    );
-    expect(await listPreviewPackNumbers(bucket)).toEqual([21, 212]);
-    expect(await removePreviewPackPrefix(bucket, "pr-21/")).toBe(2);
-    expect(bucket.keys()).toEqual([
-      "drive/packs/pack-old.pack",
-      "pr-212/drive/packs/pack-b.idx",
-      "pr-212/drive/packs/pack-b.pack",
-    ]);
-  });
+const cleanupEnv = (bucket: ReturnType<typeof memoryBucket>) => ({
+  PREVIEW_CLEANUP_TOKEN: "cleanup-token",
+  PREVIEW_DRIVE_PACKS: bucket,
+  PREVIEW_LINKS: cleanupDependencies(bucket, untouchedRegistry).links,
+});
 
-  it("removes legacy unprefixed packs and preserves every PR namespace", async () => {
-    const bucket = memoryBucket(
-      [
-        "drive-a/packs/pack-old.pack",
+const runCleanup = (command: PreviewCleanupCommand, dependencies: PreviewCleanupDependencies) =>
+  Effect.gen(function* () {
+    const cleanup = yield* PreviewCleanupService;
+    return yield* cleanup.cleanup(command);
+  }).pipe(Effect.provide(previewCleanupLayer(dependencies)));
+
+describe("preview drive pack cleanup", () => {
+  it.effect("lists PR prefixes and deletes only the requested prefix", () =>
+    Effect.gen(function* () {
+      const bucket = memoryBucket(
+        [
+          "pr-21/drive/packs/pack-a.idx",
+          "pr-21/drive/packs/pack-a.pack",
+          "pr-212/drive/packs/pack-b.pack",
+          "pr-212/drive/packs/pack-b.idx",
+          "drive/packs/pack-old.pack",
+        ],
+        1,
+      );
+      const dependencies = cleanupDependencies(bucket);
+      expect(yield* runCleanup({ action: "list" }, dependencies)).toEqual({
+        prNumbers: [21, 212],
+      });
+      expect(yield* runCleanup({ action: "delete", pullRequestNumber: 21 }, dependencies)).toEqual({
+        ok: true,
+        linksRemoved: 0,
+        packsRemoved: 2,
+      });
+      expect(bucket.keys()).toEqual([
+        "drive/packs/pack-old.pack",
+        "pr-212/drive/packs/pack-b.idx",
+        "pr-212/drive/packs/pack-b.pack",
+      ]);
+    }),
+  );
+
+  it.effect("removes legacy unprefixed packs and preserves every PR namespace", () =>
+    Effect.gen(function* () {
+      const bucket = memoryBucket(
+        [
+          "drive-a/packs/pack-old.pack",
+          "pr-12/drive/packs/pack-a.pack",
+          "pr-213/drive/packs/pack-b.idx",
+        ],
+        1,
+      );
+      expect(
+        yield* runCleanup({ action: "clear-legacy-packs" }, cleanupDependencies(bucket)),
+      ).toEqual({ ok: true, packsRemoved: 1 });
+      expect(bucket.keys()).toEqual([
         "pr-12/drive/packs/pack-a.pack",
         "pr-213/drive/packs/pack-b.idx",
-      ],
-      1,
-    );
-    expect(await removeLegacyPreviewPacks(bucket)).toBe(1);
-    expect(bucket.keys()).toEqual([
-      "pr-12/drive/packs/pack-a.pack",
-      "pr-213/drive/packs/pack-b.idx",
-    ]);
+      ]);
+    }),
+  );
+
+  it.effect("fails a truncated R2 page that has no cursor", () => {
+    let calls = 0;
+    const bucket = {
+      list: async () => {
+        calls += 1;
+        return { objects: [], truncated: true, cursor: "" };
+      },
+      delete: async () => {},
+    };
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(runCleanup({ action: "list" }, cleanupDependencies(bucket)));
+      expect(error._tag).toBe("PreviewPackCursorMissingError");
+      expect(calls).toBe(1);
+    });
   });
 
   it("is not found while production has no cleanup token", async () => {

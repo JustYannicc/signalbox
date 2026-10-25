@@ -21,9 +21,11 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as TestClock from "effect/testing/TestClock";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -42,10 +44,11 @@ import { remoteHead } from "../drive/remoteRoutes.ts";
 import * as Platform from "../platform.ts";
 import { makeMemoryCloud } from "../testing.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
+import * as IdentityProvider from "../account/IdentityProvider.ts";
 import { UserDirectory } from "../user/UserDirectory.ts";
 import * as UserStore from "../user/UserStore.ts";
 import * as CloudRpc from "../user/rpc.ts";
-import { GitHub } from "./GitHub.ts";
+import { GitHub, layerForUsers } from "./GitHub.ts";
 import * as GitHubConnection from "./GitHubConnection.ts";
 import { makeFakeGitHub } from "./githubTesting.ts";
 
@@ -129,13 +132,86 @@ describe("commitAuthorOf", () => {
   });
 });
 
+it.effect("reports GitHub availability from each user's resolved WorkOS realm", () => {
+  const sandboxUserId = "sandbox-user";
+  const identityProviders = IdentityProvider.IdentityProviders.of({
+    identityProviderForUser: (id) =>
+      Effect.succeed(
+        id === sandboxUserId
+          ? {
+              clientId: "client_sandbox",
+              apiKey: Redacted.make("sk_test_sandbox"),
+              apiBaseUrl: "https://sandbox.workos.test",
+            }
+          : {
+              clientId: "client_primary",
+              apiBaseUrl: "https://primary.workos.test",
+            },
+      ),
+  });
+  const github = layerForUsers().pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FetchHttpClient.layer,
+        Layer.succeed(IdentityProvider.IdentityProviders, identityProviders),
+      ),
+    ),
+  );
+  const cloud = makeMemoryCloud({ github });
+
+  const discover = (id: string) =>
+    Effect.gen(function* () {
+      yield* cloud.userDirectory.forUser(id).recordSignIn({
+        id,
+        email: `${id}@example.test`,
+      });
+      const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CloudRpc.layerHandlers({ identity, userId: id, sid: `session-${id}` }),
+            CloudRpc.layerScopeAuthorization([AuthOrchestrationReadScope]),
+          ).pipe(Layer.provide(cloud.layerFor(id))),
+        ),
+      );
+      return yield* rpc[WS_METHODS.serverDiscoverSourceControl]({});
+    });
+
+  return Effect.gen(function* () {
+    const ordinary = yield* discover("ordinary-user");
+    expect(ordinary.sourceControlProviders[0]).toMatchObject({
+      kind: "github",
+      status: "missing",
+      installHint: "This cloud can't connect GitHub: it has no WorkOS API key.",
+    });
+
+    const sandbox = yield* discover(sandboxUserId);
+    expect(sandbox.sourceControlProviders[0]).toMatchObject({
+      kind: "github",
+      status: "available",
+      installHint: "Connect GitHub to import its repositories.",
+    });
+  });
+});
+
 describe("GitHub-backed drives", () => {
   it.effect("connect, import, work on a thread's branch, push it and open a pull request", () => {
     const remote = setup();
+    let comparisonFailure: number | null = null;
+    let commitFailure: number | null = null;
     const github = makeFakeGitHub({
       bare: remote.bare,
       repository: "owner/repo",
       defaultBranch: "main",
+      more: (method, url) => {
+        const status = url.pathname.includes("/compare/")
+          ? comparisonFailure
+          : url.pathname.includes("/git/commits/")
+            ? commitFailure
+            : null;
+        return method === "GET" && status !== null
+          ? Response.json({ message: "GitHub temporarily unavailable" }, { status })
+          : null;
+      },
     });
     const cloud = makeMemoryCloud({ github: github.layer });
     const { drives } = cloud;
@@ -252,6 +328,17 @@ describe("GitHub-backed drives", () => {
       });
       const cwd = launched.projection.thread.worktreePath!;
 
+      const missingBranchPull = yield* rpc[WS_METHODS.vcsPull]({
+        cwd,
+        operationId: "pull-missing-branch",
+      }).pipe(Effect.flip);
+      expect(missingBranchPull).toMatchObject({
+        operation: "GitHubBranches.pull",
+        command: "git pull --ff-only",
+      });
+      if (missingBranchPull._tag !== "GitCommandError") return expect.unreachable();
+      expect(missingBranchPull.detail).toContain("GitHub has no branch named signalbox/0000abcd");
+
       // What the thread's Runner does in its turn: mirror the remote's head, commit, auto-save.
       const handle = (yield* DriveDirectory).forDrive(driveId);
       const writer = { threadId, userId, generation: 1, live: true, packsAfter: 0 };
@@ -282,8 +369,62 @@ describe("GitHub-backed drives", () => {
         { name: wipRef(threadId), old: null, new: autosave },
       ]);
 
+      const branch = "signalbox/0000abcd";
       const status = () =>
         rpc[WS_METHODS.subscribeVcsStatus]({ cwd }).pipe(Stream.take(1), Stream.runHead);
+      git(remote.bare, ["update-ref", `refs/heads/${branch}`, remote.head]);
+      let localHead = turn;
+      for (let index = 0; index < 20; index++) {
+        localHead = git(remote.machine, [
+          "commit-tree",
+          `${turn}^{tree}`,
+          "-p",
+          localHead,
+          "-m",
+          `Local turn ${index}`,
+        ]);
+      }
+      yield* uploadPack({ driveId, threadId, ...remote.pack([localHead], [remote.head]) });
+      yield* handle.updateRefs(writer, [{ name: threadRef(threadId), old: turn, new: localHead }]);
+      const beforeLocalStatus = github.calls.length;
+      expect(yield* status()).toMatchObject(
+        Option.some({ remote: { hasUpstream: true, aheadCount: 21, behindCount: 0 } }),
+      );
+      expect(
+        github.calls
+          .slice(beforeLocalStatus)
+          .filter((call) => call.includes("/compare/") || call.includes("/git/commits/")),
+      ).toEqual([]);
+      yield* handle.updateRefs(writer, [{ name: threadRef(threadId), old: localHead, new: turn }]);
+
+      // Both sides advanced from a shallow imported base. The unpublished linear commit
+      // adds one to GitHub's exact comparison without requiring the base's missing ancestors.
+      git(remote.machine, ["checkout", "-B", "remote-update", remote.head]);
+      NodeFS.writeFileSync(NodePath.join(remote.machine, "remote.md"), "changed on GitHub\n");
+      git(remote.machine, ["add", "remote.md"]);
+      git(remote.machine, ["commit", "-m", "Remote update"]);
+      git(remote.machine, ["push", remote.bare, `HEAD:refs/heads/${branch}`]);
+      const divergentStatus = yield* rpc[WS_METHODS.subscribeVcsStatus]({ cwd }).pipe(
+        Stream.take(1),
+        Stream.runHead,
+      );
+      expect(divergentStatus).toMatchObject(
+        Option.some({ remote: { hasUpstream: true, aheadCount: 1, behindCount: 1 } }),
+      );
+      for (const statusCode of [403, 503]) {
+        comparisonFailure = statusCode;
+        expect(yield* status()).toMatchObject(
+          Option.some({ local: { isRepo: true, hasWorkingTreeChanges: true }, remote: null }),
+        );
+      }
+      comparisonFailure = null;
+      commitFailure = 503;
+      expect(yield* status()).toMatchObject(
+        Option.some({ local: { isRepo: true, hasWorkingTreeChanges: true }, remote: null }),
+      );
+      commitFailure = null;
+      git(remote.bare, ["update-ref", "-d", `refs/heads/${branch}`]);
+
       expect(yield* status()).toMatchObject(
         Option.some({
           _tag: "snapshot",
@@ -329,6 +470,37 @@ describe("GitHub-backed drives", () => {
           remote: { hasUpstream: true, aheadCount: 0, pr: { number: 1, state: "open" } },
         }),
       );
+
+      // A newer remote head is measured exactly against this local commit, not guessed as one
+      // commit behind. The test fake keeps the new commit reachable as GitHub's compare API does.
+      git(remote.machine, ["checkout", "-B", "remote-update", turn]);
+      NodeFS.writeFileSync(NodePath.join(remote.machine, "remote.md"), "changed on GitHub\n");
+      git(remote.machine, ["add", "remote.md"]);
+      git(remote.machine, ["commit", "-m", "Remote update"]);
+      git(remote.machine, ["push", remote.bare, `HEAD:refs/heads/${branch}`]);
+      expect(yield* status()).toMatchObject(
+        Option.some({ remote: { hasUpstream: true, aheadCount: 0, behindCount: 1 } }),
+      );
+      const remoteAdvance = git(remote.machine, ["rev-parse", "HEAD"]);
+      const unpublishedMerge = git(remote.machine, [
+        "commit-tree",
+        git(remote.machine, ["rev-parse", "HEAD^{tree}"]),
+        "-p",
+        turn,
+        "-p",
+        remoteAdvance,
+        "-m",
+        "Unpublished merge",
+      ]);
+      yield* uploadPack({ driveId, threadId, ...remote.pack([unpublishedMerge], [remote.head]) });
+      yield* handle.updateRefs(writer, [
+        { name: threadRef(threadId), old: turn, new: unpublishedMerge },
+      ]);
+      expect(yield* status()).toMatchObject(Option.some({ remote: null }));
+      yield* handle.updateRefs(writer, [
+        { name: threadRef(threadId), old: unpublishedMerge, new: turn },
+      ]);
+      git(remote.bare, ["update-ref", `refs/heads/${branch}`, turn]);
 
       // Merged on GitHub: it's the remote's head that main may now mirror.
       github.merge(1);
@@ -515,6 +687,149 @@ describe("GitHub-backed drives", () => {
         reason: "not_connected",
         message: "Connect GitHub first: Settings › Source Control.",
       });
+    }).pipe(
+      Effect.provide(Layer.mergeAll(cloud.drives.layer, github.layer)),
+      Effect.provideService(UserDirectory, cloud.userDirectory),
+    );
+  });
+
+  it.effect("publishes source-mode work already landed on local main", () => {
+    const remote = setup();
+    const github = makeFakeGitHub({
+      bare: remote.bare,
+      repository: "owner/repo",
+      defaultBranch: "main",
+    });
+    const cloud = makeMemoryCloud({ github: github.layer });
+    return Effect.gen(function* () {
+      const user = cloud.userDirectory.forUser(userId);
+      yield* user.recordSignIn({ id: userId, email: "a@b.c" });
+      yield* user.beginGitHubConnect({ grantId: "g1", returnTo: REDIRECT });
+      github.authorize(userId);
+      yield* user.completeGitHubConnect("g1");
+      const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
+            CloudRpc.layerScopeAuthorization([
+              AuthOrchestrationReadScope,
+              AuthOrchestrationOperateScope,
+              AuthSourceControlWriteScope,
+            ]),
+          ).pipe(Layer.provide(cloud.layerFor(userId))),
+        ),
+      );
+      const imported = yield* rpc[WS_METHODS.projectCloneStart]({
+        projectId,
+        title: "repo",
+        createdAt: "2026-10-08T10:00:00.000Z",
+        remoteUrl: "https://github.com/owner/repo.git",
+        destinationPath: "~/repo",
+      });
+      const driveId = imported.cwd.slice("/drives/".length);
+      const handle = (yield* DriveDirectory).forDrive(driveId);
+      const writer = { threadId, userId, generation: 1, live: true, packsAfter: 0 };
+      yield* handle.setRemote({
+        provider: "github",
+        repository: "owner/repo",
+        defaultBranch: "main",
+        mode: "source",
+      });
+      yield* uploadPack({
+        driveId,
+        threadId,
+        ...remote.pack([remote.head]),
+        remoteHead: remote.head,
+      });
+      expect(
+        yield* handle.replaceMain(userId, { expectedMain: null, newMain: remote.head }),
+      ).toMatchObject({ _tag: "ok" });
+      const launched = yield* rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
+        commandId: CommandId.make(`launch-${threadId}`),
+        threadId,
+        projectId: imported.projectId,
+        title: "Land source work",
+        modelSelection: scriptedModelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "root" },
+      });
+      const cwd = launched.projection.thread.worktreePath!;
+      yield* handle.open(writer);
+
+      NodeFS.writeFileSync(
+        NodePath.join(remote.machine, "src/app.ts"),
+        "export const sourceChange = true;\n",
+      );
+      git(remote.machine, ["commit", "-qam", "Land source work"]);
+      const landed = git(remote.machine, ["rev-parse", "HEAD"]);
+      yield* uploadPack({ driveId, threadId, ...remote.pack([landed], [remote.head]) });
+      expect(
+        yield* handle.updateRefs(writer, [
+          { name: threadRef(threadId), old: remote.head, new: landed },
+        ]),
+      ).toMatchObject({ _tag: "ok" });
+      expect(
+        yield* handle.reconcile(writer, { expectedMain: remote.head, newMain: landed }),
+      ).toMatchObject({ _tag: "ok" });
+
+      expect(yield* handle.ref("main")).toBe(landed);
+      expect(github.head("main")).toBe(remote.head);
+      expect(() => git(remote.bare, ["cat-file", "-e", landed])).toThrow();
+      NodeFS.writeFileSync(NodePath.join(remote.machine, "draft.md"), "keep this draft\n");
+      git(remote.machine, ["add", "draft.md"]);
+      const autosave = git(remote.machine, [
+        "commit-tree",
+        git(remote.machine, ["write-tree"]),
+        "-p",
+        landed,
+        "-m",
+        "Auto-save",
+      ]);
+      yield* uploadPack({ driveId, threadId, ...remote.pack([autosave], [landed]) });
+      yield* handle.updateRefs(writer, [{ name: wipRef(threadId), old: null, new: autosave }]);
+      const status = () =>
+        rpc[WS_METHODS.subscribeVcsStatus]({ cwd }).pipe(Stream.take(1), Stream.runHead);
+      expect(yield* status()).toMatchObject(
+        Option.some({
+          local: {
+            hasWorkingTreeChanges: true,
+            workingTree: { files: [{ path: "draft.md" }] },
+          },
+          remote: { hasUpstream: false, aheadCount: 1, aheadOfDefaultCount: 1 },
+        }),
+      );
+
+      const response = yield* serveBranchRequest(
+        { userId, threadId, driveId, live: true },
+        JSON.stringify({ action: "push" }),
+      );
+      expect(response.status).toBe(200);
+      expect(branchJson.publish.decode(yield* Effect.promise(() => response.text()))).toMatchObject(
+        { _tag: "published", pushed: true },
+      );
+      expect(github.head("signalbox/0000abcd")).toBe(landed);
+      expect(() => git(remote.bare, ["cat-file", "-e", autosave])).toThrow();
+      expect(git(remote.bare, ["rev-parse", `${landed}^{tree}`])).toBe(
+        git(remote.machine, ["rev-parse", `${landed}^{tree}`]),
+      );
+      expect(yield* status()).toMatchObject(
+        Option.some({
+          remote: { hasUpstream: true, aheadCount: 0, aheadOfDefaultCount: 1 },
+        }),
+      );
+      for (let index = 0; index < 2; index++) {
+        git(remote.machine, ["commit", "--allow-empty", "-m", `Remote update ${index}`]);
+      }
+      git(remote.machine, ["push", remote.bare, "HEAD:refs/heads/signalbox/0000abcd"]);
+      expect(yield* status()).toMatchObject(
+        Option.some({
+          local: { hasWorkingTreeChanges: true },
+          remote: { hasUpstream: true, aheadCount: 0, behindCount: 2, aheadOfDefaultCount: 1 },
+        }),
+      );
+      expect(yield* handle.ref("main")).toBe(landed);
+      expect(yield* handle.ref(wipRef(threadId))).toBe(autosave);
     }).pipe(
       Effect.provide(Layer.mergeAll(cloud.drives.layer, github.layer)),
       Effect.provideService(UserDirectory, cloud.userDirectory),

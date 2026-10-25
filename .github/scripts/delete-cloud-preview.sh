@@ -13,6 +13,11 @@ set -euo pipefail
 : "${CLOUDFLARE_API_TOKEN:?CLOUDFLARE_API_TOKEN is required}"
 : "${GH_TOKEN:?GH_TOKEN is required}"
 pr_number="${PR_NUMBER:?PR_NUMBER is required}"
+current_state="$(gh api "repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}/pulls/$pr_number" --jq '.state')"
+if [[ "$current_state" != "closed" ]]; then
+  echo "PR #$pr_number is $current_state; skipping preview cleanup."
+  exit 0
+fi
 failed=0
 
 # The shared preview bucket is retained, so this only drops it from the stage.
@@ -22,6 +27,22 @@ if ! (cd apps/cloud && ALCHEMY_TELEMETRY_DISABLED=1 T3CODE_WORKOS_CLIENT_ID=dest
   SESSION_SECRET=destroy-only T3CODE_WORKOS_API_KEY=destroy-only \
   ./node_modules/.bin/alchemy destroy --stage "pr-$pr_number" --yes --no-input); then
   echo "::error::Could not destroy the Alchemy stage pr-$pr_number."
+  failed=1
+fi
+
+# A close job can overlap with a reopen. Recheck after the stage teardown,
+# before detaching the preview's custom domains.
+current_state="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/$pr_number" --jq '.state')"
+if [[ "$current_state" != "closed" ]]; then
+  echo "PR #$pr_number is $current_state; stopping the remaining preview cleanup."
+  exit 0
+fi
+
+# Alchemy owns the current domains, but older stages and failed destroys can
+# leave their Cloudflare records behind. Match the exact PR bindings, not the
+# deprecated `environment` field (Cloudflare reports `production` for previews).
+if ! node .github/scripts/cloudflare-preview-domains.cjs delete; then
+  echo "::error::Could not detach Worker domains for the #$pr_number preview."
   failed=1
 fi
 
@@ -43,13 +64,40 @@ done
 
 containers="$("$wrangler" containers list --json)"
 
-for name in "signalbox-model-gateway-pr-$pr_number" "signalbox-cloud-pr-$pr_number"; do
+for name in "signalbox-model-gateway-pr-$pr_number" "signalbox-cloud-pr-$pr_number" "signalbox-cloud-pr-$pr_number-traces"; do
   if ! grep -Fxq "$name" <<< "$worker_names"; then
     echo "No preview Worker $name to delete."
   elif ! "$wrangler" delete --name "$name" --force; then
     echo "::error::Could not delete preview Worker $name."
     failed=1
   fi
+done
+
+# A failed stack destroy can leave the stage's account-level trace destination.
+page=1
+while true; do
+  if ! result="$(curl --fail --silent --show-error --get \
+    --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    --data-urlencode 'per_page=1000' \
+    --data-urlencode "page=$page" \
+    "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/observability/destinations")"; then
+    echo "::error::Could not list preview trace destinations."
+    failed=1
+    break
+  fi
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    if ! curl --fail --silent --show-error --request DELETE --output /dev/null \
+      --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+      "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/observability/destinations/$slug"; then
+      echo "::error::Could not delete PR #$pr_number's trace destination."
+      failed=1
+    fi
+  done < <(jq -r --arg name "signalbox-cloud-pr-$pr_number-sentry-traces" \
+    '.result[]? | select(.name == $name) | .slug | @uri' <<< "$result")
+  total_pages="$(jq -r '.result_info.total_pages // 1' <<< "$result")"
+  ((page >= total_pages)) && break
+  ((page += 1))
 done
 
 for app in pools threads; do

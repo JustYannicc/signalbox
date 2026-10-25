@@ -1,0 +1,133 @@
+// Basalt's first release (#1192; decisions in #1322). Basalt is its own component (identity, inference,
+// connectors); the Signalbox OS composes it later (`Overview / Decisions / Components`).
+views {
+  view v1 {
+    title 'Overview/Decisions/Basalt'
+    description '''
+      What does Basalt's first release ship? A pool you can invite people to, plus your own tools connected,
+      used from local Claude Code and Codex. Nothing more.
+      - **One host** (indigo): `/` the app, `/v1` the model gateway, `/mcp` the tools gateway. Built on the
+        tools service v2 with its default experience and its own sign-in (Google, GitHub, passkeys).
+      - **Pools** (red): one pool app per pool, shared like an app inside the organization, which is only
+        the sharing boundary. Every subscription the pool backend can sign in, through its own login flow; no
+        API keys. Requests stick per conversation, new ones spread, and fail over at limits. The pool backend
+        runs in a warm container, a recorded limitation.
+      - **Your own tools** (green): one-click connectors each person connects themselves, never shared.
+        Sharing a pool never shares tools. Tool search by default.
+      - **This computer**: paste a prompt into your own agent; it writes Claude Code's and Codex's config.
+      - Feedback and analytics go to our own projects.
+
+      Not in this release: folders, admin roles, organizations beyond the sharing boundary, domain auto-join,
+      API keys in pools, shared tools, Codex computer history, threads, harness runtime, computer, Bases,
+      drive, assistant, automations.
+
+      Walk it end to end in `Workflows / Basalt` (click a box to open its step).
+    '''
+
+    include personA with {
+      description 'shares a pool'
+      navigateTo v1_overview_journey
+    }
+    include personB with {
+      description "uses A's pool"
+      navigateTo v1_invite
+    }
+    include laptopCli with {
+      description 'set up by a pasted prompt'
+      technology 'official CLIs · computer key'
+      navigateTo v1_set_up_this_computer
+    }
+
+    group 'One host' {
+      color indigo
+      opacity 6%
+      include signalbox.gateway.modelGateway with {
+        title 'Model gateway'
+        description '/v1'
+        technology 'router Worker'
+        navigateTo v1_local_model_request
+      }
+      group 'Tools service' {
+        color indigo
+        opacity 8%
+        include signalbox.web with {
+          title 'App'
+          description '/'
+          technology 'Executor v2 · Workers · Durable Objects · Postgres via Hyperdrive'
+          navigateTo v1_usage
+        }
+        include signalbox.identity with {
+          title 'Sign-in'
+          description 'Google · GitHub · passkeys'
+          technology 'Executor v2 sign-in'
+          navigateTo v1_sign_in
+        }
+        include signalbox.gateway.toolGateway with {
+          title 'Tools gateway'
+          description '/mcp · tool search'
+          technology 'Executor v2 MCP'
+          navigateTo v1_local_tool_call
+        }
+        include signalbox.connections with {
+          title 'Connectors'
+          description 'one click · yours only'
+          technology 'Executor v2 apps · our OAuth clients'
+          navigateTo v1_connections_one_click
+        }
+        group 'Organization' {
+          color red
+          opacity 8%
+          include signalbox.models with {
+            title 'Pools'
+            description 'one pool app per pool · pool backend'
+            technology 'Executor v2 app · CLIProxyAPI Home (warm container)'
+            navigateTo v1_pool_one_click
+          }
+        }
+      }
+    }
+
+    include modelProviders with {
+      title 'Subscriptions'
+      description 'Claude · ChatGPT · Grok · Antigravity · Kimi · Devin · Meta'
+      navigateTo v1_pool_one_click
+    }
+    include services with {
+      title 'Your tool accounts'
+      description 'Google · GitHub · Slack · Confluence · …'
+      navigateTo v1_connections_one_click
+    }
+    group 'Signals' {
+      color muted
+      opacity 6%
+      include telemetry.sentry with {
+        title 'Feedback'
+        technology 'Sentry · EU'
+      }
+      include telemetry.posthog with {
+        title 'Analytics'
+        technology 'PostHog · EU'
+      }
+    }
+
+    // Only the wiring that tells the story; everything else is in Modules/All modules.
+    exclude signalbox, signalbox.gateway, telemetry
+    exclude * -> *
+    include personA -> signalbox.web, personB -> signalbox.web
+    include personA -> laptopCli, personB -> laptopCli
+    include laptopCli -> signalbox.gateway.modelGateway with { title 'models' }
+    include laptopCli -> signalbox.gateway.toolGateway with { title 'tools' }
+    include signalbox.gateway.modelGateway -> signalbox.models with { title "this computer's pool" }
+    include signalbox.gateway.toolGateway -> signalbox.connections with { title 'your own' }
+    include signalbox.models -> modelProviders with { title 'sticky · spread · failover' }
+    include signalbox.connections -> services with { title 'as you' }
+
+    style personA, personB { color green }
+    style signalbox.web, signalbox.identity, signalbox.gateway.modelGateway, signalbox.gateway.toolGateway, laptopCli { color indigo }
+    style signalbox.models, modelProviders { color red }
+    style signalbox.connections, services { color green }
+    style telemetry.sentry, telemetry.posthog { color muted }
+    rank source { personA, personB }
+    autoLayout TopBottom 80 60
+  }
+}

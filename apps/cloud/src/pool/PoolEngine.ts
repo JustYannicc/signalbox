@@ -4,6 +4,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   type AccountPoolSetRoutingInput,
+  type AccountPoolProviderAdvice,
   DEFAULT_POOL_ROUTING,
   isCloudPoolAccountType,
   POOL_LINK_PATH,
@@ -15,21 +16,34 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
+import { takesTurns } from "@t3tools/shared/poolUsage";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as Migrations from "../storage/migrations.ts";
+import type { ModelCallTrace } from "../models/ModelProtocol.ts";
 import * as CliProxyApi from "./cliProxyApi.ts";
 import * as PoolContainer from "./PoolContainer.ts";
+import { unknownRelease } from "./CliProxyApiRuntime.ts";
+import { observePoolCall, PoolTelemetry } from "./PoolTelemetry.ts";
 import * as PoolLimits from "./poolLimits.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolModels from "./poolModels.ts";
+import {
+  ActivePoolModelTransport,
+  requestedModelId,
+  type PoolModelTransport,
+} from "./PoolModelTransport.ts";
+import * as PoolUsageHistory from "./poolUsageHistory.ts";
+import * as PoolUsageLedger from "./PoolUsageLedger.ts";
 import * as PoolStore from "./poolStore.ts";
 import * as ThreadAccounts from "./threadAccounts.ts";
 
@@ -151,6 +165,9 @@ export class PoolEngine extends Context.Service<
      */
     readonly prepareDelete: (actor: PoolActor) => Effect.Effect<void, Failure>;
     readonly accounts: (actor: PoolActor) => Effect.Effect<PoolAccounts, Failure>;
+    readonly advice: (
+      actor: PoolActor,
+    ) => Effect.Effect<ReadonlyArray<AccountPoolProviderAdvice> | null, Failure>;
     /**
      * The models the pool serves, for the check at turn start. A pool whose
      * models were never attempted reads them now, waking its container: the
@@ -159,10 +176,17 @@ export class PoolEngine extends Context.Service<
     readonly models: (actor: PoolActor) => Effect.Effect<PoolModels.PoolModels, Failure>;
     /** Reads the last catalog without refreshing it, for a pool link's metadata endpoint. */
     readonly cachedModels: (actor: PoolActor) => Effect.Effect<PoolModels.PoolModels, Failure>;
+    /** Replaces the locally served model list after checking the pool admin grant. */
+    readonly registerLocalModelTransport: (
+      actor: PoolActor,
+      transport: Pick<PoolModelTransport, "id" | "models">,
+    ) => Effect.Effect<void, Failure>;
     /** Refreshes a stale catalog from an alarm, waking a managed pool for this read. */
     readonly refreshModelsAtAlarm: () => Effect.Effect<void, SqlError>;
     /** The next catalog refresh alarm for a pool with accounts or an external backing. */
     readonly nextModelsRefreshAt: () => Effect.Effect<number | null, SqlError>;
+    readonly refreshUsageAtAlarm: () => Effect.Effect<void, SqlError>;
+    readonly nextUsageSampleAt: () => Effect.Effect<number | null, SqlError>;
     readonly startLogin: (
       actor: PoolActor,
       provider: CliProxyApi.PoolLoginProvider,
@@ -177,6 +201,11 @@ export class PoolEngine extends Context.Service<
       callback: CliProxyApi.LoginCallback,
     ) => Effect.Effect<void, Failure>;
     readonly cancelLogin: (actor: PoolActor, state: string) => Effect.Effect<boolean, Failure>;
+    readonly logoutAccount: (
+      actor: PoolActor,
+      provider: CliProxyApi.PoolLoginProvider,
+      name: string,
+    ) => Effect.Effect<void, Failure>;
     readonly updateAccount: (
       actor: PoolActor,
       name: string,
@@ -202,8 +231,8 @@ export class PoolEngine extends Context.Service<
       accounts: PoolLinkMoveRequest["accounts"],
     ) => Effect.Effect<PoolLinkMoveResult, Failure>;
     /**
-     * A model request from a turn `actor` runs, sent to the pool's
-     * CLIProxyAPI. Checked against the grants on every request, so losing
+     * A model request from a turn `actor` runs on its registered local
+     * transport or the pool's CLIProxyAPI. Checked against the grants on every request, so losing
      * access stops the next one. `upstreamMs`: from handing it to the
      * CLIProxyAPI to its response headers. A request naming its `thread`
      * stays on that thread's account (`threadAccounts.ts`); `accountMoved`
@@ -214,6 +243,7 @@ export class PoolEngine extends Context.Service<
       path: string,
       request: Request,
       thread?: string,
+      trace?: ModelCallTrace,
     ) => Effect.Effect<
       {
         readonly response: Response;
@@ -303,6 +333,18 @@ const migrations = Migrator.fromRecord({
   }),
   "0008_thread_accounts": ThreadAccounts.createTables,
   "0009_model_metadata": PoolModels.addMetadata,
+  "0010_usage_history": PoolUsageHistory.createTables,
+  "0011_usage_sampling": PoolUsageHistory.addSampling,
+  "0012_account_logout": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE logged_out_accounts (name TEXT PRIMARY KEY)`;
+  }),
+  "0012_usage_ledger": PoolUsageLedger.createTable,
+  "0013_pending_account_logout": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`ALTER TABLE logged_out_accounts ADD COLUMN pending INTEGER NOT NULL DEFAULT 0`;
+  }),
+  "0014_local_models": PoolModels.createLocalModelTable,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -335,6 +377,15 @@ const MANAGED_CONFIG_RETRY_MS = 5 * 60_000;
 
 /** How old the account list may get before a read asks the CLIProxyAPI again. */
 export const ACCOUNTS_FRESH_MS = 30_000;
+
+/** A passive account snapshot never waits on an unbounded pool or provider read. */
+export const ACCOUNTS_READ_TIMEOUT_MS = 750;
+
+/** A stuck upstream request must release the shared refresh so polling can retry. */
+export const ACCOUNTS_REFRESH_TIMEOUT_MS = 120_000;
+
+export const ACCOUNTS_READ_TIMEOUT_MESSAGE =
+  "The pool did not refresh its account snapshot in time. Try again shortly.";
 
 /** CLIProxyAPI refreshes its model registry every three hours. */
 export const MODELS_REFRESH_MS = 3 * 60 * 60_000;
@@ -396,6 +447,8 @@ const make = Effect.gen(function* () {
   const store = yield* PoolStore.PoolStore;
   const container = yield* PoolContainer.PoolContainer;
   const external = yield* ExternalFetch;
+  const telemetry = yield* PoolTelemetry;
+  const localTransport = yield* ActivePoolModelTransport;
   const crypto = yield* Crypto.Crypto;
   const links = yield* PoolLinks.PoolLinks;
   const randomKey = PoolLinks.randomKey.pipe(Effect.provideService(Crypto.Crypto, crypto));
@@ -461,36 +514,72 @@ const make = Effect.gen(function* () {
    */
   const endpointOf = (
     row: PoolRow,
-    options?: { readonly passive?: true; readonly onSend?: () => void; readonly models?: true },
-  ): CliProxyApi.PoolEndpoint =>
-    row.backing === "external" &&
-    row.external_url !== null &&
-    row.external_management_key !== null &&
-    row.external_client_key !== null
+    options?: {
+      readonly passive?: true;
+      readonly onSend?: () => void;
+      readonly models?: true;
+      readonly actor?: PoolActor;
+      readonly thread?: string;
+      readonly trace?: ModelCallTrace;
+    },
+  ): CliProxyApi.PoolEndpoint => {
+    const remote =
+      row.backing === "external" &&
+      row.external_url !== null &&
+      row.external_management_key !== null &&
+      row.external_client_key !== null;
+    const endpoint = remote
       ? {
-          fetch: (request) => {
-            options?.onSend?.();
-            return external.fetch(request);
-          },
           baseUrl: row.external_url,
           managementKey: row.external_management_key,
           clientKey: row.external_client_key,
           link: isPoolLinkUrl(row.external_url),
         }
       : {
-          fetch: (request) =>
-            options?.passive
-              ? container.peek(request)
-              : container.fetch(request, {
-                  store: { accessKey: row.store_access_key, secretKey: row.store_secret_key },
-                  ...(options?.onSend === undefined ? {} : { onSend: options.onSend }),
-                  ...(options?.models ? { models: { clientKey: row.client_key } } : {}),
-                }),
           baseUrl: PoolContainer.CONTAINER_ORIGIN,
           managementKey: row.management_key,
           clientKey: row.client_key,
           link: false,
         };
+    return {
+      ...endpoint,
+      fetch: (request) =>
+        observePoolCall({
+          request,
+          baseUrl: endpoint.baseUrl,
+          backing: endpoint.link ? "linked" : remote ? "external" : "managed",
+          release: remote ? () => unknownRelease : container.release,
+          correlation: {
+            ...(options?.actor && { person: { id: options.actor.userId } }),
+            // Link affinity is caller-supplied; only the model authority supplies a trace.
+            ...(options?.trace && {
+              ...(options.thread && { thread: { id: options.thread } }),
+              turn: { id: options.trace.runId, traceId: options.trace.traceId },
+            }),
+          },
+          submit: telemetry.submit,
+          send: (onSend) => {
+            const sending = () => {
+              onSend();
+              options?.onSend?.();
+            };
+            if (remote) {
+              sending();
+              return external.fetch(request);
+            }
+            if (options?.passive) {
+              sending();
+              return container.peek(request);
+            }
+            return container.fetch(request, {
+              store: { accessKey: row.store_access_key, secretKey: row.store_secret_key },
+              onSend: sending,
+              ...(options?.models ? { models: { clientKey: row.client_key } } : {}),
+            });
+          },
+        }),
+    };
+  };
 
   /** The routing the pool's admins chose, or the default. */
   const routingOf = sql<{
@@ -556,6 +645,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const accountChanges = yield* Semaphore.make(1);
   const cachedAccounts = Effect.gen(function* () {
     const rows = yield* sql<AccountRow>`SELECT name, type, email, disabled, signed_out,
       contributed_by FROM accounts ORDER BY added_at, name`;
@@ -579,12 +669,57 @@ const make = Effect.gen(function* () {
     };
   });
 
+  /** Stores the account list without claiming a foreground snapshot or quota read completed. */
+  const storeAccountRows = (
+    live: ReadonlyArray<CliProxyApi.ListedAccount>,
+    cached: ReadonlyArray<CachedAccount>,
+    now: number,
+    contributors: (name: string) => string | null = () => null,
+  ) =>
+    Effect.gen(function* () {
+      const known = new Map(cached.map((account) => [account.name, account]));
+      for (const account of live) {
+        // A fresh credential for this name completes reauthentication.
+        yield* sql`DELETE FROM logged_out_accounts WHERE name = ${account.name} AND pending = 0`;
+        const before = known.get(account.name);
+        if (
+          before !== undefined &&
+          before.type === account.type &&
+          before.email === account.email &&
+          before.disabled === account.disabled &&
+          before.signedOut === account.signedOut
+        )
+          continue;
+        const contributor = before === undefined ? contributors(account.name) : null;
+        yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
+          contributed_by, added_at)
+        VALUES (${account.name}, ${account.type}, ${account.email},
+          ${account.disabled ? 1 : 0}, ${account.signedOut ? 1 : 0}, ${contributor}, ${now})
+        ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
+          disabled = excluded.disabled, signed_out = excluded.signed_out`;
+      }
+      const names = new Set(live.map((account) => account.name));
+      for (const account of cached) {
+        if (!names.has(account.name)) {
+          // The account lock excludes DELETE, so absence confirms a pending logout completed.
+          yield* sql`UPDATE accounts SET signed_out = 1 WHERE name = ${account.name}
+            AND name IN (SELECT name FROM logged_out_accounts WHERE pending = 1)`;
+          yield* sql`UPDATE logged_out_accounts SET pending = 0
+            WHERE name = ${account.name} AND pending = 1`;
+          yield* sql`DELETE FROM accounts WHERE name = ${account.name}
+            AND name NOT IN (SELECT name FROM logged_out_accounts)`;
+        }
+      }
+    });
+
   const threadAccounts = ThreadAccounts.make({
     sql,
     audit: (detail) => audit(POOL_ITSELF, "move-thread", detail),
   });
 
   const readingLimits = yield* Semaphore.make(1);
+  const accountSnapshotReadLock = yield* Semaphore.make(1);
+  let accountSnapshotReadFiber: Fiber.Fiber<void, never> | null = null;
 
   /**
    * Reads the accounts' windows after their list (`poolLimits.ts`), one read
@@ -662,14 +797,26 @@ const make = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const endpoint = endpointOf(row, options);
       yield* ensureManagedConfig(endpoint);
-      const live = yield* CliProxyApi.listAccounts(endpoint).pipe(
-        Effect.catchTags({
-          PoolBackendError: (error) =>
-            sql`UPDATE accounts_state SET checked_at = ${now}, error = ${error.detail}
-              WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
-        }),
-      );
-      // The models the accounts serve. A failed read keeps the last list.
+      const live = yield* Effect.gen(function* () {
+        const live = yield* CliProxyApi.listAccounts(endpoint).pipe(
+          Effect.catchTags({
+            PoolBackendError: (error) =>
+              sql`UPDATE accounts_state SET checked_at = ${now}, error = ${error.detail}
+                WHERE id = 1`.pipe(Effect.andThen(Effect.fail(error))),
+          }),
+        );
+        const cached = yield* cachedAccounts;
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* storeAccountRows(live, cached.accounts, now, contributors);
+            yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+          }),
+        );
+        return live;
+      }).pipe(accountChanges.withPermits(1));
+      const mode: PoolLimits.ReadMode =
+        options?.passive === true || options?.probe === true ? "probe" : "free";
+      // Account freshness must not wait for model discovery or provider usage probes.
       yield* CliProxyApi.listModels(endpoint).pipe(
         Effect.flatMap((models) => withSql(PoolModels.store(models, now))),
         Effect.catchTags({
@@ -677,43 +824,6 @@ const make = Effect.gen(function* () {
             Effect.logWarning("pool model list read failed", error.detail, error.cause).pipe(
               Effect.andThen(withSql(PoolModels.markTried(now))),
             ),
-        }),
-      );
-      const cached = yield* cachedAccounts;
-      const known = new Map(cached.accounts.map((account) => [account.name, account]));
-      const changed = live.filter((account) => {
-        const before = known.get(account.name);
-        return (
-          before === undefined ||
-          before.type !== account.type ||
-          before.email !== account.email ||
-          before.disabled !== account.disabled ||
-          before.signedOut !== account.signedOut
-        );
-      });
-      const names = new Set(live.map((account) => account.name));
-      const removed = cached.accounts.filter((account) => !names.has(account.name));
-      const mode: PoolLimits.ReadMode =
-        options?.passive === true || options?.probe === true ? "probe" : "free";
-      if (changed.length === 0 && removed.length === 0 && cached.error === null) {
-        yield* refreshLimits(endpoint, live, now, mode);
-        return live;
-      }
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          for (const account of changed) {
-            const contributor = known.has(account.name) ? null : contributors(account.name);
-            yield* sql`INSERT INTO accounts (name, type, email, disabled, signed_out,
-                contributed_by, added_at)
-              VALUES (${account.name}, ${account.type}, ${account.email},
-                ${account.disabled ? 1 : 0}, ${account.signedOut ? 1 : 0}, ${contributor}, ${now})
-              ON CONFLICT (name) DO UPDATE SET type = excluded.type, email = excluded.email,
-                disabled = excluded.disabled, signed_out = excluded.signed_out`;
-          }
-          for (const account of removed) {
-            yield* sql`DELETE FROM accounts WHERE name = ${account.name}`;
-          }
-          yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
         }),
       );
       yield* refreshLimits(endpoint, live, now, mode);
@@ -857,6 +967,62 @@ const make = Effect.gen(function* () {
       );
     });
 
+  /** A read refresh outlives a caller that only waits for its deadline. */
+  const refreshAccountSnapshot = (row: PoolRow) =>
+    Effect.gen(function* () {
+      yield* firstModelsRead(row).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("pool initial account snapshot refresh failed", { cause }),
+        ),
+      );
+      const afterModels = yield* cachedAccounts;
+      if ((yield* Clock.currentTimeMillis) - afterModels.checkedAt < ACCOUNTS_FRESH_MS) return;
+      if (row.backing !== "external" && !(yield* container.running)) return;
+      yield* refreshAccounts(row, undefined, { passive: true });
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: ACCOUNTS_REFRESH_TIMEOUT_MS,
+        orElse: () => Effect.logWarning("pool account snapshot refresh timed out"),
+      }),
+      Effect.catch((cause) => Effect.logWarning("pool account snapshot refresh failed", { cause })),
+    );
+
+  /** Starts or joins the one background read shared by accounts and linkInfo. */
+  const accountSnapshotRead = (row: PoolRow) =>
+    accountSnapshotReadLock.withPermits(1)(
+      Effect.gen(function* () {
+        const cached = yield* cachedAccounts;
+        const models = yield* cachedModels;
+        const now = yield* Clock.currentTimeMillis;
+        const firstModelsReadDue =
+          cached.accounts.length > 0 &&
+          models.checkedAt === 0 &&
+          (models.attemptedAt === 0 || now - models.attemptedAt >= MODELS_REFRESH_RETRY_MS);
+        const canReadStaleAccounts = row.backing === "external" ? true : yield* container.running;
+        const staleReadDue = now - cached.checkedAt >= ACCOUNTS_FRESH_MS && canReadStaleAccounts;
+        if (!firstModelsReadDue && !staleReadDue) return null;
+        if (accountSnapshotReadFiber !== null) return accountSnapshotReadFiber;
+
+        // Publish the fiber before releasing the gate so concurrent RPCs can join it.
+        const start = yield* Deferred.make<void>();
+        const fiber = yield* Effect.forkDetach(
+          Deferred.await(start).pipe(
+            Effect.andThen(refreshAccountSnapshot(row)),
+            Effect.ensuring(
+              accountSnapshotReadLock.withPermits(1)(
+                Effect.sync(() => {
+                  accountSnapshotReadFiber = null;
+                }),
+              ),
+            ),
+          ),
+        );
+        accountSnapshotReadFiber = fiber;
+        yield* Deferred.succeed(start, undefined);
+        return fiber;
+      }),
+    );
+
   /**
    * The cached accounts, read again once stale. Reading never wakes a sleeping
    * container or keeps one awake: an asleep pool's accounts are what it last
@@ -864,13 +1030,22 @@ const make = Effect.gen(function* () {
    */
   const cachedOrRead = (row: PoolRow) =>
     Effect.gen(function* () {
-      // A failed first read leaves the cached accounts as they were.
-      yield* firstModelsRead(row).pipe(Effect.ignore);
       const cached = yield* cachedAccounts;
-      if ((yield* Clock.currentTimeMillis) - cached.checkedAt < ACCOUNTS_FRESH_MS) return cached;
-      if (row.backing !== "external" && !(yield* container.running)) return cached;
-      const read = yield* refreshAccounts(row, undefined, { passive: true }).pipe(Effect.result);
-      return read._tag === "Success" ? yield* cachedAccounts : cached;
+      const fiber = yield* accountSnapshotRead(row);
+      if (fiber === null) return yield* cachedAccounts.pipe(Effect.orElseSucceed(() => cached));
+      const completed = yield* Fiber.join(fiber).pipe(
+        Effect.as(true),
+        Effect.timeoutOrElse({
+          duration: ACCOUNTS_READ_TIMEOUT_MS,
+          orElse: () => Effect.succeed(false),
+        }),
+      );
+      if (completed) return yield* cachedAccounts.pipe(Effect.orElseSucceed(() => cached));
+      // The account list may already have committed while its usage probes were slow.
+      const after = yield* cachedAccounts;
+      if (after.checkedAt > cached.checkedAt) return after;
+      yield* sql`UPDATE accounts_state SET error = ${ACCOUNTS_READ_TIMEOUT_MESSAGE} WHERE id = 1`;
+      return yield* cachedAccounts;
     });
 
   /** Whether a catalog can be refreshed without starting this pool's container. */
@@ -945,6 +1120,20 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const advice: PoolEngine["Service"]["advice"] = (actor) =>
+    Effect.gen(function* () {
+      const { role } = yield* access(actor, "member");
+      // Account counts and plans are admin-only, checked again on each read.
+      if (role !== "admin") return null;
+      const read = yield* Effect.flatMap(cachedAccounts, withLimits);
+      return yield* withSql(
+        PoolUsageHistory.advice(
+          PoolUsageHistory.accountsWithQuota(read.accounts).filter(takesTurns),
+          yield* Clock.currentTimeMillis,
+        ),
+      );
+    });
+
   // A turn start may make its first read; later refreshes are passive.
   const models: PoolEngine["Service"]["models"] = (actor) =>
     Effect.gen(function* () {
@@ -963,6 +1152,37 @@ const make = Effect.gen(function* () {
 
   const cachedModelsForActor: PoolEngine["Service"]["cachedModels"] = (actor) =>
     Effect.as(access(actor, "member"), undefined).pipe(Effect.andThen(cachedModels));
+
+  const registerLocalModelTransport: PoolEngine["Service"]["registerLocalModelTransport"] = (
+    actor,
+    transport,
+  ) =>
+    Effect.gen(function* () {
+      const { row } = yield* access(actor, "admin");
+      if (row.personal !== 1 || row.backing !== "managed") {
+        return yield* reject(
+          "Local model transport can only be registered on a managed personal pool.",
+        );
+      }
+      if (transport.id.trim().length === 0 || localTransport?.id !== transport.id) {
+        return yield* reject("This local model transport is not available to the pool.");
+      }
+      const ids = new Set<string>();
+      for (const model of transport.models) {
+        if (
+          model.id.trim().length === 0 ||
+          model.ownedBy.trim().length === 0 ||
+          ids.has(model.id)
+        ) {
+          return yield* reject(
+            "Local model registrations need unique, non-empty model ids and owners.",
+          );
+        }
+        ids.add(model.id);
+      }
+      yield* withSql(PoolModels.storeLocal(transport.id, transport.models));
+      yield* audit(actor, "register-local-models", transport.id);
+    });
 
   const refreshModelsAtAlarm: PoolEngine["Service"]["refreshModelsAtAlarm"] = () =>
     Effect.gen(function* () {
@@ -987,6 +1207,54 @@ const make = Effect.gen(function* () {
               : now;
       return Math.max(now, next);
     });
+
+  const nextUsageSampleAt: PoolEngine["Service"]["nextUsageSampleAt"] = () =>
+    Effect.gen(function* () {
+      const row = yield* poolRow;
+      if (row === null) return null;
+      const { accounts } = yield* cachedAccounts;
+      if (
+        !accounts.some(
+          (account) =>
+            PoolLimits.READS_LIMITS.has(account.type) && !account.disabled && !account.signedOut,
+        )
+      )
+        return null;
+      return yield* withSql(PoolUsageHistory.nextSampleAt(yield* Clock.currentTimeMillis));
+    });
+
+  const samplingUsage = yield* Semaphore.make(1);
+  const refreshUsageAtAlarm: PoolEngine["Service"]["refreshUsageAtAlarm"] = () =>
+    Effect.gen(function* () {
+      const next = yield* nextUsageSampleAt();
+      const now = yield* Clock.currentTimeMillis;
+      if (next === null || next > now) return;
+      yield* withSql(PoolUsageHistory.sampledAt(now));
+      const row = yield* poolRow;
+      if (row === null) return;
+      // Unlike foreground snapshots, the quarter-hourly sample may wake a sleeping pool.
+      const endpoint = endpointOf(row, { models: true });
+      yield* ensureManagedConfig(endpoint);
+      const live = yield* Effect.gen(function* () {
+        const live = yield* CliProxyApi.listAccounts(endpoint);
+        const cached = yield* cachedAccounts;
+        // Login/import must discover new accounts so their contributor is recorded on insertion.
+        const known = new Set(cached.accounts.map((account) => account.name));
+        const held = live.filter((account) => known.has(account.name));
+        yield* sql.withTransaction(storeAccountRows(held, cached.accounts, now));
+        return live;
+      }).pipe(accountChanges.withPermits(1));
+      yield* refreshLimits(endpoint, live, now, "probe");
+    }).pipe(
+      samplingUsage.withPermits(1),
+      Effect.timeoutOrElse({
+        duration: ACCOUNTS_REFRESH_TIMEOUT_MS,
+        orElse: () => Effect.logWarning("pool usage sample timed out"),
+      }),
+      Effect.catchTags({
+        PoolBackendError: (cause) => Effect.logWarning("pool usage sample failed", { cause }),
+      }),
+    );
 
   const startLogin: PoolEngine["Service"]["startLogin"] = (actor, provider, flow) =>
     Effect.gen(function* () {
@@ -1041,13 +1309,59 @@ const make = Effect.gen(function* () {
       return cancelled;
     });
 
+  const logoutAccount: PoolEngine["Service"]["logoutAccount"] = (actor, provider, name) =>
+    Effect.gen(function* () {
+      const { row } = yield* access(actor, "admin");
+      yield* refuseIfLinked(row);
+      const [account] = yield* sql<AccountRow>`SELECT * FROM accounts WHERE name = ${name}`;
+      if (account === undefined || account.type !== provider) {
+        return yield* reject("That account does not belong to this provider in this pool.");
+      }
+      const endpoint = endpointOf(row);
+      const live = yield* CliProxyApi.listAccounts(endpoint);
+      const credential = live.find((entry) => entry.name === name);
+      if (credential !== undefined && credential.type !== provider) {
+        return yield* reject("That account does not belong to this provider in this pool.");
+      }
+      // CLIProxyAPI invalidates its runtime session when its credential is removed.
+      // Keep the pool account and attribution, so logout is distinct from removing it.
+      if (credential !== undefined) {
+        // A lost DELETE reply must not let refresh discard the row needed for a retry.
+        yield* sql`INSERT INTO logged_out_accounts (name, pending) VALUES (${name}, 1)
+          ON CONFLICT (name) DO UPDATE SET pending = 1`;
+        yield* CliProxyApi.removeAccount(endpoint, name);
+      }
+      const now = yield* Clock.currentTimeMillis;
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql`INSERT INTO logged_out_accounts (name, pending) VALUES (${name}, 0)
+            ON CONFLICT (name) DO UPDATE SET pending = 0`;
+          yield* sql`UPDATE accounts SET signed_out = 1 WHERE name = ${name}`;
+          yield* sql`UPDATE accounts_state SET checked_at = ${now}, error = NULL WHERE id = 1`;
+          yield* audit(actor, "logout-account", name);
+        }),
+      );
+    }).pipe(accountChanges.withPermits(1));
+
   const updateAccount: PoolEngine["Service"]["updateAccount"] = (actor, name, action) =>
     Effect.gen(function* () {
       const { row } = yield* access(actor, "admin");
       yield* refuseIfLinked(row);
       const endpoint = endpointOf(row);
-      if (action === "remove") yield* CliProxyApi.removeAccount(endpoint, name);
-      else yield* CliProxyApi.setAccountDisabled(endpoint, name, action === "pause");
+      const loggedOut = yield* sql`SELECT 1 FROM logged_out_accounts WHERE name = ${name}
+        AND pending = 0`;
+      if (loggedOut.length > 0) {
+        if (action !== "remove") return yield* reject("Sign in to this account again first.");
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`DELETE FROM logged_out_accounts WHERE name = ${name}`;
+            yield* sql`DELETE FROM accounts WHERE name = ${name}`;
+          }),
+        );
+      } else if (action === "remove") {
+        yield* CliProxyApi.removeAccount(endpoint, name);
+        yield* sql`DELETE FROM logged_out_accounts WHERE name = ${name}`;
+      } else yield* CliProxyApi.setAccountDisabled(endpoint, name, action === "pause");
       yield* audit(actor, `${action}-account`, name);
       yield* refreshAccounts(row).pipe(Effect.ignore);
     });
@@ -1127,7 +1441,13 @@ const make = Effect.gen(function* () {
       return { imported, skipped };
     });
 
-  const forwardModel: PoolEngine["Service"]["forwardModel"] = (actor, path, request, thread) =>
+  const forwardModel: PoolEngine["Service"]["forwardModel"] = (
+    actor,
+    path,
+    request,
+    thread,
+    trace,
+  ) =>
     Effect.gen(function* () {
       // Said in the turn that fails, which is how someone removed from the pool finds out.
       const { row } = yield* access(actor, "member", {
@@ -1136,10 +1456,39 @@ const make = Effect.gen(function* () {
       });
       const clock = yield* Clock.Clock;
       const sent = { at: clock.currentTimeMillisUnsafe() };
+      const requestedModel = yield* Effect.promise(() => requestedModelId(path, request));
+      if (localTransport !== null && requestedModel !== null) {
+        const catalog = yield* cachedModels;
+        const registered = catalog.localModels.find(
+          (model) =>
+            model.id === requestedModel && model.registration?.transportId === localTransport.id,
+        );
+        if (registered !== undefined) {
+          const response = yield* Effect.tryPromise({
+            try: () => localTransport.fetch(request),
+            catch: (cause) =>
+              new CliProxyApi.PoolBackendError({
+                detail: "The local model transport failed.",
+                cause,
+              }),
+          });
+          return {
+            response,
+            upstreamMs: clock.currentTimeMillisUnsafe() - sent.at,
+            accountMoved: null,
+          };
+        }
+        if (!catalog.accountModels.some((model) => model.id === requestedModel)) {
+          return yield* reject(`This pool does not serve model '${requestedModel}'.`);
+        }
+      }
       // Accounts that serve models: a pool without any has nothing to wait for on a cold start.
       const serving =
         yield* sql`SELECT 1 FROM accounts WHERE disabled = 0 AND signed_out = 0 LIMIT 1`;
       const endpoint = endpointOf(row, {
+        actor,
+        ...(thread === undefined ? {} : { thread }),
+        ...(trace === undefined ? {} : { trace }),
         onSend: () => {
           sent.at = clock.currentTimeMillisUnsafe();
         },
@@ -1179,14 +1528,19 @@ const make = Effect.gen(function* () {
     setBacking,
     prepareDelete,
     accounts,
+    advice,
     models,
     cachedModels: cachedModelsForActor,
+    registerLocalModelTransport,
     refreshModelsAtAlarm,
     nextModelsRefreshAt,
+    refreshUsageAtAlarm,
+    nextUsageSampleAt,
     startLogin,
     loginStatus,
     completeLogin,
     cancelLogin,
+    logoutAccount,
     updateAccount,
     openLink,
     linkInfo,

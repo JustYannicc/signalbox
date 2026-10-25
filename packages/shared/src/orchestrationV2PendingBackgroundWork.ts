@@ -75,13 +75,15 @@ type PendingBackgroundWorkPullRequest = Pick<
 type PendingBackgroundWorkProviderThread = Pick<
   OrchestrationV2ProviderThread,
   "id" | "pendingBackgroundTasks"
->;
+> & { readonly providerInstanceId?: OrchestrationV2ProviderThread["providerInstanceId"] };
 
 type PendingBackgroundWorkTurnItem = {
   readonly id: OrchestrationV2TurnItem["id"] | string;
   readonly type: OrchestrationV2TurnItem["type"];
   readonly status: OrchestrationV2TurnItem["status"];
   readonly title: string | null;
+  /** Shell readers join the owner, even when its provider thread belongs to a child app thread. */
+  readonly owningProviderInstanceId?: OrchestrationV2ProviderThread["providerInstanceId"];
   readonly runId?: OrchestrationV2Run["id"] | string | null;
   readonly nativeItemRef?: {
     readonly nativeId: string | null;
@@ -139,6 +141,9 @@ function pendingTaskFromTurnItem(
       return {
         ...named,
         kind: "subagent",
+        ...(item.owningProviderInstanceId === undefined
+          ? {}
+          : { providerInstanceId: item.owningProviderInstanceId }),
         ...(item.childThreadId == null ? {} : { childThreadId: item.childThreadId }),
       };
     case "command_execution":
@@ -191,7 +196,6 @@ export function derivePendingBackgroundWork(input: {
    */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
   readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
-  /** Adds the thread's registered monitors (see `setThreadMonitorSource`). Stop pickers leave it out. */
   readonly threadId?: string | undefined;
   /** Monitors the caller keeps itself, where a per-process source can't: a cloud thread's object. */
   readonly monitors?: ReadonlyArray<PendingBackgroundWorkTask> | undefined;
@@ -206,7 +210,7 @@ export function derivePendingBackgroundWork(input: {
     return [];
   }
   if (input.latestRun == null) {
-    return [...pullRequestWatchTasks(input.pullRequests), ...threadMonitors(input)];
+    return [...pullRequestWatchTasks(input.pullRequests), ...(input.monitors ?? [])];
   }
   if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
     return [];
@@ -228,6 +232,9 @@ export function derivePendingBackgroundWork(input: {
       const description = rawDescription?.trim();
       byTaskId.set(task.taskId, {
         ...named,
+        ...(task.kind === "subagent"
+          ? { providerInstanceId: providerThread.providerInstanceId }
+          : {}),
         ...(description === undefined || description.length === 0 ? {} : { description }),
       });
     }
@@ -243,31 +250,9 @@ export function derivePendingBackgroundWork(input: {
   }
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
-  for (const task of threadMonitors(input)) byTaskId.set(task.taskId, task);
+  for (const task of input.monitors ?? []) byTaskId.set(task.taskId, task);
 
   return Array.from(byTaskId.values());
-}
-
-/**
- * Monitors a server feature keeps outside the projection, such as Signalbox
- * automation runs attached to a thread. They wake the agent like a pull
- * request watch, so they show and hold the same way. One source per process;
- * clients never set one.
- */
-let threadMonitorSource: (threadId: string) => ReadonlyArray<PendingBackgroundWorkTask> = () => [];
-
-export function setThreadMonitorSource(
-  source: (threadId: string) => ReadonlyArray<PendingBackgroundWorkTask>,
-): void {
-  threadMonitorSource = source;
-}
-
-function threadMonitors(input: {
-  readonly threadId?: string | undefined;
-  readonly monitors?: ReadonlyArray<PendingBackgroundWorkTask> | undefined;
-}): ReadonlyArray<PendingBackgroundWorkTask> {
-  const registered = input.threadId === undefined ? [] : threadMonitorSource(input.threadId);
-  return input.monitors === undefined ? registered : [...registered, ...input.monitors];
 }
 
 function pullRequestWatchTasks(

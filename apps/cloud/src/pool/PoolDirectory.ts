@@ -2,8 +2,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type { AccountPoolSetRoutingInput } from "@t3tools/contracts/accountHub";
+import type {
+  AccountPoolSetRoutingInput,
+  AccountPoolProviderAdvice,
+} from "@t3tools/contracts/accountHub";
 
+import type { ModelCallTrace, ModelForwardReply } from "../models/ModelProtocol.ts";
 import type {
   LoginCallback,
   LoginStart,
@@ -67,6 +71,9 @@ export interface PoolObjectApi {
   /** Stops the pool's container and erases the pool. */
   readonly delete: (actor: PoolActor) => Promise<PoolReply<null>>;
   readonly accounts: (actor: PoolActor) => Promise<PoolReply<PoolAccounts>>;
+  readonly advice: (
+    actor: PoolActor,
+  ) => Promise<PoolReply<ReadonlyArray<AccountPoolProviderAdvice> | null>>;
   /** The models the pool serves, for the check at turn start (`thread/TurnModels.ts`). */
   readonly models: (actor: PoolActor) => Promise<PoolReply<PoolModels>>;
   readonly startLogin: (
@@ -77,6 +84,11 @@ export interface PoolObjectApi {
   readonly loginStatus: (actor: PoolActor, state: string) => Promise<PoolReply<LoginStatus>>;
   readonly completeLogin: (actor: PoolActor, callback: LoginCallback) => Promise<PoolReply<null>>;
   readonly cancelLogin: (actor: PoolActor, state: string) => Promise<PoolReply<boolean>>;
+  readonly logoutAccount: (
+    actor: PoolActor,
+    provider: PoolLoginProvider,
+    name: string,
+  ) => Promise<PoolReply<null>>;
   readonly updateAccount: (
     actor: PoolActor,
     name: string,
@@ -92,27 +104,6 @@ export interface PoolObjectApi {
   ) => Promise<PoolReply<string>>;
 }
 
-/** Where a turn's model requests go: a pool's object, for the user the turn runs for. */
-export interface ModelPoolRoute {
-  readonly objectName: string;
-  readonly userId: string;
-}
-
-/** How a pool object answered a model request. */
-export type ModelForwardReply =
-  | {
-      readonly _tag: "forwarded";
-      readonly response: Response;
-      /** From handing the request to the pool's CLIProxyAPI to its response headers. */
-      readonly upstreamMs: number;
-      /** What the thread should say: it had to leave its account (`threadAccounts.ts`). */
-      readonly accountMoved?: string;
-    }
-  /** The user may not use the pool, or it is gone. */
-  | { readonly _tag: "denied"; readonly reason: string }
-  /** The pool's CLIProxyAPI could not be reached. */
-  | { readonly _tag: "failed"; readonly reason: string };
-
 /**
  * What the ModelGateway asks of a pool object, through the cloud's
  * `ModelGrants` entrypoint. Apart from `PoolObjectApi`: it hands back a
@@ -125,6 +116,7 @@ export interface PoolModelApi {
     path: string,
     request: Request,
     thread?: string,
+    trace?: ModelCallTrace,
   ) => Promise<ModelForwardReply>;
 }
 
@@ -153,11 +145,13 @@ const METHODS = Object.keys({
   setBacking: true,
   delete: true,
   accounts: true,
+  advice: true,
   models: true,
   startLogin: true,
   loginStatus: true,
   completeLogin: true,
   cancelLogin: true,
+  logoutAccount: true,
   updateAccount: true,
   openLink: true,
 } satisfies Record<Method, true>) as ReadonlyArray<Method>;

@@ -14,6 +14,13 @@ export const ProviderSetupInput = Schema.Struct({
 });
 export type ProviderSetupInput = typeof ProviderSetupInput.Type;
 
+// signalbox: pooled providers require an exact account; native providers retain instance logout.
+export const ProviderAuthLogoutInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  accountId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+});
+export type ProviderAuthLogoutInput = typeof ProviderAuthLogoutInput.Type;
+
 export const CodexAuthCallbackInput = Schema.Struct({
   authorizationUrl: Schema.String.check(Schema.isMaxLength(16_384)),
   returnUrl: Schema.String.check(Schema.isMaxLength(4_096)),

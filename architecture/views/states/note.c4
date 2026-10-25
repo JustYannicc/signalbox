@@ -1,0 +1,26 @@
+// State machine for one note. The walk through it with people and modules is the dynamic view state_note.
+model {
+  smNote = state 'Note lifecycle' {
+    live = state 'Live' { description 'no status · never a needs-you' }
+    archived = state 'Archived' { description 'by the person or the assistant' }
+    discarded = state 'Discarded' { description 'Undo window' }
+    gone = state 'Gone'
+
+    live -[transition]-> archived 'archive · fold'
+    archived -[transition]-> live 'restore'
+    live -[transition]-> discarded 'discard'
+    discarded -[transition]-> live 'undo'
+    discarded -[transition]-> gone 'window passes'
+  }
+}
+views {
+  view state-note of smNote {
+    title 'States/Note/State machine'
+    description 'How is one note archived, restored or discarded? Start: green. End: gray. Click the frame for the walk with people and modules (state_note).'
+    include *
+    include smNote with { navigateTo state_note }
+    style smNote.live { color green }
+    style smNote.gone { color gray }
+    autoLayout TopBottom
+  }
+}

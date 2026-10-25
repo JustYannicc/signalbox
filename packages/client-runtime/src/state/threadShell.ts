@@ -8,6 +8,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { blockingAsk } from "@t3tools/shared/signalboxAsks";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
@@ -31,8 +32,8 @@ const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
   ReadonlyArray<ScopedThreadRef>
 > = new Map();
 
-// An async question outlives the subagent's run, but once that run ends the
-// parent is no longer waiting on the answer, so it stops counting as input.
+// Legacy runtime questions stop counting on the parent after the child run ends.
+// Durable blockers are checked separately because they remain actionable.
 // The activity run stays set when a follow-up is queued behind a blocked run;
 // older servers omit it, so fall back to the latest run's status.
 const isChildRunLive = (
@@ -48,17 +49,17 @@ const isChildRunLive = (
 /** Provider-native
     subagents ask on their parent, so they are skipped. */
 function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentRequest | null {
-  const kind = thread.pendingRuntimeRequest?.kind;
   if (
-    kind === undefined ||
-    kind === "auth_refresh" ||
     thread.lineage.relationshipToParent !== "subagent" ||
-    isProviderNativeSubagentThread(thread) ||
-    !isChildRunLive(thread)
+    isProviderNativeSubagentThread(thread)
   ) {
     return null;
   }
-  return kind === "user_input" ? "user_input" : "approval";
+  const kind = thread.pendingRuntimeRequest?.kind;
+  if (isChildRunLive(thread) && kind !== undefined && kind !== "auth_refresh") {
+    return kind === "user_input" ? "user_input" : "approval";
+  }
+  return blockingAsk(thread.asks) === undefined ? null : "user_input";
 }
 
 export function pendingSubagentRequestsByThread(

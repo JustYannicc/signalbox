@@ -20,6 +20,10 @@ import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  toggleRunFoldExpansion,
+  transitionRunFoldExpansion,
+} from "@t3tools/client-runtime/state/thread-fold-expansion";
+import {
   type OrchestrationMessageContext,
   ThreadId,
   type ChatAttachment,
@@ -28,7 +32,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
-  type RunId,
+  RunId,
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -198,6 +202,12 @@ import {
 } from "./thread-work-log";
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
+import {
+  feedIndexForFindTarget,
+  threadFindRevealAction,
+  type ThreadFindWorkRowRevealRequest,
+  type ThreadFindRevealRequest,
+} from "./find/thread-find-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
 import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
@@ -294,6 +304,7 @@ export interface ThreadFeedProps {
   readonly contentPresentation: ThreadContentPresentation;
   readonly agentLabel: string;
   readonly latestRun: ThreadFeedLatestRun | null;
+  readonly findRevealRequest?: ThreadFindRevealRequest | null;
   readonly activeWorkStartedAt: string | null;
   readonly runlessWorkActive?: boolean;
   readonly listRef: RefObject<LegendListRef | null>;
@@ -981,6 +992,8 @@ function renderFeedEntry(
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
+    readonly findWorkRowReveal: ThreadFindWorkRowRevealRequest | null; // signalbox: grouped targets need their inner viewport revealed.
+    readonly onFindWorkRowRevealed: (key: string) => void;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
     readonly unsettledTurnId: RunId | null;
     readonly failedRunIds: ReadonlySet<RunId>;
@@ -1441,6 +1454,8 @@ function renderFeedEntry(
       expandedRows={props.expandedWorkRows}
       rowSizing={props.workRowSizing}
       scrollPositions={props.workGroupScrollPositions}
+      findReveal={props.findWorkRowReveal?.anchorKey === entry.id ? props.findWorkRowReveal : null} // signalbox: only the target work group owns this reveal.
+      onFindRevealed={props.onFindWorkRowRevealed}
       iconSubtleColor={iconSubtleColor}
       edgeFadeColor={props.screenColor}
       themeAppearance={props.themeAppearance}
@@ -1673,6 +1688,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const previousLatestTurnRef = useRef(props.latestRun);
+  const runContinuations = props.latestRun?.runContinuations;
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const { width: windowWidth, fontScale } = useWindowDimensions();
@@ -1732,6 +1748,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     expandedTurnIds: new Set(),
   });
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
+  const appliedFindRevealStepRef = useRef<string | null>(null);
+  const lastFindRevealRequestKeyRef = useRef<string | null>(null);
+  const scrolledFindRevealRequestKeyRef = useRef<string | null>(null);
+  const outerScrolledFindRevealRequestKeyRef = useRef<string | null>(null); // signalbox: inner and outer lists complete separate scrolls.
+  const [findWorkRowReveal, setFindWorkRowReveal] = useState<ThreadFindWorkRowRevealRequest | null>(
+    null,
+  );
+  const onFindWorkRowRevealed = useCallback((key: string) => {
+    if (lastFindRevealRequestKeyRef.current !== key) return;
+    scrolledFindRevealRequestKeyRef.current = key;
+    setFindWorkRowReveal((current) => (current?.key === key ? null : current));
+  }, []);
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const fileShareSourceIdentifier = useId();
@@ -2005,6 +2033,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       copiedRowId,
       expandedWorkGroups,
       expandedWorkRows,
+      findWorkRowReveal, // signalbox: invalidate mounted work groups when Find selects an inner row.
       workRowSizing,
       iconSubtleColor,
       markdownStyles,
@@ -2021,6 +2050,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       copiedRowId,
       expandedWorkGroups,
       expandedWorkRows,
+      findWorkRowReveal,
       workRowSizing,
       iconSubtleColor,
       markdownStyles,
@@ -2163,7 +2193,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.latestRun,
     ],
   );
-  const setupAnchorIndex = presentedFeed.findIndex(
+  // The setup belongs to the latest message: a cloud thread prepares every run.
+  const setupAnchorIndex = presentedFeed.findLastIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
   // The empty↔filled key below remounts the list and resets its imperative
@@ -2204,28 +2235,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = props.latestRun;
-    if (!props.latestRun || !previous) {
-      return;
-    }
-    if (props.latestRun.runId === previous.runId) {
-      if (previous.status === "running" && props.latestRun.status === "interrupted") {
-        const interruptedTurnId = props.latestRun.runId;
-        setInteractionState((current) => ({
-          ...current,
-          expandedTurnIds: new Set(current.expandedTurnIds).add(interruptedTurnId),
-        }));
-      }
-      return;
-    }
+    if (!props.latestRun || !previous) return;
     setInteractionState((current) => {
-      if (!current.expandedTurnIds.has(previous.runId)) {
-        return current;
-      }
-      const next = new Set(current.expandedTurnIds);
-      next.delete(previous.runId);
-      return { ...current, expandedTurnIds: next };
+      const expandedTurnIds = transitionRunFoldExpansion(
+        current.expandedTurnIds,
+        previous,
+        props.latestRun,
+        runContinuations,
+      );
+      return expandedTurnIds === current.expandedTurnIds
+        ? current
+        : { ...current, expandedTurnIds };
     });
-  }, [props.latestRun]);
+  }, [props.latestRun, runContinuations]);
 
   useEffect(() => {
     return () => {
@@ -2349,17 +2371,115 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (runId: RunId) => {
       suspendEndScrollMaintenanceForDisclosure(`run-fold:${runId}`);
       setInteractionState((current) => {
-        const next = new Set(current.expandedTurnIds);
-        if (next.has(runId)) {
-          next.delete(runId);
-        } else {
-          next.add(runId);
-        }
-        return { ...current, expandedTurnIds: next };
+        const expandedTurnIds = toggleRunFoldExpansion(
+          current.expandedTurnIds,
+          runId,
+          runContinuations,
+        );
+        return { ...current, expandedTurnIds };
       });
     },
-    [suspendEndScrollMaintenanceForDisclosure],
+    [runContinuations, suspendEndScrollMaintenanceForDisclosure],
   );
+
+  // signalbox: Find opens the disclosures hiding its target before scrolling.
+  useEffect(() => {
+    const request = props.findRevealRequest;
+    if (request === null || request === undefined || request.threadKey !== feedThreadKey) {
+      lastFindRevealRequestKeyRef.current = null;
+      appliedFindRevealStepRef.current = null;
+      scrolledFindRevealRequestKeyRef.current = null;
+      outerScrolledFindRevealRequestKeyRef.current = null; // signalbox: clear inner work-list targets on Find close or a thread change.
+      setFindWorkRowReveal(null);
+      return;
+    }
+    if (lastFindRevealRequestKeyRef.current !== request.key) {
+      lastFindRevealRequestKeyRef.current = request.key;
+      appliedFindRevealStepRef.current = null;
+      scrolledFindRevealRequestKeyRef.current = null; // signalbox: revisiting a completed match starts a new reveal.
+      outerScrolledFindRevealRequestKeyRef.current = null;
+      setFindWorkRowReveal(null); // signalbox: stale inner-list requests must not finish a new selection.
+    }
+    if (scrolledFindRevealRequestKeyRef.current === request.key) return;
+
+    const action = threadFindRevealAction(
+      presentedFeed,
+      props.feed,
+      request.target,
+      expandedWorkRows,
+    );
+    if (action.type === "expand-run") {
+      const actionKey = `${request.key}:run:${action.runId}`;
+      if (appliedFindRevealStepRef.current === actionKey) return;
+      appliedFindRevealStepRef.current = actionKey;
+      suspendEndScrollMaintenanceForDisclosure(`run-fold:${action.runId}`);
+      const runId = RunId.make(action.runId);
+      setInteractionState((current) => {
+        if (current.expandedTurnIds.has(runId)) return current;
+        return {
+          ...current,
+          expandedTurnIds: new Set(current.expandedTurnIds).add(runId),
+        };
+      });
+      return;
+    }
+    if (action.type === "expand-work-group") {
+      const actionKey = `${request.key}:work-group:${action.groupId}`;
+      if (appliedFindRevealStepRef.current === actionKey) return;
+      appliedFindRevealStepRef.current = actionKey;
+      suspendEndScrollMaintenanceForDisclosure(action.anchorKey);
+      setInteractionState((current) => {
+        if (current.expandedWorkGroups[action.groupId]) return current;
+        return {
+          ...current,
+          expandedWorkGroups: { ...current.expandedWorkGroups, [action.groupId]: true },
+        };
+      });
+      return;
+    }
+    if (action.type === "expand-work-row") {
+      const actionKey = `${request.key}:work-row:${action.rowId}`;
+      if (appliedFindRevealStepRef.current === actionKey) return;
+      appliedFindRevealStepRef.current = actionKey;
+      suspendEndScrollMaintenanceForDisclosure(action.anchorKey);
+      setInteractionState((current) => ({
+        ...current,
+        expandedWorkRows: { ...current.expandedWorkRows, [action.rowId]: true },
+      }));
+      return;
+    }
+    if (action.type !== "scroll" && action.type !== "scroll-work-row") return;
+
+    const list = props.listRef.current;
+    if (list === null) return;
+    const index = feedIndexForFindTarget(list.getState().data, request.target);
+    if (index === -1) return;
+    if (action.type === "scroll-work-row") {
+      // signalbox: the capped work list acknowledges its own scroll before reveal completes.
+      setFindWorkRowReveal((current) =>
+        current?.key === request.key &&
+        current.rowId === action.rowId &&
+        current.anchorKey === action.anchorKey
+          ? current
+          : { key: request.key, rowId: action.rowId, anchorKey: action.anchorKey },
+      );
+    } else {
+      scrolledFindRevealRequestKeyRef.current = request.key;
+    }
+    if (outerScrolledFindRevealRequestKeyRef.current === request.key) return;
+    outerScrolledFindRevealRequestKeyRef.current = request.key;
+    setEndFollow(false);
+    list.scrollToIndex({ index, animated: true, viewPosition: 0.25 });
+  }, [
+    expandedWorkRows,
+    feedThreadKey,
+    presentedFeed,
+    props.feed,
+    props.findRevealRequest,
+    props.listRef,
+    setEndFollow,
+    suspendEndScrollMaintenanceForDisclosure,
+  ]);
 
   const onPressPreview = useCallback((source: FilePreviewSource) => {
     setExpandedFile((current) => current ?? source);
@@ -2451,6 +2571,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               expandedWorkRows,
               workRowSizing,
               workGroupScrollPositions,
+              findWorkRowReveal, // signalbox: carry the exact target into the work log's capped list.
+              onFindWorkRowRevealed,
               terminalAssistantMessageIds,
               unsettledTurnId,
               failedRunIds,
@@ -2500,6 +2622,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       expandedWorkRows,
       workRowSizing,
       workGroupScrollPositions,
+      findWorkRowReveal,
+      onFindWorkRowRevealed,
       terminalAssistantMessageIds,
       unsettledTurnId,
       failedRunIds,

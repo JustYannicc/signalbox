@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { quoteGitPatchPath, unquoteGitPatchPath } from "./gitPatchPath.ts";
+import {
+  parseGitPatchHeaderPath,
+  quoteGitPatchPath,
+  unquoteGitPatchPath,
+} from "@t3tools/shared/gitPatchPath";
 
 const BELL = "\u0007";
 const UNIT_SEPARATOR = "\u001f";
@@ -87,5 +91,44 @@ describe("a name a parser handed back with its quotes already off", () => {
     expect(unquoteGitPatchPath("odd\\zname.txt")).toBe("oddzname.txt");
     expect(unquoteGitPatchPath("trailing\\")).toBe("trailing\\");
     expect(unquoteGitPatchPath("short\\12.txt")).toBe("short12.txt");
+  });
+});
+
+describe("parseGitPatchHeaderPath", () => {
+  it("decodes quoted paths and keeps the requested side prefix", () => {
+    expect(parseGitPatchHeaderPath('--- "a/src/ old\\tname.ts"', "a")).toEqual({
+      _tag: "Path",
+      path: "src/ old\tname.ts",
+    });
+    expect(parseGitPatchHeaderPath("+++ b/src/ new.ts", "b")).toEqual({
+      _tag: "Path",
+      path: "src/ new.ts",
+    });
+    expect(parseGitPatchHeaderPath('+++ "b/caf\\303\\251.ts"', "b")).toEqual({
+      _tag: "Path",
+      path: "café.ts",
+    });
+  });
+
+  it("accepts either null-device side and rejects malformed headers or paths", () => {
+    expect(parseGitPatchHeaderPath("--- /dev/null", "a")).toEqual({ _tag: "Absent" });
+    expect(parseGitPatchHeaderPath("+++ /dev/null", "b")).toEqual({ _tag: "Absent" });
+    expect(parseGitPatchHeaderPath("--- b/src/file.ts", "a")).toBeNull();
+    expect(parseGitPatchHeaderPath("+++ src/file.ts", "b")).toBeNull();
+    expect(parseGitPatchHeaderPath('+++ "b/src/file.ts', "b")).toBeNull();
+    expect(parseGitPatchHeaderPath("+++ b/src/\\zfile.ts", "b")).toBeNull();
+    expect(parseGitPatchHeaderPath("+++ b/", "b")).toBeNull();
+    expect(parseGitPatchHeaderPath(undefined, "a")).toBeNull();
+  });
+
+  it("reads Git's trailing header tab without removing spaces from the file name", () => {
+    expect(parseGitPatchHeaderPath("+++ b/src/ new.ts\t", "b")).toEqual({
+      _tag: "Path",
+      path: "src/ new.ts",
+    });
+    expect(parseGitPatchHeaderPath("--- a/src/ old.ts \t\r", "a")).toEqual({
+      _tag: "Path",
+      path: "src/ old.ts ",
+    });
   });
 });

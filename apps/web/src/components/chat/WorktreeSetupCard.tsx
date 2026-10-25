@@ -3,6 +3,7 @@ import {
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
+import { isThreadPreparation } from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   CheckIcon,
@@ -10,6 +11,7 @@ import {
   CircleIcon,
   LaptopIcon,
   MinusIcon,
+  RotateCcwIcon,
   TerminalIcon,
   XIcon,
 } from "lucide-react";
@@ -23,10 +25,12 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
 import { WorkLogRow } from "./WorkLog";
+import type { WorktreeSetupActions } from "./useWorktreeSetup";
 
 interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
-  onCancel: (() => void) | null;
+  // Null when the server would refuse: after the agent handoff, or without the grant.
+  actions: WorktreeSetupActions | null;
   onWorkLocally: (() => void) | null;
   onOpenTerminal: (() => void) | null;
 }
@@ -96,17 +100,23 @@ function ShimmerOverlay({ children }: { children: ReactNode }) {
 }
 
 function headerLabel(snapshot: WorktreeSetupSnapshot): string {
+  // Cloud prepares every thread, with or without a worktree.
+  const thread = isThreadPreparation(snapshot);
   switch (snapshot.phase) {
     case "running":
-      return "Setting up worktree…";
+      return thread ? "Preparing thread…" : "Setting up worktree…";
     case "done":
       return snapshot.stages.some((stage) => stage.status === "failed")
-        ? "Worktree ready, setup script failed"
-        : "Worktree ready";
+        ? thread
+          ? "Thread ready, setup script failed"
+          : "Worktree ready, setup script failed"
+        : thread
+          ? "Thread ready"
+          : "Worktree ready";
     case "failed":
-      return "Worktree setup failed";
+      return thread ? "Thread preparation failed" : "Worktree setup failed";
     case "cancelled":
-      return "Worktree setup cancelled";
+      return thread ? "Thread preparation cancelled" : "Worktree setup cancelled";
   }
 }
 
@@ -309,7 +319,7 @@ function CollapsedSummaryRow({
 
 export function WorktreeSetupCard({
   snapshot,
-  onCancel,
+  actions,
   onWorkLocally,
   onOpenTerminal,
   embedded = false,
@@ -334,7 +344,10 @@ export function WorktreeSetupCard({
       (setupStage.status === "running" && setupStage.tail.length > 0));
 
   return (
-    <section aria-label="Worktree setup" data-worktree-setup-phase={snapshot.phase}>
+    <section
+      aria-label={isThreadPreparation(snapshot) ? "Thread preparation" : "Worktree setup"}
+      data-worktree-setup-phase={snapshot.phase}
+    >
       {showHeader ? <SetupHeaderRow snapshot={snapshot} totalElapsed={totalElapsed} /> : null}
       {collapsed ? (
         <CollapsedSummaryRow snapshot={snapshot} totalElapsed={totalElapsed} />
@@ -355,7 +368,7 @@ export function WorktreeSetupCard({
         </div>
       )}
 
-      {snapshot.phase === "failed" && snapshot.error ? (
+      {(snapshot.phase === "failed" || snapshot.phase === "cancelled") && snapshot.error ? (
         <p className="mt-1 ml-8 text-xs text-muted-foreground">{snapshot.error}</p>
       ) : null}
 
@@ -384,10 +397,32 @@ export function WorktreeSetupCard({
             Work locally
           </Button>
         ) : null}
-        {onCancel && running ? (
-          <Button type="button" size="xs" variant="ghost-muted" onClick={onCancel}>
-            <XIcon aria-hidden />
-            Cancel
+        {actions?.retry ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            disabled={actions.retry === "pending"}
+            onClick={actions.onRetry}
+          >
+            {actions.retry === "pending" ? (
+              <Spinner aria-hidden="true" />
+            ) : (
+              <RotateCcwIcon aria-hidden />
+            )}
+            {actions.retry === "pending" ? "Retrying…" : "Retry"}
+          </Button>
+        ) : null}
+        {actions?.cancel && running ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost-muted"
+            disabled={actions.cancel === "pending"}
+            onClick={actions.onCancel}
+          >
+            {actions.cancel === "pending" ? <Spinner aria-hidden="true" /> : <XIcon aria-hidden />}
+            {actions.cancel === "pending" ? "Cancelling…" : "Cancel"}
           </Button>
         ) : null}
       </div>

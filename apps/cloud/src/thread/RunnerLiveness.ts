@@ -1,0 +1,48 @@
+import {
+  isRunnerSocket,
+  onRunnerClose,
+  type RunnerSocketAttachment,
+  type RunnerSocketHost,
+} from "./runner/runnerSockets.ts";
+
+export const RUNNER_SILENCE_LIMIT_MS = 45_000;
+
+/** Returns another alarm deadline even when recording a disconnect fails. */
+export const tend = async (
+  host: RunnerSocketHost,
+  now: number,
+  retryAt: number,
+  onFailure: (cause: unknown) => Promise<void>,
+): Promise<number | null> => {
+  try {
+    return await inspect(host, now);
+  } catch (cause) {
+    await onFailure(cause);
+    return retryAt;
+  }
+};
+
+/** Checks only when the Runner could have missed the same three pings as its client. */
+export const inspect = async (host: RunnerSocketHost, now: number): Promise<number | null> => {
+  let wakeAt: number | null = null;
+  for (const socket of host.ctx.getWebSockets()) {
+    if (!isRunnerSocket(host.ctx, socket)) continue;
+    const attachment = (socket.deserializeAttachment() as RunnerSocketAttachment | null) ?? null;
+    if (attachment === null || attachment.inactive === true) {
+      continue;
+    }
+
+    const autoResponseAt = host.ctx.getWebSocketAutoResponseTimestamp(socket)?.getTime() ?? null;
+    const lastActivityAt = attachment.lastActivityAt ?? autoResponseAt ?? now;
+    if (attachment.lastActivityAt === undefined) {
+      socket.serializeAttachment({ ...attachment, lastActivityAt });
+    }
+    const deadline = Math.max(lastActivityAt, autoResponseAt ?? 0) + RUNNER_SILENCE_LIMIT_MS;
+    if (now >= deadline) {
+      await onRunnerClose(host, socket, 1006, "heartbeat timed out");
+      continue;
+    }
+    wakeAt = wakeAt === null ? deadline : Math.min(wakeAt, deadline);
+  }
+  return wakeAt;
+};

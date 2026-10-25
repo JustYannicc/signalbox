@@ -1,0 +1,35 @@
+--- a/library/std/src/sys/net/connection/wasip1.rs
++++ b/library/std/src/sys/net/connection/wasip1.rs
+@@ -219,17 +219,10 @@
+         unsupported()
+     }
+ 
++    // agentOS: the runtime does not export wasi_snapshot_preview1.sock_accept
++    // (inbound sockets go through host_net), so never import it.
+     pub fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
+-        let fd = unsafe {
+-            wasi::sock_accept(self.as_inner().as_inner().as_raw_fd() as _, 0).map_err(err2io)?
+-        };
+-
+-        Ok((
+-            TcpStream::from_inner(unsafe { Socket::from_raw_fd(fd as _) }),
+-            // WASI has no concept of SocketAddr yet
+-            // return an unspecified IPv4Addr
+-            SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0),
+-        ))
++        unsupported()
+     }
+ 
+     pub fn duplicate(&self) -> io::Result<TcpListener> {
+--- a/library/std/src/os/wasi/net/mod.rs
++++ b/library/std/src/os/wasi/net/mod.rs
+@@ -18,6 +18,8 @@
+ 
+ impl TcpListenerExt for net::TcpListener {
+     fn sock_accept(&self, flags: u16) -> io::Result<u32> {
+-        unsafe { wasi::sock_accept(self.as_raw_fd() as wasi::Fd, flags).map_err(err2io) }
++        // agentOS: no wasi_snapshot_preview1.sock_accept import.
++        let _ = (flags, err2io);
++        Err(io::const_error!(io::ErrorKind::Unsupported, "sock_accept is unavailable in agentOS"))
+     }
+ }

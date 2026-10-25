@@ -1,4 +1,5 @@
 import { PermissionUpdateNotice } from "./features/connection/PermissionUpdateNotice";
+import { PersonTimezoneReporter } from "./connection/PersonTimezoneReporter"; // signalbox: client timezone
 import * as Linking from "expo-linking";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
@@ -20,6 +21,9 @@ import {
 } from "./features/settings/appearance/AppearancePreferencesProvider";
 import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
+import * as Tracing from "./features/observability/tracing";
+import { environmentServerConfigsAtom } from "./state/server";
+import { savedConnectionsByIdAtom } from "./state/use-remote-environment-registry";
 import { OverlayPortalHost } from "./components/ui/OverlayPortal";
 import { shouldHandleAppLink } from "./lib/appLinking";
 import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
@@ -30,6 +34,15 @@ import { GlobalVoiceInputControl } from "./features/voice-input/GlobalVoiceInput
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
 
 import "../global.css";
+
+Tracing.configureCloudTraceConnectionProvider(() =>
+  Promise.resolve(
+    Tracing.resolvePrimaryCloudTraceConnection(
+      appAtomRegistry.get(environmentServerConfigsAtom),
+      appAtomRegistry.get(savedConnectionsByIdAtom),
+    ),
+  ),
+);
 
 if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
   prepareNativeShowcaseCapture();
@@ -76,6 +89,7 @@ function AppContent() {
   return (
     <>
       <SplashScreenCoordinator />
+      <PersonTimezoneReporter /* signalbox: client timezone */ />
       <SubscriptionUsageCoordinator />
       <PermissionUpdateNotice />
       <GestureHandlerRootView className="flex-1">

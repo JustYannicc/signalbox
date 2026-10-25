@@ -1,8 +1,8 @@
 diff --git a/docs/management-api-v8.md b/docs/management-api-v8.md
-index bc5647fa7d3..a7ca9298c6b 100644
+index afdc17e1445b20f9f40d4a25705520683e118b79..e243c85ea87065558c2bc49aab2ecba5cd57423e 100644
 --- a/docs/management-api-v8.md
 +++ b/docs/management-api-v8.md
-@@ -130,6 +130,43 @@ Keep any provider-specific login parameters in the query string. The login
+@@ -132,6 +132,43 @@ Keep any provider-specific login parameters in the query string. The login
  response includes the authorization URL and a session `state`. Use that state
  for status queries and cancellation.
  
@@ -48,10 +48,10 @@ index bc5647fa7d3..a7ca9298c6b 100644
  callback URL. If `provider` is omitted, it is inferred from the pending state;
 diff --git a/internal/api/handlers/management/auth_files_codex_device.go b/internal/api/handlers/management/auth_files_codex_device.go
 new file mode 100644
-index 00000000000..48d762923fe
+index 0000000000000000000000000000000000000000..0efe94857b3e1524258dafcb21f4a329ad197312
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_codex_device.go
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,183 @@
 +package management
 +
 +import (
@@ -61,6 +61,7 @@ index 00000000000..48d762923fe
 +	"time"
 +
 +	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/httpwire"
 +	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
 +	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 +	log "github.com/sirupsen/logrus"
@@ -75,21 +76,46 @@ index 00000000000..48d762923fe
 +		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate state parameter"})
 +		return
 +	}
-+	RegisterOAuthSession(state, "codex")
++	RegisterDeviceOAuthSession(state, "codex")
 +
 +	ctx, cancel := context.WithCancel(PopulateAuthContext(context.Background(), c))
++	watchCtx, stopWatch := context.WithCancel(ctx)
++	requestCtx := c.Request.Context()
++	stopRequestCancel := context.AfterFunc(requestCtx, cancel)
++	responseReady := make(chan struct{})
 +	deviceCodeCh := make(chan sdkAuth.DeviceCodeInfo, 1)
 +	loginDone := make(chan struct{})
-+	go watchOAuthSessionCancel(ctx, cancel, state, "codex")
++	watchDone := make(chan struct{})
++	handedOff := false
++	defer func() {
++		stopRequestCancel()
++		if !handedOff {
++			oauthSessions.Discard(state)
++			cancel()
++			<-loginDone
++			<-watchDone
++		}
++	}()
++	go func() {
++		defer close(watchDone)
++		watchOAuthSessionCancel(watchCtx, cancel, state, "codex")
++	}()
 +	go func() {
 +		defer close(loginDone)
-+		defer cancel()
++		defer func() {
++			stopWatch()
++			<-watchDone
++			cancel()
++		}()
 +
 +		authenticator := h.codexDeviceAuthenticator
 +		if authenticator == nil {
 +			authenticator = sdkAuth.NewCodexAuthenticator()
 +		}
-+		record, errLogin := authenticator.Login(ctx, h.cfg, &sdkAuth.LoginOptions{
++		h.mu.Lock()
++		cfg := h.cfg.CloneForRuntime()
++		h.mu.Unlock()
++		record, errLogin := authenticator.Login(ctx, cfg, &sdkAuth.LoginOptions{
 +			NoBrowser: true,
 +			Metadata:  map[string]string{"codex_login_mode": "device"},
 +			OnDeviceCode: func(info sdkAuth.DeviceCodeInfo) {
@@ -107,10 +133,18 @@ index 00000000000..48d762923fe
 +			SetOAuthSessionError(state, "Authentication failed")
 +			return
 +		}
++		// A fast login must not persist credentials before the caller receives its session.
++		select {
++		case <-responseReady:
++		case <-ctx.Done():
++			return
++		}
 +		if !oauthSessions.BeginSave(state, "codex") {
 +			return
 +		}
-+		if _, errSave := h.saveTokenRecord(ctx, record); errSave != nil {
++		saveCtx, stopSave := context.WithTimeout(ctx, oauthSessionTTL)
++		defer stopSave()
++		if _, errSave := h.saveTokenRecord(saveCtx, record); errSave != nil {
 +			log.Error("Failed to save Codex device authentication")
 +			SetOAuthSessionError(state, "Failed to save authentication tokens")
 +			return
@@ -120,7 +154,10 @@ index 00000000000..48d762923fe
 +
 +	startTimer := time.NewTimer(codexDeviceStartTimeout)
 +	defer startTimer.Stop()
-+	info, started, timedOut := waitForCodexDeviceStart(deviceCodeCh, loginDone, startTimer.C)
++	info, started, timedOut := waitForCodexDeviceStart(deviceCodeCh, loginDone, startTimer.C, requestCtx.Done())
++	if requestCtx.Err() != nil {
++		return
++	}
 +	if started {
 +		userCode := strings.TrimSpace(info.UserCode)
 +		verificationURL := strings.TrimSpace(info.VerificationURL)
@@ -130,6 +167,11 @@ index 00000000000..48d762923fe
 +			c.JSON(http.StatusBadGateway, gin.H{"error": "invalid device authorization response"})
 +			return
 +		}
++		// Once writing starts, delivery is decided by the write and flush results.
++		if !stopRequestCancel() || requestCtx.Err() != nil {
++			return
++		}
++		responseErrors := len(c.Errors)
 +		c.JSON(http.StatusOK, gin.H{
 +			"status":     "ok",
 +			"url":        verificationURL,
@@ -138,6 +180,14 @@ index 00000000000..48d762923fe
 +			"user_code":  userCode,
 +			"expires_in": info.ExpiresIn,
 +		})
++		if len(c.Errors) > responseErrors {
++			return
++		}
++		if errFlush := httpwire.FlushResponse(c.Writer); errFlush != nil {
++			return
++		}
++		handedOff = true
++		close(responseReady)
 +		return
 +	}
 +	if timedOut {
@@ -151,15 +201,17 @@ index 00000000000..48d762923fe
 +	c.JSON(http.StatusBadGateway, gin.H{"error": "failed to start device authorization flow"})
 +}
 +
-+func waitForCodexDeviceStart(deviceCodeCh <-chan sdkAuth.DeviceCodeInfo, loginDone <-chan struct{}, timeout <-chan time.Time) (sdkAuth.DeviceCodeInfo, bool, bool) {
++func waitForCodexDeviceStart(deviceCodeCh <-chan sdkAuth.DeviceCodeInfo, loginDone <-chan struct{}, timeout <-chan time.Time, requestDone <-chan struct{}) (sdkAuth.DeviceCodeInfo, bool, bool) {
 +	if info, ok := takeReadyCodexDeviceCode(deviceCodeCh); ok {
 +		return info, true, false
 +	}
-+	return waitForCodexDeviceStartAfterDrain(deviceCodeCh, loginDone, timeout)
++	return waitForCodexDeviceStartAfterDrain(deviceCodeCh, loginDone, timeout, requestDone)
 +}
 +
-+func waitForCodexDeviceStartAfterDrain(deviceCodeCh <-chan sdkAuth.DeviceCodeInfo, loginDone <-chan struct{}, timeout <-chan time.Time) (sdkAuth.DeviceCodeInfo, bool, bool) {
++func waitForCodexDeviceStartAfterDrain(deviceCodeCh <-chan sdkAuth.DeviceCodeInfo, loginDone <-chan struct{}, timeout <-chan time.Time, requestDone <-chan struct{}) (sdkAuth.DeviceCodeInfo, bool, bool) {
 +	select {
++	case <-requestDone:
++		return sdkAuth.DeviceCodeInfo{}, false, false
 +	case info := <-deviceCodeCh:
 +		return info, true, false
 +	case <-loginDone:
@@ -184,7 +236,7 @@ index 00000000000..48d762923fe
 +	}
 +}
 diff --git a/internal/api/handlers/management/auth_files_v8.go b/internal/api/handlers/management/auth_files_v8.go
-index 7d8151a8311..a389b5fe9df 100644
+index 7d8151a831106b1c0196e1746e35a451c8cf4df8..a389b5fe9df7879887a20f9c5efb838adcfba485 100644
 --- a/internal/api/handlers/management/auth_files_v8.go
 +++ b/internal/api/handlers/management/auth_files_v8.go
 @@ -15,7 +15,11 @@ func (h *Handler) StartOAuthV8(c *gin.Context) {
@@ -200,12 +252,190 @@ index 7d8151a8311..a389b5fe9df 100644
  	case "antigravity":
  		h.RequestAntigravityToken(c)
  	case "kimi":
+diff --git a/internal/api/handlers/management/auth_files_v8_device_callback_test.go b/internal/api/handlers/management/auth_files_v8_device_callback_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..eee09c66bb22d862f0bf4ed1c3720a922ba376a3
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_v8_device_callback_test.go
+@@ -0,0 +1,76 @@
++package management
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"testing/synctest"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestStartOAuthV8CodexDeviceFlowRejectsCallbacks(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	synctest.Test(t, func(t *testing.T) {
++		sessions := newOAuthSessionStore(time.Minute)
++		replaceOAuthSessionStoreForTest(t, sessions)
++		authDir := t.TempDir()
++		workerContext := make(chan context.Context, 1)
++		h := &Handler{cfg: &config.Config{AuthDir: authDir}}
++		h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++			workerContext <- ctx
++			opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++			<-ctx.Done()
++			return nil, ctx.Err()
++		})
++		router := gin.New()
++		router.GET("/start", h.StartOAuthV8)
++		router.GET("/v8/management/oauth/callback", h.GetOAuthCallbackV8)
++		router.POST("/v8/management/oauth/callback", h.PostOAuthCallbackV8)
++		start := httptest.NewRecorder()
++		router.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
++		if start.Code != http.StatusOK {
++			t.Fatalf("start status = %d, body=%s", start.Code, start.Body.String())
++		}
++		var response struct{ State string }
++		if err := json.Unmarshal(start.Body.Bytes(), &response); err != nil {
++			t.Fatal(err)
++		}
++		ctx := <-workerContext
++		defer func() {
++			CancelOAuthSession(response.State)
++			<-ctx.Done()
++			synctest.Wait()
++		}()
++		for _, method := range []string{http.MethodGet, http.MethodPost} {
++			request := httptest.NewRequest(method, "/v8/management/oauth/callback?state="+response.State+"&code=browser-code", nil)
++			if method == http.MethodPost {
++				request = httptest.NewRequest(method, "/v8/management/oauth/callback", strings.NewReader(`{"state":"`+response.State+`","code":"browser-code"}`))
++				request.Header.Set("Content-Type", "application/json")
++			}
++			callback := httptest.NewRecorder()
++			router.ServeHTTP(callback, request)
++			if callback.Code != http.StatusConflict {
++				t.Errorf("%s callback status = %d, body=%s", method, callback.Code, callback.Body.String())
++			}
++		}
++		if _, err := WriteOAuthCallbackFileForPendingSession(authDir, "codex", response.State, "browser-code", ""); err == nil {
++			t.Error("callback file sink accepted a device-only state")
++		}
++		if _, err := os.Stat(filepath.Join(authDir, ".oauth-codex-"+response.State+".oauth")); !os.IsNotExist(err) {
++			t.Errorf("device callback left an artifact, stat error = %v", err)
++		}
++		if !IsOAuthSessionPending(response.State, "codex") || ctx.Err() != nil {
++			t.Error("rejected callback stopped the pending device flow")
++		}
++	})
++}
+diff --git a/internal/api/handlers/management/auth_files_v8_device_config_test.go b/internal/api/handlers/management/auth_files_v8_device_config_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..52b591e37b3aa5ade0dd624e321b13e5bf64c9bf
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_v8_device_config_test.go
+@@ -0,0 +1,90 @@
++package management
++
++import (
++	"context"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestStartOAuthV8CodexDeviceFlowDoesNotRaceConfigReload(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	replaceOAuthSessionStoreForTest(t, newOAuthSessionStore(time.Minute))
++	cfg := &config.Config{AuthDir: t.TempDir()}
++	h := &Handler{cfg: cfg}
++	h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(_ context.Context, snapshot *config.Config, _ *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++		if snapshot == nil || snapshot.AuthDir != cfg.AuthDir {
++			t.Errorf("device login received invalid config: %#v", snapshot)
++		}
++		return nil, errors.New("test stops before provider login")
++	})
++	router := gin.New()
++	router.GET("/start", h.StartOAuthV8)
++	for range 8 {
++		start := make(chan struct{})
++		reloaded := make(chan struct{})
++		go func() {
++			defer close(reloaded)
++			<-start
++			h.SetConfig(cfg)
++		}()
++		close(start)
++		response := httptest.NewRecorder()
++		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
++		<-reloaded
++		if response.Code != http.StatusBadGateway {
++			t.Fatalf("failed startup status = %d, body=%s", response.Code, response.Body.String())
++		}
++	}
++}
++
++func TestStartOAuthV8CodexDeviceFlowKeepsConfigAcrossProxyUpdate(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	replaceOAuthSessionStoreForTest(t, newOAuthSessionStore(time.Minute))
++	cfg := &config.Config{AuthDir: t.TempDir()}
++	cfg.ProxyURL = "http://original.example.test:8080"
++	path := filepath.Join(t.TempDir(), "config.yaml")
++	if err := os.WriteFile(path, []byte("auth-dir: "+cfg.AuthDir+"\nproxy-url: "+cfg.ProxyURL+"\n"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	h := NewHandler(cfg, path, nil)
++	proxyUpdated := make(chan struct{})
++	workerContext := make(chan context.Context, 1)
++	h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, snapshot *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++		workerContext <- ctx
++		opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++		<-proxyUpdated
++		if snapshot.ProxyURL != cfg.ProxyURL {
++			t.Errorf("login proxy changed during authorization: got %q, want %q", snapshot.ProxyURL, cfg.ProxyURL)
++		}
++		return nil, errors.New("test stops before provider login")
++	})
++	router := gin.New()
++	router.GET("/start", h.StartOAuthV8)
++	router.PUT("/v0/management/proxy-url", h.PutProxyURL)
++	response := httptest.NewRecorder()
++	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
++	ctx := <-workerContext
++	t.Cleanup(func() {
++		close(proxyUpdated)
++		<-ctx.Done()
++	})
++	if response.Code != http.StatusOK {
++		t.Fatalf("start status = %d, body=%s", response.Code, response.Body.String())
++	}
++	updated := httptest.NewRecorder()
++	router.ServeHTTP(updated, httptest.NewRequest(http.MethodPut, "/v0/management/proxy-url", strings.NewReader(`{"value":"http://updated.example.test:8080"}`)))
++	if updated.Code != http.StatusOK {
++		t.Fatalf("proxy update status = %d, body=%s", updated.Code, updated.Body.String())
++	}
++}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_lifecycle_test.go b/internal/api/handlers/management/auth_files_v8_device_lifecycle_test.go
 new file mode 100644
-index 00000000000..74747f468a8
+index 0000000000000000000000000000000000000000..a3f6d09256e5694683abc4480c8fb4b595d44a96
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_lifecycle_test.go
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,117 @@
 +package management
 +
 +import (
@@ -215,6 +445,7 @@ index 00000000000..74747f468a8
 +	"net/http"
 +	"net/http/httptest"
 +	"testing"
++	"testing/synctest"
 +	"time"
 +
 +	"github.com/gin-gonic/gin"
@@ -233,68 +464,70 @@ index 00000000000..74747f468a8
 +		t.Run(name, func(t *testing.T) {
 +			sessions := newOAuthSessionStore(time.Minute)
 +			replaceOAuthSessionStoreForTest(t, sessions)
-+			loginReleased := make(chan struct{})
-+			saveEntered := make(chan struct{})
-+			saveReleased := make(chan struct{})
-+			workerDone := make(chan struct{})
-+			store := &memoryAuthStore{}
-+			h := &Handler{cfg: &config.Config{AuthDir: t.TempDir()}, tokenStore: store}
-+			h.postAuthHook = func(context.Context, *coreauth.Auth) error {
-+				close(saveEntered)
-+				<-saveReleased
-+				return nil
-+			}
-+			h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
-+				// The handler cancels this context after all save work has finished.
-+				go func() {
-+					<-ctx.Done()
-+					close(workerDone)
-+				}()
-+				opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
-+				<-loginReleased
-+				return &coreauth.Auth{ID: "codex-device.json", FileName: "codex-device.json", Provider: "codex"}, nil
-+			})
-+			router := gin.New()
-+			router.GET("/start", h.StartOAuthV8)
-+			router.DELETE("/cancel", h.CancelAuthSession)
-+			start := httptest.NewRecorder()
-+			router.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
-+			if start.Code != http.StatusOK {
-+				t.Fatalf("start = %d %s", start.Code, start.Body.String())
-+			}
-+			var response struct{ State string }
-+			if err := json.Unmarshal(start.Body.Bytes(), &response); err != nil {
-+				t.Fatal(err)
-+			}
-+			if !cancelBeforeSave {
-+				close(loginReleased)
-+				select {
-+				case <-saveEntered:
-+				case <-time.After(3 * time.Second):
-+					t.Fatal("save hook was not entered")
++			synctest.Test(t, func(t *testing.T) {
++				loginReleased := make(chan struct{})
++				saveEntered := make(chan struct{})
++				saveReleased := make(chan struct{})
++				workerDone := make(chan struct{})
++				store := &memoryAuthStore{}
++				h := &Handler{cfg: &config.Config{AuthDir: t.TempDir()}, tokenStore: store}
++				h.postAuthHook = func(context.Context, *coreauth.Auth) error {
++					close(saveEntered)
++					<-saveReleased
++					return nil
 +				}
-+			}
-+			cancel := httptest.NewRecorder()
-+			router.ServeHTTP(cancel, httptest.NewRequest(http.MethodDelete, "/cancel?state="+response.State, nil))
-+			var cancelled struct{ Cancelled bool }
-+			if err := json.Unmarshal(cancel.Body.Bytes(), &cancelled); err != nil {
-+				t.Fatal(err)
-+			}
-+			if cancelBeforeSave {
-+				close(loginReleased)
-+			}
-+			close(saveReleased)
-+			select {
-+			case <-workerDone:
-+			case <-time.After(3 * time.Second):
-+				t.Fatal("device worker did not finish")
-+			}
-+			if cancel.Code != http.StatusOK || cancelled.Cancelled != cancelBeforeSave {
-+				t.Fatalf("cancel = %d %s, want cancelled=%t", cancel.Code, cancel.Body.String(), cancelBeforeSave)
-+			}
-+			if _, saved := store.items["codex-device.json"]; saved == cancelBeforeSave {
-+				t.Fatalf("saved = %t, cancellation succeeded = %t", saved, cancelBeforeSave)
-+			}
++				h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++					// Cancellation can precede worker exit; synctest waits for every goroutine.
++					go func() {
++						<-ctx.Done()
++						close(workerDone)
++					}()
++					opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++					<-loginReleased
++					return &coreauth.Auth{ID: "codex-device.json", FileName: "codex-device.json", Provider: "codex"}, nil
++				})
++				router := gin.New()
++				router.GET("/start", h.StartOAuthV8)
++				router.DELETE("/cancel", h.CancelAuthSession)
++				start := httptest.NewRecorder()
++				router.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
++				if start.Code != http.StatusOK {
++					t.Fatalf("start = %d %s", start.Code, start.Body.String())
++				}
++				var response struct{ State string }
++				if err := json.Unmarshal(start.Body.Bytes(), &response); err != nil {
++					t.Fatal(err)
++				}
++				if !cancelBeforeSave {
++					close(loginReleased)
++					select {
++					case <-saveEntered:
++					case <-time.After(3 * time.Second):
++						t.Fatal("save hook was not entered")
++					}
++				}
++				cancel := httptest.NewRecorder()
++				router.ServeHTTP(cancel, httptest.NewRequest(http.MethodDelete, "/cancel?state="+response.State, nil))
++				var cancelled struct{ Cancelled bool }
++				if err := json.Unmarshal(cancel.Body.Bytes(), &cancelled); err != nil {
++					t.Fatal(err)
++				}
++				if cancelBeforeSave {
++					close(loginReleased)
++				}
++				close(saveReleased)
++				select {
++				case <-workerDone:
++				case <-time.After(3 * time.Second):
++					t.Fatal("device worker did not finish")
++				}
++				if cancel.Code != http.StatusOK || cancelled.Cancelled != cancelBeforeSave {
++					t.Fatalf("cancel = %d %s, want cancelled=%t", cancel.Code, cancel.Body.String(), cancelBeforeSave)
++				}
++				if _, saved := store.items["codex-device.json"]; saved == cancelBeforeSave {
++					t.Fatalf("saved = %t, cancellation succeeded = %t", saved, cancelBeforeSave)
++				}
++			})
 +		})
 +	}
 +}
@@ -320,12 +553,355 @@ index 00000000000..74747f468a8
 +		t.Fatalf("failed startup retained %d unreachable sessions", len(sessions.sessions))
 +	}
 +}
+diff --git a/internal/api/handlers/management/auth_files_v8_device_request_test.go b/internal/api/handlers/management/auth_files_v8_device_request_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..dddaf1f41478714e38234330be5459e910b849b8
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_v8_device_request_test.go
+@@ -0,0 +1,238 @@
++package management
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestStartOAuthV8CodexDeviceFlowCancelsDisconnectedStartup(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	sessions := newOAuthSessionStore(time.Minute)
++	replaceOAuthSessionStoreForTest(t, sessions)
++	requestCtx, disconnect := context.WithCancel(context.Background())
++	defer disconnect()
++	entered := make(chan struct{})
++	stopped := make(chan struct{})
++	release := make(chan struct{})
++	h := &Handler{cfg: &config.Config{AuthDir: t.TempDir()}}
++	h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, _ *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++		defer close(stopped)
++		close(entered)
++		select {
++		case <-ctx.Done():
++			return nil, ctx.Err()
++		case <-release:
++			return nil, errors.New("test cleanup")
++		}
++	})
++	router := gin.New()
++	router.GET("/start", h.StartOAuthV8)
++	response := httptest.NewRecorder()
++	done := make(chan struct{})
++	go func() {
++		defer close(done)
++		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil).WithContext(requestCtx))
++	}()
++	t.Cleanup(func() {
++		close(release)
++		<-done
++		<-stopped
++	})
++	<-entered
++	disconnect()
++	select {
++	case <-done:
++	case <-time.After(3 * time.Second):
++		t.Fatal("startup ignored the disconnected request")
++	}
++	<-stopped
++	if response.Body.Len() != 0 {
++		t.Fatalf("disconnected startup wrote a response: %s", response.Body.String())
++	}
++	sessions.mu.RLock()
++	defer sessions.mu.RUnlock()
++	if len(sessions.sessions) != 0 {
++		t.Fatalf("disconnected startup retained %d unreachable sessions", len(sessions.sessions))
++	}
++}
++
++func TestStartOAuthV8CodexDeviceFlowContinuesAfterResponseRequestEnds(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	sessions := newOAuthSessionStore(time.Minute)
++	replaceOAuthSessionStoreForTest(t, sessions)
++	requestCtx, disconnect := context.WithCancel(context.Background())
++	defer disconnect()
++	release := make(chan struct{})
++	workerContext := make(chan context.Context, 1)
++	h := &Handler{cfg: &config.Config{AuthDir: t.TempDir()}, tokenStore: &memoryAuthStore{}}
++	h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++		workerContext <- ctx
++		opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++		<-release
++		return &coreauth.Auth{ID: "codex-device.json", FileName: "codex-device.json", Provider: "codex"}, ctx.Err()
++	})
++	router := gin.New()
++	router.GET("/start", h.StartOAuthV8)
++	response := httptest.NewRecorder()
++	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil).WithContext(requestCtx))
++	ctx := <-workerContext
++	disconnect()
++	close(release)
++	select {
++	case <-ctx.Done():
++	case <-time.After(3 * time.Second):
++		t.Fatal("device worker did not finish")
++	}
++	if response.Code != http.StatusOK {
++		t.Fatalf("start = %d %s", response.Code, response.Body.String())
++	}
++	var result struct{ State string }
++	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
++		t.Fatal(err)
++	}
++	if session, ok := sessions.Get(result.State); !ok || !session.Completed {
++		t.Fatalf("request ending after a successful response prevented login completion: %#v", session)
++	}
++}
++
++type failedDeviceStartResponse struct{ *httptest.ResponseRecorder }
++
++func (w failedDeviceStartResponse) Write([]byte) (int, error) {
++	return 0, errors.New("connection closed")
++}
++
++type failedDeviceStartFlushResponse struct{ *httptest.ResponseRecorder }
++
++func (w failedDeviceStartFlushResponse) FlushError() error {
++	return errors.New("connection closed during flush")
++}
++
++func TestStartOAuthV8CodexDeviceFlowDiscardsFailedResponse(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	for _, failure := range []string{"write", "flush"} {
++		for _, completeLogin := range []bool{false, true} {
++			name := "polling"
++			if completeLogin {
++				name = "authenticated"
++			}
++			t.Run(failure+"/"+name, func(t *testing.T) {
++				sessions := newOAuthSessionStore(time.Minute)
++				replaceOAuthSessionStoreForTest(t, sessions)
++				release := make(chan struct{})
++				workerContext := make(chan context.Context, 1)
++				store := &memoryAuthStore{}
++				h := &Handler{cfg: &config.Config{AuthDir: t.TempDir()}, tokenStore: store}
++				h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++					workerContext <- ctx
++					opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++					if completeLogin {
++						return &coreauth.Auth{ID: "codex-device.json", FileName: "codex-device.json", Provider: "codex"}, nil
++					}
++					select {
++					case <-ctx.Done():
++						return nil, ctx.Err()
++					case <-release:
++						return nil, errors.New("test cleanup")
++					}
++				})
++				router := gin.New()
++				router.GET("/start", h.StartOAuthV8)
++				var writer http.ResponseWriter = failedDeviceStartResponse{httptest.NewRecorder()}
++				if failure == "flush" {
++					writer = failedDeviceStartFlushResponse{httptest.NewRecorder()}
++				}
++				router.ServeHTTP(writer, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
++				ctx := <-workerContext
++				t.Cleanup(func() {
++					close(release)
++					<-ctx.Done()
++				})
++				select {
++				case <-ctx.Done():
++				case <-time.After(3 * time.Second):
++					t.Fatal("device worker kept polling after the response failed")
++				}
++				if len(store.items) != 0 {
++					t.Fatal("device auth was saved despite the failed response")
++				}
++				sessions.mu.RLock()
++				defer sessions.mu.RUnlock()
++				if len(sessions.sessions) != 0 {
++					t.Fatalf("failed response retained %d unreachable sessions", len(sessions.sessions))
++				}
++			})
++		}
++	}
++}
++
++type disconnectOnDeviceStartFlush struct {
++	*httptest.ResponseRecorder
++	disconnect context.CancelFunc
++}
++
++func (w disconnectOnDeviceStartFlush) FlushError() error {
++	w.ResponseRecorder.Flush()
++	w.disconnect()
++	return nil
++}
++
++func TestStartOAuthV8CodexDeviceFlowKeepsSessionWhenClientLeavesAfterFlush(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	for _, completeLogin := range []bool{false, true} {
++		name := "polling"
++		if completeLogin {
++			name = "authenticated"
++		}
++		t.Run(name, func(t *testing.T) {
++			sessions := newOAuthSessionStore(time.Minute)
++			replaceOAuthSessionStoreForTest(t, sessions)
++			requestCtx, disconnect := context.WithCancel(context.Background())
++			defer disconnect()
++			release := make(chan struct{})
++			workerContext := make(chan context.Context, 1)
++			store := &memoryAuthStore{}
++			h := &Handler{cfg: &config.Config{AuthDir: t.TempDir()}, tokenStore: store}
++			h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++				workerContext <- ctx
++				opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++				if !completeLogin {
++					select {
++					case <-release:
++					case <-ctx.Done():
++					}
++				}
++				return &coreauth.Auth{ID: "codex-device.json", FileName: "codex-device.json", Provider: "codex"}, ctx.Err()
++			})
++			router := gin.New()
++			router.GET("/start", h.StartOAuthV8)
++			response := httptest.NewRecorder()
++			router.ServeHTTP(disconnectOnDeviceStartFlush{response, disconnect}, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil).WithContext(requestCtx))
++			ctx := <-workerContext
++			close(release)
++			<-ctx.Done()
++			if response.Code != http.StatusOK {
++				t.Fatalf("start status = %d, body=%s", response.Code, response.Body.String())
++			}
++			var result struct{ State string }
++			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
++				t.Fatal(err)
++			}
++			if session, ok := sessions.Get(result.State); !ok || !session.Completed {
++				t.Fatalf("disconnect after successful flush prevented login completion: %#v", session)
++			}
++			if len(store.items) != 1 {
++				t.Fatalf("saved %d auth records after successful flush, want 1", len(store.items))
++			}
++		})
++	}
++}
+diff --git a/internal/api/handlers/management/auth_files_v8_device_save_timeout_test.go b/internal/api/handlers/management/auth_files_v8_device_save_timeout_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..077222c13c4fd62e41645ac3cc49e4c722fb2877
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_v8_device_save_timeout_test.go
+@@ -0,0 +1,93 @@
++package management
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++	"testing/synctest"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++type stalledDeviceSaveStore struct {
++	*memoryAuthStore
++	wait func(context.Context, *coreauth.Auth) error
++}
++
++func (s *stalledDeviceSaveStore) Save(ctx context.Context, auth *coreauth.Auth) (string, error) {
++	return "", s.wait(ctx, auth)
++}
++
++func TestStartOAuthV8CodexDeviceFlowBoundsPersistence(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	for _, phase := range []string{"hook", "store", "post-persist-hook"} {
++		t.Run(phase, func(t *testing.T) {
++			synctest.Test(t, func(t *testing.T) {
++				sessions := newOAuthSessionStore(time.Minute)
++				replaceOAuthSessionStoreForTest(t, sessions)
++				entered := make(chan struct{})
++				release := make(chan struct{})
++				workerContext := make(chan context.Context, 1)
++				stall := func(ctx context.Context, _ *coreauth.Auth) error {
++					close(entered)
++					select {
++					case <-ctx.Done():
++						return ctx.Err()
++					case <-release:
++						return errors.New("test cleanup")
++					}
++				}
++				h := &Handler{cfg: &config.Config{AuthDir: t.TempDir()}, tokenStore: &memoryAuthStore{}}
++				switch phase {
++				case "hook":
++					h.postAuthHook = stall
++				case "store":
++					h.tokenStore = &stalledDeviceSaveStore{memoryAuthStore: &memoryAuthStore{}, wait: stall}
++				case "post-persist-hook":
++					h.postAuthPersistHook = stall
++				}
++				h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++					workerContext <- ctx
++					opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++					return &coreauth.Auth{ID: "codex-device.json", FileName: "codex-device.json", Provider: "codex"}, nil
++				})
++				router := gin.New()
++				router.GET("/start", h.StartOAuthV8)
++				response := httptest.NewRecorder()
++				router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
++				ctx := <-workerContext
++				defer func() {
++					close(release)
++					<-ctx.Done()
++					synctest.Wait()
++				}()
++				if response.Code != http.StatusOK {
++					t.Fatalf("start status=%d, body=%s", response.Code, response.Body.String())
++				}
++				var result struct{ State string }
++				if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
++					t.Fatal(err)
++				}
++				<-entered
++				deadline := time.NewTimer(oauthSessionTTL + time.Second)
++				defer deadline.Stop()
++				<-deadline.C
++				synctest.Wait()
++				session, ok := sessions.Get(result.State)
++				if !ok || session.Saving || session.Status != "Failed to save authentication tokens" {
++					t.Errorf("stalled persistence did not resolve to an error: %#v, exists=%t", session, ok)
++				}
++				if ctx.Err() == nil {
++					t.Error("device worker kept running after the persistence budget")
++				}
++			})
++		})
++	}
++}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_test.go b/internal/api/handlers/management/auth_files_v8_device_test.go
 new file mode 100644
-index 00000000000..a9f589e5101
+index 0000000000000000000000000000000000000000..46558bcd27ef908e4728597c5c87c91bba7c1a2f
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_test.go
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,178 @@
 +package management
 +
 +import (
@@ -335,6 +911,7 @@ index 00000000000..a9f589e5101
 +	"net/http/httptest"
 +	"strings"
 +	"testing"
++	"testing/synctest"
 +	"time"
 +
 +	"github.com/gin-gonic/gin"
@@ -353,61 +930,70 @@ index 00000000000..a9f589e5101
 +
 +func TestStartOAuthV8CodexDeviceFlowReturnsCodeAndUsesSessionStatusAndCancel(t *testing.T) {
 +	gin.SetMode(gin.TestMode)
-+	cancelled := make(chan struct{})
-+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, nil)
-+	h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
-+		opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
-+		<-ctx.Done()
-+		close(cancelled)
-+		return nil, ctx.Err()
-+	})
-+	router := gin.New()
-+	router.GET("/v8/management/oauth/auth-url", h.StartOAuthV8)
-+	router.GET("/v8/management/oauth/status", h.GetAuthStatus)
-+	router.DELETE("/v8/management/oauth/session", h.CancelAuthSession)
++	synctest.Test(t, func(t *testing.T) {
++		cancelled := make(chan struct{})
++		h := &Handler{cfg: &config.Config{AuthDir: t.TempDir()}}
++		release := make(chan struct{})
++		t.Cleanup(func() { close(release) })
++		h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++			opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++			select {
++			case <-ctx.Done():
++				close(cancelled)
++			case <-release:
++			}
 +
-+	start := httptest.NewRecorder()
-+	router.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/v8/management/oauth/auth-url?provider=codex&flow=device", nil))
-+	if start.Code != http.StatusOK {
-+		t.Fatalf("start status = %d, body=%s", start.Code, start.Body.String())
-+	}
-+	var response map[string]any
-+	if err := json.Unmarshal(start.Body.Bytes(), &response); err != nil {
-+		t.Fatal(err)
-+	}
-+	if response["flow"] != "device" || response["user_code"] != "ABCD-EFGH" || response["url"] != "https://auth.openai.com/codex/device" {
-+		t.Fatalf("device login response = %s", start.Body.String())
-+	}
-+	state, _ := response["state"].(string)
-+	if state == "" {
-+		t.Fatalf("missing state: %s", start.Body.String())
-+	}
-+	for _, secret := range []string{"private-device-auth-id", "access_token", "refresh_token", "authorization_code", "code_verifier"} {
-+		if strings.Contains(start.Body.String(), secret) {
-+			t.Fatalf("response leaked %q: %s", secret, start.Body.String())
++			return nil, ctx.Err()
++		})
++		router := gin.New()
++		router.GET("/v8/management/oauth/auth-url", h.StartOAuthV8)
++		router.GET("/v8/management/oauth/status", h.GetAuthStatus)
++		router.DELETE("/v8/management/oauth/session", h.CancelAuthSession)
++
++		start := httptest.NewRecorder()
++		router.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/v8/management/oauth/auth-url?provider=codex&flow=device", nil))
++		if start.Code != http.StatusOK {
++			t.Fatalf("start status = %d, body=%s", start.Code, start.Body.String())
 +		}
-+	}
-+	status := httptest.NewRecorder()
-+	router.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/v8/management/oauth/status?state="+state, nil))
-+	if status.Code != http.StatusOK || strings.TrimSpace(status.Body.String()) != `{"status":"wait"}` {
-+		t.Fatalf("pending status = %d %s", status.Code, status.Body.String())
-+	}
++		var response map[string]any
++		if err := json.Unmarshal(start.Body.Bytes(), &response); err != nil {
++			t.Fatal(err)
++		}
++		if response["flow"] != "device" || response["user_code"] != "ABCD-EFGH" || response["url"] != "https://auth.openai.com/codex/device" {
++			t.Fatalf("device login response = %s", start.Body.String())
++		}
++		state, _ := response["state"].(string)
++		if state == "" {
++			t.Fatalf("missing state: %s", start.Body.String())
++		}
++		for _, secret := range []string{"private-device-auth-id", "access_token", "refresh_token", "authorization_code", "code_verifier"} {
++			if strings.Contains(start.Body.String(), secret) {
++				t.Fatalf("response leaked %q: %s", secret, start.Body.String())
++			}
++		}
++		status := httptest.NewRecorder()
++		router.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/v8/management/oauth/status?state="+state, nil))
++		if status.Code != http.StatusOK || strings.TrimSpace(status.Body.String()) != `{"status":"wait"}` {
++			t.Fatalf("pending status = %d %s", status.Code, status.Body.String())
++		}
 +
-+	cancel := httptest.NewRecorder()
-+	router.ServeHTTP(cancel, httptest.NewRequest(http.MethodDelete, "/v8/management/oauth/session?state="+state, nil))
-+	if cancel.Code != http.StatusOK {
-+		t.Fatalf("cancel status = %d, body=%s", cancel.Code, cancel.Body.String())
-+	}
-+	select {
-+	case <-cancelled:
-+	case <-time.After(3 * time.Second):
-+		t.Fatal("device login context was not cancelled")
-+	}
++		cancel := httptest.NewRecorder()
++		router.ServeHTTP(cancel, httptest.NewRequest(http.MethodDelete, "/v8/management/oauth/session?state="+state, nil))
++		if cancel.Code != http.StatusOK {
++			t.Fatalf("cancel status = %d, body=%s", cancel.Code, cancel.Body.String())
++		}
++		select {
++		case <-cancelled:
++		case <-time.After(3 * time.Second):
++			t.Fatal("device login context was not cancelled")
++		}
++	})
 +}
 +
 +func TestStartOAuthV8CodexDeviceFlowSavesThroughManagementAuthHook(t *testing.T) {
 +	gin.SetMode(gin.TestMode)
 +	saved := make(chan string, 1)
++	workerContext := make(chan context.Context, 1)
 +	preSave := make(chan string, 1)
 +	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, nil)
 +	store := &memoryAuthStore{}
@@ -420,7 +1006,8 @@ index 00000000000..a9f589e5101
 +		saved <- record.ID
 +		return nil
 +	})
-+	h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(_ context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++	h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++		workerContext <- ctx
 +		opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
 +		return &coreauth.Auth{ID: "codex-device.json", FileName: "codex-device.json", Provider: "codex"}, nil
 +	})
@@ -430,6 +1017,14 @@ index 00000000000..a9f589e5101
 +
 +	start := httptest.NewRecorder()
 +	router.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/v8/management/oauth/auth-url?provider=codex&flow=device", nil))
++	ctx := <-workerContext
++	t.Cleanup(func() {
++		select {
++		case <-ctx.Done():
++		case <-time.After(3 * time.Second):
++			t.Error("device worker did not finish")
++		}
++	})
 +	if start.Code != http.StatusOK {
 +		t.Fatalf("start status = %d, body=%s", start.Code, start.Body.String())
 +	}
@@ -467,7 +1062,7 @@ index 00000000000..a9f589e5101
 +	loginDone := make(chan struct{})
 +	close(loginDone)
 +
-+	info, started, timedOut := waitForCodexDeviceStart(deviceCodeCh, loginDone, nil)
++	info, started, timedOut := waitForCodexDeviceStart(deviceCodeCh, loginDone, nil, nil)
 +	if !started || timedOut || info != expected {
 +		t.Fatalf("waitForCodexDeviceStart() = (%#v, %t, %t), want ready code", info, started, timedOut)
 +	}
@@ -480,16 +1075,16 @@ index 00000000000..a9f589e5101
 +	timeout := make(chan time.Time, 1)
 +	timeout <- time.Time{}
 +
-+	info, started, timedOut := waitForCodexDeviceStartAfterDrain(deviceCodeCh, nil, timeout)
++	info, started, timedOut := waitForCodexDeviceStartAfterDrain(deviceCodeCh, nil, timeout, nil)
 +	if !started || timedOut || info != expected {
 +		t.Fatalf("waitForCodexDeviceStartAfterDrain() = (%#v, %t, %t), want ready code", info, started, timedOut)
 +	}
 +}
 diff --git a/internal/api/handlers/management/handler.go b/internal/api/handlers/management/handler.go
-index c186e75f472..dac06bb8301 100644
+index 78dde7ac7ad0b339b7b350b4a43d4713057128f8..b70dd0fe5ca5527b0c8487b7828b4df8de9413a8 100644
 --- a/internal/api/handlers/management/handler.go
 +++ b/internal/api/handlers/management/handler.go
-@@ -38,29 +38,30 @@ const attemptMaxIdleTime = 2 * time.Hour
+@@ -38,31 +38,32 @@ const attemptMaxIdleTime = 2 * time.Hour
  
  // Handler aggregates config reference, persistence path and helpers.
  type Handler struct {
@@ -516,6 +1111,8 @@ index c186e75f472..dac06bb8301 100644
 -	pluginStoreHTTPClient   pluginstore.HTTPDoer
 -	pluginStoreRateLimiter  *pluginstore.GitHubRateLimiter
 -	pluginReleases          pluginReleaseCache
+-	siwcOAuthFactory        func(*config.Config) siwcOAuthService
+-	siwcCommitMu            sync.Mutex
 +	cfg                      *config.Config
 +	configFilePath           string
 +	mu                       sync.Mutex
@@ -540,22 +1137,111 @@ index c186e75f472..dac06bb8301 100644
 +	pluginStoreHTTPClient    pluginstore.HTTPDoer
 +	pluginStoreRateLimiter   *pluginstore.GitHubRateLimiter
 +	pluginReleases           pluginReleaseCache
++	siwcOAuthFactory         func(*config.Config) siwcOAuthService
++	siwcCommitMu             sync.Mutex
  }
  
  type configReloadSnapshot struct {
+diff --git a/internal/api/handlers/management/oauth_callback.go b/internal/api/handlers/management/oauth_callback.go
+index 030788a7a981a5b375d7626da4ad992ffd77ec77..6c37f0437b172d6a9c9d994e8d54d5d004b9d342 100644
+--- a/internal/api/handlers/management/oauth_callback.go
++++ b/internal/api/handlers/management/oauth_callback.go
+@@ -121,6 +121,10 @@ func (h *Handler) handleOAuthCallback(c *gin.Context, req oauthCallbackRequest)
+ 	}
+ 
+ 	if _, errWrite := WriteOAuthCallbackFileForPendingSession(h.cfg.AuthDir, canonicalProvider, state, code, errMsg); errWrite != nil {
++		if errors.Is(errWrite, ErrOAuthDeviceCallback) {
++			c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "device login does not accept callbacks"})
++			return
++		}
+ 		if errors.Is(errWrite, errOAuthSessionNotPending) {
+ 			_, status, okSession := GetOAuthSession(state)
+ 			if okSession && status != "" {
 diff --git a/internal/api/handlers/management/oauth_sessions.go b/internal/api/handlers/management/oauth_sessions.go
-index 336f9bbcdd7..77e5319ae75 100644
+index 2b010efec9fd750f4d2e3a53e8edac367dac3c83..e69c32f0c19d90ccd9d3a2225b86957759e6dc50 100644
 --- a/internal/api/handlers/management/oauth_sessions.go
 +++ b/internal/api/handlers/management/oauth_sessions.go
-@@ -38,6 +38,7 @@ type oauthSession struct {
- 	Source    string
- 	Metadata  map[string]any
- 	Completed bool
-+	Saving    bool
- 	CreatedAt time.Time
- 	ExpiresAt time.Time
+@@ -32,10 +32,14 @@ var (
+ 	errOAuthSessionExists     = errors.New("oauth session already exists")
+ )
+ 
++// ErrOAuthDeviceCallback rejects browser callbacks for a device login state.
++var ErrOAuthDeviceCallback = fmt.Errorf("%w: device login does not accept callbacks", errOAuthSessionNotPending)
++
+ // ErrSIWCCallbackRequiresV8 prevents legacy callback sinks from accepting SIWC codes.
+ var ErrSIWCCallbackRequiresV8 = fmt.Errorf("%w: SIWC callbacks require /v8/management/oauth/callback", errOAuthSessionNotPending)
+ 
+ type oauthSession struct {
++	Device         bool
+ 	Provider       string
+ 	Status         string
+ 	Source         string
+@@ -43,6 +47,7 @@ type oauthSession struct {
+ 	SIWC           *siwcBindSession
+ 	SIWCCommitting bool
+ 	Completed      bool
++	Saving         bool
+ 	CreatedAt      time.Time
+ 	ExpiresAt      time.Time
  }
-@@ -243,13 +244,39 @@ func (s *oauthSessionStore) Cancel(state string) bool {
+@@ -71,7 +76,7 @@ func newOAuthSessionStore(ttl time.Duration) *oauthSessionStore {
+ 
+ func (s *oauthSessionStore) purgeExpiredLocked(now time.Time) {
+ 	for state, session := range s.sessions {
+-		if !session.SIWCCommitting && !session.ExpiresAt.IsZero() && now.After(session.ExpiresAt) {
++		if !session.Saving && !session.SIWCCommitting && !session.ExpiresAt.IsZero() && now.After(session.ExpiresAt) {
+ 			if session.SIWC != nil {
+ 				session.SIWC.cancel()
+ 			}
+@@ -81,6 +86,14 @@ func (s *oauthSessionStore) purgeExpiredLocked(now time.Time) {
+ }
+ 
+ func (s *oauthSessionStore) Register(state, provider string) {
++	s.register(state, provider, false)
++}
++
++func (s *oauthSessionStore) registerDevice(state, provider string) {
++	s.register(state, provider, true)
++}
++
++func (s *oauthSessionStore) register(state, provider string, device bool) {
+ 	state = strings.TrimSpace(state)
+ 	provider = strings.ToLower(strings.TrimSpace(provider))
+ 	if state == "" || provider == "" {
+@@ -93,6 +106,7 @@ func (s *oauthSessionStore) Register(state, provider string) {
+ 
+ 	s.purgeExpiredLocked(now)
+ 	s.sessions[state] = oauthSession{
++		Device:    device,
+ 		Provider:  provider,
+ 		Status:    "",
+ 		Source:    oauthSessionSourceBuiltin,
+@@ -150,6 +164,7 @@ func (s *oauthSessionStore) SetError(state, message string) {
+ 		return
+ 	}
+ 	session.Status = message
++	session.Saving = false
+ 	session.SIWCCommitting = false
+ 	session.ExpiresAt = now.Add(s.ttl)
+ 	s.sessions[state] = session
+@@ -172,6 +187,7 @@ func (s *oauthSessionStore) Complete(state string) {
+ 	}
+ 	session.Status = ""
+ 	session.Metadata = nil
++	session.Saving = false
+ 	session.SIWCCommitting = false
+ 	session.Completed = true
+ 	session.ExpiresAt = now.Add(s.completedTTL)
+@@ -192,7 +208,7 @@ func (s *oauthSessionStore) CompleteProvider(provider string, source string) int
+ 	s.purgeExpiredLocked(now)
+ 	removed := 0
+ 	for state, session := range s.sessions {
+-		if session.SIWC == nil && !session.Completed && strings.EqualFold(session.Provider, provider) && (source == "" || session.Source == source) {
++		if session.SIWC == nil && !session.Saving && !session.Completed && strings.EqualFold(session.Provider, provider) && (source == "" || session.Source == source) {
+ 			session.Status = ""
+ 			session.Metadata = nil
+ 			session.Completed = true
+@@ -259,7 +275,7 @@ func (s *oauthSessionStore) Cancel(state string) bool {
  
  	s.purgeExpiredLocked(now)
  	session, ok := s.sessions[state]
@@ -563,12 +1249,14 @@ index 336f9bbcdd7..77e5319ae75 100644
 +	if !ok || session.Completed || session.Saving || session.Status != "" {
  		return false
  	}
- 	delete(s.sessions, state)
+ 	if session.SIWC != nil {
+@@ -270,6 +286,33 @@ func (s *oauthSessionStore) Cancel(state string) bool {
  	return true
  }
  
 +// BeginSave atomically claims a pending session before persistence begins.
-+// Once claimed, Cancel returns false because persistence may have side effects.
++// Until Complete or SetError releases the claim, cancellation and expiry cannot
++// discard the result because persistence may already have side effects.
 +func (s *oauthSessionStore) BeginSave(state, provider string) bool {
 +	state = strings.TrimSpace(state)
 +	provider = strings.ToLower(strings.TrimSpace(provider))
@@ -596,8 +1284,171 @@ index 336f9bbcdd7..77e5319ae75 100644
  func cloneOAuthSessionMetadata(in map[string]any) map[string]any {
  	if len(in) == 0 {
  		return nil
+@@ -285,6 +328,10 @@ var oauthSessions = newOAuthSessionStore(oauthSessionTTL)
+ 
+ func RegisterOAuthSession(state, provider string) { oauthSessions.Register(state, provider) }
+ 
++func RegisterDeviceOAuthSession(state, provider string) {
++	oauthSessions.registerDevice(state, provider)
++}
++
+ func RegisterPluginOAuthSession(state, provider string, metadata map[string]any) error {
+ 	return oauthSessions.RegisterPlugin(state, provider, metadata)
+ }
+@@ -501,8 +548,13 @@ func WriteOAuthCallbackFileForPendingSession(authDir, provider, state, code, err
+ 	if err != nil {
+ 		return "", err
+ 	}
+-	if session, ok := oauthSessions.Get(state); ok && session.SIWC != nil {
+-		return "", ErrSIWCCallbackRequiresV8
++	if session, ok := oauthSessions.Get(state); ok {
++		if session.Device {
++			return "", ErrOAuthDeviceCallback
++		}
++		if session.SIWC != nil {
++			return "", ErrSIWCCallbackRequiresV8
++		}
+ 	}
+ 	if !IsOAuthSessionPending(state, canonicalProvider) {
+ 		return "", errOAuthSessionNotPending
+diff --git a/internal/api/handlers/management/oauth_sessions_save_test.go b/internal/api/handlers/management/oauth_sessions_save_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..dfdd325653671be47d2d38552cad63371350ba3f
+--- /dev/null
++++ b/internal/api/handlers/management/oauth_sessions_save_test.go
+@@ -0,0 +1,71 @@
++package management
++
++import (
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++)
++
++func TestOAuthSessionSaveSurvivesExpiryUntilPersistenceResolves(t *testing.T) {
++	for _, outcome := range []string{"success", "error"} {
++		t.Run(outcome, func(t *testing.T) {
++			store := newOAuthSessionStore(oauthSessionTTL)
++			replaceOAuthSessionStoreForTest(t, store)
++			store.Register("saving-state", "codex")
++			store.Register("pending-state", "codex")
++			if !store.BeginSave("saving-state", "codex") {
++				t.Fatal("could not claim session for persistence")
++			}
++			store.mu.Lock()
++			for state, session := range store.sessions {
++				session.ExpiresAt = time.Now().Add(-time.Second)
++				store.sessions[state] = session
++			}
++			store.mu.Unlock()
++
++			if !store.IsPending("saving-state", "codex") {
++				t.Fatal("session expired while persistence was still in flight")
++			}
++			if store.IsPending("pending-state", "codex") {
++				t.Fatal("unclaimed session survived expiry")
++			}
++			if store.Cancel("saving-state") {
++				t.Fatal("cancelled a session while persistence was in flight")
++			}
++			if got := store.CompleteProvider("codex", oauthSessionSourceBuiltin); got != 0 {
++				t.Fatal("another login completed the session while persistence was in flight")
++			}
++			router := gin.New()
++			handler := &Handler{}
++			router.GET("/status", handler.GetAuthStatus)
++			if status := performOAuthStatusRequest(t, router, "saving-state"); status.Status != "wait" {
++				t.Fatalf("status during persistence = %#v, want wait", status)
++			}
++
++			if outcome == "success" {
++				store.Complete("saving-state")
++			} else {
++				store.SetError("saving-state", "persistence failed")
++			}
++			status := performOAuthStatusRequest(t, router, "saving-state")
++			if outcome == "success" && status.Status != "ok" {
++				t.Fatalf("status after saving = %#v, want ok", status)
++			}
++			if outcome == "error" && (status.Status != "error" || status.Error != "persistence failed") {
++				t.Fatalf("status after saving = %#v, want persistence error", status)
++			}
++			session, ok := store.Get("saving-state")
++			if !ok || session.Saving || !session.ExpiresAt.After(time.Now()) {
++				t.Fatalf("resolved session did not resume normal expiry: %#v, exists=%t", session, ok)
++			}
++			store.mu.Lock()
++			session.ExpiresAt = time.Now().Add(-time.Second)
++			store.sessions["saving-state"] = session
++			store.mu.Unlock()
++			if _, ok := store.Get("saving-state"); ok {
++				t.Fatal("resolved session survived expiry")
++			}
++		})
++	}
++}
+diff --git a/internal/api/server_codex_device_callback_test.go b/internal/api/server_codex_device_callback_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..f5b1c0076799c9b6d5a54377cb3226299d536a9a
+--- /dev/null
++++ b/internal/api/server_codex_device_callback_test.go
+@@ -0,0 +1,35 @@
++package api
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"testing"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/api/handlers/management"
++)
++
++func TestCodexCallbackRejectsDeviceState(t *testing.T) {
++	s := newTestServer(t)
++	state := "device-root-callback-state"
++	management.RegisterDeviceOAuthSession(state, "codex")
++	defer management.CancelOAuthSession(state)
++	callback := httptest.NewRecorder()
++	s.engine.ServeHTTP(callback, httptest.NewRequest(http.MethodGet, "/codex/callback?state="+state+"&code=browser-code", nil))
++	if callback.Code != http.StatusConflict || !strings.Contains(callback.Body.String(), "device login does not accept callbacks") {
++		t.Fatalf("callback status=%d, body=%s", callback.Code, callback.Body.String())
++	}
++	entries, errRead := os.ReadDir(s.cfg.AuthDir)
++	if errRead != nil {
++		t.Fatal(errRead)
++	}
++	for _, entry := range entries {
++		if strings.HasPrefix(entry.Name(), ".oauth") {
++			t.Fatalf("rejected callback created OAuth file %q", entry.Name())
++		}
++	}
++	if !management.IsOAuthSessionPending(state, "codex") {
++		t.Fatal("rejected callback consumed device session")
++	}
++}
+diff --git a/internal/api/server_routes.go b/internal/api/server_routes.go
+index 61786b4a9a1f66c83663358e851228ec8b5d6dec..9b136f3d1c027bded10ef9480672e84d056e7195 100644
+--- a/internal/api/server_routes.go
++++ b/internal/api/server_routes.go
+@@ -175,7 +175,12 @@ func (s *Server) setupRoutes() {
+ 		}
+ 		if state != "" {
+ 			if cfg := s.getConfig(); cfg != nil {
+-				if _, errWrite := managementHandlers.WriteOAuthCallbackFileForPendingSession(cfg.AuthDir, "codex", state, code, errStr); errors.Is(errWrite, managementHandlers.ErrSIWCCallbackRequiresV8) {
++				_, errWrite := managementHandlers.WriteOAuthCallbackFileForPendingSession(cfg.AuthDir, "codex", state, code, errStr)
++				if errors.Is(errWrite, managementHandlers.ErrOAuthDeviceCallback) {
++					c.JSON(http.StatusConflict, gin.H{"error": "device login does not accept callbacks"})
++					return
++				}
++				if errors.Is(errWrite, managementHandlers.ErrSIWCCallbackRequiresV8) {
+ 					c.JSON(http.StatusConflict, gin.H{"error": "SIWC callbacks require /v8/management/oauth/callback"})
+ 					return
+ 				}
 diff --git a/sdk/auth/codex.go b/sdk/auth/codex.go
-index 53b9cab1f21..765f0ef5a13 100644
+index 2d56fa07919f198fafe8060b5e3f93ef6255a43d..d65e8b210468eb4e610e39518366f17df57d589f 100644
 --- a/sdk/auth/codex.go
 +++ b/sdk/auth/codex.go
 @@ -19,7 +19,8 @@ import (
@@ -611,7 +1462,7 @@ index 53b9cab1f21..765f0ef5a13 100644
  
  // NewCodexAuthenticator constructs a Codex authenticator with default settings.
 diff --git a/sdk/auth/codex_device.go b/sdk/auth/codex_device.go
-index cc2febbb3c4..ecd83a4f757 100644
+index cc2febbb3c470c5f35834d0744a5e691926c5eff..59e2ea38c3448cbc054695da75e17a8af567892f 100644
 --- a/sdk/auth/codex_device.go
 +++ b/sdk/auth/codex_device.go
 @@ -66,7 +66,10 @@ func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *confi
@@ -626,7 +1477,13 @@ index cc2febbb3c4..ecd83a4f757 100644
  
  	userCodeResp, err := requestCodexDeviceUserCode(ctx, httpClient)
  	if err != nil {
-@@ -85,8 +88,16 @@ func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *confi
+@@ -82,11 +85,22 @@ func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *confi
+ 		return nil, fmt.Errorf("codex device flow did not return required fields")
+ 	}
+ 
++	ctx, cancel := context.WithTimeout(ctx, codexDeviceTimeout)
++	defer cancel()
++
  	pollInterval := parseCodexDevicePollInterval(userCodeResp.Interval)
  
  	fmt.Println("Starting Codex device authentication...")
@@ -645,7 +1502,7 @@ index cc2febbb3c4..ecd83a4f757 100644
  
  	if !opts.NoBrowser {
  		if !browser.IsAvailable() {
-@@ -172,6 +183,9 @@ func pollCodexDeviceToken(ctx context.Context, client *http.Client, deviceAuthID
+@@ -172,6 +186,9 @@ func pollCodexDeviceToken(ctx context.Context, client *http.Client, deviceAuthID
  	deadline := time.Now().Add(codexDeviceTimeout)
  
  	for {
@@ -657,18 +1514,20 @@ index cc2febbb3c4..ecd83a4f757 100644
  		}
 diff --git a/sdk/auth/codex_device_test.go b/sdk/auth/codex_device_test.go
 new file mode 100644
-index 00000000000..a2df0d1f40c
+index 0000000000000000000000000000000000000000..2a078f39059f3289f7aea8a590e477f6acf2a986
 --- /dev/null
 +++ b/sdk/auth/codex_device_test.go
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,116 @@
 +package auth
 +
 +import (
 +	"context"
++	"errors"
 +	"io"
 +	"net/http"
 +	"strings"
 +	"testing"
++	"testing/synctest"
 +	"time"
 +
 +	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
@@ -720,8 +1579,63 @@ index 00000000000..a2df0d1f40c
 +		t.Fatalf("device requests = %d, want only the code request before cancellation", requests)
 +	}
 +}
++
++func TestCodexDeviceLoginExpiresStalledPolling(t *testing.T) {
++	for _, stallBody := range []bool{false, true} {
++		name := "headers"
++		if stallBody {
++			name = "body"
++		}
++		t.Run(name, func(t *testing.T) {
++			synctest.Test(t, func(t *testing.T) {
++				ctx, cancel := context.WithCancel(context.Background())
++				defer cancel()
++				polling := make(chan struct{})
++				client := &http.Client{Transport: codexDeviceRoundTripper(func(req *http.Request) (*http.Response, error) {
++					if req.URL.String() == codexDeviceUserCodeURL {
++						return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"device_auth_id":"device-id","user_code":"ABCD-EFGH","interval":5}`)), Header: make(http.Header)}, nil
++					}
++					close(polling)
++					if stallBody {
++						return &http.Response{StatusCode: http.StatusOK, Body: &stalledCodexDeviceBody{ctx: req.Context()}, Header: make(http.Header)}, nil
++					}
++					<-req.Context().Done()
++					return nil, req.Context().Err()
++				})}
++				done := make(chan error, 1)
++				go func() {
++					_, err := (&CodexAuthenticator{deviceHTTPClient: client}).Login(ctx, &config.Config{}, &LoginOptions{
++						NoBrowser:    true,
++						Metadata:     map[string]string{codexLoginModeMetadataKey: codexLoginModeDevice},
++						OnDeviceCode: func(DeviceCodeInfo) {},
++					})
++					done <- err
++				}()
++				<-polling
++				time.Sleep(codexDeviceTimeout)
++				synctest.Wait()
++				select {
++				case err := <-done:
++					if !errors.Is(err, context.DeadlineExceeded) {
++						t.Fatalf("Login() error = %v, want device expiry", err)
++					}
++				default:
++					t.Fatal("device login kept waiting after its code expired")
++				}
++			})
++		})
++	}
++}
++
++type stalledCodexDeviceBody struct{ ctx context.Context }
++
++func (b *stalledCodexDeviceBody) Read([]byte) (int, error) {
++	<-b.ctx.Done()
++	return 0, b.ctx.Err()
++}
++func (*stalledCodexDeviceBody) Close() error { return nil }
 diff --git a/sdk/auth/interfaces.go b/sdk/auth/interfaces.go
-index 4388de8019f..c53556fa439 100644
+index 4388de8019fe2737f7d69d8e8191729546d492e7..c53556fa4392fd1ba8942228bd53d2ae112a93cf 100644
 --- a/sdk/auth/interfaces.go
 +++ b/sdk/auth/interfaces.go
 @@ -19,6 +19,16 @@ type LoginOptions struct {

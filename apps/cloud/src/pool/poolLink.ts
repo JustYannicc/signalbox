@@ -5,7 +5,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { bearerOrKey, errorResponse, withoutCaller } from "../modelGateway/modelGateway.ts";
+import { bearerOrKey, errorResponse, withoutCaller } from "../models/ModelHttp.ts";
 import type { PoolBackendError } from "./cliProxyApi.ts";
 import { poolObjectStub, type PoolObjectNamespace } from "./PoolDirectory.ts";
 import * as PoolEngine from "./PoolEngine.ts";

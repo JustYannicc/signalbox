@@ -15,6 +15,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import * as CliProxyApi from "./cliProxyApi.ts";
+import * as PoolUsageHistory from "./poolUsageHistory.ts";
 
 /**
  * Each account's usage windows (5-hour, weekly, …) as a cloud pool reads
@@ -547,6 +548,15 @@ export const refresh = (
       (account) => readAccount(endpoint, account, before.get(account.name), now, mode),
       { concurrency: PROBE_CONCURRENCY },
     );
+    const limits = yield* cached;
+    yield* PoolUsageHistory.record(
+      PoolUsageHistory.accountsWithQuota(
+        live.map((account) => ({ ...account, usageLimits: limits.get(account.name) ?? null })),
+      ),
+      now,
+      live.map((account) => account.name),
+      { fullProbe: mode === "probe" },
+    );
     const count = (outcome: Outcome) => reads.filter((each) => each.outcome === outcome).length;
     yield* Effect.annotateCurrentSpan({
       "pool.accounts": live.length,
@@ -562,4 +572,5 @@ export const refresh = (
 export const clear = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`DELETE FROM account_limits`;
+  yield* PoolUsageHistory.clear;
 });

@@ -4,6 +4,35 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveUsageAccess } from "./usageAccess.ts";
 
 describe("resolveUsageAccess", () => {
+  it("reports unavailable history when only account limits are supported", () => {
+    expect(
+      resolveUsageAccess({
+        connectionPhase: "connected",
+        session: { authenticated: true, scopes: [AuthDiagnosticsReadScope] },
+        hasSessionError: false,
+        capabilities: { usageHistory: false },
+      }),
+    ).toEqual({
+      canReadDiagnostics: false,
+      isPending: false,
+      error: "Cost and token history is not available yet. Account limits are available in Limits.",
+    });
+  });
+
+  it.each([undefined, {}, { usageHistory: true }])(
+    "retains usage access for a supported or legacy server with %j",
+    (capabilities) => {
+      expect(
+        resolveUsageAccess({
+          connectionPhase: "connected",
+          session: { authenticated: true, scopes: [AuthDiagnosticsReadScope] },
+          hasSessionError: false,
+          capabilities,
+        }),
+      ).toEqual({ canReadDiagnostics: true, isPending: false, error: null });
+    },
+  );
+
   it.each(["available", "offline", "error"] as const)(
     "reports %s connections without a session instead of keeping totals pending",
     (connectionPhase) => {

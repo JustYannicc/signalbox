@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import type { Launch } from "./engineTypes.ts";
 import { automationError, fail } from "./errors.ts";
 import type { AutomationThreads, ThreadMonitor } from "./host.ts";
-import type { RunLinkStore } from "./runLinkStore.ts";
+import type { RunLinkRow, RunLinkStore } from "./runLinkStore.ts";
 import type { AutomationRow, WorkflowStore } from "./WorkflowStore.ts";
 
 /**
@@ -28,6 +28,9 @@ import type { AutomationRow, WorkflowStore } from "./WorkflowStore.ts";
 const TASK_PREFIX = "automation-run:";
 
 /** Thread events that end the thread's attached runs. */
+/** The attachment a task's done-condition run holds on its task. */
+export const DONE_CONDITION_KEY = "done-condition";
+
 const ENDING_EVENTS: ReadonlySet<string> = new Set([
   "thread.settled",
   "thread.archived",
@@ -122,20 +125,27 @@ export const makeAttachments = (deps: AttachmentDependencies) => {
   });
 
   /** Cancels the runs attached to a thread; returns how many it stopped. */
-  const cancelAttached = (threadId: string) =>
+  const cancelAttached = (threadId: string, keep?: (link: RunLinkRow) => boolean) =>
     Effect.gen(function* () {
       let cancelled = 0;
       for (const link of yield* links.runningAttachedTo(threadId)) {
+        if (keep?.(link)) continue;
         if (yield* deps.cancel(link.run_id)) cancelled++;
         yield* drop(threadId, link.run_id);
       }
       return cancelled;
     });
 
-  /** Settling, archiving or deleting a thread ends what's attached to it. */
+  /**
+   * Settling, archiving or deleting a thread ends what's attached to it, even before monitor
+   * recovery. A task's done-condition run is the task lifecycle's to end: it may be the run that
+   * just completed the task.
+   */
   const onDomainEvent = (event: OrchestrationV2DomainEvent) =>
-    ENDING_EVENTS.has(event.type) && monitors.has(event.threadId)
-      ? cancelAttached(event.threadId).pipe(Effect.asVoid)
+    ENDING_EVENTS.has(event.type)
+      ? cancelAttached(event.threadId, (link) => link.attach_key === DONE_CONDITION_KEY).pipe(
+          Effect.asVoid,
+        )
       : Effect.void;
 
   /** What a thread's attached run shows, while it runs. */

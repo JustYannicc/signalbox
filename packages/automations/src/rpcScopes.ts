@@ -17,6 +17,7 @@ export const AUTOMATION_RPC_SCOPES = {
   [AUTOMATION_WS_METHODS.automationsDelete]: AuthOrchestrationOperateScope,
   [AUTOMATION_WS_METHODS.automationsRotateWebhook]: AuthOrchestrationOperateScope,
   [AUTOMATION_WS_METHODS.automationsSetWebhookSecret]: AuthOrchestrationOperateScope,
+  [AUTOMATION_WS_METHODS.automationsGitHubSubscriptions]: AuthOrchestrationReadScope,
   [AUTOMATION_WS_METHODS.automationsRunNow]: AuthOrchestrationOperateScope,
   [AUTOMATION_WS_METHODS.automationsCustomize]: AuthOrchestrationOperateScope,
   [AUTOMATION_WS_METHODS.automationsStopAttached]: AuthOrchestrationOperateScope,
@@ -30,4 +31,5 @@ export const AUTOMATION_RPC_SCOPES = {
   [AUTOMATION_WS_METHODS.automationsDisconnect]: AuthOrchestrationOperateScope,
   [AUTOMATION_WS_METHODS.automationsValidate]: AuthOrchestrationReadScope,
   [AUTOMATION_WS_METHODS.automationsSave]: AuthOrchestrationOperateScope,
+  [AUTOMATION_WS_METHODS.automationsTaskLifecycle]: AuthOrchestrationOperateScope,
 } as const;

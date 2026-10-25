@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import { ProjectId } from "@t3tools/contracts";
 
 import {
+  pendingReviewCommentsHaveStaleHead,
+  pullRequestWriteAttemptKey,
   type PendingReviewComment,
   pullRequestReviewKey,
   usePullRequestReviewStore,
@@ -13,7 +15,18 @@ function comment(id: string, body = id): PendingReviewComment {
 
 describe("pull request review drafts", () => {
   beforeEach(() => {
-    usePullRequestReviewStore.setState({ drafts: {}, summaries: {} });
+    usePullRequestReviewStore.setState({
+      drafts: {},
+      summaries: {},
+      reviewedHeads: {},
+      writeAttempts: {},
+    });
+  });
+
+  it("keeps a pending line comment tied to the diff it came from", () => {
+    const comment = { ...commentForTest("one"), headSha: "old-head" };
+    expect(pendingReviewCommentsHaveStaleHead([comment], "old-head")).toBe(false);
+    expect(pendingReviewCommentsHaveStaleHead([comment], "new-head")).toBe(true);
   });
 
   it("removes only the line comments included in a submitted snapshot", () => {
@@ -65,6 +78,40 @@ describe("pull request review drafts", () => {
     expect(usePullRequestReviewStore.getState().summaries[publicKey]).toBe("Public review");
   });
 
+  it("keeps reviewed heads and failed writes separate across environments", () => {
+    const reference = {
+      projectId: ProjectId.make("project-a"),
+      repository: "owner/repo",
+      number: 7,
+    };
+    const environmentA = pullRequestWriteAttemptKey(reference, "review", "environment-a");
+    const environmentB = pullRequestWriteAttemptKey(reference, "review", "environment-b");
+    const store = usePullRequestReviewStore.getState();
+    store.setReviewedHead(environmentA, "head-a");
+    store.setWriteAttempt(environmentA, {
+      requestKey: "request-a",
+      operationId: "operation-a",
+      headSha: "head-a",
+    });
+    store.setReviewedHead(environmentB, "head-b");
+    store.setWriteAttempt(environmentB, {
+      requestKey: "request-b",
+      operationId: "operation-b",
+      headSha: "head-b",
+    });
+
+    expect(usePullRequestReviewStore.getState().reviewedHeads).toEqual({
+      [environmentA]: "head-a",
+      [environmentB]: "head-b",
+    });
+    expect(usePullRequestReviewStore.getState().writeAttempts[environmentA]?.operationId).toBe(
+      "operation-a",
+    );
+    expect(usePullRequestReviewStore.getState().writeAttempts[environmentB]?.operationId).toBe(
+      "operation-b",
+    );
+  });
+
   it("does not clear a summary revised while submission is in flight", () => {
     const store = usePullRequestReviewStore.getState();
     store.setSummary("review-a", "Submitted body");
@@ -74,3 +121,7 @@ describe("pull request review drafts", () => {
     expect(usePullRequestReviewStore.getState().summaries["review-a"]).toBe("Revised body");
   });
 });
+
+function commentForTest(id: string): PendingReviewComment {
+  return { id, body: id, path: "src/app.ts", position: { kind: "added", newLine: 1 } };
+}

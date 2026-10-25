@@ -1,0 +1,32 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "windows-dependency",
+      "path": "codex-rs/mxc-sandbox/Cargo.toml",
+      "before": [
+        "serde = { workspace = true, features = [\"derive\"] }",
+        "serde_json = { workspace = true }",
+        "thiserror = { workspace = true }",
+        "wxc_common = { workspace = true }",
+        "",
+        "[target.'cfg(windows)'.dependencies]",
+        "appcontainer_common = { workspace = true }",
+        "learning_mode_windows = { workspace = true }",
+        "# 1.2.4 imports OneCore_apiset, which the GNU Windows toolchain does not ship."
+      ],
+      "after": [
+        "serde = { workspace = true, features = [\"derive\"] }",
+        "serde_json = { workspace = true }",
+        "thiserror = { workspace = true }",
+        "",
+        "[target.'cfg(windows)'.dependencies]",
+        "# Only native.rs (cfg(windows)) uses wxc_common; it does not build for wasm32-wasip1.",
+        "wxc_common = { workspace = true }",
+        "appcontainer_common = { workspace = true }",
+        "learning_mode_windows = { workspace = true }",
+        "# 1.2.4 imports OneCore_apiset, which the GNU Windows toolchain does not ship."
+      ]
+    }
+  ]
+}

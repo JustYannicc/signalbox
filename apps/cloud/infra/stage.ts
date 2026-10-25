@@ -34,6 +34,24 @@ const previewHost = (tag: string) => `*-${tag}.${PREVIEW_ZONE.name}`;
  * ThreadObject or PoolObject isn't evicted while its container still works.
  */
 export const COMPATIBILITY_DATE = "2026-10-01";
+export const CTX_EXPORTS_COMPATIBILITY_FLAG = "enable_ctx_exports";
+export const CLOUD_COMPATIBILITY_FLAGS = [
+  "nodejs_compat",
+  "legacy_module_registry",
+  CTX_EXPORTS_COMPATIBILITY_FLAG,
+] as const;
+export const MODEL_GATEWAY_COMPATIBILITY_FLAGS = [
+  "nodejs_compat",
+  "legacy_module_registry",
+] as const;
+
+/**
+ * Hosting policy: 128,000,000 decimal bytes per slot, equal to Cloudflare's documented 128 MB
+ * per-isolate envelope (https://developers.cloudflare.com/workers/platform/limits/#memory). It
+ * adds no cap beyond that platform limit and is not measured usable headroom. Revisit when #1255
+ * validates JS/Wasm/external/cache/buffer accounting and an accepted baseline maximum plus margin.
+ */
+export const RESIDENT_BYTE_LIMIT = "128000000";
 
 /**
  * Durable Object bindings and the classes behind them. A binding is its
@@ -41,10 +59,17 @@ export const COMPATIBILITY_DATE = "2026-10-01";
  */
 export const DURABLE_OBJECT_BINDINGS = {
   USERS: "UserObject",
+  SEARCH_INDEX: "SearchIndexObject",
   THREADS: "ThreadObject",
   POOLS: "PoolObject",
   DRIVES: "DriveObject",
   PREVIEW_LINKS: "PreviewLinkRegistry",
+  EXECUTOR_TOKEN_BINDINGS: "ExecutorTokenBindingObject",
+  HARNESS_RUN_STORE: "HarnessRunStoreObject",
+  HARNESS_FILES_STORE: "HarnessFilesStoreObject",
+  HARNESS_THREAD_SUPERVISOR: "HarnessThreadSupervisorObject",
+  PROCESS_EXECUTION_SHARDS: "HarnessProcessExecutionShardObject",
+  PLACEMENT_STORES: "HarnessProcessPlacementStoreObject",
 } as const;
 
 /**
@@ -75,6 +100,25 @@ export interface CloudStage {
   /** Plain-text vars fixed by the stage. CI adds the rest. */
   readonly vars: Readonly<Record<string, string>>;
 }
+
+/**
+ * Preview-only paths that serve the gateway and trace receiver from the app
+ * origin. The app owns the preview's only custom domain.
+ */
+export const stageWorkerRouting = (
+  target: CloudStage,
+  productionDomain: string,
+  paths: readonly string[],
+) =>
+  target.production
+    ? { domain: { name: productionDomain, zoneId: SIGNALBOX_ZONE_ID } }
+    : {
+        domain: null,
+        routes: paths.map((path) => ({
+          pattern: `${target.cloudDomain}${path}*`,
+          zoneId: SIGNALBOX_ZONE_ID,
+        })),
+      };
 
 export const PRODUCTION_STAGE = "production";
 export const PREVIEW_DRIVE_PACKS_BUCKET = "signalbox-drives-preview";
@@ -114,9 +158,12 @@ export const cloudStage = (stage: string): CloudStage => {
       drivePacksBucket: "signalbox-drives",
       automationWorkflow: "signalbox-cloud-automations",
       vars: {
+        SIGNALBOX_STAGE: PRODUCTION_STAGE,
+        RESIDENT_BYTE_LIMIT,
         // Production identity. Never reuse it for another deployment.
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         ENVIRONMENT_LABEL: "Signalbox Cloud",
+        EXECUTOR_TOKEN_ISSUER: "https://app.signalbox.run",
         ...urls("app.signalbox.run", "gateway.signalbox.run"),
         PREVIEW_DOMAIN: previews,
         // Previews that may take a signed-in user's setup (`src/previewSetup/`).
@@ -139,14 +186,17 @@ export const cloudStage = (stage: string): CloudStage => {
     gatewayDomain,
     previewHost: previews,
     poolContainer: { name: `signalbox-cloud-pr-${number}-pools`, maxInstances: 2 },
-    threadContainer: { name: `signalbox-cloud-pr-${number}-threads`, maxInstances: 2 },
+    threadContainer: { name: `signalbox-cloud-pr-${number}-threads`, maxInstances: 4 },
     // Previews never touch production's packs; each keeps its own prefix.
     drivePacksBucket: PREVIEW_DRIVE_PACKS_BUCKET,
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
     vars: {
+      SIGNALBOX_STAGE: stage,
+      RESIDENT_BYTE_LIMIT,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
-      ...urls(cloudDomain, gatewayDomain),
+      EXECUTOR_TOKEN_ISSUER: `https://${cloudDomain}`,
+      ...urls(cloudDomain, cloudDomain),
       PREVIEW_DOMAIN: previews,
       DRIVE_PACKS_PREFIX: `pr-${number}/`,
       // Where a preview takes each user's setup from (`src/previewSetup/`).

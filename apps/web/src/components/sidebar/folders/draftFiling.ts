@@ -7,7 +7,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { isFiledAway } from "@t3tools/client-runtime/state/signalboxFolders";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useContext } from "react";
+import { useContext } from "react";
 
 import { type EnvironmentFolders, environmentFoldersAtom } from "../../../state/signalboxFolders";
 
@@ -30,9 +30,6 @@ export function draftFiledAway(folders: EnvironmentFolders | undefined, draft: D
 
 export function useDraftFiledAway() {
   const registry = useContext(RegistryContext);
-  return useCallback(
-    (draft: DraftPlace) =>
-      draftFiledAway(registry.get(environmentFoldersAtom).get(draft.environmentId), draft),
-    [registry],
-  );
+  return (draft: DraftPlace) =>
+    draftFiledAway(registry.get(environmentFoldersAtom).get(draft.environmentId), draft);
 }

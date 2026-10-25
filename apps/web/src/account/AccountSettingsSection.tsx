@@ -1,9 +1,5 @@
-import { fetchAccountSessionState } from "@t3tools/client-runtime/account";
-import {
-  ACCOUNT_SIGN_IN_ROUTE,
-  ACCOUNT_SIGN_OUT_PATH,
-  type AccountProfile,
-} from "@t3tools/contracts/account";
+import { fetchAccountSessionState, signOutAccountSession } from "@t3tools/client-runtime/account";
+import { ACCOUNT_SIGN_IN_ROUTE, type AccountProfile } from "@t3tools/contracts/account";
 import * as Option from "effect/Option";
 import { useEffect, useState } from "react";
 
@@ -121,13 +117,12 @@ function CloudAccountSection() {
         setSigningOut(true);
         const revoke =
           httpBaseUrl !== null && token !== null
-            ? fetch(new URL(ACCOUNT_SIGN_OUT_PATH, httpBaseUrl), {
-                method: "POST",
+            ? signOutAccountSession(httpBaseUrl, {
                 credentials: "omit",
                 headers: { authorization: `Bearer ${token}` },
-                signal: AbortSignal.timeout(5_000),
-              }).catch(() => null)
-            : Promise.resolve(null);
+                timeoutMs: 5_000,
+              }).catch(() => undefined)
+            : Promise.resolve(undefined);
         void revoke
           .then(() => removeEnvironment(cloud.environmentId))
           .then((removed) => {

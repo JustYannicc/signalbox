@@ -1,0 +1,55 @@
+model {
+  extend signalbox {
+    operations = module 'Operations' {
+      #deep #v1
+      icon bootstrap:braces
+      description 'invoke · query · subscribe · catalog'
+      technology 'packages/contracts · Effect Schema + RPC'
+      metadata {
+        interface '4'
+        deletion 'UI-only operations appear; agents lose parity; gate has no single place'
+      }
+
+      api = iface 'Operations · interface' {
+        description '4 verbs: invoke · query · subscribe · catalog'
+        technology 'Deletion test: without it, UI-only operations appear; agents lose parity; gate has no single place'
+      }
+
+      registry = part 'Operation registry' {
+        icon tech:effect-icon
+        description 'handlers registered at layer build'
+      }
+      authority = part 'Authority check' {
+        icon bootstrap:shield-check
+        description 'Tree.can on every op'
+      }
+      gate = part 'Decision gate' {
+        icon bootstrap:sign-stop
+        description 'NeedsDecision · HumanOnly'
+      }
+      confirm = part 'Confirm URL' {
+        icon bootstrap:link-45deg
+        description 'for external sessions'
+      }
+
+      registry -> authority 'check'
+      registry -> gate 'destructive · human-only'
+      gate -> confirm 'external sessions'
+    }
+
+    operations.authority -> signalbox.tree.api 'can'
+    operations.gate -> signalbox.thread.api 'Ready ask (gate)'
+    operations.registry -> signalbox.tree.api 'tree commands'
+    operations.registry -> signalbox.thread.api 'thread input'
+    operations.registry -> signalbox.models.api 'pool changes'
+    operations.registry -> signalbox.connections.api 'connection changes'
+    operations.registry -> signalbox.drive.api 'accept · discard'
+    operations.registry -> signalbox.automations.api 'definitions'
+    operations.registry -> signalbox.attention.api 'defer · devices · focus'
+    operations.registry -> signalbox.capture.api 'notes · drafts'
+    operations.registry -> signalbox.search.api 'query'
+
+    // Interface → hidden parts (the only way in)
+    operations.api -> operations.registry 'invoke · query · subscribe · catalog'
+  }
+}

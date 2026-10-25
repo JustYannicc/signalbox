@@ -1,0 +1,24 @@
+{
+  "name": "signalbox-run-store-proof",
+  "main": "./proof.ts",
+  "compatibility_date": "2026-10-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "RUNS",
+        "class_name": "HarnessRunStoreObject",
+      },
+      {
+        "name": "PARENTS",
+        "class_name": "SupervisorProof",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "run-store-proof-v1",
+      "new_sqlite_classes": ["HarnessRunStoreObject", "SupervisorProof"],
+    },
+  ],
+}

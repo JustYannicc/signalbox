@@ -715,12 +715,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         threadId: selectedThread.id,
         terminalId,
         data: initialInput,
+        ...(terminal.generation !== undefined ? { generation: terminal.generation } : {}),
       },
     });
   }, [
     launchTargetKey,
     pendingLaunch?.initialInput,
     selectedThread,
+    terminal.generation,
     terminal.version,
     terminalId,
     writeTerminal,
@@ -803,11 +805,12 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           threadId: selectedThread.id,
           terminalId,
           data,
+          ...(terminal.generation !== undefined ? { generation: terminal.generation } : {}),
         },
       });
       return result._tag === "Success";
     },
-    [isRunning, selectedThread, terminalId, writeTerminal],
+    [isRunning, selectedThread, terminal.generation, terminalId, writeTerminal],
   );
 
   const pasteSessionRef = useRef<ReturnType<typeof createTerminalPasteSession> | null>(null);

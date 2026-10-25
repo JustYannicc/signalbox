@@ -3,6 +3,7 @@ import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert, expect } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -53,6 +54,8 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
+import * as UsageService from "../usage/UsageService.ts"; // signalbox: supply cached rates to provider metadata enrichment
+import { parseRateTable } from "@t3tools/provider-core/server/usagePricing"; // signalbox: build model rates for provider refresh coverage
 import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
@@ -628,6 +631,113 @@ it.layer(
   });
 
   describe("ProviderRegistry.layer", () => {
+    // signalbox: provider refresh must expose the latest cached model rates without a network fetch
+    it.effect("uses the latest cached model rates on provider refresh", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const instanceId = ProviderInstanceId.make("codex-price-refresh");
+        const model = {
+          slug: "gpt-6-luna",
+          name: "GPT-6 Luna",
+          isCustom: false,
+          capabilities: null,
+        };
+        const provider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-10-17T00:00:00.000Z",
+          version: "1.0.0",
+          models: [model],
+          slashCommands: [],
+          skills: [],
+        } satisfies ServerProvider;
+        const instance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: {
+            driverKind: driver,
+            continuationKey: "codex:instance:codex-price-refresh",
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(provider),
+            refresh: Effect.succeed({ ...provider, checkedAt: "2026-10-17T00:01:00.000Z" }),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+        const instanceRegistryLayer = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (id) => Effect.succeed(id === instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const rates = yield* Ref.make(parseRateTable({}));
+        const usageLayer = Layer.succeed(
+          UsageService.UsageService,
+          UsageService.UsageService.of({
+            readSummary: () => Effect.die("unused"),
+            refreshRates: Effect.succeed({
+              status: "unavailable",
+              source: "test",
+              fetchedAt: null,
+              knownModels: 0,
+            }),
+            cachedRates: Ref.get(rates),
+          }),
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const services = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provideMerge(instanceRegistryLayer),
+            Layer.provideMerge(usageLayer),
+            Layer.provideMerge(ModelManifest.layerTest),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-cached-model-rates-",
+              }).pipe(Layer.provideMerge(NodeServices.layer)),
+            ),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          assert.isUndefined((yield* registry.getProviders)[0]?.models[0]?.pricing);
+
+          yield* Ref.set(
+            rates,
+            parseRateTable({
+              "gpt-6-luna": { input_cost_per_token: 1e-6, output_cost_per_token: 4e-6 },
+            }),
+          );
+          const refreshed = yield* registry.refreshInstance(instanceId);
+          assert.deepStrictEqual(refreshed[0]?.models[0]?.pricing, {
+            inputCostPerMillionTokens: 1,
+            outputCostPerMillionTokens: 4,
+          });
+        }).pipe(Effect.provide(services));
+      }),
+    );
+
     it("stores workspace skills and commands without changing machine metadata", () => {
       const provider = {
         instanceId: ProviderInstanceId.make("codex"),
@@ -1140,7 +1250,13 @@ it.layer(
         ...cachedProvider,
         checkedAt: "2026-09-04T19:01:00.000Z",
         models: [
-          { slug: "gpt-6-astra", name: "GPT 6 Astra", isCustom: false, capabilities: null },
+          {
+            slug: "gpt-6-astra",
+            name: "GPT 6 Astra",
+            isCustom: false,
+            capabilities: null,
+            defaultSelection: "excluded", // signalbox: models without an economical policy stay out of automatic defaults
+          },
           cachedProvider.models[0]!,
           customModel,
         ],
@@ -3569,6 +3685,16 @@ it.layer(
         assert.strictEqual(
           status.message,
           "Could not verify Claude authentication status from initialization result.",
+        );
+
+        const timedOut = yield* checkClaudeProviderStatus(defaultClaudeSettings, () =>
+          Effect.fail(new Cause.TimeoutError()),
+        );
+        assert.strictEqual(timedOut.status, "warning");
+        assert.strictEqual(timedOut.auth.status, "unknown");
+        assert.strictEqual(
+          timedOut.message,
+          "Timed out after 25s while checking Claude account status.",
         );
       }).pipe(
         Effect.provide(

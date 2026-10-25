@@ -140,6 +140,97 @@ function fixture(
 }
 
 describe("CLIProxyAPI built-in management API", () => {
+  it.effect.each(
+    [
+      { field: "email", replacement: { ...accounts[0]!, email: "replacement@example.com" } },
+      { field: "provider", replacement: { ...accounts[0]!, provider: "claude" } },
+      {
+        field: "ChatGPT account",
+        replacement: { ...accounts[0]!, id_token: { chatgpt_account_id: "replacement-account" } },
+      },
+    ].flatMap((replacement) => [200, 429].map((status) => ({ ...replacement, status }))),
+  )(
+    "re-probes a reused file id after its $field changes with HTTP $status",
+    ({ replacement, status }) =>
+      Effect.gen(function* () {
+        const files = [{ ...accounts[0]! }];
+        let replaced = false;
+        const test = fixture({
+          accounts: files,
+          upstream: (request) =>
+            request.url?.endsWith("rate-limit-reset-credits")
+              ? { status: 200, body: { credits: [] } }
+              : {
+                  status: replaced ? status : 200,
+                  body:
+                    replaced && replacement.provider === "claude"
+                      ? { five_hour: { utilization: 12, resets_at: null } }
+                      : { rate_limit: { primary_window: { used_percent: replaced ? 12 : 78 } } },
+                },
+        });
+        const api = yield* test.api;
+        const [original] = yield* api.readAccounts(config);
+        expect(original?.usageLimits.windows[0]?.usedPercent).toBe(78);
+
+        files[0] = replacement;
+        replaced = true;
+        const [fresh] = yield* api.readAccounts(config);
+        expect(fresh).toMatchObject({
+          id: original!.id,
+          email: replacement.email,
+          workspaceId: replacement.id_token.chatgpt_account_id,
+          driver: replacement.provider === "claude" ? "claudeAgent" : "codex",
+          usageLimits:
+            status === 200
+              ? { windows: [{ usedPercent: 12 }] }
+              : { windows: [], unavailable: { reason: "probeFailed" } },
+        });
+        expect(
+          test.requests.filter((request) =>
+            request.body?.url ? new URL(request.body.url).pathname.endsWith("/usage") : false,
+          ),
+        ).toHaveLength(2);
+      }),
+  );
+
+  it.effect.each(["resume", "redeem", "failed redemption"] as const)(
+    "keeps reads paced and invalidates the same credential after %s",
+    (action) =>
+      Effect.gen(function* () {
+        let usedPercent = 78;
+        const test = fixture({
+          accounts: [accounts[0]!],
+          upstream: (request) =>
+            request.url?.endsWith("/consume")
+              ? { status: action === "failed redemption" ? 503 : 200, body: { code: "reset" } }
+              : request.url?.endsWith("rate-limit-reset-credits")
+                ? { status: 200, body: { credits: [] } }
+                : {
+                    status: 200,
+                    body: { rate_limit: { primary_window: { used_percent: usedPercent } } },
+                  },
+        });
+        const api = yield* test.api;
+        expect((yield* api.readAccounts(config))[0]?.usageLimits.windows[0]?.usedPercent).toBe(78);
+        usedPercent = 12;
+        expect((yield* api.readAccounts(config))[0]?.usageLimits.windows[0]?.usedPercent).toBe(78);
+        expect(
+          test.requests.filter((request) => request.body?.url?.endsWith("/usage")),
+        ).toHaveLength(1);
+
+        if (action === "resume") {
+          yield* api.updateAccount(config, accounts[0]!.id, "resume");
+        } else {
+          const result = yield* api.consume(config, accounts[0]!.id, "credit").pipe(Effect.result);
+          expect(result._tag).toBe(action === "failed redemption" ? "Failure" : "Success");
+        }
+        expect((yield* api.readAccounts(config))[0]?.usageLimits.windows[0]?.usedPercent).toBe(12);
+        expect(
+          test.requests.filter((request) => request.body?.url?.endsWith("/usage")),
+        ).toHaveLength(2);
+      }),
+  );
+
   it.effect(
     "reads both accounts and their earliest unexpired credits without plugin endpoints",
     () =>

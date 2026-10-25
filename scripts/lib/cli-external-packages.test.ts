@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import serverPackageJson from "../../apps/server/package.json" with { type: "json" };
 
 import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
+import { readInstalledCliPackageDirectories } from "./cli-package-paths.ts";
 
 import {
   isRuntimeExternalCliDependency,
@@ -98,45 +99,17 @@ describe("selectCliRuntimeExternalDependencies", () => {
 });
 
 it.layer(NodeServices.layer)("external package dependency closure", (it) => {
-  // Read manifests off disk from the pnpm store rather than resolving them.
-  // `require("<name>/package.json")` cannot do this job: under pnpm isolation a
-  // transitive package (node-addon-api, ffi-rs) is not reachable by name from
-  // this file at all, and an `exports` map can refuse the `/package.json`
-  // subpath outright (@ff-labs/fff-node).
   const readInstalledPackages = Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const storeDir = path.resolve(
-      path.dirname(NodeURL.fileURLToPath(import.meta.url)),
-      "../../node_modules/.pnpm",
-    );
-
-    // The store holds regular files too (lock.yaml), so a path built under one
-    // raises ENOTDIR rather than reporting absence.
-    const isPresent = (candidate: string) =>
-      fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
-
+    const repoRoot = path.resolve(path.dirname(NodeURL.fileURLToPath(import.meta.url)), "../..");
+    const directories = yield* readInstalledCliPackageDirectories(repoRoot);
     const installed = new Map<string, PackageManifest>();
-    if (!(yield* isPresent(storeDir))) return installed;
-
-    for (const entry of yield* fileSystem.readDirectory(storeDir)) {
-      const modulesDir = path.join(storeDir, entry, "node_modules");
-      if (!(yield* isPresent(modulesDir))) continue;
-
-      for (const owner of yield* fileSystem.readDirectory(modulesDir)) {
-        const names = owner.startsWith("@")
-          ? (yield* fileSystem.readDirectory(path.join(modulesDir, owner))).map(
-              (scoped) => `${owner}/${scoped}`,
-            )
-          : [owner];
-
-        for (const name of names) {
-          if (installed.has(name)) continue;
-          const manifestPath = path.join(modulesDir, name, "package.json");
-          if (!(yield* isPresent(manifestPath))) continue;
-          installed.set(name, decodeManifest(yield* fileSystem.readFileString(manifestPath)));
-        }
-      }
+    for (const [name, directory] of directories) {
+      installed.set(
+        name,
+        decodeManifest(yield* fileSystem.readFileString(path.join(directory, "package.json"))),
+      );
     }
     return installed;
   }).pipe(Effect.cached, Effect.runSync);

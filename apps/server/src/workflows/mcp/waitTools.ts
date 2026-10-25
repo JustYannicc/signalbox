@@ -2,7 +2,7 @@ import { AUTOMATION_TOOLS } from "@signalbox/automations/tools/declarations";
 
 import { tool } from "./tool.ts";
 
-/** Agent tools for waiting on something; handlers.ts runs them through the engine's waits. */
+/** Wait tool declarations shared with cloud runners. */
 
 export const WaitForTool = tool("wait_for", AUTOMATION_TOOLS.wait_for);
 export const ListWaitsTool = tool("list_waits", AUTOMATION_TOOLS.list_waits);

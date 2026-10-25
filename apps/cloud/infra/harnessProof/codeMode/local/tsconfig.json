@@ -1,0 +1,10 @@
+{
+  "extends": "../../../../tsconfig.json",
+  "files": ["./proof.ts", "./exchange.ts"],
+  "include": [],
+  "exclude": [],
+  "compilerOptions": {
+    "resolveJsonModule": true,
+    "allowArbitraryExtensions": true
+  }
+}

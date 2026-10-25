@@ -1,11 +1,18 @@
-import { useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { createDeviceEnvironmentAtoms } from "@t3tools/client-runtime/state/device";
+import {
+  agentDeviceSessionIdForPanelSession,
+  createDeviceEnvironmentAtoms,
+} from "@t3tools/client-runtime/state/device";
 import {
   type DeviceHubAccess,
   resolveDeviceHubAccess,
 } from "@t3tools/client-runtime/state/deviceHubAccess";
-import type { DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
+import type {
+  DeviceAgentCommandFailure,
+  DeviceServiceState,
+  DeviceSession,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -39,6 +46,27 @@ export function useDeviceState(environmentId: EnvironmentId | null): {
   return { state: query.data ?? EMPTY_DEVICE_STATE, loaded: query.data !== undefined };
 }
 
+export function useDeviceAgentDiagnostics(
+  environmentId: EnvironmentId | null,
+): ReadonlyArray<DeviceAgentCommandFailure> {
+  const query = useEnvironmentQuery(
+    environmentId === null
+      ? null
+      : deviceEnvironment.agentDiagnostics({ environmentId, input: {} }),
+  );
+  return query.data ?? [];
+}
+
+export function useDeviceAgentCommandFailure(
+  environmentId: EnvironmentId | null,
+  activeSession: DeviceSession | undefined,
+  sessions: ReadonlyArray<DeviceSession>,
+): DeviceAgentCommandFailure | undefined {
+  const failures = useDeviceAgentDiagnostics(environmentId);
+  const sessionId = agentDeviceSessionIdForPanelSession(activeSession, sessions);
+  return sessionId ? failures.find((failure) => failure.sessionId === sessionId) : undefined;
+}
+
 const deviceHubAccessAtom = Atom.family((environmentId: EnvironmentId) =>
   connectionAtomRuntime
     .atom((get) => {
@@ -58,13 +86,9 @@ export function useDeviceHubAccess(
   const result = useAtomValue(
     environmentId === null ? EMPTY_ACCESS_ATOM : deviceHubAccessAtom(environmentId),
   );
-  return useMemo(
-    () =>
-      AsyncResult.isSuccess(result)
-        ? { ...result.value, query: { ...result.value.query, hostId } }
-        : null,
-    [result, hostId],
-  );
+  return AsyncResult.isSuccess(result)
+    ? { ...result.value, query: { ...result.value.query, hostId } }
+    : null;
 }
 
 const EMPTY_ACCESS_ATOM = Atom.make(AsyncResult.initial<DeviceHubAccess, never>()).pipe(

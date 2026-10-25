@@ -29,11 +29,19 @@ export function createSignalboxContextsAtoms<R, E>(
 }
 
 /** The context a project belongs to, if any. */
+export function contextOfProject(
+  snapshot: SignalboxContextsSnapshot | null,
+  projectId: ProjectId,
+): SignalboxContext | undefined {
+  return snapshot?.contexts.find((context) => context.projectIds.includes(projectId));
+}
+
+/** The id of the context a project belongs to, if any. */
 export function contextIdOfProject(
   snapshot: SignalboxContextsSnapshot | null,
   projectId: ProjectId,
 ): string | undefined {
-  return snapshot?.contexts.find((context) => context.projectIds.includes(projectId))?.id;
+  return contextOfProject(snapshot, projectId)?.id;
 }
 
 /**

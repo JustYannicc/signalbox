@@ -3,11 +3,10 @@ import { isPoolInstance, poolNeed, type PoolNeed } from "@t3tools/client-runtime
 import type { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon } from "lucide-react";
-import { useMemo } from "react";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { usePoolViews } from "../../state/accountPools";
-import { useProjectPool } from "../../state/projectPool";
+import { useProjectPool, useProjectPoolModelSelection } from "../../state/projectPool";
 import { ComposerControl, type ComposerControlSize } from "../chat/ComposerControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { needsPoolCopy } from "./needsPoolCopy";
@@ -23,9 +22,14 @@ export function useProjectPoolEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   providerInstances: Readonly<Record<string, { readonly config?: unknown }>>,
   threadId?: ThreadId | null,
-): { readonly entries: ReadonlyArray<ProviderInstanceEntry>; readonly need: PoolNeed | null } {
+): {
+  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly need: PoolNeed | null;
+  readonly mapModelSelectionToPool: ReturnType<typeof useProjectPoolModelSelection>;
+} {
   const pool = useProjectPool(environmentId, projectId, threadId);
-  return useMemo(() => {
+  const mapModelSelectionToPool = useProjectPoolModelSelection();
+  return (() => {
     const own = pool
       ? entries.filter((entry) => isPoolInstance(providerInstances, entry.instanceId, pool.poolId))
       : pool === null
@@ -36,8 +40,8 @@ export function useProjectPoolEntries(
       providerInstances,
       providers: own.map((entry) => entry.snapshot),
     });
-    return { entries: own, need };
-  }, [entries, pool, providerInstances]);
+    return { entries: own, need, mapModelSelectionToPool };
+  })();
 }
 
 /** What the project needs and the composer's copy for it; null when it needs nothing. */
@@ -49,10 +53,7 @@ export function useNeedsPool(
   const views = usePoolViews(need?._tag === "signIn" ? environmentId : null);
   const poolName =
     need?._tag === "signIn" ? views.find((view) => view.id === need.poolId)?.name : undefined;
-  return useMemo(
-    () => (need === null ? null : { need, ...needsPoolCopy(need, poolName) }),
-    [need, poolName],
-  );
+  return need === null ? null : { need, ...needsPoolCopy(need, poolName) };
 }
 
 export type NeedsPool = ReturnType<typeof needsPoolCopy> & { readonly need: PoolNeed };

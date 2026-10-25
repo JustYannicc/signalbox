@@ -143,6 +143,7 @@ import { NEEDS_A_POOL } from "@t3tools/client-runtime/state/sections"; // signal
 import { NeedsPoolNotice } from "../accountHub/NeedsPoolNotice"; // signalbox
 import { FolderDraftOfflineNotice, useFileDraftInFolder } from "../folders/FolderDraftFiling"; // signalbox: folders
 import { useFolderCopy } from "../folders/use-folder-copy"; // signalbox: folders
+import { environmentCopy } from "../home/useOneEnvironmentCopy"; // signalbox: one-environment copy for attachment and share alerts
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -876,7 +877,7 @@ export function NewTaskDraftScreen(props: {
         );
       }
       if (warnings.length > 0) {
-        Dialog.alert("Some shared content was skipped", warnings.join("\n"));
+        Dialog.alert("Some shared content was skipped", warnings.map(environmentCopy).join("\n")); // signalbox: one-environment copy for skipped shared files
       }
       shareImportDraftBackupRef.current.delete(importKey);
     })()
@@ -886,7 +887,9 @@ export function NewTaskDraftScreen(props: {
         }
         Dialog.alert(
           "Could not import shared content",
-          error instanceof Error ? error.message : "The shared content could not be saved.",
+          error instanceof Error
+            ? environmentCopy(error.message)
+            : "The shared content could not be saved.", // signalbox: one-environment copy for share import errors
           [
             {
               text: "Cancel import",
@@ -1053,7 +1056,7 @@ export function NewTaskDraftScreen(props: {
     const maxBytes =
       selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments?.maxUploadBytes;
     if (maxBytes === undefined) {
-      Dialog.alert("File attachments are not available on this server.");
+      Dialog.alert(environmentCopy("File attachments are not available on this server.")); // signalbox: one-environment copy for attachment alerts
       return;
     }
     const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;

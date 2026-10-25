@@ -23,6 +23,7 @@ export const VERB_LABEL: Record<WorkflowStepVerb, string> = {
   notify: "Notify you",
   sleep: "Wait",
   waitFor: "Wait for event",
+  eventCursor: "Capture event cursor",
   hook: "Callback link",
   recall: "Recall",
   remember: "Remember",

@@ -16,7 +16,9 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { automationDefaults, automationTriggers, runLogLines, runMarks } from "./columns.ts";
+import type { ChildRuns } from "./childRuns.ts";
 import type { WorkflowCompileResult } from "./compiled.ts";
+import { SavedWorkflowMeta, withDefaultCronTimezones } from "./cronTimezones.ts";
 import { liveColumns, makeDrafts, type DraftsShape } from "./drafts.ts";
 import { fail } from "./errors.ts";
 import { stepWatch } from "./events/runWaits.ts";
@@ -34,6 +36,7 @@ import type { AutomationRow, WorkflowStore } from "./WorkflowStore.ts";
  */
 
 const decodeGraph = Schema.decodeSync(Schema.fromJsonString(WorkflowGraph));
+const decodeMeta = Schema.decodeSync(Schema.fromJsonString(SavedWorkflowMeta));
 const RUN_HISTORY = 20;
 /** Versions never change, so their decoded file and diagram are kept for the views that show them. */
 const VERSION_CACHE = 64;
@@ -59,6 +62,8 @@ export interface CatalogShape extends DraftsShape {
     input: AutomationSaveInput,
     authorize?: AuthorizeAutomation<E>,
     approvedBy?: "signalbox",
+    /** Zone to snapshot into omitted cron fields; unchanged saved crons keep their old zone. */
+    defaultTimezone?: string,
   ) => Effect.Effect<AutomationSaveResult, AutomationError | E>;
   readonly list: () => Effect.Effect<ReadonlyArray<Automation>, AutomationError>;
   readonly get: (automationId: string) => Effect.Effect<AutomationDetail, AutomationError>;
@@ -72,6 +77,7 @@ export interface CatalogShape extends DraftsShape {
 
 export const makeCatalog = (deps: {
   readonly store: WorkflowStore;
+  readonly children: ChildRuns;
   readonly newId: (prefix: string) => Effect.Effect<string, AutomationError>;
   readonly changed: (change: Change) => Effect.Effect<void>;
   readonly requireAutomation: (
@@ -120,12 +126,12 @@ export const makeCatalog = (deps: {
       : { ok: false, diagnostics: compiled.diagnostics };
   };
 
-  const save: CatalogShape["save"] = (input, authorize, approvedBy) =>
+  const save: CatalogShape["save"] = (input, authorize, approvedBy, defaultTimezone) =>
     Effect.gen(function* () {
       const compiled = compile(input.source);
       if (!compiled.ok) return { ok: false, diagnostics: compiled.diagnostics } as const;
-      const { meta, graph, script, runModule, workerModule } = compiled.workflow;
-      const byName = yield* store.getAutomationByName(input.projectId, meta.name);
+      const { meta: compiledMeta, graph, script, runModule, workerModule } = compiled.workflow;
+      const byName = yield* store.getAutomationByName(input.projectId, compiledMeta.name);
       const existing = input.automationId ? yield* requireAutomation(input.automationId) : byName;
       if (existing && existing.project_id !== input.projectId) {
         return yield* fail(
@@ -134,9 +140,29 @@ export const makeCatalog = (deps: {
         );
       }
       if (byName && existing && byName.automation_id !== existing.automation_id) {
-        return yield* fail(`Another automation in this project is already called "${meta.name}".`);
+        return yield* fail(
+          `Another automation in this project is already called "${compiledMeta.name}".`,
+        );
       }
       if (existing && authorize) yield* authorize(automationDefaults(existing));
+      let meta = compiledMeta;
+      if (defaultTimezone !== undefined) {
+        const previousVersion = existing
+          ? yield* store.getVersion(
+              existing.automation_id,
+              input.draft || existing.version === 0
+                ? (existing.draft_version ?? existing.version)
+                : existing.version,
+            )
+          : undefined;
+        const previous = previousVersion?.meta_json
+          ? decodeMeta(previousVersion.meta_json)
+          : existing
+            ? { name: existing.name, triggers: automationTriggers(existing) }
+            : undefined;
+        meta = withDefaultCronTimezones(compiledMeta, defaultTimezone, previous);
+      }
+      const defaults = existing ? automationDefaults(existing) : input.defaults;
       const now = yield* DateTime.now;
       const nowText = DateTime.formatIso(now);
       const automationId = existing?.automation_id ?? (yield* newId("automation"));
@@ -151,7 +177,7 @@ export const makeCatalog = (deps: {
       const fresh = {
         automation_id: automationId,
         project_id: input.projectId,
-        defaults_json: toJson(input.defaults),
+        defaults_json: toJson(defaults),
         webhook_token: existing?.webhook_token ?? (yield* newId("hook")),
         webhook_secret_set: existing?.webhook_secret_set ?? 0,
         created_at: existing?.created_at ?? nowText,
@@ -185,7 +211,7 @@ export const makeCatalog = (deps: {
             worker_module: workerModule ?? null,
             graph_json: toJson(graph),
             meta_json: toJson(meta),
-            defaults_json: toJson(input.defaults),
+            defaults_json: toJson(defaults),
             created_at: nowText,
             approved_by: approvedBy ?? "agent",
           }),
@@ -249,6 +275,7 @@ export const makeCatalog = (deps: {
       if (!run) return yield* fail("That run doesn't exist.", { runId });
       const version = yield* versionView(run.automation_id, run.version);
       const steps = yield* store.listSteps(runId);
+      const children = yield* deps.children.forParent(runId);
       const watches = steps.flatMap((step) => {
         const watch = step.status === "waiting" ? stepWatch(step) : undefined;
         return watch ? [watch] : [];
@@ -260,7 +287,17 @@ export const makeCatalog = (deps: {
         graph: version?.graph ?? { nodes: [] },
         input: fromJson(run.input_json),
         output: fromJson(run.output_json),
-        steps: steps.map(stepView),
+        steps: steps.map((step) => {
+          const child = children.find(
+            (link) => link.step_key === step.step_key && link.attempt === step.attempt,
+          );
+          return {
+            ...stepView(step),
+            ...(child
+              ? { childRun: { runId: child.child_run_id, automationId: child.automation_id } }
+              : {}),
+          };
+        }),
         marks: runMarks(run),
         logs: runLogLines(run),
         ...(automation ? { watching: yield* deps.watching(scopeOf(automation), watches) } : {}),

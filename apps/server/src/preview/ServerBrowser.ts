@@ -49,6 +49,7 @@ import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { constVoid } from "effect/Function";
@@ -72,6 +73,7 @@ import type {
   FileChooser,
   Frame,
   Page,
+  Request,
 } from "playwright-core";
 
 import { PENDING_ATTACHMENT_THREAD_SEGMENT } from "../attachmentStore.ts";
@@ -79,12 +81,14 @@ import * as ServerConfig from "../config.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as PreviewAutomationBroker from "../mcp/PreviewAutomationBroker.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as DesktopBrowserChannel from "./DesktopBrowserChannel.ts";
 import * as PreviewManager from "./Manager.ts";
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import * as ServerBrowserTabCleanup from "./ServerBrowserTabCleanup.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
@@ -103,8 +107,100 @@ const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSch
 const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 
+type PageNavigationState = {
+  current: number;
+  requests: WeakMap<object, number>;
+};
+
+const makePageNavigationState = (): PageNavigationState => ({
+  current: 0,
+  requests: new WeakMap(),
+});
+
+const isMainNavigationRequest = (page: Page, request: Request) => {
+  if (!request.isNavigationRequest()) return false;
+  try {
+    return request.frame() === page.mainFrame();
+  } catch {
+    return false;
+  }
+};
+
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
+
+const trackPopupInitialLoad = (page: Page) => {
+  const navigation = makePageNavigationState();
+  let settledNavigationGeneration: number | null = null;
+  let settled = false;
+  let releaseGuard: (() => void) | undefined;
+  let onSettled: (() => void) | undefined;
+  let resolveSettled!: () => void;
+  const settledPromise = new Promise<void>((resolve) => {
+    resolveSettled = resolve;
+  });
+  const removeListeners = () => {
+    page.off("request", onRequest);
+    page.off("load", finish);
+    page.off("requestfailed", onRequestFailed);
+    page.off("close", finish);
+    page.off("crash", finish);
+  };
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    settledNavigationGeneration = navigation.current;
+    removeListeners();
+    onSettled?.();
+    releaseGuard?.();
+    resolveSettled();
+  };
+  const onRequestFailed = (request: Request) => {
+    if (!isMainNavigationRequest(page, request)) return;
+    const generation = navigation.requests.get(request) ?? 0;
+    if (generation !== navigation.current) return;
+    finish();
+  };
+  const onRequest = (request: Request) => {
+    if (!isMainNavigationRequest(page, request)) return;
+    const generation = ++navigation.current;
+    navigation.requests.set(request, generation);
+  };
+
+  page.on("request", onRequest);
+  page.on("load", finish);
+  page.on("requestfailed", onRequestFailed);
+  page.on("close", finish);
+  page.on("crash", finish);
+  if (page.isClosed()) finish();
+
+  const boundedWait = page.waitForLoadState("load", { timeout: NAVIGATION_TIMEOUT_MS }).then(
+    () => {
+      // A completed blank popup has no request or load event left to observe.
+      // If navigation started after the popup event, wait for its own load/failure.
+      if (navigation.current === 0) finish();
+    },
+    (cause: unknown) => {
+      if (!(cause instanceof Error && cause.name === "TimeoutError")) finish();
+    },
+  );
+
+  return {
+    navigation,
+    isSettledNavigationCurrent: () => settledNavigationGeneration === navigation.current,
+    wait: Promise.race([settledPromise, boundedWait]),
+    isSettled: () => settled,
+    onSettled: (callback: () => void) => {
+      if (settled) callback();
+      else onSettled = callback;
+    },
+    setReleaseGuard: (release: () => void) => {
+      releaseGuard = release;
+      if (settled) release();
+    },
+    dispose: finish,
+  };
+};
 
 const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
   let element = document.elementFromPoint(x, y);
@@ -287,7 +383,7 @@ interface ServerTab {
   readonly actionTimeline: Array<PreviewAutomationActionEvent>;
   readonly control: SessionControl;
 
-  readonly isolatedContext: boolean;
+  ownsContext: boolean;
 
   readonly desktop: { readonly close: () => Promise<void> } | null;
   readonly profileId: string | undefined;
@@ -308,7 +404,7 @@ interface ServerTab {
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
-  navigationGeneration: number;
+  navigation: PageNavigationState;
 
   abortedNavigation: {
     readonly url: string;
@@ -343,8 +439,18 @@ const READ_OPERATIONS: ReadonlySet<PreviewAutomationRequest["operation"]> = new 
 
 const AGENT_TAB_LIMIT = 8;
 const SERVER_TAB_LIMIT = 32;
-const AGENT_TAB_IDLE_MS = 30 * 60 * 1000;
 const IDLE_SWEEP_INTERVAL = "1 minute";
+const cleanupBlockReasonKeys = {
+  "human-controlled": "humanControlled",
+  visible: "visible",
+  "active-operation": "activeOperation",
+  loading: "loading",
+  "pending-interaction": "pendingInteraction",
+  recording: "recording",
+  "lifecycle-unavailable": "lifecycleUnavailable",
+  "active-thread": "activeThread",
+  "idle-window": "idleWindow",
+} as const;
 
 const DOWNLOAD_LIMIT = 20;
 const ABORTED_NAVIGATION_DOWNLOAD_WAIT_MS = 5_000;
@@ -457,19 +563,45 @@ const make = Effect.gen(function* () {
   const host = { platform: yield* HostProcess.Platform, arch: yield* HostProcess.Architecture };
   const manager = yield* PreviewManager.PreviewManager;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 
   const tabs = new Map<string, ServerTab>();
   const pendingTabs = new Map<string, Promise<ServerTab>>();
+  const activeOperationsByTab = new Map<string, number>();
+  const cleanupLock = yield* Semaphore.make(1);
 
   const closedPendingTabs = new Set<string>();
-  const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  const adoptedPages = new Map<
+    string,
+    {
+      readonly page: Page;
+      readonly openerTabId: string;
+      readonly initialLoad: ReturnType<typeof trackPopupInitialLoad>;
+    }
+  >();
   const closedSessions = new Set<string>();
+  let lastCleanup = {
+    closed: 0,
+    unreadableThreads: 0,
+    blocked: {
+      humanControlled: 0,
+      visible: 0,
+      activeOperation: 0,
+      loading: 0,
+      pendingInteraction: 0,
+      recording: 0,
+      lifecycleUnavailable: 0,
+      activeThread: 0,
+      idleWindow: 0,
+    },
+  };
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
 
@@ -665,12 +797,21 @@ const make = Effect.gen(function* () {
     tabs.delete(key);
     tab.closing = true;
     clearAbortedNavigation(tab);
+    if (tab.ownsContext) {
+      const context = tab.page.context();
+      const sibling = [...tabs.values()].find((candidate) => candidate.page.context() === context);
+      if (sibling) {
+        sibling.ownsContext = true;
+        tab.ownsContext = false;
+      } else {
+        void context.close().catch(constVoid);
+      }
+    }
     const end = reconnect && !closeSession && sessionOpen(tab) ? "reconnect" : "gone";
     for (const viewer of tab.viewers) viewer.push({ _tag: end });
     void tab.control.close().catch(constVoid);
     if (tab.desktop) void tab.desktop.close().catch(constVoid);
     else void tab.page.close().catch(constVoid);
-    if (tab.isolatedContext) void tab.page.context().close().catch(constVoid);
     void tab.recording?.encoder.close().catch(constVoid);
     void NodeFSP.rm(downloadDir(tab), { recursive: true, force: true }).catch(constVoid);
     reportLiveTabs();
@@ -756,7 +897,7 @@ const make = Effect.gen(function* () {
       networkEntries: [],
       actionTimeline: [],
       control,
-      isolatedContext,
+      ownsContext: isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
@@ -766,12 +907,12 @@ const make = Effect.gen(function* () {
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
-      loading: false,
+      loading: adopted !== undefined && !adopted.initialLoad.isSettled(),
       closing: false,
       recording: null,
       recordingStart: null,
       initialNavigation: null,
-      navigationGeneration: 0,
+      navigation: adopted?.initialLoad.navigation ?? makePageNavigationState(),
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
@@ -780,12 +921,11 @@ const make = Effect.gen(function* () {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
     }
     await applyRendering(tab, snapshot);
-    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
-      request.isNavigationRequest() && request.frame() === page.mainFrame();
-    const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
-      if (!isMainNavigation(request)) return;
-      navigationGenerations.set(request, ++tab.navigationGeneration);
+      if (!isMainNavigationRequest(page, request)) return;
+      if (!tab.navigation.requests.has(request)) {
+        tab.navigation.requests.set(request, ++tab.navigation.current);
+      }
       clearAbortedNavigation(tab);
       tab.loading = true;
       report(tab, { _tag: "Loading", url: request.url().slice(0, 2048), title: "" });
@@ -811,16 +951,16 @@ const make = Effect.gen(function* () {
         errorText,
         timestamp: new Date().toISOString(),
       });
-      if (!isMainNavigation(request)) return;
+      if (!isMainNavigationRequest(page, request)) return;
       // A navigation a newer one replaced leaves the status to the newer one. A
       // popup's first request can predate the listener, so it is untracked and
       // superseded by any tracked one.
-      const generation = navigationGenerations.get(request) ?? 0;
-      if (generation !== tab.navigationGeneration) return;
+      const generation = tab.navigation.requests.get(request) ?? 0;
+      if (generation !== tab.navigation.current) return;
       // An aborted navigation is usually a download; its `download` event settles the status.
       if (errorText.includes("ERR_ABORTED")) {
         const url = request.url();
-        const navigationGeneration = tab.navigationGeneration;
+        const navigationGeneration = tab.navigation.current;
         clearAbortedNavigation(tab);
         tab.abortedNavigation = {
           url,
@@ -879,6 +1019,9 @@ const make = Effect.gen(function* () {
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
+    adopted?.initialLoad.onSettled(() => {
+      if (adopted.initialLoad.isSettledNavigationCurrent()) tab.loading = false;
+    });
     reportLiveTabs();
     // A popup is already loading its own URL, and the desktop loads its tab's.
     if (!adopted && !desktop && snapshot.navStatus._tag === "Loading") {
@@ -910,7 +1053,7 @@ const make = Effect.gen(function* () {
     url: string,
     offered: { readonly id: string; readonly fileName: string } | undefined,
   ) => {
-    if (tab.navigationGeneration !== generation) return;
+    if (tab.navigation.current !== generation) return;
     tab.loading = false;
     if (tab.page.url() !== "about:blank") {
       void reportLoaded(tab);
@@ -955,8 +1098,7 @@ const make = Effect.gen(function* () {
         await NodeFSP.rm(evicted.path, { force: true }).catch(constVoid);
       }
       offered = { id, fileName: saved.fileName };
-      const shownInTab =
-        navigation === tab.navigationGeneration && tab.page.url() === "about:blank";
+      const shownInTab = navigation === tab.navigation.current && tab.page.url() === "about:blank";
       if (shownInTab) return;
       const controller = [...tab.viewers].find((viewer) => viewer.id === tab.control.controller);
       controller?.push({
@@ -1163,39 +1305,57 @@ const make = Effect.gen(function* () {
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
     const agentId = opener.control.agentId;
-    if (opener.closing || (agentId !== null && atTabLimit(agentId))) {
-      await popup.close().catch(constVoid);
-      return;
-    }
-    const url = popup.url();
-
+    const openerKey = tabKey(opener.threadId, opener.tabId);
+    const releaseOpener = beginActiveOperation(openerKey);
+    const initialLoad = trackPopupInitialLoad(popup);
+    let retainPopupGuard = false;
     const controller = [...opener.viewers].find(
       (viewer) => viewer.id === opener.control.controller,
     );
-    await Effect.runPromise(
-      manager.open({
-        threadId: opener.threadId,
-        ...(/^https?:/i.test(url) ? { url } : {}),
-        runtime: "server",
-        ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
-        ...(opener.control.agentId === null
-          ? {}
-          : { automationOwner: opener.control.agentId, reveal: false }),
-        beforePublish: (snapshot) =>
-          adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
-            page: popup,
-            openerTabId: opener.tabId,
-          }),
-      }),
-    ).then(
-      (snapshot) => {
-        if (opener.control.agentId === null)
-          controller?.push({ _tag: "popup", tabId: snapshot.tabId });
-      },
-      async () => {
+    try {
+      // Popups navigate before createTab installs its normal request listeners.
+      if (opener.closing || tabs.get(openerKey) !== opener) {
         await popup.close().catch(constVoid);
-      },
-    );
+        return;
+      }
+      if (agentId !== null && atTabLimit(agentId)) {
+        await runPromise(cleanupAgentTabs);
+        if (opener.closing || tabs.get(openerKey) !== opener || atTabLimit(agentId)) {
+          await popup.close().catch(constVoid);
+          return;
+        }
+      }
+
+      const url = popup.url();
+      const snapshot = await runPromise(
+        manager.open({
+          threadId: opener.threadId,
+          ...(/^https?:/i.test(url) ? { url } : {}),
+          runtime: "server",
+          ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
+          ...(agentId === null ? {} : { automationOwner: agentId, reveal: false }),
+          beforePublish: (opened) => {
+            initialLoad.setReleaseGuard(
+              beginActiveOperation(tabKey(opened.threadId, opened.tabId)),
+            );
+            adoptedPages.set(tabKey(opened.threadId, opened.tabId), {
+              page: popup,
+              openerTabId: opener.tabId,
+              initialLoad,
+            });
+          },
+        }),
+      );
+      if (agentId === null) controller?.push({ _tag: "popup", tabId: snapshot.tabId });
+      await ensureTab(snapshot);
+      await initialLoad.wait;
+      retainPopupGuard = !initialLoad.isSettled();
+    } catch {
+      await popup.close().catch(constVoid);
+    } finally {
+      if (!retainPopupGuard) initialLoad.dispose();
+      releaseOpener();
+    }
   };
 
   const ensureTab = (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
@@ -1242,20 +1402,103 @@ const make = Effect.gen(function* () {
     [...tabs.values()].filter((tab) => tab.control.agentId === agentSessionId).length >=
       AGENT_TAB_LIMIT;
 
-  const assertTabCapacity = (agentSessionId: string) => {
-    if (atTabLimit(agentSessionId))
-      throw new BrowserControlInterrupted(
-        `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with t3_preview_close or reuse one from preview_status tabs.`,
-        "tabLimit",
+  const assertTabCapacity = (agentSessionId: string) =>
+    atTabLimit(agentSessionId)
+      ? Effect.fail(
+          new BrowserControlInterrupted(
+            `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server) after automatic cleanup. Inspect serverTabCapacity in preview_status, reuse a tab, or close one you own.`,
+            "tabLimit",
+          ),
+        )
+      : Effect.void;
+
+  const cleanupAgentTabs = cleanupLock.withPermits(1)(
+    Effect.gen(function* () {
+      const candidates = [...tabs.values()].flatMap((tab) =>
+        tab.control.agentId === null
+          ? []
+          : [{ tab, agentId: tab.control.agentId, generation: tab.control.generation }],
       );
+      const unreadableThreads = new Set<string>();
+      let closed = 0;
+      const blocked = {
+        humanControlled: 0,
+        visible: 0,
+        activeOperation: 0,
+        loading: 0,
+        pendingInteraction: 0,
+        recording: 0,
+        lifecycleUnavailable: 0,
+        activeThread: 0,
+        idleWindow: 0,
+      };
+
+      for (const { tab, agentId, generation } of candidates) {
+        const now = yield* Clock.currentTimeMillis;
+        const lifecycle = yield* projections.getThreadShell(ThreadId.make(tab.threadId)).pipe(
+          Effect.catch(() =>
+            Effect.sync(() => {
+              unreadableThreads.add(tab.threadId);
+              return undefined;
+            }),
+          ),
+        );
+        const key = tabKey(tab.threadId, tab.tabId);
+        // Recheck identity, ownership, and in-flight state after the lifecycle read.
+        if (
+          tabs.get(key) !== tab ||
+          tab.control.agentId !== agentId ||
+          tab.control.generation !== generation
+        )
+          continue;
+        const { cleanupReason, blockedBy } = ServerBrowserTabCleanup.assessTab({
+          agentOwned: true,
+          humanControlled: tab.control.controller !== null,
+          visible: seen(tab),
+          activeOperation: (activeOperationsByTab.get(key) ?? 0) > 0,
+          loading: tab.loading,
+          pendingInteraction: tab.dialog !== null || tab.fileChooser !== null,
+          recording: tab.recording !== null || tab.recordingStart !== null || tab.capturing > 0,
+          usedAt: tab.usedAt,
+          now,
+          thread: lifecycle,
+        });
+        if (cleanupReason === null) {
+          if (blockedBy !== null) blocked[cleanupBlockReasonKeys[blockedBy]] += 1;
+          continue;
+        }
+        dropTab(tab, true);
+        closed += 1;
+      }
+      lastCleanup = { closed, unreadableThreads: unreadableThreads.size, blocked };
+    }),
+  );
+
+  const beginActiveOperation = (key: string) => {
+    activeOperationsByTab.set(key, (activeOperationsByTab.get(key) ?? 0) + 1);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const remaining = (activeOperationsByTab.get(key) ?? 1) - 1;
+      if (remaining > 0) activeOperationsByTab.set(key, remaining);
+      else activeOperationsByTab.delete(key);
+    };
   };
 
-  const closeIdleAgentTabs = () => {
-    const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
-    for (const tab of tabs.values()) {
-      if (tab.control.agentId !== null && !seen(tab) && tab.usedAt < cutoff) dropTab(tab, true);
-    }
-  };
+  const serverTabCapacity = () => ({
+    used: tabs.size + pendingTabs.size,
+    limit: SERVER_TAB_LIMIT,
+    agentOwned: [...tabs.values()].filter((tab) => tab.control.agentId !== null).length,
+    humanControlled: [...tabs.values()].filter((tab) => tab.control.controller !== null).length,
+    unclaimed: [...tabs.values()].filter(
+      (tab) => tab.control.agentId === null && tab.control.controller === null,
+    ).length,
+    pendingOpens: pendingTabs.size,
+    lastCleanupClosed: lastCleanup.closed,
+    lastCleanupUnreadableThreads: lastCleanup.unreadableThreads,
+    lastCleanupBlocked: lastCleanup.blocked,
+  });
 
   const latestThreadTab = (threadId: string, agentSessionId?: string) => {
     const threadTabs = [...tabs.values()].filter((tab) => tab.threadId === threadId);
@@ -1367,6 +1610,7 @@ const make = Effect.gen(function* () {
         url: null,
         title: null,
         loading: false,
+        serverTabCapacity: serverTabCapacity(),
         ...profileStatus(),
       };
     }
@@ -1379,6 +1623,7 @@ const make = Effect.gen(function* () {
       url: url === "about:blank" ? null : url,
       title: null,
       loading: tab.loading,
+      serverTabCapacity: serverTabCapacity(),
       control: {
         owner: tabOwner(tab),
         ownedByCaller: tab.control.agentId === agentSessionId,
@@ -1716,6 +1961,139 @@ const make = Effect.gen(function* () {
     }
   };
 
+  const runOpenOperation = (request: PreviewAutomationRequest) => {
+    if (!request.agentSessionId)
+      return Effect.fail(
+        new BrowserControlInterrupted("The agent session is missing. Reconnect the provider."),
+      );
+
+    const agentSessionId = request.agentSessionId;
+    const open = request.input as PreviewAutomationOpenInput;
+    const reuse = open.reuseExistingTab ?? true;
+    if (
+      reuse &&
+      !request.tabIdExplicit &&
+      [...tabs.values()].filter(
+        (tab) => tab.threadId === request.threadId && tab.control.agentId === agentSessionId,
+      ).length > 1
+    )
+      return Effect.fail(
+        new BrowserControlInterrupted(
+          "Multiple tabs are open. Pass tabId or reuseExistingTab=false.",
+          "tabRequired",
+        ),
+      );
+
+    const requestedKey =
+      reuse && request.tabId !== undefined ? tabKey(request.threadId, request.tabId) : undefined;
+    const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
+    const release: { requested?: () => void; opened?: () => void } = {};
+    return Effect.gen(function* () {
+      const requestedUrl = open.url;
+      const url =
+        requestedUrl === undefined
+          ? undefined
+          : yield* Effect.try({
+              try: () => normalizePreviewUrl(requestedUrl),
+              catch: ServerBrowserPage.toOperationError,
+            });
+      if (requestedKey !== undefined) release.requested = beginActiveOperation(requestedKey);
+      const found =
+        reuse && request.tabId !== undefined
+          ? yield* findTab(request.threadId, request.tabId).pipe(
+              Effect.catchTags({
+                ServerBrowserTabNotFoundError: () => Effect.succeed(undefined),
+              }),
+            )
+          : undefined;
+      // Only an explicit tabId reuses a tab this session did not open; a tab
+      // it last read (such as the user's) is not taken over implicitly.
+      const existing =
+        found && (request.tabIdExplicit || found.control.agentId === agentSessionId)
+          ? found
+          : undefined;
+      const profileId =
+        existing === undefined
+          ? yield* Effect.try({
+              try: () => resolveOpenProfile(open.profileId),
+              catch: ServerBrowserPage.toOperationError,
+            })
+          : undefined;
+      let tab = existing;
+      if (!tab) {
+        release.requested?.();
+        yield* cleanupAgentTabs;
+        yield* assertTabCapacity(agentSessionId);
+        const snapshot = yield* manager.open({
+          threadId: request.threadId,
+          ...(url ? { url } : {}),
+          ...(profileId === undefined ? {} : { profileId }),
+          runtime: "server",
+          reveal: false,
+          automationOwner: agentSessionId,
+          beforePublish: (opened) => {
+            release.opened = beginActiveOperation(tabKey(opened.threadId, opened.tabId));
+          },
+        });
+        tab = yield* Effect.tryPromise({
+          try: () => ensureTab(snapshot),
+          catch: (cause) =>
+            isTabNotFound(cause) || isHostSetupError(cause)
+              ? cause
+              : new ServerBrowserLaunchError({ cause }),
+        });
+      }
+
+      if (existing?.dialog)
+        return yield* Effect.fail(
+          new BrowserControlInterrupted(
+            "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+            "dialogPending",
+          ),
+        );
+      const openedTab = tab;
+      return yield* Effect.tryPromise({
+        try: () =>
+          openedTab.control.agent(agentSessionId, async () => {
+            if (openedTab.dialog)
+              throw new BrowserControlInterrupted(
+                "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+                "dialogPending",
+              );
+            if (existing) {
+              if (url) await navigate(openedTab, url, "load", navigationTimeout);
+            } else {
+              await openedTab.initialNavigation;
+            }
+            const reveal = open.open ?? open.show;
+            if (reveal !== false) {
+              await runPromise(
+                manager.requestReveal({
+                  threadId: openedTab.threadId,
+                  tabId: openedTab.tabId,
+                  force: reveal === true,
+                }),
+              );
+            }
+            if (!existing && url) {
+              await openedTab.page
+                .waitForLoadState("load", { timeout: navigationTimeout })
+                .catch(constVoid);
+            }
+            return statusWithTitle(openedTab, agentSessionId);
+          }),
+        catch: ServerBrowserPage.toOperationError,
+      });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          release.opened?.();
+          release.requested?.();
+        }),
+      ),
+    );
+  };
+
   const runOperation = async (request: PreviewAutomationRequest): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
@@ -1726,97 +2104,8 @@ const make = Effect.gen(function* () {
             : tabs.get(tabKey(request.threadId, request.tabId)),
           request.agentSessionId,
         );
-      case "open": {
-        if (!request.agentSessionId)
-          throw new BrowserControlInterrupted(
-            "The agent session is missing. Reconnect the provider.",
-          );
-        const open = input as PreviewAutomationOpenInput;
-        const url = open.url === undefined ? undefined : normalizePreviewUrl(open.url);
-        const reuse = open.reuseExistingTab ?? true;
-        if (
-          reuse &&
-          !request.tabIdExplicit &&
-          [...tabs.values()].filter(
-            (tab) =>
-              tab.threadId === request.threadId && tab.control.agentId === request.agentSessionId,
-          ).length > 1
-        )
-          throw new BrowserControlInterrupted(
-            "Multiple tabs are open. Pass tabId or reuseExistingTab=false.",
-            "tabRequired",
-          );
-
-        const found =
-          reuse && request.tabId !== undefined
-            ? await Effect.runPromise(
-                findTab(request.threadId, request.tabId).pipe(
-                  Effect.catchTags({
-                    ServerBrowserTabNotFoundError: () => Effect.succeed(undefined),
-                  }),
-                ),
-              )
-            : undefined;
-        // Only an explicit tabId reuses a tab this session did not open; a tab
-        // it last read (such as the user's) is not taken over implicitly.
-        const existing =
-          found && (request.tabIdExplicit || found.control.agentId === request.agentSessionId)
-            ? found
-            : undefined;
-        const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
-        const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
-        if (!existing) {
-          closeIdleAgentTabs();
-          assertTabCapacity(request.agentSessionId);
-        }
-        const tab =
-          existing ??
-          (await ensureTab(
-            await Effect.runPromise(
-              manager.open({
-                threadId: request.threadId,
-                ...(url ? { url } : {}),
-                ...(profileId === undefined ? {} : { profileId }),
-                runtime: "server",
-                reveal: false,
-                automationOwner: request.agentSessionId,
-              }),
-            ),
-          ));
-        if (existing?.dialog)
-          throw new BrowserControlInterrupted(
-            "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-            "dialogPending",
-          );
-        return tab.control.agent(request.agentSessionId, async () => {
-          if (tab.dialog)
-            throw new BrowserControlInterrupted(
-              "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-              "dialogPending",
-            );
-          if (existing) {
-            if (url) await navigate(tab, url, "load", navigationTimeout);
-          } else {
-            await tab.initialNavigation;
-          }
-          const reveal = open.open ?? open.show;
-          if (reveal !== false) {
-            await Effect.runPromise(
-              manager.requestReveal({
-                threadId: tab.threadId,
-                tabId: tab.tabId,
-                force: reveal === true,
-              }),
-            );
-          }
-          if (!existing && url) {
-            await tab.page
-              .waitForLoadState("load", { timeout: navigationTimeout })
-              .catch(constVoid);
-          }
-          return statusWithTitle(tab, request.agentSessionId);
-        });
-      }
+      case "open":
+        throw new Error("Open operations must use the Effect request path.");
       case "recordingStop": {
         if (
           !request.tabIdExplicit &&
@@ -1994,11 +2283,35 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
-    Effect.tryPromise({
-      try: () => runOperation(request).finally(() => markUsed(request)),
-      catch: ServerBrowserPage.toOperationError,
-    }).pipe(
+  const handleRequest = (connectionId: string, request: PreviewAutomationRequest) => {
+    const tracksActiveOperation = request.operation !== "open" && request.operation !== "status";
+    const activeTab =
+      tracksActiveOperation && request.tabId === undefined
+        ? latestThreadTab(request.threadId, request.agentSessionId)
+        : undefined;
+    const selectedTabId = request.tabId ?? activeTab?.tabId;
+    const activeTabKey =
+      tracksActiveOperation && selectedTabId !== undefined
+        ? tabKey(request.threadId, selectedTabId)
+        : undefined;
+    const releaseActiveOperation =
+      activeTabKey === undefined ? undefined : beginActiveOperation(activeTabKey);
+    const operation =
+      request.operation === "open"
+        ? runOpenOperation(request)
+        : Effect.tryPromise({
+            try: () => runOperation(request),
+            catch: ServerBrowserPage.toOperationError,
+          });
+
+    return operation.pipe(
+      Effect.mapError(ServerBrowserPage.toOperationError),
+      Effect.ensuring(
+        Effect.sync(() => {
+          markUsed(request);
+          releaseActiveOperation?.();
+        }),
+      ),
       Effect.match({
         onSuccess: (result) => ({ ok: true as const, result }),
         onFailure: (error) => ({
@@ -2020,6 +2333,7 @@ const make = Effect.gen(function* () {
       ),
       Effect.ignore,
     );
+  };
 
   const mirrorManagerEvent = (event: PreviewEvent) =>
     Effect.promise(async () => {
@@ -2463,7 +2777,7 @@ const make = Effect.gen(function* () {
     Stream.runForEach(() => Effect.sync(reportLiveTabs)),
     Effect.forkScoped,
   );
-  yield* Effect.sync(closeIdleAgentTabs).pipe(
+  yield* cleanupAgentTabs.pipe(
     Effect.repeat(Schedule.spaced(IDLE_SWEEP_INTERVAL)),
     Effect.forkScoped,
   );
@@ -2479,17 +2793,19 @@ const make = Effect.gen(function* () {
     )
     .pipe(
       Effect.flatMap((events) =>
-        events.pipe(
-          Stream.runForEach((event) => {
-            if (event.type === "connected") {
-              hostConnectionId = event.connectionId;
-              return Effect.sync(reportLiveTabs);
-            }
-            return handleRequest(event.connectionId, event.request).pipe(
-              Effect.forkScoped,
-              Effect.asVoid,
-            );
-          }),
+        Effect.scoped(
+          events.pipe(
+            Stream.runForEach((event) => {
+              if (event.type === "connected") {
+                hostConnectionId = event.connectionId;
+                return Effect.sync(reportLiveTabs);
+              }
+              return handleRequest(event.connectionId, event.request).pipe(
+                Effect.forkScoped,
+                Effect.asVoid,
+              );
+            }),
+          ),
         ),
       ),
     );

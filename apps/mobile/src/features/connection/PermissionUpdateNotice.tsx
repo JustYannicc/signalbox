@@ -1,6 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
-import { sessionHasLegacyPermissions } from "@t3tools/contracts";
+import { environmentSupports, sessionHasLegacyPermissions } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import * as SecureStore from "expo-secure-store";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -20,9 +20,12 @@ export function PermissionUpdateNotice() {
     useMemo(
       () =>
         Atom.make((get) =>
-          environments.filter(({ environmentId }) => {
+          environments.filter(({ environmentId, serverConfig }) => {
             const session = get(environmentSession.sessionStateAtom(environmentId));
             return (
+              // signalbox: re-pairing fixes this, so wait until the environment says it pairs at all
+              serverConfig != null &&
+              environmentSupports(serverConfig.environment.capabilities, "accessManagement") &&
               session._tag === "Success" &&
               !session.waiting &&
               sessionHasLegacyPermissions(session.value)

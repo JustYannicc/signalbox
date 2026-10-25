@@ -5,8 +5,10 @@ import {
   WS_METHODS,
   type VcsListRefsInput,
   type VcsListRefsResult,
+  type VcsPullInput,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -285,8 +287,12 @@ describe("cached VCS refs", () => {
           environmentId: TARGET.environmentId,
           message: "pull failed after fetching refs",
         });
+        const pulls = yield* Ref.make<Array<VcsPullInput>>([]);
         const client = {
-          [WS_METHODS.vcsPull]: () => Effect.fail(expectedError),
+          [WS_METHODS.vcsPull]: (input: VcsPullInput) =>
+            Ref.update(pulls, (current) => [...current, input]).pipe(
+              Effect.andThen(Effect.fail(expectedError)),
+            ),
           [WS_METHODS.vcsRefreshStatus]: () => Effect.void,
         } as unknown as WsRpcProtocolClient;
         const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -307,12 +313,19 @@ describe("cached VCS refs", () => {
         } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
         const clears = yield* Ref.make(0);
         const runtime = Atom.runtime(
-          Layer.merge(
+          Layer.mergeAll(
             Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
             Layer.succeed(
               Persistence.EnvironmentCacheStore,
               cacheWithRefs(Option.none(), {
                 clearVcsRefs: () => Ref.update(clears, (count) => count + 1),
+              }),
+            ),
+            Layer.succeed(
+              Crypto.Crypto,
+              Crypto.make({
+                randomBytes: (size) => new Uint8Array(size),
+                digest: (_algorithm, data) => Effect.succeed(data),
               }),
             ),
           ),
@@ -330,8 +343,19 @@ describe("cached VCS refs", () => {
         );
 
         expect(AsyncResult.isFailure(result)).toBe(true);
+        const firstPull = (yield* Ref.get(pulls))[0];
+        expect(firstPull?.operationId).toMatch(/^[0-9a-f-]{36}$/);
         expect(yield* Ref.get(clears)).toBe(1);
         expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(1);
+
+        yield* Effect.promise(() =>
+          atoms.pull.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: { cwd: "/repo", operationId: "pull-retry-1" },
+          }),
+        );
+        expect((yield* Ref.get(pulls))[1]?.operationId).toBe("pull-retry-1");
+        expect(yield* Ref.get(clears)).toBe(2);
 
         const refreshResult = yield* Effect.promise(() =>
           atoms.refreshStatus.run(registry, {
@@ -341,8 +365,8 @@ describe("cached VCS refs", () => {
         );
 
         expect(AsyncResult.isSuccess(refreshResult)).toBe(true);
-        expect(yield* Ref.get(clears)).toBe(2);
-        expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
+        expect(yield* Ref.get(clears)).toBe(3);
+        expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
       }),
     ),
   );

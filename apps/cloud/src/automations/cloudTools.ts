@@ -10,6 +10,8 @@ import type { AuthorizeAutomation } from "@signalbox/automations/catalog";
 import type { AutomationThreadsShape } from "@signalbox/automations/host";
 import { builtInById } from "@signalbox/automations/defaults/registry";
 import { builtInReadResult } from "@signalbox/automations/tools/builtIns";
+import * as Schema from "effect/Schema";
+import { TaskLifecycleInput } from "@t3tools/contracts/taskLifecycle";
 import {
   automationSummary,
   readResult,
@@ -27,6 +29,7 @@ import * as Effect from "effect/Effect";
 import type { UserFolders } from "../user/UserFolders.ts";
 import { acceptCompiled, type CloudCompiler } from "./cloudCompiler.ts";
 import { setFolderPhase } from "./folderPhaseTool.ts";
+import type { GitHubWebhooks } from "../github/GitHubWebhooks.ts";
 
 /**
  * Automation tools an agent calls from its cloud thread's machine, answered
@@ -35,6 +38,8 @@ import { setFolderPhase } from "./folderPhaseTool.ts";
  * it saves or runs act with its model and modes, never more. The machine
  * compiles saves (oxc can't run here) and validates locally.
  */
+
+const decodeTaskLifecycle = Schema.decodeUnknownEffect(TaskLifecycleInput);
 
 type Input = Readonly<Record<string, unknown>>;
 type Handler = (
@@ -115,8 +120,10 @@ const pullRequestTarget = (caller: OrchestrationV2ThreadShell, input: Input) =>
 export const makeCloudTools = (deps: {
   readonly engine: WorkflowEngineShape;
   readonly compiler: CloudCompiler["Service"];
+  readonly timezone: Effect.Effect<string, AutomationError>;
   readonly threads: AutomationThreadsShape;
   readonly folders: UserFolders["Service"];
+  readonly github: GitHubWebhooks["Service"];
 }): Readonly<Record<string, Handler>> => {
   const { engine } = deps;
 
@@ -133,6 +140,30 @@ export const makeCloudTools = (deps: {
       });
 
   return {
+    task_lifecycle: (caller, input) =>
+      Effect.gen(function* () {
+        const requestedThreadId = text(input, "threadId") ?? caller.id;
+        if (requestedThreadId !== caller.id) {
+          if (input.action !== "read")
+            return yield* refuse("Task lifecycle changes can only act on the calling thread.");
+          const target = yield* deps.threads.getThreadShell(ThreadId.make(requestedThreadId));
+          if (target === null || target.projectId !== caller.projectId)
+            return yield* refuse("Task lifecycle reads stay in the calling thread's project.");
+        }
+        const parsed = yield* decodeTaskLifecycle({
+          ...input,
+          threadId: requestedThreadId,
+        }).pipe(
+          Effect.mapError(
+            () => new AutomationError({ message: "Pass a valid task lifecycle action and input." }),
+          ),
+        );
+        return yield* engine.taskLifecycle(parsed);
+      }),
+    /** Internal runner bridge for schedule_task's person-zone default. */
+    person_timezone: () => deps.timezone.pipe(Effect.map((timezone) => ({ timezone }))),
+    automation_github_subscriptions: () =>
+      deps.github.status.pipe(Effect.map((subscriptions) => ({ subscriptions }))),
     automation_save: (caller, input) =>
       Effect.gen(function* () {
         const source = yield* required(input, "source");
@@ -141,6 +172,12 @@ export const makeCloudTools = (deps: {
             "Save from a cloud thread's machine, which compiles the file first.",
           );
         const compiled = yield* acceptCompiled(input.compiled);
+        const defaultTimezone =
+          compiled.meta.triggers?.some(
+            (trigger) => "cron" in trigger && trigger.timezone === undefined,
+          ) === true
+            ? yield* deps.timezone
+            : undefined;
         const automationId = text(input, "automationId");
         const saved = yield* deps.compiler.withStaged(
           source,
@@ -154,6 +191,8 @@ export const makeCloudTools = (deps: {
               ...(input.draft === true ? { draft: true } : {}),
             },
             withinCaller(caller),
+            undefined,
+            defaultTimezone,
           ),
         );
         return saveResult(saved);
@@ -184,6 +223,7 @@ export const makeCloudTools = (deps: {
               .pipe(Effect.orElseSucceed(() => null)))?.projectId
           : (text(input, "projectId") ?? caller.projectId);
         const run = yield* engine.startRun({
+          originThreadId: caller.id,
           automationId,
           input: input.input,
           trigger: "manual",

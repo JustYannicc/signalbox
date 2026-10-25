@@ -143,8 +143,11 @@ has left and when it next resets. When a provider rate-limits an account, the po
 announced reset, but checks with the provider while threads keep asking. If the provider resets
 the window early, the account is back within about a minute.
 
-In the desktop app, sign-ins finish on their own. In a browser, the provider can end on a page that
-cannot load; copy that page's full address and paste it into Signalbox to finish.
+Each sign-in opens the provider's own page in your browser. In Signalbox Cloud, ChatGPT shows a
+code: enter it on OpenAI's page and Signalbox finishes on its own, on any device. Claude finishes on
+its own in the desktop app. In a browser or on your phone, Claude's page ends on a code instead; copy
+it and paste it into Signalbox once. On a server you run yourself, a browser sign-in can end on a
+page that cannot load; copy that page's full address and paste it into Signalbox to finish.
 
 The first account of each provider in a pool adds that provider, such as **Claude**, to the model
 picker. Pick it to use every account of that kind in the pool: each conversation stays on one

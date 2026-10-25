@@ -3,9 +3,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import type { SqlError } from "effect/sql/SqlError";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { HttpClient } from "effect/http";
 
+import * as IdentityProvider from "../account/IdentityProvider.ts";
 import type { DrivePerson } from "../drive/DriveMembers.ts";
 
 /**
@@ -69,3 +71,59 @@ export const layerWorkOS = (config: WorkOSClient.WorkOSConfig | undefined) =>
       });
     }),
   ).pipe(Layer.provide(FetchHttpClient.layer));
+
+/** Resolves the caller's WorkOS realm for every lookup and membership check. */
+export const layerForUser = (userId: Effect.Effect<string, SqlError | DrivePeopleError>) =>
+  Layer.effect(
+    DrivePeople,
+    Effect.gen(function* () {
+      const httpClient = yield* HttpClient.HttpClient;
+      const identityProviders = yield* IdentityProvider.IdentityProviders;
+      const failed = (cause: unknown) =>
+        Effect.logError("WorkOS lookup for sharing failed", { cause }).pipe(
+          Effect.andThen(Effect.fail(new DrivePeopleError({ message: UNAVAILABLE }))),
+        );
+      const unavailable = () => new DrivePeopleError({ message: UNAVAILABLE });
+      const identityFor = (id: string) =>
+        identityProviders.identityProviderForUser(id).pipe(Effect.mapError(unavailable));
+      const callerIdentity = Effect.gen(function* () {
+        const callerId = yield* userId.pipe(Effect.mapError(unavailable));
+        return yield* identityFor(callerId);
+      });
+      const apiKeyFor = (config: WorkOSClient.WorkOSConfig) => {
+        if (config.apiKey === undefined) return Effect.fail(unavailable());
+        return Effect.succeed({ ...config, apiKey: config.apiKey });
+      };
+      const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.provideService(effect, HttpClient.HttpClient, httpClient);
+
+      return DrivePeople.of({
+        findByEmail: (email) =>
+          Effect.gen(function* () {
+            const config = yield* callerIdentity;
+            const workos = yield* apiKeyFor(config);
+            const user = yield* provided(WorkOSClient.findUserByEmail(workos, email));
+            return user === null
+              ? null
+              : { userId: user.id, email: user.email, name: nameOf(user) };
+          }).pipe(Effect.catch(failed)),
+        organizationsOf: (targetUserId) =>
+          Effect.gen(function* () {
+            const callerId = yield* userId.pipe(Effect.mapError(unavailable));
+            const callerConfig = yield* identityFor(callerId);
+            const targetConfig = yield* identityFor(targetUserId);
+            if (
+              callerConfig.clientId !== targetConfig.clientId ||
+              callerConfig.apiBaseUrl !== targetConfig.apiBaseUrl
+            ) {
+              return yield* Effect.fail(unavailable());
+            }
+            const workos = yield* apiKeyFor(callerConfig);
+            const organizations = yield* provided(
+              WorkOSClient.listOrganizations(workos, targetUserId),
+            );
+            return organizations.map((organization) => organization.id);
+          }).pipe(Effect.catch(failed)),
+      });
+    }),
+  );

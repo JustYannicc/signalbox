@@ -590,7 +590,11 @@ export function buildThreadListV2Items(input: {
   let nextSnoozeWakeAt: string | null = null;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   for (const thread of input.threads) {
-    if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent") continue;
+    if (
+      (thread.archivedAt !== null && thread.settledOverride !== "settled") || // signalbox: settled tasks are archived
+      thread.lineage.relationshipToParent === "subagent"
+    )
+      continue;
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
     if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;

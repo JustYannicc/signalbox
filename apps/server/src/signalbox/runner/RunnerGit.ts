@@ -148,6 +148,28 @@ export const makeRunnerGit = Effect.fn("makeRunnerGit")(function* (cwd: string) 
         : ({ _tag: "fetched", head } as const);
     });
 
+  /** Fetches exactly `oid` into FETCH_HEAD; unlike fetchHead, it never follows a moving HEAD. */
+  const fetchCommit = (url: string, oid: string, token: string) =>
+    Effect.gen(function* () {
+      const fetched = yield* exec(["fetch", "--depth=1", "--no-tags", "-q", url, oid], {
+        env: {
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "http.extraHeader",
+          GIT_CONFIG_VALUE_0: `Authorization: Bearer ${token}`,
+        },
+      });
+      if (fetched.code !== 0) {
+        return {
+          _tag: "failed",
+          reason: fetched.stderr.trim() || `git fetch exited ${fetched.code}`,
+        } as const;
+      }
+      const commit = yield* resolve("FETCH_HEAD");
+      return commit === oid
+        ? ({ _tag: "fetched", head: commit } as const)
+        : ({ _tag: "failed", reason: "The remote did not return the requested commit." } as const);
+    });
+
   /**
    * Makes `url`, the cloud's fetch proxy for a remote-backed drive, this
    * repository's promisor (#406): such a drive holds the remote's commits and
@@ -204,7 +226,18 @@ export const makeRunnerGit = Effect.fn("makeRunnerGit")(function* (cwd: string) 
       return files;
     });
 
-  return { exec, run, resolve, isAncestor, setRef, fetchHead, usePromisor, lines, changedFiles };
+  return {
+    exec,
+    run,
+    resolve,
+    isAncestor,
+    setRef,
+    fetchHead,
+    fetchCommit,
+    usePromisor,
+    lines,
+    changedFiles,
+  };
 });
 
 const KINDS: Record<string, DriveFileChange["kind"]> = {

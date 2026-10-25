@@ -1,0 +1,263 @@
+import type { KnipConfig } from "knip";
+import vendoredRoots from "./scripts/boundaries/vendored-roots.json" with { type: "json" };
+
+export default {
+  // Exported types are part of our contracts even before they have consumers.
+  rules: { types: "off", nsTypes: "off" },
+  // These executables are supplied by the OS or installed separately from npm.
+  ignoreBinaries: ["eas", "file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
+  workspaces: {
+    ".": {
+      // Keep vendored reference repositories outside the root project.
+      project: ["*.{js,mjs,cjs,ts,mts,cts}", ".github/**/*.cjs"],
+      entry: [
+        ".dependency-cruiser.cjs",
+        // CodeRabbit loads its configuration by filename.
+        ".coderabbit.config.ts",
+        ".github/scripts/thread-transfer-report.cjs",
+      ],
+      vite: { entry: [".github/**/*.test.cjs"] },
+      vitest: { entry: [".github/**/*.test.cjs"] },
+    },
+    "packages/shared": {
+      includeEntryExports: true,
+      entry: ["src/agentProcesses/cli.ts", "src/agentProcesses/preload.ts"], // Lifecycle hooks and Node's --import.
+    },
+    scripts: {
+      // Knip loads its preprocessor through a CLI option; native verification and
+      // worktree setup (from t3.json) run directly.
+      entry: [
+        "knip-schemas.ts",
+        "knip-declarations.ts",
+        "claude-bunfs/prepare-bun-proof.ts", // signalbox: standalone isolate proof builder
+        "mobile-native-client.ts",
+        "setup-worktree.ts",
+        "release-artifacts-smoke.ts", // signalbox: invoked as a subprocess by release-smoke.ts
+        "workload-cost-replay.ts", // signalbox: workload analytics
+        "boundaries/check.mjs", // signalbox: module boundaries
+        "boundaries/tests.mjs", // signalbox: module boundaries
+        "deploy-workflow-policy.tests.mjs", // Node runs these directly in Signalbox CI.
+        "deploy-plan.tests.mjs",
+        // signalbox: the canary reads facet source and spawns its comparator by filename.
+        "claude-bunfs/proof-worker.mts!",
+        "claude-bunfs/prove.ts",
+      ],
+      // The `t3` npm package's files: copied into the package, never imported.
+      ignore: [
+        "npm-launcher/**",
+        "upstream-sync/automations/**", // signalbox: prod automation sources, run by the cloud, never imported
+      ],
+    },
+    "apps/server": {
+      // Vite+ pack entries and the launcher used by installed background services.
+      entry: [
+        "src/bin.ts!",
+        "src/signalbox/runner/main.ts!", // Started through the process cleanup wrapper.
+        "src/signalbox/runner/command-main.ts!", // Command-only VM bootstrap.
+        "runner-command.config.ts!",
+        "src/claude-history-worker.ts!",
+        "scripts/cli.ts",
+        "scripts/evaluate-thread-titles.ts",
+        "scripts/measure-pr-preview.ts",
+        "scripts/probe-claude-fork-local-rollback-replay.ts",
+        "scripts/update-test-shard-weights.ts",
+        "scripts/verify-background-live.ts",
+        "scripts/precompile-built-in-automations.ts", // signalbox: automations
+        "src/provider/testFixtures/*.mjs",
+      ],
+      // Keep the transitive Effect runtime pinned for standalone npm installs.
+      // The Vite+ web build prerequisite.
+      // Native and disk-loaded provider packages stay external to the bundle; the
+      // CLI archive and desktop sidecar stage them from this manifest.
+      // oxc is the automation compiler's (@signalbox/automation-compiler), loaded the same way.
+      ignoreDependencies: [
+        "@effect/platform-node-shared",
+        "@t3tools/web",
+        "@napi-rs/keyring",
+        "oxc-parser",
+        "oxc-transform",
+        "@rrweb/record", // signalbox: agent browser; its IIFE is read from disk and injected into pages
+      ],
+    },
+    "apps/cloud": {
+      // Workers and Alchemy stacks load these entries by filename.
+      entry: [
+        "src/models/gatewayWorker.ts!",
+        "src/boxdSpike/worker.ts!",
+        "alchemy.run.ts!",
+        "infra/boxd-spike.alchemy.ts!",
+        "infra/computer-boxd-proof.alchemy.ts!",
+        "infra/computerBoxdProof/local.ts",
+        "infra/runner-images.alchemy.ts!",
+        "infra/check-plan.ts",
+        "infra/nodeProof/*.ts",
+        "infra/kernelProof/*.ts",
+        "infra/runStoreProof/proof.ts!", // signalbox: Wrangler loads the standalone store proof by filename.
+        "infra/computerPolicyProof/prepare.mjs", // Standalone exact-policy proof builder.
+        "infra/computerPolicyProof/proof-source.ts", // Loaded by the generated policy proof entry.
+        "infra/claudeTurnProof/prepare.ts", // signalbox: standalone Claude facet proof builder.
+        "infra/claudeTurnProof/ClaudeTurnProof.ts", // signalbox: imported by the generated proof entry.
+        // CodeMode preparation and generated workers load these files by name.
+        "infra/harnessProof/codeMode/prepare.ts",
+        "infra/harnessProof/codeMode/CellService.ts",
+        "src/harness/codeMode/worker.ts",
+        // signalbox: TypeScript resolves these declarations for generated JSON assets.
+        "infra/harnessProof/codeMode/local/cell-code.d.json.ts",
+        "infra/harnessProof/codeMode/local/executable.d.json.ts",
+        "infra/harnessProof/codeMode/local/prepare.mjs",
+        "infra/harnessProof/codeMode/local/run.mjs",
+        "infra/harnessProof/codeMode/local/proof.ts",
+        "infra/harnessReleases/artifactCli.ts", // signalbox: standalone artifact preparation and publishing CLI.
+        "infra/harnessReleases/harnessReleaseCloudflare.ts", // signalbox: deployment tooling launches this subprocess by filename.
+        "infra/hooksProof/prepareClaude.ts", // Standalone hook proof builders.
+        "infra/hooksProof/prepareCodex.ts",
+        "infra/hooksProof/ClaudeHooksProof.ts", // Loaded by the generated proof entries.
+        "infra/hooksProof/CodexHooksProof.ts",
+        "infra/kernelPrograms/*/*.{ts,mjs}",
+        "src/kernel/tests/gitProgramProof.ts", // signalbox: standalone real-WASM proof runner.
+        "src/computer/tests/ChildSyscallBudgetProbe.ts", // signalbox: bundled by path into the owner-budget probe.
+        "src/kernel/tests/coreutilsProgramProof.mjs", // signalbox: standalone real-WASM proof runner.
+        "src/kernel/KernelPipeProof.ts", // Loaded by the static pipe fixture's generated entry.
+        "src/kernel/KernelRuntimeProof.ts", // Loaded by the static runtime fixture's generated entry.
+        "src/kernel/KernelWasi.ts", // Public integration entry for executable personalities.
+        "src/kernel/Wasi.ts", // Public preview1 carry API.
+        "src/computer/*.ts", // Public Computer entry points consumed by Harness and generated worker compositions.
+        // signalbox: public Harness constructors are consumed by generated session workers.
+        "src/harness/AdapterHarness.ts",
+        "src/harness/ClaudeNativeHostBinding.ts",
+        "src/harness/CodexNativeHostBinding.ts",
+        "src/harness/Harness.ts",
+        "src/harness/HarnessReleaseLoader.ts",
+        "src/harness/HarnessReleasePlan.ts",
+        "src/harness/HarnessRequestFacetObject.ts",
+        "src/harness/HarnessRequestSupervisor.ts",
+        "src/harness/HarnessRequestTurn.ts",
+        "src/harness/HarnessSessionFacet.ts",
+        "src/harness/HarnessSessionHost.ts",
+        "infra/codexExecProof/prepare.ts",
+        "infra/codexExecProof/prepareExecution.ts",
+        "infra/codexExecProof/prepareFileSystem.ts",
+        "infra/codexTurn/prepareFixture.mjs",
+        "infra/codexTurn/ModelProofHost.mjs", // Deployed proof tooling loads this entry by filename.
+        "infra/codexTurn/ProofFacet.mjs", // Loaded by the generated Codex proof entry.
+        "infra/codexTurn/BashPrograms.mjs", // Loaded by the generated turn proof entry.
+        "src/kernel/CodexExecProtocolProof.ts",
+        "src/kernel/CodexExecExecutionProof.ts",
+        "src/kernel/CodexExecFileSystemProof.ts",
+        "infra/syncProbe/alchemy.run.ts!",
+        "infra/syncProbe/worker.ts!",
+        "infra/isolateProbe/alchemy.run.ts!",
+        "infra/isolateProbe/ci.ts!",
+        "infra/isolateProbe/worker.ts!",
+        "infra/syncProbe/lunora/identity.ts",
+      ],
+      // signalbox: source preparation reads pinned vendor files instead of importing them.
+      ignore: vendoredRoots
+        .filter((root) => root.startsWith("apps/cloud/"))
+        .map((root) => `${root.slice("apps/cloud/".length)}**`),
+      // `cloudflare:workers` is a Workers runtime module, not a package.
+      ignoreDependencies: [
+        "cloudflare",
+        "wrangler", // Wrangler runs through the process cleanup wrapper.
+        "punycode", // The web package builder resolves punycode/ to select npm over the Node builtin.
+      ],
+    },
+    "apps/desktop": {
+      // Electron loads these bundles by filename rather than importing them.
+      entry: [
+        "scripts/start-electron.mjs", // Started through the process cleanup wrapper.
+        "gnome-extension/extension.js!",
+        "src/electron/WindowsForegroundFocusWorker.ts!",
+        "src/snapShot/GlobalShiftShortcutWorker.ts!",
+        "src/snapShot/RegionSnapShotWorker.ts!",
+        "src/snapShot/SnapShotAccessibilityWorker.ts!",
+        "src/boot.ts!",
+        "src/compileCache.ts!",
+        "src/main.ts!",
+        "src/preload.ts!",
+        "src/preview-pick-preload.ts!",
+        "src/preview-pip-preload.ts!",
+        "src/mac-permission-preload.ts!",
+        "src/preview/Annotation.css!",
+      ],
+      // The injected runtime resolves Playwright by string; release tooling runs
+      // electron-builder from this workspace, outside its package scripts.
+      ignoreDependencies: ["playwright-core", "electron-builder"],
+    },
+    "apps/web": {
+      // Vitest loads this through the per-file @vitest-environment directive.
+      ignoreDependencies: ["jsdom"],
+      // Worktree setup (scripts/setup-worktree.ts) runs this directly.
+      // signalbox: agent browser; the mirror page is a second Vite entry (vite.config.ts).
+      // signalbox: upstream's flat sidebar stays in the tree, unmounted, so upstream merges apply (#683).
+      // signalbox: upstream's store-links row too: T3 Code's store app can't sign in to Signalbox Cloud.
+      entry: [
+        "scripts/warm-dep-cache.ts",
+        "src/agentBrowser/mirror/main.ts!",
+        "src/components/Sidebar.tsx",
+        "src/components/settings/MobileAppSettingsRow.tsx",
+      ],
+      // UI component modules are copied and adapted as cohesive sets. Keep their
+      // named subcomponents even before they have callers; the file audit still
+      // reports an entire component module when nothing imports it.
+      ignoreIssues: { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+    },
+    "apps/mobile": {
+      // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.
+      entry: [
+        "index.ts!",
+        "fingerprint.config.js",
+        "plugins/*.cjs",
+        "scripts/generate-device-stream.mts",
+        "src/features/devices/device-stream.browser.ts!",
+        "src/features/browser/preview-stream.browser.ts!",
+      ],
+      // Fonts are configured as asset paths; Expo autolinks the native packages.
+      ignoreDependencies: [
+        "@expo-google-fonts/dm-sans",
+        "@t3tools/mobile-review-diff-native",
+        "@t3tools/mobile-terminal-native",
+      ],
+    },
+    "apps/mobile/modules/t3-source-text": {
+      // React Native codegen discovers component specifications by filename.
+      entry: ["src/*NativeComponent.ts!"],
+    },
+    "infra/relay": {
+      entry: ["alchemy.run.ts!", "src/persistence/schema.ts!"],
+    },
+    "packages/*": {
+      // These workspace packages are private to this monorepo.
+      includeEntryExports: true,
+    },
+    "packages/client-runtime": {
+      // signalbox: retain upstream's lifecycle adapter so its patches merge cleanly.
+      ignore: ["src/state/threadLifecycle.ts"],
+    },
+    "packages/sync": {
+      entry: [
+        "codegen-proof/lunora/{schema,counters}.ts",
+        "codegen-proof/src/api-contract.ts",
+        "type-tests/**/*.ts",
+      ],
+      // The generated shard uses Workers globals from the proof's own tsconfig.
+      ignoreDependencies: ["@cloudflare/workers-types"],
+    },
+    "packages/effect-acp": {
+      includeEntryExports: true,
+      entry: ["test/fixtures/*.ts"],
+      // Generated upstream protocol definitions are retained as a complete set.
+      ignoreIssues: { "src/_generated/**": ["exports", "types"] },
+    },
+    "packages/effect-codex-app-server": {
+      includeEntryExports: true,
+      entry: ["test/fixtures/*.ts"],
+      ignoreIssues: { "src/_generated/**": ["exports", "types"] },
+    },
+    "packages/source-control-github": {
+      // graphqlgen reads its config; the generated operations export every selection's class.
+      entry: ["graphql.config.ts"],
+      ignoreIssues: { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
+    },
+  },
+} satisfies KnipConfig;

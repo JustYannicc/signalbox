@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Redacted from "effect/Redacted";
@@ -9,6 +11,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
+import { KernelApiError } from "../browser/KernelApi.ts";
+import type { KernelAuth } from "../browser/KernelAuth.ts";
 import { memoryKernel } from "../browser/memoryKernel.ts";
 import { memoryKernelAuth, type Screen } from "../browser/memoryKernelAuth.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
@@ -101,12 +105,27 @@ const memoryExecutor = (sites: ReadonlyArray<string>) => {
 
 const arms: Array<number> = [];
 
-const setup = (options: { readonly sites?: ReadonlyArray<string> } = {}) => {
+const setup = (
+  options: {
+    readonly sites?: ReadonlyArray<string>;
+    readonly afterKernelLogin?: () => Effect.Effect<void>;
+    readonly clearConnectionError?: KernelApiError;
+  } = {},
+) => {
   const kernel = memoryKernelAuth(SITES);
   const browsers = memoryKernel();
   const executor = memoryExecutor(options.sites ?? Object.keys(SITES));
+  const kernelAuth: KernelAuth = {
+    ...kernel.api,
+    login: (id) =>
+      kernel.api.login(id).pipe(Effect.andThen(options.afterKernelLogin?.() ?? Effect.void)),
+    clearConnections: (profileName) =>
+      options.clearConnectionError === undefined
+        ? kernel.api.clearConnections(profileName)
+        : Effect.fail(options.clearConnectionError),
+  };
   const layer = LoginService.layer({
-    kernel: kernel.api,
+    kernel: kernelAuth,
     executor: executor.api,
     pollInterval: Duration.zero,
   }).pipe(
@@ -274,6 +293,124 @@ describe("signing an agent in (#576)", () => {
       yield* TestClock.adjust(Duration.hours(2));
       yield* logins.sweep;
       expect(kernel.logins).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("clears the one profile and prevents the sweep from restoring its sign-ins", () => {
+    const { kernel, browsers, layer } = setup();
+    return Effect.gen(function* () {
+      const logins = yield* LoginService.LoginService;
+      yield* grant("example.com");
+      yield* signIn("https://example.com");
+      const [connection] = kernel.connections();
+      expect(yield* logins.profileStatus).toEqual({ available: true });
+
+      kernel.expire(connection!.id);
+      yield* TestClock.adjust(Duration.hours(2));
+      yield* logins.clearProfile;
+
+      expect(browsers.profiles).toEqual([]);
+      expect(browsers.deletedProfiles).toHaveLength(1);
+      expect(kernel.connections()).toEqual([]);
+      yield* logins.sweep;
+      expect(kernel.logins).toHaveLength(1);
+
+      expect(yield* signIn("https://example.com")).toMatchObject({ _tag: "signed_in" });
+      expect(kernel.connections()).toHaveLength(1);
+      expect(kernel.connections()[0]?.id).not.toBe(connection!.id);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "keeps the profile and re-login rows if Managed Auth connections cannot be removed",
+    () => {
+      const { kernel, browsers, layer } = setup({
+        clearConnectionError: new KernelApiError({
+          operation: "deleteAuthConnection",
+          status: 503,
+          code: null,
+          message: "Kernel is unavailable.",
+        }),
+      });
+      return Effect.gen(function* () {
+        const logins = yield* LoginService.LoginService;
+        const sql = yield* SqlClient.SqlClient;
+        yield* grant("example.com");
+        yield* signIn("https://example.com");
+        expect(yield* Effect.flip(logins.clearProfile)).toMatchObject({
+          operation: "deleteAuthConnection",
+        });
+        expect(browsers.deletedProfiles).toEqual([]);
+        expect(kernel.connections()).toHaveLength(1);
+        expect(yield* sql`SELECT connection_id FROM signalbox_sign_in_logins`).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("waits for an active Managed Auth sign-in before clearing the profile", () =>
+    Effect.gen(function* () {
+      const loginStarted = yield* Deferred.make<void>();
+      const finishLogin = yield* Deferred.make<void>();
+      const { kernel, browsers, layer } = setup({
+        afterKernelLogin: () =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(loginStarted, undefined);
+            yield* Deferred.await(finishLogin);
+          }),
+      });
+
+      yield* Effect.gen(function* () {
+        const logins = yield* LoginService.LoginService;
+        const clearRequested = yield* Deferred.make<void>();
+        yield* grant("example.com");
+        const loginFiber = yield* Effect.forkChild(signIn("https://example.com"));
+        yield* Deferred.await(loginStarted);
+
+        const clearFiber = yield* Effect.forkChild(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(clearRequested, undefined);
+            yield* logins.clearProfile;
+          }),
+        );
+        yield* Deferred.await(clearRequested);
+        yield* Effect.yieldNow;
+        expect(browsers.deletedProfiles).toEqual([]);
+
+        yield* Deferred.succeed(finishLogin, undefined);
+        expect(yield* Fiber.join(loginFiber)).toMatchObject({ _tag: "signed_in" });
+        yield* Fiber.join(clearFiber);
+
+        expect(browsers.profiles).toEqual([]);
+        expect(browsers.deletedProfiles).toHaveLength(1);
+        yield* logins.sweep;
+        expect(kernel.logins).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("does not start Managed Auth when the existing browser writer cannot close", () => {
+    const { kernel, browsers, layer } = setup();
+    return Effect.gen(function* () {
+      yield* grant("example.com");
+      yield* PersonBrowsers.PersonBrowsers.use((personBrowsers) =>
+        personBrowsers.open({ threadId: "thread-1", requester: OWNER }),
+      );
+      browsers.refuseDeleteWith(
+        new KernelApiError({
+          operation: "deleteBrowser",
+          status: 503,
+          code: "unavailable",
+          message: "Kernel is unavailable.",
+        }),
+      );
+
+      expect(yield* signIn("https://example.com")).toMatchObject({
+        _tag: "failed",
+        site: "example.com",
+        message: expect.stringContaining("close the existing browser session"),
+      });
+      expect(kernel.logins).toEqual([]);
+      expect(browsers.deleted).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

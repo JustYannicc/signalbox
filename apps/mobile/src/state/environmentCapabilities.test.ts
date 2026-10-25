@@ -29,6 +29,11 @@ describe("anyEnvironmentSupports", () => {
     expect(anyEnvironmentSupports([], "scheduledTasks")).toBe(true);
   });
 
+  it("keeps it hidden on Signalbox Cloud until the cloud reports in", () => {
+    expect(anyEnvironmentSupports([], "terminal", false)).toBe(false);
+    expect(anyEnvironmentSupports([config({})], "terminal", false)).toBe(true);
+  });
+
   it("shows it while any environment can do it", () => {
     expect(
       anyEnvironmentSupports([config({ scheduledTasks: false }), config({})], "scheduledTasks"),

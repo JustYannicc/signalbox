@@ -52,9 +52,10 @@ export const RUNNER_SCHEDULED_TASK_TOOLS = [
 const Timezone = Schema.optional(
   TrimmedNonEmptyString.annotate({
     description:
-      "IANA timezone a fixed_time schedule keeps, such as Europe/Zurich. Defaults to UTC; pass the user's zone when you know it.",
+      "IANA timezone a fixed_time schedule keeps, such as Europe/Zurich. Defaults to the person's saved timezone for fixed_time schedules; intervals default to UTC.",
   }),
 );
+const PersonTimezoneResult = Schema.Struct({ timezone: TrimmedNonEmptyString });
 
 const ScheduleTaskInput = Schema.Struct({
   ...OrchestratorMcpScheduleTaskInput.fields,
@@ -73,11 +74,18 @@ const decodeRun = Schema.decodeUnknownEffect(AUTOMATION_TOOLS.automation_run.suc
 const decodeSetEnabled = Schema.decodeUnknownEffect(
   AUTOMATION_TOOLS.automation_set_enabled.success,
 );
+const decodePersonTimezone = Schema.decodeUnknownEffect(PersonTimezoneResult);
 
 type Summary = (typeof AUTOMATION_TOOLS.automation_list.success.Type)["automations"][number];
 
 const unexpected = () =>
   new ToolError({ message: "Signalbox's cloud answered something this machine doesn't read." });
+
+const savedTimezone = (ask: ReturnType<typeof automationCaller>) =>
+  ask("person_timezone", {}, true).pipe(
+    Effect.flatMap((result) => decodePersonTimezone(result).pipe(Effect.mapError(unexpected))),
+    Effect.map(({ timezone }) => timezone),
+  );
 
 /** The schedule a task keeps, or why it can't run here. */
 const runnable = (schedule: ScheduledTaskUpsertSchedule) =>
@@ -216,13 +224,18 @@ export const layerScheduledTaskTools = (view: DrivesView, threadId: string | nul
       register({
         name: "schedule_task",
         description:
-          "Schedule a prompt to run on its own, as an automation in this thread's folder: people see and change it in Automations, and it runs in the cloud with every client closed. interval and fixed_time schedules run as a cron, so an interval runs at the nearest cadence that divides an hour, a day or a week (the result says which). By default each run posts the prompt into this thread (bindToCurrentThread=true); false starts a fresh thread per run. Pass schedule as a structured object: {type:'interval', everyMs:300000} is every 5 minutes; {type:'fixed_time', timeOfDay:'09:00', weekdays:[1,2,3,4,5]} with timezone is weekday mornings. Webhook schedules don't run in the cloud yet. Report the returned schedule and nextRunAt; stop it with delete_scheduled_task, or pause it with update_scheduled_task enabled=false.",
+          "Schedule a prompt to run on its own, as an automation in this thread's folder: people see and change it in Automations, and it runs in the cloud with every client closed. interval and fixed_time schedules run as a cron, so an interval runs at the nearest cadence that divides an hour, a day or a week (the result says which). By default each run posts the prompt into this thread (bindToCurrentThread=true); false starts a fresh thread per run. Pass schedule as a structured object: {type:'interval', everyMs:300000} is every 5 minutes and defaults to UTC; {type:'fixed_time', timeOfDay:'09:00', weekdays:[1,2,3,4,5]} defaults to the person's saved timezone. Pass timezone to override either default. Webhook schedules don't run in the cloud yet. Report the returned schedule and nextRunAt; stop it with delete_scheduled_task, or pause it with update_scheduled_task enabled=false.",
         parameters: ScheduleTaskInput,
         writes: { destructive: false, openWorld: false },
         handle: (input) =>
           Effect.gen(function* () {
             const schedule = yield* runnable(input.schedule);
-            const timezone = yield* knownZone(input.timezone ?? "UTC");
+            const timezone =
+              input.timezone !== undefined
+                ? yield* knownZone(input.timezone)
+                : schedule.type === "fixed_time"
+                  ? yield* savedTimezone(ask)
+                  : "UTC";
             const title = input.title ?? titleOf(input.prompt);
             const automations = yield* list;
             const key =

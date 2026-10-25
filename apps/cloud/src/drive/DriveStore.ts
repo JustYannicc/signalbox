@@ -8,13 +8,41 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
 import { DriveRemote } from "@signalbox/runner-protocol/DriveProtocol";
+import type { DriveCheckpointRecord } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullResult, PullSaveRequest } from "@signalbox/runner-protocol/PullProtocol";
+import type {
+  DriveWriter,
+  ThreadRefs,
+  RefWrite,
+  CheckpointOperationResult,
+  ForkCheckpointRequest,
+  RestoreCheckpointRequest,
+  UndoRestoreRequest,
+  UpdateToLatestRequest,
+} from "./DriveRevisionTypes.ts";
 import { canManageDrive } from "@t3tools/contracts/signalboxDrives";
 import * as Migrations from "../storage/migrations.ts";
 import { canWrite } from "./driveAccess.ts";
 import * as DriveEvents from "./DriveEvents.ts";
 import * as DriveMembers from "./DriveMembers.ts";
+import * as DrivePullStore from "./DrivePullStore.ts";
+import * as DriveRevisions from "./DriveRevisions.ts";
+import * as DriveRevisionStore from "./DriveRevisionStore.ts";
+import * as DriveRepositoryPublication from "./DriveRepositoryPublication.ts";
+import * as DriveHistory from "./DriveHistory.ts";
 import { isWithin } from "./DriveReader.ts";
 import type { ObjectType, Oid } from "./git/gitObjects.ts";
+
+export type {
+  DriveWriter,
+  ThreadRefs,
+  RefWrite,
+  CheckpointOperationResult,
+  ForkCheckpointRequest,
+  RestoreCheckpointRequest,
+  UndoRestoreRequest,
+  UpdateToLatestRequest,
+} from "./DriveRevisionTypes.ts";
 
 /**
  * What one drive's Durable Object persists: its refs, the packs it holds in
@@ -43,49 +71,15 @@ import type { ObjectType, Oid } from "./git/gitObjects.ts";
  * Every move of `main` or a thread's branch is also recorded for the drive's
  * people's automations (`DriveEvents`), in the same transaction.
  *
- * A drive backed by a remote repository records it here. Its `main` mirrors
- * the remote's default branch instead (`mirror`), and is never reconciled:
- * the remote is where work lands.
+ * A drive backed by a remote repository normally mirrors its default branch
+ * (`mirror`), where work lands. A source-only remote supplies historical
+ * objects while the drive reconciles new work onto its own `main`.
  */
 
 export const MAIN_REF = "main";
 export const threadRef = (threadId: string) => `threads/${threadId}`;
 export const wipRef = (threadId: string) => `wip/${threadId}`;
 export const machineRef = (threadId: string) => `machine/${threadId}`;
-
-/** Who is writing: a thread, on its machine of `generation`. */
-export interface DriveWriter {
-  readonly threadId: string;
-  /** The thread's owner, whose role in the drive the write needs. */
-  readonly userId: string;
-  readonly generation: number;
-  /** Whether the thread has a turn running. `main` only moves during one. */
-  readonly live: boolean;
-  /** The highest pack sequence the writer has; answers list only newer packs. */
-  readonly packsAfter: number;
-}
-
-export interface ThreadRefs {
-  readonly main: Oid | null;
-  readonly thread: Oid | null;
-  readonly wip: Oid | null;
-  /** The thread's machine state (#490). */
-  readonly machine: Oid | null;
-  readonly base: Oid | null;
-  readonly packs: ReadonlyArray<{
-    readonly seq: number;
-    readonly name: string;
-    readonly size: number;
-  }>;
-  readonly remote: DriveRemote | null;
-  /** Commits in `packs` whose parents are on the remote, not in the drive. */
-  readonly shallow: ReadonlyArray<Oid>;
-}
-
-export type RefWrite =
-  | { readonly _tag: "ok"; readonly refs: ThreadRefs }
-  | { readonly _tag: "conflict"; readonly refs: ThreadRefs }
-  | { readonly _tag: "refused"; readonly reason: string };
 
 export interface PackRegistration {
   readonly name: string;
@@ -150,11 +144,12 @@ export interface ObjectLocation {
   readonly length: number;
   readonly type: ObjectType;
   readonly size: number;
+  readonly storageDriveId?: string;
 }
 
 export class DriveStore extends Context.Service<
   DriveStore,
-  {
+  DriveRepositoryPublication.PublicationOperations & {
     readonly initialize: Effect.Effect<void, SqlError | Migrator.MigrationError>;
     /** A thread's view of the drive. Creates its branch at `main` and pins its base the first time. */
     readonly open: (writer: DriveWriter) => Effect.Effect<RefWrite, SqlError>;
@@ -182,6 +177,18 @@ export class DriveStore extends Context.Service<
       { readonly _tag: "ok" } | { readonly _tag: "missing"; readonly oids: ReadonlyArray<Oid> },
       SqlError
     >;
+    readonly packStorage: (name: string) => Effect.Effect<string | null, SqlError>;
+    readonly history: (userId: string) => Effect.Effect<DriveHistory.HistoryResult, SqlError>;
+    readonly historyOrigin: (
+      userId: string,
+    ) => Effect.Effect<DriveHistory.HistoryOrigin | null, SqlError>;
+    readonly startFromHistory: (
+      userId: string,
+      history: DriveHistory.HistorySnapshot,
+    ) => Effect.Effect<
+      DriveHistory.HistoryStartResult,
+      SqlError | import("./DriveHistoryTransfer.ts").HistoryTransferError
+    >;
     readonly updateRefs: (
       writer: DriveWriter,
       updates: ReadonlyArray<{
@@ -190,6 +197,16 @@ export class DriveStore extends Context.Service<
         readonly new: Oid;
       }>,
     ) => Effect.Effect<RefWrite, SqlError>;
+    /** Saves a pull's thread refs and immutable retry receipt in one transaction. */
+    readonly savePull: (
+      writer: DriveWriter,
+      request: PullSaveRequest,
+    ) => Effect.Effect<PullResult, SqlError>;
+    /** Reads the exact result retained for one thread's pull operation. */
+    readonly pullReceipt: (
+      writer: DriveWriter,
+      id: string,
+    ) => Effect.Effect<PullResult | null, SqlError>;
     readonly reconcile: (
       writer: DriveWriter,
       request: { readonly expectedMain: Oid | null; readonly newMain: Oid },
@@ -260,6 +277,47 @@ export class DriveStore extends Context.Service<
       readonly limit: number;
       readonly threadId?: string;
     }) => Effect.Effect<ReadonlyArray<UnreconciledWork>, SqlError>;
+    /** Records an immutable checkpoint and its private note ref after all objects are in public packs. */
+    readonly recordCheckpoint: (
+      writer: DriveWriter,
+      record: DriveCheckpointRecord,
+    ) => Effect.Effect<RefWrite, SqlError>;
+    /** Reads a thread's retained checkpoint, independent of its current branch. */
+    readonly checkpoint: (
+      threadId: string,
+      runId: string,
+    ) => Effect.Effect<DriveCheckpointRecord | null, SqlError>;
+    /** Starts a new thread at an exact retained checkpoint with an immutable retry receipt. */
+    readonly forkCheckpoint: (
+      userId: string,
+      request: ForkCheckpointRequest,
+    ) => Effect.Effect<CheckpointOperationResult, SqlError>;
+    /**
+     * Restores branch and autosave to a retained checkpoint, fencing older machines.
+     * The caller stops the active Runner first; this advances generation so any
+     * subsequent write from the stopped Runner is refused. The next Runner uses
+     * the generation returned with the operation result.
+     */
+    readonly restoreCheckpoint: (
+      userId: string,
+      request: RestoreCheckpointRequest,
+    ) => Effect.Effect<CheckpointOperationResult, SqlError>;
+    /**
+     * Reverses one successful restore while preserving current refs under private refs.
+     * The next Runner must use the generation returned here.
+     */
+    readonly undoRestore: (
+      userId: string,
+      request: UndoRestoreRequest,
+    ) => Effect.Effect<CheckpointOperationResult, SqlError>;
+    /**
+     * Explicitly drops a thread's historical input-view pins. The caller stops
+     * the active Runner first; this advances generation so it reloads current inputs.
+     */
+    readonly updateToLatest: (
+      userId: string,
+      request: UpdateToLatestRequest,
+    ) => Effect.Effect<CheckpointOperationResult, SqlError>;
   }
 >()("@signalbox/cloud/drive/DriveStore") {}
 
@@ -366,6 +424,16 @@ const migrations = Migrator.fromRecord({
   }),
   // Moves of `main` and threads' branches, for automations (#471).
   "0006_ref_events": DriveEvents.createTables,
+  // Immutable turn checkpoints and idempotent fork/restore receipts (#498).
+  "0007_drive_revisions": DriveRevisions.createTables,
+  // Undo snapshots for restores already tracked by 0007.
+  "0008_drive_restore_snapshots": DriveRevisions.createRestoreTables,
+  "0009_ref_deletions": DriveEvents.allowDeletedRefs,
+  "0010_drive_repository_publication": DriveRepositoryPublication.createTables,
+  "0010_drive_pull_receipts": DrivePullStore.createTables,
+  "0010_shared_history_packs": DriveHistory.createTables,
+  "0011_drive_publication_creation_attempts": DriveRepositoryPublication.addCreationAttempts,
+  "0011_shared_history_transfers": DriveHistory.createTransferTables,
 });
 
 /** Applies every migration not recorded yet (`storage/migrations.ts`). Never edit or rename a merged one. */
@@ -376,11 +444,11 @@ const PackRow = Schema.Struct({ seq: Schema.Number, name: Schema.String, size: S
 const decodeOwnerRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ private_to: Schema.NullOr(Schema.String) })),
 );
-const ThreadRow = Schema.Struct({ base: Schema.NullOr(Schema.String), generation: Schema.Number });
 const RemoteRow = Schema.Struct({
   provider: DriveRemote.fields.provider,
   repository: Schema.String,
   default_branch: Schema.String,
+  mode: Schema.NullOr(Schema.Literal("source")),
 });
 const ObjectTypeSchema = Schema.Literals(["commit", "tree", "blob", "tag"]);
 const LocationRow = Schema.Struct({
@@ -390,6 +458,7 @@ const LocationRow = Schema.Struct({
   length: Schema.Number,
   type: ObjectTypeSchema,
   size: Schema.Number,
+  storageDriveId: Schema.NullOr(Schema.String),
 });
 const CommitRow = Schema.Struct({
   oid: Schema.String,
@@ -402,9 +471,13 @@ const CommitRow = Schema.Struct({
 });
 const decodeRefRows = Schema.decodeUnknownSync(Schema.Array(RefRow));
 const decodePackRows = Schema.decodeUnknownSync(Schema.Array(PackRow));
-const decodeThreadRows = Schema.decodeUnknownSync(Schema.Array(ThreadRow));
+const decodeThreadRows = Schema.decodeUnknownSync(Schema.Array(DriveRevisions.ThreadRevisionRow));
 const decodeRemoteRows = Schema.decodeUnknownSync(Schema.Array(RemoteRow));
-const decodeLocationRows = Schema.decodeUnknownSync(Schema.Array(LocationRow));
+const decodeLocations = Schema.decodeUnknownSync(Schema.Array(LocationRow));
+const decodeLocationRows = (input: unknown): ReadonlyArray<ObjectLocation> =>
+  decodeLocations(input).map(({ storageDriveId, ...location }) =>
+    storageDriveId === null ? location : { ...location, storageDriveId },
+  );
 const decodeCommitRows = Schema.decodeUnknownSync(Schema.Array(CommitRow));
 const decodeShortcutRows = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ path: Schema.String, target: Schema.String })),
@@ -442,23 +515,28 @@ const chunks = <A>(items: ReadonlyArray<A>) =>
     items.slice(i * CHUNK, (i + 1) * CHUNK),
   );
 
-const make = Effect.gen(function* () {
+const make = Effect.fn("DriveStore.make")(function* (driveId: string) {
   const sql = yield* SqlClient.SqlClient;
   const members = yield* DriveMembers.DriveMembers;
   const events = yield* DriveEvents.DriveEvents;
 
-  const ref: DriveStore["Service"]["ref"] = (name) =>
+  const storedRef = (name: string) =>
     sql`SELECT name, oid FROM refs WHERE name = ${name}`.pipe(
       Effect.map((rows) => decodeRefRows(rows)[0]?.oid ?? null),
     );
+  // Checkpoint and notes refs are durable internal refs, never advertised as
+  // browseable drive refs or handed to a machine for push.
+  const ref: DriveStore["Service"]["ref"] = (name) =>
+    name.startsWith("signalbox/") ? Effect.succeed(null) : storedRef(name);
 
   const threadRow = (threadId: string) =>
-    sql`SELECT base, generation FROM threads WHERE thread_id = ${threadId}`.pipe(
+    sql`SELECT base, generation, notes_oid, pinned_views, revision
+      FROM threads WHERE thread_id = ${threadId}`.pipe(
       Effect.map((rows) => decodeThreadRows(rows)[0] ?? null),
     );
 
   const remote: DriveStore["Service"]["remote"] =
-    sql`SELECT provider, repository, default_branch FROM remote WHERE id = 1`.pipe(
+    sql`SELECT provider, repository, default_branch, mode FROM remote WHERE id = 1`.pipe(
       Effect.map((rows) => {
         const row = decodeRemoteRows(rows)[0];
         return row === undefined
@@ -467,15 +545,16 @@ const make = Effect.gen(function* () {
               provider: row.provider,
               repository: row.repository,
               defaultBranch: row.default_branch,
+              ...(row.mode === null ? {} : { mode: row.mode }),
             };
       }),
     );
 
   const setRemote: DriveStore["Service"]["setRemote"] = (next) =>
-    sql`INSERT INTO remote (id, provider, repository, default_branch)
-      VALUES (1, ${next.provider}, ${next.repository}, ${next.defaultBranch})
+    sql`INSERT INTO remote (id, provider, repository, default_branch, mode)
+      VALUES (1, ${next.provider}, ${next.repository}, ${next.defaultBranch}, ${next.mode ?? null})
       ON CONFLICT (id) DO UPDATE SET provider = excluded.provider,
-        repository = excluded.repository, default_branch = excluded.default_branch`.pipe(
+        repository = excluded.repository, default_branch = excluded.default_branch, mode = excluded.mode`.pipe(
       Effect.asVoid,
     );
 
@@ -498,6 +577,10 @@ const make = Effect.gen(function* () {
         packs,
         remote: yield* remote,
         shallow,
+        notes: thread?.notes_oid ?? null,
+        pinnedViews:
+          thread?.pinned_views == null ? null : DriveRevisions.decodeViews(thread.pinned_views),
+        revision: thread?.revision ?? null,
       };
     });
 
@@ -511,17 +594,21 @@ const make = Effect.gen(function* () {
         sql`INSERT INTO refs (name, oid, updated_by, updated_at) VALUES (${name}, ${oid}, ${by}, ${now})
           ON CONFLICT (name) DO UPDATE SET oid = excluded.oid, updated_by = excluded.updated_by,
           updated_at = excluded.updated_at`,
-    );
+    ).pipe(Effect.asVoid);
 
   /** Moves `main` or a thread's branch from `before` for a thread or a person, recording it when it changed. */
   const land = (
     name: string,
     before: Oid | null,
-    after: Oid,
+    after: Oid | null,
     by: { readonly threadId: string } | { readonly userId: string },
   ) => {
     const threadId = "threadId" in by ? by.threadId : null;
-    return setRef(name, after, "threadId" in by ? by.threadId : by.userId).pipe(
+    const move =
+      after === null
+        ? sql`DELETE FROM refs WHERE name = ${name}`.pipe(Effect.asVoid)
+        : setRef(name, after, "threadId" in by ? by.threadId : by.userId);
+    return move.pipe(
       Effect.andThen(
         before === after ? Effect.void : events.record({ ref: name, before, after, threadId }),
       ),
@@ -551,9 +638,10 @@ const make = Effect.gen(function* () {
   /** Whether the writer's owner may still change files here. Removing them ends it at once. */
   const writes = (writer: DriveWriter) => Effect.map(members.role(writer.userId), canWrite);
 
+  const NO_ACCESS_REASON = "You no longer have access to change this drive.";
   const NO_ACCESS: RefWrite = {
     _tag: "refused",
-    reason: "You no longer have access to change this drive.",
+    reason: NO_ACCESS_REASON,
   };
 
   const open: DriveStore["Service"]["open"] = (writer) =>
@@ -747,18 +835,25 @@ const make = Effect.gen(function* () {
         } as const;
       }
       if (!(yield* writes(writer))) return NO_ACCESS;
-      if ((yield* remote) !== null) {
+      const source = yield* remote;
+      if (source !== null && source.mode !== "source") {
         return { _tag: "refused", reason: "This drive's work lands on its remote." } as const;
       }
       if (!(yield* fence(writer))) return STALE;
       if ((yield* ref(threadRef(writer.threadId))) !== request.newMain) {
-        return { _tag: "refused", reason: "main only moves to the thread's own branch." } as const;
+        return {
+          _tag: "refused",
+          reason: "main only moves to the thread's own branch.",
+        } as const;
       }
       const current = yield* ref(MAIN_REF);
       if (current === request.newMain)
         return { _tag: "ok", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
       if (current !== request.expectedMain) {
-        return { _tag: "conflict", refs: yield* refs(writer.threadId, writer.packsAfter) } as const;
+        return {
+          _tag: "conflict",
+          refs: yield* refs(writer.threadId, writer.packsAfter),
+        } as const;
       }
       if (current !== null && !(yield* isAncestor(current, request.newMain))) {
         return { _tag: "refused", reason: "main only moves forward: merge it first." } as const;
@@ -775,7 +870,8 @@ const make = Effect.gen(function* () {
           reason: "main only moves while the thread's turn runs.",
         } as const;
       }
-      if ((yield* remote) === null) {
+      const source = yield* remote;
+      if (source === null || source.mode === "source") {
         return { _tag: "refused", reason: "This drive has no remote to mirror." } as const;
       }
       if (!(yield* writes(writer))) return NO_ACCESS;
@@ -807,6 +903,7 @@ const make = Effect.gen(function* () {
         out.push(
           ...decodeLocationRows(
             yield* sql`SELECT o.oid, p.name AS pack, o.offset, o.length, o.type, o.size
+              , p.storage_drive_id AS storageDriveId
               FROM objects o JOIN packs p ON p.seq = o.pack_seq WHERE o.oid IN ${sql.in(chunk)}`,
           ),
         );
@@ -816,6 +913,7 @@ const make = Effect.gen(function* () {
 
   const locateAt: DriveStore["Service"]["locateAt"] = (pack, offset) =>
     sql`SELECT e.oid, p.name AS pack, e.offset, e.length, e.type, e.size
+      , p.storage_drive_id AS storageDriveId
       FROM pack_entries e JOIN packs p ON p.seq = e.pack_seq
       WHERE p.name = ${pack} AND e.offset = ${offset}`.pipe(
       Effect.map((rows) => decodeLocationRows(rows)[0] ?? null),
@@ -927,6 +1025,39 @@ const make = Effect.gen(function* () {
         : ({ _tag: "ok" } as const);
     }).pipe(sql.withTransaction);
 
+  const revisionOperations = DriveRevisionStore.makeOperations({
+    sql,
+    role: members.role,
+    threadRow,
+    refs,
+    ref,
+    publicCommit: (oid) =>
+      Effect.gen(function* () {
+        if (!(yield* isCommit(oid))) return false;
+        return (yield* missing([oid], null)).length === 0;
+      }),
+    threadRef,
+    wipRef,
+    setRef,
+    land,
+    removeRef: (name) => sql`DELETE FROM refs WHERE name = ${name}`.pipe(Effect.asVoid),
+    internalRef: storedRef,
+    fence,
+  });
+  const pullOperations = DrivePullStore.makeOperations({
+    sql,
+    role: members.role,
+    threadRow,
+    ref,
+    missing,
+    isCommit,
+    threadRef,
+    wipRef,
+    setRef,
+    removeRef: (name) => sql`DELETE FROM refs WHERE name = ${name}`.pipe(Effect.asVoid),
+    land,
+  });
+
   /** Every commit `main` reaches, as a recursive CTE to join against. */
   const REACH = sql`reach(oid) AS (
       SELECT oid FROM refs WHERE name = ${MAIN_REF}
@@ -977,6 +1108,24 @@ const make = Effect.gen(function* () {
       );
     });
 
+  const publicationOperations = DriveRepositoryPublication.makeOperations({
+    sql,
+    role: members.role,
+    main: ref(MAIN_REF),
+    remote,
+    setRemote,
+  });
+
+  const historyOperations = DriveHistory.makeOperations({
+    driveId,
+    sql,
+    role: members.role,
+    ref: storedRef,
+    setRef,
+    remote,
+    setRemote,
+  });
+
   return DriveStore.of({
     initialize: Effect.asVoid(migrate.pipe(Effect.provideService(SqlClient.SqlClient, sql))),
     open,
@@ -985,6 +1134,10 @@ const make = Effect.gen(function* () {
     missing,
     promised,
     registerPack,
+    packStorage: historyOperations.packStorage,
+    history: historyOperations.history,
+    historyOrigin: historyOperations.historyOrigin,
+    startFromHistory: historyOperations.startFromHistory,
     updateRefs,
     reconcile,
     setRemote,
@@ -1000,12 +1153,15 @@ const make = Effect.gen(function* () {
     addShortcut,
     removeShortcut,
     unreconciled,
+    ...revisionOperations,
+    ...publicationOperations,
+    ...pullOperations,
   });
 });
 
 /** The store, its events and the members of the drive named `driveId`, on the object's SQLite. */
 export const layer = (driveId: string) =>
-  Layer.effect(DriveStore, make).pipe(
+  Layer.effect(DriveStore, make(driveId)).pipe(
     Layer.provideMerge(DriveEvents.layer(driveId)),
     Layer.provideMerge(DriveMembers.layer(driveId)),
   );

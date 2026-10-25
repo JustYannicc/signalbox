@@ -1,0 +1,72 @@
+# Signalbox architecture (LikeC4)
+
+The canonical model of Signalbox's target design. It is a decision tool for deep modules:
+every module is a black box everywhere above it, and its internals live only in its own view.
+
+## View it
+
+```sh
+pnpm dlx likec4@1.60.0 start architecture        # live, from the repo root
+pnpm dlx likec4@1.60.0 validate --json --no-layout architecture
+pnpm dlx likec4@1.60.0 build architecture -o dist # static site
+```
+
+Start at `index` and click: groups open external services, modules open their drill-down.
+
+## Folder map
+
+```
+likec4.config.json   project (name: signalbox)
+spec.c4              element, deployment and relationship kinds; tags; style groups
+model/               people, clients, front-door, external, actors, hierarchy, domain
+model/modules/       one file per module with its parts, seams, adapters and technologies
+deployment.c4        build layer + production topology (edge platform, machines, SaaS, devices)
+views/               landscape, containers (runtime), modules (drill-downs), hierarchy,
+                     domain, deployment, smells, v1 (Basalt's first release), packages (publishable vs stays)
+views/states/        state machines: thread, turn, ask, pool account, VM, computer over time, Base, trash, connection
+views/workflows/     dynamic views per workflow (Workflows/... in the sidebar)
+  lifecycle.c4       thread and computer lifecycle (Workflows/Lifecycle/...): lifecycle_overview,
+                     lifecycle_tool_needs_vm, lifecycle_long_process, lifecycle_idle_dev_server,
+                     lifecycle_wake_after_day, lifecycle_fork_thread, lifecycle_interrupt,
+                     lifecycle_park_and_shutdown, lifecycle_file_sync, lifecycle_boxd_data
+  workflows/v1.c4    Basalt's first release end to end (Workflows/Basalt/...): 0 first day (index) · 1 sign in
+                     · 2 connect subscriptions · 3 share your pool · 4 usage · 5 your own tools · 6 set up this computer
+                     · 7 local model request · 8 local tool call
+  computer-gateway.c4 one command gateway and resource budgets (Workflows/Work/Computer/Gateway/...):
+                     computer_gateway_same_command, computer_terminal_session, computer_budgets
+views/funnels.c4     every boundary is one gateway (Overview/Decisions/Gateways): funnels, then one drill-down
+                     each: funnel_clients, funnel_command, funnel_files, funnel_model, funnel_connections, funnel_port
+views/components.c4 what Signalbox is built from (Overview/Decisions/Components): Basalt, Pumice and the
+                     Signalbox OS; model/components.c4 tags each module #basalt, #pumice or #os
+views/harness-map.c4 what an agent consists of and which parts we own (Overview/Decisions/Harness map):
+                     harness_map, a talk's harness split applied to Signalbox
+views/journeys/      scenario walk-throughs (Scenarios/... in the sidebar)
+CONTEXT.md           glossary and the words that are never kinds
+```
+
+## Conventions
+
+- Box text is the name. A module's description is its interface: 3-6 verbs. Tech goes in `technology`.
+- I/O between modules is relationships. A cross-module edge never targets another module's internals.
+- Tags: `#deep`, `#shallow`, `#passthrough` on modules; `#hypothetical-seam` on a seam with one adapter;
+  `#v1` on what Basalt's first release ships; `#planned` on adapters not built yet; `#publishable` on deep modules and parts that
+  become their own public npm packages (see `Overview / Decisions / Packages`); `#decided` / `#assumption` on
+  settled answers vs working plans.
+- Seams carry `metadata { adapters 'N' }`. Modules carry `interface` and `deletion` (the deletion-test verdict).
+- Relationship kinds: `sync`, `async` (outbox), `model`, `tool`, `reach`, `lend`, `mount`, `transition`, `owns`.
+- Levels are only `toplevel` and `folder`. An organization is only an owner (see CONTEXT.md).
+- At least three people (A, B members; C admin). Assistant and pipeline lanes are per person, at the top layer.
+- Generic names only. Nothing private: no real people, companies, repos, hosts or local paths.
+- Every view uses `autoLayout TopBottom`. View titles use folders: `Modules / Models`.
+- Harnesses (Claude Code, Codex) run in the isolate tier. Machines forked from a warm Base only run
+  commands and the agent's own long-lived processes; they hibernate after 2 minutes without activity and
+  are deleted at settle, archive or after H hours. A VM disk is cache only. The model never learns any of
+  this. Containers host pool backends only.
+- The tools gateway (Gateway + Connections) is the one gateway for every connector; built-in tools
+  (Bash, Read, Edit …) go Harness → Computer, and their network traffic leaves through Gateway's egress filter.
+- Every boundary is one gateway (`#funnel`): client gateway, command gateway, files gateway, model gateway,
+  tools gateway, port gateway. Every caller uses it, adapters fan out behind it, and moving work between the
+  isolate tier and a machine never moves it. Every outside call is made from the edge platform; a VM's
+  EgressProxy is only a bridge into Gateway.
+
+Source of truth for the design lives outside this folder; this model follows it, it does not decide it.

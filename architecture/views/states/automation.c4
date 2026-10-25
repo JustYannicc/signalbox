@@ -1,0 +1,27 @@
+// State machine for one automation. The walk through it with people and modules is the dynamic view state_automation.
+model {
+  smAutomation = state 'Automation lifecycle' {
+    draft = state 'Draft'
+    enabled = state 'Enabled' { description 'ticks on · pin version and move home keep it enabled' }
+    disabled = state 'Disabled' { description 'ticks off' }
+    deleted = state 'Deleted' { description 'agents only through the gate' }
+
+    draft -[transition]-> enabled 'enable'
+    enabled -[transition]-> disabled 'disable'
+    disabled -[transition]-> enabled 'enable'
+    enabled -[transition]-> deleted 'delete'
+    disabled -[transition]-> deleted 'delete'
+    draft -[transition]-> deleted 'delete'
+  }
+}
+views {
+  view state-automation of smAutomation {
+    title 'States/Automation/State machine'
+    description 'How is one automation switched on, off and deleted? Start: green. End: gray. Click the frame for the walk with people and modules (state_automation).'
+    include *
+    include smAutomation with { navigateTo state_automation }
+    style smAutomation.draft { color green }
+    style smAutomation.deleted { color gray }
+    autoLayout TopBottom
+  }
+}

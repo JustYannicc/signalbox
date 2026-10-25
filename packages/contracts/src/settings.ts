@@ -296,7 +296,8 @@ export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
-  inAppNotificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // signalbox: questions, approvals and failures reach the person out of the box (#43)
+  inAppNotificationsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
@@ -526,9 +527,13 @@ export function secretSetting<S extends Schema.Top>(schema: S): S["Rebuild"] {
   return schema.annotateKey({ settingsSecret: true });
 }
 
+/** A masked form field is a credential too, so none is saved or sent to clients as plain text. */
 export function isSecretSetting(schema: Schema.Top): boolean {
   const annotations = Schema.resolveAnnotationsKey(schema) ?? Schema.resolveAnnotations(schema);
-  return annotations?.settingsSecret === true;
+  return (
+    annotations?.settingsSecret === true ||
+    annotations?.providerSettingsForm?.control === "password"
+  );
 }
 
 export type ProviderSettingsOrder<Fields extends Schema.Struct.Fields> = readonly Extract<

@@ -1,0 +1,10 @@
+--- a/ring/src/rand.rs
++++ b/ring/src/rand.rs
+@@ -157,6 +157,7 @@
+         target_arch = "wasm32",
+         any(
+             target_os = "wasi",
++            target_os = "emscripten",
+             all(target_os = "unknown", feature = "wasm32_unknown_unknown_js")
+         )
+     ),

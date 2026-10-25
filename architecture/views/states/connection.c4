@@ -1,0 +1,35 @@
+// State machine for one connection. The walk through it with people and modules is the dynamic view state_connection.
+model {
+  smConnection = state 'Connection lifecycle' {
+    connecting = state 'Connecting' { description 'hosted OAuth · key · import' }
+    unplaced = state 'Unplaced' { description 'created, not on any folder yet' }
+    live = state 'Live' { description 'serves calls · refresh bumps epoch' }
+    needsReauth = state 'Needs reauth' { description 'health failed' }
+    retiring = state 'Retiring' { description 'serve refuses' }
+    deleted = state 'Deleted' { description 'sealed credential gone' }
+    swept = state 'Swept' { description 'unplaced past TTL' }
+
+    connecting -[transition]-> unplaced 'complete'
+    unplaced -[transition]-> live 'place on a folder'
+    unplaced -[transition]-> swept 'sweeper'
+    live -[transition]-> unplaced 'unplace everywhere'
+    live -[transition]-> needsReauth 'health check'
+    needsReauth -[transition]-> live 'reauth'
+    live -[transition]-> retiring 'disconnect'
+    needsReauth -[transition]-> retiring 'disconnect'
+    retiring -[transition]-> deleted 'every placement unplaced'
+  }
+}
+views {
+  view state-connection of smConnection {
+    #v1
+    title 'States/Connection/State machine'
+    description 'How does one connection get connected, placed on a folder, kept healthy and removed? Start: green. End: gray. Click the frame for the walk with people and modules (state_connection).'
+    include *
+    include smConnection with { navigateTo state_connection }
+    style smConnection.connecting { color green }
+    style smConnection.deleted { color gray }
+    style smConnection.swept { color gray }
+    autoLayout TopBottom
+  }
+}

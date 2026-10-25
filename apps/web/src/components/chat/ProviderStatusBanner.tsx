@@ -6,6 +6,7 @@ import { Button, InlineButton } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { POOL_DRIVERS } from "@t3tools/contracts/accountHub"; // signalbox
+import { environmentCopy } from "../../state/oneEnvironmentCopy"; // signalbox: one-environment copy for provider install
 
 function getIncompatibleVersion(status: ServerProvider) {
   const compatibility = status.compatibilityAdvisory;
@@ -70,7 +71,9 @@ export function getProviderStatusMessage(status: ServerProvider): string {
   if (status.message) return status.message;
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   if (!status.installed && hasProviderSetup(status)) {
-    return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
+    return environmentCopy(
+      `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`,
+    ); // signalbox: one-environment copy for provider install
   }
   // signalbox: a pool's providers sign in by adding an account to the pool.
   if (status.auth.status === "unauthenticated" && POOL_DRIVERS.includes(status.driver)) {

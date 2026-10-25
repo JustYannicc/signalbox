@@ -22,6 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 import * as ThreadFindText from "@t3tools/shared/threadFindText";
+import { verifyThreadFindMatchEvidence } from "@t3tools/shared/threadFindMatchEvidence";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -199,6 +200,113 @@ const setup = Effect.gen(function* () {
 });
 
 describe("V2 thread find", () => {
+  it.effect("binds selected evidence to original source, semantic labels and exact intervals", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      const text = "😀 [needle](https://a.test)\n\nneedle";
+      yield* putItems([item("evidence", 0, text)]);
+      const input = { threadId, query: "NEEDLE", index: 1 };
+      const first = yield* projection.searchThread(input);
+      const document = ThreadFindText.searchableMessageDocument({
+        role: "assistant",
+        text,
+        streaming: false,
+      })!;
+      assert.deepEqual(
+        verifyThreadFindMatchEvidence(document, input.query, 1, first.match?.evidence),
+        { segmentIndex: 1, start: 0, end: 6 },
+      );
+      assert.isNull(verifyThreadFindMatchEvidence(document, "need", 1, first.match?.evidence));
+      assert.isNull(verifyThreadFindMatchEvidence(document, input.query, 0, first.match?.evidence));
+      const changedText = text.replace("a.test", "b.test");
+      yield* putItems([item("evidence", 0, changedText)], "same-length-source-edit");
+      const changed = yield* projection.searchThread(input);
+      const changedDocument = ThreadFindText.searchableMessageDocument({
+        role: "assistant",
+        text: changedText,
+        streaming: false,
+      })!;
+      assert.equal(changed.totalMatches, first.totalMatches);
+      assert.isNull(
+        verifyThreadFindMatchEvidence(changedDocument, input.query, 1, first.match?.evidence),
+      );
+      assert.isNotNull(
+        verifyThreadFindMatchEvidence(changedDocument, input.query, 1, changed.match?.evidence),
+      );
+      const skillText = "Use $check now";
+      yield* putItems([item("evidence", 0, skillText)], "skill-source");
+      const skills = [{ name: "check", displayName: "needle One" }];
+      const label = yield* projection.searchThread({ threadId, query: "needle", skills });
+      const renamed = [{ name: "check", displayName: "needle Two" }];
+      const relabeled = yield* projection.searchThread({
+        threadId,
+        query: "needle",
+        skills: renamed,
+      });
+      const relabeledDocument = ThreadFindText.searchableMessageDocument(
+        { role: "assistant", text: skillText, streaming: false },
+        undefined,
+        renamed,
+      )!;
+      assert.equal(label.totalMatches, 1);
+      assert.equal(relabeled.totalMatches, 1);
+      assert.isNull(
+        verifyThreadFindMatchEvidence(relabeledDocument, "needle", 0, label.match?.evidence),
+      );
+      assert.isNotNull(
+        verifyThreadFindMatchEvidence(relabeledDocument, "needle", 0, relabeled.match?.evidence),
+      );
+      const markdown = "# Needle plan\n\nShip it";
+      yield* putItems([item("evidence", 0, markdown, "proposed_plan")], "plan-source");
+      const plan = yield* projection.searchThread({ threadId, query: "needle" });
+      assert.deepEqual(
+        verifyThreadFindMatchEvidence(
+          ThreadFindText.searchablePlanDocument(markdown),
+          "needle",
+          0,
+          plan.match?.evidence,
+        ),
+        { segmentIndex: 0, start: 0, end: 6 },
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("emits the same evidence through the memory projection", () =>
+    Effect.gen(function* () {
+      const projection = yield* ProjectionStore.ProjectionStoreV2;
+      yield* Effect.forEach(
+        [
+          thread(threadId, projectId),
+          run(),
+          {
+            id: EventId.make("memory-item"),
+            threadId,
+            occurredAt: at(1),
+            type: "turn-item.updated",
+            payload: item("memory", 0, "😀 ΟΣ\n\nος"),
+          },
+        ] satisfies OrchestrationV2DomainEvent[],
+        projection.apply,
+        { discard: true },
+      );
+      const result = yield* projection.searchThread({ threadId, query: "οσ", index: 1 });
+      assert.equal(result.totalMatches, 2);
+      assert.deepEqual(
+        verifyThreadFindMatchEvidence(
+          ThreadFindText.searchableMessageDocument({
+            role: "assistant",
+            text: "😀 ΟΣ\n\nος",
+            streaming: false,
+          })!,
+          "οσ",
+          1,
+          result.match?.evidence,
+        ),
+        { segmentIndex: 1, start: 0, end: 2 },
+      );
+    }).pipe(Effect.provide(ProjectionStore.layerMemory)),
+  );
+
   it.effect("delivers the reading-position match before parsing the remaining history", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
@@ -221,7 +329,22 @@ describe("V2 thread find", () => {
               Effect.sync(() => {
                 frames.push(frame);
                 if (frame.complete === false) {
-                  assert.deepEqual(frame.match, { entryId: "reading", runId, occurrence: 1 });
+                  assert.equal(frame.match?.entryId, "reading");
+                  assert.equal(frame.match?.runId, runId);
+                  assert.equal(frame.match?.occurrence, 1);
+                  assert.deepEqual(
+                    verifyThreadFindMatchEvidence(
+                      ThreadFindText.searchableMessageDocument({
+                        role: "assistant",
+                        text: "reading progressive needle needle",
+                        streaming: false,
+                      })!,
+                      "needle",
+                      1,
+                      frame.match?.evidence,
+                    ),
+                    { segmentIndex: 0, start: 27, end: 33 },
+                  );
                   assert.equal(parse.mock.calls.length, 1);
                   assert.equal(parse.mock.calls[0]![0].text, "reading progressive needle needle");
                 }
@@ -444,7 +567,9 @@ describe("V2 thread find", () => {
         yield* putItems([item("large:4", 5, `${text} needle`)], "changed");
         const changed = yield* projection.searchThread({ threadId, query: "needle", index: 5 });
         assert.equal(changed.totalMatches, 9);
-        assert.deepEqual(changed.match, { entryId: "large:4", runId, occurrence: 1 });
+        assert.equal(changed.match?.entryId, "large:4");
+        assert.equal(changed.match?.runId, runId);
+        assert.equal(changed.match?.occurrence, 1);
         assert.equal(parse.mock.calls.length, 1);
         parse.mockClear();
         const retyped = yield* projection.searchThread({ threadId, query: "large message" });
@@ -473,7 +598,13 @@ describe("V2 thread find", () => {
           index,
         });
         assert.equal(result.totalMatches, 4);
-        matches.push(result.match);
+        matches.push(
+          result.match && {
+            entryId: result.match.entryId,
+            runId: result.match.runId,
+            occurrence: result.match.occurrence,
+          },
+        );
       }
       assert.deepEqual(matches, [
         { entryId: "user", runId, occurrence: 0 },
@@ -729,6 +860,35 @@ describe("V2 thread find", () => {
         );
         assert.equal(history.items[0]?.sourceThreadId, parent);
         assert.equal(history.items.at(-1)?.item.type, "fork");
+        yield* putItems(
+          [
+            {
+              ...item("after-fork", 2, "unrelated parent edit", "assistant_message", parent),
+              runId: laterRun,
+            },
+          ],
+          "unrelated-parent-update",
+        );
+        const revised = yield* projection.searchThread({ threadId, query: "needle" });
+        const detail = yield* projection.getThreadSnapshot(threadId);
+        assert.isAbove(revised.snapshotSequence, detail.snapshotSequence);
+        assert.deepEqual(revised.match, inherited.match);
+        const document = ThreadFindText.searchableMessageDocument({
+          role: "assistant",
+          text: "needle",
+          streaming: false,
+        })!;
+        assert.deepEqual(
+          verifyThreadFindMatchEvidence(document, "needle", 0, inherited.match?.evidence),
+          { segmentIndex: 0, start: 0, end: 6 },
+        );
+        yield* putItems([item("local", 1, "needle plus another")], "newer-child-update");
+        const newerDetail = yield* projection.getThreadSnapshot(threadId);
+        assert.isAbove(newerDetail.snapshotSequence, inherited.snapshotSequence);
+        assert.deepEqual(
+          (yield* projection.searchThread({ threadId, query: "needle" })).match,
+          inherited.match,
+        );
         yield* putItems(
           [{ ...item("inherited", 1, "gone", "assistant_message", parent), runId: parentRun }],
           "parent-update",

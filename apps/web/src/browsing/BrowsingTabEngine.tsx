@@ -177,7 +177,11 @@ function SyncedTabEngine({
       element.removeEventListener("dom-ready", track);
       element.removeEventListener("did-finish-load", loaded);
     };
-  }, [webviewGeneration, webviewRef]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A crash recovery remounts the webview under a new key, so the listeners attach to the new element.
+    webviewGeneration,
+    webviewRef,
+  ]);
 
   // Report where the reader scrolled to while they read, and once more when they look away.
   // A page nobody scrolled by hand (feeds, anchors, restores) reports nothing.
@@ -205,7 +209,11 @@ function SyncedTabEngine({
       window.clearInterval(timer);
       void capture();
     };
-  }, [visible, webviewGeneration]);
+  }, [
+    visible,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A remounted webview is a new page to track; leaving the old one reports its last position.
+    webviewGeneration,
+  ]);
 
   return null;
 }

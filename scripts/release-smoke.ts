@@ -21,15 +21,18 @@ const workspaceFiles = [
   "apps/mobile/modules/t3-review-diff/package.json",
   "apps/mobile/modules/t3-terminal/package.json",
   "apps/marketing/package.json",
+  "apps/cloud/package.json", // signalbox: keep cloud dependencies in release smoke coverage.
   "infra/relay/package.json",
   "oxlint-plugin-t3code/package.json",
   "packages/account/package.json",
+  "packages/api/package.json", // signalbox: keep generated API dependencies in release smoke coverage.
   "packages/automation-compiler/package.json",
   "packages/automations/package.json",
   "packages/runner-protocol/package.json",
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
   "packages/shared/package.json",
+  "packages/sync/package.json", // signalbox: keep live sync dependencies in release smoke coverage.
   "packages/ssh/package.json",
   "packages/tailscale/package.json",
   "packages/provider-core/package.json",
@@ -37,6 +40,8 @@ const workspaceFiles = [
   "packages/provider-pi/package.json",
   "packages/provider-acp/package.json",
   "packages/provider-acp-registry/package.json",
+  "packages/provider-claude/package.json", // signalbox: keep extracted provider dependencies in release smoke coverage.
+  "packages/provider-codex/package.json", // signalbox: keep extracted provider dependencies in release smoke coverage.
   "packages/provider-cursor/package.json",
   "packages/provider-grok/package.json",
   "packages/provider-muse/package.json",
@@ -221,6 +226,13 @@ try {
     { stdio: "inherit" },
   );
 
+  // signalbox: verify fork archive consumers before the release-only steps.
+  NodeChildProcess.execFileSync(
+    process.execPath,
+    [NodePath.resolve(repoRoot, "scripts/release-artifacts-smoke.ts")],
+    { cwd: repoRoot, stdio: "inherit" },
+  );
+
   copyWorkspaceManifestFixture(tempRoot);
 
   NodeChildProcess.execFileSync(
@@ -237,8 +249,7 @@ try {
     },
   );
 
-  NodeFS.rmSync(NodePath.resolve(tempRoot, "pnpm-lock.yaml"), { force: true });
-
+  // signalbox: keep the release's locked versions so transitive upgrades cannot orphan patches.
   NodeChildProcess.execFileSync("vp", ["install", "--lockfile-only", "--ignore-scripts"], {
     cwd: tempRoot,
     stdio: "inherit",

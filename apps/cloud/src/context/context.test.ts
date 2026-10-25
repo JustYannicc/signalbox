@@ -27,6 +27,7 @@ import { MAIN_REF, threadRef, wipRef } from "../drive/DriveStore.ts";
 import { makeRepo } from "../drive/driveTesting.ts";
 import { uploadPack } from "../drive/DriveUploads.ts";
 import { makeMemoryCloud } from "../testing.ts";
+import { pauseTaskDone } from "../automations/taskLifecycleTesting.ts";
 import { scriptedModelSelection } from "../thread/scriptedProvider.ts";
 import { ThreadDirectory } from "../thread/ThreadDirectory.ts";
 import * as CloudRpc from "../user/rpc.ts";
@@ -167,6 +168,9 @@ const world = Effect.gen(function* () {
     role: "contributor",
   });
 
+  yield* pauseTaskDone(cloud, "user_alice", billing.projectId);
+  yield* pauseTaskDone(cloud, "user_bob", billing.projectId);
+  yield* pauseTaskDone(cloud, "user_alice", "scratch");
   // Alice's thread in Billing built the toggle; its files landed on `main`.
   const toggleThread = ThreadId.make("thread-dark-mode");
   yield* launch(alice, toggleThread, billing.projectId, "Add a dark mode toggle to the settings");
@@ -223,6 +227,96 @@ const search = (
   );
 
 describe("context API (#141)", () => {
+  it.effect("a fork keeps its checkpoint's input view until explicitly updated", () =>
+    Effect.gen(function* () {
+      const env = yield* world;
+      const { cloud, git, billing, toggleThread, toggle } = env;
+      const reader = { ...env.reader, driveId: billing.id, threadId: toggleThread };
+      const view = (yield* env.call(reader, CONTEXT_PATHS.view, {}, contextJson.view.decode)).body!;
+      const record = {
+        runId: "run-toggle",
+        turnId: "run-toggle",
+        commit: toggle,
+        start: env.first,
+        views: { shortcuts: [], context: view },
+      };
+      git.git([
+        "notes",
+        "--ref=signalbox/checkpoints",
+        "add",
+        "-m",
+        JSON.stringify(record),
+        toggle,
+      ]);
+      const notes = git.git(["rev-parse", "refs/notes/signalbox/checkpoints"]);
+      yield* uploadPack({
+        driveId: billing.id,
+        threadId: toggleThread,
+        ...git.pack([notes], [env.exportWip]),
+      }).pipe(Effect.provide(cloud.drives.layer));
+      const handle = cloud.drives.apiFor(billing.id);
+      const writer = {
+        threadId: toggleThread,
+        userId: reader.userId,
+        generation: 1,
+        live: true,
+        packsAfter: 0,
+      };
+      expect(
+        (yield* Effect.promise(() => handle.recordCheckpoint(writer, { ...record, notes })))._tag,
+      ).toBe("ok");
+      const fork = yield* Effect.promise(() =>
+        handle.forkCheckpoint(reader.userId, {
+          sourceThreadId: toggleThread,
+          runId: record.runId,
+          threadId: "thread-pinned-inputs",
+          operationId: "fork-inputs",
+        }),
+      );
+      expect(fork._tag).toBe("ok");
+
+      git.write("spec.md", "Today's spec, after the fork\n");
+      const latest = git.commit("Update the spec");
+      yield* save(cloud, {
+        driveId: billing.id,
+        threadId: "thread-new-spec",
+        userId: reader.userId,
+        head: latest,
+        packed: git.pack([latest], [env.exportWip]),
+        land: true,
+      });
+      const child = { ...reader, threadId: "thread-pinned-inputs" };
+      const pinned = (yield* env.call(child, CONTEXT_PATHS.view, {}, contextJson.view.decode))
+        .body!;
+      expect(pinned).toEqual(view);
+      const current = (yield* env.call(reader, CONTEXT_PATHS.view, {}, contextJson.view.decode))
+        .body!;
+      expect(
+        current.contexts
+          .flatMap((context) => context.drives)
+          .find((drive) => drive.driveId === billing.id)?.commit,
+      ).toBe(latest);
+
+      const updated = yield* Effect.promise(() =>
+        handle.updateToLatest(reader.userId, {
+          threadId: child.threadId,
+          operationId: "update-inputs",
+          expectedThread: toggle,
+          expectedWip: toggle,
+          generation: 0,
+        }),
+      );
+      expect(updated._tag).toBe("ok");
+      const refreshed = (yield* env.call(child, CONTEXT_PATHS.view, {}, contextJson.view.decode))
+        .body!;
+      expect(
+        refreshed.contexts
+          .flatMap((context) => context.drives)
+          .find((drive) => drive.driveId === billing.id)?.commit,
+      ).toBe(latest);
+    }),
+  );
+
   it.effect("lists every readable drive, pinned, and reads another drive's files", () =>
     Effect.gen(function* () {
       const env = yield* world;

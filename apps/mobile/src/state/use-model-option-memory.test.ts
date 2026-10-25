@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
+vi.mock("../lib/uuid", async () => {
+  const { randomUUID } = await import("node:crypto");
+  return { uuidv4: randomUUID };
+});
+
 import { appAtomRegistry } from "./atom-registry";
 import { modelOptionMemoryAtom } from "./use-composer-drafts";
 import {

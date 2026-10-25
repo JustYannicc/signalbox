@@ -25,6 +25,20 @@ export const createTables = Effect.gen(function* () {
   yield* sql`ALTER TABLE accounts_state ADD COLUMN models_checked_at INTEGER NOT NULL DEFAULT 0`;
 });
 
+/** `PoolEngine`'s `0014` migration; local transport registrations survive CLI catalog refreshes. */
+export const createLocalModelTable = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`CREATE TABLE local_models (
+    id TEXT PRIMARY KEY,
+    transport_id TEXT NOT NULL,
+    owned_by TEXT NOT NULL,
+    created INTEGER,
+    display_name TEXT,
+    provider TEXT,
+    reasoning_efforts TEXT
+  )`;
+});
+
 /** `PoolEngine`'s `0009` migration. */
 export const addMetadata = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -44,7 +58,13 @@ export interface PoolModels {
   readonly checkedAt: number;
   /** When the latest read was attempted, including failed reads. */
   readonly attemptedAt: number;
+  /** The pool's served models, with local registrations taking precedence by id. */
   readonly models: ReadonlyArray<ServedModel>;
+}
+
+interface PoolModelCache extends PoolModels {
+  readonly accountModels: ReadonlyArray<ServedModel>;
+  readonly localModels: ReadonlyArray<ServedModel>;
 }
 
 export const cached = Effect.gen(function* () {
@@ -62,27 +82,59 @@ export const cached = Effect.gen(function* () {
     readonly models_checked_at: number;
     readonly models_attempted_at: number;
   }>`SELECT models_checked_at, models_attempted_at FROM accounts_state WHERE id = 1`;
+  const localRows = yield* sql<{
+    readonly id: string;
+    readonly transport_id: string;
+    readonly owned_by: string;
+    readonly created: number | null;
+    readonly display_name: string | null;
+    readonly provider: string | null;
+    readonly reasoning_efforts: string | null;
+  }>`SELECT id, transport_id, owned_by, created, display_name, provider, reasoning_efforts
+    FROM local_models ORDER BY id`;
   const checkedAt = state?.models_checked_at ?? 0;
+  const accountModels = rows.map((row): ServedModel => {
+    const provider =
+      row.provider === null ? null : Option.getOrNull(decodeModelChannel(row.provider));
+    const reasoningEfforts =
+      row.reasoning_efforts === null
+        ? null
+        : Option.getOrNull(decodeReasoningEfforts(row.reasoning_efforts));
+    return {
+      id: row.id,
+      ownedBy: row.owned_by,
+      created: row.created,
+      ...(row.display_name === null ? {} : { displayName: row.display_name }),
+      ...(provider === null ? {} : { provider }),
+      ...(reasoningEfforts === null ? {} : { reasoningEfforts }),
+    };
+  });
+  const localModels = localRows.map((row): ServedModel => {
+    const provider =
+      row.provider === null ? null : Option.getOrNull(decodeModelChannel(row.provider));
+    const reasoningEfforts =
+      row.reasoning_efforts === null
+        ? null
+        : Option.getOrNull(decodeReasoningEfforts(row.reasoning_efforts));
+    return {
+      id: row.id,
+      ownedBy: row.owned_by,
+      created: row.created,
+      ...(row.display_name === null ? {} : { displayName: row.display_name }),
+      ...(provider === null ? {} : { provider }),
+      ...(reasoningEfforts === null ? {} : { reasoningEfforts }),
+      registration: { kind: "local", transportId: row.transport_id },
+    };
+  });
+  const byId = new Map(accountModels.map((model) => [model.id, model]));
+  for (const model of localModels) byId.set(model.id, model);
   return {
     checkedAt,
     attemptedAt: Math.max(state?.models_attempted_at ?? 0, checkedAt),
-    models: rows.map((row): ServedModel => {
-      const provider =
-        row.provider === null ? null : Option.getOrNull(decodeModelChannel(row.provider));
-      const reasoningEfforts =
-        row.reasoning_efforts === null
-          ? null
-          : Option.getOrNull(decodeReasoningEfforts(row.reasoning_efforts));
-      return {
-        id: row.id,
-        ownedBy: row.owned_by,
-        created: row.created,
-        ...(row.display_name === null ? {} : { displayName: row.display_name }),
-        ...(provider === null ? {} : { provider }),
-        ...(reasoningEfforts === null ? {} : { reasoningEfforts }),
-      };
-    }),
-  } satisfies PoolModels;
+    accountModels,
+    localModels,
+    models: [...byId.values()].toSorted((left, right) => left.id.localeCompare(right.id)),
+  } satisfies PoolModelCache;
 });
 
 /** Replaces the list, writing only when it changed. */
@@ -103,7 +155,7 @@ export const store = (models: ReadonlyArray<ServedModel>, now: number) =>
         }));
     yield* sql.withTransaction(
       Effect.gen(function* () {
-        if (!Equal.equals(normalized(before.models), normalized(models))) {
+        if (!Equal.equals(normalized(before.accountModels), normalized(models))) {
           yield* sql`DELETE FROM models`;
           for (const model of models) {
             yield* sql`INSERT INTO models (id, owned_by, created, display_name, provider,
@@ -116,6 +168,45 @@ export const store = (models: ReadonlyArray<ServedModel>, now: number) =>
         }
         yield* sql`UPDATE accounts_state SET models_checked_at = ${now},
           models_attempted_at = ${now} WHERE id = 1`;
+      }),
+    );
+  });
+
+/** Replaces local registrations without touching the CLIProxyAPI model cache. */
+export const storeLocal = (
+  transportId: string,
+  input: ReadonlyArray<Omit<ServedModel, "registration">>,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const before = yield* cached;
+    const models = PoolModelDiscovery.withMetadata(input, []).map((model): ServedModel => ({
+      ...model,
+      registration: { kind: "local", transportId },
+    }));
+    const normalized = (list: ReadonlyArray<ServedModel>) =>
+      list
+        .toSorted((left, right) => left.id.localeCompare(right.id))
+        .map((model) => ({
+          id: model.id,
+          ownedBy: model.ownedBy,
+          created: model.created,
+          displayName: model.displayName ?? null,
+          provider: model.provider ?? null,
+          reasoningEfforts: model.reasoningEfforts ?? null,
+          transportId: model.registration?.transportId ?? null,
+        }));
+    if (Equal.equals(normalized(before.localModels), normalized(models))) return;
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM local_models`;
+        for (const model of models) {
+          yield* sql`INSERT INTO local_models (id, transport_id, owned_by, created, display_name,
+              provider, reasoning_efforts)
+            VALUES (${model.id}, ${transportId}, ${model.ownedBy}, ${model.created},
+              ${model.displayName ?? null}, ${model.provider ?? null},
+              ${model.reasoningEfforts === undefined ? null : encodeReasoningEfforts(model.reasoningEfforts)})`;
+        }
       }),
     );
   });
@@ -134,6 +225,7 @@ export const markTried = markAttempted;
 export const clear = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`DELETE FROM models`;
+  yield* sql`DELETE FROM local_models`;
   yield* sql`UPDATE accounts_state SET models_checked_at = 0, models_attempted_at = 0
     WHERE id = 1`;
 });

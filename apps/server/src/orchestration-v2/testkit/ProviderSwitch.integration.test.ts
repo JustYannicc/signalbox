@@ -37,11 +37,9 @@ import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
 import {
   ClaudeBackgroundWorkBlocksQueryReplacementError,
   ClaudeProviderCapabilitiesV2,
-} from "../Adapters/ClaudeAdapterV2.ts";
-import {
-  CodexProviderCapabilitiesV2,
-  canReuseCodexContextUsage,
-} from "../Adapters/CodexAdapterV2.ts";
+} from "@signalbox/provider-claude/ClaudeAdapter";
+import { CodexProviderCapabilitiesV2 } from "@signalbox/provider-codex/defaults";
+import { canReuseCodexContextUsage } from "@signalbox/provider-codex/normalization";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
 import * as EventSink from "../EventSink.ts";

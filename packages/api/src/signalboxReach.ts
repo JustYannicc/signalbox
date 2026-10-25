@@ -1,7 +1,19 @@
 import { exempt, read, type Reach, write, type WsRpcMethod } from "./reach.ts";
+import { SIGNALBOX_PERSON_BROWSER_WS_METHODS } from "@t3tools/contracts/signalboxPersonBrowser";
 
 /** Signalbox's own RPC groups (`SIGNALBOX_WS_RPCS` in contracts' rpc.ts). */
 export const SIGNALBOX_RPC_REACH = {
+  "signalbox.search.query": read({
+    name: "threads.query",
+    summary: "Search thread items across the folders you can see, with anchors and index coverage.",
+  }),
+  "signalbox.timezone.get": read({ name: "timezone.get" }),
+  "signalbox.timezone.set": write({
+    name: "timezone.set",
+    summary:
+      "Set your scheduling timezone; null restores device detection. Existing schedules keep their timezone.",
+  }),
+  "signalbox.timezone.report": exempt("client-report", "A client reports its own device timezone."),
   "signalbox.analytics.getSettings": read({ name: "analytics.get" }),
   "signalbox.analytics.setEnabled": write({ name: "analytics.setEnabled" }),
   "signalbox.analytics.recordClientEvent": exempt(
@@ -45,6 +57,9 @@ export const SIGNALBOX_RPC_REACH = {
   "automations.delete": write({ destructive: true }),
   "automations.rotateWebhook": write(),
   "automations.setWebhookSecret": write(),
+  "automations.githubSubscriptions": read({
+    summary: "GitHub event subscriptions and connection errors for your folders.",
+  }),
   "automations.runNow": write({ name: "automations.run", summary: "Run an automation now." }),
   "automations.customize": write(),
   "automations.stopAttached": write(),
@@ -73,6 +88,9 @@ export const SIGNALBOX_RPC_REACH = {
     summary: "Save an automation file in a folder; new, or a new version with automationId.",
     compiles: true,
   }),
+  "automations.taskLifecycle": write({
+    summary: "Read or change a task's completion condition and lifecycle.",
+  }),
 
   "sections.subscribe": read({ name: "sections.list" }),
   "sections.create": write(),
@@ -98,6 +116,10 @@ export const SIGNALBOX_RPC_REACH = {
     summary: "Your folders, nested, with their instructions and pools.",
   }),
   "signalbox.folders.create": write({ summary: "Create a folder." }),
+  "signalbox.folders.startFrom": write({
+    name: "folders.startFrom",
+    summary: "Start a folder from another folder with its existing history.",
+  }),
   "signalbox.folders.update": write({ summary: "Rename a folder or change its settings." }),
   "signalbox.folders.move": write({ summary: "Move a folder under another one." }),
   "signalbox.folders.delete": write({ destructive: true }),
@@ -127,6 +149,25 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.notes.dismissReading": write(),
   "signalbox.notes.accept": write({
     summary: "Turn a note's offer into a task in its folder, starting with the note's words.",
+  }),
+
+  "signalbox.trash.list": read({
+    summary: "List recently trashed threads and folders with their lifecycle status.",
+  }),
+  "signalbox.trash.restore": write({ summary: "Restore a recently trashed thread or folder." }),
+  "signalbox.trash.empty": write({
+    destructive: true,
+    summary: "Permanently delete selected trashed items, or empty Trash.",
+  }),
+  "signalbox.trash.thread": write({
+    destructive: true,
+    agentCallable: true,
+    summary: "Move a thread and its data to Trash.",
+  }),
+  "signalbox.trash.folder": write({
+    destructive: true,
+    agentCallable: true,
+    summary: "Move a folder and its contents to Trash.",
   }),
 
   "signalbox.threadKinds.subscribe": read({
@@ -214,5 +255,15 @@ export const SIGNALBOX_RPC_REACH = {
   "signalbox.signIn.check": read({
     name: "signIn.check",
     summary: "Whether agents would sign in to a site without asking.",
+  }),
+
+  [SIGNALBOX_PERSON_BROWSER_WS_METHODS.profileStatus]: read({
+    name: "personBrowser.profileStatus",
+    summary: "Whether your one cloud browser profile is available.",
+  }),
+  [SIGNALBOX_PERSON_BROWSER_WS_METHODS.clearProfile]: write({
+    name: "personBrowser.clearProfile",
+    summary: "Clear your cloud browser sessions, saved site data, and managed sign-ins.",
+    destructive: true,
   }),
 } as const satisfies Partial<Record<WsRpcMethod, Reach>>;

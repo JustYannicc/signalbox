@@ -1,3 +1,4 @@
+import { workflowStopResult } from "../workflowControl.ts";
 import type {
   RunnerItem,
   RunnerMessageInput,
@@ -17,7 +18,8 @@ import {
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { isHarnessInstance, runnerInstanceFor } from "../providerCatalog.ts";
+import { driverFor, isHarnessInstance, runnerInstanceFor } from "../../models/ModelRouting.ts";
+import { deliveredHandoffEvents, prepareFreshSession } from "./freshSession.ts";
 import { activeRun, finishRunEvents, providerThreadFor, type RunEnding } from "../runLifecycle.ts";
 import {
   attemptEvent,
@@ -30,7 +32,7 @@ import {
   turnItemEvent,
 } from "../threadEvents.ts";
 import { applyEvents } from "../threadProjection.ts";
-import { checkpointEvents, noticeEvents } from "./driveItems.ts";
+import { checkpointEvents, dependencyProgressEvents, noticeEvents } from "../driveEvents.ts";
 import {
   ERROR_ITEM_BAND_POSITION,
   type Json,
@@ -66,6 +68,9 @@ export const runnerMessageOf = (
   attachments: message.attachments,
   createdBy: message.createdBy,
   creationSource: message.creationSource,
+  ...(message.providerContinuation === undefined
+    ? {}
+    : { providerContinuation: message.providerContinuation }),
 });
 
 /**
@@ -125,6 +130,7 @@ export function failRunEvents(
   failure: OrchestrationV2ProviderFailure,
   ctx: DecisionContext,
   providerTurnId: ProviderTurnId | null = null,
+  options: { readonly queue?: "advance" | "hold" | "keep" } = {},
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
   const errorItem: OrchestrationV2TurnItem = {
     id: TurnItemId.make(`turn-item:${run.id}:failure`),
@@ -145,6 +151,7 @@ export function failRunEvents(
     failure,
   };
   return finishRunEvents(projection, run, "failed", ctx, {
+    ...options,
     leading: [turnItemEvent(ctx, errorItem)],
   });
 }
@@ -162,10 +169,35 @@ function startedEvents(
   run: Run,
   item: Extract<RunnerItem, { readonly kind: "turn.started" }>,
   ctx: DecisionContext,
+  handoffTokenCap: number,
 ): ReadonlyArray<OrchestrationV2DomainEvent> {
-  if (!awaitsHandoff(run)) return [];
+  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
+  if (!awaitsHandoff(run) && !(run.status === "waiting" && attempt?.status === "pending"))
+    return [];
   const threadId = projection.thread.id;
   const current = providerThreadFor(projection, run, "active", ctx);
+  const driver = driverFor(run.providerInstanceId);
+  if (
+    item.providerThread.id !== current.id ||
+    item.providerThread.driver !== driver ||
+    item.providerSession.driver !== driver ||
+    (item.providerSession.providerInstanceId !== run.providerInstanceId &&
+      item.providerSession.providerInstanceId !== runnerInstanceFor(run.providerInstanceId)) ||
+    (item.providerThread.nativeThreadRef !== null &&
+      item.providerThread.nativeThreadRef.driver !== driver)
+  )
+    return [];
+  const turn = run.contextHandoffId === null ? runnerTurnFor(projection) : null;
+  // A changed native identity proves the Runner used the otherwise unstored fallback.
+  const fallback =
+    turn?.providerThread.nativeThreadRef != null &&
+    turn.providerThread.nativeThreadRef.nativeId !== item.providerThread.nativeThreadRef?.nativeId
+      ? prepareFreshSession(projection, turn, ctx, handoffTokenCap, true)
+      : null;
+  const fallbackEvents = fallback?._tag === "ready" ? fallback.events : [];
+  const receiving = applyEvents(projection, fallbackEvents) ?? projection;
+  const receivingRun = receiving.runs.find((candidate) => candidate.id === run.id) ?? run;
+  const delivered = deliveredHandoffEvents(receiving, receivingRun, item.providerThread, ctx);
   // The harness's native state, under the thread's own identity for the record.
   const providerThread = {
     ...item.providerThread,
@@ -177,19 +209,29 @@ function startedEvents(
     ownerNodeId: current.ownerNodeId,
     firstRunOrdinal: current.firstRunOrdinal,
     lastRunOrdinal: run.ordinal,
-    handoffIds: current.handoffIds,
+    handoffIds:
+      delivered.some(
+        (event) => event.type === "turn-item.updated" && event.payload.type === "handoff",
+      ) && receivingRun.contextHandoffId !== null
+        ? [...new Set([...current.handoffIds, receivingRun.contextHandoffId])]
+        : current.handoffIds,
     forkedFrom: current.forkedFrom,
     status: "active" as const,
     createdAt: current.createdAt,
     updatedAt: ctx.now,
   };
-  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
   const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
   const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
   return [
+    ...fallbackEvents,
+    ...delivered,
     providerSessionEvent(ctx, threadId, item.providerSession),
     providerThreadEvent(ctx, threadId, providerThread),
-    runEvent(ctx, "run.updated", { ...run, status: "running", startedAt: ctx.now }),
+    runEvent(ctx, "run.updated", {
+      ...receivingRun,
+      status: run.status === "waiting" ? "waiting" : "running",
+      startedAt: ctx.now,
+    }),
     ...(attempt === undefined
       ? []
       : [
@@ -246,11 +288,26 @@ function itemEvents(
   projection: Projection,
   item: RunnerItem,
   ctx: DecisionContext,
+  handoffTokenCap: number,
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
+  if (item.kind === "workflow.stopped") return workflowStopResult(projection, item, ctx);
   const run = harnessRun(projection);
   // Usage and log lines are for the turn's diagnostics, not its events; a drain is the lease's.
-  if (item.kind === "usage" || item.kind === "log" || item.kind === "machine.drained") return [];
+  if (
+    item.kind === "usage" ||
+    item.kind === "log" ||
+    item.kind === "machine.drained" ||
+    item.kind === "git.pull.result" ||
+    item.kind === "git.pull.interrupted"
+  )
+    return [];
   if (item.kind === "provider") {
+    if (
+      stringField(item.event, "type") === "turn.terminal" &&
+      projection.runs.find((candidate) => candidate.ordinal === item.event.runOrdinal)?.id !==
+        item.runId
+    )
+      return [];
     return stringField(item.event, "type") === "turn.terminal"
       ? terminalEvents(projection, item.event, ctx)
       : recordedEvents(projection, item, run?.id, ctx);
@@ -258,14 +315,21 @@ function itemEvents(
   // A report about a run that already ended (stopped, or failed for want of a machine).
   if (run === undefined || run.id !== item.runId) return [];
   switch (item.kind) {
+    case "preparation.progress":
+    case "preparation.ready":
+    case "preparation.cancelled":
+    case "preparation.failed":
+      return [];
     case "turn.started":
-      return startedEvents(projection, run, item, ctx);
+      return startedEvents(projection, run, item, ctx, handoffTokenCap);
     case "turn.failed":
       return failRunEvents(projection, run, unknownFailure(item.message), ctx);
     case "drive.checkpoint":
       return checkpointEvents(projection, run, item, ctx);
     case "drive.notice":
       return noticeEvents(projection, run, item, ctx);
+    case "dependencies.progress":
+      return dependencyProgressEvents(projection, run, item, ctx);
     // Why the Runner stopped the turn.
     case "session.notice":
       return systemNoticeEvents(
@@ -348,7 +412,8 @@ export function runnerBatchEvents(
   projection: Projection,
   items: ReadonlyArray<RunnerItem>,
   ctx: DecisionContext,
-  steers = false,
+  steers: boolean,
+  handoffTokenCap: number,
 ): {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly undecodable: ReadonlyArray<string>;
@@ -365,7 +430,7 @@ export function runnerBatchEvents(
       return { events, undecodable, outgrown: item.reason, drained };
     }
     if (item.kind === "machine.drained") drained = { id: item.id, unsaved: item.unsaved };
-    const next = itemEvents(current, item, ctx);
+    const next = itemEvents(current, item, ctx, handoffTokenCap);
     if (next === "undecodable") {
       undecodable.push(item.kind === "provider" ? String(item.event.type) : item.kind);
       continue;

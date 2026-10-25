@@ -73,6 +73,43 @@ describe("forkAddedLines", () => {
     expect(scanLines(forkAddedLines(cwd, "upstream"), ALLOWLIST, [])).toEqual([]);
   });
 
+  it("excludes central vendor roots while checking adjacent fork code", () => {
+    const text = `Author sam${at}realmail.ch\nAcme Corp\n`;
+    const cwd = forkRepo(
+      { "README.md": "upstream\n" },
+      {
+        "apps/cloud/src/isolate/node/fs/vendor/node/LICENSE": text,
+        "apps/cloud/src/isolate/node/vm/vendor/interpreter/LICENSE": text,
+        "apps/cloud/src/isolate/node/fs/glob.ts": text,
+        "apps/cloud/src/isolate/node/fs/vendor/node-owned/adapter.ts": text,
+      },
+    );
+
+    const findings = scanLines(forkAddedLines(cwd, "upstream"), [], parseDenylist("Acme Corp"));
+
+    expect(findings).toEqual([
+      {
+        kind: "email",
+        file: "apps/cloud/src/isolate/node/fs/glob.ts",
+        line: 1,
+        domain: "realmail.ch",
+      },
+      { kind: "term", file: "apps/cloud/src/isolate/node/fs/glob.ts", line: 2, term: 1 },
+      {
+        kind: "email",
+        file: "apps/cloud/src/isolate/node/fs/vendor/node-owned/adapter.ts",
+        line: 1,
+        domain: "realmail.ch",
+      },
+      {
+        kind: "term",
+        file: "apps/cloud/src/isolate/node/fs/vendor/node-owned/adapter.ts",
+        line: 2,
+        term: 1,
+      },
+    ]);
+  });
+
   it("fails loudly when the upstream ref is missing instead of passing", () => {
     const cwd = forkRepo({ "a.txt": "one\n" }, { "b.txt": "two\n" });
     expect(() => forkAddedLines(cwd, "no-such-ref")).toThrow();
@@ -98,6 +135,16 @@ describe("scanLines", () => {
     expect(scanLines(line(`c${at}b.co`), ALLOWLIST, [])).toEqual([
       { kind: "email", file: "f.ts", line: 1, domain: "b.co" },
     ]);
+  });
+
+  it("accepts pnpm patch filenames while still checking addresses on the same line", () => {
+    expect(
+      scanLines(
+        line(`patches/${at}lunora__do${at}1.0.0-alpha.218.patch contact${at}realmail.ch`),
+        ALLOWLIST,
+        [],
+      ),
+    ).toEqual([{ kind: "email", file: "f.ts", line: 1, domain: "realmail.ch" }]);
   });
 
   it("matches denylist terms as whole words, case-insensitively, reporting only the index", () => {

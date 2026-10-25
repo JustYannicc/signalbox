@@ -273,6 +273,7 @@ export const PullRequestCapabilities = Schema.Struct({
   search: Schema.Boolean,
   reactions: Schema.optional(Schema.Boolean),
   viewedFiles: Schema.optional(PullRequestViewedFilesStore),
+  viewedFilesInCommitDiff: Schema.optional(Schema.Boolean),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
   edit: Schema.optional(PullRequestEditCapabilities),
@@ -631,7 +632,19 @@ export const PullRequestOmittedFileStat = Schema.Struct({
 });
 export type PullRequestOmittedFileStat = typeof PullRequestOmittedFileStat.Type;
 
+export const PullRequestReviewHeadSha = Schema.String.check(
+  Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i),
+);
+
+/** The immutable comparison that produced a displayed patch and its file expansions. */
+export const PullRequestDiffRevision = Schema.Struct({
+  baseSha: PullRequestReviewHeadSha,
+  headSha: PullRequestReviewHeadSha,
+});
+export type PullRequestDiffRevision = typeof PullRequestDiffRevision.Type;
+
 export const PullRequestDiffResult = Schema.Struct({
+  revision: Schema.optional(PullRequestDiffRevision),
   patch: Schema.String,
   /**
    * Something inside this slice could not be shown — a binary file, or a hunk the host declined
@@ -645,6 +658,7 @@ export type PullRequestDiffResult = typeof PullRequestDiffResult.Type;
 
 export const PullRequestDiffFileContentsInput = Schema.Struct({
   ...PullRequestRef.fields,
+  revision: Schema.optional(PullRequestDiffRevision),
   commit: Schema.optional(TrimmedNonEmptyString),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
   oldPath: TrimmedNonEmptyString,
@@ -685,6 +699,8 @@ const MAX_FILES_VIEWED_PRESSES = 500;
 
 export const PullRequestSetFilesViewedInput = Schema.Struct({
   ...PullRequestRef.fields,
+  /** The immutable diff the reader saw when marking files; cloud rejects stale marks. */
+  displayedRevision: Schema.optional(PullRequestDiffRevision),
   files: Schema.Array(
     Schema.Struct({
       path: FilePath,
@@ -715,7 +731,33 @@ export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 // spaces are a line break.
 const CommentBody = Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536));
 
+export const PullRequestOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128)).annotate(
+  {
+    description:
+      "Required by Cloud for comment, review, and thread-reply writes. Reuse it when retrying the exact same write.",
+  },
+);
+
+/** An explicit guide generation attempt can be retried without starting another run. */
+export const PullRequestGenerateReviewGuideInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  operationId: Schema.optional(
+    PullRequestOperationId.annotate({
+      description:
+        "Required by Cloud. Reuse it when retrying the exact same guide-generation request.",
+    }),
+  ),
+  headSha: Schema.optional(
+    PullRequestReviewHeadSha.annotate({
+      description:
+        "Required by Cloud. Generate a guide for this reviewed head SHA, from pullRequests.reviewGuide or pullRequests.detail.",
+    }),
+  ),
+});
+export type PullRequestGenerateReviewGuideInput = typeof PullRequestGenerateReviewGuideInput.Type;
+
 export const PullRequestCommentInput = Schema.Struct({
+  operationId: Schema.optional(PullRequestOperationId),
   ...PullRequestRef.fields,
   body: CommentBody,
 });
@@ -772,7 +814,14 @@ export const PullRequestReviewCommentDraft = Schema.Struct({
 export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft.Type;
 
 export const PullRequestSubmitReviewInput = Schema.Struct({
+  operationId: Schema.optional(PullRequestOperationId),
   ...PullRequestRef.fields,
+  headSha: Schema.optional(
+    PullRequestReviewHeadSha.annotate({
+      description:
+        "Required by Cloud. The head SHA of the version reviewed, from pullRequests.detail.",
+    }),
+  ),
   verdict: PullRequestReviewVerdict,
   body: Schema.String.check(Schema.isMaxLength(65_536)),
   comments: Schema.Array(PullRequestReviewCommentDraft),
@@ -793,6 +842,7 @@ export const PullRequestThreadCommentsResult = Schema.Struct({
 export type PullRequestThreadCommentsResult = typeof PullRequestThreadCommentsResult.Type;
 
 export const PullRequestThreadReplyInput = Schema.Struct({
+  operationId: Schema.optional(PullRequestOperationId),
   ...PullRequestRef.fields,
   threadId: TrimmedNonEmptyString,
   body: CommentBody,
@@ -976,7 +1026,20 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
   {
     operation: Schema.String,
     detail: TrimmedNonEmptyString,
-    reason: Schema.optional(Schema.Literal("not-found")),
+    reason: Schema.optional(
+      Schema.Literals([
+        "not-found",
+        "permission",
+        "not-connected",
+        "conflict",
+        "operation-conflict",
+        "rate-limit",
+        "pending",
+        "invalid",
+      ]),
+    ),
+    status: Schema.optional(Schema.Number),
+    retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
   { httpApiStatus: 502 },

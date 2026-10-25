@@ -65,6 +65,18 @@ describe("hookChanges", () => {
     expect(droppedHooks(removed, added)).toEqual([]);
   });
 
+  it("doesn't blame an old PR for a hook current main already removed", () => {
+    const fork = commit({ "hook.ts": "x(); // signalbox: old hook\n" }, "hook");
+    const base = commit(
+      { "hook.ts": "x();\n", "new.ts": "// signalbox: replacement\n" },
+      "main replaces hook",
+    );
+    git(repo, ["checkout", "--quiet", "-b", "old-sync", fork]);
+    const head = commit({ "hook.ts": "x();\n", "up.ts": "upstream\n" }, "old sync drops old hook");
+    const { removed, added } = hookChanges(repo, { base, head });
+    expect(droppedHooks(removed, added)).toEqual([]);
+  });
+
   it("doesn't count hooks the base gained after the head branched off", () => {
     const root = git(repo, ["rev-parse", "HEAD"]);
     const base = commit({ "new.ts": "z(); // signalbox: new on main\n" }, "main moves on");

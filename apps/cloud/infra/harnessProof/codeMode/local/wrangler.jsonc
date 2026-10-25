@@ -1,0 +1,28 @@
+{
+  "name": "signalbox-1070-code-mode-local-r3",
+  "main": "./worker.js",
+  "no_bundle": true,
+  "compatibility_date": "2026-10-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "worker_loaders": [
+    {
+      "binding": "LOADER",
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PROOF",
+        "class_name": "CodeModeProof",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "code-mode-proof-v1",
+      "new_sqlite_classes": ["CodeModeProof"],
+    },
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+}

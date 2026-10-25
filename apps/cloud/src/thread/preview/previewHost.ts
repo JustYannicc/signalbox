@@ -40,7 +40,6 @@ export const PREVIEW_COOKIE = "signalbox_preview";
 /** Where a preview link lands: trades `?ticket=` for the session cookie. */
 export const PREVIEW_TICKET_PATH = "/__signalbox/preview";
 
-const LABEL_LENGTH = 26;
 const LABEL_PATTERN = /^[a-z2-7]{26}$/;
 
 export function previewSettings(env: PreviewEnv): PreviewSettings | null {
@@ -55,32 +54,6 @@ export function previewSettings(env: PreviewEnv): PreviewSettings | null {
     // Local workerd serves plain HTTP; anything deployed is HTTPS.
     scheme: env.LOCAL_WORKERD === "1" ? "http" : "https",
   };
-}
-
-const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
-
-const base32 = (bytes: Uint8Array) => {
-  let bits = 0;
-  let value = 0;
-  let out = "";
-  for (const byte of bytes) {
-    value = (value << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      out += BASE32[(value >>> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  return out;
-};
-
-/** The DNS label of `threadId`'s preview of `port`. */
-export async function previewLabel(threadId: ThreadId, port: number): Promise<string> {
-  const digest = await globalThis.crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(`signalbox-preview\n${threadId}\n${port}`),
-  );
-  return base32(new Uint8Array(digest)).slice(0, LABEL_LENGTH);
 }
 
 /** The label when `hostname` is a preview host under `settings`, else null. */

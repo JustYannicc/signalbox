@@ -61,10 +61,10 @@ export interface RetryPolicy {
 }
 
 /**
- * http and call retry network failures, 5xx and 429 three times; judge and
- * extract retry an answer they can't read once. `retry: { attempts: 1 }` turns
- * it off. Other verbs never retry: they either can't fail transiently or
- * shouldn't run twice.
+ * http and call retry network failures, 5xx and 429 three times. judge and
+ * extract get two attempts, llm one. Unreadable answers use an attempt; in
+ * the cloud, temporary pool failures share that budget. `retry: { attempts: 1 }`
+ * turns retries off. Other verbs never retry.
  */
 const DEFAULT_ATTEMPTS: Partial<Record<WorkflowStepVerb, number>> = {
   http: 3,
@@ -74,9 +74,6 @@ const DEFAULT_ATTEMPTS: Partial<Record<WorkflowStepVerb, number>> = {
   llm: 1,
 };
 const MAX_ATTEMPTS = 10;
-
-/** Whether a verb's steps can be tried again, so a parked retry restarts them. */
-export const retries = (verb: WorkflowStepVerb) => DEFAULT_ATTEMPTS[verb] !== undefined;
 
 export function retryPolicy(verb: WorkflowStepVerb, args: ReadonlyArray<unknown>): RetryPolicy {
   const fallback = DEFAULT_ATTEMPTS[verb];

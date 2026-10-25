@@ -28,6 +28,21 @@ export const makeDriveObjectApi = (
     return value;
   };
   return {
+    beginPublication: (userId, request) =>
+      run(store.use((s) => s.beginPublication(userId, request))),
+    markPublicationCreating: (userId, id) =>
+      run(store.use((s) => s.markPublicationCreating(userId, id))),
+    releasePublicationCreating: (userId, id) =>
+      run(store.use((s) => s.releasePublicationCreating(userId, id))),
+    recordPublicationCreated: (userId, request) =>
+      run(store.use((s) => s.recordPublicationCreated(userId, request))),
+    bindPublication: (userId, request) => run(store.use((s) => s.bindPublication(userId, request))),
+    finishPublication: (userId, id) => run(store.use((s) => s.finishPublication(userId, id))),
+    packStorage: (name) => run(store.use((s) => s.packStorage(name))),
+    history: (userId) => run(store.use((s) => s.history(userId))),
+    historyOrigin: (userId) => run(store.use((s) => s.historyOrigin(userId))),
+    startFromHistory: (userId, history) =>
+      run(store.use((s) => s.startFromHistory(userId, history))),
     open: (writer) => run(store.use((s) => s.open(writer))),
     refs: (threadId, packsAfter) => run(store.use((s) => s.refs(threadId, packsAfter))),
     ref: (name) => run(store.use((s) => s.ref(name))),
@@ -41,6 +56,11 @@ export const makeDriveObjectApi = (
         ? changingOutbox(moved)
         : moved;
     },
+    savePull: (writer, request) => {
+      const saved = run(store.use((s) => s.savePull(writer, request)));
+      return request.result.outcome === "refused" ? saved : changingOutbox(saved);
+    },
+    pullReceipt: (writer, id) => run(store.use((s) => s.pullReceipt(writer, id))),
     reconcile: (writer, request) =>
       changingOutbox(run(store.use((s) => s.reconcile(writer, request)))),
     setRemote: (remote) => run(store.use((s) => s.setRemote(remote))),
@@ -56,6 +76,14 @@ export const makeDriveObjectApi = (
     addShortcut: (userId, shortcut) => run(store.use((s) => s.addShortcut(userId, shortcut))),
     removeShortcut: (userId, path) => run(store.use((s) => s.removeShortcut(userId, path))),
     unreconciled: (input) => run(store.use((s) => s.unreconciled(input))),
+    recordCheckpoint: (writer, record) => run(store.use((s) => s.recordCheckpoint(writer, record))),
+    checkpoint: (threadId, runId) => run(store.use((s) => s.checkpoint(threadId, runId))),
+    forkCheckpoint: (userId, request) => run(store.use((s) => s.forkCheckpoint(userId, request))),
+    restoreCheckpoint: (userId, request) =>
+      changingOutbox(run(store.use((s) => s.restoreCheckpoint(userId, request)))),
+    undoRestore: (userId, request) =>
+      changingOutbox(run(store.use((s) => s.undoRestore(userId, request)))),
+    updateToLatest: (userId, request) => run(store.use((s) => s.updateToLatest(userId, request))),
     setup: (input) => changingOutbox(run(members.use((m) => m.setup(input)))),
     driveName: () => run(members.use((m) => m.name)),
     role: (userId) => run(members.use((m) => m.role(userId))),

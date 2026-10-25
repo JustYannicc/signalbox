@@ -11,6 +11,7 @@ import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { ThreadBrowsingWebView } from "~/browsing/ThreadBrowsingWebView"; // signalbox: synced tabs (#585)
 import { useEnvironmentSupportsThreadBrowsing } from "~/state/browsing"; // signalbox: synced tabs (#585)
 import { useEnvironmentScope } from "~/state/session";
+import { useOneEnvironmentCopy } from "~/state/oneEnvironmentCopy"; // signalbox: one-environment copy for preview access
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
 import { PreviewView } from "./PreviewView";
@@ -38,6 +39,7 @@ export function PreviewPanel({
   const available = usePreviewAvailable(threadRef.environmentId);
   const canOperatePreview = useEnvironmentScope(threadRef.environmentId, AuthPreviewOperateScope);
   const synced = useEnvironmentSupportsThreadBrowsing(threadRef.environmentId); // signalbox
+  const environmentCopy = useOneEnvironmentCopy(); // signalbox: one-environment copy for preview access
   if (canOperatePreview && !available && synced) {
     return (
       <PreviewPanelShell mode={mode}>
@@ -50,9 +52,13 @@ export function PreviewPanel({
       <PreviewPanelShell mode={mode}>
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <p className="max-w-sm text-sm text-muted-foreground">
-            {canOperatePreview
-              ? "Preview is only available in the Signalbox desktop app."
-              : "Pair this client again with preview access to control browser previews."}
+            {
+              canOperatePreview
+                ? "Preview is only available in the Signalbox desktop app."
+                : environmentCopy(
+                    "Pair this client again with preview access to control browser previews.",
+                  ) /* signalbox: one-environment copy for preview access */
+            }
           </p>
         </div>
       </PreviewPanelShell>

@@ -109,6 +109,8 @@ export const TunnelThreadMessage = Schema.Union([
     type: Schema.Literal("welcome"),
     services: Schema.optionalKey(Schema.Array(PreviewService)),
     drive: Schema.optionalKey(Schema.NullOr(DriveAccess)),
+    /** Public preview hostname suffix, so the Runner keeps its own pages out of saved profiles. */
+    previewHostSuffix: Schema.optionalKey(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literal("services.saved"), services: Schema.Array(PreviewService) }),
   Schema.Struct({ type: Schema.Literal("refused"), message: Schema.String }),

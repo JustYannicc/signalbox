@@ -1,0 +1,49 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "program-resolver",
+      "path": "codex-rs/rmcp-client/src/program_resolver.rs",
+      "before": [
+        "/// Unix systems handle PATH resolution and script execution natively through",
+        "/// the kernel's shebang (`#!`) mechanism, so this function simply returns",
+        "/// the program name unchanged.",
+        "#[cfg(unix)]",
+        "pub fn resolve(",
+        "    program: OsString,",
+        "    _env: &HashMap<OsString, OsString>,"
+      ],
+      "after": [
+        "/// Unix systems handle PATH resolution and script execution natively through",
+        "/// the kernel's shebang (`#!`) mechanism, so this function simply returns",
+        "/// the program name unchanged.",
+        "#[cfg(any(unix, target_os = \"wasi\"))]",
+        "pub fn resolve(",
+        "    program: OsString,",
+        "    _env: &HashMap<OsString, OsString>,"
+      ]
+    },
+    {
+      "rule": "default-env",
+      "path": "codex-rs/rmcp-client/src/utils.rs",
+      "before": [
+        "    Ok(headers)",
+        "}",
+        "",
+        "#[cfg(unix)]",
+        "pub(crate) const DEFAULT_ENV_VARS: &[&str] = &[",
+        "    \"HOME\",",
+        "    \"LOGNAME\","
+      ],
+      "after": [
+        "    Ok(headers)",
+        "}",
+        "",
+        "#[cfg(any(unix, target_os = \"wasi\"))]",
+        "pub(crate) const DEFAULT_ENV_VARS: &[&str] = &[",
+        "    \"HOME\",",
+        "    \"LOGNAME\","
+      ]
+    }
+  ]
+}

@@ -5,8 +5,9 @@ the project and environment a change applies to. Pages that only hold device pre
 Appearance, don't show it. They start at **All projects** and **All environments**
 and stay selected as you move between categories or search for a setting.
 
-Preferences saved on this device, such as appearance, confirmations and browser profiles, always
-show and ignore the selection. Everything else is stored on a server. Choose one environment to
+Preferences saved on this device, such as appearance, confirmations and local browser profiles,
+always show and ignore the selection. Your managed Signalbox Cloud browser profile is account-wide
+and also ignores the selection. Everything else is stored on a server. Choose one environment to
 edit its settings, or leave **All environments** to edit every connected environment at once.
 Offline environments keep their current values; this is a bulk edit, not a synced global default.
 
@@ -88,6 +89,17 @@ request: `{{body.path}}` for a JSON or form field, `{{headers.name}}`,
 For example, `Review this PR: {{body.pull_request.html_url}}` sends only the
 pull request link. A placeholder with no value is left empty.
 
+Each value reaches the agent wrapped in `<webhook-data-…>` tags and marked as
+untrusted request data. This helps the agent tell it apart from your
+instructions, but it doesn't guarantee the agent ignores what the text says.
+Inside a value, every `$`, other currency sign and `@`, and a `/` that starts
+a lone word, gets an invisible character after it, so mentions like `$skill`,
+`@file` and `/command` don't act. Text copied from a value, such as an email
+address or a command, carries that character too. Without a signature, anyone
+with the URL can start a run with any content. A signature only proves which
+service sent the request: a GitHub payload still carries text written by any
+GitHub user.
+
 For GitHub, turn on **Require signature**, keep the header
 `x-hub-signature-256`, hex encoding and the `sha256=` prefix, and enter the
 same secret in the repository's webhook settings with content type
@@ -151,15 +163,17 @@ captures and log retention remain machine-wide.
 
 Worktrees can be removed after a chosen number of inactive days, after a thread settles, after
 merging, or when they have no commits beyond the default branch. Set settled retention to 0 days
-to remove a worktree at the next cleanup after settlement. Only T3-managed worktrees are eligible.
+to consider a worktree at the next cleanup after settlement. Every automatic rule also requires
+an archived thread or a merged pull request for the worktree's current commit. A clean checkout
+or an unchanged branch alone does not count as finished. Worktrees less than three hours old stay.
+Only T3-managed worktrees are eligible.
 Active sessions and shared worktrees prevent removal. **Keep worktrees with local changes** defaults
 to **Uncommitted changes**, which protects tracked edits and untracked files but deletes ignored
 files such as `.env` and build output. **Any local files** also protects ignored files other than
 `node_modules`. **Edited tracked files** protects only tracked edits and allows untracked and
 ignored files to be deleted. Branches and thread history stay; starting another turn recreates the checkout.
-Merge cleanup requires a merged pull request whose commits are included in the remote default
-branch. A squash or rebase merge on GitHub also counts when the pull request targeted the default
-branch and the worktree is still at the pull request's last commit.
+Merge cleanup requires a merged pull request for the worktree's branch and current commit.
+A squash or rebase merge on GitHub also counts when the pull request targeted the default branch.
 
 Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
 thread is deleted, including archived threads and worktrees left by earlier deletions. The

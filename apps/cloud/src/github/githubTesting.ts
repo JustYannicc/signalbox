@@ -71,6 +71,10 @@ export const makeFakeGitHub = (options: {
     remarks?: Array<FakeRemark>;
     /** Changed paths, as GitHub lists the pull request's files. */
     files?: Array<string>;
+    /** Labels currently on the pull request. */
+    labels?: Array<string>;
+    /** Latest reviews, as GitHub's `latestReviews` connection returns them. */
+    reviews?: Array<FakeReview>;
     /** Review threads nobody resolved. */
     openThreads?: number;
     /** The head commit when it merged, as GitHub keeps it after the branch moves or goes. */
@@ -175,7 +179,36 @@ export const makeFakeGitHub = (options: {
               headRefOid: head(pull.head) ?? "0".repeat(40),
               headRefName: pull.head,
               baseRefName: pull.base,
+              baseRefOid: head(pull.base),
               headRepository: { nameWithOwner: pull.headRepository ?? options.repository },
+              baseRepository: { nameWithOwner: options.repository },
+              labels: (() => {
+                const labels = pull.labels ?? [];
+                return {
+                  nodes: labels.slice(0, 100).map((name) => ({ name })),
+                  pageInfo: { hasNextPage: labels.length > 100 },
+                };
+              })(),
+              latestReviews: (() => {
+                const reviews =
+                  pull.reviews ??
+                  (pull.remarks ?? [])
+                    .filter((remark) => remark.kind === "review")
+                    .map((remark) => ({
+                      ...remark,
+                      state: remark.state ?? ("COMMENTED" as const),
+                    }));
+                return {
+                  nodes: reviews.slice(0, 20).map((review) => ({
+                    state: review.state ?? "COMMENTED",
+                    submittedAt: review.at,
+                    body: review.body,
+                    url: `${pullUrl(pull.number)}#${review.id}`,
+                    author: { login: review.author },
+                  })),
+                  pageInfo: { hasNextPage: reviews.length > 20 },
+                };
+              })(),
               reviewThreads: {
                 nodes: Array.from({ length: pull.openThreads ?? 0 }, () => ({ isResolved: false })),
                 pageInfo: { hasNextPage: false },
@@ -423,7 +456,62 @@ export const makeFakeGitHub = (options: {
         message: "Pull Request successfully merged",
       });
     }
+    const comparing = new RegExp(
+      `^/repos/${options.repository}/compare/([0-9a-f]{40})\\.\\.\\.([0-9a-f]{40})$`,
+    ).exec(path);
+    if (method === "GET" && comparing !== null) {
+      const [, base, compared] = comparing as unknown as [string, string, string];
+      if (!has(base) || !has(compared)) return json({ message: "Not Found" }, 404);
+      const mergeBase = git(["merge-base", base, compared]).toString().trim();
+      const status =
+        base === compared
+          ? "identical"
+          : mergeBase === base
+            ? "ahead"
+            : mergeBase === compared
+              ? "behind"
+              : "diverged";
+      const [behindBy, aheadBy] = git([
+        "rev-list",
+        "--left-right",
+        "--count",
+        `${base}...${compared}`,
+      ])
+        .toString()
+        .trim()
+        .split(/\s+/)
+        .map(Number);
+      return json({
+        status,
+        base_commit: { sha: base },
+        merge_base_commit: { sha: mergeBase },
+        ahead_by: aheadBy,
+        behind_by: behindBy,
+        commits: [],
+        files: [],
+      });
+    }
     const refPrefix = `/repos/${options.repository}/git/ref/heads/`;
+    const comparePrefix = `/repos/${options.repository}/compare/`;
+    if (method === "GET" && path.startsWith(comparePrefix)) {
+      const [base, headOid] = decodeURIComponent(path.slice(comparePrefix.length)).split("...");
+      if (base === undefined || headOid === undefined) return json({ message: "Not Found" }, 404);
+      try {
+        const mergeBase = git(["merge-base", base, headOid]).toString().trim();
+        const [behind, ahead] = git(["rev-list", "--left-right", "--count", `${base}...${headOid}`])
+          .toString()
+          .trim()
+          .split(/\s+/)
+          .map(Number);
+        return json({
+          ahead_by: ahead,
+          behind_by: behind,
+          merge_base_commit: { sha: mergeBase },
+        });
+      } catch {
+        return json({ message: "Not Found" }, 404);
+      }
+    }
     if (method === "GET" && path.startsWith(refPrefix)) {
       const oid = head(decodeURIComponent(path.slice(refPrefix.length)));
       return oid === null ? json({ message: "Not Found" }, 404) : json({ object: { sha: oid } });
@@ -543,5 +631,13 @@ export interface FakeRemark {
   readonly body: string;
   readonly at: string;
   readonly path?: string;
-  readonly state?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED";
+  readonly state?: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
+}
+
+export interface FakeReview {
+  readonly id: string;
+  readonly author: string;
+  readonly body: string;
+  readonly at: string;
+  readonly state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED";
 }

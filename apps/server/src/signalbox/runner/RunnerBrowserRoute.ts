@@ -12,7 +12,7 @@ export type BrowserRoute = "machine" | "person";
 
 const LOCAL_SCHEMES = new Set(["about:", "data:", "file:", "blob:"]);
 
-export const browserFor = (url: string): BrowserRoute => {
+export const browserFor = (url: string, previewHosts: ReadonlyArray<string> = []): BrowserRoute => {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -21,6 +21,7 @@ export const browserFor = (url: string): BrowserRoute => {
   }
   if (LOCAL_SCHEMES.has(parsed.protocol)) return "machine";
   const host = normalizeHostname(parsed.hostname);
+  if (previewHosts.some((previewHost) => normalizeHostname(previewHost) === host)) return "machine";
   // `.internal` names the machine's own network, as `host.docker.internal` does.
   if (host === "" || host.endsWith(".internal") || isPrivateNetworkHost(host)) return "machine";
   return "person";

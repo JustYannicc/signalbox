@@ -10,7 +10,7 @@ import {
   type ArchiveChatsAfterDays,
 } from "@t3tools/contracts/signalboxThreadKinds";
 import { Atom } from "effect/reactivity";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import {
   environmentThreadKindsAtom,
@@ -32,24 +32,20 @@ interface EnvironmentChatArchive {
 /** The selected environments that keep kinds and have sent them. */
 function useEnvironmentChatArchive(environmentIds: readonly EnvironmentId[]) {
   return useAtomValue(
-    useMemo(
-      () =>
-        Atom.make((get) =>
-          environmentIds.flatMap((environmentId): EnvironmentChatArchive[] => {
-            const snapshot = get(environmentThreadKindsAtom(environmentId));
-            if (snapshot === null) return [];
-            return [
-              {
-                environmentId,
-                days: snapshot.archiveChatsAfterDays,
-                canChange: get(
-                  signalboxThreadKinds.setArchiveChatsAfterDays.permissionAtom(environmentId),
-                ),
-              },
-            ];
-          }),
-        ),
-      [environmentIds],
+    Atom.make((get) =>
+      environmentIds.flatMap((environmentId): EnvironmentChatArchive[] => {
+        const snapshot = get(environmentThreadKindsAtom(environmentId));
+        if (snapshot === null) return [];
+        return [
+          {
+            environmentId,
+            days: snapshot.archiveChatsAfterDays,
+            canChange: get(
+              signalboxThreadKinds.setArchiveChatsAfterDays.permissionAtom(environmentId),
+            ),
+          },
+        ];
+      }),
     ),
   );
 }
@@ -58,10 +54,7 @@ const choiceValue = (days: ArchiveChatsAfterDays) => (days === null ? "never" : 
 
 export function ArchiveIdleChatsSetting() {
   const { connectedEnvironments } = useSettingsScope();
-  const environmentIds = useMemo(
-    () => connectedEnvironments.map((environment) => environment.environmentId),
-    [connectedEnvironments],
-  );
+  const environmentIds = connectedEnvironments.map((environment) => environment.environmentId);
   const environments = useEnvironmentChatArchive(environmentIds);
   const [saving, setSaving] = useState(false);
   if (environments.length === 0) return null;

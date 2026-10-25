@@ -21,6 +21,7 @@ import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
+import * as CodexAdapterV2Defaults from "@signalbox/provider-codex/defaults";
 
 export class CodexReplayTranscriptDecodeError extends Schema.TaggedError<CodexReplayTranscriptDecodeError>()(
   "CodexReplayTranscriptDecodeError",
@@ -196,7 +197,7 @@ export function layer(input: {
           Effect.mapError(
             (cause) =>
               new ProviderAdapter.ProviderAdapterOpenSessionError({
-                driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                driver: CodexAdapterV2Defaults.CODEX_DRIVER_KIND,
                 providerSessionId: openInput.providerSessionId,
                 cause,
               }),
@@ -215,8 +216,8 @@ export function layer(input: {
   const layerRegistry = ProviderAdapterRegistry.layerFromDrivers({
     drivers: [CodexAdapterV2.CodexAdapterV2Driver],
     configMap: {
-      [CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID]: {
-        driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+      [CodexAdapterV2Defaults.CODEX_DEFAULT_INSTANCE_ID]: {
+        driver: CodexAdapterV2Defaults.CODEX_DRIVER_KIND,
       },
     },
   }).pipe(
@@ -241,7 +242,7 @@ export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness
   CodexReplay.CodexAppServerReplayTranscript,
   CodexOrchestratorReplayHarnessError
 > = {
-  driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+  driver: CodexAdapterV2Defaults.CODEX_DRIVER_KIND,
   decodeTranscript: (transcript) =>
     decodeCodexAppServerReplayTranscript(transcript).pipe(
       Effect.mapError(

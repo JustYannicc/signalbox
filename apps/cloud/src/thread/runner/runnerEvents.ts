@@ -1,3 +1,5 @@
+import { continuationAssociationEvents } from "./continuationAssociation.ts";
+import { workflowNodes } from "../workflowControl.ts";
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   type OrchestrationV2DomainEvent,
@@ -18,6 +20,8 @@ import {
   turnItemEvent,
   unstampedEventId,
 } from "../threadEvents.ts";
+import { runtimeRequestEvents } from "../runtimeRequests.ts";
+import { driverFor, runnerInstanceFor } from "../../models/ModelRouting.ts";
 
 /**
  * What a provider adapter's events become in a thread's log, following
@@ -129,6 +133,8 @@ export function recordedEvents(
 ): ReadonlyArray<OrchestrationV2DomainEvent> | "undecodable" {
   const { event } = item;
   const eventType = stringField(event, "type");
+  if (eventType === "continuation.associated")
+    return continuationAssociationEvents(projection, item.runId, event, ctx);
   const recorded =
     eventType !== undefined && Object.hasOwn(RECORDED, eventType)
       ? RECORDED[eventType as keyof typeof RECORDED]
@@ -138,22 +144,60 @@ export function recordedEvents(
   // A run already ended (stopped, or failed for want of a machine) keeps its
   // last transcript rows, but not the harness's view of its session.
   if (LIVE_RUN_ONLY.has(recorded.type) && liveRunId !== item.runId) return [];
+  const run = projection.runs.find((candidate) => candidate.id === item.runId);
+  if (run === undefined) return [];
+  if (event.driver !== undefined && event.driver !== driverFor(run.providerInstanceId)) return [];
+  if (payload.runId !== undefined && payload.runId !== item.runId) return [];
+  if (liveRunId !== run.id && projection.thread.activeProviderThreadId !== run.providerThreadId)
+    return [];
+  const providerThread = projection.providerThreads.find(
+    (candidate) => candidate.id === run.providerThreadId,
+  );
+  if (recorded.type === "provider-thread.updated") {
+    if (
+      providerThread === undefined ||
+      payload.id !== providerThread.id ||
+      payload.driver !== driverFor(run.providerInstanceId) ||
+      (isRecord(payload.nativeThreadRef) &&
+        payload.nativeThreadRef.driver !== driverFor(run.providerInstanceId)) ||
+      (providerThread.nativeThreadRef !== null &&
+        isRecord(payload.nativeThreadRef) &&
+        payload.nativeThreadRef.nativeId !== providerThread.nativeThreadRef.nativeId)
+    )
+      return [];
+  }
+  if (
+    recorded.type === "provider-session.updated" &&
+    (payload.driver !== driverFor(run.providerInstanceId) ||
+      (payload.providerInstanceId !== run.providerInstanceId &&
+        payload.providerInstanceId !== runnerInstanceFor(run.providerInstanceId)) ||
+      (providerThread?.providerSessionId != null &&
+        payload.id !== providerThread.providerSessionId))
+  )
+    return [];
   const threadId = projection.thread.id;
   // Subagents' own threads are not served yet; their rows stay on the machine.
   const owner = payloadThreadId(event, payload);
   if (owner !== undefined && owner !== threadId) return [];
   const ownNode = recorded.type === "node.updated" || recorded.type === "subagent.updated";
-  const runInstance =
-    projection.runs.find((run) => run.id === item.runId)?.providerInstanceId ??
-    projection.thread.providerInstanceId;
+  const runInstance = run.providerInstanceId;
   // The Runner names the harness's own instance, not the pool's (`runnerTurnFor`).
   // The provider thread is the thread's record: on the run's instance, as
   // `turn.started` keeps it, or the next turn takes it for a provider switch and
   // starts over without the harness's session.
   const recordedPayload =
-    recorded.type === "provider-thread.updated"
-      ? { ...payload, providerInstanceId: runInstance }
-      : payload;
+    recorded.type === "provider-thread.updated" && providerThread !== undefined
+      ? {
+          ...payload,
+          providerInstanceId: runInstance,
+          firstRunOrdinal: providerThread.firstRunOrdinal,
+          lastRunOrdinal: run.ordinal,
+          handoffIds: providerThread.handoffIds,
+          createdAt: DateTime.formatIso(providerThread.createdAt),
+        }
+      : recorded.type === "subagent.updated"
+        ? { ...payload, providerInstanceId: runInstance }
+        : payload;
   const decoded = decodeDomainEvent({
     id: unstampedEventId,
     type: recorded.type,
@@ -170,7 +214,93 @@ export function recordedEvents(
     payload: recordedPayload,
   });
   if (Exit.isFailure(decoded)) return "undecodable";
-  const domainEvent = decoded.value;
+  let domainEvent = decoded.value;
+  if (domainEvent.type === "runtime-request.updated") {
+    if (liveRunId !== item.runId) return [];
+    return runtimeRequestEvents(projection, domainEvent, ctx);
+  }
+  const requestId =
+    domainEvent.type === "node.updated"
+      ? domainEvent.payload.runtimeRequestId
+      : domainEvent.type === "turn-item.updated" &&
+          (domainEvent.payload.type === "approval_request" ||
+            domainEvent.payload.type === "user_input_request")
+        ? domainEvent.payload.requestId
+        : null;
+  if (requestId !== null) {
+    const request = projection.runtimeRequests.find((request) => request.id === requestId);
+    if (request !== undefined && request.status !== "pending") return [];
+  }
+  const stopped = new Set<string>();
+  const nativeStopped = new Set<string>();
+  for (const coordinator of projection.subagents) {
+    if (coordinator.workflow?.stop?.status !== "stopped") continue;
+    for (const id of workflowNodes(projection, coordinator.id)) stopped.add(id);
+  }
+  if (domainEvent.type === "node.updated" || domainEvent.type === "subagent.updated") {
+    const payload = domainEvent.payload;
+    if (
+      stopped.has(payload.id) ||
+      (payload.parentNodeId !== null && stopped.has(payload.parentNodeId))
+    )
+      return [];
+  }
+  for (const task of projection.subagents) {
+    if (stopped.has(task.id) && task.nativeTaskRef?.nativeId)
+      nativeStopped.add(task.nativeTaskRef.nativeId);
+  }
+  if (domainEvent.type === "provider-thread.updated") {
+    domainEvent = {
+      ...domainEvent,
+      payload: {
+        ...domainEvent.payload,
+        pendingBackgroundTasks: (domainEvent.payload.pendingBackgroundTasks ?? []).filter(
+          (task) => !stopped.has(task.taskId) && !nativeStopped.has(task.taskId),
+        ),
+      },
+    };
+  }
+  if (domainEvent.type === "turn-item.updated") {
+    const item = domainEvent.payload;
+    if (
+      (item.nodeId !== null && stopped.has(item.nodeId)) ||
+      (item.type === "subagent" && stopped.has(item.subagentId))
+    ) {
+      domainEvent = {
+        ...domainEvent,
+        payload: { ...item, status: "cancelled", completedAt: item.completedAt ?? ctx.now },
+      };
+    }
+  }
+  if (domainEvent.type === "subagent.updated") {
+    const task = domainEvent.payload;
+    const previous = projection.subagents.find((each) => each.id === task.id);
+    const { stop: _runnerStop, ...workflow } = task.workflow ?? { phases: [], agents: [] };
+    const retained = previous?.workflow?.runHandles;
+    domainEvent = {
+      ...domainEvent,
+      payload: {
+        ...task,
+        ...(task.workflow === undefined && previous?.workflow === undefined
+          ? {}
+          : {
+              workflow: {
+                ...(task.workflow === undefined ? previous!.workflow! : workflow),
+                ...(previous?.workflow?.stop === undefined ? {} : { stop: previous.workflow.stop }),
+                ...(retained?.scriptRevision === undefined
+                  ? {}
+                  : {
+                      runHandles: {
+                        ...task.workflow?.runHandles,
+                        scriptPath: retained.scriptPath,
+                        scriptRevision: retained.scriptRevision,
+                      },
+                    }),
+              },
+            }),
+      },
+    };
+  }
   return domainEvent.type === "turn-item.updated"
     ? [{ ...domainEvent, payload: positionTurnItem(projection, domainEvent.payload) }]
     : [domainEvent];

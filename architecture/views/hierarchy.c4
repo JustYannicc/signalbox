@@ -1,0 +1,112 @@
+// The tree, split into readable cuts of the same model (model/hierarchy.c4).
+views {
+  view hierarchy {
+    title 'Hierarchy/Top levels, mounts, top layers'
+    description '''
+      How does each person's world sit around one shared folder? Each person has a top layer (assistant + pipeline)
+      over their own top level. Folder Company, owned by the organization, is mounted into every member's tree (mount = the
+      only edge across owners). C is its admin. Person D, an outside collaborator, mounts only folder Team.
+    '''
+    include personA, personB, personC, personD
+    include hier.asstA, hier.asstB, hier.asstC, hier.asstD, hier.lanesA, hier.lanesB, hier.lanesC, hier.lanesD
+    include hier.topA, hier.topB, hier.topC, hier.topD
+    include hier.organization
+    include hier.company, hier.company.team, hier.company.team.sharedThread
+    // Roles, ownership, loans and the Friends mount have their own views; keep only the shape here.
+    exclude personA -> *, personB -> *, personC -> *, personD -> *
+    include personA -> hier.asstA, personB -> hier.asstB, personC -> hier.asstC, personD -> hier.asstD
+    include personA -> hier.lanesA, personB -> hier.lanesB, personC -> hier.lanesC, personD -> hier.lanesD
+    include personC -> hier.company
+    exclude hier.lanesA -> *, hier.lanesB -> *, hier.lanesC -> *, hier.lanesD -> *
+    exclude hier.topA -> hier.company.team, hier.topB -> hier.topA
+    exclude hier
+    style personA, personB, personC, personD { color green }
+    rank source { personA, personB, personC, personD }
+    rank same { hier.asstA, hier.asstB, hier.asstC, hier.asstD, hier.lanesA, hier.lanesB, hier.lanesC, hier.lanesD }
+    rank same { hier.topA, hier.topB, hier.topC, hier.topD }
+    autoLayout TopBottom
+  }
+
+  view hierarchy-trees {
+    title 'Hierarchy/Three trees in real use'
+    description '''
+      What does a tree look like in real use? Several top-level folders per person, each with its own threads; threads on
+      the top level too. Private threads stay in one tree. Shared folders are mounted: A's Friends into B's tree,
+      folder Company (owned by the organization) into each member's Work.
+    '''
+    include hier.topA, hier.topA.quickA, hier.topA.personalA, hier.topA.personalA.*, hier.topA.friendsA, hier.topA.friendsA.*, hier.topA.workA
+    include hier.topB, hier.topB.personalB, hier.topB.personalB.*, hier.topB.friendsB, hier.topB.workB
+    include hier.topC, hier.topC.quickC, hier.topC.personalC, hier.topC.personalC.*, hier.topC.workC
+    include hier.company, hier.company.team, hier.company.team.sharedThread, hier.company.team.teamPrivateB, hier.organization
+    exclude hier
+    rank same { hier.topA, hier.topB, hier.topC }
+    autoLayout TopBottom
+  }
+
+  view hierarchy-resolution {
+    title 'Hierarchy/Resolution in the shared thread'
+    description '''
+      Which pool and connections does the shared thread use, for A and for B? Only what is placed on Team or above
+      (Company), nearest wins: pool P2 and Confluence, the same whoever sends. A's own pool P1 reaches only A's tree.
+      A's Google account gets in only by an explicit loan into Team. Costs roll up Team → Company, never to A or B.
+    '''
+    include personA, personB
+    include hier.topA, hier.topA.poolA, hier.topA.googleA, hier.topA.personalA, hier.topA.personalA.privateA, hier.topA.workA
+    include hier.topB, hier.topB.poolB, hier.topB.workB
+    include hier.company, hier.company.poolCo, hier.company.confluence, hier.company.costsCo
+    include hier.company.team, hier.company.team.sharedThread, hier.company.team.costsTeam
+    exclude personA -> *, personB -> *
+    include personA -> hier.company.team.sharedThread, personB -> hier.company.team.sharedThread
+    exclude hier
+    style personA, personB { color green }
+    style hier.topA.poolA, hier.topB.poolB, hier.company.poolCo { color red }
+    style hier.topA.googleA, hier.company.confluence { color indigo }
+    rank source { personA, personB }
+    autoLayout TopBottom
+  }
+
+  dynamic view hierarchy-asks {
+    variant sequence
+    title 'Hierarchy/Asks route to each person'
+    description '''
+      Where does an ask from the shared thread land? In the decider's own pipeline lanes, never in a shared inbox:
+      A answers a merge gate from Ready, B picks an option from Considering, admin C places or lends a pool from Blocker.
+      Each answer goes back into the one thread. Each person's assistant first answers what it was delegated.
+    '''
+
+    include hier.company.team.sharedThread, hier.lanesA.ready, personA, hier.lanesB.considering, personB, hier.lanesC.blocker, personC
+    include hier.company, hier.company.team, hier.lanesA, hier.lanesB, hier.lanesC
+
+    parallel {
+      hier.company.team.sharedThread -[async]-> hier.lanesA.ready 'merge gate' {
+        notes '''
+          - The thread is ready to merge; A started the work, so A decides
+          - It lands in A's Ready lane only
+        '''
+      }
+      hier.company.team.sharedThread -[async]-> hier.lanesB.considering 'pick an option' {
+        notes '- A design choice for B, who owns that part; lands in B\'s Considering lane'
+      }
+      hier.company.team.sharedThread -[async]-> hier.lanesC.blocker 'needs a pool' {
+        notes '''
+          - No pool reaches folder Team; only an admin of Company may place one
+          - Lands in admin C's Blocker lane
+        '''
+      }
+    }
+    personA -> hier.lanesA.ready 'approves'
+    hier.lanesA.ready -> hier.company.team.sharedThread 'answer (A)'
+    personB -> hier.lanesB.considering 'picks'
+    hier.lanesB.considering -> hier.company.team.sharedThread 'answer (B)'
+    personC -> hier.lanesC.blocker 'places pool P2'
+    hier.lanesC.blocker -> hier.company.team.sharedThread 'answer (C)' {
+      notes '- The pool is placed on folder Company, so the thread resolves it by position from now on'
+    }
+
+    style hier.company, hier.company.team, hier.lanesA, hier.lanesB, hier.lanesC {
+      color muted
+      opacity 10%
+    }
+    style personA, personB, personC { color green }
+  }
+}

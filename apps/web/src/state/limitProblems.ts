@@ -5,7 +5,7 @@ import { environmentPresentations } from "./presentation";
 
 /** Accounts across every connected environment that need the user to fix them. */
 export const limitProblemsAtom = Atom.make((get) =>
-  collectLimitProblems(get(environmentPresentations.presentationsAtom)),
+  collectLimitProblems(get(environmentPresentations.presentationsWithProvidersAtom)),
 ).pipe(Atom.withLabel("web-limit-problems"));
 
 /** A boolean, so the always-mounted Usage icon re-renders only when it flips. */

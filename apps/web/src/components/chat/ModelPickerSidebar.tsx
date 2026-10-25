@@ -44,6 +44,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
   getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
   newBadgeInstanceIds?: ReadonlySet<ProviderInstanceId>;
+  poolStatusByInstance?: ReadonlyMap<ProviderInstanceId, string>;
 }) {
   const handleSelect = (instanceId: ProviderInstanceId | "favorites") => {
     props.onSelectInstance(instanceId);
@@ -65,7 +66,12 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
       return;
     }
     setSelectedIndicatorTop(selectedItem.offsetTop + selectedItem.offsetHeight / 2 - 10);
-  }, [props.instanceEntries, props.selectedInstanceId, showFavorites]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Adding, removing or reordering providers moves the selected item, so the indicator re-measures.
+    props.instanceEntries,
+    props.selectedInstanceId,
+    showFavorites,
+  ]);
 
   return (
     <Toolbar.Root
@@ -138,8 +144,11 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
             const showInstanceBadge = shouldShowInstanceBadge(entry, props.instanceEntries);
 
+            const poolStatus = props.poolStatusByInstance?.get(entry.instanceId);
             const tooltip = isUnavailable
-              ? describeUnavailableInstance(entry)
+              ? poolStatus
+                ? `${entry.displayName} — ${poolStatus}.`
+                : describeUnavailableInstance(entry)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
                 : showNewBadge

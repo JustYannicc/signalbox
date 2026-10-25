@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Stream from "effect/Stream";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
@@ -135,14 +136,19 @@ const makeObject = () => {
     wake: async (host: Omit<ClientSocketHost, "ctx">, now = 0) => {
       lifetime += 1;
       current = new ClientSockets({ ...host, ctx: state });
-      await current.restore(now);
+      await current.restore(now, "u");
       return current;
     },
     /** Accepts a new socket the way the object's `fetch` does, returning the client's end. */
     connect: async (expiresAt = Number.MAX_SAFE_INTEGER) => {
       const index = sockets.length;
       sockets.push({ tags: [], attachment: null, client: clientEnd(() => index), closed: false });
-      await current!.accept(handle(index, lifetime), { sid: `s${index}`, scopes, expiresAt }, "u");
+      await current!.accept(
+        handle(index, lifetime),
+        { sid: `s${index}`, scopes, expiresAt },
+        "u",
+        "mobile",
+      );
       return sockets[index]!.client;
     },
   };
@@ -187,6 +193,8 @@ const follow = <E>(stream: Stream.Stream<ReadonlyArray<{ readonly name: string }
   });
 
 const setup = Effect.gen(function* () {
+  const logs: Array<string> = [];
+  const logging = Logger.layer([Logger.map(Logger.formatJson, (line) => void logs.push(line))]);
   const cloud = makeMemoryCloud();
   yield* cloud.userDirectory.forUser("u").recordSignIn({ id: "u", email: "u@example.com" });
   const context = yield* Layer.build(cloud.layerFor("u"));
@@ -194,15 +202,76 @@ const setup = Effect.gen(function* () {
   const run = yield* FiberSet.makeRuntimePromise();
   const host: Omit<ClientSocketHost, "ctx"> = {
     identity,
-    run: (effect) => run(Effect.provideContext(effect, context)),
+    run: (effect) => run(Effect.provideContext(effect, context).pipe(Effect.provide(logging))),
   };
   const object = makeObject();
   // Runs before the runtime closes, so frames a closing client sends find no object.
   yield* Effect.addFinalizer(() => Effect.sync(object.stop));
-  return { host, object };
+  return { host, object, logs };
 });
 
 describe("ClientSockets", () => {
+  it.live("records legacy sockets and expiry without inventing connection metadata", () =>
+    Effect.gen(function* () {
+      const { host, object, logs } = yield* setup;
+      yield* Effect.promise(() => object.wake(host));
+      yield* Effect.promise(() => object.connect(100));
+      const legacy = object.sockets[0]!;
+      const {
+        clientKind: _kind,
+        openedAt: _opened,
+        ...attachment
+      } = legacy.attachment as Record<string, unknown>;
+      legacy.attachment = attachment;
+      logs.length = 0;
+
+      const sockets = yield* Effect.promise(() => object.wake(host, 50));
+      yield* Effect.promise(() => sockets.expire(100));
+      yield* Effect.promise(() => sockets.expire(100));
+      const recorded = logs.join("\n");
+      expect(recorded).toContain('"kind":"unknown"');
+      expect(recorded).toContain('"openedAt":null');
+      expect(recorded).toContain('"cause":"expired"');
+      expect(logs.filter((line) => line.includes('"action":"closed"'))).toHaveLength(1);
+      expect(logs.filter((line) => line.includes('"action":"opened"'))).toHaveLength(0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "records connections and actual client RPCs across hibernation without their content",
+    () =>
+      Effect.gen(function* () {
+        const { host, object, logs } = yield* setup;
+        yield* Effect.promise(() => object.wake(host));
+        const end = yield* Effect.promise(() => object.connect());
+        const client = yield* clientOn(end as unknown as Socket.WebSocketLike);
+        const pools = yield* follow(client[WS_METHODS.accountPoolSubscribe]({}));
+        const beforeWake = logs.filter((line) => line.includes('"action":"rpc"')).length;
+        const sockets = yield* Effect.promise(() => object.wake(host));
+        expect(logs.filter((line) => line.includes('"action":"rpc"'))).toHaveLength(beforeWake);
+
+        const canary = "PRIVATE_POOL_NAME_5";
+        yield* client[WS_METHODS.accountPoolCreate]({ name: canary });
+        yield* Fiber.join(pools);
+        yield* Effect.promise(() => sockets.revoke("s0"));
+        yield* Effect.promise(() => sockets.revoke("s0"));
+
+        const recorded = logs.join("\n");
+        expect(logs.filter((line) => line.includes('"action":"opened"'))).toHaveLength(1);
+        expect(logs.filter((line) => line.includes('"action":"restored"'))).toHaveLength(1);
+        expect(logs.filter((line) => line.includes('"action":"closed"'))).toHaveLength(1);
+        expect(logs.filter((line) => line.includes('"action":"rpc"'))).toHaveLength(2);
+        expect(recorded).toContain('"method":"accountPool.create"');
+        expect(recorded).toContain('"kind":"mobile"');
+        expect(recorded).toContain('"cause":"revoked"');
+        expect(recorded).toContain('"connections":0');
+        expect(recorded).toContain('"connections":1');
+        expect(recorded).not.toContain(canary);
+        expect(recorded).not.toContain('"sid"');
+        expect(recorded).not.toContain('"scopes"');
+      }).pipe(Effect.scoped),
+  );
+
   it.live("a subscription keeps getting changes after the object hibernates", () =>
     Effect.gen(function* () {
       const { host, object } = yield* setup;

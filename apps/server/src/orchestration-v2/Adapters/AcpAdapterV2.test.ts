@@ -27,6 +27,8 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2UserInputQuestion,
+  type RuntimeRequestId,
   type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
@@ -4154,6 +4156,118 @@ describe("AcpAdapterV2", () => {
       yield* Deferred.succeed(releaseResponseAcknowledgement, undefined);
       yield* Fiber.join(responseFiber);
       yield* Fiber.join(interruptFiber);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("preserves titled ACP choices and multi-select through the native callback", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const response = yield* Deferred.make<unknown>();
+      const question = yield* Deferred.make<OrchestrationV2UserInputQuestion>();
+      const pending = yield* Deferred.make<RuntimeRequestId>();
+      const instanceId = ProviderInstanceId.make("acp-test-titled-elicitation");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_EMIT_ELICITATION: "1" },
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleElicitation: (handler) =>
+                runtime.handleElicitation((params, context) =>
+                  handler(
+                    params.mode === "form"
+                      ? {
+                          ...params,
+                          requestedSchema: {
+                            type: "object",
+                            required: ["features"],
+                            properties: {
+                              features: {
+                                type: "array",
+                                items: {
+                                  anyOf: [
+                                    { const: "logs", title: "Logs" },
+                                    { const: "traces", title: "Traces" },
+                                  ],
+                                },
+                              },
+                            },
+                          },
+                        }
+                      : params,
+                    context,
+                  ).pipe(Effect.tap((result) => Deferred.succeed(response, result))),
+                ),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-titled-elicitation");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-titled-elicitation"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "user_input_request" &&
+            event.turnItem.questions[0]
+          )
+            return Deferred.succeed(question, event.turnItem.questions[0]);
+          if (event.type === "runtime_request.updated")
+            return Deferred.succeed(pending, event.runtimeRequest.id);
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const mapped = yield* Deferred.await(question);
+      assert.equal(mapped.multiSelect, true);
+      assert.deepEqual(mapped.options, [
+        { label: "Logs", description: "Logs", value: "logs" },
+        { label: "Traces", description: "Traces", value: "traces" },
+      ]);
+      yield* runtime.respondToRuntimeRequest({
+        requestId: yield* Deferred.await(pending),
+        answers: { features: ["logs", "traces"] },
+      });
+      assert.deepEqual(yield* Deferred.await(response), {
+        action: "accept",
+        content: { features: ["logs", "traces"] },
+      });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

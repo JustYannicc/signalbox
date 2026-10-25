@@ -1,48 +1,39 @@
 /**
- * The New button pinned above every sidebar view. Same behavior as `chat.new`:
- * with one project it creates right away, with several it opens the command
- * palette's "New thread in..." picker, and Shift+click creates in the current
+ * The New button pinned above every sidebar view. A click opens quick capture
+ * (`capture.open`); Shift+click goes straight to a full draft in the current
  * project.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { SquarePenIcon } from "lucide-react";
-import { useCallback, type MouseEvent as ReactMouseEvent } from "react";
+import { type MouseEvent as ReactMouseEvent } from "react";
 
-import { openCommandPalette } from "../../commandPaletteBus";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { startNewThreadFromContext } from "../../lib/chatThreadActions";
-import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { primaryServerKeybindingsAtom } from "../../state/server";
-import { shouldCreateNewThreadInCurrentProject } from "../Sidebar.logic";
+import { openQuickCapture } from "../capture/quickCaptureStore";
 import { Kbd } from "../ui/kbd";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from "../ui/sidebar";
 
 export function SidebarNewButton() {
   const { isMobile, setOpenMobile } = useSidebar();
   const newThreadContext = useHandleNewThread();
-  const projectCount = useSidebarProjectGroups().length;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const shortcut =
-    shortcutLabelForCommand(keybindings, "chat.new") ??
-    (projectCount <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
+  const shortcut = shortcutLabelForCommand(keybindings, "capture.open");
 
-  const handleNew = useCallback(
-    (event: ReactMouseEvent) => {
-      if (isMobile) setOpenMobile(false);
-      if (shouldCreateNewThreadInCurrentProject(event.shiftKey, projectCount)) {
-        void startNewThreadFromContext({
-          activeDraftThread: newThreadContext.activeDraftThread,
-          activeThread: newThreadContext.activeThread ?? undefined,
-          defaultProjectRef: newThreadContext.defaultProjectRef,
-          handleNewThread: newThreadContext.handleNewThread,
-        });
-        return;
-      }
-      openCommandPalette({ open: "new-thread-in" });
-    },
-    [isMobile, newThreadContext, projectCount, setOpenMobile],
-  );
+  const handleNew = (event: ReactMouseEvent) => {
+    if (isMobile) setOpenMobile(false);
+    if (!event.shiftKey) {
+      openQuickCapture();
+      return;
+    }
+    void startNewThreadFromContext({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread: newThreadContext.handleNewThread,
+    });
+  };
 
   return (
     <div className="shrink-0 px-2 pt-2">

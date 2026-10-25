@@ -31,6 +31,8 @@ const RUNS_EVERYTHING = [
 // Paths outside a package, or files inside one that other packages read
 // through relative imports rather than a package.json dependency.
 const EXTRA_OWNERS = [
+  [/^apps\/cloud\/containers\/cliproxyapi\/release\.json$/, ["t3"]], // signalbox: the server bundles the account hub pins.
+  [/^scripts\/cloud-migrations\//, ["@signalbox/cloud"]], // signalbox: stage tests import the migration parser.
   // Vite configs and tsconfigs of these apps import scripts/lib directly.
   [/^scripts\/lib\//, ["@t3tools/desktop", "@t3tools/mobile", "@t3tools/web", "t3"]],
   // scripts/build-desktop-artifact.ts reads the GNOME extension manifest.
@@ -108,6 +110,7 @@ function readWorkspace() {
 // Returns the packages a path touches, [] for an inert path, or null when the
 // path is not understood and everything must run.
 function ownersOf(file, packages) {
+  if (file === ".vscode/settings.json") return ["@t3tools/scripts"]; // signalbox: native SDK selection needs its parity proof.
   if (INERT.some((pattern) => pattern.test(file))) return [];
   // A manifest can change dependencies or versions other packages read.
   if (path.posix.basename(file) === "package.json") return null;

@@ -1,7 +1,18 @@
+import { ThreadCommand } from "./threadCommands.ts";
 import {
+  ModelSelection,
   NonNegativeInt,
-  OrchestrationV2Command,
+  OrchestrationV2GetWorkflowScriptInput,
+  OrchestrationV2GetWorkflowScriptResult,
+  OrchestrationGetWorkflowScriptError,
+  OrchestrationV2StopWorkflowInput,
+  OrchestrationV2StopWorkflowError,
+  SecretRequestAnswerInput,
+  OrchestrationV2CommandOutputFrame,
+  OrchestrationV2SubscribeCommandOutputInput,
   OrchestrationV2DomainEventJson,
+  OrchestrationV2SearchThreadInput,
+  OrchestrationV2SearchThreadResult,
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadLaunchInput,
   OrchestrationV2ThreadLaunchResult,
@@ -9,6 +20,7 @@ import {
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadStreamItem,
   ThreadId,
+  WorktreeSetupStreamEvent,
 } from "@t3tools/contracts";
 import { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
 import {
@@ -19,6 +31,7 @@ import {
   SignalboxThreadPreviews,
 } from "@t3tools/contracts/signalboxPreviews";
 import { ThreadStatusNote } from "@t3tools/contracts/signalboxStatusLine";
+import { PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import * as Schema from "effect/Schema";
 
 /**
@@ -59,6 +72,7 @@ export const ThreadSummaryWire = Schema.Struct({
 
 export const LaunchInputWire = Schema.Struct({
   ...OrchestrationV2ThreadLaunchInput.fields,
+  modelSelection: ModelSelection,
   threadId: ThreadId,
 });
 
@@ -66,6 +80,14 @@ export const ThreadSnapshotWire = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projection: OrchestrationV2ThreadProjection,
 });
+
+/** Constant-size metadata for remote adoption; never serializes the thread's work history. */
+export const ThreadWorkspaceWire = Schema.Struct({
+  projectId: OrchestrationV2ThreadShell.fields.projectId,
+  branch: OrchestrationV2ThreadShell.fields.branch,
+  worktreePath: OrchestrationV2ThreadShell.fields.worktreePath,
+});
+export type ThreadWorkspace = typeof ThreadWorkspaceWire.Type;
 
 /**
  * An automation run attached to the thread, listed among its background tasks
@@ -77,13 +99,42 @@ export const ThreadMonitorWire = Schema.Struct({
 });
 export type ThreadMonitor = typeof ThreadMonitorWire.Type;
 
+const PullInputWire = Schema.Struct({
+  driveId: Schema.String,
+  operationId: Schema.String,
+  target: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/)),
+  branch: Schema.String,
+});
+export type PullInput = typeof PullInputWire.Type;
+
 export const wire = {
+  preparation: jsonCodec(WorktreeSetupStreamEvent),
+  workflowScriptInput: jsonCodec(OrchestrationV2GetWorkflowScriptInput),
+  workflowStopInput: jsonCodec(OrchestrationV2StopWorkflowInput),
+  workflowScriptReply: jsonCodec(
+    Schema.Union([
+      Schema.TaggedStruct("ok", { value: OrchestrationV2GetWorkflowScriptResult }),
+      Schema.TaggedStruct("error", { error: OrchestrationGetWorkflowScriptError }),
+    ]),
+  ),
+  workflowStopReply: jsonCodec(
+    Schema.Union([
+      Schema.TaggedStruct("ok", {}),
+      Schema.TaggedStruct("error", { error: OrchestrationV2StopWorkflowError }),
+    ]),
+  ),
+  secretAnswer: jsonCodec(SecretRequestAnswerInput),
   summary: jsonCodec(ThreadSummaryWire),
-  command: jsonCodec(OrchestrationV2Command),
+  command: jsonCodec(ThreadCommand),
   launchInput: jsonCodec(LaunchInputWire),
   launchResult: jsonCodec(OrchestrationV2ThreadLaunchResult),
   snapshot: jsonCodec(ThreadSnapshotWire),
+  workspace: jsonCodec(ThreadWorkspaceWire),
   subscribeInput: jsonCodec(OrchestrationV2SubscribeThreadInput),
+  findInput: jsonCodec(OrchestrationV2SearchThreadInput),
+  findResult: jsonCodec(OrchestrationV2SearchThreadResult),
+  commandOutputInput: jsonCodec(OrchestrationV2SubscribeCommandOutputInput),
+  commandOutputFrame: jsonCodec(OrchestrationV2CommandOutputFrame),
   batch: jsonCodec(Schema.Array(OrchestrationV2ThreadStreamItem)),
   /** `SignalboxThreadPreviews` without its thread id, which the stream's caller knows. */
   previews: jsonCodec(
@@ -93,6 +144,8 @@ export const wire = {
     }),
   ),
   monitors: jsonCodec(Schema.Array(ThreadMonitorWire)),
+  pullInput: jsonCodec(PullInputWire),
+  pullResult: jsonCodec(PullResult),
   browserUpdate: jsonCodec(AgentBrowserUpdate),
   browserInput: jsonCodec(AgentBrowserInput),
   browserSteps: jsonCodec(Schema.Array(AgentBrowserStep)),

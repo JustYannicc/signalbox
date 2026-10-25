@@ -1,0 +1,25 @@
+--- a/lib/getdtablesize.c
++++ b/lib/getdtablesize.c
+@@ -90,6 +90,15 @@
+ #else
+ 
+ # include <limits.h>
++
++# if defined __wasi__
++/* Preview 1 has no RLIMIT_NOFILE. Use the existing failed-getrlimit fallback. */
++int
++getdtablesize (void)
++{
++  return INT_MAX;
++}
++# else
+ # include <sys/resource.h>
+ 
+ # ifndef RLIM_SAVED_CUR
+@@ -121,4 +130,6 @@
+   return INT_MAX;
+ }
+ 
++# endif /* !__wasi__ */
++
+ #endif

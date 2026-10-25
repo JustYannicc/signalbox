@@ -1,0 +1,697 @@
+// Marketplace scenarios (SCN-M-01 – SCN-M-14).
+// Each view walks one "what happens if": the first step's notes say **Start:**, the last step's notes say **End:**.
+// Every view carries a tag: #decided when the whole answer rests on a recorded decision (issue or owner date cited),
+// #assumption when any part of the outcome rests on an assumption. The description's first answer line matches the tag.
+// People: A and B are members of folder Company (owner: organization) and share folder Team; C is Company's admin;
+// D is the outside collaborator on folder Team only.
+views {
+
+  // ───────────────────────── Versions ─────────────────────────
+
+  dynamic view scn_m_01_update_regresses_one_folder {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Versions/Update Regresses One Folder'
+    description """
+      What happens if an update helps one holder folder and hurts another?
+      Assumption: a worse delta holds the old version and raises Considering (MARKETPLACE §6 31, 34).
+      Decided: #57 (2026-10-14) re-runs previous vs new on each holder's cases and shows the delta before syncing; #60 lets holders pin.
+      SCN-M-01 · MKT-16, MKT-17, MKT-08
+    """
+    include
+      personB,
+      personC,
+      personA,
+      signalbox.marketplace,
+      signalbox.automations,
+      signalbox.tree,
+      signalbox.attention
+
+    personB -> signalbox.marketplace 'Publish v5' {
+      notes """
+        - **Start:** folder Company (C admin) and A's folder Personal both hold v4 on Keep updated
+        - B publishes v5 from folder Team
+      """
+    }
+    parallel {
+      signalbox.marketplace -> signalbox.automations 'Delta at Company' {
+        notes 'v4 vs v5 on Company\'s own cases; Company\'s pool pays'
+      }
+      signalbox.marketplace -> signalbox.automations 'Delta at Personal' {
+        notes 'v4 vs v5 on A\'s Personal cases; A\'s pool pays'
+      }
+    }
+    signalbox.automations -> signalbox.tree 'Company → v5' {
+      notes 'Better at Company, so the placement syncs to v5'
+    }
+    personC -> signalbox.tree 'Next turn: v5' {
+      notes 'Every thread under Company (C\'s, A\'s, B\'s) resolves v5 from its next turn'
+    }
+    signalbox.automations -> signalbox.attention 'Personal: Considering' {
+      notes '"v5 scores 9 points lower on your work; staying on v4" goes to A only'
+    }
+    personA -> signalbox.attention 'Pin v4' {
+      navigateTo mkt_update
+      notes """
+        - **End:** Company on v5, A's Personal pinned on v4
+        - A can still take v5 later; B's listing shows both holders
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_m_11_model_change_regresses {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Versions/Model Change Regresses'
+    description """
+      What happens if the default model changes and an installed skill starts hurting?
+      Assumption: a negative result raises a Considering ask to the folder, not a Blocker (MARKETPLACE §6 34).
+      Decided: #378 and #280 re-run the baseline when the model changes.
+      SCN-M-11 · MKT-23, MKT-22
+    """
+    include
+      personA,
+      personB,
+      signalbox.models,
+      signalbox.automations,
+      signalbox.judge,
+      signalbox.attention,
+      signalbox.marketplace
+
+    signalbox.models -[async]-> signalbox.automations 'New default model' {
+      notes """
+        - **Start:** skill v4 placed at Team, measured +12% on the old model
+      """
+    }
+    signalbox.automations -> signalbox.judge 'Re-run without vs with' {
+      navigateTo mkt_efficacy_feedback
+      notes 'On Team\'s cases; Team\'s pool pays'
+    }
+    signalbox.automations -> signalbox.attention 'Considering to Team' {
+      notes 'Lands in A\'s and B\'s lanes: "v4 now scores below no skill; remove or pin the model"'
+    }
+    personA -> signalbox.attention 'Remove it' {
+      navigateTo mkt_uninstall
+      notes 'First answer wins by receipt; B\'s copy of the ask clears'
+    }
+    signalbox.automations -[async]-> signalbox.marketplace 'Numbers update' {
+      notes """
+        - **End:** skill gone from Team for A and B from their next turn
+        - The listing shows the new model's result, numbers only
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Lifecycle ─────────────────────────
+
+  dynamic view scn_m_02_publisher_withdraws {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Lifecycle/Publisher Withdraws'
+    description """
+      What happens if the publisher withdraws or deletes an item people installed?
+      Assumption: holders keep their last version as a frozen copy for every kind and for delete; Use-copies are independent (MARKETPLACE §9 47–48). Only the prototype did this, for skills (#60).
+      SCN-M-02 · MKT-20, MKT-18
+    """
+    include
+      personB,
+      personA,
+      personC,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.tree
+
+    personB -> signalbox.marketplace 'Delete item' {
+      notes """
+        - **Start:** A follows v3 at Team (Keep updated); C holds a Use-copy at Company
+      """
+    }
+    signalbox.marketplace -> signalbox.marketplace 'Withdraw listing' {
+      navigateTo mkt_withdraw
+      notes 'Gone from discovery; placed versions stay readable (#280)'
+    }
+    signalbox.marketplace -[async]-> signalbox.tree 'Pin Team at v3' {
+      notes 'Keep updated turns into a pin; nothing else at Team changes'
+    }
+    personA -> signalbox.web 'Sees "source withdrawn"' {
+      notes 'A\'s and B\'s turns in Team keep v3; nothing breaks, no push'
+    }
+    personC -> signalbox.web 'Copy unchanged' {
+      notes """
+        - **End:** listing gone; Team frozen at v3; C's copy at Company untouched
+        - An independent copy never followed the source
+      """
+    }
+    personB -> signalbox.marketplace 'Publish again' {
+      notes 'Reverse door: A can follow again from the Plugins row'
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_m_03_author_leaves {
+    #decided
+    variant sequence
+    title 'Scenarios/Marketplace/Lifecycle/Author Leaves'
+    description """
+      What happens to a listing when its author leaves the organization?
+      Decided by rule: work in an organization-owned folder belongs to the organization (Y 2026-10-16, #232/#270), so a listing published at folder Company stays with Company.
+      Not shown: a listing B published from B's own top level leaves with B (assumption, MARKETPLACE §9 48).
+      SCN-M-03 · MKT-04, MKT-20
+    """
+    include
+      personB,
+      personC,
+      personA,
+      signalbox.identity,
+      signalbox.marketplace,
+      signalbox.tree
+
+    personB -> signalbox.marketplace 'Publish at Company' {
+      notes """
+        - **Start:** B published a skill as folder Company; A placed it at Team
+      """
+    }
+    personC -> signalbox.identity 'Remove B' {
+      notes 'C, Company\'s admin, removes B from the organization'
+    }
+    signalbox.identity -[async]-> signalbox.tree 'B loses access' {
+      notes 'Membership sync drops B\'s mount of Company'
+    }
+    signalbox.tree -> signalbox.marketplace 'Publisher stays Company' {
+      notes 'The listing names folder Company, never B'
+    }
+    personA -> signalbox.tree 'Turns unchanged' {
+      notes 'A\'s placement at Team resolves the same version'
+    }
+    personC -> signalbox.marketplace 'Edit or withdraw' {
+      navigateTo mkt_publish_to_folder
+      notes """
+        - **End:** listing lives on under Company; C maintains it as admin
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Visibility ─────────────────────────
+
+  dynamic view scn_m_04_install_outside_scope {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Visibility/Install Outside Scope'
+    description """
+      What happens if A wants a Company-scoped listing in A's own folder Personal?
+      Assumption: a folder-scoped listing installs only inside its scope; the organization owns work in its folders (MARKETPLACE §4 15).
+      Decided: widening is a `publish` gate to named deciders (#630/#632).
+      SCN-M-04 · MKT-06, MKT-02
+    """
+    include
+      personA,
+      personC,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.operations,
+      signalbox.attention
+
+    personA -> signalbox.web 'Use at Personal' {
+      notes """
+        - **Start:** a Company-scoped automation A uses at Team
+      """
+    }
+    signalbox.web -> signalbox.marketplace 'install(Personal)'
+    signalbox.web <- signalbox.marketplace 'Outside scope' {
+      notes 'Offers: use it inside Company, or ask to publish wider'
+    }
+    personA -> signalbox.web 'Ask to publish public'
+    signalbox.web -> signalbox.operations 'publish gate' {
+      notes 'Widening who can see it is not reversible, so it is gated'
+    }
+    signalbox.operations -> signalbox.attention 'Ready ask to C' {
+      navigateTo mkt_publish_public
+      notes 'C is the decider as admin of folder Company'
+    }
+    alt 'C decides' {
+      when 'approve' {
+        personC -> signalbox.attention 'Approve'
+        signalbox.operations -> signalbox.marketplace 'Publish public' {
+          notes """
+            - **End:** public listing; A installs it at Personal
+          """
+        }
+      }
+      else 'decline' {
+        personC -> signalbox.attention 'Decline' {
+          notes """
+            - **End:** A keeps using it inside Company only
+          """
+        }
+      }
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_m_12_admin_restricts_skills {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Visibility/Admin Restricts Skills'
+    description """
+      What happens if Company's admin restricts the Skills area?
+      Assumption: from #322's prototype rule (still open): restricted areas are admin-only at the folder and below, and people can always pull back what they added.
+      SCN-M-12 · MKT-09, MKT-18
+    """
+    include
+      personC,
+      personB,
+      personA,
+      signalbox.web,
+      signalbox.operations,
+      signalbox.tree,
+      signalbox.attention
+
+    personC -> signalbox.tree 'Restrict Skills' {
+      navigateTo scn_060_admin_restricts_area
+      notes """
+        - **Start:** Skills open to members at Company; A added a skill at Team earlier
+      """
+    }
+    personB -> signalbox.web 'Install at Team'
+    signalbox.web -> signalbox.operations 'install'
+    signalbox.operations -> signalbox.tree 'can? no' {
+      notes 'One "Managed by Company admins" note, no lock on every row'
+    }
+    signalbox.operations -> signalbox.attention 'Request to C'
+    personC -> signalbox.attention 'Approve: install' {
+      notes 'C installs it at Team, or declines'
+    }
+    personA -> signalbox.web 'Removes own skill' {
+      notes """
+        - **End:** Skills admin-only at Company and below
+        - B's install went through C; A may still pull back what A added
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_m_14_outside_collaborator {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Visibility/Outside Collaborator'
+    description """
+      What does an outside collaborator see in the marketplace, and what happens when D installs something?
+      Assumption: browsing follows reach (D sees public + Team, never Company); installing needs the role to place at Team (MARKETPLACE §4 13, §7 40).
+      Decided: resolution is by position only (corr. 6).
+      SCN-M-14 · MKT-02, MKT-09
+    """
+    include
+      personD,
+      personA,
+      personC,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.thread
+
+    personD -> signalbox.web 'Open marketplace' {
+      notes """
+        - **Start:** D is an outside collaborator: member of folder Team only, mounted under D's "Shared with me"
+      """
+    }
+    signalbox.web -> signalbox.marketplace 'Scopes for D' {
+      navigateTo mkt_browse
+      notes 'D\'s reach is Team, so: public + Team listings'
+    }
+    signalbox.web <- signalbox.marketplace 'Public + Team' {
+      notes 'Company\'s listings are invisible to D'
+    }
+    personD -> signalbox.web 'Install at Team'
+    signalbox.web -> signalbox.marketplace 'install(Team)'
+    signalbox.marketplace -> signalbox.tree 'Place at Team' {
+      notes 'D\'s role at Team may place skills'
+    }
+    personA -> signalbox.thread 'Turn in Team' {
+      notes 'Resolves D\'s skill like anything placed at Team; same for B'
+    }
+    personC -> signalbox.web 'Plugins lens' {
+      notes """
+        - **End:** skill live at Team for A, B and D
+        - C, Company's admin, sees "at Team, added by D" and can remove it
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Install ─────────────────────────
+
+  dynamic view scn_m_05_missing_connection {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Install/Missing Connection'
+    description """
+      What happens if an installed automation needs an account the folder doesn't have?
+      Assumption: the install waits behind a Blocker listing the ways in (MARKETPLACE §5 22).
+      Decided: install asks for or picks accounts at that folder (#57 2026-10-15); slots resolve by position (corr. 6); off-chain things come by loan (#230).
+      SCN-M-05 · MKT-11, MKT-12
+    """
+    include
+      personA,
+      personB,
+      personC,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.attention,
+      signalbox.connections
+
+    personA -> signalbox.marketplace 'Use at Team' {
+      notes """
+        - **Start:** the automation needs "GitHub · folder-acting"; nothing on Team's chain has it
+      """
+    }
+    signalbox.marketplace -> signalbox.tree 'Resolve slots' {
+      notes 'Team → Company → Work → top level: no GitHub'
+    }
+    signalbox.tree -> signalbox.attention 'Blocker: GitHub' {
+      notes 'To Team\'s responsible people (A, B) and Company\'s admin C'
+    }
+    alt 'way in' {
+      when 'C connects at Company' {
+        personC -> signalbox.connections 'Connect at Company' {
+          navigateTo mkt_install_connection
+          notes 'Reaches every folder under Company'
+        }
+      }
+      when 'B lends into Team' {
+        personB -> signalbox.tree 'Lend GitHub' {
+          navigateTo folders_lending_lend
+          notes 'Shows "lent by B", revocable'
+        }
+      }
+      else 'A connects at Team' {
+        personA -> signalbox.connections 'Connect at Team'
+      }
+    }
+    signalbox.tree -> signalbox.marketplace 'Slot filled' {
+      navigateTo mkt_use_automation
+      notes """
+        - **End:** slot bound by position at Team; rehearse, then live at Team
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_m_06_skill_below_baseline {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Install/Skill Below Baseline'
+    description """
+      What happens if a popular skill scores below no skill on my folder?
+      Assumption: a loss is not placed, and the person may place it anyway (MARKETPLACE §5 20).
+      Decided: install runs without vs with on my folder; audits show next to it (#60, #378).
+      SCN-M-06 · MKT-09, MKT-10
+    """
+    include
+      personA,
+      personB,
+      signalbox.web,
+      signalbox.marketplace,
+      signalbox.judge,
+      signalbox.tree,
+      signalbox.thread,
+      upstreams.skillsSh
+
+    personA -> signalbox.web 'Install at Team' {
+      notes """
+        - **Start:** a top skills.sh skill with clean audits; nothing placed at Team
+      """
+    }
+    signalbox.web -> signalbox.marketplace 'install(Team)'
+    signalbox.marketplace -> upstreams.skillsSh 'Fetch + audits' {
+      notes 'Gen, Socket and Snyk verdicts come along'
+    }
+    signalbox.marketplace -> signalbox.judge 'Without vs with' {
+      navigateTo mkt_install_skill
+      notes 'With: 35%, without: 38% on Team\'s cases; Team\'s pool pays'
+    }
+    signalbox.web <- signalbox.marketplace 'Not placed' {
+      notes 'Shows numbers and cases; "place anyway" is one click'
+    }
+    opt 'A places anyway' {
+      personA -> signalbox.web 'Place anyway'
+      signalbox.marketplace -> signalbox.tree 'Place at Team'
+    }
+    personB -> signalbox.thread 'Turn in Team' {
+      notes """
+        - **End:** not placed (or placed by A's override)
+        - B's and A's turns get exactly what is placed at Team
+      """
+    }
+
+    include signalbox, upstreams
+    style signalbox, upstreams { color muted; opacity 10% }
+  }
+
+  dynamic view scn_m_13_plugin_harness_switch {
+    #decided
+    variant sequence
+    title 'Scenarios/Marketplace/Install/Plugin Harness Switch'
+    description """
+      What happens if a thread with a Claude Code plugin switches to Codex?
+      Decided: plugins are per provider; providers without plugin support say so (#61). Per-harness narrowing stays open (#324) and isn't needed here.
+      SCN-M-13 · MKT-13
+    """
+    include
+      personC,
+      personA,
+      personB,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.thread,
+      signalbox.harness,
+      upstreams.claudePlugins
+
+    personC -> signalbox.marketplace 'Install Claude plugin' {
+      notes """
+        - **Start:** nothing placed; C, Company's admin, picks a plugin in the marketplace
+      """
+    }
+    signalbox.marketplace -> upstreams.claudePlugins 'Fetch plugin'
+    signalbox.marketplace -> signalbox.tree 'Place at Company' {
+      navigateTo mkt_install_harness_plugin
+    }
+    personA -> signalbox.thread 'Claude turn in Team'
+    signalbox.thread -> signalbox.harness 'Run Claude Code'
+    signalbox.harness -> signalbox.tree 'Plugin applied' {
+      notes 'Claude Code resolves the placement from Company and loads it'
+    }
+    personA -> signalbox.thread 'Switch to Codex'
+    signalbox.thread -> signalbox.harness 'Run Codex'
+    signalbox.harness -> signalbox.tree 'Not on Codex' {
+      notes 'Same placement resolves; Codex can\'t load it, so the thread says it isn\'t loaded'
+    }
+    personB -> signalbox.thread 'Switch back' {
+      notes """
+        - **End:** placement unchanged at Company; it applies again on the next Claude Code turn
+      """
+    }
+
+    include signalbox, upstreams
+    style signalbox, upstreams { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Trust ─────────────────────────
+
+  dynamic view scn_m_07_malicious_yank {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Trust/Malicious Yank'
+    description """
+      What happens if a public listing turns out to be malicious?
+      Assumption: the operator yanks the version; placements stop resolving at the next turn; running turns end on their frozen Scope (design §3.3); the folder gets a Blocker (MARKETPLACE §7 42).
+      SCN-M-07 · MKT-08, MKT-18
+    """
+    include
+      operator,
+      personC,
+      personA,
+      signalbox.marketplace,
+      signalbox.tree,
+      signalbox.thread,
+      signalbox.attention
+
+    signalbox.marketplace -> signalbox.marketplace 'Scan flags v3' {
+      navigateTo mkt_review_version
+      notes """
+        - **Start:** v3 placed at Company; A has a turn running in Team
+      """
+    }
+    operator -> signalbox.marketplace 'Yank v3'
+    signalbox.marketplace -[async]-> signalbox.tree 'Stop resolving v3'
+    signalbox.thread -> signalbox.tree 'Next turn: no v3' {
+      notes 'A\'s running turn finishes on its frozen Scope'
+    }
+    personA -> signalbox.thread 'Keeps working' {
+      notes 'A\'s next turn runs without v3'
+    }
+    signalbox.tree -> signalbox.attention 'Blocker to C' {
+      notes 'Reason, and v2 as the last good version'
+    }
+    personC -> signalbox.attention 'Pin v2' {
+      notes """
+        - **End:** v3 gone everywhere; Company pinned on v2 (or removed)
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  dynamic view scn_m_09_restricted_publish {
+    #decided
+    variant sequence
+    title 'Scenarios/Marketplace/Trust/Restricted Publish'
+    description """
+      What happens if someone publishes an automation built in a thread that read restricted data?
+      Decided: a restricted thread can't be published as a template (#486, #57 2026-10-15). Restriction is only ever an admin's explicit choice (2026-10-16).
+      SCN-M-09 · MKT-07
+    """
+    include
+      personC,
+      personB,
+      signalbox.tree,
+      signalbox.thread,
+      signalbox.marketplace
+
+    personC -> signalbox.tree 'Mark payroll restricted' {
+      notes """
+        - **Start:** C, admin of Company, marks one source restricted
+      """
+    }
+    personB -> signalbox.thread 'Reads payroll' {
+      notes 'B builds an automation in a Team thread'
+    }
+    signalbox.thread -> signalbox.thread 'Latched restricted'
+    personB -> signalbox.marketplace 'Publish automation' {
+      navigateTo mkt_publish_blueprint
+    }
+    personB <- signalbox.marketplace 'Refused' {
+      notes 'Names the source that latched the thread'
+    }
+    personB -> signalbox.marketplace 'Publish clean rebuild' {
+      notes """
+        - **End:** only a rebuild from a thread that never read payroll is published
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Agents ─────────────────────────
+
+  dynamic view scn_m_08_agent_install_gated {
+    #assumption
+    variant sequence
+    title 'Scenarios/Marketplace/Agents/Agent Install Gated'
+    description """
+      What happens if an agent wants to install something that merges and binds an account?
+      Assumption: the gate rule (direct install only without new permissions; otherwise a Ready ask) (MARKETPLACE §10 53).
+      Decided: only code a person published may merge (#702); only people approve permissions (#335); first answer wins by receipt.
+      SCN-M-08 · MKT-21
+    """
+    include
+      hier.company.team.agentTeam,
+      personA,
+      personB,
+      signalbox.gateway,
+      signalbox.marketplace,
+      signalbox.attention,
+      signalbox.automations
+
+    hier.company.team.agentTeam -> signalbox.gateway 'Tool search' {
+      notes """
+        - **Start:** Team agent wants "merge when green"; nothing installed
+      """
+    }
+    signalbox.gateway -> signalbox.marketplace 'Finds listing' {
+      notes 'Needs GitHub · folder-acting, and merges'
+    }
+    signalbox.gateway -> signalbox.attention 'Ready ask' {
+      navigateTo mkt_agent_install
+      notes 'Not installed directly: it merges and binds an account; goes to A and B with the eval result'
+    }
+    personA -> signalbox.attention 'Approve' {
+      notes 'A\'s approval is the vouch for the merging code'
+    }
+    signalbox.attention -> personB 'Lane cleared' {
+      notes 'First answer wins; B\'s copy clears'
+    }
+    signalbox.marketplace -> signalbox.automations 'Define at Team' {
+      notes """
+        - **End:** live at Team, installed as A; the agent can use it next turn
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+
+  // ───────────────────────── Resolution ─────────────────────────
+
+  dynamic view scn_m_10_same_skill_two_levels {
+    #decided
+    variant sequence
+    title 'Scenarios/Marketplace/Resolution/Same Skill Two Folders'
+    description """
+      What happens if the same skill is installed at Company and at Team?
+      Decided: `union` by name, nearest wins; never by who sends (corr. 6, design §3.3).
+      SCN-M-10 · MKT-09, MKT-18
+    """
+    include
+      personC,
+      personB,
+      personA,
+      signalbox.web,
+      signalbox.tree,
+      signalbox.thread
+
+    personC -> signalbox.tree 'v3 at Company' {
+      notes """
+        - **Start:** nothing at Team
+      """
+    }
+    personB -> signalbox.tree 'v5 at Team'
+    personA -> signalbox.thread 'Turn in Team thread'
+    signalbox.thread -> signalbox.tree 'Resolve skills' {
+      navigateTo folders_placement_resolve
+      notes 'Nearest per name: v5 from Team'
+    }
+    personB -> signalbox.thread 'B\'s turn too' {
+      notes 'Same v5; the sender never matters'
+    }
+    personA -> signalbox.web 'Plugins row' {
+      notes """
+        - **End:** Team threads get v5 for A and B; "v5 at Team, shadows v3 from Company"
+        - Threads elsewhere in Company (C's too) still get v3
+      """
+    }
+
+    include signalbox
+    style signalbox { color muted; opacity 10% }
+  }
+}

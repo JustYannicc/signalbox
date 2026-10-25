@@ -15,6 +15,18 @@ export const COMMAND_REACH = {
   "thread.create": internal(
     "Creates a parent run's child thread; people start threads with threads.create.",
   ),
+  "thread.ask.raise": write({
+    name: "threads.asks.raise",
+    summary: "Raise a durable Blocker, Ready or Considering ask.",
+  }),
+  "thread.ask.answer": write({
+    name: "threads.asks.answer",
+    summary: "Answer part or all of an ask round.",
+  }),
+  "thread.ask.withdraw": write({
+    name: "threads.asks.withdraw",
+    summary: "Withdraw an ask that is no longer needed.",
+  }),
   "thread.archive": write(),
   "thread.unarchive": write(),
   "thread.delete": write({ destructive: true }),

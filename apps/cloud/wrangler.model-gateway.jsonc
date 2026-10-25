@@ -7,7 +7,7 @@
   // docs/operations/cloud.md.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "signalbox-model-gateway",
-  "main": "src/modelGateway/worker.ts",
+  "main": "src/models/gatewayWorker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,

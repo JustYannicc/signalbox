@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 import { newThreadWorkspaceMode, offersNewThreadBranch } from "./signalboxWorktrees"; // signalbox
 import { sanitizeNewRefName } from "@t3tools/shared/git";
+import { useNewTaskModelSelection } from "./new-task-model-selection"; // signalbox: resolve folder, person, and pool defaults for new tasks.
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Arr from "effect/Array";
@@ -43,8 +44,6 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
   groupByProvider,
-  resolveDefaultableModelSelection,
-  resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -70,7 +69,6 @@ import {
   setStickyComposerModelSelection,
   updateComposerDraftSettings,
   useComposerDraft,
-  useStickyComposerModelSelection,
 } from "../../state/use-composer-drafts";
 import {
   capturePendingTaskEditorWriteBaseline,
@@ -123,11 +121,9 @@ import {
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { usePoolServerConfig, useProjectPoolModelSelection } from "../sections/useProjectPool"; // signalbox
+import { usePoolServerConfig } from "../sections/useProjectPool"; // signalbox: load provider configuration for the project's pool.
 import { type NewTaskFolders, useNewTaskFolders } from "../folders/draft-folder"; // signalbox: folders
 import type { PoolNeed } from "@t3tools/client-runtime/state/sections"; // signalbox
-
-const NO_PROVIDERS: ReadonlyArray<ServerProvider> = []; // signalbox
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -562,27 +558,21 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProjectDraft.modelSelection ?? null,
     selectedProject?.id ?? null,
   );
-  const storedStickyModelSelection = useStickyComposerModelSelection();
   const folders = useNewTaskFolders(activeDraftKey, selectedProject); // signalbox: folders
-  // signalbox: the task starts on the pool its project runs on.
-  const sectionPoolSelection = useProjectPoolModelSelection({
-    environmentId: selectedProject?.environmentId ?? null,
-    projectId: selectedProject?.id ?? null,
-    selection: projectSettings.settings.defaultModelSelection ?? storedStickyModelSelection,
-    providerInstances: projectSettings.settings.providerInstances,
-    providers: selectedEnvironmentServerConfig?.providers ?? NO_PROVIDERS,
-    home: folders.poolHome, // signalbox: folders
-  });
-  const projectDefaultModelSelection = resolveDefaultableModelSelection(
-    selectedEnvironmentServerConfig,
-    sectionPoolSelection ?? projectSettings.settings.defaultModelSelection,
-    selectedProject?.id ?? null,
-  );
-  const stickyModelSelection = resolveDefaultableModelSelection(
-    selectedEnvironmentServerConfig,
-    storedStickyModelSelection,
-    selectedProject?.id ?? null,
-  );
+  // signalbox: new tasks share model precedence and pool mapping across clients.
+  const { projectDefaultModelSelection, selectedModelSelection: selectedModel } =
+    useNewTaskModelSelection({
+      draftSelection: draftModelSelection,
+      projectDefaultIsConfigured: projectSettings.sources.defaultModelSelection === "project",
+      projectDefaultSelection: projectSettings.settings.defaultModelSelection,
+      personDefaultSelection:
+        selectedEnvironmentServerConfig?.settings.defaultModelSelection ?? null,
+      settings: projectSettings.settings,
+      projectId: selectedProject?.id ?? null,
+      environmentId: selectedProject?.environmentId ?? null,
+      config: selectedEnvironmentServerConfig,
+      home: folders.poolHome,
+    });
   // signalbox: the picker offers only the pool the project runs on.
   const { config: poolServerConfig, need: poolNeed } = usePoolServerConfig(
     selectedProject?.environmentId ?? null,
@@ -591,28 +581,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     folders.poolHome, // signalbox: folders
   );
   const modelOptions = useMemo(
+    // signalbox: the selected pool supplies the options for the resolved default.
     () =>
       buildModelOptions(
         poolServerConfig,
-        draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+        draftModelSelection ?? projectDefaultModelSelection,
         undefined,
         selectedProject?.id ?? null,
       ),
-    [
-      poolServerConfig,
-      draftModelSelection,
-      projectDefaultModelSelection,
-      stickyModelSelection,
-      selectedProject?.id,
-    ],
+    [poolServerConfig, draftModelSelection, projectDefaultModelSelection, selectedProject?.id],
   );
 
-  const selectedModel = resolveNewTaskModelSelection({
-    draftSelection: draftModelSelection,
-    projectDefaultSelection: projectDefaultModelSelection,
-    stickySelection: stickyModelSelection,
-    modelOptions,
-  });
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;

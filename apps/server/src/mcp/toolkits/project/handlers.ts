@@ -122,23 +122,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 }),
             ),
           );
-        const modelSelection =
-          input.modelSelection ??
-          caller?.modelSelection ??
-          (yield* readProject)?.defaultModelSelection ??
-          undefined;
-        if (modelSelection === undefined)
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message:
-              "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
-          });
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
           projectId,
           title: input.title,
-          modelSelection,
+          modelSelection: input.modelSelection, // signalbox: Let ThreadLaunchService resolve omitted models consistently.
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
@@ -163,6 +152,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               });
             }
             if (error._tag === "ThreadManagementProviderInstanceDisabledError") {
+              return new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: error.message,
+              });
+            }
+            if (error._tag === "ThreadLaunchError" && error.operation === "resolve-model") {
+              // signalbox: Surface the actionable missing-default error through MCP.
               return new OrchestratorMcpFailure({
                 code: "invalid_request",
                 message: error.message,

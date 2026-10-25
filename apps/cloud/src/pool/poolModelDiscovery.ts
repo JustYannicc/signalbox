@@ -14,6 +14,8 @@ export interface ServedModel {
   readonly provider?: ModelChannel | undefined;
   /** Empty when definitions confirm the model has no effort choices. */
   readonly reasoningEfforts?: ReadonlyArray<string> | undefined;
+  /** Present only when this pool explicitly registered the model with a local transport. */
+  readonly registration?: { readonly kind: "local"; readonly transportId: string } | undefined;
 }
 
 const ModelDefinition = Schema.Struct({

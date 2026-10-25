@@ -1,18 +1,21 @@
-import { SourceControlProviderKind } from "./sourceControl.ts";
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
+  PullRequestCommentInput,
   PullRequestFilesViewedResult,
+  PullRequestGenerateReviewGuideInput,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
   PullRequestSetFilesViewedInput,
+  PullRequestSubmitReviewInput,
   pullRequestHostOf,
   resolvePullRequestAuthorFilter,
-} from "./pullRequest.ts";
+} from "@t3tools/contracts";
 
 const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
 const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
@@ -20,6 +23,9 @@ const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerReques
 const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
 const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
 const decodeFilesViewed = Schema.decodeUnknownSync(PullRequestFilesViewedResult);
+const decodeGenerateReviewGuide = Schema.decodeUnknownSync(PullRequestGenerateReviewGuideInput);
+const decodeComment = Schema.decodeUnknownSync(PullRequestCommentInput);
+const decodeReview = Schema.decodeUnknownSync(PullRequestSubmitReviewInput);
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
@@ -180,6 +186,56 @@ describe("PullRequestReviewerRequestInput", () => {
   });
 });
 
+describe("safe pull request comment and review inputs", () => {
+  const reference = { projectId: "project-1", repository: "acme/web", number: 7 };
+
+  it("keeps comment operation ids optional for existing self-host callers", () => {
+    expect(decodeComment({ ...reference, body: "Comment" })).toEqual({
+      ...reference,
+      body: "Comment",
+    });
+    expect(decodeComment({ ...reference, body: "Comment", operationId: "write-1" })).toEqual({
+      ...reference,
+      body: "Comment",
+      operationId: "write-1",
+    });
+  });
+
+  it("keeps review operation ids and reviewed heads optional for existing self-host callers", () => {
+    expect(decodeReview({ ...reference, verdict: "approve", body: "", comments: [] })).toEqual({
+      ...reference,
+      verdict: "approve",
+      body: "",
+      comments: [],
+    });
+
+    for (const headSha of ["a".repeat(40), "b".repeat(64), "c".repeat(40).toUpperCase()]) {
+      expect(
+        decodeReview({
+          ...reference,
+          operationId: "review-1",
+          headSha,
+          verdict: "approve",
+          body: "",
+          comments: [],
+        }),
+      ).toMatchObject({ operationId: "review-1", headSha });
+    }
+
+    for (const headSha of ["a".repeat(39), "a".repeat(41), "z".repeat(40)]) {
+      expect(() =>
+        decodeReview({
+          ...reference,
+          headSha,
+          verdict: "approve",
+          body: "",
+          comments: [],
+        }),
+      ).toThrow();
+    }
+  });
+});
+
 describe("updating a branch that has fallen behind its base", () => {
   const ref = { projectId: "project-1", repository: "acme/web", number: 7 };
 
@@ -306,6 +362,22 @@ describe("naming the file a tick belongs to", () => {
     ).toEqual([{ path: "docs/readme.md ", viewed: true }]);
   });
 
+  it("accepts the displayed diff revision and keeps the self-hosted request shape valid", () => {
+    const reference = {
+      projectId: "p1",
+      repository: "group/project",
+      number: 7,
+      files: [{ path: "src/app.ts", viewed: true }],
+    };
+    expect(decodeSetFilesViewed(reference)).toEqual(reference);
+    expect(
+      decodeSetFilesViewed({
+        ...reference,
+        displayedRevision: { baseSha: "a".repeat(40), headSha: "b".repeat(40) },
+      }).displayedRevision,
+    ).toEqual({ baseSha: "a".repeat(40), headSha: "b".repeat(40) });
+  });
+
   it("keeps the spaces around a path being reported back", () => {
     expect(
       decodeFilesViewed({
@@ -346,6 +418,31 @@ describe("naming the file a tick belongs to", () => {
         repository: "group/project",
         number: 7,
         files: [{ path: `src/${"a".repeat(4096)}.ts`, viewed: true }],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("review guide generation attempts", () => {
+  it("keeps the local reference-only request valid and accepts a pinned cloud attempt", () => {
+    const reference = { projectId: "p1", repository: "group/project", number: 7 };
+    expect(decodeGenerateReviewGuide(reference)).toEqual(reference);
+    expect(
+      decodeGenerateReviewGuide({
+        ...reference,
+        operationId: "attempt-1",
+        headSha: "a".repeat(40),
+      }),
+    ).toEqual({ ...reference, operationId: "attempt-1", headSha: "a".repeat(40) });
+  });
+
+  it("rejects an invalid pinned head", () => {
+    expect(() =>
+      decodeGenerateReviewGuide({
+        projectId: "p1",
+        repository: "group/project",
+        number: 7,
+        headSha: "short",
       }),
     ).toThrow();
   });

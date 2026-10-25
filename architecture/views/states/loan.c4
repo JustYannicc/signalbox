@@ -1,0 +1,28 @@
+// State machine for one loan. The walk through it with people and modules is the dynamic view state_loan.
+model {
+  smLoan = state 'Loan lifecycle' {
+    offered = state 'Offered' { description 'lender places into a level they do not own' }
+    active = state 'Active' { description 'turns below use it' }
+    refused = state 'Refused' { description 'kind not accepted there' }
+    expired = state 'Expired' { description 'until passed' }
+    ended = state 'Ended' { description 'End loan' }
+
+    offered -[transition]-> active 'kind accepted'
+    offered -[transition]-> refused 'kind refused'
+    active -[transition]-> expired 'until passes'
+    active -[transition]-> ended 'End loan'
+  }
+}
+views {
+  view state-loan of smLoan {
+    title 'States/Loan/State machine'
+    description 'How does one loan into a folder the lender does not own start and end? Start: green. End: gray. Click the frame for the walk with people and modules (state_loan).'
+    include *
+    include smLoan with { navigateTo state_loan }
+    style smLoan.offered { color green }
+    style smLoan.refused { color gray }
+    style smLoan.expired { color gray }
+    style smLoan.ended { color gray }
+    autoLayout TopBottom
+  }
+}

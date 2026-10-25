@@ -1,7 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
+import {
+  preparePullRequestWriteAttempt,
+  type PullRequestWriteAttemptRecord,
+} from "@t3tools/client-runtime/pull-request-write-attempt";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useRef, useState } from "react";
+import { uuidv4 } from "../../../lib/uuid";
 import { usePullRequestConnected } from "../usePullRequestConnected";
 import { composerPullRequests } from "../../../state/pull-requests";
 import { useEnvironmentQuery } from "../../../state/query";
@@ -31,6 +36,7 @@ export function useReviewGuide(params: PullRequestParams) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
+  const attempt = useRef<PullRequestWriteAttemptRecord | undefined>(undefined);
   const running = starting || query.data?.run?._tag === "Running";
   const refresh = query.refresh;
   useFocusEffect(
@@ -48,7 +54,16 @@ export function useReviewGuide(params: PullRequestParams) {
     setStarting(true);
     setError(null);
     try {
-      const result = await generate(target);
+      const prepared = preparePullRequestWriteAttempt(
+        attempt.current,
+        target.input,
+        query.data?.currentHeadSha ?? undefined,
+        uuidv4,
+        target.environmentId,
+      );
+      attempt.current = prepared.attempt;
+      const result = await generate({ ...target, input: prepared.input });
+      if (result._tag === "Success") attempt.current = undefined;
       if (result._tag === "Failure") {
         const cause = squashAtomCommandFailure(result);
         setError(cause instanceof Error ? cause.message : "Could not start the review guide.");

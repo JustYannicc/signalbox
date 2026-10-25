@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
  * The one scrubber for a thread's secrets (#591): every value resolved for it,
  * in every form a tool is likely to print it in, replaced by its placeholder
  * `{{secret:NAME}}`. It runs wherever text leaves the machine: the cloud's
- * side of the ModelGateway on every model request (`modelGrants.ts`), and the
+ * side of the ModelGateway on every model request (`models/ModelAccess.ts`), and the
  * Runner on its frames, session rows and logs (`secretMask.ts`). The
  * placeholder is what #592 later fills back in at the boundary.
  *

@@ -81,12 +81,15 @@ export function DeviceToolsPanel(props: {
   readonly device: DeviceSummary;
   readonly access: DeviceHubAccess | null;
   readonly axOverlay: boolean;
+  readonly readOnly?: boolean;
   readonly onAxOverlayChange: (enabled: boolean) => void;
   readonly onClose: () => void;
   readonly className?: string;
 }) {
   const { device, controls } = props;
-  const { detail, pending, error, foregroundApp, disabled, act } = controls;
+  const { detail, pending, error, foregroundApp } = controls;
+  const disabled = Boolean(props.readOnly) || controls.disabled;
+  const act: DeviceControls["act"] = props.readOnly ? async () => undefined : controls.act;
   const settings = detail?.settings;
   const isIos = device.platform === "ios";
 
@@ -277,9 +280,9 @@ export function DeviceToolsPanel(props: {
           <SwitchRow
             label="Overlay element frames"
             checked={props.axOverlay}
-            disabled={props.access === null}
+            disabled={props.access === null || props.readOnly === true}
             onChange={(value) => {
-              props.onAxOverlayChange(value);
+              if (!props.readOnly) props.onAxOverlayChange(value);
               return Promise.resolve();
             }}
           />

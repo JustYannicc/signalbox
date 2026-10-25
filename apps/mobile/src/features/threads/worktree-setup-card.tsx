@@ -3,7 +3,11 @@ import {
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  isThreadPreparation,
+  worktreeSetupAgentStarted,
+  type WorktreeSetupActionStatus,
+} from "@t3tools/client-runtime/worktree-setup";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -20,7 +24,11 @@ export interface WorktreeSetupCardProps {
   turnStarted: boolean;
   turnStartedAt: string | null;
   working: boolean;
+  // Null when the server would refuse: after the agent handoff, or without the grant.
+  cancel: WorktreeSetupActionStatus | null;
   onCancel: () => void;
+  retry: WorktreeSetupActionStatus | null;
+  onRetry: () => void;
   onWorkLocally: (() => void) | null;
 }
 
@@ -39,7 +47,7 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
 };
 
 export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
-  const { snapshot, turnStarted, turnStartedAt, working } = props;
+  const { snapshot, turnStarted, turnStartedAt, working, retry, onRetry } = props;
   const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
   const running = snapshot.phase === "running";
   const backgroundSetup = handedOff && running;
@@ -48,23 +56,36 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   const now = useVisibleSecondClock(running || working);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
+  // Cloud prepares every thread, with or without a worktree.
+  const thread = isThreadPreparation(snapshot);
   const label =
     handedOff && working
       ? `Working for ${elapsed(turnStartedAt, null, now) ?? "0s"}`
       : running
         ? handedOff
           ? "Setup continues…"
-          : "Setting up worktree…"
+          : props.cancel === "pending"
+            ? "Cancelling setup…"
+            : thread
+              ? "Preparing thread…"
+              : "Setting up worktree…"
         : snapshot.phase === "cancelled"
-          ? "Worktree setup cancelled"
+          ? thread
+            ? "Thread preparation cancelled"
+            : "Worktree setup cancelled"
           : snapshot.phase === "failed"
-            ? "Worktree setup failed"
+            ? thread
+              ? "Thread preparation failed"
+              : "Worktree setup failed"
             : failed
               ? "Setup script failed"
-              : "Worktree ready";
+              : thread
+                ? "Thread ready"
+                : "Worktree ready";
+  const subject = thread ? "thread preparation" : "worktree setup";
 
   return (
-    <View accessibilityLabel="Worktree setup" className="py-1">
+    <View accessibilityLabel={thread ? "Thread preparation" : "Worktree setup"} className="py-1">
       <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
         <HeaderLabel
           label={label}
@@ -79,12 +100,28 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
             {elapsed(snapshot.startedAt, snapshot.endedAt, now)}
           </Text>
         ) : null}
+        {retry ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Retry ${subject}`}
+            accessibilityState={{ disabled: retry === "pending", busy: retry === "pending" }}
+            disabled={retry === "pending"}
+            onPress={onRetry}
+            className="min-h-11 flex-row items-center justify-center gap-1 px-2"
+            style={{ opacity: retry === "pending" ? 0.5 : 1 }}
+          >
+            <SymbolView name="arrow.clockwise" size={11} tintColorClassName="accent-icon" />
+            <Text className="text-2xs text-foreground">
+              {retry === "pending" ? "Retrying…" : "Retry"}
+            </Text>
+          </Pressable>
+        ) : null}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
             backgroundSetup
               ? `${scriptName} is still running. Show setup progress.`
-              : "Worktree setup details"
+              : `${thread ? "Thread preparation" : "Worktree setup"} details`
           }
           accessibilityState={{ expanded: detailsOpen }}
           onPress={() => setDetailsOpen(true)}
@@ -191,6 +228,7 @@ function HeaderLabel({
 function SetupDetailsSheet({
   snapshot,
   turnStarted,
+  cancel,
   onCancel,
   onWorkLocally,
   onClose,
@@ -198,9 +236,13 @@ function SetupDetailsSheet({
 }: WorktreeSetupCardProps & { onClose: () => void; now: number }) {
   const insets = useSafeAreaInsets();
   const [bodyHeight, setBodyHeight] = useState(0);
-  const canCancel = snapshot.phase === "running" && !turnStarted;
+  const cancelStatus = snapshot.phase === "running" && !turnStarted ? cancel : null;
   return (
-    <WorktreeSetupSheet height={bodyHeight} onClose={onClose}>
+    <WorktreeSetupSheet
+      title={isThreadPreparation(snapshot) ? "Thread preparation" : "Worktree setup"}
+      height={bodyHeight}
+      onClose={onClose}
+    >
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         bounces={false}
@@ -222,23 +264,35 @@ function SetupDetailsSheet({
               ) : null}
             </View>
           ))}
-        {snapshot.phase === "failed" && snapshot.error ? (
+        {(snapshot.phase === "failed" || snapshot.phase === "cancelled") && snapshot.error ? (
           <Text selectable className="ml-8 mt-2 text-xs text-danger-foreground">
             {snapshot.error}
           </Text>
         ) : null}
-        {canCancel ? (
+        {cancelStatus ? (
           <View className="mt-3 flex-row items-center justify-end gap-4 border-t border-border pt-1">
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Cancel worktree setup"
+              accessibilityLabel={
+                isThreadPreparation(snapshot)
+                  ? "Cancel thread preparation"
+                  : "Cancel worktree setup"
+              }
+              accessibilityState={{
+                disabled: cancelStatus === "pending",
+                busy: cancelStatus === "pending",
+              }}
+              disabled={cancelStatus === "pending"}
               onPress={() => {
                 onClose();
                 onCancel();
               }}
               className="min-h-11 justify-center px-2"
+              style={{ opacity: cancelStatus === "pending" ? 0.5 : 1 }}
             >
-              <Text className="text-sm text-danger-foreground">Cancel setup</Text>
+              <Text className="text-sm text-danger-foreground">
+                {cancelStatus === "pending" ? "Cancelling…" : "Cancel setup"}
+              </Text>
             </Pressable>
             {onWorkLocally ? (
               <Pressable

@@ -1,0 +1,164 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "positional-write",
+      "path": "codex-rs/exec-server/src/file_handle.rs",
+      "before": [
+        "                    &bytes[written..],",
+        "                    position,",
+        "                );",
+        "                #[cfg(windows)]",
+        "                let result = std::os::windows::fs::FileExt::seek_write(",
+        "                    file.as_ref(),"
+      ],
+      "after": [
+        "                    &bytes[written..],",
+        "                    position,",
+        "                );",
+        "                #[cfg(target_os = \"wasi\")]",
+        "                let result = std::os::wasi::fs::FileExt::write_at(",
+        "                    file.as_ref(),",
+        "                    &bytes[written..],",
+        "                    position,",
+        "                );",
+        "                #[cfg(windows)]",
+        "                let result = std::os::windows::fs::FileExt::seek_write(",
+        "                    file.as_ref(),"
+      ]
+    },
+    {
+      "rule": "positional-read",
+      "path": "codex-rs/exec-server/src/file_handle.rs",
+      "before": [
+        "    std::os::unix::fs::FileExt::read_at(file, bytes, offset)",
+        "}",
+        "",
+        "#[cfg(windows)]",
+        "fn read_file_at(file: &File, bytes: &mut [u8], offset: u64) -> io::Result<usize> {",
+        "    std::os::windows::fs::FileExt::seek_read(file, bytes, offset)"
+      ],
+      "after": [
+        "    std::os::unix::fs::FileExt::read_at(file, bytes, offset)",
+        "}",
+        "",
+        "#[cfg(target_os = \"wasi\")]",
+        "fn read_file_at(file: &File, bytes: &mut [u8], offset: u64) -> io::Result<usize> {",
+        "    std::os::wasi::fs::FileExt::read_at(file, bytes, offset)",
+        "}",
+        "",
+        "#[cfg(windows)]",
+        "fn read_file_at(file: &File, bytes: &mut [u8], offset: u64) -> io::Result<usize> {",
+        "    std::os::windows::fs::FileExt::seek_read(file, bytes, offset)"
+      ]
+    },
+    {
+      "rule": "wasi-ext",
+      "path": "codex-rs/exec-server/src/lib.rs",
+      "before": [
+        "mod arg0_exec_helper;",
+        "mod capability_discovery;",
+        "mod capability_discovery_cache;"
+      ],
+      "after": [
+        "#![cfg_attr(target_os = \"wasi\", feature(wasi_ext))]",
+        "mod arg0_exec_helper;",
+        "mod capability_discovery;",
+        "mod capability_discovery_cache;"
+      ]
+    },
+    {
+      "rule": "no-follow-module",
+      "path": "codex-rs/exec-server/src/no_follow/mod.rs",
+      "before": [
+        "",
+        "#[cfg(unix)]",
+        "mod unix;",
+        "#[cfg(windows)]",
+        "mod windows;",
+        "",
+        "#[cfg(unix)]",
+        "use unix as imp;",
+        "#[cfg(windows)]",
+        "use windows as imp;",
+        ""
+      ],
+      "after": [
+        "",
+        "#[cfg(unix)]",
+        "mod unix;",
+        "#[cfg(target_os = \"wasi\")]",
+        "mod wasi;",
+        "#[cfg(windows)]",
+        "mod windows;",
+        "",
+        "#[cfg(unix)]",
+        "use unix as imp;",
+        "#[cfg(target_os = \"wasi\")]",
+        "use wasi as imp;",
+        "#[cfg(windows)]",
+        "use windows as imp;",
+        ""
+      ]
+    },
+    {
+      "rule": "no-follow-metadata",
+      "path": "codex-rs/exec-server/src/no_follow/mod.rs",
+      "before": [
+        "    imp::write_file(path.to_path_buf(), contents).await",
+        "}",
+        "",
+        "#[cfg(unix)]",
+        "pub(crate) async fn metadata(path: &Path) -> io::Result<FileMetadata> {",
+        "    imp::metadata(path.to_path_buf()).await",
+        "}"
+      ],
+      "after": [
+        "    imp::write_file(path.to_path_buf(), contents).await",
+        "}",
+        "",
+        "#[cfg(any(unix, target_os = \"wasi\"))]",
+        "pub(crate) async fn metadata(path: &Path) -> io::Result<FileMetadata> {",
+        "    imp::metadata(path.to_path_buf()).await",
+        "}"
+      ]
+    },
+    {
+      "rule": "no-follow-wasi-file",
+      "path": "codex-rs/exec-server/src/no_follow/wasi.rs",
+      "asset": "no_follow_wasi.rs"
+    },
+    {
+      "rule": "sandboxed-open",
+      "path": "codex-rs/exec-server/src/sandboxed_file_open.rs",
+      "before": [
+        "    }",
+        "}",
+        "",
+        "// Unix passes the opened fd over the helper's stdin socket.",
+        "#[cfg(unix)]",
+        "async fn open_platform("
+      ],
+      "after": [
+        "    }",
+        "}",
+        "",
+        "// agentOS wasm32-wasip1: no helper processes with fd passing; the VM is the sandbox,",
+        "// so sandboxed opens are refused and callers fall back to direct filesystem access.",
+        "#[cfg(target_os = \"wasi\")]",
+        "async fn open_platform(",
+        "    _command: SandboxExecRequest,",
+        "    _request: Vec<u8>,",
+        ") -> Result<tokio::fs::File, JSONRPCErrorError> {",
+        "    Err(internal_error(",
+        "        \"sandboxed file open is unavailable on wasm32-wasip1\".to_string(),",
+        "    ))",
+        "}",
+        "",
+        "// Unix passes the opened fd over the helper's stdin socket.",
+        "#[cfg(unix)]",
+        "async fn open_platform("
+      ]
+    }
+  ]
+}

@@ -1,15 +1,16 @@
-import { AutomationError, ThreadId, type AutomationNotice } from "@t3tools/contracts";
+import { AutomationError, ProjectId, ThreadId, type AutomationNotice } from "@t3tools/contracts";
 import { ExecutorSettingsStore } from "@signalbox/automations/executorConnection";
+import { AutomationFolders } from "@signalbox/automations/folderScope";
 import { explained } from "@signalbox/automations/runLog";
 import {
   AutomationFunctions,
-  AutomationIngress,
   AutomationRunLogSink,
   AutomationThreads,
 } from "@signalbox/automations/host";
 import * as HostedEngine from "@signalbox/automations/runner/layer";
 import { HostedRuns } from "@signalbox/automations/runner/hostedDriver";
 import * as WorkflowEngine from "@signalbox/automations/WorkflowEngine";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -20,12 +21,17 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as PullRequestMergesModule from "../github/PullRequestMerges.ts";
 import * as PullRequestReadsModule from "../github/PullRequestReads.ts";
+import * as GitHubWebhooksModule from "../github/GitHubWebhooks.ts";
+import { GitHubActions } from "../github/GitHubActions.ts";
+import { HarnessReleaseLedgerService } from "../harnessReleases/HarnessReleaseLedgerService.ts";
 import { PushNotifier } from "../push/PushNotifier.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
-import { projectOfDrive } from "../user/contextProjects.ts";
+import { contextOfProject, projectOfDrive } from "../user/contextProjects.ts";
+import { folderOfProject } from "../user/folderTree.ts";
 import * as UserDrives from "../user/UserDrives.ts";
 import * as UserFolders from "../user/UserFolders.ts";
 import * as UserStore from "../user/UserStore.ts";
+import * as UserTimezone from "../user/UserTimezone.ts";
 import {
   AutomationAlarm,
   CloudAutomations,
@@ -33,11 +39,15 @@ import {
   type AutomationHostRequest,
 } from "./CloudAutomations.ts";
 import { makeCloudBuiltinTools } from "./cloudBuiltinTools.ts";
+import { defaultsForSave } from "./automationDefaults.ts";
 import { driveEvent, makeChangedFiles } from "./driveChanges.ts";
 import * as CloudCompilerModule from "./cloudCompiler.ts";
+import * as CloudModelSteps from "./cloudModelSteps.ts";
 import * as CloudThreads from "./cloudThreads.ts";
 import { callTool, makeCloudTools } from "./cloudTools.ts";
 import { makeGitHubActionsRunner } from "./githubActionsRunner.ts";
+import * as CloudIngress from "./cloudIngress.ts";
+import * as HookStoreModule from "./hookStore.ts";
 
 /**
  * The user's automations on their Durable Object (#434). Each run is a
@@ -46,7 +56,7 @@ import { makeGitHubActionsRunner } from "./githubActionsRunner.ts";
  * The object keeps the engine's records on its SQLite, starts steps when an
  * instance asks, runs agents in the user's cloud threads, and sends a waiting
  * step's outcome to its instance as an event. Its alarm starts crons and
- * reads steps' runs on GitHub Actions. Hooks, Executor calls and `w.run` on
+ * reads steps' runs on GitHub Actions. Executor calls and `w.run` on
  * the host aren't here yet; they fail with a clear message instead of hanging.
  */
 
@@ -68,19 +78,6 @@ const layerUnhosted = Layer.mergeAll(
         ),
       remove: () => Effect.void,
       prune: () => Effect.void,
-    }),
-  ),
-  Layer.succeed(
-    AutomationIngress,
-    AutomationIngress.of({
-      make: () =>
-        Effect.succeed({
-          hookBaseUrl: Effect.succeed(null),
-          createCallback: () => unavailable("Callback links (w.hook)"),
-          runEnded: () => Effect.void,
-          forget: () => Effect.void,
-          setSecret: () => unavailable("Webhooks"),
-        }),
     }),
   ),
   Layer.succeed(
@@ -120,9 +117,18 @@ const make = Effect.gen(function* () {
   const feed = yield* CloudThreads.ThreadEventFeed;
   const compiler = yield* CloudCompilerModule.CloudCompiler;
   const service = yield* CloudThreadService.CloudThreadService;
+  const userTimezone = yield* UserTimezone.UserTimezone;
+  const savedTimezone = userTimezone.timezone.pipe(
+    Effect.mapError(
+      (cause) => new AutomationError({ message: "Couldn't read your saved timezone.", cause }),
+    ),
+  );
   const push = yield* PushNotifier;
   const sql = yield* SqlClient.SqlClient;
   const alarm = yield* AutomationAlarm;
+  const hooks = yield* CloudIngress.CloudHooks;
+  const inbox = yield* HookStoreModule.HookStore;
+  const githubHooks = yield* GitHubWebhooksModule.GitHubWebhooks;
   const owner = CloudThreads.ownerActor.pipe(
     Effect.provideService(UserStore.UserStore, yield* UserStore.UserStore),
     Effect.provideService(UserDrives.UserDrives, yield* UserDrives.UserDrives),
@@ -130,14 +136,31 @@ const make = Effect.gen(function* () {
 
   yield* ensureCursors.pipe(Effect.orDie);
   const merges = yield* PullRequestMergesModule.PullRequestMerges;
+  const github = yield* GitHubActions;
+  const harnessReleaseLedger = yield* HarnessReleaseLedgerService;
   const changedFiles = yield* makeChangedFiles;
   const folders = yield* UserFolders.UserFolders;
   yield* engine.registerBuiltinTools(
-    makeCloudBuiltinTools({ threads, service, owner, merges, folders }),
+    makeCloudBuiltinTools({
+      threads,
+      service,
+      owner,
+      merges,
+      github,
+      folders,
+      harnessReleaseLedger,
+    }),
   );
   yield* engine.registerPullRequestReads(yield* PullRequestReadsModule.PullRequestReads);
   yield* engine.registerExternalRunner("github-actions", yield* makeGitHubActionsRunner);
-  const tools = makeCloudTools({ engine, compiler, threads, folders });
+  const tools = makeCloudTools({
+    engine,
+    compiler,
+    timezone: savedTimezone,
+    threads,
+    folders,
+    github: githubHooks,
+  });
 
   // Notices queue up while the engine works and go out before the request ends.
   const notices = yield* Queue.unbounded<AutomationNotice>();
@@ -154,21 +177,36 @@ const make = Effect.gen(function* () {
     yield* engine.drain;
     for (const notice of yield* Queue.clear(notices)) yield* push.automationNotice(notice);
   });
-  /**
-   * The alarm goes off for the next cron, or sooner to tell an instance an
-   * outcome again or to read a step's run on GitHub Actions.
-   */
+  /** The next scheduled work, including outcome delivery, ask sync and external runs. */
   const nextAlarmAt = Effect.all([
     runs.nextCronAt,
     runs.nextRedeliveryAt,
+    engine.nextAskSyncAt,
     engine.nextExternalPollAt,
+    inbox.nextAt,
+    githubHooks.nextAt,
   ]).pipe(
     Effect.map((times) => {
-      const due = times.filter((at) => at !== null);
-      return due.length === 0 ? null : Math.min(...due);
+      const pending = times.filter((at): at is number => at !== null);
+      return pending.length ? Math.min(...pending) : null;
     }),
   );
-  const flush = drainAndPush.pipe(Effect.andThen(nextAlarmAt), Effect.flatMap(alarm.arm));
+  const reconcileGitHubHooks = githubHooks.reconcile.pipe(
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        yield* Effect.logWarning("GitHub event subscription reconciliation failed", {
+          cause: error,
+        });
+        yield* Clock.currentTimeMillis.pipe(Effect.flatMap((now) => alarm.arm(now + 60_000)));
+      }),
+    ),
+  );
+  const flush = drainAndPush.pipe(
+    Effect.andThen(reconcileGitHubHooks),
+    Effect.andThen(nextAlarmAt),
+    Effect.flatMap(alarm.arm),
+    Effect.tapCause((cause) => Effect.logError("Cloud automations flush failed", cause)),
+  );
 
   /** Who the spans are about: the owner, never anything they wrote. The id never changes, so it's read once. */
   let ownerId: string | undefined;
@@ -225,6 +263,58 @@ const make = Effect.gen(function* () {
     )(...call.args);
 
   return CloudAutomations.of({
+    answerAsk: (command, ask) =>
+      engine.answerSignalboxAsk(command, ask).pipe(Effect.andThen(flush)),
+    save: (input, newThreadModel) =>
+      Effect.gen(function* () {
+        if (input.compiled === undefined) {
+          return yield* new AutomationError({ message: CloudCompilerModule.COMPILE_WHERE });
+        }
+        const compiled = yield* CloudCompilerModule.acceptCompiled(input.compiled);
+        const defaultTimezone =
+          compiled.meta.triggers?.some(
+            (trigger) => "cron" in trigger && trigger.timezone === undefined,
+          ) === true
+            ? yield* savedTimezone
+            : undefined;
+        const defaults = yield* defaultsForSave({
+          engine,
+          projectId: input.projectId,
+          ...(input.automationId ? { automationId: input.automationId } : {}),
+          name: compiled.meta.name,
+          graph: compiled.graph,
+          newThreadModel,
+        });
+        return yield* compiler.withStaged(
+          input.source,
+          compiled,
+          engine.save(
+            {
+              source: input.source,
+              projectId: input.projectId,
+              defaults,
+              ...(input.automationId ? { automationId: input.automationId } : {}),
+              ...(input.draft === true ? { draft: true } : {}),
+            },
+            undefined,
+            undefined,
+            defaultTimezone,
+          ),
+        );
+      }).pipe(Effect.tap(() => flush)),
+    receiveHook: (request) =>
+      annotateOwner.pipe(
+        Effect.andThen(
+          request.token === "" ? githubHooks.receive(request) : hooks.receive(request),
+        ),
+        Effect.tap(() => nextAlarmAt.pipe(Effect.flatMap(alarm.arm))),
+        Effect.withSpan("CloudAutomations.receiveHook", {
+          attributes: {
+            "webhook.id": request.hookId,
+            "webhook.body_bytes": request.body.byteLength,
+          },
+        }),
+      ),
     threadEvents: ({ threadId, events }) =>
       Effect.gen(function* () {
         const { fresh, take } = yield* freshSince("thread", threadId, events);
@@ -296,6 +386,19 @@ const make = Effect.gen(function* () {
         }),
       );
     },
+    executorRunActive: (input) =>
+      Effect.gen(function* () {
+        const { run } = yield* engine.getRun(input.runId);
+        if (run.status !== "running") return false;
+        const { automation } = yield* engine.get(run.automationId);
+        const state = yield* folders.state;
+        const home = folderOfProject(state.tree, automation.projectId);
+        const ownerId =
+          (home === null
+            ? contextOfProject(state.contexts, automation.projectId)
+            : state.tree.folders.find((folder) => folder.id === home)?.ownerId) ?? null;
+        return ownerId === input.ownerId && (home ?? ownerId) === input.level;
+      }).pipe(Effect.orElseSucceed(() => false)),
     workerModule: (automationId, version) =>
       runs.workerModule(automationId, version).pipe(
         Effect.flatMap((module) =>
@@ -317,6 +420,14 @@ const make = Effect.gen(function* () {
       Effect.withSpan("CloudAutomations.start"),
     ),
     wake: annotateOwner.pipe(
+      Effect.andThen(githubHooks.sync),
+      Effect.andThen(
+        inbox.drain((row) =>
+          row.kind === "github"
+            ? githubHooks.deliver(row.target, row.payload, row.id)
+            : hooks.deliver(row.kind, row.payload, row.id),
+        ),
+      ),
       Effect.andThen(engine.tick),
       Effect.andThen(runs.redeliver),
       Effect.andThen(flush),
@@ -327,16 +438,41 @@ const make = Effect.gen(function* () {
 });
 
 /** The engine on the user object: give it the object's SQLite, threads, pushes and its runner. */
+const layerAutomationFolders = Layer.effect(
+  AutomationFolders,
+  Effect.gen(function* () {
+    const folders = yield* UserFolders.UserFolders;
+    return AutomationFolders.of({
+      projects: (projectId) =>
+        folders.automationProjects(ProjectId.make(projectId)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AutomationError({
+                message: "Couldn't resolve automation folder scopes.",
+                cause,
+              }),
+          ),
+        ),
+    });
+  }),
+);
+
 export const layer = Layer.effect(CloudAutomations, make).pipe(
-  Layer.provideMerge(HostedEngine.layer),
+  Layer.provideMerge(
+    GitHubWebhooksModule.layer.pipe(Layer.provideMerge(PullRequestMergesModule.layer)),
+  ),
+  Layer.provideMerge(HostedEngine.layer.pipe(Layer.provide(layerAutomationFolders))),
   Layer.provideMerge(
     Layer.mergeAll(
       CloudThreads.layer,
       CloudCompilerModule.layer,
+      CloudModelSteps.layer,
       PullRequestReadsModule.layer,
       PullRequestMergesModule.layer,
       layerUnhosted,
+      CloudIngress.layer,
     ).pipe(Layer.provideMerge(CloudThreads.layerEventFeed)),
   ),
+  Layer.provideMerge(HookStoreModule.layer),
   Layer.provideMerge(FetchHttpClient.layer),
 );

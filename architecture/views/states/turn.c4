@@ -1,0 +1,38 @@
+// State machine for one turn. The walk through it with people and modules is the dynamic view state_turn.
+model {
+  smTurn = state 'Turn lifecycle' {
+    queued = state 'Queued' { description 'whenBusy: queue' }
+    starting = state 'Starting' { description 'resolve + freeze Scope · grant' }
+    active = state 'Active' { description 'model wait (Durable Object) or exec' }
+    parked = state 'Parked' { description 'waits on a human · zero resident time' }
+    resuming = state 'Resuming' { description 'from session mirror' }
+    completed = state 'Completed' { description 'drive + session revision' }
+    interrupted = state 'Interrupted'
+    failed = state 'Failed' { description 'TurnFailed(cause)' }
+
+    queued -[transition]-> starting 'run slot free'
+    starting -[transition]-> active 'harness open'
+    starting -[transition]-> failed 'NeedsPool'
+    queued -[transition]-> interrupted 'cancel'
+    active -[transition]-> parked 'ask (Blocker, gate, AccessRequired)'
+    parked -[transition]-> resuming 'answer'
+    active -[transition]-> resuming 'RuntimeLost · OOM'
+    resuming -[transition]-> active 'replay-safe tools rerun'
+    active -[transition]-> completed 'settle'
+    active -[transition]-> interrupted 'interrupt · restart'
+    active -[transition]-> failed 'error'
+  }
+}
+views {
+  view state-turn of smTurn {
+    title 'States/Turn/State machine'
+    description 'What states does one turn pass through, and how does it end? Start: green. End: gray. Click the frame for the walk with people and modules (state_turn).'
+    include *
+    include smTurn with { navigateTo state_turn }
+    style smTurn.queued { color green }
+    style smTurn.completed { color gray }
+    style smTurn.interrupted { color gray }
+    style smTurn.failed { color gray }
+    autoLayout TopBottom
+  }
+}

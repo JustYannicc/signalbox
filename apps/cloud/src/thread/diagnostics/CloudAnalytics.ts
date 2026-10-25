@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { DiagnosticsStore } from "./DiagnosticsStore.ts";
+import { postHogEnabled, type PostHogEnv } from "../../observability/posthog.ts";
 
 /**
  * Sends a thread's `cloud.*` usage events (#116) to Signalbox's PostHog
@@ -15,13 +16,14 @@ import { DiagnosticsStore } from "./DiagnosticsStore.ts";
  * failed send or an eviction loses nothing. Each event keeps the uuid it got
  * when queued, so PostHog can tell a resend from a new event.
  *
- * Off without `SIGNALBOX_POSTHOG_KEY`, or with `T3CODE_TELEMETRY_ENABLED=false`
+ * Off unless `SIGNALBOX_POSTHOG_ENABLED=true` after #358 lands, without
+ * `SIGNALBOX_POSTHOG_KEY`, or with `T3CODE_TELEMETRY_ENABLED=false`
  * (the self-hosted server's switch): then nothing is queued at all. The
  * distinct id is a one-way hash of the thread's owner and person profiles are
  * off, as on the self-hosted server.
  */
 
-export interface CloudAnalyticsEnv {
+export interface CloudAnalyticsEnv extends PostHogEnv {
   readonly SIGNALBOX_POSTHOG_KEY?: string;
   readonly SIGNALBOX_POSTHOG_HOST?: string;
   readonly T3CODE_TELEMETRY_ENABLED?: string;
@@ -31,9 +33,6 @@ export interface CloudAnalyticsEnv {
 const BATCH_SIZE = 50;
 /** Sends an event is tried before it is dropped, so one bad event cannot block the outbox. */
 const MAX_ATTEMPTS = 5;
-const DEFAULT_HOST = "https://us.i.posthog.com";
-/** What `Config.Boolean` reads as false, as the self-hosted server reads the same switch. */
-const TELEMETRY_OFF = new Set(["false", "no", "off", "0", "n"]);
 
 export interface AnalyticsEvent {
   readonly event: string;
@@ -60,9 +59,8 @@ export interface AnalyticsSettings {
 
 export const settingsFromEnv = (env: CloudAnalyticsEnv): AnalyticsSettings | null => {
   const key = env.SIGNALBOX_POSTHOG_KEY?.trim() ?? "";
-  const off = TELEMETRY_OFF.has(env.T3CODE_TELEMETRY_ENABLED?.trim().toLowerCase() ?? "");
-  if (key === "" || off) return null;
-  const host = env.SIGNALBOX_POSTHOG_HOST?.trim() || DEFAULT_HOST;
+  const host = env.SIGNALBOX_POSTHOG_HOST?.trim() ?? "";
+  if (key === "" || host === "" || !postHogEnabled(env)) return null;
   return { key, host: host.replace(/\/+$/, "") };
 };
 

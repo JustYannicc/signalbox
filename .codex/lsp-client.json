@@ -1,0 +1,8 @@
+{
+  "lsp": {
+    "typescript": {
+      "command": ["./node_modules/.bin/tsc-rs", "--lsp", "--stdio"],
+      "extensions": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]
+    }
+  }
+}

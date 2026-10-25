@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeModule from "node:module";
+import * as NodeUtil from "node:util";
 
 import type { Plugin } from "vite-plus";
 
@@ -94,6 +95,7 @@ interface CollectedPackage {
 
 interface PackageCollection {
   readonly byIdentity: Map<string, CollectedPackage>;
+  readonly workspacePackageRoots: ReadonlySet<string>;
 }
 
 const EMPTY_CONFIG: ThirdPartyLicensesConfig = {
@@ -120,7 +122,6 @@ const NOTICE_TEXT_EXTENSIONS = new Set([
   ".txt",
   ".unlicense",
 ]);
-const FIRST_PARTY_PACKAGE_PREFIX = "@t3tools/";
 
 function isNoticeTextFile(fileName: string): boolean {
   return (
@@ -441,6 +442,7 @@ function packageIdentity(packageJson: PackageJson, packageRoot: string): string 
 async function findPackageRoot(
   resolvedPath: string,
   expectedName?: string,
+  workspacePackageRoots?: ReadonlySet<string>,
 ): Promise<{ readonly packageJson: PackageJson; readonly packageRoot: string } | null> {
   let current = NodePath.dirname(resolvedPath);
   const root = NodePath.parse(current).root;
@@ -449,12 +451,14 @@ async function findPackageRoot(
     const packageJsonPath = NodePath.join(current, "package.json");
     try {
       const packageJson = await readPackageJson(packageJsonPath);
+      const packageRoot = await NodeFSP.realpath(current);
       const matchesExpectedPackage =
         expectedName !== undefined
           ? packageJson.name === expectedName
-          : typeof packageJson.name === "string" && typeof packageJson.version === "string";
+          : typeof packageJson.name === "string" &&
+            (typeof packageJson.version === "string" || workspacePackageRoots?.has(packageRoot)); // signalbox: versionless workspace roots still own their bundled modules.
       if (matchesExpectedPackage) {
-        return { packageJson, packageRoot: await NodeFSP.realpath(current) };
+        return { packageJson, packageRoot };
       }
     } catch (error) {
       const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
@@ -515,6 +519,7 @@ async function collectProductionDependencyPackages(
 ): Promise<PackageCollection> {
   const collection: PackageCollection = {
     byIdentity: new Map(),
+    workspacePackageRoots: await collectWorkspacePackageRoots(packageManifests),
   };
   const visited = new Set<string>();
 
@@ -528,9 +533,8 @@ async function collectProductionDependencyPackages(
       visited.add(visitKey);
 
       const dependencyPackageJsonPath = NodePath.join(resolved.packageRoot, "package.json");
-      const name =
-        typeof resolved.packageJson.name === "string" ? resolved.packageJson.name : dependencyName;
-      if (!name.startsWith(FIRST_PARTY_PACKAGE_PREFIX)) {
+      if (!collection.workspacePackageRoots.has(resolved.packageRoot)) {
+        // signalbox: exclude by workspace ownership, never a package-name prefix.
         const identity = packageIdentity(resolved.packageJson, resolved.packageRoot);
         const existing = collection.byIdentity.get(identity);
         if (existing) {
@@ -552,6 +556,65 @@ async function collectProductionDependencyPackages(
     await visitManifest(asPath(manifest.path), manifest.bundle);
   }
   return collection;
+}
+
+// signalbox: ownership follows local dependency relationships, independent of package names.
+async function collectWorkspacePackageRoots(
+  packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>,
+): Promise<ReadonlySet<string>> {
+  const roots = new Set<string>();
+  const visited = new Set<string>();
+  const visitManifest = async (
+    packageJsonPath: string,
+    installedPackageJsonPath = packageJsonPath,
+  ): Promise<void> => {
+    const packageRoot = await NodeFSP.realpath(NodePath.dirname(packageJsonPath));
+    const installedRoot = await NodeFSP.realpath(NodePath.dirname(installedPackageJsonPath));
+    const visitKey = JSON.stringify([packageRoot, installedRoot]);
+    if (visited.has(visitKey)) return;
+    visited.add(visitKey);
+    roots.add(packageRoot);
+    roots.add(installedRoot);
+    const packageJson = await readPackageJson(packageJsonPath);
+    for (const dependencyName of dependencyNames(packageJson)) {
+      const specifier =
+        packageJson.optionalDependencies?.[dependencyName] ??
+        packageJson.dependencies?.[dependencyName];
+      if (!specifier?.startsWith("workspace:") && !specifier?.startsWith("file:")) continue;
+      const resolved = await resolveDependencyPackage(dependencyName, installedPackageJsonPath);
+      if (!resolved) continue;
+      const resolvedManifest = NodePath.join(resolved.packageRoot, "package.json");
+      if (specifier.startsWith("workspace:")) {
+        if (resolved.packageRoot.split(NodePath.sep).includes("node_modules")) continue;
+        await visitManifest(resolvedManifest);
+        continue;
+      }
+
+      // signalbox: pnpm can install a local directory as a copy inside its dependency store.
+      try {
+        const sourceRoot = await NodeFSP.realpath(
+          NodePath.resolve(NodePath.dirname(packageJsonPath), specifier.slice("file:".length)),
+        );
+        if (sourceRoot.split(NodePath.sep).includes("node_modules")) continue;
+        const sourceManifest = NodePath.join(sourceRoot, "package.json");
+        const sourcePackageJson = await readPackageJson(sourceManifest);
+        if (
+          sourcePackageJson.name !== dependencyName ||
+          !NodeUtil.isDeepStrictEqual(sourcePackageJson, resolved.packageJson)
+        ) {
+          continue;
+        }
+        await visitManifest(sourceManifest, resolvedManifest);
+      } catch (error) {
+        const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
+        if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+      }
+    }
+  };
+  for (const manifest of packageManifests) {
+    await visitManifest(asPath(manifest.path));
+  }
+  return roots;
 }
 
 function moduleFilePath(moduleId: string): string | null {
@@ -579,14 +642,18 @@ async function addBundledModulePackages(
     if (!filePath) continue;
     let found: Awaited<ReturnType<typeof findPackageRoot>>;
     try {
-      found = await findPackageRoot(await NodeFSP.realpath(filePath));
+      found = await findPackageRoot(
+        await NodeFSP.realpath(filePath),
+        undefined,
+        collection.workspacePackageRoots,
+      );
     } catch (error) {
       const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
       if (code === "ENOENT" || code === "ENOTDIR") continue;
       throw error;
     }
     if (!found || typeof found.packageJson.name !== "string") continue;
-    if (found.packageJson.name.startsWith(FIRST_PARTY_PACKAGE_PREFIX)) continue;
+    if (collection.workspacePackageRoots.has(found.packageRoot)) continue; // signalbox: bundled modules use the same workspace ownership rule.
     const identity = packageIdentity(found.packageJson, found.packageRoot);
     const existing = collection.byIdentity.get(identity);
     if (existing) {

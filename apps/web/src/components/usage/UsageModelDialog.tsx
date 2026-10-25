@@ -1,6 +1,5 @@
 import { formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { isModelCostUnknown, type ModelTotals } from "@t3tools/shared/usageMerge";
-import { useMemo } from "react";
 
 import { mergeAnsweredUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -24,6 +23,7 @@ import {
   tokenTypeSegments,
 } from "./usageBreakdown";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { useCanEditUsagePrices } from "./usagePriceCapabilities"; // signalbox
 
 export interface UsageChartWindow {
   readonly days: readonly string[];
@@ -48,18 +48,18 @@ export function UsageModelDialog({
   readonly onSetPrice: () => void;
   readonly onClose: () => void;
 }) {
-  const usage = useMemo(
-    () =>
-      mergeAnsweredUsage(
-        environments,
-        (bucket) => bucket.provider === model.provider && bucket.model === model.model,
-      ),
-    [environments, model.provider, model.model],
+  const usage = mergeAnsweredUsage(
+    environments,
+    (bucket) => bucket.provider === model.provider && bucket.model === model.model,
   );
-  const providers = useMemo(() => [model.provider], [model.provider]);
+  const providers = [model.provider];
   const presentation = PROVIDER_PRESENTATION[model.provider];
   const costUnknown = isModelCostUnknown(model);
   const hitRate = cacheHitRate(model);
+  const canSetPrice = useCanEditUsagePrices(
+    // signalbox
+    new Set(environments.map((environment) => environment.environmentId)),
+  );
   const perMillion = costPerMillionTokens(model);
   const stats = [
     { label: "Cost", value: costUnknown ? "Unpriced" : formatUsd(model.costUsd) },
@@ -143,7 +143,7 @@ export function UsageModelDialog({
             <span className="text-xs text-muted-foreground">
               {formatTokens(model.unpricedTokens)} tokens have no known price
             </span>
-            <Button onClick={onSetPrice}>Set price</Button>
+            {canSetPrice ? <Button onClick={onSetPrice}>Set price</Button> : null}
           </DialogFooter>
         ) : null}
       </DialogPopup>

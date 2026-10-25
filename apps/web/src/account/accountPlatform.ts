@@ -1,4 +1,5 @@
-import type { AccountSignInError } from "@t3tools/contracts/account";
+import { AccountSignInError } from "@t3tools/contracts/account";
+import * as Schema from "effect/Schema";
 
 import {
   readPrimaryEnvironmentTarget,
@@ -9,11 +10,16 @@ import {
 
 export const isDesktop = () => typeof window !== "undefined" && window.desktopBridge !== undefined;
 
-export class AccountFlowError extends Error {
-  constructor(readonly code: AccountSignInError) {
-    super(`Sign-in failed (${code}).`);
+export class AccountFlowError extends Schema.TaggedError<AccountFlowError>()("AccountFlowError", {
+  code: AccountSignInError,
+}) {
+  override get message(): string {
+    return `Sign-in failed (${this.code}).`;
   }
 }
+
+export const accountFlowError = (code: AccountSignInError) => new AccountFlowError({ code });
+export const isAccountFlowError = Schema.is(AccountFlowError);
 
 /** The primary environment server's origin, or null when there is none. */
 export function primaryOrigin(): string | null {
@@ -27,7 +33,7 @@ export function primaryOrigin(): string | null {
 
 export function requirePrimaryOrigin(): string {
   const origin = primaryOrigin();
-  if (!origin) throw new AccountFlowError("failed");
+  if (!origin) throw accountFlowError("failed");
   return origin;
 }
 

@@ -14,8 +14,8 @@ import * as Stream from "effect/Stream";
 import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryRunnerShape,
-  layerQueryRunner,
-} from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+} from "@signalbox/provider-claude/ClaudeQueryRunner";
+import { layerQueryRunner } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import type { SessionClient } from "./RunnerSessionClient.ts";
 import { SessionNotSavedError, type SessionOutbox } from "./RunnerSessionOutbox.ts";
 

@@ -6,12 +6,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import {
-  type ModelForwardReply,
-  type ModelPoolRoute,
-  PoolDirectory,
-  type PoolModelApi,
-} from "../pool/PoolDirectory.ts";
+import type { ModelForwardReply, ModelPoolRoute } from "../models/ModelProtocol.ts";
+import { PoolDirectory, type PoolModelApi } from "../pool/PoolDirectory.ts";
 import { pickModel, type ReadingPrompt, readingOf, replyText, requestFor } from "./noteReading.ts";
 
 /**

@@ -1,0 +1,32 @@
+// State machine for one attachment. The walk through it with people and modules is the dynamic view state_attachment.
+model {
+  smAttachment = state 'Attachment lifecycle' {
+    pending = state 'Pending' { description 'bytes under an upload id · owned by nobody' }
+    ownedByDraft = state 'Owned by draft' { description 'kept with a private draft' }
+    claimed = state 'Claimed' { description 'part of a message' }
+    discarded = state 'Discarded'
+    removed = state 'Removed' { description 'its turns rolled back' }
+    purged = state 'Purged' { description 'after the 30-day trash' }
+
+    pending -[transition]-> ownedByDraft 'draft holds it'
+    pending -[transition]-> claimed 'send'
+    ownedByDraft -[transition]-> claimed 'draft sent'
+    pending -[transition]-> discarded 'discard'
+    ownedByDraft -[transition]-> discarded 'discard'
+    claimed -[transition]-> removed 'rollback'
+    claimed -[transition]-> purged 'thread purged'
+  }
+}
+views {
+  view state-attachment of smAttachment {
+    title 'States/Attachment/State machine'
+    description 'What happens to one attachment from upload until it is sent, discarded or purged? Start: green. End: gray. Click the frame for the walk with people and modules (state_attachment).'
+    include *
+    include smAttachment with { navigateTo state_attachment }
+    style smAttachment.pending { color green }
+    style smAttachment.discarded { color gray }
+    style smAttachment.removed { color gray }
+    style smAttachment.purged { color gray }
+    autoLayout TopBottom
+  }
+}

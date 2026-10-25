@@ -14,7 +14,7 @@ import {
 } from "@signalbox/runner-protocol/PreviewTunnel";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
-import type { PreviewConfiguration } from "./PreviewState.ts";
+import type { PreviewConfiguration } from "../PreviewState.ts";
 import {
   PREVIEW_SCRIPT_PATH,
   PREVIEW_VIEW_PATH,
@@ -24,6 +24,7 @@ import {
   withPreviewLease,
 } from "./previewPage.ts";
 import type { ThreadId } from "@t3tools/contracts";
+import { previewLabel } from "@t3tools/shared/preview";
 
 import { BrowserMirror, type BrowserMirrorHost } from "./BrowserMirror.ts";
 import { requestHeaders, responseHeaders, sendableCloseCode } from "./previewHeaders.ts";
@@ -34,7 +35,6 @@ import {
   previewRouteCookie,
   readPreviewRoute,
   PREVIEW_TICKET_PATH,
-  previewLabel,
   previewOrigin,
   type PreviewSettings,
   readCookie,
@@ -369,6 +369,9 @@ export class PreviewGateway {
           type: "welcome",
           services: configuration.services,
           drive: await this.host.drive(),
+          ...(this.host.settings === null
+            ? {}
+            : { previewHostSuffix: this.host.settings.hostSuffix }),
         }),
       );
       this.mirror.connected();
@@ -483,6 +486,21 @@ export class PreviewGateway {
     if (!ended) return;
     this.failAll("The machine stopped.");
     // Watchers already moved on if a newer machine said hello first.
+    if (this.tunnel() === null) this.mirror.disconnected();
+    this.notify();
+    await this.holdMaybeChanged();
+  }
+
+  /** A trashed thread has no open previews; restore can open fresh ones. */
+  async closeForThreadTrash() {
+    const message = "This thread is in Trash.";
+    for (const socket of this.host.ctx.getWebSockets(TUNNEL_TAG)) {
+      tryClose(socket, CLOSE.released, message);
+    }
+    for (const socket of this.host.ctx.getWebSockets(VIEW_TAG)) {
+      tryClose(socket, CLOSE.released, message);
+    }
+    this.failAll(message);
     if (this.tunnel() === null) this.mirror.disconnected();
     this.notify();
     await this.holdMaybeChanged();

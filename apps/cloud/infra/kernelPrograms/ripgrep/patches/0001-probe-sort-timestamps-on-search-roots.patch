@@ -1,0 +1,80 @@
+--- a/crates/core/flags/lowargs.rs
++++ b/crates/core/flags/lowargs.rs
+@@ -709,34 +709,34 @@
+ impl SortMode {
+     /// Checks whether the selected sort mode is supported. If it isn't, an
+     /// error (hopefully explaining why) is returned.
+-    pub(crate) fn supported(&self) -> anyhow::Result<()> {
++    pub(crate) fn supported(&self, path: &std::path::Path) -> anyhow::Result<()> {
+         match self.kind {
+             SortModeKind::Path => Ok(()),
+             SortModeKind::LastModified => {
+-                let md = std::env::current_exe()
+-                    .and_then(|p| p.metadata())
++                let md = path.metadata()
+                     .and_then(|md| md.modified());
+                 let Err(err) = md else { return Ok(()) };
+                 anyhow::bail!(
+-                    "sorting by last modified isn't supported: {err}"
++                    "sorting by last modified isn't supported for {}: {err}",
++                    path.display()
+                 );
+             }
+             SortModeKind::LastAccessed => {
+-                let md = std::env::current_exe()
+-                    .and_then(|p| p.metadata())
++                let md = path.metadata()
+                     .and_then(|md| md.accessed());
+                 let Err(err) = md else { return Ok(()) };
+                 anyhow::bail!(
+-                    "sorting by last accessed isn't supported: {err}"
++                    "sorting by last accessed isn't supported for {}: {err}",
++                    path.display()
+                 );
+             }
+             SortModeKind::Created => {
+-                let md = std::env::current_exe()
+-                    .and_then(|p| p.metadata())
++                let md = path.metadata()
+                     .and_then(|md| md.created());
+                 let Err(err) = md else { return Ok(()) };
+                 anyhow::bail!(
+-                    "sorting by creation time isn't supported: {err}"
++                    "sorting by creation time isn't supported for {}: {err}",
++                    path.display()
+                 );
+             }
+         }
+--- a/crates/core/flags/hiargs.rs
++++ b/crates/core/flags/hiargs.rs
+@@ -114,14 +114,6 @@
+         // Callers should not be trying to convert low-level arguments when
+         // a short-circuiting special mode is present.
+         assert_eq!(None, low.special, "special mode demands short-circuiting");
+-        // If the sorting mode isn't supported, then we bail loudly. I'm not
+-        // sure if this is the right thing to do. We could silently "not sort"
+-        // as well. If we wanted to go that route, then we could just set
+-        // `low.sort = None` if `supported()` returns an error.
+-        if let Some(ref sort) = low.sort {
+-            sort.supported()?;
+-        }
+-
+         // We modify the mode in-place on `low` so that subsequent conversions
+         // see the correct mode.
+         match low.mode {
+@@ -142,6 +134,15 @@
+         let mut state = State::new()?;
+         let patterns = Patterns::from_low_args(&mut state, &mut low)?;
+         let paths = Paths::from_low_args(&mut state, &patterns, &mut low)?;
++        // Probe the requested filesystems: the executable can live elsewhere
++        // or have no discoverable path (for example, on WASI).
++        if let Some(ref sort) = low.sort {
++            for path in &paths.paths {
++                if path != Path::new("-") {
++                    sort.supported(path)?;
++                }
++            }
++        }
+ 
+         let binary = BinaryDetection::from_low_args(&state, &low);
+         let colors = take_color_specs(&mut state, &mut low);

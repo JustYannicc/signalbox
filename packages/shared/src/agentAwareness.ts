@@ -6,6 +6,8 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { blockingAsk, runtimeRequestNeedsInput } from "./signalboxAsks.ts";
+
 import { backgroundWorkHoldsCompletion } from "./orchestrationV2PendingBackgroundWork.ts";
 
 export type AgentAwarenessPhase =
@@ -42,6 +44,7 @@ export interface ProjectThreadAwarenessV2Input {
   readonly project: Pick<Project, "title">;
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
+    | "asks"
     | "activityRunStatus"
     | "id"
     | "lineage"
@@ -86,12 +89,16 @@ export function projectThreadAwarenessV2(
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
 ): AgentAwarenessPhase | null {
-  if (thread.pendingRuntimeRequest?.kind === "user_input") {
+  if (blockingAsk(thread.asks ?? []) !== undefined) {
+    return "waiting_for_input";
+  }
+  if (runtimeRequestNeedsInput(thread.pendingRuntimeRequest, thread.asks)) {
     return "waiting_for_input";
   }
   if (
     thread.pendingRuntimeRequest !== null &&
-    thread.pendingRuntimeRequest.kind !== "auth_refresh"
+    thread.pendingRuntimeRequest.kind !== "auth_refresh" &&
+    thread.pendingRuntimeRequest.kind !== "user_input"
   ) {
     return "waiting_for_approval";
   }

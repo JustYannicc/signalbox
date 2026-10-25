@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-09T23:31:10Z",
+  "updatedAt": "2026-10-17T00:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -116,18 +116,21 @@
           "slug": "gpt-6.1-sol",
           "name": "GPT-6.1 Sol",
           "status": "current",
+          "defaultSelection": "economical",
           "adapter": { "codex": { "minVersion": "0.153.0" } }
         },
         {
           "slug": "gpt-6-astra",
           "name": "GPT-6 Astra",
           "status": "current",
+          "defaultSelection": "excluded",
           "adapter": { "codex": { "minVersion": "0.153.0" } }
         },
         {
           "slug": "gpt-6-luna",
           "name": "GPT-6 Luna",
           "status": "current",
+          "defaultSelection": "economical",
           "adapter": { "codex": { "minVersion": "0.155.0" } }
         },
         { "slug": "gpt-6-sol", "name": "GPT-6 Sol", "status": "legacy" },
@@ -139,7 +142,7 @@
     },
     "claudeAgent": {
       "defaults": {
-        "chat": "claude-fable-5-1"
+        "chat": "claude-haiku-5-5"
       },
       "profiles": {
         "fable-5": {
@@ -668,6 +671,7 @@
           "name": "Claude Opus 5.5",
           "aliases": ["opus", "opus-5.5", "claude-opus-5.5"],
           "status": "current",
+          "defaultSelection": "excluded",
           "profile": "opus-5-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.280" } }
         },
@@ -676,6 +680,7 @@
           "name": "Claude Sonnet 5.5",
           "aliases": ["sonnet", "sonnet-5.5", "claude-sonnet-5.5"],
           "status": "current",
+          "defaultSelection": "economical",
           "profile": "sonnet-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.284" } }
         },
@@ -684,6 +689,7 @@
           "name": "Claude Fable 5.1",
           "aliases": ["fable", "fable-5.1", "claude-fable-5.1"],
           "status": "current",
+          "defaultSelection": "excluded",
           "profile": "fable-5",
           "adapter": {
             "claudeCode": {
@@ -770,6 +776,7 @@
           "name": "Claude Haiku 5.5",
           "aliases": ["haiku", "haiku-5.5", "claude-haiku-5.5"],
           "status": "current",
+          "defaultSelection": "economical",
           "badge": "new",
           "profile": "haiku-5-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.293" } }
@@ -789,6 +796,12 @@
       },
       "profiles": {},
       "models": [
+        {
+          "slug": "antigravity-default",
+          "name": "Antigravity default",
+          "status": "current",
+          "defaultSelection": "configured"
+        },
         {
           "slug": "gemini-3.8-flash-high",
           "name": "Gemini 3.8 Flash (High)",
@@ -820,6 +833,45 @@
         { "slug": "gemini-3.6-flash-low", "name": "Gemini 3.6 Flash (Low)", "status": "legacy" },
         { "slug": "gemini-pro-agent", "name": "Gemini 3.1 Pro (High)", "status": "legacy" },
         { "slug": "gemini-3.1-pro-low", "name": "Gemini 3.1 Pro (Low)", "status": "legacy" }
+      ]
+    },
+    "cursor": {
+      "profiles": {},
+      "models": [
+        { "slug": "auto", "name": "Auto", "status": "current", "defaultSelection": "configured" }
+      ]
+    },
+    "grok": {
+      "profiles": {},
+      "models": [
+        {
+          "slug": "grok-build",
+          "name": "Grok Build",
+          "status": "current",
+          "defaultSelection": "configured"
+        }
+      ]
+    },
+    "pi": {
+      "profiles": {},
+      "models": [
+        {
+          "slug": "default",
+          "name": "Pi default",
+          "status": "current",
+          "defaultSelection": "configured"
+        }
+      ]
+    },
+    "acpRegistry": {
+      "profiles": {},
+      "models": [
+        {
+          "slug": "default",
+          "name": "Default",
+          "status": "current",
+          "defaultSelection": "configured"
+        }
       ]
     }
   }

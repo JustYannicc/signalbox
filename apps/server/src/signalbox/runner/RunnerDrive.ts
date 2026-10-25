@@ -1,12 +1,17 @@
 import {
   type CommitAuthor,
+  type CheckpointViews,
+  type DriveCheckpointRecord,
   type FolderInstructions,
   DRIVE_COMMIT_AUTHOR,
   DRIVE_MERGE_MESSAGE,
+  Oid,
+  CheckpointShortcutView,
   type DriveFileChange,
   type DriveRemote,
   type SkippedFolder,
 } from "@signalbox/runner-protocol/DriveProtocol";
+import type { PullOperation, PullResult } from "@signalbox/runner-protocol/PullProtocol";
 import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -15,21 +20,23 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
+import * as Schema from "effect/Schema";
 
 import {
   type DriveClient,
   type DriveClientError,
-  type DriveRefusedError,
+  DriveRefusedError,
   DriveTooLargeError,
 } from "./RunnerDriveClient.ts";
-import { type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
+import { CHECKPOINT_NOTES_REF, type DriveRefs, makeDriveMirror } from "./RunnerDriveMirror.ts";
 import { EMPTY_TREE, makeRunnerGit, remoteCredentialFile, RunnerGitError } from "./RunnerGit.ts";
+import { applyPull } from "./RunnerPull.ts";
 import { CACHES_LINE, makeExcludes } from "./RunnerExcludes.ts";
 import { makeRunnerInstructions, type RunnerInstructionsError } from "./RunnerInstructions.ts";
 import type { DependencyTree, DependencyTreesError } from "./RunnerDependencies.ts";
 import { makeMachineState, type OutsideFolder } from "./RunnerMachineState.ts";
 import { mergedPullRequestOf } from "./mergedPullRequest.ts";
-import { makeRunnerShortcuts } from "./RunnerShortcuts.ts";
+import { makeRunnerShortcuts, type MountedShortcut } from "./RunnerShortcuts.ts";
 import { commitSummary, parseNameStatus } from "./commitSummary.ts";
 import type { SecretMask } from "./secretMask.ts";
 
@@ -48,20 +55,16 @@ import type { SecretMask } from "./secretMask.ts";
  *   fast-forwards `main` to it. A merge conflict stays in the worktree for the
  *   agent; `continueAfterResolution` or `abandonMerge` carries on from there.
  *
- * A drive backed by a remote repository (#135) keeps the remote as its home.
- * `prepare` first fetches the remote's default branch through the cloud, one
- * commit deep, with the turn's remote token (the machine holds no credential
- * for the remote) and mirrors the drive's `main` to it, so a new thread
- * starts from the remote's latest. `finishTurn` saves the branch and stops
- * there: the user pushes it or opens a pull request, and merging that on the
- * remote is what lands the work. Auto-saves never leave the drive.
- * `saveBranch` does the same mid-turn, so the thread's agent can publish its
- * work before the turn ends (`BranchProtocol.ts`). Once the thread's pull
- * request merged, `prepare` merges the remote's default branch into the
- * thread's branch before the turn (#495), so the next pull request carries
- * only new work. A merge that conflicts is undone there and reported;
- * `takeInMain` redoes it once the agent is there to resolve it, and
- * `continueAfterResolution` or `abandonMerge` carries on from there.
+ * A remote-backed drive without a mode mirrors the remote's default branch:
+ * `prepare` fetches its full history through the cloud and advances the
+ * drive's `main` to it. Turns save their branch for the user to publish, and
+ * a merged pull request can bring the remote's latest default branch into
+ * the thread (#495).
+ *
+ * A drive with `mode: "source"` keeps its own `main` while using the remote
+ * for history and promised files. Its threads never take in later source
+ * commits automatically. They land their own work on the drive; `saveBranch`
+ * remains available for an explicit publish through `BranchProtocol.ts`.
  *
  * `prepare` also mounts the drive's shortcuts (`RunnerShortcuts.ts`) and
  * writes the instructions they bring (`RunnerInstructions.ts`), answering
@@ -83,7 +86,7 @@ export interface DriveCheckpoint {
 
 export type DriveOutcome =
   | { readonly _tag: "landed"; readonly main: string }
-  /** A remote-backed drive's branch, saved for the user to push. */
+  /** The thread branch was saved without merging it into main. */
   | { readonly _tag: "saved"; readonly head: string }
   | { readonly _tag: "conflict"; readonly files: ReadonlyArray<string> }
   | { readonly _tag: "not_landed"; readonly reason: string }
@@ -134,14 +137,18 @@ export interface RunnerDrive {
    * the checkout until the next turn start is by `author`, `DRIVE_COMMIT_AUTHOR`
    * when not given. `folders` is the `AGENTS.md` of the thread's chain, top
    * level first. `pullRequests` are the thread's links: once its own merged,
-   * the remote's default branch is merged into the thread's branch. Fails
-   * when the instructions are too big to load.
+   * the remote's default branch is merged into the thread's branch unless this
+   * is a pinned continuation. Fails when the instructions are too big to load.
    */
   readonly prepare: (
     remoteToken: string | null,
     author?: CommitAuthor,
     folders?: ReadonlyArray<FolderInstructions>,
     pullRequests?: ReadonlyArray<ThreadPullRequestLink>,
+    progress?: (
+      stage: "fetch" | "checkout",
+      status: "running" | "done" | "skipped",
+    ) => Effect.Effect<void>,
   ) => Effect.Effect<PreparedDrive, RunnerDriveError | RunnerInstructionsError>;
   /** Starts an auto-save, or queues one behind the running one. Never fails. */
   readonly autosave: Effect.Effect<void>;
@@ -160,9 +167,18 @@ export interface RunnerDrive {
    * were edited at. Only after `prepare` restored the thread on a new machine.
    */
   readonly restoreDependencyEdits: Effect.Effect<void>;
+  /** The commits mounted for shortcuts and the context view pinned for this turn. */
+  readonly checkpointViews: (context: CheckpointViews["context"]) => CheckpointViews;
+  /** Adds a durable Git note and registers its uploaded ref before the checkpoint event is emitted. */
+  readonly recordCheckpoint: (
+    record: Omit<DriveCheckpointRecord, "notes"> & { readonly threadId: string },
+  ) => Effect.Effect<void, RunnerDriveError>;
+  /** Saves the current worktree as an auto-save revision without landing the branch. */
+  readonly captureCheckpoint: Effect.Effect<DriveCheckpoint | null, RunnerDriveError>;
   /**
    * Commits the turn's files with a message describing the change (never the
    * turn's prompt, which pushing would publish), then lands or saves the branch.
+   * A pinned continuation saves its selected branch without taking in main.
    */
   readonly finishTurn: () => Effect.Effect<
     { readonly checkpoint: DriveCheckpoint | null; readonly outcome: DriveOutcome },
@@ -187,7 +203,30 @@ export interface RunnerDrive {
    * fetched one.
    */
   readonly published: (head: string) => Effect.Effect<void, RunnerDriveError>;
+  /** Applies or returns the durable result for one selected remote pull. */
+  readonly pull: (
+    operation: PullOperation,
+    remoteToken: string | null,
+    blockedReason?: string,
+  ) => Effect.Effect<PullResult, RunnerDriveError>;
 }
+
+const CheckpointNoteJson = Schema.fromJsonString(
+  Schema.Struct({
+    threadId: Schema.String,
+    turnId: Schema.String,
+    runId: Schema.String,
+    commit: Oid,
+    start: Schema.NullOr(Oid),
+    views: Schema.Struct({
+      shortcuts: Schema.Array(CheckpointShortcutView),
+      context: Schema.NullOr(
+        Schema.Array(Schema.Struct({ driveId: Schema.String, commit: Schema.NullOr(Oid) })),
+      ),
+    }),
+  }),
+);
+const encodeCheckpointNote = Schema.encodeSync(CheckpointNoteJson);
 
 const BRANCH = "refs/heads/signalbox";
 /** The remote's head as last fetched. */
@@ -231,12 +270,15 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   let conflicted: ReadonlyArray<string> = [];
   /** The main a turn start reported conflicting, and its merge message, until taken in or dropped. */
   let syncing: { readonly main: string; readonly message: string } | null = null;
-  /** The remote the drive is backed by, once read; a drive's remote never changes. */
+  /** Refreshed at turn boundaries: a local drive may have been published meanwhile. */
   let remote: DriveRemote | null | undefined = undefined;
   /** Whether a turn start opened the drive here: only then is there anything to save. */
   let prepared = false;
+  /** A restored/forked thread stays on its selected input until it explicitly updates to latest. */
+  let pinnedContinuation = false;
   /** Where the last turn mounted the drive's shortcuts. */
   let mounted: ReadonlySet<string> = new Set();
+  let mountedShortcuts: ReadonlyArray<MountedShortcut> = [];
   const machineState =
     input.machine === undefined
       ? null
@@ -485,12 +527,21 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   });
 
   const resolveAndLand = Effect.gen(function* () {
+    remote = yield* drive.refresh;
     if (yield* mergeInProgress) {
       const files = yield* concludeMerge;
       if (files.length > 0) return { _tag: "conflict", files } as DriveOutcome;
     }
-    // Only a drive without a remote lands on its own main.
-    return syncing === null && (remote === null || remote === undefined)
+    if (pinnedContinuation) {
+      const head = yield* git.resolve("HEAD");
+      if (head === null) return { _tag: "nothing_saved" } as const;
+      const refused = yield* drive.saveBranch(head);
+      return refused === null
+        ? ({ _tag: "saved", head } as const)
+        : ({ _tag: "not_landed", reason: refused } as const);
+    }
+    // A source remote supplies history and files; the drive still owns main.
+    return syncing === null && (remote === null || remote === undefined || remote.mode === "source")
       ? yield* land
       : yield* saveSynced;
   });
@@ -507,7 +558,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   /** Keeps dependency trees off the branch, whatever the repository's own ignore files say. */
   const excludeCaches = makeExcludes(fs, path, gitDir).appendLines([CACHES_LINE]);
 
-  const exclusive = <A, E>(effect: Effect.Effect<A, E>) =>
+  const exclusive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     flush.pipe(Effect.andThen(lock.withPermits(1)(effect)));
 
   const checkout = (state: DriveRefs) =>
@@ -567,7 +618,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         : ({ _tag: "fetched", head } as const);
     });
 
-  /** Brings a remote-backed drive's `main` to the remote's head. Fails only when the drive has nothing at all. */
+  /** Brings a mirror drive's `main` to the remote's head. Fails only when the drive has nothing at all. */
   const syncRemote = (fetched: Effect.Success<ReturnType<typeof fetchHistory>>) =>
     Effect.gen(function* () {
       if (fetched._tag === "failed") {
@@ -633,26 +684,30 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     author = DRIVE_COMMIT_AUTHOR,
     folders = [],
     pullRequests = [],
+    progress = () => Effect.void,
   ) =>
     exclusive(
       Effect.gen(function* () {
+        yield* progress("fetch", "running");
         const existed = yield* fs.exists(gitDir);
         yield* fs.makeDirectory(input.cwd, { recursive: true });
         if (!existed) yield* git.run(["init", "-q", `--initial-branch=signalbox`]);
         for (const [key, value] of configFor(author)) yield* git.run(["config", key, value]);
+        yield* git.run(["config", "core.notesRef", CHECKPOINT_NOTES_REF]);
+        yield* git.run(["config", "notes.displayRef", CHECKPOINT_NOTES_REF]);
         yield* excludeCaches;
         const localThread = existed ? yield* git.resolve("refs/drive/thread") : null;
         // A merge a turn start reported belongs to that turn alone.
         syncing = null;
         /** The remote's default branch, when this turn start fetched it: only then is it current. */
         let fetchedMain: string | null = null;
-        // A drive backed by a remote brings `main` up to it before opening pins the branch's base.
-        // Unknown until read once; a drive with none never gets one.
-        if (remote !== null && remoteToken !== null) {
+        // Discover newly published remotes every turn. Only mirror mode advances main;
+        // a source still supplies history and promised files.
+        {
           const current = yield* input.client.state;
           remote = current.remote;
           let fetched: Effect.Success<ReturnType<typeof fetchHistory>> | null = null;
-          if (remote !== null) {
+          if (remote !== null && remoteToken !== null) {
             // The drive keeps the remote's files on the remote; git fetches them as it needs them.
             const credentials = remoteCredentialFile(input.cwd);
             yield* fs.writeFileString(
@@ -666,15 +721,26 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
             fetched = yield* fetchHistory(remote);
           }
           yield* drive.adopt(current);
-          if (fetched !== null) yield* syncRemote(fetched);
+          if (fetched !== null && remote?.mode !== "source") yield* syncRemote(fetched);
           if (fetched?._tag === "fetched") fetchedMain = fetched.head;
         }
+        yield* progress("fetch", remote === null || remoteToken === null ? "skipped" : "done");
+        yield* progress("checkout", "running");
         const state = yield* drive.open;
+        pinnedContinuation = state.pinnedViews !== null;
+        const revisionFile = path.join(gitDir, "signalbox-revision");
+        const localRevision = yield* fs.readFileString(revisionFile).pipe(
+          Effect.map((value) => value.trim() || null),
+          Effect.orElseSucceed(() => null),
+        );
+        const revisionChanged =
+          state.revision !== undefined && (state.revision ?? "") !== (localRevision ?? "");
         const notices: Array<string> = [];
-        if (!existed || localThread !== state.thread) {
+        if (!existed || localThread !== state.thread || revisionChanged) {
           conflicted = [];
           // The branch may still have files where a shortcut is mounted read-only.
           yield* shortcuts.release;
+          if (revisionChanged) yield* git.run(["clean", "-ffdq"]);
           yield* checkout(state).pipe(
             Effect.catchTags({
               RunnerGitError: (error) =>
@@ -688,6 +754,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
                     ),
             }),
           );
+          yield* fs.writeFileString(revisionFile, state.revision ?? "");
         }
         // A new machine: the last one's machine state comes back on top of the checkout.
         if (!existed && machineState !== null && state.machine !== null) {
@@ -710,13 +777,21 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           fetchedMain === null ||
           remote === null ||
           remote === undefined ||
+          remote.mode === "source" ||
           input.branch === undefined
             ? null
             : mergedPullRequestOf(pullRequests, {
                 branch: input.branch,
                 repository: remote.repository,
               });
-        if (merged !== null && fetchedMain !== null && remote !== null && remote !== undefined) {
+        if (
+          merged !== null &&
+          fetchedMain !== null &&
+          remote !== null &&
+          remote !== undefined &&
+          remote.mode !== "source" &&
+          !pinnedContinuation
+        ) {
           const main = remote.defaultBranch;
           const outcome = yield* syncMain(merged, remote, fetchedMain);
           if (outcome?._tag === "merged") {
@@ -733,10 +808,13 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         }
         turnStart = yield* git.resolve("HEAD");
         prepared = true;
-        const mounts = yield* shortcuts.mount(remoteToken);
+        const mounts = yield* shortcuts.mount(remoteToken, state.pinnedViews !== null);
         mounted = new Set(mounts.mounted.map((mount) => mount.path));
+        mountedShortcuts = mounts.mounted;
+        const composed = yield* instructions.compose(mounts.mounted, folders);
+        yield* progress("checkout", "done");
         return {
-          instructions: yield* instructions.compose(mounts.mounted, folders),
+          instructions: composed,
           notices: [...notices, ...mounts.notices],
           ...(mainConflict === undefined ? {} : { mainConflict }),
         } satisfies PreparedDrive;
@@ -774,6 +852,8 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
     exclusive(
       withMachineState(
         Effect.gen(function* () {
+          // Publication can happen while this turn is working. Never land its work on remote main.
+          remote = yield* drive.refresh;
           // Committing now would commit onto the rebase's detached HEAD; the branch stays as last saved.
           if (yield* rebasing) {
             return {
@@ -791,17 +871,26 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
           } else {
             yield* commitAll();
           }
-          const head = yield* git.resolve("HEAD");
-          const checkpoint =
-            head === null
-              ? null
-              : {
-                  start: turnStart,
-                  commit: head,
-                  files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, head),
-                };
-          if (head === null) return { checkpoint, outcome: { _tag: "nothing_saved" } };
-          if (remote !== null && remote !== undefined) {
+          let head = yield* git.resolve("HEAD");
+          if (head === null) {
+            // The first completed turn needs a real, restorable revision even when it wrote no files.
+            head = (yield* git.run([
+              "commit-tree",
+              EMPTY_TREE,
+              "-m",
+              "Initialize the drive",
+            ])).trim();
+            yield* git.setRef(BRANCH, head);
+          }
+          const checkpoint = {
+            start: turnStart,
+            commit: head,
+            files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, head),
+          };
+          if (
+            (remote !== null && remote !== undefined && remote.mode !== "source") ||
+            pinnedContinuation
+          ) {
             const refused = yield* drive.saveBranch(head);
             return {
               checkpoint,
@@ -817,6 +906,33 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
         }),
       ),
     );
+
+  const captureCheckpoint: RunnerDrive["captureCheckpoint"] = Effect.suspend(() =>
+    prepared
+      ? exclusive(
+          Effect.gen(function* () {
+            yield* saveWip;
+            let commit = drive.known().wip ?? drive.known().thread;
+            if (commit === null) {
+              commit = (yield* git.run([
+                "commit-tree",
+                EMPTY_TREE,
+                "-m",
+                "Initialize the drive",
+              ])).trim();
+              const refused = yield* drive.saveWip(commit);
+              if (refused !== null) return yield* new DriveRefusedError({ message: refused });
+              commit = drive.known().wip ?? commit;
+            }
+            return {
+              start: turnStart,
+              commit,
+              files: yield* git.changedFiles(turnStart ?? EMPTY_TREE, commit),
+            };
+          }),
+        )
+      : Effect.succeed(null),
+  );
 
   const abandonMerge = exclusive(
     Effect.gen(function* () {
@@ -851,7 +967,7 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
   const saveBranch: RunnerDrive["saveBranch"] = (message) =>
     exclusive(
       Effect.gen(function* () {
-        if (remote === undefined) remote = yield* drive.refresh;
+        remote = yield* drive.refresh;
         if (remote === null) {
           return {
             _tag: "not_saved",
@@ -880,6 +996,238 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
       }),
     );
 
+  const initializePullRepository = () =>
+    Effect.gen(function* () {
+      yield* fs.makeDirectory(input.cwd, { recursive: true });
+      const existed = yield* fs.exists(gitDir);
+      if (!existed) yield* git.run(["init", "-q", "--initial-branch=signalbox"]);
+      for (const [key, value] of configFor(DRIVE_COMMIT_AUTHOR)) {
+        yield* git.run(["config", key, value]);
+      }
+      yield* git.run(["config", "core.notesRef", CHECKPOINT_NOTES_REF]);
+      yield* git.run(["config", "notes.displayRef", CHECKPOINT_NOTES_REF]);
+      yield* excludeCaches;
+      return existed;
+    });
+
+  const restorePullCheckout = (existed: boolean) =>
+    Effect.gen(function* () {
+      if (existed) return;
+      const known = drive.known();
+      yield* checkout(known);
+      if (machineState !== null && known.machine !== null) {
+        yield* machineState.restore(known.machine, known.wip ?? known.thread);
+      }
+    });
+
+  const markPulledTarget = (operation: PullOperation, result: PullResult) =>
+    Effect.gen(function* () {
+      if (
+        result.outcome === "refused" ||
+        input.branch === undefined ||
+        operation.branch !== input.branch
+      ) {
+        return result;
+      }
+      // A successful receipt may be replayed on a replacement machine before it
+      // has a Git repository. Restore the drive refs before recording the lease.
+      const existed = yield* initializePullRepository();
+      yield* drive.open;
+      yield* restorePullCheckout(existed);
+      const trackingRef = `refs/remotes/origin/${operation.branch}`;
+      if ((yield* lease) === null) {
+        // Only the commit the person selected is incorporated. The branch may
+        // have moved beyond it while the fetch was in flight. Keep a newer tip
+        // only when the ordinary lease check proves it is already in this branch.
+        yield* git.setRef(trackingRef, operation.target);
+      }
+      return result;
+    });
+
+  const pull: RunnerDrive["pull"] = (operation, remoteToken, blockedReason) =>
+    Effect.gen(function* () {
+      const run = exclusive(
+        Effect.gen(function* () {
+          // A duplicate can have completed while this operation waited for an auto-save or lock.
+          const replay = yield* drive.pullReceipt(operation.id);
+          if (replay !== null) return yield* markPulledTarget(operation, replay);
+
+          const unchanged = (reason: string) =>
+            Effect.gen(function* () {
+              const status = (yield* fs.exists(gitDir))
+                ? yield* git
+                    .run(["status", "--porcelain=v1", "--untracked-files=all", "-z"])
+                    .pipe(Effect.orElseSucceed(() => ""))
+                : "";
+              return {
+                id: operation.id,
+                target: operation.target,
+                head: operation.expectedThread,
+                wip: operation.expectedWip,
+                outcome: "refused",
+                reason,
+                hasWorkingTreeChanges: status.length > 0,
+              } satisfies PullResult;
+            });
+
+          if (blockedReason !== undefined) {
+            return yield* drive.savePull(operation, yield* unchanged(blockedReason));
+          }
+
+          const existed = yield* initializePullRepository();
+
+          yield* drive.open;
+          const known = drive.known();
+          if (
+            known.thread !== operation.expectedThread ||
+            known.wip !== operation.expectedWip ||
+            known.revision !== operation.revision
+          ) {
+            return yield* drive.savePull(
+              operation,
+              yield* unchanged("The thread's saved files changed after this pull was selected."),
+            );
+          }
+          remote = yield* drive.refresh;
+          if (remote === null) {
+            return yield* drive.savePull(
+              operation,
+              yield* unchanged("This drive is not backed by a remote Git repository."),
+            );
+          }
+          if (remoteToken === null) {
+            return yield* drive.savePull(
+              operation,
+              yield* unchanged("Signalbox could not authorize a fetch from this repository."),
+            );
+          }
+          const branchRef = `refs/heads/${operation.branch}`;
+          const validBranch = yield* git.exec(["check-ref-format", branchRef]);
+          if (validBranch.code !== 0) {
+            return yield* drive.savePull(
+              operation,
+              yield* unchanged("The selected remote branch name is invalid."),
+            );
+          }
+          const inProgress =
+            (yield* git.resolve("MERGE_HEAD")) !== null ||
+            (yield* Effect.forEach(REBASE_DIRS, (name) => fs.exists(path.join(gitDir, name)))).some(
+              Boolean,
+            );
+          if (inProgress) {
+            return yield* drive.savePull(
+              operation,
+              yield* unchanged("A merge or rebase is already in progress in this thread."),
+            );
+          }
+
+          const credentialFile = remoteCredentialFile(input.cwd);
+          yield* fs.writeFileString(
+            credentialFile,
+            `username=signalbox\npassword=${remoteToken}\n`,
+            { mode: 0o600 },
+          );
+          yield* git.usePromisor(input.client.remoteUrl, credentialFile);
+
+          yield* restorePullCheckout(existed);
+
+          const source = `refs/signalbox/pull-source/${operation.target}`;
+          const shallow = yield* fs.exists(path.join(gitDir, "shallow"));
+          const fetched = yield* git.exec([
+            "fetch",
+            "--filter=blob:none",
+            "--no-tags",
+            "-q",
+            ...(shallow ? ["--unshallow"] : []),
+            input.client.remoteUrl,
+            `+${branchRef}:${source}`,
+          ]);
+          if (fetched.code !== 0) {
+            return yield* drive.savePull(
+              operation,
+              yield* unchanged(
+                "Signalbox couldn't fetch the selected commit from its remote branch.",
+              ),
+            );
+          }
+
+          const result = yield* applyPull({
+            cwd: input.cwd,
+            gitDir,
+            git,
+            operation,
+            source,
+            saveWip: (head) =>
+              Effect.gen(function* () {
+                const tree = yield* snapshotTree(head);
+                if (tree === (yield* treeOf(head))) return head;
+                return (yield* git.run([
+                  "commit-tree",
+                  tree,
+                  "-p",
+                  head,
+                  "-m",
+                  "Auto-save",
+                ])).trim();
+              }),
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          );
+          const saved = yield* drive.savePull(operation, result);
+          return yield* markPulledTarget(operation, saved);
+        }),
+      );
+      return yield* run;
+    });
+
+  const recordCheckpoint: RunnerDrive["recordCheckpoint"] = (record) =>
+    exclusive(
+      Effect.gen(function* () {
+        const note = encodeCheckpointNote({
+          threadId: record.threadId,
+          turnId: record.turnId,
+          runId: record.runId,
+          commit: record.commit,
+          start: record.start,
+          views: {
+            shortcuts: record.views.shortcuts,
+            context:
+              record.views.context?.contexts.flatMap((context) =>
+                context.drives.map(({ driveId, commit }) => ({ driveId, commit })),
+              ) ?? null,
+          },
+        });
+        const existing = yield* git.exec([
+          "notes",
+          `--ref=${CHECKPOINT_NOTES_REF}`,
+          "show",
+          record.commit,
+        ]);
+        if (existing.code !== 0 || !existing.stdout.split("\n").includes(note)) {
+          yield* git.run(
+            ["notes", `--ref=${CHECKPOINT_NOTES_REF}`, "append", "-F", "-", record.commit],
+            { stdin: `${note}\n` },
+          );
+        }
+        const notes = yield* git.resolve(CHECKPOINT_NOTES_REF);
+        if (notes === null) {
+          return yield* new RunnerGitError({ message: "git notes didn't create a notes ref." });
+        }
+        yield* drive.saveNotes(notes);
+        const result = yield* input.client.recordCheckpoint({ ...record, notes });
+        if (result._tag === "refused") {
+          return yield* new DriveRefusedError({ message: result.reason });
+        }
+        if (result._tag === "conflict") {
+          return yield* new DriveRefusedError({
+            message: "The drive changed while this checkpoint was being recorded.",
+          });
+        }
+        yield* drive.adopt(result.state);
+      }),
+    );
+
   return {
     prepare,
     autosave,
@@ -902,11 +1250,18 @@ export const makeRunnerDrive = Effect.fn("makeRunnerDrive")(function* (input: {
               ),
             ),
           ),
+    checkpointViews: (context) => ({
+      shortcuts: mountedShortcuts.map(({ path, target, commit }) => ({ path, target, commit })),
+      context,
+    }),
+    recordCheckpoint,
+    captureCheckpoint,
     finishTurn,
     continueAfterResolution: exclusive(resolveAndLand),
     takeInMain: exclusive(takeInMain),
     abandonMerge,
     saveBranch,
+    pull,
     published: (head) =>
       input.branch === undefined
         ? Effect.void

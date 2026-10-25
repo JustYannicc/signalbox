@@ -11,6 +11,12 @@ import type {
 
 import * as Config from "effect/Config";
 
+const utf8Encoder = new TextEncoder();
+
+function utf8ByteLength(value: string): number {
+  return utf8Encoder.encode(value).byteLength;
+}
+
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
 export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP").pipe(
@@ -122,7 +128,7 @@ export function handoffBudget(input: {
   );
   const native = usage?.usedTokens ?? input.nativeContextEstimate;
   const current =
-    Buffer.byteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
+    utf8ByteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
   return Math.max(
     0,
     Math.min(
@@ -214,8 +220,8 @@ export function historyCost(
 ): number {
   return (
     Math.max(
-      Buffer.byteLength(JSON.stringify(historyResponseItems(messages, context))),
-      Buffer.byteLength(JSON.stringify(renderHistory(messages, context))),
+      utf8ByteLength(JSON.stringify(historyResponseItems(messages, context))),
+      utf8ByteLength(JSON.stringify(renderHistory(messages, context))),
     ) + 256
   );
 }
@@ -242,8 +248,8 @@ export function selectHistory(input: {
     const message = messages[index];
     if (message === undefined || selected.has(index)) return;
     const cost = Math.max(
-      Buffer.byteLength(JSON.stringify(historyResponseItems([message], "")[1])) + 1,
-      Buffer.byteLength(JSON.stringify(renderHistoricalMessage(message))) + 4,
+      utf8ByteLength(JSON.stringify(historyResponseItems([message], "")[1])) + 1,
+      utf8ByteLength(JSON.stringify(renderHistoricalMessage(message))) + 4,
     );
     if (cost > remaining) return;
     selected.add(index);

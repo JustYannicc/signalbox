@@ -90,6 +90,38 @@ const decodeReplayRecord = Schema.decodeUnknownSync(
   Schema.fromJsonString(ProviderReplayNdjsonRecord),
 );
 const decodeTranscript = Schema.decodeUnknownSync(ProviderReplayTranscript);
+const isRecord = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
+
+// signalbox: Older recordings predate standard-form negotiation and app-created user roots.
+function normalizeCodexStartup(entry: ProviderReplayEntry): ProviderReplayEntry {
+  if (entry.type !== "expect_outbound" || !isRecord(entry.frame)) return entry;
+  const frame = entry.frame;
+  if (!isRecord(frame.params)) return entry;
+  const params = frame.params;
+  if (frame.method === "thread/start" && !Object.hasOwn(params, "threadSource")) {
+    return { ...entry, frame: { ...frame, params: { ...params, threadSource: "user" } } };
+  }
+  if (frame.method !== "initialize" || !isRecord(params.capabilities)) return entry;
+  const capabilities = params.capabilities;
+  const extensions = capabilities.extensions;
+  if (extensions !== undefined && !isRecord(extensions)) return entry;
+  if (extensions !== undefined && Object.hasOwn(extensions, "openai/standard-form-input")) {
+    return entry;
+  }
+  return {
+    ...entry,
+    frame: {
+      ...frame,
+      params: {
+        ...params,
+        capabilities: {
+          ...capabilities,
+          extensions: { ...extensions, "openai/standard-form-input": {} },
+        },
+      },
+    },
+  };
+}
 
 function parseReplayRecord(
   line: string,
@@ -154,7 +186,10 @@ export function decodeProviderReplayNdjson(
 
     return decodeTranscript({
       ...metadata,
-      entries,
+      entries:
+        metadata.provider === "codex" && metadata.protocol === "codex.app-server"
+          ? entries.map(normalizeCodexStartup)
+          : entries,
     });
   });
 }

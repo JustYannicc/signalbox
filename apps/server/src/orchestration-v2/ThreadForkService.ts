@@ -83,6 +83,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         }
         const targetThread: OrchestrationV2AppThread = {
           ...input.sourceProjection.thread,
+          asks: [], // signalbox: asks stay with their original work
           createdBy: input.createdBy,
           creationSource: input.creationSource,
           id: input.targetThreadId,

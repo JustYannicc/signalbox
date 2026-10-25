@@ -1,7 +1,10 @@
+import { layerAskTools } from "./RunnerAskTools.ts";
 // @effect-diagnostics nodeBuiltinImport:off - the context server is a Node HTTP boundary.
 import * as NodeHttp from "node:http";
 
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodePath from "@effect/platform-node/NodePath";
 import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -16,8 +19,10 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import packageJson from "../../../package.json" with { type: "json" };
-import type { ClaudeAgentSdkQueryRunnerShape } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import type { ClaudeAgentSdkQueryRunnerShape } from "@signalbox/provider-claude/ClaudeQueryRunner";
 import { automationCaller, layerAutomationTools } from "./RunnerAutomationTools.ts";
+import { layerRunnerPullRequestTools } from "./RunnerPullRequestTools.ts";
+import { layerLearnerTools } from "./RunnerLearnerTools.ts";
 import { type BranchDrive, layerBranchTools } from "./RunnerBranchTools.ts";
 import {
   BROWSER_EXECUTABLE_ENV,
@@ -34,6 +39,7 @@ import {
   layerBrowserTools,
 } from "./RunnerBrowserTools.ts";
 import { type ContextClient, ContextClientError } from "./RunnerContextClient.ts";
+import type { ContextView } from "@signalbox/runner-protocol/ContextProtocol";
 import {
   CONTEXT_INSTRUCTIONS,
   CONTEXT_SERVER_NAME,
@@ -42,12 +48,14 @@ import {
 import { DAV_PATH, serveDav } from "./RunnerDrivesDav.ts";
 import { mountDrives } from "./RunnerDrivesMount.ts";
 import { makeDrivesView } from "./RunnerDrivesView.ts";
-import { MCP_TOOL_TIMEOUT_SEC, type RunnerMcpServers } from "./RunnerModelAccess.ts";
+import { mcpToolTimeoutSec, type RunnerMcpServers } from "./RunnerModelAccess.ts";
 import { layerScheduledTaskTools } from "./RunnerScheduledTaskTools.ts";
 import { layerPreviewServiceTools } from "./RunnerPreviewServiceTools.ts";
 import * as RunnerPreviewServiceCommands from "./RunnerPreviewServiceCommands.ts";
 import * as RunnerPreviewServices from "./RunnerPreviewServices.ts";
+import { layerPullRequestReviewTools } from "./RunnerPullRequestReviewTools.ts";
 import { layerStatusLineTools } from "./RunnerStatusLineTools.ts";
+import { layerSecretTools, type RunnerSecretRequests } from "./RunnerSecretTools.ts";
 import type { RunnerConnectionError } from "./RunnerSession.ts";
 
 /**
@@ -58,9 +66,10 @@ import type { RunnerConnectionError } from "./RunnerSession.ts";
  * replaces at every turn start along with the view of the drives. The MCP
  * server also publishes the thread's branch, saving it through the drive
  * `attachDrive` gives it, and serves the automation tools, which run in the
- * cloud (`RunnerAutomationTools.ts`), with upstream's scheduled-task tools as
- * automations (`RunnerScheduledTaskTools.ts`), and the thread's status line
- * (`RunnerStatusLineTools.ts`). `/browser` serves the thread's browser
+ * cloud (`RunnerAutomationTools.ts`), pull request review tools through the
+ * same route (`RunnerPullRequestReviewTools.ts`), upstream's scheduled-task
+ * tools as automations (`RunnerScheduledTaskTools.ts`), and the thread's
+ * status line (`RunnerStatusLineTools.ts`). `/browser` serves the thread's browser
  * (#402, #574) as its own MCP server, under the name agents know it by locally:
  * the machine's headless Chromium for its dev servers, and the person's
  * browser for real sites, which the turn's client opens in the cloud. It hands
@@ -95,6 +104,8 @@ export interface ContextServer {
   readonly mcpServers: RunnerMcpServers;
   /** Takes this turn's view of the drives; a failure keeps the last one. */
   readonly pin: (client: ContextClient) => Effect.Effect<void>;
+  /** The exact context view pinned for the last turn, when it could be read. */
+  readonly currentView: () => ContextView | null;
   /** The thread's drive, once a turn opens it: what publishing saves first. */
   readonly attachDrive: (drive: BranchDrive) => Effect.Effect<void>;
   /** The `preview_*` tools' browser as people watch it, for the preview tunnel. */
@@ -112,10 +123,12 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
   ) => Effect.Effect<void, RunnerConnectionError>;
   /** Waits for the first tunnel welcome to restore saved services before exposing their tools. */
   readonly previewServicesReady?: Effect.Effect<void, RunnerConnectionError>;
+  readonly previewHosts?: Effect.Effect<ReadonlyArray<string> | null, RunnerConnectionError>;
   /** The browser behind the `preview_*` tools; the machine's and the person's by default. */
   readonly browser?: BrowserBackend;
   /** The thread this machine runs, which scheduled tasks wake. */
   readonly threadId?: string;
+  readonly secretRequests?: RunnerSecretRequests;
 }) {
   const view = makeDrivesView();
   let drive: BranchDrive | null = null;
@@ -126,6 +139,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     input.browser === undefined && input.threadId !== undefined
       ? makePayments({ asker: paymentAsker(automationCaller(view), input.threadId) })
       : null;
+  const previewHosts = input.previewHosts;
   const browser =
     input.browser ??
     makeRunnerBrowser(
@@ -133,7 +147,12 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
         machine: machineTabs({ executable: env[BROWSER_EXECUTABLE_ENV], env }),
         person: personTabs(personSession(view)),
       },
-      payments === null ? {} : { guard: payments.guard },
+      {
+        ...(payments === null ? {} : { guard: payments.guard }),
+        ...(previewHosts === undefined
+          ? {}
+          : { previewHosts: () => Effect.runPromise(previewHosts) }),
+      },
     );
   payments?.bind(browser);
   yield* Effect.addFinalizer(() =>
@@ -182,9 +201,16 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
     layerContextTools(view),
     layerBranchTools(view, () => drive),
     layerAutomationTools(view),
+    layerAskTools(view),
+    layerPullRequestReviewTools(view),
+    layerRunnerPullRequestTools(view).pipe(
+      Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+    ),
+    layerLearnerTools(view),
     layerScheduledTaskTools(view, input.threadId ?? null),
     previewServiceTools,
     layerStatusLineTools(view),
+    input.secretRequests === undefined ? Layer.empty : layerSecretTools(input.secretRequests),
   ).pipe(
     Layer.provideMerge(
       McpServer.layerHttp({
@@ -248,6 +274,7 @@ export const startContextServer = Effect.fn("startContextServer")(function* (inp
           }),
         ),
       ),
+    currentView: view.current,
     attachDrive: (next) =>
       Effect.sync(() => {
         drive = next;
@@ -275,8 +302,7 @@ export const withContextServer = (
           ...Object.fromEntries(
             Object.entries(mcpServers).map(
               ([name, url]) =>
-                // Claude gives an HTTP server's request 60 seconds; a sign-in (#576) can take minutes.
-                [name, { type: "http", url, timeout: MCP_TOOL_TIMEOUT_SEC * 1000 }] as const,
+                [name, { type: "http", url, timeout: mcpToolTimeoutSec(name) * 1000 }] as const,
             ),
           ),
         },

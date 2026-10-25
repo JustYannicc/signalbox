@@ -13,27 +13,43 @@
  * resources are retained, so no destroy or replace ever deletes them.
  */
 import * as Alchemy from "alchemy";
+import * as AlchemyOutput from "alchemy/Output";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
+import { searchSettings } from "./src/search/searchSettings.ts";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { MODEL_GATEWAY_PATHS } from "@signalbox/runner-protocol/RunnerProtocol";
+import { testSignInEnv } from "./infra/testSignInEnv.ts";
 
+import { executorSigningJwk } from "./infra/executorSigningKey.ts";
+import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
+  CLOUD_COMPATIBILITY_FLAGS,
   COMPATIBILITY_DATE,
+  MODEL_GATEWAY_COMPATIBILITY_FLAGS,
   type CloudStage,
   cloudStage,
   DURABLE_OBJECT_BINDINGS as DO,
   PREVIEW_DRIVE_PACKS_BUCKET,
   PREVIEW_ZONE,
   SIGNALBOX_ZONE_ID,
+  stageWorkerRouting,
 } from "./infra/stage.ts";
 import type {
   DriveObject,
+  ExecutorTokenBindingObject,
+  HarnessFilesStoreObject,
+  HarnessProcessExecutionShardObject,
+  HarnessProcessPlacementStoreObject,
+  HarnessRunStoreObject,
+  HarnessThreadSupervisorObject,
   ModelGrants,
   PoolObject,
   PreviewLinkRegistry,
   ThreadObject,
+  SearchIndexObject,
   UserObject,
 } from "./src/worker.ts";
 
@@ -42,10 +58,17 @@ const here = (path: string) => `${import.meta.dirname}/${path}`;
 const compatibility = {
   date: COMPATIBILITY_DATE,
   // Alchemy otherwise adds `new_module_registry`; keep what wrangler ran.
-  flags: ["nodejs_compat", "legacy_module_registry"],
+  flags: [...MODEL_GATEWAY_COMPATIBILITY_FLAGS],
 };
 
-const workerObservability = { enabled: true, logs: { enabled: true, invocationLogs: true } };
+const cloudCompatibility = {
+  date: COMPATIBILITY_DATE,
+  // Only the Cloud Worker redispatches through ctx.exports.
+  flags: [...CLOUD_COMPATIBILITY_FLAGS],
+};
+
+// Each request's wide event (`evlog.config.ts`) is its log line, so Cloudflare's own would repeat it.
+const workerObservability = { enabled: true, logs: { enabled: true, invocationLogs: false } };
 
 /** A Durable Object class's container, placed as wrangler placed it: tiers 1 and 2, EU only. */
 const euContainer = <Shape>(
@@ -73,7 +96,7 @@ const optional = (name: string) => Config.String(name).pipe(Config.withDefault("
 const optionalSecret = (name: string) =>
   Config.Redacted(name).pipe(Config.withDefault(Redacted.make("")));
 
-const drivePacks = (id: string, name: string) =>
+const drivePacks = (id: string, name: string, expirePendingAttachments = false) =>
   Cloudflare.R2.Bucket(id, {
     name,
     jurisdiction: "eu",
@@ -84,6 +107,19 @@ const drivePacks = (id: string, name: string) =>
         id: "Default Multipart Abort Rule",
         abortMultipartUploadsTransition: { condition: { type: "Age", maxAge: 7 * 24 * 60 * 60 } },
       },
+      // R2 ages the current object, so expiry cannot delete a freshly recreated pending key.
+      // Preview stages share a bucket; their PR-close cleanup owns each entire prefix instead.
+      ...(expirePendingAttachments
+        ? [
+            {
+              id: "Expire Pending Attachments",
+              prefix: "attachments/pending/",
+              deleteObjectsTransition: {
+                condition: { type: "Age" as const, maxAge: 2 * 24 * 60 * 60 },
+              },
+            },
+          ]
+        : []),
     ],
   }).pipe(
     // Shared across stages and full of drives: no stage ever deletes one.
@@ -100,7 +136,8 @@ export default Alchemy.Stack(
     const { stage } = yield* Alchemy.Stack;
     const target = cloudStage(stage);
     const env = yield* workerEnv(target);
-    return yield* deploy(target, env).pipe(
+    const telemetry = yield* telemetryEnv(stage);
+    return yield* deploy(target, env, telemetry).pipe(
       // Production and open previews were made by wrangler. Names come only
       // from the stage, so a preview can never claim production's.
       Alchemy.AdoptPolicy.adopt(true),
@@ -110,18 +147,54 @@ export default Alchemy.Stack(
   }),
 );
 
+/**
+ * Where both Workers' wide events go (`evlog.config.ts`, #285), and which
+ * release and stage they belong to. All optional: without a key, that drain is off.
+ */
+function telemetryEnv(stage: string) {
+  return Effect.gen(function* () {
+    return {
+      SIGNALBOX_STAGE: stage,
+      // The deployed commit, which evlog reports as the release.
+      APP_VERSION: yield* optional("APP_VERSION"),
+      SENTRY_DSN: yield* optionalSecret("SENTRY_DSN"),
+      POSTHOG_API_KEY: yield* optionalSecret("POSTHOG_API_KEY"),
+      POSTHOG_HOST: yield* optional("POSTHOG_HOST"),
+      SIGNALBOX_POSTHOG_ENABLED: yield* optional("SIGNALBOX_POSTHOG_ENABLED"),
+      T3CODE_TELEMETRY_ENABLED: yield* optional("T3CODE_TELEMETRY_ENABLED"),
+      SIGNALBOX_DO_STORAGE_ALERT_PERCENT: yield* optional("SIGNALBOX_DO_STORAGE_ALERT_PERCENT"),
+    };
+  });
+}
+
 /** Vars and secrets from CI's environment, next to the stage's own vars. */
 function workerEnv(target: CloudStage) {
   return Effect.gen(function* () {
+    const search = searchSettings({
+      SEARCH_INDEX_GENERATION: yield* optional("SEARCH_INDEX_GENERATION"),
+      SEARCH_INDEX_DISABLED: yield* optional("SEARCH_INDEX_DISABLED"),
+    });
+    const signingSeedId = `ExecutorTokenSigningKeySeed${target.cloudWorker.replaceAll("-", "")}`;
+    const signingSeed = yield* Alchemy.makeRandom(signingSeedId, { bytes: 32 });
+    const signingJwk = AlchemyOutput.map(signingSeed, (seed) =>
+      Redacted.make(executorSigningJwk(Redacted.value(seed))),
+    ).as<Redacted.Redacted<string>>();
     const shared = {
+      SEARCH_INDEX_GENERATION: search.generation,
+      SEARCH_INDEX_DISABLED: search.disabled ? "1" : "0",
       T3CODE_WORKOS_CLIENT_ID: yield* Config.String("T3CODE_WORKOS_CLIENT_ID"),
       MACHINE_BACKEND: yield* optional("MACHINE_BACKEND"),
       // Optional: the MCP authorization server (`src/api/mcpRoutes.ts`); unset, MCP takes keys only.
       WORKOS_AUTHKIT_DOMAIN: yield* optional("WORKOS_AUTHKIT_DOMAIN"),
+      // Operators enable a deployed preview temporarily; every normal deploy disables its drills.
+      RECOVERY_DRILLS: "",
       // Optional: the Executor local harness setup adds as an MCP server (`src/localKeys/`).
       EXECUTOR_MCP_URL: yield* optional("EXECUTOR_MCP_URL"),
       SESSION_SECRET: yield* Config.Redacted("SESSION_SECRET"),
       T3CODE_WORKOS_API_KEY: yield* Config.Redacted("T3CODE_WORKOS_API_KEY"),
+      EXECUTOR_TOKEN_PRIVATE_JWK: signingJwk,
+      // Optional public verification keys for tokens signed before an operator rotates the seed.
+      EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS: yield* optional("EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS"),
       // Optional: Claude and Codex on boat VMs.
       BOAT_API_KEY: yield* optionalSecret("BOAT_API_KEY"),
       // Optional: chat or task classifiers (`src/threadKinds/`); unset, threads stay tasks.
@@ -153,15 +226,27 @@ function workerEnv(target: CloudStage) {
           RUNNER_IMAGE: yield* optional("RUNNER_IMAGE"),
         };
 
-    return { ...target.vars, ...shared, ...stageEnv };
+    return { ...target.vars, ...shared, ...stageEnv, ...(yield* testSignInEnv(target.production)) };
   });
 }
 
 function deploy(
   target: CloudStage,
-  env: Readonly<Record<string, string | Redacted.Redacted<string>>>,
+  env: Readonly<
+    Record<
+      string,
+      string | Redacted.Redacted<string> | AlchemyOutput.Output<Redacted.Redacted<string>, unknown>
+    >
+  >,
+  telemetry: Effect.Success<ReturnType<typeof telemetryEnv>>,
 ) {
   return Effect.gen(function* () {
+    const traceExport = yield* nativeTraceExport(target, telemetry);
+    const observability = {
+      ...workerObservability,
+      ...(traceExport !== null && { traces: traceExport.traces }),
+    };
+
     // The web app, built by CI before the deploy. Same origin as the API.
     const assets = {
       directory: here("../web/dist"),
@@ -173,7 +258,7 @@ function deploy(
 
     const previewPacks = yield* drivePacks("PreviewDrivePacks", PREVIEW_DRIVE_PACKS_BUCKET);
     const packs = target.production
-      ? yield* drivePacks("DrivePacks", target.drivePacksBucket)
+      ? yield* drivePacks("DrivePacks", target.drivePacksBucket, true)
       : previewPacks;
 
     // Every stage's dev-server previews resolve through one proxied wildcard,
@@ -191,20 +276,47 @@ function deploy(
     const cloud = yield* Cloudflare.Worker("Cloud", {
       name: target.cloudWorker,
       main: here("src/worker.ts"),
-      compatibility,
+      compatibility: cloudCompatibility,
       // One origin: sign-in callbacks, cookies and saved connections all key on it.
       workersDev: false,
       domain: { name: target.cloudDomain, zoneId: SIGNALBOX_ZONE_ID },
       // Threads' dev servers (`PREVIEW_DOMAIN`), on this stage's preview hosts only.
       routes: [{ pattern: `${target.previewHost}/*`, zoneId: PREVIEW_ZONE.id }],
       assets,
-      observability: workerObservability,
+      observability,
       // Checking a directly uploaded drive pack streams through all of it (#406): up to 5 GiB.
       limits: { cpuMs: 300_000 },
       env: {
         ...env,
+        ...telemetry,
+        CLIENT_TRACE_LIMITER: Cloudflare.Workers.RateLimit("ClientTraceLimiter", {
+          namespaceId: 866,
+          simple: { limit: 300, period: 60 },
+        }),
+        ...(traceExport !== null && {
+          TRACE_EXPORT: traceExport.worker,
+          TRACE_EXPORT_TOKEN: traceExport.token,
+        }),
+        AUTOMATION_HOOK_ORIGIN: `https://${target.cloudDomain}`,
         // Binding and class names are the Durable Objects' identity.
         USERS: Cloudflare.DurableObject<UserObject>(DO.USERS),
+        SEARCH_INDEX: Cloudflare.DurableObject<SearchIndexObject>(DO.SEARCH_INDEX),
+        EXECUTOR_TOKEN_BINDINGS: Cloudflare.DurableObject<ExecutorTokenBindingObject>(
+          DO.EXECUTOR_TOKEN_BINDINGS,
+        ),
+        HARNESS_RUN_STORE: Cloudflare.DurableObject<HarnessRunStoreObject>(DO.HARNESS_RUN_STORE),
+        HARNESS_FILES_STORE: Cloudflare.DurableObject<HarnessFilesStoreObject>(
+          DO.HARNESS_FILES_STORE,
+        ),
+        HARNESS_THREAD_SUPERVISOR: Cloudflare.DurableObject<HarnessThreadSupervisorObject>(
+          DO.HARNESS_THREAD_SUPERVISOR,
+        ),
+        PROCESS_EXECUTION_SHARDS: Cloudflare.DurableObject<HarnessProcessExecutionShardObject>(
+          DO.PROCESS_EXECUTION_SHARDS,
+        ),
+        PLACEMENT_STORES: Cloudflare.DurableObject<HarnessProcessPlacementStoreObject>(
+          DO.PLACEMENT_STORES,
+        ),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
         PREVIEW_LINKS: Cloudflare.DurableObject<PreviewLinkRegistry>(DO.PREVIEW_LINKS),
         // A managed pool's CLIProxyAPI, pinned in containers/cliproxyapi/release.json.
@@ -245,12 +357,17 @@ function deploy(
     // no keys: the cloud's `ModelGrants` entrypoint checks every token.
     const gateway = yield* Cloudflare.Worker("ModelGateway", {
       name: target.gatewayWorker,
-      main: here("src/modelGateway/worker.ts"),
+      main: here("src/models/gatewayWorker.ts"),
       compatibility,
       workersDev: false,
-      domain: { name: target.gatewayDomain, zoneId: SIGNALBOX_ZONE_ID },
-      observability: workerObservability,
+      // Preview provider paths share the app origin; production keeps its gateway domain.
+      ...stageWorkerRouting(target, target.gatewayDomain, [
+        MODEL_GATEWAY_PATHS.anthropic,
+        MODEL_GATEWAY_PATHS.openai,
+      ]),
+      observability,
       env: {
+        ...telemetry,
         GRANTS: Cloudflare.WorkerEntrypoint<ModelGrants>(cloud, "ModelGrants"),
       },
     });

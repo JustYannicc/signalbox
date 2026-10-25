@@ -1,6 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { applyTextSourceEdits, type TextSourceMap } from "./textSourceMap.ts";
 
 export const THREAD_LINK_PROTOCOL = "t3-thread";
 const THREAD_LINK_HREF_PREFIX = `${THREAD_LINK_PROTOCOL}://v1/`;
@@ -37,6 +38,22 @@ export function hasThreadLinks(markdown: string): boolean {
   return markdown.includes(`](${THREAD_LINK_HREF_PREFIX}`);
 }
 
+// signalbox: mapped and ordinary labels must use the same encoded-id/title precedence.
+function resolvedThreadLink(
+  href: string | undefined,
+  title: (threadId: ThreadId) => string | undefined,
+): string | null {
+  const written = href === undefined ? null : parseThreadLinkHref(href);
+  if (written === null) return null;
+  const decoded = percentDecodedThreadLinkId(written);
+  const threadId =
+    title(written) === undefined && decoded !== null && title(decoded) !== undefined
+      ? decoded
+      : written;
+  const label = title(threadId)?.trim();
+  return label ? formatThreadLink(threadId, label) : null;
+}
+
 export function relabelThreadLinks(
   markdown: string,
   title: (threadId: ThreadId) => string | undefined,
@@ -44,15 +61,28 @@ export function relabelThreadLinks(
   if (!hasThreadLinks(markdown)) return markdown;
   return markdown.replace(THREAD_LINK_OUTSIDE_CODE, (source, ...args) => {
     const href = (args.at(-1) as { href?: string }).href;
-    if (href === undefined) return source;
-    const written = parseThreadLinkHref(href);
-    if (written === null) return source;
-    const decoded = percentDecodedThreadLinkId(written);
-    const threadId =
-      title(written) === undefined && decoded !== null && title(decoded) !== undefined
-        ? decoded
-        : written;
-    const label = title(threadId)?.trim();
-    return label ? formatThreadLink(threadId, label) : source;
+    return resolvedThreadLink(href, title) ?? source;
   });
+}
+
+// signalbox: live titles can change length, so retain the source link as their owner.
+export function relabelThreadLinksSourceMap(
+  markdown: string,
+  title: (threadId: ThreadId) => string | undefined,
+): TextSourceMap {
+  return applyTextSourceEdits(
+    markdown,
+    [...markdown.matchAll(THREAD_LINK_OUTSIDE_CODE)].flatMap((match) => {
+      const replacement = resolvedThreadLink(match.groups?.href, title);
+      return replacement
+        ? [
+            {
+              start: match.index,
+              end: match.index + match[0].length,
+              text: replacement,
+            },
+          ]
+        : [];
+    }),
+  );
 }

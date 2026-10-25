@@ -6,6 +6,7 @@ import type {
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import type { RunContinuationSummary } from "@t3tools/client-runtime/state/thread-execution";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
   turnItemDetailRevision,
@@ -169,6 +170,7 @@ type RawThreadFeedEntry =
   | {
       readonly type: "html-render";
       readonly id: string;
+      readonly itemId: TurnItemId; // signalbox: Find names the source item, not its rendered row.
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly render: HtmlRenderReference;
@@ -221,6 +223,7 @@ type ThreadFeedEntryContent =
       readonly runId: RunId;
       readonly label: string;
       readonly expanded: boolean;
+      readonly hiddenEntryIds: ReadonlySet<string>; // signalbox: Find resolves the owning fold for runless items too.
     }
   | {
       readonly type: "thinking";
@@ -232,8 +235,10 @@ type ThreadFeedEntryContent =
 export interface ThreadFeedLatestRun {
   readonly runId: RunId;
   readonly status: OrchestrationV2RunStatus;
+  readonly requestedAt?: string | null;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
+  readonly runContinuations?: ReadonlyMap<RunId, RunContinuationSummary>;
 }
 
 export interface AgentSpawnSummary {
@@ -782,6 +787,12 @@ export function formatItemFullDetail(
   row: OrchestrationV2ProjectedTurnItem,
   item: OrchestrationV2TurnItem,
 ): string {
+  // signalbox: task-list search matches open the actual plan text and step statuses.
+  if (item.type === "todo_list") {
+    return [item.explanation?.trim(), ...item.steps.map((step) => `${step.text} (${step.status})`)]
+      .filter(Boolean)
+      .join("\n");
+  }
   return JSON.stringify(
     {
       visibility: row.visibility,
@@ -834,7 +845,9 @@ function toFeedActivity(
       !(item.type === "error" && item.status === "failed") &&
       (readPaths
         ? readPaths.length > 0 || turnItemNeedsDetailFetch(item)
-        : turnItemHasDetail(item) || workEntry.questionAnswer !== undefined),
+        : turnItemHasDetail(item) ||
+          (item.type === "todo_list" && Boolean(item.explanation?.trim())) || // signalbox: explanation-only lists are searchable too.
+          workEntry.questionAnswer !== undefined),
     fetchesDetail: turnItemNeedsDetailFetch(item),
     getFullDetail,
     getCopyText,
@@ -1047,7 +1060,9 @@ function deriveThreadFeedRunFolds(
   const firstAssistantMessageIdByRun = new Map<RunId, string>();
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
   const interruptedRunIds = new Set<RunId>();
-  const failedRunIds = new Set(feedFailedRunIds);
+  const continuations = latestRun?.runContinuations;
+  const logicalRunId = (runId: RunId) => continuations?.get(runId)?.rootRunId ?? runId;
+  const failedRunIds = new Set([...feedFailedRunIds].map(logicalRunId));
   const promptIndexByRunId = new Map<RunId, number>();
   for (const [index, entry] of feed.entries()) {
     if (
@@ -1063,14 +1078,27 @@ function deriveThreadFeedRunFolds(
   }
   const groupsByRunId = new Map<
     RunId,
-    { entries: ThreadFeedEntry[]; startBoundary: string | null }
+    {
+      entries: ThreadFeedEntry[];
+      startBoundary: string | null;
+      continuationAnchorEntryId: string | null;
+    }
   >();
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
-  let pendingUserBoundary: string | null = null;
+  let pendingUserBoundary: {
+    createdAt: string;
+    runId: RunId | null;
+  } | null = null;
   for (const [index, entry] of feed.entries()) {
     if (entry.type === "message" && entry.message.role === "user") {
-      pendingUserBoundary = entry.message.createdAt;
+      const nextEntry = feed[index + 1];
+      pendingUserBoundary = nextEntry
+        ? {
+            createdAt: entry.message.createdAt,
+            runId: entry.message.runId,
+          }
+        : null;
       runlessKey = entry.message.runId == null ? RunId.make(`runless:${entry.id}`) : null;
       responseKey = entry.message.runId ?? runlessKey;
       continue;
@@ -1087,15 +1115,30 @@ function deriveThreadFeedRunFolds(
     // Resuming a subagent moves its item to the resuming run, but the item
     // keeps its place in the turn that started it. It folds with that turn,
     // so the later run's fold still opens under its own prompt.
-    const runId =
+    const attributedRunId =
       responseKey !== null && (promptIndexByRunId.get(ownRunId) ?? -1) > index
         ? responseKey
         : ownRunId;
+    const runId = logicalRunId(attributedRunId);
     let group = groupsByRunId.get(runId);
     if (!group) {
-      group = { entries: [], startBoundary: pendingUserBoundary };
+      group = {
+        entries: [],
+        startBoundary: pendingUserBoundary?.createdAt ?? null,
+        continuationAnchorEntryId: null,
+      };
       pendingUserBoundary = null;
       groupsByRunId.set(runId, group);
+    } else if (pendingUserBoundary !== null) {
+      if (
+        pendingUserBoundary.runId !== null &&
+        pendingUserBoundary.runId !== runId &&
+        logicalRunId(pendingUserBoundary.runId) === runId
+      ) {
+        // The recovery prompt is a visible user row; keep the combined fold after it.
+        group.continuationAnchorEntryId = entry.id;
+      }
+      pendingUserBoundary = null;
     }
     group.entries.push(entry);
     if (entry.type === "message") {
@@ -1107,7 +1150,7 @@ function deriveThreadFeedRunFolds(
     if (entry.type !== "activity-group") continue;
     for (const activity of entry.activities) {
       const item = activity.projectedItem.item;
-      if (item.type === "run_interrupt_result") interruptedRunIds.add(runId);
+      if (item.type === "run_interrupt_result") interruptedRunIds.add(logicalRunId(runId));
       if (
         runId === runlessKey &&
         item.type === "error" &&
@@ -1119,7 +1162,8 @@ function deriveThreadFeedRunFolds(
     }
   }
 
-  const activeRunId = unsettledRunId(latestRun);
+  const physicalActiveRunId = unsettledRunId(latestRun);
+  const activeRunId = physicalActiveRunId === null ? null : logicalRunId(physicalActiveRunId);
   const foldsByAnchorId = new Map<string, ThreadFeedRunFold>();
   for (const [runId, group] of groupsByRunId) {
     if (
@@ -1160,6 +1204,10 @@ function deriveThreadFeedRunFolds(
     const firstHiddenEntry = group.entries.find((entry) => hiddenEntryIds.has(entry.id));
     const lastEntry = group.entries.at(-1);
     if (!firstHiddenEntry || !firstEntry || !lastEntry) continue;
+    const foldAnchor = group.continuationAnchorEntryId
+      ? group.entries.find((entry) => entry.id === group.continuationAnchorEntryId)
+      : firstHiddenEntry;
+    if (!foldAnchor) continue;
     const hidesNonCompactionWork = group.entries.some(
       (entry) =>
         hiddenEntryIds.has(entry.id) &&
@@ -1169,12 +1217,13 @@ function deriveThreadFeedRunFolds(
     const terminalEntry = terminalAssistantId
       ? group.entries.find((entry) => entry.id === terminalAssistantId)
       : null;
-    const latestRunMatches = latestRun?.runId === runId;
+    const continuation = latestRun?.runContinuations?.get(runId);
+    const run = continuation ?? (latestRun?.runId === runId ? latestRun : null);
     const lastEntryEnd =
       lastEntry.type === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
     const elapsedMs =
-      latestRunMatches && latestRun.startedAt && latestRun.completedAt
-        ? computeElapsedMs(latestRun.startedAt, latestRun.completedAt)
+      run?.startedAt && run.completedAt
+        ? computeElapsedMs(run.startedAt, run.completedAt)
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(
@@ -1183,11 +1232,10 @@ function deriveThreadFeedRunFolds(
             ) ?? lastEntryEnd,
           );
     const duration = elapsedMs === null ? null : formatDuration(elapsedMs);
-    const interrupted =
-      latestRunMatches && (latestRun.status === "interrupted" || latestRun.status === "cancelled");
-    foldsByAnchorId.set(firstHiddenEntry.id, {
+    const interrupted = run?.status === "interrupted" || run?.status === "cancelled";
+    foldsByAnchorId.set(foldAnchor.id, {
       runId,
-      createdAt: firstHiddenEntry.createdAt,
+      createdAt: foldAnchor.createdAt,
       hiddenEntryIds,
       label: interrupted
         ? duration
@@ -1249,6 +1297,15 @@ export function deriveThreadFeedPresentation(
   const failedRunIds = failedFeedRunIds(sourceFeed, latestRun);
   const activeTailGroup = sourceFeed.at(-1);
   const activeRunId = unsettledRunId(latestRun);
+  const logicalActiveRunId =
+    activeRunId === null
+      ? null
+      : (latestRun?.runContinuations?.get(activeRunId)?.rootRunId ?? activeRunId);
+  const continuations = latestRun?.runContinuations;
+  const logicalExpandedRunIds =
+    expandedRunIds.size > 0 && continuations
+      ? new Set([...expandedRunIds].map((runId) => continuations.get(runId)?.rootRunId ?? runId))
+      : expandedRunIds;
   const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
   const foldsByAnchorId = deriveThreadFeedRunFolds(
     sourceFeed,
@@ -1258,7 +1315,7 @@ export function deriveThreadFeedPresentation(
   );
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
-    if (!expandedRunIds.has(fold.runId)) {
+    if (!logicalExpandedRunIds.has(fold.runId)) {
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
@@ -1270,17 +1327,22 @@ export function deriveThreadFeedPresentation(
       entry.type === "activity-group" &&
       activeTailGroup?.type === "activity-group" &&
       activeTailGroup.id === entry.id &&
-      entry.runId === activeRunId;
+      (entry.runId === null
+        ? logicalActiveRunId === null && runlessWorkActive
+        : (latestRun?.runContinuations?.get(entry.runId)?.rootRunId ?? entry.runId) ===
+          logicalActiveRunId);
     const fold = foldsByAnchorId.get(entry.id);
     if (fold) {
-      const expanded = expandedRunIds.has(fold.runId);
+      const expanded = logicalExpandedRunIds.has(fold.runId);
       let row = runFoldRowsCache.get(entry);
       if (
         !row ||
         row.runId !== fold.runId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
-        row.expanded !== expanded
+        row.expanded !== expanded ||
+        row.hiddenEntryIds.size !== fold.hiddenEntryIds.size || // signalbox: preserve exact fold ownership as history loads.
+        [...fold.hiddenEntryIds].some((id) => !row?.hiddenEntryIds.has(id))
       ) {
         row = {
           type: "run-fold",
@@ -1289,6 +1351,7 @@ export function deriveThreadFeedPresentation(
           runId: fold.runId,
           label: fold.label,
           expanded,
+          hiddenEntryIds: fold.hiddenEntryIds, // signalbox: use presentation ownership instead of guessing from an item's run ID.
         };
         runFoldRowsCache.set(entry, row);
       }
@@ -1755,7 +1818,7 @@ export function buildThreadFeed(
   for (const row of visibleTurnItems) {
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item)) continue;
-    if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (item.type === "checkpoint") continue; // signalbox: keep searchable task lists reachable in the work log.
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     if (item.type === "run_interrupt_request") {
       continue;
@@ -1775,6 +1838,7 @@ export function buildThreadFeed(
       const entry: RawThreadFeedEntry = {
         type: "html-render",
         id: `html-render:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        itemId: row.sourceItemId, // signalbox: preserve the canonical Find target through render conversion.
         createdAt,
         runId: item.runId,
         render,

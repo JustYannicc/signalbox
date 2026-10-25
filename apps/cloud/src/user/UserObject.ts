@@ -1,5 +1,4 @@
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
-import * as AccountConfig from "@signalbox/account/AccountConfig";
 import { EnvironmentId } from "@t3tools/contracts";
 import type { AccountProfile } from "@t3tools/contracts/account";
 import { DurableObject } from "cloudflare:workers";
@@ -12,24 +11,45 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import * as CloudAssets from "../assets/CloudAssets.ts";
+import { harnessReleaseLedgerLayer } from "../harnessReleases/HarnessReleaseLedgerService.ts";
+import * as Evlog from "../observability/Evlog.ts";
+import * as ClientActionTimings from "../observability/ClientActionTimings.ts";
+import { makeStorageObserver } from "../observability/DurableObjectStorage.ts";
+import * as ClientRpcTracing from "../observability/clientRpcTracing.ts";
+import * as IdentityProvider from "../account/IdentityProvider.ts";
+import * as CloudConfig from "../CloudConfig.ts";
 import { AutomationAlarm, CloudAutomations } from "../automations/CloudAutomations.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudEngine from "../automations/cloudEngine.ts";
+import { layerModelCompletion } from "../models/cloudflare.ts";
+import { HookOrigin } from "../automations/cloudIngress.ts";
 import { layerWorkflows } from "../automations/workflowRunner.ts";
 import { type AttachmentObjects, attachmentStorage } from "../attachments/attachmentObjects.ts";
 import * as CloudAttachments from "../attachments/CloudAttachments.ts";
 import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as DriveDirectory from "../drive/DriveDirectory.ts";
 import * as DriveFiles from "../drive/DriveFiles.ts";
+import * as DriveContentSearch from "./DriveContentSearch.ts";
 import * as DrivePacks from "../drive/DrivePacks.ts";
 import * as Environment from "../environment.ts";
 import * as GitHub from "../github/GitHub.ts";
 import * as GitHubActions from "../github/GitHubActions.ts";
 import * as GitHubBranches from "../github/GitHubBranches.ts";
+import * as AgentPullRequests from "../github/AgentPullRequests.ts";
+import * as CloudPullRequests from "../github/CloudPullRequests.ts";
+import * as PullRequestGuideGeneration from "../github/PullRequestGuideGeneration.ts";
+import { PullRequestGuideAlarm } from "../github/PullRequestReviewGuides.ts";
+import * as PullRequestRepository from "../github/PullRequestRepository.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import * as GitHubConnection from "../github/GitHubConnection.ts";
-import { API_HEADER, decodeApiCredential, serveApiRequest } from "../api/apiObject.ts";
+import { API_HEADER, decodeApiCredential } from "../api/apiCredential.ts";
+import { serveApiRequest } from "../api/apiObject.ts";
 import { MCP_PATH, makeMcpHandler } from "../api/mcpObject.ts";
+import * as LearnerService from "../learner/LearnerService.ts";
+import * as LearnerJev from "../learner/LearnerJev.ts";
+import * as LearnerSummary from "../learner/LearnerSummary.ts";
+import * as LearnerHomes from "./LearnerHomes.ts";
+import * as UserLearner from "./UserLearner.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as NoteReader from "../notes/NoteReader.ts";
@@ -39,8 +59,18 @@ import * as Platform from "../platform.ts";
 import * as PoolDirectory from "../pool/PoolDirectory.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
+import * as ThreadSearchLive from "../search/ThreadSearchLive.ts";
+import * as SearchCursors from "../search/SearchCursors.ts";
+import { searchSettings } from "../search/searchSettings.ts";
+import * as SearchAuthority from "../search/SearchAuthority.ts";
+import * as SearchBackfill from "../search/SearchBackfill.ts";
+import * as SearchBackfillLive from "../search/SearchBackfillLive.ts";
+import * as CloudflareSearchIndex from "../search/CloudflareSearchIndex.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
-import * as ModelManifest from "../thread/ModelManifest.ts";
+import * as CloudTerminalsLayer from "../thread/CloudTerminalsLayer.ts";
+import * as ThreadsLive from "../thread/ThreadsLive.ts";
+import * as ModelManifest from "../models/ModelManifest.ts";
+import * as ModelCatalog from "../models/ModelCatalog.ts";
 import { scriptedProviderEnabled } from "../thread/scriptedProvider.ts";
 import type { MachineBackendEnv } from "../thread/runner/MachineBackend.ts";
 import { type PreviewEnv, previewSettings } from "../thread/preview/previewHost.ts";
@@ -48,6 +78,7 @@ import { machineSettings } from "../thread/runner/machineBackends.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import * as KindClassifier from "../threadKinds/KindClassifier.ts";
 import { ClientSockets, PING, PONG } from "./clientSockets.ts";
+import { clientKindOf } from "./clientSessionLog.ts";
 import * as PoolSignIns from "./PoolSignIns.ts";
 import {
   CONNECTION_HEADER,
@@ -60,19 +91,28 @@ import * as DriveSharing from "./DriveSharing.ts";
 import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as ResourceBindings from "./ResourceBindings.ts";
-import * as ThreadContexts from "./threadContexts.ts";
+import * as ThreadContextLayers from "./threadContextLayers.ts";
 import * as UserContexts from "./UserContexts.ts";
 import * as UserDrives from "./UserDrives.ts";
 import { makeUserObjectApi } from "./userObjectApi.ts";
 import * as UserPools from "./UserPools.ts";
 import * as LegacySections from "./legacySections.ts";
 import * as UserFolders from "./UserFolders.ts";
+import * as FolderStarts from "./FolderStarts.ts";
 import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
+import * as UserTrash from "../trash/UserTrash.ts";
+import * as TrashResourcesLive from "../trash/trashResourcesLive.ts";
+import { TrashAlarm, layerPreview as layerTrashPreview } from "../trash/TrashWorkflow.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserTerminals from "./UserTerminals.ts";
 import * as UserModelSettings from "./UserModelSettings.ts";
+import * as UserKeybindings from "./UserKeybindings.ts";
+import * as UserAnalyticsPreference from "./UserAnalyticsPreference.ts";
+import * as UserTimezone from "./UserTimezone.ts";
 import * as ChatArchive from "./chatArchive.ts";
+import { makeProfileId } from "./profileId.ts";
 
 /**
  * One per WorkOS user, named by their user id, always in the EU jurisdiction.
@@ -88,8 +128,10 @@ import * as ChatArchive from "./chatArchive.ts";
 export interface UserObjectEnv
   extends
     MachineBackendEnv,
+    CloudflareSearchIndex.SearchIndexEnv,
     PreviewEnv,
     GitHub.GitHubEnv,
+    LearnerJev.LearnerJevEnv,
     KindClassifier.KindClassifierEnv,
     PersonBrowsers.PersonBrowsersEnv,
     LoginService.LoginServiceEnv {
@@ -103,6 +145,7 @@ export interface UserObjectEnv
   readonly DRIVE_PACKS_PREFIX?: string;
   readonly ENVIRONMENT_ID: string;
   readonly ENVIRONMENT_LABEL?: string;
+  readonly AUTOMATION_HOOK_ORIGIN?: string;
   /** Set by `vp run dev` only. Local workerd has no jurisdictions. */
   readonly LOCAL_WORKERD?: string;
   readonly THREADS: ThreadDirectory.ThreadObjectNamespace;
@@ -111,6 +154,12 @@ export interface UserObjectEnv
   readonly POOLS: PoolDirectory.PoolObjectNamespace;
   /** `1` in dev and tests: clients may pick the scripted provider (`scriptedProvider.ts`). */
   readonly SCRIPTED_PROVIDER?: string;
+  /** The Worker binding that accepts filtered client RPC trace batches. */
+  readonly TRACE_EXPORT?: Pick<Fetcher, "fetch">;
+  /** Secret shared with the Worker-side trace intake. */
+  readonly TRACE_EXPORT_TOKEN?: string;
+  readonly SIGNALBOX_DO_STORAGE_ALERT_PERCENT?: string;
+  readonly T3CODE_TELEMETRY_ENABLED?: string;
 }
 
 const decodeEnvironmentId = Schema.decodeSync(EnvironmentId);
@@ -127,23 +176,31 @@ const stringVars = (env: UserObjectEnv): Record<string, string> =>
  * it's built once.
  */
 const layerDrives = (env: UserObjectEnv) => {
+  const people = Layer.unwrap(
+    Effect.map(makeProfileId, (profileId) =>
+      DrivePeople.layerForUser(
+        profileId.pipe(
+          Effect.flatMap((id) =>
+            id === null
+              ? Effect.fail(
+                  new DrivePeople.DrivePeopleError({ message: "Sign in before sharing." }),
+                )
+              : Effect.succeed(id),
+          ),
+        ),
+      ),
+    ),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
   if (env.DRIVES === undefined || env.DRIVE_PACKS === undefined) {
-    return { store: Layer.empty, services: Layer.empty };
+    return { store: Layer.empty, services: Layer.empty, people };
   }
   const store = Layer.mergeAll(
     DriveDirectory.layerDurableObjects(env.DRIVES, { localWorkerd: env.LOCAL_WORKERD === "1" }),
     DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
   );
-  // The Worker's own account settings, read the same way.
-  const people = Layer.unwrap(
-    AccountConfig.read.pipe(
-      // Unreadable settings leave sharing without anyone to find, not the object down.
-      Effect.orElseSucceed(() => undefined),
-      Effect.map((accounts) => DrivePeople.layerWorkOS(accounts?.workos)),
-    ),
-  ).pipe(Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))));
   return {
     store,
+    people,
     services: Layer.mergeAll(DriveSharing.layer, DriveShortcuts.layer, DriveFiles.layer).pipe(
       Layer.provide(Layer.mergeAll(store, people)),
     ),
@@ -187,21 +244,49 @@ const layerAlarm = (storage: DurableObjectStorage) =>
   );
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
-const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
+const makeRuntime = (ctx: DurableObjectState, env: UserObjectEnv) => {
+  const { storage } = ctx;
   const drives = layerDrives(env);
-  return ManagedRuntime.make(
+  const modelCompletion = layerModelCompletion(
+    { pools: env.POOLS },
+    { localWorkerd: env.LOCAL_WORKERD === "1" },
+  );
+  const guideAlarm = Layer.succeed(PullRequestGuideAlarm, {
+    armBy: (at) => Effect.promise(() => armBy(storage, at)),
+  });
+  const searchBackfill = SearchBackfillLive.layer.pipe(
+    Layer.provide(
+      Layer.succeed(SearchBackfill.SearchBackfillAlarm, {
+        by: (at) => Effect.promise(() => armBy(storage, at)),
+      }),
+    ),
+  );
+  const services =
     // The user's automations (#434), on the services below.
     CloudEngine.layer.pipe(
       Layer.provide(
-        Layer.mergeAll(layerWorkflows(env.AUTOMATION_RUNS), layerAutomationAlarm(storage)),
+        Layer.mergeAll(
+          layerWorkflows(env.AUTOMATION_RUNS),
+          layerAutomationAlarm(storage),
+          modelCompletion,
+          harnessReleaseLedgerLayer(storage),
+          Layer.succeed(HookOrigin, env.AUTOMATION_HOOK_ORIGIN ?? ""),
+        ),
       ),
       // Building it only touches the object's own SQLite, which the object can't run without either.
       Layer.orDie,
       Layer.provideMerge(
         Layer.mergeAll(
           GitHubBranches.layer,
+          AgentPullRequests.layer,
           GitHubActions.layer,
+          CloudPullRequests.layer.pipe(
+            Layer.provideMerge(PullRequestRepository.layer),
+            Layer.provide(PullRequestGuideGeneration.layer.pipe(Layer.provide(modelCompletion))),
+            Layer.provide(guideAlarm),
+          ),
           UserPreviewSetup.layer,
+          DriveContentSearch.layer,
           CloudAssets.layer,
           // Agents' sign-ins (#576): Kernel's Managed Auth, answered from 1Password through Executor.
           LoginService.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
@@ -218,9 +303,16 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
         ).pipe(
           Layer.provideMerge(
             Layer.mergeAll(
-              UserShell.layer,
+              UserShell.layer.pipe(Layer.provide(searchBackfill)),
               UserThreadStatus.layer,
-              CloudThreadService.layer,
+              UserTerminals.layer,
+              CloudTerminalsLayer.layer,
+              CloudThreadService.layer.pipe(Layer.provideMerge(ThreadsLive.layer)),
+              ThreadSearchLive.layer.pipe(
+                Layer.provide(Layer.mergeAll(SearchAuthority.layerUser, SearchCursors.layerSql)),
+                Layer.provideMerge(searchBackfill),
+              ),
+              UserLearner.layer.pipe(Layer.provideMerge(LearnerHomes.layer)),
               PoolSignIns.layer,
               drives.services,
               ConnectionLinks.layer,
@@ -232,8 +324,7 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           Layer.provideMerge(GitHubConnection.layer),
           Layer.provideMerge(
             Layer.mergeAll(
-              ThreadContexts.layer,
-              UserPools.layer,
+              ThreadContextLayers.layer.pipe(Layer.provideMerge(UserPools.layer)),
               UserThreadKinds.layerTurns,
               // The person's browser for real sites (#574), on Kernel.
               PersonBrowsers.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
@@ -247,7 +338,13 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               KindClassifier.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
               layerAlarm(storage),
               layerLoginAlarm(storage),
-              PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID)).pipe(
+              Layer.unwrap(
+                Effect.map(UserStore.UserStore, (store) =>
+                  PushNotifier.layerWithDevices(decodeEnvironmentId(env.ENVIRONMENT_ID), (sid) =>
+                    Effect.map(store.findSession(sid), (session) => session !== null),
+                  ),
+                ),
+              ).pipe(
                 Layer.provide(
                   Layer.mergeAll(
                     FetchHttpClient.layer,
@@ -259,23 +356,42 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
           ),
           Layer.provideMerge(LegacySections.layer),
           Layer.provideMerge(UserFolders.layer),
-          Layer.provideMerge(ModelManifest.layer),
+          Layer.provideMerge(FolderStarts.layer),
           Layer.provideMerge(
-            GitHub.layer(GitHub.gitHubPipesConfig(env), GitHub.gitHubEndpoints(env)).pipe(
+            Layer.mergeAll(
+              LearnerService.layer,
+              LearnerSummary.layer((objectName) =>
+                PoolDirectory.poolObjectStub(env.POOLS, objectName, {
+                  localWorkerd: env.LOCAL_WORKERD === "1",
+                }),
+              ),
+            ).pipe(
+              Layer.provideMerge(
+                LearnerJev.layerFromEnv(env).pipe(Layer.provide(FetchHttpClient.layer)),
+              ),
+            ),
+          ),
+          Layer.provideMerge(ModelCatalog.layer.pipe(Layer.provideMerge(ModelManifest.layer))),
+          Layer.provideMerge(
+            GitHub.layerForUsers(GitHub.gitHubEndpoints(env)).pipe(
               Layer.provide(FetchHttpClient.layer),
             ),
           ),
+          Layer.provideMerge(CloudflareSearchIndex.layerFromEnv(env)),
           Layer.provideMerge(UserDrives.layer),
           Layer.provideMerge(
             Layer.mergeAll(
               UserStore.layer,
               UserModelSettings.layer,
+              UserKeybindings.layer,
+              UserAnalyticsPreference.layer,
+              UserTimezone.layer,
               UserContexts.layerWithDrives,
               ResourceBindings.layer,
               OnePasswordAccount.layer,
             ),
           ),
-          Layer.provideMerge(drives.store),
+          Layer.provideMerge(Layer.mergeAll(drives.store, drives.people)),
           Layer.provideMerge(
             Layer.mergeAll(
               ThreadDirectory.layerDurableObjects(env.THREADS, {
@@ -286,7 +402,21 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               }),
             ),
           ),
-          Layer.provideMerge(Layer.mergeAll(SqliteClient.layer({ storage }), Platform.layerCrypto)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              SqliteClient.layer({ storage }),
+              Platform.layerCrypto,
+              Evlog.layer,
+              Evlog.layerWaitUntil(ctx),
+            ),
+          ),
+          Layer.provideMerge(
+            IdentityProvider.layer.pipe(
+              Layer.provide(CloudConfig.layer),
+              Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: stringVars(env) }))),
+              Layer.orDie,
+            ),
+          ),
           // Signs asset URLs (`CloudAssets`) with the Worker's keys, from the same vars.
           Layer.provideMerge(
             CloudTokens.layerSessionSecret.pipe(
@@ -294,8 +424,24 @@ const makeRuntime = (storage: DurableObjectStorage, env: UserObjectEnv) => {
               Layer.orDie,
             ),
           ),
+          Layer.provideMerge(
+            ClientActionTimings.layer(env, (promise) => ctx.waitUntil(promise)).pipe(
+              Layer.provideMerge(ClientRpcTracing.layer(env, (promise) => ctx.waitUntil(promise))),
+            ),
+          ),
         ),
       ),
+    );
+  return ManagedRuntime.make(
+    UserTrash.layer.pipe(
+      Layer.provideMerge(TrashResourcesLive.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          layerTrashPreview,
+          Layer.succeed(TrashAlarm, { armBy: (at) => Effect.promise(() => armBy(storage, at)) }),
+        ),
+      ),
+      Layer.provideMerge(services),
     ),
   );
 };
@@ -306,6 +452,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   /** The person's MCP server (`api/mcpObject.ts`), made on first use. */
   private mcp: ReturnType<typeof makeMcpHandler> | undefined;
   private readonly sockets: ClientSockets;
+  private readonly observeStorage: () => void;
 
   constructor(ctx: DurableObjectState, env: UserObjectEnv) {
     super(ctx, env);
@@ -322,19 +469,24 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
       previews: machineSettings(env) !== null && previewSettings(env) !== null,
       scripted: scriptedProviderEnabled(env),
       attachments: env.DRIVE_PACKS !== undefined,
+      drives: env.DRIVES !== undefined && env.DRIVE_PACKS !== undefined,
+      searchDisabled: searchSettings(env).disabled,
     };
-    this.runtime = makeRuntime(ctx.storage, env);
+    this.runtime = makeRuntime(ctx, env);
+    this.observeStorage = makeStorageObserver(ctx, { kind: "user", level: "person" }, env);
     this.sockets = new ClientSockets({
       ctx,
       identity: this.identity,
-      run: (effect) => this.runtime.runPromise(effect),
+      run: (effect) => this.runtime.runPromise(effect).finally(() => this.observeStorage()),
     });
     // Client keepalives are answered without waking a hibernating object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG));
     void ctx.blockConcurrencyWhile(async () => {
       await this.runtime.runPromise(UserStore.migrate);
+      this.observeStorage();
+      await armBy(ctx.storage, (await this.now()) + 1_000);
       // Serves sockets that outlived the object's memory before anything else runs.
-      await this.sockets.restore(await this.now());
+      await this.sockets.restore(await this.now(), (await this.profile())?.id);
       // An alarm lost to a crash between sweeps is set again; one that's set is enough.
       if ((await ctx.storage.getAlarm()) === null) {
         await this.runtime.runPromise(
@@ -351,6 +503,11 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
           Effect.catchCause((cause) => Effect.logError("starting automations failed", { cause })),
         ),
       );
+      await this.runtime.runPromise(
+        UserTrash.UserTrash.use((trash) => trash.armRecovery).pipe(
+          Effect.catchCause((cause) => Effect.logError("arming trash recovery failed", { cause })),
+        ),
+      );
     });
   }
 
@@ -358,13 +515,26 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.runtime.runPromise(Clock.currentTimeMillis);
   }
 
+  trashProgress(id: string) {
+    return this.api.trashProgress(id);
+  }
+
   private readonly api: UserObjectApi = makeUserObjectApi((effect) =>
-    this.runtime.runPromise(effect),
+    this.runtime.runPromise(effect).finally(() => this.observeStorage()),
   );
 
   // Durable Object RPC dispatches to prototype methods, so each one is spelled out.
-  recordSignIn(profile: AccountProfile) {
-    return this.api.recordSignIn(profile);
+  async recordSignIn(profile: AccountProfile) {
+    await this.api.recordSignIn(profile);
+    await armBy(this.ctx.storage, (await this.now()) + 1_000);
+  }
+
+  searchThreads(...args: Parameters<UserObjectApi["searchThreads"]>) {
+    return this.api.searchThreads(...args);
+  }
+
+  readSearchItem(...args: Parameters<UserObjectApi["readSearchItem"]>) {
+    return this.api.readSearchItem(...args);
   }
 
   profile() {
@@ -401,12 +571,27 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.syncOrganizations(organizations);
   }
 
+  reserveOrganizationRefresh() {
+    return this.api.reserveOrganizationRefresh();
+  }
+
+  completeOrganizationRefresh(
+    sequence: Parameters<UserObjectApi["completeOrganizationRefresh"]>[0],
+    organizations: Parameters<UserObjectApi["completeOrganizationRefresh"]>[1],
+  ) {
+    return this.api.completeOrganizationRefresh(sequence, organizations);
+  }
+
   shellSnapshot() {
     return this.api.shellSnapshot();
   }
 
   recordThreadSummary(summary: unknown) {
     return this.api.recordThreadSummary(summary);
+  }
+
+  recordTerminalEvents(encoded: unknown) {
+    return this.api.recordTerminalEvents(encoded);
   }
 
   rebuildThreadIndex() {
@@ -419,6 +604,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
 
   completeGitHubConnect(grantId: string) {
     return this.api.completeGitHubConnect(grantId);
+  }
+
+  cancelGitHubConnect(grantId: string) {
+    return this.api.cancelGitHubConnect(grantId);
   }
 
   abortGitHubConnect(grantId: string) {
@@ -489,12 +678,24 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.githubCommitAuthor();
   }
 
+  pullRequestDiff(input: Parameters<UserObjectApi["pullRequestDiff"]>[0]) {
+    return this.api.pullRequestDiff(input);
+  }
+
   onePasswordToken() {
     return this.api.onePasswordToken();
   }
 
   contextIds() {
     return this.api.contextIds();
+  }
+
+  clientTraceDimensions(threadIds: Parameters<UserObjectApi["clientTraceDimensions"]>[0]) {
+    return this.api.clientTraceDimensions(threadIds);
+  }
+
+  clientFolderDimensions(folderIds: Parameters<UserObjectApi["clientFolderDimensions"]>[0]) {
+    return this.api.clientFolderDimensions(folderIds);
   }
 
   recordDriveAccess(entry: Parameters<UserObjectApi["recordDriveAccess"]>[0]) {
@@ -521,6 +722,10 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.driveEvents(input);
   }
 
+  learnerTool(threadId: string, name: string, input: unknown) {
+    return this.api.learnerTool(threadId, name, input);
+  }
+
   automationTool(threadId: string, name: string, input: unknown) {
     return this.api.automationTool(threadId, name, input);
   }
@@ -541,12 +746,20 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     return this.api.checkSignIn(input);
   }
 
+  authorizeExecutorToken(...args: Parameters<UserObjectApi["authorizeExecutorToken"]>) {
+    return this.api.authorizeExecutorToken(...args);
+  }
+
   endBrowser(input: Parameters<UserObjectApi["endBrowser"]>[0]) {
     return this.api.endBrowser(input);
   }
 
   automationHost(call: Parameters<UserObjectApi["automationHost"]>[0]) {
     return this.api.automationHost(call);
+  }
+
+  receiveHook(request: Parameters<UserObjectApi["receiveHook"]>[0]) {
+    return this.api.receiveHook(request);
   }
 
   automationWorkerModule(automationId: string, version: number) {
@@ -558,6 +771,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   }
 
   override async fetch(request: Request): Promise<Response> {
+    this.observeStorage();
     const apiCredential = decodeApiCredential(request.headers.get(API_HEADER));
     if (apiCredential._tag === "Some") {
       const profile = await this.profile();
@@ -589,7 +803,12 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
     if (!session || !profile) return new Response("Unauthorized", { status: 401 });
 
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
-    await this.sockets.accept(server, session, profile.id);
+    await this.sockets.accept(
+      server,
+      session,
+      profile.id,
+      clientKindOf(new URL(request.url).searchParams.get("clientSurface")),
+    );
     // The alarm disconnects it when its session expires.
     await armBy(this.ctx.storage, session.expiresAt);
     // A revoke that landed while the socket was being set up missed it.
@@ -606,7 +825,7 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
   }
 
   override async webSocketError(socket: WebSocket) {
-    await this.sockets.closed(socket);
+    await this.sockets.closed(socket, 1011, "", "error");
   }
 
   /**
@@ -615,22 +834,38 @@ export class UserObject extends DurableObject<UserObjectEnv> implements UserObje
    * are logged in again (`LoginService`). Each re-arms it.
    */
   override async alarm() {
+    this.observeStorage();
     const next = await this.sockets.expire(await this.now());
     if (next !== null) await armBy(this.ctx.storage, next);
     await this.runtime.runPromise(
       Effect.all(
         [
+          UserTrash.UserTrash.use((trash) => trash.recover).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("recovering trash cleanup failed", { cause }),
+            ),
+          ),
+          SearchBackfill.SearchBackfill.use((backfill) => backfill.step),
           UserThreadKinds.UserThreadKinds.use((kinds) => kinds.alarm).pipe(
             Effect.catchCause((cause) => Effect.logError("idle-chat sweep failed", { cause })),
           ),
           CloudAutomations.use((automations) => automations.wake).pipe(
             Effect.catchCause((cause) => Effect.logError("automation crons failed", { cause })),
           ),
+          CloudPullRequests.CloudPullRequests.use((requests) => requests.wakeReviewGuides).pipe(
+            Effect.catchCause((cause) => Effect.logError("review guide jobs failed", { cause })),
+          ),
           LoginService.LoginService.use((logins) => logins.sweep).pipe(
             Effect.catchCause((cause) => Effect.logError("re-login sweep failed", { cause })),
           ),
         ],
         { discard: true },
+      ).pipe(
+        // Named by the person's user id (`UserDirectory`).
+        Evlog.withUnit(
+          "user.alarm",
+          this.ctx.id.name === undefined ? {} : { person: { id: this.ctx.id.name } },
+        ),
       ),
     );
   }

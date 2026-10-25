@@ -1,9 +1,8 @@
 /**
  * The frame every automations page shares: the header with its breadcrumb and
- * controls, then the page body. "Automations" in the breadcrumb leads to the
- * overview.
+ * controls, then the page body. An automation's breadcrumb starts with where
+ * it lives, its folder path, since automations live in their folders (#313).
  */
-import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 
 import { isElectron } from "../../env";
@@ -17,10 +16,10 @@ import {
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 
 export function AutomationsPageShell(props: {
-  /** The automation's name; null on the overview, or while it loads. */
+  /** The page's name: the automation's, or null while it loads. */
   title: string | null;
-  /** True on the overview, where "Automations" is the page itself. */
-  overview?: boolean;
+  /** Where it lives ("Dev / signalbox"), before the title. */
+  home?: string | null;
   header?: ReactNode;
   children: ReactNode;
 }) {
@@ -28,29 +27,22 @@ export function AutomationsPageShell(props: {
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron}>
-          <WorkspaceBreadcrumb ariaLabel="Automations breadcrumb" className="min-w-0 shrink">
-            {props.overview ? (
-              <WorkspaceBreadcrumbItem current>
-                <h1>
-                  <WorkspaceBreadcrumbText>Automations</WorkspaceBreadcrumbText>
+          <WorkspaceBreadcrumb ariaLabel="Automation breadcrumb" className="min-w-0 shrink">
+            {/* Phones have room for the name only; the folder is a tap away in Home. */}
+            {props.home ? (
+              <>
+                <WorkspaceBreadcrumbItem className="hidden min-w-10 shrink sm:flex">
+                  <WorkspaceBreadcrumbText>{props.home}</WorkspaceBreadcrumbText>
+                </WorkspaceBreadcrumbItem>
+                {props.title ? <WorkspaceBreadcrumbSeparator className="hidden sm:flex" /> : null}
+              </>
+            ) : null}
+            {props.title ? (
+              <WorkspaceBreadcrumbItem current className="min-w-10">
+                <h1 className="min-w-0">
+                  <WorkspaceBreadcrumbText>{props.title}</WorkspaceBreadcrumbText>
                 </h1>
               </WorkspaceBreadcrumbItem>
-            ) : (
-              <WorkspaceBreadcrumbItem>
-                <Link to="/automations" className="hover:text-foreground">
-                  <WorkspaceBreadcrumbText>Automations</WorkspaceBreadcrumbText>
-                </Link>
-              </WorkspaceBreadcrumbItem>
-            )}
-            {props.title ? (
-              <>
-                <WorkspaceBreadcrumbSeparator />
-                <WorkspaceBreadcrumbItem current className="min-w-10">
-                  <h1 className="min-w-0">
-                    <WorkspaceBreadcrumbText>{props.title}</WorkspaceBreadcrumbText>
-                  </h1>
-                </WorkspaceBreadcrumbItem>
-              </>
             ) : null}
           </WorkspaceBreadcrumb>
           {props.header}

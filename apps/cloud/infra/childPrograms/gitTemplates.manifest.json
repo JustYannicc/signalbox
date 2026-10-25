@@ -1,0 +1,211 @@
+{
+  "format": "signalbox-git-template-assets-v1",
+  "source": {
+    "version": "2.53.0",
+    "repository": "https://www.kernel.org/pub/software/scm/git/",
+    "archiveUrl": "https://www.kernel.org/pub/software/scm/git/git-2.53.0.tar.xz",
+    "archiveBytes": 7993096,
+    "archiveSha256": "5818bd7d80b061bbbdfec8a433d609dc8818a05991f731ffc4a561e2ca18c653",
+    "matchingArtifactPin": "apps/cloud/infra/kernelPrograms/git/provenance.json"
+  },
+  "installerSource": {
+    "repository": "https://github.com/AshishKumar4/Nimbus",
+    "commit": "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
+    "buildGit": {
+      "path": "build-git.sh",
+      "sha256": "c7dae34133281572be94e91b66489da4bb45ecfffe5e37662284707ba997501a"
+    },
+    "configMak": {
+      "path": "config.mak",
+      "sha256": "c895ac16dd7a42f3d9bf9e4fef68125d7a82d605e1e8331b7c4fc53ccebb7cd0",
+      "prefix": "/usr"
+    }
+  },
+  "installation": {
+    "method": "Git 2.53.0 templates/Makefile install target",
+    "command": "make -C git-2.53.0/templates install DESTDIR=<stage> prefix=/usr SHELL_PATH=/bin/sh PERL_PATH=perl",
+    "makefileMember": "git-2.53.0/templates/Makefile",
+    "prefix": "/usr",
+    "templateDirectory": "/usr/share/git-core/templates",
+    "shellPath": "/bin/sh",
+    "perlPath": "perl",
+    "umask": "022",
+    "substitutions": ["1s|#!.*/sh|#!/bin/sh|", "s|@SHELL_PATH@|/bin/sh|", "s|@PERL_PATH@|perl|g"],
+    "outputModes": {
+      "executable": "0755",
+      "nonExecutable": "0644",
+      "directories": "0755"
+    },
+    "programDirectory": "<programDir>/git-templates"
+  },
+  "license": {
+    "spdx": "GPL-2.0-only",
+    "referenceMember": "git-2.53.0/COPYING",
+    "referenceBytes": 18765,
+    "referenceSha256": "5b2198d1645f767585e8a88ac0499b04472164c0d2da22e75ecf97ef443ab32e",
+    "sourceProvenance": "Git 2.53.0 source archive; apps/cloud/infra/kernelPrograms/git/provenance.json also pins GPL-2.0-only"
+  },
+  "directories": [
+    {
+      "path": "/usr/share/git-core/templates",
+      "assetPath": "git-templates/files/usr/share/git-core/templates",
+      "mode": "0755"
+    },
+    {
+      "path": "/usr/share/git-core/templates/hooks",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks",
+      "mode": "0755"
+    },
+    {
+      "path": "/usr/share/git-core/templates/info",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/info",
+      "mode": "0755"
+    }
+  ],
+  "files": [
+    {
+      "sourceMember": "git-2.53.0/templates/description",
+      "relativeInstallPath": "description",
+      "path": "/usr/share/git-core/templates/description",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/description",
+      "bytes": 73,
+      "sha256": "85ab6c163d43a17ea9cf7788308bca1466f1b0a8d1cc92e26e9bf63da4062aee",
+      "mode": "0644"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/applypatch-msg.sample",
+      "relativeInstallPath": "hooks/applypatch-msg.sample",
+      "path": "/usr/share/git-core/templates/hooks/applypatch-msg.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/applypatch-msg.sample",
+      "bytes": 478,
+      "sha256": "0223497a0b8b033aa58a3a521b8629869386cf7ab0e2f101963d328aa62193f7",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/commit-msg.sample",
+      "relativeInstallPath": "hooks/commit-msg.sample",
+      "path": "/usr/share/git-core/templates/hooks/commit-msg.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/commit-msg.sample",
+      "bytes": 896,
+      "sha256": "1f74d5e9292979b573ebd59741d46cb93ff391acdd083d340b94370753d92437",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/fsmonitor-watchman.sample",
+      "relativeInstallPath": "hooks/fsmonitor-watchman.sample",
+      "path": "/usr/share/git-core/templates/hooks/fsmonitor-watchman.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/fsmonitor-watchman.sample",
+      "bytes": 4726,
+      "sha256": "e0549964e93897b519bd8e333c037e51fff0f88ba13e086a331592bf801fa1d0",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/post-update.sample",
+      "relativeInstallPath": "hooks/post-update.sample",
+      "path": "/usr/share/git-core/templates/hooks/post-update.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/post-update.sample",
+      "bytes": 189,
+      "sha256": "81765af2daef323061dcbc5e61fc16481cb74b3bac9ad8a174b186523586f6c5",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/pre-applypatch.sample",
+      "relativeInstallPath": "hooks/pre-applypatch.sample",
+      "path": "/usr/share/git-core/templates/hooks/pre-applypatch.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/pre-applypatch.sample",
+      "bytes": 424,
+      "sha256": "e15c5b469ea3e0a695bea6f2c82bcf8e62821074939ddd85b77e0007ff165475",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/pre-commit.sample",
+      "relativeInstallPath": "hooks/pre-commit.sample",
+      "path": "/usr/share/git-core/templates/hooks/pre-commit.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/pre-commit.sample",
+      "bytes": 1649,
+      "sha256": "57185b7b9f05239d7ab52db045f5b89eb31348d7b2177eab214f5eb872e1971b",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/pre-merge-commit.sample",
+      "relativeInstallPath": "hooks/pre-merge-commit.sample",
+      "path": "/usr/share/git-core/templates/hooks/pre-merge-commit.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/pre-merge-commit.sample",
+      "bytes": 416,
+      "sha256": "d3825a70337940ebbd0a5c072984e13245920cdf8898bd225c8d27a6dfc9cb53",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/prepare-commit-msg.sample",
+      "relativeInstallPath": "hooks/prepare-commit-msg.sample",
+      "path": "/usr/share/git-core/templates/hooks/prepare-commit-msg.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/prepare-commit-msg.sample",
+      "bytes": 1465,
+      "sha256": "ec987a6afc21999023ff43379d1af062eb734f5dc5385d225fbab075950cd365",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/pre-push.sample",
+      "relativeInstallPath": "hooks/pre-push.sample",
+      "path": "/usr/share/git-core/templates/hooks/pre-push.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/pre-push.sample",
+      "bytes": 1374,
+      "sha256": "ecce9c7e04d3f5dd9d8ada81753dd1d549a9634b26770042b58dda00217d086a",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/pre-rebase.sample",
+      "relativeInstallPath": "hooks/pre-rebase.sample",
+      "path": "/usr/share/git-core/templates/hooks/pre-rebase.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/pre-rebase.sample",
+      "bytes": 4889,
+      "sha256": "ad176f419eb1b1205eec45d4ee40f9851f24ae2133e64f5de75728a50c01fb11",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/pre-receive.sample",
+      "relativeInstallPath": "hooks/pre-receive.sample",
+      "path": "/usr/share/git-core/templates/hooks/pre-receive.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/pre-receive.sample",
+      "bytes": 544,
+      "sha256": "a4c3d2b9c7bb3fd8d1441c31bd4ee71a595d66b44fcf49ddb310252320169989",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/push-to-checkout.sample",
+      "relativeInstallPath": "hooks/push-to-checkout.sample",
+      "path": "/usr/share/git-core/templates/hooks/push-to-checkout.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/push-to-checkout.sample",
+      "bytes": 2783,
+      "sha256": "a53d0741798b287c6dd7afa64aee473f305e65d3f49463bb9d7408ec3b12bf5f",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/sendemail-validate.sample",
+      "relativeInstallPath": "hooks/sendemail-validate.sample",
+      "path": "/usr/share/git-core/templates/hooks/sendemail-validate.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/sendemail-validate.sample",
+      "bytes": 2308,
+      "sha256": "44ebfc923dc5466bc009602f0ecf067b9c65459abfe8868ddc49b78e6ced7a92",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/hooks/update.sample",
+      "relativeInstallPath": "hooks/update.sample",
+      "path": "/usr/share/git-core/templates/hooks/update.sample",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/hooks/update.sample",
+      "bytes": 3650,
+      "sha256": "8d5f2fa83e103cf08b57eaa67521df9194f45cbdbcb37da52ad586097a14d106",
+      "mode": "0755"
+    },
+    {
+      "sourceMember": "git-2.53.0/templates/info/exclude",
+      "relativeInstallPath": "info/exclude",
+      "path": "/usr/share/git-core/templates/info/exclude",
+      "assetPath": "git-templates/files/usr/share/git-core/templates/info/exclude",
+      "bytes": 240,
+      "sha256": "6671fe83b7a07c8932ee89164d1f2793b2318058eb8b98dc5c06ee0a5a3b0ec1",
+      "mode": "0644"
+    }
+  ]
+}

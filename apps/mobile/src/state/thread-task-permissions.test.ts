@@ -114,6 +114,10 @@ vi.mock("./use-composer-drafts", async () => {
     composerContextImportsAtom: Atom.make({}),
     getComposerDraftSnapshot: () => state.draft,
     clearComposerDraftContent: state.clearDraft,
+    clearComposerDraftContentIfMatchingQueuedMessage: state.clearDraft,
+    ensureComposerDraftRevision: () => "draft-revision",
+    flushComposerDrafts: async () => {},
+    flushComposerDraftsAfterOutboxWrite: (write: Promise<void>) => write,
     clearComposerDraft: state.clearDraft,
     setComposerDraftText: (_key: string, text: string) => {
       state.draft.text = text;

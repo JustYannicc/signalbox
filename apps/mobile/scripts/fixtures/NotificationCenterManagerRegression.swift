@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 // The registry runs on macOS without starting a simulator. Only the OS-facing
 // types are replaced; the tests compile the dependency's actual Swift source.
@@ -6,10 +7,7 @@ public enum UIBackgroundFetchResult {
   case noData
 }
 
-public struct UNNotificationPresentationOptions: OptionSet {
-  public let rawValue: Int
-  public init(rawValue: Int) { self.rawValue = rawValue }
-}
+public typealias UNNotificationPresentationOptions = UserNotifications.UNNotificationPresentationOptions
 
 public final class UNNotification: NSObject {}
 
@@ -18,7 +16,20 @@ public final class UNNotificationResponse: NSObject {
   init(_ identifier: String) { self.identifier = identifier }
 }
 
-public protocol UNUserNotificationCenterDelegate: AnyObject {}
+@objc
+public protocol UNUserNotificationCenterDelegate: AnyObject {
+  @objc optional func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  )
+  @objc optional func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  )
+  @objc optional func userNotificationCenter(_ center: UNUserNotificationCenter, openSettingsFor notification: UNNotification?)
+}
 
 public final class UNUserNotificationCenter: NSObject {
   private static let instance = UNUserNotificationCenter()
@@ -138,6 +149,46 @@ private func responseDuringReplay() throws {
   manager.removeDelegate(receiver)
 }
 
+private func partiallyHandledReplay() throws {
+  let manager = NotificationCenterManager.shared
+  deliver("handled")
+  deliver("unhandled")
+  let original = TestDelegate()
+  original.onResponse = { $0.identifier == "handled" }
+  manager.addDelegate(original)
+  let receiver = TestDelegate()
+  receiver.onResponse = { _ in true }
+  manager.addDelegate(receiver)
+  try require(receiver.events == ["unhandled"], "Handling one pending response must retain the unhandled response")
+  manager.removeDelegate(original)
+  manager.removeDelegate(receiver)
+}
+
+private final class ChainedDelegate: NSObject, UNUserNotificationCenterDelegate {
+  var onResponse: (() -> Void)?
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    onResponse?()
+  }
+}
+
+private func chainedRegistration() throws {
+  let chain = ChainedDelegate()
+  UNUserNotificationCenter.current().delegate = chain
+  let manager = NotificationCenterManager.shared
+  let receiver = TestDelegate()
+  receiver.onResponse = { _ in true }
+  chain.onResponse = { manager.addDelegate(receiver) }
+  deliver("chained")
+  try require(receiver.events == ["chained"], "Chained callbacks must be able to register an Expo delegate for the pending response")
+  try require(manager.pendingResponses.isEmpty, "A response handled during chaining must not be queued again")
+  manager.removeDelegate(receiver)
+}
+
 private func concurrentRegistrations() throws {
   let manager = NotificationCenterManager.shared
   let delegates = (0..<512).map { _ in
@@ -177,6 +228,8 @@ private enum RegressionTests {
       case "reentrant": try reentrantCallbacks()
       case "handoff": try registrationDuringDelivery()
       case "pending": try responseDuringReplay()
+      case "partial": try partiallyHandledReplay()
+      case "chained": try chainedRegistration()
       case "concurrent": try concurrentRegistrations()
       default: throw NSError(domain: "NotificationCenterManagerRegression", code: 2)
       }

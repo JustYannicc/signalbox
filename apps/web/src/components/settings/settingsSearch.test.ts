@@ -318,6 +318,10 @@ describe("searchSettings", () => {
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
+    expect(searchableSetting("cloud-browser-profile")).toEqual({
+      id: "cloud-browser-profile",
+      title: "Cloud browser profile",
+    });
   });
 
   it("routes appearance settings to their current section", () => {

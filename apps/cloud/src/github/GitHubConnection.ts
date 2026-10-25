@@ -38,6 +38,7 @@ const EXPIRY_MARGIN_MS = 60_000;
 
 export type ConnectStart =
   | { readonly _tag: "started"; readonly url: string }
+  | { readonly _tag: "expired" }
   | { readonly _tag: "unavailable" };
 
 export type ConnectResult =
@@ -52,8 +53,8 @@ export interface GitHubAccount {
 export class GitHubConnection extends Context.Service<
   GitHubConnection,
   {
-    /** Whether this cloud can connect GitHub at all (it has a WorkOS API key). */
-    readonly configured: boolean;
+    /** Whether this user's resolved WorkOS realm can connect GitHub. */
+    readonly configured: Effect.Effect<boolean, SqlError>;
     /** The connected GitHub account, or null. */
     readonly account: Effect.Effect<{ readonly login: string } | null, SqlError>;
     /** Who the user's agents commit as: the connected account (`commitAuthorOf`), or null. */
@@ -65,6 +66,8 @@ export class GitHubConnection extends Context.Service<
     }) => Effect.Effect<ConnectStart, SqlError>;
     /** Finishes a connect `begin` started, back in this user's browser. */
     readonly complete: (grantId: string) => Effect.Effect<ConnectResult, SqlError>;
+    /** Spends a cancelled attempt without forgetting an existing connection. */
+    readonly cancel: (grantId: string) => Effect.Effect<boolean, SqlError>;
     /** Undoes a connect attempt that came back in someone else's browser. */
     readonly abort: (grantId: string) => Effect.Effect<void, SqlError>;
     /** The connection as recorded, for a preview of this user's to take along (`previewSetup/`). */
@@ -170,7 +173,8 @@ const pipesError = (error: { readonly status: number; readonly message: string }
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const { pipes, api } = yield* GitHub;
+  const github = yield* GitHub;
+  const { api } = github;
   // The last token Pipes gave, so a burst of git requests doesn't ask WorkOS each time.
   const cached = yield* Ref.make<{ readonly token: string; readonly until: number } | null>(null);
   // One Pipes request at a time; the others wait for its token.
@@ -185,11 +189,28 @@ const make = Effect.gen(function* () {
   );
   const userId = yield* makeProfileId;
 
+  const configured: GitHubConnection["Service"]["configured"] = Effect.gen(function* () {
+    const id = yield* userId;
+    if (id === null) return false;
+    return yield* github.pipesForUser(id).pipe(
+      Effect.map((pipes) => pipes !== null),
+      Effect.catch(() => Effect.succeed(false)),
+    );
+  });
+
   /** Forgets the connection in WorkOS too; a failure there only gets logged. */
   const forgetEverywhere = Effect.gen(function* () {
     yield* forget;
     const id = yield* userId;
-    if (pipes === null || id === null) return;
+    if (id === null) return;
+    const pipes = yield* github.pipesForUser(id).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("resolving a GitHub identity for WorkOS disconnect failed", {
+          cause,
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (pipes === null) return;
     yield* pipes
       .disconnect(id)
       .pipe(
@@ -216,11 +237,25 @@ const make = Effect.gen(function* () {
   const begin: GitHubConnection["Service"]["begin"] = (input) =>
     Effect.gen(function* () {
       const id = yield* userId;
-      if (pipes === null || id === null) return { _tag: "unavailable" } as const;
+      if (id === null) return { _tag: "unavailable" } as const;
+      const pipes = yield* github
+        .pipesForUser(id)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logError("resolving a GitHub identity in WorkOS failed", { cause }).pipe(
+              Effect.as(null),
+            ),
+          ),
+        );
+      if (pipes === null) return { _tag: "unavailable" } as const;
       const now = yield* Clock.currentTimeMillis;
       yield* sql`DELETE FROM github_connect_grants WHERE expires_at <= ${now}`;
-      yield* sql`INSERT INTO github_connect_grants (grant_id, expires_at)
-        VALUES (${input.grantId}, ${now + GRANT_TTL_MS})`;
+      const inserted = yield* sql<{
+        readonly grant_id: string;
+      }>`INSERT INTO github_connect_grants (grant_id, expires_at)
+        VALUES (${input.grantId}, ${now + GRANT_TTL_MS})
+        ON CONFLICT (grant_id) DO NOTHING RETURNING grant_id`;
+      if (inserted.length === 0) return { _tag: "expired" } as const;
       const url = yield* pipes
         .authorizeUrl({ userId: id, returnTo: input.returnTo })
         .pipe(
@@ -239,7 +274,17 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const failed = (reason: string): ConnectResult => ({ _tag: "failed", reason });
       const id = yield* userId;
-      if (pipes === null || id === null) return failed("This cloud can't connect GitHub.");
+      if (id === null) return failed("This cloud can't connect GitHub.");
+      const pipes = yield* github
+        .pipesForUser(id)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logError("resolving a GitHub identity in WorkOS failed", { cause }).pipe(
+              Effect.as(null),
+            ),
+          ),
+        );
+      if (pipes === null) return failed("This cloud can't connect GitHub.");
       const now = yield* Clock.currentTimeMillis;
       const open = yield* sql<{ readonly grant_id: string }>`SELECT grant_id
         FROM github_connect_grants WHERE grant_id = ${grantId} AND used = 0
@@ -266,12 +311,25 @@ const make = Effect.gen(function* () {
       return { _tag: "connected", login: viewer.success.login } as const;
     });
 
+  const cancel: GitHubConnection["Service"]["cancel"] = (grantId) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const spent = yield* sql<{
+        readonly grant_id: string;
+      }>`UPDATE github_connect_grants SET used = 2
+        WHERE grant_id = ${grantId} AND used = 0 AND expires_at > ${now} RETURNING grant_id`;
+      return spent.length > 0;
+    });
+
   const abort: GitHubConnection["Service"]["abort"] = (grantId) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
-      const spent = yield* sql<{ readonly grant_id: string }>`DELETE FROM github_connect_grants
-        WHERE grant_id = ${grantId} AND expires_at > ${now} RETURNING grant_id`;
-      // Pipes now holds whatever account the other browser authorized, in this user's slot.
+      // Keep a tombstone until expiry so a native start URL cannot restart an aborted attempt.
+      const spent = yield* sql<{
+        readonly grant_id: string;
+      }>`UPDATE github_connect_grants SET used = 3
+        WHERE grant_id = ${grantId} AND used != 3 AND expires_at > ${now} RETURNING grant_id`;
+      // Even a cancelled attempt may finish later in another browser and replace the user's Pipes account.
       if (spent.length > 0) yield* forgetEverywhere;
     });
 
@@ -300,6 +358,9 @@ const make = Effect.gen(function* () {
   });
 
   const accessToken: GitHubConnection["Service"]["accessToken"] = Effect.gen(function* () {
+    const id = yield* userId;
+    if (id === null) return null;
+    const pipes = yield* github.pipesForUser(id).pipe(Effect.mapError(pipesError));
     if (pipes === null) return null;
     const hit = yield* reuse;
     if (hit !== null) return hit;
@@ -308,8 +369,7 @@ const make = Effect.gen(function* () {
         // Another caller may have fetched one while this one waited.
         const fetched = yield* reuse;
         if (fetched !== null) return fetched;
-        const id = yield* userId;
-        if ((yield* row) === null || id === null) return null;
+        if ((yield* row) === null) return null;
         const answer = yield* pipes.accessToken(id).pipe(Effect.mapError(pipesError));
         if (answer._tag === "inactive") {
           // Revoked on GitHub or deleted in WorkOS: the user connects again.
@@ -334,11 +394,12 @@ const make = Effect.gen(function* () {
   });
 
   return GitHubConnection.of({
-    configured: pipes !== null,
+    configured,
     account,
     commitAuthor,
     begin,
     complete,
+    cancel,
     abort,
     disconnect,
     recorded,

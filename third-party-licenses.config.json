@@ -665,6 +665,22 @@
           "Copyright (c) 2018 Contributors (https://github.com/rrweb-io/rrweb/graphs/contributors)"
         ]
       }
+    },
+    {
+      "name": "@napi-rs/wasm-runtime",
+      "version": "1.1.4",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2020-present LongYinan", "Copyright (c) 2018 GitHub"]
+      }
+    },
+    {
+      "name": "@tybys/wasm-util",
+      "version": "0.10.2",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2022-present Toyobayashi"]
+      }
     }
   ]
 }

@@ -35,6 +35,7 @@ const HELD_SPAN_BYTES = 1024 * 1024;
 const READ_CONCURRENCY = 8;
 
 interface Span {
+  readonly storageDriveId?: string;
   readonly pack: string;
   readonly offset: number;
   readonly length: number;
@@ -64,12 +65,19 @@ const dataLength = ({ data }: PushEntry) =>
 export const packSize = (entries: ReadonlyArray<PushEntry>) =>
   entries.reduce((total, entry) => total + entry.header.length + dataLength(entry), 12 + 20);
 
-const byPosition = (a: Span, b: Span) =>
-  a.pack === b.pack ? a.offset - b.offset : a.pack < b.pack ? -1 : 1;
+const storageDrive = (span: Span, fallback: string) => span.storageDriveId ?? fallback;
+
+const byPosition = (a: Span, b: Span, fallback: string) => {
+  const aDrive = storageDrive(a, fallback);
+  const bDrive = storageDrive(b, fallback);
+  if (aDrive !== bDrive) return aDrive < bDrive ? -1 : 1;
+  return a.pack === b.pack ? a.offset - b.offset : a.pack < b.pack ? -1 : 1;
+};
 
 /** `spans`, in pack order, as runs of small neighbours read in one request each; a big span runs alone. */
-const runsOf = <A extends Span>(spans: ReadonlyArray<A>) => {
+const runsOf = <A extends Span>(spans: ReadonlyArray<A>, fallbackDriveId: string) => {
   const runs: Array<{
+    readonly storageDriveId: string;
     readonly pack: string;
     readonly offset: number;
     length: number;
@@ -77,8 +85,10 @@ const runsOf = <A extends Span>(spans: ReadonlyArray<A>) => {
   }> = [];
   for (const span of spans) {
     const last = runs.at(-1);
+    const storageDriveId = storageDrive(span, fallbackDriveId);
     if (
       last !== undefined &&
+      last.storageDriveId === storageDriveId &&
       last.pack === span.pack &&
       last.offset + last.length === span.offset &&
       last.length + span.length <= HELD_SPAN_BYTES
@@ -86,7 +96,13 @@ const runsOf = <A extends Span>(spans: ReadonlyArray<A>) => {
       last.length += span.length;
       last.spans.push(span);
     } else {
-      runs.push({ pack: span.pack, offset: span.offset, length: span.length, spans: [span] });
+      runs.push({
+        storageDriveId,
+        pack: span.pack,
+        offset: span.offset,
+        length: span.length,
+        spans: [span],
+      });
     }
   }
   return runs;
@@ -117,7 +133,7 @@ export const planEntries = Effect.fn("pushPack.planEntries")(function* (
   const entries = new Map<Oid, PushEntry>();
   let wanted: ReadonlyArray<Oid> = [...objects.keys()];
   while (wanted.length > 0) {
-    const located = [...(yield* drive.locate(wanted))].sort(byPosition);
+    const located = [...(yield* drive.locate(wanted))].sort((a, b) => byPosition(a, b, driveId));
     const stored = new Set(located.map((location) => location.oid));
     const unstored = wanted.filter((oid) => !stored.has(oid));
     const promised = new Set(
@@ -135,7 +151,12 @@ export const planEntries = Effect.fn("pushPack.planEntries")(function* (
       });
     }
     // An offset delta's base is usually among these, which saves asking the drive.
-    const at = new Map(located.map((found) => [`${found.pack}:${found.offset}`, found.oid]));
+    const at = new Map(
+      located.map((found) => [
+        `${storageDrive(found, driveId)}:${found.pack}:${found.offset}`,
+        found.oid,
+      ]),
+    );
     const bases = new Set<Oid>();
     const plan = (location: ObjectLocation, bytes: Bytes, from: number) =>
       Effect.gen(function* () {
@@ -148,7 +169,7 @@ export const planEntries = Effect.fn("pushPack.planEntries")(function* (
         if (header.kind === "ofs_delta") {
           const offset = location.offset - header.baseDistance!;
           base =
-            at.get(`${location.pack}:${offset}`) ??
+            at.get(`${storageDrive(location, driveId)}:${location.pack}:${offset}`) ??
             (yield* drive.locateAt(location.pack, offset))?.oid ??
             null;
           if (base === null) return yield* fail(`The base of ${location.oid} is missing.`);
@@ -162,6 +183,9 @@ export const planEntries = Effect.fn("pushPack.planEntries")(function* (
               ? bytes.slice(from, from + header.headerLength)
               : concatBytes([entryHeader("ref_delta", header.size), fromHex(base)]),
           data: {
+            ...(location.storageDriveId === undefined
+              ? {}
+              : { storageDriveId: location.storageDriveId }),
             pack: location.pack,
             offset: location.offset,
             length: location.length,
@@ -171,11 +195,11 @@ export const planEntries = Effect.fn("pushPack.planEntries")(function* (
         if (base !== null && !objects.has(base) && !onRemote.has(base)) bases.add(base);
       });
     yield* Effect.forEach(
-      runsOf(located),
+      runsOf(located, driveId),
       (run) =>
         Effect.gen(function* () {
           const bytes = yield* packs.range(
-            driveId,
+            run.storageDriveId,
             run.pack,
             run.offset,
             run.length > HELD_SPAN_BYTES ? HEADER_BYTES : run.length,
@@ -192,7 +216,7 @@ export const planEntries = Effect.fn("pushPack.planEntries")(function* (
   const held = all.filter((entry) => entry.data instanceof Uint8Array);
   const inPacks = all
     .flatMap((entry) => (entry.data instanceof Uint8Array ? [] : [{ entry, ...entry.data }]))
-    .sort(byPosition)
+    .sort((a, b) => byPosition(a, b, driveId))
     .map(({ entry }) => entry);
   return [...inPacks, ...held];
 });
@@ -215,6 +239,7 @@ export const streamPack = Effect.fn("pushPack.streamPack")(function* (
     entries.flatMap((entry) =>
       entry.data instanceof Uint8Array ? [] : [{ entry, ...entry.data }],
     ),
+    driveId,
   );
   type Run = (typeof runs)[number];
   const read = (
@@ -222,20 +247,22 @@ export const streamPack = Effect.fn("pushPack.streamPack")(function* (
   ): Effect.Effect<Stream.Stream<Uint8Array, DrivePackError>, DrivePackError> => {
     if (run.length <= HELD_SPAN_BYTES) {
       // Read now, ahead of its turn.
-      return Effect.map(packs.range(driveId, run.pack, run.offset, run.length), (bytes) =>
-        Stream.fromIterable(
-          run.spans.flatMap(({ entry, offset, length, headerLength }) => [
-            entry.header,
-            bytes.subarray(offset - run.offset + headerLength, offset - run.offset + length),
-          ]),
-        ),
+      return Effect.map(
+        packs.range(run.storageDriveId, run.pack, run.offset, run.length),
+        (bytes) =>
+          Stream.fromIterable(
+            run.spans.flatMap(({ entry, offset, length, headerLength }) => [
+              entry.header,
+              bytes.subarray(offset - run.offset + headerLength, offset - run.offset + length),
+            ]),
+          ),
       );
     }
     // A big entry runs alone, and is only read when it's next.
     const { entry, offset, length, headerLength } = run.spans[0]!;
     const body = Stream.unwrap(
       Effect.map(
-        packs.stream(driveId, run.pack, offset + headerLength, length - headerLength),
+        packs.stream(run.storageDriveId, run.pack, offset + headerLength, length - headerLength),
         (readable) =>
           Stream.fromReadableStream({
             evaluate: () => readable,

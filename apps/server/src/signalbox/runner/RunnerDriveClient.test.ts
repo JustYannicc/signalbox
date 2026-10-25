@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DRIVE_PATHS } from "@signalbox/runner-protocol/DriveProtocol";
+import { PULL_PATHS, pullReceiptPath } from "@signalbox/runner-protocol/PullProtocol";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -19,6 +20,7 @@ interface Seen {
   readonly length: string | undefined;
   readonly bytes: number;
   readonly auth: string | undefined;
+  readonly body: string;
 }
 
 const cleanups: Array<() => void> = [];
@@ -44,6 +46,7 @@ const serve = (direct: boolean) =>
               length: request.headers["content-length"],
               bytes: body.length,
               auth: request.headers.authorization,
+              body: body.toString("utf8"),
             });
             const json = (value: unknown) => {
               response.writeHead(200, { "content-type": "application/json" });
@@ -68,6 +71,30 @@ const serve = (direct: boolean) =>
               response.end();
             } else if (path === DRIVE_PATHS.directCommit || path === DRIVE_PATHS.packs) {
               json({ name: "a".repeat(40), objects: 3 });
+            } else if (path === DRIVE_PATHS.checkpoint) {
+              json({
+                _tag: "ok",
+                state: {
+                  driveId: "drive-1",
+                  main: null,
+                  thread: null,
+                  wip: null,
+                  base: null,
+                  packs: [],
+                  remote: null,
+                  shallow: [],
+                },
+              });
+            } else if (path === PULL_PATHS.save || path.startsWith(`${PULL_PATHS.receipts}/`)) {
+              json({
+                id: "pull-1",
+                target: "a".repeat(40),
+                head: "b".repeat(40),
+                wip: "c".repeat(40),
+                outcome: "pulled",
+                reason: null,
+                hasWorkingTreeChanges: true,
+              });
             } else {
               response.writeHead(404);
               response.end();
@@ -93,6 +120,77 @@ const packFiles = () => {
 const access = { driveId: "drive-1", token: "drive-token", remoteToken: null };
 
 describe("the drive client's uploads", () => {
+  it.effect("saves and recovers an immutable pull receipt", () =>
+    Effect.gen(function* () {
+      const cloud = yield* serve(false);
+      const client = yield* makeDriveClient({ cloudUrl: cloud.origin, access });
+      const request = {
+        operation: {
+          id: "pull-1",
+          target: "a".repeat(40),
+          expectedThread: "d".repeat(40),
+          expectedWip: "e".repeat(40),
+          revision: null,
+          branch: "feature/example",
+        },
+        result: {
+          id: "pull-1",
+          target: "a".repeat(40),
+          head: "b".repeat(40),
+          wip: "c".repeat(40),
+          outcome: "pulled",
+          reason: null,
+          hasWorkingTreeChanges: true,
+        },
+      } as const;
+      expect(yield* client.savePull(request)).toEqual(request.result);
+      expect(yield* client.pullReceipt("pull-1")).toEqual(request.result);
+      expect(
+        cloud.seen.map(({ method, path, auth, body }) => ({ method, path, auth, body })),
+      ).toEqual([
+        {
+          method: "POST",
+          path: PULL_PATHS.save,
+          auth: "Bearer drive-token",
+          body: JSON.stringify(request),
+        },
+        {
+          method: "GET",
+          path: pullReceiptPath("pull-1"),
+          auth: "Bearer drive-token",
+          body: "",
+        },
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(FetchHttpClient.layer, NodeServices.layer))),
+  );
+
+  it.effect("registers an uploaded notes ref with immutable checkpoint metadata", () =>
+    Effect.gen(function* () {
+      const cloud = yield* serve(false);
+      const client = yield* makeDriveClient({ cloudUrl: cloud.origin, access });
+      const record = {
+        runId: "run-1",
+        turnId: "provider-turn-1",
+        commit: "a".repeat(40),
+        start: null,
+        notes: "b".repeat(40),
+        views: {
+          shortcuts: [{ path: "docs", target: "drive-docs", commit: "c".repeat(40) }],
+          context: null,
+        },
+      } as const;
+      expect(yield* client.recordCheckpoint(record)).toMatchObject({ _tag: "ok" });
+      const request = cloud.seen.at(-1)!;
+      expect(request).toMatchObject({
+        method: "POST",
+        path: DRIVE_PATHS.checkpoint,
+        auth: "Bearer drive-token",
+      });
+      // The client sends the protocol shape, with no runner-only thread metadata.
+      expect(JSON.parse(request.body)).toEqual(record);
+    }).pipe(Effect.provide(Layer.mergeAll(FetchHttpClient.layer, NodeServices.layer))),
+  );
+
   it.effect(
     "puts a pack straight to storage, with its length and no drive token, then commits it",
     () =>

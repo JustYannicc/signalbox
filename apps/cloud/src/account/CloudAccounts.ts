@@ -1,5 +1,6 @@
 import * as AccountFlow from "@signalbox/account/AccountFlow";
 import * as WorkOSClient from "@signalbox/account/WorkOSClient";
+import * as WorkOSOrganizations from "@signalbox/account/WorkOSOrganizations";
 import type {
   AccountAuthorizeParams,
   AccountHandoffRequest,
@@ -23,6 +24,7 @@ import * as CloudTokens from "../auth/CloudTokens.ts";
 import * as CloudConfig from "../CloudConfig.ts";
 import * as PreviewSetup from "../previewSetup/PreviewSetup.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
+import * as IdentityProvider from "./IdentityProvider.ts";
 
 /**
  * WorkOS sign-in for the cloud, the same flow and routes as a self-hosted
@@ -109,6 +111,15 @@ export class CloudAccounts extends Context.Service<
     >;
     /** Never fails for sign-in problems; those become error redirects. */
     readonly callback: (input: CallbackInput) => Effect.Effect<SignInResult>;
+    /** Server-trusted identities only; transports must authenticate before calling. */
+    readonly finishSignIn: (
+      attempt: CloudTokens.PendingAttempt,
+      user: WorkOSClient.WorkOSUser,
+      workos?: WorkOSClient.WorkOSConfig,
+    ) => Effect.Effect<
+      SignInResult,
+      UserDirectory.UserObjectError | IdentityProvider.IdentityProviderUnavailable
+    >;
     readonly verifyEmail: (
       body: AccountVerifyEmailRequest,
       binding: string | undefined,
@@ -127,7 +138,14 @@ export class CloudAccounts extends Context.Service<
      */
     readonly refreshContexts: (
       userId: string,
-    ) => Effect.Effect<void, WorkOSClient.WorkOSOrganizationsError | UserDirectory.UserObjectError>;
+      workos?: WorkOSClient.WorkOSConfig,
+    ) => Effect.Effect<
+      void,
+      | WorkOSClient.WorkOSOrganizationsError
+      | WorkOSOrganizations.WorkOSPersonalOrganizationError
+      | UserDirectory.UserObjectError
+      | IdentityProvider.IdentityProviderUnavailable
+    >;
   }
 >()("@signalbox/cloud/account/CloudAccounts") {}
 
@@ -152,6 +170,7 @@ const make = Effect.gen(function* () {
   const users = yield* UserDirectory.UserDirectory;
   const httpClient = yield* HttpClient.HttpClient;
   const previewSetup = yield* PreviewSetup.PreviewSetupConfig;
+  const identityProviders = yield* IdentityProvider.IdentityProviders;
 
   const workosAuthenticate = (grant: WorkOSClient.WorkOSGrant) =>
     WorkOSClient.authenticate(workos, grant).pipe(
@@ -159,37 +178,60 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * Refreshes the user's work contexts from their WorkOS memberships. Best
-   * effort: a failure keeps the contexts from the previous sign-in, and
-   * without the API key there are no work contexts at all.
-   */
-  /**
-   * Makes the user's work contexts their WorkOS memberships now. Without the
-   * API key there are no work contexts to refresh.
+   * Makes the user's work contexts their WorkOS memberships now, minus their
+   * personal organization: Personal is already a context of its own. Without
+   * the API key there are no work contexts to refresh.
+   *
+   * The sequence is reserved before WorkOS is asked, so of two refreshes that
+   * overlap only the later one writes, whichever finishes first (see
+   * `user/organizationRefresh.ts`). A failed read writes nothing.
    */
   const refreshContexts: CloudAccounts["Service"]["refreshContexts"] = Effect.fn(
     "CloudAccounts.refreshContexts",
-  )(function* (userId) {
-    const { apiKey } = workos;
+  )(function* (userId, override) {
+    const resolved = yield* identityProviders.identityProviderForUser(userId);
+    const identityProvider = override ?? resolved;
+    const { apiKey } = identityProvider;
     if (apiKey === undefined) return;
-    const organizations = yield* WorkOSClient.listOrganizations({ ...workos, apiKey }, userId).pipe(
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-      // Sign-in waits for this, so a slow WorkOS must not hold it up.
-      Effect.timeout(CONTEXTS_SYNC_TIMEOUT),
-      Effect.catchTags({
-        TimeoutError: () => Effect.fail(new WorkOSClient.WorkOSOrganizationsError({})),
-      }),
+    const userObject = users.forUser(userId);
+    const sequence = yield* userObject.reserveOrganizationRefresh();
+    // Both reads go to the same WorkOS realm, so the personal id matches the listing.
+    const realm = { ...identityProvider, apiKey };
+    const [organizations, personalId] = yield* Effect.all(
+      [
+        WorkOSClient.listOrganizations(realm, userId).pipe(
+          // Sign-in waits for this, so a slow WorkOS must not hold it up.
+          Effect.timeoutOrElse({
+            duration: CONTEXTS_SYNC_TIMEOUT,
+            orElse: () => Effect.fail(new WorkOSClient.WorkOSOrganizationsError({})),
+          }),
+        ),
+        WorkOSOrganizations.resolvePersonalOrganization(realm, userId).pipe(
+          Effect.timeoutOrElse({
+            duration: CONTEXTS_SYNC_TIMEOUT,
+            orElse: () => Effect.fail(new WorkOSOrganizations.WorkOSPersonalOrganizationError({})),
+          }),
+        ),
+      ],
+      { concurrency: 2 },
+    ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
+    const applied = yield* userObject.completeOrganizationRefresh(
+      sequence,
+      organizations.filter((organization) => organization.id !== personalId),
     );
-    yield* users.forUser(userId).syncOrganizations(organizations);
+    yield* Effect.annotateCurrentSpan({ sequence, applied });
   });
 
   /** At sign-in: best effort, so a failure keeps the contexts from the previous one. */
-  const syncContexts = (userId: string) =>
-    refreshContexts(userId).pipe(
+  const syncContexts = (userId: string, identityProvider: WorkOSClient.WorkOSConfig) =>
+    refreshContexts(userId, identityProvider).pipe(
       Effect.catch((error) =>
         Effect.logWarning("cloud contexts sync failed", {
           errorTag: error._tag,
-          ...(error._tag === "WorkOSOrganizationsError" ? { status: error.status } : {}),
+          ...(error._tag === "WorkOSOrganizationsError" ||
+          error._tag === "WorkOSPersonalOrganizationError"
+            ? { status: error.status }
+            : {}),
         }),
       ),
     );
@@ -248,15 +290,20 @@ const make = Effect.gen(function* () {
   );
 
   /** The one success path, shared by the callback and email verification. */
-  const finish = Effect.fn("CloudAccounts.finish")(function* (
+  const finishSignIn: CloudAccounts["Service"]["finishSignIn"] = Effect.fn(
+    "CloudAccounts.finishSignIn",
+  )(function* (
     attempt: CloudTokens.PendingAttempt,
     user: WorkOSClient.WorkOSUser,
+    override?: WorkOSClient.WorkOSConfig,
   ) {
+    const resolved = yield* identityProviders.identityProviderForUser(user.id);
+    const identityProvider = override ?? resolved;
     const userObject = users.forUser(user.id);
     // Contexts are refreshed alongside the profile, so the first shell after
     // signing in already shows every organization.
     const recordSignIn = Effect.all(
-      [userObject.recordSignIn(toProfile(user)), syncContexts(user.id)],
+      [userObject.recordSignIn(toProfile(user)), syncContexts(user.id, identityProvider)],
       { concurrency: 2, discard: true },
     );
     if (attempt.target.mode === "browser") {
@@ -340,7 +387,7 @@ const make = Effect.gen(function* () {
         code: input.code,
         codeVerifier: attempt.codeVerifier,
       }).pipe(
-        Effect.flatMap((user) => finish(attempt, user)),
+        Effect.flatMap((user) => finishSignIn(attempt, user)),
         Effect.catchTags({
           WorkOSEmailVerificationRequired: (required) => pauseForEmail(attempt, required),
         }),
@@ -375,7 +422,7 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
-    return yield* finish(pending.attempt, user).pipe(
+    return yield* finishSignIn(pending.attempt, user).pipe(
       Effect.mapError(() => new CloudVerifyEmailError({ error: "failed" })),
     );
   });
@@ -420,6 +467,7 @@ const make = Effect.gen(function* () {
     sessionState,
     authorize,
     callback,
+    finishSignIn,
     verifyEmail,
     redeemHandoff,
     signOut,

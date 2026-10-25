@@ -4,6 +4,8 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { type HttpClient, HttpClientRequest } from "effect/http";
 
+import * as Evlog from "../observability/Evlog.ts";
+
 /**
  * Executor's login service API (JustYannicc/executor#30), the one place a
  * sign-in's values come from: the person's own 1Password, linked to Executor
@@ -99,7 +101,10 @@ export const makeExecutorLogins = (
 ): ExecutorLogins => {
   const base = options.url.replace(/\/+$/, "");
 
-  /** POSTs `body`; Executor's refusal comes back by reason, everything else as unavailable. */
+  /**
+   * POSTs `body`; Executor's refusal comes back by reason, everything else as
+   * unavailable. Each call is its own wide event: the path and status, never the body.
+   */
   const post = (path: string, body: unknown) =>
     client
       .execute(
@@ -114,6 +119,7 @@ export const makeExecutorLogins = (
         Effect.mapError(() => unavailable("1Password couldn't be reached through Executor.")),
         Effect.flatMap((response) =>
           Effect.gen(function* () {
+            yield* Evlog.annotate({ executor: { status: response.status } });
             const answer: unknown = yield* response.json.pipe(Effect.orElseSucceed(() => null));
             if (response.status >= 200 && response.status < 300) return answer;
             const decoded = decodeTag(answer);
@@ -134,6 +140,7 @@ export const makeExecutorLogins = (
           orElse: () =>
             Effect.fail(unavailable(`Executor didn't answer within ${Duration.format(TIMEOUT)}.`)),
         }),
+        Evlog.withUnit("executor.call", { executor: { path } }),
       );
 
   const malformed = () => unavailable("Executor sent an unreadable answer.");

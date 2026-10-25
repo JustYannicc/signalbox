@@ -23,30 +23,32 @@ const maintenanceLayer = ProjectionMaintenance.layer.pipe(
   Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
 );
 
-const seed = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* sql`CREATE TABLE orchestration_events (
+const seed = (receiptCount = 101) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE orchestration_events (
     sequence INTEGER PRIMARY KEY, application_event_version INTEGER, aggregate_kind TEXT,
     stream_id TEXT, event_type TEXT, payload_json TEXT
   )`;
-  yield* sql`CREATE TABLE orchestration_command_receipts (
+    yield* sql`CREATE TABLE orchestration_command_receipts (
     command_id TEXT PRIMARY KEY, command_type TEXT, aggregate_kind TEXT, aggregate_id TEXT
   )`;
-  yield* sql`CREATE TABLE orchestration_v2_legacy_imports (
+    yield* sql`CREATE TABLE orchestration_v2_legacy_imports (
     thread_id TEXT PRIMARY KEY, transcript_imported_at TEXT
   )`;
-  yield* sql`INSERT INTO orchestration_v2_legacy_imports VALUES ('imported', '2026-10-17')`;
-  yield* sql`WITH RECURSIVE history(n) AS (
+    yield* sql`INSERT INTO orchestration_v2_legacy_imports VALUES ('imported', '2026-10-17')`;
+    yield* sql`WITH RECURSIVE history(n) AS (
     SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 151
   ) INSERT INTO orchestration_events
     SELECT n, 2, 'thread', 'thread',
       CASE WHEN n IN (1, 51, 101) THEN 'message.updated' ELSE 'thread.visited' END,
       '{"id":"message"}' FROM history`;
-  yield* sql`WITH RECURSIVE history(n) AS (
-    SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 101
-  ) INSERT INTO orchestration_command_receipts
-    SELECT 'command-' || n, 'legacy', 'thread', 'imported' FROM history`;
-});
+    yield* sql`WITH RECURSIVE history(n) AS (
+    SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < ${receiptCount}
+  ) INSERT INTO orchestration_command_receipts (
+    rowid, command_id, command_type, aggregate_kind, aggregate_id
+  ) SELECT n * 2, 'command-' || n, 'legacy', 'thread', 'imported' FROM history`;
+  });
 
 it.live("discovers on the reader worker and deletes on the writer", () =>
   Effect.gen(function* () {
@@ -56,7 +58,7 @@ it.live("discovers on the reader worker and deletes on the writer", () =>
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`PRAGMA journal_mode = WAL`;
-      yield* seed;
+      yield* seed();
       // Establish the reader before recording main-thread statements.
       yield* sql`SELECT 1`.pipe(NodeSqliteClient.readOnly);
       const reads: string[] = [];
@@ -112,7 +114,7 @@ it.effect(
       const sql = yield* SqlClient.SqlClient;
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
       const clock = yield* Clock.Clock;
-      yield* seed;
+      yield* seed(100);
       const firstPage = yield* Deferred.make<void>();
       const pauseStarted = yield* Deferred.make<void>();
       const secondPage = yield* Deferred.make<void>();
@@ -172,10 +174,10 @@ it.effect(
       yield* TestClock.adjust("10 seconds");
       const result = yield* Fiber.join(fiber);
       assert.equal(eventPages, 4);
-      assert.equal(receiptPages, 3);
-      assert.deepEqual(pauses, Array(7).fill(270));
+      assert.equal(receiptPages, 2);
+      assert.deepEqual(pauses, Array(5).fill(270));
       assert.equal(result.deletedEventCount, 148);
-      assert.equal(result.deletedReceiptCount, 101);
+      assert.equal(result.deletedReceiptCount, 100);
       assert.deepEqual(yield* sql`SELECT sequence FROM orchestration_events ORDER BY sequence`, [
         { sequence: 1 },
         { sequence: 101 },

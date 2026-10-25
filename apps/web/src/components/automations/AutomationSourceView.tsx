@@ -10,7 +10,7 @@ import type { Automation, EnvironmentId } from "@t3tools/contracts";
 import { changePrompt } from "@t3tools/client-runtime/automations/prompts";
 import * as Schema from "effect/Schema";
 import { GitBranchIcon, MessageCircleIcon, PencilIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -47,14 +47,10 @@ export function AutomationSourceView(props: {
   const [mode, setMode] = useState<SourceMode>(props.line ? "code" : "changes");
   const compareTo = props.compareTo ?? null;
   const showChanges = compareTo !== null && mode === "changes";
-  const lines = useMemo(
-    () =>
-      props.source
-        .replace(/\n$/, "")
-        .split("\n")
-        .map((text, index) => ({ number: index + 1, text })),
-    [props.source],
-  );
+  const lines = props.source
+    .replace(/\n$/, "")
+    .split("\n")
+    .map((text, index) => ({ number: index + 1, text }));
   // Digits plus the gutter padding, so every line number right-aligns.
   const gutterWidth = `calc(${String(lines.length).length}ch + 1rem)`;
 

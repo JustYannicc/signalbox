@@ -180,6 +180,9 @@ export const AccountPoolOverview = Schema.Struct({
   id: AccountPoolId,
   name: PoolName,
   providers: Schema.Array(AccountPoolProvider),
+  checkedAt: Schema.optional(IsoDateTime),
+  /** A failed refresh leaves the last known quota and reset times visible. */
+  error: Schema.optional(Schema.String),
 });
 export type AccountPoolOverview = typeof AccountPoolOverview.Type;
 
@@ -361,7 +364,7 @@ export const PoolLinkMoveResult = Schema.Struct({
 export type PoolLinkMoveResult = typeof PoolLinkMoveResult.Type;
 
 /** The account types a cloud pool can take. */
-const CLOUD_POOL_ACCOUNT_TYPES = ["claude", "codex"] as const;
+export const CLOUD_POOL_ACCOUNT_TYPES = ["claude", "codex"] as const;
 export type CloudPoolAccountType = (typeof CLOUD_POOL_ACCOUNT_TYPES)[number];
 export const isCloudPoolAccountType = (type: unknown): type is CloudPoolAccountType =>
   (CLOUD_POOL_ACCOUNT_TYPES as ReadonlyArray<unknown>).includes(type);

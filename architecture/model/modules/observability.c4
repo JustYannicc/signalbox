@@ -1,0 +1,56 @@
+model {
+  extend signalbox {
+    observability = module 'Observability' {
+      #deep
+      icon bootstrap:activity
+      description 'unit · event · query · rollup'
+      technology 'ids only, never content'
+      metadata {
+        interface '4'
+        deletion 'every module picks its own sinks and leaks content'
+      }
+
+      api = iface 'Observability · interface' {
+        description '4 verbs: unit · event · query · rollup'
+        technology 'Deletion test: without it, every module picks its own sinks and leaks content'
+      }
+
+      evlog = part 'Wide events' {
+        icon bootstrap:activity
+        description 'one per unit of work'
+        technology 'evlog · evlog/effect'
+      }
+      traces = part 'Trace export' {
+        icon tech:sentry-icon
+        technology 'Workers Observability destinations · Effect OtlpTracer (Node)'
+      }
+      metrics = part 'Ops metrics' {
+        icon tech:cloudflare-icon
+        technology 'Analytics Engine'
+      }
+      queryApi = part 'Query' {
+        icon bootstrap:search
+        description 'spans and rollups · developer-mode trajectories · admin rollups'
+        technology 'Axiom query · Analytics Engine SQL'
+      }
+      profiling = part 'Isolate profiling' {
+        icon bootstrap:speedometer2
+        technology 'workerd on-demand profiling'
+      }
+    }
+
+    observability.evlog -> telemetry.axiom 'wide events'
+    observability.evlog -> telemetry.sentry 'errors · alerts'
+    observability.traces -> telemetry.sentry 'sampled traces'
+    observability.evlog -> telemetry.posthog 'analytics (off)'
+
+    // Interface → hidden parts (the only way in)
+    observability.api -> observability.evlog 'unit · event'
+    observability.api -> observability.queryApi 'query · rollup'
+    observability.queryApi -> telemetry.axiom 'read spans'
+    observability.queryApi -> observability.metrics 'rollups'
+    observability.queryApi -> observability.profiling 'profiles'
+    observability.evlog -> observability.traces 'spans'
+    observability.evlog -> observability.metrics 'counters'
+  }
+}

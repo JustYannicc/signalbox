@@ -42,6 +42,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires operate access to cancel a device open", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.deviceCancelOpen)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("authorizes background policy reporting and observation deliberately", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverReportClientActivity)).toBe(
       AuthOrchestrationReadScope,
@@ -168,6 +174,12 @@ describe("RPC authorization scopes", () => {
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
     }
+  });
+
+  it("keeps device agent diagnostics behind orchestration read access", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.subscribeDeviceAgentDiagnostics)).toBe(
+      AuthOrchestrationReadScope,
+    );
   });
 
   it("separates passive terminal observation from operations that can change a shell", () => {

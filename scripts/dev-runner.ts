@@ -22,6 +22,7 @@ import { ChildProcess } from "effect/process";
 
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
+import { registerDevProcess } from "./lib/register-dev-process.ts";
 
 Object.assign(process.env, loadRepoEnv());
 
@@ -766,6 +767,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       ),
     );
 
+    yield* registerDevProcess(Number(child.pid), env); // signalbox: cleanup ownership
     const exitCode = yield* child.exitCode.pipe(
       Effect.mapError(
         (cause) =>

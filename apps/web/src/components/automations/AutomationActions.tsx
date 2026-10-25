@@ -86,7 +86,8 @@ export function AutomationActions(props: {
     );
     if (!confirmed) return;
     const result = await remove.run({ environmentId, input: { automationId: automation.id } });
-    if (result) void navigate({ to: "/automations" });
+    // It lived in a folder; Home is where the rest of that folder is.
+    if (result) void navigate({ to: "/" });
   };
 
   const rotateWebhook = async () => {

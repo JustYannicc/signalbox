@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ChatAttachmentId,
   ComposerContextId,
@@ -7,6 +7,11 @@ import {
   type ChatAttachment,
   type OrchestrationMessageContext,
 } from "@t3tools/contracts";
+
+vi.mock("../lib/uuid", async () => {
+  const { randomUUID } = await import("node:crypto");
+  return { uuidv4: randomUUID };
+});
 
 import { composerDraftEnvironmentId } from "../lib/composerAttachmentUploadQueue";
 import { isQueuedEditDraftKey, queuedEditDraftKey } from "./queued-edit-draft-key";

@@ -6,7 +6,89 @@ self-hosted server, and one User Durable Object per WorkOS user, always in the
 EU jurisdiction. It serves the web app from its own origin. The design is in
 issue #110.
 
+## Trash retention
+
+Deleted threads and folders can be restored for 30 days in Settings → Trash.
+Permanent cleanup is disabled in this release, including Empty Trash. Expired
+items remain stored but cannot be restored through the app. Trash records the
+resource scopes planned for cleanup separately from actual removal receipts.
+The permanent cleanup cascade is tracked in #474 and ships separately.
+
 ## Local development
+
+### Run an isolated deployed probe
+
+From your own checkout with dependencies installed and Alchemy's Cloudflare auth
+already configured, run from the repository root:
+
+```sh
+vp run --filter @signalbox/cloud probe:isolate --fixture /absolute/fixture --output /tmp/proof.json
+```
+
+Each invocation claims its own random `isolate-probe-<hex>` stage, Worker and SQL
+Durable Object namespace. Owners can run concurrently without reserving a shared
+host. It deploys this checkout's prebuilt probe graph, so merge the capabilities
+your fixture needs first. Omit `--fixture` for the standard capability probe.
+The per-PR CI probe workflow uses this same wrapper with the existing
+`cloud-preview` credentials.
+
+The command logs the stage, keeps its fresh credential and endpoint in child
+process environments, measures, then destroys that exact Alchemy stage even
+after a failed proof or partial deployment. `--output` retains measurement JSON
+on proof failure. Without it, measurement JSON goes to stdout. Failures include
+bounded stdout/stderr excerpts with configured credentials and endpoints redacted.
+
+SIGINT and SIGTERM stop the owned subprocess group and still attempt cleanup.
+Cleanup has a two-minute deadline, then up to five seconds for SIGTERM before
+SIGKILL and one second to confirm the owned process group has exited.
+SIGKILL, host loss or failed cleanup can leave resources behind. Use the exact
+stage printed by the command, from the same checkout and Alchemy account:
+
+```sh
+node apps/cloud/infra/isolateProbe/run.ts --destroy-stage isolate-probe-<hex>
+```
+
+Recovery uses Alchemy's existing state; it does not need the old probe credential.
+Cleanup does not retry automatically. Fix the reported operating condition before
+retrying recovery. Never substitute another owner's stage.
+
+For runner cancellation recovery, pass `--stage-file /tmp/unique-probe-stage`.
+The command exclusively creates an owned mode-0600 file before deployment and
+removes it after successful cleanup. CI's `always()` step uses
+`--recover-stage-file /tmp/unique-probe-stage` if the file remains. A handled
+cleanup failure marks the file and prevents a blind retry; its message gives the
+exact `--destroy-stage` command for manual recovery. The file contains only the
+stage and cleanup-failure marker, never credentials or the endpoint.
+
+### Verify a full Codex WASI turn
+
+Use a built official-source Codex WASI artifact directory and its manifest SHA-256.
+Packaging verifies the engine and loader against that manifest and copies them
+unchanged. The turn fixture also requires the pinned GNU Bash artifact from
+`infra/kernelPrograms/bash/provenance.json`.
+
+```sh
+node apps/cloud/infra/codexTurn/prepareFixture.mjs \
+  /absolute/codex-artifact <manifest-sha256> \
+  apps/cloud/src/kernel /tmp/codex-turn-fixture turn /absolute/bash.async.wasm
+node apps/cloud/infra/isolateProbe/measure.ts \
+  --fixture /tmp/codex-turn-fixture --output /tmp/codex-turn-local.json
+vp run --filter @signalbox/cloud probe:isolate \
+  --fixture /tmp/codex-turn-fixture --output /tmp/codex-turn-deployed.json
+```
+
+The output directory must not exist. Each measurement runs cold and repeat turns
+on one facet with shared SQLite files. Only Responses model output is mocked:
+Codex executes GNU Bash and its Rust patch implementation through the real
+exec-server, then the fixture checks the resulting file and completed turn.
+An HTTP 200 alone is insufficient; measurement fails if either turn fails.
+Use `startup` instead of `turn` to check bootstrap without Bash or a model turn.
+
+Local workerd does not enforce the deployed heap limit. A deployed pass proves
+fit for that sequence. The reported engine linear-memory sample excludes Bash,
+compiled code, JavaScript and SQLite; total isolate peak memory is unavailable.
+
+### Run the local cloud environment
 
 ```sh
 cd apps/cloud
@@ -27,6 +109,29 @@ localhost. Use the WorkOS staging client, whose redirect URIs include
 To use the real web UI against it, build the web app once
 (`vp run --filter @t3tools/web build`) and open `http://localhost:8787`, or run
 web dev with `T3CODE_PORT=8787` so the Vite proxy forwards to the Worker.
+
+### Unattended test sign-in
+
+UI testing uses a dedicated WorkOS sandbox with fictional users. Give each
+user the external ID `signalbox-test:<alias>` from
+[`TestIdentities`](../../apps/cloud/src/testSignIn/TestIdentities.ts). Keep
+this sandbox separate from the environment used by real people.
+
+Set `E2E_WORKOS_CLIENT_ID`, `E2E_WORKOS_API_KEY` and a separate random
+`E2E_SIGN_IN_SECRET` of at least 32 characters in the `cloud-preview` GitHub
+environment as secrets, or in the ignored cloud dev vars for local tests.
+Normal account sign-in keeps its own
+WorkOS configuration. Production receives none of these test bindings.
+
+Trusted testing tools call `POST /api/testing/sign-in` using the signed
+request format in
+[`TestSignInPolicy`](../../apps/cloud/src/testSignIn/TestSignInPolicy.ts).
+The response supplies a normal browser cookie, bearer session, or a one-time
+`signalbox-dev://` pairing link. The stage and deployment identity must agree;
+production and unknown stages return 404 even with test secrets present.
+Signed requests are credentials and can be replayed until their expiry, at
+most 60 seconds. Mint them immediately before use and keep their bodies and
+responses out of traces, logs, and uploaded artifacts.
 
 ### Real Claude and Codex turns
 
@@ -75,10 +180,9 @@ registered, the gateway refuses the turn's requests with "This machine hasn't
 registered the folder's secrets to hide them yet."
 
 Production's gateway is `signalbox-model-gateway` at `gateway.signalbox.run`,
-deployed after the cloud Worker. Each pull request preview gets its own,
-`signalbox-model-gateway-pr-<number>` at
-`gateway-preview-<number>.signalbox.run`, bound to the preview's Worker and
-deleted with it. Previews set their `MODEL_GATEWAY_URL` themselves.
+deployed after the cloud Worker. Preview gateways use `/anthropic` and
+`/openai` routes on the preview app origin. The preview's `MODEL_GATEWAY_URL`
+uses that origin; production keeps its gateway domain.
 
 `POST http://127.0.0.1:8790/machines/drop-sockets` cuts every Runner's socket,
 to watch one reconnect mid-turn and resend what the thread has not acknowledged.
@@ -167,9 +271,9 @@ happy), with `CLOUD_URL` and `MODEL_GATEWAY_URL` set to the tunnels.
 ### Light and heavy machines
 
 A thread runs on one of two machine classes (#113,
-`apps/cloud/src/thread/runner/machineClass.ts`). A thread in a drive backed by
-a remote repo is heavy; every other thread (a chat, or a task in My Drive) is
-light.
+`apps/cloud/src/thread/runner/machineClass.ts`). Every new thread starts light,
+including one backed by a remote repo. Light turns skip dependency setup, so
+read-only questions do not wait for an install.
 
 - **Light:** a Cloudflare Container bound to the thread's own object
   (`THREADS` in `apps/cloud/alchemy.run.ts`, `basic`: ¼ vCPU, 1 GiB, 4 GB disk),
@@ -191,15 +295,23 @@ Runner host. The light class needs `CLOUD_URL` and `MODEL_GATEWAY_URL` like
 boat does.
 
 A light thread moves to the heavy class for good when its Runner sees a
-command it should not run there: a build, test, install or dev server
+command it should not run there: a build, test, install, dev server, package
+script/executor or Node command
 (`apps/server/src/signalbox/runner/RunnerMachineClass.ts`), or one killed for
-memory (exit 137). The Runner saves the turn's files and session rows, reports
-`machine.outgrown`, and the thread continues the run on a heavy machine the
-same way it continues one whose machine was lost (below): the command shows as
-interrupted and the agent runs it again there. A light container that runs out
-of memory mid-turn (exit 137) moves its run up too. Any other exit, including
-Cloudflare restarting the container for a deploy's rollout, is a lost machine:
-the run continues on a new light one.
+memory (exit 137), or the agent's explicit `: request-heavy-machine` request.
+The command-start classifier is best effort; commands hidden behind an
+unrecognized wrapper can stay light. For a heavy work command, the Runner saves
+the turn's files and session rows, reports `machine.outgrown`, and the thread
+continues the run on a heavy machine the same way it continues one whose
+machine was lost (below): the command shows as interrupted and the agent runs
+it again there. An explicit request follows the same save and resume path. The
+Runner records the move reason in machine diagnostics. The explicit request
+stays internal; neither it nor a move notice appears in the conversation
+transcript. If files or session rows cannot be saved, the turn fails with the
+save error instead of continuing from stale state. A light container that runs
+out of memory mid-turn (exit 137) moves its run up too. Any other exit,
+including Cloudflare restarting the container during a deploy rollout, is a
+lost machine. The run continues on a new light one.
 
 Each preview gets its own container application,
 `signalbox-cloud-pr-<number>-threads`, deleted with the preview. Containers
@@ -244,8 +356,9 @@ request deletes the image, and the weekly preview sweep deletes leftovers
 Machines pull the image anonymously, so the package must be public: after its
 first publish, set its visibility once under the package's settings on GitHub.
 A machine follows `RUNNER_IMAGE` at its next wake. Bump the Runner protocol
-only together with a published image, since a machine on an older image is
-refused.
+only together with a published image. The cloud accepts versions between
+`MIN_RUNNER_PROTOCOL_VERSION` and `RUNNER_PROTOCOL_VERSION`; older images are
+refused, and a newer Runner needs a cloud deployment that understands it.
 
 ### Direct pack uploads
 
@@ -347,11 +460,48 @@ source-build test flag, and restore the managed image's checksummed no-plugin
 archive build. Until a patch applies or is deliberately removed, release sync
 must fail for maintainer review.
 
-To roll back a merged update, revert its sync commit and let the normal main
-deployment rebuild the prior pins. This restores the previous executable; it
-does not roll back config or auth files persisted in a pool or self-hosted
-account hub. Treat any release that may have migrated those files as a data
+After reproducing an upstream regression, choose a good release from successful
+deployment and reproduction evidence, not merely the previous pin. Prepare its
+full manifest with `python3 -m scripts.cliproxyapi.rollback` from the repository
+root. Pass the manifest path, `--expected-version`, `--good-commit` (the full
+repository commit containing that manifest), `--good-evidence`, `--reproduction`,
+`--upstream-issue`, and a one-line `--reason`. Evidence arguments are HTTPS links;
+the caller must establish that the good release passes the same reproduction.
+The command only edits the local manifest. It neither diagnoses the regression
+nor creates an issue, pull request or deployment.
+
+The command restores the source commit, all binary assets and checksums, and the
+container archive from that good commit. It retains current holds and adds an
+open-ended hold starting at the bad version, with the reason and evidence links.
+Submit that manifest on `automation/cliproxyapi-update`, link the reproduction,
+good-release evidence and upstream issue in the PR, and let the same smoke,
+preview and CI gates check the rollback. The normal main deployment rebuilds the
+image after merge. Rollback restores the executable; it does not roll back config
+or auth files persisted in a pool or self-hosted account hub. Treat any release
+that may have migrated those files as a data
 recovery decision as well as an image rollback.
+
+The manifest's `holds` array blocks releases from each entry's inclusive `from`
+version until its optional exclusive `before` version. Scheduled sync skips a
+held latest release and shows the reason and upstream issue in the run summary.
+Auto-merge checks holds from both current main and the release PR, then fetches
+and checks main again immediately before requesting the merge. Updates preserve
+holds. To lift one, remove its entry on main. After a fixed release passes the
+reproduction, set `before` to that version on main and rerun sync.
+
+A final recheck leaves a seconds-long race before GitHub merges. Release sync
+also runs on main manifest pushes. Before fetching an upstream release, it checks
+whether the current pin is held and automatically prepares a rollback PR using
+the hold's full `lastGood` snapshot and evidence. It preserves current holds,
+reuses an identical pending rollback without resetting its checks, and reports
+the PR through the existing release-problem issue. Unrelated branch work or
+unmerged hold edits stop the update for a maintainer. Auto-merge refuses a
+rollback when its recheck sees changed hold metadata on main.
+
+The rollback uses the same smoke, deploy and CI gates. It changes the pin only
+after that PR merges; a failed gate can delay recovery. Detection, reproduction,
+upstream reporting and evidence for a new hold still require a maintainer or an
+agent until the alert automation is connected.
 
 A self-hosted server that moved a pool here keeps a pool link (`pool/poolLink.ts`,
 `/api/pool-link`): a token naming the pool's object plus a secret only that
@@ -471,8 +621,9 @@ folders (`legacySections.ts`). A pool placed at a folder made since is stored
 as a `folder` level, which a build from before folders can't read.
 
 `wrangler dev` keeps the bucket locally. Both buckets are in the stack and
-retained: no stage's destroy ever deletes one, and every stage that declares
-them keeps their settings (no lifecycle rules, CORS or public access).
+retained: no stage's destroy ever deletes one. Both retain the seven-day
+multipart-abort rule, and production also expires pending attachments after
+two days. Neither enables CORS or public access.
 
 The preview bucket may still contain keys written before PR prefixes existed.
 A preview whose prefixed read misses falls back to the unprefixed key, so
@@ -508,9 +659,10 @@ Pasted screenshots and files share the drives bucket, under
 attachments go with its prefix. A client uploads to a signed URL and gets a
 `pending-…` id, stored under `attachments/pending/`; sending the message copies
 each upload under an id of the thread, derived from the command so a retry
-rewrites the same copy. Uploads nobody sent are swept after a day, beside the
-next upload; an R2 lifecycle rule on `attachments/pending/` would do the same
-without the sweep. Clients load a sent attachment through the same signed
+rewrites the same copy. The uploader's next upload sweeps their pending bytes
+after a day. Production also expires pending objects through R2 after two days;
+previews keep them until that uploader returns or the preview is deleted.
+Clients load a sent attachment through the same signed
 `/api/assets` URLs as tools' images (`apps/cloud/src/assets/`), issued only to
 its uploader and to people who can see its thread. Limits are the contract's (`chatAttachment.ts`): 10 MiB
 per image, 50 MiB per file, 80 MiB of images and 100 attachments per message.
@@ -699,13 +851,82 @@ tokens, CPU and memory, and the harness's session refs.
   `GET /api/cloud/threads/<thread id>/diagnostics` lists recent turns with
   their trace ids and failures, and `.../diagnostics/<trace, run or command id>` returns
   one record.
-- In Workers Logs, search for the trace id. When a turn ends, its object logs
-  the whole record as `cloud turn diagnostic`.
+- Search the wide events (below) for the trace id: the turn's own event
+  (`action: turn`) carries it as `turn.traceId`, and so does each of its model
+  requests' events from the ModelGateway.
+
+### Wide events
+
+Both Workers log through [evlog](https://www.evlog.dev) (#285), configured in
+`apps/cloud/evlog.config.ts`: one wide event per request, per Durable Object
+alarm, per turn, per model request through the ModelGateway, and per Executor
+call. `Effect.log*` inside one of these lands on its event instead of a line
+of its own. Every event names its unit (`action`) and its person, thread,
+turn, provider, model or pool by id, with `environment` set to the stage and
+`version` to the deployed commit. They never carry text anyone wrote: the
+config redacts every string under a content-shaped key before any drain
+sees it, and `src/observability/wideEvents.test.ts` fails if a turn's prompt or
+reply reaches one. Lint fails on `console.*` or another logger in
+`apps/cloud/src`.
+
+Pool HTTP hops emit `pool.call` with response-header latency and the
+CLIProxyAPI release reported by management response headers. A managed
+container keeps that evidence only for its running lifetime; an object that
+finds an old container still running starts with an unknown release until a
+management read identifies it. The deployment pin is never runtime evidence.
+External management replies identify only their own hop. External and linked
+model hops remain unknown because their responses have no verified release
+metadata contract. These events do not measure stream completion or CPU/RAM.
+
+Where they go depends on the deploy environment's secrets (`cloud-preview`
+and `cloud-production`), passed through `alchemy.run.ts`. Each is optional:
+
+- `SENTRY_DSN`: every event as a Sentry log, every error event as a Sentry
+  issue, and both Workers' own traces through an allowlist-filtering Worker
+  before Sentry's OTLP endpoint (all of a preview's requests, a tenth of
+  production's). Native exports must never point directly at Sentry: they
+  include SQL statements, full URLs and storage keys outside evlog's redactor.
+  Unfiltered trace persistence in Cloudflare is disabled. Each stage has its
+  own destination and receiver. Production uses
+  `traces-app.signalbox.run/v1/traces`; previews use `/v1/traces` on the app
+  origin. The receiver accepts OTLP JSON, plain or gzip, with bearer auth
+  using the DSN's public ingest key. Cloud intake uses the `TRACE_EXPORT`
+  service binding and `TRACE_EXPORT_TOKEN` with that same protocol. The receiver keeps trace IDs,
+  approved enums, counts and timings; unknown fields, events and content
+  are dropped. It has no tracing of its own, preventing export loops.
+- `POSTHOG_API_KEY` with the `POSTHOG_HOST` variable, both required (no
+  default host): every event as a PostHog log. Both this drain and usage
+  analytics also require `SIGNALBOX_POSTHOG_ENABLED=true`. Leave that switch
+  unset until #358 lands, then set it with the EU project credentials.
+  Credentials alone never enable PostHog.
+
+After each deploy, CI sends one `release` event naming the stage and commit
+(`apps/cloud/infra/release-event.ts`).
+
+User objects report `durableObject.storage` at most hourly during normal
+activity. Sampling reads Cloudflare's database-size counter, never rows, and
+does not wake idle objects. In Sentry Logs, filter by that action, group by
+`durableObject.id`, `durableObject.kind` and `durableObject.level`, and sort
+`max(storage.bytes)` descending. `storage.utilizationPercent` compares the
+sample with the paid-plan cap of 10,000,000,000 bytes. Level labels distinguish
+person and organisation top levels from folders; object IDs are opaque.
+
+Samples at or above 70% create a `DurableObjectStorageCapacity` Sentry issue.
+Configure a production alert for every event whose `exception.type` equals
+`DurableObjectStorageCapacity`, with no notification interval. Capacity events
+share one issue, so a new-issue or priority-only rule can miss later objects.
+The deployment variable `SIGNALBOX_DO_STORAGE_ALERT_PERCENT` overrides that
+threshold. To verify production alerting, temporarily lower it, redeploy,
+trigger normal object activity, verify the exact release and the alert's
+trigger time in Sentry, then
+restore the variable and redeploy. An hour between samples can delay an
+alert after a large write. Home storage is not sampled until Catalog
+provisions home objects; legacy catalog copies stay inactive.
 
 ### Usage analytics
 
-With `SIGNALBOX_POSTHOG_KEY` set (and `SIGNALBOX_POSTHOG_HOST` for a non-US
-project), thread objects send `cloud.turn.completed` per turn and
+With `SIGNALBOX_POSTHOG_ENABLED=true` and both `SIGNALBOX_POSTHOG_KEY` and
+`SIGNALBOX_POSTHOG_HOST` set to the EU project, thread objects send `cloud.turn.completed` per turn and
 `cloud.machine.session` per machine wake to Signalbox's PostHog. These are the
 #116 events the cost replay reads. Ids are hashed and nothing carries content,
 paths or command text. `T3CODE_TELEMETRY_ENABLED=false` turns them off. The
@@ -787,6 +1008,10 @@ Alchemy keeps its state in the account (`Cloudflare.state()`: an
 Durable Object migrations itself, so new Durable Object classes go in the stack
 as a new binding; the `migrations` in `wrangler.jsonc` are for `wrangler dev`.
 
+Roll back a bad deploy of an Alchemy-managed Worker with `wrangler rollback`
+to an earlier version, never by reverting the merge: a revert deploys again
+and replays the legacy migration tags.
+
 Closing a pull request also deletes its R2 prefix and removes its pool links
 from production. The close workflow destroys the preview's stage first (and
 deletes any Worker or container a wrangler-era preview left), then asks
@@ -805,20 +1030,28 @@ Both read from a GitHub environment. `cloud-production` is limited to `main`;
 `cloud-preview` holds the same names, with `CLOUD_PREVIEW_SESSION_SECRET`, from
 which each preview derives its own session secret.
 
-| Name                           | Kind     | What                                                                                                 |
-| ------------------------------ | -------- | ---------------------------------------------------------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`         | secret   | Account › Workers Scripts, Containers, Workers R2 Storage, Secrets Store and Account Settings: Edit  |
-| `CLOUDFLARE_ACCOUNT_ID`        | variable | The Cloudflare account                                                                               |
-| `CLOUD_SESSION_SECRET`         | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.                              |
-| `T3CODE_WORKOS_CLIENT_ID`      | variable | WorkOS client id                                                                                     |
-| `T3CODE_WORKOS_API_KEY`        | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing                      |
-| `T3CODE_WORKOS_WEBHOOK_SECRET` | secret   | Optional. Verifies WorkOS's membership webhook (below)                                               |
-| `VITE_T3CODE_FEEDBACK_DSN`     | variable | Sentry DSN for the sidebar feedback button, baked into the web build                                 |
-| `TYPESAFE_API_KEY`             | secret   | Optional. Jev, which tells chats from tasks ([Chats and tasks](#chats-and-tasks))                    |
-| `OPENAI_API_KEY`               | secret   | Optional. OpenAI's Decisions API, the other chat or task classifier                                  |
-| `KERNEL_API_KEY`               | secret   | Optional. Kernel, which runs each person's browser for real sites; unset, machines browse headless   |
-| `EXECUTOR_LOGIN_SERVICE_URL`   | var      | Optional. Executor's origin for agents' sign-ins from 1Password (`src/signIn/`); needs the token too |
-| `EXECUTOR_LOGIN_SERVICE_TOKEN` | secret   | Optional. Executor's `EXECUTOR_LOGIN_SERVICE_TOKEN`; unset, `sign_in` says it can't read logins      |
+| Name                                  | Kind     | What                                                                                                 |
+| ------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`                | secret   | Account › Workers Scripts, Containers, Workers R2 Storage, Secrets Store and Account Settings: Edit  |
+| `CLOUDFLARE_ACCOUNT_ID`               | variable | The Cloudflare account                                                                               |
+| `CLOUD_SESSION_SECRET`                | secret   | Signs sessions and seals sign-in state. Rotating it signs everyone out.                              |
+| `T3CODE_WORKOS_CLIENT_ID`             | variable | WorkOS client id                                                                                     |
+| `T3CODE_WORKOS_API_KEY`               | secret   | WorkOS API key: email verification (GitHub sign-ins), work contexts and sharing                      |
+| `T3CODE_WORKOS_WEBHOOK_SECRET`        | secret   | Optional. Verifies WorkOS's membership webhook (below)                                               |
+| `VITE_T3CODE_FEEDBACK_DSN`            | variable | Sentry DSN for the sidebar feedback button, baked into the web build                                 |
+| `TYPESAFE_API_KEY`                    | secret   | Optional. Jev, which tells chats from tasks ([Chats and tasks](#chats-and-tasks))                    |
+| `OPENAI_API_KEY`                      | secret   | Optional. OpenAI's Decisions API, the other chat or task classifier                                  |
+| `KERNEL_API_KEY`                      | secret   | Optional. Kernel, which runs each person's browser for real sites; unset, machines browse headless   |
+| `EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS` | variable | Optional JSON array of public ES256/P-256 verification keys for retiring issuer keys                 |
+| `EXECUTOR_LOGIN_SERVICE_URL`          | var      | Optional. Executor's origin for agents' sign-ins from 1Password (`src/signIn/`); needs the token too |
+| `EXECUTOR_LOGIN_SERVICE_TOKEN`        | secret   | Optional. Executor's `EXECUTOR_LOGIN_SERVICE_TOKEN`; unset, `sign_in` says it can't read logins      |
+
+Cloud derives its active Executor signing key from a stable Alchemy secret seed. There is no supported
+seed-rotation command or automatic rotation. When a deployment replaces that seed, configure the old
+public keys in `EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS` and keep each published for at least six minutes
+after its last token issuance. The Worker accepts only public ES256/P-256 verification keys with
+unique `kid`s and rejects private key material. It does not track the final issuance time or prevent
+an operator from removing a key early, so the operator owns that six-minute window.
 
 The production deploy derives the preview-cleanup token from
 `CLOUDFLARE_API_TOKEN`. Keep the same token value in both GitHub environments
@@ -854,6 +1087,125 @@ the migrated schema, or ship-only. Additive means new tables and indexes, new
 columns that are nullable or have a default, and rows in tables the same pull
 request creates. Anything else is ship-only, including a new Durable Object
 class (an entry in `migrations` in `wrangler.jsonc`). Ship-only never blocks.
+
+### Recovering thread search
+
+Thread history is authoritative; search is a disposable replica. The part-storage
+conversion is resumable: each alarm commits bounded work, retains the old text and
+FTS until complete part coverage and replacement FTS are durable, then clears old
+whole-text copies transactionally. Its schema migration marker does not mark that
+conversion complete. Disable takes effect before index initialization or conversion.
+The converted layout is not compatible with old search code; use forward-disable,
+not a code rollback. Only selected objects convert; inactive generations stay untouched.
+
+These procedures
+apply only to `SearchIndexObject`. They do not repair threads or reset any other
+Durable Object. Confirm the account, stage Worker, `SEARCH_INDEX` namespace,
+canonical home and EU jurisdiction before touching data. Do not delete a namespace,
+change a class/binding name, or roll back across the release that creates the class.
+Cloudflare does not support that lifecycle rollback. See
+[Worker rollback restrictions](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/).
+
+`SEARCH_INDEX_DISABLED=1` stops capture, delivery, backfill and search alarm retries;
+queued deliveries remain unacknowledged. Other thread work and alarms continue.
+Queries return `unavailable` and the descriptor stops advertising content search.
+`SEARCH_INDEX_GENERATION` defaults to `1`, which preserves the original object name
+`[ownerId,projectId]`. Other generations use `["search",generation,ownerId,projectId]`
+in the same namespace. This prefix belongs to search only; it does not change the
+canonical home or any catalog identity. Values allow 1–64 letters, digits,
+underscores or hyphens, starting with a letter or digit.
+
+To stop search in production, set the GitHub environment variable and deploy
+forward from a version that retains all classes and bindings:
+
+```sh
+gh variable set SEARCH_INDEX_DISABLED --env cloud-production --body 1
+gh workflow run deploy-cloud.yml --ref main
+```
+
+Before re-enabling, choose a fresh generation and deploy again:
+
+```sh
+gh variable set SEARCH_INDEX_GENERATION --env cloud-production --body incident-20261017-a
+gh variable set SEARCH_INDEX_DISABLED --env cloud-production --body 0
+gh workflow run deploy-cloud.yml --ref main
+```
+
+Each user object's next wake starts a durable registry scan. Every activation,
+including switching 1 → 2 → 1, requests fresh source snapshots with a retry-stable
+activation key; retained `complete` watermarks never skip that replay. Completed
+scans hibernate instead of rereading the registry on every unrelated alarm. A
+user object that observes a disabled generation refuses to serve that generation
+again. Objects asleep throughout a disable cannot observe it, so always use a
+fresh generation when re-enabling. Old objects remain available for investigation;
+switching back also requires replay and is not an instant rollback.
+
+For previews, set the variables in `cloud-preview` and use the PR's normal preview
+deploy. Those environment variables affect all subsequent preview deploys, so
+restore their intended values afterwards. Never point a preview at production's
+namespace.
+
+For an FTS-only repair, first deploy the disable flag and confirm search writes
+have stopped. Use [Data Studio](https://developers.cloudflare.com/durable-objects/observability/data-studio/)
+or the account Durable Objects API. Discover the namespace with
+`GET /accounts/{account_id}/workers/durable_objects/namespaces`, confirm its
+`SearchIndexObject` class and stage script, then inspect its objects with
+`GET /accounts/{account_id}/workers/durable_objects/namespaces/{namespace_id}/objects`.
+Address the expected EU object by its exact JSON name with
+`POST /accounts/{account_id}/workers/durable_objects/namespaces/{namespace_id}/query/v2`:
+
+```json
+{
+  "durable_object_name": "[\"search\",\"incident-20261017-a\",\"<ownerId>\",\"<projectId>\"]",
+  "jurisdiction": "eu",
+  "queries": [{ "sql": "SELECT owner_id, project_id FROM search_home WHERE id = 1" }]
+}
+```
+
+Check the returned home before writing. For each response require HTTP success,
+`success: true`, no `result.error`, and a result for every submitted query. The
+API may execute queries separately; a batch is not an assumed transaction. With
+search disabled and writes stopped, run and check each statement separately:
+
+```sql
+DELETE FROM search_document_parts_fts;
+INSERT INTO search_document_parts_fts(rowid, search_text)
+  SELECT p.id, p.search_text FROM search_document_parts p
+  LEFT JOIN search_document_conversion c ON c.document_id = p.document_id
+  WHERE c.document_id IS NULL
+    OR c.stage = 'verifying'
+    OR (c.stage = 'indexing' AND p.part_index < c.next_index_part);
+```
+
+This only rebuilds FTS from intact published parts and committed conversion steps.
+It leaves unfinished conversion chunks for their next alarm step. It cannot recover damaged
+logical rows, missing parts, receipts, tombstones or watermarks. For logical damage,
+use a new generation and source replay. Do not drop tables or reset migration
+records: a running object caches its migration readiness. If an isolated replica
+must be cleared for investigation, disable search first and clear all replica data
+together, in foreign-key order, preserving `search_home` and migration records:
+
+```sql
+DELETE FROM search_document_parts_fts;
+DELETE FROM search_documents_fts;
+DELETE FROM search_document_conversion;
+DELETE FROM search_snapshot_pages;
+DELETE FROM search_snapshot_items;
+DELETE FROM search_thread_snapshots;
+DELETE FROM search_thread_coverage_gaps;
+DELETE FROM search_document_staging_parts;
+DELETE FROM search_document_staging;
+DELETE FROM search_document_parts;
+DELETE FROM search_documents;
+DELETE FROM search_tombstones;
+DELETE FROM search_delivery_receipts;
+DELETE FROM search_threads;
+```
+
+Do not resume after a partial clear. Verify each result, then rebuild through a
+fresh generation. After replay, check normal keyword and literal queries, a long
+item spanning parts, archived results, exact-item Find anchors, and current access
+revocation before relying on the replacement index.
 
 ### What a preview starts with
 

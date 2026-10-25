@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 
-import type { ModelForwardReply, PoolModelApi, PoolObjectApi, PoolReply } from "./PoolDirectory.ts";
+import type { PoolModelApi, PoolObjectApi, PoolReply } from "./PoolDirectory.ts";
+import type { ModelForwardReply } from "../models/ModelProtocol.ts";
 import * as PoolEngine from "./PoolEngine.ts";
 import { handleLinkRequest, type PoolLinkTarget } from "./poolLink.ts";
 import * as PoolLinks from "./PoolLinks.ts";
@@ -50,6 +51,7 @@ export const makePoolObjectApi = (
       return result;
     },
     accounts: (actor) => reply((engine) => engine.accounts(actor)),
+    advice: (actor) => reply((engine) => engine.advice(actor)),
     models: (actor) => reply((engine) => engine.models(actor)),
     startLogin: (actor, provider, flow) =>
       reply((engine) => engine.startLogin(actor, provider, flow)),
@@ -57,14 +59,16 @@ export const makePoolObjectApi = (
     completeLogin: (actor, callback) =>
       reply((engine) => done(engine.completeLogin(actor, callback))),
     cancelLogin: (actor, state) => reply((engine) => engine.cancelLogin(actor, state)),
+    logoutAccount: (actor, provider, name) =>
+      reply((engine) => done(engine.logoutAccount(actor, provider, name))),
     updateAccount: (actor, name, action) =>
       reply((engine) => done(engine.updateAccount(actor, name, action))),
     openLink: (actor, preview) => reply((engine) => engine.openLink(actor, preview)),
     linkFetch: (secret, request) => run(handleLinkRequest(secret, request)),
-    forwardModel: (actor, path, request, thread) =>
+    forwardModel: (actor, path, request, thread, trace) =>
       run(
         PoolEngine.PoolEngine.use((engine) =>
-          engine.forwardModel(actor, path, request, thread),
+          engine.forwardModel(actor, path, request, thread, trace),
         ).pipe(
           Effect.map(({ response, upstreamMs, accountMoved }): ModelForwardReply => ({
             _tag: "forwarded",

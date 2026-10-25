@@ -53,7 +53,8 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
     }),
   ),
 }).annotate({
-  description: "Run at a fixed local wall-clock time on selected weekdays.",
+  description:
+    "Run at a fixed local wall-clock time on selected weekdays. Cloud schedule_task uses the person's saved time zone when timezone is omitted.",
 });
 
 const ScheduledTaskWebhookSignatureFields = {

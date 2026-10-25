@@ -1,6 +1,7 @@
 import {
   DRIVE_PATHS,
   type DriveAccess,
+  type DriveCheckpointRecord,
   type DriveState,
   driveJson,
   MAX_PACK_BYTES,
@@ -17,6 +18,8 @@ import {
   shortcutPacksPath,
   shortcutRemotePath,
 } from "@signalbox/runner-protocol/DriveProtocol";
+import { pullJson, pullReceiptPath } from "@signalbox/runner-protocol/PullProtocol";
+import type { PullResult, PullSaveRequest } from "@signalbox/runner-protocol/PullProtocol";
 import * as Effect from "effect/Effect";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as FileSystem from "effect/FileSystem";
@@ -80,11 +83,19 @@ export interface DriveClient {
   readonly updateRefs: (
     updates: ReadonlyArray<RefUpdate>,
   ) => Effect.Effect<RefWriteResult, DriveClientError>;
+  /** CAS-saves the result of one pull and returns its durable receipt. */
+  readonly savePull: (request: PullSaveRequest) => Effect.Effect<PullResult, DriveClientError>;
+  /** Recovers the exact result of a previously saved pull. */
+  readonly pullReceipt: (id: string) => Effect.Effect<PullResult | null, DriveClientError>;
   readonly reconcile: (
     request: typeof ReconcileRequest.Type,
   ) => Effect.Effect<RefWriteResult, DriveClientError>;
   readonly mirror: (
     request: typeof ReconcileRequest.Type,
+  ) => Effect.Effect<RefWriteResult, DriveClientError>;
+  /** Registers immutable checkpoint metadata after its notes pack is uploaded. */
+  readonly recordCheckpoint: (
+    record: DriveCheckpointRecord,
   ) => Effect.Effect<RefWriteResult, DriveClientError>;
   /** Where git fetches the drive's remote through the cloud. */
   readonly remoteUrl: string;
@@ -343,10 +354,24 @@ export const makeDriveClient = Effect.fn("makeDriveClient")(function* (input: {
     uploadPack,
     updateRefs: (updates) =>
       writeRefs(DRIVE_PATHS.refs, driveJson.refUpdate.encode({ updates }), "moving refs"),
+    savePull: (request) =>
+      postJson(DRIVE_PATHS.pullSave, pullJson.save.encode(request), "saving a pull").pipe(
+        Effect.flatMap(decodeWith(pullJson.result.decode, "pull result")),
+      ),
+    pullReceipt: (id) =>
+      text(HttpClientRequest.get(`${origin}${pullReceiptPath(id)}`), "reading a pull receipt").pipe(
+        Effect.flatMap(decodeWith(pullJson.receipt.decode, "pull receipt")),
+      ),
     reconcile: (request) =>
       writeRefs(DRIVE_PATHS.reconcile, driveJson.reconcile.encode(request), "reconciling main"),
     mirror: (request) =>
       writeRefs(DRIVE_PATHS.mirror, driveJson.mirror.encode(request), "mirroring the remote"),
+    recordCheckpoint: (record) =>
+      writeRefs(
+        DRIVE_PATHS.checkpoint,
+        driveJson.checkpoint.encode(record),
+        "recording a checkpoint",
+      ),
     remoteUrl: `${origin}${DRIVE_PATHS.remote}`,
     shortcuts: (have) =>
       postJson(

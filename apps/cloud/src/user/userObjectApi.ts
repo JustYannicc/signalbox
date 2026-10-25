@@ -1,12 +1,19 @@
+import { askTool, isAskTool } from "../thread/askTools.ts";
+import type * as Crypto from "effect/Crypto";
+import type * as CloudThreadService from "../thread/CloudThreadService.ts";
 import { statusLineJson } from "@signalbox/runner-protocol/StatusLineProtocol";
-import { AutomationError, ThreadId } from "@t3tools/contracts";
+import { AutomationError, ThreadId, type PullRequestDiffInput } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ThreadSearch from "../search/ThreadSearch.ts";
+import { learnerTool } from "./learnerTool.ts";
+import * as UserLearner from "./UserLearner.ts";
 import { automationTool } from "../automations/automationTool.ts";
 import * as PersonBrowsers from "../browser/PersonBrowsers.ts";
 import * as CloudAutomations from "../automations/CloudAutomations.ts";
+import * as CloudPullRequests from "../github/CloudPullRequestsService.ts";
 import * as ConnectionLinks from "../connections/ConnectionLinks.ts";
 import { DriveRefEvent } from "../drive/DriveEvents.ts";
 import { linkedConnections, linkedToken } from "../connections/linkedConnections.ts";
@@ -16,15 +23,25 @@ import * as GitHubConnection from "../github/GitHubConnection.ts";
 import * as LocalKeys from "../localKeys/LocalKeys.ts";
 import * as LoginService from "../signIn/LoginService.ts";
 import * as SignInGrants from "../signIn/SignInGrants.ts";
+import { authorizeExecutorToken as authorizeExecutorTokenNow } from "../executor/ExecutorTokenAuthority.ts";
+import type { ExecutorTokenBinding } from "../executor/ExecutorTokenBindings.ts";
+import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import {
   authorizeLocalModel,
   localKeysView,
   recordLocalModelRequest,
 } from "../localKeys/localModelAccess.ts";
 import * as UserPreviewSetup from "../previewSetup/UserPreviewSetup.ts";
+import { wire as terminalWire } from "../thread/terminalSync.ts";
 import { wire } from "../thread/threadWire.ts";
-import { shellSnapshotWire, type UserObjectApi } from "./UserDirectory.ts";
+import {
+  shellSnapshotWire,
+  type PullRequestDiffReply,
+  type UserObjectApi,
+} from "./UserDirectory.ts";
 import * as UserContexts from "./UserContexts.ts";
+import * as UserFolders from "./UserFolders.ts";
+import * as DrivePeople from "./DrivePeople.ts";
 import * as OnePasswordAccount from "./OnePasswordAccount.ts";
 import * as UserDriveIndex from "./UserDriveIndex.ts";
 import * as UserDrives from "./UserDrives.ts";
@@ -33,6 +50,9 @@ import * as UserShell from "./UserShell.ts";
 import * as UserStore from "./UserStore.ts";
 import * as UserThreadKinds from "./UserThreadKinds.ts";
 import * as UserThreadStatus from "./UserThreadStatus.ts";
+import * as UserTerminals from "./UserTerminals.ts";
+import { UserTrash } from "../trash/UserTrash.ts";
+import * as ClientTraceContext from "../observability/clientTraceContext.ts";
 
 const decodeDriveEvents = Schema.decodeUnknownSync(Schema.Array(DriveRefEvent));
 
@@ -47,8 +67,13 @@ export const makeUserObjectApi = (
     effect: Effect.Effect<
       A,
       E,
+      | Crypto.Crypto
+      | CloudThreadService.CloudThreadService
+      | ThreadSearch.ThreadSearch
+      | UserLearner.UserLearner
       | UserStore.UserStore
       | UserShell.UserShell
+      | CloudPullRequests.CloudPullRequests
       | UserContexts.UserContexts
       | GitHubConnection.GitHubConnection
       | ConnectionLinks.ConnectionLinks
@@ -58,12 +83,18 @@ export const makeUserObjectApi = (
       | GitHubBranches.GitHubBranches
       | UserThreadKinds.UserThreadKinds
       | UserThreadStatus.UserThreadStatus
+      | UserTerminals.UserTerminals
+      | UserFolders.UserFolders
       | LocalKeys.LocalKeys
       | ResourceBindings.ResourceBindings
       | OnePasswordAccount.OnePasswordAccount
       | PersonBrowsers.PersonBrowsers
       | SignInGrants.SignInGrants
       | LoginService.LoginService
+      | UserTrash
+      | ThreadDirectory.ThreadDirectory
+      | DrivePeople.DrivePeople
+      | CloudAutomations.CloudAutomations
     >,
   ) => Promise<A>,
 ): UserObjectApi => {
@@ -76,7 +107,9 @@ export const makeUserObjectApi = (
   ) => run(GitHubConnection.GitHubConnection.use(f));
   /** A run's instance calling in; a rejection is its cue to retry. */
   const withAutomations = <A>(
-    f: (automations: CloudAutomations.CloudAutomationsShape) => Effect.Effect<A, AutomationError>,
+    f: (
+      automations: CloudAutomations.CloudAutomations["Service"],
+    ) => Effect.Effect<A, AutomationError>,
   ) =>
     Effect.flatMap(Effect.serviceOption(CloudAutomations.CloudAutomations), (automations) =>
       Option.isNone(automations)
@@ -84,6 +117,13 @@ export const makeUserObjectApi = (
         : f(automations.value),
     );
   return {
+    trashProgress: (id) => run(UserTrash.use((trash) => trash.progress(id))),
+    searchThreads: (actor, input) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.query(actor, input))),
+    readSearchItem: (actor, threadId, itemId) =>
+      run(ThreadSearch.ThreadSearch.use((search) => search.readItem(actor, threadId, itemId))),
+    receiveHook: (request) =>
+      run(withAutomations((automations) => automations.receiveHook(request))),
     recordSignIn: (profile) => use((store) => store.recordSignIn(profile)),
     profile: () => use((store) => store.profile),
     createSession: (input) => use((store) => store.createSession(input)),
@@ -94,6 +134,14 @@ export const makeUserObjectApi = (
     exchangeCredential: (input) => use((store) => store.exchangeCredential(input)),
     syncOrganizations: (organizations) =>
       run(UserContexts.UserContexts.use((contexts) => contexts.syncOrganizations(organizations))),
+    reserveOrganizationRefresh: () =>
+      run(UserContexts.UserContexts.use((contexts) => contexts.reserveOrganizationRefresh)),
+    completeOrganizationRefresh: (sequence, organizations) =>
+      run(
+        UserContexts.UserContexts.use((contexts) =>
+          contexts.completeOrganizationRefresh(sequence, organizations),
+        ),
+      ),
     shellSnapshot: async () => shellSnapshotWire.encode(await shell((service) => service.snapshot)),
     recordThreadSummary: (encoded) => {
       const summary = wire.summary.decode(encoded);
@@ -109,6 +157,10 @@ export const makeUserObjectApi = (
           ),
         ),
       );
+    },
+    recordTerminalEvents: (encoded) => {
+      const delivery = terminalWire.delivery.decode(encoded);
+      return run(UserTerminals.UserTerminals.use((terminals) => terminals.record(delivery)));
     },
     // An object without automations yet takes the events and drops them.
     threadEvents: ({ threadId, events }) =>
@@ -136,6 +188,7 @@ export const makeUserObjectApi = (
     rebuildThreadIndex: () => shell((service) => service.rebuildThreadIndex),
     beginGitHubConnect: (input) => github((service) => service.begin(input)),
     completeGitHubConnect: (grantId) => github((service) => service.complete(grantId)),
+    cancelGitHubConnect: (grantId) => github((service) => service.cancel(grantId)),
     abortGitHubConnect: (grantId) => github((service) => service.abort(grantId)),
     disconnectGitHub: () => github((service) => service.disconnect),
     githubAccessToken: () => github((service) => service.accessToken),
@@ -159,9 +212,35 @@ export const makeUserObjectApi = (
     importPreviewSetup: (input) =>
       run(UserPreviewSetup.UserPreviewSetup.use((setup) => setup.apply(input))),
     githubCommitAuthor: () => github((service) => service.commitAuthor),
+    pullRequestDiff: (input: PullRequestDiffInput) =>
+      run(
+        CloudPullRequests.CloudPullRequests.use((service) =>
+          service.diff(input).pipe(
+            Effect.map((value) => ({ _tag: "success", value }) as const),
+            Effect.catchTags({
+              PullRequestUnavailableError: (error) =>
+                Effect.succeed<PullRequestDiffReply>({
+                  _tag: "unavailable",
+                  reason: error.reason,
+                  ...(error.provider === undefined ? {} : { provider: error.provider }),
+                }),
+              PullRequestOperationError: (error) =>
+                Effect.succeed<PullRequestDiffReply>({
+                  _tag: "operation-error",
+                  operation: error.operation,
+                  detail: error.detail,
+                  ...(error.reason === "not-found" ? { reason: error.reason } : {}),
+                }),
+            }),
+          ),
+        ),
+      ),
     onePasswordToken: () =>
       run(OnePasswordAccount.OnePasswordAccount.use((account) => account.token)),
     contextIds: () => run(UserDrives.UserDrives.use((drives) => drives.contextIds)),
+    clientTraceDimensions: (threadIds) => run(ClientTraceContext.clientTraceDimensions(threadIds)),
+    clientFolderDimensions: (folderIds) =>
+      run(ClientTraceContext.clientFolderDimensions(folderIds)),
     recordDriveAccess: (entry) =>
       run(UserDriveIndex.UserDriveIndex.use((index) => index.record(entry))),
     driveAccess: (driveId) => run(UserDrives.UserDrives.use((drives) => drives.access(driveId))),
@@ -173,17 +252,21 @@ export const makeUserObjectApi = (
         }),
       ),
     publishBranch: (input) => run(publishBranch(input)),
-    automationTool: (threadId, name, input) => run(automationTool(threadId, name, input)),
+    automationTool: (threadId, name, input) =>
+      run(isAskTool(name) ? askTool(threadId, name, input) : automationTool(threadId, name, input)),
     folderStatus: (threadId) =>
       run(
         UserThreadStatus.UserThreadStatus.use((status) =>
           status.folderStatus(ThreadId.make(threadId)),
         ).pipe(Effect.map(statusLineJson.folder.encode)),
       ),
+    learnerTool: (threadId, name, input) => run(learnerTool(threadId, name, input)),
     browserSession: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.open(input))),
     browserSignIn: (input) => run(LoginService.LoginService.use((logins) => logins.signIn(input))),
     checkSignIn: (input) => run(SignInGrants.SignInGrants.use((grants) => grants.check(input))),
+    authorizeExecutorToken: (claims, binding: ExecutorTokenBinding) =>
+      run(authorizeExecutorTokenNow(claims, binding)),
     endBrowser: (input) =>
       run(PersonBrowsers.PersonBrowsers.use((browsers) => browsers.end(input))),
     automationHost: (call) => run(withAutomations((automations) => automations.host(call))),

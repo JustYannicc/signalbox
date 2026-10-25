@@ -1,5 +1,5 @@
 import type { DeviceSummary, EnvironmentId } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   captureDeviceScreenshot,
   DeviceScreenshotError,
@@ -16,6 +16,7 @@ export function DeviceWorkspace(props: {
   hostLabel: string;
   hostDiagnostics: string | undefined;
   visible: boolean;
+  observer: boolean;
   onFloat: () => void;
   onClose: () => void;
   onPowerOff: () => void;
@@ -29,6 +30,17 @@ export function DeviceWorkspace(props: {
   const downloadRef = useRef<string | null>(null);
   const access = useDeviceHubAccess(props.environmentId, props.device.hostId);
   const controls = useDeviceControls({ ...props, access });
+  const canControl = props.visible && !props.observer;
+  const canControlRef = useRef(canControl);
+  useLayoutEffect(() => {
+    canControlRef.current = canControl;
+  }, [canControl]);
+  const guardedControls = {
+    ...controls,
+    disabled: !canControl || controls.disabled,
+    act: (body: Parameters<typeof controls.act>[0]) =>
+      canControlRef.current ? controls.act(body) : Promise.resolve(),
+  };
   useEffect(() => {
     if (!access || !props.visible) captureRef.current?.abort();
     return () => {
@@ -38,7 +50,7 @@ export function DeviceWorkspace(props: {
     };
   }, [access, props.visible]);
   const saveScreenshot = () => {
-    if (!access || captureRef.current || !props.visible) return;
+    if (!access || captureRef.current || !canControlRef.current) return;
     const controller = new AbortController();
     captureRef.current = controller;
     setScreenshotPending(true);
@@ -78,6 +90,11 @@ export function DeviceWorkspace(props: {
   return (
     <>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {props.observer ? (
+          <p role="status" className="px-3 py-2 text-xs text-muted-foreground">
+            Watching the agent's device. Input is disabled while the agent is using it.
+          </p>
+        ) : null}
         {screenshotError || (controls.error && !toolsOpen) ? (
           <p role="alert" className="px-3 py-2 text-xs text-destructive">
             {screenshotError ?? controls.error}
@@ -92,35 +109,51 @@ export function DeviceWorkspace(props: {
             deviceId={props.device.id}
             hostId={props.device.hostId}
             visible={props.visible}
+            readOnly={props.observer}
             axOverlay={axOverlay}
-            allowPhoneView
+            allowPhoneView={!props.observer}
             onHandle={setHandle}
-            renderControls={(view) => (
-              <DeviceControlsRail
-                platform={props.device.platform}
-                handle={handle}
-                view={view}
-                controls={controls}
-                screenshotPending={screenshotPending}
-                onScreenshot={() => void saveScreenshot()}
-                toolsOpen={toolsOpen}
-                onTools={() => setToolsOpen(!toolsOpen)}
-                onFloat={props.onFloat}
-                onClose={props.onClose}
-                onPowerOff={props.onPowerOff}
-              />
-            )}
+            {...(!props.observer
+              ? {
+                  renderControls: (view) => (
+                    <DeviceControlsRail
+                      platform={props.device.platform}
+                      handle={handle}
+                      view={view}
+                      controls={guardedControls}
+                      screenshotPending={screenshotPending}
+                      onScreenshot={() => void saveScreenshot()}
+                      toolsOpen={toolsOpen}
+                      onTools={() => {
+                        if (canControlRef.current) setToolsOpen(!toolsOpen);
+                      }}
+                      onFloat={() => {
+                        if (canControlRef.current) props.onFloat();
+                      }}
+                      onClose={() => {
+                        if (canControlRef.current) props.onClose();
+                      }}
+                      onPowerOff={() => {
+                        if (canControlRef.current) props.onPowerOff();
+                      }}
+                    />
+                  ),
+                }
+              : {})}
           />
         </div>
       </div>
-      {toolsOpen ? (
+      {toolsOpen && canControl ? (
         <DeviceToolsPanel
           device={props.device}
-          controls={controls}
+          controls={guardedControls}
           hostDiagnostics={props.hostDiagnostics}
           access={access}
           axOverlay={axOverlay}
-          onAxOverlayChange={setAxOverlay}
+          onAxOverlayChange={(enabled) => {
+            if (canControlRef.current) setAxOverlay(enabled);
+          }}
+          readOnly={!canControl}
           onClose={() => setToolsOpen(false)}
           className="absolute inset-y-0 right-0 z-10 w-full max-w-72 border-l shadow-lg @[700px]:static @[700px]:w-72 @[700px]:shrink-0 @[700px]:shadow-none"
         />

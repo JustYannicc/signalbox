@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { PullRequestActivity, PullRequestReviewThread } from "@t3tools/contracts";
 
-import { settledReviewSummary } from "./pullRequestReviewGuideInput.ts";
+import { settledReviewSummary } from "@t3tools/provider-core/server/reviewGuideInput";
 
 const thread = (
   overrides: Partial<PullRequestReviewThread> & { body?: string; login?: string },

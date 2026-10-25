@@ -1,0 +1,10 @@
+--- a/socket2_05/src/sys/unix.rs
++++ b/socket2_05/src/sys/unix.rs
+@@ -371,6 +371,7 @@
+     ),
+     target_os = "aix",
+     target_os = "dragonfly",
++    target_os = "emscripten",
+     target_os = "freebsd",
+     target_os = "fuchsia",
+     target_os = "haiku",

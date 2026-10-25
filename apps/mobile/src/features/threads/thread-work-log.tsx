@@ -86,6 +86,8 @@ import {
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import type { ThreadFindWorkRowRevealRequest } from "./find/thread-find-model"; // signalbox: Find also scrolls this work log's inner viewport.
+import { useThreadFindWorkRowReveal } from "./find/use-thread-find-work-row-reveal"; // signalbox: keep nested Find scrolling and request fencing together.
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
@@ -480,6 +482,8 @@ interface ThreadWorkLogProps {
   readonly expandedRows: Readonly<Record<string, boolean>>;
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
+  readonly findReveal?: ThreadFindWorkRowRevealRequest | null; // signalbox: the enclosing feed supplies an exact activity target.
+  readonly onFindRevealed?: (key: string) => void;
   readonly iconSubtleColor: ColorValue;
   readonly edgeFadeColor: string;
   readonly themeAppearance: "light" | "dark";
@@ -555,6 +559,8 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
           groupId={props.anchorKey}
           rowSizing={props.rowSizing}
           scrollPositions={props.scrollPositions}
+          findReveal={props.findReveal} // signalbox: outer-row scrolling cannot reveal an offscreen inner activity.
+          onFindRevealed={props.onFindRevealed}
           renderRow={renderRow}
         />
       ) : (
@@ -572,6 +578,8 @@ function ThreadWorkGroupList(props: {
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
   readonly scrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
   readonly renderRow: (row: ThreadFeedActivity) => ReactNode;
+  readonly findReveal?: ThreadFindWorkRowRevealRequest | null; // signalbox: completion waits for the inner list's scroll promise.
+  readonly onFindRevealed?: (key: string) => void;
 }) {
   const estimatedRowsHeight = workLogRowsHeight(
     props.activities,
@@ -587,6 +595,7 @@ function ThreadWorkGroupList(props: {
   const [restoringPosition, setRestoringPosition] = useState(initialScrollIndex !== undefined);
   const listRef = useRef<LegendListRef>(null);
   const loadedRef = useRef(false);
+  const [loaded, setLoaded] = useState(false); // signalbox: a mounted list must load before Find can scroll it.
   const userScrollingRef = useRef(false);
   const pendingAppendHeightRef = useRef<number | null>(null);
   const previousContent = useRef({
@@ -712,6 +721,20 @@ function ThreadWorkGroupList(props: {
     [props.activities.length, props.renderRow],
   );
 
+  const cancelPendingAppend = useCallback(() => {
+    pendingAppendHeightRef.current = null;
+  }, []); // signalbox: Find owns the next scroll instead of append-follow.
+  const findRowId = useThreadFindWorkRowReveal({
+    // signalbox: acknowledge only after this viewport reaches the requested activity.
+    request: props.findReveal,
+    rows: props.activities,
+    expandedRows: props.expandedRows,
+    loaded,
+    listRef,
+    onBeforeScroll: cancelPendingAppend,
+    onRevealed: props.onFindRevealed,
+  });
+
   return (
     <View style={{ height, overflow: "hidden" }}>
       <AnimatedLegendList
@@ -724,7 +747,11 @@ function ThreadWorkGroupList(props: {
         // Bootstrap overscan is only 50px. An offset inside expanded detail can
         // otherwise leave its own row unmeasured until after scroll restoration.
         alwaysRender={
-          restoringPosition && initialPosition ? { keys: [initialPosition.rowId] } : undefined
+          findRowId
+            ? { keys: [findRowId] } // signalbox: measure the expanded Find target before completing its scroll.
+            : restoringPosition && initialPosition
+              ? { keys: [initialPosition.rowId] }
+              : undefined
         }
         recycleItems={false}
         extraData={props.renderRow}
@@ -733,6 +760,7 @@ function ThreadWorkGroupList(props: {
         onLayout={finishPendingAppend}
         onLoad={() => {
           loadedRef.current = true;
+          setLoaded(true); // signalbox: retry a Find request that arrived before the list loaded.
           setRestoringPosition(false);
           rememberPosition();
         }}

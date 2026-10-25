@@ -296,7 +296,7 @@ export function UsageLimitsSection({
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
   readonly cursorPrompt?: ReactNode;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const selected =
     selectedEnvironmentIds === null
       ? presentations
@@ -392,7 +392,7 @@ type AccountScreenProps = StaticScreenProps<{
 
 export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const insets = useSafeAreaInsets();
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const { accountKey, windowId, windowKind, environmentIds, now } = route.params;
   const selectedIds =
     environmentIds === null ? null : new Set(environmentIds.map((id) => EnvironmentId.make(id)));

@@ -1,3 +1,4 @@
+import { TerminalOperationError } from "./signalboxTerminal.ts";
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -60,6 +61,9 @@ export type TerminalObserveInput = Schema.Codec.Encoded<typeof TerminalObserveIn
 
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
+  /** Reuse this id when retrying input so a cloud runner never types it twice. */
+  commandId: Schema.optional(TerminalIdSchema),
+  generation: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
   data: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
@@ -96,6 +100,7 @@ export const TerminalSessionStatus = Schema.Literals(["starting", "running", "ex
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
 
 export const TerminalSessionSnapshot = Schema.Struct({
+  generation: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
   threadId: Schema.String.check(Schema.isNonEmpty()),
   terminalId: Schema.String.check(Schema.isNonEmpty()),
   cwd: Schema.String.check(Schema.isNonEmpty()),
@@ -112,6 +117,7 @@ export const TerminalSessionSnapshot = Schema.Struct({
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 
 export const TerminalSummary = Schema.Struct({
+  generation: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
   threadId: Schema.String.check(Schema.isNonEmpty()),
   terminalId: Schema.String.check(Schema.isNonEmpty()),
   cwd: Schema.String.check(Schema.isNonEmpty()),
@@ -365,6 +371,7 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
 }
 
 export const TerminalError = Schema.Union([
+  TerminalOperationError,
   TerminalCwdError,
   TerminalHistoryError,
   TerminalSessionLookupError,

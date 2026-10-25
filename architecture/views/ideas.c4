@@ -1,0 +1,57 @@
+// Ideas: not decided. Each view sketches one idea so it can be argued about; nothing here is design.
+views {
+
+  dynamic view idea_task_hierarchy {
+    #planned
+    variant sequence
+    title 'Ideas/One ordered task list on the hierarchy'
+    description 'Idea, not decided. Issue #1195.'
+
+    include personA, hier.asstA, hier.company.team.sharedThread, hier.lanesA, signalbox.web, signalbox.tree, signalbox.harness, signalbox.thread.threadActor
+    include signalbox, hier
+
+    style signalbox, hier {
+      color muted
+      opacity 8%
+    }
+
+    personA -> signalbox.web 'opens my list' {
+      notes '''
+        - One ordered list per person, across every level A reaches
+        - Items sit where their work lives in the tree
+      '''
+    }
+    signalbox.web -> signalbox.tree 'items in order'
+    hier.asstA -> signalbox.tree 'proposes an order' {
+      notes '''
+        - The assistant proposes the order; it never decides it
+      '''
+    }
+    personA -> signalbox.web 'decides the order' {
+      notes '- A accepts, drags or rejects; the person decides'
+    }
+    personA -> signalbox.web 'opens an item' {
+      notes '- An item opens into nested tasks, nesting like folders'
+    }
+    signalbox.web -> hier.company.team.sharedThread 'deep task is a thread' {
+      notes '''
+        - A task deep enough to need work is a thread at its level
+        - Same Thread actor, same resolution by the hierarchy
+      '''
+    }
+    hier.company.team.sharedThread -> signalbox.harness 'steps: task-tool list' {
+      notes '''
+        - Its steps are the harness task-tool list (Claude Code todos, Codex plan)
+        - Shown as the task's checklist, not a second list
+      '''
+    }
+    signalbox.harness -> signalbox.thread.threadActor 'subtask: child thread' {
+      notes '- Subtasks are subagents or child threads of that thread'
+    }
+    hier.company.team.sharedThread -[async]-> hier.lanesA 'asks only' {
+      notes '''
+        - The pipeline lanes stay separate: they hold asks (Blocker, Ready, Considering), not tasks
+      '''
+    }
+  }
+}

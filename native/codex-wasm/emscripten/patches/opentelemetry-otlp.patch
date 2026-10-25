@@ -1,0 +1,29 @@
+--- a/opentelemetry-otlp/src/exporter/http/mod.rs
++++ b/opentelemetry-otlp/src/exporter/http/mod.rs
+@@ -161,8 +161,14 @@
+             }
+             #[cfg(all(
+                 not(feature = "hyper-client"),
+-                not(feature = "reqwest-blocking-client"),
+-                feature = "reqwest-client"
++                any(
++                    all(not(feature = "reqwest-blocking-client"), feature = "reqwest-client"),
++                    all(
++                        target_os = "emscripten",
++                        not(feature = "reqwest-client"),
++                        feature = "reqwest-blocking-client"
++                    )
++                )
+             ))]
+             {
+                 http_client = Some(Arc::new(
+@@ -175,7 +181,8 @@
+             #[cfg(all(
+                 not(feature = "hyper-client"),
+                 not(feature = "reqwest-client"),
+-                feature = "reqwest-blocking-client"
++                feature = "reqwest-blocking-client",
++                not(target_os = "emscripten")
+             ))]
+             {
+                 let timeout_clone = timeout;

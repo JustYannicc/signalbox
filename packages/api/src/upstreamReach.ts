@@ -56,9 +56,14 @@ export const UPSTREAM_RPC_REACH = {
   "provider.auth.start": write({ summary: "Start signing in a provider account." }),
   // The final provider sign-in step is the person's (#335 decision 4).
   "provider.auth.complete": write({ humanOnly: true }),
-  "provider.auth.respond": write({ humanOnly: true }),
+  "provider.auth.respond": write({
+    humanOnly: true,
+    summary: "Answer the current provider sign-in interaction.",
+  }),
   "provider.auth.cancel": write(),
-  "provider.auth.logout": write(),
+  "provider.auth.logout": write({
+    summary: "Sign out of a provider. Cloud pools require the exact accountId.",
+  }),
   "provider.auth.subscribe": read(),
   "provider.chatgpt.reconnect-profile": write({ humanOnly: true }),
   "provider.chatgpt.import-profile": write({ humanOnly: true }),
@@ -172,7 +177,10 @@ export const UPSTREAM_RPC_REACH = {
     "A live terminal view. Read output with terminal.observe and type with terminal.write.",
   ),
   "terminal.observe": read(),
-  "terminal.write": write(),
+  "terminal.write": write({
+    summary:
+      "Type into a terminal. Use its snapshot generation and reuse commandId when retrying input.",
+  }),
   "terminal.resize": write(),
   "terminal.clear": write(),
   "terminal.restart": write(),
@@ -197,11 +205,13 @@ export const UPSTREAM_RPC_REACH = {
   "device.list": read(),
   "device.testHost": write(),
   "device.open": write(),
+  "device.cancelOpen": write(),
   "device.close": write(),
   "device.shutdown": write(),
   "device.detail": read(),
   "device.action": write(),
   subscribeDeviceState: read(),
+  subscribeDeviceAgentDiagnostics: read(),
 
   subscribeServerConfig: read(),
   subscribeServerLifecycle: exempt("internal", "The connection handshake: welcome, then ready."),
@@ -210,8 +220,14 @@ export const UPSTREAM_RPC_REACH = {
   subscribeResourceTelemetry: read(),
 
   "orchestration.dispatchCommand": perCommand,
-  "orchestration.getWorkflowScript": read(),
-  "orchestration.stopWorkflow": write(),
+  "orchestration.getWorkflowScript": read({
+    summary:
+      "Read the script revision retained for a thread workflow. Use its coordinator subagent ID when multiple workflows share a path.",
+  }),
+  "orchestration.stopWorkflow": write({
+    summary:
+      "Stop one workflow coordinator and its children without stopping its parent thread or sibling workflows.",
+  }),
   "orchestration.getTurnItem": read(),
   "orchestration.getTurnDiff": read(),
   "orchestration.getFullThreadDiff": read(),

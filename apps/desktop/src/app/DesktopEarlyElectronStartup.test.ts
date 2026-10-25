@@ -6,10 +6,34 @@ import {
   resolveEarlyLinuxElectronOptions,
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
+  resolveEarlyMacKeychainName,
 } from "./DesktopEarlyElectronStartup.ts";
 
 describe("DesktopEarlyElectronStartup", () => {
   const joinPath = NodePath.posix.join;
+
+  it("gives local macOS runtimes a stable Keychain identity per checkout and mode", () => {
+    const input = {
+      platform: "darwin",
+      isPackaged: false,
+      runtimeDirectory: "/work/a/dist-electron",
+      isDevelopment: true,
+    } as const;
+    const name = resolveEarlyMacKeychainName(input);
+    assert.match(name ?? "", /^Signalbox Dev [a-f0-9]{12}$/);
+    assert.equal(
+      resolveEarlyMacKeychainName({ ...input, runtimeDirectory: "/work/a/./dist-electron" }),
+      name,
+    );
+    assert.notEqual(
+      resolveEarlyMacKeychainName({ ...input, runtimeDirectory: "/other/a/dist-electron" }),
+      name,
+    );
+    assert.notEqual(resolveEarlyMacKeychainName({ ...input, isDevelopment: false }), name);
+    assert.isNull(resolveEarlyMacKeychainName({ ...input, isPackaged: true }));
+    assert.isNull(resolveEarlyMacKeychainName({ ...input, platform: "linux" }));
+    assert.isNull(resolveEarlyMacKeychainName({ ...input, platform: "win32" }));
+  });
 
   it("reads the persisted linux password-store preference before Electron is ready", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({

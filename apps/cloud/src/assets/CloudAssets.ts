@@ -6,6 +6,9 @@ import {
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceContextNotFoundError,
+  type PersistChatAttachmentsInput,
+  type PersistChatAttachmentsResult,
+  type PersistChatAttachmentsError,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -74,6 +77,10 @@ const notServed = (resource: Exclude<AssetResource, GrantedResource>) => {
 export class CloudAssets extends Context.Service<
   CloudAssets,
   {
+    readonly persistChatAttachments: (
+      actor: Actor,
+      input: PersistChatAttachmentsInput,
+    ) => Effect.Effect<PersistChatAttachmentsResult, PersistChatAttachmentsError>;
     /** A short-lived URL, relative to the cloud's origin, that loads `resource` for `actor`. */
     readonly createUrl: (
       actor: Actor,
@@ -214,7 +221,12 @@ const make = Effect.gen(function* () {
       disposition: resource.disposition,
     });
 
-  return CloudAssets.of({ createUrl, verify, read, openAttachment });
+  const persistChatAttachments: CloudAssets["Service"]["persistChatAttachments"] = (actor, input) =>
+    // Persistence precedes thread creation. Uploads stay private to the caller until
+    // the normal launch/send command authorizes the thread and claims its copies.
+    attachments.persistImages(actor.userId, input);
+
+  return CloudAssets.of({ createUrl, verify, read, openAttachment, persistChatAttachments });
 });
 
 export const layer = Layer.effect(CloudAssets, make);

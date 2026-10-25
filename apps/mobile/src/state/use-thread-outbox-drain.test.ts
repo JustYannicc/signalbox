@@ -14,6 +14,7 @@ import type { PreparedTurnAttachments } from "../lib/attachmentUpload";
 
 const harness = vi.hoisted(() => ({
   canOperate: true,
+  draftRevisionSequence: 0,
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
@@ -69,7 +70,7 @@ vi.mock("../lib/composerImages", () => ({
 }));
 
 vi.mock("../lib/uuid", () => ({
-  uuidv4: () => "00000000-0000-4000-8000-000000000000",
+  uuidv4: () => `draft-revision-${++harness.draftRevisionSequence}`,
   randomHex: () => "abcd",
 }));
 
@@ -164,12 +165,16 @@ function queuedMessage(input: {
   readonly messageId: string;
   readonly text: string;
   readonly fileUri?: string;
+  readonly sourceDraftRevision?: string;
 }): QueuedThreadMessage {
   return {
     environmentId: EnvironmentId.make("environment-1"),
     threadId: ThreadId.make("thread-1"),
     messageId: MessageId.make(input.messageId),
     commandId: CommandId.make(`command-${input.messageId}`),
+    ...(input.sourceDraftRevision === undefined
+      ? {}
+      : { sourceDraftRevision: input.sourceDraftRevision }),
     text: input.text,
     attachments: input.fileUri
       ? [
@@ -212,6 +217,7 @@ function remainingMessages(): ReadonlyArray<QueuedThreadMessage> {
 beforeEach(() => {
   appAtomRegistry.set(acknowledgedThreadMessagesAtom, []);
   harness.canOperate = true;
+  harness.draftRevisionSequence = 0;
   harness.draftFile.setDocument({ schemaVersion: 1, drafts: {} });
 });
 
@@ -229,6 +235,163 @@ afterEach(() => {
 });
 
 describe("thread outbox attachment preparation", () => {
+  it("clears the source draft left behind by a crash after the outbox write", async () => {
+    const draftKey = "environment-1:thread-1";
+    composerDrafts.setComposerDraftText(draftKey, "Sent prompt");
+    const sourceDraftRevision = composerDrafts.getComposerDraftSnapshot(draftKey).draftRevision;
+    if (!sourceDraftRevision) throw new Error("Expected a persisted source draft revision");
+    await composerDrafts.flushComposerDrafts();
+    const message = queuedMessage({
+      messageId: "restart-reconciliation",
+      text: "Sent prompt",
+      sourceDraftRevision,
+    });
+    await harness.manager.enqueue(message);
+
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+    composerDrafts.resetComposerDraftsLoadState();
+    await composerDrafts.waitForComposerDraftsLoaded();
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).text).toBe("Sent prompt");
+    harness.prepareTurnAttachments.mockResolvedValueOnce({
+      status: "ready",
+      attachments: [],
+      draftAttachments: [],
+      pendingAttachmentIds: [],
+    });
+
+    expect(await prepareQueuedMessageAttachments(message)).toMatchObject({ status: "ready" });
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).text).toBe("");
+  });
+
+  it("preserves a newer draft that adds a different attachment", async () => {
+    const draftKey = "environment-1:thread-1";
+    const baseMessage = queuedMessage({
+      messageId: "restart-reconciliation-attachment",
+      text: "Sent prompt",
+      fileUri: "file:///documents/sent.pdf",
+    });
+    const sentAttachment = baseMessage.attachments[0];
+    if (!sentAttachment) throw new Error("Expected a queued attachment");
+    composerDrafts.setComposerDraftText(draftKey, baseMessage.text);
+    composerDrafts.appendComposerDraftAttachments(draftKey, [sentAttachment]);
+    const sourceDraftRevision = composerDrafts.getComposerDraftSnapshot(draftKey).draftRevision;
+    if (!sourceDraftRevision) throw new Error("Expected a persisted source draft revision");
+    await composerDrafts.flushComposerDrafts();
+    const message = { ...baseMessage, sourceDraftRevision };
+    await harness.manager.enqueue(message);
+
+    composerDrafts.clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+    composerDrafts.setComposerDraftText(draftKey, baseMessage.text);
+    const newerAttachment = {
+      ...sentAttachment,
+      id: "newer-draft-file",
+      fileUri: "file:///documents/newer.pdf",
+    };
+    composerDrafts.appendComposerDraftAttachments(draftKey, [newerAttachment]);
+    await composerDrafts.flushComposerDrafts();
+
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+    composerDrafts.resetComposerDraftsLoadState();
+    await composerDrafts.waitForComposerDraftsLoaded();
+    harness.prepareTurnAttachments.mockResolvedValueOnce({
+      status: "ready",
+      attachments: [],
+      draftAttachments: [],
+      pendingAttachmentIds: [],
+    });
+
+    await prepareQueuedMessageAttachments(message);
+
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey)).toMatchObject({
+      text: expect.stringContaining("Sent prompt"),
+      attachments: [{ id: "newer-draft-file" }],
+    });
+  });
+
+  it("preserves the same text deliberately typed again before the queue drains", async () => {
+    const draftKey = "environment-1:thread-1";
+    const baseMessage = queuedMessage({ messageId: "same-text-before-drain", text: "continue" });
+    composerDrafts.setComposerDraftText(draftKey, baseMessage.text);
+    const sourceDraftRevision = composerDrafts.getComposerDraftSnapshot(draftKey).draftRevision;
+    if (!sourceDraftRevision) throw new Error("Expected a persisted source draft revision");
+    await composerDrafts.flushComposerDrafts();
+    const message = { ...baseMessage, sourceDraftRevision };
+    await harness.manager.enqueue(message);
+
+    composerDrafts.clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+    composerDrafts.setComposerDraftText(draftKey, message.text);
+    harness.prepareTurnAttachments.mockResolvedValueOnce({
+      status: "ready",
+      attachments: [],
+      draftAttachments: [],
+      pendingAttachmentIds: [],
+    });
+
+    await prepareQueuedMessageAttachments(message);
+
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).text).toBe("continue");
+  });
+
+  it("preserves the same text deliberately typed again across a restart", async () => {
+    const draftKey = "environment-1:thread-1";
+    const baseMessage = queuedMessage({ messageId: "same-text-after-restart", text: "continue" });
+    composerDrafts.setComposerDraftText(draftKey, baseMessage.text);
+    const sourceDraftRevision = composerDrafts.getComposerDraftSnapshot(draftKey).draftRevision;
+    if (!sourceDraftRevision) throw new Error("Expected a persisted source draft revision");
+    await composerDrafts.flushComposerDrafts();
+    const message = { ...baseMessage, sourceDraftRevision };
+    await harness.manager.enqueue(message);
+
+    composerDrafts.clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+    composerDrafts.setComposerDraftText(draftKey, message.text);
+    await composerDrafts.flushComposerDrafts();
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+    composerDrafts.resetComposerDraftsLoadState();
+    await composerDrafts.waitForComposerDraftsLoaded();
+    harness.prepareTurnAttachments.mockResolvedValueOnce({
+      status: "ready",
+      attachments: [],
+      draftAttachments: [],
+      pendingAttachmentIds: [],
+    });
+
+    await prepareQueuedMessageAttachments(message);
+
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).text).toBe("continue");
+  });
+
+  it.each(["", "A newer unsent message"])(
+    "does not restore the sent draft after a reload (next draft: %s)",
+    async (nextDraft) => {
+      vi.useFakeTimers();
+      const draftKey = "environment-1:thread-1";
+      const message = queuedMessage({ messageId: "reload-after-send", text: "Sent prompt" });
+      try {
+        composerDrafts.setComposerDraftText(draftKey, message.text);
+        await composerDrafts.flushComposerDrafts();
+        await harness.manager.enqueue(message);
+        composerDrafts.clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+        if (nextDraft) composerDrafts.setComposerDraftText(draftKey, nextDraft);
+        harness.prepareTurnAttachments.mockResolvedValueOnce({
+          status: "ready",
+          attachments: [],
+          draftAttachments: [],
+          pendingAttachmentIds: [],
+        });
+
+        expect(await prepareQueuedMessageAttachments(message)).toMatchObject({ status: "ready" });
+        appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+        composerDrafts.resetComposerDraftsLoadState();
+        await composerDrafts.waitForComposerDraftsLoaded();
+
+        expect(composerDrafts.getComposerDraftSnapshot(draftKey).text).toBe(nextDraft);
+      } finally {
+        await composerDrafts.flushComposerDrafts();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("keeps a denied message queued without starting its attachment upload", async () => {
     const message = queuedMessage({
       messageId: "denied-queued-message",
@@ -248,6 +411,30 @@ describe("thread outbox attachment preparation", () => {
     });
     expect(harness.prepareTurnAttachments).not.toHaveBeenCalled();
     expect(remainingMessages()).toEqual([message]);
+  });
+
+  it("keeps the queued message when the cleared composer cannot be persisted", async () => {
+    vi.useFakeTimers();
+    const draftKey = "environment-1:thread-1";
+    const message = queuedMessage({ messageId: "draft-write-retry", text: "Keep this queued" });
+    try {
+      composerDrafts.setComposerDraftText(draftKey, message.text);
+      await composerDrafts.flushComposerDrafts();
+      await harness.manager.enqueue(message);
+      composerDrafts.clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
+      harness.draftFile.setWriteError(new Error("Draft storage unavailable"));
+
+      await expect(prepareQueuedMessageAttachments(message)).rejects.toMatchObject({
+        _tag: "ComposerDraftPersistenceError",
+        operation: "write",
+      });
+      expect(harness.prepareTurnAttachments).not.toHaveBeenCalled();
+      expect(remainingMessages()).toEqual([message]);
+    } finally {
+      harness.draftFile.setWriteError(null);
+      await composerDrafts.flushComposerDrafts();
+      vi.useRealTimers();
+    }
   });
 
   it("abandons reused uploads when an editor saves changed text during verification", async () => {

@@ -1,4 +1,4 @@
-import { AutomationError } from "@t3tools/contracts";
+import { AutomationError, RunId, type WorkflowEventCursor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
@@ -26,6 +26,7 @@ export interface InboxRow {
   readonly event_id: string;
   readonly name: string;
   readonly envelope_json: string;
+  readonly consumed_by: string | null;
 }
 
 export const make = Effect.gen(function* () {
@@ -38,25 +39,69 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const insertLink = (row: RunLinkRow) =>
+    run(
+      "insertLink",
+      sql`
+        INSERT INTO signalbox_automation_run_links (
+          run_id, thread_id, attach_key, label, restart_of_run_id, lineage_id, started_at
+        ) VALUES (
+          ${row.run_id}, ${row.thread_id}, ${row.attach_key}, ${row.label},
+          ${row.restart_of_run_id}, ${row.lineage_id}, ${row.started_at}
+        )
+        ON CONFLICT (run_id) DO NOTHING
+      `,
+    );
+  const getLink = (runId: string) =>
+    run(
+      "getLink",
+      sql<RunLinkRow>`SELECT * FROM signalbox_automation_run_links WHERE run_id = ${runId}`,
+    ).pipe(Effect.map((rows) => rows[0]));
+
   return {
-    insertLink: (row: RunLinkRow) =>
-      run(
-        "insertLink",
-        sql`
-          INSERT INTO signalbox_automation_run_links (
-            run_id, thread_id, attach_key, label, restart_of_run_id, lineage_id, started_at
-          ) VALUES (
-            ${row.run_id}, ${row.thread_id}, ${row.attach_key}, ${row.label},
-            ${row.restart_of_run_id}, ${row.lineage_id}, ${row.started_at}
-          )
-          ON CONFLICT (run_id) DO NOTHING
-        `,
-      ),
-    getLink: (runId: string) =>
-      run(
-        "getLink",
-        sql<RunLinkRow>`SELECT * FROM signalbox_automation_run_links WHERE run_id = ${runId}`,
-      ).pipe(Effect.map((rows) => rows[0])),
+    insertLink,
+    getLink,
+    /** Adopts an existing unlinked run as a thread attachment. */
+    adoptAttachment: (input: {
+      readonly runId: string;
+      readonly threadId: string;
+      readonly key: string;
+      readonly label: string;
+      readonly startedAt: string;
+    }) =>
+      Effect.gen(function* () {
+        const existing = yield* getLink(input.runId);
+        if (existing) {
+          if (existing.thread_id === input.threadId && existing.attach_key === input.key) return;
+          if (existing.thread_id !== null || existing.attach_key !== null)
+            return yield* Effect.fail(
+              new AutomationError({ message: "That run is already attached to another task." }),
+            );
+          yield* run(
+            "adoptAttachment",
+            sql`
+              UPDATE signalbox_automation_run_links
+              SET thread_id = ${input.threadId}, attach_key = ${input.key}, label = ${input.label}
+              WHERE run_id = ${input.runId} AND thread_id IS NULL AND attach_key IS NULL
+            `,
+          );
+        } else {
+          yield* insertLink({
+            run_id: input.runId,
+            thread_id: input.threadId,
+            attach_key: input.key,
+            label: input.label,
+            restart_of_run_id: null,
+            lineage_id: input.runId,
+            started_at: input.startedAt,
+          });
+        }
+        const adopted = yield* getLink(input.runId);
+        if (adopted?.thread_id !== input.threadId || adopted.attach_key !== input.key)
+          return yield* Effect.fail(
+            new AutomationError({ message: "That run is already attached to another task." }),
+          );
+      }),
     /** The running run attached to `threadId` under `key`, if any. */
     runningAttached: (threadId: string, key: string) =>
       run(
@@ -90,7 +135,7 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map((rows) => rows[0]?.count ?? 0)),
 
     /** Keeps an event for a run; false when the run already has it. */
-    keepEvent: (row: Omit<InboxRow, "seq"> & { readonly received_at: string }) =>
+    keepEvent: (row: Omit<InboxRow, "seq" | "consumed_by"> & { readonly received_at: string }) =>
       run(
         "keepEvent",
         sql<{ seq: number }>`
@@ -103,14 +148,37 @@ export const make = Effect.gen(function* () {
           RETURNING seq
         `,
       ).pipe(Effect.map((rows) => rows.length > 0)),
-    /** A run's events no step took yet, oldest first. */
+    /** Untaken events and claims whose waiting step still needs settlement, oldest first. */
     unconsumed: (runId: string) =>
       run(
         "unconsumed",
         sql<InboxRow>`
-          SELECT seq, run_id, event_id, name, envelope_json FROM signalbox_automation_run_inbox
-          WHERE run_id = ${runId} AND consumed_by IS NULL ORDER BY seq
+          SELECT i.seq, i.run_id, i.event_id, i.name, i.envelope_json, i.consumed_by
+          FROM signalbox_automation_run_inbox i
+          WHERE i.run_id = ${runId} AND (
+            i.consumed_by IS NULL OR EXISTS (
+              SELECT 1 FROM signalbox_automation_steps s
+              WHERE s.run_id = i.run_id AND s.step_key = i.consumed_by
+                AND s.status = 'waiting'
+            )
+          )
+          ORDER BY i.seq
         `,
+      ),
+    /** Captures the run's inbox high-watermark; an empty inbox starts at sequence zero. */
+    captureEventCursor: (runId: string) =>
+      run(
+        "captureEventCursor",
+        sql<{ sequence: number }>`
+          SELECT COALESCE(MAX(seq), 0) AS sequence
+          FROM signalbox_automation_run_inbox
+          WHERE run_id = ${runId}
+        `,
+      ).pipe(
+        Effect.map((rows): WorkflowEventCursor => ({
+          runId: RunId.make(runId),
+          sequence: rows[0]?.sequence ?? 0,
+        })),
       ),
     /**
      * Gives event `seq` to step `stepKey`. False when another step took it

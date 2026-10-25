@@ -70,6 +70,26 @@ describe("sendFeedback", () => {
     expect(request!.body).toContain("ws.request: boom");
   });
 
+  it("overrides Sentry's automatic page URL with a query-free URL", async () => {
+    const callbackUrl =
+      "https://signalbox.test/oauth/callback?code=oauth-code&state=oauth-state#access_token=access-token";
+    vi.stubGlobal("window", {
+      location: { href: callbackUrl },
+      document: { location: { href: callbackUrl } },
+    });
+    const { sendFeedback } = await loadSendFeedback();
+
+    await sendFeedback({ message: "OAuth redirect failed", screenshot: null, serverLogs: null });
+
+    const request = posted[0]!;
+    const lines = request.body.split("\n");
+    const feedback = JSON.parse(lines[lines.indexOf('{"type":"feedback"}') + 1]!);
+    expect(feedback.contexts.feedback.url).toBe("https://signalbox.test/oauth/callback");
+    expect(request.body).not.toContain("oauth-code");
+    expect(request.body).not.toContain("oauth-state");
+    expect(request.body).not.toContain("access-token");
+  });
+
   it("rejects when Sentry refuses the envelope, so the draft is kept", async () => {
     const { sendFeedback } = await loadSendFeedback();
     status = 403;

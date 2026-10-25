@@ -18,7 +18,6 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import {
-  BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
   getClaudeCatalogModelCapabilities,
   isClaudeCatalogUltracodeEffort,
@@ -27,7 +26,8 @@ import {
   resolveClaudeCatalogEffort,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
-} from "../provider/ClaudeModelCatalog.ts";
+} from "@signalbox/provider-claude/ClaudeModelCatalog";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "../provider/ClaudeModelCatalog.ts";
 import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,

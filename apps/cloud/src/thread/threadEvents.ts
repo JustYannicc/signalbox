@@ -25,6 +25,10 @@ import type * as DateTime from "effect/DateTime";
  * after a crash names the same records.
  */
 
+export type Decision =
+  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
+  | { readonly _tag: "rejected"; readonly message: string };
+
 export interface DecisionContext {
   readonly now: DateTime.Utc;
 }
@@ -48,6 +52,7 @@ export const ids = {
   assistantItem: (runId: RunId) => TurnItemId.make(`turn-item:${runId}:assistant`),
   assistantMessage: (runId: RunId) => MessageId.make(`message:${runId}:assistant`),
   providerThread: (threadId: ThreadId) => ProviderThreadId.make(`provider-thread:${threadId}`),
+  providerThreadForRun: (runId: RunId) => ProviderThreadId.make(`provider-thread:${runId}`),
 };
 
 /** Turn items sort by run, then by position within the run, like upstream's ordinal bands. */

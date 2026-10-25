@@ -5,6 +5,7 @@ import {
   type RelayClientInstallProgressEvent,
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
+  TerminalOperationError,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -32,7 +33,9 @@ import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   EnvironmentRpcRequestObserver,
+  RpcPermissionGuard,
   request,
+  requestGuarded,
   runStream,
   subscribe,
   subscribeDynamicWithSession,
@@ -153,6 +156,47 @@ describe("environment RPC", () => {
         `start:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
         `finish:${TARGET.environmentId}:${WS_METHODS.cloudGetRelayClientStatus}`,
       ]);
+    }),
+  );
+
+  it.effect("keys terminal input once per request so a retry cannot type it twice", () =>
+    Effect.gen(function* () {
+      const sent: Array<string | undefined> = [];
+      const client = {
+        [WS_METHODS.terminalWrite]: (input: { readonly commandId?: string }) =>
+          Effect.suspend(() => {
+            sent.push(input.commandId);
+            return sent.length === 1
+              ? Effect.fail(
+                  new TerminalOperationError({ operation: "write", reason: "unavailable" }),
+                )
+              : Effect.void;
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const write = (commandId?: string) =>
+        requestGuarded(WS_METHODS.terminalWrite, {
+          threadId: "thread-1",
+          terminalId: "term-1",
+          data: "ls\r",
+          ...(commandId === undefined ? {} : { commandId }),
+        }).pipe(
+          Effect.retry({ times: 1 }),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+        );
+
+      yield* write();
+      yield* write();
+      yield* write("caller-key");
+
+      const [first, retried, second, explicit] = sent;
+      expect(first).toEqual(expect.any(String));
+      expect(retried).toBe(first);
+      expect(second).toEqual(expect.any(String));
+      expect(second).not.toBe(first);
+      expect(explicit).toBe("caller-key");
     }),
   );
 

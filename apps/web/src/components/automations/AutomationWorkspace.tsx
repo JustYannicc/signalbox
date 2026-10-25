@@ -15,7 +15,7 @@ import { diagramRun } from "@t3tools/client-runtime/automations/diagram";
 import { layoutWorkflow } from "@t3tools/client-runtime/automations/layout";
 import { triggerSummary } from "@t3tools/client-runtime/automations/triggers";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { AddStepPalette } from "./AddStepPalette";
 import { NodeDetailsPanel } from "./NodeDetailsPanel";
@@ -65,10 +65,7 @@ export function AutomationWorkspace(props: {
     layout = layoutWorkflow(graph, trigger);
     setPicture({ key: pictureKey, layout });
   }
-  const run = useMemo(
-    () => (runDetail ? diagramRun(layout, graph, runDetail) : null),
-    [graph, layout, runDetail],
-  );
+  const run = runDetail ? diagramRun(layout, graph, runDetail) : null;
 
   // A run that needs you, or failed, opens with that step selected.
   const [selectedId, setSelectedId] = useState<string | null>(null);

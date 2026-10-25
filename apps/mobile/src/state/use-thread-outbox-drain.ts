@@ -54,6 +54,7 @@ import {
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
   isQueuedThreadCreationSendable,
+  isComposerDraftPersistenceError,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
@@ -68,6 +69,7 @@ import {
 import { environmentThreadShells, threadEnvironment } from "./threads";
 import {
   appendComposerDraftAttachments,
+  clearComposerDraftContentIfMatchingQueuedMessage,
   composerDraftsAtom,
   flushComposerDrafts,
   type ComposerDraft,
@@ -110,7 +112,11 @@ function isRpcClientDecodeDefect(error: unknown): boolean {
 }
 
 function isOrdinaryThreadOutboxTransportFailure(error: unknown): boolean {
-  return shouldRetryThreadOutboxDelivery(error) && !isRpcClientDecodeDefect(error);
+  return (
+    !isComposerDraftPersistenceError(error) &&
+    shouldRetryThreadOutboxDelivery(error) &&
+    !isRpcClientDecodeDefect(error)
+  );
 }
 
 function logThreadOutboxDeliveryFailure(input: {
@@ -145,6 +151,13 @@ function logThreadOutboxUploadFailure(queuedMessage: QueuedThreadMessage, error:
     threadId: queuedMessage.threadId,
     messageId: queuedMessage.messageId,
   };
+  if (isComposerDraftPersistenceError(error)) {
+    console.warn("[thread-outbox] could not persist the cleared composer before delivery", {
+      ...context,
+      error,
+    });
+    return;
+  }
   if (isOrdinaryThreadOutboxTransportFailure(error)) {
     threadOutboxDebug.log("attachment upload failed; retrying", { ...context, error });
   } else {
@@ -201,6 +214,15 @@ export async function prepareQueuedMessageAttachments(
   if (!(await confirmThreadOutboxMessageQueued(queuedMessage))) {
     return { status: "abandoned" };
   }
+  await waitForComposerDraftsLoaded();
+  if (queuedMessage.creation === undefined) {
+    clearComposerDraftContentIfMatchingQueuedMessage(
+      scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
+      queuedMessage,
+    );
+  }
+  // Persist any reconciliation before the queued message reaches the server.
+  await flushComposerDrafts();
   if (!readEnvironmentScope(queuedMessage.environmentId, AuthOrchestrationOperateScope)) {
     return { status: "abandoned" };
   }

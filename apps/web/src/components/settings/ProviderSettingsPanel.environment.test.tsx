@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { cloneElement, isValidElement, type ReactElement } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
@@ -29,6 +29,8 @@ const commands = vi.hoisted(() => ({
   canManageProviders: true,
   canWriteSettings: true,
 }));
+
+const capabilities = vi.hoisted(() => ({ serverSettingsWrite: true, modelSettingsWrite: true }));
 
 const settingsState = vi.hoisted(() => ({
   value: null as UnifiedSettings | null,
@@ -66,6 +68,9 @@ vi.mock("./settingsLayout", async (importOriginal) => {
   };
 });
 
+vi.mock("../../hooks/useStableCallback", () => ({
+  useStableCallback: <F,>(fn: F) => fn,
+}));
 vi.mock("./SettingsScopeSentence", () => ({ SettingsScopeSentence: () => null }));
 vi.mock("react/compiler-runtime", async () => {
   const { reactHookHarness } = await import("../../test/reactHookHarness");
@@ -73,12 +78,15 @@ vi.mock("react/compiler-runtime", async () => {
 });
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => atoms.providers,
+  useAtomValue: (atom: unknown, select?: (value: null) => unknown) =>
+    select ? select(null) : atom === atoms.providersAtom ? (atoms.providers ?? []) : null,
 }));
 
 vi.mock("../../state/server", () => ({
   EMPTY_SERVER_PROVIDERS: [],
+  providersIgnoringCheckedAtAtom: () => atoms.providersAtom,
   serverEnvironment: {
+    configValueAtom: () => atoms.providersAtom,
     providersValueAtom: () => atoms.providersAtom,
     refreshProviders: atoms.refreshProviders,
     updateProvider: atoms.updateProvider,
@@ -143,13 +151,18 @@ vi.mock("../../state/entities", () => ({
   useServerConfigs: () => new Map(),
 }));
 
-vi.mock("../../state/environmentCapabilities", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../state/environmentCapabilities")>()),
-  useEnvironmentCanWriteModelSettings: () => true,
+vi.mock("../../state/environmentCapabilities", () => ({
+  useEnvironmentSupports: (_environmentId: EnvironmentId, capability: string) =>
+    capability === "serverSettingsWrite" ? capabilities.serverSettingsWrite : true,
+  useEnvironmentCanWriteModelSettings: () => capabilities.modelSettingsWrite,
 }));
 
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { HubInstanceSetup } from "../accountHub/HubInstanceSetup";
+import { MoveNativeLogins } from "../accountPool/MoveNativeLogins";
+import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
+import { UsageProviderSettings } from "./UsageProviderSettings";
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
@@ -180,19 +193,42 @@ function provider(): ServerProvider {
   };
 }
 
+function poolProvider(instanceId: ProviderInstanceId): ServerProvider {
+  return { ...provider(), instanceId };
+}
+
 function renderPanel(options?: {
   readonly readOnly?: boolean;
   readonly targetInstanceId?: ProviderInstanceId;
 }): ReactElement<Record<string, unknown>> {
   hooks.beginRender();
-  return EnvironmentProviderSettings({
-    environmentId,
-    environmentLabel: "Remote device",
-    ...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly }),
-    ...(options?.targetInstanceId === undefined
-      ? {}
-      : { targetInstanceId: options.targetInstanceId }),
-  }) as ReactElement<Record<string, unknown>>;
+  return expandProviderRows(
+    EnvironmentProviderSettings({
+      environmentId,
+      environmentLabel: "Remote device",
+      ...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+      ...(options?.targetInstanceId === undefined
+        ? {}
+        : { targetInstanceId: options.targetInstanceId }),
+    }),
+  ) as ReactElement<Record<string, unknown>>;
+}
+
+// Renders the row components inline so assertions see the cards they return.
+function expandProviderRows(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(expandProviderRows);
+  if (!isValidElement<Record<string, unknown>>(node)) return node;
+  if (typeof node.type === "function" && node.type.name === "ProviderInstanceRow") {
+    return expandProviderRows((node.type as (props: unknown) => unknown)(node.props));
+  }
+  const props: Record<string, unknown> = {};
+  let changed = false;
+  for (const [key, value] of Object.entries(node.props)) {
+    const expanded = expandProviderRows(value);
+    if (expanded !== value) changed = true;
+    props[key] = expanded;
+  }
+  return changed ? cloneElement(node, props) : node;
 }
 
 function isRefreshButton(element: ReactElement<Record<string, unknown>>): boolean {
@@ -236,6 +272,8 @@ describe("EnvironmentProviderSettings routing", () => {
       .mockResolvedValue({ _tag: "Success", value: {} });
     commands.canManageProviders = true;
     commands.canWriteSettings = true;
+    capabilities.serverSettingsWrite = true;
+    capabilities.modelSettingsWrite = true;
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.uninstall.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
@@ -433,6 +471,120 @@ describe("EnvironmentProviderSettings routing", () => {
     ).toBeNull();
     expect(visitElements(panel, isRefreshButton)).not.toBeNull();
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
+  });
+
+  it("keeps Cloud pool providers visible while hiding unsupported server configuration", () => {
+    capabilities.serverSettingsWrite = false;
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: { binaryPath: "/usr/local/bin/codex", configDirectory: "/home/user/.codex" },
+          environment: [{ name: "OPENAI_API_KEY", value: "secret", sensitive: true }],
+        },
+      },
+    };
+    atoms.providers = [provider()];
+
+    const panel = renderPanel({ targetInstanceId: customId });
+    const customCard = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "editor",
+    );
+
+    expect(customCard).not.toBeNull();
+    expect(customCard?.props.supportsServerSettingsWrite).toBe(false);
+    expect(customCard?.props.canWriteSettings).toBe(false);
+    expect(customCard?.props.onDelete).toBeUndefined();
+    expect(customCard?.props.onRunUpdate).toBeUndefined();
+    expect(customCard?.props.headerAction).toBeNull();
+    expect(visitElements(panel, isAddProviderButton)).toBeNull();
+    expect(visitElements(panel, (element) => element.props.title === "Advanced")).toBeNull();
+    expect(
+      visitElements(panel, (element) => element.type === AddProviderInstanceDialog),
+    ).toBeNull();
+    expect(visitElements(panel, (element) => element.type === UsageProviderSettings)).toBeNull();
+    expect(visitElements(panel, (element) => element.type === ProviderUpdatesAction)).toBeNull();
+    expect(visitElements(panel, (element) => element.type === MoveNativeLogins)).toBeNull();
+    expect(visitElements(panel, isRefreshButton)).not.toBeNull();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps model preferences writable when Cloud advertises their separate capability", async () => {
+    capabilities.serverSettingsWrite = false;
+    atoms.providers = [provider()];
+    const panel = renderPanel({ targetInstanceId: codexId });
+    const card = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    expect(card?.props.canWriteModelPreferences).toBe(true);
+    (card?.props.onHiddenModelsChange as (models: string[]) => void)(["pool-model"]);
+    await flushPromises();
+    expect(settingsState.updateSettings).toHaveBeenCalledWith({
+      setModelsHidden: [{ provider: codexId, model: "pool-model", hidden: true }],
+    });
+  });
+
+  it("keeps pool account setup and provider refresh available in Cloud", () => {
+    capabilities.serverSettingsWrite = false;
+    const poolInstanceId = ProviderInstanceId.make("codex_hub");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [poolInstanceId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: { setupMode: "hub" },
+        },
+      },
+    };
+    atoms.providers = [poolProvider(poolInstanceId)];
+
+    const panel = renderPanel({ targetInstanceId: poolInstanceId });
+    const poolCard = visitElements(
+      panel,
+      (element) => element.props.instanceId === poolInstanceId && element.props.mode === "editor",
+    );
+
+    expect(poolCard).not.toBeNull();
+    expect((poolCard?.props.setup as ReactElement | undefined)?.type).toBe(HubInstanceSetup);
+    expect(visitElements(panel, isAddProviderButton)).toBeNull();
+    expect(visitElements(panel, isRefreshButton)).not.toBeNull();
+  });
+
+  it("lists only providers the Cloud reports, not unconfigurable built-in slots", () => {
+    capabilities.serverSettingsWrite = false;
+    const poolInstanceId = ProviderInstanceId.make("codex_hub");
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [poolInstanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+    };
+    atoms.providers = [poolProvider(poolInstanceId)];
+
+    const listed = (instanceId: ProviderInstanceId) =>
+      visitElements(
+        renderPanel(),
+        (element) => element.props.instanceId === instanceId && element.props.mode === "list",
+      );
+
+    expect(listed(poolInstanceId)).not.toBeNull();
+    expect(listed(codexId)).toBeNull();
+    expect(listed(ProviderInstanceId.make("claudeAgent"))).toBeNull();
+  });
+
+  it("keeps built-in slots a self-hosted server can still set up", () => {
+    atoms.providers = [];
+    expect(
+      visitElements(
+        renderPanel(),
+        (element) => element.props.instanceId === codexId && element.props.mode === "list",
+      ),
+    ).not.toBeNull();
   });
 
   it("removes an open add-instance dialog when the provider grant is revoked", () => {

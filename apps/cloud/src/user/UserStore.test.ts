@@ -13,6 +13,25 @@ const newSession = (store: UserStore.UserStore["Service"], ttlMs = 30 * MINUTE) 
   store.createSession({ method: "bearer-access-token", scopes: AuthStandardClientScopes, ttlMs });
 
 describe("UserStore", () => {
+  it.effect("provisions one local identity and keeps it across later provisioning calls", () =>
+    Effect.gen(function* () {
+      const store = yield* UserStore.UserStore;
+      const created = yield* store.ensureLocalProfile({ firstName: "Local owner" });
+      expect(created.id).not.toBe("");
+      expect(created.firstName).toBe("Local owner");
+      expect(yield* store.profile).toEqual(created);
+      expect(yield* store.ensureLocalProfile({ firstName: "Replacement" })).toEqual(created);
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
+  it.effect("reuses a stored profile when provisioning a local domain", () =>
+    Effect.gen(function* () {
+      const store = yield* UserStore.UserStore;
+      yield* store.recordSignIn(profile);
+      expect(yield* store.ensureLocalProfile()).toEqual(profile);
+    }).pipe(Effect.provide(layerMemoryStore)),
+  );
+
   it.effect("keeps one profile per user, updated on every sign-in", () =>
     Effect.gen(function* () {
       const store = yield* UserStore.UserStore;

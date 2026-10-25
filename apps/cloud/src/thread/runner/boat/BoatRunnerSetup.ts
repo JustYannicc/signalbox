@@ -1,11 +1,12 @@
 import { MACHINE_HOME } from "@signalbox/runner-protocol/RunnerProtocol";
 
-export const SETUP_REVISION = "boat-runner-1";
+export const SETUP_REVISION = "boat-runner-2";
 
 /** On the VM's disk, mounted into the Runner's container at the same path. */
 export const CONFIG_PATH = `${MACHINE_HOME}/machine.json`;
 
 export const RUNNER_SCRIPT = `#!/bin/bash
+# Launcher ${SETUP_REVISION}: refresh mutable image tags for native answers.
 set -euo pipefail
 config=${CONFIG_PATH}
 until [ -s "$config" ]; do sleep 1; done

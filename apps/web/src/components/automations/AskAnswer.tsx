@@ -21,7 +21,7 @@ import {
   type AskDraftValue,
 } from "@t3tools/client-runtime/automations/ask";
 import { useNavigate } from "@tanstack/react-router";
-import { useId, useMemo, useState } from "react";
+import { useId, useState } from "react";
 
 import { useRightPanelStore } from "../../rightPanelStore";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -132,7 +132,7 @@ export function AskAnswer(props: {
   showOpen?: boolean;
 }) {
   const { question } = props;
-  const ask = useMemo(() => askFromQuestion(question), [question]);
+  const ask = askFromQuestion(question);
   const answer = useAutomationCommand(automationState.answer, "Couldn't send your answer");
   const pending = answer.busy;
   const [draft, setDraft] = useState<AskDraft>(() => initialAskDraft(question.fields));

@@ -7,9 +7,10 @@
  *   node scripts/rebrand/rebrand.ts --check   exit 1 if anything would change
  *
  * Only text users read or type is touched: string literals, template text,
- * and JSX text in JS/TS (comments and identifiers keep upstream's names, so
- * upstream patches still apply), and prose in docs. Code identifiers, env
- * vars, package names, and the t3.json format stay upstream's on purpose.
+ * and JSX text in JS/TS, and prose in docs. Comments, identifiers, env vars,
+ * package names, and the t3.json format are out of scope: renaming one of those
+ * is a deliberate change, and adds a rule here when upstream code we still merge
+ * uses the old name.
  * Idempotent: a second run changes nothing. See docs/operations/upstream-sync.md.
  */
 import * as NodeChildProcess from "node:child_process";
@@ -56,7 +57,7 @@ const COMMAND_RULES: ReadonlyArray<Rule> = [
   // Package runners name the npm package; the bin it installs is `signalbox`.
   {
     pattern:
-      /\b(npx|bunx|pnpm dlx|npm (?:i|install|uninstall|remove|rm) -g) t3(?=[@\s`'".,;:)]|$)/gm,
+      /\b(npx|bunx|pnpm dlx|npm (?:i|install|uninstall|remove|rm) (?:-g|--global)(?: --prefix (?:'[^']*'|"[^"]*"|\S+))?) t3(?=[@\s`'".,;:)]|$)/gm,
     replace: "$1 signalbox-cli",
   },
   {
@@ -108,6 +109,14 @@ const DOC_RULES = [
   PROSE_CLI_RULE,
   SHORT_NAME_RULE,
   { pattern: /(~|\$HOME)\/\.t3\b/g, replace: "$1/.signalbox" },
+  // Our builds' app ids (apps/mobile/app.config.ts, DESKTOP_APP_ID), and the Clerk callbacks and keychain groups built on them.
+  { pattern: /\bcom\.t3tools\.t3code\b/g, replace: "com.justyannicc.signalbox" },
+  // Scheme names without `://`, as in "the `t3code-dev` / `t3code` navigation schemes".
+  {
+    pattern:
+      /`t3code(-dev|-preview)?`(?=(?: \/ `t3code(?:-dev|-preview)?`)* navigation schemes?\b)/g,
+    replace: "`signalbox$1`",
+  },
 ];
 const USER_DOC_RULES = [...DOC_RULES, HOME_RULE];
 /** Table-driven test case names say "t3" for other things (env var families, fixtures). */

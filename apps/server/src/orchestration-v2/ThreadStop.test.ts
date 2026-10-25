@@ -25,8 +25,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { CLAUDE_PROVIDER } from "./Adapters/ClaudeAdapterV2.ts";
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { CLAUDE_PROVIDER } from "@signalbox/provider-claude/ClaudeAdapter";
+import { CodexProviderCapabilitiesV2 } from "@signalbox/provider-codex/defaults";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { OrchestrationEffectRequestV2 } from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -216,6 +216,89 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
 
     yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
     assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("Stop visits each child once when terminal task rows have active descendants", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const rootThreadId = ThreadId.make("thread:stop-history");
+    yield* createWatchingThread(rootThreadId, 31);
+    yield* send(rootThreadId, "work", "start_immediately");
+
+    const descendants: Array<ThreadId> = [];
+    let parentThreadId = rootThreadId;
+    for (let depth = 0; depth < 3; depth++) {
+      const childThreadId = yield* delegate(parentThreadId, `history child ${depth}`);
+      const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+      const task = parent.subagents.find((candidate) => candidate.childThreadId === childThreadId)!;
+      const now = yield* DateTime.now;
+      for (let history = 0; history < 8; history++) {
+        const taskId =
+          history === 0 ? task.id : NodeId.make(`node:stop-history:${depth}:${history}`);
+        yield* projections.apply({
+          id: EventId.make(`event:stop-history:${depth}:${history}`),
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          runId: task.runId!,
+          nodeId: taskId,
+          occurredAt: now,
+          payload: {
+            ...task,
+            id: taskId,
+            status: "completed",
+            completedAt: now,
+            updatedAt: now,
+          },
+        });
+      }
+      descendants.push(childThreadId);
+      parentThreadId = childThreadId;
+    }
+
+    for (const threadId of descendants) {
+      const child = yield* orchestrator.getThreadProjection(threadId);
+      assert.isTrue(
+        child.runs.some((run) =>
+          ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+        ),
+        `expected ${threadId} to retain active work under its completed parent task row`,
+      );
+    }
+
+    const stopped: Array<ThreadId> = [];
+    const read: Array<ThreadId> = [];
+    const measuredOrchestrator = Orchestrator.OrchestratorV2.of({
+      ...orchestrator,
+      dispatch: (command) =>
+        Effect.sync(() => {
+          if (command.type === "thread.stop") stopped.push(command.threadId);
+        }).pipe(Effect.andThen(orchestrator.dispatch(command))),
+      getThreadRecords: (threadId, fields, filter) =>
+        Effect.sync(() => read.push(threadId)).pipe(
+          Effect.andThen(orchestrator.getThreadRecords(threadId, fields, filter)),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      yield* threads.stopDelegatedTasks({
+        threadId: rootThreadId,
+        commandId: CommandId.make("stop-history"),
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.fresh(ThreadManagementService.layer).pipe(
+          Layer.provide(Layer.succeed(Orchestrator.OrchestratorV2, measuredOrchestrator)),
+        ),
+      ),
+    );
+
+    for (const threadId of descendants) {
+      assert.deepEqual((yield* threadState(threadId)).runs, ["interrupted"]);
+    }
+    assert.deepEqual(stopped, descendants);
+    assert.deepEqual(read, [rootThreadId, ...descendants]);
   }).pipe(Effect.provide(layerTest)),
 );
 

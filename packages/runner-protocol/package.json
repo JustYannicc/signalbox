@@ -7,6 +7,14 @@
       "types": "./src/RunnerProtocol.ts",
       "import": "./src/RunnerProtocol.ts"
     },
+    "./RunnerCommandProtocol": {
+      "types": "./src/RunnerCommandProtocol.ts",
+      "import": "./src/RunnerCommandProtocol.ts"
+    },
+    "./RunAttemptIdentity": {
+      "types": "./src/RunAttemptIdentity.ts",
+      "import": "./src/RunAttemptIdentity.ts"
+    },
     "./PreviewTunnel": {
       "types": "./src/PreviewTunnel.ts",
       "import": "./src/PreviewTunnel.ts"
@@ -15,9 +23,25 @@
       "types": "./src/PreviewServices.ts",
       "import": "./src/PreviewServices.ts"
     },
+    "./TerminalProtocol": {
+      "types": "./src/TerminalProtocol.ts",
+      "import": "./src/TerminalProtocol.ts"
+    },
+    "./ExecProtocol": {
+      "types": "./src/ExecProtocol.ts",
+      "import": "./src/ExecProtocol.ts"
+    },
+    "./MachineFilesProtocol": {
+      "types": "./src/MachineFilesProtocol.ts",
+      "import": "./src/MachineFilesProtocol.ts"
+    },
     "./DriveProtocol": {
       "types": "./src/DriveProtocol.ts",
       "import": "./src/DriveProtocol.ts"
+    },
+    "./PullProtocol": {
+      "types": "./src/PullProtocol.ts",
+      "import": "./src/PullProtocol.ts"
     },
     "./SessionProtocol": {
       "types": "./src/SessionProtocol.ts",
@@ -31,6 +55,10 @@
       "types": "./src/BranchProtocol.ts",
       "import": "./src/BranchProtocol.ts"
     },
+    "./PullRequestReviewTools": {
+      "types": "./src/PullRequestReviewTools.ts",
+      "import": "./src/PullRequestReviewTools.ts"
+    },
     "./AutomationProtocol": {
       "types": "./src/AutomationProtocol.ts",
       "import": "./src/AutomationProtocol.ts"
@@ -38,6 +66,10 @@
     "./StatusLineProtocol": {
       "types": "./src/StatusLineProtocol.ts",
       "import": "./src/StatusLineProtocol.ts"
+    },
+    "./LearnerProtocol": {
+      "types": "./src/LearnerProtocol.ts",
+      "import": "./src/LearnerProtocol.ts"
     },
     "./drivePaths": {
       "types": "./src/drivePaths.ts",
@@ -47,6 +79,10 @@
       "types": "./src/SecretsProtocol.ts",
       "import": "./src/SecretsProtocol.ts"
     },
+    "./SecretRequestProtocol": {
+      "types": "./src/SecretRequestProtocol.ts",
+      "import": "./src/SecretRequestProtocol.ts"
+    },
     "./BrowserProtocol": {
       "types": "./src/BrowserProtocol.ts",
       "import": "./src/BrowserProtocol.ts"
@@ -54,10 +90,22 @@
     "./SecretScrubber": {
       "types": "./src/SecretScrubber.ts",
       "import": "./src/SecretScrubber.ts"
+    },
+    "./HarnessSecretPolicy": {
+      "types": "./src/HarnessSecretPolicy.ts",
+      "import": "./src/HarnessSecretPolicy.ts"
+    },
+    "./FeedbackProtocol": {
+      "types": "./src/FeedbackProtocol.ts",
+      "import": "./src/FeedbackProtocol.ts"
+    },
+    "./PullRequestTools": {
+      "types": "./src/PullRequestTools.ts",
+      "import": "./src/PullRequestTools.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc-rs --noEmit"
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",

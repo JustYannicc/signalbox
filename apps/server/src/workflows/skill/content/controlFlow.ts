@@ -55,7 +55,7 @@ A small semaphore (\`slots(3)\`, see \`examples/work-through-tickets.ts\`) caps 
 
 \`async function triage(w, issue) { … }\` in the same file, called as \`await triage(w, issue)\`. Its steps show inline in the diagram wherever it's called. The receiver is always the first parameter. Recursion isn't allowed.
 
-Top-level functions without steps are ordinary code. Ones passed to \`w.run\` (and helpers only they call) run in Node instead of the sandbox.
+Top-level functions without steps are ordinary code. Ones passed to \`w.run\` (and helpers only they call) run in Node on GitHub Actions.
 
 ## What workflow code can't do
 

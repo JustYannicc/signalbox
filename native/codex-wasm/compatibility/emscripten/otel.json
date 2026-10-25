@@ -1,0 +1,43 @@
+{
+  "rules": [
+    {
+      "path": "codex-rs/otel/src/metrics/client.rs",
+      "rule": "otel-metrics-async-tls",
+      "before": [
+        "let client = crate::otlp::build_http_client(tls, OTEL_EXPORTER_OTLP_METRICS_TIMEOUT).map_err(|err| MetricsError::InvalidConfig { message: err.to_string(), })?;"
+      ],
+      "after": [
+        "#[cfg(target_os = \"emscripten\")]",
+        "let client = crate::otlp::build_async_http_client(factory, Some(tls), OTEL_EXPORTER_OTLP_METRICS_TIMEOUT).map_err(|err| MetricsError::InvalidConfig { message: err.to_string(), })?;",
+        "#[cfg(not(target_os = \"emscripten\"))]",
+        "let client = crate::otlp::build_http_client(tls, OTEL_EXPORTER_OTLP_METRICS_TIMEOUT).map_err(|err| MetricsError::InvalidConfig { message: err.to_string(), })?;"
+      ]
+    },
+    {
+      "path": "codex-rs/otel/src/provider.rs",
+      "rule": "otel-logs-async-tls",
+      "before": [
+        "let client = crate::otlp::build_http_client(tls, OTEL_EXPORTER_OTLP_LOGS_TIMEOUT)?;"
+      ],
+      "after": [
+        "#[cfg(target_os = \"emscripten\")]",
+        "let client = crate::otlp::build_async_http_client(factory, Some(tls), OTEL_EXPORTER_OTLP_LOGS_TIMEOUT)?;",
+        "#[cfg(not(target_os = \"emscripten\"))]",
+        "let client = crate::otlp::build_http_client(tls, OTEL_EXPORTER_OTLP_LOGS_TIMEOUT)?;"
+      ]
+    },
+    {
+      "path": "codex-rs/otel/src/provider.rs",
+      "rule": "otel-traces-async-tls",
+      "before": [
+        "let client = crate::otlp::build_http_client(tls, OTEL_EXPORTER_OTLP_TRACES_TIMEOUT)?;"
+      ],
+      "after": [
+        "#[cfg(target_os = \"emscripten\")]",
+        "let client = crate::otlp::build_async_http_client(factory, Some(tls), OTEL_EXPORTER_OTLP_TRACES_TIMEOUT)?;",
+        "#[cfg(not(target_os = \"emscripten\"))]",
+        "let client = crate::otlp::build_http_client(tls, OTEL_EXPORTER_OTLP_TRACES_TIMEOUT)?;"
+      ]
+    }
+  ]
+}

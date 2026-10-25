@@ -95,6 +95,33 @@ const environmentUiStateAtom = Atom.make((get): EnvironmentUiState => {
   });
 }).pipe(Atom.withLabel("web-environment-ui-state"));
 
+/**
+ * Whether absent capabilities can be read as "supported" yet. Unlike the environment UI state,
+ * a desktop gateway has to wait for the cloud's config too: it knows to hide environments
+ * before it knows the cloud has no filesystem. A client with no environment of its own has
+ * nothing to wait for.
+ */
+export function resolveCapabilitiesKnown(input: {
+  readonly gateway: boolean;
+  readonly hasPrimary: boolean;
+  readonly reportedCount: number;
+}): boolean {
+  return input.reportedCount > 0 || (!input.gateway && !input.hasPrimary);
+}
+
+const capabilitiesKnownAtom = Atom.make((get): boolean =>
+  resolveCapabilitiesKnown({
+    gateway: cloudDefaultOrigin() !== null,
+    hasPrimary: servedByAnEnvironment(),
+    reportedCount: (get(primaryServerConfigAtom) ? 1 : 0) + get(environmentServerConfigsAtom).size,
+  }),
+).pipe(Atom.withLabel("web-environment-capabilities-known"));
+
+/** For gates that hide or redirect: wait until this is true rather than flash or bounce. */
+export function useEnvironmentCapabilitiesKnown(): boolean {
+  return useAtomValue(capabilitiesKnownAtom);
+}
+
 /** For routes that redirect away: wait while `unknown` rather than bounce a self-hosted link. */
 export function useEnvironmentUiState(): EnvironmentUiState {
   return useAtomValue(environmentUiStateAtom);

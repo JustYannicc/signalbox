@@ -8,7 +8,12 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { DriveClient } from "./RunnerDriveClient.ts";
 import { storePacks } from "./RunnerDriveMirror.ts";
-import { makeRunnerGit, remoteCredentialFile, type RunnerGit } from "./RunnerGit.ts";
+import {
+  makeRunnerGit,
+  remoteCredentialFile,
+  type RunnerGit,
+  RunnerGitError,
+} from "./RunnerGit.ts";
 import { escapeGitignore, makeExcludes, SHORTCUTS_BLOCK } from "./RunnerExcludes.ts";
 
 /**
@@ -38,6 +43,8 @@ export interface MountedShortcut {
   /** Relative to the thread's working directory. */
   readonly path: string;
   readonly target: string;
+  /** The exact commit mounted this turn, or null when the drive was empty. */
+  readonly commit: string | null;
   /** The mount's absolute path. */
   readonly dir: string;
 }
@@ -252,6 +259,49 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
     remoteToken: string | null,
   ) =>
     Effect.gen(function* () {
+      const storeDrivePacks = () =>
+        Effect.gen(function* () {
+          const mountGitDir = path.join(dir, ".git");
+          const seq = yield* storePacks({
+            gitDir: mountGitDir,
+            git: mount,
+            packs: shortcut.packs,
+            shallow: shortcut.shallow,
+            promisor: shortcut.remote !== null,
+            download: (name, packDir) =>
+              client.downloadShortcutPack(shortcut.target, name, packDir),
+          }).pipe(Effect.provide(services));
+          if (seq !== null)
+            yield* fs.writeFileString(path.join(mountGitDir, PACKS_FILE), String(seq));
+        });
+
+      if (shortcut.pinned === true) {
+        if (shortcut.main === null) return null;
+        if ((yield* mount.resolve(shortcut.main)) === null) yield* storeDrivePacks();
+        if ((yield* mount.resolve(shortcut.main)) === null) {
+          if (shortcut.remote === null || remoteToken === null) {
+            return yield* new RunnerGitError({
+              message: `The pinned version of ${shortcut.path} isn't in its drive's saved history.`,
+            });
+          }
+          yield* mount.usePromisor(
+            client.shortcutRemoteUrl(shortcut.target),
+            remoteCredentialFile(input.cwd),
+          );
+          const fetched = yield* mount.fetchCommit(
+            client.shortcutRemoteUrl(shortcut.target),
+            shortcut.main,
+            remoteToken,
+          );
+          if (fetched._tag !== "fetched") {
+            return yield* new RunnerGitError({
+              message: `The pinned version of ${shortcut.path} isn't available from its remote: ${fetched.reason}`,
+            });
+          }
+        }
+        return shortcut.main;
+      }
+
       if (shortcut.remote !== null && remoteToken !== null) {
         // The target's drive keeps the remote's files on the remote, for git to fetch.
         yield* mount.usePromisor(
@@ -270,16 +320,7 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
         });
       }
       if (shortcut.main === null) return null;
-      const mountGitDir = path.join(dir, ".git");
-      const seq = yield* storePacks({
-        gitDir: mountGitDir,
-        git: mount,
-        packs: shortcut.packs,
-        shallow: shortcut.shallow,
-        promisor: shortcut.remote !== null,
-        download: (name, packDir) => client.downloadShortcutPack(shortcut.target, name, packDir),
-      }).pipe(Effect.provide(services));
-      if (seq !== null) yield* fs.writeFileString(path.join(mountGitDir, PACKS_FILE), String(seq));
+      yield* storeDrivePacks();
       return shortcut.main;
     });
 
@@ -290,6 +331,7 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
       if (yield* underLink(shortcut.path)) {
         return {
           shown: false,
+          commit: null,
           notice: `${shortcut.path} can't be shown: a link in this drive is in its way.`,
         };
       }
@@ -304,10 +346,16 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
         for (const [key, value] of MOUNT_CONFIG) yield* mount.run(["config", key, value]);
         yield* fs.writeFileString(path.join(dir, ".git", TARGET_FILE), shortcut.target);
       }
-      const commit = yield* commitFor(dir, mount, shortcut, remoteToken);
+      const commit = yield* commitFor(dir, mount, shortcut, remoteToken).pipe(
+        Effect.catchCause((cause) =>
+          shortcut.pinned === true
+            ? wipe(dir).pipe(Effect.andThen(Effect.failCause(cause)))
+            : Effect.failCause(cause),
+        ),
+      );
       // Already showing it: nothing in a read-only mount changed since.
       if (ours && commit !== null && (yield* mount.resolve("HEAD")) === commit) {
-        return { shown: true, notice: null };
+        return { shown: true, commit, notice: null };
       }
       yield* unlock(dir, mount);
       yield* Effect.gen(function* () {
@@ -320,6 +368,7 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
       }).pipe(Effect.ensuring(lock(dir, mount).pipe(Effect.ignore)));
       return {
         shown: true,
+        commit,
         notice:
           commit === null
             ? `${shortcut.path} is empty for now: the drive it shows has no files yet.`
@@ -369,16 +418,32 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
    * Brings every shortcut up to date at turn start, after the drive's own
    * checkout. When the cloud can't list them, the mounts stay as they were.
    */
-  const mount = (remoteToken: string | null) =>
+  const mount = (remoteToken: string | null, pinned = false) =>
     Effect.gen(function* () {
       const state = yield* readState;
-      const previous = Object.entries(state).map(([relative, target]) => ({
-        path: relative,
-        target,
-        dir: dirOf(relative),
-      }));
+      const previous = yield* Effect.forEach(Object.entries(state), ([relative, target]) =>
+        Effect.gen(function* () {
+          const dir = dirOf(relative);
+          const mount = yield* gitOf(dir);
+          return {
+            path: relative,
+            target,
+            commit: yield* mount.resolve("HEAD"),
+            dir,
+          };
+        }),
+      );
       const listed = yield* listShortcuts(state).pipe(Effect.result);
       if (listed._tag === "Failure") {
+        if (pinned) {
+          for (const old of previous) yield* wipe(old.dir);
+          return {
+            mounted: [],
+            notices: [
+              "This turn's pinned drive versions couldn't be loaded, so no old shortcuts were shown.",
+            ],
+          } satisfies ShortcutMounts;
+        }
         yield* Effect.logWarning(
           "listing the drive's shortcuts failed; keeping the last mounts",
           Cause.pretty(Cause.fail(listed.failure)),
@@ -423,7 +488,6 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
       );
       const mounted: Array<MountedShortcut> = [];
       for (const { shortcut, result } of results) {
-        const entry = { path: shortcut.path, target: shortcut.target, dir: dirOf(shortcut.path) };
         if (result._tag === "Failure") {
           yield* Effect.logWarning("mounting a shortcut failed", {
             path: shortcut.path,
@@ -433,7 +497,14 @@ export const makeRunnerShortcuts = Effect.fn("makeRunnerShortcuts")(function* (i
           continue;
         }
         if (result.success.notice !== null) notices.push(result.success.notice);
-        if (result.success.shown) mounted.push(entry);
+        if (result.success.shown) {
+          mounted.push({
+            path: shortcut.path,
+            target: shortcut.target,
+            commit: result.success.commit,
+            dir: dirOf(shortcut.path),
+          });
+        }
       }
       // Every readable shortcut is remembered, mounted or not, so a failed one is still taken down later.
       yield* fs.writeFileString(

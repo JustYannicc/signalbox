@@ -14,7 +14,7 @@ import {
 } from "@t3tools/shared/workloadUsage";
 import * as DateTime from "effect/DateTime";
 
-import { driverFor } from "../providerCatalog.ts";
+import { driverFor } from "../../models/ModelRouting.ts";
 import type { MachineBackendShape } from "../runner/MachineBackend.ts";
 import type { LogLine, MachineSession, RunDiagnostics } from "./DiagnosticsStore.ts";
 

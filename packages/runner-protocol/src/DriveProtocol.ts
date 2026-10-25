@@ -2,6 +2,7 @@ import { NonNegativeInt } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { jsonCodec } from "./jsonCodec.ts";
+import { PULL_PATHS, pullReceiptPath } from "./PullProtocol.ts";
 
 /**
  * How a thread's machine reads and writes its drive (#119, #131). A drive is
@@ -36,19 +37,23 @@ import { jsonCodec } from "./jsonCodec.ts";
  * thread and its machine generation; a token from an older machine, or for
  * another thread's refs, is refused.
  *
- * A drive backed by a remote repository (#135) keeps the remote as its home:
+ * A drive backed by a remote repository (#135) uses it as its home unless
+ * `mode: "source"` keeps a child drive's own history:
  *
  * - `state` reads the drive without opening it, so a new thread can bring
  *   `main` up to date before its branch starts there.
  * - `remote` is the remote repository over git's smart HTTP, fetch only, with
  *   the turn's remote token as bearer. The cloud adds the credential; the
  *   machine never holds one, and the token stops working when the turn ends.
- * - `main` mirrors the remote's default branch: the machine fetches the
- *   remote's history (blobless, #394), uploads its head with
+ * - With no mode, `main` mirrors the remote's default branch. The machine
+ *   fetches its history (blobless, #394), uploads its head with
  *   `REMOTE_HEAD_HEADER` (the drive holds it one commit deep, its files
  *   promised), and `mirror`s `main` to it. The cloud checks both against the
  *   remote. Such a drive never `reconcile`s; merging a pull request on the
  *   remote lands the work.
+ * - With `mode: "source"`, the drive keeps and reconciles its own `main`,
+ *   while its threads can fetch source history and promised files. It never
+ *   advances `main` to the source's newer default branch automatically.
  *
  * A drive's shortcuts (#142) show other drives at paths of its tree, read-only
  * and with their own history. The machine mounts each one as a repository of
@@ -68,6 +73,7 @@ export const DRIVE_API_PREFIX = "/api/drive";
 export const DRIVE_PATHS = {
   open: `${DRIVE_API_PREFIX}/open`,
   state: `${DRIVE_API_PREFIX}/state`,
+  checkpoint: `${DRIVE_API_PREFIX}/checkpoint`,
   packs: `${DRIVE_API_PREFIX}/packs`,
   refs: `${DRIVE_API_PREFIX}/refs`,
   reconcile: `${DRIVE_API_PREFIX}/reconcile`,
@@ -77,7 +83,11 @@ export const DRIVE_PATHS = {
   /** A git smart-HTTP remote: `<remote>/info/refs` and `<remote>/git-upload-pack`. */
   remote: `${DRIVE_API_PREFIX}/remote`,
   shortcuts: `${DRIVE_API_PREFIX}/shortcuts`,
+  pullSave: PULL_PATHS.save,
+  pullReceipts: PULL_PATHS.receipts,
 } as const;
+
+export { pullReceiptPath };
 
 /** Where a shortcut target's packs download from. */
 export const shortcutPacksPath = (target: string) =>
@@ -176,8 +186,62 @@ export const DriveRemote = Schema.Struct({
   /** `owner/name`. */
   repository: Schema.String,
   defaultBranch: Schema.String,
+  /** Omit when this drive mirrors the repository; `source` keeps its own main. */
+  mode: Schema.optional(Schema.Literal("source")),
 });
 export type DriveRemote = typeof DriveRemote.Type;
+
+/** A shortcut target's version, recorded with a turn checkpoint. */
+export const CheckpointShortcutView = Schema.Struct({
+  path: Schema.String,
+  target: Schema.String,
+  commit: Schema.NullOr(Oid),
+});
+export type CheckpointShortcutView = typeof CheckpointShortcutView.Type;
+
+/**
+ * The exact `/drives` view a turn read. This mirrors ContextProtocol's view
+ * schema inline to avoid a runtime import cycle: that protocol imports Oid
+ * and DRIVE_API_PREFIX from this module.
+ */
+export const CheckpointContextView = Schema.Struct({
+  driveId: Schema.String,
+  contexts: Schema.Array(
+    Schema.Struct({
+      contextId: Schema.String,
+      name: Schema.String,
+      drives: Schema.Array(
+        Schema.Struct({
+          driveId: Schema.String,
+          path: Schema.NullOr(Schema.String),
+          commit: Schema.NullOr(Oid),
+          time: Schema.NullOr(Schema.Number),
+          shortcuts: Schema.Array(Schema.Struct({ path: Schema.String, target: Schema.String })),
+        }),
+      ),
+    }),
+  ),
+});
+export type CheckpointContextView = typeof CheckpointContextView.Type;
+
+/** The shortcut and context versions this turn saw. */
+export const CheckpointViews = Schema.Struct({
+  shortcuts: Schema.Array(CheckpointShortcutView),
+  context: Schema.NullOr(CheckpointContextView),
+});
+export type CheckpointViews = typeof CheckpointViews.Type;
+
+/** Durable metadata registered with a turn's checkpoint. */
+export const DriveCheckpointRecord = Schema.Struct({
+  runId: Schema.String,
+  turnId: Schema.String,
+  commit: Oid,
+  start: Schema.NullOr(Oid),
+  /** Commit object at the head of `refs/notes/signalbox` in the uploaded pack. */
+  notes: Oid,
+  views: CheckpointViews,
+});
+export type DriveCheckpointRecord = typeof DriveCheckpointRecord.Type;
 
 /** What a thread sees of its drive. */
 export const DriveState = Schema.Struct({
@@ -189,6 +253,12 @@ export const DriveState = Schema.Struct({
   wip: Schema.NullOr(Oid),
   /** The thread's machine state, `machine/<thread id>`; absent from a cloud that keeps none. */
   machine: Schema.optional(Schema.NullOr(Oid)),
+  /** The uploaded Git notes ref commit naming this thread's turn checkpoints. */
+  notes: Schema.optional(Schema.NullOr(Oid)),
+  /** The last checkpoint's pinned view, for restore or continue. */
+  pinnedViews: Schema.optional(Schema.NullOr(CheckpointViews)),
+  /** Changes on restore/fork so an already running machine reloads the selected revision. */
+  revision: Schema.optional(Schema.NullOr(Schema.String)),
   /** Where the thread's branch started: `main` when the thread first opened the drive. */
   base: Schema.NullOr(Oid),
   /** The drive's packs after the caller's `PACKS_AFTER_HEADER`, oldest first. */
@@ -255,6 +325,8 @@ export const DriveShortcut = Schema.Struct({
   target: Schema.String,
   /** False when the user can't open the target: the rest is empty, and nothing is mounted. */
   readable: Schema.Boolean,
+  /** This turn's requested historical version; don't replace it with the latest remote head. */
+  pinned: Schema.optional(Schema.Boolean),
   main: Schema.NullOr(Oid),
   /** The target's packs after the caller's `have` for it, oldest first. */
   packs: Schema.Array(DrivePack),
@@ -341,6 +413,7 @@ export const DirectCommitRequest = Schema.Struct({
 
 export const driveJson = {
   state: jsonCodec(DriveState),
+  checkpoint: jsonCodec(DriveCheckpointRecord),
   packUpload: jsonCodec(PackUploadResult),
   refUpdate: jsonCodec(RefUpdateRequest),
   reconcile: jsonCodec(ReconcileRequest),

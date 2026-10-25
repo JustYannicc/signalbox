@@ -1,7 +1,10 @@
-import { ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
-import { resolveVisibleWorktreeSetup } from "@t3tools/client-runtime/worktree-setup";
+import { RunId, ThreadId, type WorktreeSetupSnapshot } from "@t3tools/contracts";
+import {
+  resolveVisibleWorktreeSetup,
+  runAwaitsSetup,
+} from "@t3tools/client-runtime/worktree-setup";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveWorktreeSetupSnapshot } from "./worktree-setup-state";
+import { resolveComposerStop, resolveWorktreeSetupSnapshot } from "./worktree-setup-state";
 
 const threadId = ThreadId.make("setup-thread");
 const running: WorktreeSetupSnapshot = {
@@ -73,5 +76,64 @@ describe("mobile worktree setup handoff", () => {
     expect(resolveWorktreeSetupSnapshot(otherId, running, running)).toBeNull();
     const other = { ...running, threadId: otherId };
     expect(resolveWorktreeSetupSnapshot(otherId, other, running)).toBe(other);
+  });
+});
+
+describe("mobile worktree setup retries", () => {
+  const cloud: WorktreeSetupSnapshot = {
+    ...running,
+    runId: RunId.make("setup-run"),
+    preparationGeneration: 1,
+    turnStarted: false,
+    cancellationRequested: false,
+  };
+
+  it("lets the retried attempt replace the held ending, and not the other way round", () => {
+    const cancelled = { ...cloud, phase: "cancelled" as const, sequence: 2 };
+    const retried = { ...cloud, preparationGeneration: 2, sequence: 3 };
+    expect(resolveWorktreeSetupSnapshot(threadId, retried, cancelled)).toBe(retried);
+    expect(resolveWorktreeSetupSnapshot(threadId, cancelled, retried)).toBe(retried);
+  });
+});
+
+describe("mobile composer stop during setup", () => {
+  it("offers no stop before a snapshot names the attempt", () => {
+    expect(
+      resolveComposerStop({ awaitingSetup: true, setupCancel: null, interruptible: true }),
+    ).toBeNull();
+  });
+
+  it("cancels setup rather than interrupting the run before the handoff", () => {
+    expect(
+      resolveComposerStop({ awaitingSetup: true, setupCancel: "available", interruptible: true }),
+    ).toBe("cancel-setup");
+  });
+
+  it("hides the stop while a requested cancel is pending", () => {
+    expect(
+      resolveComposerStop({ awaitingSetup: true, setupCancel: "pending", interruptible: false }),
+    ).toBeNull();
+  });
+
+  it("interrupts the run once setup no longer holds the thread", () => {
+    expect(
+      resolveComposerStop({ awaitingSetup: false, setupCancel: null, interruptible: true }),
+    ).toBe("interrupt");
+    expect(
+      resolveComposerStop({ awaitingSetup: false, setupCancel: null, interruptible: false }),
+    ).toBeNull();
+  });
+});
+
+describe("mobile setup on a device that did not send the message", () => {
+  it("recognises cloud setup from the run, so stop waits for the first snapshot", () => {
+    const run = { status: "starting", startedAt: null };
+    expect(
+      resolveComposerStop({
+        awaitingSetup: runAwaitsSetup(run, true),
+        setupCancel: null,
+        interruptible: true,
+      }),
+    ).toBeNull();
   });
 });

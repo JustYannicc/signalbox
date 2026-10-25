@@ -1,0 +1,476 @@
+// Prototype gaps: surfaces the prototype UI (branch `prototype` @ ffe562c5b9) shows that no
+// workflow view drew yet.
+// Modules stay black boxes here: the desktop stream is Computer's, pool grants are Models',
+// the library is Drive's and backlinks are Search's (their parts show in each module's own view).
+// The room is hier.company.team.roomAB. Marketplace workflows live in marketplace.c4 (mkt_*).
+// Sequences play in order; container groups are muted lanes.
+views {
+
+  // ───────────────────────────── Files / Spaces ─────────────────────────────
+
+  dynamic view pgap_spaces_place_page {
+    variant sequence
+    title 'Journeys/Files/Open a place page and preview an item'
+    description 'Prototype gap PG-01 (spaces/SpacesPage, SpacesPreviewPanel, spacesPlace). The library of one mapped place or one account at its level; A and D see what folder Team holds.'
+
+    include personA, personD, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.drive, signalbox.connections, services.google
+    include signalbox, services
+
+    personA -> signalbox.web 'opens a place' {
+      notes """
+        - From folder Team's strip: one mapped place (a Drive folder), or an account at the level it is connected at
+        - No place set: everything Focus keeps in sight
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'Tree.view(place)' {
+      notes """
+        - The place's one home, the folders that reference it, and its reach
+        - The breadcrumb is the path of that one home
+      """
+    }
+    alt 'who opens it' {
+      when 'A or B (members of folder Company)' {
+        signalbox.tree -> signalbox.funnel 'place + references' {
+          notes """
+            - Members see places homed at Team and at Company
+          """
+        }
+      }
+      else 'D (outside collaborator, folder Team only)' {
+        personD -> signalbox.web 'opens the same place' {
+          notes """
+            - D sees places homed at Team
+            - Loose items of an account connected at Company never show to D
+          """
+        }
+      }
+    }
+    signalbox.funnel -> signalbox.drive 'list library items' {
+      navigateTo work_sources_map
+      notes """
+        - Synced items and native notes for that slice, as a list or a grid
+        - Spaces never re-shares synced items: access is the source's own
+      """
+    }
+    signalbox.drive -> signalbox.connections 'read through source' {
+      notes """
+        - The Source seam reads via the connection placed on the chain
+      """
+    }
+    signalbox.connections -> services.google 'list files'
+    personA -> signalbox.web 'previews an item' {
+      notes """
+        - Format-aware preview (slides, sheet, PDF, photos)
+        - Shows the file agents read in its place (Markdown or JSON) and where an edit lands
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.drive 'Drive.open(path)' {
+      navigateTo journey_files_browse
+      notes """
+        - Same file the agent gets under /sources/<label>/
+      """
+    }
+    opt 'source needs reconnecting' {
+      signalbox.connections -> signalbox.funnel 'reauth needed' {
+        navigateTo state_connection
+        notes """
+          - The library shows a reconnect notice instead of stale items
+        """
+      }
+    }
+
+    style signalbox, services {
+      color muted
+      opacity 10%
+    }
+  }
+
+  dynamic view pgap_notes_links {
+    variant sequence
+    title 'Workflows/Person/Notes/Link items in a note and see where it is referenced'
+    description 'Prototype gap PG-02 (spaces/SpacesNoteEditor, SpacesSlashMenu, SpacesNoteBacklinks). Links via "/", backlinks filtered per reader.'
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.capture, signalbox.search, hier.company.team.sharedThread
+    include signalbox, hier
+
+    personA -> signalbox.web 'types / in a note' {
+      notes """
+        - Block types first, then library items to link
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.search 'find linkable items' {
+      notes """
+        - Only what A can see (visibility re-check)
+      """
+    }
+    personA -> signalbox.web 'links a doc'
+    signalbox.web -> signalbox.funnel -> signalbox.capture 'Capture.change(note, link)' {
+      navigateTo person_notes_edit_move
+      notes """
+        - Shared note at Team: stored in the Level
+        - Private note: stays in A's Person actor
+      """
+    }
+    signalbox.capture -> signalbox.search 'note rows + links' {
+      navigateTo work_search_notes
+      notes """
+        - Links are indexed so backlinks are one query
+      """
+    }
+    hier.company.team.sharedThread -> signalbox.capture 'cites the note' {
+      notes """
+        - A chat or task in Team points at the note
+      """
+    }
+    personB -> signalbox.web 'opens the note'
+    signalbox.web -> signalbox.funnel -> signalbox.search 'Referenced in' {
+      notes """
+        - Chats, tasks and folders that point at it, filtered by what B can see
+        - A's private chats that cite it never show to B
+      """
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Marketplace ─────────────────────────────
+
+  // ───────────────────────────── Pools ─────────────────────────────
+
+  dynamic view pgap_pools_share_people {
+    variant sequence
+    title 'Workflows/Folders/Pools/Share a pool with people'
+    description 'Prototype gap PG-06 (accounts/SharePoolDialog, PoolBlock: Share, Connect, Leave). Per corrections 1 and 6 a person grant never routes a turn: using the pool takes a placement or a loan.'
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.models, signalbox.tree
+    include signalbox
+
+    personA -> signalbox.web 'shares pool P1' {
+      notes """
+        - Add a person or a folder's members: Can use or Can manage
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.models 'grant{B, use | manage}' {
+      notes """
+        - Held by Pool custody; the people axis only
+      """
+    }
+    signalbox.models -> signalbox.web 'shared with B'
+    alt 'what B got' {
+      when 'Can use' {
+        personB -> signalbox.web 'Connect' {
+          navigateTo folders_lending_lend
+          notes """
+            - Connect = A lends P1 into B's top level (consent given at share time)
+            - Routes only threads on B's chain; nearest pool still wins
+          """
+        }
+        signalbox.web -> signalbox.funnel -> signalbox.tree 'loan P1 into top level B'
+        signalbox.tree -> signalbox.models 'placement event'
+      }
+      else 'Can manage' {
+        personB -> signalbox.web 'adds an account' {
+          navigateTo folders_pools_add_account
+          notes """
+            - B can also place P1 where B is Admin
+          """
+        }
+      }
+    }
+    opt 'leave or revoke' {
+      personB -> signalbox.web 'Leave' {
+        navigateTo folders_lending_end_loan
+      }
+      signalbox.web -> signalbox.funnel -> signalbox.tree 'end loan' {
+        notes """
+          - Running turns finish; the next resolves without P1
+          - A revoking the grant ends the same loans
+        """
+      }
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Computer ─────────────────────────────
+
+  dynamic view pgap_computer_watch {
+    variant sequence
+    title 'Workflows/Work/Computer/Watch, take over, pause or release a computer'
+    description "Prototype gap PG-07 (computers/ComputersIndexPage, ComputerSessionPanel, ComputerLiveView). What can a person do with an agent's computer? The thread keeps one computer; where it runs stays hidden."
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.computer, signalbox.models, hier.company.team.sharedThread
+    include signalbox, hier
+
+    personA -> signalbox.web 'opens Computers' {
+      navigateTo person_focus_out_of_sight
+      notes """
+        - Every computer an agent acquired, live first
+        - Only at levels Focus keeps in sight
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.computer 'watch desktop' {
+      navigateTo work_computer_open
+      notes """
+        - Live desktop of the Shared work thread's computer, who acquired it, cost so far
+        - B watches the same stream
+      """
+    }
+    alt 'what A does' {
+      when 'take over' {
+        personA -> signalbox.web 'takes over'
+        signalbox.web -> signalbox.funnel -> hier.company.team.sharedThread 'hold agent input' {
+          notes """
+            - The turn parks while A drives
+          """
+        }
+        signalbox.web -> personB 'A is driving' {
+          notes '- B, watching the same thread, sees who holds the computer'
+        }
+        personA -> signalbox.web 'hands back'
+        signalbox.funnel -> hier.company.team.sharedThread 'resume' {
+          notes """
+            - The agent resumes with a note of what A changed
+          """
+        }
+      }
+      when 'pause' {
+        personA -> signalbox.web 'pauses'
+        signalbox.funnel -> signalbox.computer 'stop compute' {
+          notes """
+            - Compute stops, the disk is kept and still billed
+          """
+        }
+      }
+      else 'release' {
+        personA -> signalbox.web 'releases'
+        signalbox.funnel -> signalbox.computer 'release' {
+          navigateTo state_computer
+          notes """
+            - Files are retained; the machine is gone
+          """
+        }
+      }
+    }
+    signalbox.computer -> signalbox.models 'compute minutes' {
+      navigateTo work_computer_usage_metering
+      notes """
+        - Billed to the thread's resolved pool, like tokens
+      """
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Onboarding ─────────────────────────────
+
+  dynamic view pgap_onboarding_agent_setup {
+    variant sequence
+    title 'Journeys/Onboarding/Set up Signalbox from your own coding agent'
+    description 'Prototype gap PG-08 (setup/SetupPage, SetupPromptBlock, SetupSurfaces). Agent-first onboarding: one prompt installs the CLI, MCP server and skill.'
+
+    include personA, laptopCli, signalbox, signalbox.web, signalbox.cli, signalbox.identity, signalbox.gateway, hier, hier.asstA
+
+    personA -> signalbox.web 'opens Setup' {
+      notes """
+        - One prompt to copy, or hand it to the assistant
+      """
+    }
+    alt 'where the prompt goes' {
+      when 'A pastes it into a local coding agent' {
+        personA -> laptopCli 'pastes the prompt'
+        laptopCli -> signalbox.cli 'installs CLI, MCP, skill' {
+          notes """
+            - CLI from npm; the MCP server URL; the Signalbox skill
+          """
+        }
+        signalbox.cli -> signalbox.identity 'device-code sign-in' {
+          navigateTo identity_identity_device_code
+        }
+        personA -> signalbox.web 'approves the code'
+        laptopCli -> signalbox.gateway 'MCP: threads, asks, tools' {
+          navigateTo work_agenttools_outside_agent_connect
+          notes """
+            - Everything the UI shows is reachable to agents, so nobody scrapes the app
+          """
+        }
+        laptopCli -> personA 'reports done'
+      }
+      else 'A hands it to the assistant' {
+        personA -> hier.asstA 'set me up' {
+          notes """
+            - The assistant coordinates and delegates; it never executes
+          """
+        }
+      }
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Rooms ─────────────────────────────
+
+  dynamic view pgap_rooms_widen_fork {
+    variant sequence
+    title 'Workflows/Person/Assistant/Reach/Widen, fork or archive a room'
+    description 'Prototype gap PG-09 (rooms/RoomPage, multiplayer/useAccessControls). A room is also its other owner: widening asks them.'
+
+    include personA, personB, personC, signalbox.web, signalbox.funnel, hier.company.team.roomAB, hier.asstB
+    include signalbox, hier
+
+    personA -> signalbox.web 'adds C to the room' {
+      navigateTo work_threads_multiplayer_rooms
+      notes """
+        - A room starts with its two owners (A and B) and their assistants
+      """
+    }
+    signalbox.web -> signalbox.funnel -> hier.company.team.roomAB 'widen(room, C)'
+    hier.company.team.roomAB -> hier.asstB 'consent ask' {
+      navigateTo person_assistant_answer_on_behalf
+      notes """
+        - B's assistant answers only if B delegated this kind; otherwise it goes to B
+      """
+    }
+    alt 'B decides' {
+      when 'allows' {
+        personB -> signalbox.web 'allows'
+        hier.company.team.roomAB -> personC 'C added' {
+          notes """
+            - C reads the history and can watch; C's assistant joins only if invited
+          """
+        }
+      }
+      else 'declines' {
+        personB -> signalbox.web 'declines'
+        hier.company.team.roomAB -> signalbox.web 'stays two owners'
+      }
+    }
+    opt 'fork privately' {
+      personA -> signalbox.web 'forks the room' {
+        navigateTo work_threads_multiplayer_make_private
+        notes """
+          - A private copy in the same folder; the original is untouched
+        """
+      }
+    }
+    opt 'archive' {
+      personA -> signalbox.web 'archives' {
+        notes """
+          - Archive is per room (either owner restores); hiding it from one tree is per person
+        """
+      }
+      signalbox.web -> signalbox.funnel -> hier.company.team.roomAB 'archive(room)'
+    }
+
+    style signalbox, hier {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Home tree ─────────────────────────────
+
+  dynamic view pgap_home_hide_for_me {
+    variant sequence
+    title 'Workflows/Folders/Tree/Home/Hide a folder from my tree, restore it from Archived'
+    description 'Prototype gap PG-10 (sidebar/sections/sectionStore, ArchivedList, HomeProjectNode). Per-person view state; the folder and its work are untouched.'
+
+    include personA, personB, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.attention
+    include signalbox
+
+    personA -> signalbox.web 'hides Team for me' {
+      navigateTo folders_tree_home
+      notes """
+        - Hides a shared folder or item from A's tree only
+        - Work keeps running; access and resolution are unchanged
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'hide(Team) for A' {
+      notes """
+        - View state in A's Person actor, never on the Level (assumption; prototype has three archives)
+      """
+    }
+    signalbox.tree -> signalbox.web 'gone from A tree'
+    personB -> signalbox.web 'still sees Team'
+    opt 'asks from Team' {
+      signalbox.attention -> signalbox.web 'asks still reach A' {
+        navigateTo person_notifications_set_rule
+        notes """
+          - Hiding is not muting; to mute, set the level's notification rule
+        """
+      }
+    }
+    personA -> signalbox.web 'opens Archived' {
+      navigateTo person_settings_archived
+      notes """
+        - One list: archived threads, rooms, notes, and folders hidden for me
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'list archived + hidden'
+    personA -> signalbox.web 'restores Team'
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'unhide(Team)'
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+
+  // ───────────────────────────── Admin ─────────────────────────────
+
+  dynamic view pgap_newcomer_preview {
+    variant sequence
+    title 'Journeys/Admin/Preview what a newcomer gets'
+    description 'Prototype gap PG-11 (plugins/NewcomerPreview, LevelNewcomers). C previews folder Team as a new member; D then joins.'
+
+    include personC, personD, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.connections
+    include signalbox
+
+    personC -> signalbox.web 'Preview as newcomer' {
+      notes """
+        - On folder Team's page
+      """
+    }
+    signalbox.web -> signalbox.funnel -> signalbox.tree 'resolve preset' {
+      notes """
+        - Nearest preset on the chain plus Team's own changes
+      """
+    }
+    signalbox.tree -> signalbox.web 'gets automatically' {
+      notes """
+        - Shared Company accounts, skills, AGENTS.md, apps that reach Team
+      """
+    }
+    signalbox.tree -> signalbox.connections 'slots to fill' {
+      notes """
+        - Accounts only the newcomer can connect (a slot each member fills)
+      """
+    }
+    personC -> signalbox.web 'edits the preset' {
+      navigateTo folders_access_newcomer_preset
+    }
+    personD -> signalbox.web 'joins Team' {
+      navigateTo folders_connections_oauth_connect
+      notes """
+        - D gets the preset and fills own slots in one click each
+      """
+    }
+
+    style signalbox {
+      color muted
+      opacity 10%
+    }
+  }
+}

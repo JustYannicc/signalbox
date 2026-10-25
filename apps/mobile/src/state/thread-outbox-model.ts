@@ -50,6 +50,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   commandId: CommandId,
+  sourceDraftRevision: Schema.optional(Schema.String),
   text: Schema.String,
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
@@ -80,6 +81,8 @@ export interface QueuedThreadMessage {
   readonly threadId: ThreadId;
   readonly messageId: MessageId;
   readonly commandId: CommandId;
+  /** The draft version this accepted message cleared, if it came from a composer draft. */
+  readonly sourceDraftRevision?: string;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -264,12 +267,26 @@ export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
       case "RpcClientError":
       case "EnvironmentRpcUnavailableError":
       case "EnvironmentNotRegisteredError":
+      case "ComposerDraftPersistenceError":
         return true;
       default:
         break;
     }
   }
   return isTransportConnectionErrorMessage(errorMessage(error));
+}
+
+export function isComposerDraftPersistenceError(
+  error: unknown,
+): error is { readonly _tag: "ComposerDraftPersistenceError"; readonly message: string } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "ComposerDraftPersistenceError" &&
+    "message" in error &&
+    typeof error.message === "string"
+  );
 }
 
 export type ThreadOutboxCommandStage = "settings-sync" | "start-turn";

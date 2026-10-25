@@ -1,0 +1,88 @@
+model {
+  extend signalbox {
+    browser = module 'Browser' {
+      #passthrough
+      icon bootstrap:window
+      description 'session · render'
+      technology 'one renderer for every thread'
+      metadata {
+        interface '2'
+        deletion 'real-web and render paths diverge by placement'
+      }
+
+      api = iface 'Browser · interface' {
+        description '2 verbs: session · render'
+        technology 'Deletion test: without it, real-web and render paths diverge by placement'
+      }
+
+      realWeb = part 'Real-web seam · 1 adapter' {
+        #hypothetical-seam
+        metadata { adapters '1' }
+        kernelBrowser = adapter 'Hosted browser + managed sign-in' {
+          icon tech:chrome
+          description 'one profile per person'
+          technology 'Kernel API · Managed Auth · CDP virtual authenticator'
+        }
+      }
+      render = part 'Render seam · 1 adapter' {
+        #hypothetical-seam
+        metadata { adapters '1' }
+        browserRun = adapter 'Hosted render' {
+          icon tech:cloudflare-icon
+          technology 'Cloudflare Browser Run'
+        }
+      }
+      testLocal = part 'Test-local seam · 3 candidates, none real' {
+        #planned
+        description 'candidates; one gets picked'
+        metadata { adapters '3' }
+        testBrowserRun = adapter 'Hosted render (test)' {
+          #planned
+          icon tech:cloudflare-icon
+          technology 'Browser Run'
+        }
+        vmChromium = adapter 'Chromium on VM' {
+          #planned
+          icon tech:playwright
+          technology 'playwright-core'
+        }
+        testKernel = adapter 'Hosted browser (test)' {
+          #planned
+          icon tech:chrome
+          technology 'Kernel'
+        }
+      }
+      loginService = part 'Login service' {
+        icon bootstrap:box-arrow-in-right
+        description 'signs agents in · managed sign-in driver'
+      }
+      signInGrants = part 'Sign-in grants' {
+        icon bootstrap:shield-check
+        description 'per site or * · Once / Always · person-only'
+      }
+      grantRows = store 'Grant rows' {
+        icon bootstrap:person-lock
+        description 'per person · revocable'
+      }
+      mirror = part 'rrweb mirror' {
+        icon bootstrap:camera-video
+        technology '@rrweb/record · @rrweb/replay'
+      }
+
+      realWeb.kernelBrowser -> mirror 'DOM stream'
+    }
+
+    browser.realWeb.kernelBrowser -> platform.kernel 'sessions · sign-ins'
+    browser.realWeb.kernelBrowser -> signalbox.connections.api 'login secrets (vault ref)'
+    browser.loginService -> browser.signInGrants 'grant for site?'
+    browser.loginService -> browser.realWeb.kernelBrowser 'Managed sign-in'
+    browser.signInGrants -> browser.grantRows 'kept per person'
+    browser.mirror -> signalbox.funnel.api 'mirror'
+    browser.render -> signalbox.computer.portGateway 'preview a port'
+
+    // Interface → hidden parts (the only way in)
+    browser.api -> browser.loginService 'session (signed in)'
+    browser.api -> browser.realWeb 'session'
+    browser.api -> browser.render 'render'
+  }
+}

@@ -2,7 +2,7 @@
 
 Signalbox is one app for working with AI. You start a thread, say what you want, and agents do the work on a server and tell you when they need you. It is meant for knowledge workers as much as for developers.
 
-Signalbox is built on [T3 Code](https://github.com/pingdotgg/t3code). T3 Code gets a lot right, and we want to keep receiving its updates. See [Staying on T3 Code](#staying-on-t3-code).
+Signalbox started from [T3 Code](https://github.com/pingdotgg/t3code), which gets a lot right. Upstream is now a source, not a branch. See [Upstream T3 Code](#upstream-t3-code).
 
 Explicit user instructions take precedence over these defaults and skill guidance. Continue authorized work without inventing approval gates. If an instruction blocks work, identify its file and exact rule, explain the conflict, and state what remains unfinished.
 
@@ -72,16 +72,19 @@ Most of this has been figured out somewhere. Before designing anything, look at 
 
 Two interaction models I don't want. The first is the department bot: a university chatbot, a company's accounting agent, Grokbot's roster of bots. Grokbot made AI dead simple to start, and that was a real step for most people. But it doesn't remove the complexity. You still pay the supervisor tax of picking the right bot and managing it. People want to go to the one assistant they already use and have it handle everything from there. The second is the void: OpenClaw started as a CLI, and its front ends still feel bolted on. I tell it something and trust the void to handle it. That trust is the goal. But when something breaks, I need to see what happened. T3 Code's site shows you the app immediately. That difference is felt before anything else.
 
-## Staying on T3 Code
+## Upstream T3 Code
 
-`origin` is `JustYannicc/signalbox`. `pingdotgg/t3code` is the remote `t3code`, fetched into `refs/remotes/upstream/*` so `upstream/main` is T3 Code's main (`git fetch t3code`). Don't name a remote `upstream`: T3 Code and Signalbox name a project after it, and the sidebar would show T3 Code's repository. Upstream ships hundreds of commits a week, so every fork change is a future merge.
+Staying merge-compatible with T3 Code is not a goal. We're rebuilding the backend on Cloudflare and the frontend will diverge. Upstream is a source, not a branch: we take what's valuable where code is still shared (provider adapters, contracts, bug and performance fixes), and it constrains nothing else.
 
-- Merge upstream into `main`; never rebase shared history.
-- Rename what users see, type, or install. Keep upstream's internal names (`@t3tools/*`, `T3CODE_*`, symbols, `t3.json`) so upstream patches apply cleanly.
-- Put fork features in their own modules. Give an upstream file at most a hook line, using existing seams (routes, provider registries, settings sections) before adding new ones.
-- When upstream ships a workflow-shaped feature, adopt the primitive it implies, not the feature itself (principle 8). Make the primitive available to automations and agents, and leave upstream's code in place so merges stay clean.
-- Generic fixes and seams belong upstream. Open those as PRs to T3 Code instead of carrying them.
-- `apps/server` persistence migrations are numbered and the runner only applies ids above the latest recorded one. A fork migration that takes a number upstream later uses silently skips upstream's. Fork tables create themselves (`CREATE TABLE IF NOT EXISTS`) instead.
+`origin` is `JustYannicc/signalbox`. `pingdotgg/t3code` is the remote `t3code`, fetched into `refs/remotes/upstream/*` so `upstream/main` is T3 Code's main (`git fetch t3code`). Don't name a remote `upstream`: T3 Code and Signalbox name a project after it, and the sidebar would show T3 Code's repository.
+
+- Design for Signalbox. Restructure, replace or delete upstream code wherever that makes the better system. A conflict with upstream is a cost the next sync pays, never a reason to keep the worse design.
+- Syncs merge upstream into `main` while they stay cheap; never rebase shared history. Where conflicts cost more than the sync brings, port the upstream changes we want instead. [Upstream sync](docs/operations/upstream-sync.md) covers how to decide.
+- Rename internal names (`@t3tools/*`, `T3CODE_*`, `t3.json`) only as part of a real change, never in a rename-only sweep. Where code we still merge from upstream uses the old name, extend the rebrand codemod in the same PR so syncs keep renaming it.
+- Where fork code sits in a file we still merge from upstream, mark it `// signalbox: <why>`. Signalbox CI fails a sync that drops a marked line.
+- When upstream ships a workflow-shaped feature, adopt the primitive it implies, not the feature itself (principle 8), and make the primitive available to automations and agents.
+- Upstream PRs are welcome for generic fixes, with a demo. Ship ours first; never wait on or design around one.
+- `apps/server` persistence migrations are numbered and the runner only applies ids above the latest recorded one. While we merge upstream's persistence code, a fork migration that takes a number upstream later uses silently skips upstream's. Fork tables create themselves (`CREATE TABLE IF NOT EXISTS`) instead.
 - Cloud Durable Object migrations (`apps/cloud`) run by full name, so ids may repeat or land out of order. Never edit, rename or remove one once merged; CI fails on it. See [Durable Object migrations](docs/operations/cloud.md#durable-object-migrations).
 - `settings.json` decodes through the contracts schema and drops unknown keys on write. Fork settings live in their own file.
 
@@ -113,7 +116,7 @@ Most Signalbox contributions come from Signalbox itself, often controlled remote
 ## The three ways to hurt yourself
 
 1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or `kill` a PID you found by matching a name, path, or worktree string. Your own agent process has this worktree's path in its argv, and this machine runs several other dev servers at once. Kill only a PID you captured at spawn, or the owner of your port from `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is your worktree.
-2. **Writing to the live install.** `~/.signalbox/userdata` is the developer's real Signalbox database, in use while you work. `~/.t3/userdata` is T3 Code's, if it is installed alongside; treat it the same way. Reading it and copying from it are fine, and a good way to get real test data (see Test data). Never start a server against it, never open it read-write, never clean it up.
+2. **Writing to the live install.** `~/.signalbox/userdata` is the developer's real Signalbox database, in use while you work. `~/.t3/userdata` is T3 Code's, if it is installed alongside; treat it the same way. Never hold a long read or long-running scan on the live database: it blocks WAL checkpoints and can fill the disk. Use a copy for test data (see Test data). Never start a server against it, never open it read-write, never clean it up.
 3. **Baking in origins.** Never set `VITE_HTTP_URL` or `VITE_WS_URL` for dev. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`. Setting them bakes localhost into the bundle and silently breaks every remote browser.
 
 ## Hit every surface
@@ -138,12 +141,14 @@ The most common defect in this repo is a change that works on the path you teste
 - Sharing over the tailnet is three steps: run `vp run dev --share` in the background, wait for the `pairingUrl:` line in its output, then give that full URL to an unpaired browser. Do not wire up `tailscale serve` by hand, open the URL yourself, or consume the user's pairing link. A browser with the reusable dev cookie can use the bare origin. If a normal one-time token was consumed, mint a fresh one with `node apps/server/src/bin.ts pair`. It carries standard scopes, while the startup URL carries admin scopes needed for Connections settings.
 - To reuse web dev auth across worktrees, configure one fixed `T3CODE_DEV_AUTH_TOKEN` in the main checkout's gitignored `.env`. The `t3.json` setup links that file into worktrees. Never commit or publish the token or a startup URL. See [Reusable dev credential](docs/operations/development.md#reusable-dev-credential).
 - Stop what you started, by the PID you tracked. See rule 1.
+- Dev and Metro scripts register processes in `.t3`. Use `vp run agents:run -- <command>` for other watchers and `vp run agents:status --all` to inspect registrations. `agents:stop` requires an explicit `--session-id <id>` from the hook context, or Codex's exact runtime thread ID. Claude native subagents share their parent's environment, so Claude stops always require the explicit ID, and `agents:run` requires it while children are active. `--all` explicitly stops every registration in the checkout, including other sessions. Harnesses that supply no session environment must pass the hook's `--session-id` to `agents:run` and `agents:stop`.
 
 ## Test data
 
 An empty database is a bad test. Seed your worktree's `.t3` with a copy of real data instead of pointing at live state:
 
 - Run `vp run migrate-dev-db` with your dev server stopped. It rebuilds `<worktree>/.t3/userdata/statev2.sqlite` from a read-only snapshot of `~/.signalbox/userdata/statev2.sqlite`, the developer's real data. It keeps recent projects and their stopped threads, and drops scheduled tasks, pending work, and auth sessions, so your dev server never runs the developer's agents. Raise `--projects` and `--threads-per-project` for more data. Point `--source` at another database file (`~/.signalbox/dev/userdata/statev2.sqlite`, or T3 Code's `~/.t3/userdata/statev2.sqlite`, which uses the same format) when you need it.
+- Alternatively, make a quick file-level copy of the `.sqlite` file plus its `-wal`, then do all scans and fixture building on the copy.
 - Refresh `statev2.sqlite`, not `state.sqlite`. The server copies the V1 `state.sqlite` only when `statev2.sqlite` is missing.
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
@@ -197,13 +202,21 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 
 ## Where code lives
 
+Before adding a module or importing across modules, read [workspace boundaries](packages/README.md) and [cloud module boundaries](apps/cloud/src/README.md).
+Before changing thread execution or live events, read the [threads module](apps/cloud/src/thread/README.md).
+
+For live people views or explicit location joins, read [presence](apps/cloud/src/presence/README.md).
+
 - `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.
 - `apps/cloud` - the hosted product on Cloudflare: Workers, Durable Objects, the model gateway, drives, pools and automations. Deploys through Alchemy.
+- For learner scope or evidence-routing changes, read `apps/cloud/src/learner/README.md`.
+- For model authorization or gateway adapter changes, read [models](apps/cloud/src/models/README.md).
 - `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
 - `packages/client-runtime` - client code shared by web and mobile.
 - `packages/runner-protocol` - what the cloud and a runner machine say to each other. The Runner itself lives in `apps/server/src/signalbox/runner`.
+- `apps/server/src/signalbox` and `apps/desktop/src/signalbox` hold fork code kept apart for upstream merges. New code goes where it belongs in the app, not there by default.
 - `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.
 
 ## Taste

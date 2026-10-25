@@ -1,0 +1,32 @@
+// State machine for one pool account. The walk through it with people and modules is the dynamic view state_pool_account.
+model {
+  smAccount = state 'Pool account lifecycle' {
+    connecting = state 'Connecting' { description 'device code · pasted code · API key' }
+    live = state 'Live' { description 'routable in exactly one pool' }
+    cooling = state 'Cooling' { description 'exhausted until reset' }
+    moving = state 'Moving' { description 'running leases drain' }
+    moved = state 'Moved' { description 'source deleted its blob' }
+    removed = state 'Removed'
+
+    connecting -[transition]-> live 'complete'
+    live -[transition]-> cooling 'quota hit'
+    cooling -[transition]-> live 'window resets'
+    live -[transition]-> moving 'move to another pool'
+    moving -[transition]-> live 'cancel'
+    moving -[transition]-> moved 'target acks'
+    live -[transition]-> removed 'remove · pool deleted'
+  }
+}
+views {
+  view state-pool-account of smAccount {
+    #v1
+    title 'States/Pool account/State machine'
+    description 'How does one subscription account join a pool, cool down at quota, move or leave? Start: green. End: gray. Click the frame for the walk with people and modules (state_pool_account).'
+    include *
+    include smAccount with { navigateTo state_pool_account }
+    style smAccount.connecting { color green }
+    style smAccount.moved { color gray }
+    style smAccount.removed { color gray }
+    autoLayout TopBottom
+  }
+}

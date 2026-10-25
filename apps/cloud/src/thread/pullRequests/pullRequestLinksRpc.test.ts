@@ -32,24 +32,26 @@ const reference = {
   url,
 };
 
-const connect = Effect.gen(function* () {
-  const cloud = makeMemoryCloud();
-  yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
-  const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
-        CloudRpc.layerScopeAuthorization([
-          AuthOrchestrationReadScope,
-          AuthOrchestrationOperateScope,
-        ]),
-      ).pipe(Layer.provide(cloud.layerFor(userId))),
-    ),
-  );
-  return { cloud, rpc };
-});
+const connect = (
+  scopes: ReadonlyArray<
+    typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope
+  > = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+) =>
+  Effect.gen(function* () {
+    const cloud = makeMemoryCloud();
+    yield* cloud.userDirectory.forUser(userId).recordSignIn({ id: userId, email: "a@b.c" });
+    const rpc = yield* RpcTest.makeClient(CloudRpc.CloudRpcGroup).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          CloudRpc.layerHandlers({ identity, userId, sid: "test-session" }),
+          CloudRpc.layerScopeAuthorization(scopes),
+        ).pipe(Layer.provide(cloud.layerFor(userId))),
+      ),
+    );
+    return { cloud, rpc };
+  });
 
-type Rpc = Effect.Success<typeof connect>["rpc"];
+type Rpc = Effect.Success<ReturnType<typeof connect>>["rpc"];
 
 const capabilities = (rpc: Rpc) =>
   rpc[WS_METHODS.subscribeServerConfig]({}).pipe(
@@ -100,20 +102,43 @@ const changeLink = (
   });
 
 describe("cloud pull request links", () => {
-  it.effect("advertises thread links but not the reads and watches it doesn't serve yet", () =>
+  it.effect("serves the cloud read RPC on the user's read scope without a runner", () =>
     Effect.gen(function* () {
-      const { rpc } = yield* connect;
+      const { rpc } = yield* connect([AuthOrchestrationReadScope]);
+      const result = yield* rpc[WS_METHODS.pullRequestsList]({ state: "open" });
+
+      expect(result.entries).toEqual([]);
+      expect(result.errors).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("requires the read scope for pull-request reads", () =>
+    Effect.gen(function* () {
+      const { rpc } = yield* connect([]);
+      const error = yield* Effect.flip(rpc[WS_METHODS.pullRequestsList]({ state: "open" }));
+
+      expect(error).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredScope: AuthOrchestrationReadScope,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("advertises linked PRs and reads while leaving watching unavailable", () =>
+    Effect.gen(function* () {
+      const { rpc } = yield* connect();
       const advertised = yield* capabilities(rpc);
       expect(advertised.threadPullRequests).toBe(true);
-      // `pullRequests.*` and `threads.pullRequest.watch` are gaps (#397, `api/cloudCoverage.ts`).
-      expect(advertised.pullRequests).not.toBe(true);
+      expect(advertised.pullRequests).toBe(true);
+      expect(advertised.pullRequestChecks).toBe(true);
+      // Watching remains a separate automation slice (#818, `api/cloudCoverage.ts`).
       expect(advertised.threadPullRequestWatch).not.toBe(true);
     }).pipe(Effect.scoped),
   );
 
   it.effect("links, unlinks and relinks a pull request from the client's plan", () =>
     Effect.gen(function* () {
-      const { cloud, rpc } = yield* connect;
+      const { cloud, rpc } = yield* connect();
       const advertised = yield* capabilities(rpc);
       yield* rpc[ORCHESTRATION_V2_WS_METHODS.launchThread]({
         commandId: CommandId.make("launch"),

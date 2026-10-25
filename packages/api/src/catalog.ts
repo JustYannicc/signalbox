@@ -49,6 +49,7 @@ export interface Operation {
   readonly stream: StreamRead | undefined;
   readonly humanOnly: boolean;
   readonly destructive: boolean;
+  readonly agentCallable: boolean;
   /** The caller compiles its `source` into `compiled` before sending (`DerivedReach.compiles`). */
   readonly compiles: boolean;
   readonly summary: string | undefined;
@@ -117,6 +118,8 @@ const operationOf = (
   access: reach.access,
   humanOnly: reach.humanOnly === true,
   destructive: reach.destructive === true,
+  agentCallable:
+    reach.humanOnly !== true && (reach.destructive !== true || reach.agentCallable === true),
   compiles: reach.compiles === true,
   summary: reach.summary,
 });

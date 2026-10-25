@@ -9,7 +9,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 
-import { sortThreads } from "../../../lib/threadSort";
+import { sortThreadsNeedsYouFirst } from "../needsYouFirst";
 import { projectExpansionPreferenceKeys } from "../../../sidebarProjectExpansion";
 import { resolveProjectExpanded } from "../../../uiStateStore";
 import type { SidebarThreadSummary } from "../../../types";
@@ -35,7 +35,7 @@ export function visibleSectionThreadKeys(input: {
 
   return input.rows.flatMap(({ environmentId, project, threads }) => {
     const projectKey = scopedProjectKey(scopeProjectRef(environmentId, project.id));
-    const projectThreads = sortThreads(
+    const projectThreads = sortThreadsNeedsYouFirst(
       threads ?? threadsByProject.get(projectKey) ?? [],
       input.threadSortOrder,
     );

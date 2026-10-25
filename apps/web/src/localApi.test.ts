@@ -150,6 +150,86 @@ describe("LocalApi", () => {
     expect(setClientSettings).toHaveBeenCalledWith(DEFAULT_CLIENT_SETTINGS);
   });
 
+  // signalbox: #43. A failed default migration must not undo a later opt-out.
+  describe("needs-you default adoption", () => {
+    const ADOPTED_KEY = "signalbox:needs-you-defaults:v1";
+    const SETTINGS_KEY = "t3code:client-settings:v1";
+    const off = { ...DEFAULT_CLIENT_SETTINGS, inAppNotificationsEnabled: false };
+
+    function browserStorage() {
+      const storage = createLocalStorageStub();
+      const write = storage.setItem.bind(storage);
+      const state = { failSettingsWrites: true };
+      storage.setItem = (key, value) => {
+        if (key === SETTINGS_KEY && state.failSettingsWrites) throw new Error("quota exceeded");
+        write(key, value);
+      };
+      write(SETTINGS_KEY, JSON.stringify(off));
+      Object.defineProperty(testWindow(), "localStorage", { configurable: true, value: storage });
+      return { storage, state };
+    }
+
+    it("keeps a browser opt-out saved after a failed migration write", async () => {
+      const { storage, state } = browserStorage();
+      const { createLocalApi } = await import("./localApi");
+      const api = createLocalApi();
+      await expect(api.persistence.getClientSettings()).resolves.toMatchObject({
+        inAppNotificationsEnabled: true,
+      });
+      expect(storage.getItem(ADOPTED_KEY)).toBeNull();
+
+      state.failSettingsWrites = false;
+      await api.persistence.setClientSettings(off);
+      expect(storage.getItem(ADOPTED_KEY)).toBe("1");
+      await expect(createLocalApi().persistence.getClientSettings()).resolves.toEqual(off);
+    });
+
+    it("leaves a browser's adoption unset when its save is rejected", async () => {
+      const { storage } = browserStorage();
+      const { createLocalApi } = await import("./localApi");
+      const api = createLocalApi();
+      await api.persistence.getClientSettings();
+      await expect(api.persistence.setClientSettings(off)).rejects.toThrow();
+      expect(storage.getItem(ADOPTED_KEY)).toBeNull();
+    });
+
+    function desktopBridge(saves: Array<"reject" | "resolve">) {
+      const setClientSettings = vi.fn(() =>
+        saves.shift() === "reject"
+          ? Promise.reject(new Error("bridge unavailable"))
+          : Promise.resolve(),
+      );
+      testWindow().desktopBridge = {
+        getClientSettings: vi.fn().mockResolvedValue(off),
+        setClientSettings,
+      } as unknown as DesktopBridge;
+      return setClientSettings;
+    }
+
+    it("keeps a desktop opt-out saved after a failed migration write", async () => {
+      desktopBridge(["reject", "resolve"]);
+      const { createLocalApi } = await import("./localApi");
+      const api = createLocalApi();
+      await expect(api.persistence.getClientSettings()).resolves.toMatchObject({
+        inAppNotificationsEnabled: true,
+      });
+      expect(testWindow().localStorage.getItem(ADOPTED_KEY)).toBeNull();
+
+      await api.persistence.setClientSettings(off);
+      expect(testWindow().localStorage.getItem(ADOPTED_KEY)).toBe("1");
+      await expect(createLocalApi().persistence.getClientSettings()).resolves.toEqual(off);
+    });
+
+    it("leaves a desktop's adoption unset when its save is rejected", async () => {
+      desktopBridge(["reject", "reject"]);
+      const { createLocalApi } = await import("./localApi");
+      const api = createLocalApi();
+      await api.persistence.getClientSettings();
+      await expect(api.persistence.setClientSettings(off)).rejects.toThrow("bridge unavailable");
+      expect(testWindow().localStorage.getItem(ADOPTED_KEY)).toBeNull();
+    });
+  });
+
   it("persists client settings in browser storage", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi();

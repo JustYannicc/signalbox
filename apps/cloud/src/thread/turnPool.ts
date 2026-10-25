@@ -8,7 +8,7 @@ import { poolInstanceId } from "@t3tools/contracts/accountHub";
 import type { OnePasswordEnvironmentId } from "@t3tools/contracts/signalboxFolders";
 import type { FolderInstructions } from "@signalbox/runner-protocol/DriveProtocol";
 
-import { poolKindOfInstance } from "./providerCatalog.ts";
+import { poolKindOfInstance } from "../models/ModelRouting.ts";
 
 /**
  * What a thread's turns run on and follow: its pool, its chain's `AGENTS.md`
@@ -64,6 +64,7 @@ export const commandOnPool = (
   switch (command.type) {
     case "thread.create":
     case "thread.model-selection.set":
+    case "provider.switch":
       return { ...command, modelSelection: onPool(command.modelSelection, poolId) };
     case "message.dispatch": {
       const selection = command.modelSelection ?? projection?.thread.modelSelection;

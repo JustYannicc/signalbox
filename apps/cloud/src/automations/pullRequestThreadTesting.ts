@@ -8,7 +8,6 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
-  AuthStandardClientScopes,
   CommandId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -39,6 +38,7 @@ import { makeFakeGitHub } from "../github/githubTesting.ts";
 import { WorkflowEngine } from "@signalbox/automations/WorkflowEngine";
 
 import { CloudAutomations } from "./CloudAutomations.ts";
+import { CLOUD_CLIENT_SCOPES } from "../auth/CloudScopes.ts";
 
 const identity = { environmentId: EnvironmentId.make("cloud-test"), label: "Cloud" };
 const userId = "user_1";
@@ -209,7 +209,7 @@ export const makePullRequestThread = () => {
       operation: operations.find((operation) => operation.name === name)!,
       body,
       follow: false,
-      caller: { userId, kind, scopes: AuthStandardClientScopes, credentialId: "key-1" },
+      caller: { userId, kind, scopes: CLOUD_CLIENT_SCOPES, credentialId: "key-1" },
       identity,
     }).pipe(Effect.provide(cloud.layerFor(userId)));
 

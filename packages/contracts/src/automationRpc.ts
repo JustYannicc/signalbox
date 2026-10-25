@@ -15,6 +15,7 @@ import {
 } from "./automation.ts";
 import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { WorkflowDiagnostic, WorkflowGraph, WorkflowMeta } from "./workflow.ts";
+import { TaskLifecycleInput, TaskLifecycleResult } from "./taskLifecycle.ts";
 
 /**
  * WebSocket methods for automations. Spread into `WS_METHODS` and `WsRpcGroup`
@@ -28,6 +29,7 @@ export const AUTOMATION_WS_METHODS = {
   automationsDelete: "automations.delete",
   automationsRotateWebhook: "automations.rotateWebhook",
   automationsSetWebhookSecret: "automations.setWebhookSecret",
+  automationsGitHubSubscriptions: "automations.githubSubscriptions",
   automationsRunNow: "automations.runNow",
   automationsCustomize: "automations.customize",
   automationsStopAttached: "automations.stopAttached",
@@ -42,6 +44,7 @@ export const AUTOMATION_WS_METHODS = {
   automationsDisconnect: "automations.disconnect",
   automationsValidate: "automations.validate",
   automationsSave: "automations.save",
+  automationsTaskLifecycle: "automations.taskLifecycle",
 } as const;
 
 const AutomationId = TrimmedNonEmptyString;
@@ -111,6 +114,23 @@ const SetWebhookSecretRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSetWebhook
     secret: Schema.NullOr(TrimmedNonEmptyString),
   }),
   success: Automation,
+  error,
+});
+
+/** Installation state, including missing repository-admin access, never hook secrets or URLs. */
+const GitHubSubscriptionsRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsGitHubSubscriptions, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({
+    subscriptions: Schema.Array(
+      Schema.Struct({
+        projectId: ProjectId,
+        repository: Schema.String,
+        mode: Schema.Literals(["webhook", "release-poll", "unavailable"]),
+        connected: Schema.Boolean,
+        error: Schema.NullOr(Schema.String),
+      }),
+    ),
+  }),
   error,
 });
 
@@ -257,7 +277,7 @@ export type AutomationValidateResult = typeof AutomationValidateResult.Type;
  * only its own, so a `signalbox` older or newer than the cloud is told to
  * update instead of saving code the cloud can't load.
  */
-export const AUTOMATION_COMPILED_FORMAT = 1;
+export const AUTOMATION_COMPILED_FORMAT = 2;
 
 /**
  * An automation file compiled where the caller runs: the cloud can't compile
@@ -297,8 +317,8 @@ const ValidateRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsValidate, {
 /**
  * Saves a file in a project, live unless `draft`: new without `automationId`,
  * a new version of that automation with it. A file that doesn't compile is
- * not saved; the result says what to fix. The cloud saves only what the
- * caller compiled (`compiled`).
+ * not saved; the result says what to fix. The cloud keeps the caller's compiled
+ * code and resolves omitted cron zones into the saved scheduling metadata.
  */
 const SaveRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSave, {
   payload: Schema.Struct({
@@ -312,6 +332,13 @@ const SaveRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSave, {
   error,
 });
 
+/** Reads or changes a task's completion condition and lifecycle. */
+const TaskLifecycleRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsTaskLifecycle, {
+  payload: TaskLifecycleInput,
+  success: TaskLifecycleResult,
+  error,
+});
+
 export const AutomationRpcs = [
   SubscribeRpc,
   SubscribeOneRpc,
@@ -320,6 +347,7 @@ export const AutomationRpcs = [
   DeleteRpc,
   RotateWebhookRpc,
   SetWebhookSecretRpc,
+  GitHubSubscriptionsRpc,
   RunNowRpc,
   CustomizeRpc,
   StopAttachedRpc,
@@ -334,4 +362,5 @@ export const AutomationRpcs = [
   DisconnectRpc,
   ValidateRpc,
   SaveRpc,
+  TaskLifecycleRpc,
 ] as const;

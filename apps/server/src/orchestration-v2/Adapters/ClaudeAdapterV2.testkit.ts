@@ -1,3 +1,4 @@
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "../../provider/ClaudeModelCatalog.ts";
 import {
   forkSession,
   query,
@@ -32,8 +33,10 @@ import {
   isWindowsClaudeLauncherShimPath,
   resolveClaudeSdkExecutablePath,
 } from "../../provider/Drivers/ClaudeExecutable.ts";
-import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
-import { claudeTaskOutputRoot } from "./ClaudeTaskOutputTail.ts";
+import * as ClaudeAdapterV2 from "@signalbox/provider-claude/ClaudeAdapter";
+import * as ClaudeTransport from "@signalbox/provider-claude/ClaudeQueryRunner";
+import * as NativeClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
+import { claudeTaskOutputRoot } from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -171,7 +174,7 @@ export type ClaudeOrchestratorReplayHarnessError = typeof ClaudeOrchestratorRepl
 
 interface ClaudeQueryOpenFrame {
   readonly type: "query.open";
-  readonly options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions;
+  readonly options: ClaudeTransport.ClaudeAgentSdkQueryOptions;
 }
 
 interface ClaudePromptOfferFrame {
@@ -249,7 +252,7 @@ type ClaudeOutboundFrame =
   | {
       readonly type: "query.apply_flag_settings";
       readonly settings: Parameters<
-        ClaudeAdapterV2.ClaudeAgentSdkQuerySession["applyFlagSettings"]
+        ClaudeTransport.ClaudeAgentSdkQuerySession["applyFlagSettings"]
       >[0];
     }
   | ClaudeQuerySetPermissionModeFrame
@@ -260,13 +263,13 @@ type ClaudeOutboundFrame =
 
 interface ClaudeQueryRunner {
   readonly open: (
-    input: ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput,
-  ) => ClaudeAdapterV2.ClaudeAgentSdkQuerySession;
+    input: ClaudeTransport.ClaudeAgentSdkQueryOpenInput,
+  ) => ClaudeTransport.ClaudeAgentSdkQuerySession;
   readonly forkSession: (
-    input: ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput,
+    input: ClaudeTransport.ClaudeAgentSdkSessionForkInput,
   ) => ClaudeSessionForkedFrame;
   readonly subagentLaunchToolUseId: (
-    input: ClaudeAdapterV2.ClaudeAgentSdkSubagentLookupInput,
+    input: ClaudeTransport.ClaudeAgentSdkSubagentLookupInput,
   ) => string | null;
   readonly assertComplete: () => void;
 }
@@ -431,8 +434,8 @@ async function waitForReplayDelay(afterMs: number, signal: AbortSignal): Promise
 }
 
 function stableClaudeQueryOptions(
-  options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions,
-): ClaudeAdapterV2.ClaudeAgentSdkQueryOptions {
+  options: ClaudeTransport.ClaudeAgentSdkQueryOptions,
+): ClaudeTransport.ClaudeAgentSdkQueryOptions {
   const stable = {
     model: options.model,
     tools: options.tools,
@@ -452,7 +455,7 @@ function stableClaudeQueryOptions(
 }
 
 function makeClaudeQueryOpenFrame(
-  input: Pick<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput, "options">,
+  input: Pick<ClaudeTransport.ClaudeAgentSdkQueryOpenInput, "options">,
 ): ClaudeQueryOpenFrame {
   return {
     type: "query.open",
@@ -468,7 +471,7 @@ function makeClaudePromptOfferFrame(message: SDKUserMessage): ClaudePromptOfferF
 }
 
 function makeClaudeSessionForkFrame(
-  input: ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput,
+  input: ClaudeTransport.ClaudeAgentSdkSessionForkInput,
   scenario: string,
 ): ClaudeSessionForkFrame {
   return {
@@ -521,7 +524,7 @@ function makeReplayQueryRunner(
   };
 
   async function* replayMessages(
-    options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions,
+    options: ClaudeTransport.ClaudeAgentSdkQueryOptions,
     signal: AbortSignal,
   ): AsyncGenerator<SDKMessage, void> {
     while (true) {
@@ -622,7 +625,7 @@ function makeReplayQueryRunner(
   }
 
   const replayMessagesWithGateCleanup = (
-    options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions,
+    options: ClaudeTransport.ClaudeAgentSdkQueryOptions,
   ): AsyncIterable<SDKMessage> => ({
     [Symbol.asyncIterator]: () => {
       const abortController = new AbortController();
@@ -904,20 +907,20 @@ function nativeSessionIdFor(transcript: ClaudeAgentSdkReplayTranscript): string 
     : "00000000-0000-4000-8000-000000000000";
 }
 
-const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError);
+const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeTransport.ClaudeAgentSdkQueryRunnerError);
 const isClaudeAgentSdkReplayError = Schema.is(ClaudeAgentSdkReplayError);
 
 function replayQueryRunnerError(
   transcript: ClaudeAgentSdkReplayTranscript,
   cause: unknown,
-): ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError {
+): ClaudeTransport.ClaudeAgentSdkQueryRunnerError {
   if (isClaudeAgentSdkQueryRunnerError(cause)) {
     return cause;
   }
   const replayCause = isClaudeAgentSdkReplayError(cause)
     ? cause
     : new ClaudeReplayDriverError({ scenario: transcript.scenario, cause });
-  return new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+  return new ClaudeTransport.ClaudeAgentSdkQueryRunnerError({
     cause: replayCause,
     method: `replay-scenario:${transcript.scenario}`,
   });
@@ -942,13 +945,13 @@ const makeClaudeAgentSdkReplayQueryRunner = Effect.fn("ClaudeAgentSdkReplayQuery
 function replayQueryRunnerService(
   transcript: ClaudeAgentSdkReplayTranscript,
   queryRunner: ClaudeQueryRunner,
-): ClaudeAdapterV2.ClaudeAgentSdkQueryRunner["Service"] {
+): ClaudeTransport.ClaudeAgentSdkQueryRunner["Service"] {
   const replay = <A>(run: () => A) =>
     Effect.try({
       try: run,
       catch: (cause) => replayQueryRunnerError(transcript, cause),
     });
-  return ClaudeAdapterV2.ClaudeAgentSdkQueryRunner.of({
+  return ClaudeTransport.ClaudeAgentSdkQueryRunner.of({
     allocateSessionId: Effect.succeed(nativeSessionIdFor(transcript)),
     open: (input) => replay(() => queryRunner.open(input)),
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
@@ -960,9 +963,9 @@ function replayQueryRunnerService(
 function layerClaudeAgentSdkReplayQueryRunner(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
-): Layer.Layer<ClaudeAdapterV2.ClaudeAgentSdkQueryRunner> {
+): Layer.Layer<ClaudeTransport.ClaudeAgentSdkQueryRunner> {
   return Layer.effect(
-    ClaudeAdapterV2.ClaudeAgentSdkQueryRunner,
+    ClaudeTransport.ClaudeAgentSdkQueryRunner,
     makeClaudeAgentSdkReplayQueryRunner(transcript, options),
   );
 }
@@ -973,16 +976,16 @@ function layerClaudeAgentSdkReplay(
     readonly replayGate?: ProviderReplayGate;
     readonly queryRunner?: ClaudeQueryRunner;
   } = {},
-): Layer.Layer<ClaudeAdapterV2.ClaudeAgentSdkQueryRunner> {
+): Layer.Layer<ClaudeTransport.ClaudeAgentSdkQueryRunner> {
   if (options.queryRunner !== undefined) {
     return Layer.succeed(
-      ClaudeAdapterV2.ClaudeAgentSdkQueryRunner,
+      ClaudeTransport.ClaudeAgentSdkQueryRunner,
       replayQueryRunnerService(transcript, options.queryRunner),
     );
   }
   const queryRunner = makeReplayQueryRunner(transcript, options);
   return Layer.effect(
-    ClaudeAdapterV2.ClaudeAgentSdkQueryRunner,
+    ClaudeTransport.ClaudeAgentSdkQueryRunner,
     Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -1056,7 +1059,7 @@ function layerClaudeProviderAdapterRegistryReplay(
       Effect.orDie,
       Effect.map((tmpRoot) =>
         ProviderAdapterRegistry.layerFromDrivers({
-          drivers: [ClaudeAdapterV2.ClaudeAdapterV2Driver],
+          drivers: [NativeClaudeAdapterV2.ClaudeAdapterV2Driver],
           configMap: {
             [ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID]: {
               driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
@@ -1540,8 +1543,8 @@ async function recordClaudeStreamingQuery(input: {
   readonly sessionId: string;
   readonly entries: Array<ProviderReplayEntry>;
   readonly enableTools?: boolean;
-  readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
-  readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly tools?: ClaudeTransport.ClaudeAgentSdkQueryTools;
+  readonly permissionMode?: ClaudeTransport.ClaudeAgentSdkQueryOptions["permissionMode"];
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -1581,6 +1584,7 @@ async function recordClaudeStreamingQuery(input: {
         }
       : undefined;
   const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+    modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: false,
@@ -1700,8 +1704,8 @@ async function recordClaudeActiveSteeringQuery(input: {
   readonly sessionId: string;
   readonly entries: Array<ProviderReplayEntry>;
   readonly enableTools?: boolean;
-  readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
-  readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly tools?: ClaudeTransport.ClaudeAgentSdkQueryTools;
+  readonly permissionMode?: ClaudeTransport.ClaudeAgentSdkQueryOptions["permissionMode"];
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -1765,6 +1769,7 @@ async function recordClaudeActiveSteeringQuery(input: {
         }
       : undefined;
   const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+    modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: false,
@@ -1835,8 +1840,8 @@ async function recordClaudeRestartingQueries(input: {
   readonly sessionId: string;
   readonly entries: Array<ProviderReplayEntry>;
   readonly enableTools?: boolean;
-  readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
-  readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly tools?: ClaudeTransport.ClaudeAgentSdkQueryTools;
+  readonly permissionMode?: ClaudeTransport.ClaudeAgentSdkQueryOptions["permissionMode"];
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -1844,6 +1849,7 @@ async function recordClaudeRestartingQueries(input: {
   for (const [index, prompt] of input.prompts.entries()) {
     const promptQueue = new RecordingPromptQueue();
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
       modelSelection: input.modelSelection,
       nativeThreadId: input.sessionId,
       resume: index > 0,
@@ -1923,8 +1929,8 @@ async function recordClaudeResumeAtCursorQuery(input: {
   readonly entries: Array<ProviderReplayEntry>;
   readonly metadata: Record<string, unknown>;
   readonly enableTools?: boolean;
-  readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
-  readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly tools?: ClaudeTransport.ClaudeAgentSdkQueryTools;
+  readonly permissionMode?: ClaudeTransport.ClaudeAgentSdkQueryOptions["permissionMode"];
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -1937,6 +1943,7 @@ async function recordClaudeResumeAtCursorQuery(input: {
 
   const sourcePromptQueue = new RecordingPromptQueue();
   const sourceOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+    modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: false,
@@ -2007,6 +2014,7 @@ async function recordClaudeResumeAtCursorQuery(input: {
     const resumedPromptQueue = new RecordingPromptQueue();
     const resumedOptions = {
       ...ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
         modelSelection: input.modelSelection,
         nativeThreadId: input.sessionId,
         resume: true,
@@ -2026,7 +2034,7 @@ async function recordClaudeResumeAtCursorQuery(input: {
           : {}),
       }),
       resumeSessionAt,
-    } satisfies ClaudeAdapterV2.ClaudeAgentSdkQueryOptions;
+    } satisfies ClaudeTransport.ClaudeAgentSdkQueryOptions;
     input.entries.push({
       type: "expect_outbound",
       label: "query.open:resume_at_cursor",
@@ -2087,8 +2095,8 @@ async function recordClaudeForkSessionQuery(input: {
   readonly forkPromptGroups?: ReadonlyArray<ReadonlyArray<string>>;
   readonly sourceContinuationPromptCount?: number;
   readonly enableTools?: boolean;
-  readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
-  readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly tools?: ClaudeTransport.ClaudeAgentSdkQueryTools;
+  readonly permissionMode?: ClaudeTransport.ClaudeAgentSdkQueryOptions["permissionMode"];
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -2120,6 +2128,7 @@ async function recordClaudeForkSessionQuery(input: {
 
   const sourcePromptQueue = new RecordingPromptQueue();
   const sourceOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+    modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: false,
@@ -2228,6 +2237,7 @@ async function recordClaudeForkSessionQuery(input: {
 
       const targetPromptQueue = new RecordingPromptQueue();
       const targetOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
         modelSelection: input.modelSelection,
         nativeThreadId: forked.sessionId,
         resume: true,
@@ -2286,6 +2296,7 @@ async function recordClaudeForkSessionQuery(input: {
     if (sourceContinuationPromptCount > 0) {
       const continuationPromptQueue = new RecordingPromptQueue();
       const continuationOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
         modelSelection: input.modelSelection,
         nativeThreadId: input.sessionId,
         resume: true,
@@ -2368,14 +2379,15 @@ async function recordInterruptedClaudeQuery(input: {
   readonly interruptAfter?: "prompt_offer" | "tool_use";
   readonly interruptAfterToolUses?: number;
   readonly enableTools?: boolean;
-  readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
-  readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly tools?: ClaudeTransport.ClaudeAgentSdkQueryTools;
+  readonly permissionMode?: ClaudeTransport.ClaudeAgentSdkQueryOptions["permissionMode"];
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
 }): Promise<void> {
   const promptQueue = new RecordingPromptQueue();
   const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+    modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: input.resume,
@@ -2472,8 +2484,8 @@ async function recordClaudeInterruptQuery(input: {
   readonly sessionId: string;
   readonly entries: Array<ProviderReplayEntry>;
   readonly enableTools?: boolean;
-  readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
-  readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly tools?: ClaudeTransport.ClaudeAgentSdkQueryTools;
+  readonly permissionMode?: ClaudeTransport.ClaudeAgentSdkQueryOptions["permissionMode"];
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -2520,8 +2532,8 @@ async function recordClaudeInterruptRestartQuery(input: {
   readonly sessionId: string;
   readonly entries: Array<ProviderReplayEntry>;
   readonly enableTools?: boolean;
-  readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
-  readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly tools?: ClaudeTransport.ClaudeAgentSdkQueryTools;
+  readonly permissionMode?: ClaudeTransport.ClaudeAgentSdkQueryOptions["permissionMode"];
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -2557,6 +2569,7 @@ async function recordClaudeInterruptRestartQuery(input: {
 
   const secondPromptQueue = new RecordingPromptQueue();
   const secondOptions = ClaudeAdapterV2.makeClaudeQueryOptions({
+    modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
     modelSelection: input.modelSelection,
     nativeThreadId: input.sessionId,
     resume: true,
@@ -2636,8 +2649,8 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
     | "interrupt"
     | "interrupt_restart";
   readonly enableTools?: boolean;
-  readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
-  readonly permissionMode?: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly tools?: ClaudeTransport.ClaudeAgentSdkQueryTools;
+  readonly permissionMode?: ClaudeTransport.ClaudeAgentSdkQueryOptions["permissionMode"];
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;

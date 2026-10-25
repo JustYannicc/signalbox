@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as Platform from "../../platform.ts";
-import * as PreviewState from "./PreviewState.ts";
+import * as PreviewState from "../PreviewState.ts";
 
 const database = NodeSqliteClient.layer({ filename: ":memory:" });
 const dependencies = Layer.mergeAll(database, Platform.layerCrypto);

@@ -13,6 +13,7 @@ import {
 } from "../MachineBackend.ts";
 import type { BoatApi, BoatApiError, BoatSandbox } from "./BoatApi.ts";
 import { CONFIG_PATH, SETUP_COMMAND, SETUP_REVISION, SETUP_SCRIPT } from "./BoatRunnerSetup.ts";
+import { boatStartupProblem } from "./boatStartup.ts";
 
 export { CONFIG_PATH } from "./BoatRunnerSetup.ts";
 
@@ -74,6 +75,7 @@ export const makeBoatMachineBackend = ({
     new MachineBackendError({
       message: `boat ${cause.operation} failed: ${cause.message}`,
       cause,
+      startupProblem: boatStartupProblem(cause),
     });
   const statusOf = (
     record: MachineRecord,
@@ -188,7 +190,14 @@ export const makeBoatMachineBackend = ({
         return statusOf(current, "starting", "Installing the machine's Runner.");
       }
       if (sandbox.hydrated === false) {
-        return statusOf(current, "starting", "Waiting for the machine's disk restore.");
+        return {
+          ...statusOf(current, "starting", "Waiting for the machine's disk restore."),
+          startupProblem: {
+            code: "machine_disk_restore",
+            message: "Boat is still restoring the machine's disk.",
+            retryable: true,
+          },
+        };
       }
       const setupKey = `${sandbox.id}:${SETUP_REVISION}`;
       if (current.setupKey !== setupKey) {

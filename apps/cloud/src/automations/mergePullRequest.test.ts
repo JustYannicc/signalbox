@@ -95,7 +95,7 @@ export default workflow(async (w) => {
           });
           const refused = Effect.gen(function* () {
             expect((yield* runIt).error).toContain(
-              "Only Signalbox's own automations, or one a person published",
+              "A person must publish this automation before it can use this protected tool.",
             );
             expect(github.pulls[0]).toMatchObject({ merged: false });
           });
@@ -187,6 +187,7 @@ export default workflow(async (w) => {
         yield* cloud.settle;
         const ask = (yield* getRun(waitId)).steps.find((step) => step.verb === "ask");
         expect(ask?.status).toBe("waiting");
+        expect(ask?.commonAsk?.kind).toBe("ready");
         const [shown] = (ask?.args ?? []) as ReadonlyArray<{ readonly question?: string }>;
         expect(shown?.question).toBe(
           [

@@ -1,0 +1,27 @@
+// State machine for one level. The walk through it with people and modules is the dynamic view state_level.
+model {
+  smLevel = state 'Level lifecycle' {
+    active = state 'Active'
+    archived = state 'Archived' { description 'read-only · hidden' }
+    trashed = state 'Trashed' { description 'tombstone · 30-day trash' }
+    purged = state 'Purged' { description 'every store purged' }
+
+    active -[transition]-> archived 'archive'
+    archived -[transition]-> active 'unarchive'
+    active -[transition]-> trashed 'trash'
+    archived -[transition]-> trashed 'trash'
+    trashed -[transition]-> active 'restore (≤ 30 days)'
+    trashed -[transition]-> purged '30-day alarm'
+  }
+}
+views {
+  view state-level of smLevel {
+    title 'States/Level/State machine'
+    description 'How is one level (top level or folder) archived, trashed, restored and purged? Start: green. End: gray. Click the frame for the walk with people and modules (state_level).'
+    include *
+    include smLevel with { navigateTo state_level }
+    style smLevel.active { color green }
+    style smLevel.purged { color gray }
+    autoLayout TopBottom
+  }
+}

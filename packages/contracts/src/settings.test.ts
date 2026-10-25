@@ -287,9 +287,10 @@ describe("ClaudeSettings auto-compaction", () => {
 });
 
 describe("ClientSettings notifications", () => {
-  it("requires opt-in when existing settings omit notification preferences", () => {
+  // signalbox: in-app signals are on by default; system notifications still need opt-in (#43)
+  it("requires opt-in for system notifications when settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");
-    expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(false);
+    expect(decodeClientSettings({}).inAppNotificationsEnabled).toBe(true);
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
   });

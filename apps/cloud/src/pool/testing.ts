@@ -10,6 +10,7 @@ import * as PoolEngine from "./PoolEngine.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import { makePoolObjectApi } from "./poolObjectApi.ts";
 import * as PoolStore from "./poolStore.ts";
+import { PoolTelemetry, type PoolCallEvent } from "./PoolTelemetry.ts";
 
 /**
  * Test doubles for pools: a CLIProxyAPI that answers the management calls a
@@ -21,6 +22,7 @@ interface FakeAccount {
   readonly type: string;
   readonly email: string;
   disabled: boolean;
+  signedOut?: boolean;
   /** Headers of its last response, as CLIProxyAPI keeps them; none until set. */
   signals?: Record<string, string>;
   /** When those headers came, ISO. */
@@ -329,6 +331,7 @@ export const makeFakeCliProxyApi = () => {
             type: account.type,
             email: account.email,
             disabled: account.disabled,
+            ...(account.signedOut ? { status: "error", unavailable: true } : {}),
             quota: {
               signals: account.signals ?? {},
               ...(account.observedAt ? { observed_at: account.observedAt } : {}),
@@ -430,6 +433,8 @@ export const makeFakeCliProxyApi = () => {
 export const makeMemoryPoolObject = (
   external: (request: Request) => Promise<Response> = () =>
     Promise.reject(new Error("No external CLIProxyAPI in this test")),
+  submit: (event: PoolCallEvent) => void = () => {},
+  options?: { readonly filename: string },
 ) => {
   const cliProxyApi = makeFakeCliProxyApi();
   const container = PoolContainer.makeFake((request) => cliProxyApi.serve(request));
@@ -444,8 +449,16 @@ export const makeMemoryPoolObject = (
         ),
       ),
       Layer.provideMerge(
-        Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" }), Platform.layerCrypto),
+        Layer.mergeAll(
+          NodeSqliteClient.layer({
+            filename: options?.filename ?? ":memory:",
+            readerWorker: false,
+            checkpointWorker: false,
+          }),
+          Platform.layerCrypto,
+        ),
       ),
+      Layer.provideMerge(Layer.succeed(PoolTelemetry, { submit })),
     ),
   );
   let erased = false;

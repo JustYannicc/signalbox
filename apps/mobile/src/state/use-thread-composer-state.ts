@@ -7,6 +7,7 @@ import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
   deriveProviderSubagentStatus,
+  deriveRunContinuations,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
@@ -34,7 +35,10 @@ import {
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  type ThreadRunSummary,
+} from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
@@ -55,7 +59,7 @@ import {
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { buildThreadFeed } from "../lib/threadActivity";
+import { buildThreadFeed, type ThreadFeedLatestRun } from "../lib/threadActivity";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
@@ -75,7 +79,11 @@ import {
   composerDraftsAtom,
   composerContextImportsAtom,
   ensureComposerDraftsLoaded,
+  ensureComposerDraftRevision,
+  flushComposerDrafts,
+  flushComposerDraftsAfterOutboxWrite,
   getComposerDraftSnapshot,
+  clearComposerDraftContentIfMatchingQueuedMessage,
   mergeComposerDraftContent,
   removeComposerDraftAttachment,
   scheduleUnusedComposerAttachmentCleanup,
@@ -87,6 +95,7 @@ import {
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import { isComposerDraftPersistenceError, type QueuedThreadMessage } from "./thread-outbox-model";
 import { Atom } from "effect/reactivity";
 import { AsyncResult } from "effect/reactivity";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
@@ -355,13 +364,24 @@ export function useThreadComposerState() {
         : (selectedThreadShell?.runtime ?? null),
     [selectedThreadProjection, selectedThreadShell?.runtime],
   );
-  const selectedThreadActivityRun = useMemo(
+  const selectedThreadProjectionRuns = selectedThreadProjection?.projection.runs;
+  const selectedThreadRunContinuations = useMemo(
     () =>
-      selectedThreadProjection
-        ? deriveThreadActivityRun(selectedThreadProjection.projection)
-        : (selectedThreadShell?.latestRun ?? null),
-    [selectedThreadProjection, selectedThreadShell?.latestRun],
+      selectedThreadProjectionRuns ? deriveRunContinuations(selectedThreadProjectionRuns) : null,
+    [selectedThreadProjectionRuns],
   );
+  const selectedThreadActivityRun = useMemo<
+    (ThreadFeedLatestRun & Pick<ThreadRunSummary, "requestedAt">) | null
+  >(() => {
+    if (!selectedThreadProjection) return selectedThreadShell?.latestRun ?? null;
+    const projection = selectedThreadProjection.projection;
+    const run = deriveThreadActivityRun(projection);
+    return run === null
+      ? null
+      : selectedThreadRunContinuations === null
+        ? run
+        : { ...run, runContinuations: selectedThreadRunContinuations };
+  }, [selectedThreadProjection, selectedThreadRunContinuations, selectedThreadShell?.latestRun]);
 
   const isCompacting = useMemo(() => {
     const queuedCompact = selectedThreadQueuedMessages.some(
@@ -682,14 +702,29 @@ export function useThreadComposerState() {
             ? "queue"
             : "auto";
 
+      const sourceDraftRevision = ensureComposerDraftRevision(threadKey);
+      if (sourceDraftRevision === undefined) return null;
+      try {
+        // The outbox can only reconcile a stale draft after restart if this
+        // source version is durable before the queued message is committed.
+        await flushComposerDrafts();
+      } catch (error) {
+        setThreadComposerError(
+          threadKey,
+          error instanceof Error ? error.message : "Failed to save the composer draft.",
+        );
+        return null;
+      }
+
       const metadata = makeQueuedMessageMetadata();
       const messageId = MessageId.make(metadata.messageId);
       clearThreadComposerError(threadKey);
-      const enqueuePromise = enqueueThreadOutboxMessage({
+      const queuedMessage: QueuedThreadMessage = {
         environmentId: selectedThreadShell.environmentId,
         threadId: selectedThreadShell.id,
         messageId,
         commandId: CommandId.make(metadata.commandId),
+        sourceDraftRevision,
         text,
         attachments,
         context: draft.context,
@@ -701,11 +736,17 @@ export function useThreadComposerState() {
         ),
         ...(followUpDispatchMode === null ? {} : { dispatchMode: followUpDispatchMode }),
         createdAt: metadata.createdAt,
-      });
-      clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
-      enqueuePromise.then(
+      };
+      const enqueuePromise = enqueueThreadOutboxMessage(queuedMessage);
+      clearComposerDraftContentIfMatchingQueuedMessage(threadKey, queuedMessage);
+      void flushComposerDraftsAfterOutboxWrite(enqueuePromise).then(
         () => scheduleUnusedComposerAttachmentCleanup(attachments),
         (error: unknown) => {
+          if (isComposerDraftPersistenceError(error)) {
+            scheduleUnusedComposerAttachmentCleanup(attachments);
+            setThreadComposerError(threadKey, error.message, messageId);
+            return;
+          }
           // Restore text via merge (idempotent) but attachments via the uncapped
           // append: the merge path slots existing attachments first and truncates
           // at the send limit, which would silently drop this message's images if

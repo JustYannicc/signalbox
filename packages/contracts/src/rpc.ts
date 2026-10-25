@@ -47,19 +47,23 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PERSON_TIMEZONE_RPCS } from "./personTimezone.ts"; // signalbox: person timezone
 import { SIGNALBOX_ANALYTICS_RPCS } from "./signalboxAnalytics.ts"; // signalbox: analytics
 import { SIGNALBOX_CONTEXTS_RPCS } from "./signalboxContexts.ts"; // signalbox: contexts
 import { SIGNALBOX_DRIVES_RPCS } from "./signalboxDrives.ts"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_RPCS } from "./signalboxFolders.ts"; // signalbox: folders
 import { SIGNALBOX_NOTES_RPCS } from "./signalboxNotes.ts"; // signalbox: notes
+import { SIGNALBOX_TRASH_RPCS } from "./signalboxTrash.ts"; // signalbox: trash
 import { SIGNALBOX_PREVIEWS_RPCS } from "./signalboxPreviews.ts"; // signalbox: previews
 import { SIGNALBOX_BROWSING_RPCS } from "./signalboxBrowsing.ts"; // signalbox: browsing
 import { SIGNALBOX_PUSH_RPCS } from "./signalboxPush.ts"; // signalbox: push devices
 import { SIGNALBOX_REPOSITORIES_RPCS } from "./signalboxRepositories.ts"; // signalbox: repositories
+import { SIGNALBOX_SEARCH_RPCS } from "./signalboxSearch.ts"; // signalbox: thread search
 import { SIGNALBOX_THREAD_KINDS_RPCS } from "./signalboxThreadKinds.ts"; // signalbox: thread kinds
 import { SIGNALBOX_THREAD_STATUS_RPCS } from "./signalboxStatusLine.ts"; // signalbox: status lines
 import { SIGNALBOX_KEYS_RPCS } from "./signalboxKeys.ts"; // signalbox: personal keys
 import { SIGNALBOX_SIGN_IN_RPCS } from "./signalboxSignIn.ts"; // signalbox: sign-in grants
+import { SIGNALBOX_PERSON_BROWSER_RPCS } from "./signalboxPersonBrowser.ts"; // signalbox: person's cloud browser
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -68,6 +72,7 @@ import {
   ProviderAuthState,
   ProviderAuthStartInput,
   ProviderAuthRespondInput,
+  ProviderAuthLogoutInput,
   ProviderInstallCancelInput,
   ProviderInstallState,
   ProviderSetupError,
@@ -147,6 +152,7 @@ import {
 import {
   WorktreeSetupCancelInput,
   WorktreeSetupCancelResult,
+  WorktreeSetupError,
   WorktreeSetupStreamEvent,
   WorktreeSetupSubscribeInput,
 } from "./worktreeSetup.ts";
@@ -216,6 +222,7 @@ import {
   PullRequestOperationError,
   PullRequestReactionInput,
   PullRequestRef,
+  PullRequestGenerateReviewGuideInput,
   PullRequestRoutingResult,
   PullRequestRoutingIdentityInput,
   PullRequestRoutingIdentityResult,
@@ -307,6 +314,7 @@ import {
 } from "./preview.ts";
 import {
   DeviceActionInput,
+  DeviceCancelOpenInput,
   DeviceCloseInput,
   DeviceConfigureInput,
   DeviceDetail,
@@ -320,6 +328,7 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
+import { DeviceAgentCommandFailure } from "./deviceAgentDiagnostics.ts";
 import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
@@ -515,6 +524,7 @@ export const WS_METHODS = {
   deviceList: "device.list",
   deviceTestHost: "device.testHost",
   deviceOpen: "device.open",
+  deviceCancelOpen: "device.cancelOpen",
   deviceClose: "device.close",
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
@@ -623,6 +633,7 @@ export const WS_METHODS = {
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
+  subscribeDeviceAgentDiagnostics: "subscribeDeviceAgentDiagnostics",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -831,7 +842,7 @@ const WsProviderAuthCancelRpc = Rpc.make(WS_METHODS.providerAuthCancel, {
 });
 
 const WsProviderAuthLogoutRpc = Rpc.make(WS_METHODS.providerAuthLogout, {
-  payload: ProviderSetupInput,
+  payload: ProviderAuthLogoutInput,
   success: ProviderAuthState,
   error: ProviderSetupRpcError,
 });
@@ -1175,7 +1186,7 @@ const WsPullRequestsReviewGuideRpc = Rpc.make(WS_METHODS.pullRequestsReviewGuide
 });
 
 const WsPullRequestsGenerateReviewGuideRpc = Rpc.make(WS_METHODS.pullRequestsGenerateReviewGuide, {
-  payload: PullRequestRef,
+  payload: PullRequestGenerateReviewGuideInput,
   success: PullRequestReviewGuideResult,
   error: PullRequestRpcError,
 });
@@ -1505,14 +1516,14 @@ const WsVcsRefreshStatusRpc = Rpc.make(WS_METHODS.vcsRefreshStatus, {
 const WsSubscribeWorktreeSetupRpc = Rpc.make(WS_METHODS.subscribeWorktreeSetup, {
   payload: WorktreeSetupSubscribeInput,
   success: WorktreeSetupStreamEvent,
-  error: EnvironmentAuthorizationError,
+  error: Schema.Union([WorktreeSetupError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
 const WsWorktreeSetupCancelRpc = Rpc.make(WS_METHODS.worktreeSetupCancel, {
   payload: WorktreeSetupCancelInput,
   success: WorktreeSetupCancelResult,
-  error: EnvironmentAuthorizationError,
+  error: Schema.Union([WorktreeSetupError, EnvironmentAuthorizationError]),
 });
 
 const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
@@ -1541,7 +1552,10 @@ const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
 });
 
 const WsVcsCreateWorktreeRpc = Rpc.make(WS_METHODS.vcsCreateWorktree, {
-  payload: VcsCreateWorktreeInput,
+  // Clients cannot choose the folder: new worktrees go in the server's managed
+  // worktrees folder. `path` stays a required null because older servers
+  // require the key.
+  payload: Schema.Struct({ ...VcsCreateWorktreeInput.fields, path: Schema.Null }),
   success: VcsCreateWorktreeResult,
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
@@ -1721,6 +1735,11 @@ const WsDeviceOpenRpc = Rpc.make(WS_METHODS.deviceOpen, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceCancelOpenRpc = Rpc.make(WS_METHODS.deviceCancelOpen, {
+  payload: DeviceCancelOpenInput,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsDeviceCloseRpc = Rpc.make(WS_METHODS.deviceClose, {
   payload: DeviceCloseInput,
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
@@ -1746,6 +1765,13 @@ const WsDeviceActionRpc = Rpc.make(WS_METHODS.deviceAction, {
 const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   payload: Schema.Struct({}),
   success: DeviceServiceState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsSubscribeDeviceAgentDiagnosticsRpc = Rpc.make(WS_METHODS.subscribeDeviceAgentDiagnostics, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(DeviceAgentCommandFailure),
   error: EnvironmentAuthorizationError,
   stream: true,
 });
@@ -2016,6 +2042,7 @@ export const SectionsWsRpcGroup =
 /** Signalbox's RPCs; the server serves them from `signalbox/wsRpc.ts`. */
 export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_ANALYTICS_RPCS,
+  ...PERSON_TIMEZONE_RPCS,
   ...ACCOUNT_POOL_RPCS,
   ...AutomationRpcs,
   ...SectionRpcs,
@@ -2023,14 +2050,17 @@ export const SIGNALBOX_WS_RPCS = [
   ...SIGNALBOX_DRIVES_RPCS,
   ...SIGNALBOX_FOLDERS_RPCS,
   ...SIGNALBOX_NOTES_RPCS,
+  ...SIGNALBOX_TRASH_RPCS,
   ...SIGNALBOX_PREVIEWS_RPCS,
   ...SIGNALBOX_BROWSING_RPCS,
   ...SIGNALBOX_PUSH_RPCS,
   ...SIGNALBOX_REPOSITORIES_RPCS,
   ...SIGNALBOX_THREAD_KINDS_RPCS,
+  ...SIGNALBOX_SEARCH_RPCS,
   ...SIGNALBOX_THREAD_STATUS_RPCS,
   ...SIGNALBOX_KEYS_RPCS,
   ...SIGNALBOX_SIGN_IN_RPCS,
+  ...SIGNALBOX_PERSON_BROWSER_RPCS,
 ] as const;
 
 export const WsRpcGroup = RpcGroup.make(
@@ -2204,11 +2234,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceListRpc,
   WsDeviceTestHostRpc,
   WsDeviceOpenRpc,
+  WsDeviceCancelOpenRpc,
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsSubscribeDeviceAgentDiagnosticsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

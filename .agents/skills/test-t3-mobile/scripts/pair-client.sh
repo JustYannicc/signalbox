@@ -40,11 +40,11 @@ const query = new URLSearchParams({
   pairingUrl: process.env.PAIRING_URL,
   autoConnect: "1",
 });
-process.stdout.write(`t3code-dev://connections/new?${query}`);
+process.stdout.write(`signalbox-dev://connections/new?${query}`);
 NODE
 )"
 
-if ! "$agent_device_command" open com.t3tools.t3code.dev "$deep_link" "$@" \
+if ! "$agent_device_command" open com.justyannicc.signalbox.dev "$deep_link" "$@" \
   >/dev/null 2>&1; then
   echo "AgentDevice could not open the pairing route. Check the Device panel and retry with a fresh credential." >&2
   exit 1

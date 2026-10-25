@@ -13,6 +13,7 @@
 //   node .github/scripts/wait-own-certificate.cjs preview-1.signalbox.run ...
 
 const tls = require("node:tls");
+const dns = require("node:dns/promises");
 
 /** Whether `subjectAltName` (Node's "DNS:a, DNS:b" form) names `host` itself. A wildcard doesn't count. */
 function namesHost(subjectAltName, host) {
@@ -41,25 +42,51 @@ async function waitForOwnCertificates(
   {
     deadlineMs,
     intervalMs = 15_000,
+    resolve = (host) => dns.lookup(host),
     probe = servedSubjectAltName,
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now = Date.now,
     log = console.log,
+    label = (host) => host,
   },
 ) {
   const waiting = new Set(hosts);
+  const state = new Map();
   const deadline = now() + deadlineMs;
   for (;;) {
-    const served = await Promise.all([...waiting].map(async (host) => [host, await probe(host)]));
-    for (const [host, subjectAltName] of served) {
+    const served = await Promise.all(
+      [...waiting].map(async (host) => {
+        try {
+          await resolve(host);
+        } catch {
+          return [host, "dns", undefined];
+        }
+        return [host, "certificate", await probe(host)];
+      }),
+    );
+    for (const [host, phase, subjectAltName] of served) {
       if (namesHost(subjectAltName, host)) {
-        log(`${host} serves its own certificate.`);
+        log(`${label(host)} serves its own certificate.`);
         waiting.delete(host);
+        state.delete(host);
+      } else {
+        state.set(host, phase);
       }
     }
     if (waiting.size === 0) return true;
     if (now() >= deadline) {
-      log(`Still on the zone's shared certificate: ${[...waiting].join(", ")}`);
+      const unresolved = [...waiting].filter((host) => state.get(host) === "dns");
+      const certificatePending = [...waiting].filter((host) => state.get(host) === "certificate");
+      if (unresolved.length > 0) {
+        log(
+          `Cloudflare has the Worker domain binding, but DNS did not resolve before the deadline: ${unresolved.map(label).join(", ")}.`,
+        );
+      }
+      if (certificatePending.length > 0) {
+        log(
+          `DNS resolves, but the zone's shared certificate is still served: ${certificatePending.map(label).join(", ")}.`,
+        );
+      }
       return false;
     }
     await sleep(intervalMs);
@@ -69,7 +96,19 @@ async function waitForOwnCertificates(
 if (require.main === module) {
   const hosts = process.argv.slice(2);
   if (hosts.length === 0) throw new Error("Pass the hostnames to wait for.");
-  waitForOwnCertificates(hosts, { deadlineMs: 30 * 60_000 }).then((ok) => {
+  const prNumber = process.env.PR_NUMBER;
+  const labels = new Map(
+    hosts.map((host, index) => [
+      host,
+      prNumber === undefined
+        ? `Worker ${index + 1}`
+        : `the #${prNumber} preview ${index === 0 ? "cloud" : "gateway"} Worker`,
+    ]),
+  );
+  waitForOwnCertificates(hosts, {
+    deadlineMs: 30 * 60_000,
+    label: (host) => labels.get(host) ?? "Worker",
+  }).then((ok) => {
     if (!ok) process.exitCode = 1;
   });
 }

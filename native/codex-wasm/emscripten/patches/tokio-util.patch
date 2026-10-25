@@ -1,0 +1,11 @@
+--- a/tokio-util/src/lib.rs
++++ b/tokio-util/src/lib.rs
+@@ -30,7 +30,7 @@
+ }
+ 
+ cfg_net! {
+-    #[cfg(not(target_arch = "wasm32"))]
++    #[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
+     pub mod udp;
+     pub mod net;
+ }

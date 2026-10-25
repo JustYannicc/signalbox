@@ -1,3 +1,5 @@
+import * as NativeClaudeAdapterV2 from "./Adapters/ClaudeAdapterV2.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG } from "../provider/ClaudeModelCatalog.ts";
 import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -28,7 +30,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as ClaudeAdapterV2 from "./Adapters/ClaudeAdapterV2.ts";
+import * as ClaudeAdapterV2 from "@signalbox/provider-claude/ClaudeAdapter";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
@@ -140,6 +142,8 @@ it.effect.each(deliveries)(
         const nativeQueue: SDKUserMessage[] = [];
         const batchAbort = new AbortController();
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          host: NativeClaudeAdapterV2.claudeNativeHost,
+          modelCatalog: BUNDLED_CLAUDE_MODEL_CATALOG,
           instanceId: modelSelection.instanceId,
           settings,
           environment: {},

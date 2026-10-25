@@ -69,7 +69,7 @@ export type LimitPresentations = ReadonlyMap<
   {
     readonly entry: { readonly target: { readonly label: string } };
     readonly serverConfig: {
-      readonly providers?: readonly ServerProvider[] | undefined;
+      readonly providers: readonly ServerProvider[];
       readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
     } | null;
   }

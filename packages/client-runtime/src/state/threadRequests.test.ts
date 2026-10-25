@@ -117,7 +117,7 @@ describe("pending v2 questions", () => {
     ]);
   });
 
-  it("only marks asynchronous questions as dismissible", () => {
+  it("also lets a person dismiss a live native question", () => {
     const live = {
       ...projection,
       runtimeRequests: projection.runtimeRequests.map((request) => ({
@@ -131,7 +131,15 @@ describe("pending v2 questions", () => {
         item.type === "user_input_request" ? { ...item, responseMode: undefined } : item,
       ),
     };
-    expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
+    expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(true);
+    const ended = {
+      ...live,
+      runtimeRequests: live.runtimeRequests.map((request) => ({
+        ...request,
+        responseCapability: { type: "not_resumable" as const, reason: "The turn ended." },
+      })),
+    };
+    expect(derivePendingThreadRequests(ended).userInputs[0]?.dismissible).toBe(false);
   });
 
   it("removes answered requests from the composer while retaining their answers in projection data", () => {

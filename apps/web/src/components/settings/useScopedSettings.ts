@@ -13,12 +13,10 @@ import {
   type ProjectScopedServerSettingKey,
   type UnifiedSettings,
 } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
 
 import {
-  mergeEnvironmentSettings,
   persistClientSettingsPatch,
-  useClientSettings,
+  useMergedSettings,
   useMigrateModelPreferences,
 } from "../../hooks/useSettings";
 import {
@@ -50,14 +48,8 @@ export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const { target } = useSettingsScope();
-  const clientSettings = useClientSettings();
-  const serverSettings = target?.settings ?? DEFAULT_SERVER_SETTINGS;
   useMigrateModelPreferences(target?.environmentId ?? null, target?.settings ?? null);
-  const settings = useMemo(
-    () => mergeEnvironmentSettings(serverSettings, clientSettings),
-    [clientSettings, serverSettings],
-  );
-  return useMemo(() => (selector ? selector(settings) : (settings as T)), [selector, settings]);
+  return useMergedSettings(target?.settings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
 export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]): boolean {
@@ -72,109 +64,96 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  return useCallback(
-    (plan: ReturnType<typeof planScopedSettingsPatch>) => {
-      if (plan.unavailableReason) {
-        toastManager.add({
-          type: "warning",
-          title: "Setting not saved",
-          description: plan.unavailableReason,
-        });
-        return;
-      }
-      void persistScopedSettingsPatch(
-        plan,
-        async (request) => {
-          const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
-            (scope) => !readEnvironmentScope(request.environmentId, scope),
-          );
-          if (missing)
-            return AsyncResult.failure(
-              Cause.fail(
-                new EnvironmentAuthorizationError({
-                  requiredScope: missing,
-                  message: "This connection lacks permission to change these settings.",
-                }),
-              ),
-            );
-          return persistServer(request);
-        },
-        persistClientSettingsPatch,
-      ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-        if (failedEnvironments.length === 0) return;
-        toastManager.add({
-          type: "error",
-          title:
-            savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
-          description: [
-            ...failedEnvironments.map(
-              ({ label, message }) => `Could not save on ${label}: ${message}`,
-            ),
-            ...(savedEnvironmentCount > 0
-              ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
-              : []),
-          ].join("\n"),
-        });
+  return (plan: ReturnType<typeof planScopedSettingsPatch>) => {
+    if (plan.unavailableReason) {
+      toastManager.add({
+        type: "warning",
+        title: "Setting not saved",
+        description: plan.unavailableReason,
       });
-    },
-    [persistServer],
-  );
+      return;
+    }
+    void persistScopedSettingsPatch(
+      plan,
+      async (request) => {
+        const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
+          (scope) => !readEnvironmentScope(request.environmentId, scope),
+        );
+        if (missing)
+          return AsyncResult.failure(
+            Cause.fail(
+              new EnvironmentAuthorizationError({
+                requiredScope: missing,
+                message: "This connection lacks permission to change these settings.",
+              }),
+            ),
+          );
+        return persistServer(request);
+      },
+      persistClientSettingsPatch,
+    ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
+      if (failedEnvironments.length === 0) return;
+      toastManager.add({
+        type: "error",
+        title:
+          savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+        description: [
+          ...failedEnvironments.map(
+            ({ label, message }) => `Could not save on ${label}: ${message}`,
+          ),
+          ...(savedEnvironmentCount > 0
+            ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+            : []),
+        ].join("\n"),
+      });
+    });
+  };
 }
 
 export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
-  return useCallback(
-    (patch: ScopedSettingsPatch) => {
-      const serverKeys = Object.keys(patch).filter((key) =>
-        Object.hasOwn(ServerSettings.fields, key),
-      );
-      const acceptsPatch = (environment: (typeof environments)[number]) =>
-        acceptsServerSettingsPatch(environment, serverKeys);
-      return run(planScopedSettingsPatch(scope, environments.filter(acceptsPatch), patch));
-    },
-    [environments, run, scope],
-  );
+  return (patch: ScopedSettingsPatch) => {
+    const serverKeys = Object.keys(patch).filter((key) =>
+      Object.hasOwn(ServerSettings.fields, key),
+    );
+    const acceptsPatch = (environment: (typeof environments)[number]) =>
+      acceptsServerSettingsPatch(environment, serverKeys);
+    return run(planScopedSettingsPatch(scope, environments.filter(acceptsPatch), patch));
+  };
 }
 
 export function useClearScopedSettings() {
   const context = useOptionalSettingsScope();
   const run = useRunScopedPlan();
-  return useCallback(
-    (keys: readonly ProjectScopedServerSettingKey[]) => {
-      if (context === null) return;
-      run(
-        planScopedSettingsClear(
-          context.scope,
-          context.environments.filter((environment) =>
-            acceptsServerSettingsPatch(environment, keys),
-          ),
-          keys,
-        ),
-      );
-    },
-    [context, run],
-  );
+  return (keys: readonly ProjectScopedServerSettingKey[]) => {
+    if (context === null) return;
+    run(
+      planScopedSettingsClear(
+        context.scope,
+        context.environments.filter((environment) => acceptsServerSettingsPatch(environment, keys)),
+        keys,
+      ),
+    );
+  };
 }
 
 export function useClearProjectOverrides() {
   const context = useOptionalSettingsScope();
   const run = useRunScopedPlan();
-  return useCallback(
-    (entries: readonly ProjectOverrideEntry[], keys: readonly ProjectScopedServerSettingKey[]) => {
-      if (context === null) return;
-      run(
-        planProjectOverridesClear(
-          context.environments.filter((environment) =>
-            acceptsServerSettingsPatch(environment, keys),
-          ),
-          entries,
-          keys,
-        ),
-      ); // signalbox: skip environments that never save server settings
-    },
-    [context, run],
-  );
+  return (
+    entries: readonly ProjectOverrideEntry[],
+    keys: readonly ProjectScopedServerSettingKey[],
+  ) => {
+    if (context === null) return;
+    run(
+      planProjectOverridesClear(
+        context.environments.filter((environment) => acceptsServerSettingsPatch(environment, keys)),
+        entries,
+        keys,
+      ),
+    ); // signalbox: skip environments that never save server settings
+  };
 }
 
 export function useScopedSettingsWriteAllowed() {

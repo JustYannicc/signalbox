@@ -16,7 +16,7 @@ import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
-import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { CodexProviderCapabilitiesV2 } from "@signalbox/provider-codex/defaults";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";

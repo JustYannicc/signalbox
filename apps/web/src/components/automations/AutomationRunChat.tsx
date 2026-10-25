@@ -18,7 +18,7 @@ import {
   WorkflowIcon,
   type LucideIcon,
 } from "lucide-react";
-import { createElement, useMemo, type ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -111,7 +111,7 @@ export function AutomationRunChat(props: {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const { run, environmentId } = props;
   const summary = run.run;
-  const items = useMemo(() => runChatItems(run.steps), [run.steps]);
+  const items = runChatItems(run.steps);
   const ms = durationMs(summary);
   const input = resultLine(run.input);
 

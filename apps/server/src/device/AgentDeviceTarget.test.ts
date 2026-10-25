@@ -1,22 +1,74 @@
 // @effect-diagnostics nodeBuiltinImport:off - exercises concurrent real CLI subprocesses.
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
+import { DeviceHostId, DeviceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as NetAddress from "effect/net/NetAddress";
 import { ensureAgentDeviceShim } from "./AgentDeviceShim.ts";
+import type { AgentDeviceSession } from "./AgentDeviceSession.ts";
 import {
   agentDeviceConfigPath,
-  agentDeviceSession,
+  agentDeviceProxyBaseUrl,
   writeAgentDeviceConfig,
 } from "./AgentDeviceTarget.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
+const agentSession = (hostId: string, sessionId: string): AgentDeviceSession => ({
+  sessionId,
+  leaseId: `lease-${sessionId}`,
+  ownerKind: "agent",
+  providerSessionId: ProviderSessionId.make(`provider-${sessionId}`),
+  threadId: ThreadId.make(`thread-${sessionId}`),
+  hostId: DeviceHostId.make(hostId),
+  deviceId: DeviceId.make(`device-${sessionId}`),
+  platform: "android",
+});
+
 describe("host-bound agent commands", () => {
+  it.effect("builds session proxy URLs from the bound HTTP address", () =>
+    Effect.gen(function* () {
+      const sessionId = "session/with space";
+      const wildcardV4 = yield* agentDeviceProxyBaseUrl(
+        NetAddress.inetAddressFromIpStringUnsafe("0.0.0.0", 43123),
+        sessionId,
+      );
+      const wildcardV6 = yield* agentDeviceProxyBaseUrl(
+        NetAddress.inetAddressFromIpStringUnsafe("::", 43124),
+        sessionId,
+      );
+      const specificV4 = yield* agentDeviceProxyBaseUrl(
+        NetAddress.inetAddressFromIpStringUnsafe("192.0.2.44", 43125),
+        sessionId,
+      );
+      const specificV6 = yield* agentDeviceProxyBaseUrl(
+        NetAddress.inetAddressFromIpStringUnsafe("2001:db8::44", 43126),
+        sessionId,
+      );
+
+      expect(wildcardV4).toBe("http://127.0.0.1:43123/api/agent-device/session%2Fwith%20space/");
+      expect(wildcardV6).toBe("http://127.0.0.1:43124/api/agent-device/session%2Fwith%20space/");
+      expect(specificV4).toBe("http://192.0.2.44:43125/api/agent-device/session%2Fwith%20space/");
+      expect(specificV6).toBe(
+        "http://[2001:db8::44]:43126/api/agent-device/session%2Fwith%20space/",
+      );
+
+      const unixFailure = yield* Effect.flip(
+        agentDeviceProxyBaseUrl(NetAddress.unixPathAddress("/tmp/signalbox.sock"), sessionId),
+      );
+      expect(unixFailure).toMatchObject({
+        _tag: "AgentDeviceAddressError",
+        addressKind: "unix",
+        message: "Agent device access requires an HTTP server bound to an IP address.",
+      });
+    }),
+  );
+
   it.effect("runs two hosts concurrently and only updates the reconnected host", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -37,9 +89,19 @@ console.log(readFileSync(args[args.indexOf('--config') + 1], 'utf8'));
 if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       );
       const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
-      const files = yield* Effect.forEach(["mini", "android"], (host) =>
-        agentDeviceConfigPath(dir, host, path),
+      const sessions = [
+        agentSession("mini", "session-mini"),
+        agentSession("android", "session-android"),
+      ];
+      const files = yield* Effect.forEach(sessions, (session) =>
+        agentDeviceConfigPath(dir, session, path),
       );
+      const recycledSession = {
+        ...sessions[0]!,
+        leaseId: "lease-recycled",
+        providerSessionId: ProviderSessionId.make("provider-recycled"),
+      };
+      expect(yield* agentDeviceConfigPath(dir, recycledSession, path)).not.toBe(files[0]);
       for (const [index, file] of files.entries())
         yield* writeAgentDeviceConfig(file, {
           baseUrl: `http://127.0.0.1:${1000 + index}`,
@@ -71,9 +133,6 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       });
       expect((yield* Effect.promise(() => invoke(files[0]!))).daemonAuthToken).toBe("new");
       expect(yield* fs.readFileString(files[1]!)).toBe(second);
-      expect(yield* agentDeviceSession("thread", "mini", "same-id")).not.toBe(
-        yield* agentDeviceSession("thread", "android", "same-id"),
-      );
       for (const args of [
         ["snapshot"],
         ["snapshot", "--config", files[0]!],

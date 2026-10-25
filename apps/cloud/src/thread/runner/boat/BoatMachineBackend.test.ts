@@ -145,10 +145,19 @@ const makeStore = () => {
   };
 };
 
-const makeBackend = (boat: ReturnType<typeof makeFakeBoat>, store: ReturnType<typeof makeStore>) =>
+const makeBackend = (
+  boat: ReturnType<typeof makeFakeBoat>,
+  store: ReturnType<typeof makeStore>,
+  image = settings.image,
+) =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
-    return makeBoatMachineBackend({ settings, api: boat.api, records: store.records, crypto });
+    return makeBoatMachineBackend({
+      settings: { ...settings, image },
+      api: boat.api,
+      records: store.records,
+      crypto,
+    });
   }).pipe(Effect.provide(Platform.layerCrypto));
 
 const request = (generation: number) => ({
@@ -159,6 +168,27 @@ const request = (generation: number) => ({
 });
 
 describe("BoatMachineBackend", () => {
+  it.effect(
+    "updates an old launcher and hands the same VM the current image at its new generation",
+    () =>
+      Effect.gen(function* () {
+        const boat = makeFakeBoat();
+        const store = makeStore();
+        const backend = yield* makeBackend(boat, store);
+        yield* backend.ensure(request(1));
+        boat.settle();
+        yield* backend.ensure(request(1));
+        yield* store.records.save({ ...store.current(), setupKey: "bx_1:boat-runner-1" });
+        const image = "ghcr.io/test/runner:current";
+        const updated = yield* makeBackend(boat, store, image);
+        yield* updated.ensure(request(2));
+        yield* updated.ensure(request(2));
+        expect(boat.sandboxes.size).toBe(1);
+        expect(boat.calls.filter((call) => call === "execute")).toHaveLength(2);
+        expect(boat.config("bx_1")).toMatchObject({ generation: 2, image });
+      }),
+  );
+
   it.effect("starts one VM on demand and hands its Runner the generation", () =>
     Effect.gen(function* () {
       const boat = makeFakeBoat();
@@ -226,6 +256,94 @@ describe("BoatMachineBackend", () => {
     }),
   );
 
+  it.effect("distinguishes permanent access rejection from retryable provider failures", () =>
+    Effect.gen(function* () {
+      for (const [status, retryable, code] of [
+        [401, false, "machine_access_denied"],
+        [404, false, "machine_request_rejected"],
+        [429, true, "machine_rate_limited"],
+        [0, true, "machine_backend_unavailable"],
+      ] as const) {
+        const boat = makeFakeBoat();
+        const store = makeStore();
+        const backend = yield* makeBackend(
+          {
+            ...boat,
+            api: {
+              ...boat.api,
+              create: () =>
+                Effect.fail(
+                  new BoatApiError({
+                    operation: "create",
+                    status,
+                    code: null,
+                    message: "opaque provider response body",
+                  }),
+                ),
+            },
+          },
+          store,
+        );
+        const error = yield* Effect.flip(backend.ensure(request(1)));
+        expect(error.startupProblem).toMatchObject({ retryable, code });
+        expect(JSON.stringify(error.startupProblem)).not.toContain("opaque provider response body");
+        expect(store.current().createKey).not.toBeNull();
+      }
+    }),
+  );
+
+  it.effect("recovers when the VM disappears between inspection and startup", () =>
+    Effect.gen(function* () {
+      for (const operation of ["resume", "execute", "writeFile"] as const) {
+        const boat = makeFakeBoat();
+        const store = makeStore();
+        const backend = yield* makeBackend(boat, store);
+        yield* backend.ensure(request(1));
+        boat.settle();
+        if (operation === "resume") {
+          yield* backend.stop(threadId);
+          boat.settle();
+        }
+        const gone = () =>
+          Effect.suspend(() => {
+            boat.sandboxes.delete("bx_1");
+            return Effect.fail(
+              new BoatApiError({
+                operation,
+                status: 404,
+                code: "sandbox_not_found",
+                message: "No such sandbox.",
+              }),
+            );
+          });
+        const disappearing = yield* makeBackend(
+          {
+            ...boat,
+            api: {
+              ...boat.api,
+              resume: operation === "resume" ? gone : boat.api.resume,
+              execute: operation === "execute" ? gone : boat.api.execute,
+              writeFile: operation === "writeFile" ? gone : boat.api.writeFile,
+            },
+          },
+          store,
+        );
+        const error = yield* Effect.flip(disappearing.ensure(request(2)));
+        expect(error.startupProblem).toMatchObject({
+          code: "machine_disappeared",
+          retryable: true,
+        });
+        const recovered = yield* makeBackend(boat, store);
+        yield* recovered.ensure(request(2));
+        yield* recovered.ensure(request(2));
+        boat.settle();
+        expect((yield* recovered.ensure(request(2))).actual).toBe("running");
+        expect(boat.config("bx_2")?.generation).toBe(2);
+        expect([...boat.sandboxes.keys()]).toEqual(["bx_2"]);
+      }
+    }),
+  );
+
   it.effect("a lost create answer, retried after the object went down, finds the same VM", () =>
     Effect.gen(function* () {
       const boat = makeFakeBoat();
@@ -267,6 +385,37 @@ describe("BoatMachineBackend", () => {
       expect((yield* backend.ensure(request(2))).actual).toBe("running");
       expect(boat.sandboxes.size).toBe(1);
       expect(boat.config("bx_1")?.generation).toBe(2);
+    }),
+  );
+
+  it.effect("keeps the resumed VM and old config until its disk is hydrated", () =>
+    Effect.gen(function* () {
+      const boat = makeFakeBoat();
+      const store = makeStore();
+      const backend = yield* makeBackend(boat, store);
+      yield* backend.ensure(request(1));
+      boat.settle();
+      yield* backend.ensure(request(1));
+      yield* backend.stop(threadId);
+      boat.settle();
+      yield* backend.ensure(request(2));
+      boat.settle();
+      boat.sandboxes.get("bx_1")!.hydrated = false;
+      const waiting = yield* backend.ensure(request(2));
+      expect(waiting).toMatchObject({
+        actual: "starting",
+        startupProblem: { code: "machine_disk_restore", retryable: true },
+      });
+      expect(boat.config("bx_1")?.generation).toBe(1);
+      const resumed = yield* makeBackend(boat, store);
+      expect((yield* resumed.ensure(request(2))).actual).toBe("starting");
+      expect(boat.config("bx_1")?.generation).toBe(1);
+      boat.sandboxes.get("bx_1")!.hydrated = true;
+      expect((yield* resumed.ensure(request(2))).actual).toBe("running");
+      expect(boat.config("bx_1")?.generation).toBe(2);
+      expect(boat.sandboxes.size).toBe(1);
+      expect(boat.calls.filter((call) => call === "resume")).toHaveLength(1);
+      expect(boat.calls).not.toContain("delete");
     }),
   );
 

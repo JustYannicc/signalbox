@@ -95,6 +95,34 @@ const personalDownOnce = (cloud: Effect.Success<ReturnType<typeof client>>["clou
   });
 
 describe("cloud pool RPC", () => {
+  it.effect(
+    "streams advice snapshots and pool additions without exposing another user's pool",
+    () =>
+      Effect.gen(function* () {
+        const { rpc, cloud } = yield* client();
+        yield* cloud.pools.directory
+          .forPool("another-user:private")
+          .create({ userId: "another-user" }, { name: "Private", personal: true });
+        const initial = yield* Deferred.make<void>();
+        const snapshots = rpc[WS_METHODS.accountPoolSubscribeAdvice]({}).pipe(
+          Stream.tap(() => Deferred.succeed(initial, undefined)),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        const subscription = yield* snapshots;
+        yield* Deferred.await(initial);
+        const work = yield* rpc[WS_METHODS.accountPoolCreate]({ name: "Work" });
+        expect(yield* Fiber.join(subscription)).toEqual([
+          [{ poolId: "personal", providers: [] }],
+          [
+            { poolId: "personal", providers: [] },
+            { poolId: work.id, providers: [] },
+          ],
+        ]);
+      }).pipe(Effect.scoped),
+  );
+
   it.live("refuses another flow's callback and lets the active sign-in be corrected", () =>
     Effect.gen(function* () {
       const { rpc } = yield* client();
@@ -377,7 +405,11 @@ describe("cloud pool RPC", () => {
       const instanceId = ProviderInstanceId.make(poolInstanceId("claude", work.id));
       const before = yield* config(rpc);
       // Add account offers only what cloud pools take.
-      expect(before.config.environment.capabilities.poolFeatures).toEqual(["claude", "codex"]);
+      expect(before.config.environment.capabilities.poolFeatures).toEqual([
+        "claude",
+        "codex",
+        "advice",
+      ]);
       expect(before.config.settings.providerInstances[instanceId]).toMatchObject({
         driver: "claudeAgent",
         displayName: "Claude · Work",
@@ -512,6 +544,8 @@ describe("cloud pool RPC", () => {
       const { rpc } = yield* client([AuthOrchestrationReadScope]);
       const error = yield* Effect.flip(rpc[WS_METHODS.accountPoolCreate]({ name: "Work" }));
       expect(error._tag).toBe("EnvironmentAuthorizationError");
+      const adviceError = yield* Effect.flip(first(rpc[WS_METHODS.accountPoolSubscribeAdvice]({})));
+      expect(adviceError._tag).toBe("EnvironmentAuthorizationError");
       // The member-safe overviews only need read access.
       expect(
         (yield* first(rpc[WS_METHODS.accountPoolSubscribeViews]({}))).map((v) => v.name),

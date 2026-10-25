@@ -1,0 +1,91 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "ctrl-c-call",
+      "path": "codex-rs/core/src/exec.rs",
+      "before": [
+        "                None => unreachable!(\"expiration wait only resolves while expiration is active\"),",
+        "            }",
+        "        }",
+        "        _ = tokio::signal::ctrl_c() => {",
+        "            kill_child_process_group(&mut child)?;",
+        "            child.start_kill()?;",
+        "            (synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + SIGKILL_CODE), false)"
+      ],
+      "after": [
+        "                None => unreachable!(\"expiration wait only resolves while expiration is active\"),",
+        "            }",
+        "        }",
+        "        _ = wait_ctrl_c() => {",
+        "            kill_child_process_group(&mut child)?;",
+        "            child.start_kill()?;",
+        "            (synthetic_exit_status(EXIT_CODE_SIGNAL_BASE + SIGKILL_CODE), false)"
+      ]
+    },
+    {
+      "rule": "exit-status-and-signal-arms",
+      "path": "codex-rs/core/src/exec.rs",
+      "before": [
+        "    std::process::ExitStatus::from_raw(code << 8)",
+        "}",
+        "",
+        "#[cfg(windows)]",
+        "fn synthetic_exit_status(code: i32) -> ExitStatus {",
+        "    use std::os::windows::process::ExitStatusExt;"
+      ],
+      "after": [
+        "    std::process::ExitStatus::from_raw(code << 8)",
+        "}",
+        "",
+        "#[cfg(not(target_os = \"wasi\"))]",
+        "async fn wait_ctrl_c() {",
+        "    let _ = tokio::signal::ctrl_c().await;",
+        "}",
+        "",
+        "/// agentOS wasm32-wasip1: no Ctrl-C/signals in the VM; never fires.",
+        "#[cfg(target_os = \"wasi\")]",
+        "async fn wait_ctrl_c() {",
+        "    std::future::pending::<()>().await;",
+        "}",
+        "",
+        "#[cfg(target_os = \"wasi\")]",
+        "fn synthetic_exit_status(code: i32) -> ExitStatus {",
+        "    use std::os::wasi::process::ExitStatusExt;",
+        "    std::process::ExitStatus::from_raw(code)",
+        "}",
+        "",
+        "#[cfg(target_os = \"wasi\")]",
+        "fn synthetic_exit_status_for_code(code: i32) -> ExitStatus {",
+        "    use std::os::wasi::process::ExitStatusExt;",
+        "    std::process::ExitStatus::from_raw(code << 8)",
+        "}",
+        "",
+        "#[cfg(windows)]",
+        "fn synthetic_exit_status(code: i32) -> ExitStatus {",
+        "    use std::os::windows::process::ExitStatusExt;"
+      ]
+    },
+    {
+      "rule": "wasi-ext",
+      "path": "codex-rs/core/src/lib.rs",
+      "before": [
+        "// Prevent accidental direct writes to stdout/stderr in library code. All",
+        "// user-visible output must go through the appropriate abstraction (e.g.,",
+        "// the TUI or the tracing stack).",
+        "#![deny(clippy::print_stdout, clippy::print_stderr)]",
+        "",
+        "mod apply_patch;"
+      ],
+      "after": [
+        "// Prevent accidental direct writes to stdout/stderr in library code. All",
+        "// user-visible output must go through the appropriate abstraction (e.g.,",
+        "// the TUI or the tracing stack).",
+        "#![cfg_attr(target_os = \"wasi\", feature(wasi_ext))]",
+        "#![deny(clippy::print_stdout, clippy::print_stderr)]",
+        "",
+        "mod apply_patch;"
+      ]
+    }
+  ]
+}

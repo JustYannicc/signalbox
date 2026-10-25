@@ -75,6 +75,7 @@ import {
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
+import { useWithSettledArchivedThreads } from "../home/settledArchivedThreads"; // signalbox: tasks
 import {
   buildThreadListV2Items,
   getThreadListV2OrderedSection,
@@ -137,7 +138,7 @@ function ThreadNavigationSidebarPane(
   const insets = useSafeAreaInsets();
   const { fabClearance } = useAndroidControlSizing();
   const projects = useProjects();
-  const threads = useNavigationThreadShells();
+  const threads = useWithSettledArchivedThreads(useNavigationThreadShells()); // signalbox: tasks
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const searchInputRef = useRef<TextInputInstance>(null);
@@ -370,7 +371,10 @@ function ThreadNavigationSidebarPane(
     threadListInboxReturns.observe(workingShelfEnabled ? threads : null);
     return buildThreadListV2Items({
       pendingOrder,
-      threads: folderScope.threads.filter((thread) => thread.archivedAt === null),
+      // signalbox: settled tasks are archived but stay on the settled shelf.
+      threads: folderScope.threads.filter(
+        (thread) => thread.archivedAt === null || thread.settledOverride === "settled",
+      ),
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,

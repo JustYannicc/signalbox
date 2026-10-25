@@ -5,7 +5,6 @@
  * locked: a pending question or a proposed plan's Refine/Implement follow-up.
  * Approvals answer through their own buttons.
  */
-import { useCallback, useMemo } from "react";
 
 import { composerTargetKey, type ComposerThreadTarget } from "../../../composerDraftStore";
 import type { ComposerCommandItem } from "../ComposerCommandMenu";
@@ -30,14 +29,9 @@ export interface ComposerSendLock {
 export function useComposerSendLock(targetKey: string, answeringAgent: boolean): ComposerSendLock {
   const on = useComposerSendLockStore((state) => state.lockedTargetKeys[targetKey] === true);
   const locked = on && !answeringAgent;
-  const setLocked = useCallback(
-    (next: boolean) => useComposerSendLockStore.getState().setSendLocked(targetKey, next),
-    [targetKey],
-  );
-  return useMemo(
-    () => ({ on, locked, disabledReason: locked ? SEND_LOCKED_REASON : null, setLocked }),
-    [on, locked, setLocked],
-  );
+  const setLocked = (next: boolean) =>
+    useComposerSendLockStore.getState().setSendLocked(targetKey, next);
+  return { on, locked, disabledReason: locked ? SEND_LOCKED_REASON : null, setLocked };
 }
 
 /** ChatComposer's built-in slash command: `/lock`, or `/unlock` once the draft is locked. */

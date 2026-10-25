@@ -5,6 +5,7 @@ import {
   type ChatAttachment,
   ChatAttachmentId,
   CommandId,
+  ComposerContextId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -15,6 +16,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Base64 from "effect/encoding/Base64";
 import * as HttpEffect from "effect/http/HttpEffect";
 import { HttpRouter } from "effect/http";
 
@@ -94,6 +96,381 @@ const withService = <A, E>(
 };
 
 describe("CloudAttachments", () => {
+  const retryInput = {
+    threadId: ThreadId.make("expired-retry-thread"),
+    messageId: MessageId.make("expired-retry-message"),
+    attachments: [
+      {
+        type: "image" as const,
+        name: "shot.png",
+        mimeType: "image/png",
+        sizeBytes: PNG.length,
+        dataUrl: `data:image/png;base64,${Base64.encode(PNG)}`,
+      },
+    ],
+  };
+
+  it.live("keeps another owner's recreated bytes when a different layer sweeps a stale list", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const objects = makeMemoryObjects();
+        const seeded = Promise.withResolvers<void>();
+        let writes = 0;
+        const ownerObjects = {
+          ...objects,
+          put: (...args: Parameters<typeof objects.put>) => {
+            writes++;
+            return objects.put(...args);
+          },
+          list: async (...args: Parameters<typeof objects.list>) => {
+            const snapshot = await objects.list(...args);
+            seeded.resolve();
+            return snapshot;
+          },
+        };
+        const owner = Context.get(
+          yield* Layer.build(layerAttachments(ownerObjects)),
+          CloudAttachments,
+        );
+        const saved = yield* owner.persistImages(userId, retryInput);
+        yield* Effect.promise(() => seeded.promise);
+        const key = attachmentKey("", saved.attachments[0]!.id);
+        const otherUser = "user_2";
+        const sentinel = attachmentKey("", "pending-00000000-0000-4000-8000-000000000001");
+        const orphan = attachmentKey("", "pending-00000000-0000-4000-8000-000000000002");
+        yield* Effect.promise(() =>
+          objects.put(sentinel, PNG, { customMetadata: { owner: otherUser } }),
+        );
+        yield* Effect.promise(() => objects.put(orphan, PNG, { customMetadata: {} }));
+        for (const expired of [key, sentinel, orphan]) objects.age(expired, 25 * 60 * 60_000);
+        const listed = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const swept = Promise.withResolvers<void>();
+        const deleted: string[] = [];
+        const sweepingObjects = {
+          ...objects,
+          list: async (...args: Parameters<typeof objects.list>) => {
+            const snapshot = await objects.list(...args);
+            listed.resolve();
+            await release.promise;
+            return snapshot;
+          },
+          delete: async (keys: string | string[]) => {
+            deleted.push(...(typeof keys === "string" ? [keys] : keys));
+            await objects.delete(keys);
+            if (keys.includes(sentinel)) swept.resolve();
+          },
+        };
+        const sweeper = Context.get(
+          yield* Layer.build(layerAttachments(sweepingObjects)),
+          CloudAttachments,
+        );
+        yield* Effect.gen(function* () {
+          yield* sweeper.issueUpload(otherUser, {
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: PNG.length,
+          });
+          yield* Effect.promise(() => listed.promise);
+          expect(yield* owner.persistImages(userId, retryInput)).toEqual(saved);
+          expect(writes).toBe(2);
+          const open = () =>
+            owner.open({
+              userId,
+              attachmentId: saved.attachments[0]!.id,
+              canSee: () => Effect.succeed(false),
+            });
+          const before = yield* open();
+          expect(before).not.toBeNull();
+          expect(yield* bytesOf(before!.body)).toEqual(PNG);
+          release.resolve();
+          yield* Effect.promise(() => swept.promise);
+          const file = yield* open();
+          expect(file).not.toBeNull();
+          expect(yield* bytesOf(file!.body)).toEqual(PNG);
+          expect(deleted).toEqual([sentinel]);
+          expect(objects.keys()).toContain(orphan);
+          const claimed = yield* owner.claim({
+            userId,
+            threadId: retryInput.threadId,
+            commandId: "send-after-other-owner-sweep",
+            attachments: saved.attachments,
+          });
+          expect(claimed.attachments[0]?.id).toMatch(/^expired-retry-thread-/);
+        }).pipe(Effect.ensuring(Effect.sync(() => release.resolve())));
+      }),
+    ),
+  );
+
+  it.live("throttles sweeps per owner when callers share a layer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const objects = makeMemoryObjects();
+        const owners = [userId, "user_2"];
+        const keys = owners.map((_, index) =>
+          attachmentKey("", `pending-00000000-0000-4000-8000-00000000000${index}`),
+        );
+        for (const [index, owner] of owners.entries()) {
+          const key = keys[index]!;
+          yield* Effect.promise(() => objects.put(key, PNG, { customMetadata: { owner } }));
+          objects.age(key, 25 * 60 * 60_000);
+        }
+        const swept = owners.map(() => Promise.withResolvers<void>());
+        let lists = 0;
+        const tracked = {
+          ...objects,
+          list: (...args: Parameters<typeof objects.list>) => {
+            lists++;
+            return objects.list(...args);
+          },
+          delete: async (deleted: string | string[]) => {
+            await objects.delete(deleted);
+            for (const [index, key] of keys.entries()) {
+              if (deleted.includes(key)) swept[index]!.resolve();
+            }
+          },
+        };
+        const service = Context.get(
+          yield* Layer.build(layerAttachments(tracked)),
+          CloudAttachments,
+        );
+        const issue = (owner: string) =>
+          service.issueUpload(owner, {
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: PNG.length,
+          });
+        yield* issue(userId);
+        yield* Effect.promise(() => swept[0]!.promise);
+        expect(objects.keys()).toEqual([keys[1]]);
+        yield* issue(userId);
+        yield* issue("user_2");
+        yield* Effect.promise(() => swept[1]!.promise);
+        expect(lists).toBe(2);
+        expect(objects.keys()).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("recreates expired pending bytes without a delayed sweep deleting the retry", () =>
+    Effect.gen(function* () {
+      const objects = makeMemoryObjects();
+      const seeded = Promise.withResolvers<void>();
+      const seeding = {
+        ...objects,
+        list: async (...args: Parameters<typeof objects.list>) => {
+          const snapshot = await objects.list(...args);
+          seeded.resolve();
+          return snapshot;
+        },
+      };
+      const saved = yield* CloudAttachments.use((service) =>
+        service.persistImages(userId, retryInput),
+      ).pipe(Effect.provide(layerAttachments(seeding)));
+      yield* Effect.promise(() => seeded.promise);
+      const key = attachmentKey("", saved.attachments[0]!.id);
+      // This expired key makes sweep deletion observable even when the retry is fresh.
+      const sentinel = attachmentKey("", "pending-00000000-0000-4000-8000-000000000000");
+      yield* Effect.promise(() =>
+        objects.put(sentinel, PNG, { customMetadata: { owner: userId } }),
+      );
+      objects.age(key, 25 * 60 * 60_000);
+      objects.age(sentinel, 25 * 60 * 60_000);
+      const listed = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const swept = Promise.withResolvers<void>();
+      let writes = 0;
+      const gated = {
+        ...objects,
+        put: (...args: Parameters<typeof objects.put>) => {
+          writes++;
+          return objects.put(...args);
+        },
+        list: async (...args: Parameters<typeof objects.list>) => {
+          const snapshot = await objects.list(...args);
+          listed.resolve();
+          await release.promise;
+          return snapshot;
+        },
+        delete: async (keys: string | string[]) => {
+          await objects.delete(keys);
+          if (keys.includes(sentinel)) {
+            swept.resolve();
+          }
+        },
+      };
+      yield* CloudAttachments.use((service) =>
+        Effect.gen(function* () {
+          const retried = yield* service.persistImages(userId, retryInput);
+          expect(retried).toEqual(saved);
+          yield* Effect.promise(() => listed.promise);
+          release.resolve();
+          yield* Effect.promise(() => swept.promise);
+          const file = yield* service.open({
+            userId,
+            attachmentId: retried.attachments[0]!.id,
+            canSee: () => Effect.succeed(false),
+          });
+          expect({ writes, readable: file !== null }).toEqual({ writes: 1, readable: true });
+          expect(yield* bytesOf(file!.body)).toEqual(PNG);
+          const claimed = yield* service.claim({
+            userId,
+            threadId: retryInput.threadId,
+            commandId: "send-after-expired-retry",
+            attachments: retried.attachments,
+          });
+          expect(claimed.attachments[0]?.id).toMatch(/^expired-retry-thread-/);
+        }).pipe(Effect.ensuring(Effect.sync(() => release.resolve()))),
+      ).pipe(Effect.provide(layerAttachments(gated)));
+    }),
+  );
+
+  it.live("reuses pending bytes near expiry without risking another write", () =>
+    Effect.gen(function* () {
+      const objects = makeMemoryObjects();
+      const saved = yield* CloudAttachments.use((service) =>
+        service.persistImages(userId, retryInput),
+      ).pipe(Effect.provide(layerAttachments(objects)));
+      objects.age(attachmentKey("", saved.attachments[0]!.id), 23 * 60 * 60_000 + 59 * 60_000);
+      let writes = 0;
+      const failing = {
+        ...objects,
+        put: async () => {
+          writes++;
+          throw new Error("test retry write must not happen");
+        },
+      };
+      yield* CloudAttachments.use((service) =>
+        Effect.gen(function* () {
+          expect(yield* service.persistImages(userId, retryInput)).toEqual(saved);
+          expect(writes).toBe(0);
+          const file = yield* service.open({
+            userId,
+            attachmentId: saved.attachments[0]!.id,
+            canSee: () => Effect.succeed(false),
+          });
+          expect(file).not.toBeNull();
+          expect(yield* bytesOf(file!.body)).toEqual(PNG);
+        }),
+      ).pipe(Effect.provide(layerAttachments(failing)));
+    }),
+  );
+
+  it.effect("preserves successful pending bytes when a later retry cannot read storage", () => {
+    const objects = makeMemoryObjects();
+    let reads = 0;
+    let writes = 0;
+    const failing = {
+      ...objects,
+      put: (...args: Parameters<typeof objects.put>) => {
+        writes++;
+        return objects.put(...args);
+      },
+      head: async (key: string) => {
+        if (++reads === 3) throw new Error("test retry lookup failure");
+        return objects.head(key);
+      },
+    };
+    return CloudAttachments.use((service) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("successful-retry-thread");
+        const input = {
+          threadId,
+          messageId: MessageId.make("successful-retry-message"),
+          attachments: [
+            {
+              type: "image" as const,
+              name: "shot.png",
+              mimeType: "image/png",
+              sizeBytes: PNG.length,
+              dataUrl: `data:image/png;base64,${Base64.encode(PNG)}`,
+            },
+          ],
+        };
+        const results = yield* Effect.all(
+          [
+            Effect.result(service.persistImages(userId, input)),
+            Effect.result(service.persistImages(userId, input)),
+          ],
+          { concurrency: 2 },
+        );
+        const saved = results[0];
+        if (saved._tag !== "Success") throw new Error("first request should succeed");
+        expect(results[1]._tag).toBe("Failure");
+        expect(writes).toBe(1);
+        const file = yield* service.open({
+          userId,
+          attachmentId: saved.success.attachments[0]!.id,
+          canSee: () => Effect.succeed(false),
+        });
+        expect(file).not.toBeNull();
+        expect(yield* bytesOf(file!.body)).toEqual(PNG);
+        const claimed = yield* service.claim({
+          userId,
+          threadId,
+          commandId: "send-after-retry",
+          attachments: saved.success.attachments,
+        });
+        expect(claimed.attachments[0]?.id).toMatch(/^successful-retry-thread-/);
+      }),
+    ).pipe(Effect.provide(layerAttachments(failing)));
+  });
+
+  it.effect("keeps a successful retry's pending bytes when another write fails", () => {
+    const objects = makeMemoryObjects();
+    let writes = 0;
+    let writing = 0;
+    let maximumWriting = 0;
+    const failing = {
+      ...objects,
+      put: async (...args: Parameters<typeof objects.put>) => {
+        const attempt = ++writes;
+        maximumWriting = Math.max(maximumWriting, ++writing);
+        try {
+          await objects.put(...args);
+          if (attempt === 1) throw new Error("test storage failure");
+        } finally {
+          writing--;
+        }
+      },
+    };
+    return CloudAttachments.use((service) =>
+      Effect.gen(function* () {
+        const input = {
+          threadId: ThreadId.make("retry-thread"),
+          messageId: MessageId.make("retry-message"),
+          attachments: [
+            {
+              type: "image" as const,
+              name: "shot.png",
+              mimeType: "image/png",
+              sizeBytes: PNG.length,
+              dataUrl: `data:image/png;base64,${Base64.encode(PNG)}`,
+            },
+          ],
+        };
+        const results = yield* Effect.all(
+          [
+            Effect.result(service.persistImages(userId, input)),
+            Effect.result(service.persistImages(userId, input)),
+          ],
+          { concurrency: 2 },
+        );
+        expect(maximumWriting).toBe(1);
+        expect(results[0]._tag).toBe("Failure");
+        const saved = results[1];
+        if (saved._tag !== "Success") throw new Error("retry should succeed");
+        const file = yield* service.open({
+          userId,
+          attachmentId: saved.success.attachments[0]!.id,
+          canSee: () => Effect.succeed(false),
+        });
+        expect(file).not.toBeNull();
+        expect(yield* bytesOf(file!.body)).toEqual(PNG);
+      }),
+    ).pipe(Effect.provide(layerAttachments(failing)));
+  });
+
   it.effect("stores an upload only with exactly the bytes its URL promised", () =>
     withService((service, objects) =>
       Effect.gen(function* () {
@@ -137,7 +514,7 @@ describe("CloudAttachments", () => {
         const sent = yield* claim(userId, threadId, [shot]);
         const claimed = sent.attachments[0]!;
         expect(claimed.id.startsWith(`${threadSegment(threadId)}-`)).toBe(true);
-        // A retried command writes the same copy again, under the same id.
+        // A retried command keeps the same copy and id.
         expect((yield* claim(userId, threadId, [shot])).attachments).toEqual([claimed]);
         // The thread's own attachment passes as stored; a made-up one of the thread doesn't.
         expect((yield* claim(userId, threadId, [claimed])).attachments).toEqual([claimed]);
@@ -180,6 +557,18 @@ describe("CloudAttachments", () => {
         yield* service.deletePending(userId, another.id);
         yield* service.deletePending(userId, claimed.id);
         expect(objects.keys()).toEqual([attachmentKey("", claimed.id)]);
+        const replay = yield* claim(userId, threadId, [shot]);
+        expect(replay.attachments).toEqual([claimed]);
+        yield* replay.release;
+        expect(objects.keys()).toEqual([attachmentKey("", claimed.id)]);
+        expect((yield* claim("user_2", threadId, [shot]).pipe(Effect.flip))._tag).toBe(
+          "AttachmentRejectedError",
+        );
+        expect(
+          (yield* claim(userId, threadId, [{ ...shot, sizeBytes: PNG.length + 1 }]).pipe(
+            Effect.flip,
+          ))._tag,
+        ).toBe("AttachmentRejectedError");
       }),
     ),
   );
@@ -393,7 +782,7 @@ describe("links to sent attachments", () => {
 });
 
 describe("the machine's attachments", () => {
-  it.effect("serves a thread's attachments to its machine, and nothing else", () =>
+  it.effect("serves legacy persisted images before and after replacing the machine", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const objects = makeMemoryObjects();
@@ -401,12 +790,30 @@ describe("the machine's attachments", () => {
         const engine = Context.get(context, ThreadEngine.ThreadEngine);
         const runner = Context.get(context, ThreadRunner.ThreadRunner);
         const threadId = ThreadId.make("thread-machine");
-        const id = ChatAttachmentId.make(
-          `${threadSegment(threadId)}-0b6f6c2e-4d3c-4b8f-9f55-2f4b1d1e9a10`,
-        );
-        yield* Effect.promise(() =>
-          objects.put(attachmentKey("", id), PNG, { customMetadata: { mime: "image/png" } }),
-        );
+        const persisted = yield* CloudAttachments.use((attachments) =>
+          attachments.persistImages(userId, {
+            threadId,
+            messageId: MessageId.make("message-1"),
+            attachments: [
+              {
+                type: "image",
+                name: "shot.png",
+                mimeType: "image/png",
+                sizeBytes: PNG.length,
+                dataUrl: `data:image/png;base64,${Base64.encode(PNG)}`,
+              },
+            ],
+          }),
+        ).pipe(Effect.provide(layerAttachments(objects)));
+        const claimed = yield* CloudAttachments.use((attachments) =>
+          attachments.claim({
+            userId,
+            threadId,
+            commandId: "launch-1",
+            attachments: persisted.attachments,
+          }),
+        ).pipe(Effect.provide(layerAttachments(objects)));
+        const id = claimed.attachments[0]!.id;
         yield* engine.launch(
           actor,
           {
@@ -472,7 +879,275 @@ describe("the machine's attachments", () => {
         expect(yield* bytesOf(file.body!)).toEqual(PNG);
         expect((yield* call(`${SESSION_PATHS.attachments}/thread-other-x`)).status).toBe(404);
         expect((yield* call(SESSION_PATHS.attachments, "sbs1.x.y")).status).toBe(403);
+        yield* runner.ended(plan.ensure.generation, "test machine stopped");
+        yield* engine.dispatch(
+          actor,
+          {
+            type: "message.dispatch",
+            commandId: CommandId.make("resume-message"),
+            createdBy: "user",
+            creationSource: "web",
+            threadId,
+            messageId: MessageId.make("message-2"),
+            text: "Look again",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+          },
+          {
+            place: { contextId: PERSONAL_CONTEXT_ID, driveId: "my/personal/user_1" },
+            pools: { top: PERSONAL_POOL_ID, projects: {} },
+          },
+        );
+        const replacement = yield* runner.reconcile;
+        if (replacement.ensure === null) throw new Error("expected a replacement machine");
+        yield* runner.hello({
+          type: "hello",
+          protocolVersion: RUNNER_PROTOCOL_VERSION,
+          imageVersion: "test",
+          machineId: "machine-2",
+          threadId,
+          generation: replacement.ensure.generation,
+          token: replacement.ensure.token,
+          lastAckedSequence: 0,
+        });
+        const resumedToken = (yield* runner.work).sessions?.token ?? "";
+        const resumed = yield* call(`${SESSION_PATHS.attachments}/${id}`, resumedToken);
+        expect(resumed.status).toBe(200);
+        expect(yield* bytesOf(resumed.body!)).toEqual(PNG);
       }),
     ),
+  );
+});
+
+describe("editing queued attachments", () => {
+  it.effect(
+    "claims replacement uploads, remaps context, preserves omitted fields and clears explicit attachments",
+    () =>
+      Effect.gen(function* () {
+        const cloud = makeMemoryCloud();
+        const layer = cloud.layerPersonal(userId);
+        const threads = yield* CloudThreadService.CloudThreadService.pipe(Effect.provide(layer));
+        const attachments = yield* CloudAttachments.pipe(Effect.provide(layer));
+        const threadId = ThreadId.make("queue-attachments");
+        yield* threads.launchThread(actor, {
+          commandId: CommandId.make("queue-launch"),
+          threadId,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Queued attachments",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: { text: "Live", attachments: [] },
+        });
+        yield* threads.dispatchCommand(actor, {
+          type: "message.dispatch",
+          commandId: CommandId.make("queue-send"),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          messageId: MessageId.make("queued-message"),
+          text: "Later",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const queued = (yield* threads.threadSnapshot(actor, threadId)).projection.runs[1]!;
+        const shot = yield* upload(attachments, userId, PNG);
+        const command = {
+          type: "queued-run.edit" as const,
+          commandId: CommandId.make("queue-edit-attachments"),
+          threadId,
+          runId: queued.id,
+          text: "Check [context:image:shot]",
+          attachments: [shot],
+          context: {
+            version: 1 as const,
+            records: [
+              {
+                version: 1 as const,
+                contextId: ComposerContextId.make("shot"),
+                kind: "image" as const,
+                label: shot.name,
+                attachmentId: shot.id,
+                name: shot.name,
+                mimeType: shot.mimeType,
+                sizeBytes: shot.sizeBytes,
+              },
+            ],
+          },
+        };
+        const edited = yield* threads.dispatchCommand(actor, command);
+        expect(yield* threads.dispatchCommand(actor, command)).toEqual(edited);
+        yield* attachments.deletePending(userId, shot.id);
+        expect(yield* threads.dispatchCommand(actor, command)).toEqual(edited);
+        const saved = (yield* threads.threadSnapshot(actor, threadId)).projection.messages.find(
+          (message) => message.id === "queued-message",
+        )!;
+        const kept = saved.attachments[0]!;
+        expect(kept.id).not.toBe(shot.id);
+        expect(cloud.attachmentObjects.keys()).toContain(attachmentKey("", kept.id));
+        expect(saved.context?.records[0]).toMatchObject({ attachmentId: kept.id });
+        yield* threads.dispatchCommand(actor, {
+          type: "queued-run.edit",
+          commandId: CommandId.make("queue-text-only"),
+          threadId,
+          runId: queued.id,
+          text: "Text only",
+        });
+        const textOnly = (yield* threads.threadSnapshot(actor, threadId)).projection.messages.find(
+          (message) => message.id === saved.id,
+        )!;
+        expect(textOnly.attachments).toEqual(saved.attachments);
+        expect(textOnly.context).toEqual(saved.context);
+        // Existing sent attachments pass ownership checks and keep stored metadata.
+        yield* threads.dispatchCommand(actor, {
+          type: "queued-run.edit",
+          commandId: CommandId.make("queue-keep-sent"),
+          threadId,
+          runId: queued.id,
+          text: "Still attached",
+          attachments: saved.attachments,
+        });
+        yield* cloud.settle;
+        const delivered = (yield* threads.threadSnapshot(
+          actor,
+          threadId,
+        )).projection.turnItems.find(
+          (item) => item.type === "user_message" && item.messageId === saved.id,
+        );
+        expect(delivered).toMatchObject({
+          type: "user_message",
+          text: "Still attached",
+          attachments: saved.attachments,
+          context: saved.context,
+        });
+      }),
+  );
+
+  it.effect(
+    "rejects foreign and missing attachments, releases refused copies and keeps old message bytes",
+    () =>
+      Effect.gen(function* () {
+        const cloud = makeMemoryCloud();
+        const layer = cloud.layerPersonal(userId);
+        const threads = yield* CloudThreadService.CloudThreadService.pipe(Effect.provide(layer));
+        const attachments = yield* CloudAttachments.pipe(Effect.provide(layer));
+        const threadId = ThreadId.make("queue-attachment-refusals");
+        yield* threads.launchThread(actor, {
+          commandId: CommandId.make("refusal-launch"),
+          threadId,
+          projectId: Environment.SCRATCH_PROJECT_ID,
+          title: "Refusals",
+          modelSelection: scriptedModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "root" },
+          initialMessage: { text: "Live", attachments: [] },
+        });
+        const old = yield* upload(attachments, userId, PNG);
+        yield* threads.dispatchCommand(actor, {
+          type: "message.dispatch",
+          commandId: CommandId.make("queue-old"),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          messageId: MessageId.make("old-message"),
+          text: "Keep me",
+          attachments: [old],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const before = yield* threads.threadSnapshot(actor, threadId);
+        const runId = before.projection.runs[1]!.id;
+        const foreign = yield* upload(attachments, "user_2", PNG);
+        const crossThread = yield* attachments.claim({
+          userId,
+          threadId: "other-thread",
+          commandId: "other-send",
+          attachments: [old],
+        });
+        const missing = {
+          ...old,
+          id: ChatAttachmentId.make("pending-00000000-0000-0000-0000-000000000000"),
+        };
+        for (const [n, replacement] of [foreign, crossThread.attachments[0]!, missing].entries()) {
+          expect(
+            (yield* threads
+              .dispatchCommand(actor, {
+                type: "queued-run.edit",
+                commandId: CommandId.make(`foreign-${n}`),
+                threadId,
+                runId,
+                text: "Must not land",
+                attachments: [replacement],
+              })
+              .pipe(Effect.flip))._tag,
+          ).toBe("ThreadCommandRejectedError");
+        }
+        expect((yield* threads.threadSnapshot(actor, threadId)).projection).toEqual(
+          before.projection,
+        );
+        const replacement = yield* upload(attachments, userId, PNG);
+        const keys = cloud.attachmentObjects.keys().toSorted();
+        const empty = yield* threads
+          .dispatchCommand(actor, {
+            type: "queued-run.edit",
+            commandId: CommandId.make("empty-edit"),
+            threadId,
+            runId,
+            text: "  ",
+            attachments: [replacement],
+          })
+          .pipe(Effect.flip);
+        expect(empty._tag).toBe("ThreadCommandRejectedError");
+        expect(cloud.attachmentObjects.keys().toSorted()).toEqual(keys);
+        const cleared = yield* threads.dispatchCommand(actor, {
+          type: "queued-run.edit",
+          commandId: CommandId.make("clear-attachments"),
+          threadId,
+          runId,
+          text: "Cleared",
+          attachments: [],
+          context: { version: 1, records: [] },
+        });
+        expect(cleared.sequence).toBeGreaterThan(before.snapshotSequence);
+        const afterClear = yield* threads.threadSnapshot(actor, threadId);
+        expect(
+          afterClear.projection.messages.find((message) => message.id === "old-message"),
+        ).toMatchObject({ attachments: [], context: { version: 1, records: [] } });
+        // Historical message events still refer to these bytes, so edits never delete them.
+        expect(cloud.attachmentObjects.keys()).toContain(
+          attachmentKey(
+            "",
+            before.projection.messages.find((message) => message.id === "old-message")!
+              .attachments[0]!.id,
+          ),
+        );
+        yield* threads.dispatchCommand(actor, {
+          type: "queued-run.cancel",
+          commandId: CommandId.make("cancel-before-edit"),
+          threadId,
+          runId,
+        });
+        const staleKeys = cloud.attachmentObjects.keys().toSorted();
+        const stale = {
+          type: "queued-run.edit" as const,
+          commandId: CommandId.make("stale-with-upload"),
+          threadId,
+          runId,
+          text: "Too late",
+          attachments: [replacement],
+        };
+        expect((yield* threads.dispatchCommand(actor, stale).pipe(Effect.flip))._tag).toBe(
+          "ThreadCommandRejectedError",
+        );
+        expect((yield* threads.dispatchCommand(actor, stale).pipe(Effect.flip))._tag).toBe(
+          "ThreadCommandRejectedError",
+        );
+        expect(cloud.attachmentObjects.keys().toSorted()).toEqual(staleKeys);
+        expect((yield* threads.threadSnapshot(actor, threadId)).projection.messages).toEqual(
+          afterClear.projection.messages,
+        );
+      }),
   );
 });

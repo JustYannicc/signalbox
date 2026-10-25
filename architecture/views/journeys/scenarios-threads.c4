@@ -1,0 +1,1098 @@
+// Scenario shard 08: threads (SCN-170 to SCN-191).
+// Moves, forks, folder moves, lifecycle and multiplayer in one shared thread.
+// Everything resolves by the hierarchy only; a move changes the home, so the next turn
+// runs on the new home's chain. The Thread actor is the single writer of each thread.
+global {
+  styleGroup scn08Lanes {
+    style signalbox {
+      color muted
+      opacity 8%
+    }
+    style personA, personB, personC {
+      color green
+    }
+  }
+}
+
+views {
+
+  // ─── Scenarios / Threads / Moves ────────────────────────────────────────
+
+  dynamic view scn_170_moves_private_chat_out_of_company {
+    #decided
+    variant sequence
+    title 'Scenarios/Threads/Moves/Private Chat Out Of Company'
+    description "Can A move a private chat A started in folder Company to Personal? Decided: #225 §7 (2026-10-14) and #271 (2026-10-15): the author may move own untouched private chats out; the confirm names the Company sources; the next turn runs on Personal's pool and writes Personal's drive. #270 (2026-10-16) dropped the deadline. Usage stays where it happened (A21). SCN-170 · v1 no."
+
+    include personA, personC, signalbox.web, signalbox.operations, signalbox.thread, signalbox.tree, signalbox.drive, signalbox.search, signalbox.gateway.modelGateway
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Move to Personal' {
+      notes '''
+        - **Start:** A's private chat sits in folder Company (via A's mount), on Company's pool and drive.
+        - A opens Thread details and picks Move → Personal.
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Move request' {
+      navigateTo work_threads_lifecycle_move_across
+      notes '''
+        - Checks: A is the author, the chat is private, nobody else posted.
+        - **Decided (#271):** only the author's own untouched private chats move out.
+      '''
+    }
+    signalbox.operations -> signalbox.tree 'Owner at Personal?' {
+      notes '- A must hold Owner at Personal, the destination.'
+    }
+    signalbox.web <- signalbox.operations 'Confirm with sources' {
+      notes '- The confirm lists the Company sources and connections the chat used.'
+    }
+    personA -> signalbox.web 'Confirms'
+    signalbox.operations -> signalbox.thread 'Commit moved' {
+      notes '''
+        - `moved{from, to}`; `via` comes from A's own tree (none for Personal).
+        - The access epoch bumps.
+      '''
+    }
+    parallel {
+      signalbox.thread -> signalbox.tree 'Swap catalog rows' {
+        navigateTo folders_placement_move_thread
+        notes '- The row leaves Company and appears in Personal.'
+      }
+      signalbox.thread -> signalbox.search 'Reindex to A root' {
+        navigateTo work_search_move
+        notes "- Across owners: into A's owner root, out of Company's."
+      }
+      signalbox.thread -> signalbox.drive 'Move ref and WIP' {
+        navigateTo work_threads_lifecycle_move_within
+        notes '''
+          - A pointer change into Personal's drive.
+          - A `Conflict` leaves the old fork read-only until resolved.
+        '''
+      }
+    }
+    signalbox.tree -> personC 'Metadata row gone' {
+      notes '''
+        - C only ever saw the metadata row; now it is gone from Company.
+        - B was never involved and never saw it.
+      '''
+    }
+    signalbox.thread -> signalbox.gateway.modelGateway 'Next turn: Personal pool' {
+      notes '''
+        - **End:** the chat sits in Personal with full history, runs on Personal's chain, writes Personal's drive.
+        - Usage already billed to Company's pool stays there (A21).
+      '''
+    }
+  }
+
+  dynamic view scn_173_moves_thread_within_one_tree {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Moves/Within One Tree'
+    description "What happens when A moves a thread from Personal › Research to Personal › Writing? Decided for the chain: #227 (2026-10-14/15), #225 §2: every thread runs on its home's chain from the next turn. Assumption for files: they follow the new home through the rebase saga, pending #541. Why: #496 (2026-10-15) is later than #227's note and matches one home, runs on its chain (A5). SCN-173 · v1 no."
+
+    include personA, signalbox.web, signalbox.thread, signalbox.tree, signalbox.drive, signalbox.search, signalbox.gateway.modelGateway
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Drag onto Writing' {
+      notes '''
+        - **Start:** the thread sits at Personal › Research.
+        - Drag, or Move to… in Thread details.
+      '''
+    }
+    signalbox.web -> signalbox.thread 'Move to Writing'
+    signalbox.thread -> signalbox.thread 'Commit moved' {
+      navigateTo work_threads_lifecycle_move_within
+      notes '- Same owner: `via` is kept; the access epoch bumps.'
+    }
+    parallel {
+      signalbox.thread -> signalbox.tree 'Both catalogs' {
+        notes '- Research drops the row, Writing adds it.'
+      }
+      signalbox.thread -> signalbox.search 'Path in place' {
+        navigateTo work_search_move
+        notes '- Same owner root: no reindex, just the path.'
+      }
+      signalbox.thread -> signalbox.drive 'Rebase saga' {
+        notes '''
+          - **Assumption (pending #541):** files follow the home.
+          - Ref and WIP move into Writing's drive as a pointer change.
+        '''
+      }
+    }
+    alt 'rebase result' {
+      when 'clean' {
+        signalbox.thread <- signalbox.drive 'Ref in Writing'
+      }
+      else 'Conflict' {
+        signalbox.thread <- signalbox.drive 'Old fork read-only' {
+          notes '- A resolves the conflict; nothing is lost.'
+        }
+      }
+    }
+    signalbox.thread -> signalbox.tree 'Resolve next turn' {
+      navigateTo folders_placement_move_thread
+      notes '''
+        - **Decided (#227):** nearest wins on Writing's chain: pool, AGENTS.md, connections.
+        - Pins and loans clear.
+      '''
+    }
+    signalbox.thread -> signalbox.gateway.modelGateway "Writing's pool" {
+      notes '''
+        - **End:** the thread runs on Writing's chain with its files in Writing's drive.
+        - Usage rows already written stay where they happened.
+      '''
+    }
+  }
+
+  dynamic view scn_174_move_shared_thread_out_refused {
+    #decided
+    variant sequence
+    title 'Scenarios/Threads/Moves/Shared Move Refused'
+    description "Can A move a shared thread, or a thread B started or posted in, out of folder Company? Decided: #271 acceptance (shared threads and threads someone else started can't be moved this way) and #270 (2026-10-16: work in a folder owned by an organization belongs to it). SCN-174 · v1 no."
+
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.thread
+    include signalbox
+    global style scn08Lanes
+
+    personB -> signalbox.thread 'Starts or posts' {
+      notes '''
+        - **Start:** a thread in folder Company that is shared with Company members, or B started it, or B posted in A's private chat.
+      '''
+    }
+    personA -> signalbox.web 'Move to Personal'
+    signalbox.web -> signalbox.operations 'Move request' {
+      navigateTo work_threads_lifecycle_move_across
+    }
+    signalbox.operations -> signalbox.thread 'Author · visibility · posters'
+    signalbox.operations <- signalbox.thread 'Not A own untouched chat'
+    signalbox.web <- signalbox.operations 'Refused with reason' {
+      notes '''
+        - "Shared threads and threads someone else started stay with the folder."
+        - **Decided (#271, #270).**
+      '''
+    }
+    opt 'A wants a private copy' {
+      personA -> signalbox.web 'Fork privately' {
+        navigateTo work_threads_multiplayer_make_private
+        notes '''
+          - The fork stays in folder Company, beside its parent.
+          - **End:** no `moved` event, no epoch bump; catalogs and Search unchanged.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_175_thread_moved_while_watched {
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Moves/Moved While Watched'
+    description "What does B see when C moves a shared thread B is reading into a folder B can't open? Assumption: B loses the live view on the epoch bump, and the sidebar row and search results with it; the mover sees who loses access before confirming. Why: design §2.3 Move thread; #225 §7 access carries over only for members of the new home; #334/#860 stale index copies fail the authoritative check. SCN-175 · v1 no."
+
+    include personC, personB, personA, signalbox.web, signalbox.mobile, signalbox.operations, signalbox.thread, signalbox.tree, signalbox.search
+    include signalbox
+    global style scn08Lanes
+
+    personB -> signalbox.mobile 'Reads live' {
+      notes "- **Start:** B watches a shared thread in folder Team. B has no role at folder Finance."
+    }
+    personC -> signalbox.web 'Move to Finance' {
+      notes '- C (admin of folder Company) moves it to folder Company › folder Finance.'
+    }
+    signalbox.web -> signalbox.operations 'Roles at both ends'
+    signalbox.web <- signalbox.operations 'Preview: B loses access' {
+      notes '- **Assumption:** the access preview names B before C confirms.'
+    }
+    personC -> signalbox.web 'Confirms'
+    signalbox.operations -> signalbox.thread 'Commit moved' {
+      notes '- Same owner: `via` kept; the access epoch bumps.'
+    }
+    signalbox.thread -> signalbox.mobile 'Socket dropped' {
+      navigateTo work_threads_multiplayer_live
+      notes '''
+        - B's socket fails the re-check at once.
+        - B sees "Moved somewhere you can't open".
+      '''
+    }
+    parallel {
+      signalbox.thread -> signalbox.tree 'Team and Finance rows' {
+        navigateTo folders_tree_home
+        notes "- B's row disappears through the per-level shards."
+      }
+      signalbox.thread -> signalbox.search 'Path in place' {
+        navigateTo work_search_access_change
+        notes "- Any stale copy on B's client fails the authoritative check."
+      }
+    }
+    signalbox.tree -> personA 'Still listed' {
+      notes '''
+        - **End:** A (member of Finance) keeps the thread.
+        - What B already saw stays in B's memory only; nothing new reaches B.
+      '''
+    }
+  }
+
+  dynamic view scn_176_moved_thread_with_loans_and_asks {
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Moves/Loans And Asks Move'
+    description "What happens to loans, pool pins and open asks when their thread moves? Assumption: thread-scoped loans and pins end at the next turn's resolve and must be re-lent with consent; open asks are not withdrawn, only re-projected on each recipient's chain. Why: design §2.3 Move thread (pins and loans clear at the next turn's resolve), the binding loan rule (revocable, destination accepts the kind), A41. SCN-176 · v1 no."
+
+    include personB, personA, signalbox.thread, signalbox.tree, signalbox.gateway, signalbox.attention
+    include signalbox
+    global style scn08Lanes
+
+    alt 'who moves what' {
+      when 'B moves a Team thread' {
+        personB -> signalbox.thread 'Move to Company' {
+          notes '''
+            - **Start:** B lent a personal connection into the thread and pinned a pool.
+            - It moves from folder Team to folder Company.
+          '''
+        }
+      }
+      else 'A moves a Personal thread' {
+        personA -> signalbox.thread 'Move into Company' {
+          notes '''
+            - **Start:** the thread has an open Blocker for A.
+            - Filed with `via` from A's own mount.
+          '''
+        }
+      }
+    }
+    signalbox.thread -> signalbox.thread 'Finish turn, bump epoch' {
+      notes '- The running turn finishes on its old Scope.'
+    }
+    signalbox.thread -> signalbox.tree 'Resolve next turn' {
+      navigateTo folders_placement_move_thread
+      notes '''
+        - **Assumption:** the thread-scoped loan and the pool pin clear here.
+        - Nearest wins on the new chain.
+      '''
+    }
+    opt 'a tool needs the lent connection' {
+      signalbox.thread -> signalbox.gateway 'Call lent tool'
+      signalbox.thread <- signalbox.gateway 'No grant here'
+      signalbox.thread -> signalbox.attention 'Place-or-Lend ask' {
+        navigateTo work_approvals_access_place_lend
+      }
+      personB -> signalbox.tree 'Re-lend with consent' {
+        navigateTo folders_lending_lend
+        notes '- Only if the destination accepts that kind of thing.'
+      }
+    }
+    signalbox.thread -> signalbox.attention 'Ask stays open' {
+      navigateTo work_threads_multiplayer_ask_routing
+      notes '- A move never withdraws an ask; it only re-projects it.'
+    }
+    signalbox.attention -> personA 'Re-projected ask' {
+      navigateTo person_notifications_route_ping
+      notes '''
+        - **End:** `area` becomes work via A's mount.
+        - Devices homed at Personal stop covering it; Company's devices for A start.
+      '''
+    }
+  }
+
+  dynamic view scn_190_moved_thread_files_follow {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Moves/Files Follow'
+    description "When A moves a thread from Personal into folder Company, do its files follow? Assumption: yes, files follow the home (option 1), pending #541. Why: #225 §2 one home runs on its chain; #496 (2026-10-15) is later than #227's note (A5); it keeps #271's moved chats out of Company's files. The move with access preview is decided (#227/#119, 2026-10-15). SCN-190 · v1 no."
+
+    include personA, personC, signalbox.web, signalbox.tree, signalbox.thread, signalbox.drive, signalbox.attention, signalbox.gateway.modelGateway
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Move into Company' {
+      notes "- **Start:** the thread writes Personal's drive."
+    }
+    signalbox.web -> signalbox.tree 'Access preview'
+    signalbox.web <- signalbox.tree 'What becomes visible' {
+      notes '- **Decided (#227/#119):** the move shows its access preview first.'
+    }
+    signalbox.web -> signalbox.thread 'Commit moved' {
+      navigateTo work_threads_lifecycle_move_across
+      notes "- `via` from A's mount; the access epoch bumps."
+    }
+    signalbox.thread -> signalbox.drive 'Rebase onto Company' {
+      navigateTo work_drive_thread_fork
+      notes '''
+        - **Assumption (pending #541):** files follow the home.
+        - A pointer change over shared objects; nothing is copied.
+      '''
+    }
+    alt 'rebase result' {
+      when 'clean' {
+        signalbox.thread <- signalbox.drive "Fork of Company's drive"
+      }
+      else 'Conflict' {
+        signalbox.drive -> signalbox.attention 'Blocker for A' {
+          notes '- The old fork stays read-only until A resolves it.'
+        }
+        signalbox.attention -> personA 'Resolve conflict'
+      }
+    }
+    signalbox.thread -> signalbox.gateway.modelGateway "Next turn: Company's pool" {
+      notes "- Company's pool and AGENTS.md from the next turn."
+    }
+    signalbox.thread -> signalbox.drive 'Writes its fork'
+    opt 'someone accepts the work' {
+      personC -> signalbox.drive 'Accept into main' {
+        navigateTo work_drive_accept
+        notes "- **End:** nothing lands in Company's `main` until someone accepts it."
+      }
+    }
+  }
+
+  // ─── Scenarios / Threads / Forks ────────────────────────────────────────
+
+  dynamic view scn_172_forks_shared_thread_privately {
+    #decided
+    variant sequence
+    title 'Scenarios/Threads/Forks/Fork Privately'
+    description "Can B fork a shared thread privately and move the copy to Personal? Decided: #225 §2/§3 (2026-10-14): forks live where their parent lives, anyone who can read may fork privately; #242, #244, #804 (2026-10-17) exact checkpoint; #546 and the ledger: forks can't move alone. #878 finding 9 (author-movable forks) is not adopted, pending #878. SCN-172 · v1 no."
+
+    include personB, personA, personC, signalbox.web, signalbox.thread, signalbox.tree, signalbox.drive
+    include signalbox
+    global style scn08Lanes
+
+    personB -> signalbox.web 'Fork privately' {
+      notes '''
+        - **Start:** a thread in folder Company, shared with Company members; A wrote it.
+        - Any reader may fork privately.
+      '''
+    }
+    signalbox.web -> signalbox.thread 'Fork at checkpoint' {
+      notes '- The exact turn checkpoint (#804).'
+    }
+    signalbox.thread -> signalbox.thread 'Create private copy' {
+      navigateTo work_threads_multiplayer_make_private
+      notes '''
+        - "<title> (copy)", author B, private, lineage "Private copy of <original>".
+        - No broadened permissions.
+      '''
+    }
+    signalbox.thread -> signalbox.tree "Parent's home" {
+      notes "- Home is folder Company with the parent's `via`; it resolves on Company's chain."
+    }
+    signalbox.thread -> signalbox.drive 'Ref at checkpoint' {
+      navigateTo work_drive_thread_fork
+      notes '- A new ref at the pinned checkpoint; no objects copied.'
+    }
+    personB -> signalbox.web 'Move copy to Personal'
+    signalbox.web -> signalbox.thread 'Move fork'
+    signalbox.web <- signalbox.thread 'Refused: move the root' {
+      navigateTo work_threads_lifecycle_move_within
+      notes '- **Decided (#546):** forks move only with their root.'
+    }
+    opt 'B wants it in Personal anyway' {
+      personB -> signalbox.tree 'File a reference' {
+        navigateTo folders_tree_reference
+        notes '- A reference under Personal grants nothing; the copy stays in Company.'
+      }
+    }
+    parallel {
+      signalbox.tree -> personA 'Metadata row'
+      signalbox.tree -> personC 'Metadata row' {
+        notes '- **End:** A and C see the fork only as a metadata row; the original is untouched.'
+      }
+    }
+  }
+
+  dynamic view scn_177_moves_child_thread_alone {
+    #decided
+    variant sequence
+    title 'Scenarios/Threads/Forks/Child Moves Alone'
+    description "Can a subagent or a fork move on its own? Decided: #225 §2 (2026-10-14), #546 and the ledger: subagents and forks inherit the root's home, can't move alone, and move with the root. A fork author who can't read the new home loses the fork; #878 finding 9 (author-movable forks) is not adopted, pending #878. SCN-177 · v1 no."
+
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.thread, signalbox.tree
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Move root to Company' {
+      notes '''
+        - **Start:** A's root thread in folder Team has subagents and B's private fork.
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Preview move'
+    signalbox.web <- signalbox.operations 'Fork authors losing access' {
+      notes "- B is listed if B can't read folder Company."
+    }
+    signalbox.operations -> signalbox.thread 'Move whole lineage' {
+      navigateTo work_threads_lifecycle_move_within
+      notes "- Subagents and forks get the new home and the root's `via`."
+    }
+    signalbox.thread -> signalbox.tree 'Catalog rows'
+    alt 'someone moves one child' {
+      when 'A moves a subagent' {
+        personA -> signalbox.web 'Move subagent'
+      }
+      else 'B moves the fork' {
+        personB -> signalbox.web 'Move my fork'
+      }
+    }
+    signalbox.web -> signalbox.operations 'Move child'
+    signalbox.web <- signalbox.operations 'Refused: move the root' {
+      notes '- **Decided (#546):** the refusal points at the root.'
+    }
+    personA -> signalbox.web 'Thread details' {
+      navigateTo journey_threads_details
+      notes '- **End:** "Home: folder Company, as a subagent" (or "as a fork").'
+    }
+  }
+
+  // ─── Scenarios / Threads / FolderMoves ──────────────────────────────────
+
+  dynamic view scn_178_moves_personal_folder_into_company {
+    #decided
+    variant sequence
+    title 'Scenarios/Threads/FolderMoves/Into Company'
+    description "What happens when A moves Personal › folder Side Work into folder Company? Decided: #225 §7 (2026-10-14), #232: Owner/Admin on it and Member+ at the destination; history moves; new chain from the next turn; lends stay until withdrawn; access carries over only for members of the new home. SCN-178 · v1 no."
+
+    include personA, personC, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.search, signalbox.gateway.modelGateway
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Move to Company' {
+      notes '''
+        - **Start:** folder Side Work (owner: A); A invited a friend, Person D, who is not in Company.
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Check roles' {
+      notes '- Owner/Admin on Side Work, Member+ at folder Company.'
+    }
+    signalbox.web <- signalbox.operations 'Preview: D loses access' {
+      notes '- Access carries over only for members of the new home.'
+    }
+    personA -> signalbox.web 'Confirms'
+    signalbox.operations -> signalbox.tree 'Re-parent folder' {
+      navigateTo folders_tree_move_across
+      notes '''
+        - The owner becomes the organization.
+        - `via` comes from A's own mount.
+      '''
+    }
+    parallel {
+      signalbox.tree -> signalbox.search 'Reindex to Company root' {
+        navigateTo work_search_move
+      }
+      signalbox.tree -> signalbox.thread 'Next turn: Company chain' {
+        navigateTo folders_placement_move_thread
+        notes "- History moves; Company's pool and AGENTS.md cascade apply."
+      }
+    }
+    signalbox.thread -> signalbox.gateway.modelGateway "Company's pool" {
+      notes "- Usage already written stays on A's pool."
+    }
+    signalbox.tree -> personC 'Side Work under Company' {
+      notes '- C now administers it as part of folder Company.'
+    }
+    opt 'A withdraws lends' {
+      personA -> signalbox.tree 'Withdraw lends' {
+        navigateTo folders_lending_leaver_loans
+        notes "- **End:** A's lends into Side Work stay until A withdraws them."
+      }
+    }
+  }
+
+  dynamic view scn_179_moves_folder_out_of_company {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/FolderMoves/Out Of Company'
+    description "Can B move folder Team out of folder Company into B's Personal? Decided: #225 §7 (2026-10-14), #232: moving a folder out of folder Company needs an Admin of folder Company, Enterprise can lock it, access carries over only for members of the new home. Assumption for the consent path: a Ready ask to Company's Admins. Why: one ask route for decisions (design §4.4). SCN-179 · v1 no."
+
+    include personB, personC, personA, signalbox.web, signalbox.operations, signalbox.attention, signalbox.tree, signalbox.search
+    include signalbox
+    global style scn08Lanes
+
+    personB -> signalbox.web 'Move Team to Personal' {
+      notes '- **Start:** B is Admin of folder Team under folder Company, but not an Admin of folder Company.'
+    }
+    signalbox.web -> signalbox.operations 'Needs Company Admin'
+    alt 'Company policy' {
+      when 'Enterprise lock' {
+        signalbox.web <- signalbox.operations 'Refused: locked' {
+          notes '- **End:** nothing changes; the reason is shown.'
+        }
+      }
+      else 'no lock' {
+        signalbox.operations -> signalbox.attention "Ready ask to Admins" {
+          navigateTo person_pipeline_ready_gate
+          notes "- **Assumption:** the request is a Ready decision for Company's Admins."
+        }
+        signalbox.attention -> personC 'Decide the move'
+        personC -> signalbox.operations 'Approves'
+        signalbox.web <- signalbox.operations 'Preview: A loses Team' {
+          notes '- A keeps Team only if B invites A.'
+        }
+        personB -> signalbox.web 'Confirms'
+        signalbox.operations -> signalbox.tree "Re-parent into B's tree" {
+          navigateTo folders_tree_move_across
+          notes '''
+            - Owner becomes B; the next turn resolves on B's personal chain.
+            - Company's pool no longer reaches; usage rows stay on it.
+          '''
+        }
+        signalbox.tree -> signalbox.search "Reindex to B's root" {
+          navigateTo work_search_move
+        }
+        signalbox.tree -> personA 'Team gone' {
+          notes '''
+            - **End:** Team sits in B's Personal (owner: B).
+            - Lends into Team stay until withdrawn.
+          '''
+        }
+      }
+    }
+  }
+
+  dynamic view scn_180_moves_folder_between_people {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/FolderMoves/Person To Person'
+    description "Can A move A's folder Club under B's folder Groups? Decided: #225 §7 (2026-10-14), #232: moves between owners need Owner/Admin on the folder and Member+ at the destination. Assumption: B needs no separate accept, because granting A Member at Groups is B's consent. Why: the destination rule is role-based (#225 §4). SCN-180 · v1 no."
+
+    include personA, personB, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.search, signalbox.gateway.modelGateway
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Move Club to Groups' {
+      navigateTo folders_tree_reference
+      notes '''
+        - **Start:** Personal › folder Club (owner: A). A is Member of B's folder Groups.
+        - A picks Groups through the reference A filed.
+      '''
+    }
+    signalbox.web -> signalbox.operations 'Check roles' {
+      notes '''
+        - Owner/Admin on Club, Member+ at Groups.
+        - **Assumption:** no separate accept from B.
+      '''
+    }
+    signalbox.web <- signalbox.operations 'Preview: who loses access' {
+      notes '- People in Club who are not members of Groups.'
+    }
+    personA -> signalbox.web 'Confirms'
+    signalbox.operations -> signalbox.tree 'Re-parent, owner B' {
+      navigateTo folders_tree_move_across
+    }
+    parallel {
+      signalbox.tree -> signalbox.search "Reindex to B's root"
+      signalbox.tree -> signalbox.thread "Next turn: B's chain" {
+        navigateTo folders_placement_move_thread
+        notes '- History moves with the folder.'
+      }
+    }
+    signalbox.thread -> signalbox.gateway.modelGateway "B's pool pays"
+    signalbox.tree -> personB 'Club under Groups' {
+      navigateTo folders_lending_leaver_loans
+      notes '''
+        - **End:** folder Club (owner: B) under Groups.
+        - A's lends into Club stay until A withdraws them.
+      '''
+    }
+  }
+
+  dynamic view scn_181_nests_folder_in_same_tree {
+    #decided
+    variant sequence
+    title 'Scenarios/Threads/FolderMoves/Nest Folder'
+    description "What happens when A nests Personal › Recipes inside Personal › Home? Decided: #236 acceptance (nesting shows on another device without a reload) and #225 §2 (2026-10-14: one home, runs on its chain). The access preview before widening follows R-TRE-05. SCN-181 · v1 no."
+
+    include personA, signalbox.web, signalbox.mobile, signalbox.tree, signalbox.thread, signalbox.search
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Drag Recipes onto Home' {
+      notes '- **Start:** Personal › Recipes and Personal › Home, both A\'s.'
+    }
+    signalbox.web -> signalbox.tree 'Re-parent' {
+      navigateTo folders_tree_move
+      notes '- One owner, so no ownership change.'
+    }
+    opt 'Home has members Recipes lacked' {
+      signalbox.web <- signalbox.tree 'Who gains access' {
+        notes '- Access never widens silently.'
+      }
+      personA -> signalbox.web 'Confirms'
+    }
+    parallel {
+      signalbox.tree -> signalbox.mobile 'Tree updates live' {
+        navigateTo folders_tree_home
+        notes '- Every device updates without a reload (#236).'
+      }
+      signalbox.tree -> signalbox.search 'Paths in place' {
+        navigateTo work_search_move
+      }
+    }
+    signalbox.thread -> signalbox.tree 'Next turn resolves' {
+      navigateTo folders_placement_move_thread
+      notes '''
+        - **End:** Personal › Home › Recipes; nearest wins through Home.
+        - Home's AGENTS.md cascades; Home's pool applies if Recipes has none.
+      '''
+    }
+  }
+
+  // ─── Scenarios / Threads / Lifecycle ────────────────────────────────────
+
+  dynamic view scn_171_chat_turns_into_task_visibility {
+    #decided
+    variant sequence
+    title 'Scenarios/Threads/Lifecycle/Chat Becomes Task'
+    description "Does a private chat change visibility when it turns into a task? Decided: #310 (kind never decides visibility), #46 (2026-10-15: chat or task is display only, the person's flip wins), #229 d5 (2026-10-14). #38's \"tasks start shared\" is superseded. SCN-171 · not v1."
+
+    include personA, personB, personC, signalbox.web, signalbox.harness, signalbox.thread, signalbox.tree
+    include signalbox
+    global style scn08Lanes
+
+    alt 'what makes it a task' {
+      when 'real work starts' {
+        signalbox.harness -> signalbox.thread 'Classify as task' {
+          notes "- **Start:** A's private chat in folder Company starts real work."
+        }
+      }
+      else 'A flips it' {
+        personA -> signalbox.web 'Mark as task'
+        signalbox.web -> signalbox.thread 'Set kind: task'
+      }
+    }
+    signalbox.thread -> signalbox.thread 'Kind changed' {
+      navigateTo work_threads_start_chat_vs_task
+      notes '- **Decided (#310):** the visibility field is untouched.'
+    }
+    signalbox.thread -> signalbox.tree 'Catalog row' {
+      navigateTo work_threads_multiplayer_private_invisible
+    }
+    parallel {
+      signalbox.tree -> personB 'Metadata row only'
+      signalbox.tree -> personC 'Metadata row only' {
+        notes '- Author, folder, start time, status and cost; never the content.'
+      }
+    }
+    personA -> signalbox.web 'Flip back to chat'
+    signalbox.web -> signalbox.thread 'Set kind: chat' {
+      navigateTo state_thread
+      notes '''
+        - **Decided (#46):** the person's flip wins over the classifier.
+        - **End:** it is a task (or chat again) and still private.
+      '''
+    }
+  }
+
+  dynamic view scn_182_lifecycle_on_shared_thread {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Lifecycle/Shared Archive Snooze'
+    description "Who is affected when someone archives, pins or snoozes a shared thread? Decided: #439 (2026-10-16: archive and pin per thread, snooze per person), #635 (2026-10-16 snooze semantics), #334 (2026-10-17: archived stays searchable, trash excluded). Conditional snooze is an assumption: the same wait primitive, owned by the person, fires once (pending #369). SCN-182 · not v1."
+
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.tree, signalbox.attention, signalbox.thread, signalbox.search
+    include signalbox
+    global style scn08Lanes
+
+    personB -> signalbox.mobile 'Snooze until 5pm' {
+      notes '- **Start:** A and B both drive a shared thread in folder Team.'
+    }
+    signalbox.mobile -> signalbox.tree 'Snooze for B only' {
+      navigateTo work_threads_multiplayer_per_person_state
+      notes "- Only B's view changes; A sees nothing different."
+    }
+    signalbox.tree -> signalbox.attention "Leave B's pipeline" {
+      navigateTo person_pipeline_blocker_snooze
+      notes '''
+        - The agent keeps working.
+        - B's status line reads "snoozed until 5pm".
+      '''
+    }
+    alt 'snooze ends' {
+      when 'time, or waiting cost jumps' {
+        signalbox.attention -> signalbox.mobile 'Back in pipeline'
+      }
+      else 'B unsnoozes' {
+        personB -> signalbox.mobile 'Unsnooze'
+        signalbox.mobile -> signalbox.tree 'Cancel snooze'
+      }
+    }
+    personA -> signalbox.web 'Pin, later archive'
+    signalbox.web -> signalbox.thread 'Pinned, archived' {
+      navigateTo work_threads_lifecycle_archive
+      notes '''
+        - Pin and archive apply to everyone (#439).
+        - Archive withdraws open Blockers.
+      '''
+    }
+    signalbox.thread -> signalbox.search 'Archive tier' {
+      notes '- **Decided (#334):** archived stays searchable; trash does not.'
+    }
+    opt 'a new message arrives' {
+      personB -> signalbox.thread 'New message' {
+        navigateTo state_thread
+        notes '- A new message unarchives it for everyone.'
+      }
+    }
+    opt 'B snoozes until CI is green' {
+      signalbox.mobile -> signalbox.tree 'Person-owned wait' {
+        notes '''
+          - **Assumption (pending #369):** the same wait primitive, owned by B, fires once.
+          - **End:** snooze hid it only for B; pin and archive affected everyone.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_191_settles_early_then_reopens {
+    #decided
+    variant sequence
+    title 'Scenarios/Threads/Lifecycle/Settle And Reopen'
+    description "What happens when A settles an unfinished task early, then reopens it? Decided: #634 (2026-10-16), corrected so A's own assistant, not Jev, records the reason; #671 one-click settle and reopen. SCN-191 · v1 no."
+
+    include personA, hier.asstA with { title 'Assistant (A)' }, signalbox.web, signalbox.thread, signalbox.learner, signalbox.attention
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Settle task' {
+      notes '''
+        - **Start:** an unfinished task in Personal.
+        - One click, no pop-up.
+      '''
+    }
+    signalbox.web -> signalbox.thread 'Settled' {
+      navigateTo person_pipeline_ready_settle
+    }
+    signalbox.thread -> hier.asstA 'Reads the thread' {
+      navigateTo person_assistant_settle_reason
+    }
+    hier.asstA -> signalbox.learner 'Records reason' {
+      notes '- Silently: "dropped" or "done enough". The learner observes the decision.'
+    }
+    alt 'reason' {
+      when 'dropped' {
+        hier.asstA -> signalbox.thread 'Stop related work' {
+          notes '- No finishing pass.'
+        }
+      }
+      when 'done enough' {
+        hier.asstA -> signalbox.thread 'Pave behind' {
+          notes '- The folder agent cleans up: tests, docs.'
+        }
+      }
+      else 'unsure' {
+        hier.asstA -> signalbox.attention 'Why settle? (low)' {
+          notes '- A low-priority question in A\'s pipeline.'
+        }
+      }
+    }
+    personA -> signalbox.web 'Reopen'
+    signalbox.web -> signalbox.thread 'Resume' {
+      navigateTo state_thread
+      notes '- **End:** from recently settled, back to its exact state.'
+    }
+  }
+
+  // ─── Scenarios / Threads / Multiplayer ──────────────────────────────────
+
+  dynamic view scn_183_two_senders_at_once {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Multiplayer/Two Senders'
+    description "What happens when A and B send into one shared thread within a second? Decided for authors and answering each person: #37, #241 (2026-10-14/16). Assumption for ordering: the Thread actor serializes, and the second message obeys its sender's Queue or Steer preference. Why: design §2.1 single writer, T-TRN-08. SCN-183 · v1 no."
+
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.thread, signalbox.harness, signalbox.tree, signalbox.gateway.modelGateway
+    include signalbox
+    global style scn08Lanes
+
+    parallel {
+      personA -> signalbox.web 'Sends'
+      personB -> signalbox.mobile 'Sends'
+      signalbox.web -> signalbox.thread "A's message"
+      signalbox.mobile -> signalbox.thread "B's message" {
+        notes '- **Start:** a shared thread in folder Team; both send within a second.'
+      }
+    }
+    signalbox.thread -> signalbox.thread 'Order, record senders' {
+      navigateTo work_threads_multiplayer_live
+      notes '- **Assumption:** the single writer orders them; each message keeps its sender (#37).'
+    }
+    signalbox.thread -> signalbox.harness "Run A's turn"
+    alt "B's follow-up default" {
+      when 'Queue' {
+        signalbox.thread -> signalbox.thread "Queue B's turn" {
+          navigateTo person_settings_change
+        }
+      }
+      else 'Steer' {
+        signalbox.thread -> signalbox.harness "Steer B's message in"
+      }
+    }
+    signalbox.harness -> signalbox.tree "Resolve thread's chain" {
+      navigateTo work_threads_multiplayer_same_resolution
+      notes '- Same resolution whoever sent the turn.'
+    }
+    signalbox.harness -> signalbox.gateway.modelGateway "Team's pool"
+    signalbox.harness -> signalbox.web "Reply in A's prefs"
+    signalbox.harness -> signalbox.mobile "Reply in B's prefs" {
+      notes '- **End:** both messages landed with their authors, in one order; each person is answered.'
+    }
+  }
+
+  dynamic view scn_184_approval_owner_shared_thread {
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Multiplayer/Approval Owner'
+    description "Who owns an approval in a shared thread? Assumption: the turn starter owns it; any person who can drive the thread may explicitly take it over; agents never approve. Pending #306. Why: #245 agents act the same whoever talks; first answer wins (P-BLK-13); approvals are human-only (design §4.4). SCN-184 · v1 no."
+
+    include personB, personA, personC, signalbox.web, signalbox.operations, signalbox.thread, signalbox.harness, signalbox.attention
+    include signalbox
+    global style scn08Lanes
+
+    personB -> signalbox.web 'Starts a turn' {
+      notes "- **Start:** B's turn in a shared thread, approval-required mode."
+    }
+    signalbox.harness -> signalbox.thread 'Command approval' {
+      navigateTo work_approvals_harness_approval
+      notes '- A Blocker with an approval surface; human-only.'
+    }
+    signalbox.thread -> signalbox.attention 'Approval ask'
+    parallel {
+      signalbox.attention -> personB 'Banner and buttons' {
+        navigateTo person_pipeline_blocker_approval
+        notes '- **Assumption:** B, the turn starter, owns it.'
+      }
+      signalbox.attention -> personA 'Waiting for B'
+      signalbox.attention -> personC 'Waiting for B' {
+        notes '- A and C see the command and a Take over action.'
+      }
+    }
+    personA -> signalbox.web 'Take over'
+    signalbox.web -> signalbox.operations 'Can A drive?'
+    signalbox.operations -> signalbox.thread 'Answer as A' {
+      navigateTo work_approvals_shared_answer
+      notes "- A is recorded as the answerer; every other projection drops."
+    }
+    opt 'B answers late' {
+      personB -> signalbox.thread 'Approve'
+      personB <- signalbox.thread 'AlreadyAnswered' {
+        notes '''
+          - **End:** first answer wins.
+          - Agents and assistants can never answer an approval.
+        '''
+      }
+    }
+  }
+
+  dynamic view scn_185_approver_away_takeover {
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Multiplayer/Approver Away'
+    description "B owns an approval and is away: can someone take over? Assumption: the approval becomes B's needs-you via the one ask route, and anyone who can drive the thread may take it over; nobody's assistant can. Pending #306. Why: #228 one needs-you primitive; approvals are human-only (design §4.4). SCN-185 · v1 no."
+
+    include personB, personA, signalbox.mobile, signalbox.web, signalbox.operations, signalbox.thread, signalbox.attention
+    include signalbox
+    global style scn08Lanes
+
+    signalbox.thread -> signalbox.attention "Parked on B's approval" {
+      navigateTo work_approvals_turn_parks
+      notes "- **Start:** the turn waits on B's approval; B doesn't answer."
+    }
+    signalbox.attention -> signalbox.mobile "B's needs-you" {
+      navigateTo person_notifications_turn_pushes
+      notes "- A Blocker in B's pipeline; pushes follow B's chain and Focus."
+    }
+    signalbox.thread -> signalbox.web 'Waiting on B' {
+      notes '- The status line says "waiting on B" for everyone.'
+    }
+    alt 'what happens' {
+      when 'A takes over' {
+        personA -> signalbox.web 'Take over'
+        signalbox.web -> signalbox.operations 'Can A drive?'
+        signalbox.operations -> signalbox.thread 'Answer as A'
+        signalbox.attention -> signalbox.mobile "B's projection drops"
+      }
+      when 'breakthrough rule' {
+        signalbox.attention -> signalbox.mobile 'Through Focus' {
+          navigateTo person_focus_breakthrough
+        }
+        personB -> signalbox.mobile 'Approves'
+      }
+      else 'nobody answers' {
+        signalbox.thread -> signalbox.thread 'Stays parked' {
+          notes "- **End:** the turn waits; no assistant answers for B."
+        }
+      }
+    }
+  }
+
+  dynamic view scn_186_agent_waits_for_people {
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Multiplayer/Wait For People'
+    description "Can the agent wait until everyone has replied (members and an outside collaborator), or until a mentioned person answers? Assumption: the #41/#40 prototype behaviour (2026-10-14 reviews) with no automatic timeout; a wait ends only on replies, Reply now or Stop waiting, and stays visible as a needs-you. Pending #41. Why: #228 one needs-you primitive; push model (principle 3). SCN-186 · v1 no."
+
+    include personA, personB, personD, signalbox.web, signalbox.thread, signalbox.judge, signalbox.attention, signalbox.harness
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Wait for B, D' {
+      navigateTo work_threads_multiplayer_reply_modes
+      notes '''
+        - **Start:** a shared thread in folder Team; D is an outside collaborator on folder Team.
+        - Thread details "Agent replies: when everyone has replied", or per message.
+      '''
+    }
+    signalbox.web -> signalbox.thread 'Persist the wait' {
+      notes '- A timeline event and a row "waiting for B, D" with Reply now and Stop waiting.'
+    }
+    opt 'A mentions B with a question' {
+      signalbox.thread -> signalbox.judge 'Suggest a wait?' {
+        navigateTo work_threads_multiplayer_mention
+        notes '- "Wait for B before the agent replies?"'
+      }
+    }
+    signalbox.thread -> signalbox.attention 'Needs-you for B' {
+      navigateTo person_asks_record
+    }
+    signalbox.attention -> personB 'Waiting on B' {
+      navigateTo person_people_mention
+      notes '- A click jumps to the message.'
+    }
+    alt 'wait ends' {
+      when 'B and D posted' {
+        personB -> signalbox.thread 'Posts'
+        personD -> signalbox.thread 'Posts'
+      }
+      else 'someone presses Reply now' {
+        personA -> signalbox.web 'Reply now'
+      }
+    }
+    signalbox.thread -> signalbox.harness 'Start the turn' {
+      notes '''
+        - **End:** the agent replies from the last message.
+        - **Assumption:** no automatic timeout.
+      '''
+    }
+  }
+
+  dynamic view scn_187_switches_model_shared_thread {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Multiplayer/Model Switch'
+    description "What do others see when B switches the model in a shared thread? Decided: #37 body: switches show as system events. Assumption: the Thread actor records the event server-side, pending #37 (2026-10-14). Why: one record of history (#334). SCN-187 · not v1."
+
+    include personB, personA, personC, signalbox.web, signalbox.thread, signalbox.harness, signalbox.tree, signalbox.gateway.modelGateway
+    include signalbox
+    global style scn08Lanes
+
+    personB -> signalbox.web 'Pick Claude' {
+      navigateTo work_harness_switch
+      notes '''
+        - **Start:** a shared thread in folder Team, between runs.
+        - B's model favorites never change the folder's default.
+      '''
+    }
+    signalbox.web -> signalbox.thread 'Record switch' {
+      notes '- **Assumption:** a system event with author B, written server-side.'
+    }
+    parallel {
+      signalbox.thread -> personA 'B switched to Claude' {
+        navigateTo work_threads_multiplayer_live
+      }
+      signalbox.thread -> personC 'B switched to Claude' {
+        notes '- A timeline separator for everyone.'
+      }
+    }
+    personA -> signalbox.thread 'Sends next turn'
+    signalbox.thread -> signalbox.harness 'Run new model'
+    signalbox.harness -> signalbox.tree "Resolve thread's pool" {
+      navigateTo person_settings_change
+      notes "- From the thread's home, whoever sends."
+    }
+    signalbox.harness -> signalbox.gateway.modelGateway 'Claude via pool' {
+      notes "- **End:** next turns use Claude on the thread's pool."
+    }
+  }
+
+  dynamic view scn_188_replies_follow_sender_preferences {
+    #decided
+    variant sequence
+    title 'Scenarios/Threads/Multiplayer/Sender Preferences'
+    description "Do replies follow each sender's personal preferences in a shared thread? Decided: #225 §2 (2026-10-14): personal preferences are the only thing that follows a person; they shape replies to that person's turns, never what a folder does. SCN-188 · v1 no."
+
+    include personA, personB, signalbox.web, signalbox.mobile, signalbox.thread, signalbox.harness, signalbox.tree
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Sends (prefers German)' {
+      notes '- **Start:** A and B share a thread in folder Team.'
+    }
+    signalbox.web -> signalbox.thread "A's turn"
+    signalbox.thread -> signalbox.harness 'Run turn'
+    signalbox.harness -> signalbox.tree "Resolve thread's home" {
+      navigateTo work_threads_multiplayer_same_resolution
+      notes "- Pool, AGENTS.md, connections and skills come from the thread's home."
+    }
+    signalbox.harness -> signalbox.tree "A's preferences"
+    signalbox.harness -> signalbox.web 'Reply in German'
+    personB -> signalbox.mobile 'Sends (prefers English)'
+    signalbox.mobile -> signalbox.thread "B's turn"
+    signalbox.thread -> signalbox.harness 'Run turn'
+    signalbox.harness -> signalbox.tree 'Same resolution'
+    signalbox.harness -> signalbox.tree "B's preferences" {
+      navigateTo person_settings_change
+    }
+    signalbox.harness -> signalbox.mobile 'Reply in English' {
+      notes "- **End:** each gets replies in their own preferences; what the folder does is unchanged."
+    }
+  }
+
+  dynamic view scn_189_presence_in_shared_thread {
+    #decided
+    #assumption
+    variant sequence
+    title 'Scenarios/Threads/Multiplayer/Presence'
+    description "Who is here in a shared thread, and who never shows up? Decided: #840 module 10 (2026-10-17) and the ledger for multiplayer threads (#241). Assumption: no presence on Home folder rows until decided, pending #39. Why: private activity must never imply folder presence. SCN-189 · v1 no."
+
+    include personA, personB, personD, signalbox.web, signalbox.mobile, signalbox.funnel, signalbox.thread, signalbox.tree
+    include signalbox
+    global style scn08Lanes
+
+    personA -> signalbox.web 'Opens the thread' {
+      notes '''
+        - **Start:** a shared thread in folder Company; D, an outside collaborator, has access only to folder Team.
+        - Merely observing never publishes presence.
+      '''
+    }
+    personB -> signalbox.mobile 'Types'
+    signalbox.mobile -> signalbox.funnel 'Publish presence'
+    signalbox.funnel -> signalbox.thread 'Roster update' {
+      notes "- The roster dedups B's devices."
+    }
+    signalbox.thread -> signalbox.tree 'Who may see it?' {
+      notes '- Roles decide the audience; private threads never show typing.'
+    }
+    signalbox.thread -> signalbox.web 'B here, typing' {
+      navigateTo work_threads_multiplayer_live
+    }
+    personD -> signalbox.web 'Opens thread link' {
+      navigateTo person_people_live
+    }
+    signalbox.web -> signalbox.funnel 'Subscribe'
+    signalbox.web <- signalbox.funnel 'No access' {
+      notes '- D is neither shown nor sent anything.'
+    }
+    opt 'presence fails' {
+      signalbox.funnel -> signalbox.web 'Presence unavailable' {
+        navigateTo folders_tree_home
+        notes '- **End:** the header says "unavailable", never an empty roster.'
+      }
+    }
+  }
+}

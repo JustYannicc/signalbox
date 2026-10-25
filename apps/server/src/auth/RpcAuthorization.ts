@@ -1,3 +1,4 @@
+import { PERSON_TIMEZONE_REQUIRED_SCOPES } from "@t3tools/contracts/personTimezone"; // signalbox: cloud timezone
 import {
   CLIENT_GUARDED_RPC_SCOPES,
   type DeviceListInput,
@@ -40,6 +41,8 @@ import { SIGNALBOX_CONTEXTS_REQUIRED_SCOPES } from "@t3tools/contracts/signalbox
 import { SIGNALBOX_DRIVES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxDrives"; // signalbox: drives
 import { SIGNALBOX_FOLDERS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxFolders"; // signalbox: folders
 import { SIGNALBOX_NOTES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxNotes"; // signalbox: notes
+import { SIGNALBOX_TRASH_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxTrash";
+import { SIGNALBOX_SEARCH_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxSearch"; // signalbox: thread search
 import { SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxThreadKinds"; // signalbox: thread kinds
 import { SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxStatusLine"; // signalbox: status lines
 import { SIGNALBOX_PREVIEWS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPreviews"; // signalbox: previews
@@ -48,6 +51,7 @@ import { SIGNALBOX_PUSH_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPush
 import { SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxRepositories"; // signalbox: repositories
 import { SIGNALBOX_KEYS_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxKeys"; // signalbox: personal keys
 import { SIGNALBOX_SIGN_IN_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxSignIn"; // signalbox: sign-in grants
+import { SIGNALBOX_PERSON_BROWSER_REQUIRED_SCOPES } from "@t3tools/contracts/signalboxPersonBrowser"; // signalbox: cloud browser profile
 import { SECTIONS_RPC_REQUIRED_SCOPES } from "../sections/rpcScopes.ts"; // signalbox: sections
 import { ACCOUNT_POOL_RPC_SCOPES } from "../accountHub/poolRpcScopes.ts"; // signalbox: account pools
 
@@ -56,11 +60,14 @@ import { AUTOMATION_RPC_SCOPES } from "@signalbox/automations/rpcScopes"; // sig
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
+  ...PERSON_TIMEZONE_REQUIRED_SCOPES,
   ...SIGNALBOX_ANALYTICS_RPC_REQUIRED_SCOPES, // signalbox: analytics
   ...SIGNALBOX_CONTEXTS_REQUIRED_SCOPES, // signalbox: contexts
   ...SIGNALBOX_DRIVES_REQUIRED_SCOPES, // signalbox: drives
   ...SIGNALBOX_FOLDERS_REQUIRED_SCOPES, // signalbox: folders
   ...SIGNALBOX_NOTES_REQUIRED_SCOPES, // signalbox: notes
+  ...SIGNALBOX_TRASH_REQUIRED_SCOPES,
+  ...SIGNALBOX_SEARCH_REQUIRED_SCOPES, // signalbox: thread search
   ...SIGNALBOX_THREAD_KINDS_REQUIRED_SCOPES, // signalbox: thread kinds
   ...SIGNALBOX_THREAD_STATUS_REQUIRED_SCOPES, // signalbox: status lines
   ...SIGNALBOX_PREVIEWS_REQUIRED_SCOPES, // signalbox: previews
@@ -69,6 +76,7 @@ export const RPC_REQUIRED_SCOPES = {
   ...SIGNALBOX_REPOSITORIES_REQUIRED_SCOPES, // signalbox: repositories
   ...SIGNALBOX_KEYS_REQUIRED_SCOPES, // signalbox: personal keys
   ...SIGNALBOX_SIGN_IN_REQUIRED_SCOPES, // signalbox: sign-in grants
+  ...SIGNALBOX_PERSON_BROWSER_REQUIRED_SCOPES, // signalbox: cloud browser profile
   ...SECTIONS_RPC_REQUIRED_SCOPES, // signalbox: sections
   ...ACCOUNT_POOL_RPC_SCOPES, // signalbox: account pools
   ...CLIENT_GUARDED_RPC_SCOPES,
@@ -229,11 +237,13 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.deviceTestHost]: AuthSettingsWriteScope,
   [WS_METHODS.deviceList]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceOpen]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceCancelOpen]: AuthOrchestrationOperateScope,
   [WS_METHODS.deviceClose]: AuthOrchestrationOperateScope,
   [WS_METHODS.deviceShutdown]: AuthOrchestrationOperateScope,
   [WS_METHODS.deviceDetail]: AuthOrchestrationReadScope,
   [WS_METHODS.deviceAction]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribeDeviceState]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeDeviceAgentDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,

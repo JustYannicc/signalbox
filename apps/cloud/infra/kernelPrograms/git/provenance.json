@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "artifact": {
+    "file": "git.wasm",
+    "sha256": "87c054c0a772fce3a236f5721f486707461d98144af8a9ff9a1424e40b9b9f36",
+    "bytes": 3678759,
+    "version": "2.53.0+nimbus.e9f019ab.startup-cwd.1",
+    "gitVersion": "2.53.0",
+    "license": "GPL-2.0-only"
+  },
+  "source": {
+    "repository": "https://github.com/AshishKumar4/Nimbus",
+    "revision": "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
+    "sourcePath": "packages/worker/wasm/git/git.wasm",
+    "originalArtifact": {
+      "sha256": "2161d33679baea773ceabaf9aeece17791a55ea3099fe4995f2000f7bcab252e",
+      "bytes": 3683175
+    },
+    "gitSource": {
+      "version": "2.53.0",
+      "sha256": "5818bd7d80b061bbbdfec8a433d609dc8818a05991f731ffc4a561e2ca18c653",
+      "license": "GPL-2.0-only"
+    },
+    "shimLicense": "MIT",
+    "licenses": [
+      {
+        "path": "COPYING",
+        "license": "GPL-2.0-only",
+        "sha256": "5b2198d1645f767585e8a88ac0499b04472164c0d2da22e75ecf97ef443ab32e"
+      },
+      {
+        "path": "LICENSE-NIMBUS",
+        "license": "MIT",
+        "sha256": "9abf902a70f15256b6d108767fc510341854ec2297e3874c5bc6df496a895617"
+      }
+    ]
+  },
+  "build": {
+    "target": "wasm32-wasi",
+    "noFork": true,
+    "recipe": {
+      "path": "build.sh",
+      "sha256": "2a5b34d6d992a1db126763426d00643229f2884915d423a24d4b021465b4c072"
+    },
+    "containerImage": "node@sha256:14078204b6bb268c107ceff6d3c43f45a888105e5c2b18b14c32b3409d93a1b0",
+    "inputs": {
+      "nimbus": "f7024781c3dc2be1325efa1279aa9682cd84a2cd48f7782eb87ccd90ff0f1c12",
+      "git": "5818bd7d80b061bbbdfec8a433d609dc8818a05991f731ffc4a561e2ca18c653",
+      "zlib": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+      "wasiSdk": "47fccad8b2498f2239e05e1115c3ffc652bf37e7de2f88fb64b2d663c976ce2d"
+    },
+    "toolchain": {
+      "wasiSdk": "25.0 arm64 Linux",
+      "jobs": 2
+    },
+    "patches": [
+      {
+        "path": "patches/0001-startup-cwd.patch",
+        "sha256": "0ced54937ce31b98038c9368ef91d568a61d91adc0d1e794b11203f1ce84bd35"
+      }
+    ],
+    "patchedShimSha256": "c482a19122046ce254731c3b73840da5a0b7f709e5238603451e28a6d0311869",
+    "customImportNamespaces": ["nimbus_fs", "nimbus_proc"],
+    "imports": {
+      "nimbus_fs": ["fd_chmod", "fd_stat", "path_access", "path_chmod", "path_stat", "umask"],
+      "nimbus_proc": ["dup", "dup2", "ids", "kill", "pipe", "spawn", "start", "startup_cwd", "wait"]
+    },
+    "output": {
+      "file": "git.cwd.wasm",
+      "sha256": "87c054c0a772fce3a236f5721f486707461d98144af8a9ff9a1424e40b9b9f36",
+      "bytes": 3678759
+    }
+  },
+  "proof": {
+    "path": "proof.ts",
+    "filesystem": "KernelFileSystem over in-memory SQLite storage",
+    "checks": [
+      "git --version",
+      "git init with the supplied cwd and persisted POSIX modes",
+      "relative and absolute git add path resolution with decoy files",
+      "git add and staged diff from atomically created worktree files",
+      "git commit and clean status/diff on shared SQLite state"
+    ]
+  }
+}

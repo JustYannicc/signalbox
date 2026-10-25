@@ -1,0 +1,28 @@
+// State machine for one draft. The walk through it with people and modules is the dynamic view state_draft.
+model {
+  smDraft = state 'Draft lifecycle' {
+    page = state 'Page' { description 'typing, not yet saved' }
+    saved = state 'Saved' { description 'private · at its level' }
+    sent = state 'Sent' { description 'became a thread' }
+    discarded = state 'Discarded' { description 'Undo window' }
+    gone = state 'Gone'
+
+    page -[transition]-> saved 'autosave'
+    saved -[transition]-> sent 'send'
+    saved -[transition]-> discarded 'discard'
+    discarded -[transition]-> saved 'undo'
+    discarded -[transition]-> gone 'window passes'
+  }
+}
+views {
+  view state-draft of smDraft {
+    title 'States/Draft/State machine'
+    description 'What happens to one private draft from typing until it is sent or gone? Start: green. End: gray. Click the frame for the walk with people and modules (state_draft).'
+    include *
+    include smDraft with { navigateTo state_draft }
+    style smDraft.page { color green }
+    style smDraft.sent { color gray }
+    style smDraft.gone { color gray }
+    autoLayout TopBottom
+  }
+}

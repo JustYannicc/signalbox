@@ -1,6 +1,8 @@
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
+import { withEnvironmentCommandPermissions } from "../rpc/commandBoundary.ts"; // signalbox: optimistic ledger
 import { followStreamInEnvironment } from "./environmentStreams.ts";
+import { reuseUnchanged } from "./serverConfigProjection.ts";
 export { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
 import {
   type ClientGuardedRpcTag,
@@ -28,7 +30,6 @@ import {
   EnvironmentRpcUnavailableError,
   request,
   requestGuarded,
-  RpcPermissionGuard,
   subscribe,
 } from "../rpc/client.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -97,6 +98,7 @@ export interface AtomCommandOptions {
   readonly label?: string;
   readonly reportFailure?: boolean;
   readonly reportDefect?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 export interface AtomCommandReporter {
@@ -106,7 +108,11 @@ export interface AtomCommandReporter {
 
 export interface AtomCommand<W, A, E> {
   readonly label: string;
-  readonly run: (registry: AtomRegistry.AtomRegistry, input: W) => Promise<AtomCommandResult<A, E>>;
+  readonly run: (
+    registry: AtomRegistry.AtomRegistry,
+    input: W,
+    signal?: AbortSignal,
+  ) => Promise<AtomCommandResult<A, E>>;
 }
 
 export type AtomCommandConcurrency<W> =
@@ -301,7 +307,7 @@ export async function runAtomCommand<W, A, E>(
   options: AtomCommandOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
-  const result = await settleAtomCommandResult(() => command.run(registry, input));
+  const result = await settleAtomCommandResult(() => command.run(registry, input, options.signal));
   reportAtomCommandResult(result, { ...options, label: options.label ?? command.label }, reporter);
   return result;
 }
@@ -397,13 +403,17 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   const concurrency = options.concurrency ?? { mode: "parallel" as const };
   return {
     label: options.label,
-    run: (registry, input) =>
+    run: (registry, input, signal) =>
       settleAtomCommandResult(() =>
         scheduler.schedule(registry, concurrency, input, () => {
           const atom = runtime
             .atom(options.execute(input, registry))
             .pipe(Atom.withLabel(options.label));
-          return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
+          return executeAtomQuery(registry, atom, {
+            reportDefect: false,
+            reportFailure: false,
+            ...(signal === undefined ? {} : { signal }),
+          });
         }),
       ),
   };
@@ -514,6 +524,14 @@ const refreshEveryUntilFinal =
       { initialValueTarget: self },
     );
 
+/**
+ * A query result's data alone. A refetch always publishes a new result (a new
+ * timestamp, `waiting` on and off), while equal data keeps its identity, so a
+ * reader of only this skips the refetches that changed nothing.
+ */
+export const selectEnvironmentQueryData = <A, E>(result: AsyncResult.AsyncResult<A, E>): A | null =>
+  Option.getOrNull(AsyncResult.value(result));
+
 export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
   options: EnvironmentQueryAtomOptions<
@@ -560,8 +578,17 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         const connection = Option.getOrNull(
           AsyncResult.value(get(connectionAtom(target.environmentId))),
         );
+        // A refetch that returns equal content keeps the previous value's
+        // references, so readers of the data skip re-rendering on idle polls.
+        const share = (value: A): A =>
+          reuseUnchanged(
+            Option.getOrUndefined(
+              Option.flatMap(get.self<AsyncResult.AsyncResult<A, unknown>>(), AsyncResult.value),
+            ),
+            value,
+          );
         const emit = (value: A) =>
-          Effect.sync(() => get.setSelf(AsyncResult.success(value, { waiting: true }))).pipe(
+          Effect.sync(() => get.setSelf(AsyncResult.success(share(value), { waiting: true }))).pipe(
             // A value set while the atom builds wins over the build's own
             // result, so a query that then settled synchronously would stay
             // waiting forever. Suspend on a promise (`yieldNow` is drained
@@ -604,7 +631,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               );
           }
         };
-        if (!options.persistence) return execute();
+        if (!options.persistence) return execute().pipe(Effect.map(share));
         const persistence = options.persistence;
         const cacheKey = JSON.stringify([options.label, target.input]);
         const previous = Option.flatMap(
@@ -623,6 +650,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           }
           if (Option.isNone(previous) && Option.isSome(cached)) yield* emit(cached.value);
           return yield* execute().pipe(
+            Effect.map(share),
             Effect.tap((value) => persistence.save(target.environmentId, cacheKey, value)),
           );
         });
@@ -697,7 +725,7 @@ export function createEnvironmentCommand<R, ER, Input, A, E>(
       runInEnvironment(
         target.environmentId,
         options.execute(target.input, registry, target.environmentId),
-      ),
+      ).pipe(withEnvironmentCommandPermissions(runtime, registry)), // signalbox: optimistic ledger
   });
 }
 
@@ -798,12 +826,11 @@ export function createEnvironmentRpcCommand<
   options: {
     readonly label: string;
     readonly tag: TTag;
-    readonly execute?: (
-      input: Input,
-    ) => Effect.Effect<
+    readonly execute?: (input: Input) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
       EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
-      EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry
+      // signalbox: guarded RPC commands may derive retry ids from the platform Crypto service.
+      EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry | R
     >;
     readonly scheduler?: AtomCommandScheduler;
     readonly concurrency?: AtomCommandConcurrency<{
@@ -841,10 +868,6 @@ export function createEnvironmentRpcCommand<
       // The transport check below deliberately checks the destination again.
       return permissions.authorize(registry, environmentId, input).pipe(
         Effect.andThen(() => options.execute?.(input) ?? requestGuarded(options.tag, input)),
-        Effect.provideService(RpcPermissionGuard, {
-          authorize: (id, method, payload) =>
-            createCommandPermissions(runtime, method).authorize(registry, id, payload),
-        }),
         Effect.tap((result) => options.onSuccess?.(target, registry, result) ?? Effect.void),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );

@@ -37,6 +37,42 @@ return [news, reply];`);
   });
 });
 
+describe("run inbox cursors", () => {
+  it("captures a cursor and accepts it as a wait boundary", () => {
+    const result = compile(`
+const after = await w.eventCursor("Before the pull request read");
+const news = await w.waitFor("Wait for fresh pull request events", {
+  on: ["pr.checks.failed", "pr.conflicted", "pr.merged", "pr.closed"],
+  after,
+});
+return news;`);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.workflow.graph.nodes.map((node) => node.type === "step" && node.verb)).toEqual([
+      "eventCursor",
+      "waitFor",
+    ]);
+    expect(result.workflow.script).toContain('w.eventCursor("s1", "Before the pull request read")');
+  });
+
+  it("rejects a cursor on named events that don't use the run inbox", () => {
+    expect(
+      messages(`
+const after = await w.eventCursor("Capture boundary");
+await w.waitFor("Wait for the reply", { event: "reply", after });`)[0],
+    ).toContain("w.waitFor `after` only works with `on` or `watch` events");
+  });
+
+  it("requires the wait's event pattern to be known before the cursor capture", () => {
+    expect(
+      messages(`
+const after = await w.eventCursor("Capture boundary");
+await w.waitFor("Wait for the event", { on: input.event, after });`)[0],
+    ).toContain("w.waitFor `after` needs a literal `on`");
+  });
+});
+
 describe("w.restart", () => {
   it("ends the workflow and shows in the diagram", () => {
     const result = compile(`

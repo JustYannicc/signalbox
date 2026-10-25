@@ -1,0 +1,39 @@
+// State machine for one thread. The walk through it with people and modules is the dynamic view state_thread.
+model {
+  smThread = state 'Thread lifecycle' {
+    pending = state 'Pending' { description 'created, catalog row pending' }
+    idle = state 'Idle'
+    running = state 'Running' { description 'one turn at a time' }
+    waiting = state 'Waiting' { description 'turn parked on an ask' }
+    settled = state 'Settled'
+    archived = state 'Archived'
+    trashed = state 'Trashed' { description 'tombstone, effects stop · 30-day trash' }
+    purged = state 'Purged' { description 'every store purged' }
+
+    pending -[transition]-> idle 'live'
+    idle -[transition]-> running 'send'
+    running -[transition]-> waiting 'ask raised'
+    waiting -[transition]-> running 'answer'
+    running -[transition]-> idle 'turn ends'
+    idle -[transition]-> settled 'settle'
+    settled -[transition]-> idle 'reopen'
+    idle -[transition]-> archived 'archive'
+    settled -[transition]-> archived 'archive'
+    archived -[transition]-> idle 'unarchive'
+    idle -[transition]-> trashed 'trash'
+    archived -[transition]-> trashed 'trash'
+    trashed -[transition]-> idle 'restore (≤ 30 days)'
+    trashed -[transition]-> purged '30-day alarm'
+  }
+}
+views {
+  view state-thread of smThread {
+    title 'States/Thread/State machine'
+    description 'Which states can one thread be in, and what moves it? Start: Pending (green). End: Purged (gray); Trashed restores within 30 days. Click the frame for the walk with people and modules (state_thread).'
+    include *
+    include smThread with { navigateTo state_thread }
+    style smThread.pending { color green }
+    style smThread.purged { color gray }
+    autoLayout TopBottom
+  }
+}

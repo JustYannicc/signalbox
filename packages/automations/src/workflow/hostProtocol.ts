@@ -1,6 +1,12 @@
-import type { StepRequest } from "../sandbox/replayWorkflow.ts";
+import type { WorkflowStepVerb } from "@t3tools/contracts";
 
-export type { StepRequest };
+/** A step the automation reached. */
+export interface StepRequest {
+  readonly key: string;
+  readonly verb: WorkflowStepVerb;
+  readonly label: string;
+  readonly args: ReadonlyArray<unknown>;
+}
 
 /**
  * What an automation version's Dynamic Worker (`runtime.ts`) asks of the

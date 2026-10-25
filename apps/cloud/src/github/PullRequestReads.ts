@@ -11,10 +11,8 @@ import { pullRequestChecks, pullRequestRemarks } from "./GitHubPullRequests.ts";
 
 /**
  * The host reads behind `pr.commented`, `pr.reviewed` and the failed checks
- * on `pr.checks.failed`, for automations running in the user's object: the
- * same two reads, with the same shapes, as the self-hosted engine's
- * (`apps/server/src/workflows/events/pullRequestReads.ts`), acting with the
- * user's own GitHub connection. A check counts as failed and a remark as new
+ * on `pr.checks.failed`, acting with the user's own GitHub connection.
+ * A check counts as failed and a remark as new
  * by upstream's PR watch rules (`evaluatePullRequestWatch`). A read that fails
  * or takes too long answers null, so the event still goes, without details.
  */

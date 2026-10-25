@@ -29,7 +29,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as AccountPools from "./AccountPools.ts";
-import { advisePool, PROFILE_HOURS } from "./poolAdvice.ts";
+import { advisePool, PROFILE_HOURS } from "@t3tools/shared/poolAdvice";
 import { takesTurns } from "@t3tools/shared/poolUsage";
 import {
   type AccountWindowState,
@@ -37,7 +37,7 @@ import {
   HOUR_MS,
   recordRead,
   type UsageHour,
-} from "./poolUsageRecording.ts";
+} from "@t3tools/shared/poolUsageRecording";
 
 const KEEP_MS = 35 * 24 * HOUR_MS;
 /** Without a client polling Limits, pools are still read this often. */

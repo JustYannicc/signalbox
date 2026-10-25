@@ -1,0 +1,215 @@
+--- a/tokio/src/io/async_fd.rs
++++ b/tokio/src/io/async_fd.rs
+@@ -2,11 +2,18 @@
+ use crate::runtime::io::{ReadyEvent, Registration};
+ use crate::runtime::scheduler;
+ 
++#[cfg(unix)]
+ use mio::unix::SourceFd;
++#[cfg(all(target_os = "wasi", target_env = "p1"))]
++use mio::wasi::SourceFd;
+ use std::error::Error;
+ use std::fmt;
+ use std::io;
+-use std::os::unix::io::{AsRawFd, RawFd};
++#[cfg(unix)]
++use std::os::unix::io as fd;
++#[cfg(all(target_os = "wasi", target_env = "p1"))]
++use std::os::wasi::io as fd;
++use fd::{AsRawFd, RawFd};
+ use std::task::{ready, Context, Poll};
+ 
+ /// Associates an IO object backed by a Unix file descriptor with the tokio
+@@ -309,7 +316,13 @@
+     ) -> Result<Self, AsyncFdTryNewError<T>> {
+         let fd = inner.as_raw_fd();
+ 
+-        match Registration::new_with_interest_and_handle(&mut SourceFd(&fd), interest, handle) {
++        let registration = Registration::new_with_interest_and_handle(&mut SourceFd(&fd), interest, handle);
++        #[cfg(all(target_os = "wasi", target_env = "p1"))]
++        let registration = registration.map(|mut registration| {
++            registration.configure_wasi_rearm(fd, interest);
++            registration
++        });
++        match registration {
+             Ok(registration) => Ok(AsyncFd {
+                 registration,
+                 inner: Some(inner),
+@@ -930,9 +943,9 @@
+     }
+ }
+ 
+-impl<T: AsRawFd> std::os::unix::io::AsFd for AsyncFd<T> {
+-    fn as_fd(&self) -> std::os::unix::io::BorrowedFd<'_> {
+-        unsafe { std::os::unix::io::BorrowedFd::borrow_raw(self.as_raw_fd()) }
++impl<T: AsRawFd> fd::AsFd for AsyncFd<T> {
++    fn as_fd(&self) -> fd::BorrowedFd<'_> {
++        unsafe { fd::BorrowedFd::borrow_raw(self.as_raw_fd()) }
+     }
+ }
+ 
+--- a/tokio/src/io/mod.rs
++++ b/tokio/src/io/mod.rs
+@@ -252,8 +252,17 @@
+     }
+ }
+ 
++// signalbox: WASI uses the same Registration and readiness guards as Unix.
++#[cfg(all(feature = "net", any(unix, all(target_os = "wasi", target_env = "p1"))))]
++mod async_fd;
++
++#[cfg(all(feature = "net", target_os = "wasi", target_env = "p1"))]
++pub mod wasi {
++    //! Asynchronous readiness for nonblocking WASI preview1 file descriptors.
++    pub use super::async_fd::{AsyncFd, AsyncFdTryNewError, AsyncFdReadyGuard, AsyncFdReadyMutGuard, TryIoError};
++}
++
+ cfg_net_unix! {
+-    mod async_fd;
+ 
+     pub mod unix {
+         //! Asynchronous IO structures specific to Unix-like operating systems.
+--- a/tokio/src/runtime/io/driver.rs
++++ b/tokio/src/runtime/io/driver.rs
+@@ -77,17 +77,16 @@
+     pub(super) is_shutdown: bool,
+ }
+ 
+-cfg_net_unix!(
+-    impl ReadyEvent {
+-        pub(crate) fn with_ready(&self, ready: Ready) -> Self {
+-            Self {
+-                ready,
+-                tick: self.tick,
+-                is_shutdown: self.is_shutdown,
+-            }
+-        }
+-    }
+-);
++#[cfg(all(feature = "net", any(unix, all(target_os = "wasi", target_env = "p1"))))]
++impl ReadyEvent {
++    pub(crate) fn with_ready(&self, ready: Ready) -> Self {
++        Self {
++            ready,
++            tick: self.tick,
++            is_shutdown: self.is_shutdown,
++        }
++    }
++}
+ 
+ #[derive(Debug, Eq, PartialEq, Clone, Copy)]
+ pub(super) enum Direction {
+@@ -289,6 +288,12 @@
+         Ok(scheduled_io)
+     }
+ 
++    #[cfg(all(target_os = "wasi", target_env = "p1"))]
++    pub(super) fn reregister_source(&self, registration: &Arc<ScheduledIo>,
++        source: &mut impl Source, interest: Interest) -> io::Result<()> {
++        self.registry.reregister(source, registration.token(), interest.to_mio())
++    }
++
+     /// Deregisters an I/O resource from the reactor.
+     pub(super) fn deregister_source(
+         &self,
+--- a/tokio/src/runtime/io/registration.rs
++++ b/tokio/src/runtime/io/registration.rs
+@@ -51,6 +51,8 @@
+ 
+         /// Reference to state stored by the driver.
+         shared: Arc<ScheduledIo>,
++        #[cfg(all(target_os = "wasi", target_env = "p1"))]
++        wasi_rearm: Option<WasiRearm>,
+     }
+ }
+ 
+@@ -77,7 +79,10 @@
+     ) -> io::Result<Registration> {
+         let shared = handle.driver().io().add_source(io, interest)?;
+ 
+-        Ok(Registration { handle, shared })
++        Ok(Registration { handle, shared,
++            #[cfg(all(target_os = "wasi", target_env = "p1"))]
++            wasi_rearm: None,
++        })
+     }
+ 
+     /// Deregisters the I/O resource from the reactor it is associated with.
+@@ -102,6 +107,10 @@
+ 
+     pub(crate) fn clear_readiness(&self, event: ReadyEvent) {
+         self.shared.clear_readiness(event);
++        #[cfg(all(target_os = "wasi", target_env = "p1"))]
++        if let Some(state) = &self.wasi_rearm {
++            state.pending.store(true, std::sync::atomic::Ordering::Release);
++        }
+     }
+ 
+     // Uses the poll path, requiring the caller to ensure mutual exclusion for
+@@ -146,6 +155,8 @@
+         cx: &mut Context<'_>,
+         direction: Direction,
+     ) -> Poll<io::Result<ReadyEvent>> {
++        #[cfg(all(target_os = "wasi", target_env = "p1"))]
++        self.rearm_wasi()?;
+         ready!(crate::trace::trace_leaf(cx));
+         // Keep track of task budget
+         let coop = ready!(crate::task::coop::poll_proceed(cx));
+@@ -185,6 +196,8 @@
+         interest: Interest,
+         f: impl FnOnce() -> io::Result<R>,
+     ) -> io::Result<R> {
++        #[cfg(all(target_os = "wasi", target_env = "p1"))]
++        self.rearm_wasi()?;
+         let ev = self.shared.ready_event(interest);
+ 
+         // Don't attempt the operation if the resource is not ready.
+@@ -202,6 +215,8 @@
+     }
+ 
+     pub(crate) async fn readiness(&self, interest: Interest) -> io::Result<ReadyEvent> {
++        #[cfg(all(target_os = "wasi", target_env = "p1"))]
++        self.rearm_wasi()?;
+         let ev = self.shared.readiness(interest).await;
+ 
+         if ev.is_shutdown {
+@@ -231,6 +246,27 @@
+                 }
+             }
+         }
++    }
++
++    #[cfg(all(target_os = "wasi", target_env = "p1"))]
++    pub(crate) fn configure_wasi_rearm(&mut self, fd: std::os::wasi::io::RawFd, interest: Interest) {
++        self.wasi_rearm = Some(WasiRearm {
++            fd, interest, pending: std::sync::atomic::AtomicBool::new(false),
++        });
++    }
++
++    #[cfg(all(target_os = "wasi", target_env = "p1"))]
++    fn rearm_wasi(&self) -> io::Result<()> {
++        use std::sync::atomic::Ordering;
++        if let Some(state) = &self.wasi_rearm {
++            if state.pending.swap(false, Ordering::AcqRel) {
++                let result = self.handle().reregister_source(&self.shared,
++                    &mut mio::wasi::SourceFd(&state.fd), state.interest);
++                if result.is_err() { state.pending.store(true, Ordering::Release); }
++                result?;
++            }
++        }
++        Ok(())
+     }
+ 
+     fn handle(&self) -> &Handle {
+@@ -257,3 +293,11 @@
+         crate::util::error::RUNTIME_SHUTTING_DOWN_ERROR,
+     )
+ }
++
++#[cfg(all(target_os = "wasi", target_env = "p1"))]
++#[derive(Debug)]
++struct WasiRearm {
++    fd: std::os::wasi::io::RawFd,
++    interest: Interest,
++    pending: std::sync::atomic::AtomicBool,
++}

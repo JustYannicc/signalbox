@@ -1,0 +1,122 @@
+--- a/nix_031/src/sys/signal.rs
++++ b/nix_031/src/sys/signal.rs
+@@ -585,14 +585,22 @@
+     /// signal mask becomes pending, and returns the accepted signal.
+     #[cfg(not(target_os = "redox"))] // RedoxFS does not yet support sigwait
+     pub fn wait(&self) -> Result<Signal> {
+-        use std::convert::TryFrom;
+-
+-        let mut signum = mem::MaybeUninit::uninit();
+-        let res = unsafe { libc::sigwait(&self.sigset as *const libc::sigset_t, signum.as_mut_ptr()) };
+-
+-        Errno::result(res).map(|_| unsafe {
+-            Signal::try_from(signum.assume_init()).unwrap()
+-        })
++        #[cfg(target_os = "emscripten")]
++        {
++            // SDK 4.0.10 sigwait only checks emulated pending signals; this carrier cannot wait for OS signals.
++            Err(Errno::ENOSYS)
++        }
++        #[cfg(not(target_os = "emscripten"))]
++        {
++            use std::convert::TryFrom;
++
++            let mut signum = mem::MaybeUninit::uninit();
++            let res = unsafe { libc::sigwait(&self.sigset as *const libc::sigset_t, signum.as_mut_ptr()) };
++
++            Errno::result(res).map(|_| unsafe {
++                Signal::try_from(signum.assume_init()).unwrap()
++            })
++        }
+     }
+ 
+     /// Wait for a signal
+@@ -1015,16 +1023,25 @@
+         return Ok(())
+     }
+ 
+-    let res = unsafe {
+-        // if set or oldset is None, pass in null pointers instead
+-        libc::pthread_sigmask(how as libc::c_int,
+-                             set.map_or_else(ptr::null::<libc::sigset_t>,
+-                                             |s| &s.sigset as *const libc::sigset_t),
+-                             oldset.unwrap_or(ptr::null_mut())
+-                             )
+-    };
+-
+-    Errno::result(res).map(drop)
++    #[cfg(target_os = "emscripten")]
++    {
++        // SDK 4.0.10 pthread_sigmask dereferences a null set for queries; this carrier has no OS thread masks.
++        let _ = how;
++        Err(Errno::ENOSYS)
++    }
++    #[cfg(not(target_os = "emscripten"))]
++    {
++        let res = unsafe {
++            // if set or oldset is None, pass in null pointers instead
++            libc::pthread_sigmask(how as libc::c_int,
++                                 set.map_or_else(ptr::null::<libc::sigset_t>,
++                                                 |s| &s.sigset as *const libc::sigset_t),
++                                 oldset.unwrap_or(ptr::null_mut())
++                                 )
++        };
++
++        Errno::result(res).map(drop)
++    }
+ }
+ 
+ /// Manages the signal mask (set of blocked signals) for the calling thread.
+--- a/nix_031/src/unistd.rs
++++ b/nix_031/src/unistd.rs
+@@ -1,6 +1,19 @@
+ //! Safe wrappers around functions found in libc "unistd.h" header
+ 
+ use crate::errno::Errno;
++
++#[cfg(all(feature = "fs", target_os = "emscripten"))]
++mod emscripten_compat {
++    extern "C" {
++        // SDK 4.0.10 unistd.h and libc.a define this ABI; Rust libc 0.2.186 omits it.
++        pub(super) fn faccessat(
++            dirfd: libc::c_int,
++            path: *const libc::c_char,
++            mode: libc::c_int,
++            flags: libc::c_int,
++        ) -> libc::c_int;
++    }
++}
+ 
+ #[cfg(not(target_os = "redox"))]
+ #[cfg(feature = "fs")]
+@@ -3450,12 +3463,24 @@
+     use std::os::fd::AsRawFd;
+ 
+     let res = path.with_nix_path(|cstr| unsafe {
+-        libc::faccessat(
+-            dirfd.as_fd().as_raw_fd(),
+-            cstr.as_ptr(),
+-            mode.bits(),
+-            flags.bits(),
+-        )
++        #[cfg(target_os = "emscripten")]
++        {
++            emscripten_compat::faccessat(
++                dirfd.as_fd().as_raw_fd(),
++                cstr.as_ptr(),
++                mode.bits(),
++                flags.bits(),
++            )
++        }
++        #[cfg(not(target_os = "emscripten"))]
++        {
++            libc::faccessat(
++                dirfd.as_fd().as_raw_fd(),
++                cstr.as_ptr(),
++                mode.bits(),
++                flags.bits(),
++            )
++        }
+     })?;
+     Errno::result(res).map(drop)
+ }

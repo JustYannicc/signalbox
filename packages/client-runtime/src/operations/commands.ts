@@ -34,7 +34,8 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
 import { stopAttachedAutomations } from "../automations/attached.ts"; // signalbox: Stop cancels attached automation runs
-import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { SIGNALBOX_TRASH_WS_METHODS } from "@t3tools/contracts/signalboxTrash";
+import { getInitialServerConfig, request, requestGuarded } from "../rpc/client.ts"; // signalbox: optimistic ledger
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -236,6 +237,7 @@ export interface CancelQueuedRunInput extends ThreadCommandInput {
 
 export interface RetryWorkspacePreparationInput extends ThreadCommandInput {
   readonly runId: RunId;
+  readonly preparationGeneration?: number;
 }
 
 export interface EditQueuedRunInput extends ThreadCommandInput {
@@ -261,7 +263,7 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 });
 
 const dispatch = (command: OrchestrationV2Command) =>
-  request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
+  requestGuarded(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command); // signalbox: optimistic ledger
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
@@ -424,6 +426,16 @@ export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(functi
   return yield* simpleThreadCommand("thread.delete", input);
 });
 
+export const trashThread = Effect.fn("EnvironmentCommands.trashThread")(function* (
+  input: DeleteThreadInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  return yield* requestGuarded(SIGNALBOX_TRASH_WS_METHODS.thread, {
+    threadId: input.threadId,
+    commandId,
+  });
+});
+
 export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(function* (
   input: ArchiveThreadInput,
 ) {
@@ -439,7 +451,12 @@ export const unarchiveThread = Effect.fn("EnvironmentCommands.unarchiveThread")(
 export const settleThread = Effect.fn("EnvironmentCommands.settleThread")(function* (
   input: SettleThreadInput,
 ) {
-  return yield* simpleThreadCommand("thread.settle", input);
+  return yield* dispatch({
+    type: "thread.settle",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    stopWork: true,
+  });
 });
 
 export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
@@ -1018,6 +1035,9 @@ export const retryWorkspacePreparation = Effect.fn("EnvironmentCommands.retryWor
       commandId: yield* allocateCommandId(input),
       threadId: input.threadId,
       runId: input.runId,
+      ...(input.preparationGeneration === undefined
+        ? {}
+        : { preparationGeneration: input.preparationGeneration }),
     });
   },
 );

@@ -13,6 +13,19 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentSessionAtoms } from "./session.ts";
 
+function authorizationFailure(
+  session: AuthSessionState | null,
+  scopes: readonly AuthEnvironmentScope[],
+) {
+  const missing = scopes.find((scope) => session === null || !sessionGrantsScope(session, scope));
+  return missing === undefined
+    ? null
+    : new EnvironmentAuthorizationError({
+        ...authScopeRequiredResponse(missing),
+        message: `This connection requires ${missing}.`,
+      });
+}
+
 function makeCommandPermissions<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   method: string,
@@ -37,6 +50,16 @@ function makeCommandPermissions<R, E>(
   );
   const permissionAtom = (environmentId: EnvironmentId | null, input?: unknown) =>
     atomsByEnvironment(environmentId)(requiredScopes(input).join(","));
+  const check = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    input?: unknown,
+  ) => {
+    const session = Option.getOrNull(
+      AsyncResult.value(registry.get(sessions.sessionStateAtom(environmentId))),
+    );
+    return session === null ? null : authorizationFailure(session, requiredScopes(input));
+  };
   const authorize = (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
@@ -55,20 +78,12 @@ function makeCommandPermissions<R, E>(
             Effect.timeoutOption(6_000),
             Effect.catch(() => Effect.succeed(Option.none<AuthSessionState>())),
           );
-          const missing = scopes.find(
-            (scope) => Option.isNone(session) || !sessionGrantsScope(session.value, scope),
-          );
-          if (missing !== undefined)
-            return yield* Effect.fail(
-              new EnvironmentAuthorizationError({
-                ...authScopeRequiredResponse(missing),
-                message: `This connection requires ${missing}.`,
-              }),
-            );
+          const denial = authorizationFailure(Option.getOrNull(session), scopes);
+          if (denial !== null) return yield* denial;
         }),
       );
     });
-  return { requiredScopes, permissionAtom, authorize };
+  return { requiredScopes, permissionAtom, check, authorize };
 }
 
 const permissionsByRuntime = new WeakMap<

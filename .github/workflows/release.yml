@@ -748,7 +748,7 @@ jobs:
         continue-on-error: true
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          PACKAGE_NAME: com.t3tools.t3code
+          PACKAGE_NAME: com.justyannicc.signalbox
           APK_OUTPUT_DIR: release-assets
         run: |
           if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
@@ -759,17 +759,7 @@ jobs:
       # signed bytes that get uploaded, never from an earlier stage.
       - name: Write CLI archive checksums
         shell: bash
-        run: |
-          set -euo pipefail
-          cd release-assets
-          shopt -s nullglob
-          archives=(t3-*.tar.gz t3-*.zip)
-          if [[ ${#archives[@]} -eq 0 ]]; then
-            echo "No CLI archives were produced." >&2
-            exit 1
-          fi
-          sha256sum "${archives[@]}" > SHA256SUMS
-          cat SHA256SUMS
+        run: bash .github/scripts/write-cli-archive-checksums.sh release-assets
 
       # The desktop build omits the publish config for preview versions, so
       # electron-builder emits no updater manifests for them. Refuse to publish

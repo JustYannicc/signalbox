@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import { EXAMPLES } from "./content/examples.ts";
 import { skillFiles, skillReference, SKILL_TOPICS } from "./files.ts";
-import { skillsAddArgs } from "./installSkill.ts";
 
 describe("the automations skill", () => {
   it.each(Object.keys(EXAMPLES))("compiles the example %s", (name) => {
@@ -42,14 +41,5 @@ describe("the automations skill", () => {
       expect(skillReference(topic)).toBe(text);
     expect(skillReference("work-through-tickets")).toBe(EXAMPLES["work-through-tickets.ts"]);
     expect(skillReference("nope")).toBeNull();
-  });
-
-  it("installs globally for every harness Signalbox runs, without prompts", () => {
-    const args = skillsAddArgs("/state/skills/signalbox-automations");
-    expect(args.slice(0, 3)).toEqual(["add", "/state/skills/signalbox-automations", "--global"]);
-    for (const agent of ["claude-code", "codex", "cursor", "opencode", "grok", "antigravity"]) {
-      expect(args).toContain(agent);
-    }
-    expect(args).toEqual(expect.arrayContaining(["--yes", "--copy"]));
   });
 });

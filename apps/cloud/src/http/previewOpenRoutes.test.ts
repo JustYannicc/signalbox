@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 
 import * as CloudSessions from "../auth/CloudSessions.ts";
 import * as CloudThreadService from "../thread/CloudThreadService.ts";
+import * as ThreadsLive from "../thread/ThreadsLive.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
 import * as Platform from "../platform.ts";
 import { makeMemoryObjects } from "../attachments/attachmentTesting.ts";
@@ -62,6 +63,7 @@ const setup = Effect.gen(function* () {
   const threadService = yield* CloudThreadService.CloudThreadService.pipe(
     Effect.provide(
       Layer.fresh(CloudThreadService.layer).pipe(
+        Layer.provide(ThreadsLive.layer),
         Layer.provide(Layer.succeed(ThreadDirectory.ThreadDirectory, threadDirectory)),
         Layer.provide(layerPersonalThreadContexts(USER_ID)),
         Layer.provide(Platform.layerCrypto),

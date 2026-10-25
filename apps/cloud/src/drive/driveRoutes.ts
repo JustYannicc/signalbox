@@ -13,6 +13,7 @@ import {
   type RefWriteResult,
   REMOTE_HEAD_HEADER,
 } from "@signalbox/runner-protocol/DriveProtocol";
+import { pullJson } from "@signalbox/runner-protocol/PullProtocol";
 import { ThreadId } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -30,9 +31,10 @@ import * as ContextTool from "../context/ContextTool.ts";
 import * as GitHub from "../github/GitHub.ts";
 import * as Platform from "../platform.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
-import type { DriveAuthorization } from "../thread/runner/ThreadRunner.ts";
+import type { DriveAuthorization } from "../thread/ThreadAuthorization.ts";
 import * as UserDirectory from "../user/UserDirectory.ts";
 import * as DriveDirectory from "./DriveDirectory.ts";
+import * as DriveShortcuts from "./DriveShortcuts.ts";
 import * as DrivePacks from "./DrivePacks.ts";
 import {
   type DriveWriter,
@@ -43,6 +45,7 @@ import {
   machineRef,
 } from "./DriveStore.ts";
 import { isAutomationApiPath, serveAutomationRequest } from "./automationRoutes.ts";
+import { isLearnerApiPath, serveLearnerRequest } from "./learnerRoutes.ts";
 import { isBranchApiPath, serveBranchRequest } from "./branchRoutes.ts";
 import { isBrowserApiPath, serveBrowserRequest } from "./browserRoutes.ts";
 import { isStatusLineApiPath, serveStatusLineRequest } from "./statusLineRoutes.ts";
@@ -85,6 +88,7 @@ export interface DriveRouteEnv extends GitHub.GitHubEnv, DirectUploadsEnv {
 type Services =
   | Crypto.Crypto
   | DriveDirectory.DriveDirectory
+  | DriveShortcuts.DriveShortcuts
   | DrivePacks.DrivePacks
   | UserDirectory.UserDirectory
   | GitHub.GitHub
@@ -104,6 +108,9 @@ const toState = (driveId: string, refs: ThreadRefs): DriveState => ({
   packs: refs.packs,
   remote: refs.remote,
   shallow: refs.shallow,
+  notes: refs.notes,
+  pinnedViews: refs.pinnedViews,
+  revision: refs.revision,
 });
 
 const decodeOid = Schema.decodeUnknownOption(Oid);
@@ -148,10 +155,16 @@ export async function handleDriveRequest(
     ContextTool.layer.pipe(
       Layer.provideMerge(
         Layer.mergeAll(
-          DriveDirectory.layerDurableObjects(env.DRIVES, options),
+          DriveShortcuts.layer.pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                DriveDirectory.layerDurableObjects(env.DRIVES, options),
+                UserDirectory.layerDurableObjects(env.USERS, options),
+              ),
+            ),
+          ),
           DrivePacks.layerBucket(env.DRIVE_PACKS, env.DRIVE_PACKS_PREFIX),
           Platform.layerCrypto,
-          UserDirectory.layerDurableObjects(env.USERS, options),
           ThreadDirectory.layerDurableObjects(env.THREADS, options),
           // Only users' own tokens act on GitHub here; the App's client stays in their objects.
           GitHub.layer(null, GitHub.gitHubEndpoints(env)).pipe(
@@ -261,6 +274,11 @@ async function route(
       ),
     );
   }
+  // The thread's agent using its level's learner (#668).
+  if (isLearnerApiPath(new URL(request.url).pathname)) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    return await runtime!.runPromise(serveLearnerRequest(auth, await request.text()));
+  }
   // The person's browser for the thread's agent, opened as its owner (#574).
   const browserPath = new URL(request.url).pathname;
   if (isBrowserApiPath(browserPath)) {
@@ -281,9 +299,38 @@ async function route(
     Effect.succeed(directory.forDrive(auth.driveId)),
   );
 
+  if (pathname === DRIVE_PATHS.pullSave) {
+    if (request.method !== "POST") return text("Method not allowed.", 405);
+    const body = decodeBody(pullJson.save.decode, await request.text());
+    if (body === null) return text("Unreadable request.", 400);
+    if (auth.pullOperationId !== body.operation.id) {
+      return text("This pull is no longer running on this machine.", 403);
+    }
+    const result = await run(Effect.flatMap(drive, (handle) => handle.savePull(writer, body)));
+    return json(pullJson.result.encode(result));
+  }
+  if (pathname.startsWith(`${DRIVE_PATHS.pullReceipts}/`)) {
+    if (request.method !== "GET") return text("Method not allowed.", 405);
+    const encodedId = pathname.slice(DRIVE_PATHS.pullReceipts.length + 1);
+    if (encodedId.length === 0 || encodedId.includes("/")) return text("Unknown path.", 404);
+    let id: string;
+    try {
+      id = decodeURIComponent(encodedId);
+    } catch {
+      return text("Unknown path.", 404);
+    }
+    const receipt = await run(Effect.flatMap(drive, (handle) => handle.pullReceipt(writer, id)));
+    return json(pullJson.receipt.encode(receipt));
+  }
+
   // Shortcut targets, read-only (#142): the thread's user's access to each, asked now.
   if (pathname === DRIVE_PATHS.shortcuts || pathname.startsWith(`${DRIVE_PATHS.shortcuts}/`)) {
-    return await run(shortcutRoute({ userId: auth.userId, driveId: auth.driveId }, request));
+    return await run(
+      shortcutRoute(
+        { userId: auth.userId, driveId: auth.driveId, threadId: auth.threadId },
+        request,
+      ),
+    );
   }
   if (request.method === "GET" && pathname.startsWith(`${DRIVE_PATHS.packs}/`)) {
     return await run(packResponse(auth.driveId, pathname.slice(DRIVE_PATHS.packs.length + 1)));
@@ -291,6 +338,14 @@ async function route(
   if (request.method !== "POST") return text("Method not allowed.", 405);
 
   switch (pathname) {
+    case DRIVE_PATHS.checkpoint: {
+      const body = decodeBody(driveJson.checkpoint.decode, await request.text());
+      if (body === null) return text("Unreadable request.", 400);
+      const written = await run(
+        Effect.flatMap(drive, (handle) => handle.recordCheckpoint(writer, body)),
+      );
+      return json(driveJson.refWrite.encode(toResult(auth.driveId, written)));
+    }
     case DRIVE_PATHS.open: {
       const opened = await run(Effect.flatMap(drive, (handle) => handle.open(writer)));
       // A newer machine writes here now; nothing this one retries changes that.

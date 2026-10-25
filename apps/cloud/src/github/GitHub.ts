@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
 
+import * as IdentityProvider from "../account/IdentityProvider.ts";
 import { type GitHubApi, type GitHubEndpoints, makeGitHubApi } from "./GitHubApi.ts";
 
 /**
@@ -59,7 +60,12 @@ export interface GitHubPipes {
 
 export class GitHub extends Context.Service<
   GitHub,
-  { readonly pipes: GitHubPipes | null; readonly api: GitHubApi }
+  {
+    readonly pipesForUser: (
+      userId: string,
+    ) => Effect.Effect<GitHubPipes | null, WorkOSPipes.WorkOSPipesError>;
+    readonly api: GitHubApi;
+  }
 >()("@signalbox/cloud/github/GitHub") {}
 
 const makePipes = (config: WorkOSPipes.PipesConfig, client: HttpClient.HttpClient): GitHubPipes => {
@@ -77,10 +83,36 @@ const makePipes = (config: WorkOSPipes.PipesConfig, client: HttpClient.HttpClien
 export const layer = (pipes: WorkOSPipes.PipesConfig | null, endpoints?: GitHubEndpoints) =>
   Layer.effect(
     GitHub,
-    Effect.map(HttpClient.HttpClient, (client) =>
-      GitHub.of({
-        pipes: pipes === null ? null : makePipes(pipes, client),
+    Effect.map(HttpClient.HttpClient, (client) => {
+      const configured = pipes === null ? null : makePipes(pipes, client);
+      return GitHub.of({
+        pipesForUser: () => Effect.succeed(configured),
         api: makeGitHubApi(client, endpoints),
-      }),
-    ),
+      });
+    }),
+  );
+
+/** Resolves each user's WorkOS realm before using Pipes for them. */
+export const layerForUsers = (endpoints?: GitHubEndpoints) =>
+  Layer.effect(
+    GitHub,
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      const identityProviders = yield* IdentityProvider.IdentityProviders;
+      const pipesForUser: GitHub["Service"]["pipesForUser"] = (userId) =>
+        identityProviders.identityProviderForUser(userId).pipe(
+          Effect.mapError(
+            () => new WorkOSPipes.WorkOSPipesError({ operation: "configuration", status: 0 }),
+          ),
+          Effect.map((config) =>
+            config.apiKey === undefined || Redacted.value(config.apiKey).trim() === ""
+              ? null
+              : makePipes({ apiKey: config.apiKey, apiBaseUrl: config.apiBaseUrl }, client),
+          ),
+        );
+      return GitHub.of({
+        pipesForUser,
+        api: makeGitHubApi(client, endpoints),
+      });
+    }),
   );

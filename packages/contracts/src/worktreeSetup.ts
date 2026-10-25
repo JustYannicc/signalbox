@@ -1,6 +1,13 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  RunId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /** Producers clamp free text to these before publishing so encoding never fails. */
 export const WORKTREE_SETUP_DETAIL_MAX_LENGTH = 200;
@@ -42,6 +49,11 @@ export type WorktreeSetupPhase = typeof WorktreeSetupPhase.Type;
 
 export const WorktreeSetupSnapshot = Schema.Struct({
   threadId: ThreadId,
+  /** Cloud attempts are addressed independently of the machine lease. Absent on self-hosted servers. */
+  runId: Schema.optional(RunId),
+  preparationGeneration: Schema.optional(PositiveInt),
+  turnStarted: Schema.optional(Schema.Boolean),
+  cancellationRequested: Schema.optional(Schema.Boolean),
   phase: WorktreeSetupPhase,
   startedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
@@ -73,6 +85,8 @@ export type WorktreeSetupStreamEvent = typeof WorktreeSetupStreamEvent.Type;
 
 export const WorktreeSetupCancelInput = Schema.Struct({
   threadId: ThreadId,
+  runId: Schema.optional(RunId),
+  preparationGeneration: Schema.optional(PositiveInt),
 });
 export type WorktreeSetupCancelInput = typeof WorktreeSetupCancelInput.Type;
 
@@ -80,6 +94,11 @@ export const WorktreeSetupCancelResult = Schema.Struct({
   cancelled: Schema.Boolean,
 });
 export type WorktreeSetupCancelResult = typeof WorktreeSetupCancelResult.Type;
+
+export class WorktreeSetupError extends Schema.TaggedError<WorktreeSetupError>()(
+  "WorktreeSetupError",
+  { message: Schema.String },
+) {}
 
 export const WORKTREE_SETUP_STAGE_ORDER: ReadonlyArray<WorktreeSetupStageId> = [
   "fetch",

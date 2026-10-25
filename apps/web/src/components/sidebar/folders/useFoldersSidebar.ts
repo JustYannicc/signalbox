@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { SignalboxContextId } from "@t3tools/contracts/signalboxContexts";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import {
   buildSidebarProjectSnapshots,
@@ -95,76 +95,61 @@ export function useFoldersSidebar(input: {
   const counts = useAtomValue(folderCountsAtom);
   const slices = useAtomValue(folderThreadSlicesAtom);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
-  const toggle = useCallback((key: string) => {
+  const toggle = (key: string) => {
     setCollapsed((current) => {
       const next = new Set(current);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  }, []);
+  };
 
-  const environments = useMemo(
-    (): ReadonlyArray<FolderEnvironmentView> =>
-      input.environments.flatMap((environment) => {
-        const tree = trees.get(environment.environmentId);
-        if (tree === undefined) return [];
-        const { lists, keys } = ownerProjects({
-          environment,
-          owners: tree.owners,
-          projects: input.projects.filter(
-            (project) => project.environmentId === environment.environmentId,
-          ),
-          primaryEnvironmentId: input.primaryEnvironmentId,
-        });
-        return [{ ...tree, label: environment.label, ownerProjects: lists, projectKeys: keys }];
-      }),
-    [input.environments, input.primaryEnvironmentId, input.projects, trees],
-  );
+  const environments = input.environments.flatMap((environment) => {
+    const tree = trees.get(environment.environmentId);
+    if (tree === undefined) return [];
+    const { lists, keys } = ownerProjects({
+      environment,
+      owners: tree.owners,
+      projects: input.projects.filter(
+        (project) => project.environmentId === environment.environmentId,
+      ),
+      primaryEnvironmentId: input.primaryEnvironmentId,
+    });
+    return [{ ...tree, label: environment.label, ownerProjects: lists, projectKeys: keys }];
+  });
 
-  const failures = useMemo(
-    () =>
-      input.environments.flatMap((environment) => {
-        const error = folders.get(environment.environmentId)?.error;
-        return error
-          ? [{ environmentId: environment.environmentId, label: environment.label, error }]
-          : [];
-      }),
-    [folders, input.environments],
-  );
+  const failures = input.environments.flatMap((environment) => {
+    const error = folders.get(environment.environmentId)?.error;
+    return error
+      ? [{ environmentId: environment.environmentId, label: environment.label, error }]
+      : [];
+  });
 
-  const visibleRows = useMemo(
-    (): ReadonlyArray<SectionSidebarVisibleProjectRow> =>
-      visibleFolderLists(environments, collapsed).flatMap((list) => {
-        const project = environments
-          .find((environment) => environment.environmentId === list.environmentId)
-          ?.ownerProjects.get(list.owner.context.id);
-        const threads: ReadonlyArray<SidebarThreadSummary> | undefined = slices.get(list.listKey);
-        return project && threads
-          ? [
-              {
-                environmentId: list.environmentId,
-                project: folderListRow(project, list.listKey),
-                threads,
-              },
-            ]
-          : [];
-      }),
-    [collapsed, environments, slices],
-  );
+  const visibleRows = visibleFolderLists(environments, collapsed).flatMap((list) => {
+    const project = environments
+      .find((environment) => environment.environmentId === list.environmentId)
+      ?.ownerProjects.get(list.owner.context.id);
+    const threads: ReadonlyArray<SidebarThreadSummary> | undefined = slices.get(list.listKey);
+    return project && threads
+      ? [
+          {
+            environmentId: list.environmentId,
+            project: folderListRow(project, list.listKey),
+            threads,
+          },
+        ]
+      : [];
+  });
 
-  return useMemo(
-    () => ({
-      environments,
-      counts,
-      failures,
-      visibleRows,
-      showEnvironmentLabels: input.environments.length > 1,
-      collapsed,
-      toggle,
-    }),
-    [collapsed, counts, environments, failures, input.environments.length, toggle, visibleRows],
-  );
+  return {
+    environments,
+    counts,
+    failures,
+    visibleRows,
+    showEnvironmentLabels: input.environments.length > 1,
+    collapsed,
+    toggle,
+  };
 }
 
 export type FoldersSidebar = ReturnType<typeof useFoldersSidebar>;

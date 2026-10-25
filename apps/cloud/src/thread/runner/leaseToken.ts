@@ -10,7 +10,7 @@ import * as Result from "effect/Result";
  *   <prefix>.<base64url(thread id)>.<base64url(HMAC-SHA256(lease token, message))>
  *
  * The thread id says which thread to ask; that thread recomputes the token
- * from its current lease. Model tokens (`modelToken.ts`) and drive tokens
+ * from its current lease. Model tokens (`../ModelTokens.ts`) and drive tokens
  * (`drive/driveToken.ts`) differ only in prefix and signed message.
  */
 

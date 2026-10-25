@@ -40,7 +40,7 @@ jobs:
               - --filter=@signalbox/cloud...
 
       - name: Run updater fixtures and tests
-        run: python3 -m unittest scripts/cliproxyapi/test_update.py
+        run: python3 -m unittest discover -s scripts/cliproxyapi -t . -p 'test_*.py'
 
       - name: Run focused pool tests
         working-directory: apps/cloud

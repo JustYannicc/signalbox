@@ -1,0 +1,60 @@
+diff --git a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift b/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
+--- a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
++++ b/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
+@@ -82,12 +82,19 @@
+     state.withLock { $0.delegates.removeAll { $0 === delegate } }
+   }
+ 
+-  func appendPendingResponse(_ response: UNNotificationResponse) {
+-    state.withLock { $0.pendingResponses.append(response) }
+-  }
+-
+-  func removeAllPendingResponses() {
+-    state.withLock { $0.pendingResponses.removeAll() }
++  func beginDelivery(_ response: UNNotificationResponse) -> [NotificationDelegate] {
++    state.withLock { state in
++      // A delegate registering during delivery must see this response too.
++      state.pendingResponses.append(response)
++      return state.delegates
++    }
++  }
++
++  func removePendingResponse(_ response: UNNotificationResponse) {
++    state.withLock { state in
++      // Keep responses received while delegate callbacks were running.
++      state.pendingResponses.removeAll { $0 === response }
++    }
+   }
+ }
+ 
+@@ -162,12 +169,10 @@
+   }
+ 
+   public func addDelegate(_ delegate: NotificationDelegate) {
+-    var handled = false
+     for pendingResponse in registry.add(delegate) {
+-      handled = delegate.didReceive(pendingResponse, completionHandler: {}) || handled
+-    }
+-    if handled {
+-      registry.removeAllPendingResponses()
++      if delegate.didReceive(pendingResponse, completionHandler: {}) {
++        registry.removePendingResponse(pendingResponse)
++      }
+     }
+   }
+ 
+@@ -228,11 +233,11 @@
+     withCompletionHandler completionHandler: @escaping () -> Void
+   ) {
+     var handled = false
+-    for delegate in delegates {
++    for delegate in registry.beginDelivery(response) {
+       handled = delegate.didReceive(response, completionHandler: completionHandler) || handled
+     }
+-    if !handled {
+-      registry.appendPendingResponse(response)
++    if handled {
++      registry.removePendingResponse(response)
+     }
+     chainedDelegate?.userNotificationCenter?(center, didReceive: response, withCompletionHandler: completionHandler)
+     completionHandler()

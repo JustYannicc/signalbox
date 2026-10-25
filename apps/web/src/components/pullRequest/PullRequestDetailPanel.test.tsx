@@ -30,7 +30,10 @@ vi.mock("~/state/session", async (original) => ({
   useEnvironmentScope: () => true,
   readEnvironmentScope: () => true,
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
+vi.mock("@effect/atom-react", async (original) => ({
+  ...(await original<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => [],
+}));
 vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 let worktreesSupported = true;
 vi.mock("~/state/environmentCapabilities", () => ({

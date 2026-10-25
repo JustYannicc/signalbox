@@ -19,14 +19,21 @@ export interface AttachmentObjects {
   readonly get: (
     key: string,
   ) => Promise<(AttachmentObjectMeta & { readonly body: ReadableStream<Uint8Array> }) | null>;
-  readonly head: (key: string) => Promise<AttachmentObjectMeta | null>;
+  readonly head: (
+    key: string,
+  ) => Promise<(AttachmentObjectMeta & { readonly uploaded: Date }) | null>;
   readonly delete: (keys: string | string[]) => Promise<unknown>;
   readonly list: (options: {
     readonly prefix: string;
     readonly cursor?: string;
     readonly limit?: number;
+    readonly include?: Array<"customMetadata">;
   }) => Promise<{
-    readonly objects: ReadonlyArray<{ readonly key: string; readonly uploaded: Date }>;
+    readonly objects: ReadonlyArray<{
+      readonly key: string;
+      readonly uploaded: Date;
+      readonly customMetadata?: Record<string, string>;
+    }>;
     readonly truncated: boolean;
     readonly cursor?: string;
   }>;

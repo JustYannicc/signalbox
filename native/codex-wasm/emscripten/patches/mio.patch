@@ -1,0 +1,273 @@
+--- a/mio/src/lib.rs
++++ b/mio/src/lib.rs
+@@ -40,7 +40,7 @@
+ //!
+ //! The available features are described in the [`features`] module.
+ 
+-#[cfg(all(target_family = "wasm", not(target_os = "wasi")))]
++#[cfg(all(target_family = "wasm", not(any(target_os = "wasi", target_os = "emscripten"))))]
+ compile_error!("This wasm target is unsupported by mio. If using Tokio, disable the net feature.");
+ 
+ // macros used internally
+--- a/mio/src/poll.rs
++++ b/mio/src/poll.rs
+@@ -3,6 +3,7 @@
+     not(mio_unsupported_force_poll_poll),
+     not(any(
+         target_os = "aix",
++        target_os = "emscripten",
+         target_os = "espidf",
+         target_os = "fuchsia",
+         target_os = "haiku",
+@@ -446,6 +447,7 @@
+     not(mio_unsupported_force_poll_poll),
+     not(any(
+         target_os = "aix",
++        target_os = "emscripten",
+         target_os = "espidf",
+         target_os = "fuchsia",
+         target_os = "haiku",
+@@ -748,6 +750,7 @@
+     not(mio_unsupported_force_poll_poll),
+     not(any(
+         target_os = "aix",
++        target_os = "emscripten",
+         target_os = "espidf",
+         target_os = "haiku",
+         target_os = "fuchsia",
+@@ -770,6 +773,7 @@
+     not(mio_unsupported_force_poll_poll),
+     not(any(
+         target_os = "aix",
++        target_os = "emscripten",
+         target_os = "espidf",
+         target_os = "haiku",
+         target_os = "fuchsia",
+@@ -793,6 +797,7 @@
+         not(mio_unsupported_force_poll_poll),
+         not(any(
+             target_os = "aix",
++            target_os = "emscripten",
+             target_os = "espidf",
+             target_os = "hermit",
+             target_os = "hurd",
+--- a/mio/src/sys/unix/mod.rs
++++ b/mio/src/sys/unix/mod.rs
+@@ -51,6 +51,7 @@
+         target_os = "vita",
+         target_os = "cygwin",
+         target_os = "wasi",
++        target_os = "emscripten",
+     ), path = "selector/poll.rs")]
+     mod selector;
+     pub(crate) use self::selector::*;
+@@ -107,6 +108,7 @@
+         all(target_os = "wasi", target_env = "p1")
+     ), path = "waker/pipe.rs")]
+     #[cfg_attr(all(target_os = "wasi", not(target_env = "p1")), path = "waker/single_threaded.rs")]
++    #[cfg_attr(target_os = "emscripten", path = "waker/emscripten.rs")]
+     mod waker;
+     // NOTE: the `Waker` type is expected in the selector module as the
+     // `poll(2)` implementation needs to do some special stuff.
+@@ -155,6 +157,7 @@
+             target_os = "solaris",
+             target_os = "vita",
+             target_os = "cygwin",
++            target_os = "emscripten",
+         ),
+         not(target_os = "hermit"),
+         not(target_os = "wasi"),
+--- a/mio/src/sys/unix/net.rs
++++ b/mio/src/sys/unix/net.rs
+@@ -66,6 +66,7 @@
+         target_os = "espidf",
+         target_os = "vita",
+         target_os = "nto",
++        target_os = "emscripten",
+     ))]
+     {
+         if let Err(err) = syscall!(fcntl(socket, libc::F_SETFL, libc::O_NONBLOCK)) {
+--- a/mio/src/sys/unix/pipe.rs
++++ b/mio/src/sys/unix/pipe.rs
+@@ -31,6 +31,7 @@
+ 
+     #[cfg(any(
+         target_os = "aix",
++        target_os = "emscripten",
+         target_os = "haiku",
+         target_os = "ios",
+         target_os = "macos",
+--- a/mio/src/sys/unix/selector/poll.rs
++++ b/mio/src/sys/unix/selector/poll.rs
+@@ -216,11 +216,17 @@
+ 
+             // Perform the poll.
+             trace!("Polling on {:?}", &fds);
+-            let num_events = poll(&mut fds.poll_fds, timeout)?;
++            let num_events = poll(&mut fds.poll_fds, timeout, &self.notify_waker)?;
+             trace!("Poll finished: {:?}", &fds);
+ 
+             if num_events == 0 {
++                #[cfg(not(target_os = "emscripten"))]
+                 return Ok(());
++                // A host wake has no fd event. Still emit its pending Mio token.
++                #[cfg(target_os = "emscripten")]
++                if !self.notify_waker.woken() {
++                    return Ok(());
++                }
+             }
+ 
+             let waker_events;
+@@ -231,8 +237,9 @@
+                 notified = waker_events != 0;
+                 num_fd_events = if notified { num_events - 1 } else { num_events }
+             } else {
+-                waker_events = 0;
+                 notified = self.notify_waker.woken();
++                // Public Mio wakers deliver a readable event even without a pipe.
++                waker_events = if cfg!(target_os = "emscripten") && notified { libc::POLLIN } else { 0 };
+                 num_fd_events = num_events;
+             };
+ 
+@@ -536,7 +543,7 @@
+ }
+ 
+ /// Helper function to call poll.
+-fn poll(fds: &mut [PollFd], timeout: Option<Duration>) -> io::Result<usize> {
++fn poll(fds: &mut [PollFd], timeout: Option<Duration>, _waker: &WakerInternal) -> io::Result<usize> {
+     loop {
+         // A bug in kernels < 2.6.37 makes timeouts larger than LONG_MAX / CONFIG_HZ
+         // (approx. 30 minutes with CONFIG_HZ=1200) effectively infinite on 32 bits
+@@ -560,11 +567,16 @@
+             })
+             .unwrap_or(-1);
+ 
++        #[cfg(not(target_os = "emscripten"))]
+         let res = syscall!(poll(
+             fds.as_mut_ptr() as *mut libc::pollfd,
+             fds.len() as libc::nfds_t,
+             timeout,
+         ));
++
++        // PollFd is repr(transparent). The host completes writes before JSPI resumes.
++        #[cfg(target_os = "emscripten")]
++        let res = unsafe { _waker.poll(fds.as_mut_ptr().cast(), fds.len(), timeout) };
+ 
+         match res {
+             Ok(num_events) => break Ok(num_events as usize),
+--- a/mio/src/sys/unix/tcp.rs
++++ b/mio/src/sys/unix/tcp.rs
+@@ -102,6 +102,7 @@
+         target_os = "hermit",
+         target_os = "nto",
+         target_os = "wasi",
++        target_os = "emscripten",
+         all(target_arch = "x86", target_os = "android"),
+     ))]
+     let stream = {
+@@ -123,6 +124,7 @@
+                 target_os = "vita",
+                 target_os = "hermit",
+                 target_os = "nto",
++                target_os = "emscripten",
+             ))]
+             syscall!(fcntl(s.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK))?;
+ 
+--- a/mio/src/sys/unix/uds/mod.rs
++++ b/mio/src/sys/unix/uds/mod.rs
+@@ -87,6 +87,7 @@
+ {
+     #[cfg(not(any(
+         target_os = "aix",
++        target_os = "emscripten",
+         target_os = "haiku",
+         target_os = "ios",
+         target_os = "macos",
+@@ -111,6 +112,7 @@
+     // there is an error, the file descriptors are closed.
+     #[cfg(any(
+         target_os = "aix",
++        target_os = "emscripten",
+         target_os = "haiku",
+         target_os = "ios",
+         target_os = "macos",
+--- /dev/null
++++ b/mio/src/sys/unix/waker/emscripten.rs
+@@ -0,0 +1,77 @@
++//! Single-threaded JSPI reactor. The host owns waiting and the wake latch.
++
++use std::io;
++use std::os::fd::RawFd;
++use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
++
++#[link(wasm_import_module = "signalbox_emscripten")]
++unsafe extern "C" {
++    fn reactor_new(handle: *mut u32) -> i32;
++    fn reactor_drop(handle: u32) -> i32;
++    fn reactor_wake(handle: u32) -> i32;
++    fn reactor_poll(handle: u32, fds: *mut libc::pollfd, count: u32,
++                    timeout_ms: i32, ready: *mut u32) -> i32;
++}
++
++fn checked(errno: i32) -> io::Result<()> {
++    if errno == 0 {
++        Ok(())
++    } else if errno > 0 {
++        Err(io::Error::from_raw_os_error(errno))
++    } else {
++        Err(io::Error::new(io::ErrorKind::InvalidData, "invalid host reactor errno"))
++    }
++}
++
++#[derive(Debug)]
++pub(crate) struct Waker {
++    handle: u32,
++    woken: AtomicBool,
++}
++
++impl Waker {
++    pub(crate) fn new_unregistered() -> io::Result<Self> {
++        let mut handle = 0;
++        checked(unsafe { reactor_new(&mut handle) })?;
++        Ok(Self { handle, woken: AtomicBool::new(false) })
++    }
++
++    pub(crate) fn wake(&self) -> io::Result<()> {
++        checked(unsafe { reactor_wake(self.handle) })?;
++        self.woken.store(true, Relaxed);
++        Ok(())
++    }
++
++    pub(crate) fn fd(&self) -> Option<RawFd> {
++        None
++    }
++
++    pub(crate) fn woken(&self) -> bool {
++        self.woken.load(Relaxed)
++    }
++
++    pub(crate) fn ack_and_reset(&self) {
++        self.woken.store(false, Relaxed);
++    }
++
++    // The caller keeps the pollfd array alive until the suspending import returns.
++    pub(crate) unsafe fn poll(&self, fds: *mut libc::pollfd, count: usize,
++                              timeout_ms: i32) -> io::Result<i32> {
++        let count = u32::try_from(count)
++            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many host poll fds"))?;
++        let mut ready = 0;
++        checked(unsafe { reactor_poll(self.handle, fds, count, timeout_ms, &mut ready) })?;
++        if ready > count {
++            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid host reactor event count"));
++        }
++        i32::try_from(ready)
++            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "host reactor event count overflow"))
++    }
++}
++
++impl Drop for Waker {
++    fn drop(&mut self) {
++        // Drop cannot report an error; host handles must be released even after poll errors.
++        let _ = unsafe { reactor_drop(self.handle) };
++    }
++}

@@ -20,6 +20,7 @@ import {
   presentPendingBackgroundWork,
   presentProviderGoal,
   deriveReportedModelSelection,
+  deriveRunContinuations,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
   formatModelSelectionEffort,
@@ -54,6 +55,95 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 }
 
 describe("thread execution presentation", () => {
+  it("maps restart continuations through their root to the terminal run", () => {
+    const at = (value: string) => DateTime.makeUnsafe(value);
+    const root = {
+      ...run("root", 1, "interrupted"),
+      requestedAt: at("2026-07-28T10:00:00.000Z"),
+      startedAt: at("2026-07-28T10:00:05.000Z"),
+      workStartedAt: at("2026-07-28T10:00:00.000Z"),
+      completedAt: at("2026-07-28T10:00:30.000Z"),
+    };
+    const middle = {
+      ...run("middle", 2, "interrupted"),
+      restartContinuationOfRunId: root.id,
+      requestedAt: at("2026-07-28T10:00:31.000Z"),
+      startedAt: at("2026-07-28T10:00:35.000Z"),
+      workStartedAt: at("2026-07-28T10:00:00.000Z"),
+      completedAt: at("2026-07-28T10:00:50.000Z"),
+    };
+    const terminal = {
+      ...run("terminal", 3, "completed"),
+      restartContinuationOfRunId: middle.id,
+      requestedAt: at("2026-07-28T10:00:51.000Z"),
+      startedAt: at("2026-07-28T10:00:55.000Z"),
+      workStartedAt: at("2026-07-28T10:00:00.000Z"),
+      completedAt: at("2026-07-28T10:01:24.000Z"),
+    };
+
+    const continuations = deriveRunContinuations([root, middle, terminal]);
+    for (const runId of [root.id, middle.id, terminal.id]) {
+      const summary = continuations.get(runId);
+      expect(summary).toEqual({
+        rootRunId: root.id,
+        terminalRunId: terminal.id,
+        status: "completed",
+        startedAt: "2026-07-28T10:00:00.000Z",
+        completedAt: "2026-07-28T10:01:24.000Z",
+      });
+      expect(Date.parse(summary!.completedAt!) - Date.parse(summary!.startedAt)).toBe(84_000);
+    }
+  });
+
+  it("keeps a continuation with a missing source anchored to its own known run", () => {
+    const orphan = {
+      ...run("orphan", 2, "interrupted"),
+      restartContinuationOfRunId: RunId.make("missing"),
+      completedAt: now,
+    };
+    const continuation = {
+      ...run("orphan-continuation", 3, "completed"),
+      restartContinuationOfRunId: orphan.id,
+      workStartedAt: now,
+      completedAt: now,
+    };
+    const unrelated = run("unrelated", 4, "completed");
+
+    const continuations = deriveRunContinuations([orphan, continuation, unrelated]);
+    expect(continuations.get(orphan.id)).toMatchObject({
+      rootRunId: orphan.id,
+      terminalRunId: continuation.id,
+      status: "completed",
+    });
+    expect(continuations.get(unrelated.id)).toMatchObject({
+      rootRunId: unrelated.id,
+      terminalRunId: unrelated.id,
+    });
+  });
+
+  it("isolates runs with cyclic continuation links", () => {
+    const first = {
+      ...run("cycle-first", 1, "interrupted"),
+      restartContinuationOfRunId: RunId.make("cycle-second"),
+    };
+    const second = {
+      ...run("cycle-second", 2, "completed"),
+      restartContinuationOfRunId: first.id,
+    };
+
+    const continuations = deriveRunContinuations([first, second]);
+    expect(continuations.get(first.id)).toMatchObject({
+      rootRunId: first.id,
+      terminalRunId: first.id,
+      status: "interrupted",
+    });
+    expect(continuations.get(second.id)).toMatchObject({
+      rootRunId: second.id,
+      terminalRunId: second.id,
+      status: "completed",
+    });
+  });
+
   it("derives the current root failure without inheriting errors from children or previous runs", () => {
     const failed = { ...run("limited", 1, "failed"), rootNodeId: NodeId.make("root") };
     const item = {

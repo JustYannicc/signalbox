@@ -1,0 +1,29 @@
+// State machine for one trash. The walk through it with people and modules is the dynamic view state_trash.
+model {
+  smTrash = state 'Trash, restore, purge' {
+    live = state 'Live'
+    archivedItem = state 'Archived' { description 'never merges' }
+    trashedItem = state 'Trashed' { description 'tombstone · 30-day trash' }
+    purging = state 'Purging' { description 'per-store purge workers' }
+    purged = state 'Purged'
+
+    live -[transition]-> archivedItem 'archive'
+    archivedItem -[transition]-> live 'unarchive'
+    live -[transition]-> trashedItem 'trash'
+    archivedItem -[transition]-> trashedItem 'trash'
+    trashedItem -[transition]-> live 'restore (≤ 30 days)'
+    trashedItem -[transition]-> purging '30 days'
+    purging -[transition]-> purged 'catalog · search · forks · VMs · leases'
+  }
+}
+views {
+  view state-trash of smTrash {
+    title 'States/Trash/State machine'
+    description 'How does any item get archived, trashed, restored within 30 days, or purged? Start: green. End: gray. Click the frame for the walk with people and modules (state_trash).'
+    include *
+    include smTrash with { navigateTo state_trash }
+    style smTrash.live { color green }
+    style smTrash.purged { color gray }
+    autoLayout TopBottom
+  }
+}

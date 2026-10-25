@@ -1,0 +1,18 @@
+Wrapper preparation reuses DigiBugCat/codex-wasi-agentos, copyright 2026
+DigiBugCat, under Apache-2.0, at commit
+45eca7daf24bbac603689cc3229693310d184e51.
+
+patches/wasi-deps.patch and patches/std/* are copied verbatim from
+scripts/codex-latest/patches/. build-wasi-libc.sh is adapted from
+scripts/codex-latest/build-wasi-libc.sh: it requires a previously staged libc
+source, takes explicit wrapper paths, quotes paths, initializes its own Git repository, and uses quiet make with two jobs.
+Dependency staging and the Cargo panic-runtime workaround are adapted from
+scripts/codex-latest/{stage-wasi-deps.sh,build-wasm.sh,build.sh,env.sh}.
+The upstream license and notice are retained as UPSTREAM-LICENSE and
+UPSTREAM-NOTICE.
+
+Runtime preparation archives Rivet's Apache-2.0 agentos toolchain at
+63ae3b256749d47c7b3a7c463128d5deda57d1bb (a6c668cd^), and the tokio WASI
+replacement from Rivet's Apache-2.0 Codex fork at
+8f4655a9dbfc7db91768c78ccaea7357ba47127e. Their existing source notices
+are retained in the staged files. No original source checkout is changed.

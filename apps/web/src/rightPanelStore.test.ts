@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { DeviceId, type DeviceHostId, type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
@@ -23,6 +23,7 @@ beforeEach(() => {
   useClosedViewStore.setState({ entries: [] });
   useRightPanelStore.setState({
     byThreadKey: {},
+    pendingDeviceOpensByThreadKey: {},
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
     closeRevisionByThreadKey: {},
@@ -171,6 +172,99 @@ describe("rightPanelStore", () => {
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
     ).toHaveLength(0);
+  });
+
+  it("transfers the exact device owner when reopening an existing device surface", () => {
+    const store = useRightPanelStore.getState();
+    const target = {
+      hostId: "nucbox" as DeviceHostId,
+      deviceId: DeviceId.make("emulator-5580"),
+      name: "Pixel",
+      platform: "android",
+    } as const;
+    store.openDevice(refA, target);
+    store.renameDevice(refA, "device:nucbox:emulator-5580", "Android test");
+    store.openDevice(refA, {
+      ...target,
+      sessionId: "panel-owner",
+      leaseId: "device-walk-4",
+    });
+
+    let surface = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)
+      .surfaces[0];
+    expect(surface).toMatchObject({
+      id: "device:nucbox:emulator-5580",
+      title: "Android test",
+      target: { ...target, sessionId: "panel-owner", leaseId: "device-walk-4" },
+    });
+
+    store.openDevice(refA, target);
+    surface = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)
+      .surfaces[0];
+    expect(surface).toMatchObject({
+      target: { ...target, sessionId: "panel-owner", leaseId: "device-walk-4" },
+    });
+  });
+
+  it("tracks overlapping device opens until each request settles", () => {
+    const store = useRightPanelStore.getState();
+    store.beginDeviceOpen(refA, "request-first", { hostId: "nucbox" });
+    store.beginDeviceOpen(refA, "request-second", { hostId: "mac-mini" });
+    store.endDeviceOpen(refA, "request-second");
+    expect(useRightPanelStore.getState().pendingDeviceOpensByThreadKey).toEqual({
+      ["env-1:thread-A"]: [{ requestId: "request-first", hostId: "nucbox" }],
+    });
+    store.endDeviceOpen(refA, "request-first");
+    expect(useRightPanelStore.getState().pendingDeviceOpensByThreadKey).toEqual({});
+  });
+
+  it("updates a device owner in place without selecting the tab or accepting a stale heartbeat", () => {
+    const store = useRightPanelStore.getState();
+    const target = {
+      hostId: "nucbox",
+      deviceId: "emulator-5580",
+      name: "Pixel",
+      platform: "android",
+    } as const;
+    store.openDevice(refA, target);
+    store.renameDevice(refA, "device:nucbox:emulator-5580", "Android test");
+    store.open(refA, "files");
+
+    const stateBefore = useRightPanelStore.getState().byThreadKey["env-1:thread-A"]!;
+    const deviceSurface = stateBefore.surfaces.find(
+      (surface) => surface.id === "device:nucbox:emulator-5580",
+    );
+    if (deviceSurface?.kind !== "device" || !deviceSurface.target)
+      throw new Error("Expected the existing device tab.");
+
+    expect(
+      store.updateDeviceSurfaceOwner(refA, deviceSurface.id, deviceSurface.target, {
+        threadId: refA.threadId,
+        hostId: target.hostId,
+        deviceId: target.deviceId,
+        sessionId: "panel-owner-b",
+        leaseId: "walk-b",
+      }),
+    ).toBe(true);
+    expect(
+      store.updateDeviceSurfaceOwner(refA, deviceSurface.id, deviceSurface.target, {
+        threadId: refA.threadId,
+        hostId: target.hostId,
+        deviceId: target.deviceId,
+        sessionId: "panel-owner-c",
+        leaseId: "walk-c",
+      }),
+    ).toBe(false);
+
+    const stateAfter = useRightPanelStore.getState().byThreadKey["env-1:thread-A"]!;
+    const updatedDeviceSurface = stateAfter.surfaces.find(
+      (surface) => surface.id === deviceSurface.id,
+    );
+    expect(stateAfter.activeSurfaceId).toBe("files");
+    expect(updatedDeviceSurface).toMatchObject({
+      title: "Android test",
+      target: { sessionId: "panel-owner-b", leaseId: "walk-b" },
+    });
   });
 
   it.each(["one", "all", "others", "right"])(

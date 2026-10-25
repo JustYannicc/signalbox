@@ -16,6 +16,7 @@ export const signalboxFoldersWsHandlers = {
   [SIGNALBOX_FOLDERS_WS_METHODS.subscribe]: (_input: {}) =>
     Stream.fail(new SignalboxFoldersUnavailableError()),
   [SIGNALBOX_FOLDERS_WS_METHODS.create]: unavailable,
+  [SIGNALBOX_FOLDERS_WS_METHODS.startFrom]: unavailable,
   [SIGNALBOX_FOLDERS_WS_METHODS.update]: unavailable,
   [SIGNALBOX_FOLDERS_WS_METHODS.move]: unavailable,
   [SIGNALBOX_FOLDERS_WS_METHODS.delete]: unavailable,

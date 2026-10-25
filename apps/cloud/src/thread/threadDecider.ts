@@ -1,18 +1,29 @@
+import { type ThreadCommand } from "./threadCommands.ts";
+import { decideAsk } from "./threadAsks.ts";
+import { runtimeResponseEvents } from "./runtimeResponses.ts";
 import {
+  type ModelSelection,
   MessageId,
   type OrchestrationV2AppThread,
-  type OrchestrationV2Command,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
+  type ProviderContinuation,
+  continuationBlocksMatchObservations,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { isHarnessInstance } from "./providerCatalog.ts";
+import {
+  beginPreparation,
+  type PreparationState,
+  retryPreparationEvents,
+} from "./preparation/preparationState.ts";
+import { decideQueuedRunCommand } from "./queuedRunCommands.ts";
 import { pullRequestLinkEvents } from "./pullRequests/pullRequestLinks.ts";
+import * as threadLifecycle from "./threadLifecycle.ts";
 import {
   activeRun,
   cancelQueuedEvents,
@@ -21,7 +32,14 @@ import {
 } from "./runLifecycle.ts";
 import { interruptRunEvents } from "./scriptedTurn.ts";
 import { canSteer, steerEvents, steerTarget } from "./steering.ts";
-import { type DecisionContext, ids, messageEvent, runEvent, threadEvent } from "./threadEvents.ts";
+import {
+  type Decision as ThreadEventDecision,
+  type DecisionContext,
+  ids,
+  messageEvent,
+  runEvent,
+  threadEvent,
+} from "./threadEvents.ts";
 import { applyEvents } from "./threadProjection.ts";
 
 /**
@@ -32,10 +50,7 @@ import { applyEvents } from "./threadProjection.ts";
  * followed here rather than its code.
  */
 
-export type Decision =
-  | { readonly _tag: "accepted"; readonly events: ReadonlyArray<OrchestrationV2DomainEvent> }
-  | { readonly _tag: "rejected"; readonly message: string };
-
+export type Decision = ThreadEventDecision & { readonly preparation?: PreparationState };
 const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => ({
   _tag: "accepted",
   events,
@@ -43,13 +58,12 @@ const accept = (events: ReadonlyArray<OrchestrationV2DomainEvent>): Decision => 
 const reject = (message: string): Decision => ({ _tag: "rejected", message });
 
 type Projection = OrchestrationV2ThreadProjection;
-type CommandOf<T extends OrchestrationV2Command["type"]> = Extract<
-  OrchestrationV2Command,
-  { readonly type: T }
->;
-
-export const HARNESS_MODES_UNSUPPORTED =
-  "Claude and Codex in the cloud run with full access and without plan mode for now: approvals can't reach cloud machines yet.";
+type CommandOf<T extends ThreadCommand["type"]> = Extract<ThreadCommand, { readonly type: T }>;
+const PROVIDER_CONTINUATION_SOURCE_STATUSES = new Set<OrchestrationV2Run["status"]>([
+  "running",
+  "waiting",
+  "completed",
+]);
 
 /** A thread's own branch, and the path clients address its working tree by. */
 export interface ThreadWorktree {
@@ -58,19 +72,27 @@ export interface ThreadWorktree {
 }
 
 /** The rejection for a command the cloud does not serve yet. */
-export const unsupported = (commandType: string) =>
-  `${commandType} is not available in the cloud yet.`;
+export const unsupported = () => "This action isn't available in the cloud yet.";
 
 const CLOUD_COMMAND_TYPES = [
   "thread.create",
+  "thread.ask.raise",
+  "thread.ask.answer",
+  "thread.ask.withdraw",
+  "thread.ask.sync",
+  "runtime-request.respond",
   "message.dispatch",
   "run.interrupt",
+  "prepared-run.retry",
   "queue.resume",
   "queued-run.cancel",
+  "queued-run.edit",
+  "queued-run.reorder",
   "queued-message.promote-to-steer",
   "thread.visit",
   "thread.metadata.update",
   "thread.model-selection.set",
+  "provider.switch",
   "thread.runtime-mode.set",
   "thread.interaction-mode.set",
   "thread.pull-request.link",
@@ -78,22 +100,28 @@ const CLOUD_COMMAND_TYPES = [
   "thread.pull-request-link.sync",
   "thread.archive",
   "thread.unarchive",
-] as const satisfies ReadonlyArray<OrchestrationV2Command["type"]>;
+  "thread.user-input.dismiss",
+  "thread.settle",
+  "thread.auto-settle",
+  "thread.unsettle",
+  "thread.auto-settle.set",
+  "thread.pin",
+  "thread.unpin",
+  "thread.pin.reorder",
+] as const satisfies ReadonlyArray<ThreadCommand["type"]>;
 type CloudCommand = CommandOf<(typeof CLOUD_COMMAND_TYPES)[number]>;
 
 /**
  * The commands `decide` serves; its switch is exhaustive over them. The public
  * API lists the rest as gaps (`api/cloudCoverage.ts`).
  */
-export const CLOUD_COMMANDS: ReadonlySet<OrchestrationV2Command["type"]> = new Set(
-  CLOUD_COMMAND_TYPES,
-);
+export const CLOUD_COMMANDS: ReadonlySet<ThreadCommand["type"]> = new Set(CLOUD_COMMAND_TYPES);
 
-const isCloudCommand = (command: OrchestrationV2Command): command is CloudCommand =>
+const isCloudCommand = (command: ThreadCommand): command is CloudCommand =>
   CLOUD_COMMANDS.has(command.type);
 
 /** The thread a command addresses. Commands without a single target thread are not served. */
-export function commandThreadId(command: OrchestrationV2Command) {
+export function commandThreadId(command: ThreadCommand) {
   return "threadId" in command ? command.threadId : null;
 }
 
@@ -139,8 +167,13 @@ function dispatchMessage(
   const { thread } = projection;
   const updates: Array<OrchestrationV2DomainEvent> = [];
   let current = thread;
+  const reopened = threadLifecycle.reopenForMessage(thread, ctx);
+  if (reopened !== null) {
+    current = reopened.thread;
+    updates.push(reopened.event);
+  }
   const firstMessage = !projection.messages.some((message) => message.role === "user");
-  if (command.titleSeed !== undefined && firstMessage && command.titleSeed !== thread.title) {
+  if (command.titleSeed !== undefined && firstMessage && command.titleSeed !== current.title) {
     current = { ...current, title: command.titleSeed, updatedAt: ctx.now };
     updates.push(threadEvent(ctx, "thread.metadata-updated", current));
   }
@@ -158,15 +191,6 @@ function dispatchMessage(
     updates.push(threadEvent(ctx, "thread.model-selection-updated", current));
   }
 
-  // Cloud machines have no way to answer an approval or a question yet, so a
-  // harness turn that could stop to ask would wait until someone pressed Stop.
-  if (
-    isHarnessInstance(current.providerInstanceId) &&
-    (current.runtimeMode !== "full-access" || current.interactionMode === "plan")
-  ) {
-    return reject(HARNESS_MODES_UNSUPPORTED);
-  }
-
   const ordinal = projection.runs.length + 1;
   const runId = ids.run(thread.id, ordinal);
   const live = activeRun(projection);
@@ -181,17 +205,31 @@ function dispatchMessage(
     nodeId: null,
     role: "user",
     text: command.text,
+    ...(command.notification === undefined ? {} : { notification: command.notification }),
+    ...(command.providerContinuation === undefined
+      ? {}
+      : { providerContinuation: command.providerContinuation }),
+    ...(command.delegatedCompletion === undefined
+      ? {}
+      : { delegatedCompletion: command.delegatedCompletion }),
     ...(command.context === undefined ? {} : { context: command.context }),
     attachments: command.attachments,
     streaming: false,
     createdAt: ctx.now,
     updatedAt: ctx.now,
   };
-  const steered = steerTarget(projection, command);
+  const updatedProjection = applyEvents(projection, updates) ?? projection;
+  const steered = steerTarget(updatedProjection, command);
   if (steered !== undefined) {
-    return accept([...updates, ...steerEvents(projection, steered, message, "steer", ctx)]);
+    return accept([...updates, ...steerEvents(updatedProjection, steered, message, "steer", ctx)]);
   }
-  const queuePosition = projection.runs.filter((run) => run.status === "queued").length + 1;
+  const queuePosition =
+    Math.max(
+      0,
+      ...updatedProjection.runs
+        .filter((run) => run.status === "queued")
+        .map((run) => run.queuePosition ?? run.ordinal),
+    ) + 1;
   const run: OrchestrationV2Run = {
     id: runId,
     threadId: thread.id,
@@ -210,13 +248,91 @@ function dispatchMessage(
     completedAt: null,
     checkpointId: null,
     contextHandoffId: null,
+    ...(command.restartContinuationOfRunId === undefined
+      ? {}
+      : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
   };
   const recorded = messageEvent(ctx, message);
   if (live !== undefined) {
     return accept([...updates, runEvent(ctx, "run.created", run), recorded]);
   }
-  const withMessage = applyEvents(projection, [...updates, recorded]) ?? projection;
+  const withMessage = applyEvents(updatedProjection, [recorded]) ?? updatedProjection;
   return accept([...updates, recorded, ...startRunEvents(withMessage, run, "turn_start", ctx)]);
+}
+
+function staleProviderContinuation(
+  projection: Projection,
+  command: CommandOf<"message.dispatch">,
+): Decision | undefined {
+  const continuation = command.providerContinuation;
+  if (continuation === undefined) return undefined;
+
+  const { thread } = projection;
+  const sourceRun = projection.runs.find((run) => run.id === continuation.sourceRunId);
+  const providerThread = projection.providerThreads.find(
+    (candidate) => candidate.id === continuation.providerThreadId,
+  );
+  if (
+    command.dispatchMode.type !== "queue_after_active" ||
+    command.createdBy !== "agent" ||
+    (command.creationSource !== "provider" && command.creationSource !== "server") ||
+    thread.archivedAt !== null ||
+    thread.deletedAt !== null ||
+    sourceRun === undefined ||
+    sourceRun.threadId !== thread.id ||
+    sourceRun.startedAt === null ||
+    !PROVIDER_CONTINUATION_SOURCE_STATUSES.has(sourceRun.status) ||
+    sourceRun.providerThreadId !== continuation.providerThreadId ||
+    thread.activeProviderThreadId !== continuation.providerThreadId ||
+    sourceRun.providerInstanceId !== thread.providerInstanceId ||
+    sourceRun.modelSelection.instanceId !== thread.providerInstanceId ||
+    providerThread === undefined ||
+    providerThread.appThreadId !== thread.id ||
+    providerThread.providerInstanceId !== thread.providerInstanceId ||
+    (continuation.driver !== undefined && providerThread.driver !== continuation.driver) ||
+    (providerThread.status !== "active" && providerThread.status !== "idle")
+  ) {
+    return reject("This provider continuation is no longer current.");
+  }
+  if (!continuationBlocksMatchObservations(continuation))
+    return reject("Provider continuation blocks do not match their observations.");
+  if (hasRepeatedProviderContinuationCompletion(projection, command, continuation)) {
+    return reject("This provider continuation repeats a source occurrence.");
+  }
+  return undefined;
+}
+
+function hasRepeatedProviderContinuationCompletion(
+  projection: Projection,
+  command: CommandOf<"message.dispatch">,
+  continuation: ProviderContinuation,
+): boolean {
+  const observations = new Set<string>();
+  for (const observed of continuation.observations ?? []) {
+    const key = JSON.stringify([observed.sdkMessageId, observed.blockIndex]);
+    if (observations.has(key)) return true;
+    observations.add(key);
+  }
+  const identities = new Set<string>();
+  for (const completion of continuation.completions ?? []) {
+    const identity = JSON.stringify([completion.sourceCallId, completion.sourceOccurrenceId]);
+    if (identities.has(identity)) return true;
+    identities.add(identity);
+  }
+
+  return projection.messages.some((message) => {
+    const previous = message.providerContinuation;
+    return (
+      message.id !== command.messageId &&
+      previous?.providerThreadId === continuation.providerThreadId &&
+      (previous.completions?.some((completion) =>
+        identities.has(JSON.stringify([completion.sourceCallId, completion.sourceOccurrenceId])),
+      ) === true ||
+        previous.observations?.some((observed) =>
+          observations.has(JSON.stringify([observed.sdkMessageId, observed.blockIndex])),
+        ) === true)
+    );
+  });
 }
 
 function updateThread(
@@ -228,26 +344,94 @@ function updateThread(
   return accept([threadEvent(ctx, type, { ...projection.thread, ...patch, updatedAt: ctx.now })]);
 }
 
+const lifecycleDecision = (decision: threadLifecycle.LifecycleDecision): Decision =>
+  decision._tag === "accepted" ? accept(decision.events) : reject(decision.message);
+
 /**
  * The commands a cloud thread serves today. Anything else is rejected with a
  * message the client shows, never silently dropped.
  */
 export function decide(
   projection: Projection | null,
-  command: OrchestrationV2Command,
+  command: ThreadCommand,
   ctx: DecisionContext,
   /** `idleSinceMs`: archive only a thread unchanged since then (the idle-chat sweep's). */
-  expected: { readonly idleSinceMs?: number } = {},
+  expected: {
+    readonly idleSinceMs?: number;
+    readonly personId?: string;
+    readonly preparation?: PreparationState | null;
+  } = {},
 ): Decision {
-  if (!isCloudCommand(command)) return reject(unsupported(command.type));
+  if (!isCloudCommand(command)) return reject(unsupported());
   if (command.type === "thread.create") {
     return projection === null ? createThread(command, ctx) : reject("This thread already exists.");
   }
   if (projection === null) return reject("This thread does not exist.");
-  if (projection.thread.deletedAt !== null) return reject("This thread was deleted.");
+  if (projection.thread.deletedAt !== null && command.type !== "thread.ask.sync")
+    return reject("This thread was deleted.");
   switch (command.type) {
+    case "thread.ask.raise":
+    case "thread.ask.answer":
+    case "thread.ask.withdraw":
+    case "thread.ask.sync":
+      return decideAsk(projection, command, ctx, dispatchMessage, (state, response, at) =>
+        runtimeResponseEvents(
+          state,
+          response,
+          at,
+          dispatchMessage,
+          command.type === "thread.ask.answer"
+            ? command.answeredBy
+            : { kind: "person", personId: expected.personId ?? "thread-owner" },
+        ),
+      );
+    case "runtime-request.respond":
+    case "thread.user-input.dismiss":
+      return runtimeResponseEvents(projection, command, ctx, dispatchMessage, {
+        kind: "person",
+        personId: expected.personId ?? "thread-owner",
+      });
+    case "prepared-run.retry": {
+      const current = expected.preparation;
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (
+        command.preparationGeneration === undefined ||
+        current == null ||
+        current.runId !== command.runId ||
+        current.generation !== command.preparationGeneration ||
+        (current.status !== "failed" && current.status !== "cancelled") ||
+        current.snapshot.turnStarted === true ||
+        run === undefined ||
+        run.startedAt !== null ||
+        (run.status !== "failed" && run.status !== "interrupted") ||
+        projection.thread.archivedAt !== null ||
+        activeRun(projection) !== undefined ||
+        projection.runs.some(
+          (candidate) => candidate.ordinal > run.ordinal && candidate.status !== "queued",
+        )
+      ) {
+        return reject("This preparation attempt is missing, out of date, or cannot be retried.");
+      }
+      return {
+        _tag: "accepted",
+        events: retryPreparationEvents(projection, run.id, ctx),
+        preparation: beginPreparation(projection, run.id, 0, current, ctx),
+      };
+    }
+    case "thread.settle":
+    case "thread.auto-settle":
+    case "thread.unsettle":
+    case "thread.auto-settle.set":
+    case "thread.pin":
+    case "thread.unpin":
+    case "thread.pin.reorder": {
+      const decision = threadLifecycle.decide(projection, command, ctx);
+      return decision === undefined ? reject(unsupported()) : lifecycleDecision(decision);
+    }
     case "message.dispatch":
-      return dispatchMessage(projection, command, ctx);
+      return (
+        staleProviderContinuation(projection, command) ?? dispatchMessage(projection, command, ctx)
+      );
     case "run.interrupt": {
       const run = activeRun(projection);
       if (run === undefined || run.id !== command.runId) {
@@ -255,6 +439,9 @@ export function decide(
       }
       return accept(interruptRunEvents(projection, run, ctx, command.holdQueue === true));
     }
+    case "queued-run.edit":
+    case "queued-run.reorder":
+      return decideQueuedRunCommand(projection, command, ctx);
     case "queued-run.cancel": {
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
       if (run?.status !== "queued") return reject("That message is no longer queued.");
@@ -332,13 +519,21 @@ export function decide(
         return reject("This thread changed since it went idle.");
       }
       return updateThread(projection, "thread.archived", { archivedAt: ctx.now }, ctx);
-    case "thread.unarchive":
+    case "thread.unarchive": {
+      // Unarchiving a settled task reopens it.
+      const reopened = threadLifecycle.decide(projection, command, ctx);
+      if (reopened !== undefined) return lifecycleDecision(reopened);
       if (projection.thread.archivedAt === null) return reject("This thread is not archived.");
       return updateThread(projection, "thread.unarchived", { archivedAt: null }, ctx);
+    }
+    case "provider.switch":
     case "thread.model-selection.set":
       return updateThread(
         projection,
-        "thread.model-selection-updated",
+        command.type === "provider.switch" ||
+          projection.thread.providerInstanceId !== command.modelSelection.instanceId
+          ? "thread.provider-switched"
+          : "thread.model-selection-updated",
         {
           modelSelection: command.modelSelection,
           providerInstanceId: command.modelSelection.instanceId,
@@ -374,7 +569,10 @@ export function decide(
  */
 export function decideLaunch(
   projection: Projection | null,
-  input: OrchestrationV2ThreadLaunchInput & { readonly threadId: ThreadId },
+  input: OrchestrationV2ThreadLaunchInput & {
+    readonly threadId: ThreadId;
+    readonly modelSelection: ModelSelection;
+  },
   ctx: DecisionContext,
   worktree: ThreadWorktree | null = null,
 ): Decision {

@@ -14,6 +14,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import { keybindingCapability } from "./keybindingCapabilities"; // signalbox
+import { settingsItemSupported, settingsPathSupported } from "./settingsCapabilities";
 import {
   validateSettingsScopeSearch,
   type ResolvedSettingsScope,
@@ -35,7 +36,8 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/archived"
+  | "/settings/trash"; // signalbox: trash
 
 export type SettingsSearchScope =
   | "environment"
@@ -101,6 +103,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
+  "/settings/trash": "Trash", // signalbox: trash
 };
 
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
@@ -399,6 +402,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Time format",
     to: "/settings/general",
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
+  },
+  {
+    id: "person-timezone", // signalbox: person timezone
+    capability: "personTimezone",
+    title: "Time zone",
+    to: "/settings/general",
+    searchTerms: ["timezone time zone schedule local time automatic device"],
   },
   {
     id: "response-streaming",
@@ -752,6 +762,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "browser",
   },
   {
+    id: "cloud-browser-profile",
+    title: "Cloud browser profile",
+    to: "/settings/integrations",
+    targetId: "browser",
+    cloudOnly: true,
+    searchTerms: ["clear sign-ins cookies site data"],
+  },
+  {
     id: "browser-default-profile",
     title: "Default browser profile",
     to: "/settings/integrations",
@@ -1051,6 +1069,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
   },
+  // signalbox: trash
+  {
+    id: "trash",
+    title: "Trash",
+    to: "/settings/trash",
+    searchTerms: ["deleted threads folders restore recover empty bin recycle permanently forever"],
+    cloudOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
@@ -1073,6 +1099,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
+  "/settings/trash": null, // signalbox: trash
 };
 
 export function getSettingsSearchTargetScope(targetId: string) {
@@ -1175,22 +1202,31 @@ export function filterAvailableSettingsSearchItems(
   availability: SettingsSearchAvailability,
 ): ReadonlyArray<SettingsSearchItem> {
   const items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS;
-  return items.filter(
-    (item) =>
-      !item.hidden && // signalbox
-      (!item.cloudOnly || availability.hasCloudPublicConfig) &&
-      (!item.environmentOnly || availability.hasEnvironment) &&
-      (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
-      (!item.macProviderSettingsOnly || availability.hasMacProviderSettingsEnvironment) &&
-      (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
-      (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
-      (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
-      (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
-      (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.capability || !availability.unsupportedCapabilities?.has(item.capability)) &&
-      (!availability.unsupportedCapabilities ||
-        isSettingsPathAvailable(item.to, availability.unsupportedCapabilities)),
-  );
+  return items
+    .filter(
+      (item) =>
+        !item.hidden &&
+        (!item.cloudOnly || availability.hasCloudPublicConfig) &&
+        (!item.environmentOnly || availability.hasEnvironment) &&
+        (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
+        (!item.macProviderSettingsOnly || availability.hasMacProviderSettingsEnvironment) &&
+        (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
+        (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
+        (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
+        (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+        (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
+        (!item.capability || !availability.unsupportedCapabilities?.has(item.capability)) &&
+        (!availability.unsupportedCapabilities ||
+          settingsItemSupported(item.id, availability.unsupportedCapabilities)) &&
+        (!availability.unsupportedCapabilities ||
+          isSettingsPathAvailable(item.to, availability.unsupportedCapabilities)),
+    )
+    .map((item) =>
+      item.id === "keybinding-chat.newLocal" &&
+      availability.unsupportedCapabilities?.has("localFilesystem")
+        ? { ...item, title: commandLabel("chat.newLocal", false) }
+        : item,
+    );
 }
 
 interface CapabilitySearchEnvironment {
@@ -1239,18 +1275,11 @@ export function unsupportedSettingsCapabilities(
 }
 
 /** signalbox: settings pages that only exist where an environment can do something. */
-const SETTINGS_PATH_CAPABILITIES: Partial<Record<SettingsPath, SignalboxEnvironmentCapability>> = {
-  "/settings/scheduled-tasks": "scheduledTasks",
-  // Connections manages other environments; the cloud is the only one.
-  "/settings/connections": "otherEnvironments",
-};
-
 export function isSettingsPathAvailable(
   path: SettingsPath,
   unsupportedCapabilities: ReadonlySet<SignalboxEnvironmentCapability>,
 ): boolean {
-  const capability = SETTINGS_PATH_CAPABILITIES[path];
-  return capability === undefined || !unsupportedCapabilities.has(capability);
+  return settingsPathSupported(path, unsupportedCapabilities);
 }
 
 export function searchSettings(

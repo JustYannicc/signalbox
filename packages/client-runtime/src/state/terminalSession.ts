@@ -27,6 +27,7 @@ export {
 export interface TerminalSessionState {
   readonly summary: TerminalSummary | null;
   readonly output: TerminalOutputState;
+  readonly generation?: number;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly hasRunningSubprocess: boolean;
@@ -37,6 +38,7 @@ export interface TerminalSessionState {
 
 export interface TerminalBufferState {
   readonly output: TerminalOutputState;
+  readonly generation?: number;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly updatedAt: string | null;
@@ -103,6 +105,7 @@ function terminalBufferStateFromSnapshot(
 ): TerminalBufferState {
   return {
     output: resetOutput(current.output, snapshot.history, maxBufferBytes),
+    ...(snapshot.generation !== undefined ? { generation: snapshot.generation } : {}),
     status: snapshot.status,
     error: null,
     updatedAt: snapshot.updatedAt,
@@ -121,9 +124,11 @@ export function combineTerminalSessionState(
   summary: TerminalSummary | null,
   buffer: TerminalBufferState,
 ): TerminalSessionState {
+  const generation = buffer.generation ?? summary?.generation;
   return {
     summary,
     output: buffer.output,
+    ...(generation !== undefined ? { generation } : {}),
     status: buffer.version > 0 ? buffer.status : (summary?.status ?? buffer.status),
     error: buffer.error,
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,

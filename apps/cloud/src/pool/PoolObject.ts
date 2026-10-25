@@ -1,10 +1,13 @@
-// @effect-diagnostics globalConsole:off globalDate:off - container logs go straight to Workers logs; alarms are wall-clock.
+// @effect-diagnostics globalDate:off - alarms are wall-clock.
 import * as SqliteClient from "@effect/sql-sqlite-do/SqliteClient";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
+import { log } from "evlog";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 
+import * as Evlog from "../observability/Evlog.ts";
+import { drainsSettled } from "../observability/evlogWorkers.ts";
 import * as Platform from "../platform.ts";
 import {
   POOL_OBJECT_JURISDICTION,
@@ -23,6 +26,7 @@ import {
 } from "./PreviewLinkRegistry.ts";
 import { makePoolObjectApi } from "./poolObjectApi.ts";
 import * as PoolStore from "./poolStore.ts";
+import { PoolTelemetry } from "./PoolTelemetry.ts";
 
 /**
  * One per account pool, named by `poolObjectName`, always in the EU
@@ -47,9 +51,6 @@ interface StoreGatewayProps {
   readonly objectId: string;
 }
 
-const log = (event: string, fields: Record<string, unknown>) =>
-  console.log(JSON.stringify({ event, ...fields }));
-
 /** Keep an earlier idle or catalog alarm when another request schedules later work. */
 const scheduleEarlierAlarm = async (storage: DurableObjectStorage, at: number) => {
   const current = await storage.getAlarm();
@@ -57,8 +58,18 @@ const scheduleEarlierAlarm = async (storage: DurableObjectStorage, at: number) =
 };
 
 // The whole storage, not just `storage.sql`: migrations run in transactions.
-const makeRuntime = (ctx: DurableObjectState) =>
-  ManagedRuntime.make(
+const makeRuntime = (ctx: DurableObjectState) => {
+  const emit = (action: string, fields: Record<string, unknown>) => {
+    const event = { ...fields, action, pool: { id: ctx.id.toString() } };
+    try {
+      if (typeof fields.status === "number" && fields.status >= 500) log.error(event);
+      else log.info(event);
+      ctx.waitUntil(drainsSettled());
+    } catch {
+      // Telemetry must never fail a pool request.
+    }
+  };
+  return ManagedRuntime.make(
     PoolEngine.layer.pipe(
       Layer.provideMerge(PoolLinks.layer),
       Layer.provideMerge(
@@ -69,7 +80,8 @@ const makeRuntime = (ctx: DurableObjectState) =>
                 ctx as unknown as { readonly exports: PoolExports }
               ).exports.PoolStoreGateway({ props: { objectId: ctx.id.toString() } }),
               wakeAt: (at) => ctx.waitUntil(scheduleEarlierAlarm(ctx.storage, at)),
-              log,
+              // Each container milestone is a wide event of its own.
+              log: emit,
             })
           : PoolContainer.layerUnavailable,
       ),
@@ -77,8 +89,13 @@ const makeRuntime = (ctx: DurableObjectState) =>
       Layer.provideMerge(
         Layer.mergeAll(SqliteClient.layer({ storage: ctx.storage }), Platform.layerCrypto),
       ),
+      Layer.provideMerge(Layer.mergeAll(Evlog.layer, Evlog.layerWaitUntil(ctx))),
+      Layer.provideMerge(
+        Layer.succeed(PoolTelemetry, { submit: (event) => emit(event.action, { ...event }) }),
+      ),
     ),
   );
+};
 
 export class PoolObject
   extends DurableObject<PoolObjectEnv>
@@ -95,16 +112,22 @@ export class PoolObject
     }
     this.runtime = makeRuntime(ctx);
     const poolObject = ctx.id.toString();
-    const scheduleCatalogAlarm = async () => {
+    const scheduleRefreshAlarm = async () => {
       try {
-        // An existing idle or catalog alarm will recalculate both deadlines when it fires.
-        if ((await ctx.storage.getAlarm()) !== null) return;
-        const at = await this.runtime.runPromise(
-          PoolEngine.PoolEngine.use((engine) => engine.nextModelsRefreshAt()),
+        const deadlines = await this.runtime.runPromise(
+          PoolEngine.PoolEngine.use((engine) =>
+            Effect.all([engine.nextModelsRefreshAt(), engine.nextUsageSampleAt()]),
+          ),
         );
-        if (at !== null) await scheduleEarlierAlarm(ctx.storage, at);
+        for (const at of deadlines) {
+          if (at !== null) await scheduleEarlierAlarm(ctx.storage, at);
+        }
       } catch (cause) {
-        log("pool.models_alarm_schedule_failed", { cause: String(cause) });
+        log.error({
+          action: "pool.models_alarm_schedule_failed",
+          pool: { id: poolObject },
+          cause: String(cause),
+        });
       }
     };
     this.api = makePoolObjectApi(
@@ -115,7 +138,7 @@ export class PoolObject
             Effect.annotateSpans(effect, "pool.object", poolObject),
           );
         } finally {
-          await scheduleCatalogAlarm();
+          await scheduleRefreshAlarm();
         }
       },
       // Erased, the object is an empty pool again, so a repeated delete still answers.
@@ -130,7 +153,7 @@ export class PoolObject
       if (ctx.container?.running) {
         await scheduleEarlierAlarm(ctx.storage, Date.now() + PoolContainer.IDLE_TIMEOUT_MS);
       }
-      await scheduleCatalogAlarm();
+      await scheduleRefreshAlarm();
     });
   }
 
@@ -163,6 +186,10 @@ export class PoolObject
     return this.api.accounts(...args);
   }
 
+  advice(...args: Parameters<PoolObjectApi["advice"]>) {
+    return this.api.advice(...args);
+  }
+
   models(...args: Parameters<PoolObjectApi["models"]>) {
     return this.api.models(...args);
   }
@@ -173,6 +200,10 @@ export class PoolObject
 
   loginStatus(...args: Parameters<PoolObjectApi["loginStatus"]>) {
     return this.api.loginStatus(...args);
+  }
+
+  logoutAccount(...args: Parameters<PoolObjectApi["logoutAccount"]>) {
+    return this.api.logoutAccount(...args);
   }
 
   completeLogin(...args: Parameters<PoolObjectApi["completeLogin"]>) {
@@ -237,18 +268,40 @@ export class PoolObject
   override async alarm() {
     try {
       await this.runtime.runPromise(
+        PoolEngine.PoolEngine.use((engine) => engine.refreshUsageAtAlarm()),
+      );
+    } catch (cause) {
+      log.error({
+        action: "pool.usage_alarm_refresh_failed",
+        pool: { id: this.ctx.id.toString() },
+        cause: String(cause),
+      });
+    }
+    try {
+      await this.runtime.runPromise(
         PoolEngine.PoolEngine.use((engine) => engine.refreshModelsAtAlarm()),
       );
     } catch (cause) {
-      log("pool.models_alarm_refresh_failed", { cause: String(cause) });
+      log.error({
+        action: "pool.models_alarm_refresh_failed",
+        pool: { id: this.ctx.id.toString() },
+        cause: String(cause),
+      });
     }
     const next = await this.runtime.runPromise(
-      PoolContainer.PoolContainer.use((container) => container.sleepIfIdle(Date.now())),
+      PoolContainer.PoolContainer.use((container) => container.sleepIfIdle(Date.now())).pipe(
+        Evlog.withUnit("pool.alarm", { pool: { id: this.ctx.id.toString() } }),
+      ),
     );
     const refresh = await this.runtime.runPromise(
       PoolEngine.PoolEngine.use((engine) => engine.nextModelsRefreshAt()),
     );
-    const at = [next, refresh].filter((value): value is number => value !== null).sort()[0];
+    const usage = await this.runtime.runPromise(
+      PoolEngine.PoolEngine.use((engine) => engine.nextUsageSampleAt()),
+    );
+    const at = [next, refresh, usage]
+      .filter((value): value is number => value !== null)
+      .sort((a, b) => a - b)[0];
     if (at !== undefined) await this.ctx.storage.setAlarm(at);
   }
 

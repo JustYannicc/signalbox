@@ -1,21 +1,29 @@
-import type {
-  ProviderConsumeResetCreditOutcome,
-  ServerProviderResetCredits,
-} from "@t3tools/contracts";
+import {
+  ClaimResponse,
+  CLAIM_OUTCOMES,
+  RESET_CREDIT_FAILURES,
+  claudeResetCreditsToContract,
+} from "@t3tools/provider-core/server/resetCredits";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+
+export {
+  ClaimResponse,
+  CLAIM_OUTCOMES,
+  RESET_CREDIT_FAILURES,
+  claudeResetCreditsToContract,
+  type ClaudeResetGrant,
+} from "@t3tools/provider-core/server/resetCredits";
 
 const API_BASE = "https://api.anthropic.com";
 const PROGRAM = "cedar_ember";
 const GRANT_ID = /^[a-z0-9_-]{1,40}$/;
 const REQUEST_ID = /^[A-Za-z0-9_-]{1,64}$/;
-const COMPLETE_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 const Credentials = Schema.Struct({
   claudeAiOauth: Schema.optional(Schema.Struct({ accessToken: Schema.optional(Schema.String) })),
@@ -25,49 +33,9 @@ const Config = Schema.Struct({
     Schema.Struct({ organizationUuid: Schema.optional(Schema.String) }),
   ),
 });
-const Grant = Schema.Struct({
-  id: Schema.String.check(Schema.isPattern(GRANT_ID)),
-  resets_left: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  ends_at: Schema.optional(Schema.NullOr(Schema.String)),
-  paused: Schema.optional(Schema.Boolean),
-  usable_now: Schema.optional(Schema.Boolean),
-  // signalbox: the windows a claim clears; Claude has 5-hour and full resets.
-  clears: Schema.optional(Schema.Array(Schema.String)),
-});
-export type ClaudeResetGrant = typeof Grant.Type;
-const decodeGrant = Schema.decodeUnknownOption(Grant);
-const CedarEmber = Schema.Struct({
-  eligible: Schema.Boolean,
-  grants: Schema.optional(Schema.Array(Schema.Unknown)),
-  next_grant_id: Schema.optional(Schema.NullOr(Schema.String)),
-});
 const UsageResponse = Schema.Struct({
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
-const decodeCedarEmber = Schema.decodeUnknownOption(CedarEmber);
-export const ClaimResponse = Schema.Struct({
-  result: Schema.Literals([
-    "reset",
-    "already_used",
-    "not_limited",
-    "cooldown",
-    "ineligible",
-    "unavailable",
-  ]),
-});
-
-export const RESET_CREDIT_FAILURES = {
-  malformedCredit: "Claude returned a malformed reset credit.",
-  loginUnreadable: "Claude could not read its login.",
-  accountUnreadable: "Claude could not read its account.",
-  signedOut: "Sign in to Claude again to redeem resets.",
-  rateLimited: "Claude is rate limiting resets. Try again soon.",
-  coolingDown: "Claude resets are cooling down. Try again later.",
-  unconfirmed:
-    "Claude could not confirm the reset. If you are still limited in a moment, try again.",
-  requestFailed: "Claude could not redeem the reset.",
-} as const;
-
 class ClaudeResetCreditError extends Schema.TaggedError<ClaudeResetCreditError>()(
   "ClaudeResetCreditError",
   {
@@ -91,51 +59,6 @@ export const isSettledClaudeResetCreditFailure = (error: unknown) =>
   isClaudeResetCreditError(error) &&
   error.reason !== "requestFailed" &&
   error.reason !== "unconfirmed";
-
-const isFutureTimestamp = (value: string, nowMs: number) => {
-  if (!COMPLETE_TIMESTAMP.test(value)) return false;
-  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
-  return (
-    Date.parse(value) > nowMs && Date.UTC(year!, month! - 1, day!) <= Date.UTC(year!, month!, 0)
-  );
-};
-
-export function liveClaudeResetGrants(
-  block: unknown,
-  nowMs: number,
-):
-  | { readonly grants: ReadonlyArray<ClaudeResetGrant>; readonly nextGrantId: string | null }
-  | undefined {
-  const parsed = decodeCedarEmber(block);
-  if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
-  const grants = (parsed.value.grants ?? [])
-    .flatMap((raw) => Option.toArray(decodeGrant(raw)))
-    .filter(
-      (grant) =>
-        !grant.paused &&
-        grant.usable_now &&
-        (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
-    );
-  return { grants, nextGrantId: parsed.value.next_grant_id ?? null };
-}
-
-export function claudeResetCreditsToContract(
-  block: unknown,
-  nowMs: number,
-): ServerProviderResetCredits | undefined {
-  const parsed = liveClaudeResetGrants(block, nowMs);
-  if (!parsed) return undefined;
-  const live = parsed.grants;
-  const next = live.find((grant) => grant.id === parsed.nextGrantId);
-  const nextExpiresAt = next?.ends_at ? DateTime.make(next.ends_at) : Option.none();
-  return {
-    availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
-    ...(Option.isSome(nextExpiresAt)
-      ? { nextExpiresAt: DateTime.formatIso(nextExpiresAt.value) }
-      : {}),
-    ...(next ? { nextCreditId: next.id } : {}),
-  };
-}
 
 const readJson = <S extends Schema.Top>(schema: S, file: string) =>
   Effect.gen(function* () {
@@ -200,13 +123,6 @@ export const claudeAccountConfigPath = Effect.fn("claudeAccountConfigPath")(func
     ? path.join(configDir, ".claude.json")
     : path.join(yield* HostProcess.HomeDirectory, ".claude.json");
 });
-
-export const CLAIM_OUTCOMES = {
-  reset: "reset",
-  not_limited: "nothingToReset",
-  already_used: "alreadyRedeemed",
-  ineligible: "noCredit",
-} as const satisfies Record<string, ProviderConsumeResetCreditOutcome>;
 
 /**
  * `requestId` is the idempotency key: a retry with the same id is the same

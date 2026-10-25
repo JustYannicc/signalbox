@@ -25,6 +25,7 @@ import {
   type PreparedConnection,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { RpcPermissionGuard } from "@t3tools/client-runtime/rpc";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
@@ -137,12 +138,15 @@ const TARGET = new PrimaryConnectionTarget({
   wsBaseUrl: "wss://environment.example.test",
 });
 
-const layerTestCrypto = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    randomBytes: (size) => new Uint8Array(size),
-    digest: (_algorithm, data) => Effect.succeed(data),
-  }),
+const layerTestCommandRuntime = Layer.mergeAll(
+  Layer.succeed(
+    Crypto.Crypto,
+    Crypto.make({
+      randomBytes: (size) => new Uint8Array(size),
+      digest: (_algorithm, data) => Effect.succeed(data),
+    }),
+  ),
+  Layer.succeed(RpcPermissionGuard, { authorize: () => Effect.void }),
 );
 
 const makeSupervisor = Effect.fn("CommandPerformance.makeSupervisor")(function* (input: {
@@ -271,6 +275,6 @@ describe("routine command transport budget", () => {
       });
       expect(currentRpcJsonBytes).toBeLessThanOrEqual(MAX_CURRENT_SEND_RPC_JSON_BYTES);
       expect(currentRpcJsonBytes / formerRpcJsonBytes).toBeLessThanOrEqual(0.000_06);
-    }).pipe(Effect.provide(layerTestCrypto)),
+    }).pipe(Effect.provide(layerTestCommandRuntime)),
   );
 });

@@ -2,14 +2,27 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { RunId } from "@t3tools/contracts";
 
 import { matchThread, threadTurns } from "../context/threadContext.ts";
+import {
+  threadPullRequestKeyOf,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import { browsingWire, encodeBrowsingLine } from "./browsing/browsingWire.ts";
 import { ThreadBrowsing } from "./browsing/ThreadBrowsing.ts";
+import { ThreadSecretRequests } from "./secrets/ThreadSecretRequests.ts";
 import { TurnReports } from "./diagnostics/TurnReports.ts";
-import type { ThreadObjectApi } from "./ThreadDirectory.ts";
+import { makeTerminalObjectApi } from "./terminal/terminalObjectApi.ts";
+import type * as ThreadTerminals from "./terminal/ThreadTerminals.ts";
+import * as ThreadFeedback from "./ThreadFeedback.ts";
+import type { ThreadLifecycleReceipt, ThreadObjectApi } from "./ThreadDirectory.ts";
 import * as ThreadEngine from "./ThreadEngine.ts";
-import { encodeBatchLine, type ThreadObjectReply, wire } from "./threadWire.ts";
+import * as ThreadRunner from "./runner/ThreadRunner.ts";
+import { type ThreadObjectReply, wire } from "./threadWire.ts";
+import * as ThreadPulls from "./ThreadPulls.ts";
+import * as PullRequestSync from "./pullRequests/PullRequestSync.ts";
+import { makeThreadCommandObjectApi } from "./ThreadCommandApi.ts";
 
 // Diagnostic records are plain JSON values already (ISO times, no class instances).
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -23,7 +36,19 @@ const encodeRecord = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
  */
 export const makeThreadObjectApi = (
   run: <A, E>(
-    effect: Effect.Effect<A, E, ThreadEngine.ThreadEngine | TurnReports | ThreadBrowsing>,
+    effect: Effect.Effect<
+      A,
+      E,
+      | ThreadEngine.ThreadEngine
+      | TurnReports
+      | ThreadBrowsing
+      | ThreadSecretRequests
+      | ThreadPulls.ThreadPulls
+      | PullRequestSync.PullRequestSync
+      | ThreadTerminals.ThreadTerminals
+      | ThreadFeedback.ThreadFeedback
+      | ThreadRunner.ThreadRunner
+    >,
   ) => Promise<A>,
   afterChange: () => Promise<void>,
   wakeAt: (at: number) => Promise<void>,
@@ -35,7 +60,11 @@ export const makeThreadObjectApi = (
     effect: Effect.Effect<
       A,
       ThreadEngine.ThreadNotFoundError | ThreadEngine.ThreadCommandRejectedError,
-      ThreadEngine.ThreadEngine | ThreadBrowsing
+      | ThreadEngine.ThreadEngine
+      | ThreadBrowsing
+      | ThreadPulls.ThreadPulls
+      | PullRequestSync.PullRequestSync
+      | ThreadFeedback.ThreadFeedback
     >,
   ): Promise<ThreadObjectReply<A>> =>
     run(
@@ -54,39 +83,90 @@ export const makeThreadObjectApi = (
       ),
     );
   const engine = ThreadEngine.ThreadEngine;
+  const commandApi = makeThreadCommandObjectApi(run, afterChange);
   return {
-    dispatch: async (actor, command, creation) => {
-      const result = await reply(
-        engine.use((service) => service.dispatch(actor, wire.command.decode(command), creation)),
-      );
-      await afterChange();
-      return result;
-    },
-    launch: async (actor, input, creation) => {
+    ...makeTerminalObjectApi(run, afterChange),
+    ...commandApi,
+    uploadFeedback: (actor, input) =>
+      reply(ThreadFeedback.ThreadFeedback.use((service) => service.upload(actor, input))),
+    trash: async (actor, input) => {
       const result = await reply(
         engine.use((service) =>
-          Effect.map(
-            service.launch(actor, wire.launchInput.decode(input), creation),
-            wire.launchResult.encode,
-          ),
+          Effect.map(service.trash(actor, input), (receipt): ThreadLifecycleReceipt => ({
+            trashId: receipt.trashId,
+            deletedAt: receipt.deletedAt,
+            purgeAfter: receipt.purgeAfter,
+            state: receipt.state,
+          })),
         ),
       );
       await afterChange();
       return result;
     },
-    snapshot: (actor) =>
-      reply(engine.use((service) => Effect.map(service.snapshot(actor), wire.snapshot.encode))),
-    subscribe: (actor, input) =>
-      run(
+    restore: async (actor, input) => {
+      const result = await reply(
         engine.use((service) =>
-          service.subscribe(actor, wire.subscribeInput.decode(input)).pipe(
-            Effect.map((stream) =>
-              stream.pipe(Stream.map(encodeBatchLine), Stream.toReadableStream()),
-            ),
-            Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) }),
+          Effect.map(service.restoreTrash(actor, input.trashId), (receipt) => ({
+            trashId: receipt.trashId,
+            deletedAt: receipt.deletedAt,
+            purgeAfter: receipt.purgeAfter,
+            state: receipt.state,
+          })),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
+    purge: (actor, input) => reply(engine.use((service) => service.purgeTrash(actor, input))),
+    getWorkflowScript: (actor, input) =>
+      reply(
+        engine.use((service) =>
+          service.getWorkflowScript(actor, wire.workflowScriptInput.decode(input)).pipe(
+            Effect.map((value) => wire.workflowScriptReply.encode({ _tag: "ok", value })),
+            Effect.catchTags({
+              OrchestrationGetWorkflowScriptError: (error) =>
+                Effect.succeed(wire.workflowScriptReply.encode({ _tag: "error", error })),
+            }),
           ),
         ),
       ),
+    stopWorkflow: async (actor, input) => {
+      const result = await reply(
+        engine.use((service) =>
+          service.stopWorkflow(actor, wire.workflowStopInput.decode(input)).pipe(
+            Effect.map(() => wire.workflowStopReply.encode({ _tag: "ok" })),
+            Effect.catchTags({
+              OrchestrationV2StopWorkflowError: (error) =>
+                Effect.succeed(wire.workflowStopReply.encode({ _tag: "error", error })),
+            }),
+          ),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
+    answerSecret: async (actor, input) => {
+      const result = await run(
+        ThreadSecretRequests.use((service) =>
+          service.answer(actor, wire.secretAnswer.decode(input)),
+        ).pipe(
+          Effect.as(null),
+          Effect.catchTags({ SecretRequestError: (error) => Effect.succeed(error.reason) }),
+        ),
+      );
+      await afterChange();
+      return result;
+    },
+    backfill: async (actor, requestKey) => {
+      const value = await run(engine.use((service) => service.backfill(actor, requestKey)));
+      if (value === null) return { _tag: "not_found" };
+      if (value.revision > 0 || value.complete) await afterChange();
+      return { _tag: "ok", value };
+    },
+    searchDocuments: (actor, itemIds) =>
+      run(engine.use((service) => service.searchDocuments(actor, itemIds))),
+    find: (actor, input) =>
+      reply(engine.use((service) => service.find(actor, wire.findInput.decode(input)))),
     diagnostics: (actor, key) =>
       run(
         Effect.gen(function* () {
@@ -98,6 +178,31 @@ export const makeThreadObjectApi = (
               : yield* reports.turn(projection, key);
           return found === null ? null : encodeRecord(found);
         }).pipe(Effect.catchTags({ ThreadNotFoundError: () => Effect.succeed(null) })),
+      ),
+    requestPullRequestSync: (actor, key) =>
+      reply(
+        engine.use((service) =>
+          service.snapshot(actor).pipe(
+            Effect.flatMap(({ projection }) => {
+              const linked = visibleThreadPullRequests(projection.thread.pullRequests ?? []).some(
+                (link) => threadPullRequestKeyOf(link) === key,
+              );
+              if (!linked) return Effect.fail(new ThreadEngine.ThreadNotFoundError());
+              return PullRequestSync.PullRequestSync.use((sync) => sync.requestSync(key)).pipe(
+                Effect.tap((at) =>
+                  at === null
+                    ? Effect.void
+                    : Effect.tryPromise(() => wakeAt(at)).pipe(
+                        Effect.catch((cause) =>
+                          Effect.logError("arming a pull request refresh failed", { cause }),
+                        ),
+                      ),
+                ),
+                Effect.asVoid,
+              );
+            }),
+          ),
+        ),
       ),
     contextMatch: (actor, terms) =>
       run(
@@ -177,13 +282,53 @@ export const makeThreadObjectApi = (
           Effect.map(browsing.record(actor), browsingWire.head.encode),
         ),
       ),
-    summary: (actor) =>
+    pullOwner: (actor, driveId) =>
+      run(ThreadPulls.ThreadPulls.use((pulls) => pulls.owner(actor, driveId))),
+    pullTarget: (actor, driveId, operationId, branch) =>
       run(
-        engine.use((service) =>
-          Effect.map(service.summary(actor), (summary) =>
-            summary === null ? null : wire.summary.encode(summary),
-          ),
+        ThreadPulls.ThreadPulls.use((pulls) => pulls.target(actor, driveId, operationId, branch)),
+      ),
+    reservePublication: (actor, driveId, operationId) =>
+      reply(
+        ThreadPulls.ThreadPulls.use((pulls) =>
+          pulls.reservePublication(actor, driveId, operationId),
         ),
+      ),
+    releasePublication: (actor, driveId, operationId) =>
+      run(
+        ThreadPulls.ThreadPulls.use((pulls) =>
+          pulls.releasePublication(actor, driveId, operationId),
+        ),
+      ),
+    pull: async (actor, input) => {
+      const decoded = wire.pullInput.decode(input);
+      const begun = await reply(
+        ThreadPulls.ThreadPulls.use((pulls) => pulls.begin(actor, decoded)),
+      );
+      if (begun._tag !== "ok") return begun;
+      await afterChange();
+      return reply(
+        ThreadPulls.ThreadPulls.use((pulls) =>
+          Effect.map(pulls.wait(actor, decoded.operationId), wire.pullResult.encode),
+        ),
+      );
+    },
+    authorizeExecutorTurn: (actor, input) =>
+      run(
+        engine
+          .use((service) => service.summary(actor))
+          .pipe(
+            Effect.flatMap((summary) =>
+              summary === null
+                ? Effect.succeed(false)
+                : ThreadRunner.ThreadRunner.use((runner) =>
+                    runner.authorizeExecutorTurn({
+                      runId: RunId.make(input.runId),
+                      generation: input.generation,
+                    }),
+                  ),
+            ),
+          ),
       ),
   };
 };

@@ -11,6 +11,7 @@
 import { readAccountSession } from "../../../account/accountSession";
 import { APP_STAGE_LABEL, APP_VERSION } from "../../../branding";
 import { isElectron } from "../../../env";
+import { scrubTraceUrl } from "@t3tools/shared/traceUrlScrubbing";
 
 export const FEEDBACK_DSN = import.meta.env.VITE_T3CODE_FEEDBACK_DSN?.trim() || null;
 
@@ -91,6 +92,7 @@ export async function sendFeedback(submission: FeedbackSubmission): Promise<void
     {
       message: submission.message,
       source: "sidebar-rail",
+      ...(typeof window === "undefined" ? {} : { url: scrubTraceUrl(window.location.href) }),
       ...(account ? { email: account.email } : {}),
       ...(name ? { name } : {}),
     },

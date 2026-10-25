@@ -12,7 +12,7 @@ import * as NodePath from "node:path";
 import { OrchestrationWorkflowFileError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { field, text } from "./unknownField.ts";
+import { field, text } from "@t3tools/provider-core/server/unknownField";
 import { readContainedWorkflowFile } from "./workflowFileRead.ts";
 
 const TRANSCRIPT_BYTE_CAP = 512 * 1024;

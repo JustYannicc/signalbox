@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.infra.json",
+  "include": ["**/*.ts"]
+}

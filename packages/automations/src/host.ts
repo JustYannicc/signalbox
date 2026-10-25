@@ -8,6 +8,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2CreationSource,
   OrchestrationV2DomainEvent,
+  OrchestrationV2Command,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
@@ -24,6 +25,7 @@ import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 import type { DrainContext } from "evlog";
+import type { SignalboxAsk, SignalboxAskAnswerer } from "@t3tools/contracts/signalboxAsks";
 
 import type { WorkflowCompileResult } from "./compiled.ts";
 import type { LaunchRun } from "./engineTypes.ts";
@@ -31,8 +33,7 @@ import type { Envelope } from "./events/eventTriggers.ts";
 import type { WorkflowStore } from "./WorkflowStore.ts";
 
 /**
- * What the automation engine needs from the environment hosting it: a
- * self-hosted server (`serverHost.ts`) or a user's cloud object. The engine
+ * What the automation engine needs from its cloud object. The engine
  * reaches threads, the machine, compiling and its log sink only through
  * these, so each host decides how they work there.
  */
@@ -68,7 +69,8 @@ export interface AutomationThreadLaunch {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly title: string;
-  readonly modelSelection: ModelSelection;
+  /** Omitted when the host should resolve the thread's current default on launch. */
+  readonly modelSelection?: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspace: AgentWorkspace;
@@ -98,14 +100,23 @@ export interface ThreadMonitor {
 }
 
 export interface AutomationThreadsShape {
+  readonly syncAsk?: (
+    threadId: ThreadId,
+    ask: SignalboxAsk,
+  ) => Effect.Effect<void, AutomationError>;
+  readonly askAnswerer?: Effect.Effect<SignalboxAskAnswerer, AutomationError>;
   readonly getThreadShell: (
     threadId: ThreadId,
+    options?: { readonly includeTrashed?: boolean },
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, AutomationError>;
   readonly getThreadRecords: <K extends ThreadRecordField>(
     threadId: ThreadId,
     fields: ReadonlyArray<K>,
     filter?: ThreadRecordFilter,
   ) => Effect.Effect<ThreadRecords<K>, AutomationError>;
+  readonly initialModelSelection: (
+    projectId: ProjectId,
+  ) => Effect.Effect<ModelSelection | null, AutomationError>;
   readonly launch: (
     input: AutomationThreadLaunch,
   ) => Effect.Effect<{ readonly threadId: ThreadId }, AutomationError>;
@@ -123,6 +134,24 @@ export interface AutomationThreadsShape {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
   }) => Effect.Effect<void, AutomationError>;
+  /** Lifecycle commands keep their snapshot guards in the host's event-sourced decider. */
+  readonly dispatchLifecycle?: (
+    command: Extract<
+      OrchestrationV2Command,
+      {
+        readonly type:
+          | "thread.settle"
+          | "thread.auto-settle"
+          | "thread.unsettle"
+          | "thread.unarchive"
+          | "thread.auto-settle.set";
+      }
+    >,
+  ) => Effect.Effect<void, AutomationError>;
+  /** Cloud kinds exclude chats from task defaults; servers without kinds treat threads as tasks. */
+  readonly getTaskKind?: (threadId: ThreadId) => Effect.Effect<"chat" | "task", AutomationError>;
+  /** False where `w.llm`/`judge`/`extract` can't run; built-ins then skip their model steps. */
+  readonly modelSteps?: boolean;
   /** Every domain event of the host's threads, live from when it's run. */
   readonly domainEvents: Stream.Stream<OrchestrationV2DomainEvent, AutomationError>;
   /** The attached runs a thread lists now; an empty list clears them. */
@@ -182,7 +211,7 @@ export interface IngressDependencies {
   readonly newId: (prefix: string) => Effect.Effect<string, AutomationError>;
   readonly launchRun: LaunchRun;
   /** Delivers an event to one run's waiting steps. */
-  readonly deliverTo: (runId: string, envelope: Envelope) => Effect.Effect<void>;
+  readonly deliverTo: (runId: string, envelope: Envelope) => Effect.Effect<void, AutomationError>;
 }
 
 /** Automation webhooks and `w.hook` callback links, as the engine drives them. */
@@ -242,6 +271,18 @@ export class AutomationModels extends Context.Service<
     } | null>;
   }
 >()("@signalbox/automations/host/AutomationModels") {}
+
+/** Text-only model calls, when the host has a gateway instead of a harness. */
+export class AutomationModelSteps extends Context.Service<
+  AutomationModelSteps,
+  {
+    readonly complete: (input: {
+      readonly projectId: string;
+      readonly modelSelection: ModelSelection;
+      readonly prompt: string;
+    }) => Effect.Effect<string, AutomationError>;
+  }
+>()("@signalbox/automations/host/AutomationModelSteps") {}
 
 /**
  * Held until the host is ready to run work, when it has such a moment (a

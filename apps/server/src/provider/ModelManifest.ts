@@ -17,7 +17,7 @@ import {
 } from "@t3tools/shared/modelManifest";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
+import { hasValidClaudeManifestAdapters } from "@signalbox/provider-claude/ClaudeModelManifest";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
@@ -98,6 +98,8 @@ export function resolveProviderCatalog(
       ...(entry.subProvider ? { subProvider: entry.subProvider } : {}),
       ...(entry.aliases ? { aliases: entry.aliases } : {}),
       ...(entry.badge ? { badge: entry.badge } : {}),
+      ...(entry.pricing ? { pricing: entry.pricing } : {}),
+      ...(entry.defaultSelection ? { defaultSelection: entry.defaultSelection } : {}), // signalbox: model-manifest.json supplies the policy used to rank economical defaults
       status: entry.status,
       capabilities: profile?.capabilities ?? null,
       adapter: entry.adapter,

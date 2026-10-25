@@ -1,0 +1,6 @@
+{
+  "sourceSha256": "171087d4f7ff9590dac3dba83837d533155cc033b55c7d044a08d6513bce927c",
+  "sdkIoctl": "src/lib/libsyscall.js",
+  "sdkIoctlSha256": "91c17685e4d60e2cb8a8de8c2f6939aefadd668b97508b494165bb214809f835",
+  "observation": "TIOCSBRK and TIOCCBRK have no SDK ioctl handler; default EINVAL. Serial set_break must report explicit unsupported instead of fake constants."
+}

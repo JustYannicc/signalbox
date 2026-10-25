@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import type { SidebarProjectSnapshot } from "../../../sidebarProjectGrouping";
 import {
@@ -31,7 +31,7 @@ export function useSectionsSidebar(input: {
   const serverViews = useAtomValue(environmentSectionTreesAtom);
   const folders = useFoldersSidebar(input); // signalbox: folders
   const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<string>>(() => new Set());
-  const toggleSection = useCallback((environmentId: EnvironmentId, sectionId: string) => {
+  const toggleSection = (environmentId: EnvironmentId, sectionId: string) => {
     const sectionKey = sectionSidebarSectionKey(environmentId, sectionId);
     setCollapsedSections((current) => {
       const next = new Set(current);
@@ -39,9 +39,9 @@ export function useSectionsSidebar(input: {
       else next.add(sectionKey);
       return next;
     });
-  }, []);
+  };
 
-  const sections = useMemo(() => {
+  const sections = (() => {
     // signalbox: environments with folders show those instead (`sidebar/folders`).
     const servesFolders = (environmentId: EnvironmentId) =>
       serverConfigs.get(environmentId)?.environment.capabilities.folders === true;
@@ -111,30 +111,18 @@ export function useSectionsSidebar(input: {
       toggleSection,
       visibleProjectRows,
     };
-  }, [
-    input.environments,
-    input.primaryEnvironmentId,
-    input.projectGroups,
-    input.projects,
-    collapsedSections,
-    serverConfigs,
-    serverViews,
-    toggleSection,
-  ]);
+  })();
   // signalbox: folders change with their threads, so they join outside the section trees' memo;
   // folder environments draw first, so their lists come first.
-  return useMemo(
-    () => ({
-      ...sections,
-      visibleProjectRows: [...folders.visibleRows, ...sections.visibleProjectRows],
-      folders,
-      // Only folders: the list is the user's folders, and adding brings in a source
-      // (a repository gets a folder of its own). Projects stay projects anywhere else.
-      labels:
-        folders.environments.length > 0 && (sections.environments?.length ?? 0) === 0
-          ? { title: "Folders", add: "Add a source" }
-          : { title: "Projects", add: "Add project" },
-    }),
-    [folders, sections],
-  );
+  return {
+    ...sections,
+    visibleProjectRows: [...folders.visibleRows, ...sections.visibleProjectRows],
+    folders,
+    // Only folders: the list is the user's folders, and adding brings in a source
+    // (a repository gets a folder of its own). Projects stay projects anywhere else.
+    labels:
+      folders.environments.length > 0 && (sections.environments?.length ?? 0) === 0
+        ? { title: "Folders", add: "Add a source" }
+        : { title: "Projects", add: "Add project" },
+  };
 }

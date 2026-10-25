@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { CodexProviderCapabilitiesV2 } from "@signalbox/provider-codex/defaults";
 import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
 import { GrokProviderCapabilitiesV2 } from "@t3tools/provider-grok/testing";
 import * as CommandPolicy from "./CommandPolicy.ts";

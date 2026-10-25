@@ -4,7 +4,7 @@
  * living there, then your folders, nested at any depth, then each
  * organization you're a member of as a level row holding its own threads and
  * folders. An open folder shows its subfolders, its files as one "Files"
- * source, and the threads that live there, drawn by the sidebar's own
+ * source, its automations (`FolderAutomations`), and the threads that live there, drawn by the sidebar's own
  * project renderer inside a `SidebarThreadScope`.
  */
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -21,21 +21,41 @@ import type { FolderId } from "@t3tools/contracts/signalboxFolders";
 import { useParams } from "@tanstack/react-router";
 import {
   Building2Icon,
+  ChevronRightIcon,
   FolderClosedIcon,
   FolderOpenIcon,
   FolderPlusIcon,
   HardDriveIcon,
 } from "lucide-react";
-import { createContext, memo, useCallback, useContext, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  memo,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { effectiveThreadKind } from "@t3tools/contracts/signalboxThreadKinds";
+import {
+  threadKindLookup,
+  threadKindWithCapabilityFallback,
+} from "@t3tools/client-runtime/state/signalboxThreadKinds";
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 import { useComposerDraftStore } from "../../../composerDraftStore";
+import { cn } from "../../../lib/utils";
 import {
   folderEditableEnvironmentsAtom,
   retryEnvironmentFolders,
 } from "../../../state/signalboxFolders";
 import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "../../../threadRoutes";
+import { useArchivedThreadSnapshots } from "../../../lib/archivedThreadsState";
+import { environmentThreadKindsAtom } from "../../../state/signalboxThreadKinds";
+import { useServerConfigs } from "../../../state/entities";
 import { DriveShareDialogHost } from "../../drives/DriveProjectShareMenuItem";
 import { NewSharedDriveButton } from "../../drives/NewSharedDriveButton";
+import { TaskLifecycleControl } from "../../taskLifecycle/TaskLifecycleControl";
 import { Button } from "../../ui/button";
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "../../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
@@ -46,16 +66,20 @@ import {
   useFolderStatus,
 } from "../../statusLine/FolderStatusCount";
 import { openFolderDialog } from "./folderDialogStore";
-import { LevelRow, NewThreadButton } from "./LevelRow";
+import { FolderAutomations, useFolderAutomations } from "./FolderAutomations";
+import { LEVEL_ITEM_ROW_CLASS, LevelRow, NewThreadButton } from "./LevelRow";
 import { FolderMenu, OwnerMenu } from "./FolderMenus";
 import { FolderPhaseLabel } from "./FolderPhase";
+import { NEW_AUTOMATION_PROMPT } from "@t3tools/client-runtime/automations/prompts";
 import {
   folderNodeKey,
   folderOwnerKey,
   folderThreadListKey,
   moveThreadMenuItem,
   movedThreadDestination,
+  recentlySettledFolderThreads,
   type FolderOwner,
+  type FolderListKey,
 } from "./folderSidebarModel";
 import { folderThreadSliceAtom } from "./folderThreads";
 import { SidebarThreadScopeContext, type SidebarThreadScope } from "./threadScope";
@@ -120,39 +144,143 @@ function HomeThreads(props: ListProps) {
   const renderProject = useContext(RenderProjectContext);
   const listKey = folderThreadListKey(environmentId, ownerId, home);
   const threads = useAtomValue(folderThreadSliceAtom(listKey));
+  const serverConfigs = useServerConfigs();
+  const supportsThreadKinds =
+    serverConfigs.get(environmentId)?.environment.capabilities.threadKinds;
+  const archived = useArchivedThreadSnapshots([environmentId]);
+  const kinds = useAtomValue(environmentThreadKindsAtom(environmentId));
+  const kindOf = kinds === null ? null : threadKindLookup(kinds);
+  const archivedThreads =
+    archived.snapshots
+      .find((entry) => entry.environmentId === environmentId)
+      ?.snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)) ?? [];
+  const recentlySettled = recentlySettledFolderThreads({
+    environmentId,
+    projectIds: owner.context.projectIds,
+    home,
+    homeOf: threadHomeLookup(snapshot),
+    liveThreads: threads,
+    archivedThreads,
+    isTask: (thread) =>
+      threadKindWithCapabilityFallback(
+        supportsThreadKinds,
+        kindOf === null ? null : effectiveThreadKind(kindOf(thread.id)).kind,
+      ) === "task",
+  });
+  const recentlySettledKeys = new Set(
+    recentlySettled.map((thread) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+    ),
+  );
+  const visibleThreads = threads.filter(
+    (thread) =>
+      !recentlySettledKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+  );
+  const liveThreadMembership = threads
+    .map((thread) => thread.id)
+    .toSorted()
+    .join("\n");
+  const previousLiveThreadMembership = useRef(liveThreadMembership);
+  useEffect(() => {
+    if (previousLiveThreadMembership.current === liveThreadMembership) return;
+    previousLiveThreadMembership.current = liveThreadMembership;
+    archived.refresh();
+  }, [archived, liveThreadMembership]);
   // Only the list holding the open thread changes when it does.
-  const activeHere = threads.some(
+  const activeHere = visibleThreads.some(
     (thread) =>
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeThreadKey,
   )
     ? activeThreadKey
     : null;
-  const scope = useMemo<SidebarThreadScope>(() => {
-    const homeOf = threadHomeLookup(snapshot);
-    return {
-      threads,
-      activeThreadKey: activeHere,
-      settingsProjectKey: (thread) => projectKeys.get(thread.projectId),
-      threadMenu: (thread) => ({
-        items: [
-          moveThreadMenuItem(threadFolderChoices(snapshot, ownerId, homeOf(thread)), !canEdit),
-        ],
-        select: (clicked) => {
-          const destination = movedThreadDestination(clicked);
-          if (destination === null) return false;
-          void commands.moveThread(environmentId, thread.id, destination.folderId);
-          return true;
-        },
-      }),
-    };
-  }, [activeHere, canEdit, commands, environmentId, ownerId, projectKeys, snapshot, threads]);
+  const homeOf = threadHomeLookup(snapshot);
+  const scope: SidebarThreadScope = {
+    threads: visibleThreads,
+    activeThreadKey: activeHere,
+    settingsProjectKey: (thread) => projectKeys.get(thread.projectId),
+    threadMenu: (thread) => ({
+      items: [moveThreadMenuItem(threadFolderChoices(snapshot, ownerId, homeOf(thread)), !canEdit)],
+      select: (clicked) => {
+        const destination = movedThreadDestination(clicked);
+        if (destination === null) return false;
+        void commands.moveThread(environmentId, thread.id, destination.folderId);
+        return true;
+      },
+    }),
+  };
   const project = environment.ownerProjects.get(ownerId);
-  const row = useMemo(() => project && folderListRow(project, listKey), [listKey, project]);
-  if (!row || !renderProject || threads.length === 0) return null;
+  const row = project && folderListRow(project, listKey);
+  if (!row || !renderProject || (visibleThreads.length === 0 && recentlySettled.length === 0))
+    return null;
   return (
     <SidebarThreadScopeContext value={scope}>
-      {renderProject(environmentId, row, null, NO_SIBLINGS, null)}
+      {visibleThreads.length > 0
+        ? renderProject(environmentId, row, null, NO_SIBLINGS, null)
+        : null}
+      <RecentlySettledTasks
+        listKey={listKey}
+        threads={recentlySettled}
+        onReopen={archived.refresh}
+      />
     </SidebarThreadScopeContext>
+  );
+}
+
+function RecentlySettledTasks(props: {
+  readonly listKey: FolderListKey;
+  readonly threads: ReadonlyArray<ReturnType<typeof presentThreadShell>>;
+  readonly onReopen: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(5);
+  if (props.threads.length === 0) return null;
+  const visible = props.threads.slice(0, visibleCount);
+  const hiddenCount = props.threads.length - visible.length;
+  const listId = `recently-settled-${props.listKey}`;
+  return (
+    <li className="list-none">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={listId}
+        onClick={() => setExpanded((current) => !current)}
+        className={cn(
+          LEVEL_ITEM_ROW_CLASS,
+          "text-sidebar-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+        )}
+      >
+        <ChevronRightIcon
+          aria-hidden
+          className={cn("size-3.5 shrink-0 transition-transform", expanded && "rotate-90")}
+        />
+        <span className="truncate">Recently settled ({props.threads.length})</span>
+      </button>
+      {expanded ? (
+        <ul id={listId} className="m-0 flex list-none flex-col gap-0.5 ps-3">
+          {visible.map((thread) => (
+            <TaskLifecycleControl
+              key={`${thread.environmentId}:${thread.id}`}
+              environmentId={thread.environmentId}
+              threadId={thread.id}
+              shell={thread}
+              presentation="recent"
+              onReopen={props.onReopen}
+            />
+          ))}
+          {hiddenCount > 0 ? (
+            <li className="list-none">
+              <button
+                type="button"
+                onClick={() => setVisibleCount((count) => count + 5)}
+                className="flex h-7 w-full cursor-pointer items-center ps-2 text-left text-xs text-sidebar-muted-foreground/70 hover:text-sidebar-foreground"
+              >
+                Show {Math.min(hiddenCount, 5)} more
+              </button>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </li>
   );
 }
 
@@ -165,8 +293,12 @@ function FilesRow(props: { name: string; onOpen: () => void }) {
           render={
             <button
               type="button"
+              aria-label="Files"
               onClick={props.onOpen}
-              className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md ps-5.5 pe-2 text-left text-xs text-sidebar-muted-foreground/75 outline-hidden ring-ring hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset"
+              className={cn(
+                LEVEL_ITEM_ROW_CLASS,
+                "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+              )}
             />
           }
         >
@@ -194,15 +326,21 @@ const FolderRow = memo(function FolderRow(props: {
   const expanded = !collapsed.has(key);
   const count = counts.get(folder.id) ?? 0;
   const status = useFolderStatus(key); // signalbox: status roll-up (#670)
-  const empty = node.children.length === 0 && folder.files === undefined && count === 0;
+  const listKey = folderThreadListKey(environment.environmentId, owner.context.id, folder.id);
+  const automationCount = useFolderAutomations(listKey).length;
+  const empty =
+    node.children.length === 0 &&
+    folder.files === undefined &&
+    count === 0 &&
+    automationCount === 0;
   // A folder with its own files can start threads even where its owner has none.
   const canStart = owner.filesProjectId !== null || folder.files !== undefined;
-  const startHere = (openFiles: boolean) =>
+  const startHere = (extra?: Pick<StartInFolder, "openFiles" | "prompt">) =>
     start({
       environmentId: environment.environmentId,
       ownerProjectId: owner.filesProjectId,
       folderId: folder.id,
-      openFiles,
+      ...extra,
     });
 
   return (
@@ -227,9 +365,7 @@ const FolderRow = memo(function FolderRow(props: {
       }
       actions={
         <>
-          {canStart ? (
-            <NewThreadButton name={folder.name} onClick={() => startHere(false)} />
-          ) : null}
+          {canStart ? <NewThreadButton name={folder.name} onClick={() => startHere()} /> : null}
           {canEdit ? (
             <FolderMenu
               environmentId={environment.environmentId}
@@ -237,6 +373,11 @@ const FolderRow = memo(function FolderRow(props: {
               owner={owner}
               folder={folder}
               commands={commands}
+              // An automation lives where its project's threads do: only a folder with
+              // files of its own can hold one (#313).
+              onNewAutomation={
+                folder.files ? () => startHere({ prompt: NEW_AUTOMATION_PROMPT }) : null
+              }
             />
           ) : null}
         </>
@@ -254,7 +395,10 @@ const FolderRow = memo(function FolderRow(props: {
           counts={counts}
         />
       ))}
-      {folder.files ? <FilesRow name={folder.name} onOpen={() => startHere(true)} /> : null}
+      {folder.files ? (
+        <FilesRow name={folder.name} onOpen={() => startHere({ openFiles: true })} />
+      ) : null}
+      <FolderAutomations environmentId={environment.environmentId} listKey={listKey} />
       <HomeThreads environment={environment} owner={owner} home={folder.id} canEdit={canEdit} />
       {empty ? (
         <li className="flex h-7 items-center ps-5.5 text-xs text-sidebar-muted-foreground/50">
@@ -301,6 +445,10 @@ function LevelContents(props: LevelProps & { depth: number; after?: ReactNode })
   const { environment, owner, canEdit, counts } = props;
   return (
     <>
+      <FolderAutomations
+        environmentId={environment.environmentId}
+        listKey={folderThreadListKey(environment.environmentId, owner.context.id, null)}
+      />
       <HomeThreads environment={environment} owner={owner} home={null} canEdit={canEdit} />
       {owner.roots.map((node) => (
         <FolderRow
@@ -418,16 +566,13 @@ const NO_COUNTS: ReadonlyMap<FolderId, number> = new Map();
 function useStartFromSidebar(): (input: StartInFolder) => void {
   const startInFolder = useStartInFolder();
   const { isMobile, setOpenMobile } = useSidebar();
-  return useCallback(
-    (input: StartInFolder) => {
-      if (isMobile) setOpenMobile(false);
-      void startInFolder(input);
-    },
-    [isMobile, setOpenMobile, startInFolder],
-  );
+  return (input: StartInFolder) => {
+    if (isMobile) setOpenMobile(false);
+    void startInFolder(input);
+  };
 }
 
-/** Your top level's ⋯ (new thread, instructions, secrets): it has no row of its own. */
+/** Your top level's ⋯ (new thread or automation, instructions, secrets): it has no row of its own. */
 function TopLevelMenu(props: { environment: FolderEnvironmentView }) {
   const { environment } = props;
   const editable = useAtomValue(folderEditableEnvironmentsAtom);
@@ -435,22 +580,24 @@ function TopLevelMenu(props: { environment: FolderEnvironmentView }) {
   const { top } = ownerLevels(environment.owners, (owner) => owner.context);
   if (top === null) return null;
   const filesProjectId = top.filesProjectId;
+  const startTop =
+    filesProjectId === null
+      ? null
+      : (extra?: Pick<StartInFolder, "prompt">) =>
+          start({
+            environmentId: environment.environmentId,
+            ownerProjectId: filesProjectId,
+            folderId: null,
+            ...extra,
+          });
   return (
     <OwnerMenu
       environmentId={environment.environmentId}
       snapshot={environment.snapshot}
       owner={top}
       canEdit={editable.has(environment.environmentId)}
-      onNewThread={
-        filesProjectId === null
-          ? null
-          : () =>
-              start({
-                environmentId: environment.environmentId,
-                ownerProjectId: filesProjectId,
-                folderId: null,
-              })
-      }
+      onNewThread={startTop && (() => startTop())}
+      onNewAutomation={startTop && (() => startTop({ prompt: NEW_AUTOMATION_PROMPT }))}
     />
   );
 }
@@ -474,10 +621,12 @@ export function FoldersSidebarTree(props: {
   const start = useStartFromSidebar();
   const editable = useAtomValue(folderEditableEnvironmentsAtom);
   const activeThreadKey = useActiveThreadKey();
-  const tree = useMemo<TreeContext>(
-    () => ({ collapsed: sidebar.collapsed, toggle: sidebar.toggle, commands, start }),
-    [commands, sidebar.collapsed, sidebar.toggle, start],
-  );
+  const tree: TreeContext = {
+    collapsed: sidebar.collapsed,
+    toggle: sidebar.toggle,
+    commands,
+    start,
+  };
   if (sidebar.environments.length === 0 && sidebar.failures.length === 0) return null;
 
   return (

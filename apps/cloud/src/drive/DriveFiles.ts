@@ -1,10 +1,16 @@
-import type { OrchestrationV2Checkpoint, ProjectEntry } from "@t3tools/contracts";
+import type {
+  OrchestrationV2Checkpoint,
+  ProjectEntry,
+  ProjectSearchContentsInput,
+  ReviewDiffFileContentsInput,
+  ReviewDiffFileContentsResult,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { parseCheckpointRange } from "../thread/runner/driveItems.ts";
+import { parseCheckpointRange } from "../thread/driveEvents.ts";
 import { DriveDirectory } from "./DriveDirectory.ts";
 import { DrivePacks } from "./DrivePacks.ts";
 import { type DriveReader, DriveReadError, makeDriveReader, pathSegments } from "./DriveReader.ts";
@@ -14,6 +20,7 @@ import { GitHub } from "../github/GitHub.ts";
 import { GitHubConnection } from "../github/GitHubConnection.ts";
 import { isBinary } from "./drivePatch.ts";
 import type { Oid } from "./git/gitObjects.ts";
+import { scanDriveContents, type DriveContentScanState } from "./DriveContentScan.ts";
 
 /**
  * A drive as clients browse it, with no machine running: the files on its
@@ -45,9 +52,42 @@ export type DriveFile =
 
 type Failure = Effect.Error<ReturnType<DriveReader["object"]>>;
 
+/** One changed file between two commits: its patch and how many lines it adds and removes. */
+export interface ComparedFile {
+  readonly path: string;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly patch: string;
+}
+
+/** `git diff --numstat`'s counts, read off a file's patch: binary and too-large files count 0. */
+const lineCounts = (patch: string) => {
+  let additions = 0;
+  let deletions = 0;
+  let inHunk = false;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("@@")) inHunk = true;
+    else if (!inHunk) continue;
+    else if (line.startsWith("+")) additions++;
+    else if (line.startsWith("-")) deletions++;
+  }
+  return { additions, deletions };
+};
+
 export class DriveFiles extends Context.Service<
   DriveFiles,
   {
+    readonly contentSearchSnapshot: (
+      driveId: string,
+      at?: ReadAt,
+    ) => Effect.Effect<Oid | null, Failure>;
+    readonly searchContents: (
+      driveId: string,
+      input: Omit<ProjectSearchContentsInput, "cwd">,
+      commit: Oid | null,
+      state?: DriveContentScanState,
+      excludePaths?: ReadonlyArray<string>,
+    ) => ReturnType<typeof scanDriveContents>;
     readonly listEntries: (
       driveId: string,
       directoryPath: string,
@@ -58,6 +98,10 @@ export class DriveFiles extends Context.Service<
       path: string,
       at?: ReadAt,
     ) => Effect.Effect<DriveFile, Failure>;
+    readonly diffFileContents: (
+      driveId: string,
+      input: ReviewDiffFileContentsInput,
+    ) => Effect.Effect<ReviewDiffFileContentsResult, Failure>;
     readonly searchEntries: (
       driveId: string,
       input: {
@@ -70,6 +114,17 @@ export class DriveFiles extends Context.Service<
       { readonly entries: ReadonlyArray<ProjectEntry>; readonly truncated: boolean },
       Failure
     >;
+    /**
+     * Every file that differs from commit `from` (null: nothing) to commit `to`,
+     * or only `paths`. Both must be commits anyone with the drive can read, so
+     * a commit named by a client reads nothing a thread keeps private.
+     */
+    readonly compare: (
+      driveId: string,
+      from: Oid | null,
+      to: Oid,
+      options: { readonly ignoreWhitespace: boolean; readonly paths?: ReadonlyArray<string> },
+    ) => Effect.Effect<ReadonlyArray<ComparedFile>, Failure>;
     /**
      * The diff over turns `from` (exclusive) to `to` (inclusive): from where the
      * first checkpointed turn after `from` started to where turn `to` ended.
@@ -180,6 +235,51 @@ const make = Effect.gen(function* () {
       } as const;
     });
 
+  const diffFileContents: DriveFiles["Service"]["diffFileContents"] = (driveId, input) =>
+    Effect.gen(function* () {
+      const reader = yield* readerOf(driveId);
+      const side = (revision: string | null, path: string) =>
+        Effect.gen(function* () {
+          const fail = (message: string) => new DriveReadError({ message });
+          if (revision === null || !/^[a-f0-9]{40}$/.test(revision)) {
+            return yield* fail(
+              "Diff expansion requires an immutable commit ID for each existing side.",
+            );
+          }
+          if ((yield* reader.drive.missing([revision], null)).length > 0) {
+            return yield* fail("The requested revision is not available in this drive.");
+          }
+          const segments = pathSegments(path);
+          if (segments === null || segments.length === 0) {
+            return yield* fail(`Diff file '${path}' resolves outside the review workspace.`);
+          }
+          const entry = yield* reader.entryAt(yield* reader.treeOf(revision), segments);
+          if (entry === null)
+            return yield* fail(`Diff file '${path}' does not exist at ${revision}.`);
+          if (entry.kind === "directory" || entry.kind === "submodule") {
+            return yield* fail(`Diff path '${path}' is not a file.`);
+          }
+          const size = (yield* reader.sizes([entry.oid])).get(entry.oid);
+          if (size !== undefined && size !== null && size > MAX_FILE_BYTES) {
+            return yield* fail(`Diff file '${path}' exceeds the 1 MB expansion limit.`);
+          }
+          const bytes = yield* reader.blob(entry.oid);
+          if (bytes.length > MAX_FILE_BYTES) {
+            return yield* fail(`Diff file '${path}' exceeds the 1 MB expansion limit.`);
+          }
+          if (bytes.includes(0)) return yield* fail(`Cannot expand binary file '${path}'.`);
+          return new TextDecoder().decode(bytes);
+        });
+      const [oldContents, newContents] = yield* Effect.all(
+        [
+          input.changeType === "new" ? Effect.succeed("") : side(input.baseRef, input.oldPath),
+          input.changeType === "deleted" ? Effect.succeed("") : side(input.headRef, input.newPath),
+        ],
+        { concurrency: 2 },
+      );
+      return { oldContents, newContents };
+    });
+
   const searchEntries: DriveFiles["Service"]["searchEntries"] = (driveId, input, at) =>
     Effect.gen(function* () {
       const reader = yield* readerOf(driveId);
@@ -199,6 +299,19 @@ const make = Effect.gen(function* () {
         entries: matches.slice(0, input.limit).map((candidate) => candidate.entry),
         truncated: all.truncated || matches.length > input.limit,
       };
+    });
+
+  const compare: DriveFiles["Service"]["compare"] = (driveId, from, to, options) =>
+    Effect.gen(function* () {
+      const reader = yield* readerOf(driveId);
+      const commits = from === null ? [to] : [from, to];
+      if ((yield* reader.drive.missing(commits, null)).length > 0) {
+        return yield* new DriveReadError({
+          message: "The compared commits are not available in this drive.",
+        });
+      }
+      const files = yield* reader.patches(from, to, options);
+      return files.map((file) => ({ ...file, ...lineCounts(file.patch) }));
     });
 
   const turnDiff: DriveFiles["Service"]["turnDiff"] = (driveId, checkpoints, range) =>
@@ -223,7 +336,26 @@ const make = Effect.gen(function* () {
       });
     });
 
-  return DriveFiles.of({ listEntries, readFile, searchEntries, turnDiff });
+  return DriveFiles.of({
+    contentSearchSnapshot: (driveId, at) =>
+      Effect.flatMap(readerOf(driveId), (reader) => resolveAt(reader, at)),
+    searchContents: (driveId, input, commit, state, excludePaths) =>
+      Effect.flatMap(readerOf(driveId), (reader) =>
+        scanDriveContents(
+          reader,
+          commit,
+          input,
+          state ?? null,
+          excludePaths === undefined ? {} : { excludePaths },
+        ),
+      ),
+    listEntries,
+    readFile,
+    diffFileContents,
+    searchEntries,
+    compare,
+    turnDiff,
+  });
 });
 
 export const layer = Layer.effect(DriveFiles, make);

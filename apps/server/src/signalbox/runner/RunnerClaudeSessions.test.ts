@@ -11,7 +11,7 @@ import type {
   ClaudeAgentSdkQueryOpenInput,
   ClaudeAgentSdkQueryRunnerShape,
   ClaudeAgentSdkQuerySession,
-} from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+} from "@signalbox/provider-claude/ClaudeQueryRunner";
 import { makeClaudeSessions, withSessions } from "./RunnerClaudeSessions.ts";
 import { makeSessionOutbox } from "./RunnerSessionOutbox.ts";
 import { makeMemorySessionStore } from "./sessionStoreTesting.ts";

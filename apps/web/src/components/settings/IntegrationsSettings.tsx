@@ -5,6 +5,7 @@ import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
 import { ConnectedServicesSettings } from "./ConnectedServicesSettings"; // signalbox: automations
 import {
+  AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
   BROWSER_PROFILE_MAX_COUNT,
@@ -35,16 +36,21 @@ import {
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
+import { useIsSignalboxCloud } from "~/github/CloudGitHubSettings";
 import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
-import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentsWithScopeResolution,
+} from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { previewEnvironment } from "~/state/preview";
 import { useServerConfigs } from "~/state/entities";
@@ -117,6 +123,8 @@ import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
+import { resolveBrowserSettingsAvailability } from "./browserSettings.logic";
+import { CloudBrowserProfileSetting } from "./CloudBrowserProfileSetting";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -191,6 +199,87 @@ export const importFailureReason = (cause: unknown): BrowserImportFailureReason 
     "readFailed"
   );
 };
+
+async function importBrowserCookiesIntoTarget(
+  bridge: NonNullable<typeof previewBridge>,
+  source: BrowserImportSource,
+  environmentId: EnvironmentId,
+  input: { readonly sourceProfileDirectory: string; readonly target: WizardTarget },
+): Promise<ImportOutcome> {
+  try {
+    const result = await bridge.importBrowserCookies({
+      environmentId,
+      sourceId: source.id,
+      sourceProfileDirectory: input.sourceProfileDirectory,
+      targetProfileId: input.target.profileId,
+    });
+    if (
+      input.target.kind === "existing" &&
+      !resolveBrowserProfiles(getClientSettings().browserProfiles).some(
+        (profile) => profile.id === input.target.profileId,
+      )
+    ) {
+      return { kind: "blocked", reason: "readFailed" };
+    }
+    let targetName: string;
+    if (input.target.kind === "new") {
+      if (result.imported > 0) {
+        try {
+          const persisted = await persistClientSettingsUpdate((current) => {
+            const existing = current.browserProfiles.find(
+              (profile) => profile.id === input.target.profileId,
+            );
+            if (existing) return current;
+            // The wizard refuses a new target at the cap, but the cap can be
+            // reached while the import runs; the updater sees the newest
+            // settings, so this is the check that holds.
+            if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT) {
+              throw new ProfileLimitReachedError();
+            }
+            const taken = new Set(
+              resolveBrowserProfiles(current.browserProfiles).map((profile) => profile.name),
+            );
+            let name = source.name;
+            for (let index = 2; taken.has(name); index += 1) name = `${source.name} ${index}`;
+            return {
+              ...current,
+              browserProfiles: [
+                ...current.browserProfiles,
+                { id: input.target.profileId, name, kind: "persistent" as const },
+              ],
+            };
+          });
+          targetName =
+            persisted.browserProfiles.find((profile) => profile.id === input.target.profileId)
+              ?.name ?? source.name;
+        } catch (cause) {
+          // This target id belongs only to the attempted new profile. Clear
+          // its partition so a failed registration cannot strand imported
+          // cookies behind a profile that disappears on restart.
+          await clearBrowserProfileData(bridge, [environmentId], input.target.profileId).catch(
+            () => undefined,
+          );
+          const reason =
+            cause instanceof ProfileLimitReachedError ? "profileLimitReached" : "profileNotSaved";
+          throw new Error(`Importing cookies from ${source.id} failed: ${reason}.`, { cause });
+        }
+      } else {
+        targetName = source.name;
+      }
+    } else {
+      targetName = input.target.name;
+    }
+    return {
+      kind: "imported",
+      imported: result.imported,
+      skipped: result.skipped,
+      skippedDomains: result.skippedDomains,
+      targetName,
+    };
+  } catch (cause) {
+    return { kind: "blocked", reason: importFailureReason(cause) };
+  }
+}
 
 const viewportSelectValue = (viewport: PreviewViewportSetting): string => {
   if (viewport._tag === "fill") return FILL_VALUE;
@@ -279,7 +368,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-default-viewport")}
-      description="Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar."
+      description="Tab size for browser previews. Fill fits the panel; other sizes show the device toolbar."
       resetAction={
         !disabled && viewport._tag !== DEFAULT_BROWSER_VIEWPORT._tag ? (
           <SettingResetButton
@@ -561,16 +650,28 @@ const LINK_TARGET_LABELS: Readonly<Record<BrowserLinkTarget, string>> = {
   app: "Signalbox",
 };
 
-function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
+function BrowserLinkTargetSetting({
+  appTargetAvailable,
+  checking,
+}: {
+  readonly appTargetAvailable: boolean;
+  readonly checking: boolean;
+}) {
   const linkTarget = useClientSettings((settings) => settings.browserLinkTarget);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-link-target")}
-      description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
+      description={
+        appTargetAvailable
+          ? "Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
+          : checking
+            ? "Checking whether Signalbox can open pages in this environment."
+            : "Your default browser works here. Signalbox needs the desktop app or preview access to a server browser."
+      }
       resetAction={
-        !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
+        linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
           <SettingResetButton
             label="link target"
             onClick={() => updateSettings({ browserLinkTarget: DEFAULT_BROWSER_LINK_TARGET })}
@@ -579,7 +680,6 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
       }
       control={
         <Select
-          disabled={disabled}
           value={linkTarget}
           onValueChange={(value) => {
             if (value === "system" || value === "app") {
@@ -592,7 +692,12 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {(Object.keys(LINK_TARGET_LABELS) as ReadonlyArray<BrowserLinkTarget>).map((target) => (
-              <SelectItem hideIndicator key={target} value={target}>
+              <SelectItem
+                hideIndicator
+                key={target}
+                value={target}
+                disabled={target === "app" && !appTargetAvailable}
+              >
                 {LINK_TARGET_LABELS[target]}
               </SelectItem>
             ))}
@@ -700,34 +805,31 @@ function DeviceIntegrationControls({
     const deviceEnvironments = environments.filter((environment) =>
       environmentSupports(environment.serverConfig?.environment.capabilities, "devices"),
     );
-    try {
-      const results = await Promise.allSettled(
-        deviceEnvironments.map(async (environment) => {
-          if (environment.connection.phase !== "connected" || !environment.serverConfig) {
-            throw new Error("Environment disconnected");
-          }
-          if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
-            throw new Error("This connection cannot change device settings.");
-          }
-          return configure({
-            environmentId: environment.environmentId,
-            input: { ...input, ...(input.enabled ? { onboardingCompleted: true } : {}) },
-          });
-        }),
-      );
-      const failed = deviceEnvironments.filter((_, index) => {
-        const result = results[index];
-        return result?.status !== "fulfilled" || result.value._tag === "Failure";
-      });
-      if (failed.length > 0) {
-        toastManager.add({
-          type: "error",
-          title: "Device settings not saved on all environments",
-          description: `Could not update ${failed.map((environment) => environment.label).join(", ")}.`,
+    const results = await Promise.allSettled(
+      deviceEnvironments.map(async (environment) => {
+        if (environment.connection.phase !== "connected" || !environment.serverConfig) {
+          throw new Error("Environment disconnected");
+        }
+        if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
+          throw new Error("This connection cannot change device settings.");
+        }
+        return configure({
+          environmentId: environment.environmentId,
+          input: { ...input, ...(input.enabled ? { onboardingCompleted: true } : {}) },
         });
-      }
-    } finally {
-      setPending(null);
+      }),
+    );
+    setPending(null);
+    const failed = deviceEnvironments.filter((_, index) => {
+      const result = results[index];
+      return result?.status !== "fulfilled" || result.value._tag === "Failure";
+    });
+    if (failed.length > 0) {
+      toastManager.add({
+        type: "error",
+        title: "Device settings not saved on all environments",
+        description: `Could not update ${failed.map((environment) => environment.label).join(", ")}.`,
+      });
     }
   };
 
@@ -940,7 +1042,13 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
   );
 }
 
-function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
+function BrowserProfilesSetting({
+  disabled,
+  serverBrowserClearEnvironmentIds,
+}: {
+  readonly disabled: boolean;
+  readonly serverBrowserClearEnvironmentIds: ReadonlyArray<EnvironmentId>;
+}) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const settingsHydrated = useClientSettingsHydrated();
@@ -957,17 +1065,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const [profilePendingClear, setProfilePendingClear] = useState<BrowserProfile | null>(null);
   const [profileRemovalError, setProfileRemovalError] = useState<string | null>(null);
   const [profileRemovalInFlight, setProfileRemovalInFlight] = useState(false);
-  const serverConfigs = useServerConfigs();
   const runClearServerProfile = useAtomCommand(previewEnvironment.clearProfile, {
     reportFailure: false,
   });
   const serverProfileData: ServerProfileData = {
-    environmentIds: environments
-      .map((environment) => environment.environmentId)
-      .filter(
-        (environmentId) =>
-          serverConfigs.get(environmentId)?.environment.capabilities.serverBrowser === true,
-      ),
+    environmentIds: serverBrowserClearEnvironmentIds,
     clear: async (environmentId, profileId) => {
       const result = await runClearServerProfile({ environmentId, input: { profileId } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
@@ -1075,13 +1177,13 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       source.unavailable !== "notInstalled" && source.unavailable !== "unsupportedPlatform",
   );
 
-  const loadSources = useCallback(() => {
+  const loadSources = () => {
     if (!previewBridge) return;
     void previewBridge
       .listBrowserImportSources()
       .then(setSources)
       .catch(() => setSources((previous) => previous ?? []));
-  }, []);
+  };
 
   const runWizardImport = async (
     source: BrowserImportSource,
@@ -1101,84 +1203,12 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     if (importInFlightRef.current) return { kind: "blocked", reason: "readFailed" };
     importInFlightRef.current = true;
     setImportInFlight(true);
-    try {
-      const result = await previewBridge.importBrowserCookies({
-        environmentId,
-        sourceId: source.id,
-        sourceProfileDirectory: input.sourceProfileDirectory,
-        targetProfileId: input.target.profileId,
-      });
-      if (
-        input.target.kind === "existing" &&
-        !resolveBrowserProfiles(getClientSettings().browserProfiles).some(
-          (profile) => profile.id === input.target.profileId,
-        )
-      ) {
-        return { kind: "blocked", reason: "readFailed" };
-      }
-      let targetName: string;
-      if (input.target.kind === "new") {
-        if (result.imported > 0) {
-          try {
-            const persisted = await persistClientSettingsUpdate((current) => {
-              const existing = current.browserProfiles.find(
-                (profile) => profile.id === input.target.profileId,
-              );
-              if (existing) return current;
-              // The wizard refuses a new target at the cap, but the cap can be
-              // reached while the import runs; the updater sees the newest
-              // settings, so this is the check that holds.
-              if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT) {
-                throw new ProfileLimitReachedError();
-              }
-              const taken = new Set(
-                resolveBrowserProfiles(current.browserProfiles).map((profile) => profile.name),
-              );
-              let name = source.name;
-              for (let index = 2; taken.has(name); index += 1) name = `${source.name} ${index}`;
-              return {
-                ...current,
-                browserProfiles: [
-                  ...current.browserProfiles,
-                  { id: input.target.profileId, name, kind: "persistent" as const },
-                ],
-              };
-            });
-            targetName =
-              persisted.browserProfiles.find((profile) => profile.id === input.target.profileId)
-                ?.name ?? source.name;
-          } catch (cause) {
-            // This target id belongs only to the attempted new profile. Clear
-            // its partition so a failed registration cannot strand imported
-            // cookies behind a profile that disappears on restart.
-            await clearBrowserProfileData(
-              previewBridge,
-              [environmentId],
-              input.target.profileId,
-            ).catch(() => undefined);
-            const reason =
-              cause instanceof ProfileLimitReachedError ? "profileLimitReached" : "profileNotSaved";
-            throw new Error(`Importing cookies from ${source.id} failed: ${reason}.`, { cause });
-          }
-        } else {
-          targetName = source.name;
-        }
-      } else {
-        targetName = input.target.name;
-      }
-      return {
-        kind: "imported",
-        imported: result.imported,
-        skipped: result.skipped,
-        skippedDomains: result.skippedDomains,
-        targetName,
-      };
-    } catch (cause) {
-      return { kind: "blocked", reason: importFailureReason(cause) };
-    } finally {
-      importInFlightRef.current = false;
-      setImportInFlight(false);
-    }
+    return importBrowserCookiesIntoTarget(previewBridge, source, environmentId, input).finally(
+      () => {
+        importInFlightRef.current = false;
+        setImportInFlight(false);
+      },
+    );
   };
 
   const refreshImportSource = async (
@@ -1224,41 +1254,45 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             {atProfileLimit ? (
               <MenuItem disabled>You&rsquo;ve reached the profile limit</MenuItem>
             ) : null}
-            <MenuSeparator />
-            <MenuGroup>
-              <MenuGroupLabel>Import from</MenuGroupLabel>
-              {sources === null ? (
-                <MenuItem disabled>Looking for browsers…</MenuItem>
-              ) : importableSources.length === 0 ? (
-                <MenuItem disabled>No supported browsers found</MenuItem>
-              ) : (
-                <>
-                  {importableSources.map((source) => (
-                    <MenuItem
-                      key={source.id}
-                      disabled={!settingsHydrated || primaryEnvironment == null}
-                      onClick={() => {
-                        if (!settingsHydrated || primaryEnvironment == null) return;
-                        setImportSession({
-                          source,
-                          environmentId: primaryEnvironment.environmentId,
-                          environmentName: resolveEnvironmentOptionLabel({
-                            isPrimary: true,
-                            environmentId: primaryEnvironment.environmentId,
-                            runtimeLabel: primaryEnvironment.label,
-                          }),
-                        });
-                      }}
-                    >
-                      {source.name}
-                    </MenuItem>
-                  ))}
-                  {primaryEnvironment == null ? (
-                    <MenuItem disabled>Connect to an environment to import cookies</MenuItem>
-                  ) : null}
-                </>
-              )}
-            </MenuGroup>
+            {previewBridge !== null ? (
+              <>
+                <MenuSeparator />
+                <MenuGroup>
+                  <MenuGroupLabel>Import from</MenuGroupLabel>
+                  {sources === null ? (
+                    <MenuItem disabled>Looking for browsers…</MenuItem>
+                  ) : importableSources.length === 0 ? (
+                    <MenuItem disabled>No supported browsers found</MenuItem>
+                  ) : (
+                    <>
+                      {importableSources.map((source) => (
+                        <MenuItem
+                          key={source.id}
+                          disabled={!settingsHydrated || primaryEnvironment == null}
+                          onClick={() => {
+                            if (!settingsHydrated || primaryEnvironment == null) return;
+                            setImportSession({
+                              source,
+                              environmentId: primaryEnvironment.environmentId,
+                              environmentName: resolveEnvironmentOptionLabel({
+                                isPrimary: true,
+                                environmentId: primaryEnvironment.environmentId,
+                                runtimeLabel: primaryEnvironment.label,
+                              }),
+                            });
+                          }}
+                        >
+                          {source.name}
+                        </MenuItem>
+                      ))}
+                      {primaryEnvironment == null ? (
+                        <MenuItem disabled>Connect to an environment to import cookies</MenuItem>
+                      ) : null}
+                    </>
+                  )}
+                </MenuGroup>
+              </>
+            ) : null}
           </MenuPopup>
         </Menu>
       }
@@ -1476,19 +1510,12 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
 }
 
 export function IntegrationsSettingsPanel() {
-  const previewDefaultsDisabled = !isElectron;
-  const previewDefaults = (
-    <>
-      <BrowserProfilesSetting disabled={previewDefaultsDisabled} />
-      <BrowserViewportSetting disabled={previewDefaultsDisabled} />
-      <BrowserZoomSetting disabled={previewDefaultsDisabled} />
-      <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />
-      <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />
-      <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
-      <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />
-      <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
-    </>
-  );
+  const browserSettings = useBrowserSettingsAvailability();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const isSignalboxCloud = useIsSignalboxCloud(primaryEnvironment?.environmentId ?? null);
+  const cloudBrowserEnvironmentId = isSignalboxCloud
+    ? (primaryEnvironment?.environmentId ?? null)
+    : null;
 
   return (
     <SettingsPageContainer>
@@ -1496,16 +1523,78 @@ export function IntegrationsSettingsPanel() {
       {/* signalbox: automations */}
       <ConnectedServicesSettings />
       <SettingsSection id="browser" title="Browser">
-        {previewDefaultsDisabled ? (
-          <SettingsUnavailableGroup message="Only available in the desktop app.">
-            {previewDefaults}
-          </SettingsUnavailableGroup>
-        ) : (
-          previewDefaults
+        {cloudBrowserEnvironmentId === null ? null : (
+          <CloudBrowserProfileSetting environmentId={cloudBrowserEnvironmentId} />
         )}
+        <SettingsUnavailableGroup
+          message={
+            browserSettings.checkingBrowserSettings
+              ? "Checking connected environments for browser support."
+              : browserSettings.browserProfiles
+                ? undefined
+                : "Browser profiles and viewport defaults apply to the desktop browser or a connected server browser."
+          }
+        >
+          <BrowserProfilesSetting
+            disabled={!browserSettings.browserProfiles}
+            serverBrowserClearEnvironmentIds={browserSettings.serverBrowserClearEnvironmentIds}
+          />
+          <BrowserViewportSetting disabled={!browserSettings.viewport} />
+        </SettingsUnavailableGroup>
+        <SettingsUnavailableGroup
+          message={
+            browserSettings.desktopViewDefaults
+              ? undefined
+              : "Zoom, appearance, and recording settings apply only to desktop browser tabs."
+          }
+        >
+          <BrowserZoomSetting disabled={!browserSettings.desktopViewDefaults} />
+          <BrowserAppearanceSetting disabled={!browserSettings.desktopViewDefaults} />
+          <BrowserRecordingFrameRateSetting disabled={!browserSettings.recording} />
+          <BrowserRecordingInputSettings disabled={!browserSettings.recording} />
+        </SettingsUnavailableGroup>
+        <BrowserLinkTargetSetting
+          appTargetAvailable={browserSettings.appLinkTarget}
+          checking={browserSettings.checkingAppLinkTarget}
+        />
+        <SettingsUnavailableGroup
+          message={
+            browserSettings.checkingFloatingPreview
+              ? "Checking connected environments for browser or device support."
+              : browserSettings.floatingPreview
+                ? undefined
+                : "Floating previews need a server browser or device support."
+          }
+        >
+          <BrowserAutoShowFloatingPreviewSetting disabled={!browserSettings.floatingPreview} />
+        </SettingsUnavailableGroup>
         <PullRequestLinksOpenInAppSetting />
       </SettingsSection>
       <DeviceIntegrationSettings />
     </SettingsPageContainer>
   );
+}
+
+function useBrowserSettingsAvailability() {
+  const { environments, isReady } = useEnvironments();
+  const serverConfigs = useServerConfigs();
+  const previewPermissions = useEnvironmentsWithScopeResolution(
+    environments,
+    AuthPreviewOperateScope,
+  );
+  return resolveBrowserSettingsAvailability({
+    isElectron,
+    environmentsReady: isReady,
+    environments: environments.map(({ environmentId, connection }) => {
+      const config = serverConfigs.get(environmentId);
+      return {
+        environmentId,
+        connectionPhase: connection.phase,
+        configKnown: config !== undefined,
+        serverBrowser: config?.environment.capabilities.serverBrowser === true,
+        devices: config?.environment.capabilities.devices === true,
+        previewPermission: previewPermissions.get(environmentId) ?? "unresolved",
+      };
+    }),
+  });
 }

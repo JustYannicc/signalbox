@@ -11,6 +11,7 @@ import type { DriveAccess } from "@signalbox/runner-protocol/DriveProtocol";
 import type { PreviewService } from "@signalbox/runner-protocol/PreviewServices";
 import type { ThreadId } from "@t3tools/contracts";
 import type { AgentBrowserStep } from "@t3tools/contracts/signalboxPreviews";
+import { previewLabel } from "@t3tools/shared/preview";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -81,6 +82,8 @@ export interface PreviewTunnel {
   readonly ended: Effect.Effect<string>;
   /** Completes after this Runner's declarations were reconciled with the first welcome. */
   readonly ready: Effect.Effect<void, RunnerConnectionError>;
+  /** Null until routing is known: public URLs must stay on the machine meanwhile. */
+  readonly previewHosts: Effect.Effect<ReadonlyArray<string> | null, RunnerConnectionError>;
   /** Persists the current declarations and completes after the thread acknowledges them. */
   readonly persistServices: (
     services: ReadonlyArray<PreviewService>,
@@ -162,6 +165,7 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
           if (terminalError !== null) return { _tag: "Stopped" as const, error: terminalError };
           servicesRevision++;
           desiredServices = services;
+          for (const { port } of services) previewPorts.add(port);
           serviceWaiters.set(servicesRevision, ack);
           return { _tag: "Pending" as const, revision: servicesRevision };
         });
@@ -173,6 +177,9 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
 
   // Plain variables: every read and write below happens in one synchronous step.
   let ports: ReadonlyArray<PreviewPort> = [];
+  let previewHostSuffix: string | null = null;
+  // A server stopping does not make its public preview safe for a saved profile.
+  const previewPorts = new Set<number>();
   /** Sends the ports on the welcomed connection, if there is one. */
   let reportPorts: ((ports: ReadonlyArray<PreviewPort>) => void) | null = null;
   let welcomed = false;
@@ -199,6 +206,7 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
     .watch((next) =>
       Effect.sync(() => {
         ports = next;
+        for (const { port } of next) previewPorts.add(port);
         reportPorts?.(next);
       }),
     )
@@ -227,6 +235,8 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
       if (!("type" in answer) || answer.type !== "welcome") {
         return yield* new RunnerConnectionError({ message: "Expected the thread's welcome." });
       }
+      previewHostSuffix = answer.previewHostSuffix ?? null;
+      for (const { port } of answer.services ?? []) previewPorts.add(port);
       if (answer.drive !== undefined) {
         if (answer.drive === null) {
           if (!servicesRestored) {
@@ -389,5 +399,23 @@ export const runPreviewTunnel = Effect.fn("runPreviewTunnel")(function* (
     }
   }).pipe(Effect.forkScoped);
 
-  return { ended: Deferred.await(ended), ready: Deferred.await(ready), persistServices };
+  const previewHosts = Effect.gen(function* () {
+    if (!(yield* Deferred.isDone(ready))) return null;
+    yield* Deferred.await(ready);
+    const suffix = previewHostSuffix;
+    if (suffix === null) return [];
+    return yield* Effect.promise(() =>
+      Promise.all(
+        [...previewPorts].map(
+          async (port) => `${await previewLabel(input.threadId, port)}${suffix}`,
+        ),
+      ),
+    );
+  });
+  return {
+    ended: Deferred.await(ended),
+    ready: Deferred.await(ready),
+    previewHosts,
+    persistServices,
+  };
 });

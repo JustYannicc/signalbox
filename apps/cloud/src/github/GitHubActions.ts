@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts/signalboxFolders";
 import { explained } from "@signalbox/automations/runLog";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { SqlError } from "effect/sql/SqlError";
@@ -17,6 +18,27 @@ import * as UserStore from "../user/UserStore.ts";
 import { makeActionsApi, type StepResult } from "./actionsApi.ts";
 import { GitHub } from "./GitHub.ts";
 import { GitHubConnection } from "./GitHubConnection.ts";
+import { makeGitHubOperationJournal } from "./githubOperationJournal.ts";
+import { makeWorkflowApi } from "./workflowApi.ts";
+import type {
+  CreateIssueInput,
+  GitHubIssue,
+  WorkflowArtifactInput,
+  WorkflowArtifactResult,
+  WorkflowDispatchInput,
+  WorkflowReadInput,
+  WorkflowRun,
+} from "./workflow/types.ts";
+
+export type {
+  CreateIssueInput,
+  GitHubIssue,
+  WorkflowArtifactInput,
+  WorkflowArtifactResult,
+  WorkflowDispatchInput,
+  WorkflowReadInput,
+  WorkflowRun,
+} from "./workflow/types.ts";
 
 /**
  * GitHub Actions for a folder: which repository its CI runs in and whose
@@ -47,6 +69,26 @@ export class GitHubActions extends Context.Service<
     /** What the function returned, from a finished run's artifact; null when it kept none. */
     readonly result: (run: ExternalRun) => Effect.Effect<StepResult | null, AutomationError>;
     readonly cancel: (run: ExternalRun) => Effect.Effect<void, AutomationError>;
+    /** Dispatches one workflow under an exact, durable correlation key. */
+    readonly workflowDispatch: (
+      projectId: string,
+      input: WorkflowDispatchInput,
+    ) => Effect.Effect<WorkflowRun, AutomationError>;
+    /** Reads only a run from the folder's connected repository, workflow, and head SHA. */
+    readonly workflowRead: (
+      projectId: string,
+      input: WorkflowReadInput,
+    ) => Effect.Effect<WorkflowRun | null, AutomationError>;
+    /** Reads one verified text entry from an immutable completed-run artifact. */
+    readonly workflowArtifact: (
+      projectId: string,
+      input: WorkflowArtifactInput,
+    ) => Effect.Effect<WorkflowArtifactResult | null, AutomationError>;
+    /** Creates or recovers one issue using its exact correlation marker. */
+    readonly createIssue: (
+      projectId: string,
+      input: CreateIssueInput,
+    ) => Effect.Effect<GitHubIssue, AutomationError>;
     /**
      * Lends the user's connected GitHub account to a folder's CI steps, or
      * stops lending it. Once folders have their GitHub App, there is nothing to lend.
@@ -73,6 +115,8 @@ const make = Effect.gen(function* () {
   const users = yield* UserStore.UserStore;
   const directory = yield* Effect.serviceOption(DriveDirectory);
   const api = makeActionsApi(github.api);
+  const crypto = yield* Crypto.Crypto;
+  const workflowApi = makeWorkflowApi(github.api, yield* makeGitHubOperationJournal, crypto);
 
   /**
    * What calls GitHub for a repository act with: the user's connection now.
@@ -177,6 +221,44 @@ const make = Effect.gen(function* () {
       tokenFor(run.scope).pipe(
         Effect.flatMap((access) => api.result(access, run)),
         Effect.mapError(githubFailure("Couldn't read the step's result")),
+      ),
+    workflowDispatch: (projectId, input) =>
+      Effect.gen(function* () {
+        const remote = yield* repositoryOf(projectId);
+        yield* credentials(projectId);
+        const token = yield* tokenFor(remote.repository);
+        return yield* workflowApi.workflowDispatch(token, remote.repository, projectId, input);
+      }).pipe(
+        Effect.withSpan("GitHubActions.workflowDispatch", {
+          attributes: { "folder.id": projectId },
+        }),
+      ),
+    workflowRead: (projectId, input) =>
+      Effect.gen(function* () {
+        const remote = yield* repositoryOf(projectId);
+        const token = yield* tokenFor(remote.repository);
+        return yield* workflowApi.workflowRead(token, remote.repository, input);
+      }).pipe(
+        Effect.withSpan("GitHubActions.workflowRead", { attributes: { "folder.id": projectId } }),
+      ),
+    workflowArtifact: (projectId, input) =>
+      Effect.gen(function* () {
+        const remote = yield* repositoryOf(projectId);
+        const token = yield* tokenFor(remote.repository);
+        return yield* workflowApi.workflowArtifact(token, remote.repository, input);
+      }).pipe(
+        Effect.withSpan("GitHubActions.workflowArtifact", {
+          attributes: { "folder.id": projectId },
+        }),
+      ),
+    createIssue: (projectId, input) =>
+      Effect.gen(function* () {
+        const remote = yield* repositoryOf(projectId);
+        yield* credentials(projectId);
+        const token = yield* tokenFor(remote.repository);
+        return yield* workflowApi.createIssue(token, remote.repository, projectId, input);
+      }).pipe(
+        Effect.withSpan("GitHubActions.createIssue", { attributes: { "folder.id": projectId } }),
       ),
     cancel: (run) =>
       tokenFor(run.scope).pipe(

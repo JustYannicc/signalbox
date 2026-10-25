@@ -1,6 +1,6 @@
 import {
-  AccountHandoffError,
   buildAccountAuthorizeUrl,
+  isAccountHandoffError,
   parseAccountReturn,
   redeemAccountHandoff,
 } from "@t3tools/client-runtime/account";
@@ -159,7 +159,7 @@ export function useAccountSignIn(options: { readonly onSignedIn?: () => void }) 
         );
         optionsRef.current.onSignedIn?.();
       } catch (error) {
-        if (error instanceof AccountHandoffError) {
+        if (isAccountHandoffError(error)) {
           report(error.code);
         } else {
           setFailure(describeError(error));

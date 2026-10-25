@@ -7,7 +7,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
@@ -22,7 +22,6 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { resolveThreadRouteRef } from "../threadRoutes";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
@@ -32,6 +31,7 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
+import { QuickCaptureHost } from "./capture/QuickCaptureHost"; // signalbox: quick capture
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -58,10 +58,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 // signalbox: view rail
 import { useIsMobile } from "../hooks/useMediaQuery";
 import { SidebarViews } from "./sidebar/SidebarViews";
+import { SidebarViewShortcuts } from "./sidebar/sidebarViewCommands";
 import { TITLEBAR_HISTORY_WIDTH, TitlebarHistoryButtons } from "./sidebar/TitlebarHistoryButtons";
 import { resolveCollapsedRailWidth } from "../workspaceTitlebar";
 import { FolderDialogs } from "./sidebar/folders/FolderDialogs"; // signalbox: folders
 import { NotesSheet } from "./notes/NotesSheet"; // signalbox: notes
+import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -72,6 +74,44 @@ function subscribeToViewportWidth(onChange: () => void): () => void {
 
 function readViewportWidth(): number {
   return window.innerWidth;
+}
+
+// getWindowFullscreenState is a synchronous IPC round trip, so the snapshot is cached
+// and only re-read when a subscription starts.
+let windowFullscreenSnapshot: boolean | null = null;
+
+function macosDesktopBridge() {
+  if (!isElectron || !isMacPlatform(navigator.platform)) return null;
+  return window.desktopBridge ?? null;
+}
+
+function subscribeToWindowFullscreen(onChange: () => void): () => void {
+  const bridge = macosDesktopBridge();
+  if (
+    typeof bridge?.getWindowFullscreenState !== "function" ||
+    typeof bridge.onWindowFullscreenStateChange !== "function"
+  ) {
+    return () => {};
+  }
+  const unsubscribe = bridge.onWindowFullscreenStateChange((fullscreen) => {
+    windowFullscreenSnapshot = fullscreen;
+    onChange();
+  });
+  // The window may have changed state between the first render and this subscription.
+  windowFullscreenSnapshot = bridge.getWindowFullscreenState();
+  return () => {
+    unsubscribe();
+    windowFullscreenSnapshot = null;
+  };
+}
+
+function readWindowFullscreen(): boolean {
+  if (windowFullscreenSnapshot === null) {
+    const getWindowFullscreenState = macosDesktopBridge()?.getWindowFullscreenState;
+    windowFullscreenSnapshot =
+      typeof getWindowFullscreenState === "function" ? getWindowFullscreenState() : false;
+  }
+  return windowFullscreenSnapshot;
 }
 
 function readInitialThreadSidebarWidth(): number {
@@ -173,10 +213,7 @@ function SidebarControl() {
 
 function NavigationHistoryShortcuts() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const routeThreadRef = useParams({
-    strict: false,
-    select: (params) => resolveThreadRouteRef(params),
-  });
+  const routeThreadRef = useThreadRouteRef();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -256,12 +293,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     }
     setSidebarWidth(resolveInitialThreadSidebarWidth(null, viewportWidth));
   };
-  const [isWindowFullscreen, setIsWindowFullscreen] = useState(() => {
-    const getWindowFullscreenState = window.desktopBridge?.getWindowFullscreenState;
-    return isMacosDesktop && typeof getWindowFullscreenState === "function"
-      ? getWindowFullscreenState()
-      : false;
-  });
+  const isWindowFullscreen = useSyncExternalStore(
+    subscribeToWindowFullscreen,
+    readWindowFullscreen,
+  );
   const windowControlsInsetStyle = (
     isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
@@ -283,23 +318,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       railLayout: !legacySidebarEnabled,
     }),
   } as CSSProperties;
-
-  useEffect(() => {
-    if (!isMacosDesktop) return;
-    const bridge = window.desktopBridge;
-    if (!bridge) return;
-    const { getWindowFullscreenState, onWindowFullscreenStateChange } = bridge;
-    if (
-      typeof getWindowFullscreenState !== "function" ||
-      typeof onWindowFullscreenStateChange !== "function"
-    ) {
-      return;
-    }
-
-    const unsubscribe = onWindowFullscreenStateChange(setIsWindowFullscreen);
-    setIsWindowFullscreen(getWindowFullscreenState());
-    return unsubscribe;
-  }, [isMacosDesktop]);
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
@@ -369,8 +387,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <SidebarControl />
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />
+        <SidebarViewShortcuts />
         <FolderDialogs />
         <NotesSheet />
+        <QuickCaptureHost />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

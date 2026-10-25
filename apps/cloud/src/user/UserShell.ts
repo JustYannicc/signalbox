@@ -1,12 +1,15 @@
 import type {
+  OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ShellStreamItem,
   OrchestrationV2SubscribeShellInput,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -16,6 +19,7 @@ import { contextAllows } from "../drive/driveAccess.ts";
 import * as Environment from "../environment.ts";
 import * as PushNotifier from "../push/PushNotifier.ts";
 import * as ThreadDirectory from "../thread/ThreadDirectory.ts";
+import * as SearchBackfill from "../search/SearchBackfill.ts";
 import type { ThreadSummary } from "../thread/ThreadEngine.ts";
 import { contextProjects } from "./contextProjects.ts";
 import * as UserContexts from "./UserContexts.ts";
@@ -25,15 +29,24 @@ import * as UserStore from "./UserStore.ts";
 /**
  * A user's sidebar, served from their object's thread index: the snapshot
  * `GET /api/orchestration/shell` and `subscribeShell` start from, and the
- * `thread.updated` items that follow as thread objects deliver summaries,
+ * thread updates and removals that follow as thread objects deliver summaries,
  * each of which may also push to the user's phones (`PushNotifier`).
  * Its projects are the drives of the user's contexts (see `contextProjects`);
  * when those change, open subscriptions get a fresh snapshot. Threads of a
  * context the user has left stay indexed but out of sight.
  */
 
-type ShellItem = Extract<OrchestrationV2ShellStreamItem, { readonly kind: "thread.updated" }>;
-type ShellUpdate = ShellItem | { readonly kind: "projects.changed" };
+type ShellItem = Extract<
+  OrchestrationV2ShellStreamItem,
+  { readonly kind: "thread.updated" | "thread.removed" }
+>;
+type ShellUpdate =
+  | {
+      readonly kind: "thread.changed";
+      readonly item: ShellItem;
+      readonly contextId: ThreadSummary["contextId"];
+    }
+  | { readonly kind: "projects.changed" };
 const PROJECTS_CHANGED: ShellUpdate = { kind: "projects.changed" };
 
 export class UserShell extends Context.Service<
@@ -43,6 +56,10 @@ export class UserShell extends Context.Service<
     readonly subscribe: (
       input: OrchestrationV2SubscribeShellInput,
     ) => Effect.Effect<Stream.Stream<OrchestrationV2ShellStreamItem>, SqlError>;
+    readonly subscribeArchived: Effect.Effect<
+      Stream.Stream<OrchestrationV2ArchivedShellStreamItem>,
+      SqlError
+    >;
     /** A thread object's outbox delivery. Idempotent: an old revision changes nothing. */
     readonly recordThreadSummary: (summary: ThreadSummary) => Effect.Effect<void, SqlError>;
     /**
@@ -64,6 +81,7 @@ const make = Effect.gen(function* () {
   const { contextIds } = contexts;
   const directory = yield* ThreadDirectory.ThreadDirectory;
   const pushes = yield* PushNotifier.PushNotifier;
+  const searchBackfill = yield* Effect.serviceOption(SearchBackfill.SearchBackfill);
   // Pushes outlive the delivery that caused them, so a slow APNs never holds up the thread.
   const scope = yield* Effect.scope;
   // Thread updates and project changes share one queue, so a subscriber sees
@@ -103,22 +121,36 @@ const make = Effect.gen(function* () {
             Effect.as(Effect.logWarning("cloud shell project update failed", { cause }), null),
           ),
         )
-      : Effect.succeed(update);
+      : Effect.map(contextIds, (ids) =>
+          contextAllows(ids, update.contextId) ? update.item : null,
+        ).pipe(
+          Effect.catch(() => Effect.as(Effect.logWarning("cloud shell access check failed"), null)),
+        );
 
   const publish = (summary: ThreadSummary, sequence: number) => {
-    const item: ShellItem = {
-      kind: "thread.updated",
-      sequence,
-      location: summary.shell.archivedAt === null ? "active" : "archive",
-      thread: summary.shell,
-    };
-    return Effect.asVoid(PubSub.publish(updates, item));
+    const location = summary.shell.archivedAt === null ? "active" : "archive";
+    const item: ShellItem =
+      summary.shell.deletedAt === null
+        ? { kind: "thread.updated", sequence, location, thread: summary.shell }
+        : { kind: "thread.removed", sequence, location, threadId: summary.threadId };
+    return Effect.asVoid(
+      PubSub.publish(updates, { kind: "thread.changed", item, contextId: summary.contextId }),
+    );
   };
 
   /** Indexes the summary; open sidebars hear of it only while its context is the user's. */
   const record = (summary: ThreadSummary) =>
     Effect.gen(function* () {
       const written = yield* store.recordThreadSummary(summary);
+      if (Option.isSome(searchBackfill)) {
+        yield* searchBackfill.value
+          .observeThread(summary.threadId)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("search snapshot queue failed", { cause }),
+            ),
+          );
+      }
       if (written === null || !contextAllows(yield* contextIds, summary.contextId)) return;
       yield* publish(summary, written.sequence);
       yield* Effect.forkIn(
@@ -144,13 +176,63 @@ const make = Effect.gen(function* () {
         Stream.fromSubscription(subscription).pipe(
           Stream.filter(
             (update) =>
-              update.kind === "projects.changed" || update.sequence > current.snapshotSequence,
+              update.kind === "projects.changed" || update.item.sequence > current.snapshotSequence,
           ),
           Stream.mapEffect(toItem),
           Stream.filter((item) => item !== null),
         ),
       ).pipe(Stream.ensuring(Scope.close(scope, Exit.void)));
     });
+
+  const subscribeArchived: UserShell["Service"]["subscribeArchived"] = Effect.map(
+    subscribe({}),
+    (stream) =>
+      stream.pipe(
+        Stream.mapAccum(
+          () => new Set<ThreadId>(),
+          (archivedIds, item): [Set<ThreadId>, Array<OrchestrationV2ArchivedShellStreamItem>] => {
+            if (item.kind === "snapshot") {
+              return [
+                new Set(item.snapshot.archivedThreads.map((thread) => thread.id)),
+                [
+                  {
+                    kind: "snapshot",
+                    snapshot: {
+                      schemaVersion: item.snapshot.schemaVersion,
+                      snapshotSequence: item.snapshot.snapshotSequence,
+                      projects: item.snapshot.projects,
+                      threads: item.snapshot.archivedThreads,
+                    },
+                  },
+                ],
+              ];
+            }
+            if (item.kind === "thread.removed") {
+              return [
+                archivedIds,
+                item.location === "archive" && archivedIds.delete(item.threadId)
+                  ? [{ kind: "thread.removed", sequence: item.sequence, threadId: item.threadId }]
+                  : [],
+              ];
+            }
+            if (item.kind !== "thread.updated") return [archivedIds, []];
+            if (item.location === "archive" && item.thread.deletedAt === null) {
+              archivedIds.add(item.thread.id);
+              return [
+                archivedIds,
+                [{ kind: "thread.updated", sequence: item.sequence, thread: item.thread }],
+              ];
+            }
+            return [
+              archivedIds,
+              archivedIds.delete(item.thread.id)
+                ? [{ kind: "thread.removed", sequence: item.sequence, threadId: item.thread.id }]
+                : [],
+            ];
+          },
+        ),
+      ),
+  );
 
   const rebuildThreadIndex: UserShell["Service"]["rebuildThreadIndex"] = Effect.gen(function* () {
     const profile = yield* store.profile;
@@ -176,6 +258,7 @@ const make = Effect.gen(function* () {
   return UserShell.of({
     snapshot,
     subscribe,
+    subscribeArchived,
     recordThreadSummary: record,
     rebuildThreadIndex,
   });

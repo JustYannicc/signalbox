@@ -1,0 +1,56 @@
+{
+  "reference": "DigiBugCat/codex-wasi-agentos@45eca7daf24bbac603689cc3229693310d184e51",
+  "rules": [
+    {
+      "rule": "wasi-ext",
+      "path": "codex-rs/state/src/lib.rs",
+      "before": [
+        "//! This crate is intentionally small and focused: it extracts rollout metadata",
+        "//! from JSONL rollouts and mirrors it into a local SQLite database. Backfill",
+        "//! orchestration and rollout scanning live in `codex-core`.",
+        "",
+        "const _: () = assert!(",
+        "    libsqlite3_sys::SQLITE_VERSION_NUMBER >= 3_051_003,"
+      ],
+      "after": [
+        "//! This crate is intentionally small and focused: it extracts rollout metadata",
+        "//! from JSONL rollouts and mirrors it into a local SQLite database. Backfill",
+        "//! orchestration and rollout scanning live in `codex-core`.",
+        "#![cfg_attr(target_os = \"wasi\", feature(wasi_ext))]",
+        "",
+        "const _: () = assert!(",
+        "    libsqlite3_sys::SQLITE_VERSION_NUMBER >= 3_051_003,"
+      ]
+    },
+    {
+      "rule": "sqlite-file-identity",
+      "path": "codex-rs/state/src/sqlite/validation.rs",
+      "before": [
+        "        path: &Path,",
+        "        budget: Duration,",
+        "    ) -> anyhow::Result<QuickCheckOutcome> {",
+        "        let id = file_id::get_file_id(path)?;",
+        "",
+        "        if !self.0.lock().await.insert(id) {",
+        "            // Only check each file once for this owner."
+      ],
+      "after": [
+        "        path: &Path,",
+        "        budget: Duration,",
+        "    ) -> anyhow::Result<QuickCheckOutcome> {",
+        "        #[cfg(not(target_os = \"wasi\"))]",
+        "        let id = file_id::get_file_id(path)?;",
+        "        // agentOS wasm32-wasip1: file-id has no WASI arm; use dev/ino directly.",
+        "        #[cfg(target_os = \"wasi\")]",
+        "        let id = {",
+        "            use std::os::wasi::fs::MetadataExt;",
+        "            let metadata = std::fs::metadata(path)?;",
+        "            FileId::new_inode(metadata.dev(), metadata.ino())",
+        "        };",
+        "",
+        "        if !self.0.lock().await.insert(id) {",
+        "            // Only check each file once for this owner."
+      ]
+    }
+  ]
+}
