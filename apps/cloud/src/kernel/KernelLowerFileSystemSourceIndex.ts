@@ -293,7 +293,29 @@ export class KernelLowerFileSystemSourceIndex {
     const cached = this.#linkByPath.get(path);
     if (cached !== undefined) return cached;
     if (currentKernelIoMode() === "sync") {
-      throw kernelError("ENOTSUP", "Lower symlink targets require asynchronous execution");
+      let entry = this.#entryByPath.get(path);
+      if (entry === undefined) {
+        const known = this.lookupKnown(path);
+        if (known.kind === "missing") throw kernelError("ENOENT");
+        if (known.kind === "unknown")
+          throw kernelError("ENOTSUP", "Lower symlink targets require asynchronous execution");
+        entry = this.#entryByPath.get(path);
+        if (entry === undefined)
+          throw new KernelFileSystemUnavailable("Lower known lookup did not cache its entry");
+      }
+      if (entry.stat.type !== "symlink") throw kernelError("EINVAL");
+      if (this.#source.readlinkKnown === undefined)
+        throw kernelError("ENOTSUP", "Lower symlink targets require asynchronous execution");
+      let target: string | undefined;
+      try {
+        target = this.#source.readlinkKnown(path);
+      } catch (error) {
+        throw sourceFailure(error, true);
+      }
+      if (typeof target !== "string")
+        throw kernelError("ENOTSUP", "Lower symlink targets require asynchronous execution");
+      this.#linkByPath.set(path, target);
+      return target;
     }
     const activeSignal = signal ?? currentKernelSignal();
     const epoch = this.#epoch;
@@ -330,7 +352,17 @@ export class KernelLowerFileSystemSourceIndex {
     }
     if (entry.stat.type !== "directory" && entry.stat.type !== "symlink") return undefined;
     if (currentKernelIoMode() === "sync") {
-      throw kernelError("ENOTSUP", "Lower directory entries require asynchronous execution");
+      if (this.#source.readdirKnown === undefined)
+        throw kernelError("ENOTSUP", "Lower directory entries require asynchronous execution");
+      let entries: readonly KernelLowerFileSystemEntry[] | undefined;
+      try {
+        entries = this.#source.readdirKnown(path);
+      } catch (error) {
+        throw sourceFailure(error, true);
+      }
+      if (entries === undefined)
+        throw kernelError("ENOTSUP", "Lower directory entries require asynchronous execution");
+      return this.#cacheDirectory(path, entries);
     }
     const activeSignal = signal ?? currentKernelSignal();
     const epoch = this.#epoch;
@@ -343,45 +375,7 @@ export class KernelLowerFileSystemSourceIndex {
         activeSignal?.throwIfAborted();
         if (epoch !== this.#epoch) return retry();
         if (entries === undefined) return undefined;
-        if (!Array.isArray(entries)) {
-          throw new KernelFileSystemUnavailable("Lower readdir returned invalid entries");
-        }
-        const result = entries.map((child) => {
-          if (typeof child !== "object" || child === null || typeof child.path !== "string") {
-            throw new KernelFileSystemUnavailable("Lower readdir returned an invalid entry");
-          }
-          let childCanonical: string;
-          try {
-            childCanonical = canonicalPath(child.path);
-          } catch (error) {
-            throw new KernelFileSystemUnavailable("Lower readdir returned a non-canonical path", {
-              cause: error,
-            });
-          }
-          const name = basename(childCanonical);
-          if (
-            name === "" ||
-            name === "." ||
-            name === ".." ||
-            childPath(path, name) !== childCanonical
-          ) {
-            throw new KernelFileSystemUnavailable("Lower readdir returned a non-child path");
-          }
-          try {
-            validateEntry(childCanonical, child);
-          } catch (error) {
-            throw new KernelFileSystemUnavailable("Lower readdir returned invalid metadata", {
-              cause: error,
-            });
-          }
-          return {
-            name,
-            inode: this.#cacheEntry(childCanonical, child),
-            type: child.stat.type,
-          } satisfies DirectoryEntry;
-        });
-        this.#directoryByPath.set(path, result);
-        return result;
+        return this.#cacheDirectory(path, entries);
       },
       (error) => {
         activeSignal?.throwIfAborted();
@@ -402,6 +396,51 @@ export class KernelLowerFileSystemSourceIndex {
     const read = (entry: KernelLowerFileSystemEntry | undefined) =>
       entry === undefined ? undefined : this.#readDirectory(path, entry, signal, attempt);
     return isPromiseLike(found) ? found.then(read) : read(found);
+  }
+
+  #cacheDirectory(
+    path: string,
+    entries: readonly KernelLowerFileSystemEntry[],
+  ): readonly DirectoryEntry[] {
+    if (!Array.isArray(entries)) {
+      throw new KernelFileSystemUnavailable("Lower readdir returned invalid entries");
+    }
+    const result = entries.map((child) => {
+      if (typeof child !== "object" || child === null || typeof child.path !== "string") {
+        throw new KernelFileSystemUnavailable("Lower readdir returned an invalid entry");
+      }
+      let childCanonical: string;
+      try {
+        childCanonical = canonicalPath(child.path);
+      } catch (error) {
+        throw new KernelFileSystemUnavailable("Lower readdir returned a non-canonical path", {
+          cause: error,
+        });
+      }
+      const name = basename(childCanonical);
+      if (
+        name === "" ||
+        name === "." ||
+        name === ".." ||
+        childPath(path, name) !== childCanonical
+      ) {
+        throw new KernelFileSystemUnavailable("Lower readdir returned a non-child path");
+      }
+      try {
+        validateEntry(childCanonical, child);
+      } catch (error) {
+        throw new KernelFileSystemUnavailable("Lower readdir returned invalid metadata", {
+          cause: error,
+        });
+      }
+      return {
+        name,
+        inode: this.#cacheEntry(childCanonical, child),
+        type: child.stat.type,
+      } satisfies DirectoryEntry;
+    });
+    this.#directoryByPath.set(path, result);
+    return result;
   }
 
   #readBytes(
