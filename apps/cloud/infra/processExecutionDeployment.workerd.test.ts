@@ -72,6 +72,15 @@ const cloudConfigWithoutResidentByteLimit = {
   ...cloudConfig,
   vars: devVarsWithoutResidentByteLimit,
 };
+const cloudConfigWithoutProcessExecutionShards = {
+  ...cloudConfigWithoutResidentByteLimit,
+  durable_objects: {
+    ...cloudConfig.durable_objects,
+    bindings: cloudConfig.durable_objects.bindings.filter(
+      ({ name }: { readonly name: string }) => name !== "PROCESS_EXECUTION_SHARDS",
+    ),
+  },
+};
 const processExecutionProbeConfig = (name: string) => ({
   name,
   main: NodeURL.fileURLToPath(
@@ -110,15 +119,15 @@ const harness = createTestHarness({
       vars: { LOCAL_WORKERD: "1", RESIDENT_BYTE_LIMIT: "1" },
     },
     {
-      config: { ...cloudConfigWithoutResidentByteLimit, name: missingLimitCloudName },
+      config: { ...cloudConfigWithoutProcessExecutionShards, name: missingLimitCloudName },
       vars: { LOCAL_WORKERD: "1" },
     },
     {
-      config: { ...cloudConfigWithoutResidentByteLimit, name: emptyLimitCloudName },
+      config: { ...cloudConfigWithoutProcessExecutionShards, name: emptyLimitCloudName },
       vars: { LOCAL_WORKERD: "1", RESIDENT_BYTE_LIMIT: "" },
     },
     {
-      config: { ...cloudConfigWithoutResidentByteLimit, name: invalidLimitCloudName },
+      config: { ...cloudConfig, name: invalidLimitCloudName },
       vars: { LOCAL_WORKERD: "1", RESIDENT_BYTE_LIMIT: "not-a-number" },
     },
     {
@@ -171,15 +180,42 @@ describe("normal process-execution deployment wiring", () => {
     expect(new Set(result.processes.map(({ requestContextId }) => requestContextId)).size).toBe(2);
   }, 120_000);
 
+  it("serves normal Worker traffic when process-shard execution is disabled", async () => {
+    const cloud = harness.getWorker<CloudEnv>(missingLimitCloudName);
+    const env = await cloud.getEnv();
+    expect(env.RESIDENT_BYTE_LIMIT).toBeUndefined();
+
+    const response = await cloud.fetch("http://localhost/.well-known/executor-jwks.json");
+    expect(response.status).toBe(200);
+    const jwks = (await response.json()) as { keys: ReadonlyArray<unknown> };
+    expect(jwks.keys).toHaveLength(1);
+  }, 120_000);
+
   it("rejects missing, empty and invalid resident-byte limits before placement", async () => {
     const cases = [
-      { label: "missing", path: "missing", cloudName: missingLimitCloudName, limit: undefined },
-      { label: "empty", path: "empty", cloudName: emptyLimitCloudName, limit: "" },
+      {
+        label: "missing",
+        path: "missing",
+        cloudName: missingLimitCloudName,
+        limit: undefined,
+        processCount: 0,
+        error: "Process execution is disabled until RESIDENT_BYTE_LIMIT is configured.",
+      },
+      {
+        label: "empty",
+        path: "empty",
+        cloudName: emptyLimitCloudName,
+        limit: "",
+        processCount: 0,
+        error: "Process execution is disabled until RESIDENT_BYTE_LIMIT is configured.",
+      },
       {
         label: "invalid",
         path: "invalid",
         cloudName: invalidLimitCloudName,
         limit: "not-a-number",
+        processCount: 1,
+        error: "Process execution shard resident-byte limit is invalid.",
       },
     ] as const;
     const probe = harness.getWorker("process-execution-deployment-probe");
@@ -200,11 +236,11 @@ describe("normal process-execution deployment wiring", () => {
       const response = await probe.fetch(`http://probe/${testCase.path}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(executionInput(runId, 1)),
+        body: JSON.stringify(executionInput(runId, testCase.processCount)),
       });
       const body = (await response.json()) as { error: string };
       expect(response.status).toBe(500);
-      expect(body.error).toContain("Process execution shard resident-byte limit is invalid.");
+      expect(body.error).toContain(testCase.error);
     }
   }, 120_000);
 });

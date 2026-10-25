@@ -46,10 +46,9 @@ export const MODEL_GATEWAY_COMPATIBILITY_FLAGS = [
 ] as const;
 
 /**
- * Product policy: 128,000,000 decimal bytes per slot, not a measured capacity limit.
- * Cloudflare publishes a 128 MB per-isolate ceiling at https://developers.cloudflare.com/workers/platform/limits/#memory.
- * #1451's local staged-main LOADER V8 self_size was 105,987,763 bytes immediately after the
- * first scripted-peer turn; this incomplete snapshot does not qualify usable capacity or headroom.
+ * Hosting policy: 128,000,000 decimal bytes per slot, set to the documented 128 MB per-isolate
+ * envelope (https://developers.cloudflare.com/workers/platform/limits/#memory). It is not a
+ * measured capacity budget; revisit when #1255's charged-memory accounting is complete.
  */
 export const RESIDENT_BYTE_LIMIT = "128000000";
 

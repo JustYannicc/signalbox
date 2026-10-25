@@ -239,7 +239,7 @@ describe("wrangler.jsonc", () => {
     expect(wrangler.vars.EXECUTOR_TOKEN_ISSUER).toBe("http://localhost");
   });
 
-  it("sets the explicit resident-byte product policy in Alchemy, Wrangler and local dev", () => {
+  it("sets the explicit per-slot product policy in Alchemy, Wrangler and local dev", () => {
     expect(RESIDENT_BYTE_LIMIT).toBe("128000000");
     expect(cloudStage("production").vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
     expect(cloudStage("pr-298").vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
