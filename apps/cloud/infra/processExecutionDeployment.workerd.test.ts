@@ -33,6 +33,8 @@ const checkpoint = {
 
 const cloudName = cloudStage("production").cloudWorker;
 const missingLimitCloudName = "signalbox-cloud-missing-resident-limit";
+const emptyLimitCloudName = "signalbox-cloud-empty-resident-limit";
+const invalidLimitCloudName = "signalbox-cloud-invalid-resident-limit";
 const normalConfig = unstable_readConfig(
   {
     config: NodeURL.fileURLToPath(new URL("../wrangler.jsonc", import.meta.url)),
@@ -64,7 +66,13 @@ const cloudConfig = {
   assets: { ...configuredAssets, directory: testAssetsDirectory },
   containers: [],
 };
-const processExecutionProbeConfig = (name: string, service: string) => ({
+const { RESIDENT_BYTE_LIMIT: _configuredResidentByteLimit, ...devVarsWithoutResidentByteLimit } =
+  normalDevConfig.vars as Record<string, string>;
+const cloudConfigWithoutResidentByteLimit = {
+  ...cloudConfig,
+  vars: devVarsWithoutResidentByteLimit,
+};
+const processExecutionProbeConfig = (name: string) => ({
   name,
   main: NodeURL.fileURLToPath(
     new URL("./processExecutionDeploymentProbe.worker.ts", import.meta.url),
@@ -73,7 +81,22 @@ const processExecutionProbeConfig = (name: string, service: string) => ({
   services: [
     {
       binding: "PROCESS_EXECUTION",
-      service,
+      service: cloudName,
+      entrypoint: "HarnessProcessExecutionEntrypoint",
+    },
+    {
+      binding: "PROCESS_EXECUTION_MISSING",
+      service: missingLimitCloudName,
+      entrypoint: "HarnessProcessExecutionEntrypoint",
+    },
+    {
+      binding: "PROCESS_EXECUTION_EMPTY",
+      service: emptyLimitCloudName,
+      entrypoint: "HarnessProcessExecutionEntrypoint",
+    },
+    {
+      binding: "PROCESS_EXECUTION_INVALID",
+      service: invalidLimitCloudName,
       entrypoint: "HarnessProcessExecutionEntrypoint",
     },
   ],
@@ -87,17 +110,19 @@ const harness = createTestHarness({
       vars: { LOCAL_WORKERD: "1", RESIDENT_BYTE_LIMIT: "1" },
     },
     {
-      config: { ...cloudConfig, name: missingLimitCloudName },
+      config: { ...cloudConfigWithoutResidentByteLimit, name: missingLimitCloudName },
       vars: { LOCAL_WORKERD: "1" },
     },
     {
-      config: processExecutionProbeConfig("process-execution-deployment-probe", cloudName),
+      config: { ...cloudConfigWithoutResidentByteLimit, name: emptyLimitCloudName },
+      vars: { LOCAL_WORKERD: "1", RESIDENT_BYTE_LIMIT: "" },
     },
     {
-      config: processExecutionProbeConfig(
-        "process-execution-deployment-missing-limit-probe",
-        missingLimitCloudName,
-      ),
+      config: { ...cloudConfigWithoutResidentByteLimit, name: invalidLimitCloudName },
+      vars: { LOCAL_WORKERD: "1", RESIDENT_BYTE_LIMIT: "not-a-number" },
+    },
+    {
+      config: processExecutionProbeConfig("process-execution-deployment-probe"),
     },
   ],
 });
@@ -146,29 +171,41 @@ describe("normal process-execution deployment wiring", () => {
     expect(new Set(result.processes.map(({ requestContextId }) => requestContextId)).size).toBe(2);
   }, 120_000);
 
-  it("rejects a missing resident-byte limit at execution before placement", async () => {
-    const runId = "deployment-missing-resident-limit-run";
-    const cloud = harness.getWorker<CloudEnv>(missingLimitCloudName);
-    const env = await cloud.getEnv();
-    expect(env.RESIDENT_BYTE_LIMIT).toBeUndefined();
-    await env.HARNESS_THREAD_SUPERVISOR.getByName(runId).execute({
-      type: "initialize",
-      runId,
-      nativeSessionId: "deployment-reachability-session",
-      control,
-      publisher,
-      checkpoint,
-    });
+  it("rejects missing, empty and invalid resident-byte limits before placement", async () => {
+    const cases = [
+      { label: "missing", path: "missing", cloudName: missingLimitCloudName, limit: undefined },
+      { label: "empty", path: "empty", cloudName: emptyLimitCloudName, limit: "" },
+      {
+        label: "invalid",
+        path: "invalid",
+        cloudName: invalidLimitCloudName,
+        limit: "not-a-number",
+      },
+    ] as const;
+    const probe = harness.getWorker("process-execution-deployment-probe");
+    for (const testCase of cases) {
+      const runId = `deployment-${testCase.label}-resident-limit-run`;
+      const cloud = harness.getWorker<CloudEnv>(testCase.cloudName);
+      const env = await cloud.getEnv();
+      expect(env.RESIDENT_BYTE_LIMIT).toBe(testCase.limit);
+      await env.HARNESS_THREAD_SUPERVISOR.getByName(runId).execute({
+        type: "initialize",
+        runId,
+        nativeSessionId: "deployment-reachability-session",
+        control,
+        publisher,
+        checkpoint,
+      });
 
-    const probe = harness.getWorker("process-execution-deployment-missing-limit-probe");
-    const response = await probe.fetch("http://probe/run", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(executionInput(runId, 1)),
-    });
-    const body = (await response.json()) as { error: string };
-    expect(response.status).toBe(500);
-    expect(body.error).toContain("Process execution shard resident-byte limit is invalid.");
+      const response = await probe.fetch(`http://probe/${testCase.path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(executionInput(runId, 1)),
+      });
+      const body = (await response.json()) as { error: string };
+      expect(response.status).toBe(500);
+      expect(body.error).toContain("Process execution shard resident-byte limit is invalid.");
+    }
   }, 120_000);
 });
 

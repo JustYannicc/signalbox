@@ -46,6 +46,14 @@ export const MODEL_GATEWAY_COMPATIBILITY_FLAGS = [
 ] as const;
 
 /**
+ * Product policy: 128,000,000 decimal bytes per slot, not a measured capacity limit.
+ * Cloudflare publishes a 128 MB per-isolate ceiling at https://developers.cloudflare.com/workers/platform/limits/#memory.
+ * #1451's local staged-main LOADER V8 self_size was 105,987,763 bytes immediately after the
+ * first scripted-peer turn; this incomplete snapshot does not qualify usable capacity or headroom.
+ */
+export const RESIDENT_BYTE_LIMIT = "128000000";
+
+/**
  * Durable Object bindings and the classes behind them. A binding is its
  * namespace's identity: renaming one deploys a new, empty namespace.
  */
@@ -151,6 +159,7 @@ export const cloudStage = (stage: string): CloudStage => {
       automationWorkflow: "signalbox-cloud-automations",
       vars: {
         SIGNALBOX_STAGE: PRODUCTION_STAGE,
+        RESIDENT_BYTE_LIMIT,
         // Production identity. Never reuse it for another deployment.
         ENVIRONMENT_ID: "4bfb70e5-7954-458a-9b75-4834c0ab4e13",
         ENVIRONMENT_LABEL: "Signalbox Cloud",
@@ -183,6 +192,7 @@ export const cloudStage = (stage: string): CloudStage => {
     automationWorkflow: `signalbox-cloud-pr-${number}-automations`,
     vars: {
       SIGNALBOX_STAGE: stage,
+      RESIDENT_BYTE_LIMIT,
       ENVIRONMENT_ID: `cloud-preview-${number}`,
       ENVIRONMENT_LABEL: `Signalbox Cloud (PR #${number})`,
       EXECUTOR_TOKEN_ISSUER: `https://${cloudDomain}`,

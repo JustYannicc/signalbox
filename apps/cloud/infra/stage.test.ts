@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - reads the checked-in local vars example.
+import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
 import { ThreadId } from "@t3tools/contracts";
@@ -17,6 +19,7 @@ import {
   DURABLE_OBJECT_BINDINGS,
   MODEL_GATEWAY_COMPATIBILITY_FLAGS,
   previewStageNumber,
+  RESIDENT_BYTE_LIMIT,
   stageWorkerRouting,
 } from "./stage.ts";
 import { TRACES_PATH } from "../src/observability/nativeTracesWorker.ts";
@@ -46,6 +49,10 @@ const readWrangler = (file: string, env?: string) =>
 const wrangler = readWrangler("wrangler.jsonc");
 const wranglerDev = readWrangler("wrangler.jsonc", "dev");
 const modelGatewayWrangler = readWrangler("wrangler.model-gateway.jsonc");
+const devVarsExample = NodeFS.readFileSync(
+  new URL("../.dev.vars.example", import.meta.url),
+  "utf8",
+);
 describe("cloudStage", () => {
   it("keeps production's wrangler-made names", () => {
     const production = cloudStage("production");
@@ -230,6 +237,15 @@ describe("wrangler.jsonc", () => {
     expect(modelGatewayWrangler.compatibility_date).toBe(COMPATIBILITY_DATE);
     expect(wrangler.vars.ENVIRONMENT_ID).toBe(cloudStage("production").vars.ENVIRONMENT_ID);
     expect(wrangler.vars.EXECUTOR_TOKEN_ISSUER).toBe("http://localhost");
+  });
+
+  it("sets the explicit resident-byte product policy in Alchemy, Wrangler and local dev", () => {
+    expect(RESIDENT_BYTE_LIMIT).toBe("128000000");
+    expect(cloudStage("production").vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
+    expect(cloudStage("pr-298").vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
+    expect(wrangler.vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
+    expect(wranglerDev.vars.RESIDENT_BYTE_LIMIT).toBe(RESIDENT_BYTE_LIMIT);
+    expect(devVarsExample).toMatch(/^RESIDENT_BYTE_LIMIT=128000000$/m);
   });
 
   it("keeps durable harness state and appends process-execution migrations", () => {

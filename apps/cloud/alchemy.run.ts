@@ -179,10 +179,6 @@ function workerEnv(target: CloudStage) {
     const signingJwk = AlchemyOutput.map(signingSeed, (seed) =>
       Redacted.make(executorSigningJwk(Redacted.value(seed))),
     ).as<Redacted.Redacted<string>>();
-    // The shard rejects a missing limit at execution; no normal default is justified by the
-    // 128 MB/isolate ceiling (https://developers.cloudflare.com/workers/platform/limits/#memory)
-    // and #1451's 105,987,763-byte post-turn LOADER V8 self_size, which lacks full charged
-    // JS/Wasm, backing, module-cache/runtime and usable-headroom coverage.
     const shared = {
       SEARCH_INDEX_GENERATION: search.generation,
       SEARCH_INDEX_DISABLED: search.disabled ? "1" : "0",
