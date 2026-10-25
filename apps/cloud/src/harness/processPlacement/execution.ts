@@ -7,7 +7,7 @@ import {
   PlacementCreationFailure,
 } from "./executionLifecycle.ts";
 import type {
-  HarnessProcessExecutionShardInput,
+  HarnessProcessExecutionShardInput as PlacementShardInput,
   HarnessProcessExecutionShardResult,
   HarnessProcessExecutionEnvironment,
   HarnessProcessExecutionHooks,
@@ -18,7 +18,6 @@ export {
 } from "./executionLifecycle.ts";
 export type {
   HarnessProcessExecutionProcessInput,
-  HarnessProcessExecutionShardInput,
   HarnessProcessExecutionProcessResult,
   HarnessProcessExecutionShardResult,
   HarnessProcessExecutionHooks,
@@ -27,6 +26,11 @@ export type {
   HarnessProcessExecutionEnvironment,
   HarnessProcessExecutionResumeHandle,
 } from "./executionLifecycle.ts";
+
+export interface HarnessProcessExecutionShardInput extends PlacementShardInput {
+  /** Installed stores do not opt a caller into C's journal authority and checkpoint lifecycle. */
+  readonly executionMode?: "placement" | "native-journal";
+}
 
 /** Runs one shard in the DO context that owns its durable facets and ProcessSlots writer. */
 export async function runHarnessProcessExecutionShard(

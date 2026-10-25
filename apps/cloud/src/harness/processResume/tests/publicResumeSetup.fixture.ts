@@ -166,6 +166,7 @@ export async function setup(
     },
   };
   const shardInput: HarnessProcessExecutionShardInput = {
+    executionMode: "native-journal",
     runId,
     executionOperationId: "plain-execution",
     shardOwner: `plain/${runId}`,

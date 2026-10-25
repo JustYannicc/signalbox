@@ -15,7 +15,10 @@ import {
   sameHarnessProcessResumeOperation,
 } from "./operation.ts";
 import { startResumeAttempt, type ResumeAttempt, type ResumedProcess } from "./resumeAttempt.ts";
-import { createInitialProcessAuthority } from "./initialExecution.ts";
+import {
+  assertHarnessProcessExecutionMode,
+  createInitialProcessAuthority,
+} from "./initialExecution.ts";
 import { ProcessCheckpointOwner } from "./checkpoint.ts";
 import type { OwnedProcessRequest } from "./executionState.ts";
 import { persistTerminalEvidence } from "./terminalEvidence.ts";
@@ -84,11 +87,9 @@ export class HarnessProcessResumeOwner {
     )
       throw new Error("This shard already owns execution or recovery work.");
     this.#running = true;
-    const native =
-      this.environment.HARNESS_RUN_STORE !== undefined ||
-      this.environment.HARNESS_FILES_STORE !== undefined;
     try {
-      if (!native) return await this.#runBatches(input, requestContextId, hooks);
+      if (assertHarnessProcessExecutionMode(input) === "placement")
+        return await this.#runBatches(input, requestContextId, hooks);
       if (
         this.environment.HARNESS_RUN_STORE === undefined ||
         this.environment.HARNESS_FILES_STORE === undefined

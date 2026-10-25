@@ -15,6 +15,19 @@ import {
   sameVisibleState,
 } from "./runStoreState.ts";
 
+export function assertHarnessProcessExecutionMode(input: HarnessProcessExecutionShardInput) {
+  const mode = input.executionMode === undefined ? "placement" : input.executionMode;
+  if (mode !== "placement" && mode !== "native-journal")
+    throw new Error("Process execution mode is invalid.");
+  if (mode === "native-journal") {
+    if (input.processes.length !== 1)
+      throw new Error("Native journal execution requires exactly one process.");
+  } else if (input.processes.some((process) => Object.hasOwn(process, "journal"))) {
+    throw new Error("A process journal requires native-journal execution mode.");
+  }
+  return mode;
+}
+
 /** Bridges the first keyed process to A and the caller's independently owned RunStore. */
 export function createInitialProcessAuthority(input: {
   readonly shard: HarnessProcessExecutionShardInput;
