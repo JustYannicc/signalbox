@@ -52,7 +52,9 @@ export function createSdkProcess(
       return signalCode;
     },
     kill(signal) {
-      if (exitCode !== null || signalCode !== null || killed) return false;
+      // SDK exit listeners can signal this child before its final output has drained.
+      if (process.exitStatus !== undefined || exitCode !== null || signalCode !== null || killed)
+        return false;
       if (signal !== "SIGTERM" && signal !== "SIGKILL")
         throw new Error(`Unsupported Claude signal ${signal}`);
       killed = true;
