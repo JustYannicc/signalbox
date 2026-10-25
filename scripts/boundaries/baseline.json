@@ -136,7 +136,6 @@
     "tests-through-entrypoints | apps/cloud/src/thread/statusLine/statusNotePolicy.test.ts | apps/cloud/src/thread/statusLine/statusNotePolicy.ts",
     "tests-through-entrypoints | apps/cloud/src/thread/statusLine/statusNotePolicy.test.ts | apps/cloud/src/thread/statusLine/statusNotePrompt.ts",
     "tests-through-entrypoints | apps/cloud/src/thread/turnPools.test.ts | apps/cloud/src/thread/statusLine/statusInstructions.ts",
-    "workspace-relative-reach-in | apps/cloud/infra/stage.test.ts | scripts/cloud-migrations/check.ts",
     "workspace-relative-reach-in | apps/cloud/src/environment.ts | apps/web/package.json",
     "workspace-relative-reach-in | apps/server/src/accountHub/AccountHubRelease.ts | apps/cloud/containers/cliproxyapi/release.json",
     "workspace-tests-through-exports | packages/client-runtime/src/signalboxCloudActivity.test.ts | packages/client-runtime/src/connection/model.ts",
