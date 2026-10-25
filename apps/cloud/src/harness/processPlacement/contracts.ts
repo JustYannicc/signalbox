@@ -70,11 +70,13 @@ export interface HarnessProcessPublication {
 }
 
 /** The caller returns A's actual publication result and its authorized request publisher. */
-export interface HarnessProcessPublishedActivation {
+export type HarnessProcessPublishedActivation = {
   readonly publication: HarnessProcessPublication;
   readonly publisher: HarnessRequestPublisher;
-  readonly requestId: string;
-}
+} & (
+  | { readonly requestMode?: "supplied"; readonly requestId: string }
+  | { readonly requestMode: "awaiting-next-request"; readonly requestId?: never }
+);
 
 export interface HarnessProcessPublicationRequest {
   readonly identity: HarnessProcessPlacementIdentity;
@@ -87,10 +89,16 @@ export interface HarnessProcessPublicationRequest {
   readonly expectedFacetGeneration: number;
 }
 
-export interface HarnessProcessPublicationPublisher {
-  publishProcessFacet(
+export interface HarnessProcessPublicationPublisher<
+  Activation extends HarnessProcessPublishedActivation = HarnessProcessPublishedActivation & {
+    readonly requestId: string;
+  },
+> {
+  publishProcessFacet(input: HarnessProcessPublicationRequest): Promise<Activation>;
+  authorizeProcessFacetActivation(
     input: HarnessProcessPublicationRequest,
-  ): Promise<HarnessProcessPublishedActivation>;
+    confirmedReceipt: HarnessProcessPublicationReceipt,
+  ): Promise<void>;
 }
 
 export type HarnessProcessPublicationReconciliation =
@@ -273,9 +281,9 @@ export interface HarnessProcessHandle<Input = unknown> {
   readonly identity: HarnessProcessPlacementIdentity;
   readonly lease: ProcessSlotLease;
   /** Persists publication-in-progress before calling the publisher exactly once. */
-  activate(
-    publisher: HarnessProcessPublicationPublisher,
-  ): Promise<HarnessProcessPublishedActivation>;
+  activate<Activation extends HarnessProcessPublishedActivation>(
+    publisher: HarnessProcessPublicationPublisher<Activation>,
+  ): Promise<Activation>;
   invoke(input: Input): Promise<HarnessProcessInvocationSettlement>;
   /** The returned promise resolves only after the wait completes and ProcessSlots re-admits. */
   park<Value>(

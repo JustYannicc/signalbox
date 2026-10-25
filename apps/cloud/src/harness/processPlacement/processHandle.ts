@@ -77,6 +77,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   #invocationReply: HarnessProcessPlacementRecoveryRecord["invocationReply"];
   #lastFailure: HarnessProcessFailureRecord | undefined;
   #terminalFailure: HarnessProcessFailureRecord | undefined;
+  #activationAuthorizationFailed = false;
+  #awaitingFirstRequest = false;
   #publicationState: HarnessProcessPlacementRecoveryRecord["publicationState"];
   #publicationReceipt: HarnessProcessPlacementRecoveryRecord["publicationReceipt"];
   #lastCause: unknown;
@@ -190,9 +192,9 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     }
   }
 
-  async activate(
-    publisher: HarnessProcessPublicationPublisher,
-  ): Promise<HarnessProcessPublishedActivation> {
+  async activate<Activation extends HarnessProcessPublishedActivation>(
+    publisher: HarnessProcessPublicationPublisher<Activation>,
+  ): Promise<Activation> {
     if (this.#state !== "prepared") this.#requireState("prepared");
     if (this.#publicationState !== undefined)
       throw new HarnessProcessPlacementError(
@@ -237,7 +239,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       );
     }
 
-    let activation: HarnessProcessPublishedActivation;
+    let activation: Activation;
     try {
       activation = await publisher.publishProcessFacet(request);
     } catch (cause) {
@@ -253,12 +255,18 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     }
 
     const confirmed = this.#confirmPublication(activation.publication);
+    const awaitingRequest =
+      activation.requestMode === "awaiting-next-request" && !Object.hasOwn(activation, "requestId");
+    const suppliedRequest =
+      (activation.requestMode === undefined || activation.requestMode === "supplied") &&
+      typeof activation.requestId === "string" &&
+      activation.requestId.length > 0;
     if (
       confirmed === undefined ||
       activation.publisher.generation !== confirmed.toGeneration ||
       activation.publisher.facetNonce !== this.identity.incarnationNonce ||
       !activation.publisher.publisherKey ||
-      !activation.requestId
+      (!awaitingRequest && !suppliedRequest)
     ) {
       const pending =
         activation.publication.status === "supervisor-pending" ||
@@ -281,7 +289,8 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
 
     this.#publicationState = "confirmed";
     this.#publicationReceipt = confirmed;
-    this.#invocationRequestId = activation.requestId;
+    this.#awaitingFirstRequest = awaitingRequest;
+    this.#invocationRequestId = awaitingRequest ? undefined : activation.requestId;
     try {
       await this.#persist("prepared");
     } catch (cause) {
@@ -329,6 +338,30 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     this.#permit = admitted.value.permit;
 
     try {
+      await publisher.authorizeProcessFacetActivation(request, confirmed);
+    } catch (cause) {
+      this.#activationAuthorizationFailed = true;
+      this.#terminalFailure = failureRecord("activation", "PUBLICATION_REQUIRES_REPAIR");
+      this.#lastFailure = this.#terminalFailure;
+      this.#lastCause = cause;
+      this.#state = "activation-failed";
+      try {
+        await this.#persist("activation-failed");
+      } catch (persistCause) {
+        this.#lastFailure = failureRecord("recovery", "RPC_FAILED");
+        this.#lastCause = persistCause;
+      }
+      throw new HarnessProcessPlacementError(
+        "activation-failed",
+        "The current controller did not authorize the published facet after readmission.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId, causeCode: "PUBLICATION_REQUIRES_REPAIR" },
+        { cause: this.#lastCause },
+      );
+    }
+
+    try {
       await this.#facet.activate(confirmed);
     } catch (cause) {
       this.#terminalFailure = failureRecord("activation", "RPC_FAILED");
@@ -371,6 +404,20 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
         { recoveryId: this.identity.loaderId, openInvocations: this.#attempts.size },
       );
     const suppliedRequestId = invocationRequestId(input);
+    if (
+      this.#awaitingFirstRequest &&
+      this.#invocationAttempt === 0 &&
+      (suppliedRequestId === undefined ||
+        suppliedRequestId.length === 0 ||
+        suppliedRequestId.length > 256)
+    )
+      throw new HarnessProcessPlacementError(
+        "stale-publication",
+        "The first continuation must supply its exact nonempty request ID.",
+        true,
+        this.identity,
+        { recoveryId: this.identity.loaderId },
+      );
     if (
       this.#invocationAttempt === 0 &&
       this.#invocationRequestId !== undefined &&
@@ -637,6 +684,19 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   }
 
   async cleanup(options: { readonly retainPublishedOwnership?: boolean } = {}): Promise<void> {
+    if (this.#activationAuthorizationFailed)
+      throw new HarnessProcessPlacementError(
+        "cleanup-incomplete",
+        "The published process remains non-runnable until current authority is explicitly repaired.",
+        true,
+        this.identity,
+        {
+          recoveryId: this.identity.loaderId,
+          publicationState: "confirmed",
+          causeCode: "PUBLICATION_REQUIRES_REPAIR",
+        },
+        { cause: this.#lastCause },
+      );
     if ([...this.#attempts].some((attempt) => !attempt.dispatchStarted))
       throw new HarnessProcessPlacementError(
         "invocation-unsettled",
@@ -713,6 +773,11 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   }
 
   async #cleanupInternal(keepActivationFailure: boolean): Promise<CleanupResult | undefined> {
+    if (this.#activationAuthorizationFailed)
+      return {
+        failure: this.#lastFailure ?? failureRecord("activation", "PUBLICATION_REQUIRES_REPAIR"),
+        cause: this.#lastCause,
+      };
     this.#cleanupStarted = true;
     if (
       this.#publicationState === "in-progress" ||

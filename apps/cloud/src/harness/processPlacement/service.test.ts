@@ -414,6 +414,159 @@ describe("harness process placement", () => {
   });
 });
 
+it("keeps the supplied first request fence and only dispatches its matching request", async () => {
+  const { placement, recovery } = await fixture();
+  let invocations = 0;
+  const request = requestFor();
+  const handle = await placement.prepareInert(request, (locator) =>
+    testFacet(
+      {
+        async invoke(input) {
+          invocations++;
+          return { value: input, stopAcknowledged: false, joined };
+        },
+      },
+      locator,
+    ),
+  );
+  const activation = await handle.activate(publisherFor(request, handle.identity));
+  await expect(handle.invoke({ requestId: "another-request" })).rejects.toMatchObject({
+    kind: "stale-publication",
+  });
+  expect(invocations).toBe(0);
+  await handle.invoke({ requestId: activation.requestId });
+  expect(invocations).toBe(1);
+  expect([...recovery.values()][0]).toMatchObject({
+    invocationRequestId: activation.requestId,
+    invocationAttempt: 1,
+    invocationReply: "received",
+  });
+  await handle.cleanup();
+});
+
+it("awaits a real later request and persists its exact unresolved attempt before dispatch", async () => {
+  const { placement, recovery } = await fixture();
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let invocations = 0;
+  const request = requestFor();
+  const handle = await placement.prepareInert(request, (locator) =>
+    testFacet(
+      {
+        async invoke() {
+          invocations++;
+          expect([...recovery.values()][0]).toMatchObject({
+            invocationRequestId: "arrived-later",
+            invocationAttempt: 1,
+            invocationMayHaveStarted: true,
+            invocationReply: "unresolved",
+          });
+          entered.resolve();
+          await release.promise;
+          return { value: "done", stopAcknowledged: false, joined };
+        },
+      },
+      locator,
+    ),
+  );
+  await handle.activate(awaitingPublisherFor(request, handle.identity));
+  expect(invocations).toBe(0);
+  for (const malformed of [{}, { requestId: "" }, { requestId: 4 }, { requestId: "x".repeat(257) }])
+    await expect(handle.invoke(malformed)).rejects.toMatchObject({ kind: "stale-publication" });
+  expect(invocations).toBe(0);
+  const first = handle.invoke({ requestId: "arrived-later" });
+  await entered.promise;
+  await expect(handle.invoke({ requestId: "concurrent" })).rejects.toMatchObject({
+    kind: "invocation-unsettled",
+  });
+  release.resolve();
+  await first;
+  await expect(handle.invoke({ requestId: "arrived-later" })).rejects.toMatchObject({
+    kind: "stale-handle",
+  });
+  expect(invocations).toBe(1);
+  await handle.cleanup();
+});
+
+it("rejects missing, malformed and contradictory activation request modes", async () => {
+  for (const mode of ["missing", "empty", "malformed", "contradictory"]) {
+    const { placement } = await fixture();
+    const request = requestFor();
+    let invocations = 0;
+    const handle = await placement.prepareInert(request, (locator) =>
+      testFacet(
+        {
+          async invoke() {
+            invocations++;
+            return { value: undefined, stopAcknowledged: false, joined };
+          },
+        },
+        locator,
+      ),
+    );
+    const authority = publisherFor(request, handle.identity);
+    const publish = authority.publishProcessFacet;
+    authority.publishProcessFacet = async (value) => {
+      const activation = await publish(value);
+      if (mode === "missing") Reflect.deleteProperty(activation, "requestId");
+      if (mode === "empty") Reflect.set(activation, "requestId", "");
+      if (mode === "malformed") Reflect.set(activation, "requestMode", "guess-next");
+      if (mode === "contradictory") Reflect.set(activation, "requestMode", "awaiting-next-request");
+      return activation;
+    };
+    await expect(handle.activate(authority)).rejects.toMatchObject({ kind: "publication-unknown" });
+    expect(invocations).toBe(0);
+    expect(placement.signals.resident).toBe(1);
+  }
+});
+
+it("retains the first awaiting request after a lost invocation reply without redispatch", async () => {
+  const { placement, recovery } = await fixture();
+  const request = requestFor();
+  let invocations = 0;
+  const handle = await placement.prepareInert(request, (locator) =>
+    testFacet(
+      {
+        async invoke() {
+          invocations++;
+          throw new Error("First continuation reply was lost.");
+        },
+      },
+      locator,
+    ),
+  );
+  await handle.activate(awaitingPublisherFor(request, handle.identity));
+  await expect(handle.invoke({ requestId: "arrived-later" })).rejects.toMatchObject({
+    kind: "invocation-unsettled",
+  });
+  await expect(handle.invoke({ requestId: "arrived-later" })).rejects.toBeDefined();
+  expect(invocations).toBe(1);
+  expect(placement.signals.resident).toBe(1);
+  expect([...recovery.values()][0]).toMatchObject({
+    invocationRequestId: "arrived-later",
+    invocationAttempt: 1,
+    invocationMayHaveStarted: true,
+  });
+});
+
+function awaitingPublisherFor(
+  request: HarnessProcessPlacementRequest,
+  identity: HarnessProcessPlacementIdentity,
+): HarnessProcessPublicationPublisher<HarnessProcessPublishedActivation> {
+  const supplied = publisherFor(request, identity);
+  return {
+    ...supplied,
+    async publishProcessFacet(input) {
+      const result = await supplied.publishProcessFacet(input);
+      return {
+        publication: result.publication,
+        publisher: result.publisher,
+        requestMode: "awaiting-next-request",
+      };
+    },
+  };
+}
+
 interface FixtureBacking {
   slotState: ProcessSlotState | undefined;
   recovery: Map<string, HarnessProcessPlacementRecoveryRecord>;
@@ -553,7 +706,25 @@ function publisherFor(
     },
     requestId: `request-${request.operationId}`,
   };
-  return { publishProcessFacet: async () => activation };
+  return {
+    publishProcessFacet: async () => activation,
+    async authorizeProcessFacetActivation(input, receipt) {
+      const actual = result.receipt;
+      if (
+        result.status !== "published" ||
+        actual === null ||
+        actual === undefined ||
+        actual !== receipt ||
+        input.operationId !== request.operationId ||
+        input.identity.incarnationNonce !== identity.incarnationNonce ||
+        input.controllerClaim.controlKey !== request.controllerClaim.controlKey ||
+        actual.preparedFacetNonce !== identity.incarnationNonce ||
+        actual.checkpoint.checkpointId !== request.checkpointId ||
+        actual.checkpoint.manifestSha256 !== request.manifestRevision
+      )
+        throw new Error("Fixture authority rejected the exact publication tuple.");
+    },
+  };
 }
 
 function testFacet(
