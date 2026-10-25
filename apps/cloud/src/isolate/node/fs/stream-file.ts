@@ -1,7 +1,7 @@
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
 import { DescriptorLifetime } from "./descriptor-lifetime.ts";
-import { openFdOperation } from "./io.ts";
+import { openFdAsyncOperation } from "./io.ts";
 import { runAsync, type AsyncLeafRunner, type FsOperation } from "./operations.ts";
 import { pathString, type PathLike } from "./path.ts";
 
@@ -66,7 +66,7 @@ export class StreamFile {
     if (path === undefined) throw new TypeError("A path is required to open the stream");
     return this.#track(
       this.run(
-        openFdOperation(
+        openFdAsyncOperation(
           this.#kernelFs,
           path,
           parseOpenFlags(this.#options.flags ?? defaultFlags),

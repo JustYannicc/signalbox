@@ -37,6 +37,10 @@ export class SqliteInodes {
       this.exec(
         "CREATE TABLE IF NOT EXISTS kernel_fs_posix (ino TEXT PRIMARY KEY, mode INTEGER NOT NULL, uid INTEGER NOT NULL, gid INTEGER NOT NULL)",
       );
+      this.exec("CREATE TABLE IF NOT EXISTS kernel_fs_overlay_whiteout (path TEXT PRIMARY KEY)");
+      this.exec(
+        "CREATE TABLE IF NOT EXISTS kernel_fs_overlay_staging (path TEXT PRIMARY KEY, parent TEXT NOT NULL, name TEXT NOT NULL, ino TEXT NOT NULL)",
+      );
       if (!version) {
         this.exec("INSERT INTO kernel_fs_meta (k, v) VALUES ('schema', '1'), ('next_inode', '2')");
         const now = nowNs().toString();
@@ -53,6 +57,7 @@ export class SqliteInodes {
       ) {
         throw new StorageError("EIO");
       }
+      this.cleanupStaging();
       // Pins belong to one incarnation. No previous open handle survives startup.
       // Chunks without an inode indicate corruption, not lost handles; leave them intact.
       this.exec(
@@ -142,6 +147,26 @@ export class SqliteInodes {
     options: CreateOptions,
     initialize?: (inode: Inode) => void,
   ): Inode {
+    return this.createInternal(parent, name, options, initialize);
+  }
+
+  createStagingFile(
+    parent: Inode,
+    name: string,
+    path: string,
+    initialize: (inode: Inode) => void,
+  ): Inode {
+    if (!path.startsWith("/") || path.includes("\0")) throw new StorageError("EINVAL");
+    return this.createInternal(parent, name, { type: "file", exclusive: true }, initialize, path);
+  }
+
+  private createInternal(
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    initialize?: (inode: Inode) => void,
+    stagingPath?: string,
+  ): Inode {
     const result = this.storage.transactionSync(() => {
       validName(name);
       this.directory(parent, true);
@@ -190,6 +215,15 @@ export class SqliteInodes {
         name,
         inode.toString(),
       );
+      if (stagingPath !== undefined) {
+        this.exec(
+          "INSERT INTO kernel_fs_overlay_staging (path, parent, name, ino) VALUES (?, ?, ?, ?)",
+          stagingPath,
+          parent.toString(),
+          name,
+          inode.toString(),
+        );
+      }
       this.parentChanged(parent, options.type === "directory" ? 1 : 0, now);
       // Initialization must commit before publishing the in-memory pin.
       initialize?.(inode);
@@ -226,50 +260,102 @@ export class SqliteInodes {
   }
 
   unlink(parent: Inode, name: string, options: { directory: boolean }): void {
+    this.storage.transactionSync(() => this.unlinkInternal(parent, name, options));
+  }
+
+  unlinkFileWithWhiteout(parent: Inode, name: string, hiddenLowerPath: string): void {
     this.storage.transactionSync(() => {
-      validName(name);
-      this.directory(parent, true);
-      const inode = this.lookup(parent, name);
-      const stat = this.removable(inode, options.directory);
-      this.detach(parent, name, inode, stat, this.nowNs().toString());
+      this.unlinkInternal(parent, name, { directory: false });
+      this.exec(
+        "INSERT OR IGNORE INTO kernel_fs_overlay_whiteout (path) VALUES (?)",
+        hiddenLowerPath,
+      );
     });
   }
 
   rename(fromParent: Inode, fromName: string, toParent: Inode, toName: string): void {
+    this.storage.transactionSync(() => this.renameInternal(fromParent, fromName, toParent, toName));
+  }
+
+  renameFileWithWhiteout(
+    fromParent: Inode,
+    fromName: string,
+    toParent: Inode,
+    toName: string,
+    hiddenLowerPath: string,
+  ): void {
     this.storage.transactionSync(() => {
-      validName(fromName);
-      validName(toName);
-      this.directory(fromParent, true);
-      this.directory(toParent, true);
-      const inode = this.lookup(fromParent, fromName);
-      if (inode === this.root) throw new StorageError("EBUSY");
-      const stat = this.stat(inode);
-      const destination = this.entry(toParent, toName);
-      if (destination === inode) return;
-      const replaced =
-        destination === undefined
-          ? undefined
-          : this.removable(destination, stat.type === "directory");
-      if (stat.type === "directory") this.noCycle(inode, toParent);
-      const now = this.nowNs().toString();
-      if (destination !== undefined && replaced)
-        this.detach(toParent, toName, destination, replaced, now);
+      this.renameInternal(fromParent, fromName, toParent, toName);
       this.exec(
-        "DELETE FROM kernel_fs_entry WHERE parent = ? AND name = ?",
-        fromParent.toString(),
-        fromName,
+        "INSERT OR IGNORE INTO kernel_fs_overlay_whiteout (path) VALUES (?)",
+        hiddenLowerPath,
       );
-      this.exec(
-        "INSERT INTO kernel_fs_entry VALUES (?, ?, ?)",
-        toParent.toString(),
-        toName,
-        inode.toString(),
-      );
-      this.exec("UPDATE kernel_fs_inode SET ctime_ns = ? WHERE ino = ?", now, inode.toString());
-      const movingDirectory = stat.type === "directory" && fromParent !== toParent;
-      this.parentChanged(fromParent, movingDirectory ? -1 : 0, now);
-      if (fromParent !== toParent) this.parentChanged(toParent, movingDirectory ? 1 : 0, now);
     });
+  }
+
+  isLowerPathHidden(path: string): boolean {
+    return (
+      this.row("SELECT path FROM kernel_fs_overlay_whiteout WHERE path = ?", path) !== undefined
+    );
+  }
+
+  isStagingPath(path: string): boolean {
+    return (
+      this.row("SELECT path FROM kernel_fs_overlay_staging WHERE path = ?", path) !== undefined
+    );
+  }
+
+  publishStagingFile(input: {
+    readonly stageParent: Inode;
+    readonly stageName: string;
+    readonly stagePath: string;
+    readonly targetParent: Inode;
+    readonly targetName: string;
+    readonly replaceExisting: boolean;
+    readonly hiddenLowerPath?: string;
+  }): Inode {
+    return this.storage.transactionSync(() => {
+      const staging = this.row(
+        "SELECT ino, parent, name FROM kernel_fs_overlay_staging WHERE path = ?",
+        input.stagePath,
+      );
+      const stagedInode = this.lookup(input.stageParent, input.stageName);
+      if (
+        !staging ||
+        String(staging.ino) !== stagedInode.toString() ||
+        String(staging.parent) !== input.stageParent.toString() ||
+        String(staging.name) !== input.stageName ||
+        this.stat(stagedInode).type !== "file"
+      ) {
+        throw new StorageError("EIO");
+      }
+
+      const destination = this.entry(input.targetParent, input.targetName);
+      if (destination !== undefined) {
+        const destinationType = this.stat(destination).type;
+        if (destinationType === "directory") throw new StorageError("EISDIR");
+        if (!input.replaceExisting && destinationType === "symlink")
+          throw new StorageError("ELOOP");
+      }
+      if (destination !== undefined && !input.replaceExisting) {
+        this.discardStagingInternal(input.stageParent, input.stageName, input.stagePath);
+        return destination;
+      }
+
+      this.renameInternal(input.stageParent, input.stageName, input.targetParent, input.targetName);
+      this.exec("DELETE FROM kernel_fs_overlay_staging WHERE path = ?", input.stagePath);
+      if (input.hiddenLowerPath !== undefined) {
+        this.exec(
+          "INSERT OR IGNORE INTO kernel_fs_overlay_whiteout (path) VALUES (?)",
+          input.hiddenLowerPath,
+        );
+      }
+      return stagedInode;
+    });
+  }
+
+  discardStagingFile(parent: Inode, name: string, path: string): void {
+    this.storage.transactionSync(() => this.discardStagingInternal(parent, name, path));
   }
 
   setTimes(inode: Inode, times: Times): void {
@@ -287,6 +373,91 @@ export class SqliteInodes {
 
   private exec(query: string, ...bindings: (string | number | null)[]) {
     return this.storage.sql.exec(query, ...bindings);
+  }
+
+  private unlinkInternal(parent: Inode, name: string, options: { directory: boolean }): void {
+    validName(name);
+    this.directory(parent, true);
+    const inode = this.lookup(parent, name);
+    const stat = this.removable(inode, options.directory);
+    this.detach(parent, name, inode, stat, this.nowNs().toString());
+  }
+
+  private renameInternal(
+    fromParent: Inode,
+    fromName: string,
+    toParent: Inode,
+    toName: string,
+  ): void {
+    validName(fromName);
+    validName(toName);
+    this.directory(fromParent, true);
+    this.directory(toParent, true);
+    const inode = this.lookup(fromParent, fromName);
+    if (inode === this.root) throw new StorageError("EBUSY");
+    const stat = this.stat(inode);
+    const destination = this.entry(toParent, toName);
+    if (destination === inode) return;
+    const replaced =
+      destination === undefined
+        ? undefined
+        : this.removable(destination, stat.type === "directory");
+    if (stat.type === "directory") this.noCycle(inode, toParent);
+    const now = this.nowNs().toString();
+    if (destination !== undefined && replaced)
+      this.detach(toParent, toName, destination, replaced, now);
+    this.exec(
+      "DELETE FROM kernel_fs_entry WHERE parent = ? AND name = ?",
+      fromParent.toString(),
+      fromName,
+    );
+    this.exec(
+      "INSERT INTO kernel_fs_entry VALUES (?, ?, ?)",
+      toParent.toString(),
+      toName,
+      inode.toString(),
+    );
+    this.exec("UPDATE kernel_fs_inode SET ctime_ns = ? WHERE ino = ?", now, inode.toString());
+    const movingDirectory = stat.type === "directory" && fromParent !== toParent;
+    this.parentChanged(fromParent, movingDirectory ? -1 : 0, now);
+    if (fromParent !== toParent) this.parentChanged(toParent, movingDirectory ? 1 : 0, now);
+  }
+
+  private discardStagingInternal(parent: Inode, name: string, path: string): void {
+    const staging = this.row(
+      "SELECT ino, parent, name FROM kernel_fs_overlay_staging WHERE path = ?",
+      path,
+    );
+    if (staging === undefined) return;
+    const stagedInode = BigInt(String(staging.ino));
+    if (
+      String(staging.parent) === parent.toString() &&
+      String(staging.name) === name &&
+      this.entry(parent, name) === stagedInode
+    ) {
+      const stat = this.stat(stagedInode);
+      if (stat.type !== "file") throw new StorageError("EIO");
+      this.detach(parent, name, stagedInode, stat, this.nowNs().toString());
+    }
+    this.exec("DELETE FROM kernel_fs_overlay_staging WHERE path = ?", path);
+  }
+
+  private cleanupStaging(): void {
+    const rows = Array.from(
+      this.exec("SELECT path, parent, name, ino FROM kernel_fs_overlay_staging"),
+    );
+    for (const row of rows) {
+      const path = String(row.path);
+      const parent = BigInt(String(row.parent));
+      const name = String(row.name);
+      const inode = BigInt(String(row.ino));
+      if (this.entry(parent, name) === inode) {
+        const stat = this.stat(inode);
+        if (stat.type !== "file") throw new StorageError("EIO");
+        this.detach(parent, name, inode, stat, this.nowNs().toString());
+      }
+      this.exec("DELETE FROM kernel_fs_overlay_staging WHERE path = ?", path);
+    }
   }
 
   private row(

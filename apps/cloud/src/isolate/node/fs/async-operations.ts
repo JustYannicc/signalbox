@@ -20,7 +20,7 @@ import {
   unlinkOperation,
 } from "./directories.ts";
 import { readOperation, writeBufferOperation, writeStringOperation } from "./fd-ops.ts";
-import { closeFdOperation, openFdOperation, writeAllOperation } from "./io.ts";
+import { closeFdOperation, openFdAsyncOperation, writeAllOperation } from "./io.ts";
 import {
   fstatOperation,
   fsyncOperation,
@@ -53,21 +53,68 @@ export function createAsyncOperations(kernelFs: KernelFileSystem, runLeaf?: Asyn
   return {
     access: bind(accessOperation),
     fchmod: bind(fchmodOperation),
-    openFd: bind(openFdOperation),
+    openFd: bind(openFdAsyncOperation),
     closeFd: bind(closeFdOperation),
     read: bind(readOperation),
     writeBuffer: bind(writeBufferOperation),
     writeString: bind(writeStringOperation),
     writeAll: bind(writeAllOperation),
-    readFile: bind(readFileOperation, (_path, options) => readOptions(options).signal),
-    writeFile: bind(writeFileOperation, (_path, _data, options) => writeOptions(options).signal),
-    appendFile: bind(appendFileOperation, (_path, _data, options) => writeOptions(options).signal),
-    copyFile: bind(copyFileOperation),
+    readFile: bind(
+      (
+        kernelFs,
+        path: Parameters<typeof readFileOperation>[1],
+        options: Parameters<typeof readFileOperation>[2],
+      ) => readFileOperation(kernelFs, path, options, true),
+      (
+        _path: Parameters<typeof readFileOperation>[1],
+        options: Parameters<typeof readFileOperation>[2],
+      ) => readOptions(options).signal,
+    ),
+    writeFile: bind(
+      (
+        kernelFs,
+        path: Parameters<typeof writeFileOperation>[1],
+        data: Parameters<typeof writeFileOperation>[2],
+        options: Parameters<typeof writeFileOperation>[3],
+      ) => writeFileOperation(kernelFs, path, data, options, true),
+      (
+        _path: Parameters<typeof writeFileOperation>[1],
+        _data: Parameters<typeof writeFileOperation>[2],
+        options: Parameters<typeof writeFileOperation>[3],
+      ) => writeOptions(options).signal,
+    ),
+    appendFile: bind(
+      (
+        kernelFs,
+        path: Parameters<typeof appendFileOperation>[1],
+        data: Parameters<typeof appendFileOperation>[2],
+        options: Parameters<typeof appendFileOperation>[3],
+      ) => appendFileOperation(kernelFs, path, data, options, true),
+      (
+        _path: Parameters<typeof appendFileOperation>[1],
+        _data: Parameters<typeof appendFileOperation>[2],
+        options: Parameters<typeof appendFileOperation>[3],
+      ) => writeOptions(options).signal,
+    ),
+    copyFile: bind(
+      (
+        kernelFs,
+        source: Parameters<typeof copyFileOperation>[1],
+        destination: Parameters<typeof copyFileOperation>[2],
+        flags: Parameters<typeof copyFileOperation>[3],
+      ) => copyFileOperation(kernelFs, source, destination, flags, true),
+    ),
     link: bind(linkOperation),
     mkdir: bind(mkdirOperation),
     mkdtemp: bind(mkdtempOperation),
     readdir: bind(readdirOperation),
-    rename: bind(renameOperation),
+    rename: bind(
+      (
+        kernelFs,
+        source: Parameters<typeof renameOperation>[1],
+        destination: Parameters<typeof renameOperation>[2],
+      ) => renameOperation(kernelFs, source, destination, true),
+    ),
     rm: bind(rmOperation),
     rmdir: bind(rmdirOperation),
     symlink: bind(symlinkOperation),

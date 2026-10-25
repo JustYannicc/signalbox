@@ -81,6 +81,15 @@ export class KernelFileSystemPaths {
     });
   }
 
+  resolveOrCreateAsync(path: string, options: ResolveOptions = {}): Promise<WasiPathLookup> {
+    return withKernelErrorsAsync(async () => {
+      this.#rejectVirtualMutation(path);
+      const followFinal = options.followFinal ?? true;
+      if (followFinal) await this.#checkFinalAbsoluteSymlinkAsync(path, options);
+      return this.resolver.resolveOrCreateAsync(path, options);
+    });
+  }
+
   resolveParent(
     path: string,
     options: Omit<ResolveOptions, "followFinal"> = {},
@@ -311,6 +320,49 @@ export class KernelFileSystemPaths {
       if (source.mount.id !== target.mount.id) throw kernelError("EXDEV");
       runKernelSync(
         source.mount.storage.rename(source.parent, source.name, target.parent, target.name),
+      );
+    });
+  }
+
+  renameAsync(sourcePath: string, targetPath: string): Promise<void> {
+    return withKernelErrorsAsync(async () => {
+      this.#rejectVirtualMutation(sourcePath);
+      this.#rejectVirtualMutation(targetPath);
+      const search = this.#searchOptionsAsync(true);
+      const sourceLookup = await this.resolver.resolveOrCreateAsync(sourcePath, {
+        followFinal: false,
+        ...search,
+      });
+      if (sourceLookup.kind === "missing") throw kernelError("ENOENT");
+      const source = sourceLookup.path;
+      if (source.parent === undefined || source.name === undefined) throw kernelError("EBUSY");
+
+      const targetLookup = await this.resolver.resolveOrCreateAsync(targetPath, {
+        followFinal: false,
+        ...search,
+      });
+      const targetParent =
+        targetLookup.kind === "missing"
+          ? targetLookup.parent
+          : targetLookup.path.parent === undefined || targetLookup.path.name === undefined
+            ? undefined
+            : {
+                mount: targetLookup.path.mount,
+                parent: targetLookup.path.parent,
+                name: targetLookup.path.name,
+                pathComponents: targetLookup.path.pathComponents.slice(0, -1),
+                ancestors: targetLookup.path.ancestors,
+              };
+      if (targetParent === undefined) throw kernelError("EBUSY");
+
+      this.#assertWritable(source.mount);
+      this.#assertWritable(targetParent.mount);
+      if (source.mount.id !== targetParent.mount.id) throw kernelError("EXDEV");
+      await source.mount.storage.rename(
+        source.parent,
+        source.name,
+        targetParent.parent,
+        targetParent.name,
       );
     });
   }

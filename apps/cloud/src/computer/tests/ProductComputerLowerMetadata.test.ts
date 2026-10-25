@@ -64,7 +64,7 @@ const localFs: MetadataFs = {
 };
 
 describe.skipIf(inventory === undefined)("ProductComputer synchronous lower metadata", () => {
-  it("matches local missing paths, symlinks and the merged upper view without a machine", async () => {
+  it("matches local metadata and copies lower home directories up without a machine", async () => {
     const lowerChildren = inventory!.entries.filter(
       ({ path }) => NodePath.posix.dirname(path) === "/usr",
     );
@@ -236,6 +236,51 @@ describe.skipIf(inventory === undefined)("ProductComputer synchronous lower meta
       expect(logicalRealpath(NodeFS.realpathSync(NodePath.join(localRoot, "bin")))).toBe(
         "/usr/bin",
       );
+
+      const writtenBytes = Uint8Array.from([0, 255, 1, 128, 10]);
+      productFs.mkdirSync("/home/claude", { mode: 0o700 });
+      await productFs.promises.mkdir("/home/node/.config/claude/cache", {
+        recursive: true,
+        mode: 0o700,
+      });
+      await productFs.promises.writeFile("/home/user/.claude-settings", writtenBytes);
+      await productFs.promises.writeFile("/work/rename-source", writtenBytes);
+      await productFs.promises.rename(
+        "/work/rename-source",
+        "/home/user/signalbox/renamed-settings.bin",
+      );
+
+      expect([...(await productFs.promises.readFile("/home/user/.claude-settings"))]).toEqual([
+        ...writtenBytes,
+      ]);
+      expect([
+        ...(await productFs.promises.readFile("/home/user/signalbox/renamed-settings.bin")),
+      ]).toEqual([...writtenBytes]);
+      expect(productFs.statSync("/home/claude").isDirectory()).toBe(true);
+      const nodeMode = Number((await productFs.promises.stat("/home/node")).mode);
+      expect(nodeMode & 0o777).toBe(0o755);
+      expect((await productFs.promises.stat("/home/user/signalbox")).isDirectory()).toBe(true);
+      expect((await productFs.promises.readdir("/home")).map(String).sort()).toEqual([
+        "claude",
+        "node",
+        "user",
+      ]);
+      expect((await productFs.promises.readdir("/home/node")).map(String).sort()).toEqual([
+        ".bash_logout",
+        ".bashrc",
+        ".config",
+        ".profile",
+      ]);
+      expect((await productFs.promises.readdir("/home/user/signalbox")).map(String).sort()).toEqual(
+        ["renamed-settings.bin"],
+      );
+      expect(() => productFs.mkdirSync("/home/node/.bashrc")).toThrow(
+        expect.objectContaining({ code: "EEXIST" }),
+      );
+      expect(() => productFs.mkdirSync("/home/node/.bashrc/child", { recursive: true })).toThrow(
+        expect.objectContaining({ code: "ENOTDIR" }),
+      );
+      expect(NodeFS.readFileSync(inventoryPath)).toEqual(inventoryBytes);
       expect({ machineLookups, machineSpawns }).toEqual({ machineLookups: 0, machineSpawns: 0 });
     } finally {
       await computer.close();

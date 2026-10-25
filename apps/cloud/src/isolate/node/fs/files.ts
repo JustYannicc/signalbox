@@ -5,7 +5,13 @@ import * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { checkAbort } from "./abort.ts";
 import { codedError } from "./errors.ts";
-import { bytesOf, openFdOperation, readAllOperation, writeAllOperation } from "./io.ts";
+import {
+  bytesOf,
+  openFdAsyncOperation,
+  openFdOperation,
+  readAllOperation,
+  writeAllOperation,
+} from "./io.ts";
 import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
 import { pathOrFd, type PathOrFd } from "./path.ts";
@@ -40,6 +46,7 @@ export function* readFileOperation(
   kernelFs: KernelFileSystem,
   path: PathOrFd,
   options?: BufferEncoding | ReadFileOptions | null,
+  asyncOpen = false,
 ): FsOperation<NodeBuffer.Buffer | string> {
   const input = pathOrFd(path);
   const normalized = readOptions(options);
@@ -47,7 +54,8 @@ export function* readFileOperation(
   const operation = function* (): FsOperation<NodeBuffer.Buffer | string> {
     if (typeof input === "number")
       return decoded(yield* readAllOperation(kernelFs, input), normalized.encoding);
-    const fd = yield* openFdOperation(kernelFs, input, parseOpenFlags(normalized.flag ?? "r"));
+    const open = asyncOpen ? openFdAsyncOperation : openFdOperation;
+    const fd = yield* open(kernelFs, input, parseOpenFlags(normalized.flag ?? "r"));
     try {
       checkAbort(normalized.signal);
       return decoded(yield* readAllOperation(kernelFs, fd), normalized.encoding);
@@ -63,6 +71,7 @@ export function* writeFileOperation(
   path: PathOrFd,
   data: string | ArrayBuffer | ArrayBufferView,
   options?: BufferEncoding | WriteFileOptions | null,
+  asyncOpen = false,
 ): FsOperation<void> {
   const input = pathOrFd(path);
   const normalized = writeOptions(options);
@@ -74,7 +83,8 @@ export function* writeFileOperation(
       if (normalized.flush) yield* leaf(() => kernelFs.sync(input, false));
       return;
     }
-    const fd = yield* openFdOperation(
+    const open = asyncOpen ? openFdAsyncOperation : openFdOperation;
+    const fd = yield* open(
       kernelFs,
       input,
       parseOpenFlags(normalized.flag ?? "w"),
@@ -95,6 +105,7 @@ export function* appendFileOperation(
   path: PathOrFd,
   data: string | ArrayBuffer | ArrayBufferView,
   options?: BufferEncoding | WriteFileOptions | null,
+  asyncOpen = false,
 ): FsOperation<void> {
   const input = pathOrFd(path);
   const normalized = writeOptions(options);
@@ -106,7 +117,8 @@ export function* appendFileOperation(
       if (normalized.flush) yield* leaf(() => kernelFs.sync(input, false));
       return;
     }
-    const fd = yield* openFdOperation(
+    const open = asyncOpen ? openFdAsyncOperation : openFdOperation;
+    const fd = yield* open(
       kernelFs,
       input,
       parseOpenFlags(normalized.flag ?? "a"),
@@ -127,6 +139,7 @@ export function* copyFileOperation(
   source: string,
   destination: string,
   flags = 0,
+  asyncOpen = false,
 ): FsOperation<void> {
   const exclusive = (flags & 1) !== 0;
   yield* fsOperation(
@@ -135,15 +148,12 @@ export function* copyFileOperation(
     (function* (): FsOperation<void> {
       if ((flags & ~3) !== 0)
         throw codedError("ENOTSUP", "forced reflink copying is not supported", "copyfile");
-      const sourceFd = yield* openFdOperation(kernelFs, source, parseOpenFlags("r"));
+      const open = asyncOpen ? openFdAsyncOperation : openFdOperation;
+      const sourceFd = yield* open(kernelFs, source, parseOpenFlags("r"));
       let destinationFd: number | undefined;
       try {
         const data = yield* readAllOperation(kernelFs, sourceFd);
-        destinationFd = yield* openFdOperation(
-          kernelFs,
-          destination,
-          parseOpenFlags(exclusive ? "wx" : "w"),
-        );
+        destinationFd = yield* open(kernelFs, destination, parseOpenFlags(exclusive ? "wx" : "w"));
         yield* writeAllOperation(kernelFs, destinationFd, data);
       } finally {
         try {

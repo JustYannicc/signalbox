@@ -9,6 +9,9 @@ import {
   KernelLowerFileSystemUpperLayer,
   type KernelLowerFileSystemUpperNamespace,
 } from "./KernelLowerFileSystemUpperLayer.ts";
+import { KernelLowerFileSystemDirectoryLayer } from "./KernelLowerFileSystemDirectoryLayer.ts";
+import { KernelLowerFileSystemFileLayer } from "./KernelLowerFileSystemFileLayer.ts";
+import { lowerFileSystemUpperStorage } from "./KernelLowerFileSystemUpperStorage.ts";
 import type {
   CreateOptions,
   DirectoryEntry,
@@ -42,7 +45,9 @@ export class KernelLowerFileSystemStorage
 {
   readonly root: Inode;
   readonly #upper: Storage;
-  readonly #upperPathByDirectory = new Map<Inode, string>();
+  readonly #directories: KernelLowerFileSystemDirectoryLayer;
+  readonly #files: KernelLowerFileSystemFileLayer;
+  readonly #overlayUpper: ReturnType<typeof lowerFileSystemUpperStorage>;
   readonly #invalidationHooks = new Set<() => void>();
   readonly #upperLayer: KernelLowerFileSystemUpperLayer;
   readonly posix: MaybePosixStorage["posix"];
@@ -53,17 +58,37 @@ export class KernelLowerFileSystemStorage
   constructor(upper: Storage) {
     this.root = upper.root;
     this.#upper = upper;
-    this.#upperPathByDirectory.set(upper.root, "/");
+    this.#directories = new KernelLowerFileSystemDirectoryLayer(upper, () => this.#sourceIndex);
+    this.#overlayUpper = lowerFileSystemUpperStorage(upper);
+    this.#files = new KernelLowerFileSystemFileLayer(
+      upper,
+      this.#overlayUpper,
+      this.#directories,
+      () => this.#sourceIndex,
+    );
     const namespace: KernelLowerFileSystemUpperNamespace = {
       hasLowerSource: () => this.#sourceIndex !== undefined,
       isLowerInode: (inode) => this.isLowerInode(inode),
-      upperDirectoryPath: (inode) => this.#upperPathByDirectory.get(inode),
+      upperDirectoryPath: (inode) => this.#directories.upperPath(inode),
+      copyUpDirectory: (inode) => this.#directories.copyUpDirectory(inode),
       lookupLower: (path) => this.#lookupLower(path),
       lookupLowerKnown: (path) => this.#lookupLowerKnown(path),
+      lowerStat: (inode) => this.#requireIndex().stat(inode),
       lowerMetadata: (inode) => this.#requireIndex().metadata(inode),
-      rememberUpper: (path, inode) => this.#rememberUpper(path, inode),
-      forgetUpperPath: (path) => this.#forgetUpperPath(path),
-      moveUpperPaths: (fromPath, toPath) => this.#moveUpperPaths(fromPath, toPath),
+      upperFileForLowerInode: (inode) => this.#files.upperInodeForLower(inode),
+      copyUpFile: (inode, copyData) => this.#files.copyUpFile(inode, copyData),
+      copyUpFileSync: (inode) => this.#files.copyUpFileSync(inode),
+      renameLowerFile: (inode, fromParent, fromName, toParent, toName) =>
+        this.#files.renameLowerFile(inode, fromParent, fromName, toParent, toName),
+      renameUpperFileWithWhiteout: (fromParent, fromName, toParent, toName, path) =>
+        this.#files.renameUpperFileWithWhiteout(fromParent, fromName, toParent, toName, path),
+      unlinkUpperFileWithWhiteout: (parent, name, path) =>
+        this.#files.unlinkUpperFileWithWhiteout(parent, name, path),
+      isLowerPathHidden: (path) => this.#overlayUpper?.isLowerPathHidden(path) ?? false,
+      isStagingPath: (path) => this.#overlayUpper?.isStagingPath(path) ?? false,
+      rememberUpper: (path, inode) => this.#directories.rememberUpper(path, inode),
+      forgetUpperPath: (path) => this.#directories.forgetUpperPath(path),
+      moveUpperPaths: (fromPath, toPath) => this.#directories.moveUpperPaths(fromPath, toPath),
     };
     this.#upperLayer = new KernelLowerFileSystemUpperLayer(upper, namespace);
     this.posix = this.#upperLayer.posix;
@@ -122,6 +147,16 @@ export class KernelLowerFileSystemStorage
     return this.#sourceIndex?.nativeMetadata(inode);
   }
 
+  copyUpFile(inode: Inode, copyData: boolean): Promise<Inode> {
+    if (!this.isLowerInode(inode)) return Promise.resolve(inode);
+    return this.#files.copyUpFile(inode, copyData);
+  }
+
+  copyUpFileSync(inode: Inode): Inode {
+    if (!this.isLowerInode(inode)) return inode;
+    return this.#files.copyUpFileSync(inode);
+  }
+
   invalidate(): void {
     this.#sourceIndex?.invalidate();
     for (const hook of this.#invalidationHooks) hook();
@@ -133,17 +168,25 @@ export class KernelLowerFileSystemStorage
 
   #lookupFromParent(parent: Inode, name: string, signal?: AbortSignal): MaybePromise<Inode> {
     validateName(name);
-    const upperParentPath = this.#upperPathByDirectory.get(parent);
+    const upperParentPath = this.#directories.upperPath(parent);
     const lowerParentPath = this.#lowerPath(parent);
     const parentPath = lowerParentPath ?? upperParentPath;
     if (parentPath === undefined) throw kernelError("ENOENT");
     const path = childPath(parentPath, name);
 
-    if (upperParentPath !== undefined) {
+    const upperParent =
+      upperParentPath !== undefined
+        ? parent
+        : lowerParentPath === undefined
+          ? undefined
+          : this.#directories.upperDirectoryAt(lowerParentPath);
+    if (upperParent !== undefined) {
       try {
-        const inode = this.#upper.lookup(parent, name);
-        this.#rememberUpper(path, inode);
-        return inode;
+        const inode = this.#upper.lookup(upperParent, name);
+        if (!this.#overlayUpper?.isStagingPath(path)) {
+          this.#directories.rememberUpper(path, inode);
+          return inode;
+        }
       } catch (error) {
         if (!isCode(error, "ENOENT")) throw error;
       }
@@ -152,9 +195,18 @@ export class KernelLowerFileSystemStorage
   }
 
   stat(inode: Inode): MaybePromise<Stat> {
-    return this.isLowerInode(inode)
-      ? this.#requireIndex().stat(inode, currentKernelSignal())
-      : this.#upper.stat(inode);
+    const upperFile = this.#files.upperInodeForLower(inode);
+    if (upperFile !== undefined) return this.#upper.stat(upperFile);
+    if (!this.isLowerInode(inode)) return this.#upper.stat(inode);
+    const lower = this.#requireIndex().stat(inode, currentKernelSignal());
+    const useUpperDirectory = (stat: Stat): Stat => {
+      if (stat.type !== "directory") return stat;
+      const path = this.#lowerPath(inode);
+      if (path === undefined) return stat;
+      const upper = this.#directories.upperDirectoryAt(path);
+      return upper === undefined ? stat : this.#upper.stat(upper);
+    };
+    return isPromiseLike(lower) ? lower.then(useUpperDirectory) : useUpperDirectory(lower);
   }
 
   readlink(inode: Inode): MaybePromise<string> {
@@ -170,49 +222,71 @@ export class KernelLowerFileSystemStorage
   readdir(inode: Inode): MaybePromise<DirectoryEntry[]> {
     const lowerPath = this.#lowerPath(inode);
     if (lowerPath !== undefined) {
+      const upperDirectory = this.#directories.upperDirectoryAt(lowerPath);
+      const upperEntries =
+        upperDirectory === undefined ? [] : this.#visibleUpperEntries(lowerPath, upperDirectory);
       const entries = this.#requireIndex().readdir(lowerPath, currentKernelSignal());
-      const requireEntries = (entries: readonly DirectoryEntry[] | undefined) => {
-        if (entries === undefined) throw kernelError("ENOENT");
-        return [...entries];
+      const merge = (lower: readonly DirectoryEntry[] | undefined) => {
+        if (lower === undefined) {
+          if (upperDirectory !== undefined) return upperEntries;
+          throw kernelError("ENOENT");
+        }
+        return mergeDirectoryEntries(upperEntries, this.#visibleLowerEntries(lowerPath, lower));
       };
-      return isPromiseLike(entries) ? entries.then(requireEntries) : requireEntries(entries);
+      return isPromiseLike(entries) ? entries.then(merge) : merge(entries);
     }
 
-    const upperPath = this.#upperPathByDirectory.get(inode);
-    const upperEntries = this.#upper.readdir(inode);
+    const upperPath = this.#directories.upperPath(inode);
+    const upperEntries =
+      upperPath === undefined
+        ? this.#upper.readdir(inode)
+        : this.#visibleUpperEntries(upperPath, inode);
     if (upperPath === undefined || this.#sourceIndex === undefined) return upperEntries;
     const lower = this.#sourceIndex.readdir(upperPath, currentKernelSignal());
     return isPromiseLike(lower)
-      ? lower.then((entries) => mergeDirectoryEntries(upperEntries, entries))
-      : mergeDirectoryEntries(upperEntries, lower);
+      ? lower.then((entries) =>
+          mergeDirectoryEntries(upperEntries, this.#visibleLowerEntries(upperPath, entries)),
+        )
+      : mergeDirectoryEntries(upperEntries, this.#visibleLowerEntries(upperPath, lower));
   }
 
   directoryEntry(parent: Inode, child: Inode): MaybePromise<DirectoryEntry | undefined> {
     const lowerParentPath = this.#lowerPath(parent);
     if (lowerParentPath !== undefined) {
+      const upperParent = this.#directories.upperDirectoryAt(lowerParentPath);
+      if (upperParent !== undefined) {
+        const upperEntry = this.#upperDirectoryEntry(upperParent, lowerParentPath, child);
+        if (upperEntry !== undefined) return upperEntry ?? undefined;
+      }
       return this.#lowerDirectoryEntry(lowerParentPath, child);
     }
 
-    const upperParentPath = this.#upperPathByDirectory.get(parent);
+    const upperParentPath = this.#directories.upperPath(parent);
     if (upperParentPath === undefined) return undefined;
-    const upperEntry = this.#upper
-      .readdir(parent)
-      .find((entry) => entry.inode === child && entry.type === "directory");
-    if (upperEntry !== undefined) return upperEntry;
+    const upperEntry = this.#upperDirectoryEntry(parent, upperParentPath, child);
+    if (upperEntry !== undefined) return upperEntry ?? undefined;
     return this.#lowerDirectoryEntry(upperParentPath, child);
   }
 
   retain(inode: Inode): MaybePromise<void> {
-    if (this.isLowerInode(inode)) return;
+    if (this.isLowerInode(inode)) {
+      this.#files.retainLower(inode);
+      return;
+    }
     return this.#upper.retain(inode);
   }
 
   release(inode: Inode): MaybePromise<void> {
-    if (this.isLowerInode(inode)) return;
+    if (this.isLowerInode(inode)) {
+      this.#files.releaseLower(inode);
+      return;
+    }
     return this.#upper.release(inode);
   }
 
   readInto(inode: Inode, offset: bigint, target: Uint8Array): MaybePromise<number> {
+    const upperFile = this.#files.upperInodeForLower(inode);
+    if (upperFile !== undefined) return this.#upper.readInto(upperFile, offset, target);
     if (this.isLowerInode(inode)) return this.#requireIndex().readInto(inode, offset, target);
     return this.#upper.readInto(inode, offset, target);
   }
@@ -296,7 +370,8 @@ export class KernelLowerFileSystemStorage
 
   #lookupLower(path: string, signal?: AbortSignal): MaybePromise<Inode> {
     const index = this.#sourceIndex;
-    if (index === undefined) throw kernelError("ENOENT");
+    if (index === undefined || this.#overlayUpper?.isLowerPathHidden(path))
+      throw kernelError("ENOENT");
     const result = index.lookup(path, signal);
     if (isPromiseLike(result)) {
       return result.then((inode) => {
@@ -310,13 +385,21 @@ export class KernelLowerFileSystemStorage
 
   #lookupLowerKnown(path: string): KernelLowerFileSystemKnownLookup {
     const index = this.#sourceIndex;
-    return index === undefined ? { kind: "missing" } : index.lookupKnown(path);
+    return index === undefined || this.#overlayUpper?.isLowerPathHidden(path)
+      ? { kind: "missing" }
+      : index.lookupKnown(path);
   }
 
   #lowerDirectoryEntry(parent: string, child: Inode): MaybePromise<DirectoryEntry | undefined> {
     const index = this.#sourceIndex;
     const path = index?.pathForInode(child);
-    if (index === undefined || path === undefined || parentPath(path) !== parent) return undefined;
+    if (
+      index === undefined ||
+      path === undefined ||
+      parentPath(path) !== parent ||
+      this.#overlayUpper?.isLowerPathHidden(path)
+    )
+      return undefined;
     const cached = index.cachedEntry(path);
     if (cached !== undefined) {
       return cached.stat.type === "directory"
@@ -331,8 +414,39 @@ export class KernelLowerFileSystemStorage
     return isPromiseLike(stat) ? stat.then(directoryEntry) : directoryEntry(stat);
   }
 
+  #upperDirectoryEntry(
+    parent: Inode,
+    parentPathValue: string,
+    child: Inode,
+  ): DirectoryEntry | null | undefined {
+    const entries = this.#visibleUpperEntries(parentPathValue, parent);
+    const byInode = entries.find((entry) => entry.inode === child);
+    if (byInode !== undefined) return byInode.type === "directory" ? byInode : null;
+
+    const lowerPath = this.#lowerPath(child);
+    if (lowerPath === undefined || parentPath(lowerPath) !== parentPathValue) return undefined;
+    const byName = entries.find((entry) => entry.name === basename(lowerPath));
+    if (byName === undefined) return undefined;
+    return byName.type === "directory" ? byName : null;
+  }
+
   #lowerPath(inode: Inode): string | undefined {
-    return this.#sourceIndex?.pathForInode(inode);
+    return this.#directories.lowerPath(inode);
+  }
+
+  #visibleUpperEntries(path: string, directory: Inode): DirectoryEntry[] {
+    return this.#upper
+      .readdir(directory)
+      .filter((entry) => !this.#overlayUpper?.isStagingPath(childPath(path, entry.name)));
+  }
+
+  #visibleLowerEntries(
+    path: string,
+    entries: readonly DirectoryEntry[] | undefined,
+  ): readonly DirectoryEntry[] | undefined {
+    return entries?.filter(
+      (entry) => !this.#overlayUpper?.isLowerPathHidden(childPath(path, entry.name)),
+    );
   }
 
   #requireIndex(): KernelLowerFileSystemSourceIndex {
@@ -348,11 +462,15 @@ export class KernelLowerFileSystemStorage
 
   #upperBlocksSource(path: string): boolean {
     if (path === "/") return false;
+    if (this.#overlayUpper?.isLowerPathHidden(path)) return true;
     let current = this.#upper.root;
+    let currentPath = "/";
     const components = pathComponents(path);
     for (let index = 0; index < components.length; index++) {
       const component = components[index];
       if (component === undefined) return true;
+      currentPath = childPath(currentPath, component);
+      if (this.#overlayUpper?.isStagingPath(currentPath)) return false;
       try {
         current = this.#upper.lookup(current, component);
       } catch (error) {
@@ -364,29 +482,6 @@ export class KernelLowerFileSystemStorage
       if (stat.type !== "directory") return true;
     }
     return false;
-  }
-
-  #rememberUpper(path: string, inode: Inode): void {
-    try {
-      if (this.#upper.stat(inode).type === "directory") this.#upperPathByDirectory.set(inode, path);
-    } catch (error) {
-      if (!isCode(error, "ENOENT")) throw error;
-    }
-  }
-
-  #moveUpperPaths(fromPath: string, toPath: string): void {
-    for (const [inode, path] of this.#upperPathByDirectory) {
-      if (path === fromPath || path.startsWith(`${fromPath}/`)) {
-        this.#upperPathByDirectory.set(inode, `${toPath}${path.slice(fromPath.length)}`);
-      }
-    }
-  }
-
-  #forgetUpperPath(path: string): void {
-    for (const [inode, current] of this.#upperPathByDirectory) {
-      if (current === path || current.startsWith(`${path}/`))
-        this.#upperPathByDirectory.delete(inode);
-    }
   }
 
   #detach(token: symbol): void {

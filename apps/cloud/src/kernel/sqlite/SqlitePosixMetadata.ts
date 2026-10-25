@@ -46,6 +46,13 @@ export class SqlitePosixMetadata {
     );
   };
 
+  createStagingFile(parent: Inode, name: string, path: string, metadata: PosixMetadata): Inode {
+    this.validate(metadata);
+    return this.inodes.createStagingFile(parent, name, path, (inode) =>
+      this.insert(inode, metadata),
+    );
+  }
+
   chmod(inode: Inode, mode: number): void {
     // Validate before mutation; masking belongs to the guest ABI adapter.
     this.validate({ mode, uid: 0, gid: 0 });
