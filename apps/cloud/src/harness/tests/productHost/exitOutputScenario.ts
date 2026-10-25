@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Controlled native modules run in an isolated test realm.
 import * as NodeAssert from "node:assert/strict";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
