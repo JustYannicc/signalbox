@@ -31,6 +31,7 @@ import type { ThreadObjectEnv } from "./thread/ThreadObject.ts";
 import type { UserObjectEnv } from "./user/UserObject.ts";
 import type { AutomationWorkflowEnv } from "./automations/automationWorkflow.ts";
 import type { HarnessDurableStateBindings } from "./harness/HarnessDurableState.ts";
+import type { HarnessProcessExecutionEnvironment } from "./harness/HarnessProcessPlacement.ts";
 import { isApiPath } from "./api/apiPaths.ts";
 import { MCP_PATH } from "./api/mcpObject.ts";
 import { PROTECTED_RESOURCE_PATHS } from "./api/mcpRoutes.ts";
@@ -53,6 +54,9 @@ export { AutomationHost, AutomationWorkflow } from "./automations/automationWork
 export { HarnessRunStoreObject } from "./harness/HarnessRunStoreObject.ts";
 export { HarnessFilesStoreObject } from "./harness/HarnessFilesStoreObject.ts";
 export { HarnessThreadSupervisorObject } from "./harness/HarnessThreadSupervisorObject.ts";
+export { HarnessProcessExecutionEntrypoint } from "./harness/HarnessProcessExecutionEntrypoint.ts";
+export { HarnessProcessExecutionShardObject } from "./harness/HarnessProcessExecutionShardObject.ts";
+export { HarnessProcessPlacementStoreObject } from "./harness/HarnessProcessPlacementStoreObject.ts";
 
 /**
  * Signalbox Cloud: an environment that runs on Cloudflare. Clients connect to
@@ -68,10 +72,12 @@ export interface CloudEnv
     PoolObjectEnv,
     PreviewCleanupEnv,
     AutomationWorkflowEnv,
-    HarnessDurableStateBindings {
+    HarnessDurableStateBindings,
+    Omit<HarnessProcessExecutionEnvironment, "LOADER" | "HARNESS_THREAD_SUPERVISOR"> {
   readonly CLIENT_TRACE_LIMITER?: Pick<RateLimit, "limit">;
   readonly ASSETS: { readonly fetch: (request: Request) => Promise<Response> };
   readonly EXECUTOR_TOKEN_BINDINGS: ExecutorTokenBindingNamespace;
+  readonly PROCESS_EXECUTION_SHARDS: DurableObjectNamespace;
   readonly EXECUTOR_TOKEN_ISSUER?: string;
   readonly EXECUTOR_TOKEN_PRIVATE_JWK?: string;
   readonly EXECUTOR_TOKEN_RETIRING_PUBLIC_JWKS?: string;
