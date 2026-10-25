@@ -6,10 +6,12 @@ import * as NodeURL from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { createTestHarness, unstable_readConfig } from "wrangler";
 
-import type {
-  HarnessProcessExecutionShardInput,
-  HarnessProcessExecutionShardResult,
+import {
+  deterministicShardOwner,
+  type HarnessProcessExecutionShardInput,
+  type HarnessProcessExecutionShardResult,
 } from "../src/harness/HarnessProcessPlacement.ts";
+import type { HarnessProcessPlacementStoreObject } from "../src/harness/HarnessProcessPlacementStoreObject.ts";
 import type { CloudEnv } from "../src/worker.ts";
 import { COMPATIBILITY_DATE, cloudStage } from "./stage.ts";
 
@@ -189,6 +191,117 @@ describe("normal process-execution deployment wiring", () => {
     expect(response.status).toBe(200);
     const jwks = (await response.json()) as { keys: ReadonlyArray<unknown> };
     expect(jwks.keys).toHaveLength(1);
+  }, 120_000);
+
+  it("rejects explicit native requests with absent or malformed journal intent before mutating either route", async () => {
+    const cases = [
+      {
+        label: "missing-journal",
+        mode: "native-journal",
+        count: 1,
+        journal: undefined,
+        error: "RunStore resume authority",
+      },
+      {
+        label: "partial-journal",
+        mode: "native-journal",
+        count: 1,
+        journal: {},
+        error: "RunStore resume authority",
+      },
+      {
+        label: "null-journal",
+        mode: "native-journal",
+        count: 1,
+        journal: null,
+        error: "RunStore resume authority",
+      },
+      {
+        label: "native-overflow",
+        mode: "native-journal",
+        count: 5,
+        journal: undefined,
+        error: "exactly one process",
+      },
+      {
+        label: "empty-native",
+        mode: "native-journal",
+        count: 0,
+        journal: undefined,
+        error: "exactly one process",
+      },
+      {
+        label: "implicit-journal",
+        mode: undefined,
+        count: 1,
+        journal: {},
+        error: "requires native-journal",
+      },
+      {
+        label: "placement-journal",
+        mode: "placement",
+        count: 1,
+        journal: {},
+        error: "requires native-journal",
+      },
+      {
+        label: "unknown-mode",
+        mode: "unknown",
+        count: 1,
+        journal: undefined,
+        error: "mode is invalid",
+      },
+      { label: "null-mode", mode: null, count: 1, journal: undefined, error: "mode is invalid" },
+    ];
+    const env = await harness
+      .getWorker<
+        Omit<CloudEnv, "PLACEMENT_STORES"> & {
+          readonly PLACEMENT_STORES: DurableObjectNamespace<HarnessProcessPlacementStoreObject>;
+        }
+      >(cloudName)
+      .getEnv();
+    const probe = harness.getWorker("process-execution-deployment-probe");
+    for (const testCase of cases) {
+      const runId = `deployment-intent-${testCase.label}`;
+      const supervisor = env.HARNESS_THREAD_SUPERVISOR.getByName(runId);
+      const before = await supervisor.execute({
+        type: "initialize",
+        runId,
+        nativeSessionId: "deployment-reachability-session",
+        control,
+        publisher,
+        checkpoint,
+      });
+      const input = executionInput(runId, testCase.count);
+      const response = await probe.fetch("http://probe/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          executionMode: testCase.mode,
+          processes: input.processes.map((process) => ({ ...process, journal: testCase.journal })),
+        }),
+      });
+      const body = (await response.json()) as { error: string };
+      expect(response.status, testCase.label).toBe(500);
+      expect(body.error, testCase.label).toContain(testCase.error);
+      const after = await supervisor.execute({ type: "read", runId, control });
+      expect(after.snapshot, testCase.label).toEqual(before.snapshot);
+      await expect(
+        env.HARNESS_RUN_STORE.getByName(runId).execute({ type: "read", runId }),
+      ).rejects.toThrow();
+      for (const shardIndex of [0, 1]) {
+        const owner = await deterministicShardOwner(
+          input.shardOwner,
+          input.executionOperationId,
+          shardIndex,
+        );
+        expect(
+          await env.PLACEMENT_STORES.getByName(owner).readWriter(owner),
+          testCase.label,
+        ).toBeUndefined();
+      }
+    }
   }, 120_000);
 
   it("rejects missing, empty and invalid resident-byte limits before placement", async () => {

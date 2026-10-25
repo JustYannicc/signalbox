@@ -14,6 +14,7 @@ import {
   type HarnessProcessPlacementRecoveryRecord,
   type HarnessProcessPlacementWriter,
   type HarnessProcessPublication,
+  type HarnessProcessPublicationReceipt,
   type HarnessProcessPublicationReconciliation,
   type HarnessProcessPublicationRequest,
   type HarnessProcessPublishedActivation,
@@ -51,8 +52,10 @@ const controllerClaim: HarnessProcessControllerClaim = {
 };
 
 export class ProcessPlacementSupervisor extends DurableObject {
+  #controllerClaim = controllerClaim;
   #dropPublicationReply = false;
   #publicationCalls = 0;
+  #activationAuthorizationCalls = 0;
   #processInvocationCalls = 0;
   #heldInvocationBarrier:
     | {
@@ -180,13 +183,13 @@ export class ProcessPlacementSupervisor extends DurableObject {
       await barrier.release.promise;
       if (this.#readBarrier === barrier) this.#readBarrier = undefined;
     }
-    if (!input.runId || !sameClaim(input.control, controllerClaim))
+    if (!input.runId || !sameClaim(input.control, this.#controllerClaim))
       throw new Error("The fixture supervisor rejected a stale controller claim.");
     return {
       snapshot: {
-        ownerId: controllerClaim.ownerId,
-        controlIncarnationId: controllerClaim.incarnationId,
-        controlEpoch: controllerClaim.epoch,
+        ownerId: this.#controllerClaim.ownerId,
+        controlIncarnationId: this.#controllerClaim.incarnationId,
+        controlEpoch: this.#controllerClaim.epoch,
       },
     };
   }
@@ -200,9 +203,9 @@ export class ProcessPlacementSupervisor extends DurableObject {
     readonly manifestRevision: string;
     readonly priorFacetNonce: string;
     readonly expectedFacetGeneration: number;
-  }): Promise<HarnessProcessPublishedActivation> {
+  }): Promise<HarnessProcessPublishedActivation & { readonly requestId: string }> {
     this.#publicationCalls++;
-    if (!sameClaim(input.controllerClaim, controllerClaim))
+    if (!sameClaim(input.controllerClaim, this.#controllerClaim))
       throw new Error("The fixture A publisher rejected a stale controller claim.");
     const publication = makePublication({ ...input, claim: input.controllerClaim });
     await this.ctx.storage.put(`publication-${input.operationId}`, publication);
@@ -220,6 +223,56 @@ export class ProcessPlacementSupervisor extends DurableObject {
       throw new Error("Fixture dropped the committed publication reply.");
     }
     return activation;
+  }
+
+  async authorizeProcessFacetActivation(
+    input: HarnessProcessPublicationRequest,
+    confirmedReceipt: HarnessProcessPublicationReceipt,
+  ) {
+    this.#activationAuthorizationCalls++;
+    const publication = await this.ctx.storage.get<HarnessProcessPublication>(
+      `publication-${input.operationId}`,
+    );
+    const receipt = publication?.receipt;
+    const snapshot = publication?.supervisor?.snapshot;
+    if (
+      !sameClaim(input.controllerClaim, this.#controllerClaim) ||
+      publication?.status !== "published" ||
+      receipt?.status !== "confirmed" ||
+      snapshot?.ownerId !== this.#controllerClaim.ownerId ||
+      snapshot.controlIncarnationId !== this.#controllerClaim.incarnationId ||
+      snapshot.controlEpoch !== this.#controllerClaim.epoch ||
+      !samePublicationReceipt(receipt, confirmedReceipt) ||
+      receipt.operationId !== input.operationId ||
+      receipt.fromGeneration !== input.expectedFacetGeneration ||
+      receipt.toGeneration !== input.expectedFacetGeneration + 1 ||
+      receipt.priorFacetNonce !== input.priorFacetNonce ||
+      receipt.preparedFacetNonce !== input.identity.incarnationNonce ||
+      receipt.checkpoint.checkpointId !== input.checkpointId ||
+      receipt.checkpoint.manifestSha256 !== input.manifestRevision ||
+      snapshot.lastPublicationOperationId !== input.operationId ||
+      snapshot.generation !== receipt.toGeneration ||
+      snapshot.facetNonce !== input.identity.incarnationNonce ||
+      snapshot.nativeSessionId !== input.nativeSessionId ||
+      snapshot.checkpoint.checkpointId !== input.checkpointId ||
+      snapshot.checkpoint.manifestSha256 !== input.manifestRevision
+    )
+      throw new Error(
+        "The fixture authority rejected activation under a stale or mismatched claim.",
+      );
+  }
+
+  takeOverControllerForActivation() {
+    this.#controllerClaim = {
+      ownerId: controllerClaim.ownerId,
+      incarnationId: "fixture-takeover-incarnation",
+      epoch: controllerClaim.epoch + 1,
+      controlKey: "fixture-takeover-control-key-00000000000000000000000000000000",
+    };
+  }
+
+  async activationAuthorizationCallCount() {
+    return this.#activationAuthorizationCalls;
   }
 
   dropNextPublicationReply() {
@@ -241,7 +294,7 @@ export class ProcessPlacementSupervisor extends DurableObject {
   async reconcileProcessFacetPublication(
     input: HarnessProcessPublicationRequest,
   ): Promise<HarnessProcessPublicationReconciliation> {
-    if (!sameClaim(input.controllerClaim, controllerClaim)) return { status: "unknown" };
+    if (!sameClaim(input.controllerClaim, this.#controllerClaim)) return { status: "unknown" };
     const publication = await this.ctx.storage.get<HarnessProcessPublication>(
       `publication-${input.operationId}`,
     );
@@ -351,6 +404,7 @@ export default {
     if (path === "/recover/start") return await recover(env, ctx, "start");
     if (path === "/recover/stale") return await recover(env, ctx, "stale");
     if (path === "/recover/retry") return await recover(env, ctx, "retry");
+    if (path === "/recover/recreate") return await recover(env, ctx, "recreate");
     return await overflow(request, env, ctx);
   },
 };
@@ -396,23 +450,25 @@ async function publicationReplyLoss(env: ProcessPlacementEnvironment) {
     owner,
   ) as unknown as PublicationLossShardClient;
   const first = await shard.runShard(input, "first-publication-request");
-  const second = await shard.runShard(input, "reconcile-publication-request");
+  const secondRejected = await shard.runShard(input, "reconcile-publication-request").then(
+    () => false,
+    () => true,
+  );
 
   const shardNonce = await shard.executionIncarnationNonce();
   const currentWriter = writer(operationId, shardNonce, 0);
   const placementStore = env.PLACEMENT_STORES.getByName(owner);
-  await placementStore.claimWriter(owner, currentWriter);
   const records = await placementStore.listRecovery(owner, currentWriter);
   const slotState = await placementStore.load(owner, currentWriter);
-  await placementStore.releaseWriter(owner, currentWriter);
   const record = records[0];
   return Response.json({
     firstStatus: first.processes[0]?.status,
     firstKind: first.processes[0]?.error?.kind,
-    secondStatus: second.processes[0]?.status,
+    secondRejected,
     recoveryState: record?.state,
     publicationState: record?.publicationState,
-    receiptOperationId: record?.publicationReceipt?.operationId,
+    operationId: record?.operationId,
+    receiptPresent: record?.publicationReceipt !== undefined,
     leaseStillHeld:
       record !== undefined &&
       slotState?.slots.some((slot) => slot.holder?.token === record.lease.token) === true,
@@ -557,7 +613,7 @@ async function unplaceableThenRetry(env: ProcessPlacementEnvironment, ctx: Execu
 async function recover(
   env: ProcessPlacementEnvironment,
   ctx: ExecutionContext,
-  action: "start" | "stale" | "retry",
+  action: "start" | "stale" | "retry" | "recreate",
 ) {
   const claim =
     action === "stale" ? { ...controllerClaim, controlKey: "stale-control-key" } : controllerClaim;
@@ -568,6 +624,12 @@ async function recover(
     [makeProcess(0, "recovery", claim, 2, 1)],
     claim,
   );
+  if (action === "recreate") {
+    const owner = await deterministicShardOwner(input.shardOwner, input.executionOperationId, 0);
+    await env.PROCESS_EXECUTION_SHARDS.getByName(owner)
+      .crashForTest()
+      .catch(() => undefined);
+  }
   try {
     const result = await runPublic(ctx, input);
     return Response.json({
@@ -597,7 +659,10 @@ async function terminalRecovery(env: ProcessPlacementEnvironment, ctx: Execution
     [makeProcess(0, "terminal-recovery", controllerClaim, 1, 0, 4)],
   );
   const failed = await runPublic(ctx, input);
-  const repaired = await runPublic(ctx, input);
+  const repeatRejected = await runPublic(ctx, input).then(
+    () => false,
+    () => true,
+  );
   const owner = await deterministicShardOwner(
     input.shardOwner,
     input.executionOperationId,
@@ -610,7 +675,6 @@ async function terminalRecovery(env: ProcessPlacementEnvironment, ctx: Execution
     input.shardIndex ?? 0,
   );
   const store = env.PLACEMENT_STORES.getByName(owner);
-  await store.claimWriter(owner, writerClaim);
   let slotsHeld: number;
   let recovery: readonly HarnessProcessPlacementRecoveryRecord[];
   try {
@@ -618,11 +682,11 @@ async function terminalRecovery(env: ProcessPlacementEnvironment, ctx: Execution
     slotsHeld = state?.slots.filter((slot) => slot.holder !== undefined).length ?? 0;
     recovery = await store.listRecovery(owner, writerClaim);
   } finally {
-    await store.releaseWriter(owner, writerClaim);
+    // The exact published lease and writer remain reserved for explicit repair.
   }
   return Response.json({
     failed,
-    repaired,
+    repeatRejected,
     slotsHeld,
     recovery: recovery.map((record) => ({
       loaderId: record.loaderId,
@@ -873,5 +937,21 @@ function sameClaim(
     left.incarnationId === right.incarnationId &&
     left.epoch === right.epoch &&
     left.controlKey === right.controlKey
+  );
+}
+
+function samePublicationReceipt(
+  left: HarnessProcessPublicationReceipt,
+  right: HarnessProcessPublicationReceipt,
+): boolean {
+  return (
+    left.operationId === right.operationId &&
+    left.fromGeneration === right.fromGeneration &&
+    left.toGeneration === right.toGeneration &&
+    left.priorFacetNonce === right.priorFacetNonce &&
+    left.preparedFacetNonce === right.preparedFacetNonce &&
+    left.status === right.status &&
+    left.checkpoint.checkpointId === right.checkpoint.checkpointId &&
+    left.checkpoint.manifestSha256 === right.checkpoint.manifestSha256
   );
 }

@@ -592,16 +592,29 @@ describe("process execution Worker entrypoint", () => {
     const retryBody = await retry.text();
     expect(retry.status, retryBody).toBe(200);
     const result = JSON.parse(retryBody) as {
-      readonly result: { readonly processes: readonly { readonly status: string }[] };
+      readonly recoverable: boolean;
       readonly invocationCalls: number;
     };
-    expect(result.result.processes).toMatchObject([
-      { status: "recoverable", error: { kind: "recovery-unresolved" } },
-    ]);
+    expect(result.recoverable).toBe(true);
     expect(result.invocationCalls).toBe(1);
+    const recreated = await harness.fetch("/recover/recreate");
+    const recreatedBody = await recreated.text();
+    expect(recreated.status, recreatedBody).toBe(200);
+    expect(JSON.parse(recreatedBody)).toMatchObject({
+      result: {
+        processes: [
+          {
+            status: "recoverable",
+            recoveryId: expect.any(String),
+            error: { kind: "recovery-unresolved" },
+          },
+        ],
+      },
+      invocationCalls: 1,
+    });
   }, 120_000);
 
-  it("reconstructs terminal activation cleanup without replaying or dropping repair ownership", async () => {
+  it("keeps terminal activation ownership reserved when the same live shard requests repair", async () => {
     const response = await harness.fetch("/terminal-recovery");
     const body = await response.text();
     expect(response.status, body).toBe(200);
@@ -612,12 +625,7 @@ describe("process execution Worker entrypoint", () => {
           readonly error?: { readonly kind: string };
         }[];
       };
-      readonly repaired: {
-        readonly processes: readonly {
-          readonly status: string;
-          readonly error?: { readonly kind: string };
-        }[];
-      };
+      readonly repeatRejected: boolean;
       readonly slotsHeld: number;
       readonly recovery: readonly {
         readonly state: string;
@@ -633,31 +641,30 @@ describe("process execution Worker entrypoint", () => {
     expect(result.failed.processes).toMatchObject([
       { status: "recoverable", error: { kind: "activation-failed" } },
     ]);
-    expect(result.repaired.processes).toMatchObject([
-      { status: "recovered", error: { kind: "activation-failed" } },
-    ]);
-    expect(result.slotsHeld).toBe(0);
+    expect(result.repeatRejected).toBe(true);
+    expect(result.slotsHeld).toBe(1);
     expect(result.recovery).toMatchObject([
       {
-        state: "activation-failed",
-        stopAcknowledged: true,
-        joined: { invocationRpc: true, fetch: true, ports: true },
+        state: "cleanup-required",
+        stopAcknowledged: false,
+        joined: { invocationRpc: true, fetch: false, ports: false },
         terminalFailure: { code: "RPC_FAILED" },
       },
     ]);
   }, 120_000);
 
-  it("persists and reconciles a committed publication whose reply was lost without invoking or retiring it", async () => {
+  it("retains a committed publication with a lost reply and rejects an automatic same-shard retry", async () => {
     const response = await harness.fetch("/publication-reply-loss");
     const body = await response.text();
     expect(response.status, body).toBe(200);
     const result = JSON.parse(body) as {
       readonly firstStatus: string;
       readonly firstKind: string;
-      readonly secondStatus: string;
+      readonly secondRejected: boolean;
       readonly recoveryState: string;
       readonly publicationState: string;
-      readonly receiptOperationId: string;
+      readonly operationId: string;
+      readonly receiptPresent: boolean;
       readonly leaseStillHeld: boolean;
       readonly publisherCalls: number;
       readonly invocationCalls: number;
@@ -665,10 +672,11 @@ describe("process execution Worker entrypoint", () => {
     expect(result).toEqual({
       firstStatus: "recoverable",
       firstKind: "publication-unknown",
-      secondStatus: "recoverable",
-      recoveryState: "publication-confirmed",
-      publicationState: "confirmed",
-      receiptOperationId: "publication-reply-loss-operation-0",
+      secondRejected: true,
+      recoveryState: "prepared",
+      publicationState: "unknown",
+      operationId: "publication-reply-loss-operation-0",
+      receiptPresent: false,
       leaseStillHeld: true,
       publisherCalls: 1,
       invocationCalls: 0,

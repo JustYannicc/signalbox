@@ -7,6 +7,7 @@ import {
   type HarnessProcessExecutionShardInput,
 } from "./processPlacement/execution.ts";
 import { WORKER_REQUEST_INVOCATION_LIMIT } from "./processPlacement/limits.ts";
+import { assertHarnessProcessExecutionMode } from "./HarnessProcessResume.ts";
 
 export interface HarnessProcessExecutionEntrypointEnvironment extends HarnessProcessExecutionEnvironment {
   readonly PROCESS_EXECUTION_SHARDS: DurableObjectNamespace;
@@ -34,6 +35,7 @@ export class HarnessProcessExecutionEntrypoint extends WorkerEntrypoint<HarnessP
     if (!this.env.RESIDENT_BYTE_LIMIT)
       throw new Error("Process execution is disabled until RESIDENT_BYTE_LIMIT is configured.");
 
+    assertHarnessProcessExecutionMode(input);
     const firstIndex = input.shardIndex ?? 0;
     const batches = [];
     for (let start = 0; start < input.processes.length; start += WORKER_REQUEST_INVOCATION_LIMIT) {
