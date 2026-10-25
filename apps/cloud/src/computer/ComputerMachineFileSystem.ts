@@ -16,18 +16,19 @@ export interface ComputerMachineFileSystemOptions {
   readonly signal: AbortSignal;
 }
 
-/** The image proves absence until the lifecycle owner records a machine command. */
+/** Use the immutable image before a generation exists and while its attestation remains pristine. */
 export function createComputerMachineFileSystem(
   options: ComputerMachineFileSystemOptions,
 ): KernelLowerFileSystemSource {
   const inventory = indexMachinePrograms(options.inventory);
-  const pristine = (path: string) => {
+  const imageIsAuthoritative = (path: string) => {
     const state = options.files.current();
-    return (
-      state.pristine &&
-      state.imageDigest === options.inventory.imageDigest &&
-      !inventory.isExcluded(path)
-    );
+    const imageMatches =
+      state.imageDigest === undefined || state.imageDigest === options.inventory.imageDigest;
+    const noGeneration = state.generation === null && imageMatches;
+    const pristineGeneration =
+      state.pristine && state.imageDigest === options.inventory.imageDigest;
+    return (noGeneration || pristineGeneration) && !inventory.isExcluded(path);
   };
   const liveParents = (request: ReturnType<typeof machineFileRequest>) =>
     liveSymlinkParents({
@@ -60,17 +61,27 @@ export function createComputerMachineFileSystem(
   return {
     lookupKnown(paths) {
       options.signal.throwIfAborted();
-      if (paths.some((path) => !pristine(path))) return undefined;
+      if (paths.some((path) => !imageIsAuthoritative(path))) return undefined;
       return inventory
         .lookup(paths)
         .map((entry, index) =>
           entry === undefined ? undefined : machineFileMetadata(paths[index]!, entry),
         );
     },
+    readdirKnown(path) {
+      options.signal.throwIfAborted();
+      if (!imageIsAuthoritative(path)) return undefined;
+      return inventory.readdir(path)?.map((entry) => machineFileMetadata(entry.path, entry));
+    },
+    readlinkKnown(path) {
+      options.signal.throwIfAborted();
+      if (!imageIsAuthoritative(path)) return undefined;
+      return inventory.readlink(path);
+    },
     async lookup(paths, signal) {
       const request = machineFileRequest(options.files, options.signal, signal);
       const parent = liveParents(request);
-      const captured = paths.map((path) => ({ path, image: pristine(path) }));
+      const captured = paths.map((path) => ({ path, image: imageIsAuthoritative(path) }));
       const imagePaths = captured.filter((entry) => entry.image).map((entry) => entry.path);
       const image = imagePaths.length === 0 ? [] : inventory.lookup(imagePaths);
       const live = captured.filter((entry) => !entry.image);
@@ -110,7 +121,7 @@ export function createComputerMachineFileSystem(
       return entries;
     },
     async readdir(path, signal) {
-      if (pristine(path) && !inventory.needsLiveDirectory(path))
+      if (imageIsAuthoritative(path) && !inventory.needsLiveDirectory(path))
         return inventory.readdir(path)?.map((entry) => machineFileMetadata(entry.path, entry));
       const entries: KernelLowerFileSystemEntry[] = [];
       const request = machineFileRequest(options.files, options.signal, signal);
@@ -148,7 +159,7 @@ export function createComputerMachineFileSystem(
       return entries;
     },
     async readlink(path, signal) {
-      if (pristine(path)) {
+      if (imageIsAuthoritative(path)) {
         const target = inventory.readlink(path);
         if (target !== undefined) return target;
         throw posixError({ code: "EINVAL", message: "Machine path is not a symbolic link" });

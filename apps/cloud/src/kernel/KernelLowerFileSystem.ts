@@ -37,6 +37,10 @@ export interface KernelLowerFileSystemSource {
   lookupKnown?(
     paths: readonly string[],
   ): readonly (KernelLowerFileSystemEntry | undefined)[] | undefined;
+  /** Returns immediate children only when the complete directory listing is known locally. */
+  readdirKnown?(path: string): readonly KernelLowerFileSystemEntry[] | undefined;
+  /** Returns a symlink target only when it is known locally. */
+  readlinkKnown?(path: string): string | undefined;
   /** Returns immediate children, including their metadata, or `undefined` when absent. */
   readdir(
     path: string,

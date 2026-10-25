@@ -22,6 +22,24 @@ const stat: MachineFileStat = {
 const signal = new AbortController().signal;
 
 describe("Computer machine filesystem sources", () => {
+  it("answers known image metadata when no machine generation exists", () => {
+    const files: MachineFilesPort = {
+      current: () => ({ generation: null, pristine: false }),
+      markExecuted: async () => {},
+      lookup: vi.fn(async () => {
+        throw new Error("An absent machine cannot answer a live lookup");
+      }),
+    };
+    const source = createComputerMachineFileSystem({ inventory, files, signal });
+
+    expect(source.lookupKnown?.(["/usr/bin/tool", "/usr/bin/missing"])).toMatchObject([
+      { path: "/usr/bin/tool", stat: { type: "file" } },
+      undefined,
+    ]);
+    expect(source.readdirKnown?.("/usr/bin")).toMatchObject([{ path: "/usr/bin/tool" }]);
+    expect(files.lookup).not.toHaveBeenCalled();
+  });
+
   it("proves pristine presence and absence without contacting the machine", async () => {
     const files: MachineFilesPort = {
       current: () => ({ generation: null, pristine: true, imageDigest: inventory.imageDigest }),
@@ -109,6 +127,9 @@ describe("Computer machine filesystem sources", () => {
     };
     const source = createComputerMachineFileSystem({ inventory, files, signal });
     await files.markExecuted(1);
+    expect(source.lookupKnown?.(["/usr/bin/tool"])).toBeUndefined();
+    expect(source.readdirKnown?.("/usr/bin")).toBeUndefined();
+    expect(source.readlinkKnown?.("/usr/bin/tool")).toBeUndefined();
     const entries = await source.lookup(["/usr/bin/tool", "/home/node/.local/bin/new-tool"]);
     expect(entries).toMatchObject([
       undefined,
