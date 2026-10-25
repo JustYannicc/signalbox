@@ -3,7 +3,13 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import { extractRelease, releaseBase, requiredVersions } from "./releases.ts";
+import {
+  directoryBytes,
+  extractRelease,
+  logDiskUsage,
+  releaseBase,
+  selectedVersions,
+} from "./releases.ts";
 
 const PLATFORM = "linux-x64";
 const root = NodeURL.fileURLToPath(new URL("../../", import.meta.url));
@@ -22,14 +28,21 @@ async function readLatestVersion() {
   return version;
 }
 
-async function extractWithoutPaths(version: string, output: string) {
-  const originalLog = console.log;
-  console.log = () => undefined;
+async function logRetainedBytes(stage: string, directory: string, version?: string) {
+  let retainedBytes: number | undefined;
   try {
-    return await extractRelease(version, output, PLATFORM);
-  } finally {
-    console.log = originalLog;
+    retainedBytes = await directoryBytes(directory);
+  } catch {
+    // Size reporting is diagnostic; it must not replace the extraction error.
   }
+  process.stdout.write(
+    `${JSON.stringify({
+      event: "canary-retained-output",
+      stage,
+      ...(version ? { version } : {}),
+      ...(retainedBytes === undefined ? { status: "unavailable" } : { bytes: retainedBytes }),
+    })}\n`,
+  );
 }
 
 async function releasePin(version: string, directory: string) {
@@ -85,28 +98,55 @@ async function main() {
   }
   const output = NodePath.resolve(outputArg);
   await NodeFSP.mkdir(output, { recursive: true });
+  logDiskUsage("before-releases", output);
 
   const latest = await readLatestVersion();
-  const versions = selection === "latest" ? [latest] : [...new Set([...requiredVersions, latest])];
+  const versions = selectedVersions(selection, latest);
   const cases: { version: string; platform: string; manifest: string }[] = [];
   const pins = [];
   for (const version of versions) {
-    const directory = await extractWithoutPaths(version, output);
-    pins.push(await releasePin(version, directory));
-    cases.push({
-      version,
-      platform: PLATFORM,
-      manifest: `graph-${version}-${PLATFORM}/manifest.json`,
-    });
+    logDiskUsage("before-release", output, version);
+    try {
+      const extracted = await extractRelease(version, output, PLATFORM, {
+        materialize: false,
+        discardDownloadedBinary: true,
+      });
+      pins.push(await releasePin(version, extracted.directory));
+      cases.push({
+        version,
+        platform: PLATFORM,
+        manifest: `graph-${version}-${PLATFORM}/manifest.json`,
+      });
+      process.stdout.write(
+        `${JSON.stringify({
+          event: "canary-release-extracted",
+          version,
+          platform: PLATFORM,
+          artifactKind: "raw-executable",
+          downloadBytes: extracted.downloadBytes,
+          sha256: extracted.binarySha256,
+          serializedGraphBytes: extracted.serializedGraphBytes,
+          moduleRegionBytes: extracted.moduleRegionBytes,
+          materializedPayloadBytes: extracted.materializedPayloadBytes,
+          retainedReleaseBytes: extracted.retainedReleaseBytes,
+        })}\n`,
+      );
+    } finally {
+      await logRetainedBytes("after-release", output, version);
+      logDiskUsage("after-release", output, version);
+    }
   }
 
   const fixture = NodePath.join(output, "fixture");
   const prepareFixture = NodeURL.fileURLToPath(new URL("./prepare-fixture.ts", import.meta.url));
+  logDiskUsage("before-fixture", output);
   const prepared = NodeChildProcess.spawnSync(
     process.execPath,
     [prepareFixture, fixture, versions.join(",")],
     { cwd: root, stdio: "inherit" },
   );
+  await logRetainedBytes("after-fixture", output);
+  logDiskUsage("after-fixture", output);
   if (prepared.error || prepared.status !== 0) {
     fail("Could not prepare the shared isolate-probe fixture.");
   }
@@ -128,6 +168,8 @@ async function main() {
     NodePath.join(output, "canary-index.json"),
     `${JSON.stringify({ schemaVersion: 1, versions, cases }, null, 2)}\n`,
   );
+  await logRetainedBytes("final", output);
+  logDiskUsage("final", output);
   process.stdout.write(
     `Prepared ${versions.length} official release cases for the isolate-probe host.\n`,
   );

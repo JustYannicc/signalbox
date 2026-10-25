@@ -7,6 +7,8 @@ import * as NodeURL from "node:url";
 import { readBunGraph, regionNames } from "./bun-graph.ts";
 import { cachedReader } from "./range-reader.ts";
 
+const READ_CHUNK_BYTES = 1024 * 1024;
+
 export function modulePath(name: string) {
   const relative = name
     .replace(/^.*?\/(?:\$bunfs|~BUN)\/root\//, "")
@@ -25,7 +27,11 @@ export function modulePath(name: string) {
   return relative;
 }
 
-export async function extract(binary: string, output: string) {
+export async function extract(
+  binary: string,
+  output: string,
+  { materialize = true }: { materialize?: boolean } = {},
+) {
   const file = await NodeFSP.open(binary, "r");
   let stage: string | undefined;
   try {
@@ -44,19 +50,21 @@ export async function extract(binary: string, output: string) {
     for await (const chunk of NodeFS.createReadStream(binary)) binaryHash.update(chunk);
     stage = await NodeFSP.mkdtemp(`${output}.partial-`);
     await NodeFSP.mkdir(NodePath.join(stage, ".bun-data"));
-    const graphFile = await NodeFSP.open(NodePath.join(stage, ".bun-data/graph.bin"), "wx");
+    const graphFile = materialize
+      ? await NodeFSP.open(NodePath.join(stage, ".bun-data/graph.bin"), "wx")
+      : undefined;
     const graphHash = NodeCrypto.createHash("sha256");
     try {
-      for (let offset = 0; offset < graph.length; offset += 1024 * 1024) {
+      for (let offset = 0; offset < graph.length; offset += READ_CHUNK_BYTES) {
         const bytes = await reader.read(
           graph.offset + offset,
-          Math.min(1024 * 1024, graph.length - offset),
+          Math.min(READ_CHUNK_BYTES, graph.length - offset),
         );
         graphHash.update(bytes);
-        await graphFile.writeFile(bytes);
+        await graphFile?.writeFile(bytes);
       }
     } finally {
-      await graphFile.close();
+      await graphFile?.close();
     }
     const modules = [];
     const paths = new Set<string>();
@@ -64,18 +72,33 @@ export async function extract(binary: string, output: string) {
       const relative = modulePath(module.name);
       if (paths.has(relative)) throw new Error(`Colliding module path: ${module.name}`);
       paths.add(relative);
-      const artifacts: Record<string, { path: string; bytes: number; sha256: string }> = {};
+      const artifacts: Record<string, { path?: string; bytes: number; sha256: string }> = {};
       for (const kind of regionNames.slice(1)) {
         const region = module.regions[kind];
         if (!region || (kind !== "contents" && !region.length)) continue;
-        const bytes = await reader.read(graph.offset + region.offset, region.length);
         const path = kind === "contents" ? relative : `.bun-data/${module.index}.${kind}`;
-        await NodeFSP.mkdir(NodePath.dirname(NodePath.join(stage, path)), { recursive: true });
-        await NodeFSP.writeFile(NodePath.join(stage, path), bytes, { flag: "wx" });
+        let artifactFile: Awaited<ReturnType<typeof NodeFSP.open>> | undefined;
+        if (materialize) {
+          await NodeFSP.mkdir(NodePath.dirname(NodePath.join(stage, path)), { recursive: true });
+          artifactFile = await NodeFSP.open(NodePath.join(stage, path), "wx");
+        }
+        const artifactHash = NodeCrypto.createHash("sha256");
+        try {
+          for (let offset = 0; offset < region.length; offset += READ_CHUNK_BYTES) {
+            const bytes = await reader.read(
+              graph.offset + region.offset + offset,
+              Math.min(READ_CHUNK_BYTES, region.length - offset),
+            );
+            artifactHash.update(bytes);
+            await artifactFile?.writeFile(bytes);
+          }
+        } finally {
+          await artifactFile?.close();
+        }
         artifacts[kind] = {
-          path,
-          bytes: bytes.length,
-          sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+          ...(materialize ? { path } : {}),
+          bytes: region.length,
+          sha256: artifactHash.digest("hex"),
         };
       }
       modules.push({ ...module, artifacts });
@@ -84,7 +107,7 @@ export async function extract(binary: string, output: string) {
       schemaVersion: 1,
       binary: { bytes: size, sha256: binaryHash.digest("hex") },
       serializedGraph: {
-        path: ".bun-data/graph.bin",
+        ...(materialize ? { path: ".bun-data/graph.bin" } : {}),
         bytes: graph.length,
         sha256: graphHash.digest("hex"),
       },
