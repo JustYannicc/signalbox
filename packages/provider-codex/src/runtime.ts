@@ -76,6 +76,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -199,6 +200,7 @@ import {
 } from "./threadConfig.ts";
 
 export interface CodexAdapterV2Options {
+  /** Optional one-input recovery admission, scoped to the binding's logical run and input. */
   readonly nativeRecovery?: CodexNativeRecoveryBinding;
   /** Undefined uses the app MCP session; an explicit map replaces that fallback. */
   readonly mcpServers?: (
@@ -564,6 +566,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         const nativeRecovery = adapterOptions.nativeRecovery;
         let recoveryClaimed = false;
+        let recoveryCompletionReceiptPersisted = false;
+        let recoveryCompleted = false;
+        // A terminal subscriber can request the next run as soon as this event is queued.
+        let recoveryCompletionPending: Deferred.Deferred<void> | undefined;
         let nativeRecoveryFailure: ProviderAdapter.ProviderAdapterProtocolError | undefined;
         // Replies and notifications run in separate fibers but share one persistence outcome.
         const nativeRecoveryPersistence = yield* Semaphore.make(1);
@@ -4338,7 +4344,31 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   },
                 }
               : event;
-          yield* emitProviderEvent(current);
+          const recoveryAdmission =
+            nativeRecovery === undefined ? undefined : codexRecoveryAdmission(nativeRecovery);
+          const publishesRecoveryCompletion =
+            recoveryCompletionReceiptPersisted &&
+            recoveryClaimed &&
+            current.status === "completed" &&
+            recoveryAdmission !== undefined &&
+            context.input.runId === recoveryAdmission.logicalRunId &&
+            context.providerThread.nativeThreadRef?.nativeId === recoveryAdmission.nativeSessionId;
+          const completionPending = publishesRecoveryCompletion
+            ? yield* Deferred.make<void>()
+            : undefined;
+          if (completionPending !== undefined) recoveryCompletionPending = completionPending;
+          yield* emitProviderEvent(current).pipe(
+            Effect.onExit((exit) =>
+              completionPending === undefined
+                ? Effect.void
+                : Effect.gen(function* () {
+                    if (Exit.isSuccess(exit)) recoveryCompleted = true;
+                    if (recoveryCompletionPending === completionPending)
+                      recoveryCompletionPending = undefined;
+                    yield* Deferred.succeed(completionPending, undefined);
+                  }),
+            ),
+          );
           for (const turn of goalRuns.get(context.providerTurnId) ?? []) {
             goalRuns.delete(turn.providerTurnId);
           }
@@ -4743,6 +4773,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               recoveryClaimed &&
               context.input.runId === codexRecoveryAdmission(nativeRecovery).logicalRunId
             ) {
+              const recoveryTerminalStatus =
+                nativeStatus === "completed"
+                  ? "completed"
+                  : nativeStatus === "interrupted"
+                    ? "interrupted"
+                    : "failed";
               yield* observeNativeRecovery({
                 status: "completed",
                 operation: "turn/completed",
@@ -4751,13 +4787,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   nativeTurnId: payload.turn.id,
                 },
                 nativeTurnId: payload.turn.id,
-                terminalStatus:
-                  nativeStatus === "completed"
-                    ? "completed"
-                    : nativeStatus === "interrupted"
-                      ? "interrupted"
-                      : "failed",
+                terminalStatus: recoveryTerminalStatus,
               });
+              recoveryCompletionReceiptPersisted = recoveryTerminalStatus === "completed";
             }
             const status =
               nativeStatus === "completed" &&
@@ -4957,6 +4989,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>,
           admission?: CodexNativeAdmission,
+          recoveryMode?: CodexNativeRecoveryBinding["mode"]["type"],
         ) =>
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
@@ -4987,7 +5020,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const started = yield* client
               .request("turn/start", {
                 ...turnStartParams,
-                ...(admission === undefined || nativeRecovery?.mode.type === "resume-unfinished"
+                ...(admission === undefined || recoveryMode === "resume-unfinished"
                   ? {}
                   : { clientUserMessageId: admission.nativeInputId }),
               })
@@ -5453,65 +5486,113 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
               ),
             ),
-          startTurn: (turnInput) => {
-            const goalCommand =
-              nativeRecovery === undefined &&
-              turnInput.message.attachments.length === 0 &&
-              turnInput.restartContinuationOfRunId === undefined
-                ? parseCodexGoalCommand(turnInput.message.text)
-                : null;
-            if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
-            return Effect.gen(function* () {
-              yield* requireNativeRecoveryPersistence;
+          startTurn: (turnInput) =>
+            Effect.suspend(() => {
               const admission =
                 nativeRecovery === undefined ? undefined : codexRecoveryAdmission(nativeRecovery);
-              if (admission !== undefined) {
-                const nativeId = yield* getNativeThreadId(turnInput.providerThread);
-                if (
-                  recoveryClaimed ||
-                  admission.logicalRunId !== turnInput.runId ||
-                  admission.nativeSessionId !== nativeId ||
-                  admission.inputId !== turnInput.message.messageId ||
-                  (nativeRecovery?.mode.type === "resume-unfinished" &&
-                    admission.inputDurability !== "native-file")
-                ) {
-                  return yield* toProtocolError(
-                    "Native recovery admission is stale, mismatched, or already consumed.",
-                  );
-                }
-                recoveryClaimed = true;
-                yield* persistNativeRecovery(
-                  () => nativeRecovery!.beforeNativeStart(admission),
-                  "Native admission reservation could not be persisted.",
-                ).pipe(withNativeRecoveryPersistence);
-                yield* observeNativeRecovery({
-                  status: "reserved",
-                  admission,
-                  operation: "turn/start",
-                  nativeTurnId: null,
+              const sameRun = admission !== undefined && admission.logicalRunId === turnInput.runId;
+              const sameInput =
+                admission !== undefined && admission.inputId === turnInput.message.messageId;
+              const admissionIdentityMismatch = admission !== undefined && sameRun !== sameInput;
+              const ordinaryAfterRecovery = admission !== undefined && !sameRun && !sameInput;
+              const turnRecovery =
+                admission !== undefined && sameRun && sameInput ? nativeRecovery : undefined;
+              const validateAdmissionScope = () =>
+                Effect.gen(function* () {
+                  if (admissionIdentityMismatch)
+                    return yield* toProtocolError(
+                      "Native recovery admission is stale, mismatched, or already consumed.",
+                    );
+                  if (ordinaryAfterRecovery) {
+                    if (!recoveryCompleted) {
+                      const pending = recoveryCompletionPending;
+                      if (pending === undefined)
+                        return yield* toProtocolError(
+                          "Native recovery admission is stale, mismatched, or already consumed.",
+                        );
+                      yield* Deferred.await(pending);
+                    }
+                    if (!recoveryCompleted || admission === undefined)
+                      return yield* toProtocolError(
+                        "Native recovery admission is stale, mismatched, or already consumed.",
+                      );
+                    const nativeId = yield* getNativeThreadId(turnInput.providerThread);
+                    if (admission.nativeSessionId !== nativeId)
+                      return yield* toProtocolError(
+                        "Native recovery admission is stale, mismatched, or already consumed.",
+                      );
+                  }
+                });
+              const goalCommand =
+                nativeRecoveryFailure === undefined &&
+                turnRecovery === undefined &&
+                !admissionIdentityMismatch &&
+                (!ordinaryAfterRecovery ||
+                  recoveryCompleted ||
+                  recoveryCompletionPending !== undefined) &&
+                turnInput.message.attachments.length === 0 &&
+                turnInput.restartContinuationOfRunId === undefined
+                  ? parseCodexGoalCommand(turnInput.message.text)
+                  : null;
+              if (goalCommand !== null) {
+                if (!ordinaryAfterRecovery) return runGoalCommand(turnInput, goalCommand);
+                return Effect.gen(function* () {
+                  yield* requireNativeRecoveryPersistence;
+                  yield* validateAdmissionScope();
+                  return yield* runGoalCommand(turnInput, goalCommand);
                 });
               }
-              yield* startNativeTurn(
-                turnInput,
-                nativeRecovery?.mode.type !== "resume-unfinished" &&
-                  turnInput.restartContinuationOfRunId === undefined
-                  ? yield* toCodexInput(turnInput)
-                  : [],
-                admission,
+              return Effect.gen(function* () {
+                yield* requireNativeRecoveryPersistence;
+                yield* validateAdmissionScope();
+                const turnAdmission =
+                  turnRecovery === undefined || admission === undefined ? undefined : admission;
+                if (turnRecovery !== undefined && turnAdmission !== undefined) {
+                  const nativeId = yield* getNativeThreadId(turnInput.providerThread);
+                  if (
+                    recoveryClaimed ||
+                    turnAdmission.nativeSessionId !== nativeId ||
+                    (turnRecovery.mode.type === "resume-unfinished" &&
+                      turnAdmission.inputDurability !== "native-file")
+                  ) {
+                    return yield* toProtocolError(
+                      "Native recovery admission is stale, mismatched, or already consumed.",
+                    );
+                  }
+                  recoveryClaimed = true;
+                  yield* persistNativeRecovery(
+                    () => turnRecovery.beforeNativeStart(turnAdmission),
+                    "Native admission reservation could not be persisted.",
+                  ).pipe(withNativeRecoveryPersistence);
+                  yield* observeNativeRecovery({
+                    status: "reserved",
+                    admission: turnAdmission,
+                    operation: "turn/start",
+                    nativeTurnId: null,
+                  });
+                }
+                yield* startNativeTurn(
+                  turnInput,
+                  turnRecovery?.mode.type !== "resume-unfinished" &&
+                    turnInput.restartContinuationOfRunId === undefined
+                    ? yield* toCodexInput(turnInput)
+                    : [],
+                  turnAdmission,
+                  turnRecovery?.mode.type,
+                );
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CODEX_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
+                ),
               );
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CODEX_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
-              ),
-            );
-          },
+            }),
           steerTurn: (turnInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);

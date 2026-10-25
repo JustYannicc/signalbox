@@ -1,6 +1,7 @@
 import {
   makeCodexAdapterV2,
   prepareCodexNativeAdmission,
+  type CodexAdapterV2Options,
   type CodexNativeReceipt,
   type CodexNativeRecoveryBinding,
 } from "@signalbox/provider-codex/runtime";
@@ -34,6 +35,7 @@ const isGoalContinuation = Schema.is(
     turn: Schema.Struct({ id: Schema.Literal("goal-next") }),
   }),
 );
+const isTurnNotification = Schema.is(Schema.Struct({ turn: Schema.Struct({ id: Schema.String }) }));
 const decode = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -47,6 +49,8 @@ const decode = Schema.decodeUnknownSync(
 export function fixture(
   options: {
     fresh?: boolean;
+    nativeRecoveryBinding?: CodexNativeRecoveryBinding;
+    mcpServers?: CodexAdapterV2Options["mcpServers"];
     denyReservation?: boolean;
     loseReply?: boolean;
     delayedStart?: boolean;
@@ -63,6 +67,8 @@ export function fixture(
     const inbound = yield* Queue.unbounded<Uint8Array>();
     const continued = yield* Deferred.make<void>();
     const completionHandled = yield* Deferred.make<Exit.Exit<void, unknown>>();
+    const startedByTurn = new Map<string, Deferred.Deferred<Exit.Exit<void, unknown>>>();
+    const completedByTurn = new Map<string, Deferred.Deferred<Exit.Exit<void, unknown>>>();
     const goalReleased = yield* Deferred.make<Exit.Exit<void, unknown>>();
     const goalContinued = yield* Deferred.make<Exit.Exit<void, unknown>>();
     const goalPauseRequested = yield* Deferred.make<void>();
@@ -86,6 +92,8 @@ export function fixture(
       items: [],
       startedAt: options.delayedStart ? null : 1,
     };
+    let nativeTurnStarts = 0;
+    const nativeTurnIds: string[] = [];
     const client = yield* CodexClient.make(
       Stdio.make({
         args: Effect.succeed([]),
@@ -104,7 +112,14 @@ export function fixture(
                   id: request.id,
                   result: { thread: { id: "native-session", updatedAt: 1 } },
                 });
+              } else if (request.method === "thread/goal/get") {
+                yield* send({ id: request.id, result: { goal: null } });
               } else if (request.method === "turn/start") {
+                const startedNativeTurn =
+                  nativeTurnStarts++ === 0
+                    ? nativeTurn
+                    : { ...nativeTurn, id: `post-recovery-native-turn-${nativeTurnStarts}` };
+                nativeTurnIds.push(startedNativeTurn.id);
                 if (options.earlyGoalCompletion || options.delayGoalPause)
                   yield* send({
                     method: "thread/goal/updated",
@@ -124,7 +139,10 @@ export function fixture(
                 if (options.earlyStart || options.earlyGoalCompletion) {
                   yield* send({
                     method: "turn/started",
-                    params: { threadId: "native-session", turn: { ...nativeTurn, startedAt: 1 } },
+                    params: {
+                      threadId: "native-session",
+                      turn: { ...startedNativeTurn, startedAt: 1 },
+                    },
                   });
                   yield* Deferred.await(continued);
                 }
@@ -133,7 +151,7 @@ export function fixture(
                     method: "turn/completed",
                     params: {
                       threadId: "native-session",
-                      turn: { ...nativeTurn, status: "completed", completedAt: 2 },
+                      turn: { ...startedNativeTurn, status: "completed", completedAt: 2 },
                     },
                   });
                   yield* Deferred.await(completionHandled);
@@ -141,7 +159,7 @@ export function fixture(
                 const reply = send(
                   options.loseReply
                     ? { id: request.id, error: { code: -1, message: "reply lost after dispatch" } }
-                    : { id: request.id, result: { turn: nativeTurn } },
+                    : { id: request.id, result: { turn: startedNativeTurn } },
                 );
                 if (options.delayAcceptanceReply)
                   yield* Deferred.await(acceptanceReply).pipe(
@@ -207,22 +225,25 @@ export function fixture(
             },
           },
         };
+    const receiptBinding: CodexNativeRecoveryBinding = {
+      mode,
+      beforeNativeStart: () =>
+        Effect.suspend(() => {
+          order.push("reserve");
+          return options.denyReservation ? Effect.fail(reservationFailure) : Effect.void;
+        }),
+      observe: (receipt) =>
+        Effect.gen(function* () {
+          receiptAttempts.push(receipt);
+          if (receipt.status === options.rejectReceipt) return yield* Effect.fail(receiptFailure);
+          receipts.push(receipt);
+          if (receipt.status === "continued") yield* Deferred.succeed(continued, undefined);
+        }),
+    };
+    const nativeRecovery = options.nativeRecoveryBinding ?? receiptBinding;
     const adapter = yield* makeCodexAdapterV2({
-      nativeRecovery: {
-        mode,
-        beforeNativeStart: () =>
-          Effect.suspend(() => {
-            order.push("reserve");
-            return options.denyReservation ? Effect.fail(reservationFailure) : Effect.void;
-          }),
-        observe: (receipt) =>
-          Effect.gen(function* () {
-            receiptAttempts.push(receipt);
-            if (receipt.status === options.rejectReceipt) return yield* Effect.fail(receiptFailure);
-            receipts.push(receipt);
-            if (receipt.status === "continued") yield* Deferred.succeed(continued, undefined);
-          }),
-      },
+      nativeRecovery,
+      ...(options.mcpServers === undefined ? {} : { mcpServers: options.mcpServers }),
       defaultCwd: "/workspace",
       instanceId: turn.modelSelection.instanceId,
       settings: yield* decodeSettings({}),
@@ -244,8 +265,19 @@ export function fixture(
               client.handleServerNotification(method, (payload) =>
                 handler(payload).pipe(
                   Effect.onExit((exit) => {
+                    const nativeTurnId = isTurnNotification(payload) ? payload.turn.id : undefined;
                     if (method === "turn/completed")
-                      return Deferred.succeed(completionHandled, exit);
+                      return Deferred.succeed(
+                        (nativeTurnId === undefined
+                          ? undefined
+                          : completedByTurn.get(nativeTurnId)) ?? completionHandled,
+                        exit,
+                      );
+                    if (method === "turn/started") {
+                      const started =
+                        nativeTurnId === undefined ? undefined : startedByTurn.get(nativeTurnId);
+                      if (started !== undefined) return Deferred.succeed(started, exit);
+                    }
                     if (method === "thread/goal/cleared")
                       return Deferred.succeed(goalReleased, exit);
                     if (method === "turn/started" && isGoalContinuation(payload))
@@ -279,6 +311,40 @@ export function fixture(
     return {
       runtime,
       turn,
+      nativeRecovery,
+      receiptBinding,
+      nativeTurnIds,
+      observeStarted: (nativeTurnId: string) =>
+        Effect.gen(function* () {
+          const handled = yield* Deferred.make<Exit.Exit<void, unknown>>();
+          startedByTurn.set(nativeTurnId, handled);
+          yield* send({
+            method: "turn/started",
+            params: {
+              threadId: "native-session",
+              turn: { ...nativeTurn, id: nativeTurnId, startedAt: 3 },
+            },
+          });
+          return yield* Deferred.await(handled);
+        }),
+      observeCompleted: (nativeTurnId: string) =>
+        Effect.gen(function* () {
+          const handled = yield* Deferred.make<Exit.Exit<void, unknown>>();
+          completedByTurn.set(nativeTurnId, handled);
+          yield* send({
+            method: "turn/completed",
+            params: {
+              threadId: "native-session",
+              turn: {
+                ...nativeTurn,
+                id: nativeTurnId,
+                status: "completed",
+                completedAt: 4,
+              },
+            },
+          });
+          return yield* Deferred.await(handled);
+        }),
       requests,
       receipts,
       receiptAttempts,
