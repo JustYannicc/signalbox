@@ -1,7 +1,8 @@
 import type { MaybePosixStorage, PosixMetadata } from "./PosixStorage.ts";
 import type { KernelLowerFileSystemKnownLookup } from "./KernelLowerFileSystem.ts";
-import type { CreateOptions, Inode, MaybePromise, Storage, Times } from "./storage.ts";
+import type { CreateOptions, Inode, MaybePromise, Stat, Storage, Times } from "./storage.ts";
 import { kernelError } from "./filesystem/KernelFileSystemErrors.ts";
+import { currentKernelIoMode } from "./process/KernelExecution.ts";
 
 export interface KernelLowerFileSystemUpperNamespace {
   hasLowerSource(): boolean;
@@ -10,7 +11,28 @@ export interface KernelLowerFileSystemUpperNamespace {
   copyUpDirectory(inode: Inode): MaybePromise<Inode>;
   lookupLower(path: string): MaybePromise<Inode>;
   lookupLowerKnown(path: string): KernelLowerFileSystemKnownLookup;
+  lowerStat(inode: Inode): MaybePromise<Stat>;
   lowerMetadata(inode: Inode): MaybePromise<PosixMetadata>;
+  upperFileForLowerInode(inode: Inode): Inode | undefined;
+  copyUpFile(inode: Inode, copyData: boolean): Promise<Inode>;
+  copyUpFileSync(inode: Inode): Inode;
+  renameLowerFile(
+    inode: Inode,
+    fromParent: Inode,
+    fromName: string,
+    toParent: Inode,
+    toName: string,
+  ): Promise<void>;
+  renameUpperFileWithWhiteout(
+    fromParent: Inode,
+    fromName: string,
+    toParent: Inode,
+    toName: string,
+    lowerPath: string,
+  ): void;
+  unlinkUpperFileWithWhiteout(parent: Inode, name: string, lowerPath: string): void;
+  isLowerPathHidden(path: string): boolean;
+  isStagingPath(path: string): boolean;
   rememberUpper(path: string, inode: Inode): void;
   forgetUpperPath(path: string): void;
   moveUpperPaths(fromPath: string, toPath: string): void;
@@ -35,28 +57,25 @@ export class KernelLowerFileSystemUpperLayer {
   }
 
   write(inode: Inode, offset: bigint, source: Uint8Array): MaybePromise<number> {
-    this.#assertUpper(inode);
-    return this.#storage.write(inode, offset, source);
+    return this.#storage.write(this.#upperFile(inode), offset, source);
   }
 
   append(inode: Inode, source: Uint8Array): MaybePromise<{ offset: bigint; bytesWritten: number }> {
-    this.#assertUpper(inode);
-    return this.#storage.append(inode, source);
+    return this.#storage.append(this.#upperFile(inode), source);
   }
 
   truncate(inode: Inode, size: bigint): MaybePromise<void> {
-    this.#assertUpper(inode);
-    return this.#storage.truncate(inode, size);
+    return this.#storage.truncate(this.#upperFile(inode), size);
   }
 
   setTimes(inode: Inode, times: Times): MaybePromise<void> {
-    this.#assertUpper(inode);
-    return this.#storage.setTimes(inode, times);
+    return this.#storage.setTimes(this.#upperFile(inode), times);
   }
 
   sync(inode: Inode, dataOnly: boolean): MaybePromise<void> {
-    if (this.#namespace.isLowerInode(inode)) return;
-    return this.#storage.sync(inode, dataOnly);
+    const upper = this.#namespace.upperFileForLowerInode(inode);
+    if (this.#namespace.isLowerInode(inode) && upper === undefined) return;
+    return this.#storage.sync(upper ?? inode, dataOnly);
   }
 
   create(parent: Inode, name: string, options: CreateOptions): MaybePromise<Inode> {
@@ -82,7 +101,11 @@ export class KernelLowerFileSystemUpperLayer {
     const path = childPath(parentPath, name);
     try {
       this.#storage.lookup(parent, name);
-      this.#storage.unlink(parent, name, options);
+      const lower = options.directory
+        ? { kind: "missing" }
+        : this.#namespace.lookupLowerKnown(path);
+      if (lower.kind === "entry") this.#namespace.unlinkUpperFileWithWhiteout(parent, name, path);
+      else this.#storage.unlink(parent, name, options);
       this.#namespace.forgetUpperPath(path);
       return;
     } catch (error) {
@@ -107,23 +130,69 @@ export class KernelLowerFileSystemUpperLayer {
           throw kernelError("ENOTDIR");
         const fromPath = childPath(fromParentPath, fromName);
         const toPath = childPath(toParentPath, toName);
+        if (fromPath === toPath) return;
         try {
           this.#storage.lookup(upperFromParent, fromName);
+          return mapMaybe(lookupLowerOptional(this.#namespace, fromPath), (lowerSource) => {
+            if (lowerSource === undefined) {
+              this.#storage.rename(upperFromParent, fromName, upperToParent, toName);
+              this.#namespace.forgetUpperPath(toPath);
+              this.#namespace.moveUpperPaths(fromPath, toPath);
+              return;
+            }
+            return mapMaybe(this.#namespace.lowerStat(lowerSource), (lowerStat) => {
+              if (lowerStat.type !== "file") {
+                this.#storage.rename(upperFromParent, fromName, upperToParent, toName);
+              } else {
+                return mapMaybe(
+                  this.#validateLowerDestination(lowerStat, upperToParent, toName, toPath),
+                  () =>
+                    this.#namespace.renameUpperFileWithWhiteout(
+                      upperFromParent,
+                      fromName,
+                      upperToParent,
+                      toName,
+                      fromPath,
+                    ),
+                );
+              }
+              this.#namespace.forgetUpperPath(toPath);
+              this.#namespace.moveUpperPaths(fromPath, toPath);
+            });
+          });
         } catch (error) {
           if (!isCode(error, "ENOENT")) throw error;
-          return lowerMutationError(this.#namespace.lookupLower(fromPath));
         }
-        this.#storage.rename(upperFromParent, fromName, upperToParent, toName);
-        if (fromPath !== toPath) {
-          this.#namespace.forgetUpperPath(toPath);
-          this.#namespace.moveUpperPaths(fromPath, toPath);
-        }
+        return mapMaybe(this.#namespace.lookupLower(fromPath), (lowerSource) =>
+          mapMaybe(this.#namespace.lowerStat(lowerSource), (lowerStat) => {
+            if (lowerStat.type !== "file") return lowerMutationError(lowerSource);
+            if (currentKernelIoMode() === "sync")
+              throw kernelError("ENOTSUP", "Lower file rename requires asynchronous execution");
+            return mapMaybe(
+              this.#validateLowerDestination(lowerStat, upperToParent, toName, toPath),
+              () =>
+                this.#namespace.renameLowerFile(
+                  lowerSource,
+                  upperFromParent,
+                  fromName,
+                  upperToParent,
+                  toName,
+                ),
+            );
+          }),
+        );
       }),
     );
   }
 
   #posixGet(inode: Inode): MaybePromise<PosixMetadata> {
-    if (this.#namespace.isLowerInode(inode)) return this.#namespace.lowerMetadata(inode);
+    if (this.#namespace.isLowerInode(inode)) {
+      const upper = this.#namespace.upperFileForLowerInode(inode);
+      if (upper === undefined) return this.#namespace.lowerMetadata(inode);
+      const posix = upperPosix(this.#storage);
+      if (posix === undefined) throw kernelError("ENOTSUP");
+      return posix.get(upper);
+    }
     const posix = upperPosix(this.#storage);
     if (posix === undefined) throw kernelError("ENOTSUP");
     return posix.get(inode);
@@ -153,17 +222,15 @@ export class KernelLowerFileSystemUpperLayer {
   }
 
   #posixChmod(inode: Inode, mode: number): MaybePromise<void> {
-    this.#assertUpper(inode);
     const posix = upperPosix(this.#storage);
     if (posix === undefined) throw kernelError("ENOTSUP");
-    return posix.chmod(inode, mode);
+    return posix.chmod(this.#upperFile(inode), mode);
   }
 
   #posixChown(inode: Inode, owner: Pick<PosixMetadata, "uid" | "gid">): MaybePromise<void> {
-    this.#assertUpper(inode);
     const posix = upperPosix(this.#storage);
     if (posix === undefined) throw kernelError("ENOTSUP");
-    return posix.chown(inode, owner);
+    return posix.chown(this.#upperFile(inode), owner);
   }
 
   #createUpper(
@@ -238,6 +305,36 @@ export class KernelLowerFileSystemUpperLayer {
   #assertUpper(inode: Inode): void {
     if (this.#namespace.isLowerInode(inode)) throw kernelError("EROFS");
   }
+
+  #upperFile(inode: Inode): Inode {
+    if (!this.#namespace.isLowerInode(inode)) return inode;
+    const upper = this.#namespace.upperFileForLowerInode(inode);
+    if (upper === undefined) throw kernelError("EROFS");
+    return upper;
+  }
+
+  #validateLowerDestination(
+    sourceStat: Stat,
+    upperParent: Inode,
+    name: string,
+    path: string,
+  ): MaybePromise<void> {
+    try {
+      this.#storage.lookup(upperParent, name);
+      return;
+    } catch (error) {
+      if (!isCode(error, "ENOENT")) throw error;
+    }
+    return mapMaybe(lookupLowerOptional(this.#namespace, path), (destination) => {
+      if (destination === undefined) return;
+      return mapMaybe(this.#namespace.lowerStat(destination), (destinationStat) => {
+        if (sourceStat.type === "file" && destinationStat.type === "directory")
+          throw kernelError("EISDIR");
+        if (sourceStat.type === "directory" && destinationStat.type !== "directory")
+          throw kernelError("ENOTDIR");
+      });
+    });
+  }
 }
 
 function upperPosix(storage: Storage): MaybePosixStorage["posix"] | undefined {
@@ -284,6 +381,27 @@ function lowerMutationError(lower: MaybePromise<Inode>): MaybePromise<void> {
 
 function isPromiseLike<T>(value: MaybePromise<T>): value is Promise<T> {
   return typeof value === "object" && value !== null && "then" in value;
+}
+
+function lookupLowerOptional(
+  namespace: KernelLowerFileSystemUpperNamespace,
+  path: string,
+): MaybePromise<Inode | undefined> {
+  try {
+    const lower = namespace.lookupLower(path);
+    return isPromiseLike(lower)
+      ? lower.then(
+          (inode) => inode,
+          (error: unknown) => {
+            if (isCode(error, "ENOENT")) return undefined;
+            throw error;
+          },
+        )
+      : lower;
+  } catch (error) {
+    if (isCode(error, "ENOENT")) return undefined;
+    throw error;
+  }
 }
 
 function mapMaybe<A, B>(value: MaybePromise<A>, f: (value: A) => MaybePromise<B>): MaybePromise<B> {

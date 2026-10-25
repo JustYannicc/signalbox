@@ -7,7 +7,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import { codedError } from "./errors.ts";
-import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
+import { asyncLeaf, fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
 import { parsePermissionMode } from "./permission-ops.ts";
 import { encodedPath, nodeDirent, type NodeDirentLike } from "./metadata.ts";
 import { pathString, type PathLike } from "./path.ts";
@@ -145,13 +145,16 @@ export function* renameOperation(
   kernelFs: KernelFileSystem,
   oldPath: PathLike,
   newPath: PathLike,
+  asyncRename = false,
 ): FsOperation<void> {
   const source = pathString(oldPath);
   const destination = pathString(newPath);
   yield* fsOperation(
     "rename",
     source,
-    leaf(() => kernelFs.rename(source, destination)),
+    asyncRename
+      ? asyncLeaf(() => kernelFs.renameAsync(source, destination))
+      : leaf(() => kernelFs.rename(source, destination)),
     destination,
   );
 }

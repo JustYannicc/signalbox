@@ -11,7 +11,6 @@ import { currentKernelSignal } from "./process/KernelExecution.ts";
 import type { Inode, MaybePromise, Stat, Storage } from "./storage.ts";
 import { kernelError } from "./filesystem/KernelFileSystemErrors.ts";
 
-/** Owns overlay directory identity and copies lower-only parents into writable storage. */
 export class KernelLowerFileSystemDirectoryLayer {
   readonly #upper: Storage;
   readonly #source: () => KernelLowerFileSystemSourceIndex | undefined;

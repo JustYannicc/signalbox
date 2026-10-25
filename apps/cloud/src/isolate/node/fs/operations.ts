@@ -9,6 +9,10 @@ export function* leaf<T>(operation: () => T, cleanup = false): FsOperation<T> {
   return (yield { call: operation, cleanup }) as T;
 }
 
+export function* asyncLeaf<T>(operation: () => Promise<T>, cleanup = false): FsOperation<T> {
+  return (yield { call: operation, cleanup }) as T;
+}
+
 export function runSync<T>(operation: FsOperation<T>): T {
   let next = operation.next();
   while (!next.done) {
@@ -35,7 +39,7 @@ export async function runAsync<T>(
     try {
       const step = next.value;
       if (!step.cleanup) signal?.throwIfAborted();
-      value = runLeaf && !step.cleanup ? await runLeaf(step.call, signal) : step.call();
+      value = runLeaf && !step.cleanup ? await runLeaf(step.call, signal) : await step.call();
     } catch (error) {
       next = operation.throw(error);
       continue;

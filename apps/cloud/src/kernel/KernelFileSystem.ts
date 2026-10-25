@@ -358,6 +358,10 @@ export class KernelFileSystem {
     }
   }
 
+  openAsync(path: string, flags: number, mode?: number, signal?: AbortSignal): Promise<number> {
+    return this.#async(signal, () => this.#open.openAsync(path, flags, mode));
+  }
+
   createInode(
     mount: WasiMountedStorage,
     parent: Inode,
@@ -564,6 +568,10 @@ export class KernelFileSystem {
       this.#assertOpen();
       this.#paths.rename(sourcePath, targetPath);
     });
+  }
+
+  renameAsync(sourcePath: string, targetPath: string, signal?: AbortSignal): Promise<void> {
+    return this.#async(signal, () => this.#paths.renameAsync(sourcePath, targetPath));
   }
 
   unlink(path: string): void {
