@@ -20,6 +20,7 @@ export function selectedVersions(selection: CanarySelection, latest: string) {
 export type ExtractReleaseOptions = {
   materialize?: boolean;
   discardDownloadedBinary?: boolean;
+  measureRetainedBytes?: (directory: string) => Promise<number>;
 };
 
 export type ExtractReleaseResult = {
@@ -29,7 +30,7 @@ export type ExtractReleaseResult = {
   serializedGraphBytes: number;
   moduleRegionBytes: number;
   materializedPayloadBytes: number;
-  retainedReleaseBytes: number;
+  retainedReleaseBytes: number | null;
 };
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -230,6 +231,19 @@ export async function extractRelease(
         total + Object.values(module.artifacts).reduce((regions, item) => regions + item.bytes, 0),
       0,
     );
+    let retainedReleaseBytes: number | null = null;
+    try {
+      retainedReleaseBytes = await (options.measureRetainedBytes ?? directoryBytes)(output);
+    } catch (error) {
+      process.stdout.write(
+        `${JSON.stringify({
+          event: "canary-retained-size",
+          version,
+          status: "unavailable",
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        })}\n`,
+      );
+    }
     return {
       directory: output,
       downloadBytes: binaryBytes,
@@ -238,7 +252,7 @@ export async function extractRelease(
       moduleRegionBytes,
       materializedPayloadBytes:
         options.materialize === false ? 0 : result.serializedGraph.bytes + moduleRegionBytes,
-      retainedReleaseBytes: await directoryBytes(output),
+      retainedReleaseBytes,
     };
   } catch (error) {
     const ownedPaths = [

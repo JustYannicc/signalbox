@@ -134,6 +134,52 @@ it("cleans only its downloaded input and partial extraction after a failed relea
   }
 });
 
+it("keeps a completed release when retained-size measurement fails", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "bun-release-test-"));
+  const input = fixture();
+  const manifest = {
+    version: "1.2.3",
+    platforms: {
+      "linux-x64": {
+        binary: "claude",
+        size: input.bytes.length,
+        checksum: NodeCrypto.createHash("sha256").update(input.bytes).digest("hex"),
+      },
+    },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (resource: string | URL | Request) =>
+      String(resource).endsWith("manifest.json")
+        ? Response.json(manifest)
+        : new Response(input.bytes),
+    ),
+  );
+  try {
+    const output = await extractRelease("1.2.3", directory, "linux-x64", {
+      materialize: false,
+      discardDownloadedBinary: true,
+      measureRetainedBytes: async () => {
+        throw new Error("retained-size read failed");
+      },
+    });
+
+    expect(output.retainedReleaseBytes).toBeNull();
+    expect(
+      JSON.parse(await NodeFSP.readFile(NodePath.join(output.directory, "manifest.json"), "utf8")),
+    ).toMatchObject({ binary: { sha256: manifest.platforms["linux-x64"].checksum } });
+    expect(
+      JSON.parse(
+        await NodeFSP.readFile(NodePath.join(output.directory, ".bun-data/release.json"), "utf8"),
+      ),
+    ).toMatchObject({ manifest });
+    expect(await NodeFSP.readdir(directory)).toEqual(["graph-1.2.3-linux-x64"]);
+  } finally {
+    vi.unstubAllGlobals();
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("removes an interrupted binary download and preserves its stream error", async () => {
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "bun-release-test-"));
   const input = fixture();
