@@ -2,13 +2,11 @@ import { describe, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { RunId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import type { HarnessCheckpoint } from "../Harness.ts";
 import type { CodexHarnessProcess, CodexHarnessProcessOptions } from "../CodexHarnessProcess.ts";
 import { hostBindingFixture } from "./tests/hostBindingFixture.ts";
@@ -18,7 +16,6 @@ const launch = vi.hoisted(() =>
 );
 vi.mock("../CodexHarnessProcess.ts", () => ({ startCodexHarnessProcess: launch }));
 const layer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer);
-const encodeFrame = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeServers = Schema.decodeUnknownSync(
   Schema.Struct({
     config: Schema.Struct({
@@ -233,53 +230,5 @@ describe("Codex binding through the canonical host and facet", () => {
         ),
       ).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layer)),
-  );
-
-  it.effect(
-    "retires native MCP routes at terminal and refuses another map on the same incarnation",
-    () =>
-      Effect.gen(function* () {
-        const { f, instance, peer } = yield* hostBindingFixture();
-        launch.mockResolvedValue(peer.process);
-        const session = yield* instance.open();
-        const access = f.access("bound");
-        const terminal = yield* session.events.pipe(
-          Stream.filter((item) => item.kind === "provider" && item.event.type === "turn.terminal"),
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.forkScoped,
-        );
-        yield* session.turn({ turn: instance.adapter.turn, access });
-        const output = yield* Effect.promise(() => peer.output);
-        output.enqueue(
-          new TextEncoder().encode(
-            encodeFrame({
-              method: "turn/completed",
-              params: {
-                threadId: "preinitialized-native-thread",
-                turn: { id: "preinitialized-turn", status: "completed", items: [], error: null },
-              },
-            }) + "\n",
-          ),
-        );
-        yield* Fiber.join(terminal);
-        const url = decodeServers(peer.requests[0]?.params).config.mcp_servers.executor.url;
-        expect(
-          Exit.isFailure(
-            yield* Effect.tryPromise(() => f.mcp.fetch(new Request(url))).pipe(Effect.exit),
-          ),
-        ).toBe(true);
-        expect(
-          Exit.isFailure(
-            yield* session
-              .turn({
-                turn: { ...instance.adapter.turn, runId: RunId.make("next-run"), runOrdinal: 2 },
-                access,
-              })
-              .pipe(Effect.exit),
-          ),
-        ).toBe(true);
-        expect(peer.sent).toEqual(["thread/start", "turn/start"]);
-      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

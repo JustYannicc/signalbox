@@ -191,11 +191,10 @@ export function makeCodexNativeHostBinding(
     configureMcp: (configuration, signal, load) =>
       Effect.suspend(() => {
         const previous = current;
+        // Retiring terminal routes revokes the old map without aborting the still-live access.
         if (
           previous !== undefined &&
-          (previous.phase !== "completed" ||
-            !previous.signal.aborted ||
-            configuration.epoch <= previous.configuration.epoch)
+          (previous.phase !== "completed" || configuration.epoch <= previous.configuration.epoch)
         )
           return Effect.fail(unavailableInstallation());
 

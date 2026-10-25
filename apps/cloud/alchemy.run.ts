@@ -26,7 +26,9 @@ import { executorSigningJwk } from "./infra/executorSigningKey.ts";
 import { nativeTraceExport } from "./infra/nativeTraceExport.ts";
 import {
   AUTOMATION_BINDINGS as AUTOMATION,
+  CLOUD_COMPATIBILITY_FLAGS,
   COMPATIBILITY_DATE,
+  MODEL_GATEWAY_COMPATIBILITY_FLAGS,
   type CloudStage,
   cloudStage,
   DURABLE_OBJECT_BINDINGS as DO,
@@ -39,6 +41,8 @@ import type {
   DriveObject,
   ExecutorTokenBindingObject,
   HarnessFilesStoreObject,
+  HarnessProcessExecutionShardObject,
+  HarnessProcessPlacementStoreObject,
   HarnessRunStoreObject,
   HarnessThreadSupervisorObject,
   ModelGrants,
@@ -54,7 +58,13 @@ const here = (path: string) => `${import.meta.dirname}/${path}`;
 const compatibility = {
   date: COMPATIBILITY_DATE,
   // Alchemy otherwise adds `new_module_registry`; keep what wrangler ran.
-  flags: ["nodejs_compat", "legacy_module_registry"],
+  flags: [...MODEL_GATEWAY_COMPATIBILITY_FLAGS],
+};
+
+const cloudCompatibility = {
+  date: COMPATIBILITY_DATE,
+  // Only the Cloud Worker redispatches through ctx.exports.
+  flags: [...CLOUD_COMPATIBILITY_FLAGS],
 };
 
 // Each request's wide event (`evlog.config.ts`) is its log line, so Cloudflare's own would repeat it.
@@ -266,7 +276,7 @@ function deploy(
     const cloud = yield* Cloudflare.Worker("Cloud", {
       name: target.cloudWorker,
       main: here("src/worker.ts"),
-      compatibility,
+      compatibility: cloudCompatibility,
       // One origin: sign-in callbacks, cookies and saved connections all key on it.
       workersDev: false,
       domain: { name: target.cloudDomain, zoneId: SIGNALBOX_ZONE_ID },
@@ -300,6 +310,12 @@ function deploy(
         ),
         HARNESS_THREAD_SUPERVISOR: Cloudflare.DurableObject<HarnessThreadSupervisorObject>(
           DO.HARNESS_THREAD_SUPERVISOR,
+        ),
+        PROCESS_EXECUTION_SHARDS: Cloudflare.DurableObject<HarnessProcessExecutionShardObject>(
+          DO.PROCESS_EXECUTION_SHARDS,
+        ),
+        PLACEMENT_STORES: Cloudflare.DurableObject<HarnessProcessPlacementStoreObject>(
+          DO.PLACEMENT_STORES,
         ),
         DRIVES: Cloudflare.DurableObject<DriveObject>(DO.DRIVES),
         PREVIEW_LINKS: Cloudflare.DurableObject<PreviewLinkRegistry>(DO.PREVIEW_LINKS),
