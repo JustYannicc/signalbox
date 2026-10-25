@@ -13,10 +13,14 @@ export const hostBindingFixture = (beforeReply?: (method: string) => Promise<voi
     yield* Effect.addFinalizer(() => Effect.promise(() => context.close()));
     const release = yield* Effect.promise(() => f.codexRelease());
     const options = yield* adapterOptions();
+    let mcp:
+      | { readonly origin: string; readonly fetch: (request: Request) => Promise<Response> }
+      | undefined;
     const instance = yield* f.make({
       release,
-      buildRuntime: ({ harness }) =>
+      buildRuntime: ({ harness, mcp: route }) =>
         Effect.sync(() => {
+          mcp = route;
           return makeCodexNativeHostBinding({
             process: { ...context.options, computer: harness.computer },
             adapter: options,
@@ -32,5 +36,13 @@ export const hostBindingFixture = (beforeReply?: (method: string) => Promise<voi
     (yield* Effect.promise(() => peer.output)).enqueue(new TextEncoder().encode(readyLine));
     yield* instance.host.seed("assets");
     yield* instance.host.seed("programs");
-    return { f, instance, peer };
+    return {
+      f,
+      instance,
+      peer,
+      get mcp() {
+        if (mcp === undefined) throw new Error("Codex host route is not initialized");
+        return mcp;
+      },
+    };
   });
