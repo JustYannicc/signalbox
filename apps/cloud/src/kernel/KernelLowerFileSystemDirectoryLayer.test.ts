@@ -4,10 +4,7 @@ import {
   type KernelLowerFileSystemEntry,
   type KernelLowerFileSystemSource,
 } from "./KernelLowerFileSystem.ts";
-import { KernelFileSystem } from "./KernelFileSystem.ts";
-import { KernelLowerFileSystemStorage } from "./KernelLowerFileSystemStorage.ts";
-import { parentPath } from "./KernelLowerFileSystemSourceIndex.ts";
-import { runKernelExecution } from "./process/KernelExecution.ts";
+import { KernelFileSystem, KernelOpenFlags } from "./KernelFileSystem.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
 
 const originalBytes = Uint8Array.from([0, 255, 1, 128, 10]);
@@ -38,10 +35,13 @@ describe("KernelLowerFileSystemDirectoryLayer", () => {
     const database = sqliteFixture();
     const upper = createFacetSqliteStorage(database.storage, () => 1n);
     const filesystem = new KernelFileSystem({ mounts: [{ path: "/", storage: upper }] });
+    const lowerPath = "/home/node/.bashrc";
+    const writtenPath = "/home/node/settings.bin";
+    const renamedPath = "/home/node/renamed-settings.bin";
     const entries = [
       lowerEntry("/home", "directory", 0n, { mode: 0o755, uid: 0, gid: 0 }),
       lowerEntry("/home/node", "directory", 0n, { mode: 0o750, uid: 1000, gid: 1000 }),
-      lowerEntry("/home/node/.bashrc", "file", BigInt(originalBytes.byteLength), {
+      lowerEntry(lowerPath, "file", BigInt(originalBytes.byteLength), {
         mode: 0o640,
         uid: 1000,
         gid: 1000,
@@ -49,13 +49,18 @@ describe("KernelLowerFileSystemDirectoryLayer", () => {
     ];
     const byPath = new Map(entries.map((entry) => [entry.path, entry]));
     const calls = { read: [] as string[] };
+    const originalBefore = originalBytes.slice();
     const source: KernelLowerFileSystemSource = {
       async lookup(paths) {
         return paths.map((path) => byPath.get(path));
       },
       async readdir(path) {
         if (byPath.get(path)?.stat.type !== "directory") return undefined;
-        return entries.filter((entry) => entry.path !== path && parentPath(entry.path) === path);
+        return entries.filter((entry) => {
+          const separator = entry.path.lastIndexOf("/");
+          const parent = entry.path.slice(0, separator) || "/";
+          return entry.path !== path && parent === path;
+        });
       },
       async readlink() {
         throw Object.assign(new Error("Not a symlink"), { code: "EINVAL" });
@@ -66,73 +71,89 @@ describe("KernelLowerFileSystemDirectoryLayer", () => {
       },
     };
     const lower = filesystem.installLowerFileSystem(source);
-    const signal = new AbortController().signal;
-    const mountedStorage = filesystem.resolve("/").mount.storage;
-    if (!(mountedStorage instanceof KernelLowerFileSystemStorage)) {
-      throw new Error("Expected the root filesystem to use the lower overlay");
-    }
-    const storage = mountedStorage;
+    const opened: number[] = [];
 
     try {
-      const lowerHome = await runKernelExecution(signal, () =>
-        storage.lookup(storage.root, "home"),
+      await filesystem.prepareLowerPaths(["/home", "/home/node", lowerPath]);
+      const lowerHome = filesystem.open(
+        "/home",
+        KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_DIRECTORY,
       );
-      const lowerNode = await runKernelExecution(signal, () => storage.lookup(lowerHome, "node"));
-      const lowerFile = await runKernelExecution(signal, () =>
-        storage.lookup(lowerNode, ".bashrc"),
+      opened.push(lowerHome);
+      const lowerHomeBefore = filesystem.fstat(lowerHome);
+      const lowerNode = filesystem.open(
+        "/home/node",
+        KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_DIRECTORY,
       );
-      const upperFile = await runKernelExecution(signal, () =>
-        storage.create(lowerNode, "settings.bin", { type: "file", exclusive: true }),
+      opened.push(lowerNode);
+      const lowerNodeBefore = filesystem.fstat(lowerNode);
+      const lowerFile = filesystem.open(lowerPath, KernelOpenFlags.O_RDONLY);
+      opened.push(lowerFile);
+      const lowerFileBefore = filesystem.fstat(lowerFile);
+
+      const upperFile = await filesystem.openAsync(
+        writtenPath,
+        KernelOpenFlags.O_CREAT | KernelOpenFlags.O_EXCL | KernelOpenFlags.O_WRONLY,
+        0o600,
       );
       try {
-        await runKernelExecution(signal, () => storage.write(upperFile, 0n, writtenBytes));
+        expect(filesystem.write(upperFile, writtenBytes, 0n)).toBe(writtenBytes.byteLength);
       } finally {
-        await runKernelExecution(signal, () => storage.release(upperFile));
+        filesystem.close(upperFile);
       }
-      await runKernelExecution(signal, () =>
-        storage.rename(lowerNode, "settings.bin", lowerNode, "renamed-settings.bin"),
-      );
+      await filesystem.renameAsync(writtenPath, renamedPath);
 
       expect(calls.read).toEqual([]);
-      const upperHome = await runKernelExecution(signal, () =>
-        storage.lookup(storage.root, "home"),
-      );
-      const upperNode = await runKernelExecution(signal, () => storage.lookup(lowerHome, "node"));
-      const upperSettings = await runKernelExecution(signal, () =>
-        storage.lookup(lowerNode, "renamed-settings.bin"),
-      );
-      const stillLowerFile = await runKernelExecution(signal, () =>
-        storage.lookup(lowerNode, ".bashrc"),
-      );
-      const entriesAfterCopyUp = await runKernelExecution(signal, () => storage.readdir(lowerNode));
-      const directoryEdge = await runKernelExecution(signal, () =>
-        storage.directoryEntry(lowerHome, lowerNode),
-      );
-      const lowerDirectoryStat = await runKernelExecution(signal, () => storage.stat(lowerNode));
-
-      expect(upperHome).not.toBe(lowerHome);
-      expect(upperNode).not.toBe(lowerNode);
-      expect(upperSettings).toBe(upperFile);
-      expect(stillLowerFile).toBe(lowerFile);
-      expect(entriesAfterCopyUp.map((entry) => entry.name).sort()).toEqual([
-        ".bashrc",
-        "renamed-settings.bin",
-      ]);
-      expect(directoryEdge).toEqual({ name: "node", inode: upperNode, type: "directory" });
-      expect(lowerDirectoryStat.type).toBe("directory");
+      const homeStat = await filesystem.statAsync("/home");
+      const nodeStat = await filesystem.statAsync("/home/node");
+      const lowerFileStat = await filesystem.statAsync(lowerPath);
+      const renamedStat = await filesystem.statAsync(renamedPath);
+      const entriesAfterCopyUp = await filesystem.readdirAsync("/home/node");
+      expect(homeStat.type).toBe("directory");
+      expect(homeStat.ino).not.toBe(lowerHomeBefore.ino);
+      expect(nodeStat.type).toBe("directory");
+      expect(nodeStat.ino).not.toBe(lowerNodeBefore.ino);
+      expect(renamedStat).toMatchObject({ type: "file", size: BigInt(writtenBytes.byteLength) });
+      expect(lowerFileStat).toMatchObject({
+        type: "file",
+        ino: lowerFileBefore.ino,
+        size: BigInt(originalBytes.byteLength),
+      });
+      expect(filesystem.fstat(lowerFile)).toMatchObject({
+        type: "file",
+        ino: lowerFileBefore.ino,
+        size: BigInt(originalBytes.byteLength),
+      });
+      expect(filesystem.fstat(lowerHome)).toMatchObject({
+        type: "directory",
+        ino: lowerHomeBefore.ino,
+      });
+      expect(filesystem.fstat(lowerNode)).toMatchObject({
+        type: "directory",
+        ino: lowerNodeBefore.ino,
+      });
+      expect(entriesAfterCopyUp.sort()).toEqual([".bashrc", "renamed-settings.bin"]);
       expect(filesystem.getPosixMetadata("/home/node")).toEqual({
         mode: 0o750,
         uid: 1000,
         gid: 1000,
       });
 
-      const actualBytes = new Uint8Array(originalBytes.byteLength);
-      expect(
-        await runKernelExecution(signal, () => storage.readInto(lowerFile, 0n, actualBytes)),
-      ).toBe(originalBytes.byteLength);
-      expect(actualBytes).toEqual(originalBytes);
-      expect(calls.read).toEqual(["/home/node/.bashrc"]);
+      const upperSettings = filesystem.open(renamedPath, KernelOpenFlags.O_RDONLY);
+      opened.push(upperSettings);
+      const actualWrittenBytes = new Uint8Array(writtenBytes.byteLength);
+      expect(filesystem.read(upperSettings, actualWrittenBytes, 0n)).toBe(writtenBytes.byteLength);
+      expect(actualWrittenBytes).toEqual(writtenBytes);
+
+      const actualLowerBytes = await source.read(lowerPath, 0n, originalBytes.byteLength);
+      expect(actualLowerBytes).toEqual(originalBytes);
+      expect(originalBytes).toEqual(originalBefore);
+      expect(calls.read).toEqual([lowerPath]);
     } finally {
+      for (let index = opened.length - 1; index >= 0; index--) {
+        const fd = opened[index];
+        if (fd !== undefined) filesystem.close(fd);
+      }
       lower.dispose();
       filesystem.dispose();
       database.close();
