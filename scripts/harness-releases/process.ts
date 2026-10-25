@@ -14,7 +14,7 @@ import {
   type PreparedProbeHost,
   type DeployedProbeHost,
 } from "./deployment.ts";
-import { codexBuildPin, resolveOfficialRelease } from "./releaseIdentity.ts";
+import { codexBuildPin, freezeArtifact, resolveOfficialRelease } from "./releaseIdentity.ts";
 import { captureLocalWorkerdIdentity } from "./runtimeIdentity.ts";
 import {
   PendingReleaseProof,
@@ -29,7 +29,7 @@ import { isNodeErrorCode } from "./guards.ts";
 const json = async (path: string): Promise<unknown> =>
   JSON.parse(await NodeFSP.readFile(path, "utf8"));
 
-type CommandPurpose = "build" | "scan" | "package" | "measure" | "prepare-deployment";
+type CommandPurpose = "build" | "scan" | "package" | "measure" | "prepare-deployment" | "publish";
 const protectedChildVariables = [
   "CLOUDFLARE_ACCOUNT_ID",
   "CLOUDFLARE_API_TOKEN",
@@ -220,6 +220,20 @@ export function createProcessOperations(
     busybox?: string;
     ripgrep?: string;
     deploymentCredentials?: ReleaseDeploymentCredentials;
+    claudeVariants?: {
+      readonly ledger: string;
+      readonly projectId?: string;
+      readonly baselineReleaseId: string;
+      readonly hooksReleaseId: string;
+      readonly baselineDirectory: string;
+      readonly hooksDirectory: string;
+      readonly baselinePin: string;
+      readonly trustedComputer: {
+        readonly sourceIdentity: string;
+        readonly manifestSha256: string;
+      };
+      readonly maxPreparedModuleBytes: number;
+    };
   } = {},
 ): ReleaseOperations {
   let sequence = 0;
@@ -248,6 +262,48 @@ export function createProcessOperations(
     environment?: Record<string, string>,
   ) => command(context, process.execPath, args, purpose, environment);
   return {
+    ...(options.claudeVariants
+      ? {
+          async publish(context: ReleaseContext) {
+            if (context.identity.provider !== "claude-code")
+              throw new Error("CLAUDE_VARIANTS_PROVIDER_MISMATCH");
+            const input = options.claudeVariants!;
+            const built = await freezeArtifact(NodePath.join(context.output, "claude-artifact"));
+            await node(
+              context,
+              [
+                "apps/cloud/infra/harnessReleases/artifactCli.ts",
+                "--mode",
+                "publish-claude-variants",
+                "--ledger",
+                input.ledger,
+                "--baseline-release",
+                input.baselineReleaseId,
+                "--hooks-release",
+                input.hooksReleaseId,
+                "--baseline-directory",
+                input.baselineDirectory,
+                "--directory",
+                input.hooksDirectory,
+                "--baseline-pin",
+                input.baselinePin,
+                "--computer-source-identity",
+                input.trustedComputer.sourceIdentity,
+                "--computer-manifest-sha256",
+                input.trustedComputer.manifestSha256,
+                "--max-prepared-module-bytes",
+                String(input.maxPreparedModuleBytes),
+                "--expected-cli-manifest-sha256",
+                built.sha256,
+                "--result",
+                NodePath.join(context.output, "claude-release-variants.json"),
+                ...(input.projectId ? ["--project-id", input.projectId] : []),
+              ],
+              "publish",
+            );
+          },
+        }
+      : {}),
     identity: (provider, version) =>
       resolveOfficialRelease(provider, version, (url) =>
         fetch(url, {
@@ -316,6 +372,8 @@ export function createProcessOperations(
       const artifact = NodePath.join(output, "claude-artifact");
       await node(context, [
         "scripts/harness-releases/buildClaude.ts",
+        "--variant",
+        "hooks",
         "--identity",
         NodePath.join(output, "identity.json"),
         "--extracted",

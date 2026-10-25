@@ -9,6 +9,7 @@ import {
   type RuntimeBuiltinInventory,
 } from "./runtimeBuiltinInventory.ts";
 import { scanBuiltinSource, type BuiltinSource } from "./nodeBuiltinGate/source.ts";
+import { linkPublishedSources } from "./nodeBuiltinGate/publishedGraph.ts";
 import { readPublishedBuiltinSources } from "./nodeBuiltinGate/published.ts";
 
 export { scanBuiltinSource } from "./nodeBuiltinGate/source.ts";
@@ -45,9 +46,12 @@ export async function assertPublishedBuiltinCoverage(
   directory: string,
   runtimeInventory?: RuntimeBuiltinInventory,
 ) {
-  const { sources, artifact, omission } = await readPublishedBuiltinSources(directory);
+  const { sources, artifact, omission, partitioned } = await readPublishedBuiltinSources(directory);
   return {
-    ...(await assertPackagedBuiltinCoverage(sources, runtimeInventory)),
+    ...(await assertPackagedBuiltinCoverage(
+      partitioned ? [...sources, await linkPublishedSources(sources)] : sources,
+      runtimeInventory,
+    )),
     artifact,
     ...(omission === undefined ? {} : { omission }),
   };

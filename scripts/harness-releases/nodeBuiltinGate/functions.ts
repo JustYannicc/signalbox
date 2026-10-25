@@ -28,6 +28,7 @@ export function scanBuiltinFunctionCalls(
   file: ts.SourceFile,
   bindings: ScopedBindings<BuiltinFunctionAnalysisOrigin>,
   requires: RequireBindings,
+  requireFallbacks: ReadonlySet<ts.Node>,
 ) {
   const { reference } = resolveBuiltinFunctionReferences(file, bindings, requires);
   const functionCalls: NodeBuiltinFunctionCall[] = [];
@@ -50,6 +51,7 @@ export function scanBuiltinFunctionCalls(
   };
 
   const visit = (node: ts.Node): void => {
+    if (requireFallbacks.has(node)) return;
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       let callee = reference(node.expression);
       const prototypeOperation = callee && withoutFunctionPrototypeOperation(callee);
@@ -85,7 +87,11 @@ export function scanBuiltinFunctionCalls(
           callee.specifier,
           callee.kind === "dynamic-member" ? callee.memberPath : [],
         );
-      } else if (callee?.kind === "dynamic-require") {
+      } else if (
+        callee?.kind === "dynamic-require" ||
+        (callee?.kind === "require" &&
+          (!node.arguments?.[0] || !ts.isStringLiteralLike(node.arguments[0])))
+      ) {
         addAmbiguity(node, "require", [], "dynamic-builtin-loader-call");
       }
     }

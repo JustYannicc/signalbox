@@ -108,6 +108,7 @@ export async function claudeFixture(
     cliMapBytes?: Uint8Array;
     sdkMapBytes?: Uint8Array;
     omission?: unknown;
+    workerEntries?: unknown;
     omissionIdentity?: HarnessReleaseOmissionIdentity;
     assets?: Readonly<Record<string, { bytes: Uint8Array; loader: number; encoding: number }>>;
   } = {},
@@ -164,6 +165,7 @@ export async function claudeFixture(
       embeddedEntrypointExport: "launch",
       embeddedEntrypoints: { "/embedded/worker": "worker.cjs" },
       hostEntrypoints: {},
+      ...(options.workerEntries ? { workerEntries: options.workerEntries } : {}),
       moduleMap: { path: "module-map.json", sha256: (await descriptor(cliMapBytes)).sha256 },
       modules,
       assets: {

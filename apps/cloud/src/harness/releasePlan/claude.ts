@@ -115,7 +115,32 @@ export function claudePlan(input: HarnessReleasePlanInput): ClaudeReleasePlan {
         declaredEntrypoint("cli", module, cli.modules),
       ]),
     );
+  const workerEntries = Object.fromEntries(
+    Object.entries(cli.workerEntries ?? {}).map(([id, entry]) => {
+      const module = declaredEntrypoint("cli", entry.module, cli.modules);
+      if (
+        !entry.entry.startsWith("file:///") ||
+        entry.export !== "instantiate" ||
+        new Set(entry.globals).size !== entry.globals.length ||
+        entry.globals.includes("Function") ||
+        new Set(entry.imports).size !== entry.imports.length ||
+        entry.computedGlobalAccess.count !== entry.computedGlobalAccess.sites.length ||
+        entry.functionConstructors.count !== entry.functionConstructors.sites.length ||
+        entry.sourceAnalysis.computedGlobalAccess.count !==
+          entry.sourceAnalysis.computedGlobalAccess.sites.length ||
+        entry.sourceAnalysis.functionConstructors.count !==
+          entry.sourceAnalysis.functionConstructors.sites.length ||
+        new Set(entry.inputs).size !== entry.inputs.length ||
+        entry.inputs.length === 0 ||
+        entry.preparedBytes !== preparedModules[module]!.bytes ||
+        !Object.hasOwn(cli.embeddedEntrypoints, entry.entry.slice("file://".length))
+      )
+        throw new HarnessReleasePlanError(`Invalid Claude worker entry: ${id}`);
+      return [id, { ...entry }];
+    }),
+  );
   return {
+    workerEntries,
     harness: "claude-code",
     release: release(input, cli.release.version, preparedModules),
     sourceIdentity: input.manifest.sourceIdentity,

@@ -40,7 +40,39 @@ function memberChain(
   return [...receiver, access, property];
 }
 
-/** Only immediate expressions qualify; aliases and enclosing control flow stay required. */
+function optionalBufferConstant(call: ts.CallExpression, builtinRoot: string) {
+  if (
+    builtinRoot !== "process" ||
+    call.arguments.length !== 1 ||
+    !ts.isStringLiteralLike(call.arguments[0]!) ||
+    call.arguments[0]!.text !== "buffer"
+  )
+    return undefined;
+  let lookup: ts.Expression = call;
+  while (ts.isParenthesizedExpression(lookup.parent)) lookup = lookup.parent;
+  const property = lookup.parent;
+  if (
+    !ts.isPropertyAccessExpression(property) ||
+    property.expression !== lookup ||
+    property.name.text !== "kStringMaxLength"
+  )
+    return undefined;
+  lookup = property;
+  while (ts.isParenthesizedExpression(lookup.parent)) lookup = lookup.parent;
+  const assignment = lookup.parent;
+  if (
+    !ts.isBinaryExpression(assignment) ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    assignment.right !== lookup ||
+    !ts.isPropertyAccessExpression(assignment.left) ||
+    !ts.isIdentifier(assignment.left.expression) ||
+    assignment.left.name.text !== "kStringMaxLength"
+  )
+    return undefined;
+  return { assignment, receiver: assignment.left.expression.text };
+}
+
+/** Only immediate guards qualify; aliases and deferred execution stay required. */
 export function builtinCallGuard(
   call: ts.CallExpression | ts.NewExpression,
   builtinRoot: string,
@@ -54,7 +86,7 @@ export function builtinCallGuard(
     .slice(callee[0] === builtinRoot ? 1 : 3)
     .filter((_part, index) => index % 2 === 1);
   if (JSON.stringify(memberPath) !== JSON.stringify(resolvedMemberPath)) return undefined;
-  const evidence = (node: ts.Node, kind: "feature-test" | "optional-call") => {
+  const evidence = (node: ts.Node, kind: NonNullable<NodeBuiltinFunctionCall["guard"]>["kind"]) => {
     const file = call.getSourceFile();
     const point = file.getLineAndCharacterOfPosition(node.getStart(file));
     return {
@@ -66,6 +98,41 @@ export function builtinCallGuard(
   };
   if (call.questionDotToken && memberChain(call.expression, builtinRoot, true))
     return evidence(call, "optional-call");
+
+  // The SDK preserves its own Buffer limit when this optional Node-internal lookup is absent.
+  const lookup =
+    resolvedMemberPath.length === 1 && resolvedMemberPath[0] === "binding"
+      ? optionalBufferConstant(call, builtinRoot)
+      : undefined;
+  const statement = lookup?.assignment.parent;
+  if (lookup && statement && ts.isExpressionStatement(statement) && ts.isBlock(statement.parent)) {
+    const block = statement.parent,
+      attempt = block.parent,
+      guard = attempt.parent;
+    const condition =
+      ts.isIfStatement(guard) && guard.thenStatement === attempt
+        ? unparen(guard.expression)
+        : undefined;
+    const missing =
+      condition &&
+      ts.isPrefixUnaryExpression(condition) &&
+      condition.operator === ts.SyntaxKind.ExclamationToken
+        ? unparen(condition.operand)
+        : undefined;
+    if (
+      block.statements.length === 1 &&
+      ts.isTryStatement(attempt) &&
+      attempt.tryBlock === block &&
+      attempt.catchClause?.block.statements.length === 0 &&
+      !attempt.finallyBlock &&
+      missing &&
+      ts.isPropertyAccessExpression(missing) &&
+      ts.isIdentifier(missing.expression) &&
+      missing.expression.text === lookup.receiver &&
+      missing.name.text === "kStringMaxLength"
+    )
+      return evidence(guard, "caught-call");
+  }
 
   let consequent: ts.Expression = call;
   while (ts.isParenthesizedExpression(consequent.parent)) consequent = consequent.parent;

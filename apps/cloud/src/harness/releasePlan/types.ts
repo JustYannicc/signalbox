@@ -85,7 +85,36 @@ export interface ReleaseEntrypoint {
   readonly export: string;
 }
 
+export interface WorkerFactorySites {
+  readonly count: number;
+  readonly sites: readonly {
+    readonly source: string;
+    readonly line: number;
+    readonly column: number;
+    readonly kind: string;
+  }[];
+}
+
+export interface ReleaseWorkerEntry {
+  readonly entry: string;
+  /** Native CLI module name; its verified descriptor is preparedModules[`cli/${module}`]. */
+  readonly module: string;
+  readonly export: "instantiate";
+  readonly globals: readonly string[];
+  readonly imports: readonly string[];
+  readonly computedGlobalAccess: WorkerFactorySites;
+  readonly functionConstructors: WorkerFactorySites;
+  readonly sourceAnalysis: {
+    readonly computedGlobalAccess: WorkerFactorySites;
+    readonly functionConstructors: WorkerFactorySites;
+  };
+  readonly inputs: readonly string[];
+  readonly sourceBytes: number;
+  readonly preparedBytes: number;
+}
+
 export interface ClaudeReleasePlan extends PlanBase {
+  readonly workerEntries: Readonly<Record<string, ReleaseWorkerEntry>>;
   readonly harness: "claude-code";
   readonly componentManifestPaths: { readonly cli: string; readonly sdk: string };
   readonly main: ReleaseEntrypoint;
