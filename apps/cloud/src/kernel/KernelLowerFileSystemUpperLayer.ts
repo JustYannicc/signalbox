@@ -7,6 +7,7 @@ export interface KernelLowerFileSystemUpperNamespace {
   hasLowerSource(): boolean;
   isLowerInode(inode: Inode): boolean;
   upperDirectoryPath(inode: Inode): string | undefined;
+  copyUpDirectory(inode: Inode): MaybePromise<Inode>;
   lookupLower(path: string): MaybePromise<Inode>;
   lookupLowerKnown(path: string): KernelLowerFileSystemKnownLookup;
   lowerMetadata(inode: Inode): MaybePromise<PosixMetadata>;
@@ -59,16 +60,19 @@ export class KernelLowerFileSystemUpperLayer {
   }
 
   create(parent: Inode, name: string, options: CreateOptions): MaybePromise<Inode> {
-    return this.#createUpper(parent, name, options.exclusive, () =>
-      this.#storage.create(parent, name, options),
+    return this.#createUpper(parent, name, options.exclusive, (upperParent) =>
+      this.#storage.create(upperParent, name, options),
     );
   }
 
   link(inode: Inode, parent: Inode, name: string): MaybePromise<void> {
     this.#assertUpper(inode);
-    this.#assertUpper(parent);
-    if (this.#namespace.upperDirectoryPath(parent) === undefined) throw kernelError("ENOTDIR");
-    return this.#storage.link(inode, parent, name);
+    return mapMaybe(this.#namespace.copyUpDirectory(parent), (upperParent) => {
+      this.#assertUpper(upperParent);
+      if (this.#namespace.upperDirectoryPath(upperParent) === undefined)
+        throw kernelError("ENOTDIR");
+      return this.#storage.link(inode, upperParent, name);
+    });
   }
 
   unlink(parent: Inode, name: string, options: { directory: boolean }): MaybePromise<void> {
@@ -93,21 +97,29 @@ export class KernelLowerFileSystemUpperLayer {
   }
 
   rename(fromParent: Inode, fromName: string, toParent: Inode, toName: string): MaybePromise<void> {
-    this.#assertUpper(fromParent);
-    this.#assertUpper(toParent);
-    const fromParentPath = this.#namespace.upperDirectoryPath(fromParent);
-    const toParentPath = this.#namespace.upperDirectoryPath(toParent);
-    if (fromParentPath === undefined || toParentPath === undefined) throw kernelError("ENOTDIR");
-    const fromPath = childPath(fromParentPath, fromName);
-    const toPath = childPath(toParentPath, toName);
-    try {
-      this.#storage.lookup(fromParent, fromName);
-    } catch (error) {
-      if (!isCode(error, "ENOENT")) throw error;
-      return lowerMutationError(this.#namespace.lookupLower(fromPath));
-    }
-    this.#storage.rename(fromParent, fromName, toParent, toName);
-    this.#namespace.moveUpperPaths(fromPath, toPath);
+    return mapMaybe(this.#namespace.copyUpDirectory(fromParent), (upperFromParent) =>
+      mapMaybe(this.#namespace.copyUpDirectory(toParent), (upperToParent) => {
+        this.#assertUpper(upperFromParent);
+        this.#assertUpper(upperToParent);
+        const fromParentPath = this.#namespace.upperDirectoryPath(upperFromParent);
+        const toParentPath = this.#namespace.upperDirectoryPath(upperToParent);
+        if (fromParentPath === undefined || toParentPath === undefined)
+          throw kernelError("ENOTDIR");
+        const fromPath = childPath(fromParentPath, fromName);
+        const toPath = childPath(toParentPath, toName);
+        try {
+          this.#storage.lookup(upperFromParent, fromName);
+        } catch (error) {
+          if (!isCode(error, "ENOENT")) throw error;
+          return lowerMutationError(this.#namespace.lookupLower(fromPath));
+        }
+        this.#storage.rename(upperFromParent, fromName, upperToParent, toName);
+        if (fromPath !== toPath) {
+          this.#namespace.forgetUpperPath(toPath);
+          this.#namespace.moveUpperPaths(fromPath, toPath);
+        }
+      }),
+    );
   }
 
   #posixGet(inode: Inode): MaybePromise<PosixMetadata> {
@@ -135,7 +147,7 @@ export class KernelLowerFileSystemUpperLayer {
       parent,
       name,
       options.exclusive,
-      () => posix.create(parent, name, options),
+      (upperParent) => posix.create(upperParent, name, options),
       true,
     );
   }
@@ -158,15 +170,27 @@ export class KernelLowerFileSystemUpperLayer {
     parent: Inode,
     name: string,
     exclusive: boolean,
-    create: () => MaybePromise<Inode>,
+    create: (parent: Inode) => MaybePromise<Inode>,
     synchronous = false,
+  ): MaybePromise<Inode> {
+    return mapMaybe(this.#namespace.copyUpDirectory(parent), (upperParent) =>
+      this.#createInUpper(upperParent, name, exclusive, create, synchronous),
+    );
+  }
+
+  #createInUpper(
+    parent: Inode,
+    name: string,
+    exclusive: boolean,
+    create: (parent: Inode) => MaybePromise<Inode>,
+    synchronous: boolean,
   ): MaybePromise<Inode> {
     this.#assertUpper(parent);
     const parentPath = this.#namespace.upperDirectoryPath(parent);
     if (parentPath === undefined) throw kernelError("ENOTDIR");
     const path = childPath(parentPath, name);
     const createAndRemember = (): MaybePromise<Inode> => {
-      const inode = create();
+      const inode = create(parent);
       if (typeof inode === "bigint") {
         this.#namespace.rememberUpper(path, inode);
         return inode;
@@ -260,4 +284,8 @@ function lowerMutationError(lower: MaybePromise<Inode>): MaybePromise<void> {
 
 function isPromiseLike<T>(value: MaybePromise<T>): value is Promise<T> {
   return typeof value === "object" && value !== null && "then" in value;
+}
+
+function mapMaybe<A, B>(value: MaybePromise<A>, f: (value: A) => MaybePromise<B>): MaybePromise<B> {
+  return isPromiseLike(value) ? value.then(f) : f(value);
 }
