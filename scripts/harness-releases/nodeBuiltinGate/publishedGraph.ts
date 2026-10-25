@@ -9,11 +9,24 @@ export async function linkPublishedSources(
   sources: readonly BuiltinSource[],
 ): Promise<BuiltinSource> {
   sources = workerFactoryBuiltinSources(sources);
-  const files = new Map(sources.map((source) => [source.name, source.source]));
+  const retained = sources.map((source, index) => {
+    let marker = `__signalboxBuiltinAnalysisKeep${index}`;
+    while (source.source.includes(marker)) marker += "_";
+    return { ...source, marker };
+  });
+  const files = new Map(
+    retained.map((source) => [
+      source.name,
+      `${source.source}\nexport const ${source.marker}=true;`,
+    ]),
+  );
   const root = "signalbox:published-analysis";
   const built = await Esbuild.build({
     entryPoints: [root],
     bundle: true,
+    // Preserve every published body without making analysis-only bindings escape as exports.
+    treeShaking: false,
+    ignoreAnnotations: true,
     write: false,
     platform: "node",
     format: "esm",
@@ -27,22 +40,23 @@ export async function linkPublishedSources(
         setup(build) {
           build.onResolve({ filter: /.*/ }, (args) => {
             if (args.path === root && args.kind === "entry-point")
-              return { path: root, namespace: "published" };
+              return { path: root, namespace: "published", sideEffects: true };
             const path =
               args.importer === root
                 ? args.path
                 : NodePath.posix.normalize(
                     NodePath.posix.join(NodePath.posix.dirname(args.importer), args.path),
                   );
-            return files.has(path) ? { path, namespace: "published" } : undefined;
+            return files.has(path)
+              ? { path, namespace: "published", sideEffects: true }
+              : undefined;
           });
           build.onLoad({ filter: /.*/, namespace: "published" }, (args) => {
             const contents =
               args.path === root
-                ? sources
+                ? retained
                     .map(
-                      (source, index) =>
-                        `export * as source${index} from ${JSON.stringify(source.name)};`,
+                      (source) => `export {${source.marker}} from ${JSON.stringify(source.name)};`,
                     )
                     .join("\n")
                 : files.get(args.path);

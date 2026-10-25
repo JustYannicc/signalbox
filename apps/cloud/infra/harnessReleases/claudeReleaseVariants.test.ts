@@ -7,6 +7,30 @@ import {
   writeClaudeReleaseVariantCatalog,
 } from "./claudeReleaseVariants.ts";
 import { fixture, encode } from "./fixtures/claudeReleaseVariants.ts";
+
+function recordProofs(f: Awaited<ReturnType<typeof fixture>>, status: "green" | "rejected") {
+  for (const fullArtifact of [f.baseline.fullArtifact, f.hooks.fullArtifact])
+    for (const environment of ["local-workerd", "deployed-do"] as const)
+      f.input.ledger.recordProof({
+        ...fullArtifact,
+        proofId: `${fullArtifact.releaseId}-${environment}`,
+        environment,
+        recordedAt: fullArtifact.createdAt,
+        checks: {
+          unchangedSource: "passed",
+          boot: status === "rejected" && fullArtifact.releaseId === "hooks" ? "rejected" : "passed",
+          toolTurn: "passed",
+          resume: "passed",
+          mcp: "passed",
+          interrupt: "passed",
+        },
+        metrics: {
+          bootTimeMs: { state: "measured", value: 10 },
+          moduleBytes: { state: "measured", value: 50 },
+          peakHeapBytes: { state: "measured", value: 100 },
+        },
+      });
+}
 it.each([false, true])(
   "opens both registered graphs with truthful shared fixtures, project store=%s",
   async (project) => {
@@ -114,28 +138,7 @@ it.each(["green", "rejected"] as const)(
     const f = await fixture(false);
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-catalog-"));
     try {
-      for (const fullArtifact of [f.baseline.fullArtifact, f.hooks.fullArtifact])
-        for (const environment of ["local-workerd", "deployed-do"] as const)
-          f.input.ledger.recordProof({
-            ...fullArtifact,
-            proofId: `${fullArtifact.releaseId}-${environment}`,
-            environment,
-            recordedAt: fullArtifact.createdAt,
-            checks: {
-              unchangedSource: "passed",
-              boot:
-                status === "rejected" && fullArtifact.releaseId === "hooks" ? "rejected" : "passed",
-              toolTurn: "passed",
-              resume: "passed",
-              mcp: "passed",
-              interrupt: "passed",
-            },
-            metrics: {
-              bootTimeMs: { state: "measured", value: 10 },
-              moduleBytes: { state: "measured", value: 50 },
-              peakHeapBytes: { state: "measured", value: 100 },
-            },
-          });
+      recordProofs(f, status);
       const output = NodePath.join(root, "catalog.json");
       if (status === "rejected") {
         await expect(writeClaudeReleaseVariantCatalog({ ...f.input, output })).rejects.toThrow(
@@ -155,3 +158,39 @@ it.each(["green", "rejected"] as const)(
     }
   },
 );
+
+it("does not publish when proof becomes rejected while the graphs are being read", async () => {
+  const f = await fixture(false);
+  const root = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "claude-catalog-proof-change-"),
+  );
+  try {
+    recordProofs(f, "green");
+    let changed = false;
+    const output = NodePath.join(root, "catalog.json");
+    await expect(
+      writeClaudeReleaseVariantCatalog({
+        ...f.input,
+        output,
+        source: {
+          async read(ref, path) {
+            if (!changed) {
+              changed = true;
+              const proof = f.input.ledger.listProofs("claude-code", "baseline")[0]!;
+              f.input.ledger.recordProof({
+                ...proof,
+                proofId: "baseline-new-failure",
+                checks: { ...proof.checks, boot: "rejected" },
+              });
+            }
+            return f.input.source.read(ref, path);
+          },
+        },
+      }),
+    ).rejects.toThrow("CLAUDE_VARIANTS_NOT_QUALIFIED");
+    await expect(NodeFSP.stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    f.close();
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});

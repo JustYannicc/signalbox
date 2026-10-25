@@ -3,9 +3,11 @@ import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { prepareHarnessArtifact } from "./prepareArtifact.ts";
 import { cloudflareHarnessArtifactStore, publishHarnessArtifact } from "./publishArtifact.ts";
+import { publishClaudeVariants } from "./publishClaudeVariants.ts";
 
-const main = async () => {
+export const runHarnessArtifactCli = async (args: readonly string[]) => {
   const { values } = NodeUtil.parseArgs({
+    args: [...args],
     options: {
       mode: { type: "string" },
       harness: { type: "string" },
@@ -20,6 +22,13 @@ const main = async () => {
       "project-id": { type: "string" },
       prefix: { type: "string" },
       result: { type: "string" },
+      ledger: { type: "string" },
+      "baseline-directory": { type: "string" },
+      "baseline-release": { type: "string" },
+      "hooks-release": { type: "string" },
+      "baseline-pin": { type: "string" },
+      "max-prepared-module-bytes": { type: "string" },
+      "expected-cli-manifest-sha256": { type: "string" },
     },
   });
   if (!values.directory || !values.result) throw new Error("Pass --directory and --result.");
@@ -68,8 +77,44 @@ const main = async () => {
         ...(values.prefix ? { prefix: values.prefix } : {}),
       },
     );
+  } else if (values.mode === "publish-claude-variants") {
+    if (
+      !values.ledger ||
+      !values["baseline-directory"] ||
+      !values["baseline-release"] ||
+      !values["hooks-release"] ||
+      !values["baseline-pin"] ||
+      !values["computer-source-identity"] ||
+      !values["computer-manifest-sha256"] ||
+      !values["max-prepared-module-bytes"]
+    )
+      throw new Error(
+        "Pass the ledger, both prepared releases, the saved baseline pin and trusted Computer/module allowance.",
+      );
+    const maxPreparedModuleBytes = Number(values["max-prepared-module-bytes"]);
+    if (!Number.isSafeInteger(maxPreparedModuleBytes) || maxPreparedModuleBytes <= 0)
+      throw new Error("CLAUDE_VARIANTS_MODULE_ALLOWANCE_INVALID");
+    await publishClaudeVariants({
+      ledger: NodePath.resolve(values.ledger),
+      ...(values["project-id"] ? { projectId: values["project-id"] } : {}),
+      baselineReleaseId: values["baseline-release"],
+      hooksReleaseId: values["hooks-release"],
+      baselineDirectory: NodePath.resolve(values["baseline-directory"]),
+      hooksDirectory: output,
+      baselinePin: NodePath.resolve(values["baseline-pin"]),
+      trustedComputer: {
+        sourceIdentity: values["computer-source-identity"],
+        manifestSha256: values["computer-manifest-sha256"],
+      },
+      maxPreparedModuleBytes,
+      output: NodePath.resolve(values.result),
+      ...(values["expected-cli-manifest-sha256"]
+        ? { expectedCliManifestSha256: values["expected-cli-manifest-sha256"] }
+        : {}),
+    });
+    return;
   } else {
-    throw new Error("Pass --mode prepare or --mode publish.");
+    throw new Error("Pass --mode prepare, publish or publish-claude-variants.");
   }
   await NodeFSP.writeFile(NodePath.resolve(values.result), `${JSON.stringify(result, null, 2)}\n`, {
     flag: "wx",
@@ -77,5 +122,5 @@ const main = async () => {
 };
 
 if (process.argv[1] && (await NodeFSP.realpath(process.argv[1])) === import.meta.filename) {
-  await main();
+  await runHarnessArtifactCli(process.argv.slice(2));
 }

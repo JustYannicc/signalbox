@@ -194,5 +194,11 @@ export async function fixture(project: boolean, change?: Parameters<typeof artif
       preparedModules: loaded.plan.preparedModules,
     },
   };
-  return { input, baseline, hooks, close: () => database.database.close() };
+  return {
+    input,
+    baseline,
+    hooks,
+    database: database.database,
+    close: () => database.database.close(),
+  };
 }

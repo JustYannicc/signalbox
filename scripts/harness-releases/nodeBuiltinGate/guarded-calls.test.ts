@@ -48,6 +48,12 @@ describe("feature-tested builtin calls", () => {
       }),
     ]);
     for (const source of [
+      'try{process.binding("buffer")}catch{}',
+      'try{value=process.binding("buffer")}catch{}',
+      'try{Buffer.kStringMaxLength=process.binding("other").kStringMaxLength}catch{}',
+      'try{Buffer.other=process.binding("buffer").kStringMaxLength}catch{}',
+      'try{Buffer.kStringMaxLength=process.binding("buffer").other}catch{}',
+      'try{consume().kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}',
       'try{process.binding("buffer")}catch(error){throw error}',
       'try{process.binding("buffer")}catch{fallback()}',
       'try{process.binding("buffer");work()}catch{}',

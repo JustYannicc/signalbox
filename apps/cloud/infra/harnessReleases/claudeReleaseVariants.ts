@@ -116,11 +116,10 @@ export async function writeClaudeReleaseVariantCatalog(
   input: Parameters<typeof validateClaudeReleaseVariantArtifacts>[0] & { readonly output: string },
 ) {
   const validated = await validateClaudeReleaseVariantArtifacts(input);
-  if (
-    validated.baseline.qualification.status !== "green" ||
-    validated.hooks.qualification.status !== "green"
-  )
-    throw new Error("CLAUDE_VARIANTS_NOT_QUALIFIED");
+  // Opening both graphs awaits I/O; a newer failure may have arrived during those reads.
+  for (const { fullArtifact } of [validated.catalog.baseline, validated.catalog.hooks])
+    if (input.ledger.getEligibility("claude-code", fullArtifact.releaseId).status !== "green")
+      throw new Error("CLAUDE_VARIANTS_NOT_QUALIFIED");
   await NodeFSP.writeFile(input.output, encodeClaudeReleaseVariants(validated.catalog), {
     flag: "wx",
     mode: 0o600,

@@ -40,6 +40,38 @@ function memberChain(
   return [...receiver, access, property];
 }
 
+function optionalBufferConstant(call: ts.CallExpression, builtinRoot: string) {
+  if (
+    builtinRoot !== "process" ||
+    call.arguments.length !== 1 ||
+    !ts.isStringLiteralLike(call.arguments[0]!) ||
+    call.arguments[0]!.text !== "buffer"
+  )
+    return undefined;
+  let lookup: ts.Expression = call;
+  while (ts.isParenthesizedExpression(lookup.parent)) lookup = lookup.parent;
+  const property = lookup.parent;
+  if (
+    !ts.isPropertyAccessExpression(property) ||
+    property.expression !== lookup ||
+    property.name.text !== "kStringMaxLength"
+  )
+    return undefined;
+  lookup = property;
+  while (ts.isParenthesizedExpression(lookup.parent)) lookup = lookup.parent;
+  const assignment = lookup.parent;
+  if (
+    !ts.isBinaryExpression(assignment) ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    assignment.right !== lookup ||
+    !ts.isPropertyAccessExpression(assignment.left) ||
+    !ts.isIdentifier(assignment.left.expression) ||
+    assignment.left.name.text !== "kStringMaxLength"
+  )
+    return undefined;
+  return assignment;
+}
+
 /** Only immediate guards qualify; aliases and deferred execution stay required. */
 export function builtinCallGuard(
   call: ts.CallExpression | ts.NewExpression,
@@ -67,23 +99,13 @@ export function builtinCallGuard(
   if (call.questionDotToken && memberChain(call.expression, builtinRoot, true))
     return evidence(call, "optional-call");
 
-  // Optional constant lookups may catch absence instead of testing the property first.
-  let lookup: ts.Node = call;
-  while (
-    ts.isParenthesizedExpression(lookup.parent) ||
-    ((ts.isPropertyAccessExpression(lookup.parent) ||
-      ts.isElementAccessExpression(lookup.parent)) &&
-      lookup.parent.expression === lookup)
-  )
-    lookup = lookup.parent;
-  if (
-    ts.isBinaryExpression(lookup.parent) &&
-    lookup.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    lookup.parent.right === lookup
-  )
-    lookup = lookup.parent;
-  const statement = lookup.parent;
-  if (ts.isExpressionStatement(statement) && ts.isBlock(statement.parent)) {
+  // The SDK preserves its own Buffer limit when this optional Node-internal lookup is absent.
+  const lookup =
+    resolvedMemberPath.length === 1 && resolvedMemberPath[0] === "binding"
+      ? optionalBufferConstant(call, builtinRoot)
+      : undefined;
+  const statement = lookup?.parent;
+  if (statement && ts.isExpressionStatement(statement) && ts.isBlock(statement.parent)) {
     const block = statement.parent,
       attempt = block.parent;
     if (
