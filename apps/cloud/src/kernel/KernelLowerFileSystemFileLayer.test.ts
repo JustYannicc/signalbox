@@ -164,7 +164,7 @@ describe("lower file copy-up through Node fs", () => {
     }
   });
 
-  it("reports ENOTSUP when a synchronous mutation needs lower file bytes", () => {
+  it("returns ENOTSUP for append and EXDEV for lower-source rename", () => {
     const path = "/home/node/.bashrc";
     const lowerBytes = encoder.encode("lower bytes\n");
     const original = lowerBytes.slice();
@@ -173,8 +173,9 @@ describe("lower file copy-up through Node fs", () => {
       expect(() => test.fs.appendFileSync(path, "append")).toThrow(
         expect.objectContaining({ code: "ENOTSUP" }),
       );
-      expect(() => test.fs.renameSync(path, "/home/node/.bashrc.next")).toThrow(
-        expect.objectContaining({ code: "ENOTSUP" }),
+      const destination = "/home/node/.bashrc.next";
+      expect(() => test.fs.renameSync(path, destination)).toThrow(
+        expect.objectContaining({ code: "EXDEV", syscall: "rename", path, dest: destination }),
       );
 
       expect(test.fs.existsSync(path)).toBe(true);

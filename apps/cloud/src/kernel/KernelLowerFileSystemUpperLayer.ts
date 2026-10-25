@@ -167,7 +167,7 @@ export class KernelLowerFileSystemUpperLayer {
           mapMaybe(this.#namespace.lowerStat(lowerSource), (lowerStat) => {
             if (lowerStat.type !== "file") return lowerMutationError(lowerSource);
             if (currentKernelIoMode() === "sync")
-              throw kernelError("ENOTSUP", "Lower file rename requires asynchronous execution");
+              throw kernelError("EXDEV", "Lower file rename requires asynchronous execution");
             return mapMaybe(
               this.#validateLowerDestination(lowerStat, upperToParent, toName, toPath),
               () =>
