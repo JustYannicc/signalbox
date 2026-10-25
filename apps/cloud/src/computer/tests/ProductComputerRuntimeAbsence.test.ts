@@ -22,8 +22,8 @@ function bootComputer(absent: boolean) {
   const fs = createNodeFs(filesystem).fs;
   fs.mkdirSync("/tmp", { mode: 0o1777 });
   const wakes = new KernelWakeRegistry();
-  const files = new RunnerMachineFileLookupForwarder({
-    ...(absent
+  const files = new RunnerMachineFileLookupForwarder(
+    absent
       ? {
           source: {
             current: () => ({ generation: null, generationAbsent: true as const, pristine: false }),
@@ -32,8 +32,8 @@ function bootComputer(absent: boolean) {
             },
           },
         }
-      : {}),
-  });
+      : {},
+  );
   const lookup = vi.spyOn(files, "lookup");
   const spawn = vi.fn(async () => {
     throw new Error("This boot composition cannot create a machine");
