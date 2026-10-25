@@ -118,6 +118,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       stdin: input.stdio.stdin,
       stdout: input.stdio.stdout,
       stderr: input.stdio.stderr,
+      exitStatus: undefined,
       exited,
       abort: dispose,
       dispose,
@@ -259,6 +260,9 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     stdin: input.stdio.stdin,
     stdout: input.stdio.stdout,
     stderr: input.stdio.stderr,
+    get exitStatus() {
+      return outcome !== undefined && "status" in outcome ? outcome.status : undefined;
+    },
     exited,
     abort,
     dispose: () => abort(),
