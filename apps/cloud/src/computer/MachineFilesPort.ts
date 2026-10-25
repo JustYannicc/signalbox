@@ -5,6 +5,8 @@ import type {
 
 export interface MachineFileSourceState {
   readonly generation: number | null;
+  /** Lifecycle owner positively attests absence; a missing Runner connection cannot do this. */
+  readonly generationAbsent?: true;
   /** Immutable image attested by the lifecycle owner; unknown images use live lookup. */
   readonly imageDigest?: string;
   /** True only when lifecycle state attests that this image has run no machine command. */

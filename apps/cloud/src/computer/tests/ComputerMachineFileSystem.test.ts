@@ -61,6 +61,43 @@ describe("Computer machine filesystem sources", () => {
     expect(files.lookup).not.toHaveBeenCalled();
   });
 
+  it("knows excluded runtime paths are absent only with lifecycle attestation", async () => {
+    let generation: number | null = null;
+    const files: MachineFilesPort = {
+      current: () => ({
+        generation,
+        ...(generation === null ? { generationAbsent: true } : {}),
+        pristine: true,
+        imageDigest: inventory.imageDigest,
+      }),
+      markExecuted: async () => {},
+      lookup: vi.fn<MachineFilesPort["lookup"]>(async (input) => ({
+        generation: input.generation,
+        results: input.operations.map((operation) => ({ id: operation.id, op: "lstat", stat })),
+      })),
+    };
+    const source = createComputerMachineFileSystem({
+      inventory: { ...inventory, excludedRoots: ["/run", "/tmp"] },
+      files,
+      signal,
+    });
+    const paths = ["/tmp/claude-1000", "/run/application"];
+
+    expect(source.lookupKnown?.(paths)).toEqual([undefined, undefined]);
+    expect(await source.lookup(paths)).toEqual([undefined, undefined]);
+    expect(await source.readdir("/tmp")).toBeUndefined();
+    await expect(source.readlink("/tmp/absent")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(files.lookup).not.toHaveBeenCalled();
+
+    generation = 1;
+    expect(source.lookupKnown?.(paths)).toBeUndefined();
+    expect(await source.lookup(paths)).toMatchObject([
+      { path: paths[0], stat: { size: 118456n } },
+      { path: paths[1], stat: { size: 118456n } },
+    ]);
+    expect(files.lookup).toHaveBeenCalledOnce();
+  });
+
   it.each([undefined, `sha256:${"a".repeat(64)}`])(
     "uses live metadata when the pristine image identity is %s",
     async (imageDigest) => {
