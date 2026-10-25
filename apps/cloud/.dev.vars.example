@@ -3,7 +3,7 @@
 SESSION_SECRET=
 # A WorkOS staging client id whose redirect URIs include http://localhost:*.
 T3CODE_WORKOS_CLIENT_ID=
-# Product policy per process slot; this is not a measured capacity budget.
+# Hosting policy per slot equals the Cloudflare 128 MB per-isolate envelope; not measured headroom.
 RESIDENT_BYTE_LIMIT=128000000
 # Optional, but GitHub sign-ins need it to finish email verification.
 T3CODE_WORKOS_API_KEY=

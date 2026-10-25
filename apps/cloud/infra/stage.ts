@@ -46,9 +46,10 @@ export const MODEL_GATEWAY_COMPATIBILITY_FLAGS = [
 ] as const;
 
 /**
- * Hosting policy: 128,000,000 decimal bytes per slot, set to the documented 128 MB per-isolate
- * envelope (https://developers.cloudflare.com/workers/platform/limits/#memory). It is not a
- * measured capacity budget; revisit when #1255's charged-memory accounting is complete.
+ * Hosting policy: 128,000,000 decimal bytes per slot, equal to Cloudflare's documented 128 MB
+ * per-isolate envelope (https://developers.cloudflare.com/workers/platform/limits/#memory). It
+ * adds no cap beyond that platform limit and is not measured usable headroom. Revisit when #1255
+ * validates JS/Wasm/external/cache/buffer accounting and an accepted baseline maximum plus margin.
  */
 export const RESIDENT_BYTE_LIMIT = "128000000";
 
