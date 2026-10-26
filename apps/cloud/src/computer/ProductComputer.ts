@@ -66,9 +66,13 @@ export function createProductComputer(options: ProductComputerOptions) {
       signal,
     }),
   );
-  const metadataRefreshPaths = options.machineInventory.entries
-    .filter(({ type }) => type === "directory" || type === "symlink")
-    .map(({ path }) => path);
+  const metadataRefreshPaths = [
+    ...options.machineInventory.entries
+      .filter(({ type }) => type === "directory" || type === "symlink")
+      .map(({ path }) => path),
+    // Excluded roots are live machine state, not represented by the image inventory.
+    ...options.machineInventory.excludedRoots,
+  ];
   const refreshMetadata = async (generation: number, callerSignal: AbortSignal) => {
     const refreshSignal = AbortSignal.any([signal, callerSignal]);
     try {

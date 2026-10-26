@@ -302,6 +302,20 @@ function makeFixture(hooks: Hooks = {}) {
           ino: String(nextInode++),
           dev: "1",
         });
+        entries.set("/tmp/signalbox-live-root-entry", {
+          path: "/tmp/signalbox-live-root-entry",
+          type: "file",
+          size: "13",
+          nlink: "1",
+          atimeNs: "2",
+          mtimeNs: "3",
+          ctimeNs: "4",
+          mode: 0o100600,
+          uid: 1000,
+          gid: 1000,
+          ino: String(nextInode++),
+          dev: "1",
+        });
         const exit = Promise.withResolvers<{
           exitCode: number;
           signal: number;
@@ -393,6 +407,14 @@ describe.skipIf(!available)("ProductComputer machine metadata refresh", () => {
         mode: 0o100755,
         size: 9,
       });
+      expect(fixture.fs.readdirSync("/tmp").map(String)).toContain("signalbox-live-root-entry");
+      expect(fixture.fs.lstatSync("/tmp/signalbox-live-root-entry")).toMatchObject({
+        mode: 0o100600,
+        size: 13,
+      });
+      expect(() => fixture.fs.lstatSync("/tmp/signalbox-live-missing")).toThrow(
+        expect.objectContaining({ code: "ENOENT" }),
+      );
       expect(() => fixture.fs.lstatSync("/usr/bin/signalbox-missing")).toThrow(
         expect.objectContaining({ code: "ENOENT" }),
       );
