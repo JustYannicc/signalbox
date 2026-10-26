@@ -1,11 +1,11 @@
 diff --git a/docs/management-api-v8.md b/docs/management-api-v8.md
-index afdc17e1445b20f9f40d4a25705520683e118b79..e243c85ea87065558c2bc49aab2ecba5cd57423e 100644
+index afdc17e1..e243c85e 100644
 --- a/docs/management-api-v8.md
 +++ b/docs/management-api-v8.md
 @@ -132,6 +132,43 @@ Keep any provider-specific login parameters in the query string. The login
  response includes the authorization URL and a session `state`. Use that state
  for status queries and cancellation.
- 
+
 +Codex keeps its browser callback flow by default. To start Codex device login,
 +add `flow=device`; the response returns the verification `url`, `user_code`,
 +`expires_in`, and `state` before polling begins:
@@ -48,10 +48,10 @@ index afdc17e1445b20f9f40d4a25705520683e118b79..e243c85ea87065558c2bc49aab2ecba5
  callback URL. If `provider` is omitted, it is inferred from the pending state;
 diff --git a/internal/api/handlers/management/auth_files_codex_device.go b/internal/api/handlers/management/auth_files_codex_device.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..0efe94857b3e1524258dafcb21f4a329ad197312
+index 00000000..78419deb
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_codex_device.go
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,188 @@
 +package management
 +
 +import (
@@ -143,13 +143,18 @@ index 0000000000000000000000000000000000000000..0efe94857b3e1524258dafcb21f4a329
 +			return
 +		}
 +		saveCtx, stopSave := context.WithTimeout(ctx, oauthSessionTTL)
-+		defer stopSave()
-+		if _, errSave := h.saveTokenRecord(saveCtx, record); errSave != nil {
++		savedPath, errSave := h.persistTokenRecord(saveCtx, record)
++		stopSave()
++		if errSave != nil {
 +			log.Error("Failed to save Codex device authentication")
 +			SetOAuthSessionError(state, "Failed to save authentication tokens")
 +			return
 +		}
++		// Persistence commits the login. Runtime registration can outlive its acquisition budget.
 +		CompleteOAuthSession(state)
++		if errNotify := h.notifyPersistedTokenRecord(context.WithoutCancel(ctx), savedPath, record); errNotify != nil {
++			log.Warn("Codex device authentication saved but post-auth notification failed")
++		}
 +	}()
 +
 +	startTimer := time.NewTimer(codexDeviceStartTimeout)
@@ -236,7 +241,7 @@ index 0000000000000000000000000000000000000000..0efe94857b3e1524258dafcb21f4a329
 +	}
 +}
 diff --git a/internal/api/handlers/management/auth_files_fields.go b/internal/api/handlers/management/auth_files_fields.go
-index 766202a3b8a2793cd1818df915da7d9ce3d85993..ac10df1d829a61549e226fca7af55c7a074cb68b 100644
+index 766202a3..2aa02d1b 100644
 --- a/internal/api/handlers/management/auth_files_fields.go
 +++ b/internal/api/handlers/management/auth_files_fields.go
 @@ -936,20 +936,34 @@ func (h *Handler) deleteTokenRecord(ctx context.Context, path string) error {
@@ -279,7 +284,19 @@ index 766202a3b8a2793cd1818df915da7d9ce3d85993..ac10df1d829a61549e226fca7af55c7a
  }
 
  func (h *Handler) mergeExistingAuthFileMetadata(record *coreauth.Auth) {
-@@ -994,7 +1008,10 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
+@@ -990,11 +1004,22 @@ func (h *Handler) mergeExistingAuthFileMetadata(record *coreauth.Auth) {
+ }
+
+ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (string, error) {
++	savedPath, err := h.persistTokenRecord(ctx, record)
++	if err != nil {
++		return savedPath, err
++	}
++	return savedPath, h.notifyPersistedTokenRecord(ctx, savedPath, record)
++}
++
++func (h *Handler) persistTokenRecord(ctx context.Context, record *coreauth.Auth) (string, error) {
+ 	if record == nil {
  		return "", fmt.Errorf("token record is nil")
  	}
  	h.mergeExistingAuthFileMetadata(record)
@@ -291,8 +308,39 @@ index 766202a3b8a2793cd1818df915da7d9ce3d85993..ac10df1d829a61549e226fca7af55c7a
  	if store == nil {
  		return "", fmt.Errorf("token store unavailable")
  	}
+@@ -1026,6 +1051,10 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
+ 			return savedPath, fmt.Errorf("canonical Claude credential saved but legacy credential cleanup failed: %w", errDelete)
+ 		}
+ 	}
++	return savedPath, nil
++}
++
++func (h *Handler) notifyPersistedTokenRecord(ctx context.Context, savedPath string, record *coreauth.Auth) error {
+ 	if h.postAuthPersistHook != nil {
+ 		persistedRecord := record
+ 		if data, errRead := os.ReadFile(savedPath); errRead == nil && len(data) > 0 {
+@@ -1037,7 +1066,7 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
+ 				PluginAuthParser: h.pluginHost,
+ 			}, savedPath, data)
+ 			if errSynthesize != nil {
+-				return savedPath, fmt.Errorf("synthesize persisted auth failed: %w", errSynthesize)
++				return fmt.Errorf("synthesize persisted auth failed: %w", errSynthesize)
+ 			}
+ 			for _, auth := range auths {
+ 				if auth != nil && (auth.ID == record.ID || len(auths) == 1) {
+@@ -1047,8 +1076,8 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
+ 			}
+ 		}
+ 		if errHook := h.postAuthPersistHook(ctx, persistedRecord); errHook != nil {
+-			return savedPath, fmt.Errorf("post-auth persist hook failed: %w", errHook)
++			return fmt.Errorf("post-auth persist hook failed: %w", errHook)
+ 		}
+ 	}
+-	return savedPath, nil
++	return nil
+ }
 diff --git a/internal/api/handlers/management/auth_files_v8.go b/internal/api/handlers/management/auth_files_v8.go
-index 7d8151a831106b1c0196e1746e35a451c8cf4df8..a389b5fe9df7879887a20f9c5efb838adcfba485 100644
+index 7d8151a8..a389b5fe 100644
 --- a/internal/api/handlers/management/auth_files_v8.go
 +++ b/internal/api/handlers/management/auth_files_v8.go
 @@ -15,7 +15,11 @@ func (h *Handler) StartOAuthV8(c *gin.Context) {
@@ -310,7 +358,7 @@ index 7d8151a831106b1c0196e1746e35a451c8cf4df8..a389b5fe9df7879887a20f9c5efb838a
  	case "kimi":
 diff --git a/internal/api/handlers/management/auth_files_v8_device_callback_test.go b/internal/api/handlers/management/auth_files_v8_device_callback_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..eee09c66bb22d862f0bf4ed1c3720a922ba376a3
+index 00000000..eee09c66
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_callback_test.go
 @@ -0,0 +1,76 @@
@@ -392,7 +440,7 @@ index 0000000000000000000000000000000000000000..eee09c66bb22d862f0bf4ed1c3720a92
 +}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_config_test.go b/internal/api/handlers/management/auth_files_v8_device_config_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..52b591e37b3aa5ade0dd624e321b13e5bf64c9bf
+index 00000000..52b591e3
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_config_test.go
 @@ -0,0 +1,90 @@
@@ -486,9 +534,108 @@ index 0000000000000000000000000000000000000000..52b591e37b3aa5ade0dd624e321b13e5
 +		t.Fatalf("proxy update status = %d, body=%s", updated.Code, updated.Body.String())
 +	}
 +}
+diff --git a/internal/api/handlers/management/auth_files_v8_device_file_lock_test.go b/internal/api/handlers/management/auth_files_v8_device_file_lock_test.go
+new file mode 100644
+index 00000000..88bb90c2
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_v8_device_file_lock_test.go
+@@ -0,0 +1,93 @@
++package management
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"sync"
++	"testing"
++	"testing/synctest"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestStartOAuthV8CodexDeviceFlowBoundsCodexFileLock(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	synctest.Test(t, func(t *testing.T) {
++		root := t.TempDir()
++		authDir := filepath.Join(root, "auths")
++		tokenStore := sdkAuth.NewFileTokenStore()
++		tokenStore.SetBaseDir(authDir)
++		entered := make(chan struct{})
++		release := make(chan struct{})
++		holderDone := make(chan error, 1)
++		go func() {
++			holderDone <- codex.WithFileLock(filepath.Join(authDir, "device.json"), func() error {
++				close(entered)
++				<-release
++				return nil
++			})
++		}()
++		releaseHolder := sync.OnceFunc(func() {
++			close(release)
++			<-holderDone
++			synctest.Wait()
++		})
++		defer releaseHolder()
++		<-entered
++		sessions := newOAuthSessionStore(time.Minute)
++		replaceOAuthSessionStoreForTest(t, sessions)
++		workerContext := make(chan context.Context, 1)
++		h := &Handler{cfg: &config.Config{AuthDir: authDir}, tokenStore: tokenStore}
++		h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++			workerContext <- ctx
++			opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++			return &coreauth.Auth{
++				ID: "device.json", FileName: "device.json", Provider: "codex",
++				Metadata: map[string]any{"type": "codex", "access_token": "test-access-token"},
++			}, nil
++		})
++		router := gin.New()
++		router.GET("/start", h.StartOAuthV8)
++		response := httptest.NewRecorder()
++		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
++		ctx := <-workerContext
++		if response.Code != http.StatusOK {
++			t.Fatalf("start status=%d, body=%s", response.Code, response.Body.String())
++		}
++		var result struct{ State string }
++		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
++			t.Fatal(err)
++		}
++		synctest.Wait()
++		if session, ok := sessions.Get(result.State); !ok || !session.Saving {
++			t.Fatalf("device save did not claim the session: %#v, exists=%t", session, ok)
++		}
++		deadline := time.NewTimer(oauthSessionTTL + time.Second)
++		defer deadline.Stop()
++		<-deadline.C
++		synctest.Wait()
++		if session, ok := sessions.Get(result.State); !ok || session.Saving || session.Status != "Failed to save authentication tokens" {
++			t.Errorf("blocked Codex file lock did not resolve the device session: %#v, exists=%t", session, ok)
++		}
++		if ctx.Err() == nil {
++			t.Error("device worker kept running past the persistence deadline")
++		}
++		releaseHolder()
++		if session, ok := sessions.Get(result.State); !ok || session.Saving || session.Status != "Failed to save authentication tokens" {
++			t.Errorf("releasing the Codex file lock changed the failed session: %#v, exists=%t", session, ok)
++		}
++		if _, err := os.Stat(filepath.Join(authDir, "device.json")); !errors.Is(err, os.ErrNotExist) {
++			t.Errorf("device save wrote credentials after the file lock deadline: %v", err)
++		}
++	})
++}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_lifecycle_test.go b/internal/api/handlers/management/auth_files_v8_device_lifecycle_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..a3f6d09256e5694683abc4480c8fb4b595d44a96
+index 00000000..a3f6d092
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_lifecycle_test.go
 @@ -0,0 +1,117 @@
@@ -611,7 +758,7 @@ index 0000000000000000000000000000000000000000..a3f6d09256e5694683abc4480c8fb4b5
 +}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_provider_completion_test.go b/internal/api/handlers/management/auth_files_v8_device_provider_completion_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..eb04ce883eedb378b49a8c84468afea32dd16acb
+index 00000000..eb04ce88
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_provider_completion_test.go
 @@ -0,0 +1,86 @@
@@ -703,7 +850,7 @@ index 0000000000000000000000000000000000000000..eb04ce883eedb378b49a8c84468afea3
 +}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_request_test.go b/internal/api/handlers/management/auth_files_v8_device_request_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..dddaf1f41478714e38234330be5459e910b849b8
+index 00000000..dddaf1f4
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_request_test.go
 @@ -0,0 +1,238 @@
@@ -945,12 +1092,125 @@ index 0000000000000000000000000000000000000000..dddaf1f41478714e38234330be5459e9
 +		})
 +	}
 +}
+diff --git a/internal/api/handlers/management/auth_files_v8_device_runtime_sync_test.go b/internal/api/handlers/management/auth_files_v8_device_runtime_sync_test.go
+new file mode 100644
+index 00000000..e652c542
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_v8_device_runtime_sync_test.go
+@@ -0,0 +1,107 @@
++package management
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"sync"
++	"testing"
++	"testing/synctest"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestStartOAuthV8CodexDeviceFlowCompletesBeforeRuntimeSync(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	for _, hookFails := range []bool{false, true} {
++		name := "success"
++		if hookFails {
++			name = "error"
++		}
++		t.Run(name, func(t *testing.T) {
++			synctest.Test(t, func(t *testing.T) {
++				sessions := newOAuthSessionStore(2 * oauthSessionTTL)
++				replaceOAuthSessionStoreForTest(t, sessions)
++				authDir := t.TempDir()
++				h := &Handler{cfg: &config.Config{AuthDir: authDir}, tokenStore: sdkAuth.NewFileTokenStore()}
++				entered := make(chan struct{})
++				release := make(chan struct{})
++				finished := make(chan struct{})
++				workerContext := make(chan context.Context, 1)
++				releaseHook := sync.OnceFunc(func() { close(release) })
++				defer releaseHook()
++				h.postAuthPersistHook = func(ctx context.Context, record *coreauth.Auth) error {
++					defer close(finished)
++					close(entered)
++					// Runtime registration deliberately outlives the acquisition context.
++					<-release
++					if hookFails {
++						return errors.New("runtime registration failed")
++					}
++					return nil
++				}
++				h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++					workerContext <- ctx
++					opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++					return &coreauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "test-token"}}, nil
++				})
++				router := gin.New()
++				router.GET("/start", h.StartOAuthV8)
++				router.GET("/status", h.GetAuthStatus)
++				response := httptest.NewRecorder()
++				router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
++				ctx := <-workerContext
++				if response.Code != http.StatusOK {
++					t.Fatalf("start status=%d: %s", response.Code, response.Body.String())
++				}
++				var result struct{ State string }
++				if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
++					t.Fatal(err)
++				}
++				<-entered
++				defer func() { releaseHook(); <-finished; synctest.Wait() }()
++				synctest.Wait()
++				check := func(stage string) {
++					t.Helper()
++					session, ok := sessions.Get(result.State)
++					if !ok || !session.Completed || session.Saving || session.Status != "" {
++						t.Errorf("%s: persisted login held by runtime sync: %#v, exists=%t", stage, session, ok)
++					}
++					status := httptest.NewRecorder()
++					router.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/status?state="+result.State, nil))
++					if status.Code != http.StatusOK || status.Body.String() != `{"status":"ok"}` {
++						t.Errorf("%s: status=%d %s", stage, status.Code, status.Body.String())
++					}
++				}
++				if _, err := os.Stat(filepath.Join(authDir, "device.json")); err != nil {
++					t.Fatalf("credential not persisted before sync: %v", err)
++				}
++				check("runtime blocked")
++				deadline := time.NewTimer(oauthSessionTTL + time.Second)
++				defer deadline.Stop()
++				<-deadline.C
++				synctest.Wait()
++				checkExpired := func(stage string) {
++					t.Helper()
++					if session, ok := sessions.Get(result.State); ok {
++						t.Errorf("%s: completed session did not expire while runtime was blocked: %#v", stage, session)
++					}
++				}
++				checkExpired("past acquisition deadline")
++				releaseHook()
++				<-finished
++				<-ctx.Done()
++				synctest.Wait()
++				checkExpired("runtime finished")
++			})
++		})
++	}
++}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_save_timeout_test.go b/internal/api/handlers/management/auth_files_v8_device_save_timeout_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..27fa9efa60b4a9f08bbf5dd961071ad660bc008e
+index 00000000..d37e13b1
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_save_timeout_test.go
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,184 @@
 +package management
 +
 +import (
@@ -1073,7 +1333,7 @@ index 0000000000000000000000000000000000000000..27fa9efa60b4a9f08bbf5dd961071ad6
 +
 +func TestStartOAuthV8CodexDeviceFlowBoundsPersistence(t *testing.T) {
 +	gin.SetMode(gin.TestMode)
-+	for _, phase := range []string{"hook", "store", "post-persist-hook"} {
++	for _, phase := range []string{"hook", "store"} {
 +		t.Run(phase, func(t *testing.T) {
 +			synctest.Test(t, func(t *testing.T) {
 +				sessions := newOAuthSessionStore(time.Minute)
@@ -1096,8 +1356,6 @@ index 0000000000000000000000000000000000000000..27fa9efa60b4a9f08bbf5dd961071ad6
 +					h.postAuthHook = stall
 +				case "store":
 +					h.tokenStore = &stalledDeviceSaveStore{memoryAuthStore: &memoryAuthStore{}, wait: stall}
-+				case "post-persist-hook":
-+					h.postAuthPersistHook = stall
 +				}
 +				h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
 +					workerContext <- ctx
@@ -1139,7 +1397,7 @@ index 0000000000000000000000000000000000000000..27fa9efa60b4a9f08bbf5dd961071ad6
 +}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_test.go b/internal/api/handlers/management/auth_files_v8_device_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..46558bcd27ef908e4728597c5c87c91bba7c1a2f
+index 00000000..46558bcd
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_test.go
 @@ -0,0 +1,178 @@
@@ -1322,11 +1580,11 @@ index 0000000000000000000000000000000000000000..46558bcd27ef908e4728597c5c87c91b
 +	}
 +}
 diff --git a/internal/api/handlers/management/handler.go b/internal/api/handlers/management/handler.go
-index 78dde7ac7ad0b339b7b350b4a43d4713057128f8..b70dd0fe5ca5527b0c8487b7828b4df8de9413a8 100644
+index 78dde7ac..b70dd0fe 100644
 --- a/internal/api/handlers/management/handler.go
 +++ b/internal/api/handlers/management/handler.go
 @@ -38,31 +38,32 @@ const attemptMaxIdleTime = 2 * time.Hour
- 
+
  // Handler aggregates config reference, persistence path and helpers.
  type Handler struct {
 -	cfg                     *config.Config
@@ -1381,15 +1639,15 @@ index 78dde7ac7ad0b339b7b350b4a43d4713057128f8..b70dd0fe5ca5527b0c8487b7828b4df8
 +	siwcOAuthFactory         func(*config.Config) siwcOAuthService
 +	siwcCommitMu             sync.Mutex
  }
- 
+
  type configReloadSnapshot struct {
 diff --git a/internal/api/handlers/management/oauth_callback.go b/internal/api/handlers/management/oauth_callback.go
-index 030788a7a981a5b375d7626da4ad992ffd77ec77..6c37f0437b172d6a9c9d994e8d54d5d004b9d342 100644
+index 030788a7..6c37f043 100644
 --- a/internal/api/handlers/management/oauth_callback.go
 +++ b/internal/api/handlers/management/oauth_callback.go
 @@ -121,6 +121,10 @@ func (h *Handler) handleOAuthCallback(c *gin.Context, req oauthCallbackRequest)
  	}
- 
+
  	if _, errWrite := WriteOAuthCallbackFileForPendingSession(h.cfg.AuthDir, canonicalProvider, state, code, errMsg); errWrite != nil {
 +		if errors.Is(errWrite, ErrOAuthDeviceCallback) {
 +			c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "device login does not accept callbacks"})
@@ -1399,19 +1657,19 @@ index 030788a7a981a5b375d7626da4ad992ffd77ec77..6c37f0437b172d6a9c9d994e8d54d5d0
  			_, status, okSession := GetOAuthSession(state)
  			if okSession && status != "" {
 diff --git a/internal/api/handlers/management/oauth_sessions.go b/internal/api/handlers/management/oauth_sessions.go
-index 2b010efec9fd750f4d2e3a53e8edac367dac3c83..b67fb931bb101b42b80a57814d9882d512462b5d 100644
+index 2b010efe..b67fb931 100644
 --- a/internal/api/handlers/management/oauth_sessions.go
 +++ b/internal/api/handlers/management/oauth_sessions.go
 @@ -32,10 +32,14 @@ var (
  	errOAuthSessionExists     = errors.New("oauth session already exists")
  )
- 
+
 +// ErrOAuthDeviceCallback rejects browser callbacks for a device login state.
 +var ErrOAuthDeviceCallback = fmt.Errorf("%w: device login does not accept callbacks", errOAuthSessionNotPending)
 +
  // ErrSIWCCallbackRequiresV8 prevents legacy callback sinks from accepting SIWC codes.
  var ErrSIWCCallbackRequiresV8 = fmt.Errorf("%w: SIWC callbacks require /v8/management/oauth/callback", errOAuthSessionNotPending)
- 
+
  type oauthSession struct {
 +	Device         bool
  	Provider       string
@@ -1426,7 +1684,7 @@ index 2b010efec9fd750f4d2e3a53e8edac367dac3c83..b67fb931bb101b42b80a57814d9882d5
  	ExpiresAt      time.Time
  }
 @@ -71,7 +76,7 @@ func newOAuthSessionStore(ttl time.Duration) *oauthSessionStore {
- 
+
  func (s *oauthSessionStore) purgeExpiredLocked(now time.Time) {
  	for state, session := range s.sessions {
 -		if !session.SIWCCommitting && !session.ExpiresAt.IsZero() && now.After(session.ExpiresAt) {
@@ -1436,7 +1694,7 @@ index 2b010efec9fd750f4d2e3a53e8edac367dac3c83..b67fb931bb101b42b80a57814d9882d5
  			}
 @@ -81,6 +86,14 @@ func (s *oauthSessionStore) purgeExpiredLocked(now time.Time) {
  }
- 
+
  func (s *oauthSessionStore) Register(state, provider string) {
 +	s.register(state, provider, false)
 +}
@@ -1450,7 +1708,7 @@ index 2b010efec9fd750f4d2e3a53e8edac367dac3c83..b67fb931bb101b42b80a57814d9882d5
  	provider = strings.ToLower(strings.TrimSpace(provider))
  	if state == "" || provider == "" {
 @@ -93,6 +106,7 @@ func (s *oauthSessionStore) Register(state, provider string) {
- 
+
  	s.purgeExpiredLocked(now)
  	s.sessions[state] = oauthSession{
 +		Device:    device,
@@ -1483,7 +1741,7 @@ index 2b010efec9fd750f4d2e3a53e8edac367dac3c83..b67fb931bb101b42b80a57814d9882d5
  			session.Metadata = nil
  			session.Completed = true
 @@ -259,7 +275,7 @@ func (s *oauthSessionStore) Cancel(state string) bool {
- 
+
  	s.purgeExpiredLocked(now)
  	session, ok := s.sessions[state]
 -	if !ok || session.Completed || session.Status != "" {
@@ -1494,7 +1752,7 @@ index 2b010efec9fd750f4d2e3a53e8edac367dac3c83..b67fb931bb101b42b80a57814d9882d5
 @@ -270,6 +286,33 @@ func (s *oauthSessionStore) Cancel(state string) bool {
  	return true
  }
- 
+
 +// BeginSave atomically claims a pending session before persistence begins.
 +// Until Complete or SetError releases the claim, cancellation and expiry cannot
 +// discard the result because persistence may already have side effects.
@@ -1526,9 +1784,9 @@ index 2b010efec9fd750f4d2e3a53e8edac367dac3c83..b67fb931bb101b42b80a57814d9882d5
  	if len(in) == 0 {
  		return nil
 @@ -285,6 +328,10 @@ var oauthSessions = newOAuthSessionStore(oauthSessionTTL)
- 
+
  func RegisterOAuthSession(state, provider string) { oauthSessions.Register(state, provider) }
- 
+
 +func RegisterDeviceOAuthSession(state, provider string) {
 +	oauthSessions.registerDevice(state, provider)
 +}
@@ -1554,7 +1812,7 @@ index 2b010efec9fd750f4d2e3a53e8edac367dac3c83..b67fb931bb101b42b80a57814d9882d5
  		return "", errOAuthSessionNotPending
 diff --git a/internal/api/handlers/management/oauth_sessions_save_test.go b/internal/api/handlers/management/oauth_sessions_save_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..dfdd325653671be47d2d38552cad63371350ba3f
+index 00000000..dfdd3256
 --- /dev/null
 +++ b/internal/api/handlers/management/oauth_sessions_save_test.go
 @@ -0,0 +1,71 @@
@@ -1631,7 +1889,7 @@ index 0000000000000000000000000000000000000000..dfdd325653671be47d2d38552cad6337
 +}
 diff --git a/internal/api/server_codex_device_callback_test.go b/internal/api/server_codex_device_callback_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..f5b1c0076799c9b6d5a54377cb3226299d536a9a
+index 00000000..f5b1c007
 --- /dev/null
 +++ b/internal/api/server_codex_device_callback_test.go
 @@ -0,0 +1,35 @@
@@ -1671,7 +1929,7 @@ index 0000000000000000000000000000000000000000..f5b1c0076799c9b6d5a54377cb322629
 +	}
 +}
 diff --git a/internal/api/server_routes.go b/internal/api/server_routes.go
-index 61786b4a9a1f66c83663358e851228ec8b5d6dec..9b136f3d1c027bded10ef9480672e84d056e7195 100644
+index 61786b4a..9b136f3d 100644
 --- a/internal/api/server_routes.go
 +++ b/internal/api/server_routes.go
 @@ -175,7 +175,12 @@ func (s *Server) setupRoutes() {
@@ -1688,9 +1946,341 @@ index 61786b4a9a1f66c83663358e851228ec8b5d6dec..9b136f3d1c027bded10ef9480672e84d
  					c.JSON(http.StatusConflict, gin.H{"error": "SIWC callbacks require /v8/management/oauth/callback"})
  					return
  				}
+diff --git a/internal/auth/codex/filelock.go b/internal/auth/codex/filelock.go
+new file mode 100644
+index 00000000..d738778c
+--- /dev/null
++++ b/internal/auth/codex/filelock.go
+@@ -0,0 +1,80 @@
++package codex
++
++import (
++	"context"
++	"fmt"
++	"os"
++	"path/filepath"
++	"sync"
++	"time"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
++)
++
++var codexFileLocks sync.Map
++
++func lockForFilePath(authFilePath string) *misc.ContextMutex {
++	cleaned := canonicalLockPath(authFilePath)
++	if actual, ok := codexFileLocks.Load(cleaned); ok {
++		return actual.(*misc.ContextMutex)
++	}
++	actual, _ := codexFileLocks.LoadOrStore(cleaned, &misc.ContextMutex{})
++	return actual.(*misc.ContextMutex)
++}
++
++// WithFileLock serializes credential updates within and across processes.
++func WithFileLock(authFilePath string, fn func() error) error {
++	return WithFileLockContext(context.Background(), authFilePath, fn)
++}
++
++// WithFileLockContext lets a canceled credential save leave both lock queues
++// without scheduling a write after the caller has already reported failure.
++func WithFileLockContext(ctx context.Context, authFilePath string, fn func() error) error {
++	if ctx == nil {
++		ctx = context.Background()
++	}
++	mu := lockForFilePath(authFilePath)
++	if err := mu.LockContext(ctx); err != nil {
++		return err
++	}
++	defer mu.Unlock()
++	if err := os.MkdirAll(filepath.Dir(authFilePath), 0o700); err != nil {
++		return fmt.Errorf("failed to create credential directory: %w", err)
++	}
++	release, err := acquireInterProcessLockFileContext(ctx, authFilePath)
++	if err != nil {
++		return err
++	}
++	defer release()
++	if err := ctx.Err(); err != nil {
++		return err
++	}
++	return fn()
++}
++
++func acquireInterProcessLockFile(authFilePath string) (func(), error) {
++	return acquireInterProcessLockFileContext(context.Background(), authFilePath)
++}
++
++// OS lock waits cannot select on ctx.Done, so retry nonblocking attempts instead.
++func waitForFileLock(ctx context.Context, tryLock func() (bool, error)) error {
++	for {
++		if err := ctx.Err(); err != nil {
++			return err
++		}
++		locked, err := tryLock()
++		if err != nil {
++			return err
++		}
++		if locked {
++			return nil
++		}
++		timer := time.NewTimer(10 * time.Millisecond)
++		select {
++		case <-ctx.Done():
++			timer.Stop()
++			return ctx.Err()
++		case <-timer.C:
++		}
++	}
++}
+diff --git a/internal/auth/codex/filelock_test.go b/internal/auth/codex/filelock_test.go
+new file mode 100644
+index 00000000..c069ebcf
+--- /dev/null
++++ b/internal/auth/codex/filelock_test.go
+@@ -0,0 +1,67 @@
++package codex
++
++import (
++	"context"
++	"errors"
++	"path/filepath"
++	"testing"
++	"testing/synctest"
++	"time"
++)
++
++func TestWithFileLockContextDeadline(t *testing.T) {
++	for _, phase := range []string{"process", "file"} {
++		t.Run(phase, func(t *testing.T) {
++			synctest.Test(t, func(t *testing.T) {
++				path := filepath.Join(t.TempDir(), "codex.json")
++				var release func()
++				if phase == "process" {
++					mu := lockForFilePath(path)
++					mu.Lock()
++					release = mu.Unlock
++				} else {
++					var err error
++					release, err = acquireInterProcessLockFile(path)
++					if err != nil {
++						t.Fatal(err)
++					}
++				}
++				defer func() {
++					if release != nil {
++						release()
++					}
++				}()
++				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
++				defer cancel()
++				done := make(chan error, 1)
++				called := false
++				go func() { done <- WithFileLockContext(ctx, path, func() error { called = true; return nil }) }()
++				synctest.Wait()
++				<-ctx.Done()
++				if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
++					t.Fatalf("error=%v; want deadline exceeded", err)
++				}
++				if called {
++					t.Fatal("canceled lock acquisition ran the write")
++				}
++				release()
++				release = nil
++				sentinel := errors.New("callback result")
++				if err := WithFileLock(path, func() error { return sentinel }); !errors.Is(err, sentinel) {
++					t.Fatalf("subsequent lock failed: %v", err)
++				}
++				if called {
++					t.Fatal("timed out callback ran after release")
++				}
++			})
++		})
++	}
++}
++
++func TestWithFileLockContextCanceled(t *testing.T) {
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	if err := WithFileLockContext(ctx, filepath.Join(t.TempDir(), "codex.json"), func() error { t.Error("canceled callback ran"); return nil }); !errors.Is(err, context.Canceled) {
++		t.Fatalf("error=%v; want canceled", err)
++	}
++}
+diff --git a/internal/auth/codex/filelock_unix.go b/internal/auth/codex/filelock_unix.go
+index d9ccce8b..5cd33b65 100644
+--- a/internal/auth/codex/filelock_unix.go
++++ b/internal/auth/codex/filelock_unix.go
+@@ -3,18 +3,26 @@
+ package codex
+
+ import (
++	"context"
++	"errors"
+ 	"fmt"
+ 	"os"
+ 	"syscall"
+ )
+
+-func acquireInterProcessLockFile(authFilePath string) (func(), error) {
++func acquireInterProcessLockFileContext(ctx context.Context, authFilePath string) (func(), error) {
+ 	lockPath := canonicalLockPath(authFilePath) + ".lock"
+ 	f, errOpen := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+ 	if errOpen != nil {
+ 		return nil, fmt.Errorf("failed to open credential lock file %s: %w", lockPath, errOpen)
+ 	}
+-	if errFlock := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); errFlock != nil {
++	if errFlock := waitForFileLock(ctx, func() (bool, error) {
++		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
++		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EINTR) {
++			return false, nil
++		}
++		return err == nil, err
++	}); errFlock != nil {
+ 		_ = f.Close()
+ 		return nil, fmt.Errorf("failed to acquire flock on %s: %w", lockPath, errFlock)
+ 	}
+diff --git a/internal/auth/codex/filelock_windows.go b/internal/auth/codex/filelock_windows.go
+index bd9ed8f8..dcfd5f06 100644
+--- a/internal/auth/codex/filelock_windows.go
++++ b/internal/auth/codex/filelock_windows.go
+@@ -3,10 +3,14 @@
+ package codex
+
+ import (
++	"context"
++	"errors"
+ 	"fmt"
+ 	"os"
+ 	"syscall"
+ 	"unsafe"
++
++	"golang.org/x/sys/windows"
+ )
+
+ var (
+@@ -15,24 +19,29 @@ var (
+ 	procUnlockFileEx = modkernel32.NewProc("UnlockFileEx")
+ )
+
+-const lockfileExclusiveLock = 0x00000002
++const (
++	lockfileExclusiveLock   = 0x00000002
++	lockfileFailImmediately = 0x00000001
++)
+
+-func acquireInterProcessLockFile(authFilePath string) (func(), error) {
++func acquireInterProcessLockFileContext(ctx context.Context, authFilePath string) (func(), error) {
+ 	lockPath := canonicalLockPath(authFilePath) + ".lock"
+ 	f, errOpen := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+ 	if errOpen != nil {
+ 		return nil, fmt.Errorf("failed to open credential lock file %s: %w", lockPath, errOpen)
+ 	}
+-	var overlapped syscall.Overlapped
+-	r1, _, errLock := procLockFileEx.Call(
+-		f.Fd(),
+-		uintptr(lockfileExclusiveLock),
+-		0,
+-		1,
+-		0,
+-		uintptr(unsafe.Pointer(&overlapped)),
+-	)
+-	if r1 == 0 {
++	errLock := waitForFileLock(ctx, func() (bool, error) {
++		var overlapped syscall.Overlapped
++		r1, _, err := procLockFileEx.Call(f.Fd(), uintptr(lockfileExclusiveLock|lockfileFailImmediately), 0, 1, 0, uintptr(unsafe.Pointer(&overlapped)))
++		if r1 != 0 {
++			return true, nil
++		}
++		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
++			return false, nil
++		}
++		return false, err
++	})
++	if errLock != nil {
+ 		_ = f.Close()
+ 		return nil, fmt.Errorf("failed to lock credential file %s: %w", lockPath, errLock)
+ 	}
+diff --git a/internal/auth/codex/token.go b/internal/auth/codex/token.go
+index 6baffb94..1125efe4 100644
+--- a/internal/auth/codex/token.go
++++ b/internal/auth/codex/token.go
+@@ -4,30 +4,18 @@
+ package codex
+
+ import (
++	"context"
+ 	"encoding/json"
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
+ 	"strconv"
+ 	"strings"
+-	"sync"
+
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
+ 	log "github.com/sirupsen/logrus"
+ )
+
+-var codexFileLocks sync.Map
+-
+-func lockForFilePath(authFilePath string) *sync.Mutex {
+-	cleaned := canonicalLockPath(authFilePath)
+-	if actual, ok := codexFileLocks.Load(cleaned); ok {
+-		return actual.(*sync.Mutex)
+-	}
+-	mu := &sync.Mutex{}
+-	actual, _ := codexFileLocks.LoadOrStore(cleaned, mu)
+-	return actual.(*sync.Mutex)
+-}
+-
+ func canonicalLockPath(authFilePath string) string {
+ 	cleaned := filepath.Clean(strings.TrimSpace(authFilePath))
+ 	if abs, errAbs := filepath.Abs(cleaned); errAbs == nil && strings.TrimSpace(abs) != "" {
+@@ -41,24 +29,6 @@ func canonicalLockPath(authFilePath string) string {
+ 	return cleaned
+ }
+
+-// WithFileLock executes fn while holding both an in-process mutex and an inter-process lockfile for authFilePath.
+-func WithFileLock(authFilePath string, fn func() error) error {
+-	mu := lockForFilePath(authFilePath)
+-	mu.Lock()
+-	defer mu.Unlock()
+-
+-	if errDir := os.MkdirAll(filepath.Dir(authFilePath), 0o700); errDir != nil {
+-		return fmt.Errorf("failed to create credential directory: %w", errDir)
+-	}
+-	releaseLockFile, errLock := acquireInterProcessLockFile(authFilePath)
+-	if errLock != nil {
+-		return errLock
+-	}
+-	defer releaseLockFile()
+-
+-	return fn()
+-}
+-
+ // WriteJSONFileAtomic writes data as JSON to authFilePath atomically via a temporary file in the same directory.
+ func WriteJSONFileAtomic(authFilePath string, data map[string]any) error {
+ 	dir := filepath.Dir(authFilePath)
+@@ -269,11 +239,16 @@ func (ts *CodexTokenStorage) SetMetadata(meta map[string]any) {
+ // SaveTokenToFile serializes the Codex token storage to a JSON file under a per-file and inter-process lock,
+ // reading and merging any existing JSON on disk before atomically replacing the file.
+ func (ts *CodexTokenStorage) SaveTokenToFile(authFilePath string) error {
++	return ts.SaveTokenToFileContext(context.Background(), authFilePath)
++}
++
++// SaveTokenToFileContext bounds credential-lock acquisition by the caller's context.
++func (ts *CodexTokenStorage) SaveTokenToFileContext(ctx context.Context, authFilePath string) error {
+ 	misc.LogSavingCredentials(authFilePath)
+ 	ts.Type = "codex"
+ 	_ = strconv.IntSize
+
+-	return WithFileLock(authFilePath, func() error {
++	return WithFileLockContext(ctx, authFilePath, func() error {
+ 		data, errMerge := misc.MergeMetadata(ts, ts.Metadata)
+ 		if errMerge != nil {
+ 			return fmt.Errorf("failed to merge metadata: %w", errMerge)
 diff --git a/internal/misc/context_mutex.go b/internal/misc/context_mutex.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..7960686ab884627b528e14e3a7dc5e831eb4a18c
+index 00000000..7960686a
 --- /dev/null
 +++ b/internal/misc/context_mutex.go
 @@ -0,0 +1,31 @@
@@ -1726,7 +2316,7 @@ index 0000000000000000000000000000000000000000..7960686ab884627b528e14e3a7dc5e83
 +	m.sem.Release(1)
 +}
 diff --git a/internal/store/gitstore.go b/internal/store/gitstore.go
-index 3c1f0fbe1d0ad7bce19c02e2acdbeaf4298553ba..84bf106514f6fceca1002ad99813f51929d49abf 100644
+index 3c1f0fbe..84bf1065 100644
 --- a/internal/store/gitstore.go
 +++ b/internal/store/gitstore.go
 @@ -22,6 +22,7 @@ import (
@@ -1791,7 +2381,7 @@ index 3c1f0fbe1d0ad7bce19c02e2acdbeaf4298553ba..84bf106514f6fceca1002ad99813f519
 
  	path, err := s.resolveAuthPath(auth)
 diff --git a/internal/store/objectstore.go b/internal/store/objectstore.go
-index 39b8b0898256c6df4c37fe36a97fbb04ec5ce746..78c8f3e7cac30cd9ab4652146d481324e77598e3 100644
+index 39b8b089..78c8f3e7 100644
 --- a/internal/store/objectstore.go
 +++ b/internal/store/objectstore.go
 @@ -12,7 +12,6 @@ import (
@@ -1823,7 +2413,7 @@ index 39b8b0898256c6df4c37fe36a97fbb04ec5ce746..78c8f3e7cac30cd9ab4652146d481324
 
  	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 diff --git a/internal/store/postgresstore.go b/internal/store/postgresstore.go
-index 69bc318bdaa5a75dd64860ec0be5361553f7a4cc..47c93837ccdd720c0e40d1c8e403b33186bbcc2e 100644
+index 69bc318b..47c93837 100644
 --- a/internal/store/postgresstore.go
 +++ b/internal/store/postgresstore.go
 @@ -10,7 +10,6 @@ import (
@@ -1856,7 +2446,7 @@ index 69bc318bdaa5a75dd64860ec0be5361553f7a4cc..47c93837ccdd720c0e40d1c8e403b331
  	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 diff --git a/internal/store/save_lock_context_test.go b/internal/store/save_lock_context_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..a966ae2b0f42aee009c8a44da28b9292975d006c
+index 00000000..a966ae2b
 --- /dev/null
 +++ b/internal/store/save_lock_context_test.go
 @@ -0,0 +1,94 @@
@@ -1955,44 +2545,44 @@ index 0000000000000000000000000000000000000000..a966ae2b0f42aee009c8a44da28b9292
 +	}
 +}
 diff --git a/sdk/auth/codex.go b/sdk/auth/codex.go
-index 2d56fa07919f198fafe8060b5e3f93ef6255a43d..d65e8b210468eb4e610e39518366f17df57d589f 100644
+index 2d56fa07..d65e8b21 100644
 --- a/sdk/auth/codex.go
 +++ b/sdk/auth/codex.go
 @@ -19,7 +19,8 @@ import (
- 
+
  // CodexAuthenticator implements the OAuth login flow for Codex accounts.
  type CodexAuthenticator struct {
 -	CallbackPort int
 +	CallbackPort     int
 +	deviceHTTPClient *http.Client
  }
- 
+
  // NewCodexAuthenticator constructs a Codex authenticator with default settings.
 diff --git a/sdk/auth/codex_device.go b/sdk/auth/codex_device.go
-index cc2febbb3c470c5f35834d0744a5e691926c5eff..59e2ea38c3448cbc054695da75e17a8af567892f 100644
+index cc2febbb..59e2ea38 100644
 --- a/sdk/auth/codex_device.go
 +++ b/sdk/auth/codex_device.go
 @@ -66,7 +66,10 @@ func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *confi
  		ctx = context.Background()
  	}
- 
+
 -	httpClient := util.SetProxy(&cfg.SDKConfig, &http.Client{})
 +	httpClient := a.deviceHTTPClient
 +	if httpClient == nil {
 +		httpClient = util.SetProxy(&cfg.SDKConfig, &http.Client{})
 +	}
- 
+
  	userCodeResp, err := requestCodexDeviceUserCode(ctx, httpClient)
  	if err != nil {
 @@ -82,11 +85,22 @@ func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *confi
  		return nil, fmt.Errorf("codex device flow did not return required fields")
  	}
- 
+
 +	ctx, cancel := context.WithTimeout(ctx, codexDeviceTimeout)
 +	defer cancel()
 +
  	pollInterval := parseCodexDevicePollInterval(userCodeResp.Interval)
- 
+
  	fmt.Println("Starting Codex device authentication...")
 -	fmt.Printf("Codex device URL: %s\n", codexDeviceVerificationURL)
 -	fmt.Printf("Codex device code: %s\n", deviceCode)
@@ -2006,12 +2596,12 @@ index cc2febbb3c470c5f35834d0744a5e691926c5eff..59e2ea38c3448cbc054695da75e17a8a
 +		fmt.Printf("Codex device URL: %s\n", codexDeviceVerificationURL)
 +		fmt.Printf("Codex device code: %s\n", deviceCode)
 +	}
- 
+
  	if !opts.NoBrowser {
  		if !browser.IsAvailable() {
 @@ -172,6 +186,9 @@ func pollCodexDeviceToken(ctx context.Context, client *http.Client, deviceAuthID
  	deadline := time.Now().Add(codexDeviceTimeout)
- 
+
  	for {
 +		if err := ctx.Err(); err != nil {
 +			return nil, err
@@ -2021,7 +2611,7 @@ index cc2febbb3c470c5f35834d0744a5e691926c5eff..59e2ea38c3448cbc054695da75e17a8a
  		}
 diff --git a/sdk/auth/codex_device_test.go b/sdk/auth/codex_device_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..2a078f39059f3289f7aea8a590e477f6acf2a986
+index 00000000..2a078f39
 --- /dev/null
 +++ b/sdk/auth/codex_device_test.go
 @@ -0,0 +1,116 @@
@@ -2142,7 +2732,7 @@ index 0000000000000000000000000000000000000000..2a078f39059f3289f7aea8a590e477f6
 +}
 +func (*stalledCodexDeviceBody) Close() error { return nil }
 diff --git a/sdk/auth/filestore.go b/sdk/auth/filestore.go
-index f8e061535b02b8609002c06498192f30bfaf2070..78e82bc3747fb349633e55459cc7343a0af72a1b 100644
+index f8e06153..78e82bc3 100644
 --- a/sdk/auth/filestore.go
 +++ b/sdk/auth/filestore.go
 @@ -13,6 +13,7 @@ import (
@@ -2175,7 +2765,7 @@ index f8e061535b02b8609002c06498192f30bfaf2070..78e82bc3747fb349633e55459cc7343a
  	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 diff --git a/sdk/auth/filestore_context_test.go b/sdk/auth/filestore_context_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..273b0d64d65b417c32c12626b7d24ac9116c9633
+index 00000000..273b0d64
 --- /dev/null
 +++ b/sdk/auth/filestore_context_test.go
 @@ -0,0 +1,60 @@
@@ -2240,7 +2830,7 @@ index 0000000000000000000000000000000000000000..273b0d64d65b417c32c12626b7d24ac9
 +	}
 +}
 diff --git a/sdk/auth/interfaces.go b/sdk/auth/interfaces.go
-index 4388de8019fe2737f7d69d8e8191729546d492e7..c53556fa4392fd1ba8942228bd53d2ae112a93cf 100644
+index 4388de80..c53556fa 100644
 --- a/sdk/auth/interfaces.go
 +++ b/sdk/auth/interfaces.go
 @@ -19,6 +19,16 @@ type LoginOptions struct {
@@ -2258,5 +2848,91 @@ index 4388de8019fe2737f7d69d8e8191729546d492e7..c53556fa4392fd1ba8942228bd53d2ae
 +	VerificationURL string
 +	ExpiresIn       int // seconds
  }
- 
+
  // Authenticator manages login and optional refresh flows for a provider.
+diff --git a/sdk/cliproxy/auth/codex_persist.go b/sdk/cliproxy/auth/codex_persist.go
+index 0215f7f6..dc7c6863 100644
+--- a/sdk/cliproxy/auth/codex_persist.go
++++ b/sdk/cliproxy/auth/codex_persist.go
+@@ -43,7 +43,7 @@ func PersistCodexAuthFile(ctx context.Context, path string, auth *Auth) (bool, e
+
+ 	switch {
+ 	case auth.CodexRefreshPatch != nil:
+-		errRefresh := codex.WithFileLock(path, func() error {
++		errRefresh := codex.WithFileLockContext(ctx, path, func() error {
+ 			existing, errRead := os.ReadFile(path)
+ 			if errRead != nil {
+ 				if os.IsNotExist(errRead) {
+@@ -91,7 +91,13 @@ func PersistCodexAuthFile(ctx context.Context, path string, auth *Auth) (bool, e
+ 		if setter, ok := auth.Storage.(metadataSetter); ok {
+ 			setter.SetMetadata(auth.Metadata)
+ 		}
+-		if errSave := auth.Storage.SaveTokenToFile(path); errSave != nil {
++		var errSave error
++		if storage, ok := auth.Storage.(*codex.CodexTokenStorage); ok && storage != nil {
++			errSave = storage.SaveTokenToFileContext(ctx, path)
++		} else {
++			errSave = auth.Storage.SaveTokenToFile(path)
++		}
++		if errSave != nil {
+ 			return true, errSave
+ 		}
+ 		if persistedBytes, errReadPersisted := os.ReadFile(path); errReadPersisted == nil && len(persistedBytes) > 0 {
+@@ -105,7 +111,7 @@ func PersistCodexAuthFile(ctx context.Context, path string, auth *Auth) (bool, e
+
+ 	case auth.Metadata != nil:
+ 		auth.Metadata["disabled"] = auth.Disabled
+-		errLock := codex.WithFileLock(path, func() error {
++		errLock := codex.WithFileLockContext(ctx, path, func() error {
+ 			existing, errRead := os.ReadFile(path)
+ 			if errRead == nil && len(existing) > 0 {
+ 				var diskMap map[string]any
+diff --git a/sdk/cliproxy/auth/codex_persist_context_test.go b/sdk/cliproxy/auth/codex_persist_context_test.go
+new file mode 100644
+index 00000000..36330979
+--- /dev/null
++++ b/sdk/cliproxy/auth/codex_persist_context_test.go
+@@ -0,0 +1,43 @@
++package auth
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++)
++
++func TestPersistCodexAuthFileCanceledContextDoesNotWrite(t *testing.T) {
++	for _, mode := range []string{"metadata", "storage", "refresh"} {
++		t.Run(mode, func(t *testing.T) {
++			path := filepath.Join(t.TempDir(), "codex.json")
++			original := []byte(`{"type":"codex","access_token":"original"}`)
++			if err := os.WriteFile(path, original, 0o600); err != nil {
++				t.Fatal(err)
++			}
++			record := &Auth{Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "replacement", "note": "updated"}}
++			switch mode {
++			case "storage":
++				record.Storage = &codex.CodexTokenStorage{AccessToken: "replacement", ReplaceCredentials: true}
++			case "refresh":
++				record.CodexRefreshPatch = &codex.CredentialRefreshPatch{}
++			}
++			ctx, cancel := context.WithCancel(context.Background())
++			cancel()
++			handled, err := PersistCodexAuthFile(ctx, path, record)
++			if !handled || !errors.Is(err, context.Canceled) {
++				t.Errorf("handled=%t, error=%v; want handled cancellation", handled, err)
++			}
++			got, err := os.ReadFile(path)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if string(got) != string(original) {
++				t.Errorf("canceled persistence changed credentials: %s", got)
++			}
++		})
++	}
++}
