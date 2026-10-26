@@ -20,7 +20,7 @@ function fixture() {
       return requested.map((path) => paths.get(path));
     },
     async readdir(path) {
-      if (path === "/tmp") return [entries[1]!];
+      if (path === "/tmp") return [...paths.values()].filter((entry) => entry.path !== "/tmp");
       return undefined;
     },
     async readlink() {
@@ -31,7 +31,7 @@ function fixture() {
     },
   };
   let nextInode = 1n;
-  return { index: new KernelLowerFileSystemSourceIndex(source, () => nextInode++), calls };
+  return { index: new KernelLowerFileSystemSourceIndex(source, () => nextInode++), calls, paths };
 }
 
 describe("KernelLowerFileSystemSourceIndex known absence", () => {
@@ -50,6 +50,26 @@ describe("KernelLowerFileSystemSourceIndex known absence", () => {
     const { index } = fixture();
     await index.prepare(["/tmp"]);
     expect(index.lookupKnown("/tmp/existing/uncaptured")).toEqual({ kind: "unknown" });
+  });
+
+  it("derives ancestor absence from a fresh complete directory without a separate parent lookup", async () => {
+    const { index, calls } = fixture();
+    await index.prepare(["/tmp"]);
+    const before = calls.slice();
+    expect(index.lookupKnown("/tmp/new/deep/value")).toEqual({ kind: "missing" });
+    expect(await index.lookup("/tmp/another/deep/value")).toBeUndefined();
+    expect(calls).toEqual(before);
+  });
+
+  it("uses newly present lower directories after invalidation instead of old inferred absence", async () => {
+    const { index, paths } = fixture();
+    await index.prepare(["/tmp"]);
+    expect(index.lookupKnown("/tmp/new")).toEqual({ kind: "missing" });
+    expect(index.lookupKnown("/tmp/new/deep/value")).toEqual({ kind: "missing" });
+    paths.set("/tmp/new", { ...paths.get("/tmp/existing")!, path: "/tmp/new" });
+    index.invalidate();
+    await index.prepare(["/tmp"]);
+    expect(index.lookupKnown("/tmp/new/deep/value")).toEqual({ kind: "unknown" });
   });
 
   it("revokes inferred absence when the lower source is invalidated", async () => {
