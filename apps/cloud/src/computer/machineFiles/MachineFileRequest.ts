@@ -93,6 +93,8 @@ export function machineFileRequest(
     batch,
     single,
     check,
+    unavailable: (message: string, options?: ErrorOptions) =>
+      unavailable(message, lastBatchOperations, options),
     async readlink(path: string) {
       const result = await single({ id: "link", op: "readlink", path });
       if ("error" in result)

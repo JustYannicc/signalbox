@@ -1,8 +1,7 @@
 import { MACHINE_FILES_MAX_CONTENT_BYTES } from "@signalbox/runner-protocol/MachineFilesProtocol";
-import {
-  KernelFileSystemUnavailable,
-  type KernelLowerFileSystemEntry,
-  type KernelLowerFileSystemSource,
+import type {
+  KernelLowerFileSystemEntry,
+  KernelLowerFileSystemSource,
 } from "../kernel/KernelLowerFileSystem.ts";
 import { machineFileMetadata } from "./MachineFileMetadata.ts";
 import type { MachineFilesPort } from "./MachineFilesPort.ts";
@@ -40,17 +39,16 @@ export function createComputerMachineFileSystem(
   };
   const liveParents = (request: ReturnType<typeof machineFileRequest>) =>
     liveSymlinkParents({
+      unavailable: request.unavailable,
       async lstat(path) {
         const result = await request.single({ id: "parent", op: "lstat", path });
         if ("error" in result) {
           if (absent(result.error.code))
-            throw new KernelFileSystemUnavailable(
-              "Machine symlink parent disappeared during lookup",
-            );
+            throw request.unavailable("Machine symlink parent disappeared during lookup");
           throw posixError(result.error);
         }
         if (result.op !== "lstat")
-          throw new KernelFileSystemUnavailable("Machine returned the wrong ancestor operation");
+          throw request.unavailable("Machine returned the wrong ancestor operation");
         return result.stat;
       },
       async readlink(path) {
@@ -58,10 +56,9 @@ export function createComputerMachineFileSystem(
           return await request.readlink(path);
         } catch (error) {
           if (error instanceof Error && "code" in error && absent(String(error.code)))
-            throw new KernelFileSystemUnavailable(
-              "Machine ancestor symlink disappeared during lookup",
-              { cause: error },
-            );
+            throw request.unavailable("Machine ancestor symlink disappeared during lookup", {
+              cause: error,
+            });
           throw error;
         }
       },
@@ -110,8 +107,7 @@ export function createComputerMachineFileSystem(
           continue;
         }
         const result = results[liveIndex++];
-        if (result === undefined)
-          throw new KernelFileSystemUnavailable("Machine file response is incomplete");
+        if (result === undefined) throw request.unavailable("Machine file response is incomplete");
         if ("error" in result) {
           if (absent(result.error.code)) {
             entries.push(undefined);
@@ -120,7 +116,7 @@ export function createComputerMachineFileSystem(
           throw posixError(result.error);
         }
         if (result.op !== "lstat")
-          throw new KernelFileSystemUnavailable("Machine returned the wrong file operation");
+          throw request.unavailable("Machine returned the wrong file operation");
         const symlinkParent = result.stat.type === "symlink" ? await parent(path) : undefined;
         entries.push(
           machineFileMetadata(path, {
@@ -153,10 +149,10 @@ export function createComputerMachineFileSystem(
           throw posixError(result.error);
         }
         if (result.op !== "readdir")
-          throw new KernelFileSystemUnavailable("Machine returned the wrong directory operation");
+          throw request.unavailable("Machine returned the wrong directory operation");
         for (const entry of result.entries) {
           if (entry.stat === undefined)
-            throw new KernelFileSystemUnavailable("Machine omitted directory metadata");
+            throw request.unavailable("Machine omitted directory metadata");
           const child = `${path === "/" ? "" : path}/${entry.name}`;
           const symlinkParent = entry.stat.type === "symlink" ? await parent(child) : undefined;
           entries.push(
@@ -187,7 +183,8 @@ export function createComputerMachineFileSystem(
           code: "EOVERFLOW",
           message: "Machine file offset is outside the supported range",
         });
-      const result = await machineFileRequest(options.files, options.signal, signal).single({
+      const request = machineFileRequest(options.files, options.signal, signal);
+      const result = await request.single({
         id: "bytes",
         op: "readRange",
         path,
@@ -196,10 +193,10 @@ export function createComputerMachineFileSystem(
       });
       if ("error" in result) throw posixError(result.error);
       if (result.op !== "readRange")
-        throw new KernelFileSystemUnavailable("Machine returned the wrong read operation");
+        throw request.unavailable("Machine returned the wrong read operation");
       const bytes = decodeBase64(result.bytesBase64);
       if (bytes.byteLength !== result.bytesRead)
-        throw new KernelFileSystemUnavailable("Machine file byte count does not match its payload");
+        throw request.unavailable("Machine file byte count does not match its payload");
       return bytes;
     },
   };
