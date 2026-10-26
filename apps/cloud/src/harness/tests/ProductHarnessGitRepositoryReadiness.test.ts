@@ -11,10 +11,11 @@ const artifact =
   NodePath.resolve(import.meta.dirname, "../../../../../.t3/issue-1263/programs/git.wasm");
 
 it.skipIf(!NodeFS.existsSync(artifact))(
-  "runs the public ProductHost Git gate through pinned refresh, failure and cancellation",
+  "runs the public ProductHost Git gate through pinned refresh, machine rules, failure and cancellation",
   async () => {
     for (const scenario of [
       "repository-readiness",
+      "repository-machine-rule",
       "repository-failure",
       "repository-cancel",
     ] as const) {

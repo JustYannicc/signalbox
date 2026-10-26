@@ -176,6 +176,16 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
           },
           commands: {
             loader: productGit?.loader ?? commands.loader,
+            orderedMachineRules:
+              scenario === "repository-machine-rule"
+                ? [
+                    {
+                      id: "refresh-on-machine",
+                      executable: "/usr/bin/git",
+                      argvPrefix: ["update-index"],
+                    },
+                  ]
+                : [],
             capacity,
             systemIdentity,
             machine: (identity) => {
@@ -247,7 +257,7 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
             adapter: ({ harness }) =>
               Effect.gen(function* () {
                 NodeAssert.equal(hydrated, true);
-                if (scenario === "repository-readiness") {
+                if (scenario === "repository-readiness" || scenario === "repository-machine-rule") {
                   NodeAssert.deepEqual(productGit?.commands[0]?.command.argv, [
                     "/usr/bin/git",
                     "update-index",
@@ -313,6 +323,7 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
         yield* host.seed("programs");
         if (
           scenario === "repository-readiness" ||
+          scenario === "repository-machine-rule" ||
           scenario === "repository-failure" ||
           scenario === "repository-cancel"
         ) {
@@ -324,6 +335,7 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
             systemIdentity,
             nativeLaunched: () => native.launched,
             nativeAdapterBuilt: () => nativeAdapterBuilt,
+            machineRequests: machine.requests,
             git: productGit,
             capacity,
             repositoryCancelled: repositoryCancelled.promise,

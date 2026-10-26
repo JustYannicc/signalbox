@@ -15,6 +15,7 @@ NodeModule.registerHooks({
 const scenario = NodeProcess.argv[2];
 if (
   scenario !== "repository-readiness" &&
+  scenario !== "repository-machine-rule" &&
   scenario !== "repository-failure" &&
   scenario !== "repository-cancel"
 )

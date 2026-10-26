@@ -13,6 +13,7 @@ import { runGit, trackReadsFor } from "./gitRepository.ts";
 
 export type RepositoryScenario =
   | "repository-readiness"
+  | "repository-machine-rule"
   | "repository-failure"
   | "repository-cancel";
 
@@ -29,6 +30,7 @@ export function runRepositoryScenario(
     readonly systemIdentity: SystemIdentity;
     readonly nativeLaunched: () => boolean;
     readonly nativeAdapterBuilt: () => boolean;
+    readonly machineRequests: readonly string[];
     readonly git: ReturnType<typeof pinnedGitCommandLoader>;
     readonly capacity: ChildWorkerCapacity;
     readonly repositoryCancelled: Promise<void>;
@@ -137,6 +139,7 @@ export function runRepositoryScenario(
       },
     );
     NodeAssert.equal(input.git.commands.length, 3);
+    NodeAssert.deepEqual(input.machineRequests, []);
     yield* input.host.dispose;
   });
 }

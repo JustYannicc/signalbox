@@ -149,7 +149,7 @@ function createProductBindings<G, Native>(
               input.signal.throwIfAborted();
               await prepareHydratedRepository({
                 files: input.files,
-                commands: bound,
+                commands: bound.isolate,
                 signal: input.signal,
               });
             } finally {
