@@ -9,6 +9,7 @@ import type {
   HarnessThreadSupervisorPublisher,
 } from "../HarnessThreadSupervisor.ts";
 import type { HarnessProcessFacetLocator } from "./contracts.ts";
+import type { HarnessProcessFacetModule } from "./moduleCode.ts";
 
 export interface HarnessCProductCapabilityEnvironment {
   readonly HARNESS_C_PRODUCT_CAPABILITIES?: Readonly<Record<string, Fetcher>>;
@@ -44,7 +45,7 @@ export type HarnessProcessExecutionProcessInput = {
   readonly priorFacetNonce: string;
   readonly expectedFacetGeneration: number;
   readonly mainModule: string;
-  readonly modules: Readonly<Record<string, string | { readonly js: string }>>;
+  readonly modules: Readonly<Record<string, HarnessProcessFacetModule>>;
   readonly entrypoint: string;
   readonly journal?: HarnessProcessExecutionJournal;
   /** Publisher capability for the fresh RunStore facet, bound to this lease's nonce at open. */

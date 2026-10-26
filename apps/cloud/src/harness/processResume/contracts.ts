@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleaseLedger.ts";
 import type { HarnessDurableStatePublicationResult } from "../HarnessDurableState.ts";
 import type { HarnessProcessPlacementIdentity } from "../processPlacement/contracts.ts";
+import type { HarnessProcessFacetModule } from "../processPlacement/moduleCode.ts";
 import type { HarnessReleasePlan } from "../HarnessReleasePlan.ts";
 import type {
   HarnessRequestCheckpoint,
@@ -46,7 +47,7 @@ export interface HarnessProcessResumeFacetCode {
   readonly codeId: string;
   readonly residentBytes: number;
   readonly mainModule: string;
-  readonly modules: Readonly<Record<string, string | { readonly js: string }>>;
+  readonly modules: Readonly<Record<string, HarnessProcessFacetModule>>;
   readonly entrypoint: string;
 }
 

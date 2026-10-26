@@ -18,6 +18,7 @@ import {
 } from "./publicResumeStores.fixture.ts";
 import type { ProofShard, ProofPlacementStore } from "./publicResumeShard.fixture.ts";
 import { jsonBytes, reference, releaseMaterial, loadMaterial } from "./releaseMaterial.ts";
+import { transportWasmBytes } from "./transportModule.fixture.ts";
 
 export interface ProofEnv {
   readonly HARNESS_FILES_STORE: DurableObjectNamespace<ProofFilesStore>;
@@ -147,7 +148,10 @@ export async function setup(
     priorFacetNonce: fixturePublisher.facetNonce,
     expectedFacetGeneration: 1,
     mainModule: "plain.mjs",
-    modules: { "plain.mjs": { js: env.OLD_SOURCE } },
+    modules: {
+      "plain.mjs": { js: env.OLD_SOURCE },
+      "transport.wasm": { wasm: transportWasmBytes() },
+    },
     entrypoint: "PlainFacet",
     ...(options.omitInitialBootstrap === true
       ? {}
@@ -357,6 +361,7 @@ export async function resumeInput(
       residentBytes: 1,
       mainModule: "plain.mjs",
       modules: {
+        "transport.wasm": { wasm: transportWasmBytes() },
         "plain.mjs": {
           js:
             options.mismatched === true

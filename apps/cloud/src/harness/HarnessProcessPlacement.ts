@@ -6,6 +6,7 @@ export {
   deterministicShardOwner,
 } from "./processPlacement/execution.ts";
 export { HarnessProcessPlacementError } from "./processPlacement/contracts.ts";
+export type { HarnessProcessFacetModule } from "./processPlacement/moduleCode.ts";
 export type { HarnessProcessPlacementWriter } from "./processPlacement/storeSchema.ts";
 export type { HarnessProcessPlacementStoreClient } from "./processPlacement/durableStore.ts";
 export type {

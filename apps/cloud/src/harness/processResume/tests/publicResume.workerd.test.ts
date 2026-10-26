@@ -15,7 +15,8 @@ beforeAll(async () => {
       format: "esm",
       platform: "node",
       target: "esnext",
-      external: ["cloudflare:workers", "node:*"],
+      external: ["cloudflare:workers", "node:*", "./transport.wasm"],
+      banner: { js: 'import C_TRANSPORT_WASM from "./transport.wasm";' },
       define: { PLAIN_VARIANT: JSON.stringify(variant) },
       write: false,
     });
@@ -174,6 +175,7 @@ it("resumes actual verified plain fixture code, then accepts a later request and
     true,
   );
   const transports = result.transports as readonly {
+    readonly wasmAnswer: number;
     readonly productBootstrap: {
       readonly provider: string;
       readonly preparedReleaseId: string;
@@ -227,6 +229,7 @@ it("resumes actual verified plain fixture code, then accepts a later request and
     ),
   );
   for (const row of transports) {
+    expect(row.wasmAnswer).toBe(42);
     expect(row.productBootstrap.provider).toBe("claude-code");
     expect(row.productBootstrap.preparedReleaseId).toBe(
       row.targetPreparedRelease.artifact.releaseId,

@@ -4,6 +4,10 @@ import type {
 } from "./contracts.ts";
 import { snapshotHarnessProcessResumeRunStoreBinding } from "./runStoreBinding.ts";
 import { samePreparedRelease, snapshotInput } from "./identity.ts";
+import {
+  snapshotHarnessProcessModules,
+  sameHarnessProcessModules,
+} from "../processPlacement/moduleCode.ts";
 
 const text = (value: unknown, maximum = 256): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= maximum;
@@ -66,30 +70,14 @@ function snapshotFacetCode(value: unknown): HarnessProcessResumeFacetCode | unde
     )
       return undefined;
 
-    const modules: Record<string, string | { readonly js: string }> = {};
-    for (const [name, supplied] of Object.entries(facet.modules)) {
-      if (!text(name)) return undefined;
-      if (typeof supplied === "string") {
-        modules[name] = supplied;
-        continue;
-      }
-      if (
-        typeof supplied !== "object" ||
-        supplied === null ||
-        Array.isArray(supplied) ||
-        Object.keys(supplied).length !== 1 ||
-        typeof (supplied as { readonly js?: unknown }).js !== "string"
-      )
-        return undefined;
-      modules[name] = Object.freeze({ js: (supplied as { readonly js: string }).js });
-    }
-    if (!Object.hasOwn(modules, facet.mainModule)) return undefined;
+    const modules = snapshotHarnessProcessModules(facet.modules, facet.mainModule);
+    if (modules === undefined) return undefined;
     return Object.freeze({
       processId: facet.processId,
       codeId: facet.codeId,
       residentBytes: facet.residentBytes as number,
       mainModule: facet.mainModule,
-      modules: Object.freeze(modules),
+      modules,
       entrypoint: facet.entrypoint,
     });
   } catch {
@@ -184,24 +172,6 @@ export function sameHarnessProcessResumeOperation(
     a: HarnessProcessResumeOperationInput["runStore"]["request"]["input"],
     b: HarnessProcessResumeOperationInput["runStore"]["request"]["input"],
   ) => a.id === b.id && a.sha256 === b.sha256 && a.bytes === b.bytes;
-  const sameModuleRecords = (
-    a: HarnessProcessResumeFacetCode["modules"],
-    b: HarnessProcessResumeFacetCode["modules"],
-  ) => {
-    const names = Object.keys(a);
-    return (
-      names.length === Object.keys(b).length &&
-      names.every((name) => {
-        if (!Object.hasOwn(b, name)) return false;
-        const leftModule = a[name];
-        const rightModule = b[name];
-        if (leftModule === undefined || rightModule === undefined) return false;
-        if (typeof leftModule === "string" || typeof rightModule === "string")
-          return leftModule === rightModule;
-        return leftModule.js === rightModule.js;
-      })
-    );
-  };
   return (
     left.runId === right.runId &&
     left.previousProcessId === right.previousProcessId &&
@@ -244,6 +214,6 @@ export function sameHarnessProcessResumeOperation(
     left.facet.residentBytes === right.facet.residentBytes &&
     left.facet.mainModule === right.facet.mainModule &&
     left.facet.entrypoint === right.facet.entrypoint &&
-    sameModuleRecords(left.facet.modules, right.facet.modules)
+    sameHarnessProcessModules(left.facet.modules, right.facet.modules)
   );
 }

@@ -9,6 +9,10 @@ export { HarnessProcessContinuationInput } from "./processResume/continuation.ts
 export { HarnessProcessResumeRunStoreBindingSchema } from "./processResume/contracts.ts";
 export { snapshotHarnessProcessResumeRunStoreBinding } from "./processResume/runStoreBinding.ts";
 export {
+  snapshotHarnessProcessResumeOperation,
+  sameHarnessProcessResumeOperation,
+} from "./processResume/operation.ts";
+export {
   replaceHarnessProcessResumeRunStoreFacet,
   validateHarnessProcessResumeRunStoreActive,
   validateHarnessProcessResumeRunStoreDrain,

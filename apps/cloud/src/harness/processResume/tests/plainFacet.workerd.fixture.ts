@@ -21,6 +21,10 @@ import type { ProofFilesStore } from "./publicResumeStores.fixture.ts";
 import { loadMaterial, jsonBytes, reference } from "./releaseMaterial.ts";
 
 declare const PLAIN_VARIANT: string;
+declare const C_TRANSPORT_WASM: WebAssembly.Module;
+const wasmAnswer = new WebAssembly.Instance(C_TRANSPORT_WASM).exports.answer;
+if (typeof wasmAnswer !== "function") throw new Error("The transported Wasm export is missing.");
+const transportedWasmAnswer = Number(wasmAnswer());
 interface Env extends HarnessCProductCapabilityEnvironment {
   readonly HARNESS_RESUME_RUN_STORE: Pick<HarnessRunStoreObject, "execute">;
   readonly HARNESS_RESUME_FILES_STORE: Pick<
@@ -83,6 +87,7 @@ const createPlainProcess = (exposeLoadedRelease: boolean) =>
                 });
           yield* call(() =>
             files.observe(`facet-transport:${facetNonce}`, {
+              wasmAnswer: transportedWasmAnswer,
               productBootstrap: env.HARNESS_C_PRODUCT_BOOTSTRAP ?? null,
               targetPreparedRelease: env.HARNESS_C_TARGET_PREPARED_RELEASE ?? null,
               productCapability: capabilityResult,

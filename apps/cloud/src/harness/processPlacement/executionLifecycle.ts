@@ -25,6 +25,7 @@ import {
 import { createHarnessProcessPlacement, forgetHarnessProcessPlacement } from "./service.ts";
 import { type HarnessProcessPlacementWriter } from "./storeSchema.ts";
 import { sameClaim } from "./storeSchema.ts";
+import { snapshotHarnessProcessModules } from "./moduleCode.ts";
 import { confirmedProcessPublication } from "./publication.ts";
 import type { ProcessSlotLease } from "../../computer/ProcessSlots.ts";
 import type { HarnessRequestFacetObject } from "../HarnessRequestFacetObject.ts";
@@ -554,11 +555,16 @@ export function createFacet(
     throw new TypeError("Process execution code must include a main module and entrypoint.");
   if (identity.facetKey !== identity.loaderId)
     throw new TypeError("A process facet key must use its ProcessSlots loader ID.");
+  const modules = snapshotHarnessProcessModules(process.modules, process.mainModule);
+  if (modules === undefined)
+    throw new TypeError(
+      "Process execution code must use JavaScript and Wasm byte modules with a JavaScript main.",
+    );
   const workerCode: WorkerLoaderWorkerCode = {
     compatibilityDate: "2026-10-19",
     compatibilityFlags: ["nodejs_compat"],
     mainModule: process.mainModule,
-    modules: process.modules,
+    modules,
     env: createHarnessProcessFacetEnvironment(process, environment, identity),
     globalOutbound: null,
   };
