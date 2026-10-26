@@ -31,11 +31,21 @@ import { createNodeFs } from "../../../isolate/NodeFs.ts";
 import { hostSqlite } from "../hostSqlite.ts";
 import { claudeFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
 import { data } from "../../adapter/tests/data.ts";
-import { commandLoader, programFixture } from "./commands.ts";
+import { commandLoader, pinnedGitCommandLoader, programFixture } from "./commands.ts";
+import {
+  createRepositoryImage,
+  installRepositoryImage,
+  loadPinnedGitModule,
+  trackReadsFor,
+  type RepositoryFile,
+} from "./gitRepository.ts";
+import { runRepositoryScenario, type RepositoryScenario } from "./repositoryScenario.ts";
 import { nativeFixture } from "./native.ts";
 import { adapter, services } from "./adapter.ts";
 
-export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", omitOnExit = false) {
+type ProductScenario = Scenario | "hydrate" | "start-failure" | RepositoryScenario;
+
+export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
   return Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -101,26 +111,44 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
               }
             : undefined,
         );
+        const gitModule = scenario.startsWith("repository-") ? loadPinnedGitModule() : undefined;
+        const repositoryImage: readonly RepositoryFile[] | undefined =
+          gitModule === undefined ? undefined : yield* Effect.sync(createRepositoryImage);
+        let files: KernelFileSystem | undefined;
+        let indexLockExistsAfterGit: boolean | undefined;
+        const productGit =
+          gitModule === undefined
+            ? undefined
+            : pinnedGitCommandLoader(gitModule, {
+                holdTrackedRead: scenario === "repository-cancel",
+                afterCommand: () => {
+                  if (scenario === "repository-cancel" && files !== undefined)
+                    indexLockExistsAfterGit = createNodeFs(files).fs.existsSync(
+                      "/workspace/.git/index.lock",
+                    );
+                },
+              });
         const commands = commandLoader();
         const capacity = new ChildWorkerCapacity(2);
         const persistencePorts = createMemoryFilePersistencePorts();
         const at = { repository: "product-test", fork: "thread", commit: "base" };
         persistencePorts.seedFile(at, "/workspace/file.txt", new TextEncoder().encode("before\n"));
         const modelRequests: string[] = [];
-        let files: KernelFileSystem | undefined;
         let retainedFd: number | undefined;
         let nativeBindingClosed = false;
+        let nativeAdapterBuilt = false;
+        let repositoryReads: ReturnType<typeof trackReadsFor> | undefined;
         const hydrateEntered = Promise.withResolvers<void>();
         const hydrateCancelled = Promise.withResolvers<void>();
         const hydrateReleased = Promise.withResolvers<void>();
-        const machine = machineFixture(
-          scenario === "hydrate" || scenario === "start-failure" ? "turn" : scenario,
-          () => {
-            NodeAssert.ok(files !== undefined);
-            if (retainedFd !== undefined) files.fstat(retainedFd);
-            else files.stat("/workspace/file.txt");
-          },
-        );
+        const repositoryCancelled = Promise.withResolvers<void>();
+        const machineScenario: Scenario =
+          scenario === "interrupt" || scenario === "dispose" ? scenario : "turn";
+        const machine = machineFixture(machineScenario, () => {
+          NodeAssert.ok(files !== undefined);
+          if (retainedFd !== undefined) files.fstat(retainedFd);
+          else files.stat("/workspace/file.txt");
+        });
         yield* Effect.addFinalizer(() => Effect.sync(machine.release));
         const observed: Uint8Array[] = [];
         let nativeProcess: HarnessOwnedProcess | undefined;
@@ -147,7 +175,7 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
             assetMode: 0o644,
           },
           commands: {
-            loader: commands.loader,
+            loader: productGit?.loader ?? commands.loader,
             capacity,
             systemIdentity,
             machine: (identity) => {
@@ -167,12 +195,25 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
             }
             NodeAssert.equal(native.launched, false);
             const fs = createNodeFs(canonical).fs;
+            if (repositoryImage !== undefined) {
+              installRepositoryImage(canonical, repositoryImage);
+              if (scenario === "repository-failure")
+                fs.writeFileSync("/workspace/.git/index.lock", "other writer");
+              if (scenario === "repository-cancel") {
+                retainedFd = canonical.open("/workspace/tracked.txt", 0);
+                signal.addEventListener("abort", () => repositoryCancelled.resolve(), {
+                  once: true,
+                });
+              }
+              repositoryReads = trackReadsFor(canonical, "/workspace/tracked.txt");
+            } else {
+              fs.mkdirSync("/recorded/git", { recursive: true });
+              fs.writeFileSync("/workspace/.git", "gitdir: /recorded/git\n");
+              fs.writeFileSync("/workspace/file.txt", "before\n");
+            }
             fs.mkdirSync("/home/recorded", { recursive: true });
-            fs.mkdirSync("/recorded/git", { recursive: true });
-            fs.writeFileSync("/workspace/.git", "gitdir: /recorded/git\n");
-            fs.writeFileSync("/workspace/file.txt", "before\n");
             fs.writeFileSync("/home/recorded/session", nativeId);
-            fs.symlinkSync("/workspace", "/source-alias");
+            if (repositoryImage === undefined) fs.symlinkSync("/workspace", "/source-alias");
             hydrated = true;
           },
           save: async ({ files, persistence, signal }) => {
@@ -206,6 +247,14 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
             adapter: ({ harness }) =>
               Effect.gen(function* () {
                 NodeAssert.equal(hydrated, true);
+                if (scenario === "repository-readiness") {
+                  NodeAssert.deepEqual(productGit?.commands[0]?.command.argv, [
+                    "/usr/bin/git",
+                    "update-index",
+                    "--refresh",
+                  ]);
+                  nativeAdapterBuilt = true;
+                }
                 if (scenario === "start-failure") {
                   yield* Effect.addFinalizer(() =>
                     Effect.sync(() => {
@@ -262,6 +311,29 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
         });
         yield* host.seed("assets");
         yield* host.seed("programs");
+        if (
+          scenario === "repository-readiness" ||
+          scenario === "repository-failure" ||
+          scenario === "repository-cancel"
+        ) {
+          if (productGit === undefined) throw new Error("Repository scenario needs pinned Git");
+          yield* runRepositoryScenario(scenario, {
+            host,
+            session: sessionInput,
+            providerSessionId,
+            systemIdentity,
+            nativeLaunched: () => native.launched,
+            nativeAdapterBuilt: () => nativeAdapterBuilt,
+            git: productGit,
+            capacity,
+            repositoryCancelled: repositoryCancelled.promise,
+            files: () => files,
+            retainedFd: () => retainedFd,
+            repositoryReads: () => repositoryReads,
+            indexLockExistsAfterGit: () => indexLockExistsAfterGit,
+          });
+          return;
+        }
         if (scenario === "hydrate") {
           let closed = false;
           const opening = yield* host
@@ -381,7 +453,7 @@ export function run(scenario: Scenario | "hydrate" | "start-failure" = "turn", o
         }
         yield* Deferred.await(terminal);
         if (native.failure !== undefined) throw native.failure;
-        NodeAssert.deepEqual(commands.commands, ["/usr/bin/git", "/bin/sed"]);
+        NodeAssert.deepEqual(commands.commands, ["/usr/bin/git", "/usr/bin/git", "/bin/sed"]);
         NodeAssert.deepEqual(machine.requests, ["/usr/bin/machine-tool"]);
         NodeAssert.deepEqual(native.outputs, [" M file.txt\n", "", "machine output\n"]);
         NodeAssert.equal(

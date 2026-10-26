@@ -115,6 +115,7 @@ function testCode(name: string): ChildWorkerCode {
 export function createCodexLocaleProductComputer(
   programs: CodexLocalePrograms,
   options: {
+    readonly nowNs?: () => bigint;
     readonly directory?: KernelPosixMetadata;
     readonly file?: KernelPosixMetadata;
     readonly machine?: KernelCommandForwarder;
@@ -122,7 +123,10 @@ export function createCodexLocaleProductComputer(
   } = {},
 ) {
   const database = sqliteFixture();
-  const storage = createFacetSqliteStorage(database.storage, () => 1_800_000_000_000_000_001n);
+  const storage = createFacetSqliteStorage(
+    database.storage,
+    options.nowNs ?? (() => 1_800_000_000_000_000_001n),
+  );
   const credentials = { uid: 1000, gid: 1000, euid: 1000, egid: 1000 } as const;
   storage.posix.initialize(storage.root, {
     uid: credentials.uid,
