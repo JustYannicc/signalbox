@@ -15,6 +15,9 @@ export {
   validateHarnessProcessResumeRunStoreStart,
 } from "./processResume/runStore.ts";
 export type {
+  HarnessCProductBootstrapDescriptor,
+  HarnessCProductProvider,
+  HarnessCProductRestoreMode,
   HarnessProcessResumeCheckpointOutcome,
   HarnessProcessResumeCleanup,
   HarnessProcessResumeDriver,

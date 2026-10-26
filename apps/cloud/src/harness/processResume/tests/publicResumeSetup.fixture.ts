@@ -1,6 +1,9 @@
 // @effect-diagnostics cryptoRandomUUID:off - each local Workerd scenario owns fresh isolated DO names.
 import { createHarnessDurableState } from "../../HarnessDurableState.ts";
-import type { HarnessProcessExecutionShardInput } from "../../HarnessProcessPlacement.ts";
+import type {
+  HarnessProcessExecutionProcessInput,
+  HarnessProcessExecutionShardInput,
+} from "../../HarnessProcessPlacement.ts";
 import { deterministicShardOwner } from "../../HarnessProcessPlacement.ts";
 import type {
   HarnessProcessResumeOperationInput,
@@ -41,6 +44,7 @@ export async function setup(
     readonly holdWork?: boolean;
     readonly failDispose?: boolean;
     readonly invocationFailure?: "reject" | "failed-finish";
+    readonly omitInitialBootstrap?: boolean;
   } = {},
 ) {
   const runId = `plain-${scenario}-${crypto.randomUUID()}`;
@@ -64,7 +68,7 @@ export async function setup(
   const old = await releaseMaterial(env.OLD_SOURCE, "old");
   const next = await releaseMaterial(env.NEW_SOURCE, "next");
   const third = await releaseMaterial(env.THIRD_SOURCE, "third");
-  await loadMaterial(old);
+  const initialPreparedRelease = await loadMaterial(old);
   await files.configure({ artifacts: { old, next, third }, ...options });
   const initialMaterial = await files.produce("initial", initialCheckpoint);
   const seed = await reference("seed", jsonBytes({ runId }));
@@ -132,7 +136,7 @@ export async function setup(
     requestId: "turn-one",
     input: await reference("turn-one-input", new TextEncoder().encode("append one")),
   };
-  const process = {
+  const process: HarnessProcessExecutionProcessInput = {
     processId: "plain-process",
     codeId: old.artifact.releaseId,
     residentBytes: 1,
@@ -145,6 +149,32 @@ export async function setup(
     mainModule: "plain.mjs",
     modules: { "plain.mjs": { js: env.OLD_SOURCE } },
     entrypoint: "PlainFacet",
+    ...(options.omitInitialBootstrap === true
+      ? {}
+      : {
+          productBootstrap: {
+            provider: "claude-code",
+            preparedReleaseId: initialPreparedRelease.artifact.releaseId,
+            restoreMode: "same-variant-serialized-checkpoint",
+          },
+          targetPreparedRelease: initialPreparedRelease,
+        }),
+    facetEnv: {
+      HARNESS_C_PRODUCT_BOOTSTRAP: "caller-descriptor",
+      HARNESS_C_TARGET_PREPARED_RELEASE: "caller-target",
+      HARNESS_C_PRODUCT_CAPABILITIES: { "proof-platform": "caller-binding" },
+      HARNESS_PROCESS_ID: "caller-process",
+      HARNESS_PROCESS_SHARD_OWNER: "caller-owner",
+      HARNESS_PROCESS_LOADER_ID: "caller-loader",
+      HARNESS_PROCESS_FACET_KEY: "caller-facet",
+      HARNESS_REQUEST_PUBLISHER: { generation: 99, publisherKey: "caller-publisher" },
+      HARNESS_RESUME_RUN_ID: "caller-run",
+      HARNESS_RESUME_CONTROL: "caller-control",
+      HARNESS_RESUME_PUBLISHER: "caller-a-publisher",
+      HARNESS_RESUME_RUN_STORE: "caller-run-store",
+      HARNESS_RESUME_FILES_STORE: "caller-files-store",
+      HARNESS_RESUME_SUPERVISOR: "caller-supervisor",
+    },
     journal: {
       publisher: fixturePublisher,
       runStore: {
@@ -257,7 +287,11 @@ export async function complete(
 
 export async function resumeInput(
   fixture: ProofSetup,
-  options: { readonly observed?: boolean; readonly step?: number; readonly mismatched?: boolean } = {},
+  options: {
+    readonly observed?: boolean;
+    readonly step?: number;
+    readonly mismatched?: boolean;
+  } = {},
 ): Promise<HarnessProcessResumeOperationInput> {
   const step = options.step ?? 1;
   const control = fixtureControl(step + 1);
@@ -303,6 +337,11 @@ export async function resumeInput(
       nextPublisherKey: fixture.publisherKey(step + 2),
       request: entry.request,
       checkpoint: parent.reference,
+    },
+    productBootstrap: {
+      provider: "claude-code",
+      preparedReleaseId: target.artifact.releaseId,
+      restoreMode: "cross-variant-fresh-boot",
     },
     transition: {
       operationId: step === 1 ? "resume-one" : "resume-two",

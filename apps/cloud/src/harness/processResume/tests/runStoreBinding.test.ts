@@ -173,6 +173,11 @@ async function setupRunStore() {
     previousOperationId: processOperationId,
     previousStepId: requestId,
     runStore: binding,
+    productBootstrap: {
+      provider: "codex",
+      preparedReleaseId: preparedRelease.artifact.releaseId,
+      restoreMode: "cross-variant-fresh-boot",
+    },
     transition: {
       operationId: transitionOperationId,
       control: aControl,

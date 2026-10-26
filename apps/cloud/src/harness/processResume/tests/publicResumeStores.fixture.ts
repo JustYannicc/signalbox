@@ -83,7 +83,10 @@ export class ProofFilesStore extends HarnessFilesStoreObject {
     await release.promise;
   }
   override async fetch(request: Request) {
-    const requestId = new URL(request.url).pathname.slice(1);
+    const pathname = new URL(request.url).pathname;
+    if (pathname === "/product-bootstrap-transport")
+      return new Response("authorized-workerd-product-capability");
+    const requestId = pathname.slice(1);
     await this.observe(`fetch-entered:${requestId}`);
     if ((await this.configuration()).holdWork) await this.hold(`fetch:${requestId}`);
     await this.observe(`fetch-returned:${requestId}`);
