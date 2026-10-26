@@ -121,7 +121,7 @@ export function testHydratedDescriptors() {
           fixture.fs.writeFileSync("/ready", "bytes");
           const controller = new AbortController();
           const failure = Object.assign(new Error("I/O failed"), { code });
-          const reads = vi.spyOn(fixture.kernelFs, "read").mockImplementation(() => {
+          const reads = vi.spyOn(fixture.kernelFs, "readAsync").mockImplementation(async () => {
             controller.abort(failure);
             throw failure;
           });

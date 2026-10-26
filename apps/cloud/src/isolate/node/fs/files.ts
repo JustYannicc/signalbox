@@ -53,12 +53,12 @@ export function* readFileOperation(
   checkAbort(normalized.signal);
   const operation = function* (): FsOperation<NodeBuffer.Buffer | string> {
     if (typeof input === "number")
-      return decoded(yield* readAllOperation(kernelFs, input), normalized.encoding);
+      return decoded(yield* readAllOperation(kernelFs, input, asyncOpen), normalized.encoding);
     const open = asyncOpen ? openFdAsyncOperation : openFdOperation;
     const fd = yield* open(kernelFs, input, parseOpenFlags(normalized.flag ?? "r"));
     try {
       checkAbort(normalized.signal);
-      return decoded(yield* readAllOperation(kernelFs, fd), normalized.encoding);
+      return decoded(yield* readAllOperation(kernelFs, fd, asyncOpen), normalized.encoding);
     } finally {
       yield* leaf(() => kernelFs.close(fd), true);
     }
@@ -152,7 +152,7 @@ export function* copyFileOperation(
       const sourceFd = yield* open(kernelFs, source, parseOpenFlags("r"));
       let destinationFd: number | undefined;
       try {
-        const data = yield* readAllOperation(kernelFs, sourceFd);
+        const data = yield* readAllOperation(kernelFs, sourceFd, asyncOpen);
         destinationFd = yield* open(kernelFs, destination, parseOpenFlags(exclusive ? "wx" : "w"));
         yield* writeAllOperation(kernelFs, destinationFd, data);
       } finally {

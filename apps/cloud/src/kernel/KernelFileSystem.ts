@@ -120,6 +120,7 @@ export class KernelFileSystem {
             pathCheck: this.assertWasiPathVisible.bind(this),
             pathSearch: this.assertPathSearchAllowed.bind(this),
             fileBytes: () => this.#fileBytes,
+            openAccess: this.assertOpenAllowed.bind(this),
             creation: {
               createInode: this.createInode.bind(this),
               takeCreateMode: this.takeNextCreateMode.bind(this),
@@ -152,7 +153,12 @@ export class KernelFileSystem {
         this.#posix,
         () => this.#fileBytes,
       );
-      this.#open = new KernelFileSystemOpen(this.descriptors, this.#paths, () => this.#fileBytes);
+      this.#open = new KernelFileSystemOpen(
+        this.descriptors,
+        this.#paths,
+        this.#posix,
+        () => this.#fileBytes,
+      );
       this.#io = new KernelFileSystemIo(this.descriptors);
       if (forkContext?.cwdAnchor !== undefined) {
         this.#retainCwdAnchor(forkContext.cwdAnchor);
@@ -345,6 +351,24 @@ export class KernelFileSystem {
       .then(() => undefined);
   }
 
+  assertOpenAllowed(resolved: WasiResolvedPath, requested: number): MaybePromise<void> {
+    this.#assertOpen();
+    if (this.#posix.credentials === undefined || requested === 0) return;
+    if (currentKernelIoMode() === "sync") {
+      this.#posix.checkAccess(
+        resolved.mount.storage,
+        resolved.inode,
+        resolved.stat.type,
+        requested,
+        true,
+      );
+      return;
+    }
+    return this.#posix
+      .checkAccessAsync(resolved.mount.storage, resolved.inode, resolved.stat.type, requested, true)
+      .then(() => undefined);
+  }
+
   open(path: string, flags: number, mode?: number): number {
     let allocated: number | undefined;
     try {
@@ -505,6 +529,15 @@ export class KernelFileSystem {
       this.#assertOpen();
       return this.#io.read(fd, target, position);
     });
+  }
+
+  readAsync(
+    fd: number,
+    target: Uint8Array,
+    position: bigint | null,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    return this.#async(signal, () => this.#io.readAsync(fd, target, position));
   }
 
   write(fd: number, source: Uint8Array, position: bigint | null): number {

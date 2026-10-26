@@ -43,6 +43,7 @@ export function* readOperation(
   offsetOrOptions: number | IoOptions = 0,
   length?: number,
   position?: number | null,
+  asynchronous = false,
 ): FsOperation<number> {
   const options =
     typeof offsetOrOptions === "object"
@@ -52,7 +53,7 @@ export function* readOperation(
   return yield* fsOperation(
     "read",
     undefined,
-    readIntoOperation(kernelFs, fd, args.buffer, args.position),
+    readIntoOperation(kernelFs, fd, args.buffer, args.position, asynchronous),
   );
 }
 
