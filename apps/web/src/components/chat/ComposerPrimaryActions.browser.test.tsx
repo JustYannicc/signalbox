@@ -138,3 +138,15 @@ it("keeps Stop pending across a permission failure", async () => {
     .toBeDisabled();
   expect(props.onInterrupt).toHaveBeenCalledTimes(1);
 });
+
+it("clears a pending stop when reconnect skips straight to a different run", async () => {
+  const props = setup();
+  await using screen = await render(<ComposerPrimaryActions {...props} {...{ runId: "first" }} />);
+  await act(() =>
+    (
+      screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
+    ).click(),
+  );
+  await screen.rerender(<ComposerPrimaryActions {...props} {...{ runId: "second" }} />);
+  expect(screen.getByRole("button", { name: "Stop generation" }).element()).toBeEnabled();
+});
