@@ -2559,7 +2559,7 @@ index 2d56fa07..d65e8b21 100644
 
  // NewCodexAuthenticator constructs a Codex authenticator with default settings.
 diff --git a/sdk/auth/codex_device.go b/sdk/auth/codex_device.go
-index cc2febbb..59e2ea38 100644
+index cc2febbb..0ad07b34 100644
 --- a/sdk/auth/codex_device.go
 +++ b/sdk/auth/codex_device.go
 @@ -66,7 +66,10 @@ func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *confi
@@ -2609,6 +2609,18 @@ index cc2febbb..59e2ea38 100644
  		if time.Now().After(deadline) {
  			return nil, fmt.Errorf("codex device authentication timed out after 15 minutes")
  		}
+@@ -282,8 +299,9 @@ func (a *CodexAuthenticator) buildAuthRecord(authSvc *codex.CodexAuth, authBundl
+
+ 	fileName := codex.CredentialFileName(tokenStorage.Email, planType, hashAccountID, true)
+ 	metadata := map[string]any{
+-		"email":     tokenStorage.Email,
+-		"plan_type": planType,
++		"email":      tokenStorage.Email,
++		"account_id": tokenStorage.AccountID,
++		"plan_type":  planType,
+ 	}
+
+ 	fmt.Println("Codex authentication successful")
 diff --git a/sdk/auth/codex_device_test.go b/sdk/auth/codex_device_test.go
 new file mode 100644
 index 00000000..2a078f39
@@ -2934,5 +2946,32 @@ index 00000000..36330979
 +				t.Errorf("canceled persistence changed credentials: %s", got)
 +			}
 +		})
++	}
++}
+diff --git a/sdk/auth/codex_auth_record_test.go b/sdk/auth/codex_auth_record_test.go
+index 4865627c..f5eff4c1 100644
+--- a/sdk/auth/codex_auth_record_test.go
++++ b/sdk/auth/codex_auth_record_test.go
+@@ -100,3 +100,22 @@ func TestBuildAuthRecord_PlanTypeExtractedWhenPresent(t *testing.T) {
+ 		t.Errorf("auth.FileName = %q, want suffix -plus.json", auth.FileName)
+ 	}
+ }
++
++func TestBuildAuthRecordIncludesAccountIDBeforePersistence(t *testing.T) {
++	authenticator := NewCodexAuthenticator()
++	bundle := &codex.CodexAuthBundle{
++		TokenData: codex.CodexTokenData{
++			IDToken:     makeTestCodexJWT("plus", "jwt-account"),
++			Email:       "user@example.com",
++			AccountID:   "exchanged-account",
++			AccessToken: "test-access-token",
++		},
++	}
++	record, err := authenticator.buildAuthRecord(codex.NewCodexAuth(nil), bundle)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := record.Metadata["account_id"]; got != bundle.TokenData.AccountID {
++		t.Fatalf("pre-persistence account_id=%v, want token exchange account %q", got, bundle.TokenData.AccountID)
 +	}
 +}
