@@ -66,6 +66,28 @@ describe("Node runtime closure adapters", () => {
     }
   });
 
+  it.each([false, true])(
+    "supports graceful-fs constants detection with O_SYMLINK=%s",
+    (present) => {
+      const fixture = filesystemFixture();
+      try {
+        const fs = createNodeFs(fixture.filesystem).fs;
+        const nativeConstants = present ? { O_SYMLINK: 0x20_0000 } : {};
+        const constants = createNodeConstants(nativeConstants, fs);
+        const detectsSymlinkFlag = (value: object) => {
+          return value.hasOwnProperty("O_SYMLINK");
+        };
+
+        expect(detectsSymlinkFlag(constants)).toBe(detectsSymlinkFlag(nativeConstants));
+        expect(constants.default).toBe(constants);
+        expect(Object.keys(constants)).not.toContain("hasOwnProperty");
+        expect(Reflect.set(constants, "default", {})).toBe(false);
+      } finally {
+        fixture.close();
+      }
+    },
+  );
+
   it("keeps querystring behavior and the partial native inspector on their actual modules", () => {
     const fixture = filesystemFixture();
     try {
