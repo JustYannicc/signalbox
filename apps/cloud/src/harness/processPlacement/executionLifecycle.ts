@@ -28,28 +28,11 @@ import { sameClaim } from "./storeSchema.ts";
 import { confirmedProcessPublication } from "./publication.ts";
 import type { ProcessSlotLease } from "../../computer/ProcessSlots.ts";
 import type { HarnessRequestFacetObject } from "../HarnessRequestFacetObject.ts";
-import type { HarnessRequestPublisher } from "../HarnessRunStore.ts";
-import type { HarnessProcessExecutionJournal } from "../processResume/contracts.ts";
-
-export interface HarnessProcessExecutionProcessInput {
-  readonly processId: string;
-  readonly codeId: string;
-  readonly residentBytes: number;
-  readonly nativeSessionId: string;
-  readonly checkpointId: string;
-  readonly manifestRevision: string;
-  readonly operationId: string;
-  readonly priorFacetNonce: string;
-  readonly expectedFacetGeneration: number;
-  readonly mainModule: string;
-  readonly modules: Readonly<Record<string, string | { readonly js: string }>>;
-  readonly entrypoint: string;
-  readonly journal?: HarnessProcessExecutionJournal;
-  /** Publisher capability for the fresh RunStore facet, bound to this lease's nonce at open. */
-  readonly runStorePublisher?: Pick<HarnessRequestPublisher, "generation" | "publisherKey">;
-  /** Bindings come from the harness owner. Fixture-only observers stay in the fixture. */
-  readonly facetEnv?: Readonly<Record<string, unknown>>;
-}
+import {
+  createHarnessProcessFacetEnvironment,
+  type HarnessProcessExecutionEnvironment,
+  type HarnessProcessExecutionProcessInput,
+} from "./executionEnvironment.ts";
 
 export interface HarnessProcessExecutionShardInput {
   readonly runId: string;
@@ -126,13 +109,6 @@ export interface HarnessProcessExecutionSupervisorClient
     readonly runId: string;
     readonly control: HarnessProcessControllerClaim;
   }): Promise<{ readonly snapshot: HarnessProcessExecutionControlSnapshot }>;
-}
-
-export interface HarnessProcessExecutionEnvironment {
-  readonly LOADER: WorkerLoader;
-  readonly PLACEMENT_STORES: DurableObjectNamespace;
-  readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace;
-  readonly RESIDENT_BYTE_LIMIT: string;
 }
 
 type HarnessProcessFacetStub = Pick<
@@ -583,21 +559,7 @@ export function createFacet(
     compatibilityFlags: ["nodejs_compat"],
     mainModule: process.mainModule,
     modules: process.modules,
-    env: {
-      ...process.facetEnv,
-      HARNESS_PROCESS_ID: process.processId,
-      HARNESS_PROCESS_SHARD_OWNER: identity.shardOwner,
-      HARNESS_PROCESS_LOADER_ID: identity.loaderId,
-      HARNESS_PROCESS_FACET_KEY: identity.facetKey,
-      ...(process.runStorePublisher === undefined
-        ? {}
-        : {
-            HARNESS_REQUEST_PUBLISHER: {
-              generation: process.runStorePublisher.generation,
-              publisherKey: process.runStorePublisher.publisherKey,
-            } satisfies Pick<HarnessRequestPublisher, "generation" | "publisherKey">,
-          }),
-    },
+    env: createHarnessProcessFacetEnvironment(process, environment, identity),
     globalOutbound: null,
   };
   const worker = environment.LOADER.get(identity.loaderId, () => workerCode);

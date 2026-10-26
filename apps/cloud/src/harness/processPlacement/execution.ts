@@ -9,23 +9,29 @@ import {
 import type {
   HarnessProcessExecutionShardInput as PlacementShardInput,
   HarnessProcessExecutionShardResult,
-  HarnessProcessExecutionEnvironment,
   HarnessProcessExecutionHooks,
 } from "./executionLifecycle.ts";
+import type { HarnessProcessExecutionEnvironment } from "./executionEnvironment.ts";
 export {
   deterministicShardOwner,
   prepareHarnessProcessExecutionResumeFacet,
 } from "./executionLifecycle.ts";
+export { createHarnessProcessFacetEnvironment } from "./executionEnvironment.ts";
 export type {
-  HarnessProcessExecutionProcessInput,
   HarnessProcessExecutionProcessResult,
   HarnessProcessExecutionShardResult,
   HarnessProcessExecutionHooks,
   HarnessProcessExecutionControlSnapshot,
   HarnessProcessExecutionSupervisorClient,
-  HarnessProcessExecutionEnvironment,
   HarnessProcessExecutionResumeHandle,
 } from "./executionLifecycle.ts";
+export type {
+  HarnessCProductCapabilityEnvironment,
+  HarnessProcessExecutionEnvironment,
+  HarnessProcessExecutionProcessInput,
+  HarnessProcessExecutionProductBootstrapInput,
+  HarnessProcessExecutionResumeFacetEnvironment,
+} from "./executionEnvironment.ts";
 
 export interface HarnessProcessExecutionShardInput extends PlacementShardInput {
   /** Installed stores do not opt a caller into C's journal authority and checkpoint lifecycle. */

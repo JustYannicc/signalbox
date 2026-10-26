@@ -121,9 +121,7 @@ it("rejects an actually loaded mismatched release before prepared persistence or
   expect(result.observations["proof/event/observed-release-returned"].artifact.releaseId).toMatch(
     /^plain-third-/,
   );
-  expect(result.postResume.currentPublisher.generation).toBe(
-    result.previousPublisherGeneration,
-  );
+  expect(result.postResume.currentPublisher.generation).toBe(result.previousPublisherGeneration);
   expect(result.postResume.snapshot.lifecycle).toBe("stopped");
   expect(result.postResume.snapshot.lastPublication).toEqual(result.previousPublication);
   expect(result.postResume.snapshot.lastPublicationOperationId).toBe(
@@ -140,6 +138,9 @@ it("resumes actual verified plain fixture code, then accepts a later request and
   expect(response.status, body).toBe(200);
   const result = JSON.parse(body);
   expect(result.resumed.ok, body).toBe(true);
+  expect(result.invalidBootstrapRejected).toBe(true);
+  expect(result.invalidBootstrapDidNotDrain).toBe(true);
+  expect(result.changedRestoreModeRejected).toBe(true);
   expect(result.nextStatus).toBe("settled");
   expect(result.nextCompleted).toBe("committed");
   expect(result.secondResume.status).toBe("resumed");
@@ -172,6 +173,107 @@ it("resumes actual verified plain fixture code, then accepts a later request and
   expect(result.evidence.resumes.every((row: { phase: string }) => row.phase === "active")).toBe(
     true,
   );
+  const transports = result.transports as readonly {
+    readonly productBootstrap: {
+      readonly provider: string;
+      readonly preparedReleaseId: string;
+      readonly restoreMode: string;
+    };
+    readonly targetPreparedRelease: {
+      readonly artifact: { readonly provider: string; readonly releaseId: string };
+      readonly plan: { readonly release: { readonly manifestSha256: string } };
+    };
+    readonly productCapability: string;
+    readonly resumeRunId: string;
+    readonly resumeControl: { readonly ownerId: string };
+    readonly resumePublisher: { readonly publisherKey: string };
+    readonly processIdentity: {
+      readonly processId: string;
+      readonly shardOwner: string;
+      readonly loaderId: string;
+      readonly facetKey: string;
+    };
+    readonly requestPublisher: { readonly generation: number; readonly publisherKey: string };
+  }[];
+  expect(transports).toHaveLength(3);
+  expect(
+    transports.filter(
+      (row) => row.productBootstrap.restoreMode === "same-variant-serialized-checkpoint",
+    ),
+  ).toHaveLength(1);
+  expect(
+    transports.filter((row) => row.productBootstrap.restoreMode === "cross-variant-fresh-boot"),
+  ).toHaveLength(2);
+  const expectedProductTransports = result.expectedProductTransports as readonly {
+    readonly productBootstrap: { readonly preparedReleaseId: string } | null;
+    readonly targetPreparedRelease: unknown;
+  }[];
+  expect(
+    transports
+      .map(({ productBootstrap, targetPreparedRelease }) => ({
+        productBootstrap,
+        targetPreparedRelease,
+      }))
+      .toSorted((left, right) =>
+        (left.productBootstrap?.preparedReleaseId ?? "").localeCompare(
+          right.productBootstrap?.preparedReleaseId ?? "",
+        ),
+      ),
+  ).toEqual(
+    expectedProductTransports.toSorted((left, right) =>
+      (left.productBootstrap?.preparedReleaseId ?? "").localeCompare(
+        right.productBootstrap?.preparedReleaseId ?? "",
+      ),
+    ),
+  );
+  for (const row of transports) {
+    expect(row.productBootstrap.provider).toBe("claude-code");
+    expect(row.productBootstrap.preparedReleaseId).toBe(
+      row.targetPreparedRelease.artifact.releaseId,
+    );
+    expect(row.targetPreparedRelease.artifact.provider).toBe("claude-code");
+    expect(row.targetPreparedRelease.plan.release.manifestSha256).toBeTruthy();
+    expect(row.productCapability).toBe("authorized-workerd-product-capability");
+    expect(row.resumeRunId.startsWith("plain-positive-")).toBe(true);
+    expect(row.resumeControl.ownerId).toBe("plain-process-owner");
+    expect(row.resumePublisher.publisherKey).not.toBe("caller-a-publisher");
+    expect(row.processIdentity.processId).toBe("plain-process");
+    expect(row.processIdentity.shardOwner).not.toBe("caller-owner");
+    expect(row.processIdentity.loaderId).not.toBe("caller-loader");
+    expect(row.processIdentity.facetKey).not.toBe("caller-facet");
+    expect(row.requestPublisher.generation).toBeGreaterThan(0);
+    expect(row.requestPublisher.publisherKey).not.toBe("caller-publisher");
+  }
+});
+
+it("forwards the authorized capability when the initial process has no typed bootstrap", async () => {
+  const result = await scenario("/transport-without-typed-bindings");
+  expect(result.resumed.ok).toBe(true);
+  const transports = result.transports as readonly {
+    readonly productBootstrap: {
+      readonly provider: string;
+      readonly preparedReleaseId: string;
+      readonly restoreMode: string;
+    } | null;
+    readonly targetPreparedRelease: {
+      readonly artifact: { readonly releaseId: string };
+    } | null;
+    readonly productCapability: string;
+    readonly processIdentity: { readonly processId: string };
+  }[];
+  expect(transports).toHaveLength(3);
+  const initial = transports.find((row) => row.productBootstrap === null);
+  expect(initial?.targetPreparedRelease).toBeNull();
+  expect(initial?.productCapability).toBe("authorized-workerd-product-capability");
+  const replacements = transports.filter((row) => row.productBootstrap !== null);
+  expect(replacements).toHaveLength(2);
+  for (const row of replacements) {
+    expect(row.productCapability).toBe("authorized-workerd-product-capability");
+    expect(row.productBootstrap?.preparedReleaseId).toBe(
+      row.targetPreparedRelease?.artifact.releaseId,
+    );
+  }
+  expect(transports.every((row) => row.processIdentity.processId === "plain-process")).toBe(true);
 });
 
 async function scenario(path: string) {

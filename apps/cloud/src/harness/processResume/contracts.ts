@@ -50,6 +50,18 @@ export interface HarnessProcessResumeFacetCode {
   readonly entrypoint: string;
 }
 
+export type HarnessCProductProvider = "claude-code" | "codex";
+
+export type HarnessCProductRestoreMode =
+  | "same-variant-serialized-checkpoint"
+  | "cross-variant-fresh-boot";
+
+export interface HarnessCProductBootstrapDescriptor {
+  readonly provider: HarnessCProductProvider;
+  readonly preparedReleaseId: HarnessReleaseArtifact["releaseId"];
+  readonly restoreMode: HarnessCProductRestoreMode;
+}
+
 const id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
 const capability = Schema.String.check(Schema.isMinLength(32), Schema.isMaxLength(128));
 const positive = Schema.Number.check(
@@ -114,6 +126,7 @@ export interface HarnessProcessResumeOperationInput {
   readonly runStore: HarnessProcessResumeRunStoreBinding;
   readonly transition: HarnessProcessResumeInput;
   readonly facet: HarnessProcessResumeFacetCode;
+  readonly productBootstrap: HarnessCProductBootstrapDescriptor;
 }
 
 export type HarnessProcessResumeStage =

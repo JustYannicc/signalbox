@@ -8,6 +8,47 @@ import { samePreparedRelease, snapshotInput } from "./identity.ts";
 const text = (value: unknown, maximum = 256): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= maximum;
 
+function snapshotProductBootstrap(
+  value: unknown,
+  target: HarnessProcessResumeOperationInput["transition"]["targetPreparedRelease"],
+): HarnessProcessResumeOperationInput["productBootstrap"] | undefined {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return undefined;
+
+    const descriptor = value as Record<string, unknown>;
+    const keys = Reflect.ownKeys(descriptor);
+    if (
+      keys.length !== 3 ||
+      keys.some(
+        (key) =>
+          typeof key !== "string" ||
+          (key !== "provider" && key !== "preparedReleaseId" && key !== "restoreMode"),
+      )
+    )
+      return undefined;
+
+    const provider = descriptor.provider;
+    const preparedReleaseId = descriptor.preparedReleaseId;
+    const restoreMode = descriptor.restoreMode;
+    if (
+      (provider !== "claude-code" && provider !== "codex") ||
+      typeof preparedReleaseId !== "string" ||
+      preparedReleaseId.trim().length === 0 ||
+      (restoreMode !== "same-variant-serialized-checkpoint" &&
+        restoreMode !== "cross-variant-fresh-boot") ||
+      provider !== target.artifact.provider ||
+      preparedReleaseId !== target.artifact.releaseId
+    )
+      return undefined;
+
+    return Object.freeze({ provider, preparedReleaseId, restoreMode });
+  } catch {
+    return undefined;
+  }
+}
+
 function snapshotFacetCode(value: unknown): HarnessProcessResumeFacetCode | undefined {
   try {
     if (typeof value !== "object" || value === null) return undefined;
@@ -64,15 +105,17 @@ export function snapshotHarnessProcessResumeOperation(
     if (typeof value !== "object" || value === null) return undefined;
     const supplied = value as Record<string, unknown>;
     if (
-      Object.keys(supplied).some(
+      Reflect.ownKeys(supplied).some(
         (key) =>
-          key !== "runId" &&
-          key !== "previousProcessId" &&
-          key !== "previousOperationId" &&
-          key !== "previousStepId" &&
-          key !== "runStore" &&
-          key !== "transition" &&
-          key !== "facet",
+          typeof key !== "string" ||
+          (key !== "runId" &&
+            key !== "previousProcessId" &&
+            key !== "previousOperationId" &&
+            key !== "previousStepId" &&
+            key !== "runStore" &&
+            key !== "transition" &&
+            key !== "facet" &&
+            key !== "productBootstrap"),
       ) ||
       !text(supplied.runId) ||
       !text(supplied.previousProcessId) ||
@@ -87,6 +130,11 @@ export function snapshotHarnessProcessResumeOperation(
     );
     const facet = snapshotFacetCode(supplied.facet);
     if (runStore === undefined || transition === undefined || facet === undefined) return undefined;
+    const productBootstrap = snapshotProductBootstrap(
+      supplied.productBootstrap,
+      transition.targetPreparedRelease,
+    );
+    if (productBootstrap === undefined) return undefined;
     if (
       runStore.runId !== supplied.runId ||
       runStore.processId !== supplied.previousProcessId ||
@@ -108,6 +156,7 @@ export function snapshotHarnessProcessResumeOperation(
       runStore,
       transition,
       facet,
+      productBootstrap,
     });
   } catch {
     return undefined;
@@ -187,6 +236,9 @@ export function sameHarnessProcessResumeOperation(
       left.transition.targetPreparedRelease,
       right.transition.targetPreparedRelease,
     ) &&
+    left.productBootstrap.provider === right.productBootstrap.provider &&
+    left.productBootstrap.preparedReleaseId === right.productBootstrap.preparedReleaseId &&
+    left.productBootstrap.restoreMode === right.productBootstrap.restoreMode &&
     left.facet.processId === right.facet.processId &&
     left.facet.codeId === right.facet.codeId &&
     left.facet.residentBytes === right.facet.residentBytes &&
