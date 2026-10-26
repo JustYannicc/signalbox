@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { validateCapturedContent } from "./content.mjs";
 
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/;
@@ -128,7 +129,7 @@ function validateCapture(snapshot, captureSha256) {
 }
 
 export function finalizeMachineProgramInventory(snapshot, input) {
-  if (snapshot?.format !== "signalbox-machine-files-capture-v1")
+  if (snapshot?.format !== "signalbox-machine-files-capture-v2")
     throw new TypeError("Unsupported machine file capture");
   if (!IMAGE_ID.test(input.sourceImageId ?? "") || snapshot.sourceImageId !== input.sourceImageId)
     throw new TypeError("Capture does not belong to the selected build image");
@@ -147,7 +148,7 @@ export function finalizeMachineProgramInventory(snapshot, input) {
   if (ref === null || !input.imageRepository || ref[1] !== input.imageRepository)
     throw new TypeError("Published image reference must be pinned to the expected repository");
 
-  return {
+  const inventory = {
     format: "signalbox-machine-files-v1",
     imageRef: input.imageRef,
     imageDigest: ref[2],
@@ -157,11 +158,27 @@ export function finalizeMachineProgramInventory(snapshot, input) {
       sourceImageId: input.sourceImageId,
       dockerfile: input.dockerfile,
       captureSha256: snapshot.captureSha256,
+      snapshotSha256: hash(JSON.stringify(snapshot)),
     },
     path: snapshot.path,
     excludedRoots: snapshot.excludedRoots,
     entries: snapshot.entries,
   };
+  validateCapturedContent(snapshot);
+  return {
+    ...inventory,
+    imageContent: {
+      format: "signalbox-machine-image-content-v1",
+      imageDigest: inventory.imageDigest,
+      captureSha256: snapshot.captureSha256,
+      inventorySha256: hash(JSON.stringify(inventory)),
+      ...snapshot.content,
+    },
+  };
+}
+
+function hash(value) {
+  return NodeCrypto.createHash("sha256").update(value).digest("hex");
 }
 
 function argumentsOf(values) {

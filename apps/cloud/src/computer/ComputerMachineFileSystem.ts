@@ -8,6 +8,7 @@ import type { MachineFilesPort } from "./MachineFilesPort.ts";
 import { indexMachinePrograms, type MachineProgramInventory } from "./MachineProgramInventory.ts";
 import { liveSymlinkParents } from "./machineFiles/LiveSymlinkParents.ts";
 import { machineFileRequest } from "./machineFiles/MachineFileRequest.ts";
+import { createMachineImageContentReader } from "./MachineImageContent.ts";
 
 export interface ComputerMachineFileSystemOptions {
   readonly inventory: MachineProgramInventory;
@@ -20,6 +21,13 @@ export function createComputerMachineFileSystem(
   options: ComputerMachineFileSystemOptions,
 ): KernelLowerFileSystemSource {
   const inventory = indexMachinePrograms(options.inventory);
+  const imageContent = createMachineImageContentReader(options.inventory);
+  const contentIsAuthoritative = (path: string) => {
+    const state = options.files.current();
+    return (
+      imageIsAuthoritative(path) && (state.generation !== null || state.generationAbsent === true)
+    );
+  };
   const imageIsAuthoritative = (path: string) => {
     const state = options.files.current();
     const imageMatches =
@@ -178,19 +186,36 @@ export function createComputerMachineFileSystem(
       return machineFileRequest(options.files, options.signal, signal).readlink(path);
     },
     async read(path, offset, length, signal) {
+      const request = machineFileRequest(options.files, options.signal, signal);
+      request.check();
       if (offset < 0n || offset > BigInt(Number.MAX_SAFE_INTEGER))
         throw posixError({
           code: "EOVERFLOW",
           message: "Machine file offset is outside the supported range",
         });
-      const request = machineFileRequest(options.files, options.signal, signal);
-      const result = await request.single({
+      if (!Number.isSafeInteger(length) || length < 0)
+        throw posixError({ code: "EINVAL", message: "Invalid machine file read length" });
+      const boundedLength = Math.min(length, MACHINE_FILES_MAX_CONTENT_BYTES);
+      const operation = {
         id: "bytes",
         op: "readRange",
         path,
         offset: Number(offset),
-        length: Math.min(length, MACHINE_FILES_MAX_CONTENT_BYTES),
-      });
+        length: boundedLength,
+      } as const;
+      request.check([operation]);
+      if (contentIsAuthoritative(path)) {
+        let bytes: Uint8Array | undefined;
+        try {
+          bytes = await imageContent(path, Number(offset), boundedLength);
+        } catch (cause) {
+          request.check([operation]);
+          throw request.unavailable("Image content validation failed", { cause }, [operation]);
+        }
+        request.check([operation]);
+        if (bytes !== undefined && contentIsAuthoritative(path)) return bytes;
+      }
+      const result = await request.single(operation);
       if ("error" in result) throw posixError(result.error);
       if (result.op !== "readRange")
         throw request.unavailable("Machine returned the wrong read operation");

@@ -1,4 +1,4 @@
-# Machine file inventory
+# Machine file inventory and image content
 
 Run these commands from the repository root. Use the same immutable image reference that the deployment will use.
 
@@ -34,4 +34,6 @@ node apps/cloud/infra/kernelPrograms/machine-files/prepare.mjs \
   --output apps/cloud/infra/kernelPrograms/machine-files/build/runner.json
 ```
 
-The commands stop if the published digest, captured image ID, source revision, or capture script hash do not match. Keep `build/runner.json` with the image build artifact. Do not commit it.
+The same read-only walk captures metadata and bytes of every regular file under `/etc`, except live mount exclusions. Capture stops above 1 MiB of included content. Preparation checks complete include-rule coverage, file sizes and SHA-256 hashes. The `imageContent` sidecar is carried once inside `runner.json`, bound to its image digest, capture source hash, and the SHA-256 of the metadata inventory before `imageContent` is attached. Provenance also pins the full input snapshot hash.
+
+The commands stop if the published digest, captured image ID, source revision, or capture script hash do not match. Keep `build/runner.json` with the image build artifact and pass it unchanged as `machineInventory` to ProductComputer or a product host. Older metadata-only inventories still use live byte lookup. Do not commit generated artifacts.

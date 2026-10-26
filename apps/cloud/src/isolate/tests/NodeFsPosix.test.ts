@@ -260,7 +260,7 @@ describe("Node fs canonical permissions", () => {
         posix: policy,
       });
       try {
-        const otherHandle = await createNodeFs(other).fs.promises.open("/file", "r+");
+        const otherHandle = await createNodeFs(other).fs.promises.open("/file", "r");
         try {
           await expect(otherHandle.chmod(0o777)).rejects.toMatchObject({
             code: "EPERM",

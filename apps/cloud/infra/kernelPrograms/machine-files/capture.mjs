@@ -103,6 +103,8 @@ const excludedRoots = [...new Set([...excludedCandidates, ...mountPoints])]
   }, []);
 const excluded = new Set(excludedRoots);
 const entries = [];
+const contentEntries = [];
+let contentBytes = 0;
 const pending = ["/"];
 while (pending.length > 0) {
   const file = pending.pop();
@@ -110,6 +112,22 @@ while (pending.length > 0) {
   if (excluded.has(file)) continue;
   const current = entryAt(file, file);
   entries.push(current);
+  if (current.type === "file" && file.startsWith("/etc/")) {
+    if (BigInt(contentBytes) + BigInt(current.size) > 1024n * 1024n)
+      throw new Error("Image /etc content exceeds the 1 MiB capture budget");
+    const bytes = NodeFS.readFileSync(file);
+    if (BigInt(bytes.byteLength) !== BigInt(current.size))
+      throw new Error(`Image content size changed during capture: ${file}`);
+    contentBytes += bytes.byteLength;
+    if (contentBytes > 1024 * 1024)
+      throw new Error("Image /etc content exceeds the 1 MiB capture budget");
+    contentEntries.push({
+      path: file,
+      size: current.size,
+      sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+      bytesBase64: bytes.toString("base64"),
+    });
+  }
   if (current.type !== "directory") continue;
 
   const names = NodeFS.readdirSync(file, { encoding: "buffer" });
@@ -122,8 +140,11 @@ while (pending.length > 0) {
 }
 
 entries.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+contentEntries.sort((left, right) =>
+  left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+);
 const snapshot = {
-  format: "signalbox-machine-files-capture-v1",
+  format: "signalbox-machine-files-capture-v2",
   complete: true,
   entryCount: entries.length,
   sourceImageId: imageId,
@@ -133,5 +154,11 @@ const snapshot = {
   path,
   excludedRoots,
   entries,
+  content: {
+    includeRule: "regular-files-under-/etc",
+    fileCount: contentEntries.length,
+    totalBytes: contentBytes,
+    entries: contentEntries,
+  },
 };
 NodeProcess.stdout.write(`${JSON.stringify(snapshot)}\n`);

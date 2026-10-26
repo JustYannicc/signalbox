@@ -166,8 +166,13 @@ export class KernelPathResolver {
     });
   }
 
-  resolveFromAnchor(anchor: WasiPathAnchor, path: string, followFinal = true): WasiResolvedPath {
-    const resolved = this.#run(this.#resolver.resolve(anchor, path, followFinal));
+  resolveFromAnchor(
+    anchor: WasiPathAnchor,
+    path: string,
+    followFinal = true,
+    checkSearch?: WasiPathSearchCheck,
+  ): WasiResolvedPath {
+    const resolved = this.#run(this.#resolver.resolve(anchor, path, followFinal, checkSearch));
     this.#assertResolvedMount(resolved.mount, resolved.pathComponents);
     return resolved;
   }

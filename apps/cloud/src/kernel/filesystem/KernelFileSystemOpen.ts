@@ -22,6 +22,7 @@ import {
   parseOpenFlags,
   type ParsedOpenFlags,
 } from "./KernelOpenFlags.ts";
+import { KernelPosix } from "./KernelPosix.ts";
 import { KernelFileSystemPaths } from "./KernelFileSystemPaths.ts";
 import {
   deviceInfoForDescriptor,
@@ -32,15 +33,18 @@ import {
 export class KernelFileSystemOpen {
   readonly #descriptors: WasiDescriptorTable;
   readonly #paths: KernelFileSystemPaths;
+  readonly #posix: KernelPosix;
   readonly #fileBytes: () => KernelFileByteSelection;
 
   constructor(
     descriptors: WasiDescriptorTable,
     paths: KernelFileSystemPaths,
+    posix: KernelPosix,
     fileBytes: () => KernelFileByteSelection = () => canonicalFileByteSelection,
   ) {
     this.#descriptors = descriptors;
     this.#paths = paths;
+    this.#posix = posix;
     this.#fileBytes = fileBytes;
   }
 
@@ -97,12 +101,7 @@ export class KernelFileSystemOpen {
 
   async openAsync(path: string, flags: number, mode = 0o666): Promise<number> {
     const parsed = parseOpenFlags(flags);
-    if (
-      virtualDevice(path) !== undefined ||
-      descriptorPathAlias(path) !== undefined ||
-      parsed.pathOnly ||
-      (parsed.accessMode === KernelOpenFlags.O_RDONLY && !parsed.truncate)
-    ) {
+    if (virtualDevice(path) !== undefined || descriptorPathAlias(path) !== undefined) {
       return this.open(path, flags, mode);
     }
 
@@ -110,6 +109,18 @@ export class KernelFileSystemOpen {
     const lookup = await this.#paths.resolveOrCreateAsync(path, { followFinal });
     if (lookup.kind === "existing" && !(parsed.create && parsed.exclusive)) {
       const resolved = lookup.path;
+      if (this.#posix.credentials !== undefined && !parsed.pathOnly) {
+        await this.#posix.checkAccessAsync(
+          resolved.mount.storage,
+          resolved.inode,
+          resolved.stat.type,
+          openAccessMode(parsed),
+          true,
+        );
+      }
+      if (parsed.pathOnly || (parsed.accessMode === KernelOpenFlags.O_RDONLY && !parsed.truncate)) {
+        return this.#openResolved(resolved, parsed, false);
+      }
       if (
         isKernelLowerFileSystemInode(resolved.mount.storage, resolved.inode) &&
         resolved.stat.type === "file"
@@ -197,9 +208,7 @@ export class KernelFileSystemOpen {
     }
     const target = runKernelSync(source.mount.storage.readlink(source.inode));
     if (parsed.noFollow) throw kernelError("ELOOP");
-    if (target.startsWith("/")) return this.#paths.resolve(target);
-    const anchor = this.#paths.resolver.anchorForDescriptorParent(source);
-    return this.#paths.resolver.resolveFromAnchor(anchor, target, true);
+    return this.#paths.resolveSymlinkTarget(source, target);
   }
 
   #openResolved(
@@ -210,6 +219,15 @@ export class KernelFileSystemOpen {
   ): number {
     const mount = resolved.mount;
     let inode = resolved.inode;
+    if (!retained && !parsed.pathOnly && this.#posix.credentials !== undefined) {
+      this.#posix.checkAccess(
+        mount.storage,
+        inode,
+        resolved.stat.type,
+        openAccessMode(parsed),
+        true,
+      );
+    }
     if (
       isKernelLowerFileSystemInode(mount.storage, inode) &&
       !parsed.pathOnly &&
@@ -318,4 +336,11 @@ export class KernelFileSystemOpen {
 
 function isCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
+
+function openAccessMode(parsed: ParsedOpenFlags): number {
+  return (
+    (parsed.accessMode !== KernelOpenFlags.O_WRONLY ? 4 : 0) |
+    (parsed.accessMode !== KernelOpenFlags.O_RDONLY || parsed.truncate ? 2 : 0)
+  );
 }

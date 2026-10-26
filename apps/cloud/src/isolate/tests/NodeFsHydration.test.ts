@@ -101,14 +101,14 @@ describe("NodeFS async hydration", () => {
     try {
       fixture.fs.writeFileSync("/plain", "x");
       const error = Object.assign(new Error("ordinary readiness"), { code: "EAGAIN" });
-      vi.spyOn(fixture.kernelFs, "read").mockImplementation(() => {
+      vi.spyOn(fixture.kernelFs, "readAsync").mockImplementation(async () => {
         throw error;
       });
       const seen: unknown[] = [];
       const { fs } = createNodeFs(fixture.kernelFs, undefined, (operation, signal) =>
-        fixture.persistence.runLeaf(() => {
+        fixture.persistence.runLeaf(async () => {
           try {
-            return operation();
+            return await operation();
           } catch (cause) {
             seen.push(cause);
             throw cause;
@@ -173,12 +173,12 @@ describe("NodeFS async hydration", () => {
       fs.writeFileSync("/data", "abcdef");
       const handle = await fs.promises.open("/data", "r");
       const gate = fs.openSync("/gate", "r");
-      const original = kernelFs.read.bind(kernelFs);
+      const original = kernelFs.readAsync.bind(kernelFs);
       let reads = 0;
-      vi.spyOn(kernelFs, "read").mockImplementation((fd, bytes, position) => {
+      vi.spyOn(kernelFs, "readAsync").mockImplementation(async (fd, bytes, position) => {
         if (fd === gate) return original(fd, bytes, position);
         reads++;
-        if (reads > 1) original(gate, new Uint8Array(1), 0n);
+        if (reads > 1) await original(gate, new Uint8Array(1), 0n);
         return original(fd, bytes.subarray(0, 2), position);
       });
       const reading = handle.readFile("utf8");

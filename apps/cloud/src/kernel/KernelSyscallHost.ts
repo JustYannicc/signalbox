@@ -43,6 +43,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
     fileBytes: () => options.filesystem.fileBytes,
     pathCheck: options.filesystem.assertWasiPathVisible.bind(options.filesystem),
     pathSearch: options.filesystem.assertPathSearchAllowed.bind(options.filesystem),
+    openAccess: options.filesystem.assertOpenAllowed.bind(options.filesystem),
     creation: {
       createInode: options.filesystem.createInode.bind(options.filesystem),
       takeCreateMode: options.filesystem.takeNextCreateMode.bind(options.filesystem),
