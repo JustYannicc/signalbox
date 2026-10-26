@@ -2,7 +2,7 @@ import "~/index.css";
 
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
-import { act, render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 
 vi.mock("~/hooks/useSettings", () => ({
   useEnvironmentIdentificationMode: () => "none",
@@ -46,13 +46,17 @@ it.each([false, true])(
     const container = document.createElement("div");
     Object.assign(container.style, { display: "flex", justifyContent: "flex-end", width: "400px" });
     await using screen = await render(<ComposerPrimaryActions {...props} />, { container });
-    const stop = screen.getByRole("button", { name: "Stop generation" }).element();
+    const stop = screen
+      .getByRole("button", { name: "Stop generation" })
+      .element() as HTMLButtonElement;
     const { x, y, width, height } = stop.getBoundingClientRect();
     const target = () =>
       document.elementFromPoint(x + width / 2, y + height / 2)?.closest("button");
     await act(() => stop.click());
     await act(() =>
-      screen.getByRole("button", { name: "Stopping", exact: true }).element().click(),
+      (
+        screen.getByRole("button", { name: "Stopping", exact: true }).element() as HTMLButtonElement
+      ).click(),
     );
     await expect
       .element(screen.getByRole("button", { name: "Stopping", exact: true }))
@@ -79,7 +83,7 @@ it.each([false, true])(
     expect(props.onSubmitMessage).not.toHaveBeenCalled();
     const action = screen
       .getByRole("button", { name: draft ? "Submit message" : "Resume thread" })
-      .element();
+      .element() as HTMLButtonElement;
     await act(() => action.click());
     expect(draft ? props.onSubmitMessage : props.onResume).toHaveBeenCalledTimes(1);
     await screen.rerender(<ComposerPrimaryActions {...props} />);
@@ -92,15 +96,22 @@ it.each([false, true])(
   async (retry) => {
     const props = setup();
     await using screen = await render(<ComposerPrimaryActions {...props} />);
-    vi.useFakeTimers();
-    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
-    await act(() => screen.getByRole("button", { name: "Stop generation" }).element().click());
+    using _timers = fakeTimers();
+    await act(() =>
+      (
+        screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
+      ).click(),
+    );
     await act(() => vi.advanceTimersByTime(9_999));
     expect(screen.getByRole("button", { name: "Stopping", exact: true }).element()).toBeDisabled();
     await act(() => vi.advanceTimersByTime(1));
     expect(screen.getByRole("button", { name: "Stop generation" }).element()).toBeEnabled();
     if (retry)
-      await act(() => screen.getByRole("button", { name: "Stop generation" }).element().click());
+      await act(() =>
+        (
+          screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
+        ).click(),
+      );
     await screen.rerender(
       <ComposerPrimaryActions {...props} isRunning={false} canInterrupt={false} canResume />,
     );
@@ -113,7 +124,11 @@ it.each([false, true])(
 it("keeps Stop pending across a permission failure", async () => {
   const props = setup();
   await using screen = await render(<ComposerPrimaryActions {...props} />);
-  await act(() => screen.getByRole("button", { name: "Stop generation" }).element().click());
+  await act(() =>
+    (
+      screen.getByRole("button", { name: "Stop generation" }).element() as HTMLButtonElement
+    ).click(),
+  );
   await screen.rerender(
     <ComposerPrimaryActions {...props} canOperateThread={false} canInterrupt={false} />,
   );
