@@ -5,6 +5,7 @@ import {
   type SystemIdentityConfig,
 } from "@t3tools/contracts/systemIdentity";
 import type { KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
+import { KernelFileSystemUnavailable } from "../kernel/KernelLowerFileSystem.ts";
 import { createCommandGateway, type CommandGatewayOptions } from "./CommandGateway.ts";
 import { CHILD_COREUTILS_COMMANDS } from "./ChildProgramSet.ts";
 import {
@@ -65,6 +66,26 @@ export function createProductComputer(options: ProductComputerOptions) {
       signal,
     }),
   );
+  const metadataRefreshPaths = options.machineInventory.entries
+    .filter(({ type }) => type === "directory" || type === "symlink")
+    .map(({ path }) => path);
+  const refreshMetadata = async (generation: number, callerSignal: AbortSignal) => {
+    const refreshSignal = AbortSignal.any([signal, callerSignal]);
+    try {
+      refreshSignal.throwIfAborted();
+      const current = transport.files.current();
+      if (current.generation !== generation || current.pristine)
+        throw new KernelFileSystemUnavailable("Machine generation changed before metadata refresh");
+      await overlay.refresh(metadataRefreshPaths, refreshSignal);
+      refreshSignal.throwIfAborted();
+      const refreshed = transport.files.current();
+      if (refreshed.generation !== generation || refreshed.pristine)
+        throw new KernelFileSystemUnavailable("Machine generation changed during metadata refresh");
+    } catch (error) {
+      overlay.invalidate();
+      throw error;
+    }
+  };
   const machine: KernelCommandForwarder = {
     async spawn(command, callerSignal) {
       overlay.invalidate();
@@ -72,7 +93,22 @@ export function createProductComputer(options: ProductComputerOptions) {
         const generation = transport.files.current().generation;
         if (generation !== null) await transport.files.markExecuted(generation);
         const child = await transport.spawn(command, callerSignal);
-        const exited = child.exited.finally(() => overlay.invalidate());
+        const exited = child.exited.then(
+          async (result) => {
+            if (generation === null) {
+              overlay.invalidate();
+              throw new KernelFileSystemUnavailable(
+                "Machine execution has no attested generation for metadata refresh",
+              );
+            }
+            await refreshMetadata(generation, callerSignal);
+            return result;
+          },
+          (error: unknown) => {
+            overlay.invalidate();
+            throw error;
+          },
+        );
         void exited.catch(() => undefined);
         return { ...child, exited };
       } catch (error) {

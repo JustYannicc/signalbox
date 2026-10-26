@@ -217,7 +217,7 @@ export class KernelLowerFileSystemUpperLayer {
       name,
       options.exclusive,
       (upperParent) => posix.create(upperParent, name, options),
-      true,
+      currentKernelIoMode() === "sync",
     );
   }
 

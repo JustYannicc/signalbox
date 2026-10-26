@@ -171,6 +171,59 @@ export function createComputerMachineFileSystem(
       request.check();
       return entries;
     },
+    async readdirMany(paths, signal) {
+      if (paths.length === 0) return [];
+      const request = machineFileRequest(options.files, options.signal, signal);
+      const parent = liveParents(request);
+      const entriesByPath: Array<KernelLowerFileSystemEntry[] | undefined> = paths.map(() => []);
+      let remaining: Array<{ path: string; index: number; cursor?: string }> = paths.map(
+        (path, index) => ({ path, index }),
+      );
+      let nextId = 0;
+      while (remaining.length > 0) {
+        const operations = remaining.map(({ path, cursor }) => ({
+          id: String(nextId++),
+          op: "readdir" as const,
+          path,
+          withStat: true,
+          ...(cursor === undefined ? {} : { cursor }),
+        }));
+        const results = await request.batch(operations);
+        const next: Array<{ path: string; index: number; cursor?: string }> = [];
+        for (let offset = 0; offset < remaining.length; offset++) {
+          const current = remaining[offset];
+          const result = results[offset];
+          if (current === undefined || result === undefined)
+            throw new KernelFileSystemUnavailable("Machine directory batch response is incomplete");
+          if ("error" in result) {
+            if (absent(result.error.code) && current.cursor === undefined) {
+              entriesByPath[current.index] = undefined;
+              continue;
+            }
+            throw posixError(result.error);
+          }
+          if (result.op !== "readdir")
+            throw new KernelFileSystemUnavailable("Machine returned the wrong directory operation");
+          for (const entry of result.entries) {
+            if (entry.stat === undefined)
+              throw new KernelFileSystemUnavailable("Machine omitted directory metadata");
+            const child = `${current.path === "/" ? "" : current.path}/${entry.name}`;
+            const symlinkParent = entry.stat.type === "symlink" ? await parent(child) : undefined;
+            entriesByPath[current.index]!.push(
+              machineFileMetadata(child, {
+                ...entry.stat,
+                ...(symlinkParent === undefined ? {} : { symlinkParent }),
+              }),
+            );
+          }
+          if (result.nextCursor !== null)
+            next.push({ path: current.path, index: current.index, cursor: result.nextCursor });
+        }
+        remaining = next;
+      }
+      request.check();
+      return entriesByPath;
+    },
     async readlink(path, signal) {
       if (runtimePathIsAbsent(path, signal))
         throw posixError({ code: "ENOENT", message: "Machine runtime path is absent" });
@@ -180,6 +233,19 @@ export function createComputerMachineFileSystem(
         throw posixError({ code: "EINVAL", message: "Machine path is not a symbolic link" });
       }
       return machineFileRequest(options.files, options.signal, signal).readlink(path);
+    },
+    async readlinkMany(paths, signal) {
+      if (paths.length === 0) return [];
+      const request = machineFileRequest(options.files, options.signal, signal);
+      const results = await request.batch(
+        paths.map((path, index) => ({ id: String(index), op: "readlink" as const, path })),
+      );
+      return results.map((result) => {
+        if ("error" in result) throw posixError(result.error);
+        if (result.op !== "readlink")
+          throw new KernelFileSystemUnavailable("Machine returned the wrong link operation");
+        return new TextDecoder("utf-8", { fatal: true }).decode(decodeBase64(result.targetBase64));
+      });
     },
     async read(path, offset, length, signal) {
       if (offset < 0n || offset > BigInt(Number.MAX_SAFE_INTEGER))

@@ -74,8 +74,19 @@ export class KernelLowerFileSystemSourceIndex {
     const cached = this.#entryByPath.get(path);
     if (cached !== undefined) return { kind: "entry", inode: this.#cacheEntry(path, cached) };
     if (this.#missingPaths.has(path)) return { kind: "missing" };
-    if (this.#source.lookupKnown === undefined) return { kind: "unknown" };
     canonicalPath(path);
+    const parentEntries = this.#directoryByPath.get(parentPath(path));
+    if (parentEntries !== undefined) {
+      const entry = parentEntries.find((candidate) => candidate.name === basename(path));
+      if (entry === undefined) {
+        this.#missingPaths.add(path);
+        return { kind: "missing" };
+      }
+      const cached = this.#entryByPath.get(path);
+      if (cached !== undefined) return { kind: "entry", inode: this.#cacheEntry(path, cached) };
+      throw new KernelFileSystemUnavailable("Lower directory entry metadata is missing");
+    }
+    if (this.#source.lookupKnown === undefined) return { kind: "unknown" };
 
     let entries: readonly (KernelLowerFileSystemEntry | undefined)[] | undefined;
     try {
@@ -200,11 +211,84 @@ export class KernelLowerFileSystemSourceIndex {
     }
 
     const explicitEntries = [...explicit].filter((path) => !skip(path));
+    const symlinks = explicitEntries.filter(
+      (path) => this.#entryByPath.get(path)?.stat.type === "symlink",
+    );
+    await this.#readlinks(symlinks, signal);
+    const directories = explicitEntries.filter(
+      (path) => this.#entryByPath.get(path)?.stat.type === "directory",
+    );
+    await this.#readDirectories(directories, signal);
+  }
+
+  async refresh(
+    paths: readonly string[],
+    signal?: AbortSignal,
+    skip: (path: string) => boolean = () => false,
+  ): Promise<void> {
+    if (this.#source.readdirMany === undefined) return this.prepare(paths, signal, skip);
+    const activeSignal = signal ?? currentKernelSignal();
+    const epoch = this.#epoch;
+    const directories = paths.filter((path) => {
+      canonicalPath(path);
+      return !skip(path);
+    });
+    if (directories.includes("/")) {
+      await this.#lookupBatch(["/"], activeSignal, (entries) => {
+        const root = entries[0];
+        if (root !== undefined) this.#cacheEntry("/", root);
+      });
+    }
+    await this.#readDirectories(directories, activeSignal, true);
+    activeSignal?.throwIfAborted();
+    if (epoch !== this.#epoch)
+      throw new KernelFileSystemUnavailable("Lower filesystem changed during generation refresh");
+    const symlinks = new Set<string>();
+    for (const path of directories) {
+      for (const child of this.#directoryByPath.get(path) ?? []) {
+        if (child.type === "symlink") symlinks.add(childPath(path, child.name));
+      }
+    }
+    await this.#readlinks([...symlinks], signal);
+    activeSignal?.throwIfAborted();
+    if (epoch !== this.#epoch)
+      throw new KernelFileSystemUnavailable("Lower filesystem changed during link refresh");
+  }
+
+  async #readDirectories(
+    paths: readonly string[],
+    signal?: AbortSignal,
+    allowMissing = false,
+  ): Promise<void> {
+    if (paths.length === 0) return;
+    const activeSignal = signal ?? currentKernelSignal();
+    if (this.#source.readdirMany !== undefined) {
+      const epoch = this.#epoch;
+      const listings = await sourceCall(() => this.#source.readdirMany!(paths, activeSignal));
+      activeSignal?.throwIfAborted();
+      if (epoch !== this.#epoch)
+        throw new KernelFileSystemUnavailable("Lower filesystem changed during directory refresh");
+      if (!Array.isArray(listings) || listings.length !== paths.length) {
+        throw new KernelFileSystemUnavailable("Lower directory batch result length mismatch");
+      }
+      for (let index = 0; index < paths.length; index++) {
+        const path = paths[index];
+        const entries = listings[index];
+        if (path !== undefined && entries !== undefined) this.#cacheDirectory(path, entries);
+      }
+      return;
+    }
+
     await Promise.all(
-      explicitEntries.map(async (path) => {
+      paths.map(async (path) => {
         const entry = this.#entryByPath.get(path);
-        if (entry?.stat.type === "symlink") await this.#readlink(path, signal);
-        if (entry?.stat.type === "directory") await this.#readDirectory(path, entry, signal);
+        if (entry === undefined) return;
+        try {
+          await this.#readDirectory(path, entry, activeSignal);
+        } catch (error) {
+          if (allowMissing && (isCode(error, "ENOENT") || isCode(error, "ENOTDIR"))) return;
+          throw error;
+        }
       }),
     );
   }
@@ -339,6 +423,33 @@ export class KernelLowerFileSystemSourceIndex {
         throw error;
       },
     );
+  }
+
+  async #readlinks(paths: readonly string[], signal?: AbortSignal): Promise<void> {
+    const pending = [...new Set(paths)].filter((path) => !this.#linkByPath.has(path));
+    if (pending.length === 0) return;
+    const activeSignal = signal ?? currentKernelSignal();
+    activeSignal?.throwIfAborted();
+    const epoch = this.#epoch;
+    if (this.#source.readlinkMany === undefined) {
+      await Promise.all(pending.map((path) => this.#readlink(path, activeSignal)));
+      return;
+    }
+    const targets = await sourceCall(() => this.#source.readlinkMany!(pending, activeSignal));
+    activeSignal?.throwIfAborted();
+    if (epoch !== this.#epoch)
+      throw new KernelFileSystemUnavailable("Lower filesystem changed during link refresh");
+    if (!Array.isArray(targets) || targets.length !== pending.length) {
+      throw new KernelFileSystemUnavailable("Lower readlink batch result length mismatch");
+    }
+    for (let index = 0; index < pending.length; index++) {
+      const path = pending[index];
+      const target = targets[index];
+      if (path === undefined || typeof target !== "string") {
+        throw new KernelFileSystemUnavailable("Lower readlink batch returned invalid data");
+      }
+      this.#linkByPath.set(path, target);
+    }
   }
 
   #readDirectory(
@@ -637,4 +748,8 @@ function sourceFailure(error: unknown, lookup = false): Error {
 
 function isPromiseLike<T>(value: MaybePromise<T>): value is Promise<T> {
   return typeof value === "object" && value !== null && "then" in value;
+}
+
+function isCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }

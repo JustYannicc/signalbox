@@ -38,7 +38,7 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
       pathCheck: input.filesystem.assertWasiPathVisible.bind(input.filesystem),
       pathSearch: input.filesystem.assertPathSearchAllowed.bind(input.filesystem),
       creation: {
-        createInode: input.filesystem.createInode.bind(input.filesystem),
+        createInode: input.filesystem.createInodeAsync.bind(input.filesystem),
         takeCreateMode: input.filesystem.takeNextCreateMode.bind(input.filesystem),
       },
     },

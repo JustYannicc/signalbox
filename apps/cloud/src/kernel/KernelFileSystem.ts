@@ -263,6 +263,13 @@ export class KernelFileSystem {
           );
           return attachment.prepare(visible, signal);
         },
+        refresh: (paths, signal) => {
+          const rootMount = this.#paths.resolver.mountForPath("/");
+          const visible = paths.filter(
+            (path) => this.#paths.resolver.mountForPath(path) === rootMount,
+          );
+          return attachment.refresh(visible, signal);
+        },
         isLower: async (path, signal) => {
           const rootMount = this.#paths.resolver.mountForPath("/");
           if (this.#paths.resolver.mountForPath(path) !== rootMount) return false;
@@ -385,6 +392,19 @@ export class KernelFileSystem {
     return this.#system(() => {
       this.#assertOpen();
       return this.#posix.createInode(mount, parent, name, options, mode);
+    });
+  }
+
+  createInodeAsync(
+    mount: WasiMountedStorage,
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    mode?: number,
+  ): Promise<Inode> {
+    return this.#async(undefined, async () => {
+      this.#assertOpen();
+      return this.#posix.createInodeAsync(mount, parent, name, options, mode);
     });
   }
 
