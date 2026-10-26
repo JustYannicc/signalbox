@@ -1,3 +1,4 @@
+import type { MachineImageContent } from "./machineFiles/ImageContent.ts";
 import { resolveInventoryPath } from "./machineFiles/InventoryPath.ts";
 
 export type MachineProgramEntryType =
@@ -36,6 +37,7 @@ export interface MachineProgramInventoryProvenance {
   readonly sourceImageId: MachineImageDigest;
   readonly dockerfile: string;
   readonly captureSha256: string;
+  readonly snapshotSha256?: string;
 }
 
 export type MachineImageDigest = `sha256:${string}`;
@@ -54,6 +56,8 @@ export interface MachineProgramInventory {
   readonly excludedRoots: readonly string[];
   /** Sorted by path and complete outside `excludedRoots`. */
   readonly entries: readonly MachineProgramEntry[];
+  /** Captured with this inventory; omitted by older metadata-only artifacts. */
+  readonly imageContent?: MachineImageContent;
 }
 
 /** Wire entry consumed by the lower filesystem adapter. It contains no file bytes. */
