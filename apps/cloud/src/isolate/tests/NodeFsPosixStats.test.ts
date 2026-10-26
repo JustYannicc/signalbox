@@ -125,6 +125,7 @@ describe("Node fs POSIX stats", () => {
 
   it("does not hide non-ENOTSUP errors from POSIX metadata storage", () => {
     const fixture = nodeFsPosixFixture();
+    createNodeFs(fixture.kernelFs).fs.writeFileSync("/broken-metadata", "data");
     const failure = Object.assign(new Error("POSIX metadata read failed"), { code: "EIO" });
     const posix = new Proxy(fixture.storage.posix, {
       get(target, property, receiver) {
@@ -147,10 +148,12 @@ describe("Node fs POSIX stats", () => {
     });
     try {
       const { fs } = createNodeFs(kernelFs);
-      fs.writeFileSync("/broken-metadata", "data");
 
       expect(() => fs.statSync("/broken-metadata")).toThrow(
         expect.objectContaining({ code: "EIO", syscall: "stat", path: "/broken-metadata" }),
+      );
+      expect(() => fs.openSync("/broken-metadata", "r")).toThrow(
+        expect.objectContaining({ code: "EIO", syscall: "open", path: "/broken-metadata" }),
       );
     } finally {
       kernelFs.dispose();
