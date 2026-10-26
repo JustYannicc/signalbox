@@ -65,6 +65,9 @@ describe("MachineCommands", () => {
     });
 
     const first = await fixture.commands.spawn(machineCommand, new AbortController().signal);
+    expect(first.generation).toBe(
+      fixture.records.find(({ phase }) => phase === "execute")?.machine?.generation,
+    );
     fixture.closeChild();
     await applyEntered;
 

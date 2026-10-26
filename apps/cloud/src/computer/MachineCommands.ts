@@ -182,6 +182,7 @@ export class MachineCommands implements KernelCommandForwarder {
         void exited.catch(() => undefined);
         handoffAdmission = true;
         return {
+          generation: runtime.owner.generation,
           stdin: child.stdin,
           stdout: child.stdout,
           stderr: child.stderr,

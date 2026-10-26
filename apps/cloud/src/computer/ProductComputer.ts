@@ -107,9 +107,10 @@ export function createProductComputer(options: ProductComputerOptions) {
       const commandEpoch = ++metadataEpoch;
       overlay.invalidate();
       try {
-        const generation = transport.files.current().generation;
-        if (generation !== null) await transport.files.markExecuted(generation);
+        const previousGeneration = transport.files.current().generation;
+        if (previousGeneration !== null) await transport.files.markExecuted(previousGeneration);
         const child = await transport.spawn(command, callerSignal);
+        const generation = child.generation ?? previousGeneration;
         const exited = child.exited.then(
           async (result) => {
             if (generation === null) {
