@@ -50,10 +50,10 @@ it.each([false, true])(
     const { x, y, width, height } = stop.getBoundingClientRect();
     const target = () =>
       document.elementFromPoint(x + width / 2, y + height / 2)?.closest("button");
-    await act(() => {
-      stop.click();
-      stop.click();
-    });
+    await act(() => stop.click());
+    await act(() =>
+      screen.getByRole("button", { name: "Stopping", exact: true }).element().click(),
+    );
     await expect
       .element(screen.getByRole("button", { name: "Stopping", exact: true }))
       .toBeDisabled();
