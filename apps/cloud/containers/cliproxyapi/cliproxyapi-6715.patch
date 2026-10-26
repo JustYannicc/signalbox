@@ -1969,30 +1969,30 @@ index 2d56fa07919f198fafe8060b5e3f93ef6255a43d..d65e8b210468eb4e610e39518366f17d
  
  // NewCodexAuthenticator constructs a Codex authenticator with default settings.
 diff --git a/sdk/auth/codex_device.go b/sdk/auth/codex_device.go
-index cc2febbb3c470c5f35834d0744a5e691926c5eff..59e2ea38c3448cbc054695da75e17a8af567892f 100644
+index cc2febbb..0ad07b34 100644
 --- a/sdk/auth/codex_device.go
 +++ b/sdk/auth/codex_device.go
 @@ -66,7 +66,10 @@ func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *confi
  		ctx = context.Background()
  	}
- 
+
 -	httpClient := util.SetProxy(&cfg.SDKConfig, &http.Client{})
 +	httpClient := a.deviceHTTPClient
 +	if httpClient == nil {
 +		httpClient = util.SetProxy(&cfg.SDKConfig, &http.Client{})
 +	}
- 
+
  	userCodeResp, err := requestCodexDeviceUserCode(ctx, httpClient)
  	if err != nil {
 @@ -82,11 +85,22 @@ func (a *CodexAuthenticator) loginWithDeviceFlow(ctx context.Context, cfg *confi
  		return nil, fmt.Errorf("codex device flow did not return required fields")
  	}
- 
+
 +	ctx, cancel := context.WithTimeout(ctx, codexDeviceTimeout)
 +	defer cancel()
 +
  	pollInterval := parseCodexDevicePollInterval(userCodeResp.Interval)
- 
+
  	fmt.Println("Starting Codex device authentication...")
 -	fmt.Printf("Codex device URL: %s\n", codexDeviceVerificationURL)
 -	fmt.Printf("Codex device code: %s\n", deviceCode)
@@ -2006,12 +2006,12 @@ index cc2febbb3c470c5f35834d0744a5e691926c5eff..59e2ea38c3448cbc054695da75e17a8a
 +		fmt.Printf("Codex device URL: %s\n", codexDeviceVerificationURL)
 +		fmt.Printf("Codex device code: %s\n", deviceCode)
 +	}
- 
+
  	if !opts.NoBrowser {
  		if !browser.IsAvailable() {
 @@ -172,6 +186,9 @@ func pollCodexDeviceToken(ctx context.Context, client *http.Client, deviceAuthID
  	deadline := time.Now().Add(codexDeviceTimeout)
- 
+
  	for {
 +		if err := ctx.Err(); err != nil {
 +			return nil, err
@@ -2019,6 +2019,18 @@ index cc2febbb3c470c5f35834d0744a5e691926c5eff..59e2ea38c3448cbc054695da75e17a8a
  		if time.Now().After(deadline) {
  			return nil, fmt.Errorf("codex device authentication timed out after 15 minutes")
  		}
+@@ -282,8 +299,9 @@ func (a *CodexAuthenticator) buildAuthRecord(authSvc *codex.CodexAuth, authBundl
+
+ 	fileName := codex.CredentialFileName(tokenStorage.Email, planType, hashAccountID, true)
+ 	metadata := map[string]any{
+-		"email":     tokenStorage.Email,
+-		"plan_type": planType,
++		"email":      tokenStorage.Email,
++		"account_id": tokenStorage.AccountID,
++		"plan_type":  planType,
+ 	}
+
+ 	fmt.Println("Codex authentication successful")
 diff --git a/sdk/auth/codex_device_test.go b/sdk/auth/codex_device_test.go
 new file mode 100644
 index 0000000000000000000000000000000000000000..2a078f39059f3289f7aea8a590e477f6acf2a986
@@ -2260,3 +2272,30 @@ index 4388de8019fe2737f7d69d8e8191729546d492e7..c53556fa4392fd1ba8942228bd53d2ae
  }
  
  // Authenticator manages login and optional refresh flows for a provider.
+diff --git a/sdk/auth/codex_auth_record_test.go b/sdk/auth/codex_auth_record_test.go
+index 4865627c..f5eff4c1 100644
+--- a/sdk/auth/codex_auth_record_test.go
++++ b/sdk/auth/codex_auth_record_test.go
+@@ -100,3 +100,22 @@ func TestBuildAuthRecord_PlanTypeExtractedWhenPresent(t *testing.T) {
+ 		t.Errorf("auth.FileName = %q, want suffix -plus.json", auth.FileName)
+ 	}
+ }
++
++func TestBuildAuthRecordIncludesAccountIDBeforePersistence(t *testing.T) {
++	authenticator := NewCodexAuthenticator()
++	bundle := &codex.CodexAuthBundle{
++		TokenData: codex.CodexTokenData{
++			IDToken:     makeTestCodexJWT("plus", "jwt-account"),
++			Email:       "user@example.com",
++			AccountID:   "exchanged-account",
++			AccessToken: "test-access-token",
++		},
++	}
++	record, err := authenticator.buildAuthRecord(codex.NewCodexAuth(nil), bundle)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := record.Metadata["account_id"]; got != bundle.TokenData.AccountID {
++		t.Fatalf("pre-persistence account_id=%v, want token exchange account %q", got, bundle.TokenData.AccountID)
++	}
++}
