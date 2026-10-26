@@ -77,7 +77,10 @@ describe("Computer live lower symlink ownership", () => {
     expect((await test.source.lookup(["/bin/tool"]))[0]?.symlinkParent).toBe("/usr/bin");
     test.replace(liveMachineInventory("/opt"));
     expect((await test.source.lookup(["/bin/tool"]))[0]?.symlinkParent).toBe("/opt/bin");
-    expect((await test.source.readdir("/bin"))?.[0]?.symlinkParent).toBe("/opt/bin");
+    const binEntry = (await test.source.readdir("/bin"))?.[0];
+    expect(binEntry !== undefined && "stat" in binEntry ? binEntry.symlinkParent : undefined).toBe(
+      "/opt/bin",
+    );
   });
 
   it.each(["lookup", "readdir"] as const)(

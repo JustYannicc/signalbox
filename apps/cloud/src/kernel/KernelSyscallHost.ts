@@ -45,7 +45,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
     pathSearch: options.filesystem.assertPathSearchAllowed.bind(options.filesystem),
     openAccess: options.filesystem.assertOpenAllowed.bind(options.filesystem),
     creation: {
-      createInode: options.filesystem.createInode.bind(options.filesystem),
+      createInode: options.filesystem.createInodeAsync.bind(options.filesystem),
       takeCreateMode: options.filesystem.takeNextCreateMode.bind(options.filesystem),
     },
   });
@@ -67,6 +67,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
       ...system.imports,
       ...createKernelWasiFileSystemAdapter(options.filesystem, options, {
         ...options,
+        createInode: options.filesystem.createInodeAsync.bind(options.filesystem),
         preparePathSearch:
           options.preparePathSearch ??
           createKernelFileSystemPathSearch(options.filesystem, options.env.PATH),

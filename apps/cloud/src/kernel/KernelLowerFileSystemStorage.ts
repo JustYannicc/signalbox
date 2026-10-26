@@ -74,6 +74,7 @@ export class KernelLowerFileSystemStorage
       lookupLower: (path) => this.#lookupLower(path),
       lookupLowerKnown: (path) => this.#lookupLowerKnown(path),
       lowerStat: (inode) => this.#requireIndex().stat(inode),
+      lowerReaddir: (inode) => this.readdir(inode),
       lowerMetadata: (inode) => this.#requireIndex().metadata(inode),
       upperFileForLowerInode: (inode) => this.#files.upperInodeForLower(inode),
       copyUpFile: (inode, copyData) => this.#files.copyUpFile(inode, copyData),
@@ -105,6 +106,7 @@ export class KernelLowerFileSystemStorage
     this.#sourceIndex = index;
     return {
       prepare: (paths, signal) => this.#prepare(token, paths, signal),
+      refresh: (paths, signal) => this.#refresh(token, paths, signal),
       isLower: (path, signal) => {
         this.#assertAttachment(token);
         return this.isLower(path, signal);
@@ -460,6 +462,20 @@ export class KernelLowerFileSystemStorage
     return this.prepare(paths, signal);
   }
 
+  #refresh(token: symbol, paths: readonly string[], signal?: AbortSignal): Promise<void> {
+    this.#assertAttachment(token);
+    const index = this.#requireIndex();
+    this.invalidate();
+    const epoch = index.epoch;
+    return index
+      .refresh(paths, signal, (path) => this.#upperBlocksSourceDuringRefresh(path))
+      .catch((error: unknown) => {
+        if (this.#attachmentToken === token && this.#sourceIndex === index && index.epoch === epoch)
+          this.invalidate();
+        throw error;
+      });
+  }
+
   #upperBlocksSource(path: string): boolean {
     if (path === "/") return false;
     if (this.#overlayUpper?.isLowerPathHidden(path)) return true;
@@ -482,6 +498,17 @@ export class KernelLowerFileSystemStorage
       if (stat.type !== "directory") return true;
     }
     return false;
+  }
+
+  #upperBlocksSourceDuringRefresh(path: string): boolean {
+    if (!this.#upperBlocksSource(path)) return false;
+    if (this.#overlayUpper?.isLowerPathHidden(path)) return true;
+    try {
+      return this.#directories.upperDirectoryAt(path) === undefined;
+    } catch (error) {
+      if (isCode(error, "ENOENT") || isCode(error, "ENOTDIR")) return true;
+      throw error;
+    }
   }
 
   #detach(token: symbol): void {

@@ -39,7 +39,7 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
       pathSearch: input.filesystem.assertPathSearchAllowed.bind(input.filesystem),
       openAccess: input.filesystem.assertOpenAllowed.bind(input.filesystem),
       creation: {
-        createInode: input.filesystem.createInode.bind(input.filesystem),
+        createInode: input.filesystem.createInodeAsync.bind(input.filesystem),
         takeCreateMode: input.filesystem.takeNextCreateMode.bind(input.filesystem),
       },
     },
@@ -47,6 +47,7 @@ export function createKernelAsyncWasi(input: KernelAsyncWasiOptions) {
     createKernelWasiFileSystemAdapter(input.filesystem, input, {
       ...input,
       signal: execution.signal,
+      createInode: input.filesystem.createInodeAsync.bind(input.filesystem),
     }),
     execution.signal,
   );

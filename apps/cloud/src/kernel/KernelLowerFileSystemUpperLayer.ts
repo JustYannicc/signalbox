@@ -1,6 +1,14 @@
 import type { MaybePosixStorage, PosixMetadata } from "./PosixStorage.ts";
 import type { KernelLowerFileSystemKnownLookup } from "./KernelLowerFileSystem.ts";
-import type { CreateOptions, Inode, MaybePromise, Stat, Storage, Times } from "./storage.ts";
+import type {
+  CreateOptions,
+  DirectoryEntry,
+  Inode,
+  MaybePromise,
+  Stat,
+  Storage,
+  Times,
+} from "./storage.ts";
 import { kernelError } from "./filesystem/KernelFileSystemErrors.ts";
 import { currentKernelIoMode } from "./process/KernelExecution.ts";
 
@@ -12,6 +20,7 @@ export interface KernelLowerFileSystemUpperNamespace {
   lookupLower(path: string): MaybePromise<Inode>;
   lookupLowerKnown(path: string): KernelLowerFileSystemKnownLookup;
   lowerStat(inode: Inode): MaybePromise<Stat>;
+  lowerReaddir(inode: Inode): MaybePromise<readonly DirectoryEntry[]>;
   lowerMetadata(inode: Inode): MaybePromise<PosixMetadata>;
   upperFileForLowerInode(inode: Inode): Inode | undefined;
   copyUpFile(inode: Inode, copyData: boolean): Promise<Inode>;
@@ -132,13 +141,18 @@ export class KernelLowerFileSystemUpperLayer {
         const toPath = childPath(toParentPath, toName);
         if (fromPath === toPath) return;
         try {
-          this.#storage.lookup(upperFromParent, fromName);
+          const upperSource = this.#storage.lookup(upperFromParent, fromName);
+          const upperSourceStat = this.#storage.stat(upperSource);
           return mapMaybe(lookupLowerOptional(this.#namespace, fromPath), (lowerSource) => {
             if (lowerSource === undefined) {
-              this.#storage.rename(upperFromParent, fromName, upperToParent, toName);
-              this.#namespace.forgetUpperPath(toPath);
-              this.#namespace.moveUpperPaths(fromPath, toPath);
-              return;
+              return mapMaybe(
+                this.#validateLowerDestination(upperSourceStat, upperToParent, toName, toPath),
+                () => {
+                  this.#storage.rename(upperFromParent, fromName, upperToParent, toName);
+                  this.#namespace.forgetUpperPath(toPath);
+                  this.#namespace.moveUpperPaths(fromPath, toPath);
+                },
+              );
             }
             return mapMaybe(this.#namespace.lowerStat(lowerSource), (lowerStat) => {
               if (lowerStat.type !== "file") {
@@ -217,7 +231,7 @@ export class KernelLowerFileSystemUpperLayer {
       name,
       options.exclusive,
       (upperParent) => posix.create(upperParent, name, options),
-      true,
+      currentKernelIoMode() === "sync",
     );
   }
 
@@ -328,10 +342,14 @@ export class KernelLowerFileSystemUpperLayer {
     return mapMaybe(lookupLowerOptional(this.#namespace, path), (destination) => {
       if (destination === undefined) return;
       return mapMaybe(this.#namespace.lowerStat(destination), (destinationStat) => {
-        if (sourceStat.type === "file" && destinationStat.type === "directory")
+        if (sourceStat.type !== "directory" && destinationStat.type === "directory")
           throw kernelError("EISDIR");
         if (sourceStat.type === "directory" && destinationStat.type !== "directory")
           throw kernelError("ENOTDIR");
+        if (sourceStat.type === "directory")
+          return mapMaybe(this.#namespace.lowerReaddir(destination), (entries) => {
+            if (entries.length > 0) throw kernelError("ENOTEMPTY");
+          });
       });
     });
   }
