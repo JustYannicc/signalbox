@@ -235,6 +235,62 @@ index 0000000000000000000000000000000000000000..0efe94857b3e1524258dafcb21f4a329
 +		return sdkAuth.DeviceCodeInfo{}, false
 +	}
 +}
+diff --git a/internal/api/handlers/management/auth_files_fields.go b/internal/api/handlers/management/auth_files_fields.go
+index 766202a3b8a2793cd1818df915da7d9ce3d85993..ac10df1d829a61549e226fca7af55c7a074cb68b 100644
+--- a/internal/api/handlers/management/auth_files_fields.go
++++ b/internal/api/handlers/management/auth_files_fields.go
+@@ -936,20 +936,34 @@ func (h *Handler) deleteTokenRecord(ctx context.Context, path string) error {
+ }
+
+ func (h *Handler) tokenStoreWithBaseDir() coreauth.Store {
++	store, _ := h.tokenStoreWithBaseDirContext(context.Background())
++	return store
++}
++
++func (h *Handler) tokenStoreWithBaseDirContext(ctx context.Context) (coreauth.Store, error) {
+ 	if h == nil {
+-		return nil
++		return nil, nil
+ 	}
+ 	store := h.tokenStore
+ 	if store == nil {
+ 		store = sdkAuth.GetTokenStore()
+ 		h.tokenStore = store
+ 	}
+-	if h.cfg != nil {
+-		if dirSetter, ok := store.(interface{ SetBaseDir(string) }); ok {
+-			dirSetter.SetBaseDir(h.cfg.AuthDir)
++	h.mu.Lock()
++	cfg := h.cfg.CloneForRuntime()
++	h.mu.Unlock()
++	if cfg != nil {
++		if dirSetter, ok := store.(interface {
++			SetBaseDirContext(context.Context, string) error
++		}); ok {
++			if err := dirSetter.SetBaseDirContext(ctx, cfg.AuthDir); err != nil {
++				return nil, fmt.Errorf("set token store directory: %w", err)
++			}
++		} else if dirSetter, ok := store.(interface{ SetBaseDir(string) }); ok {
++			dirSetter.SetBaseDir(cfg.AuthDir)
+ 		}
+ 	}
+-	return store
++	return store, nil
+ }
+
+ func (h *Handler) mergeExistingAuthFileMetadata(record *coreauth.Auth) {
+@@ -994,7 +1008,10 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
+ 		return "", fmt.Errorf("token record is nil")
+ 	}
+ 	h.mergeExistingAuthFileMetadata(record)
+-	store := h.tokenStoreWithBaseDir()
++	store, errStore := h.tokenStoreWithBaseDirContext(ctx)
++	if errStore != nil {
++		return "", errStore
++	}
+ 	if store == nil {
+ 		return "", fmt.Errorf("token store unavailable")
+ 	}
 diff --git a/internal/api/handlers/management/auth_files_v8.go b/internal/api/handlers/management/auth_files_v8.go
 index 7d8151a831106b1c0196e1746e35a451c8cf4df8..a389b5fe9df7879887a20f9c5efb838adcfba485 100644
 --- a/internal/api/handlers/management/auth_files_v8.go
@@ -891,10 +947,10 @@ index 0000000000000000000000000000000000000000..dddaf1f41478714e38234330be5459e9
 +}
 diff --git a/internal/api/handlers/management/auth_files_v8_device_save_timeout_test.go b/internal/api/handlers/management/auth_files_v8_device_save_timeout_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..077222c13c4fd62e41645ac3cc49e4c722fb2877
+index 0000000000000000000000000000000000000000..27fa9efa60b4a9f08bbf5dd961071ad660bc008e
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_device_save_timeout_test.go
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,186 @@
 +package management
 +
 +import (
@@ -903,12 +959,17 @@ index 0000000000000000000000000000000000000000..077222c13c4fd62e41645ac3cc49e4c7
 +	"errors"
 +	"net/http"
 +	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"sync"
 +	"testing"
 +	"testing/synctest"
 +	"time"
 +
 +	"github.com/gin-gonic/gin"
++	"github.com/go-git/go-git/v6"
 +	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/store"
 +	sdkAuth "github.com/router-for-me/CLIProxyAPI/v8/sdk/auth"
 +	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 +)
@@ -916,6 +977,94 @@ index 0000000000000000000000000000000000000000..077222c13c4fd62e41645ac3cc49e4c7
 +type stalledDeviceSaveStore struct {
 +	*memoryAuthStore
 +	wait func(context.Context, *coreauth.Auth) error
++}
++
++type blockedDeviceTokenStorage struct {
++	entered chan struct{}
++	release chan struct{}
++}
++
++func (s *blockedDeviceTokenStorage) SaveTokenToFile(string) error {
++	close(s.entered)
++	<-s.release
++	return errors.New("test holder released")
++}
++
++func TestStartOAuthV8CodexDeviceFlowBoundsGitStoreLock(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	synctest.Test(t, func(t *testing.T) {
++		root := t.TempDir()
++		remoteDir := filepath.Join(root, "remote.git")
++		if _, err := git.PlainInit(remoteDir, true); err != nil {
++			t.Fatal(err)
++		}
++		gitStore := store.NewGitTokenStore(remoteDir, "", "", "")
++		authDir := filepath.Join(root, "workspace", "auths")
++		gitStore.SetBaseDir(authDir)
++		if err := gitStore.EnsureRepository(); err != nil {
++			t.Fatal(err)
++		}
++		blocker := &blockedDeviceTokenStorage{entered: make(chan struct{}), release: make(chan struct{})}
++		holderDone := make(chan error, 1)
++		go func() {
++			_, err := gitStore.Save(context.Background(), &coreauth.Auth{
++				ID: "holder.json", FileName: "holder.json", Provider: "claude", Storage: blocker,
++			})
++			holderDone <- err
++		}()
++		releaseHolder := sync.OnceFunc(func() {
++			close(blocker.release)
++			<-holderDone
++			synctest.Wait()
++		})
++		defer releaseHolder()
++		<-blocker.entered
++		sessions := newOAuthSessionStore(time.Minute)
++		replaceOAuthSessionStoreForTest(t, sessions)
++		workerContext := make(chan context.Context, 1)
++		h := &Handler{cfg: &config.Config{AuthDir: authDir}, tokenStore: gitStore}
++		h.codexDeviceAuthenticator = codexDeviceAuthenticatorFunc(func(ctx context.Context, _ *config.Config, opts *sdkAuth.LoginOptions) (*coreauth.Auth, error) {
++			workerContext <- ctx
++			opts.OnDeviceCode(sdkAuth.DeviceCodeInfo{UserCode: "ABCD-EFGH", VerificationURL: "https://auth.openai.com/codex/device", ExpiresIn: 900})
++			return &coreauth.Auth{
++				ID: "device.json", FileName: "device.json", Provider: "codex",
++				Metadata: map[string]any{"type": "codex", "access_token": "test-access-token"},
++			}, nil
++		})
++		router := gin.New()
++		router.GET("/start", h.StartOAuthV8)
++		response := httptest.NewRecorder()
++		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/start?provider=codex&flow=device", nil))
++		ctx := <-workerContext
++		if response.Code != http.StatusOK {
++			t.Fatalf("start status=%d, body=%s", response.Code, response.Body.String())
++		}
++		var result struct{ State string }
++		if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
++			t.Fatal(err)
++		}
++		synctest.Wait()
++		if session, ok := sessions.Get(result.State); !ok || !session.Saving {
++			t.Fatalf("device save did not claim the session: %#v, exists=%t", session, ok)
++		}
++		deadline := time.NewTimer(oauthSessionTTL + time.Second)
++		defer deadline.Stop()
++		<-deadline.C
++		synctest.Wait()
++		if session, ok := sessions.Get(result.State); !ok || session.Saving || session.Status != "Failed to save authentication tokens" {
++			t.Errorf("blocked Git store did not resolve the device session: %#v, exists=%t", session, ok)
++		}
++		if ctx.Err() == nil {
++			t.Error("device worker kept running past the persistence deadline")
++		}
++		releaseHolder()
++		if session, ok := sessions.Get(result.State); !ok || session.Saving || session.Status != "Failed to save authentication tokens" {
++			t.Errorf("releasing the Git store changed the failed session: %#v, exists=%t", session, ok)
++		}
++		if _, err := os.Stat(filepath.Join(authDir, "device.json")); !errors.Is(err, os.ErrNotExist) {
++			t.Errorf("device save wrote credentials despite the blocked store: %v", err)
++		}
++	})
 +}
 +
 +func (s *stalledDeviceSaveStore) Save(ctx context.Context, auth *coreauth.Auth) (string, error) {
@@ -1539,6 +1688,272 @@ index 61786b4a9a1f66c83663358e851228ec8b5d6dec..9b136f3d1c027bded10ef9480672e84d
  					c.JSON(http.StatusConflict, gin.H{"error": "SIWC callbacks require /v8/management/oauth/callback"})
  					return
  				}
+diff --git a/internal/misc/context_mutex.go b/internal/misc/context_mutex.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..7960686ab884627b528e14e3a7dc5e831eb4a18c
+--- /dev/null
++++ b/internal/misc/context_mutex.go
+@@ -0,0 +1,31 @@
++package misc
++
++import (
++	"context"
++	"sync"
++
++	"golang.org/x/sync/semaphore"
++)
++
++// ContextMutex lets credential acquisition stop waiting behind a stalled store
++// operation. Its zero value is ready to use and must not be copied after use.
++type ContextMutex struct {
++	once sync.Once
++	sem  *semaphore.Weighted
++}
++
++func (m *ContextMutex) LockContext(ctx context.Context) error {
++	if ctx == nil {
++		ctx = context.Background()
++	}
++	m.once.Do(func() { m.sem = semaphore.NewWeighted(1) })
++	return m.sem.Acquire(ctx, 1)
++}
++
++func (m *ContextMutex) Lock() {
++	_ = m.LockContext(context.Background())
++}
++
++func (m *ContextMutex) Unlock() {
++	m.sem.Release(1)
++}
+diff --git a/internal/store/gitstore.go b/internal/store/gitstore.go
+index 3c1f0fbe1d0ad7bce19c02e2acdbeaf4298553ba..84bf106514f6fceca1002ad99813f51929d49abf 100644
+--- a/internal/store/gitstore.go
++++ b/internal/store/gitstore.go
+@@ -22,6 +22,7 @@ import (
+ 	"github.com/go-git/go-git/v6/plumbing/transport"
+ 	"github.com/go-git/go-git/v6/plumbing/transport/http"
+ 	"github.com/go-git/go-git/v6/storage/filesystem/dotgit"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
+ 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+ 	log "github.com/sirupsen/logrus"
+ )
+@@ -35,7 +36,7 @@ const (
+
+ // GitTokenStore persists token records and auth metadata using git as the backing storage.
+ type GitTokenStore struct {
+-	mu        sync.Mutex
++	mu        misc.ContextMutex
+ 	dirLock   sync.RWMutex
+ 	baseDir   string
+ 	repoDir   string
+@@ -68,7 +69,14 @@ func NewGitTokenStore(remote, username, password, branch string) *GitTokenStore
+
+ // SetBaseDir updates the default directory used for auth JSON persistence when no explicit path is provided.
+ func (s *GitTokenStore) SetBaseDir(dir string) {
+-	s.mu.Lock()
++	_ = s.SetBaseDirContext(context.Background(), dir)
++}
++
++// SetBaseDirContext lets canceled credential saves stop waiting for another repository operation.
++func (s *GitTokenStore) SetBaseDirContext(ctx context.Context, dir string) error {
++	if errLock := s.mu.LockContext(ctx); errLock != nil {
++		return errLock
++	}
+ 	defer s.mu.Unlock()
+
+ 	clean := strings.TrimSpace(dir)
+@@ -78,7 +86,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
+ 		s.repoDir = ""
+ 		s.configDir = ""
+ 		s.dirLock.Unlock()
+-		return
++		return nil
+ 	}
+ 	if abs, err := filepath.Abs(clean); err == nil {
+ 		clean = abs
+@@ -93,6 +101,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
+ 	s.repoDir = repoDir
+ 	s.configDir = configDir
+ 	s.dirLock.Unlock()
++	return nil
+ }
+
+ // AuthDir returns the directory used for auth persistence.
+@@ -431,7 +440,9 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+ 		return "", fmt.Errorf("auth filestore: %w", errWeight)
+ 	}
+
+-	s.mu.Lock()
++	if errLock := s.mu.LockContext(ctx); errLock != nil {
++		return "", errLock
++	}
+ 	defer s.mu.Unlock()
+
+ 	path, err := s.resolveAuthPath(auth)
+diff --git a/internal/store/objectstore.go b/internal/store/objectstore.go
+index 39b8b0898256c6df4c37fe36a97fbb04ec5ce746..78c8f3e7cac30cd9ab4652146d481324e77598e3 100644
+--- a/internal/store/objectstore.go
++++ b/internal/store/objectstore.go
+@@ -12,7 +12,6 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+-	"sync"
+ 	"time"
+
+ 	"github.com/minio/minio-go/v7"
+@@ -49,7 +48,7 @@ type ObjectTokenStore struct {
+ 	spoolRoot   string
+ 	configPath  string
+ 	authDir     string
+-	mu          sync.Mutex
++	mu          misc.ContextMutex
+ 	putObjectFn func(ctx context.Context, key string, data []byte, contentType string) error
+ }
+
+@@ -184,7 +183,9 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
+ 		}
+ 	}
+
+-	s.mu.Lock()
++	if errLock := s.mu.LockContext(ctx); errLock != nil {
++		return "", errLock
++	}
+ 	defer s.mu.Unlock()
+
+ 	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+diff --git a/internal/store/postgresstore.go b/internal/store/postgresstore.go
+index 69bc318bdaa5a75dd64860ec0be5361553f7a4cc..47c93837ccdd720c0e40d1c8e403b33186bbcc2e 100644
+--- a/internal/store/postgresstore.go
++++ b/internal/store/postgresstore.go
+@@ -10,7 +10,6 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+-	"sync"
+ 	"time"
+
+ 	_ "github.com/jackc/pgx/v5/stdlib"
+@@ -46,7 +45,7 @@ type PostgresStore struct {
+ 	configPath    string
+ 	authDir       string
+ 	cooldownStore *postgresCooldownStateStore
+-	mu            sync.Mutex
++	mu            misc.ContextMutex
+ 	persistAuthFn func(ctx context.Context, relID string, data []byte) error
+ }
+
+@@ -235,7 +234,9 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+ 		}
+ 	}
+
+-	s.mu.Lock()
++	if errLock := s.mu.LockContext(ctx); errLock != nil {
++		return "", errLock
++	}
+ 	defer s.mu.Unlock()
+
+ 	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+diff --git a/internal/store/save_lock_context_test.go b/internal/store/save_lock_context_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..a966ae2b0f42aee009c8a44da28b9292975d006c
+--- /dev/null
++++ b/internal/store/save_lock_context_test.go
+@@ -0,0 +1,94 @@
++package store
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"sync"
++	"testing"
++	"testing/synctest"
++	"time"
++
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestTokenStoresSaveHonorsContextWhileWaitingForLock(t *testing.T) {
++	factories := []struct {
++		name string
++		new  func(string) (cliproxyauth.Store, sync.Locker)
++	}{
++		{"git", func(dir string) (cliproxyauth.Store, sync.Locker) {
++			s := &GitTokenStore{baseDir: dir}
++			return s, &s.mu
++		}},
++		{"object", func(dir string) (cliproxyauth.Store, sync.Locker) {
++			s := &ObjectTokenStore{authDir: dir}
++			return s, &s.mu
++		}},
++		{"postgres", func(dir string) (cliproxyauth.Store, sync.Locker) {
++			s := &PostgresStore{authDir: dir}
++			return s, &s.mu
++		}},
++	}
++	for _, factory := range factories {
++		t.Run(factory.name, func(t *testing.T) {
++			for _, held := range []bool{false, true} {
++				name := "already-canceled"
++				if held {
++					name = "deadline-with-held-lock"
++				}
++				t.Run(name, func(t *testing.T) {
++					synctest.Test(t, func(t *testing.T) {
++						dir := t.TempDir()
++						s, lock := factory.new(dir)
++						ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
++						defer cancel()
++						if held {
++							lock.Lock()
++							defer lock.Unlock()
++						} else {
++							cancel()
++						}
++						storageCalled := false
++						auth := &cliproxyauth.Auth{
++							ID:       "pending.json",
++							FileName: "pending.json",
++							Provider: "claude",
++							Metadata: map[string]any{"type": "claude"},
++							Storage: &callbackTokenStorage{save: func(string) error {
++								storageCalled = true
++								return errors.New("unexpected token write")
++							}},
++						}
++						type result struct {
++							path string
++							err  error
++						}
++						done := make(chan result, 1)
++						go func() {
++							path, err := s.Save(ctx, auth)
++							done <- result{path, err}
++						}()
++						<-ctx.Done()
++						synctest.Wait()
++						select {
++						case got := <-done:
++							if got.path != "" || !errors.Is(got.err, ctx.Err()) {
++								t.Errorf("Save() = (%q, %v), want empty path and %v", got.path, got.err, ctx.Err())
++							}
++						default:
++							t.Fatal("Save did not return after its context expired while the store lock was held")
++						}
++						if storageCalled {
++							t.Error("canceled Save reached token storage")
++						}
++						if _, err := os.Stat(filepath.Join(dir, auth.FileName)); !errors.Is(err, os.ErrNotExist) {
++							t.Errorf("canceled Save created a local auth file: %v", err)
++						}
++					})
++				})
++			}
++		})
++	}
++}
 diff --git a/sdk/auth/codex.go b/sdk/auth/codex.go
 index 2d56fa07919f198fafe8060b5e3f93ef6255a43d..d65e8b210468eb4e610e39518366f17df57d589f 100644
 --- a/sdk/auth/codex.go
@@ -1726,6 +2141,104 @@ index 0000000000000000000000000000000000000000..2a078f39059f3289f7aea8a590e477f6
 +	return 0, b.ctx.Err()
 +}
 +func (*stalledCodexDeviceBody) Close() error { return nil }
+diff --git a/sdk/auth/filestore.go b/sdk/auth/filestore.go
+index f8e061535b02b8609002c06498192f30bfaf2070..78e82bc3747fb349633e55459cc7343a0af72a1b 100644
+--- a/sdk/auth/filestore.go
++++ b/sdk/auth/filestore.go
+@@ -13,6 +13,7 @@ import (
+ 	"sync/atomic"
+ 	"time"
+
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
+ 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+ )
+@@ -53,7 +54,7 @@ func currentPluginAuthParser() PluginAuthParser {
+
+ // FileTokenStore persists token records and auth metadata using the filesystem as backing storage.
+ type FileTokenStore struct {
+-	mu      sync.Mutex
++	mu      misc.ContextMutex
+ 	dirLock sync.RWMutex
+ 	baseDir string
+ }
+@@ -98,7 +99,9 @@ func (s *FileTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (str
+ 		}
+ 	}
+
+-	s.mu.Lock()
++	if errLock := s.mu.LockContext(ctx); errLock != nil {
++		return "", errLock
++	}
+ 	defer s.mu.Unlock()
+
+ 	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+diff --git a/sdk/auth/filestore_context_test.go b/sdk/auth/filestore_context_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..273b0d64d65b417c32c12626b7d24ac9116c9633
+--- /dev/null
++++ b/sdk/auth/filestore_context_test.go
+@@ -0,0 +1,60 @@
++package auth
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++	"testing/synctest"
++	"time"
++
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestFileTokenStoreSaveHonorsContextWhileWaitingForLock(t *testing.T) {
++	for _, held := range []bool{false, true} {
++		name := "already-canceled"
++		if held {
++			name = "deadline-with-held-lock"
++		}
++		t.Run(name, func(t *testing.T) {
++			synctest.Test(t, func(t *testing.T) {
++				dir := t.TempDir()
++				s := &FileTokenStore{baseDir: dir}
++				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
++				defer cancel()
++				if held {
++					s.mu.Lock()
++					defer s.mu.Unlock()
++				} else {
++					cancel()
++				}
++				auth := &cliproxyauth.Auth{
++					ID:       "pending.json",
++					FileName: "pending.json",
++					Provider: "claude",
++					Metadata: map[string]any{"type": "claude"},
++				}
++				done := make(chan error, 1)
++				go func() {
++					_, err := s.Save(ctx, auth)
++					done <- err
++				}()
++				<-ctx.Done()
++				synctest.Wait()
++				select {
++				case err := <-done:
++					if !errors.Is(err, ctx.Err()) {
++						t.Errorf("Save() error = %v, want %v", err, ctx.Err())
++					}
++				default:
++					t.Fatal("Save did not return after its context expired while the store lock was held")
++				}
++				if _, err := os.Stat(filepath.Join(dir, auth.FileName)); !errors.Is(err, os.ErrNotExist) {
++					t.Errorf("canceled Save created a local auth file: %v", err)
++				}
++			})
++		})
++	}
++}
 diff --git a/sdk/auth/interfaces.go b/sdk/auth/interfaces.go
 index 4388de8019fe2737f7d69d8e8191729546d492e7..c53556fa4392fd1ba8942228bd53d2ae112a93cf 100644
 --- a/sdk/auth/interfaces.go
