@@ -1,5 +1,5 @@
 import type { MaybePosixStorage, PosixMetadata } from "../PosixStorage.ts";
-import type { CreateOptions, Inode } from "../storage.ts";
+import type { CreateOptions, Inode, MaybePromise } from "../storage.ts";
 import type { WasiMountedStorage } from "../wasi/internal_wasi_paths.ts";
 import {
   kernelError,
@@ -71,28 +71,46 @@ export class KernelPosix {
     options: CreateOptions,
     mode?: number,
   ): Inode {
-    return withKernelErrors(() => {
-      if (mount.readOnly) throw kernelError("EROFS");
-      if (this.#credentials === undefined) {
-        return runKernelSync(mount.storage.create(parent, name, options));
-      }
+    return withKernelErrors(() =>
+      runKernelSync(this.#createInode(mount, parent, name, options, mode)),
+    );
+  }
 
-      validateMode(mode ?? defaultCreateMode(options.type), MODE_MASK);
-      const posix = requirePosixStorage(mount.storage);
-      const requestedMode = mode ?? defaultCreateMode(options.type);
-      const effectiveMode =
-        options.type === "symlink" ? 0o777 : requestedMode & ~this.#umask & MODE_MASK;
-      const metadata: PosixMetadata = {
-        mode: effectiveMode,
-        uid: this.#credentials.euid,
-        gid: this.#credentials.egid,
-      };
-      return runKernelSync(
-        posix.create(parent, name, {
-          ...options,
-          metadata,
-        }),
-      );
+  createInodeAsync(
+    mount: WasiMountedStorage,
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    mode?: number,
+  ): Promise<Inode> {
+    return withKernelErrorsAsync(
+      async () => await this.#createInode(mount, parent, name, options, mode),
+    );
+  }
+
+  #createInode(
+    mount: WasiMountedStorage,
+    parent: Inode,
+    name: string,
+    options: CreateOptions,
+    mode?: number,
+  ): MaybePromise<Inode> {
+    if (mount.readOnly) throw kernelError("EROFS");
+    if (this.#credentials === undefined) return mount.storage.create(parent, name, options);
+
+    validateMode(mode ?? defaultCreateMode(options.type), MODE_MASK);
+    const posix = requirePosixStorage(mount.storage);
+    const requestedMode = mode ?? defaultCreateMode(options.type);
+    const effectiveMode =
+      options.type === "symlink" ? 0o777 : requestedMode & ~this.#umask & MODE_MASK;
+    const metadata: PosixMetadata = {
+      mode: effectiveMode,
+      uid: this.#credentials.euid,
+      gid: this.#credentials.egid,
+    };
+    return posix.create(parent, name, {
+      ...options,
+      metadata,
     });
   }
 
