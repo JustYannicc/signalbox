@@ -257,7 +257,7 @@ export async function complete(
 
 export async function resumeInput(
   fixture: ProofSetup,
-  options: { readonly observed?: boolean; readonly step?: number } = {},
+  options: { readonly observed?: boolean; readonly step?: number; readonly mismatched?: boolean } = {},
 ): Promise<HarnessProcessResumeOperationInput> {
   const step = options.step ?? 1;
   const control = fixtureControl(step + 1);
@@ -318,7 +318,14 @@ export async function resumeInput(
       residentBytes: 1,
       mainModule: "plain.mjs",
       modules: {
-        "plain.mjs": { js: step === 1 ? fixture.env.NEW_SOURCE : fixture.env.THIRD_SOURCE },
+        "plain.mjs": {
+          js:
+            options.mismatched === true
+              ? fixture.env.THIRD_SOURCE
+              : step === 1
+                ? fixture.env.NEW_SOURCE
+                : fixture.env.THIRD_SOURCE,
+        },
       },
       entrypoint: options.observed === false ? "PlainFacet" : "ObservedPlainFacet",
     },

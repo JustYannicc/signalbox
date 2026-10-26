@@ -24,8 +24,11 @@ export async function runFirst(fixture: ProofSetup) {
   return { committed, result };
 }
 
-export async function publicResumeProof(env: ProofEnv, observed: boolean) {
-  const fixture = await setup(env, observed ? "positive" : "missing-observation");
+export async function publicResumeProof(env: ProofEnv, observed: boolean, mismatched = false) {
+  const fixture = await setup(
+    env,
+    mismatched ? "mismatched-observation" : observed ? "positive" : "missing-observation",
+  );
   const shardNonce = await fixture.shard.executionIncarnationNonce();
   const initial = await runFirst(fixture);
   const before = await fixture.a.execute({
@@ -48,7 +51,7 @@ export async function publicResumeProof(env: ProofEnv, observed: boolean) {
   const rehydrated =
     beforeInstance !== (await fixture.a.instance()) &&
     filesInstance !== (await fixture.files.instance());
-  const operation = await resumeInput(fixture, { observed });
+  const operation = await resumeInput(fixture, { observed, mismatched });
   const resumed = await fixture.shard.resumeProcess(operation).then(
     (value) => ({ ok: true as const, value }),
     (error: unknown) => ({
@@ -76,6 +79,15 @@ export async function publicResumeProof(env: ProofEnv, observed: boolean) {
       sameShard: shardNonce === (await fixture.shard.executionIncarnationNonce()),
       resumed,
       status,
+      previousPublisherGeneration: before.currentPublisher.generation,
+      previousPublication: before.snapshot.lastPublication,
+      previousPublicationOperationId: before.snapshot.lastPublicationOperationId,
+      previousPreparedFacet: before.snapshot.preparedFacet,
+      postResume: await fixture.a.execute({
+        type: "read",
+        runId: fixture.runId,
+        control: fixtureControl(3),
+      }),
       journalFacetCount: journal.snapshot.requests?.facets.length,
       journalRequestCount: journal.snapshot.requests?.entries.length,
       releases: await fixture.placement.releases(),

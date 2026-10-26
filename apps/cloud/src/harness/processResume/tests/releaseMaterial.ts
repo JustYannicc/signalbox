@@ -1,4 +1,5 @@
 import { serializeHarnessReleaseArtifactManifest } from "../../../harnessReleases/HarnessReleaseArtifact.ts";
+import { productLoadedPreparedRelease } from "../../ProductHarnessProcessRelease.ts";
 import { loadHarnessRelease } from "../../HarnessReleaseLoader.ts";
 import type { HarnessProcessResumePreparedRelease } from "../../HarnessProcessResume.ts";
 
@@ -144,13 +145,5 @@ export async function loadMaterial(
       },
     },
   });
-  return {
-    artifact: material.artifact,
-    plan: {
-      release: loaded.plan.release,
-      sourceIdentity: loaded.plan.sourceIdentity,
-      computer: loaded.plan.computer,
-      preparedModules: loaded.plan.preparedModules,
-    },
-  };
+  return productLoadedPreparedRelease("claude-code", material.artifact, loaded);
 }
