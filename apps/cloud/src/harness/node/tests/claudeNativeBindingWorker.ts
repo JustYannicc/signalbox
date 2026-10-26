@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeUtil from "node:util";
 import { ThreadId } from "@t3tools/contracts";
 import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { makeClaudeNativeHostBinding } from "../../ClaudeNativeHostBinding.ts";
 import { nativeTurnThreadLoad, type NativeThreadLoad } from "../../HarnessThreadLoad.ts";
@@ -11,7 +12,10 @@ import type {
   SdkSpawnedProcess,
 } from "../../ClaudeIsolateAdapter.ts";
 import type { ClaudeAgentSdkMcpServers } from "@signalbox/provider-claude/ClaudeQueryRunner";
-import type { ClaudeSdkQuery } from "@signalbox/provider-claude/ClaudeSdkQueryRunner";
+import type {
+  ClaudeSdkQuery,
+  ClaudeSdkQueryPreCleanupDiagnostic,
+} from "@signalbox/provider-claude/ClaudeSdkQueryRunner";
 import {
   assertPreparedAssets,
   preparedAssetsFixture,
@@ -32,25 +36,30 @@ function sdkQuery(
   installs: ClaudeAgentSdkMcpServers[],
   order: string[],
   offered: (message: SDKUserMessage) => void,
+  initializationResult: ClaudeSdkQuery["initializationResult"],
+  consumePrompt: boolean,
 ): ClaudeSdkQuery {
   let finish!: () => void;
   const closed = new Promise<void>((resolve) => {
     finish = resolve;
   });
-  void (async () => {
-    const first = await prompt[Symbol.asyncIterator]().next();
-    NodeAssert.equal(first.done, false);
-    if (first.value !== undefined) {
-      order.push("prompt.offer");
-      offered(first.value);
-    }
-  })();
+  if (consumePrompt)
+    void (async () => {
+      const first = await prompt[Symbol.asyncIterator]().next();
+      NodeAssert.equal(first.done, false);
+      if (first.value !== undefined) {
+        order.push("prompt.offer");
+        offered(first.value);
+      }
+    })();
   async function* messages(): AsyncGenerator<SDKMessage> {
     await closed;
     yield* [];
   }
   return Object.assign(messages(), {
+    initializationResult,
     close: () => {
+      order.push("query.close");
       finish();
       child.kill("SIGTERM");
     },
@@ -68,7 +77,7 @@ function sdkQuery(
   }) satisfies ClaudeSdkQuery;
 }
 
-function coldSetup(override?: "prepared" | "both") {
+function coldSetup(override?: "prepared" | "both" | "diagnostic") {
   const f = readinessFixture();
   return Effect.scoped(
     Effect.gen(function* () {
@@ -80,6 +89,9 @@ function coldSetup(override?: "prepared" | "both") {
       const installs: ClaudeAgentSdkMcpServers[] = [];
       const order: string[] = [];
       const hasPreparedOverride = override === "prepared" || override === "both";
+      const diagnosticCase = override === "diagnostic";
+      const initializationFailure = new Error("host SDK initialization failure");
+      const diagnostics: ClaudeSdkQueryPreCleanupDiagnostic[] = [];
       let fetchedMcp = "";
       let fetchedModel = "";
       let queryOptions: unknown;
@@ -101,7 +113,19 @@ function coldSetup(override?: "prepared" | "both") {
             signal: new AbortController().signal,
           } satisfies SdkSpawnOptions);
           order.push("spawnClaudeCodeProcess");
-          return sdkQuery(prompt, child, installs, order, resolvePrompt);
+          return sdkQuery(
+            prompt,
+            child,
+            installs,
+            order,
+            resolvePrompt,
+            async () => {
+              order.push("initializationResult");
+              if (diagnosticCase) throw initializationFailure;
+              return {} as Awaited<ReturnType<ClaudeSdkQuery["initializationResult"]>>;
+            },
+            !diagnosticCase,
+          );
         },
         forkSession: async (sessionId) => ({ sessionId }),
         getSubagentMessages: async () => [],
@@ -124,7 +148,7 @@ function coldSetup(override?: "prepared" | "both") {
         mcpSessions: services.mcpSessions,
         loadSdk: async (bridge) => {
           const module = bridge.require("node:module") as GuestModule;
-          if (override === undefined) assertPreparedAssets(module);
+          if (!hasPreparedOverride) assertPreparedAssets(module);
           else {
             const require = module.createRequire("/entry.js");
             NodeAssert.equal(require(latinAsset), "caller text");
@@ -135,12 +159,14 @@ function coldSetup(override?: "prepared" | "both") {
                 code: "ERR_NODE_PREPARED_MODULE_UNAVAILABLE",
               });
           }
-          // @effect-diagnostics-next-line globalFetch:off - Verify the fetch installed by the guest personality.
-          const mcpResponse = await globalThis.fetch(`${origin}/thread/epoch-1/executor`);
-          fetchedMcp = await mcpResponse.text();
-          // @effect-diagnostics-next-line globalFetch:off - Verify fallback through the same installed fetch.
-          const modelResponse = await globalThis.fetch("https://model.invalid/request");
-          fetchedModel = await modelResponse.text();
+          if (!diagnosticCase) {
+            // @effect-diagnostics-next-line globalFetch:off - Verify the fetch installed by the guest personality.
+            const mcpResponse = await globalThis.fetch(`${origin}/thread/epoch-1/executor`);
+            fetchedMcp = await mcpResponse.text();
+            // @effect-diagnostics-next-line globalFetch:off - Verify fallback through the same installed fetch.
+            const modelResponse = await globalThis.fetch("https://model.invalid/request");
+            fetchedModel = await modelResponse.text();
+          }
           return sdk;
         },
         mcp: {
@@ -150,6 +176,14 @@ function coldSetup(override?: "prepared" | "both") {
             return new Response("canonical-mcp");
           },
         },
+        ...(diagnosticCase
+          ? {
+              onQueryPreCleanupDiagnostic: (diagnostic: ClaudeSdkQueryPreCleanupDiagnostic) => {
+                diagnostics.push(diagnostic);
+                order.push(`precleanup:${diagnostic.phase}`);
+              },
+            }
+          : {}),
       });
       const openInput = {
         loadedRelease: loaded,
@@ -195,6 +229,28 @@ function coldSetup(override?: "prepared" | "both") {
         modelSelection: services.turn.modelSelection,
         runtimePolicy: services.session.runtimePolicy,
       };
+      if (diagnosticCase) {
+        const start = yield* Effect.exit(runtime.startTurn(turn));
+        NodeAssert.equal(start._tag, "Failure");
+        NodeAssert.deepEqual(order, [
+          "sdk.query",
+          "spawnClaudeCodeProcess",
+          "initializationResult",
+          "precleanup:initialization",
+          "query.close",
+        ]);
+        NodeAssert.equal(installs.length, 0);
+        NodeAssert.equal(diagnostics.length, 1);
+        NodeAssert.equal(diagnostics[0]?.phase, "initialization");
+        NodeAssert.ok(diagnostics[0]?.mcpSignal.present);
+        NodeAssert.deepEqual(routeRequests, []);
+        NodeAssert.deepEqual(modelRequests, []);
+        if (diagnostics[0]?.mcpSignal.present) {
+          NodeAssert.equal(diagnostics[0].mcpSignal.aborted, false);
+        }
+        NodeAssert.match(Cause.pretty(diagnostics[0]!.cause), /host SDK initialization failure/);
+        return;
+      }
       yield* runtime.startTurn(turn);
       const offered = yield* Effect.promise(() => offeredPrompt);
 
@@ -205,6 +261,7 @@ function coldSetup(override?: "prepared" | "both") {
       NodeAssert.deepEqual(order, [
         "sdk.query",
         "spawnClaudeCodeProcess",
+        "initializationResult",
         "setMcpServers",
         "prompt.offer",
       ]);
@@ -335,11 +392,13 @@ const run =
     ? () => coldSetup("prepared")
     : NodeWorkerThreads.workerData === "both"
       ? () => coldSetup("both")
-      : NodeWorkerThreads.workerData === "cold"
-        ? coldSetup
-        : NodeWorkerThreads.workerData === "resume"
-          ? resumeSetup
-          : undefined;
+      : NodeWorkerThreads.workerData === "diagnostic"
+        ? () => coldSetup("diagnostic")
+        : NodeWorkerThreads.workerData === "cold"
+          ? coldSetup
+          : NodeWorkerThreads.workerData === "resume"
+            ? resumeSetup
+            : undefined;
 if (run === undefined || NodeWorkerThreads.parentPort === null)
   throw new Error("Invalid native binding test case.");
 const port = NodeWorkerThreads.parentPort;

@@ -5,6 +5,7 @@ import {
 import {
   makeClaudeAgentSdkQueryRunner,
   queryRunnerError,
+  type ClaudeSdkQueryPreCleanupDiagnostic,
 } from "@signalbox/provider-claude/ClaudeSdkQueryRunner";
 import type {
   ClaudeAgentSdkMcpServers,
@@ -45,6 +46,7 @@ export interface ClaudeIsolateAdapterOptions {
   readonly loadSdk: (bridge: NodeBridge, signal: AbortSignal) => Promise<PreparedClaudeSdk>;
   readonly nativeMcp?: ClaudeIsolateNativeMcpBridge;
   readonly processObserver?: HarnessProcessObserver;
+  readonly onQueryPreCleanupDiagnostic?: (diagnostic: ClaudeSdkQueryPreCleanupDiagnostic) => void;
 }
 
 /** The prepared SDK and CLI share the installed Node personality and Computer files. */
@@ -179,6 +181,9 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
             });
             return messages[0]?.parent_tool_use_id ?? null;
           },
+          ...(options.onQueryPreCleanupDiagnostic === undefined
+            ? {}
+            : { onPreCleanupDiagnostic: options.onQueryPreCleanupDiagnostic }),
           ...(options.nativeMcp === undefined
             ? {}
             : {

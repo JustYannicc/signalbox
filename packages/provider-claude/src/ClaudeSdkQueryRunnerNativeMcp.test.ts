@@ -13,6 +13,7 @@ import {
 import {
   makeClaudeAgentSdkQueryRunner,
   type ClaudeSdkQuery,
+  type ClaudeSdkQueryPreCleanupDiagnostic,
 } from "@signalbox/provider-claude/ClaudeSdkQueryRunner";
 
 const identity = {
@@ -29,6 +30,8 @@ const queryOptions: ClaudeAgentSdkQueryOptions = {
 function queryFixture(): ClaudeSdkQuery {
   async function* messages(): AsyncGenerator<SDKMessage> {}
   return Object.assign(messages(), {
+    initializationResult: async () =>
+      ({}) as Awaited<ReturnType<ClaudeSdkQuery["initializationResult"]>>,
     close: () => {},
     setMcpServers: async (servers: ClaudeAgentSdkMcpServers) => ({
       added: Object.keys(servers),
@@ -190,8 +193,9 @@ describe("native Claude MCP query seam", () => {
     }),
   );
 
-  it.effect("aborts initial native registration and closes the acquired Query", () =>
-    Effect.gen(function* () {
+  it.effect("aborts initial native registration and closes the acquired Query", () => {
+    const controller = new AbortController();
+    return Effect.gen(function* () {
       let entered!: () => void;
       let finish!: (value: {
         added: string[];
@@ -209,15 +213,18 @@ describe("native Claude MCP query seam", () => {
         finish = resolve;
       });
       let closed = false;
+      const order: string[] = [];
+      const diagnostics: ClaudeSdkQueryPreCleanupDiagnostic[] = [];
       const query = queryFixture();
       query.close = () => {
         closed = true;
+        order.push("close");
       };
       query.setMcpServers = async (_servers) => {
         entered();
         return pending;
       };
-      const controller = new AbortController();
+      const reason = new Error("checkpoint access ended");
       const nativeRunner = makeClaudeAgentSdkQueryRunner({
         allocateSessionId: Effect.succeed("allocated-session"),
         requireMcpServerRegistration: true,
@@ -226,6 +233,10 @@ describe("native Claude MCP query seam", () => {
             servers: mcp("canonical", "https://harness-mcp.invalid/thread/initial"),
             signal: controller.signal,
           }),
+        onPreCleanupDiagnostic: (diagnostic) => {
+          diagnostics.push(diagnostic);
+          order.push("diagnostic");
+        },
         query: () => Effect.succeed(query),
         forkSession: async () => ({ sessionId: "forked-session" }),
         subagentLaunchToolUseId: async () => null,
@@ -234,13 +245,22 @@ describe("native Claude MCP query seam", () => {
         .open({ ...identity, options: queryOptions })
         .pipe(Effect.forkScoped);
       yield* Effect.promise(() => installStarted);
-      controller.abort(new Error("checkpoint access ended"));
+      controller.abort(reason);
       const result = yield* Effect.exit(Fiber.join(opening));
       finish({ added: [], removed: [], errors: {} });
       assert.isTrue(Exit.isFailure(result));
       assert.isTrue(closed);
-    }).pipe(Effect.scoped),
-  );
+      assert.deepEqual(order, ["diagnostic", "close"]);
+      assert.equal(diagnostics.length, 1);
+      assert.equal(diagnostics[0]?.phase, "mcp-registration");
+      assert.isTrue(diagnostics[0]?.mcpSignal.present);
+      if (diagnostics[0]?.mcpSignal.present) {
+        assert.isTrue(diagnostics[0].mcpSignal.aborted);
+        assert.strictEqual(diagnostics[0].mcpSignal.reason, reason);
+      }
+      assert.include(Cause.pretty(diagnostics[0]!.cause), reason.message);
+    }).pipe(Effect.scoped);
+  });
 
   it.effect("joins Query acquisition after abort and closes the late Query", () =>
     Effect.gen(function* () {
