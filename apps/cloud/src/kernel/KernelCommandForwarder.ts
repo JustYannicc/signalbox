@@ -18,6 +18,8 @@ export interface KernelCommandExit {
 
 /** The same byte-stream contract is used for registered and forwarded children. */
 export interface KernelCommandChild {
+  /** The accepted machine lease owns this generation, including a machine attached during spawn. */
+  readonly generation?: number;
   readonly stdin: WritableStream<Uint8Array>;
   readonly stdout: ReadableStream<Uint8Array>;
   readonly stderr: ReadableStream<Uint8Array>;
