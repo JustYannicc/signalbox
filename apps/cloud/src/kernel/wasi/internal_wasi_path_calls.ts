@@ -64,6 +64,11 @@ export interface WasiCreationPolicy {
   readonly takeCreateMode: () => number | undefined;
 }
 
+export type WasiOpenAccessCheck = (
+  resolved: WasiResolvedPath,
+  requested: number,
+) => void | Promise<void>;
+
 export class WasiPathCalls {
   readonly #memory: WasiMemory;
   readonly #descriptors: WasiDescriptorTable;
@@ -71,6 +76,7 @@ export class WasiPathCalls {
   readonly #creation: WasiCreationPolicy | undefined;
   readonly #fileBytes: (() => KernelFileByteSelection) | undefined;
   readonly #pathSearch: WasiPathSearchCheck | undefined;
+  readonly #openAccess: WasiOpenAccessCheck | undefined;
 
   readonly imports = {
     path_create_directory: (fd: number, path: number, pathLen: number): WasiCall<number> =>
@@ -160,6 +166,7 @@ export class WasiPathCalls {
     creation?: WasiCreationPolicy,
     fileBytes?: () => KernelFileByteSelection,
     pathSearch?: WasiPathSearchCheck,
+    openAccess?: WasiOpenAccessCheck,
   ) {
     this.#memory = memory;
     this.#descriptors = descriptors;
@@ -167,6 +174,7 @@ export class WasiPathCalls {
     this.#creation = creation;
     this.#fileBytes = fileBytes;
     this.#pathSearch = pathSearch;
+    this.#openAccess = openAccess;
   }
 
   *pathCreateDirectory(fd: number, pathPointer: number, pathLength: number): WasiCall<number> {
@@ -314,7 +322,12 @@ export class WasiPathCalls {
     }
     const path = this.#readPath(pathPointer, pathLength);
     const follow = (dirflags & DIRFLAGS_SYMLINK_FOLLOW) !== 0;
-    const lookup = yield* this.#paths.resolveOrCreate(this.#anchor(directory), path, follow);
+    const lookup = yield* this.#paths.resolveOrCreate(
+      this.#anchor(directory),
+      path,
+      follow,
+      this.#pathSearch,
+    );
     let retained: { mount: WasiMountedStorage; inode: Inode } | undefined;
     let childFd: number | undefined;
     let byteAccess: KernelFileByteAccess | undefined;
@@ -358,6 +371,10 @@ export class WasiPathCalls {
         if ((oflags & OFLAGS.DIRECTORY) !== 0 && resolved.stat.type !== "directory") {
           throw new WasiError(ENOTDIR);
         }
+        const requested =
+          ((baseRights & (RIGHTS.FD_READ | RIGHTS.FD_READDIR)) !== 0n ? 4 : 0) |
+          ((baseRights & RIGHTS.FD_WRITE) !== 0n || (oflags & OFLAGS.TRUNCATE) !== 0 ? 2 : 0);
+        yield* complete(this.#openAccess?.(resolved, requested));
         inode = resolved.inode;
         if (isKernelLowerFileSystemInode(resolved.mount.storage, inode)) {
           if ((oflags & OFLAGS.TRUNCATE) !== 0 || (baseRights & RIGHTS.FD_WRITE) !== 0n) {

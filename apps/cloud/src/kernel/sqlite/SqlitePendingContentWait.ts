@@ -52,7 +52,7 @@ export function registerPendingContent<
   return { status: "registered", token: registration.value, attempt };
 }
 
-/** Retries one synchronous leaf while the persistence owner shares its fetch. */
+/** Retries one leaf while the persistence owner shares its fetch. */
 export async function runPendingContentLeaf<
   T,
   Attempt extends {
@@ -60,7 +60,7 @@ export async function runPendingContentLeaf<
     readonly failure: PersistenceFailure | undefined;
   },
 >(input: {
-  readonly operation: () => T;
+  readonly operation: () => T | Promise<T>;
   readonly signal?: AbortSignal;
   readonly ownerSignal: AbortSignal;
   readonly ownerFailure: PersistenceFailure;
@@ -85,7 +85,7 @@ export async function runPendingContentLeaf<
     if (input.signal?.aborted) throw input.signal.reason ?? new StorageError("ECANCELED");
     if (input.ownerSignal.aborted) throw input.hydrationError(input.ownerFailure.error);
     try {
-      return input.operation();
+      return await input.operation();
     } catch (error) {
       if (!(error instanceof PendingContentError)) throw error;
       const registration = registerPendingContent<PersistenceFailure, Attempt>({

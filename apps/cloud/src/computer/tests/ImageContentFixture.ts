@@ -15,6 +15,12 @@ export function imageContentInventory(): MachineProgramInventory {
     entries: [
       ...base.entries.map((entry) => (entry.type === "file" ? { ...entry, size: "5" } : entry)),
       { ...base.entries[0]!, path: "/etc/link", type: "symlink" as const, target: "config" },
+      {
+        ...base.entries[0]!,
+        path: "/etc/private-link",
+        type: "symlink" as const,
+        target: "private",
+      },
     ].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
   };
   const hash = (value: string | Uint8Array) =>

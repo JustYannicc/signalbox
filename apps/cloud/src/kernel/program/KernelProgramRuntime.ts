@@ -111,6 +111,10 @@ export function prepareKernelWasiRuntime(
       pathCheck: options.prepared.filesystem.assertWasiPathVisible.bind(
         options.prepared.filesystem,
       ),
+      pathSearch: options.prepared.filesystem.assertPathSearchAllowed.bind(
+        options.prepared.filesystem,
+      ),
+      openAccess: options.prepared.filesystem.assertOpenAllowed.bind(options.prepared.filesystem),
       creation: {
         createInode: options.prepared.filesystem.createInode.bind(options.prepared.filesystem),
         takeCreateMode: options.prepared.filesystem.takeNextCreateMode.bind(

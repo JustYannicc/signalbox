@@ -196,24 +196,26 @@ export function createComputerMachineFileSystem(
       if (!Number.isSafeInteger(length) || length < 0)
         throw posixError({ code: "EINVAL", message: "Invalid machine file read length" });
       const boundedLength = Math.min(length, MACHINE_FILES_MAX_CONTENT_BYTES);
-      if (contentIsAuthoritative(path)) {
-        let bytes: Uint8Array | undefined;
-        try {
-          bytes = await imageContent(path, Number(offset), boundedLength);
-        } catch (cause) {
-          request.check();
-          throw request.unavailable("Image content validation failed", { cause });
-        }
-        request.check();
-        if (bytes !== undefined && contentIsAuthoritative(path)) return bytes;
-      }
-      const result = await request.single({
+      const operation = {
         id: "bytes",
         op: "readRange",
         path,
         offset: Number(offset),
         length: boundedLength,
-      });
+      } as const;
+      request.check([operation]);
+      if (contentIsAuthoritative(path)) {
+        let bytes: Uint8Array | undefined;
+        try {
+          bytes = await imageContent(path, Number(offset), boundedLength);
+        } catch (cause) {
+          request.check([operation]);
+          throw request.unavailable("Image content validation failed", { cause }, [operation]);
+        }
+        request.check([operation]);
+        if (bytes !== undefined && contentIsAuthoritative(path)) return bytes;
+      }
+      const result = await request.single(operation);
       if ("error" in result) throw posixError(result.error);
       if (result.op !== "readRange")
         throw request.unavailable("Machine returned the wrong read operation");

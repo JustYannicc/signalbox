@@ -5,9 +5,14 @@ import {
   WasiDescriptorTable,
   type WasiDescriptor,
 } from "../wasi/internal_wasi_descriptors.ts";
-import { complete, runSync, type WasiCall } from "../wasi/internal_wasi_calls.ts";
+import { complete, runSync, runAsync, type WasiCall } from "../wasi/internal_wasi_calls.ts";
 import type { Inode } from "../storage.ts";
-import { kernelError, runKernelSync, withKernelErrors } from "./KernelFileSystemErrors.ts";
+import {
+  kernelError,
+  runKernelSync,
+  withKernelErrors,
+  withKernelErrorsAsync,
+} from "./KernelFileSystemErrors.ts";
 
 const MAX_FILE_SIZE = (1n << 63n) - 1n;
 
@@ -25,15 +30,19 @@ export class KernelFileSystemIo {
   }
 
   read(fd: number, target: Uint8Array, position: bigint | null): number {
-    return withKernelErrors(() => {
-      const descriptor = this.#descriptors.get(fd);
-      const operation = () => this.#read(descriptor, target, position);
-      return this.#run(
-        descriptor.kind === "stdio" && (descriptor.flags & FDFLAGS.NONBLOCK) !== 0
-          ? operation()
-          : descriptor.withOffset(operation),
-      );
-    });
+    return withKernelErrors(() => this.#run(this.#readOperation(fd, target, position)));
+  }
+
+  readAsync(fd: number, target: Uint8Array, position: bigint | null): Promise<number> {
+    return withKernelErrorsAsync(() => runAsync(this.#readOperation(fd, target, position)));
+  }
+
+  #readOperation(fd: number, target: Uint8Array, position: bigint | null): WasiCall<number> {
+    const descriptor = this.#descriptors.get(fd);
+    const operation = () => this.#read(descriptor, target, position);
+    return descriptor.kind === "stdio" && (descriptor.flags & FDFLAGS.NONBLOCK) !== 0
+      ? operation()
+      : descriptor.withOffset(operation);
   }
 
   write(fd: number, source: Uint8Array, position: bigint | null): number {

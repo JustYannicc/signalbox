@@ -64,6 +64,7 @@ export function createKernelWasiDeviceAdapter(
       },
       () => filesystem.fileBytes,
       filesystem.assertPathSearchAllowed.bind(filesystem),
+      filesystem.assertOpenAllowed.bind(filesystem),
     );
     return {
       ...imports,

@@ -19,7 +19,12 @@ import {
   symlinkOperation,
   unlinkOperation,
 } from "./directories.ts";
-import { readOperation, writeBufferOperation, writeStringOperation } from "./fd-ops.ts";
+import {
+  readOperation,
+  writeBufferOperation,
+  writeStringOperation,
+  type IoOptions,
+} from "./fd-ops.ts";
 import { closeFdOperation, openFdAsyncOperation, writeAllOperation } from "./io.ts";
 import {
   fstatOperation,
@@ -55,7 +60,16 @@ export function createAsyncOperations(kernelFs: KernelFileSystem, runLeaf?: Asyn
     fchmod: bind(fchmodOperation),
     openFd: bind(openFdAsyncOperation),
     closeFd: bind(closeFdOperation),
-    read: bind(readOperation),
+    read: bind(
+      (
+        kernelFs,
+        fd: number,
+        buffer: ArrayBufferView,
+        offsetOrOptions?: number | IoOptions,
+        length?: number,
+        position?: number | null,
+      ) => readOperation(kernelFs, fd, buffer, offsetOrOptions, length, position, true),
+    ),
     writeBuffer: bind(writeBufferOperation),
     writeString: bind(writeStringOperation),
     writeAll: bind(writeAllOperation),

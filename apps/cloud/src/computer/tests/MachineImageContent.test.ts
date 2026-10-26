@@ -165,6 +165,7 @@ describe("immutable image content through the public lower filesystem", () => {
     const lower = source({ ...inventory, imageContent: { ...content, ...changes } });
     await expect(lower.read("/etc/config", 0n, 5)).rejects.toMatchObject({
       name: "KernelFileSystemUnavailable",
+      filesystemContext: { operations: [{ operation: "readRange", path: "/etc/config" }] },
     });
   });
 
@@ -180,7 +181,10 @@ describe("immutable image content through the public lower filesystem", () => {
     const changed = source(fixture(), mutable);
     const stale = changed.read("/etc/config", 0n, 5);
     mutable.generation = 2;
-    await expect(stale).rejects.toMatchObject({ name: "KernelFileSystemUnavailable" });
+    await expect(stale).rejects.toMatchObject({
+      name: "KernelFileSystemUnavailable",
+      filesystemContext: { operations: [{ operation: "readRange", path: "/etc/config" }] },
+    });
   });
 
   it("falls back when the same generation becomes dirty during verification", async () => {

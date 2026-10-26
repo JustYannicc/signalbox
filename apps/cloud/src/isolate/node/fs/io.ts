@@ -46,11 +46,14 @@ export function* readIntoOperation(
   fd: number,
   target: Uint8Array,
   position: bigint | null,
+  asynchronous = false,
 ): FsOperation<number> {
   return yield* fsOperation(
     "read",
     undefined,
-    leaf(() => kernelFs.read(fd, target, position)),
+    asynchronous
+      ? asyncLeaf((signal) => kernelFs.readAsync(fd, target, position, signal))
+      : leaf(() => kernelFs.read(fd, target, position)),
   );
 }
 
@@ -70,12 +73,13 @@ export function* writeFromOperation(
 export function* readAllOperation(
   kernelFs: KernelFileSystem,
   fd: number,
+  asynchronous = false,
 ): FsOperation<NodeBuffer.Buffer> {
   const chunks: NodeBuffer.Buffer[] = [];
   let length = 0;
   while (true) {
     const chunk = NodeBuffer.Buffer.allocUnsafe(IO_CHUNK_BYTES);
-    const bytesRead = yield* readIntoOperation(kernelFs, fd, chunk, null);
+    const bytesRead = yield* readIntoOperation(kernelFs, fd, chunk, null, asynchronous);
     if (bytesRead === 0) break;
     chunks.push(chunk.subarray(0, bytesRead));
     length += bytesRead;

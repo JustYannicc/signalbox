@@ -156,7 +156,7 @@ export function createFacetFilePersistence(
     }
   };
 
-  const runLeaf = <T>(operation: () => T, signal?: AbortSignal): Promise<T> =>
+  const runLeaf = <T>(operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T> =>
     runPendingContentLeaf({
       operation,
       ...(signal ? { signal } : {}),

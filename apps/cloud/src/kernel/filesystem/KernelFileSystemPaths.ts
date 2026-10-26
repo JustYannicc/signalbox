@@ -75,6 +75,7 @@ export class KernelFileSystemPaths {
   resolveOrCreate(path: string, options: ResolveOptions = {}): WasiPathLookup {
     return withKernelErrors(() => {
       this.#rejectVirtualMutation(path);
+      options = { ...options, ...this.#searchOptions(true) };
       const followFinal = options.followFinal ?? true;
       if (followFinal) this.#checkFinalAbsoluteSymlink(path, options);
       return this.resolver.resolveOrCreate(path, options);
@@ -84,6 +85,7 @@ export class KernelFileSystemPaths {
   resolveOrCreateAsync(path: string, options: ResolveOptions = {}): Promise<WasiPathLookup> {
     return withKernelErrorsAsync(async () => {
       this.#rejectVirtualMutation(path);
+      options = { ...options, ...this.#searchOptionsAsync(true) };
       const followFinal = options.followFinal ?? true;
       if (followFinal) await this.#checkFinalAbsoluteSymlinkAsync(path, options);
       return this.resolver.resolveOrCreateAsync(path, options);
