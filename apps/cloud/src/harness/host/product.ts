@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import type { Computer } from "../../computer/Computer.ts";
 import type { MachineProgramInventory } from "../../computer/MachineProgramInventory.ts";
+import { prepareHydratedRepository } from "../../computer/ComputerRepositoryReadiness.ts";
 import {
   createProductComputer,
   type ProductComputer,
@@ -14,6 +15,7 @@ import {
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { CHILD_PROGRAM_PATHS } from "../../computer/ChildProgramSet.ts";
 import { HarnessError } from "../Harness.ts";
+import { repositoryPreparationLifetime } from "./repositoryPreparation.ts";
 import { makeFacetLifetime } from "../facet/lifetime.ts";
 import {
   createHarnessSessionHost,
@@ -111,6 +113,10 @@ function createProductBindings<G, Native>(
     bindComputer: (input: BindingInput<G>) =>
       Effect.gen(function* () {
         stdio.assertBound(input.files);
+        const preparation = yield* Effect.acquireRelease(
+          Effect.sync(() => repositoryPreparationLifetime(input.signal)),
+          (value) => Effect.sync(() => value.dispose()),
+        );
         const bound = yield* Effect.acquireRelease(
           Effect.try({
             try: () =>
@@ -122,7 +128,7 @@ function createProductBindings<G, Native>(
                 wakes,
                 programs: codes,
                 home: binding.home(options.native),
-                signal: input.signal,
+                signal: preparation.signal,
               }),
             catch: (cause) =>
               new HarnessError({
@@ -137,14 +143,24 @@ function createProductBindings<G, Native>(
         // Hydration can hold canonical files; cancellation must join it before they close.
         yield* Effect.tryPromise({
           try: async () => {
-            input.signal.throwIfAborted();
-            await options.hydrate?.(input);
+            try {
+              input.signal.throwIfAborted();
+              await options.hydrate?.(input);
+              input.signal.throwIfAborted();
+              await prepareHydratedRepository({
+                files: input.files,
+                commands: bound.isolate,
+                signal: input.signal,
+              });
+            } finally {
+              preparation.settle();
+            }
             input.signal.throwIfAborted();
           },
           catch: (cause) =>
             new HarnessError({
               operation: "open",
-              message: "Product files could not be hydrated.",
+              message: "Product files could not be prepared.",
               cause,
             }),
         }).pipe(Effect.uninterruptible);
