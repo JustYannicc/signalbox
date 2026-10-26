@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { createNodeFs } from "../../isolate/NodeFs.ts";
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
 import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
-import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
+import { KernelFileSystem, KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { CHILD_COREUTILS_COMMANDS } from "../ChildProgramSet.ts";
@@ -89,6 +89,47 @@ describe("public ProductComputer image-content composition", () => {
       expect(forbidden).not.toHaveBeenCalled();
     });
   });
+
+  it.each([
+    { target: "/etc/locked/config", allowed: "/etc/config" },
+    { target: "etc/locked/config", allowed: "etc/config" },
+  ])(
+    "checks parent permissions when reopening an O_PATH symlink to $target",
+    async ({ target, allowed }) => {
+      await withFixture(async ({ filesystem, forbidden }) => {
+        const { fs } = createNodeFs(filesystem);
+        fs.symlinkSync(target, "/alias");
+        await expect(fs.promises.readFile("/etc/locked/config")).rejects.toMatchObject({
+          code: "EACCES",
+        });
+        await expect(fs.promises.readFile("/alias")).rejects.toMatchObject({ code: "EACCES" });
+        const descriptor = fs.openSync(
+          "/alias",
+          KernelOpenFlags.O_PATH | KernelOpenFlags.O_NOFOLLOW,
+        );
+        try {
+          await expect(fs.promises.readFile(`/proc/self/fd/${descriptor}`)).rejects.toMatchObject({
+            code: "EACCES",
+          });
+        } finally {
+          fs.closeSync(descriptor);
+        }
+        fs.symlinkSync(allowed, "/allowed");
+        const readable = fs.openSync(
+          "/allowed",
+          KernelOpenFlags.O_PATH | KernelOpenFlags.O_NOFOLLOW,
+        );
+        try {
+          expect(await fs.promises.readFile(`/proc/self/fd/${readable}`)).toEqual(
+            Buffer.from([0, 255, 128, 10, 65]),
+          );
+        } finally {
+          fs.closeSync(readable);
+        }
+        expect(forbidden).not.toHaveBeenCalled();
+      });
+    },
+  );
 
   it("keeps offsets and EOF on async Node file handles", async () => {
     await withFixture(async ({ filesystem, forbidden }) => {

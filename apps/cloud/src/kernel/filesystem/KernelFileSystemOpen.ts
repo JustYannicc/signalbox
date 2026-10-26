@@ -208,9 +208,7 @@ export class KernelFileSystemOpen {
     }
     const target = runKernelSync(source.mount.storage.readlink(source.inode));
     if (parsed.noFollow) throw kernelError("ELOOP");
-    if (target.startsWith("/")) return this.#paths.resolve(target);
-    const anchor = this.#paths.resolver.anchorForDescriptorParent(source);
-    return this.#paths.resolver.resolveFromAnchor(anchor, target, true);
+    return this.#paths.resolveSymlinkTarget(source, target);
   }
 
   #openResolved(

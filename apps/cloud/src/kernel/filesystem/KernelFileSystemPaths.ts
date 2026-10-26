@@ -72,6 +72,12 @@ export class KernelFileSystemPaths {
     });
   }
 
+  resolveSymlinkTarget(source: WasiDescriptor, target: string): WasiResolvedPath {
+    if (target.startsWith("/")) return this.resolve(target, this.#searchOptions(true));
+    const anchor = this.resolver.anchorForDescriptorParent(source);
+    return this.resolver.resolveFromAnchor(anchor, target, true, this.#searchCheck(true));
+  }
+
   resolveOrCreate(path: string, options: ResolveOptions = {}): WasiPathLookup {
     return withKernelErrors(() => {
       this.#rejectVirtualMutation(path);

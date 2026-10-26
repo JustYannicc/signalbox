@@ -8,12 +8,19 @@ export function imageContentInventory(): MachineProgramInventory {
   const base = machineInventoryFixture([
     { path: "/etc/config", mode: 0o644, uid: 0, gid: 0 },
     { path: "/etc/private", mode: 0o600, uid: 0, gid: 0 },
+    { path: "/etc/locked/config", mode: 0o644, uid: 0, gid: 0 },
   ]);
   const metadata = {
     ...base,
     provenance: { ...base.provenance, snapshotSha256: "1".repeat(64) },
     entries: [
-      ...base.entries.map((entry) => (entry.type === "file" ? { ...entry, size: "5" } : entry)),
+      ...base.entries.map((entry) =>
+        entry.type === "file"
+          ? { ...entry, size: "5" }
+          : entry.path === "/etc/locked"
+            ? { ...entry, mode: 0o700, uid: 0, gid: 0 }
+            : entry,
+      ),
       { ...base.entries[0]!, path: "/etc/link", type: "symlink" as const, target: "config" },
       {
         ...base.entries[0]!,
@@ -33,9 +40,9 @@ export function imageContentInventory(): MachineProgramInventory {
       captureSha256: metadata.provenance.captureSha256,
       inventorySha256: hash(JSON.stringify(metadata)),
       includeRule: "regular-files-under-/etc",
-      fileCount: 2,
-      totalBytes: bytes.length * 2,
-      entries: ["/etc/config", "/etc/private"].map((path) => ({
+      fileCount: 3,
+      totalBytes: bytes.length * 3,
+      entries: ["/etc/config", "/etc/locked/config", "/etc/private"].map((path) => ({
         path,
         size: "5",
         sha256: hash(bytes),
