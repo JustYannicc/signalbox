@@ -261,6 +261,7 @@ function makeFixture(hooks: Hooks = {}) {
   let pendingExit:
     | ((value: { exitCode: number; signal: number; coreDumped: boolean }) => void)
     | undefined;
+  let pendingFailure: ((error: unknown) => void) | undefined;
   let leaseHeld = false;
   let fileTransportOwned = true;
   let lookupsAfterCommandLeaseRelease = 0;
@@ -481,6 +482,7 @@ function makeFixture(hooks: Hooks = {}) {
           coreDumped: boolean;
         }>();
         pendingExit = exit.resolve;
+        pendingFailure = exit.reject;
         return {
           stdin: new WritableStream<Uint8Array>(),
           stdout: new ReadableStream<Uint8Array>({
@@ -504,6 +506,26 @@ function makeFixture(hooks: Hooks = {}) {
     }),
   });
   const fs = createNodeFs(filesystem).fs;
+  const startRoute = async (signal = new AbortController().signal) => {
+    const child = await computer.exec(
+      {
+        executable: "/usr/bin/uname",
+        argv: ["uname", "-s"],
+        cwd: "/",
+        env: { PATH: inventory.path.join(":") },
+      },
+      signal,
+      undefined,
+    );
+    const finish = pendingExit;
+    const fail = pendingFailure;
+    if (finish === undefined || fail === undefined) throw new Error("Machine exit is missing");
+    return {
+      child,
+      finish: () => finish({ exitCode: 0, signal: 0, coreDumped: false }),
+      fail,
+    };
+  };
   return {
     fs,
     filesystem,
@@ -519,21 +541,13 @@ function makeFixture(hooks: Hooks = {}) {
     linkBatchStarted: () => linkBatchStarted,
     frameRejections: () => frameRejections,
     frameSizes,
+    startRoute,
     async route(signal = new AbortController().signal) {
-      const child = await computer.exec(
-        {
-          executable: "/usr/bin/uname",
-          argv: ["uname", "-s"],
-          cwd: "/",
-          env: { PATH: inventory.path.join(":") },
-        },
-        signal,
-        undefined,
-      );
+      const { child, finish } = await startRoute(signal);
       const machineExitAt = performance.now();
       // The Runner may report closed and release the process lease before exit handling refreshes metadata.
       leaseHeld = false;
-      pendingExit?.({ exitCode: 0, signal: 0, coreDumped: false });
+      finish();
       const exit = await child.exited;
       const completionAt = performance.now();
       await Promise.all([
@@ -805,6 +819,31 @@ describe("ProductComputer machine metadata refresh", () => {
       await expect(older).rejects.toThrow();
       expect(fixture.fs.readdirSync("/usr")).toEqual(newerNames);
       expect(fixture.fs.statSync("/usr/bin/uname").ino).toBe(newerInode);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("rejects an older command's refresh after a newer command starts", async () => {
+    const fixture = makeFixture();
+    try {
+      const older = await fixture.startRoute();
+      const newer = await fixture.startRoute();
+      const beforeOlderExit = fixture.lookups.length;
+      older.finish();
+      const olderResult = await older.child.exited.then(
+        () => "resolved",
+        () => "rejected",
+      );
+      const afterOlderExit = fixture.lookups.length;
+      newer.fail(new Error("newer command failed after writing"));
+      await expect(newer.child.exited).rejects.toThrow("Child process completion failed");
+
+      expect(olderResult).toBe("rejected");
+      expect(afterOlderExit).toBe(beforeOlderExit);
+      expect(() => fixture.fs.readdirSync("/usr")).toThrow(
+        expect.objectContaining({ code: "ENOTSUP" }),
+      );
     } finally {
       await fixture.close();
     }

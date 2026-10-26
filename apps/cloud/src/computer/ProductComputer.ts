@@ -77,23 +77,28 @@ export function createProductComputer(options: ProductComputerOptions) {
   const invalidateMetadata = (epoch: number) => {
     if (epoch === metadataEpoch) overlay.invalidate();
   };
-  const refreshMetadata = async (generation: number, callerSignal: AbortSignal) => {
-    const refreshEpoch = ++metadataEpoch;
+  const refreshMetadata = async (
+    generation: number,
+    callerSignal: AbortSignal,
+    commandEpoch: number,
+  ) => {
     const refreshSignal = AbortSignal.any([signal, callerSignal]);
     try {
       refreshSignal.throwIfAborted();
+      if (commandEpoch !== metadataEpoch)
+        throw new KernelFileSystemUnavailable("Machine metadata refresh was superseded");
       const current = transport.files.current();
       if (current.generation !== generation || current.pristine)
         throw new KernelFileSystemUnavailable("Machine generation changed before metadata refresh");
       await overlay.refresh(metadataRefreshPaths, refreshSignal);
       refreshSignal.throwIfAborted();
-      if (refreshEpoch !== metadataEpoch)
+      if (commandEpoch !== metadataEpoch)
         throw new KernelFileSystemUnavailable("Machine metadata refresh was superseded");
       const refreshed = transport.files.current();
       if (refreshed.generation !== generation || refreshed.pristine)
         throw new KernelFileSystemUnavailable("Machine generation changed during metadata refresh");
     } catch (error) {
-      invalidateMetadata(refreshEpoch);
+      invalidateMetadata(commandEpoch);
       throw error;
     }
   };
@@ -113,7 +118,7 @@ export function createProductComputer(options: ProductComputerOptions) {
                 "Machine execution has no attested generation for metadata refresh",
               );
             }
-            await refreshMetadata(generation, callerSignal);
+            await refreshMetadata(generation, callerSignal, commandEpoch);
             return result;
           },
           (error: unknown) => {
