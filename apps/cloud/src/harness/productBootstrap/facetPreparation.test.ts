@@ -64,4 +64,17 @@ describe.each(["claude-code", "codex"] as const)("%s product facet preparation",
         expect(disposed).toBe(1);
       }),
   );
+  it.effect("rejects a provider open input that changes the committed native ID", () =>
+    Effect.gen(function* () {
+      let disposed = 0;
+      const failure = yield* prepareProductFixture(provider, "cross-variant-fresh-boot", {
+        openNativeSessionId: "another-native-id",
+        onDispose: () => {
+          disposed++;
+        },
+      }).pipe(Effect.scoped, Effect.exit);
+      expect(failure._tag).toBe("Failure");
+      expect(disposed).toBe(1);
+    }),
+  );
 });

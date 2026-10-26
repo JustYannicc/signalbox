@@ -183,6 +183,13 @@ export function prepareHarnessCProductHost<
       nativeSessionId,
       restoreMode: input.descriptor.restoreMode,
     });
+    if (
+      open.session.threadId !== threadId ||
+      open.session.initialNativeThreadId !== nativeSessionId
+    )
+      return yield* Effect.fail(
+        failed("The product open input changes the committed session identity."),
+      );
     let openInput: HostOpenInput<G> = open;
     if (input.descriptor.restoreMode === "same-variant-serialized-checkpoint") {
       if (native.checkpoint.release.harness !== input.factory.provider)

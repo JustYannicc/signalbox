@@ -37,7 +37,11 @@ import {
 export const prepareProductFixture = (
   provider: "claude-code" | "codex",
   restoreMode: "same-variant-serialized-checkpoint" | "cross-variant-fresh-boot",
-  faults: { readonly failSeed?: "assets" | "programs"; readonly onDispose?: () => void } = {},
+  faults: {
+    readonly failSeed?: "assets" | "programs";
+    readonly openNativeSessionId?: string;
+    readonly onDispose?: () => void;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const source = yield* Effect.promise(() => releaseSource(provider));
@@ -229,7 +233,7 @@ export const prepareProductFixture = (
               interactionMode: "default",
               cwd: "/workspace",
             },
-            initialNativeThreadId: sessionId,
+            initialNativeThreadId: faults.openNativeSessionId ?? sessionId,
           },
           bootAttemptId: "product-bootstrap",
         }),
