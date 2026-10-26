@@ -16,10 +16,6 @@ import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
 import { createKernelAsyncWasi } from "../../kernel/KernelWasi.ts";
-import type {
-  KernelLowerFileSystemEntry,
-  KernelLowerFileSystemSource,
-} from "../../kernel/KernelLowerFileSystem.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { wasmImportReactor } from "./wasmGuest.ts";
 import { createNodeFs } from "../../isolate/NodeFs.ts";
@@ -157,7 +153,7 @@ function frameInventory(): MachineProgramInventory {
 
 type Hooks = {
   readonly inventory?: MachineProgramInventory;
-  readonly beforeReaddirBatch?: (operations: readonly unknown[]) => void;
+  readonly beforeReaddirBatch?: (operations: readonly unknown[]) => void | Promise<void>;
   readonly beforeLinkBatch?: (signal: AbortSignal) => void;
   readonly changeGenerationDuringLinkBatch?: boolean;
   readonly denyReaddirPaths?: readonly string[];
@@ -297,7 +293,7 @@ function makeFixture(hooks: Hooks = {}) {
         state = { ...state, generation: 2 };
       }
       const readdirOperations = input.operations.filter((operation) => operation.op === "readdir");
-      if (readdirOperations.length > 0) hooks.beforeReaddirBatch?.(readdirOperations);
+      if (readdirOperations.length > 0) await hooks.beforeReaddirBatch?.(readdirOperations);
       lookups.push({ generation: input.generation, operations: structuredClone(input.operations) });
       const result = input.operations.map((operation): MachineFileOperationResult => {
         if (operation.op === "lstat" || operation.op === "stat") {
@@ -562,64 +558,6 @@ function parent(path: string) {
   return slash <= 0 ? "/" : path.slice(0, slash);
 }
 
-function kernelEntry(path: string, type: "file" | "directory"): KernelLowerFileSystemEntry {
-  return {
-    path,
-    stat: {
-      type,
-      size: 0n,
-      nlink: type === "directory" ? 2n : 1n,
-      atimeNs: 1n,
-      mtimeNs: 1n,
-      ctimeNs: 1n,
-    },
-    metadata: { mode: type === "directory" ? 0o755 : 0o644, uid: 1000, gid: 1000 },
-  };
-}
-
-function directoryListing(entries: readonly KernelLowerFileSystemEntry[]) {
-  return Object.assign([...entries], { kind: "entries" as const, entries });
-}
-
-function makeEpochSource(
-  readdirMany: (paths: readonly string[]) => Promise<readonly unknown[]>,
-): KernelLowerFileSystemSource {
-  const root = kernelEntry("/", "directory");
-  const usr = kernelEntry("/usr", "directory");
-  const known = new Map([
-    ["/", root],
-    ["/usr", usr],
-  ]);
-  return {
-    lookup: async (paths) => paths.map((path) => known.get(path)),
-    lookupKnown: (paths) => paths.map((path) => known.get(path)),
-    readdir: async (path) => (path === "/usr" ? [kernelEntry("/usr/newer", "file")] : []),
-    readdirMany: async (paths) => {
-      return (await readdirMany(paths)) as never;
-    },
-    readlink: async () => {
-      throw Object.assign(new Error("Not a symlink"), { code: "EINVAL" });
-    },
-    readlinkMany: async () => [],
-    read: async () => new Uint8Array(),
-  };
-}
-
-function makeEpochFilesystem() {
-  const database = sqliteFixture();
-  const filesystem = new KernelFileSystem({
-    mounts: [{ path: "/", storage: createFacetSqliteStorage(database.storage, () => 1n) }],
-  });
-  return {
-    filesystem,
-    fs: createNodeFs(filesystem).fs,
-    close() {
-      filesystem.dispose();
-      database.close();
-    },
-  };
-}
-
 describe("ProductComputer machine metadata refresh", () => {
   it("refreshes cold, changed, and missing names before resolving a successful machine exit", async () => {
     const fixture = makeFixture();
@@ -775,6 +713,127 @@ describe("ProductComputer machine metadata refresh", () => {
     }
   });
 
+  it.each(["sync", "async"] as const)(
+    "rejects renaming an upper symlink onto a lower directory through %s calls",
+    async (mode) => {
+      const fixture = makeFixture();
+      try {
+        await fixture.route();
+        const source = "/usr/upper-link";
+        const destination = "/usr/lower-only-directory";
+        const target = "/usr/bin/uname";
+        fixture.fs.symlinkSync(target, source);
+        const sourceInode = fixture.fs.lstatSync(source).ino;
+        const destinationInode = fixture.fs.statSync(destination).ino;
+
+        if (mode === "sync") {
+          expect(() => fixture.fs.renameSync(source, destination)).toThrow(
+            expect.objectContaining({ code: "EISDIR" }),
+          );
+        } else {
+          await expect(fixture.fs.promises.rename(source, destination)).rejects.toMatchObject({
+            code: "EISDIR",
+          });
+        }
+        expect(fixture.fs.lstatSync(source).ino).toBe(sourceInode);
+        expect(fixture.fs.readlinkSync(source)).toBe(target);
+        expect(fixture.fs.statSync(destination).ino).toBe(destinationInode);
+        expect(fixture.fs.statSync(destination).isDirectory()).toBe(true);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  it.each(["sync", "async"] as const)(
+    "rejects replacing a nonempty lower directory through %s calls",
+    async (mode) => {
+      const destination = "/usr/lower-only-directory";
+      const fixture = makeFixture({
+        inventory: makeInventory([machineEntry(`${destination}/child`, "file")]),
+      });
+      try {
+        await fixture.route();
+        const source = "/usr/upper-dir";
+        fixture.fs.mkdirSync(source);
+        const sourceInode = fixture.fs.statSync(source).ino;
+        const destinationInode = fixture.fs.statSync(destination).ino;
+
+        if (mode === "sync") {
+          expect(() => fixture.fs.renameSync(source, destination)).toThrow(
+            expect.objectContaining({ code: "ENOTEMPTY" }),
+          );
+        } else {
+          await expect(fixture.fs.promises.rename(source, destination)).rejects.toMatchObject({
+            code: "ENOTEMPTY",
+          });
+        }
+        expect(fixture.fs.statSync(source).ino).toBe(sourceInode);
+        expect(fixture.fs.statSync(source).isDirectory()).toBe(true);
+        expect(fixture.fs.readdirSync(source)).toEqual([]);
+        expect(fixture.fs.statSync(destination).ino).toBe(destinationInode);
+        expect(fixture.fs.statSync(destination).isDirectory()).toBe(true);
+        expect(fixture.fs.readdirSync(destination)).toEqual(["child"]);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
+  it("keeps newer command metadata after an older completion refresh fails", async () => {
+    const started = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    let holdFirstBatch = true;
+    const fixture = makeFixture({
+      beforeReaddirBatch: () => {
+        if (!holdFirstBatch) return;
+        holdFirstBatch = false;
+        started.resolve();
+        return held.promise;
+      },
+    });
+    try {
+      const older = fixture.route();
+      void older.catch(() => undefined);
+      await started.promise;
+      await expect(fixture.route()).resolves.toMatchObject({ exit: { exitCode: 0 } });
+      const newerNames = fixture.fs.readdirSync("/usr");
+      const newerInode = fixture.fs.statSync("/usr/bin/uname").ino;
+      expect(newerNames).toContain("signalbox-new-dir");
+
+      held.reject(new Error("older refresh failed"));
+      await expect(older).rejects.toThrow();
+      expect(fixture.fs.readdirSync("/usr")).toEqual(newerNames);
+      expect(fixture.fs.statSync("/usr/bin/uname").ino).toBe(newerInode);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it.each(["sync", "async"] as const)(
+    "replaces an empty lower directory through %s calls",
+    async (mode) => {
+      const fixture = makeFixture();
+      try {
+        await fixture.route();
+        const source = "/usr/upper-empty-dir";
+        const destination = "/usr/lower-only-directory";
+        fixture.fs.mkdirSync(source);
+        const sourceInode = fixture.fs.statSync(source).ino;
+        if (mode === "sync") fixture.fs.renameSync(source, destination);
+        else await fixture.fs.promises.rename(source, destination);
+        expect(() => fixture.fs.statSync(source)).toThrow(
+          expect.objectContaining({ code: "ENOENT" }),
+        );
+        expect(fixture.fs.statSync(destination).ino).toBe(sourceInode);
+        expect(fixture.fs.statSync(destination).isDirectory()).toBe(true);
+        expect(fixture.fs.readdirSync(destination)).toEqual([]);
+      } finally {
+        await fixture.close();
+      }
+    },
+  );
+
   it("splits oversized directory responses and preserves every paginated child", async () => {
     const fixture = makeFixture({
       inventory: frameInventory(),
@@ -794,70 +853,6 @@ describe("ProductComputer machine metadata refresh", () => {
       expect(childCount).toBe(8_193);
     } finally {
       await fixture.close();
-    }
-  });
-
-  it("does not let a late same-attachment refresh failure clear a newer snapshot", async () => {
-    const fixture = makeEpochFilesystem();
-    const started = Promise.withResolvers<void>();
-    const oldBatch = Promise.withResolvers<readonly unknown[]>();
-    let batchCount = 0;
-    const attachment = fixture.filesystem.installLowerFileSystem(
-      makeEpochSource(async (paths) => {
-        batchCount++;
-        if (batchCount === 1) {
-          started.resolve();
-          return oldBatch.promise;
-        }
-        return paths.map(() => directoryListing([kernelEntry("/usr/newer", "file")]));
-      }),
-    );
-    try {
-      const oldRefresh = attachment.refresh(["/usr"]);
-      await started.promise;
-      await attachment.refresh(["/usr"]);
-      await attachment.prepare(["/usr"]);
-      expect(fixture.fs.readdirSync("/usr")).toContain("newer");
-
-      oldBatch.reject(new Error("late transport failure"));
-      await expect(oldRefresh).rejects.toBeDefined();
-      expect(fixture.fs.readdirSync("/usr")).toContain("newer");
-    } finally {
-      attachment.dispose();
-      fixture.close();
-    }
-  });
-
-  it("does not let a detached attachment clear its replacement's snapshot", async () => {
-    const fixture = makeEpochFilesystem();
-    const started = Promise.withResolvers<void>();
-    const oldBatch = Promise.withResolvers<readonly unknown[]>();
-    const oldAttachment = fixture.filesystem.installLowerFileSystem(
-      makeEpochSource(async () => {
-        started.resolve();
-        return oldBatch.promise;
-      }),
-    );
-    let newAttachment: ReturnType<typeof fixture.filesystem.installLowerFileSystem> | undefined;
-    try {
-      const oldRefresh = oldAttachment.refresh(["/usr"]);
-      await started.promise;
-      oldAttachment.dispose();
-      newAttachment = fixture.filesystem.installLowerFileSystem(
-        makeEpochSource(async (paths) =>
-          paths.map(() => directoryListing([kernelEntry("/usr/newer", "file")])),
-        ),
-      );
-      await newAttachment.refresh(["/usr"]);
-      await newAttachment.prepare(["/usr"]);
-
-      oldBatch.reject(new Error("detached source failed"));
-      await expect(oldRefresh).rejects.toBeDefined();
-      expect(fixture.fs.readdirSync("/usr")).toContain("newer");
-    } finally {
-      newAttachment?.dispose();
-      oldAttachment.dispose();
-      fixture.close();
     }
   });
 

@@ -74,6 +74,7 @@ export class KernelLowerFileSystemStorage
       lookupLower: (path) => this.#lookupLower(path),
       lookupLowerKnown: (path) => this.#lookupLowerKnown(path),
       lowerStat: (inode) => this.#requireIndex().stat(inode),
+      lowerReaddir: (inode) => this.readdir(inode),
       lowerMetadata: (inode) => this.#requireIndex().metadata(inode),
       upperFileForLowerInode: (inode) => this.#files.upperInodeForLower(inode),
       copyUpFile: (inode, copyData) => this.#files.copyUpFile(inode, copyData),

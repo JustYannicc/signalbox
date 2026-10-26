@@ -73,7 +73,12 @@ export function createProductComputer(options: ProductComputerOptions) {
     // Excluded roots are live machine state, not represented by the image inventory.
     ...options.machineInventory.excludedRoots,
   ];
+  let metadataEpoch = 0;
+  const invalidateMetadata = (epoch: number) => {
+    if (epoch === metadataEpoch) overlay.invalidate();
+  };
   const refreshMetadata = async (generation: number, callerSignal: AbortSignal) => {
+    const refreshEpoch = ++metadataEpoch;
     const refreshSignal = AbortSignal.any([signal, callerSignal]);
     try {
       refreshSignal.throwIfAborted();
@@ -82,16 +87,19 @@ export function createProductComputer(options: ProductComputerOptions) {
         throw new KernelFileSystemUnavailable("Machine generation changed before metadata refresh");
       await overlay.refresh(metadataRefreshPaths, refreshSignal);
       refreshSignal.throwIfAborted();
+      if (refreshEpoch !== metadataEpoch)
+        throw new KernelFileSystemUnavailable("Machine metadata refresh was superseded");
       const refreshed = transport.files.current();
       if (refreshed.generation !== generation || refreshed.pristine)
         throw new KernelFileSystemUnavailable("Machine generation changed during metadata refresh");
     } catch (error) {
-      overlay.invalidate();
+      invalidateMetadata(refreshEpoch);
       throw error;
     }
   };
   const machine: KernelCommandForwarder = {
     async spawn(command, callerSignal) {
+      const commandEpoch = ++metadataEpoch;
       overlay.invalidate();
       try {
         const generation = transport.files.current().generation;
@@ -100,7 +108,7 @@ export function createProductComputer(options: ProductComputerOptions) {
         const exited = child.exited.then(
           async (result) => {
             if (generation === null) {
-              overlay.invalidate();
+              invalidateMetadata(commandEpoch);
               throw new KernelFileSystemUnavailable(
                 "Machine execution has no attested generation for metadata refresh",
               );
@@ -109,14 +117,14 @@ export function createProductComputer(options: ProductComputerOptions) {
             return result;
           },
           (error: unknown) => {
-            overlay.invalidate();
+            invalidateMetadata(commandEpoch);
             throw error;
           },
         );
         void exited.catch(() => undefined);
         return { ...child, exited };
       } catch (error) {
-        overlay.invalidate();
+        invalidateMetadata(commandEpoch);
         throw error;
       }
     },
