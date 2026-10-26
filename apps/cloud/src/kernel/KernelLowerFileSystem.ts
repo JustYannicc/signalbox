@@ -2,12 +2,41 @@ import type { PosixMetadata } from "./PosixStorage.ts";
 import type { Inode, MaybePromise, Stat } from "./storage.ts";
 
 /** A lower-source failure that must stop the command instead of becoming a guest errno. */
+export interface KernelFileSystemUnavailableContext {
+  readonly operations: readonly {
+    readonly operation: string;
+    readonly path: string;
+  }[];
+  readonly generationState: {
+    readonly requested: number | null;
+    readonly current: number | null;
+    readonly generationAbsent: boolean;
+    readonly pristine: boolean;
+    readonly imageDigest?: string;
+  };
+}
+
+export interface KernelFileSystemUnavailableOptions extends ErrorOptions {
+  readonly filesystemContext?: KernelFileSystemUnavailableContext;
+}
+
 export class KernelFileSystemUnavailable extends Error {
   readonly fatal = true;
+  readonly filesystemContext: KernelFileSystemUnavailableContext | undefined;
 
-  constructor(message = "Lower filesystem source is unavailable", options?: ErrorOptions) {
-    super(message, options);
+  constructor(
+    message = "Lower filesystem source is unavailable",
+    options?: KernelFileSystemUnavailableOptions,
+  ) {
+    const { filesystemContext, ...errorOptions } = options ?? {};
+    super(
+      filesystemContext === undefined
+        ? message
+        : `${message} [filesystemContext=${JSON.stringify(filesystemContext)}]`,
+      errorOptions,
+    );
     this.name = "KernelFileSystemUnavailable";
+    this.filesystemContext = filesystemContext;
   }
 }
 
