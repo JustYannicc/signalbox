@@ -55,10 +55,10 @@ index 48fc4ef..9815081 100644
  func (h *Handler) RequestCodexToken(c *gin.Context) {
 diff --git a/internal/api/handlers/management/auth_files_v8_claude_manual_test.go b/internal/api/handlers/management/auth_files_v8_claude_manual_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..d1e2d89ea9a7763cf6a6181039b7b68f8a5921f9
+index 0000000..17cf890
 --- /dev/null
 +++ b/internal/api/handlers/management/auth_files_v8_claude_manual_test.go
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,79 @@
 +package management
 +
 +import (
@@ -80,6 +80,14 @@ index 0000000000000000000000000000000000000000..d1e2d89ea9a7763cf6a6181039b7b68f
 +	replaceOAuthSessionStoreForTest(t, newOAuthSessionStore(time.Minute))
 +	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, nil)
 +	synctest.Test(t, func(t *testing.T) {
++		defer func() {
++			CompleteOAuthSessionsByProvider("anthropic")
++			// Drain the legacy poller even when no response state was decoded.
++			poll := time.NewTimer(500 * time.Millisecond)
++			defer poll.Stop()
++			<-poll.C
++			synctest.Wait()
++		}()
 +		router := gin.New()
 +		router.GET("/v8/management/oauth/auth-url", h.StartOAuthV8)
 +		router.DELETE("/v8/management/oauth/session", h.CancelAuthSession)
@@ -128,11 +136,6 @@ index 0000000000000000000000000000000000000000..d1e2d89ea9a7763cf6a6181039b7b68f
 +		if cancel.Code != http.StatusOK {
 +			t.Fatalf("cancel status = %d, body=%s", cancel.Code, cancel.Body.String())
 +		}
-+		// Drain the legacy worker's next callback poll before restoring the fixture.
-+		poll := time.NewTimer(500 * time.Millisecond)
-+		defer poll.Stop()
-+		<-poll.C
-+		synctest.Wait()
 +	})
 +}
 diff --git a/internal/auth/claude/anthropic_auth.go b/internal/auth/claude/anthropic_auth.go
