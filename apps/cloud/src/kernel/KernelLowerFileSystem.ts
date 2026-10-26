@@ -51,6 +51,22 @@ export interface KernelLowerFileSystemEntry {
   readonly symlinkParent?: string;
 }
 
+/** A directory name whose native type cannot be represented by this filesystem. */
+export interface KernelLowerFileSystemUnsupportedEntry {
+  readonly path: string;
+  readonly unsupportedType: string;
+}
+
+export type KernelLowerFileSystemDirectoryEntry =
+  | KernelLowerFileSystemEntry
+  | KernelLowerFileSystemUnsupportedEntry;
+
+/** Batch directory reads keep path-local denials separate from transport failures. */
+export type KernelLowerFileSystemDirectoryResult =
+  | { readonly kind: "entries"; readonly entries: readonly KernelLowerFileSystemDirectoryEntry[] }
+  | { readonly kind: "error"; readonly error: Error }
+  | undefined;
+
 /** Read-only source for a lower POSIX filesystem. Paths are canonical absolute guest paths. */
 export interface KernelLowerFileSystemSource {
   /**
@@ -67,19 +83,19 @@ export interface KernelLowerFileSystemSource {
     paths: readonly string[],
   ): readonly (KernelLowerFileSystemEntry | undefined)[] | undefined;
   /** Returns immediate children only when the complete directory listing is known locally. */
-  readdirKnown?(path: string): readonly KernelLowerFileSystemEntry[] | undefined;
+  readdirKnown?(path: string): readonly KernelLowerFileSystemDirectoryEntry[] | undefined;
   /** Returns a symlink target only when it is known locally. */
   readlinkKnown?(path: string): string | undefined;
   /** Returns immediate children, including their metadata, or `undefined` when absent. */
   readdir(
     path: string,
     signal?: AbortSignal,
-  ): Promise<readonly KernelLowerFileSystemEntry[] | undefined>;
+  ): Promise<readonly KernelLowerFileSystemDirectoryEntry[] | undefined>;
   /** Optional batch path for sources whose transport already accepts many directory reads. */
   readdirMany?(
     paths: readonly string[],
     signal?: AbortSignal,
-  ): Promise<readonly (readonly KernelLowerFileSystemEntry[] | undefined)[]>;
+  ): Promise<readonly KernelLowerFileSystemDirectoryResult[]>;
   readlink(path: string, signal?: AbortSignal): Promise<string>;
   /** Optional batch path for warming symlink targets from a refreshed directory snapshot. */
   readlinkMany?(paths: readonly string[], signal?: AbortSignal): Promise<readonly string[]>;

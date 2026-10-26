@@ -52,11 +52,12 @@ export function machineFileRequest(
     if (generation === null)
       throw unavailable("A machine generation is required for live file lookup", operations);
     const results: MachineFileOperationResult[] = [];
-    let part = operations;
-    try {
-      for (let offset = 0; offset < operations.length; offset += MACHINE_FILES_MAX_OPERATIONS) {
-        part = operations.slice(offset, offset + MACHINE_FILES_MAX_OPERATIONS);
-        check(part);
+    const requestPart = async (
+      part: readonly MachineFileOperation[],
+    ): Promise<MachineFileOperationResult[]> => {
+      lastBatchOperations = part;
+      check(part);
+      try {
         const response = await files.lookup({ generation, operations: part }, owned);
         check(part);
         if (response.generation !== generation)
@@ -65,6 +66,7 @@ export function machineFileRequest(
             "Machine changed during filesystem lookup",
           );
         const byId = new Map(response.results.map((result) => [result.id, result]));
+        const ordered: MachineFileOperationResult[] = [];
         for (const operation of part) {
           const result = byId.get(operation.id);
           if (result === undefined || result.op !== operation.op)
@@ -72,17 +74,33 @@ export function machineFileRequest(
               "LOOKUP_FAILED",
               "Machine file response is incomplete",
             );
-          results.push(result);
+          ordered.push(result);
         }
+        return ordered;
+      } catch (cause) {
+        if (owned.aborted) throw owned.reason;
+        if (
+          cause instanceof MachineFileLookupError &&
+          cause.code === "FRAME_TOO_LARGE" &&
+          part.length > 1
+        ) {
+          const middle = Math.floor(part.length / 2);
+          return [
+            ...(await requestPart(part.slice(0, middle))),
+            ...(await requestPart(part.slice(middle))),
+          ];
+        }
+        if (cause instanceof KernelFileSystemUnavailable && cause.filesystemContext !== undefined)
+          throw cause;
+        throw unavailable("The machine could not answer a filesystem lookup", part, { cause });
       }
-      check(operations);
-      return results;
-    } catch (cause) {
-      if (owned.aborted) throw owned.reason;
-      if (cause instanceof KernelFileSystemUnavailable && cause.filesystemContext !== undefined)
-        throw cause;
-      throw unavailable("The machine could not answer a filesystem lookup", part, { cause });
+    };
+    for (let offset = 0; offset < operations.length; offset += MACHINE_FILES_MAX_OPERATIONS) {
+      const part = operations.slice(offset, offset + MACHINE_FILES_MAX_OPERATIONS);
+      results.push(...(await requestPart(part)));
     }
+    check(operations);
+    return results;
   };
   const single = async (operation: MachineFileOperation) => {
     const result = (await batch([operation]))[0];

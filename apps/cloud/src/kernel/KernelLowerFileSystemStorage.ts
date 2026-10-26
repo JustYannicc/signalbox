@@ -463,11 +463,14 @@ export class KernelLowerFileSystemStorage
 
   #refresh(token: symbol, paths: readonly string[], signal?: AbortSignal): Promise<void> {
     this.#assertAttachment(token);
+    const index = this.#requireIndex();
     this.invalidate();
-    return this.#requireIndex()
+    const epoch = index.epoch;
+    return index
       .refresh(paths, signal, (path) => this.#upperBlocksSourceDuringRefresh(path))
       .catch((error: unknown) => {
-        this.invalidate();
+        if (this.#attachmentToken === token && this.#sourceIndex === index && index.epoch === epoch)
+          this.invalidate();
         throw error;
       });
   }

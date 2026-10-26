@@ -132,13 +132,18 @@ export class KernelLowerFileSystemUpperLayer {
         const toPath = childPath(toParentPath, toName);
         if (fromPath === toPath) return;
         try {
-          this.#storage.lookup(upperFromParent, fromName);
+          const upperSource = this.#storage.lookup(upperFromParent, fromName);
+          const upperSourceStat = this.#storage.stat(upperSource);
           return mapMaybe(lookupLowerOptional(this.#namespace, fromPath), (lowerSource) => {
             if (lowerSource === undefined) {
-              this.#storage.rename(upperFromParent, fromName, upperToParent, toName);
-              this.#namespace.forgetUpperPath(toPath);
-              this.#namespace.moveUpperPaths(fromPath, toPath);
-              return;
+              return mapMaybe(
+                this.#validateLowerDestination(upperSourceStat, upperToParent, toName, toPath),
+                () => {
+                  this.#storage.rename(upperFromParent, fromName, upperToParent, toName);
+                  this.#namespace.forgetUpperPath(toPath);
+                  this.#namespace.moveUpperPaths(fromPath, toPath);
+                },
+              );
             }
             return mapMaybe(this.#namespace.lowerStat(lowerSource), (lowerStat) => {
               if (lowerStat.type !== "file") {

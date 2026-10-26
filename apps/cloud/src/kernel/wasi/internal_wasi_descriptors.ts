@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { Inode, Stat } from "../storage.ts";
+import type { DirectoryEntry, Inode } from "../storage.ts";
 import type { KernelFileByteAccess, KernelFileByteView } from "../KernelFileBytes.ts";
 import { WasiError } from "./internal_wasi_memory.ts";
 import type { WasiCall } from "./internal_wasi_calls.ts";
@@ -98,7 +98,7 @@ export interface WasiDescriptorSpec {
   rightsInheriting: bigint;
   flags: number;
   closeOnExec?: boolean;
-  directorySnapshot?: { name: string; inode: Inode; type: Stat["type"] }[] | undefined;
+  directorySnapshot?: { name: string; inode: Inode; type: DirectoryEntry["type"] }[] | undefined;
   /** Internal endpoint cleanup, called once when the last alias closes. */
   onLastClose?: () => void | Promise<void>;
 }
@@ -122,7 +122,7 @@ export interface WasiDescriptor {
   rightsInheriting: bigint;
   flags: number;
   closeOnExec: boolean;
-  directorySnapshot?: { name: string; inode: Inode; type: Stat["type"] }[] | undefined;
+  directorySnapshot?: { name: string; inode: Inode; type: DirectoryEntry["type"] }[] | undefined;
   withOffset<T>(operation: () => WasiCall<T>, owner?: object): WasiCall<T>;
   withWrite<T>(operation: () => WasiCall<T>, owner?: object): WasiCall<T>;
   acquireIo(owner: object, write: boolean, signal?: AbortSignal): WasiCall<() => void>;
@@ -275,11 +275,15 @@ class WasiDescriptorHandle implements WasiDescriptor {
     this.#closeOnExec = value;
   }
 
-  get directorySnapshot(): { name: string; inode: Inode; type: Stat["type"] }[] | undefined {
+  get directorySnapshot():
+    | { name: string; inode: Inode; type: DirectoryEntry["type"] }[]
+    | undefined {
     return this.#description.directorySnapshot;
   }
 
-  set directorySnapshot(value: { name: string; inode: Inode; type: Stat["type"] }[] | undefined) {
+  set directorySnapshot(
+    value: { name: string; inode: Inode; type: DirectoryEntry["type"] }[] | undefined,
+  ) {
     this.#description.directorySnapshot = value;
   }
 

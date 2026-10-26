@@ -1,6 +1,7 @@
 import type { KernelAsyncProgramContext } from "./KernelAsyncProgram.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import type { KernelLowerFileSystemPathSearch } from "./KernelLowerFileSystem.ts";
+import type { WasiCreationPolicy } from "./wasi/internal_wasi_path_calls.ts";
 import { KernelBrokenPipeError } from "./KernelPipe.ts";
 import { KernelProcessSignal, type KernelSigpipeDisposition } from "./KernelProcessSignal.ts";
 import { createKernelWasiDeviceAdapter } from "./KernelWasiDevices.ts";
@@ -17,6 +18,8 @@ export interface KernelWasiSignalOptions {
 
 export interface KernelWasiFileSystemOptions {
   readonly nimbusStatMetadata?: boolean;
+  /** Selects async creation for syscall hosts that run inside an async process turn. */
+  readonly createInode?: WasiCreationPolicy["createInode"];
   /** Lets callers batch a PATH candidate across live search directories before stat or open. */
   readonly preparePathSearch?: KernelLowerFileSystemPathSearch;
   readonly signal?: AbortSignal;
@@ -28,7 +31,7 @@ export function createKernelWasiFileSystemAdapter(
   options: KernelWasiSignalOptions = {},
   fileSystemOptions: KernelWasiFileSystemOptions = {},
 ): WasiFileSystemImportAdapter {
-  const devices = createKernelWasiDeviceAdapter(filesystem);
+  const devices = createKernelWasiDeviceAdapter(filesystem, fileSystemOptions.createInode);
   const prepared: WasiFileSystemImportAdapter = (memory, imports) => {
     const base = devices(memory, imports);
     if (fileSystemOptions.preparePathSearch === undefined) return base;

@@ -1,5 +1,7 @@
 import { MACHINE_FILES_MAX_CONTENT_BYTES } from "@signalbox/runner-protocol/MachineFilesProtocol";
 import type {
+  KernelLowerFileSystemDirectoryEntry,
+  KernelLowerFileSystemDirectoryResult,
   KernelLowerFileSystemEntry,
   KernelLowerFileSystemSource,
 } from "../kernel/KernelLowerFileSystem.ts";
@@ -77,7 +79,7 @@ export function createComputerMachineFileSystem(
     readdirKnown(path) {
       options.signal.throwIfAborted();
       if (!imageIsAuthoritative(path)) return undefined;
-      return inventory.readdir(path)?.map((entry) => machineFileMetadata(entry.path, entry));
+      return inventory.readdir(path)?.map((entry) => machineFileDirectoryEntry(entry.path, entry));
     },
     readlinkKnown(path) {
       options.signal.throwIfAborted();
@@ -125,14 +127,14 @@ export function createComputerMachineFileSystem(
           }),
         );
       }
-      if (live.length > 0) request.check();
+      request.check();
       return entries;
     },
     async readdir(path, signal) {
       if (runtimePathIsAbsent(path, signal)) return undefined;
       if (imageIsAuthoritative(path) && !inventory.needsLiveDirectory(path))
         return inventory.readdir(path)?.map((entry) => machineFileMetadata(entry.path, entry));
-      const entries: KernelLowerFileSystemEntry[] = [];
+      const entries: KernelLowerFileSystemDirectoryEntry[] = [];
       const request = machineFileRequest(options.files, options.signal, signal);
       const parent = liveParents(request);
       let cursor: string | undefined;
@@ -156,7 +158,7 @@ export function createComputerMachineFileSystem(
           const child = `${path === "/" ? "" : path}/${entry.name}`;
           const symlinkParent = entry.stat.type === "symlink" ? await parent(child) : undefined;
           entries.push(
-            machineFileMetadata(child, {
+            machineFileDirectoryEntry(child, {
               ...entry.stat,
               ...(symlinkParent === undefined ? {} : { symlinkParent }),
             }),
@@ -171,9 +173,26 @@ export function createComputerMachineFileSystem(
       if (paths.length === 0) return [];
       const request = machineFileRequest(options.files, options.signal, signal);
       const parent = liveParents(request);
-      const entriesByPath: Array<KernelLowerFileSystemEntry[] | undefined> = paths.map(() => []);
-      let remaining: Array<{ path: string; index: number; cursor?: string }> = paths.map(
-        (path, index) => ({ path, index }),
+      const routes = paths.map((path) => {
+        if (runtimePathIsAbsent(path, signal)) return { kind: "absent" as const };
+        if (imageIsAuthoritative(path) && !inventory.needsLiveDirectory(path)) {
+          return { kind: "image" as const, entries: inventory.readdir(path) };
+        }
+        return { kind: "live" as const };
+      });
+      const entriesByPath: KernelLowerFileSystemDirectoryResult[] = routes.map((route) =>
+        route.kind !== "image" || route.entries === undefined
+          ? undefined
+          : {
+              kind: "entries",
+              entries: route.entries.map((entry) => machineFileDirectoryEntry(entry.path, entry)),
+            },
+      );
+      const collectedByPath: Array<KernelLowerFileSystemDirectoryEntry[] | undefined> = routes.map(
+        (route) => (route.kind === "live" ? [] : undefined),
+      );
+      let remaining: Array<{ path: string; index: number; cursor?: string }> = paths.flatMap(
+        (path, index) => (routes[index]?.kind === "live" ? [{ path, index }] : []),
       );
       let nextId = 0;
       while (remaining.length > 0) {
@@ -192,7 +211,13 @@ export function createComputerMachineFileSystem(
           if (current === undefined || result === undefined)
             throw request.unavailable("Machine directory batch response is incomplete");
           if ("error" in result) {
+            if (result.error.code === "EACCES") {
+              collectedByPath[current.index] = undefined;
+              entriesByPath[current.index] = { kind: "error", error: posixError(result.error) };
+              continue;
+            }
             if (absent(result.error.code) && current.cursor === undefined) {
+              collectedByPath[current.index] = undefined;
               entriesByPath[current.index] = undefined;
               continue;
             }
@@ -205,8 +230,8 @@ export function createComputerMachineFileSystem(
               throw request.unavailable("Machine omitted directory metadata");
             const child = `${current.path === "/" ? "" : current.path}/${entry.name}`;
             const symlinkParent = entry.stat.type === "symlink" ? await parent(child) : undefined;
-            entriesByPath[current.index]!.push(
-              machineFileMetadata(child, {
+            collectedByPath[current.index]!.push(
+              machineFileDirectoryEntry(child, {
                 ...entry.stat,
                 ...(symlinkParent === undefined ? {} : { symlinkParent }),
               }),
@@ -218,6 +243,10 @@ export function createComputerMachineFileSystem(
         remaining = next;
       }
       request.check();
+      for (let index = 0; index < paths.length; index++) {
+        const entries = collectedByPath[index];
+        if (entries !== undefined) entriesByPath[index] = { kind: "entries", entries };
+      }
       return entriesByPath;
     },
     async readlink(path, signal) {
@@ -233,10 +262,20 @@ export function createComputerMachineFileSystem(
     async readlinkMany(paths, signal) {
       if (paths.length === 0) return [];
       const request = machineFileRequest(options.files, options.signal, signal);
+      const captured = paths.map((path) => {
+        if (runtimePathIsAbsent(path, signal))
+          throw posixError({ code: "ENOENT", message: "Machine runtime path is absent" });
+        return { path, image: imageIsAuthoritative(path) };
+      });
+      const live = captured.filter(({ image }) => !image);
       const results = await request.batch(
-        paths.map((path, index) => ({ id: String(index), op: "readlink" as const, path })),
+        live.map(({ path }, index) => ({ id: String(index), op: "readlink" as const, path })),
       );
-      return results.map((result) => {
+      let liveIndex = 0;
+      const targets = captured.map(({ path, image: useImage }) => {
+        if (useImage) return inventory.readlink(path);
+        const result = results[liveIndex++];
+        if (result === undefined) throw request.unavailable("Machine link response is incomplete");
         if ("error" in result) throw posixError(result.error);
         if (result.op !== "readlink")
           throw request.unavailable("Machine returned the wrong link operation");
@@ -248,6 +287,8 @@ export function createComputerMachineFileSystem(
           throw request.unavailable("Machine returned an invalid link target", { cause });
         }
       });
+      request.check();
+      return targets;
     },
     async read(path, offset, length, signal) {
       if (offset < 0n || offset > BigInt(Number.MAX_SAFE_INTEGER))
@@ -280,6 +321,15 @@ function absent(code: string) {
 
 function posixError(error: { readonly code: string; readonly message: string }) {
   return Object.assign(new Error(error.message), { code: error.code });
+}
+
+function machineFileDirectoryEntry(
+  path: string,
+  metadata: Parameters<typeof machineFileMetadata>[1],
+): KernelLowerFileSystemDirectoryEntry {
+  if (metadata.type !== "file" && metadata.type !== "directory" && metadata.type !== "symlink")
+    return { path, unsupportedType: metadata.type };
+  return machineFileMetadata(path, metadata);
 }
 
 function decodeBase64(value: string): Uint8Array {

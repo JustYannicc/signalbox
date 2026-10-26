@@ -779,8 +779,10 @@ function normalizeU64(value: bigint): bigint {
   return normalized;
 }
 
-export function filetype(type: "file" | "directory" | "symlink" | "character"): number {
+export function filetype(type: "file" | "directory" | "symlink" | "character" | "unknown"): number {
   switch (type) {
+    case "unknown":
+      return 0;
     case "character":
       return 2;
     case "directory":

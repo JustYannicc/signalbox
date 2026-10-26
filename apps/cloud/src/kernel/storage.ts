@@ -17,7 +17,7 @@ export interface Stat {
 export interface DirectoryEntry {
   name: string;
   inode: Inode;
-  type: Stat['type'];
+  type: Stat['type'] | 'unknown';
 }
 
 export interface CreateOptions {
