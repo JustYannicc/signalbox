@@ -190,7 +190,7 @@ export function createComputerMachineFileSystem(
           const current = remaining[offset];
           const result = results[offset];
           if (current === undefined || result === undefined)
-            throw new KernelFileSystemUnavailable("Machine directory batch response is incomplete");
+            throw request.unavailable("Machine directory batch response is incomplete");
           if ("error" in result) {
             if (absent(result.error.code) && current.cursor === undefined) {
               entriesByPath[current.index] = undefined;
@@ -199,10 +199,10 @@ export function createComputerMachineFileSystem(
             throw posixError(result.error);
           }
           if (result.op !== "readdir")
-            throw new KernelFileSystemUnavailable("Machine returned the wrong directory operation");
+            throw request.unavailable("Machine returned the wrong directory operation");
           for (const entry of result.entries) {
             if (entry.stat === undefined)
-              throw new KernelFileSystemUnavailable("Machine omitted directory metadata");
+              throw request.unavailable("Machine omitted directory metadata");
             const child = `${current.path === "/" ? "" : current.path}/${entry.name}`;
             const symlinkParent = entry.stat.type === "symlink" ? await parent(child) : undefined;
             entriesByPath[current.index]!.push(
@@ -239,8 +239,14 @@ export function createComputerMachineFileSystem(
       return results.map((result) => {
         if ("error" in result) throw posixError(result.error);
         if (result.op !== "readlink")
-          throw new KernelFileSystemUnavailable("Machine returned the wrong link operation");
-        return new TextDecoder("utf-8", { fatal: true }).decode(decodeBase64(result.targetBase64));
+          throw request.unavailable("Machine returned the wrong link operation");
+        try {
+          return new TextDecoder("utf-8", { fatal: true }).decode(
+            decodeBase64(result.targetBase64),
+          );
+        } catch (cause) {
+          throw request.unavailable("Machine returned an invalid link target", { cause });
+        }
       });
     },
     async read(path, offset, length, signal) {

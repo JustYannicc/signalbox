@@ -15,7 +15,7 @@ import { wasmImportReactor } from "../../kernel/tests/wasmGuest.ts";
 import { createNodeFs } from "../../isolate/NodeFs.ts";
 import { CHILD_COREUTILS_COMMANDS } from "../ChildProgramSet.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
-import type { MachineFileSourceState } from "../MachineFilesPort.ts";
+import type { MachineFileSourceState, MachineFilesPort } from "../MachineFilesPort.ts";
 import type { MachineProgramEntry, MachineProgramInventory } from "../MachineProgramInventory.ts";
 import { createProductComputer } from "../ProductComputer.ts";
 import type { ChildWorkerLoaderPort } from "../WorkerLoaderDispatch.ts";
@@ -379,9 +379,11 @@ describe.skipIf(!available)("ProductComputer machine metadata refresh", () => {
 
       expect(exit).toEqual({ exitCode: 0, signal: 0, coreDumped: false });
       expect(fixture.fs.lstatSync("/usr/bin/git").size).toBe(beforeStat.size + 1);
+      expect(fixture.fs.statSync("/bin/git").size).toBe(beforeStat.size + 1);
       expect(fixture.fs.readdirSync("/usr").map(String).sort()).toEqual(
         [...beforeDirectory, "signalbox-new-dir"].sort(),
       );
+      expect(fixture.fs.readdirSync("/bin").map(String)).toContain("git");
       expect(fixture.fs.lstatSync("/usr/signalbox-new-dir")).toMatchObject({
         mode: 0o40750,
         size: 0,
@@ -405,6 +407,7 @@ describe.skipIf(!available)("ProductComputer machine metadata refresh", () => {
               operation !== null &&
               "op" in operation &&
               operation.op === "readdir" &&
+              "path" in operation &&
               operation.path === "/usr/bin",
           ),
       ).toBe(true);
@@ -414,7 +417,7 @@ describe.skipIf(!available)("ProductComputer machine metadata refresh", () => {
     }
   });
 
-  it("creates through public async WASI and preserves POSIX modes, exclusivity, and rename", async () => {
+  it("uses async WASI and sync NodeFs creation with POSIX semantics", async () => {
     const fixture = makeFixture();
     const mkdirWasi = createKernelAsyncWasi({
       filesystem: fixture.filesystem,
@@ -498,12 +501,50 @@ describe.skipIf(!available)("ProductComputer machine metadata refresh", () => {
         gid: 1000,
       });
 
+      const syncDirectory = "/usr/node-sync-mkdir";
+      fixture.fs.mkdirSync(syncDirectory, { mode: 0o700 });
+      expect(fixture.filesystem.getPosixMetadata(syncDirectory)).toEqual({
+        mode: 0o700,
+        uid: 1000,
+        gid: 1000,
+      });
+
+      const syncPath = "/usr/sync-open-created";
+      const syncDestination = "/usr/sync-renamed-created";
+      const syncDescriptor = fixture.fs.openSync(syncPath, "wx", 0o666);
+      try {
+        const created = fixture.fs.fstatSync(syncDescriptor);
+        expect(Number(created.mode) & 0o777).toBe(0o644);
+        expect(created.uid).toBe(1000);
+        expect(created.gid).toBe(1000);
+        expect(() => fixture.fs.openSync(syncPath, "wx")).toThrow(
+          expect.objectContaining({ code: "EEXIST" }),
+        );
+
+        const destinationDirectory = "/usr/sync-rename-destination";
+        fixture.fs.mkdirSync(destinationDirectory);
+        expect(() => fixture.fs.renameSync(syncPath, destinationDirectory)).toThrow(
+          expect.objectContaining({ code: "EISDIR" }),
+        );
+        expect(fixture.fs.statSync(syncPath).isFile()).toBe(true);
+
+        fixture.fs.renameSync(syncPath, syncDestination);
+        const renamed = fixture.fs.statSync(syncDestination);
+        expect(renamed.ino).toBe(created.ino);
+        expect(fixture.fs.fstatSync(syncDescriptor).ino).toBe(created.ino);
+        expect(() => fixture.fs.statSync(syncPath)).toThrow(
+          expect.objectContaining({ code: "ENOENT" }),
+        );
+      } finally {
+        fixture.fs.closeSync(syncDescriptor);
+      }
+
       await fixture.fs.promises.mkdir("/usr/node-mkdir", { mode: 0o700 });
       expect(fixture.fs.readdirSync("/usr").map(String)).toContain("node-mkdir");
       const handle = await fixture.fs.promises.open("/usr/open-created", "wx", 0o666);
       await handle.writeFile("upper");
       const created = await handle.stat();
-      expect(created.mode & 0o777).toBe(0o644);
+      expect(Number(created.mode) & 0o777).toBe(0o644);
       expect(created.uid).toBe(1000);
       expect(created.gid).toBe(1000);
       await expect(fixture.fs.promises.open("/usr/open-created", "wx")).rejects.toMatchObject({
