@@ -1,9 +1,9 @@
 import type { MachineFileStat } from "@signalbox/runner-protocol/MachineFilesProtocol";
-import { KernelFileSystemUnavailable } from "../../kernel/KernelLowerFileSystem.ts";
 
 interface LiveParentOperations {
   readonly lstat: (path: string) => Promise<MachineFileStat>;
   readonly readlink: (path: string) => Promise<string>;
+  readonly unavailable: (message: string) => Error;
 }
 
 /** A request owns these caches so directory provenance never survives its machine generation. */
@@ -45,12 +45,12 @@ export function liveSymlinkParents(operations: LiveParentOperations) {
           throw Object.assign(new Error("Too many live machine symlinks"), { code: "ELOOP" });
         const target = await readlink(candidate);
         if (target.length === 0 || target.includes("\0"))
-          throw new KernelFileSystemUnavailable("Machine returned an invalid ancestor symlink");
+          throw operations.unavailable("Machine returned an invalid ancestor symlink");
         if (target.startsWith("/")) components.length = 0;
         pending.unshift(...target.split("/").filter(Boolean));
       } else {
         if (stat.type !== "directory")
-          throw new KernelFileSystemUnavailable("Machine symlink parent is no longer a directory");
+          throw operations.unavailable("Machine symlink parent is no longer a directory");
         components.push(part);
       }
     }

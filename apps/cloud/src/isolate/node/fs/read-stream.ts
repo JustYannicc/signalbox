@@ -108,7 +108,7 @@ export class NodeFsReadStream extends NodeStream.Readable {
     }
     const buffer = NodeBuffer.Buffer.allocUnsafe(length);
     const bytesRead = await this.#file.run(
-      readIntoOperation(this.#kernelFs, fd, buffer, this.#position),
+      readIntoOperation(this.#kernelFs, fd, buffer, this.#position, true),
     );
     if (this.destroyed) return;
     if (bytesRead === 0) {

@@ -2,10 +2,12 @@ import * as NodeAssert from "node:assert/strict";
 import type { KernelSyscallPort } from "../../../kernel/KernelSyscallPort.ts";
 import type { KernelBusyboxPort } from "../../../kernel/KernelBusyboxPort.ts";
 import type { KernelGitPort } from "../../../kernel/KernelGitPort.ts";
+import type { KernelCommand } from "../../../kernel/KernelCommandForwarder.ts";
 import type { ChildWorkerLoaderPort } from "../../../computer/WorkerLoaderDispatch.ts";
 import type { CommandProgramCodes } from "../../../computer/CommandGateway.ts";
 import { CHILD_PROGRAM_PATHS } from "../../../computer/ChildProgramSet.ts";
 import type { ProgramSeed } from "../../HarnessSessionHost.ts";
+import { createChildGit } from "../../../computer/ChildGit.ts";
 
 const bytes = new TextEncoder().encode("controlled-command-body");
 const exit = { exitCode: 0, signal: 0, coreDumped: false };
@@ -129,18 +131,23 @@ export function commandLoader() {
         commands.push(input.command.executable);
         NodeAssert.equal(input.command.cwd, "/workspace");
         if (input.command.executable === "/usr/bin/git") {
-          NodeAssert.deepEqual(input.command.argv, ["/usr/bin/git", "status", "--short"]);
-          const result = await port.callGit({
-            namespace: "nimbus_proc",
-            name: "ids",
-            args: [0],
-            memorySize: 8,
-            regions: [{ pointer: 0, bytes: new Uint8Array(8) }],
-          });
-          const view = new DataView(result.regions[0]!.bytes.buffer);
-          NodeAssert.equal(view.getUint32(0, true), 1000);
-          NodeAssert.equal(view.getUint32(4, true), 1000);
-          await write(port, 1, " M file.txt\n");
+          if (input.command.argv[1] === "update-index") {
+            // The separate pinnedGitCommandLoader scenario exercises actual Git behavior.
+            NodeAssert.deepEqual(input.command.argv, ["/usr/bin/git", "update-index", "--refresh"]);
+          } else {
+            NodeAssert.deepEqual(input.command.argv, ["/usr/bin/git", "status", "--short"]);
+            const result = await port.callGit({
+              namespace: "nimbus_proc",
+              name: "ids",
+              args: [0],
+              memorySize: 8,
+              regions: [{ pointer: 0, bytes: new Uint8Array(8) }],
+            });
+            const view = new DataView(result.regions[0]!.bytes.buffer);
+            NodeAssert.equal(view.getUint32(0, true), 1000);
+            NodeAssert.equal(view.getUint32(4, true), 1000);
+            await write(port, 1, " M file.txt\n");
+          }
         } else if (input.command.executable === "/bin/sed") {
           NodeAssert.deepEqual(input.command.argv, [
             "/bin/sed",
@@ -166,4 +173,100 @@ export function commandLoader() {
     },
   };
   return { loader, commands, identities };
+}
+
+/** Runs the pinned Git child against the ProductComputer-owned syscall ports. */
+export function pinnedGitCommandLoader(
+  module: WebAssembly.Module,
+  options: {
+    readonly holdTrackedRead?: boolean;
+    readonly afterCommand?: (input: {
+      readonly command: KernelCommand;
+      readonly exitCode: number;
+    }) => void;
+  } = {},
+) {
+  const commands: { readonly command: KernelCommand; readonly exitCode: number }[] = [];
+  const entered = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  let held = false;
+  const loader: ChildWorkerLoaderPort = {
+    async run(input, target) {
+      const invocation = target as unknown as {
+        host(): Promise<KernelGitPort>;
+        stopped(): void | Promise<void>;
+      };
+      const port = await invocation.host();
+      const isRefresh =
+        input.command.executable === "/usr/bin/git" &&
+        input.command.argv[1] === "update-index" &&
+        input.command.argv[2] === "--refresh";
+      const openedPaths = new Map<number, string>();
+      const decoder = new TextDecoder();
+      const guestPort: KernelGitPort = {
+        async call(request) {
+          if (
+            options.holdTrackedRead &&
+            isRefresh &&
+            request.name === "fd_read" &&
+            !held &&
+            openedPaths.get(Number(request.args[0]))?.includes("tracked.txt")
+          ) {
+            held = true;
+            entered.resolve();
+            await released.promise;
+          }
+          const result = await port.call(request);
+          if (request.name === "path_open" && result.kind === "return") {
+            const pathPointer = Number(request.args[2]);
+            const pathLength = Number(request.args[3]);
+            const pathRegion = request.regions.find((region) => region.pointer === pathPointer);
+            const descriptorPointer = Number(request.args[8]);
+            const descriptorRegion = result.regions.find(
+              (region) => region.pointer === descriptorPointer,
+            );
+            if (pathRegion !== undefined && descriptorRegion !== undefined) {
+              const path = decoder.decode(pathRegion.bytes.subarray(0, pathLength));
+              const descriptor = new DataView(
+                descriptorRegion.bytes.buffer,
+                descriptorRegion.bytes.byteOffset,
+                descriptorRegion.bytes.byteLength,
+              ).getUint32(0, true);
+              openedPaths.set(descriptor, path);
+            }
+          } else if (request.name === "fd_close") openedPaths.delete(Number(request.args[0]));
+          return result;
+        },
+        callGit: (request) => port.callGit(request),
+      };
+      try {
+        if (input.command.executable !== "/usr/bin/git")
+          throw new Error(`Pinned Git loader received ${input.command.executable}`);
+        const result = await createChildGit({
+          module,
+          port: guestPort,
+          args: input.command.argv,
+          env: input.command.env,
+        }).run();
+        commands.push({
+          command: {
+            ...input.command,
+            argv: [...input.command.argv],
+            env: { ...input.command.env },
+          },
+          exitCode: result.exitCode,
+        });
+        options.afterCommand?.({ command: input.command, exitCode: result.exitCode });
+        return result;
+      } finally {
+        await invocation.stopped();
+      }
+    },
+  };
+  return {
+    loader,
+    commands,
+    entered: entered.promise,
+    release: () => released.resolve(),
+  };
 }

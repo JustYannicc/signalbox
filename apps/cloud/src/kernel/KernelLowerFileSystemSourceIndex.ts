@@ -2,6 +2,7 @@ import { isPosixMetadata } from "./PosixStorage.ts";
 import type { PosixMetadata } from "./PosixStorage.ts";
 import {
   KernelFileSystemUnavailable,
+  type KernelLowerFileSystemDirectoryEntry,
   type KernelLowerFileSystemEntry,
   type KernelLowerFileSystemKnownLookup,
   type KernelLowerFileSystemSource,
@@ -20,9 +21,12 @@ export class KernelLowerFileSystemSourceIndex {
   readonly #missingPaths = new Set<string>();
   readonly #linkByPath = new Map<string, string>();
   readonly #directoryByPath = new Map<string, readonly DirectoryEntry[]>();
+  readonly #directoryErrors = new Map<string, Error>();
   readonly #lowerInodeByPath = new Map<string, Inode>();
   readonly #lowerPathsByInode = new Map<Inode, Set<string>>();
   readonly #lowerInodesByIdentity = new Map<string, Inode>();
+  readonly #unsupportedByPath = new Map<string, Inode>();
+  readonly #unsupportedPathByInode = new Map<Inode, string>();
   #epoch = 0;
 
   constructor(source: KernelLowerFileSystemSource, allocateInode: () => Inode) {
@@ -39,11 +43,14 @@ export class KernelLowerFileSystemSourceIndex {
   }
 
   isInode(inode: Inode): boolean {
-    return this.#lowerPathsByInode.has(inode);
+    return this.#lowerPathsByInode.has(inode) || this.#unsupportedPathByInode.has(inode);
   }
 
   pathForInode(inode: Inode): string | undefined {
-    return this.#lowerPathsByInode.get(inode)?.values().next().value;
+    return (
+      this.#lowerPathsByInode.get(inode)?.values().next().value ??
+      this.#unsupportedPathByInode.get(inode)
+    );
   }
 
   symlinkParent(inode: Inode): string | undefined {
@@ -73,9 +80,24 @@ export class KernelLowerFileSystemSourceIndex {
   lookupKnown(path: string): KernelLowerFileSystemKnownLookup {
     const cached = this.#entryByPath.get(path);
     if (cached !== undefined) return { kind: "entry", inode: this.#cacheEntry(path, cached) };
+    const unsupported = this.#unsupportedByPath.get(path);
+    if (unsupported !== undefined) return { kind: "entry", inode: unsupported };
     if (this.#missingPaths.has(path)) return { kind: "missing" };
-    if (this.#source.lookupKnown === undefined) return { kind: "unknown" };
     canonicalPath(path);
+    const parentEntries = this.#directoryByPath.get(parentPath(path));
+    if (parentEntries !== undefined) {
+      const entry = parentEntries.find((candidate) => candidate.name === basename(path));
+      if (entry === undefined) {
+        this.#missingPaths.add(path);
+        return { kind: "missing" };
+      }
+      const cached = this.#entryByPath.get(path);
+      if (cached !== undefined) return { kind: "entry", inode: this.#cacheEntry(path, cached) };
+      const unsupported = this.#unsupportedByPath.get(path);
+      if (unsupported !== undefined) return { kind: "entry", inode: unsupported };
+      throw new KernelFileSystemUnavailable("Lower directory entry metadata is missing");
+    }
+    if (this.#source.lookupKnown === undefined) return { kind: "unknown" };
 
     let entries: readonly (KernelLowerFileSystemEntry | undefined)[] | undefined;
     try {
@@ -158,6 +180,8 @@ export class KernelLowerFileSystemSourceIndex {
   }
 
   readdir(path: string, signal?: AbortSignal): MaybePromise<readonly DirectoryEntry[] | undefined> {
+    const denied = this.#directoryErrors.get(path);
+    if (denied !== undefined) throw denied;
     const cached = this.#directoryByPath.get(path);
     if (cached !== undefined) return cached;
     const entry = this.#entryByPath.get(path);
@@ -200,11 +224,90 @@ export class KernelLowerFileSystemSourceIndex {
     }
 
     const explicitEntries = [...explicit].filter((path) => !skip(path));
+    const symlinks = explicitEntries.filter(
+      (path) => this.#entryByPath.get(path)?.stat.type === "symlink",
+    );
+    await this.#readlinks(symlinks, signal);
+    const directories = explicitEntries.filter(
+      (path) => this.#entryByPath.get(path)?.stat.type === "directory",
+    );
+    await this.#readDirectories(directories, signal);
+  }
+
+  async refresh(
+    paths: readonly string[],
+    signal?: AbortSignal,
+    skip: (path: string) => boolean = () => false,
+  ): Promise<void> {
+    if (this.#source.readdirMany === undefined) return this.prepare(paths, signal, skip);
+    const activeSignal = signal ?? currentKernelSignal();
+    const epoch = this.#epoch;
+    const directories = paths.filter((path) => {
+      canonicalPath(path);
+      return !skip(path);
+    });
+    if (directories.includes("/")) {
+      await this.#lookupBatch(["/"], activeSignal, (entries) => {
+        const root = entries[0];
+        if (root !== undefined) this.#cacheEntry("/", root);
+      });
+    }
+    await this.#readDirectories(directories, activeSignal, true);
+    activeSignal?.throwIfAborted();
+    if (epoch !== this.#epoch)
+      throw new KernelFileSystemUnavailable("Lower filesystem changed during generation refresh");
+    const symlinks = new Set<string>();
+    for (const path of directories) {
+      for (const child of this.#directoryByPath.get(path) ?? []) {
+        if (child.type === "symlink") symlinks.add(childPath(path, child.name));
+      }
+    }
+    await this.#readlinks([...symlinks], signal);
+    activeSignal?.throwIfAborted();
+    if (epoch !== this.#epoch)
+      throw new KernelFileSystemUnavailable("Lower filesystem changed during link refresh");
+  }
+
+  async #readDirectories(
+    paths: readonly string[],
+    signal?: AbortSignal,
+    allowMissing = false,
+  ): Promise<void> {
+    if (paths.length === 0) return;
+    const activeSignal = signal ?? currentKernelSignal();
+    if (this.#source.readdirMany !== undefined) {
+      const epoch = this.#epoch;
+      const listings = await sourceCall(() => this.#source.readdirMany!(paths, activeSignal));
+      activeSignal?.throwIfAborted();
+      if (epoch !== this.#epoch)
+        throw new KernelFileSystemUnavailable("Lower filesystem changed during directory refresh");
+      if (!Array.isArray(listings) || listings.length !== paths.length) {
+        throw new KernelFileSystemUnavailable("Lower directory batch result length mismatch");
+      }
+      for (let index = 0; index < paths.length; index++) {
+        const path = paths[index];
+        const listing = listings[index];
+        if (path === undefined || listing === undefined) continue;
+        if (listing.kind === "error") {
+          if (!isCode(listing.error, "EACCES")) throw listing.error;
+          this.#directoryErrors.set(path, listing.error);
+          continue;
+        }
+        this.#cacheDirectory(path, listing.entries);
+      }
+      return;
+    }
+
     await Promise.all(
-      explicitEntries.map(async (path) => {
+      paths.map(async (path) => {
         const entry = this.#entryByPath.get(path);
-        if (entry?.stat.type === "symlink") await this.#readlink(path, signal);
-        if (entry?.stat.type === "directory") await this.#readDirectory(path, entry, signal);
+        if (entry === undefined) return;
+        try {
+          await this.#readDirectory(path, entry, activeSignal);
+        } catch (error) {
+          if (allowMissing && (isCode(error, "ENOENT") || isCode(error, "ENOTDIR"))) return;
+          throw error;
+        }
       }),
     );
   }
@@ -215,9 +318,13 @@ export class KernelLowerFileSystemSourceIndex {
     this.#missingPaths.clear();
     this.#linkByPath.clear();
     this.#directoryByPath.clear();
+    this.#directoryErrors.clear();
+    this.#unsupportedByPath.clear();
+    this.#unsupportedPathByInode.clear();
   }
 
   #entry(path: string, signal?: AbortSignal): MaybePromise<KernelLowerFileSystemEntry | undefined> {
+    if (this.#unsupportedByPath.has(path)) throw kernelError("ENOTSUP");
     const cached = this.#entryByPath.get(path);
     if (cached !== undefined) return cached;
     if (this.#missingPaths.has(path)) return undefined;
@@ -290,6 +397,7 @@ export class KernelLowerFileSystemSourceIndex {
   }
 
   #readlink(path: string, signal?: AbortSignal, attempt = 0): MaybePromise<string> {
+    if (this.#unsupportedByPath.has(path)) throw kernelError("ENOTSUP");
     const cached = this.#linkByPath.get(path);
     if (cached !== undefined) return cached;
     if (currentKernelIoMode() === "sync") {
@@ -341,12 +449,41 @@ export class KernelLowerFileSystemSourceIndex {
     );
   }
 
+  async #readlinks(paths: readonly string[], signal?: AbortSignal): Promise<void> {
+    const pending = [...new Set(paths)].filter((path) => !this.#linkByPath.has(path));
+    if (pending.length === 0) return;
+    const activeSignal = signal ?? currentKernelSignal();
+    activeSignal?.throwIfAborted();
+    const epoch = this.#epoch;
+    if (this.#source.readlinkMany === undefined) {
+      await Promise.all(pending.map((path) => this.#readlink(path, activeSignal)));
+      return;
+    }
+    const targets = await sourceCall(() => this.#source.readlinkMany!(pending, activeSignal));
+    activeSignal?.throwIfAborted();
+    if (epoch !== this.#epoch)
+      throw new KernelFileSystemUnavailable("Lower filesystem changed during link refresh");
+    if (!Array.isArray(targets) || targets.length !== pending.length) {
+      throw new KernelFileSystemUnavailable("Lower readlink batch result length mismatch");
+    }
+    for (let index = 0; index < pending.length; index++) {
+      const path = pending[index];
+      const target = targets[index];
+      if (path === undefined || typeof target !== "string") {
+        throw new KernelFileSystemUnavailable("Lower readlink batch returned invalid data");
+      }
+      this.#linkByPath.set(path, target);
+    }
+  }
+
   #readDirectory(
     path: string,
     entry: KernelLowerFileSystemEntry,
     signal?: AbortSignal,
     attempt = 0,
   ): MaybePromise<readonly DirectoryEntry[] | undefined> {
+    const denied = this.#directoryErrors.get(path);
+    if (denied !== undefined) throw denied;
     if (this.#entryByPath.get(path) !== entry) {
       return this.#readDirectoryFresh(path, signal ?? currentKernelSignal(), attempt);
     }
@@ -354,7 +491,7 @@ export class KernelLowerFileSystemSourceIndex {
     if (currentKernelIoMode() === "sync") {
       if (this.#source.readdirKnown === undefined)
         throw kernelError("ENOTSUP", "Lower directory entries require asynchronous execution");
-      let entries: readonly KernelLowerFileSystemEntry[] | undefined;
+      let entries: readonly KernelLowerFileSystemDirectoryEntry[] | undefined;
       try {
         entries = this.#source.readdirKnown(path);
       } catch (error) {
@@ -400,7 +537,7 @@ export class KernelLowerFileSystemSourceIndex {
 
   #cacheDirectory(
     path: string,
-    entries: readonly KernelLowerFileSystemEntry[],
+    entries: readonly KernelLowerFileSystemDirectoryEntry[],
   ): readonly DirectoryEntry[] {
     if (!Array.isArray(entries)) {
       throw new KernelFileSystemUnavailable("Lower readdir returned invalid entries");
@@ -426,6 +563,18 @@ export class KernelLowerFileSystemSourceIndex {
       ) {
         throw new KernelFileSystemUnavailable("Lower readdir returned a non-child path");
       }
+      if (!("stat" in child)) {
+        if (typeof child.unsupportedType !== "string" || child.unsupportedType.length === 0) {
+          throw new KernelFileSystemUnavailable(
+            "Lower readdir returned an invalid unsupported entry",
+          );
+        }
+        return {
+          name,
+          inode: this.#cacheUnsupported(childCanonical),
+          type: "unknown",
+        } satisfies DirectoryEntry;
+      }
       try {
         validateEntry(childCanonical, child);
       } catch (error) {
@@ -440,6 +589,7 @@ export class KernelLowerFileSystemSourceIndex {
       } satisfies DirectoryEntry;
     });
     this.#directoryByPath.set(path, result);
+    this.#directoryErrors.delete(path);
     return result;
   }
 
@@ -450,6 +600,7 @@ export class KernelLowerFileSystemSourceIndex {
     signal: AbortSignal | undefined,
     attempt = 0,
   ): Promise<number> {
+    if (this.#unsupportedByPath.has(path)) return Promise.reject(kernelError("ENOTSUP"));
     const activeSignal = signal ?? currentKernelSignal();
     const epoch = this.#epoch;
     const retry = () =>
@@ -493,6 +644,11 @@ export class KernelLowerFileSystemSourceIndex {
   }
 
   #cacheEntry(path: string, entry: KernelLowerFileSystemEntry): Inode {
+    const unsupported = this.#unsupportedByPath.get(path);
+    if (unsupported !== undefined) {
+      this.#unsupportedByPath.delete(path);
+      this.#unsupportedPathByInode.delete(unsupported);
+    }
     const identity = nativeIdentity(entry);
     let inode =
       identity === undefined
@@ -507,6 +663,15 @@ export class KernelLowerFileSystemSourceIndex {
     paths.add(path);
     this.#lowerPathsByInode.set(inode, paths);
     this.#entryByPath.set(path, entry);
+    return inode;
+  }
+
+  #cacheUnsupported(path: string): Inode {
+    const cached = this.#unsupportedByPath.get(path);
+    if (cached !== undefined) return cached;
+    const inode = this.#allocateInode();
+    this.#unsupportedByPath.set(path, inode);
+    this.#unsupportedPathByInode.set(inode, path);
     return inode;
   }
 }
@@ -637,4 +802,8 @@ function sourceFailure(error: unknown, lookup = false): Error {
 
 function isPromiseLike<T>(value: MaybePromise<T>): value is Promise<T> {
   return typeof value === "object" && value !== null && "then" in value;
+}
+
+function isCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }

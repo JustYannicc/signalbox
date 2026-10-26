@@ -47,6 +47,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine lookup failur
   it("leaves SQL unchanged when the second machine metadata batch fails", async () => {
     const lookupCalls: number[] = [];
     let pristine = true;
+    let failureArmed = false;
     const files: MachineFilesPort = {
       current: () => ({
         generation: 1,
@@ -59,9 +60,11 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine lookup failur
       },
       async lookup(input, signal) {
         signal.throwIfAborted();
-        lookupCalls.push(input.operations.length);
-        if (lookupCalls.length > 1)
-          throw new MachineFileLookupError("RUNNER_DISCONNECTED", "Lookup stopped mid-batch.");
+        if (failureArmed) {
+          lookupCalls.push(input.operations.length);
+          if (lookupCalls.length > 1)
+            throw new MachineFileLookupError("RUNNER_DISCONNECTED", "Lookup stopped mid-batch.");
+        }
         return {
           generation: input.generation,
           results: input.operations.map((operation) => ({
@@ -79,6 +82,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine lookup failur
       const machineCallsBeforeLookup = fixture.machineCalls.length;
       expect(machineCallsBeforeLookup).toBe(1);
       const writesBefore = fixture.sqlWriteCount();
+      failureArmed = true;
       const visibleFailure = await expectUnavailableRejection(
         fixture.direct("signalbox_lookup_crash", ["signalbox_lookup_crash"], path),
       );

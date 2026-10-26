@@ -20,7 +20,11 @@ import {
   type WasiPathSearchCheck,
 } from "./internal_wasi_paths.ts";
 import { WasiFdCalls } from "./internal_wasi_fd_calls.ts";
-import { WasiPathCalls, type WasiCreationPolicy } from "./internal_wasi_path_calls.ts";
+import {
+  WasiPathCalls,
+  type WasiCreationPolicy,
+  type WasiOpenAccessCheck,
+} from "./internal_wasi_path_calls.ts";
 import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 
 export { complete, type WasiCall } from "./internal_wasi_calls.ts";
@@ -37,6 +41,7 @@ export interface WasiDescriptorContext {
   readonly creation?: WasiCreationPolicy;
   readonly pathCheck?: WasiPathCheck;
   readonly pathSearch?: WasiPathSearchCheck;
+  readonly openAccess?: WasiOpenAccessCheck;
   readonly fileBytes?: () => KernelFileByteSelection;
 }
 
@@ -71,6 +76,7 @@ export class WasiFileSystem {
       descriptorContext?.creation,
       descriptorContext?.fileBytes,
       descriptorContext?.pathSearch,
+      descriptorContext?.openAccess,
     );
     this.imports = Object.assign(
       Object.create(null) as Record<string, unknown>,

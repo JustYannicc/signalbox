@@ -55,6 +55,8 @@ function createProcess(
       table: context.filesystem.descriptors,
       ownership: "borrowed",
       pathCheck: context.filesystem.assertWasiPathVisible.bind(context.filesystem),
+      pathSearch: context.filesystem.assertPathSearchAllowed.bind(context.filesystem),
+      openAccess: context.filesystem.assertOpenAllowed.bind(context.filesystem),
       creation: {
         createInode: context.filesystem.createInode.bind(context.filesystem),
         takeCreateMode: context.filesystem.takeNextCreateMode.bind(context.filesystem),

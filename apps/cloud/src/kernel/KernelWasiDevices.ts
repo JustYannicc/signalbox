@@ -13,6 +13,7 @@ import { writeFilestat } from "./wasi/internal_wasi_fd_calls.ts";
 import type { WasiFileSystemImportAdapter } from "./wasi/internal_wasi_lifecycle.ts";
 import { WasiError, type WasiMemory } from "./wasi/internal_wasi_memory.ts";
 import { WasiPathCalls } from "./wasi/internal_wasi_path_calls.ts";
+import type { WasiCreationPolicy } from "./wasi/internal_wasi_path_calls.ts";
 import { WasiPathResolver, type WasiMountedStorage } from "./wasi/internal_wasi_paths.ts";
 
 class DevicePath extends Error {
@@ -31,6 +32,7 @@ class DevicePath extends Error {
 /** Reuses preview1 validation and traversal, then opens devices on the owner's table. */
 export function createKernelWasiDeviceAdapter(
   filesystem: KernelFileSystem,
+  createInode: WasiCreationPolicy["createInode"] = filesystem.createInode.bind(filesystem),
 ): WasiFileSystemImportAdapter {
   return (memory, imports) => {
     const paths = new WasiPathResolver(
@@ -59,11 +61,12 @@ export function createKernelWasiDeviceAdapter(
       filesystem.descriptors,
       paths,
       {
-        createInode: filesystem.createInode.bind(filesystem),
+        createInode,
         takeCreateMode: filesystem.takeNextCreateMode.bind(filesystem),
       },
       () => filesystem.fileBytes,
       filesystem.assertPathSearchAllowed.bind(filesystem),
+      filesystem.assertOpenAllowed.bind(filesystem),
     );
     return {
       ...imports,
