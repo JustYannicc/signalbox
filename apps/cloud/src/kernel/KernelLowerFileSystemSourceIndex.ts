@@ -65,7 +65,7 @@ export class KernelLowerFileSystemSourceIndex {
   lookup(path: string, signal?: AbortSignal): MaybePromise<Inode | undefined> {
     const cached = this.#entryByPath.get(path);
     if (cached !== undefined) return this.#cacheEntry(path, cached);
-    if (this.#missingPaths.has(path)) return undefined;
+    if (this.#knownMissing(path)) return undefined;
     const entry = this.#entry(path, signal);
     const inode = (found: KernelLowerFileSystemEntry | undefined) => {
       if (found === undefined) return undefined;
@@ -82,7 +82,7 @@ export class KernelLowerFileSystemSourceIndex {
     if (cached !== undefined) return { kind: "entry", inode: this.#cacheEntry(path, cached) };
     const unsupported = this.#unsupportedByPath.get(path);
     if (unsupported !== undefined) return { kind: "entry", inode: unsupported };
-    if (this.#missingPaths.has(path)) return { kind: "missing" };
+    if (this.#knownMissing(path)) return { kind: "missing" };
     canonicalPath(path);
     const parentEntries = this.#directoryByPath.get(parentPath(path));
     if (parentEntries !== undefined) {
@@ -211,7 +211,7 @@ export class KernelLowerFileSystemSourceIndex {
       }
     }
     const ordered = [...requested].filter(
-      (path) => !skip(path) && !this.#entryByPath.has(path) && !this.#missingPaths.has(path),
+      (path) => !skip(path) && !this.#entryByPath.has(path) && !this.#knownMissing(path),
     );
     if (ordered.length > 0) {
       await this.#lookupBatch(ordered, signal ?? currentKernelSignal(), (entries) => {
@@ -323,11 +323,22 @@ export class KernelLowerFileSystemSourceIndex {
     this.#unsupportedPathByInode.clear();
   }
 
+  #knownMissing(path: string): boolean {
+    if (this.#missingPaths.has(path)) return true;
+    for (let ancestor = parentPath(path); ancestor !== "/"; ancestor = parentPath(ancestor)) {
+      if (this.#missingPaths.has(ancestor)) {
+        this.#missingPaths.add(path);
+        return true;
+      }
+    }
+    return false;
+  }
+
   #entry(path: string, signal?: AbortSignal): MaybePromise<KernelLowerFileSystemEntry | undefined> {
     if (this.#unsupportedByPath.has(path)) throw kernelError("ENOTSUP");
     const cached = this.#entryByPath.get(path);
     if (cached !== undefined) return cached;
-    if (this.#missingPaths.has(path)) return undefined;
+    if (this.#knownMissing(path)) return undefined;
     if (currentKernelIoMode() === "sync") {
       const known = this.lookupKnown(path);
       if (known.kind === "missing") return undefined;
