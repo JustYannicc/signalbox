@@ -12,11 +12,8 @@ export function createNodeConstants(
     throw new TypeError("Node constants requires the bridged fs.constants");
   }
 
-  const constants = Object.assign(
-    Object.create(null) as Record<string, unknown>,
-    nativeConstants,
-    fs.constants,
-  );
+  // graceful-fs calls constants.hasOwnProperty before it initializes file locking.
+  const constants = Object.assign({} as Record<string, unknown>, nativeConstants, fs.constants);
   Object.defineProperty(constants, "default", {
     configurable: false,
     enumerable: true,
