@@ -109,6 +109,31 @@ it("consumes real durable stop evidence after A rehydration in the same shard an
   });
 });
 
+it("rejects an actually loaded mismatched release before prepared persistence or publication", async () => {
+  const result = await scenario("/mismatched-observation");
+  expect(result.resumed.ok).toBe(false);
+  expect(result.status.failure).toEqual({
+    stage: "fresh-verification",
+    reason: "prepared-release-mismatch",
+  });
+  expect(result.status.preparedIdentityPersisted).toBe(false);
+  expect(result.evidence.resumes).toEqual([{ phase: "retained", prepared: false }]);
+  expect(result.observations["proof/event/observed-release-returned"].artifact.releaseId).toMatch(
+    /^plain-third-/,
+  );
+  expect(result.postResume.currentPublisher.generation).toBe(
+    result.previousPublisherGeneration,
+  );
+  expect(result.postResume.snapshot.lifecycle).toBe("stopped");
+  expect(result.postResume.snapshot.lastPublication).toEqual(result.previousPublication);
+  expect(result.postResume.snapshot.lastPublicationOperationId).toBe(
+    result.previousPublicationOperationId,
+  );
+  expect(result.postResume.snapshot.preparedFacet).toEqual(result.previousPreparedFacet);
+  expect(result.journalFacetCount).toBe(2);
+  expect(result.releases[0].terminal).toHaveLength(1);
+});
+
 it("resumes actual verified plain fixture code, then accepts a later request and the next completed boundary", async () => {
   const response = await harness.fetch("http://proof/positive");
   const body = await response.text();

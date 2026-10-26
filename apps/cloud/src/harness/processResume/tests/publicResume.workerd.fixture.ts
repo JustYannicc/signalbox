@@ -41,7 +41,9 @@ export default {
                       ? await cancellationProof(env)
                       : path === "/held-work"
                         ? await heldWorkProof(env)
-                        : await publicResumeProof(env, path === "/positive");
+                        : path === "/mismatched-observation"
+                          ? await publicResumeProof(env, true, true)
+                          : await publicResumeProof(env, path === "/positive");
       return Response.json(result);
     } catch (error) {
       return new Response(error instanceof Error ? error.stack : "Public resume proof failed", {

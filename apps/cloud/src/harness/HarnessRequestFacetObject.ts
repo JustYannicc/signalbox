@@ -25,16 +25,24 @@ export function createHarnessRequestFacetClass<Env>(
     readonly facetNonce = crypto.randomUUID();
     private closed = false;
     private readonly runtime;
+    private loadedPreparedReleaseReader: HarnessRequestFacetOptions["loadedPreparedRelease"] =
+      undefined;
 
     constructor(ctx: DurableObjectState, env: Env) {
       super(ctx, env);
       const identity = { ctx, env, facetNonce: this.facetNonce };
+      const setLoadedPreparedReleaseReader = (
+        reader: HarnessRequestFacetOptions["loadedPreparedRelease"],
+      ) => {
+        this.loadedPreparedReleaseReader = reader;
+      };
       // The layer opens lazily on the first incoming request and owns the retained native lifetime.
       this.runtime = ManagedRuntime.make(
         Layer.effect(
           Facet,
           Effect.gen(function* () {
             const options = yield* compose(identity);
+            setLoadedPreparedReleaseReader(options.loadedPreparedRelease);
             if (options.facetNonce !== identity.facetNonce)
               return yield* Effect.fail(
                 new HarnessRequestFacetError("Harness facet nonce changed during construction."),
@@ -57,6 +65,17 @@ export function createHarnessRequestFacetClass<Env>(
     async prepareInert(input: Parameters<HarnessRequestFacet["prepareInert"]>[0]) {
       if (this.closed) throw new HarnessRequestFacetError("Harness facet is disposed.");
       return this.runtime.runPromise(Facet.use((facet) => facet.prepareInert(input)));
+    }
+
+    async loadedPreparedRelease() {
+      if (this.closed) throw new HarnessRequestFacetError("Harness facet is disposed.");
+      await this.runtime.runPromise(Facet.use(() => Effect.void));
+      const read = this.loadedPreparedReleaseReader;
+      if (read === undefined)
+        throw new HarnessRequestFacetError(
+          "This product facet cannot observe a verified prepared release.",
+        );
+      return await read();
     }
 
     async dispose(expectedFacetNonce: string) {

@@ -36,7 +36,8 @@ const decodePlainNative = Schema.decodeEffect(
     }),
   ),
 );
-const PlainProcess = createHarnessRequestFacetClass<Env>(({ ctx, env, facetNonce }) => {
+const createPlainProcess = (exposeLoadedRelease: boolean) =>
+  createHarnessRequestFacetClass<Env>(({ ctx, env, facetNonce }) => {
   const files = env.HARNESS_RESUME_FILES_STORE;
   const store = env.HARNESS_RESUME_RUN_STORE;
   return Effect.succeed({
@@ -185,17 +186,23 @@ const PlainProcess = createHarnessRequestFacetClass<Env>(({ ctx, env, facetNonce
           }),
         ),
       ),
+    ...(exposeLoadedRelease
+      ? {
+          loadedPreparedRelease: async () => {
+            const observed = await ctx.storage.get<HarnessProcessResumePreparedRelease>(
+              "observed-release",
+            );
+            if (observed === undefined)
+              throw new Error("The plain artifact has not been loaded and verified.");
+            await files.observe("observed-release-returned", observed);
+            return observed;
+          },
+        }
+      : {}),
   });
-});
+  });
 
+const PlainProcess = createPlainProcess(false);
+const ObservedProcess = createPlainProcess(true);
 export class PlainFacet extends PlainProcess {}
-export class ObservedPlainFacet extends PlainProcess {
-  async loadedPreparedRelease() {
-    const observed =
-      await this.ctx.storage.get<HarnessProcessResumePreparedRelease>("observed-release");
-    if (observed === undefined)
-      throw new Error("The plain artifact has not been loaded and verified.");
-    await this.env.HARNESS_RESUME_FILES_STORE.observe("observed-release-returned", observed);
-    return observed;
-  }
-}
+export class ObservedPlainFacet extends ObservedProcess {}

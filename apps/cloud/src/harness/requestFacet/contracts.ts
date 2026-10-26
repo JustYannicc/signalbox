@@ -87,6 +87,8 @@ export interface HarnessRequestFacetOptions {
   readonly prepareInert?: (
     input: HarnessRequestFacetPreparationRequest,
   ) => Effect.Effect<HarnessRequestFacetPreparationEvidence, HarnessRequestFacetError, Scope.Scope>;
+  /** C reads the release observed by this product facet after inert preparation succeeds. */
+  readonly loadedPreparedRelease?: () => Promise<unknown> | unknown;
 }
 
 export interface HarnessRequestFacet {
