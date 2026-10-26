@@ -324,9 +324,16 @@ export class KernelLowerFileSystemSourceIndex {
   }
 
   #knownMissing(path: string): boolean {
+    canonicalPath(path);
     if (this.#missingPaths.has(path)) return true;
-    for (let ancestor = parentPath(path); ancestor !== "/"; ancestor = parentPath(ancestor)) {
-      if (this.#missingPaths.has(ancestor)) {
+    for (let ancestor = path; ancestor !== "/"; ancestor = parentPath(ancestor)) {
+      if (this.#entryByPath.has(ancestor) || this.#unsupportedByPath.has(ancestor)) return false;
+      const entries = this.#directoryByPath.get(parentPath(ancestor));
+      if (
+        this.#missingPaths.has(ancestor) ||
+        (entries !== undefined && !entries.some((entry) => entry.name === basename(ancestor)))
+      ) {
+        this.#missingPaths.add(ancestor);
         this.#missingPaths.add(path);
         return true;
       }
