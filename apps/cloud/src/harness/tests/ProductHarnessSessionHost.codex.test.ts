@@ -94,6 +94,56 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(services)),
 );
 
+it.effect("returns the caller-selected artifact with the actual product loader projection", () =>
+  Effect.gen(function* () {
+    launch.mockReset();
+    const release = yield* Effect.promise(codexFixture);
+    const selected = {
+      provider: "codex" as const,
+      releaseId: "selected-codex-process-release",
+      artifactHash: release.options.identity.artifactHash,
+      artifactRef: release.options.identity.artifactRef,
+      sourceIdentity: release.options.identity.sourceIdentity,
+      fixtureIdentity: "codex-process-resume-fixture",
+      createdAt: "2026-10-26T00:00:00.000Z",
+    };
+    const product = yield* productOptions(release.options, "/home/product-codex", selected);
+    expect(() => product.host.loadedPreparedRelease()).toThrow(
+      "The product host has not completed its verified release load.",
+    );
+
+    const peer = processFixture();
+    yield* Effect.addFinalizer(() => Effect.promise(() => peer.process.abort()));
+    (yield* Effect.promise(() => peer.output)).enqueue(new TextEncoder().encode(readyLine));
+    launch.mockImplementation(async () => peer.process);
+    const session = yield* product.host.open({
+      session: codexSession,
+      bootAttemptId: "product-codex-release-observation",
+    });
+    yield* Effect.addFinalizer(() => Effect.orDie(session.dispose));
+
+    const observed = product.host.loadedPreparedRelease();
+    expect(observed.artifact).toEqual(selected);
+    expect(observed.plan.release).toMatchObject({
+      harness: "codex",
+      manifestSha256: selected.artifactHash,
+    });
+    expect(observed.plan.sourceIdentity).toBe(selected.sourceIdentity);
+    expect(Object.isFrozen(observed)).toBe(true);
+    expect(Object.isFrozen(observed.plan.release.modules)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
+it.effect("requires an explicit full release artifact for process resume observation", () =>
+  Effect.gen(function* () {
+    const release = yield* Effect.promise(codexFixture);
+    const product = yield* productOptions(release.options);
+    expect(() => product.host.loadedPreparedRelease()).toThrow(
+      "Product process resume requires a caller-selected full HarnessReleaseArtifact.",
+    );
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
 it.effect(
   "rejects a Codex binding against a Claude release before starting the native engine",
   () =>
