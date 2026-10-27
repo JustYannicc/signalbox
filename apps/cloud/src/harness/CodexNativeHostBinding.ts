@@ -187,7 +187,7 @@ export function makeCodexNativeHostBinding(
       Effect.suspend(() => {
         const attempt = current;
         if (
-          harness?.checkpoint === undefined ||
+          (harness?.checkpoint === undefined && harness?.creation === undefined) ||
           attempt?.configuration.epoch !== epoch ||
           attempt.phase !== "ready" ||
           !attempt.handedOff ||

@@ -4,14 +4,12 @@ import * as Scope from "effect/Scope";
 import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleaseLedger.ts";
 import type { HarnessRequestFacetPreparationEvidence } from "../HarnessRequestFacet.ts";
 import type { HarnessRequestCheckpoint } from "../HarnessRunStore.ts";
-import type { HarnessRequestTurnOptions } from "../HarnessRequestTurn.ts";
 import type { HarnessProcessResumePreparedRelease } from "../HarnessProcessResume.ts";
 import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
 import type { HarnessError } from "../Harness.ts";
 import type { HostOpenInput } from "../HarnessSessionHost.ts";
 import type { ProductHostOptions, ProductHarnessSessionHost } from "../host/product.ts";
 import { HarnessRequestFacetError } from "../HarnessRequestFacet.ts";
-import { createHarnessRequestTurnRuntime } from "../HarnessRequestTurn.ts";
 import { readHarnessCProductFilesCheckpoint } from "./filesCheckpoint.ts";
 import { materializeHarnessCProductFiles } from "./materializeFiles.ts";
 import { decodeHarnessCProductNativeCheckpoint } from "./nativeCheckpoint.ts";
@@ -24,6 +22,7 @@ import {
 import { productExecutor } from "./executor.ts";
 import { productTurnGrantSource } from "./turnGrant.ts";
 import { selectHarnessCProductRelease } from "./selectedArtifact.ts";
+import { createHarnessCProductRequestRuntime } from "./requestRuntime.ts";
 import type {
   HarnessCProductFacetEnvironment,
   HarnessCProductHostPreparationInput,
@@ -226,41 +225,13 @@ export function prepareHarnessCProductHost<
           failed("Checkpoint access could not be retired after inert restoration.", cause),
         ),
       );
-    const requestTurnOptions: Omit<HarnessRequestTurnOptions<G>, "restore"> = {
-      readInput: (reference, context) =>
-        Effect.gen(function* () {
-          const turn = yield* input.turnBindings.readTurn(reference, context);
-          const access = yield* Effect.tryPromise({
-            try: () =>
-              input.capabilities.access.resolveTurnAccess({
-                threadId,
-                runId: input.runId,
-                requestId: context.requestId,
-              }),
-            catch: (cause) => failed("Turn access could not be resolved.", cause),
-          });
-          return {
-            turn,
-            access: {
-              ...access,
-              signal: context.signal,
-              ...(input.capabilities.turnGrantSource === undefined
-                ? {}
-                : {
-                    publisher: {
-                      generation: context.publisher.generation,
-                      facetNonce: context.publisher.facetNonce,
-                    },
-                  }),
-            },
-          };
-        }),
-      onEvent: input.turnBindings.onEvent,
-      writeResult: input.turnBindings.writeResult,
-      writeCheckpoint: input.turnBindings.writeCheckpoint,
-      verify: input.turnBindings.verify,
-    };
-    const runtime = yield* createHarnessRequestTurnRuntime(requestTurnOptions, session);
+    const runtime = yield* createHarnessCProductRequestRuntime({
+      runId: input.runId,
+      threadId,
+      capabilities: input.capabilities,
+      turnBindings: input.turnBindings,
+      session,
+    });
     const evidence: HarnessRequestFacetPreparationEvidence = {
       facetNonce: input.facetNonce,
       nativeSessionId,

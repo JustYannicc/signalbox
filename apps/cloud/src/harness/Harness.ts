@@ -7,7 +7,10 @@ import type {
   ProviderAdapterV2OpenSessionInput,
   ProviderAdapterV2ThreadSnapshot,
 } from "@t3tools/provider-core/server/ProviderAdapter";
-import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ProviderSession,
+  OrchestrationV2ProviderThread,
+} from "@t3tools/contracts";
 import { ReleaseModuleOmittedFailure } from "@t3tools/contracts/harnessReleaseOmission";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -154,6 +157,8 @@ export interface HarnessOpenInput {
   readonly modelTransport: (request: Request) => Promise<Response>;
   readonly hooks?: HarnessHookCallback;
   readonly checkpoint?: HarnessCheckpoint;
+  /** Creates the native thread during open, without submitting a user turn. */
+  readonly creation?: { readonly providerThread: OrchestrationV2ProviderThread };
 }
 
 export interface HarnessSession {

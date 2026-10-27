@@ -15,7 +15,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HarnessError, type HarnessOpenInput, type HarnessSession } from "../Harness.ts";
-import { checkpointThreadLoad, nativeTurnThreadLoad } from "../HarnessThreadLoad.ts";
+import {
+  checkpointThreadLoad,
+  nativeTurnThreadLoad,
+  type NativeThreadLoad,
+} from "../HarnessThreadLoad.ts";
 import { threadMatches } from "../adapter/checkpoint.ts";
 import type {
   HarnessHostSession,
@@ -240,12 +244,28 @@ export const createHostSession = <G>(
         return lock.withPermits(1)(
           Effect.gen(function* () {
             const checkpoint = input.checkpoint;
+            const creation = input.creation;
+            const load: NativeThreadLoad | undefined =
+              checkpoint !== undefined
+                ? checkpointThreadLoad(checkpoint, input.session)
+                : creation === undefined
+                  ? undefined
+                  : {
+                      method: "ensureThread",
+                      input: {
+                        threadId: input.session.threadId,
+                        providerSessionId: input.session.providerSessionId,
+                        modelSelection: input.session.modelSelection,
+                        runtimePolicy: input.session.runtimePolicy,
+                        existingProviderThread: creation.providerThread,
+                      },
+                    };
             if (
               closed ||
               signal.aborted ||
               access.signal.aborted ||
               initial !== undefined ||
-              checkpoint === undefined
+              load === undefined
             )
               return yield* Effect.fail(
                 new HarnessError({
@@ -261,13 +281,7 @@ export const createHostSession = <G>(
             initial = { access, configuration };
             // Native setup belongs to the session and access, beyond this open operation's fiber.
             const setupSignal = AbortSignal.any([signal, access.signal]);
-            yield* Effect.suspend(() =>
-              native.configureMcp(
-                configuration,
-                setupSignal,
-                checkpointThreadLoad(checkpoint, input.session),
-              ),
-            ).pipe(
+            yield* Effect.suspend(() => native.configureMcp(configuration, setupSignal, load)).pipe(
               Effect.raceFirst(mcpAborted(setupSignal)),
               Effect.andThen(
                 Effect.suspend(() =>
@@ -298,7 +312,8 @@ export const createHostSession = <G>(
           cleanup: Effect.Effect<void, HarnessError>,
         ) => Effect.Effect<HarnessError>,
       ): HarnessHostSession<G> {
-        providerThreadId = input.checkpoint?.snapshot.providerThread.id;
+        providerThreadId =
+          input.checkpoint?.snapshot.providerThread.id ?? input.creation?.providerThread.id;
         const dispose = Effect.suspend(() => {
           stop();
           return raw.dispose.pipe(

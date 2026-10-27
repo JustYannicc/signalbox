@@ -13,6 +13,7 @@ import {
   type HarnessRequestFacetPreparationObservation,
   type HarnessRequestFacetPreparationRequest,
 } from "./contracts.ts";
+import { createFreshRequestPreparation } from "./creation.ts";
 import type {
   HarnessRequestCheckpoint,
   HarnessRequestPublisher,
@@ -90,6 +91,7 @@ export const createHarnessRequestFacet = (
             disposed = true;
           })
             .pipe(Effect.andThen(Scope.close(scope, Exit.void)))
+            .pipe(Effect.andThen(() => fresh.cleanup))
             .pipe(
               Effect.andThen(
                 Effect.suspend(() =>
@@ -134,10 +136,33 @@ export const createHarnessRequestFacet = (
         try: () => options.store.execute(command),
         catch: (cause) => failure("Harness request store rejected the operation.", cause),
       });
+    const fresh = createFreshRequestPreparation(options, scope, {
+      available: () =>
+        !disposed &&
+        !poisoned &&
+        runtime === undefined &&
+        active === undefined &&
+        preparation === undefined,
+      install: (observed) => {
+        runtime = observed.runtime;
+        checkpoint = observed.checkpoint;
+      },
+      poison: () => {
+        poisoned = true;
+      },
+    });
+    const startFresh: HarnessRequestFacet["startFresh"] = (input) =>
+      preparationLock.withPermits(1)(
+        Effect.suspend(() =>
+          disposed || poisoned
+            ? Effect.fail(failure("Harness facet requires a fresh restoration."))
+            : fresh.start(input),
+        ),
+      );
     const prepareInert: HarnessRequestFacet["prepareInert"] = (supplied) =>
       preparationLock.withPermits(1)(
         Effect.gen(function* () {
-          if (disposed || poisoned)
+          if (disposed || poisoned || fresh.started())
             return yield* Effect.fail(failure("Harness facet requires a fresh restoration."));
           if (preparation !== undefined) {
             if (!samePreparation(preparation.input, supplied))
@@ -242,12 +267,14 @@ export const createHarnessRequestFacet = (
           return yield* Effect.fail(
             failure("Published request does not match the inert facet preparation."),
           );
+        yield* fresh.checkPublisher(input.publisher);
         const admitted = yield* execute({
           type: "request.admit",
           runId: options.runId,
           publisher: input.publisher,
           requestId: input.requestId,
         });
+        yield* fresh.checkPublication(admitted);
         if (preparation !== undefined) {
           const requests = admitted.snapshot.requests;
           const published = requests?.facets.find(
@@ -356,5 +383,5 @@ export const createHarnessRequestFacet = (
           ),
         );
       }).pipe(Effect.scoped);
-    return { facetNonce: options.facetNonce, prepareInert, run, dispose };
+    return { facetNonce: options.facetNonce, prepareInert, startFresh, run, dispose };
   });

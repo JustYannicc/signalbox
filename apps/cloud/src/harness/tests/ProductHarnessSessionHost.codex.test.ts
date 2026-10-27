@@ -1,4 +1,6 @@
 import { expect, vi } from "vite-plus/test";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import { dataForDriver } from "../adapter/tests/data.ts";
 import type { ProductComputerOptions } from "../../computer/ProductComputer.ts";
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -205,5 +207,46 @@ it.effect("closes product stdio and Computer after native acquisition fails", ()
     ];
     expect(rows).toHaveLength(1);
     expect(String(rows[0]?.error_json)).toContain("missing WASI import");
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
+it.effect("creates a native Codex thread during open and adopts the same completed setup", () =>
+  Effect.gen(function* () {
+    launch.mockReset();
+    const release = yield* Effect.promise(() => codexFixture());
+    const product = yield* productOptions(release.options);
+    const data = yield* dataForDriver(ProviderDriverKind.make("codex"));
+    const peer = processFixture();
+    yield* Effect.addFinalizer(() => Effect.promise(() => peer.process.abort()));
+    (yield* Effect.promise(() => peer.output)).enqueue(new TextEncoder().encode(readyLine));
+    launch.mockImplementation(async () => peer.process);
+    const providerThread = {
+      ...data.providerThread,
+      appThreadId: codexSession.threadId,
+      providerSessionId: codexSession.providerSessionId,
+      providerInstanceId: codexSession.modelSelection.instanceId,
+      nativeThreadRef: null,
+    };
+    const session = yield* product.host.open({
+      session: codexSession,
+      bootAttemptId: "product-codex-cold-open",
+      creation: { providerThread },
+      initialAccess: {
+        grant: {},
+        connections: { servers: [] },
+        signal: new AbortController().signal,
+      },
+    });
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(peer.sent.filter((method) => method === "thread/start")).toHaveLength(1);
+    expect(peer.sent).not.toContain("thread/resume");
+    expect(peer.sent).not.toContain("turn/start");
+    const initial = yield* session.export();
+    expect(initial.snapshot.providerThread.nativeThreadRef?.nativeId).toBe(
+      "preinitialized-native-thread",
+    );
+    expect(initial.snapshot.providerTurns).toEqual([]);
+    yield* session.retireCheckpointAccess;
+    yield* session.dispose;
   }).pipe(Effect.scoped, Effect.provide(services)),
 );

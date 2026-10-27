@@ -21,14 +21,22 @@ import type { Published } from "./authority.ts";
 export interface OwnedProcessRequest {
   readonly runId: string;
   readonly placement: HarnessProcessResumePlacementPin;
-  readonly process: HarnessProcessExecutionProcessInput;
+  readonly process: Pick<
+    HarnessProcessExecutionProcessInput,
+    "processId" | "operationId" | "nativeSessionId"
+  > &
+    Partial<HarnessProcessExecutionProcessInput>;
   durable: HarnessDurableState;
-  readonly handle: HarnessProcessHandle<HarnessProcessFacetInvokeInput>;
-  readonly publication: Published;
+  readonly handle: Pick<
+    HarnessProcessHandle<HarnessProcessFacetInvokeInput>,
+    "identity" | "stop" | "join" | "cleanup"
+  >;
+  readonly publication?: Published;
   readonly publisher: HarnessThreadSupervisorPublisher;
   readonly request: HarnessRequestOffer;
   readonly runStorePublisher: HarnessRequestPublisher;
-  readonly journal: HarnessProcessResumeRunStoreBinding;
+  readonly journal: Pick<HarnessProcessResumeRunStoreBinding, "controlKey" | "supervisor"> &
+    Partial<HarnessProcessResumeRunStoreBinding>;
   readonly parentCheckpoint: HarnessRequestCheckpoint;
   readonly completion: PromiseWithResolvers<HarnessDurableStateCheckpointResult | undefined>;
   readonly settled: PromiseWithResolvers<void>;

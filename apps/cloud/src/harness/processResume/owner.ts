@@ -34,6 +34,13 @@ import {
 import type { HarnessRequestCheckpoint } from "../HarnessRunStore.ts";
 import type { HarnessProcessInvocationSettlement } from "../processPlacement/contracts.ts";
 import { stopIdleProcess } from "./idleStop.ts";
+import { HarnessProcessCreationOwner } from "../processCreation/service.ts";
+import type {
+  HarnessProcessCreationInput,
+  HarnessProcessCreationRunInput,
+  HarnessProcessCreationEnvironment,
+} from "../processCreation/contracts.ts";
+import type { HarnessProcessCreationRecoveryInput } from "../processCreation/recovery.ts";
 import { validateHarnessProcessResumeRunStoreActive } from "./runStore.ts";
 
 export interface ResumeProcessResult {
@@ -51,6 +58,7 @@ interface ExecutionShardExports {
 /** Owns lifecycle state for one real shard context; callers can never supply a context or handle. */
 export class HarnessProcessResumeOwner {
   #running = false;
+  #creation: HarnessProcessCreationOwner | undefined;
   #retained = false;
   #current: OwnedProcessRequest | undefined;
   #attempt: ResumeAttempt | undefined;
@@ -93,6 +101,58 @@ export class HarnessProcessResumeOwner {
     this.environment = environment;
     this.incarnationNonce = incarnationNonce;
     this.#checkpoints = new ProcessCheckpointOwner(context.storage, () => this.#current);
+  }
+
+  #creationOwner() {
+    if (!this.environment.HARNESS_RUN_STORE || !this.environment.HARNESS_FILES_STORE)
+      throw new Error("Cold creation requires the public durable stores.");
+    return (this.#creation ??= new HarnessProcessCreationOwner(
+      this.context,
+      this.environment as HarnessProcessCreationEnvironment,
+      this.incarnationNonce,
+    ));
+  }
+
+  async startFreshProcess(input: HarnessProcessCreationInput) {
+    if (this.#running || this.#current || this.#attempt || this.#resumed || this.#retained)
+      throw new Error("This shard already owns process execution.");
+    this.#running = true;
+    try {
+      return await this.#creationOwner().start(input);
+    } finally {
+      this.#running = false;
+    }
+  }
+
+  async runCreatedProcess(input: HarnessProcessCreationRunInput, requestContextId: string) {
+    if (this.#running || this.#current || this.#attempt || this.#resumed || this.#retained)
+      throw new Error("This shard already owns process execution.");
+    this.#running = true;
+    try {
+      return await this.#creationOwner().run(input, requestContextId, (owned) => {
+        this.#current = owned;
+      });
+    } finally {
+      this.#running = false;
+    }
+  }
+
+  async recoverFreshProcess(input: HarnessProcessCreationRecoveryInput) {
+    if (this.#running || this.#current || this.#attempt || this.#resumed || this.#retained)
+      throw new Error("This shard already owns process execution.");
+    this.#running = true;
+    try {
+      return await this.#creationOwner().recover(input);
+    } finally {
+      this.#running = false;
+    }
+  }
+
+  processCreationStatus(input: {
+    readonly runId: string;
+    readonly control: HarnessProcessCreationInput["controllerClaim"];
+  }) {
+    return this.#creationOwner().status(input.runId, input.control);
   }
 
   async runShard(

@@ -53,6 +53,11 @@ export interface HarnessCProductAccessService<G> {
     readonly providerSessionId: string;
     readonly nativeSessionId: string;
   }): Promise<{ readonly grant: G; readonly connections: ResolvedConnections }>;
+  resolveFreshAccess?(input: {
+    readonly threadId: ThreadId;
+    readonly providerSessionId: string;
+    readonly operationId: string;
+  }): Promise<{ readonly grant: G; readonly connections: ResolvedConnections }>;
   resolveTurnAccess(input: {
     readonly threadId: ThreadId;
     readonly runId: string;

@@ -62,6 +62,21 @@ export interface HarnessRequestFacetPreparationEvidence {
   readonly runtime: HarnessFacetRequestRuntime;
 }
 
+export interface HarnessRequestFacetCreationRequest {
+  readonly operationId: string;
+  readonly targetFacetNonce: string;
+  readonly publisherKey: string;
+}
+
+export interface HarnessRequestFacetCreationEvidence extends HarnessRequestFacetPreparationEvidence {
+  readonly filesCheckpoint: import("../HarnessFilesStore.ts").HarnessFilesCheckpoint;
+}
+
+export type HarnessRequestFacetCreationObservation = Omit<
+  HarnessRequestFacetCreationEvidence,
+  "runtime"
+>;
+
 export type HarnessRequestFacetPreparationObservation = Omit<
   HarnessRequestFacetPreparationEvidence,
   "runtime"
@@ -87,6 +102,10 @@ export interface HarnessRequestFacetOptions {
   readonly prepareInert?: (
     input: HarnessRequestFacetPreparationRequest,
   ) => Effect.Effect<HarnessRequestFacetPreparationEvidence, HarnessRequestFacetError, Scope.Scope>;
+  /** Creates the first native thread without a user turn and retains that same runtime. */
+  readonly startFresh?: (
+    input: HarnessRequestFacetCreationRequest,
+  ) => Effect.Effect<HarnessRequestFacetCreationEvidence, HarnessRequestFacetError, Scope.Scope>;
   /** C reads the release observed by this product facet after inert preparation succeeds. */
   readonly loadedPreparedRelease?: () => Promise<unknown> | unknown;
 }
@@ -102,5 +121,8 @@ export interface HarnessRequestFacet {
   readonly prepareInert: (
     input: HarnessRequestFacetPreparationRequest,
   ) => Effect.Effect<HarnessRequestFacetPreparationObservation, HarnessRequestFacetError>;
+  readonly startFresh: (
+    input: HarnessRequestFacetCreationRequest,
+  ) => Effect.Effect<HarnessRequestFacetCreationObservation, HarnessRequestFacetError>;
   readonly dispose: Effect.Effect<void>;
 }

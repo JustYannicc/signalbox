@@ -29,7 +29,7 @@ export type HarnessProcessExecutionProductBootstrapInput =
 export interface HarnessProcessExecutionResumeFacetEnvironment {
   readonly HARNESS_RESUME_RUN_ID: string;
   readonly HARNESS_RESUME_CONTROL: HarnessThreadSupervisorControlClaim;
-  readonly HARNESS_RESUME_PUBLISHER: HarnessThreadSupervisorPublisher;
+  readonly HARNESS_RESUME_PUBLISHER?: HarnessThreadSupervisorPublisher;
   readonly HARNESS_RESUME_RUN_STORE: Fetcher;
   readonly HARNESS_RESUME_FILES_STORE: Fetcher;
   readonly HARNESS_RESUME_SUPERVISOR: Fetcher;
@@ -57,6 +57,20 @@ export type HarnessProcessExecutionProcessInput = {
   readonly resumeFacetEnv?: HarnessProcessExecutionResumeFacetEnvironment;
 } & HarnessProcessExecutionProductBootstrapInput;
 
+export type HarnessProcessExecutionFacetCodeInput = Pick<
+  HarnessProcessExecutionProcessInput,
+  | "processId"
+  | "codeId"
+  | "residentBytes"
+  | "mainModule"
+  | "modules"
+  | "entrypoint"
+  | "facetEnv"
+  | "resumeFacetEnv"
+  | "runStorePublisher"
+> &
+  HarnessProcessExecutionProductBootstrapInput;
+
 export interface HarnessProcessExecutionEnvironment extends HarnessCProductCapabilityEnvironment {
   readonly LOADER: WorkerLoader;
   readonly PLACEMENT_STORES: DurableObjectNamespace;
@@ -83,7 +97,7 @@ const reservedFacetEnvironmentKeys = [
 ] as const;
 
 export function createHarnessProcessFacetEnvironment(
-  process: HarnessProcessExecutionProcessInput,
+  process: HarnessProcessExecutionFacetCodeInput,
   environment: HarnessCProductCapabilityEnvironment,
   identity: HarnessProcessFacetLocator,
   context?: DurableObjectState,
@@ -152,7 +166,11 @@ export function createHarnessProcessFacetEnvironment(
       : {
           HARNESS_RESUME_RUN_ID: process.resumeFacetEnv.HARNESS_RESUME_RUN_ID,
           HARNESS_RESUME_CONTROL: process.resumeFacetEnv.HARNESS_RESUME_CONTROL,
-          HARNESS_RESUME_PUBLISHER: process.resumeFacetEnv.HARNESS_RESUME_PUBLISHER,
+          ...(process.resumeFacetEnv.HARNESS_RESUME_PUBLISHER === undefined
+            ? {}
+            : {
+                HARNESS_RESUME_PUBLISHER: process.resumeFacetEnv.HARNESS_RESUME_PUBLISHER,
+              }),
           HARNESS_RESUME_RUN_STORE: process.resumeFacetEnv.HARNESS_RESUME_RUN_STORE,
           HARNESS_RESUME_FILES_STORE: process.resumeFacetEnv.HARNESS_RESUME_FILES_STORE,
           HARNESS_RESUME_SUPERVISOR: process.resumeFacetEnv.HARNESS_RESUME_SUPERVISOR,

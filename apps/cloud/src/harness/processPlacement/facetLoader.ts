@@ -18,13 +18,15 @@ import {
   createHarnessProcessFacetEnvironment,
   type HarnessProcessExecutionEnvironment,
   type HarnessProcessExecutionProcessInput,
+  type HarnessProcessExecutionFacetCodeInput,
 } from "./executionEnvironment.ts";
 
-type HarnessProcessFacetStub = Pick<
+export type HarnessProcessFacetStub = Pick<
   HarnessRequestFacetObject,
-  "identity" | "prepareInert" | "run" | "dispose"
+  "prepareInert" | "startFresh" | "run" | "dispose"
 > &
   Rpc.DurableObjectBranded & {
+    identity(): Promise<{ readonly facetNonce: string }>;
     /** Implemented only by a host that can observe its verified prepared artifact load. */
     loadedPreparedRelease: () => Promise<unknown>;
   };
@@ -37,6 +39,25 @@ export function createHarnessProcessFacet(
 ): HarnessProcessPreparedFacet<FacetInvokeInput> & {
   readonly readLoadedPreparedRelease: () => Promise<unknown>;
 } {
+  const facet = createHarnessProcessFacetStub(context, environment, process, identity);
+  return {
+    ...createHarnessProcessFacetAdapter(identity, facet),
+    async readLoadedPreparedRelease() {
+      try {
+        return await facet.loadedPreparedRelease();
+      } catch {
+        return undefined;
+      }
+    },
+  };
+}
+
+export function createHarnessProcessFacetStub(
+  context: DurableObjectState,
+  environment: HarnessProcessExecutionEnvironment,
+  process: HarnessProcessExecutionFacetCodeInput,
+  identity: HarnessProcessFacetLocator,
+): HarnessProcessFacetStub {
   if (
     !process.mainModule ||
     !Object.hasOwn(process.modules, process.mainModule) ||
@@ -102,14 +123,5 @@ export function createHarnessProcessFacet(
   const facet = context.facets.get<HarnessProcessFacetStub>(identity.facetKey, () => ({
     class: facetClass,
   }));
-  return {
-    ...createHarnessProcessFacetAdapter(identity, facet),
-    async readLoadedPreparedRelease() {
-      try {
-        return await facet.loadedPreparedRelease();
-      } catch {
-        return undefined;
-      }
-    },
-  };
+  return facet;
 }
