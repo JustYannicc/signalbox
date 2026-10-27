@@ -133,7 +133,8 @@ describe.skipIf(!bashAvailable || !coreutilsArtifactsAvailable)("GNU Bash SIGPIP
     [false, true],
     [true, true],
   ])("finishes an unbounded builtin pipeline, child=%s pipefail=%s", async (child, pipefail) => {
-    const count = 131_073;
+    // One consumed byte closes the reader and drives the writer's next SIGPIPE.
+    const count = 1;
     const command = `${pipefail ? "set -o pipefail; " : ""}while :; do printf y; done | head -c ${count}; printf '%s:%s\\n' "$?" "\${PIPESTATUS[*]}" >&2`;
     const native = NodeChildProcess.spawnSync("/bin/bash", [
       "--noprofile",

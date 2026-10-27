@@ -145,6 +145,33 @@ function startGuest(
   return { owner, reactor };
 }
 
+function makeRetryWaitsReady(port: KernelBashPort) {
+  const call = port.call;
+  const waits: bigint[] = [];
+  vi.spyOn(port, "call").mockImplementation((request) => {
+    if (request.name !== "poll_oneoff") return call(request);
+    expect(request.args[2]).toBe(1);
+    const subscription = request.regions.find(({ pointer }) => pointer === request.args[0]);
+    if (subscription === undefined) throw new Error("Missing retry clock subscription");
+    const bytes = subscription.bytes.slice();
+    const clock = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    expect(clock.getUint8(8)).toBe(0);
+    expect(clock.getUint16(40, true)).toBe(0);
+    const delay = clock.getBigUint64(24, true);
+    expect(delay).toBeGreaterThan(0n);
+    waits.push(delay);
+    // Keep the real WASI poll and its event, with this retry deadline already due.
+    clock.setBigUint64(24, 0n, true);
+    return call({
+      ...request,
+      regions: request.regions.map((region) =>
+        region === subscription ? { ...region, bytes } : region,
+      ),
+    });
+  });
+  return waits;
+}
+
 describe.skipIf(!available)("Bash Dynamic Worker quota fork failure", () => {
   it.each(quotaCases)(
     "reports a normal failed fork, releases the slot, and reuses its generation after the $label cap",
@@ -157,6 +184,8 @@ describe.skipIf(!available)("Bash Dynamic Worker quota fork failure", () => {
       const waitpid = vi.spyOn(fixture.processes, "waitpid");
 
       const control = childBashFixture({ args: command });
+      const expectedWaits = makeRetryWaitsReady(control.owner.port);
+      const actualWaits = makeRetryWaitsReady(guest.owner.port);
       const reference = createChildBash({
         residentByteLimit: 104 * 1024 * 1024,
         module: module!,
@@ -191,6 +220,9 @@ describe.skipIf(!available)("Bash Dynamic Worker quota fork failure", () => {
         expect(fixture.stderr()).toBe(control.stderr());
         expect(fixture.stderr()).toContain("fork:");
         expect(actual).toEqual(expected);
+        expect(actualWaits).toEqual(expectedWaits);
+        expect(actualWaits).toEqual([1n, 2n, 4n, 8n].map((seconds) => seconds * 1_000_000_000n));
+        expect(actualWaits).toHaveLength(failedForkAttempts - 1);
         expect(fixture.processes.size).toBe(1);
         expect([...fixture.filesystem.descriptors.entries()].map(([fd]) => fd)).toEqual(
           initialDescriptors,
@@ -234,6 +266,7 @@ describe.skipIf(!available)("Bash Dynamic Worker quota fork failure", () => {
         await fixture.close();
         await control.close();
         await harness.lifetimes.drain();
+        vi.restoreAllMocks();
       }
     },
   );
