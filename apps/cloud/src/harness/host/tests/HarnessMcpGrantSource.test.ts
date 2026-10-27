@@ -4,6 +4,7 @@ import { RunAttemptId, RunId } from "@t3tools/contracts";
 import type { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
+import * as TestClock from "effect/testing/TestClock";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import type {
@@ -283,6 +284,53 @@ describe("Harness host injected per-turn grants", () => {
           )).status,
         ).toBe(200);
         yield* replacementSession.dispose;
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "denies an expired grant at the retained endpoint and renews it for the next turn",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* hostFixture;
+        const clock = yield* Clock.Clock;
+        const gateway = makeGrantGateway(() => clock.currentTimeMillisUnsafe());
+        f.setForward(gateway.forward);
+        const instance = yield* f.make({ turnGrantSource: gateway.source });
+        yield* instance.host.seed("assets");
+        yield* instance.host.seed("programs");
+        const session = yield* instance.open();
+        const firstTurn = instance.adapter.turn;
+        yield* session.turn({
+          turn: firstTurn,
+          access: publisherAccess(f, "first", 7, "publisher"),
+        });
+        yield* instance.adapter.nextStart;
+        const capturedUrl = f.configurations[0]!.servers.executor!.url;
+        yield* instance.adapter.terminal();
+        yield* instance.adapter.saving;
+        yield* TestClock.adjust(59_999);
+        yield* Effect.promise(() => f.mcp.fetch(new Request(capturedUrl)));
+        expect(f.forwards.at(-1)?.grant).toBe(gateway.issued[0]!.grant);
+        yield* TestClock.adjust(1);
+        const count = f.forwards.length;
+        yield* Effect.promise(() =>
+          expect(f.mcp.fetch(new Request(capturedUrl))).rejects.toThrow(),
+        );
+        expect(f.forwards).toHaveLength(count);
+
+        const continued = laterTurn(firstTurn, "renewed-run", 2);
+        yield* session.turn({
+          turn: continued,
+          access: publisherAccess(f, "renewed", 7, "publisher"),
+        });
+        yield* instance.adapter.nextStart;
+        expect(f.configurations[1]!.servers.executor!.url).toBe(capturedUrl);
+        expect(gateway.issued).toHaveLength(2);
+        yield* Effect.promise(() => f.mcp.fetch(new Request(capturedUrl)));
+        expect(f.forwards.at(-1)?.grant).toBe(gateway.issued[1]!.grant);
+        expect(f.forwards.at(-1)?.grant).not.toBe(gateway.issued[0]!.grant);
+        expect(f.acquisitions).toHaveLength(1);
+        yield* session.dispose;
       }).pipe(Effect.scoped),
   );
 
