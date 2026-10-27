@@ -9,11 +9,15 @@ export const CHILD_COREUTILS_COMMANDS = Object.freeze([
   "pwd",
   "head",
   "tail",
+  "wc",
+  "uniq",
 ] as const);
 
 export type ChildCoreutilsCommand = (typeof CHILD_COREUTILS_COMMANDS)[number];
 
 export const CHILD_BUSYBOX_APPLETS = Object.freeze(["cat", "grep", "touch"] as const);
+
+export const CHILD_PRODUCT_BUSYBOX_APPLETS = Object.freeze(["env", "id", "sort"] as const);
 
 export const CHILD_PROGRAM_PATHS = Object.freeze({
   bash: "/bin/bash",
@@ -33,5 +37,11 @@ export const CHILD_PROGRAM_PATHS = Object.freeze({
   pwd: "/bin/pwd",
   head: "/bin/head",
   tail: "/bin/tail",
+  wc: "/bin/wc",
+  uniq: "/bin/uniq",
+  env: "/bin/env",
+  id: "/bin/id",
+  sort: "/bin/sort",
   git: "/usr/bin/git",
+  jq: "/usr/bin/jq",
 });

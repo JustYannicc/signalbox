@@ -9,7 +9,11 @@ import {
   CHILD_PROGRAM_PATHS,
 } from "../../src/computer/ChildProgramSet.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../src/kernel/KernelBashProgram.ts";
-import { KERNEL_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusyboxProgram.ts";
+import {
+  KERNEL_BUSYBOX_ARTIFACT,
+  PRODUCT_COMPUTER_BUSYBOX_ARTIFACT,
+} from "../../src/kernel/KernelBusyboxProgram.ts";
+import { KERNEL_JQ_ARTIFACT } from "../../src/kernel/KernelJqProgram.ts";
 import { KERNEL_GIT_ARTIFACT } from "../../src/kernel/KernelGitProgram.ts";
 import { KERNEL_GNU_SED_ARTIFACT } from "../../src/kernel/KernelGnuPrograms.ts";
 import { KERNEL_RIPGREP_ARTIFACT } from "../../src/kernel/KernelRipgrepProgram.ts";
@@ -89,9 +93,13 @@ describe("full child program preparation", () => {
     expect(await programReference(codes.bash)).toBe(KERNEL_BASH_ARTIFACT.sha256);
     expect(await programReference(codes.busyboxCat)).toBe(KERNEL_BUSYBOX_ARTIFACT.sha256);
     expect(await programReference(codes.busyboxApplets)).toBe(KERNEL_BUSYBOX_ARTIFACT.sha256);
+    expect(await programReference(codes.productBusyboxApplets)).toBe(
+      PRODUCT_COMPUTER_BUSYBOX_ARTIFACT.sha256,
+    );
     expect(await programReference(codes.ripgrep)).toBe(KERNEL_RIPGREP_ARTIFACT.sha256);
     expect(await programReference(codes.git)).toBe(KERNEL_GIT_ARTIFACT.sha256);
     expect(await programReference(codes.sed)).toBe(KERNEL_GNU_SED_ARTIFACT.sha256);
+    expect(await programReference(codes.jq)).toBe(KERNEL_JQ_ARTIFACT.sha256);
     for (const command of CHILD_COREUTILS_COMMANDS) {
       expect(await programReference(codes.coreutils![command])).toBe(
         coreutilsProvenance.commands[command].sha256,
@@ -107,7 +115,7 @@ describe("full child program preparation", () => {
     ).toThrow("Prepared child program is missing coreutils mkdir");
   });
 
-  it("describes each of the 18 executable paths and rejects incomplete seeds", () => {
+  it("describes each of the 24 executable paths and rejects incomplete seeds", () => {
     const files = Object.values(CHILD_PROGRAM_PATHS).map((path, index) => ({
       path,
       bytes: encoder.encode(path),
@@ -116,7 +124,7 @@ describe("full child program preparation", () => {
     }));
     const catalog = createChildProgramExecutableCatalog(files);
     expect(Object.keys(catalog)).toEqual(Object.values(CHILD_PROGRAM_PATHS));
-    expect(Object.keys(catalog)).toHaveLength(18);
+    expect(Object.keys(catalog)).toHaveLength(24);
     expect(catalog["/bin/sed"]).toEqual({
       bytes: encoder.encode("/bin/sed").byteLength,
       sha256: String(Object.values(CHILD_PROGRAM_PATHS).indexOf("/bin/sed")).padStart(64, "0"),
@@ -212,10 +220,12 @@ function fullProgramSources(): FullChildProgramSources {
     bash: code("bash"),
     busyboxCat: code("busybox-cat"),
     busyboxApplets: code("busybox-applets"),
+    productBusyboxApplets: code("busybox-product-applets"),
     sed: code("gnu-sed"),
     ripgrep: code("ripgrep"),
     coreutils,
     git: code("git"),
+    jq: code("jq"),
   };
 }
 

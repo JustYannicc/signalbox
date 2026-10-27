@@ -1,0 +1,13 @@
+diff --git a/packages/worker/wasm/bash/coreutils/busybox-wasi.config b/packages/worker/wasm/bash/coreutils/busybox-wasi.config
+index 0000000..0000000 100644
+--- a/packages/worker/wasm/bash/coreutils/busybox-wasi.config
++++ b/packages/worker/wasm/bash/coreutils/busybox-wasi.config
+@@ -45,6 +45,7 @@ CONFIG_FEATURE_FANCY_TAIL=y
+ CONFIG_DU=y
+ CONFIG_FEATURE_DU_DEFAULT_BLOCKSIZE_1K=y
+ CONFIG_DF=y
+ CONFIG_ENV=y
++CONFIG_ID=y
+ CONFIG_WHICH=y
+ CONFIG_BASENAME=y
+ CONFIG_DIRNAME=y

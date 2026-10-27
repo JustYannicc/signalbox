@@ -34,7 +34,7 @@ describe("uniform command gateway admission", () => {
     try {
       const pathnames = Object.values(CHILD_PROGRAM_PATHS);
       const aliases = Object.keys(CHILD_PROGRAM_PATHS);
-      expect(pathnames).toHaveLength(18);
+      expect(pathnames).toHaveLength(24);
       for (const executable of [...pathnames, ...aliases]) {
         expect(fixture.gateway.host.resolve(executable).status).toBe("ok");
         expect(fixture.gateway.isolateHost.resolve(executable).status).toBe("ok");

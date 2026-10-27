@@ -19,7 +19,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine lookup failur
     };
     const fixture = machinePathFixture(bashModule!, { files });
     await withLookupFailureFixture(fixture, async () => {
-      const visibleFailure = await expectUnavailableRejection(fixture.run("sort"));
+      const visibleFailure = await expectUnavailableRejection(fixture.run("awk"));
       expect(fixture.machineCalls).toEqual([]);
       return visibleFailure;
     });
@@ -37,7 +37,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine lookup failur
     };
     const fixture = machinePathFixture(bashModule!, { files });
     await withLookupFailureFixture(fixture, async () => {
-      const visibleFailure = await expectUnavailableRejection(fixture.run("sort"));
+      const visibleFailure = await expectUnavailableRejection(fixture.run("awk"));
       expect(lookupCalls).toContain("lstat");
       expect(fixture.machineCalls).toEqual([]);
       return visibleFailure;
@@ -78,7 +78,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine lookup failur
     const fixture = machinePathFixture(bashModule!, { files });
     const path = Array.from({ length: 40 }, (_, index) => `/missing-${index}`).join(":");
     await withLookupFailureFixture(fixture, async () => {
-      await fixture.direct("sort", ["sort"]);
+      await fixture.direct("awk", ["awk"]);
       const machineCallsBeforeLookup = fixture.machineCalls.length;
       expect(machineCallsBeforeLookup).toBe(1);
       const writesBefore = fixture.sqlWriteCount();
