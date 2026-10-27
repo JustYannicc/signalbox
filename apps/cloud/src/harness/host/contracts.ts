@@ -52,11 +52,34 @@ export interface ResolvedConnections {
 export type ExecutorTarget =
   | { readonly type: "executor" }
   | { readonly type: "direct"; readonly serverId: string; readonly tools: readonly string[] };
+export interface HarnessMcpPublisherIdentity {
+  readonly generation: number;
+  readonly facetNonce: string;
+}
+export interface HarnessMcpTurnGrantInput {
+  readonly runId: string;
+  /** The epoch allocated by the host for this exact native MCP installation. */
+  readonly nativeTurnEpoch: number;
+  readonly publisher: HarnessMcpPublisherIdentity;
+  readonly signal: AbortSignal;
+}
+export interface HarnessMcpTurnGrant<G> {
+  readonly grant: G;
+  /** Endpoint of the tools gateway that receives this short-lived grant. */
+  readonly endpoint: string;
+  /** Unix time in milliseconds, when known by the issuing authority. */
+  readonly expiresAtMs?: number;
+}
+export interface HarnessMcpTurnGrantSource<G> {
+  readonly issue: (input: HarnessMcpTurnGrantInput) => Promise<HarnessMcpTurnGrant<G> | null>;
+}
 export interface ExecutorMcpPort<G> {
   /** Executor checks this supplied grant on every call and owns upstream authentication. */
   readonly forward: (input: {
     readonly target: ExecutorTarget;
     readonly grant: G;
+    /** Present only when an injected per-turn grant source selected a gateway endpoint. */
+    readonly gatewayEndpoint?: string;
     readonly request: Request;
     readonly signal: AbortSignal;
   }) => Promise<Response>;
@@ -65,6 +88,8 @@ export interface TurnAccess<G> {
   readonly grant: G;
   readonly signal: AbortSignal;
   readonly connections: ResolvedConnections;
+  /** Current request publisher identity; checkpoint-only access leaves this absent. */
+  readonly publisher?: HarnessMcpPublisherIdentity;
 }
 export interface NativeMcpConfiguration {
   readonly epoch: number;
@@ -105,6 +130,8 @@ export interface HarnessHostOptions<G> {
   readonly hooks?: HarnessOpenInput["hooks"];
   readonly continuations?: HarnessContinuationPublisher;
   readonly executor: ExecutorMcpPort<G>;
+  /** Issues a fresh tools-gateway grant after the host allocates each turn epoch. */
+  readonly turnGrantSource?: HarnessMcpTurnGrantSource<G>;
   readonly bindComputer: (input: {
     readonly threadId: string;
     readonly files: Computer["files"];

@@ -1,7 +1,13 @@
 import type { ThreadId } from "@t3tools/contracts";
 import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleaseLedger.ts";
 import type { HarnessRunArtifact } from "../HarnessRunStore.ts";
-import type { ExecutorTarget, ProgramSeed, ResolvedConnections } from "../HarnessSessionHost.ts";
+import type {
+  ExecutorTarget,
+  HarnessMcpTurnGrant,
+  HarnessMcpTurnGrantInput,
+  ProgramSeed,
+  ResolvedConnections,
+} from "../HarnessSessionHost.ts";
 import type {
   HarnessCProductBootstrapDescriptor,
   HarnessCProductProvider,
@@ -47,6 +53,15 @@ export interface HarnessCProductAccessService<G> {
   }): Promise<{ readonly grant: G; readonly connections: ResolvedConnections }>;
 }
 
+export interface HarnessCProductTurnGrantInput extends Omit<HarnessMcpTurnGrantInput, "signal"> {
+  /** Closing this stream cancels issuance without transporting a local AbortSignal. */
+  readonly cancellation: ReadableStream<Uint8Array>;
+}
+
+export interface HarnessCProductTurnGrantSource<G> {
+  issue(input: HarnessCProductTurnGrantInput): Promise<HarnessMcpTurnGrant<G> | null>;
+}
+
 export interface HarnessCProductProgramCatalog {
   readonly sourceIdentity: string;
   readonly codes: CommandProgramCodes;
@@ -79,6 +94,7 @@ export interface HarnessCProductExecutorResponse {
 export interface HarnessCProductExecutorForwardInput<G> {
   readonly target: ExecutorTarget;
   readonly grant: G;
+  readonly gatewayEndpoint?: string;
   readonly request: HarnessCProductExecutorRequest;
   /** AbortSignal cannot cross Workers RPC; closing this stream revokes the request. */
   readonly cancellation: ReadableStream<Uint8Array>;
