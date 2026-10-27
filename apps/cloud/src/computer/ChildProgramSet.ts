@@ -45,3 +45,5 @@ export const CHILD_PROGRAM_PATHS = Object.freeze({
   git: "/usr/bin/git",
   jq: "/usr/bin/jq",
 });
+
+export const CHILD_SED_EXECUTABLES = Object.freeze(["/bin/sed", "/usr/bin/sed"] as const);

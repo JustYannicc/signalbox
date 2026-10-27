@@ -2,6 +2,7 @@ import {
   CHILD_BUSYBOX_APPLETS,
   CHILD_PRODUCT_BUSYBOX_APPLETS,
   CHILD_PROGRAM_PATHS,
+  CHILD_SED_EXECUTABLES,
   type ChildCoreutilsCommand,
 } from "../../src/computer/ChildProgramSet.ts";
 import {
@@ -61,7 +62,8 @@ export interface FullChildProgramSources extends ChildProgramSources {
 }
 
 export type ChildProgramExecutablePath =
-  (typeof CHILD_PROGRAM_PATHS)[keyof typeof CHILD_PROGRAM_PATHS];
+  | (typeof CHILD_PROGRAM_PATHS)[keyof typeof CHILD_PROGRAM_PATHS]
+  | (typeof CHILD_SED_EXECUTABLES)[number];
 export type LegacyChildProgramExecutablePath = "/bin/bash" | "/bin/cat" | "/bin/rg";
 
 export interface ChildProgramExecutableFile {
@@ -185,6 +187,7 @@ export async function prepareChildPrograms(
     "src/computer/catalog/BusyboxPrograms.ts",
     "src/computer/catalog/ChildProgramFactory.ts",
     "src/computer/catalog/JqProgram.ts",
+    "src/computer/catalog/SedPrograms.ts",
     "src/computer/CommandGateway.ts",
     "src/computer/CompiledChildWorkerLoader.ts",
     "src/kernel/KernelBashProgram.ts",
@@ -239,7 +242,7 @@ export async function prepareChildPrograms(
       executableFile(CHILD_PROGRAM_PATHS[applet], productBusyboxArtifact),
     ),
     ...measured.files,
-    executableFile("/bin/sed", sedArtifact),
+    ...CHILD_SED_EXECUTABLES.map((path) => executableFile(path, sedArtifact)),
     executableFile(CHILD_PROGRAM_PATHS.jq, jqArtifact),
   ]);
   const commandExecutableCatalog = createChildProgramExecutableCatalog(commandExecutableFiles);
@@ -269,7 +272,10 @@ export async function prepareChildPrograms(
 export function createChildProgramExecutableCatalog(
   files: readonly ChildProgramExecutableFile[],
 ): ChildProgramExecutableCatalog {
-  const expectedPaths = new Set(Object.values(CHILD_PROGRAM_PATHS));
+  const expectedPaths = new Set<ChildProgramExecutablePath>([
+    ...Object.values(CHILD_PROGRAM_PATHS),
+    ...CHILD_SED_EXECUTABLES,
+  ]);
   if (
     files.length !== expectedPaths.size ||
     files.some((file) => !expectedPaths.delete(file.path)) ||
