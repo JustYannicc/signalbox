@@ -8,6 +8,7 @@ import { prepare } from "./prepare.ts";
 import { readChildProgramWasmInventory } from "./programWasmRegistryGeneration.ts";
 import { verificationErrors } from "./verify.ts";
 import { requestJson } from "./transport.ts";
+import { createStageTransport } from "./stageTransport.ts";
 import {
   encodeModuleTransport,
   MODULE_TRANSPORT_CONTENT_TYPE,
@@ -147,6 +148,11 @@ const harness = deployedUrl
     });
 const runId = NodeCrypto.randomBytes(8).toString("hex");
 const rows: unknown[] = [];
+const stageTransport =
+  deployedUrl && process.env.PROBE_VERSION_ID
+    ? createStageTransport(deployedUrl, token, process.env.PROBE_VERSION_ID)
+    : undefined;
+const request = stageTransport?.request ?? requestJson;
 
 try {
   const endpoint = deployedUrl ?? (await harness!.listen()).url.toString();
@@ -172,7 +178,7 @@ try {
       ...(hasModuleTransport ? { duplex: "half" } : {}),
       signal: AbortSignal.timeout(60_000),
     };
-    return requestJson(url, init);
+    return request(url, init);
   };
   if (values.fixture) {
     const dir = NodePath.resolve(values.fixture);
@@ -266,7 +272,7 @@ try {
       rows.push({
         target: "do",
         path,
-        ...(await requestJson(
+        ...(await request(
           url,
           {
             headers: { authorization: `Bearer ${token}` },
@@ -309,5 +315,9 @@ try {
   process.stdout.write(output);
   if (!values["measure-only"] && evidence.verificationErrors.length > 0) process.exitCode = 1;
 } finally {
-  await harness?.close();
+  try {
+    await stageTransport?.close();
+  } finally {
+    await harness?.close();
+  }
 }
