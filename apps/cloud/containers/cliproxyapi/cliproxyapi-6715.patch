@@ -241,12 +241,12 @@ index 00000000..78419deb
 +	}
 +}
 diff --git a/internal/api/handlers/management/auth_files_fields.go b/internal/api/handlers/management/auth_files_fields.go
-index 766202a3..2aa02d1b 100644
+index 766202a3..fa3fb966 100644
 --- a/internal/api/handlers/management/auth_files_fields.go
 +++ b/internal/api/handlers/management/auth_files_fields.go
 @@ -936,20 +936,34 @@ func (h *Handler) deleteTokenRecord(ctx context.Context, path string) error {
  }
-
+ 
  func (h *Handler) tokenStoreWithBaseDir() coreauth.Store {
 +	store, _ := h.tokenStoreWithBaseDirContext(context.Background())
 +	return store
@@ -282,11 +282,11 @@ index 766202a3..2aa02d1b 100644
 -	return store
 +	return store, nil
  }
-
+ 
  func (h *Handler) mergeExistingAuthFileMetadata(record *coreauth.Auth) {
 @@ -990,11 +1004,22 @@ func (h *Handler) mergeExistingAuthFileMetadata(record *coreauth.Auth) {
  }
-
+ 
  func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (string, error) {
 +	savedPath, err := h.persistTokenRecord(ctx, record)
 +	if err != nil {
@@ -308,7 +308,15 @@ index 766202a3..2aa02d1b 100644
  	if store == nil {
  		return "", fmt.Errorf("token store unavailable")
  	}
-@@ -1026,6 +1051,10 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
+@@ -1010,6 +1035,7 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
+ 			return "", fmt.Errorf("post-auth hook failed: %w", err)
+ 		}
+ 	}
++	record.BindCommittedAuthFile("", nil)
+ 	savedPath, errSave := store.Save(coreauth.WithAuthCreationIntent(ctx), record)
+ 	if errSave != nil {
+ 		return savedPath, errSave
+@@ -1026,9 +1052,18 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
  			return savedPath, fmt.Errorf("canonical Claude credential saved but legacy credential cleanup failed: %w", errDelete)
  		}
  	}
@@ -318,8 +326,17 @@ index 766202a3..2aa02d1b 100644
 +func (h *Handler) notifyPersistedTokenRecord(ctx context.Context, savedPath string, record *coreauth.Auth) error {
  	if h.postAuthPersistHook != nil {
  		persistedRecord := record
- 		if data, errRead := os.ReadFile(savedPath); errRead == nil && len(data) > 0 {
-@@ -1037,7 +1066,7 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
+-		if data, errRead := os.ReadFile(savedPath); errRead == nil && len(data) > 0 {
++		data := record.CommittedAuthFile(savedPath)
++		remotelyCommitted := len(data) > 0
++		if !remotelyCommitted {
++			data, _ = os.ReadFile(savedPath)
++		}
++		if len(data) > 0 {
+ 			auths, errSynthesize := synthesizer.SynthesizeAuthFile(&synthesizer.SynthesisContext{
+ 				Config:           h.cfg,
+ 				AuthDir:          filepath.Dir(savedPath),
+@@ -1037,18 +1072,22 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
  				PluginAuthParser: h.pluginHost,
  			}, savedPath, data)
  			if errSynthesize != nil {
@@ -328,7 +345,13 @@ index 766202a3..2aa02d1b 100644
  			}
  			for _, auth := range auths {
  				if auth != nil && (auth.ID == record.ID || len(auths) == 1) {
-@@ -1047,8 +1076,8 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
++					if remotelyCommitted {
++						// These bytes are committed remotely, not an observation of the stale mirror.
++						auth.ClearFileSnapshot()
++					}
+ 					persistedRecord = auth
+ 					break
+ 				}
  			}
  		}
  		if errHook := h.postAuthPersistHook(ctx, persistedRecord); errHook != nil {
@@ -1948,10 +1971,10 @@ index 61786b4a..9b136f3d 100644
  				}
 diff --git a/internal/auth/codex/filelock.go b/internal/auth/codex/filelock.go
 new file mode 100644
-index 00000000..d738778c
+index 00000000..afc807c1
 --- /dev/null
 +++ b/internal/auth/codex/filelock.go
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,96 @@
 +package codex
 +
 +import (
@@ -1965,15 +1988,30 @@ index 00000000..d738778c
 +	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
 +)
 +
++// Entries include waiters so cancellation cannot replace a mutex still in use.
 +var codexFileLocks sync.Map
++var codexFileLocksMu sync.Mutex
 +
-+func lockForFilePath(authFilePath string) *misc.ContextMutex {
++type filePathLock struct {
++	mutex misc.ContextMutex
++	users int
++}
++
++func lockForFilePath(authFilePath string) (*misc.ContextMutex, func()) {
 +	cleaned := canonicalLockPath(authFilePath)
-+	if actual, ok := codexFileLocks.Load(cleaned); ok {
-+		return actual.(*misc.ContextMutex)
++	codexFileLocksMu.Lock()
++	actual, _ := codexFileLocks.LoadOrStore(cleaned, &filePathLock{})
++	entry := actual.(*filePathLock)
++	entry.users++
++	codexFileLocksMu.Unlock()
++	return &entry.mutex, func() {
++		codexFileLocksMu.Lock()
++		defer codexFileLocksMu.Unlock()
++		entry.users--
++		if entry.users == 0 {
++			codexFileLocks.Delete(cleaned)
++		}
 +	}
-+	actual, _ := codexFileLocks.LoadOrStore(cleaned, &misc.ContextMutex{})
-+	return actual.(*misc.ContextMutex)
 +}
 +
 +// WithFileLock serializes credential updates within and across processes.
@@ -1987,7 +2025,8 @@ index 00000000..d738778c
 +	if ctx == nil {
 +		ctx = context.Background()
 +	}
-+	mu := lockForFilePath(authFilePath)
++	mu, releaseEntry := lockForFilePath(authFilePath)
++	defer releaseEntry()
 +	if err := mu.LockContext(ctx); err != nil {
 +		return err
 +	}
@@ -2034,16 +2073,18 @@ index 00000000..d738778c
 +}
 diff --git a/internal/auth/codex/filelock_test.go b/internal/auth/codex/filelock_test.go
 new file mode 100644
-index 00000000..c069ebcf
+index 00000000..84ef2a7e
 --- /dev/null
 +++ b/internal/auth/codex/filelock_test.go
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,118 @@
 +package codex
 +
 +import (
 +	"context"
 +	"errors"
++	"fmt"
 +	"path/filepath"
++	"strings"
 +	"testing"
 +	"testing/synctest"
 +	"time"
@@ -2056,7 +2097,8 @@ index 00000000..c069ebcf
 +				path := filepath.Join(t.TempDir(), "codex.json")
 +				var release func()
 +				if phase == "process" {
-+					mu := lockForFilePath(path)
++					mu, releaseEntry := lockForFilePath(path)
++					defer releaseEntry()
 +					mu.Lock()
 +					release = mu.Unlock
 +				} else {
@@ -2104,6 +2146,54 @@ index 00000000..c069ebcf
 +	if err := WithFileLockContext(ctx, filepath.Join(t.TempDir(), "codex.json"), func() error { t.Error("canceled callback ran"); return nil }); !errors.Is(err, context.Canceled) {
 +		t.Fatalf("error=%v; want canceled", err)
 +	}
++}
++
++func TestWithFileLockReleasesOneUsePaths(t *testing.T) {
++	dir := t.TempDir()
++	for i := 0; i < 20; i++ {
++		path := filepath.Join(dir, fmt.Sprintf("staged-%d", i))
++		if err := WithFileLockContext(context.Background(), path, func() error { return nil }); err != nil {
++			t.Fatal(err)
++		}
++	}
++	retained := 0
++	codexFileLocks.Range(func(key, _ any) bool {
++		if strings.HasPrefix(key.(string), canonicalLockPath(dir)+string(filepath.Separator)) {
++			retained++
++		}
++		return true
++	})
++	if retained != 0 {
++		t.Fatalf("completed one-use paths retained %d locks", retained)
++	}
++}
++
++func TestWithFileLockCanceledWaiterKeepsActiveEntry(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		path := filepath.Join(t.TempDir(), "credential")
++		mutex, releaseEntry := lockForFilePath(path)
++		mutex.Lock()
++		ctx, cancel := context.WithCancel(context.Background())
++		done := make(chan error, 1)
++		go func() {
++			done <- WithFileLockContext(ctx, path, func() error { t.Error("canceled waiter ran"); return nil })
++		}()
++		synctest.Wait()
++		cancel()
++		if err := <-done; !errors.Is(err, context.Canceled) {
++			t.Errorf("wait error = %v", err)
++		}
++		next, releaseNext := lockForFilePath(path)
++		if next != mutex {
++			t.Error("canceling a waiter replaced an active mutex")
++		}
++		releaseNext()
++		mutex.Unlock()
++		releaseEntry()
++		if _, retained := codexFileLocks.Load(canonicalLockPath(path)); retained {
++			t.Error("last user left a cached mutex")
++		}
++	})
 +}
 diff --git a/internal/auth/codex/filelock_unix.go b/internal/auth/codex/filelock_unix.go
 index d9ccce8b..5cd33b65 100644
@@ -2316,19 +2406,20 @@ index 00000000..7960686a
 +	m.sem.Release(1)
 +}
 diff --git a/internal/store/gitstore.go b/internal/store/gitstore.go
-index 3c1f0fbe..eda14e18 100644
+index 3c1f0fbe..90777731 100644
 --- a/internal/store/gitstore.go
 +++ b/internal/store/gitstore.go
-@@ -22,6 +22,7 @@ import (
+@@ -22,6 +22,8 @@ import (
  	"github.com/go-git/go-git/v6/plumbing/transport"
  	"github.com/go-git/go-git/v6/plumbing/transport/http"
  	"github.com/go-git/go-git/v6/storage/filesystem/dotgit"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
 +	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
  	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
  	log "github.com/sirupsen/logrus"
  )
-@@ -35,7 +36,7 @@ const (
-
+@@ -35,7 +37,7 @@ const (
+ 
  // GitTokenStore persists token records and auth metadata using git as the backing storage.
  type GitTokenStore struct {
 -	mu        sync.Mutex
@@ -2336,16 +2427,16 @@ index 3c1f0fbe..eda14e18 100644
  	dirLock   sync.RWMutex
  	baseDir   string
  	repoDir   string
-@@ -47,6 +48,7 @@ type GitTokenStore struct {
+@@ -47,6 +49,7 @@ type GitTokenStore struct {
  	lastGC    time.Time
  	pullFn    func(ctx context.Context, worktree *git.Worktree, pullOpts *git.PullOptions) error
  	pushFn    func(ctx context.Context, repo *git.Repository, pushOpts *git.PushOptions) error
 +	openFn    func(path string) (*git.Repository, error)
  }
-
+ 
  type resolvedRemoteBranch struct {
-@@ -68,7 +70,14 @@ func NewGitTokenStore(remote, username, password, branch string) *GitTokenStore
-
+@@ -68,7 +71,14 @@ func NewGitTokenStore(remote, username, password, branch string) *GitTokenStore
+ 
  // SetBaseDir updates the default directory used for auth JSON persistence when no explicit path is provided.
  func (s *GitTokenStore) SetBaseDir(dir string) {
 -	s.mu.Lock()
@@ -2358,9 +2449,9 @@ index 3c1f0fbe..eda14e18 100644
 +		return errLock
 +	}
  	defer s.mu.Unlock()
-
+ 
  	clean := strings.TrimSpace(dir)
-@@ -78,7 +87,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
+@@ -78,7 +88,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
  		s.repoDir = ""
  		s.configDir = ""
  		s.dirLock.Unlock()
@@ -2369,29 +2460,60 @@ index 3c1f0fbe..eda14e18 100644
  	}
  	if abs, err := filepath.Abs(clean); err == nil {
  		clean = abs
-@@ -93,6 +102,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
+@@ -93,6 +103,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
  	s.repoDir = repoDir
  	s.configDir = configDir
  	s.dirLock.Unlock()
 +	return nil
  }
-
+ 
  // AuthDir returns the directory used for auth persistence.
-@@ -431,7 +441,9 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+@@ -288,6 +299,10 @@ func (s *GitTokenStore) ensureRepositoryContextLocked(ctx context.Context) (errR
+ 				}
+ 			}
+ 		}
++		if errRecover := s.recoverUnpushedPublications(ctx, repo, worktree, repoDir, s.baseDir); errRecover != nil {
++			s.dirLock.Unlock()
++			return fmt.Errorf("git token store: recover unpublished credential commit: %w", errRecover)
++		}
+ 		pullOpts := &git.PullOptions{ClientOptions: authMethod, RemoteName: "origin"}
+ 		if s.branch != "" {
+ 			pullOpts.ReferenceName = plumbing.NewBranchReferenceName(s.branch)
+@@ -394,6 +409,10 @@ func (s *GitTokenStore) ensureRepositoryContextLocked(ctx context.Context) (errR
+ 			}
+ 		}
+ 		if !repositoryRecovered {
++			if errReplay := recoverGitPublications(ctx, repo, repoDir, s.baseDir); errReplay != nil {
++				s.dirLock.Unlock()
++				return fmt.Errorf("git token store: replay acquired credentials: %w", errReplay)
++			}
+ 			if errRestore := restoreMissingTrackedFiles(repo, repoDir); errRestore != nil {
+ 				s.dirLock.Unlock()
+ 				return fmt.Errorf("git token store: restore tracked worktree files: %w", errRestore)
+@@ -431,7 +450,9 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: %w", errWeight)
  	}
-
+ 
 -	s.mu.Lock()
 +	if errLock := s.mu.LockContext(ctx); errLock != nil {
 +		return "", errLock
 +	}
  	defer s.mu.Unlock()
-
+ 
  	path, err := s.resolveAuthPath(auth)
-@@ -462,67 +474,75 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+@@ -446,7 +467,7 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+ 	// was deliberately removed. Login and migration callers explicitly mark the
+ 	// save when creating a missing disabled credential is intentional.
+ 	if auth.Disabled && !cliproxyauth.HasAuthCreationIntent(ctx) {
+-		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
++		if _, statErr := authpublication.Stat(path); os.IsNotExist(statErr) {
+ 			return "", nil
+ 		}
+ 	}
+@@ -462,67 +483,75 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: create dir failed: %w", err)
  	}
-
+ 
 -	if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
 -		if errCodex != nil {
 -			return "", errCodex
@@ -2414,17 +2536,17 @@ index 3c1f0fbe..eda14e18 100644
 -			raw, errMarshal := json.Marshal(auth.Metadata)
 -			if errMarshal != nil {
 -				return "", fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
--			}
++	errPersist := persistAcquisitionMirror(ctx, path, auth, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
 -			contentsMatch := false
 -			if existing, errRead := os.ReadFile(path); errRead == nil {
 -				contentsMatch = jsonEqual(existing, raw)
 -			} else if !os.IsNotExist(errRead) {
 -				return "", fmt.Errorf("auth filestore: read existing failed: %w", errRead)
-+	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
-+		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
-+			if errCodex != nil {
-+				return errCodex
- 			}
+-			}
 -			if !contentsMatch {
 -				tmp := path + ".tmp"
 -				if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2472,27 +2594,27 @@ index 3c1f0fbe..eda14e18 100644
 -			return "", fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
  		}
 -	}
-
+ 
 -	if auth.Attributes == nil {
 -		auth.Attributes = make(map[string]string)
 -	}
 -	auth.Attributes[cliproxyauth.AttributePath] = path
 -	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceGit
 +		return nil
-+	}, func() error {
++	}, func(stagedPath string) error {
 +		if auth.Attributes == nil {
 +			auth.Attributes = make(map[string]string)
 +		}
 +		auth.Attributes[cliproxyauth.AttributePath] = path
 +		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceGit
-
+ 
 -	if strings.TrimSpace(auth.FileName) == "" {
 -		auth.FileName = auth.ID
 -	}
 +		if strings.TrimSpace(auth.FileName) == "" {
 +			auth.FileName = auth.ID
 +		}
-
+ 
 -	messageID := auth.ID
 -	if strings.TrimSpace(messageID) == "" {
 -		messageID = filepath.Base(path)
@@ -2504,19 +2626,78 @@ index 3c1f0fbe..eda14e18 100644
 +		if strings.TrimSpace(messageID) == "" {
 +			messageID = filepath.Base(path)
 +		}
-+		if errCommit := s.commitAndPushContextLocked(ctx, fmt.Sprintf("Update auth %s", strings.TrimSpace(messageID)), relPath); errCommit != nil {
++		if errCommit := s.commitAuthSourceLocked(ctx, fmt.Sprintf("Update auth %s", strings.TrimSpace(messageID)), relPath, path, stagedPath); errCommit != nil {
 +			return errCommit
 +		}
-
+ 
 +		return nil
-+	})
++	}, func() { clearGitPublication(s.repoDirSnapshot(), relPath) })
 +	if errPersist != nil {
 +		return "", errPersist
 +	}
  	return path, nil
  }
-
-@@ -1701,13 +1721,22 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 
+@@ -544,6 +573,9 @@ func (s *GitTokenStore) List(_ context.Context) ([]*cliproxyauth.Auth, error) {
+ 			return walkErr
+ 		}
+ 		if d.IsDir() {
++			if d.Name() == authpublication.DirectoryName {
++				return filepath.SkipDir
++			}
+ 			return nil
+ 		}
+ 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".json") {
+@@ -561,7 +593,7 @@ func (s *GitTokenStore) List(_ context.Context) ([]*cliproxyauth.Auth, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return entries, nil
++	return appendPendingAuthFiles(dir, entries, s.readAuthFile)
+ }
+ 
+ // Delete removes the auth file.
+@@ -592,7 +624,7 @@ func (s *GitTokenStore) Delete(_ context.Context, id string) error {
+ 	if errCommit := s.commitAndPushLocked(fmt.Sprintf("Delete auth %s", messageID), rel); errCommit != nil {
+ 		return errCommit
+ 	}
+-	return nil
++	return authpublication.Clear(path)
+ }
+ 
+ // PersistAuthFiles commits and pushes the provided paths to the remote repository.
+@@ -717,7 +749,7 @@ func (s *GitTokenStore) resolveDeletePath(id string) (string, error) {
+ }
+ 
+ func (s *GitTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth, error) {
+-	data, err := os.ReadFile(path)
++	data, err := authpublication.ReadFile(path)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("read file: %w", err)
+ 	}
+@@ -736,7 +768,7 @@ func (s *GitTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth,
+ 	if provider == "" {
+ 		provider = "unknown"
+ 	}
+-	info, err := os.Stat(path)
++	info, err := authpublication.Stat(path)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("stat file: %w", err)
+ 	}
+@@ -1690,7 +1722,11 @@ func (s *GitTokenStore) commitAndPushInitialLocked(message string, relPaths ...s
+ 	return s.commitAndPushWithOptionsLocked(context.Background(), message, true, relPaths...)
+ }
+ 
+-func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, message string, allowMissingRemote bool, relPaths ...string) (errResult error) {
++func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, message string, allowMissingRemote bool, relPaths ...string) error {
++	return s.commitSourcesAndPushLocked(ctx, message, allowMissingRemote, nil, relPaths...)
++}
++
++func (s *GitTokenStore) commitSourcesAndPushLocked(ctx context.Context, message string, allowMissingRemote bool, sources map[string]string, relPaths ...string) (errResult error) {
+ 	if ctx == nil {
+ 		ctx = context.Background()
+ 	}
+@@ -1701,13 +1737,22 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
  	if repoDir == "" {
  		return fmt.Errorf("git token store: repository path not configured")
  	}
@@ -2540,7 +2721,7 @@ index 3c1f0fbe..eda14e18 100644
  			if errResult == nil {
  				errResult = errCloseWrap
  			} else {
-@@ -1731,6 +1760,27 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+@@ -1731,6 +1776,27 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
  	if errHead != nil && !errors.Is(errHead, plumbing.ErrReferenceNotFound) {
  		return fmt.Errorf("git token store: get base head: %w", errHead)
  	}
@@ -2568,7 +2749,21 @@ index 3c1f0fbe..eda14e18 100644
  	if errHead == nil {
  		if errReset := resetIndexToHead(repo, worktree); errReset != nil {
  			return fmt.Errorf("git token store: reset index before commit: %w", errReset)
-@@ -1785,13 +1835,6 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+@@ -1739,6 +1805,13 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 
+ 	added := false
+ 	for _, rel := range managedPaths {
++		if source, ok := sources[rel]; ok {
++			if err := stageAcquisitionBlob(repo, rel, source); err != nil {
++				return err
++			}
++			added = true
++			continue
++		}
+ 		if _, err = worktree.Add(rel); err != nil {
+ 			if errors.Is(err, gitindex.ErrEntryNotFound) {
+ 				continue
+@@ -1785,13 +1858,6 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
  	}
  	if baseRef != nil {
  		if errValidate := validateManagedTreeChanges(repo, baseRef.Hash(), commitHash, managedPaths); errValidate != nil {
@@ -2582,7 +2777,7 @@ index 3c1f0fbe..eda14e18 100644
  			return fmt.Errorf("git token store: validate commit tree: %w", errValidate)
  		}
  	}
-@@ -1803,14 +1846,9 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+@@ -1803,14 +1869,9 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
  		return errRewrite
  	}
  	if errPush := s.pushRepositoryLocked(ctx, repo, repoDir, allowMissingRemote); errPush != nil {
@@ -2597,11 +2792,11 @@ index 3c1f0fbe..eda14e18 100644
 +	pushed = true
  	return nil
  }
-
-@@ -1887,6 +1925,17 @@ func restoreHeadAndIndex(repo *git.Repository, worktree *git.Worktree, head *plu
+ 
+@@ -1887,6 +1948,17 @@ func restoreHeadAndIndex(repo *git.Repository, worktree *git.Worktree, head *plu
  	return worktree.Reset(&git.ResetOptions{Mode: git.MixedReset, Commit: head.Hash()})
  }
-
+ 
 +func restoreUnpublishedGitState(repo *git.Repository, worktree *git.Worktree, base *plumbing.Reference, unbornBranch plumbing.ReferenceName) error {
 +	if base != nil {
 +		return restoreHeadAndIndex(repo, worktree, base)
@@ -2616,7 +2811,7 @@ index 3c1f0fbe..eda14e18 100644
  func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repository, repoDir string, allowMissingRemote bool) error {
  	if ctx == nil {
  		ctx = context.Background()
-@@ -1896,9 +1945,6 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
+@@ -1896,9 +1968,6 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
  	}
  	headRef, errHead := repo.Head()
  	if errHead != nil {
@@ -2626,7 +2821,7 @@ index 3c1f0fbe..eda14e18 100644
  		return fmt.Errorf("git token store: get head for push: %w", errHead)
  	}
  	if !headRef.Name().IsBranch() {
-@@ -1932,8 +1978,9 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
+@@ -1932,8 +2001,9 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
  			return fmt.Errorf("git token store: push: %w", errPush)
  		}
  	}
@@ -2638,18 +2833,23 @@ index 3c1f0fbe..eda14e18 100644
  	s.maybeRunGC(repoDir)
  	return nil
 diff --git a/internal/store/objectstore.go b/internal/store/objectstore.go
-index 39b8b089..d78a40f3 100644
+index 39b8b089..391ab3a2 100644
 --- a/internal/store/objectstore.go
 +++ b/internal/store/objectstore.go
-@@ -12,7 +12,6 @@ import (
+@@ -12,11 +12,11 @@ import (
  	"os"
  	"path/filepath"
  	"strings"
 -	"sync"
  	"time"
-
+ 
  	"github.com/minio/minio-go/v7"
-@@ -49,7 +48,7 @@ type ObjectTokenStore struct {
+ 	"github.com/minio/minio-go/v7/pkg/credentials"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
+ 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+@@ -49,7 +49,7 @@ type ObjectTokenStore struct {
  	spoolRoot   string
  	configPath  string
  	authDir     string
@@ -2657,21 +2857,27 @@ index 39b8b089..d78a40f3 100644
 +	mu          misc.ContextMutex
  	putObjectFn func(ctx context.Context, key string, data []byte, contentType string) error
  }
-
-@@ -184,68 +183,78 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
+ 
+@@ -179,73 +179,83 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
+ 	// was deliberately removed. Login and migration callers explicitly mark the
+ 	// save when creating a missing disabled credential is intentional.
+ 	if auth.Disabled && !cliproxyauth.HasAuthCreationIntent(ctx) {
+-		if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
++		if _, statErr := authpublication.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
+ 			return "", nil
  		}
  	}
-
+ 
 -	s.mu.Lock()
 +	if errLock := s.mu.LockContext(ctx); errLock != nil {
 +		return "", errLock
 +	}
  	defer s.mu.Unlock()
-
+ 
  	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
  		return "", fmt.Errorf("object store: create auth directory: %w", err)
  	}
-
+ 
 -	if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
 -		if errCodex != nil {
 -			return "", errCodex
@@ -2694,17 +2900,17 @@ index 39b8b089..d78a40f3 100644
 -			raw, errMarshal := json.Marshal(auth.Metadata)
 -			if errMarshal != nil {
 -				return "", fmt.Errorf("object store: marshal metadata: %w", errMarshal)
-+	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
-+		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
-+			if errCodex != nil {
-+				return errCodex
- 			}
+-			}
 -			contentsMatch := false
 -			if existing, errRead := os.ReadFile(path); errRead == nil {
 -				contentsMatch = jsonEqual(existing, raw)
 -			} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
 -				return "", fmt.Errorf("object store: read existing metadata: %w", errRead)
--			}
++	errPersist := persistAcquisitionMirror(ctx, path, auth, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
 -			if !contentsMatch {
 -				tmp := path + ".tmp"
 -				if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2727,15 +2933,15 @@ index 39b8b089..d78a40f3 100644
 +				raw, errMarshal := json.Marshal(auth.Metadata)
 +				if errMarshal != nil {
 +					return fmt.Errorf("object store: marshal metadata: %w", errMarshal)
-+				}
+ 				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("object store: rename auth file: %w", errRename)
 +				contentsMatch := false
 +				if existing, errRead := os.ReadFile(path); errRead == nil {
 +					contentsMatch = jsonEqual(existing, raw)
 +				} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
 +					return fmt.Errorf("object store: read existing metadata: %w", errRead)
  				}
--				if errRename := os.Rename(tmp, path); errRename != nil {
--					return "", fmt.Errorf("object store: rename auth file: %w", errRename)
 +				if !contentsMatch {
 +					tmp := path + ".tmp"
 +					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2744,7 +2950,7 @@ index 39b8b089..d78a40f3 100644
 +					if errRename := os.Rename(tmp, path); errRename != nil {
 +						return fmt.Errorf("object store: rename auth file: %w", errRename)
 +					}
- 				}
++				}
 +			default:
 +				return fmt.Errorf("object store: nothing to persist for %s", auth.ID)
  			}
@@ -2752,52 +2958,127 @@ index 39b8b089..d78a40f3 100644
 -			return "", fmt.Errorf("object store: nothing to persist for %s", auth.ID)
  		}
 -	}
-
+ 
 -	if auth.Attributes == nil {
 -		auth.Attributes = make(map[string]string)
 -	}
 -	auth.Attributes[cliproxyauth.AttributePath] = path
 -	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceObjectStore
 +		return nil
-+	}, func() error {
++	}, func(stagedPath string) error {
 +		if auth.Attributes == nil {
 +			auth.Attributes = make(map[string]string)
 +		}
 +		auth.Attributes[cliproxyauth.AttributePath] = path
 +		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceObjectStore
-
+ 
 -	if strings.TrimSpace(auth.FileName) == "" {
 -		auth.FileName = auth.ID
 -	}
 +		if strings.TrimSpace(auth.FileName) == "" {
 +			auth.FileName = auth.ID
 +		}
-
+ 
 -	if err = s.uploadAuth(ctx, path); err != nil {
 -		return "", err
-+		if err = s.uploadAuth(ctx, path); err != nil {
++		if err = s.uploadAuthFrom(ctx, path, stagedPath); err != nil {
 +			return err
 +		}
 +		return nil
-+	})
++	}, nil)
 +	if errPersist != nil {
 +		return "", errPersist
  	}
  	return path, nil
  }
+@@ -262,6 +272,9 @@ func (s *ObjectTokenStore) List(_ context.Context) ([]*cliproxyauth.Auth, error)
+ 			return walkErr
+ 		}
+ 		if d.IsDir() {
++			if d.Name() == authpublication.DirectoryName {
++				return filepath.SkipDir
++			}
+ 			return nil
+ 		}
+ 		if !strings.HasSuffix(strings.ToLower(d.Name()), ".json") {
+@@ -280,7 +293,7 @@ func (s *ObjectTokenStore) List(_ context.Context) ([]*cliproxyauth.Auth, error)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("object store: walk auth directory: %w", err)
+ 	}
+-	return entries, nil
++	return appendPendingAuthFiles(dir, entries, s.readAuthFile)
+ }
+ 
+ // Delete removes an auth file locally and remotely.
+@@ -303,7 +316,7 @@ func (s *ObjectTokenStore) Delete(ctx context.Context, id string) error {
+ 	if err = s.deleteAuthObject(ctx, path); err != nil {
+ 		return err
+ 	}
+-	return nil
++	return authpublication.Clear(path)
+ }
+ 
+ // PersistAuthFiles uploads the provided auth files to the object storage backend.
+@@ -465,10 +478,14 @@ func (s *ObjectTokenStore) syncAuthFromBucket(ctx context.Context) error {
+ 			return fmt.Errorf("object store: write auth %s: %w", local, errWrite)
+ 		}
+ 	}
+-	return nil
++	return authpublication.ReconciledDirectory(s.authDir)
+ }
+ 
+ func (s *ObjectTokenStore) uploadAuth(ctx context.Context, path string) error {
++	return s.uploadAuthFrom(ctx, path, path)
++}
++
++func (s *ObjectTokenStore) uploadAuthFrom(ctx context.Context, path, source string) error {
+ 	if path == "" {
+ 		return nil
+ 	}
+@@ -476,7 +493,7 @@ func (s *ObjectTokenStore) uploadAuth(ctx context.Context, path string) error {
+ 	if err != nil {
+ 		return fmt.Errorf("object store: resolve auth relative path: %w", err)
+ 	}
+-	data, err := os.ReadFile(path)
++	data, err := authpublication.ReadFile(source)
+ 	if err != nil {
+ 		if errors.Is(err, fs.ErrNotExist) {
+ 			return s.deleteAuthObject(ctx, path)
+@@ -591,7 +608,7 @@ func (s *ObjectTokenStore) resolveDeletePath(id string) (string, error) {
+ }
+ 
+ func (s *ObjectTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth, error) {
+-	data, err := os.ReadFile(path)
++	data, err := authpublication.ReadFile(path)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("read file: %w", err)
+ 	}
+@@ -610,7 +627,7 @@ func (s *ObjectTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Aut
+ 	if provider == "" {
+ 		provider = "unknown"
+ 	}
+-	info, err := os.Stat(path)
++	info, err := authpublication.Stat(path)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("stat auth file: %w", err)
+ 	}
 diff --git a/internal/store/postgresstore.go b/internal/store/postgresstore.go
-index 69bc318b..7648396f 100644
+index 69bc318b..da47006a 100644
 --- a/internal/store/postgresstore.go
 +++ b/internal/store/postgresstore.go
-@@ -10,7 +10,6 @@ import (
+@@ -10,10 +10,10 @@ import (
  	"os"
  	"path/filepath"
  	"strings"
 -	"sync"
  	"time"
-
+ 
  	_ "github.com/jackc/pgx/v5/stdlib"
-@@ -46,7 +45,7 @@ type PostgresStore struct {
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
+ 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+@@ -46,7 +46,7 @@ type PostgresStore struct {
  	configPath    string
  	authDir       string
  	cooldownStore *postgresCooldownStateStore
@@ -2805,21 +3086,27 @@ index 69bc318b..7648396f 100644
 +	mu            misc.ContextMutex
  	persistAuthFn func(ctx context.Context, relID string, data []byte) error
  }
-
-@@ -235,72 +234,82 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+ 
+@@ -230,77 +230,87 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+ 	// was deliberately removed. Login and migration callers explicitly mark the
+ 	// save when creating a missing disabled credential is intentional.
+ 	if auth.Disabled && !cliproxyauth.HasAuthCreationIntent(ctx) {
+-		if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
++		if _, statErr := authpublication.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
+ 			return "", nil
  		}
  	}
-
+ 
 -	s.mu.Lock()
 +	if errLock := s.mu.LockContext(ctx); errLock != nil {
 +		return "", errLock
 +	}
  	defer s.mu.Unlock()
-
+ 
  	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
  		return "", fmt.Errorf("postgres store: create auth directory: %w", err)
  	}
-
+ 
 -	if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
 -		if errCodex != nil {
 -			return "", errCodex
@@ -2833,7 +3120,7 @@ index 69bc318b..7648396f 100644
 -			auth.Metadata["disabled"] = auth.Disabled
 -			if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
 -				setter.SetMetadata(auth.Metadata)
-+	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
++	errPersist := persistAcquisitionMirror(ctx, path, auth, func(path string) error {
 +		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
 +			if errCodex != nil {
 +				return errCodex
@@ -2900,27 +3187,27 @@ index 69bc318b..7648396f 100644
 -			return "", fmt.Errorf("postgres store: nothing to persist for %s", auth.ID)
  		}
 -	}
-
+ 
 -	if auth.Attributes == nil {
 -		auth.Attributes = make(map[string]string)
 -	}
 -	auth.Attributes[cliproxyauth.AttributePath] = path
 -	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourcePostgres
 +		return nil
-+	}, func() error {
++	}, func(stagedPath string) error {
 +		if auth.Attributes == nil {
 +			auth.Attributes = make(map[string]string)
 +		}
 +		auth.Attributes[cliproxyauth.AttributePath] = path
 +		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourcePostgres
-
+ 
 -	if strings.TrimSpace(auth.FileName) == "" {
 -		auth.FileName = auth.ID
 -	}
 +		if strings.TrimSpace(auth.FileName) == "" {
 +			auth.FileName = auth.ID
 +		}
-
+ 
 -	relID, err := s.relativeAuthID(path)
 -	if err != nil {
 -		return "", err
@@ -2931,16 +3218,51 @@ index 69bc318b..7648396f 100644
 +		if err != nil {
 +			return err
 +		}
-+		if err = s.upsertAuthRecord(ctx, relID, path); err != nil {
++		if err = s.upsertAuthRecord(ctx, relID, stagedPath); err != nil {
 +			return err
 +		}
 +		return nil
-+	})
++	}, nil)
 +	if errPersist != nil {
 +		return "", errPersist
  	}
  	return path, nil
  }
+@@ -398,7 +408,10 @@ func (s *PostgresStore) Delete(ctx context.Context, id string) error {
+ 	if err != nil {
+ 		return err
+ 	}
+-	return s.deleteAuthRecord(ctx, relID)
++	if err := s.deleteAuthRecord(ctx, relID); err != nil {
++		return err
++	}
++	return authpublication.Clear(path)
+ }
+ 
+ // PersistAuthFiles stores the provided auth file changes in PostgreSQL.
+@@ -537,11 +550,11 @@ func (s *PostgresStore) syncAuthFromDatabase(ctx context.Context) error {
+ 	if err = rows.Err(); err != nil {
+ 		return fmt.Errorf("postgres store: iterate auth rows: %w", err)
+ 	}
+-	return nil
++	return authpublication.ReconciledDirectory(s.authDir)
+ }
+ 
+ func (s *PostgresStore) syncAuthFile(ctx context.Context, relID, path string) error {
+-	data, err := os.ReadFile(path)
++	data, err := authpublication.ReadFile(path)
+ 	if err != nil {
+ 		if errors.Is(err, fs.ErrNotExist) {
+ 			return s.deleteAuthRecord(ctx, relID)
+@@ -555,7 +568,7 @@ func (s *PostgresStore) syncAuthFile(ctx context.Context, relID, path string) er
+ }
+ 
+ func (s *PostgresStore) upsertAuthRecord(ctx context.Context, relID, path string) error {
+-	data, err := os.ReadFile(path)
++	data, err := authpublication.ReadFile(path)
+ 	if err != nil {
+ 		return fmt.Errorf("postgres store: read auth file: %w", err)
+ 	}
 diff --git a/internal/store/save_lock_context_test.go b/internal/store/save_lock_context_test.go
 new file mode 100644
 index 00000000..a966ae2b
@@ -3474,14 +3796,13 @@ index 4865627c..f5eff4c1 100644
 +}
 diff --git a/internal/store/acquisition_mirror.go b/internal/store/acquisition_mirror.go
 new file mode 100644
-index 00000000..b6b86df5
+index 00000000..8cc7bb12
 --- /dev/null
 +++ b/internal/store/acquisition_mirror.go
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,100 @@
 +package store
 +
 +import (
-+	"bytes"
 +	"context"
 +	"errors"
 +	"fmt"
@@ -3489,148 +3810,95 @@ index 00000000..b6b86df5
 +	"path/filepath"
 +
 +	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
 +	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++	log "github.com/sirupsen/logrus"
 +)
 +
-+type acquisitionMirror struct {
-+	path        string
-+	original    []byte
-+	mode        os.FileMode
-+	existed     bool
-+	written     []byte
-+	writtenInfo os.FileInfo
-+}
-+
-+// The destination lock covers commit and rollback so a refresh cannot consume a
-+// failed login, and cleanup cannot wait behind a refresh after the save expires.
-+// Staging lets Codex serialization take its own lock without nesting the target lock.
-+func persistAcquisitionMirror(ctx context.Context, path string, write func(string) error, persist func() error) error {
++// The destination lock excludes refresh writers until the remote commit and local
++// publication finish. Uncommitted credentials never occupy a discoverable JSON path.
++func persistAcquisitionMirror(ctx context.Context, path string, auth *cliproxyauth.Auth, write func(string) error, persist func(string) error, published func()) error {
++	auth.BindCommittedAuthFile("", nil)
 +	if !cliproxyauth.HasAuthCreationIntent(ctx) {
++		if err := codex.WithFileLockContext(ctx, path, func() error { return authpublication.Repair(path) }); err != nil {
++			return err
++		}
 +		if errWrite := write(path); errWrite != nil {
 +			return errWrite
 +		}
-+		return persist()
++		return persist(path)
 +	}
 +	return codex.WithFileLockContext(ctx, path, func() error {
-+		mirror, errSnapshot := snapshotAcquisitionMirror(path)
-+		if errSnapshot != nil {
-+			return errSnapshot
++		info, err := os.Lstat(path)
++		existed := err == nil
++		if err != nil && !errors.Is(err, os.ErrNotExist) {
++			return fmt.Errorf("snapshot auth mirror: %w", err)
 +		}
-+		dir, errTemp := os.MkdirTemp(filepath.Dir(path), ".auth-acquisition-*")
-+		if errTemp != nil {
-+			return errTemp
++		if existed && !info.Mode().IsRegular() {
++			return fmt.Errorf("acquisition auth mirror must be a regular file")
++		}
++		var original []byte
++		if existed {
++			original, err = authpublication.ReadFile(path)
++			if err != nil {
++				return fmt.Errorf("snapshot auth mirror: %w", err)
++			}
++		}
++		dir, err := os.MkdirTemp(filepath.Dir(path), ".auth-acquisition-*")
++		if err != nil {
++			return err
 +		}
 +		defer func() { _ = os.RemoveAll(dir) }()
 +		stagedPath := filepath.Join(dir, "credential")
-+		if mirror.existed {
-+			if errSeed := os.WriteFile(stagedPath, mirror.original, 0o600); errSeed != nil {
-+				return errSeed
++		if existed {
++			if err := os.WriteFile(stagedPath, original, 0o600); err != nil {
++				return err
 +			}
 +		}
-+		if errWrite := write(stagedPath); errWrite != nil {
-+			return errWrite
++		if err := write(stagedPath); err != nil {
++			return err
 +		}
-+		// Capture the version before publication, with refresh writers still excluded.
-+		mirror.path = stagedPath
-+		errRemember := mirror.rememberWrite()
-+		mirror.path = path
-+		if errRemember != nil {
-+			return errRemember
++		stagedInfo, err := os.Lstat(stagedPath)
++		if err != nil {
++			return fmt.Errorf("inspect acquired credential: %w", err)
 +		}
-+		if errContext := ctx.Err(); errContext != nil {
-+			return errContext
++		if !stagedInfo.Mode().IsRegular() {
++			return fmt.Errorf("acquired credential must be a regular file")
 +		}
-+		if errRename := os.Rename(stagedPath, path); errRename != nil {
-+			return errRename
++		data, err := os.ReadFile(stagedPath)
++		if err != nil {
++			return fmt.Errorf("read acquired credential: %w", err)
 +		}
-+		return mirror.restore(persist())
-+	})
-+}
-+
-+func snapshotAcquisitionMirror(path string) (*acquisitionMirror, error) {
-+	m := &acquisitionMirror{path: path}
-+	info, err := os.Lstat(path)
-+	if errors.Is(err, os.ErrNotExist) {
-+		return m, nil
-+	}
-+	if err != nil {
-+		return nil, fmt.Errorf("snapshot auth mirror: %w", err)
-+	}
-+	// In-place token writers follow links. Refuse acquisitions before they can
-+	// modify a referent that rollback does not own.
-+	if !info.Mode().IsRegular() {
-+		return nil, fmt.Errorf("acquisition auth mirror must be a regular file")
-+	}
-+	m.existed = true
-+	m.mode = info.Mode()
-+	m.original, err = os.ReadFile(path)
-+	if err != nil {
-+		return nil, fmt.Errorf("snapshot auth mirror: %w", err)
-+	}
-+	return m, nil
-+}
-+
-+func (m *acquisitionMirror) rememberWrite() error {
-+	if m == nil {
++		if err := ctx.Err(); err != nil {
++			return err
++		}
++		pending, err := authpublication.Prepare(path, data)
++		if err != nil {
++			return err
++		}
++		if err := persist(stagedPath); err != nil {
++			return errors.Join(err, pending.Abort())
++		}
++		if err := pending.Commit(); err != nil {
++			log.Warnf("auth store: remote credential committed but publication confirmation failed: %v", err)
++		}
++		// The remote commit is authoritative. Reconcile the mirror without turning a
++		// saved login into an OAuth failure if local publication is unavailable.
++		if err := os.Rename(stagedPath, path); err != nil {
++			auth.BindCommittedAuthFile(path, data)
++			log.Warnf("auth store: remote credential commit succeeded but local publication failed: %v", err)
++		} else {
++			if err := authpublication.Clear(path); err != nil {
++				auth.BindCommittedAuthFile(path, data)
++				log.Warnf("auth store: could not clear publication overlay: %v", err)
++				return nil
++			}
++			if published != nil {
++				published()
++			}
++		}
 +		return nil
-+	}
-+	data, err := os.ReadFile(m.path)
-+	if err != nil {
-+		return fmt.Errorf("read acquired auth mirror: %w", err)
-+	}
-+	info, err := os.Stat(m.path)
-+	if err != nil {
-+		return fmt.Errorf("inspect acquired auth mirror: %w", err)
-+	}
-+	m.written, m.writtenInfo = data, info
-+	return nil
-+}
-+
-+func (m *acquisitionMirror) restore(errSave error) error {
-+	if m == nil || m.writtenInfo == nil || errSave == nil {
-+		return errSave
-+	}
-+	if errRestore := m.restoreWritten(); errRestore != nil {
-+		return errors.Join(errSave, fmt.Errorf("restore failed acquisition mirror: %w", errRestore))
-+	}
-+	return errSave
-+}
-+
-+func (m *acquisitionMirror) restoreWritten() error {
-+	current, err := os.ReadFile(m.path)
-+	if err != nil {
-+		return err
-+	}
-+	info, err := os.Stat(m.path)
-+	if err != nil {
-+		return err
-+	}
-+	// Another writer's credential must survive a failed acquisition.
-+	if !os.SameFile(info, m.writtenInfo) || !bytes.Equal(current, m.written) {
-+		return fmt.Errorf("auth mirror changed after acquisition write")
-+	}
-+	if !m.existed {
-+		return os.Remove(m.path)
-+	}
-+	file, err := os.CreateTemp(filepath.Dir(m.path), ".auth-rollback-*")
-+	if err != nil {
-+		return err
-+	}
-+	tempPath := file.Name()
-+	defer func() { _ = os.Remove(tempPath) }()
-+	if errMode := file.Chmod(m.mode.Perm()); errMode != nil {
-+		_ = file.Close()
-+		return errMode
-+	}
-+	if _, errWrite := file.Write(m.original); errWrite != nil {
-+		_ = file.Close()
-+		return errWrite
-+	}
-+	if errClose := file.Close(); errClose != nil {
-+		return errClose
-+	}
-+
-+	return os.Rename(tempPath, m.path)
++	})
 +}
 diff --git a/internal/store/acquisition_mirror_test.go b/internal/store/acquisition_mirror_test.go
 new file mode 100644
@@ -4134,10 +4402,10 @@ index 00000000..e6abe884
 +}
 diff --git a/internal/store/acquisition_git_commit_test.go b/internal/store/acquisition_git_commit_test.go
 new file mode 100644
-index 00000000..665531b6
+index 00000000..303e014d
 --- /dev/null
 +++ b/internal/store/acquisition_git_commit_test.go
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,134 @@
 +package store
 +
 +import (
@@ -4209,11 +4477,23 @@ index 00000000..665531b6
 +					if err := repo.PushContext(ctx, opts); err != nil {
 +						return err
 +					}
-+					var errRead error
-+					committed, errRead = os.ReadFile(path)
-+					if errRead != nil {
-+						return errRead
++					head, err := repo.Head()
++					if err != nil {
++						return err
 +					}
++					commit, err := repo.CommitObject(head.Hash())
++					if err != nil {
++						return err
++					}
++					file, err := commit.File("auths/login.json")
++					if err != nil {
++						return err
++					}
++					contents, err := file.Contents()
++					if err != nil {
++						return err
++					}
++					committed = []byte(contents)
 +					injected = &postPushFailureStorer{Storer: repo.Storer, trackingRef: plumbing.NewRemoteReferenceName("origin", "master")}
 +					if failure == "tracking-ref" {
 +						injected.errTracking = errors.New("tracking ref write failed after successful push")
@@ -4520,6 +4800,3013 @@ index 00000000..4b83ad71
 +				t.Fatalf("retry initialization failed: %v", err)
 +			}
 +			assertRemoteFileContents(t, remote, "master", "seed", "seed\n")
++		})
++	}
++}
+diff --git a/internal/store/acquisition_git_stage.go b/internal/store/acquisition_git_stage.go
+new file mode 100644
+index 00000000..90ab62e9
+--- /dev/null
++++ b/internal/store/acquisition_git_stage.go
+@@ -0,0 +1,67 @@
++package store
++
++import (
++	"context"
++	"fmt"
++	"os"
++	"path/filepath"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/go-git/go-git/v6/plumbing"
++	"github.com/go-git/go-git/v6/plumbing/filemode"
++)
++
++func (s *GitTokenStore) commitAuthSourceLocked(ctx context.Context, message, relPath, path, source string) error {
++	if source == path {
++		return s.commitAndPushContextLocked(ctx, message, relPath)
++	}
++	repoDir := s.repoDirSnapshot()
++	if err := prepareGitPublication(repoDir, relPath, source); err != nil {
++		return err
++	}
++	// A failed save may also have failed to restore HEAD or the index. Keep the
++	// journal until recovery has inspected the actual Git state.
++	return s.commitSourcesAndPushLocked(ctx, message, false, map[string]string{filepath.ToSlash(relPath): source}, relPath)
++}
++
++// Insert the private staged content directly into Git's index. Worktree.Add
++// would require publishing an uncommitted credential in the watched directory.
++func stageAcquisitionBlob(repo *git.Repository, relPath, source string) error {
++	data, err := os.ReadFile(source)
++	if err != nil {
++		return fmt.Errorf("git token store: read staged credential: %w", err)
++	}
++	obj := repo.Storer.NewEncodedObject()
++	obj.SetType(plumbing.BlobObject)
++	obj.SetSize(int64(len(data)))
++	writer, err := obj.Writer()
++	if err != nil {
++		return err
++	}
++	if _, err := writer.Write(data); err != nil {
++		_ = writer.Close()
++		return err
++	}
++	if err := writer.Close(); err != nil {
++		return err
++	}
++	hash, err := repo.Storer.SetEncodedObject(obj)
++	if err != nil {
++		return err
++	}
++	index, err := repo.Storer.Index()
++	if err != nil {
++		return err
++	}
++	entry, err := index.Entry(relPath)
++	if err != nil {
++		entry, err = index.Add(relPath)
++		if err != nil {
++			return err
++		}
++	}
++	entry.Hash = hash
++	entry.Mode = filemode.Regular
++	entry.Size = uint32(len(data))
++	return repo.Storer.SetIndex(index)
++}
+diff --git a/internal/store/acquisition_publication_test.go b/internal/store/acquisition_publication_test.go
+new file mode 100644
+index 00000000..6c471fb0
+--- /dev/null
++++ b/internal/store/acquisition_publication_test.go
+@@ -0,0 +1,120 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestAcquisitionPublishesOnlyAfterRemoteCommit(t *testing.T) {
++	for _, backend := range []string{"git", "object", "postgres"} {
++		for _, existing := range []bool{false, true} {
++			for _, succeeds := range []bool{false, true} {
++				name := backend + "/new/failure"
++				if existing {
++					name = backend + "/replacement/failure"
++				}
++				if succeeds {
++					name = strings.TrimSuffix(name, "failure") + "success"
++				}
++				t.Run(name, func(t *testing.T) {
++					dir := filepath.Join(t.TempDir(), "workspace", "auths")
++					path := filepath.Join(dir, "device.json")
++					original := []byte(`{"type":"codex","access_token":"original"}`)
++					remoteErr := errors.New("remote rejected acquisition")
++					reached := false
++					beforeCommit := func() error {
++						reached = true
++						data, err := os.ReadFile(path)
++						if existing {
++							if err != nil || string(data) != string(original) {
++								t.Errorf("uncommitted credential replaced visible mirror: %q, %v", data, err)
++							}
++						} else if !errors.Is(err, os.ErrNotExist) {
++							t.Errorf("uncommitted credential is visible: %q, %v", data, err)
++						}
++						if !succeeds {
++							return remoteErr
++						}
++						return nil
++					}
++					var s cliproxyauth.Store
++					var gitRemote string
++					switch backend {
++					case "git":
++						remote := filepath.Join(t.TempDir(), "remote.git")
++						gitRemote = remote
++						if _, err := git.PlainInit(remote, true); err != nil {
++							t.Fatal(err)
++						}
++						gs := NewGitTokenStore(remote, "", "", "")
++						gs.SetBaseDir(dir)
++						if err := gs.EnsureRepository(); err != nil {
++							t.Fatal(err)
++						}
++						gs.pushFn = func(ctx context.Context, repo *git.Repository, opts *git.PushOptions) error {
++							if err := beforeCommit(); err != nil {
++								return err
++							}
++							return repo.PushContext(ctx, opts)
++						}
++						s = gs
++					case "object":
++						s = &ObjectTokenStore{authDir: dir, putObjectFn: func(_ context.Context, key string, data []byte, _ string) error {
++							if !bytes.Contains(data, []byte(`"replacement"`)) {
++								t.Errorf("remote did not receive acquired credential: %q", data)
++							}
++							if key != "auths/device.json" {
++								t.Errorf("remote key = %q", key)
++							}
++							return beforeCommit()
++						}}
++					case "postgres":
++						s = &PostgresStore{authDir: dir, persistAuthFn: func(_ context.Context, id string, data []byte) error {
++							if !bytes.Contains(data, []byte(`"replacement"`)) {
++								t.Errorf("remote did not receive acquired credential: %q", data)
++							}
++							if id != "device.json" {
++								t.Errorf("remote id = %q", id)
++							}
++							return beforeCommit()
++						}}
++					}
++					if err := os.MkdirAll(dir, 0o700); err != nil {
++						t.Fatal(err)
++					}
++					if existing {
++						if err := os.WriteFile(path, original, 0o600); err != nil {
++							t.Fatal(err)
++						}
++					}
++					saved, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "replacement"}})
++					if !reached {
++						t.Fatal("remote commit was not attempted")
++					}
++					if succeeds {
++						if err != nil || saved != path {
++							t.Fatalf("Save = %q, %v", saved, err)
++						}
++						data, err := os.ReadFile(path)
++						if err != nil || !bytes.Contains(data, []byte(`"replacement"`)) {
++							t.Fatalf("committed credential not published: %q, %v", data, err)
++						}
++						if gitRemote != "" {
++							assertRemoteFileContents(t, gitRemote, "master", "auths/device.json", string(data))
++						}
++					} else if !errors.Is(err, remoteErr) || saved != "" {
++						t.Fatalf("Save = %q, %v", saved, err)
++					}
++				})
++			}
++		}
++	}
++}
+diff --git a/internal/store/acquisition_commit_point_test.go b/internal/store/acquisition_commit_point_test.go
+new file mode 100644
+index 00000000..eb39cae8
+--- /dev/null
++++ b/internal/store/acquisition_commit_point_test.go
+@@ -0,0 +1,128 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestAcquisitionRemoteCommitSurvivesMirrorConflict(t *testing.T) {
++	for _, backend := range []string{"git", "object", "postgres"} {
++		for _, mutation := range []string{"rewrite", "replace", "remove", "directory", "create", "staging-lost"} {
++			t.Run(backend+"/"+mutation, func(t *testing.T) {
++				dir := filepath.Join(t.TempDir(), "workspace", "auths")
++				path := filepath.Join(dir, "device.json")
++				original := []byte(`{"type":"codex","access_token":"original"}`)
++				var remoteBytes []byte
++				var gitRemote string
++				mutate := func() error {
++					switch mutation {
++					case "staging-lost":
++						staged, err := filepath.Glob(filepath.Join(dir, ".auth-acquisition-*", "credential"))
++						if err != nil || len(staged) != 1 {
++							t.Fatalf("staged credential: %v, %v", staged, err)
++						}
++						return os.Remove(staged[0])
++					case "rewrite", "create":
++						return os.WriteFile(path, []byte(`{"type":"codex","access_token":"independent"}`), 0o600)
++					case "replace":
++						replacement := filepath.Join(dir, "replacement")
++						if err := os.WriteFile(replacement, []byte(`{"type":"codex","access_token":"independent"}`), 0o600); err != nil {
++							return err
++						}
++						return os.Rename(replacement, path)
++					case "remove":
++						return os.Remove(path)
++					case "directory":
++						if err := os.Remove(path); err != nil {
++							return err
++						}
++						return os.Mkdir(path, 0o700)
++					}
++					return nil
++				}
++				var s cliproxyauth.Store
++				switch backend {
++				case "git":
++					gitRemote = filepath.Join(t.TempDir(), "remote.git")
++					if _, err := git.PlainInit(gitRemote, true); err != nil {
++						t.Fatal(err)
++					}
++					gs := NewGitTokenStore(gitRemote, "", "", "")
++					gs.SetBaseDir(dir)
++					if err := gs.EnsureRepository(); err != nil {
++						t.Fatal(err)
++					}
++					gs.pushFn = func(ctx context.Context, repo *git.Repository, opts *git.PushOptions) error {
++						if err := repo.PushContext(ctx, opts); err != nil {
++							return err
++						}
++						return mutate()
++					}
++					s = gs
++				case "object":
++					s = &ObjectTokenStore{authDir: dir, putObjectFn: func(_ context.Context, _ string, data []byte, _ string) error {
++						remoteBytes = append([]byte(nil), data...)
++						return mutate()
++					}}
++				case "postgres":
++					s = &PostgresStore{authDir: dir, persistAuthFn: func(_ context.Context, _ string, data []byte) error {
++						remoteBytes = append([]byte(nil), data...)
++						return mutate()
++					}}
++				}
++				if err := os.MkdirAll(dir, 0o700); err != nil {
++					t.Fatal(err)
++				}
++				if mutation != "create" {
++					if err := os.WriteFile(path, original, 0o600); err != nil {
++						t.Fatal(err)
++					}
++				}
++				record := &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "committed"}}
++				saved, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), record)
++				if err != nil || saved != path {
++					t.Errorf("successful remote commit reported save failure: %q, %v", saved, err)
++				}
++				if mutation == "directory" {
++					info, err := os.Stat(path)
++					if err != nil || !info.IsDir() {
++						t.Fatalf("publication removed independent directory: %v, %v", info, err)
++					}
++				} else if mutation == "staging-lost" {
++					data, err := os.ReadFile(path)
++					if err != nil || !bytes.Equal(data, original) {
++						t.Fatalf("old mirror should remain readable: %q, %v", data, err)
++					}
++				} else {
++					data, err := os.ReadFile(path)
++					if err != nil || !bytes.Contains(data, []byte(`"committed"`)) {
++						t.Errorf("mirror was not reconciled to committed credential: %q, %v", data, err)
++					}
++				}
++				expected := `{"access_token":"committed","disabled":false,"type":"codex"}`
++				if got, err := authpublication.ReadFile(saved); err != nil || string(got) != expected {
++					t.Errorf("published reader lost remote commit: %q, %v", got, err)
++				}
++				if mutation == "directory" || mutation == "staging-lost" {
++					if got := record.CommittedAuthFile(saved); string(got) != expected {
++						t.Errorf("notification snapshot = %q, want remotely committed bytes %q", got, expected)
++					}
++				} else if got := record.CommittedAuthFile(saved); len(got) != 0 {
++					t.Errorf("successful publication retained a notification snapshot: %q", got)
++				}
++				if gitRemote != "" {
++					assertRemoteFileContents(t, gitRemote, "master", "auths/device.json", expected)
++				} else if string(remoteBytes) != expected {
++					t.Errorf("remote retained %q, want %q", remoteBytes, expected)
++				}
++			})
++		}
++	}
++}
+diff --git a/internal/store/acquisition_git_publication.go b/internal/store/acquisition_git_publication.go
+new file mode 100644
+index 00000000..e552a888
+--- /dev/null
++++ b/internal/store/acquisition_git_publication.go
+@@ -0,0 +1,196 @@
++package store
++
++import (
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/go-git/go-git/v6/plumbing"
++	"github.com/go-git/go-git/v6/plumbing/object"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++	log "github.com/sirupsen/logrus"
++)
++
++type gitPublication struct {
++	Path    string `json:"path"`
++	SHA256  string `json:"sha256"`
++	Staging string `json:"staging"`
++	Base    string `json:"base_commit,omitempty"`
++}
++
++func publicationHash(data []byte) string {
++	hash := sha256.Sum256(data)
++	return hex.EncodeToString(hash[:])
++}
++
++func gitPublicationPath(repoDir, relPath string) string {
++	return filepath.Join(repoDir, ".git", "auth-publications", publicationHash([]byte(filepath.ToSlash(relPath)))+".json")
++}
++
++// Record intent before Git can push. A process exit cannot lose the worktree
++// publication that must follow a durable commit.
++func prepareGitPublication(repoDir, relPath, source string) error {
++	data, err := os.ReadFile(source)
++	if err != nil {
++		return err
++	}
++	repo, err := git.PlainOpen(repoDir)
++	if err != nil {
++		return err
++	}
++	head, errHead := repo.Head()
++	if err := errors.Join(errHead, repo.Close()); err != nil {
++		return err
++	}
++	path := gitPublicationPath(repoDir, relPath)
++	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
++		return err
++	}
++	return codex.WriteJSONFileAtomic(path, map[string]any{"path": filepath.ToSlash(relPath), "sha256": publicationHash(data), "staging": source, "base_commit": head.Hash().String()})
++}
++
++func clearGitPublication(repoDir, relPath string) {
++	if err := os.Remove(gitPublicationPath(repoDir, relPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
++		log.Warnf("git token store: could not clear credential publication record: %v", err)
++	}
++}
++
++func recoverGitPublications(ctx context.Context, repo *git.Repository, repoDir, authDir string) error {
++	dir := filepath.Join(repoDir, ".git", "auth-publications")
++	entries, err := os.ReadDir(dir)
++	if errors.Is(err, os.ErrNotExist) {
++		return discardUnjournaledPublicationBarriers(ctx, repoDir, authDir)
++	}
++	if err != nil {
++		return err
++	}
++	for _, entry := range entries {
++		if !strings.HasSuffix(entry.Name(), ".json") {
++			continue
++		}
++		marker := filepath.Join(dir, entry.Name())
++		record, err := readGitPublication(marker, repoDir, authDir)
++		if errors.Is(err, os.ErrNotExist) {
++			continue
++		}
++		if err != nil {
++			return err
++		}
++		destination := filepath.Join(repoDir, filepath.FromSlash(record.Path))
++		if err := codex.WithFileLockContext(ctx, destination, func() error {
++			// Another process may have finished publishing while this startup waited.
++			record, err := readGitPublication(marker, repoDir, authDir)
++			if errors.Is(err, os.ErrNotExist) {
++				return nil
++			}
++			if err != nil {
++				return err
++			}
++			head, err := repo.Head()
++			if err != nil {
++				return err
++			}
++			remote, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", head.Name().Short()), true)
++			if err != nil {
++				return err
++			}
++			if head.Hash() != remote.Hash() {
++				return fmt.Errorf("pending credential publication requires a synchronized remote branch")
++			}
++			commit, err := repo.CommitObject(head.Hash())
++			if err != nil {
++				return err
++			}
++			file, err := commit.File(record.Path)
++			if errors.Is(err, object.ErrFileNotFound) {
++				return finishGitPublicationReplay(repoDir, destination, record)
++			}
++			if err != nil {
++				return err
++			}
++			content, err := file.Contents()
++			if err != nil {
++				return err
++			}
++			if publicationHash([]byte(content)) == record.SHA256 {
++				if err := publishGitCredential(destination, []byte(content)); err != nil {
++					return err
++				}
++			}
++			// A different remote version must not activate the uncommitted staged one.
++			return finishGitPublicationReplay(repoDir, destination, record)
++		}); err != nil {
++			return err
++		}
++	}
++	return discardUnjournaledPublicationBarriers(ctx, repoDir, authDir)
++}
++
++func finishGitPublicationReplay(repoDir, destination string, record gitPublication) error {
++	if err := authpublication.Clear(destination); err != nil {
++		return fmt.Errorf("clear publication overlay: %w", err)
++	}
++	clearGitPublication(repoDir, record.Path)
++	stagingDir := filepath.Dir(record.Staging)
++	if filepath.Base(record.Staging) == "credential" && filepath.Dir(stagingDir) == filepath.Dir(destination) && strings.HasPrefix(filepath.Base(stagingDir), ".auth-acquisition-") {
++		if err := os.RemoveAll(stagingDir); err != nil {
++			log.Warnf("git token store: could not clean credential staging directory: %v", err)
++		}
++	}
++	return nil
++}
++
++func readGitPublication(marker, repoDir, authDir string) (gitPublication, error) {
++	var record gitPublication
++	data, err := os.ReadFile(marker)
++	if err != nil {
++		return record, err
++	}
++	if err := json.Unmarshal(data, &record); err != nil {
++		return record, err
++	}
++	paths, err := normalizeManagedPaths([]string{record.Path})
++	if err != nil || len(paths) != 1 || paths[0] != record.Path {
++		return record, fmt.Errorf("invalid credential publication path")
++	}
++	relative, err := filepath.Rel(authDir, filepath.Join(repoDir, filepath.FromSlash(record.Path)))
++	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
++		return record, fmt.Errorf("credential publication is outside auth directory")
++	}
++	if marker != gitPublicationPath(repoDir, record.Path) {
++		return record, fmt.Errorf("credential publication record does not match path")
++	}
++	if record.Base != "" && !plumbing.IsHash(record.Base) {
++		return record, fmt.Errorf("invalid credential publication base")
++	}
++	hash, err := hex.DecodeString(record.SHA256)
++	if err != nil || len(hash) != sha256.Size {
++		return record, fmt.Errorf("invalid credential publication digest")
++	}
++	return record, nil
++}
++
++func publishGitCredential(path string, data []byte) error {
++	file, err := os.CreateTemp(filepath.Dir(path), ".auth-publication-*")
++	if err != nil {
++		return err
++	}
++	temp := file.Name()
++	defer func() { _ = os.Remove(temp) }()
++	if _, err := file.Write(data); err != nil {
++		_ = file.Close()
++		return err
++	}
++	if err := file.Close(); err != nil {
++		return err
++	}
++	return os.Rename(temp, path)
++}
+diff --git a/internal/store/acquisition_git_publication_test.go b/internal/store/acquisition_git_publication_test.go
+new file mode 100644
+index 00000000..146db5cd
+--- /dev/null
++++ b/internal/store/acquisition_git_publication_test.go
+@@ -0,0 +1,207 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/go-git/go-git/v6/plumbing"
++	"github.com/go-git/go-git/v6/storage"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++type publicationCrashStorer struct {
++	storage.Storer
++	branch plumbing.ReferenceName
++	base   plumbing.Hash
++}
++
++func (s *publicationCrashStorer) SetReference(ref *plumbing.Reference) error {
++	if err := s.Storer.SetReference(ref); err != nil {
++		return err
++	}
++	if ref.Name() == s.branch && ref.Hash() != s.base {
++		os.Exit(83)
++	}
++	return nil
++}
++
++func TestGitAcquisitionPublicationCrashHelper(t *testing.T) {
++	if os.Getenv("CPA_PUBLICATION_CRASH_HELPER") != "1" {
++		t.Skip("subprocess helper")
++	}
++	s := NewGitTokenStore(os.Getenv("CPA_PUBLICATION_REMOTE"), "", "", "master")
++	s.SetBaseDir(os.Getenv("CPA_PUBLICATION_AUTH_DIR"))
++	if os.Getenv("CPA_PUBLICATION_PHASE") == "before-commit" {
++		s.openFn = func(string) (*git.Repository, error) { os.Exit(83); return nil, nil }
++	}
++	if os.Getenv("CPA_PUBLICATION_PHASE") == "after-commit" {
++		s.openFn = func(path string) (*git.Repository, error) {
++			repo, err := git.PlainOpen(path)
++			if err != nil {
++				return nil, err
++			}
++			head, err := repo.Head()
++			if err != nil {
++				_ = repo.Close()
++				return nil, err
++			}
++			repo.Storer = &publicationCrashStorer{Storer: repo.Storer, branch: head.Name(), base: head.Hash()}
++			return repo, nil
++		}
++	}
++	s.pushFn = func(ctx context.Context, repo *git.Repository, opts *git.PushOptions) error {
++		if os.Getenv("CPA_PUBLICATION_PHASE") == "before-push" {
++			os.Exit(83)
++		}
++		if err := repo.PushContext(ctx, opts); err != nil {
++			return err
++		}
++		os.Exit(83)
++		return nil
++	}
++	_, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "committed"}})
++	t.Fatalf("process did not exit after push: %v", err)
++}
++
++func TestGitAcquisitionPublicationRecoversAfterProcessExit(t *testing.T) {
++	for _, advance := range []string{"none", "other-credential", "same-credential"} {
++		for _, phase := range []string{"after-push", "before-commit", "after-commit", "before-push"} {
++			for _, existing := range []bool{false, true} {
++				name := "new"
++				if existing {
++					name = "replacement"
++				}
++				t.Run(advance+"/"+phase+"/"+name, func(t *testing.T) {
++					root := t.TempDir()
++					remote := setupGitRemoteRepository(t, root, "master", testBranchSpec{name: "master", contents: "baseline\n"})
++					authDir := filepath.Join(root, "workspace", "auths")
++					s := NewGitTokenStore(remote, "", "", "master")
++					s.SetBaseDir(authDir)
++					if err := s.EnsureRepository(); err != nil {
++						t.Fatal(err)
++					}
++					if existing {
++						if _, err := s.Save(context.Background(), &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "original"}}); err != nil {
++							t.Fatal(err)
++						}
++					}
++					unrelated := filepath.Join(root, "workspace", "README.md")
++					unrelatedBytes := []byte("independent local edit\n")
++					if err := os.WriteFile(unrelated, unrelatedBytes, 0o600); err != nil {
++						t.Fatal(err)
++					}
++					untracked := filepath.Join(authDir, "untracked.json")
++					if err := os.WriteFile(untracked, []byte(`{"type":"codex","access_token":"independent"}`), 0o600); err != nil {
++						t.Fatal(err)
++					}
++					child := exec.Command(os.Args[0], "-test.run=^TestGitAcquisitionPublicationCrashHelper$")
++					child.Env = append(os.Environ(), "CPA_PUBLICATION_CRASH_HELPER=1", "CPA_PUBLICATION_PHASE="+phase, "CPA_PUBLICATION_REMOTE="+remote, "CPA_PUBLICATION_AUTH_DIR="+authDir)
++					output, err := child.CombinedOutput()
++					var exit *exec.ExitError
++					if !errors.As(err, &exit) || exit.ExitCode() != 83 {
++						t.Fatalf("crash helper = %v, output=%s", err, output)
++					}
++					if advance != "none" {
++						other := NewGitTokenStore(remote, "", "", "master")
++						other.SetBaseDir(filepath.Join(root, "other-instance", "auths"))
++						id := "concurrent.json"
++						if advance == "same-credential" {
++							id = "device.json"
++						}
++						if _, err := other.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: id, FileName: id, Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "concurrent"}}); err != nil {
++							t.Fatalf("concurrent push failed: %v", err)
++						}
++					}
++					wantToken := "committed"
++					wantCredential := phase == "after-push" || existing
++					if phase != "after-push" {
++						wantToken = "original"
++					}
++					if advance == "same-credential" {
++						wantToken = "concurrent"
++						wantCredential = true
++					}
++					expected := `{"access_token":"` + wantToken + `","disabled":false,"type":"codex"}`
++					if wantCredential {
++						assertRemoteFileContents(t, remote, "master", "auths/device.json", expected)
++					} else {
++						assertRemoteTreePath(t, remote, "master", "auths/device.json", false)
++					}
++					path := filepath.Join(authDir, "device.json")
++					before, err := os.ReadFile(path)
++					if existing {
++						if err != nil || !bytes.Contains(before, []byte(`"original"`)) {
++							t.Fatalf("helper published before exit: %q, %v", before, err)
++						}
++					} else if !errors.Is(err, os.ErrNotExist) {
++						t.Fatalf("helper published before exit: %q, %v", before, err)
++					}
++					restarted := NewGitTokenStore(remote, "", "", "master")
++					restarted.SetBaseDir(authDir)
++					if err := restarted.EnsureRepository(); err != nil {
++						t.Fatal(err)
++					}
++					got, err := os.ReadFile(path)
++					if wantCredential {
++						if err != nil || string(got) != expected {
++							t.Errorf("restart loaded wrong mirror: %q, %v", got, err)
++						}
++					} else if !errors.Is(err, os.ErrNotExist) {
++						t.Errorf("restart published an uncommitted credential: %q, %v", got, err)
++					}
++					records, err := restarted.List(context.Background())
++					if err != nil {
++						t.Fatal(err)
++					}
++					found := false
++					for _, record := range records {
++						if record.FileName == "device.json" {
++							found = true
++							if record.Metadata["access_token"] != wantToken {
++								t.Errorf("runtime loaded old credential: %v", record.Metadata["access_token"])
++							}
++						}
++					}
++					if found != wantCredential {
++						t.Errorf("credential loaded=%v, want=%v", found, wantCredential)
++					}
++					if got, err := os.ReadFile(unrelated); err != nil || !bytes.Equal(got, unrelatedBytes) {
++						t.Errorf("restart overwrote unrelated edit: %q, %v", got, err)
++					}
++					if got, err := os.ReadFile(untracked); err != nil || !bytes.Contains(got, []byte(`"independent"`)) {
++						t.Errorf("restart overwrote unrelated credential: %q, %v", got, err)
++					}
++					if err := restarted.EnsureRepository(); err != nil {
++						t.Errorf("replay not idempotent: %v", err)
++					}
++					pending, err := filepath.Glob(filepath.Join(root, "workspace", ".git", "auth-publications", "*.json"))
++					if err != nil || len(pending) != 0 {
++						t.Errorf("completed replay left pending records: %v, %v", pending, err)
++					}
++					staging, err := filepath.Glob(filepath.Join(authDir, ".auth-acquisition-*"))
++					if err != nil || len(staging) != 0 {
++						t.Errorf("completed replay left private staging files: %v, %v", staging, err)
++					}
++					if _, err := restarted.Save(context.Background(), &cliproxyauth.Auth{ID: "later.json", FileName: "later.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "later"}}); err != nil {
++						t.Fatalf("recovered store cannot save: %v", err)
++					}
++					assertRemoteTreePath(t, remote, "master", "auths/later.json", true)
++					if advance == "other-credential" {
++						assertRemoteFileContents(t, remote, "master", "auths/concurrent.json", `{"access_token":"concurrent","disabled":false,"type":"codex"}`)
++					}
++					if wantCredential {
++						assertRemoteFileContents(t, remote, "master", "auths/device.json", expected)
++					} else {
++						assertRemoteTreePath(t, remote, "master", "auths/device.json", false)
++					}
++				})
++			}
++		}
++	}
++}
+diff --git a/internal/store/acquisition_git_recovery.go b/internal/store/acquisition_git_recovery.go
+new file mode 100644
+index 00000000..c87222e9
+--- /dev/null
++++ b/internal/store/acquisition_git_recovery.go
+@@ -0,0 +1,101 @@
++package store
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/go-git/go-git/v6/plumbing"
++	"github.com/go-git/go-git/v6/plumbing/object"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++)
++
++// A staged acquisition can move HEAD before its push. Undo only a journal-matched
++// credential commit, preserving the worktree, before ordinary pull conflict checks.
++func (s *GitTokenStore) recoverUnpushedPublications(ctx context.Context, repo *git.Repository, worktree *git.Worktree, repoDir, authDir string) error {
++	dir := filepath.Join(repoDir, ".git", "auth-publications")
++	entries, err := os.ReadDir(dir)
++	if errors.Is(err, os.ErrNotExist) {
++		return nil
++	}
++	if err != nil {
++		return err
++	}
++	for _, entry := range entries {
++		if !strings.HasSuffix(entry.Name(), ".json") {
++			continue
++		}
++		marker := filepath.Join(dir, entry.Name())
++		record, err := readGitPublication(marker, repoDir, authDir)
++		if errors.Is(err, os.ErrNotExist) {
++			continue
++		}
++		if err != nil {
++			return err
++		}
++		destination := filepath.Join(repoDir, filepath.FromSlash(record.Path))
++		if err := codex.WithFileLockContext(ctx, destination, func() error {
++			record, err := readGitPublication(marker, repoDir, authDir)
++			if errors.Is(err, os.ErrNotExist) {
++				return nil
++			}
++			if err != nil {
++				return err
++			}
++			// Fetch after taking the publication lock. A push may have completed while
++			// this startup was waiting for the writer that owned the journal record.
++			if err := syncRemoteReferences(ctx, repo, s.gitClientOptions()); err != nil {
++				return err
++			}
++			head, err := repo.Head()
++			if err != nil {
++				return err
++			}
++			if !head.Name().IsBranch() {
++				return fmt.Errorf("pending credential publication requires a branch")
++			}
++			remote, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", head.Name().Short()), true)
++			if err != nil {
++				return err
++			}
++			if head.Hash() == remote.Hash() {
++				return nil
++			}
++			commit, err := repo.CommitObject(head.Hash())
++			if err != nil {
++				return err
++			}
++			file, err := commit.File(record.Path)
++			if errors.Is(err, object.ErrFileNotFound) {
++				return nil
++			}
++			if err != nil {
++				return err
++			}
++			content, err := file.Contents()
++			if err != nil {
++				return err
++			}
++			if publicationHash([]byte(content)) != record.SHA256 {
++				return nil
++			}
++			// Remote can advance after the interrupted save. Its original base defines
++			// which local changes belong to this acquisition.
++			base := remote.Hash()
++			if record.Base != "" {
++				base = plumbing.NewHash(record.Base)
++			}
++			if err := validateManagedTreeChanges(repo, base, head.Hash(), []string{record.Path}); err != nil {
++				return fmt.Errorf("pending credential commit includes changes outside its recorded path: %w", err)
++			}
++			return restoreHeadAndIndex(repo, worktree, plumbing.NewHashReference(head.Name(), base))
++		}); err != nil {
++			return err
++		}
++	}
++	return nil
++}
+diff --git a/internal/api/handlers/management/auth_files_committed_runtime_test.go b/internal/api/handlers/management/auth_files_committed_runtime_test.go
+new file mode 100644
+index 00000000..86785219
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_committed_runtime_test.go
+@@ -0,0 +1,181 @@
++package management
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"net/http/httputil"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/store"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestAcquisitionRuntimeSyncUsesCommittedCredential(t *testing.T) {
++	for _, provider := range []string{"codex", "claude"} {
++		for _, existing := range []bool{false, true} {
++			name := "new"
++			if existing {
++				name = "replacement"
++			}
++			t.Run(provider+"/"+name, func(t *testing.T) {
++				root := t.TempDir()
++				authDir := filepath.Join(root, "auths")
++				var uploaded []byte
++				remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++					if r.Method != http.MethodPut || r.URL.Path != "/credentials/auths/acquired.json" {
++						t.Errorf("unexpected object request: %s %s", r.Method, r.URL)
++						w.WriteHeader(http.StatusBadRequest)
++						return
++					}
++					data, err := io.ReadAll(r.Body)
++					if err != nil {
++						t.Error(err)
++						w.WriteHeader(http.StatusInternalServerError)
++						return
++					}
++					if strings.Contains(r.Header.Get("X-Amz-Content-Sha256"), "STREAMING") {
++						data, err = io.ReadAll(httputil.NewChunkedReader(bytes.NewReader(data)))
++						if err != nil {
++							t.Error(err)
++							w.WriteHeader(http.StatusInternalServerError)
++							return
++						}
++					}
++					uploaded = data
++					staged, err := filepath.Glob(filepath.Join(authDir, ".auth-acquisition-*", "credential"))
++					if err != nil || len(staged) != 1 {
++						t.Errorf("staged credential: %v, %v", staged, err)
++						w.WriteHeader(http.StatusInternalServerError)
++						return
++					}
++					// Lose the staged mirror after the remote received it. The final rename
++					// must fail while the previous credential remains readable.
++					if err := os.Remove(staged[0]); err != nil {
++						t.Error(err)
++						w.WriteHeader(http.StatusInternalServerError)
++						return
++					}
++					w.Header().Set("ETag", `"committed"`)
++					w.WriteHeader(http.StatusOK)
++				}))
++				defer remote.Close()
++				tokenStore, err := store.NewObjectTokenStore(store.ObjectStoreConfig{
++					Endpoint: strings.TrimPrefix(remote.URL, "http://"), Bucket: "credentials",
++					AccessKey: "test-key", SecretKey: "test-secret", Region: "us-east-1", LocalRoot: root, PathStyle: true,
++				})
++				if err != nil {
++					t.Fatal(err)
++				}
++				path := filepath.Join(authDir, "acquired.json")
++				original := []byte(fmt.Sprintf(`{"type":%q,"access_token":"previous"}`, provider))
++				if existing {
++					if err := os.WriteFile(path, original, 0o600); err != nil {
++						t.Fatal(err)
++					}
++				}
++				record := &coreauth.Auth{ID: "acquired.json", FileName: "acquired.json", Provider: provider}
++				if provider == "codex" {
++					record.Storage = &codex.CodexTokenStorage{AccessToken: "committed", RefreshToken: "committed-refresh"}
++				} else {
++					record.Storage = &claude.ClaudeTokenStorage{AccessToken: "committed", RefreshToken: "committed-refresh"}
++				}
++				manager := coreauth.NewManager(nil, nil, nil)
++				if _, err := manager.Register(coreauth.WithSkipPersist(context.Background()), &coreauth.Auth{
++					ID: record.ID, Provider: provider, Metadata: map[string]any{"type": provider, "access_token": "previous"},
++				}); err != nil {
++					t.Fatal(err)
++				}
++				var runtimeRecord *coreauth.Auth
++				h := &Handler{cfg: &config.Config{AuthDir: authDir}, tokenStore: tokenStore,
++					postAuthPersistHook: func(_ context.Context, auth *coreauth.Auth) error {
++						runtimeRecord = auth
++						_, err := manager.Update(coreauth.WithSkipPersist(context.Background()), auth)
++						return err
++					},
++				}
++				if _, err := h.saveTokenRecord(context.Background(), record); err != nil {
++					t.Fatalf("remote commit was reported as failure: %v", err)
++				}
++				if !bytes.Contains(uploaded, []byte(`"access_token":"committed"`)) {
++					t.Fatalf("remote did not receive the acquired credential: %q", uploaded)
++				}
++				mirror, err := os.ReadFile(path)
++				if existing {
++					if err != nil || !bytes.Equal(mirror, original) {
++						t.Fatalf("publication failure did not leave the old mirror readable: %q, %v", mirror, err)
++					}
++				} else if !errors.Is(err, os.ErrNotExist) {
++					t.Fatalf("failed first publication left an unexpected mirror: %q, %v", mirror, err)
++				}
++				if runtimeRecord == nil || runtimeRecord.Metadata["access_token"] != "committed" || runtimeRecord.Metadata["refresh_token"] != "committed-refresh" {
++					t.Fatalf("runtime received stale or incomplete credentials: %#v", runtimeRecord)
++				}
++				active, ok := manager.GetByID(record.ID)
++				if !ok || active.Metadata["access_token"] != "committed" || active.Metadata["refresh_token"] != "committed-refresh" {
++					t.Fatalf("manager discarded remotely committed credentials: %#v", active)
++				}
++				rescanned, err := synthesizer.NewFileSynthesizer().Synthesize(&synthesizer.SynthesisContext{
++					Config: h.cfg, AuthDir: authDir, Now: time.Now(), IDGenerator: synthesizer.NewStableIDGenerator(),
++				})
++				if err != nil || len(rescanned) != 1 {
++					t.Fatalf("watcher rescan: %v, %v", rescanned, err)
++				}
++				if _, err := manager.Update(coreauth.WithSkipPersist(context.Background()), rescanned[0]); err != nil {
++					t.Fatal(err)
++				}
++				active, ok = manager.GetByID(record.ID)
++				if !ok || active.Metadata["access_token"] != "committed" || active.Metadata["refresh_token"] != "committed-refresh" {
++					t.Fatalf("watcher rescan reactivated the stale mirror: %#v", active)
++				}
++
++				router := gin.New()
++				router.GET("/download", h.DownloadAuthFile)
++				download := httptest.NewRecorder()
++				router.ServeHTTP(download, httptest.NewRequest(http.MethodGet, "/download?name=acquired.json", nil))
++				if download.Code != http.StatusOK || !bytes.Equal(download.Body.Bytes(), uploaded) {
++					t.Fatalf("credential download differs from the remote commit: status=%d data=%q want=%q", download.Code, download.Body.Bytes(), uploaded)
++				}
++			})
++		}
++	}
++	t.Run("file_snapshot_remains_fenced", func(t *testing.T) {
++		authDir := t.TempDir()
++		path := filepath.Join(authDir, "acquired.json")
++		if err := os.WriteFile(path, []byte(`{"type":"codex","access_token":"observed"}`), 0o600); err != nil {
++			t.Fatal(err)
++		}
++		manager := coreauth.NewManager(nil, nil, nil)
++		record := &coreauth.Auth{ID: "acquired.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "previous"}}
++		if _, err := manager.Register(coreauth.WithSkipPersist(context.Background()), record); err != nil {
++			t.Fatal(err)
++		}
++		h := &Handler{cfg: &config.Config{AuthDir: authDir}, postAuthPersistHook: func(_ context.Context, auth *coreauth.Auth) error {
++			if err := os.WriteFile(path, []byte(`{"type":"codex","access_token":"newer"}`), 0o600); err != nil {
++				return err
++			}
++			_, err := manager.Update(coreauth.WithSkipPersist(context.Background()), auth)
++			return err
++		}}
++		if err := h.notifyPersistedTokenRecord(context.Background(), path, record); err != nil {
++			t.Fatal(err)
++		}
++		active, ok := manager.GetByID(record.ID)
++		if !ok || active.Metadata["access_token"] != "previous" {
++			t.Fatalf("file-derived notification bypassed the stale-file fence: %#v", active)
++		}
++	})
++}
+diff --git a/sdk/cliproxy/auth/committed_file.go b/sdk/cliproxy/auth/committed_file.go
+new file mode 100644
+index 00000000..4b8f0ca9
+--- /dev/null
++++ b/sdk/cliproxy/auth/committed_file.go
+@@ -0,0 +1,29 @@
++package auth
++
++import "path/filepath"
++
++type committedAuthFileSnapshot struct {
++	path string
++	data string
++}
++
++// BindCommittedAuthFile retains remotely committed bytes when the local mirror
++// could not be published. Passing empty data clears a previous save's snapshot.
++func (a *Auth) BindCommittedAuthFile(path string, data []byte) {
++	if a == nil {
++		return
++	}
++	a.committedAuthFile = nil
++	if len(data) > 0 {
++		a.committedAuthFile = &committedAuthFileSnapshot{path: filepath.Clean(path), data: string(data)}
++	}
++}
++
++// CommittedAuthFile returns the committed credential for this destination without
++// rereading a local mirror that still contains the previous credential.
++func (a *Auth) CommittedAuthFile(path string) []byte {
++	if a == nil || a.committedAuthFile == nil || a.committedAuthFile.path != filepath.Clean(path) {
++		return nil
++	}
++	return []byte(a.committedAuthFile.data)
++}
+diff --git a/sdk/cliproxy/auth/types.go b/sdk/cliproxy/auth/types.go
+index c665461c..bd0d6e4e 100644
+--- a/sdk/cliproxy/auth/types.go
++++ b/sdk/cliproxy/auth/types.go
+@@ -10,7 +10,6 @@ import (
+ 	"io"
+ 	"net/http"
+ 	"net/url"
+-	"os"
+ 	"path/filepath"
+ 	"strconv"
+ 	"strings"
+@@ -19,6 +18,7 @@ import (
+ 
+ 	baseauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
+ )
+ 
+ // PostAuthHook defines a function that is called after an Auth record is created
+@@ -106,7 +106,8 @@ type Auth struct {
+ 	ModelStates map[string]*ModelState `json:"model_states,omitempty"`
+ 
+ 	// Runtime carries non-serialisable data used during execution (in-memory only).
+-	Runtime any `json:"-"`
++	Runtime           any                        `json:"-"`
++	committedAuthFile *committedAuthFileSnapshot `json:"-"`
+ 
+ 	// RejectedAccessToken tracks the access token rejected by upstream 401 until a refresh succeeds.
+ 	RejectedAccessToken string `json:"-"`
+@@ -133,7 +134,7 @@ type Auth struct {
+ 	fileSnapshotDigest string `json:"-"`
+ }
+ 
+-var readAuthSnapshotFileFunc = os.ReadFile
++var readAuthSnapshotFileFunc = authpublication.ReadFile
+ 
+ func canonicalAuthFileDigest(data []byte) string {
+ 	trimmed := bytes.TrimSpace(data)
+@@ -195,9 +196,8 @@ func (a *Auth) SameFileSnapshot(other *Auth) bool {
+ 	return a.fileSnapshotDigest == other.fileSnapshotDigest && a.fileSnapshotPath == other.fileSnapshotPath
+ }
+ 
+-// FileSnapshotMatchesDisk reports whether the backing file on disk still
+-// exists, is readable, and matches the canonical digest observed when this
+-// snapshot was synthesized.
++// FileSnapshotMatchesDisk compares the observation with the published credential.
++// A confirmed remote commit supersedes a mirror awaiting local publication.
+ func (a *Auth) FileSnapshotMatchesDisk() bool {
+ 	if !a.HasFileSnapshot() {
+ 		return true
+diff --git a/internal/store/acquisition_git_rollback_recovery_test.go b/internal/store/acquisition_git_rollback_recovery_test.go
+new file mode 100644
+index 00000000..8c49add3
+--- /dev/null
++++ b/internal/store/acquisition_git_rollback_recovery_test.go
+@@ -0,0 +1,133 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/go-git/go-git/v6/plumbing"
++	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
++	"github.com/go-git/go-git/v6/storage"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++type rollbackFailureStorer struct {
++	storage.Storer
++	phase    string
++	fault    error
++	rollback bool
++	injected bool
++}
++
++func (s *rollbackFailureStorer) SetReference(ref *plumbing.Reference) error {
++	if s.rollback && s.phase == "branch" && ref.Name().IsBranch() {
++		s.injected = true
++		return s.fault
++	}
++	return s.Storer.SetReference(ref)
++}
++
++func (s *rollbackFailureStorer) SetIndex(index *gitindex.Index) error {
++	if s.rollback && s.phase == "index" {
++		s.injected = true
++		return s.fault
++	}
++	return s.Storer.SetIndex(index)
++}
++
++func (s *rollbackFailureStorer) Close() error {
++	if closer, ok := s.Storer.(interface{ Close() error }); ok {
++		return closer.Close()
++	}
++	return nil
++}
++
++func TestGitAcquisitionRollbackFailureRetainsRecoveryJournal(t *testing.T) {
++	for _, phase := range []string{"branch", "index"} {
++		for _, existing := range []bool{false, true} {
++			name := "new"
++			if existing {
++				name = "replacement"
++			}
++			t.Run(phase+"/"+name, func(t *testing.T) {
++				root := t.TempDir()
++				remote := setupGitRemoteRepository(t, root, "master", testBranchSpec{name: "master", contents: "baseline\n"})
++				authDir := filepath.Join(root, "workspace", "auths")
++				s := NewGitTokenStore(remote, "", "", "master")
++				s.SetBaseDir(authDir)
++				if err := s.EnsureRepository(); err != nil {
++					t.Fatal(err)
++				}
++				original := []byte(`{"access_token":"original","disabled":false,"type":"codex"}`)
++				if existing {
++					if _, err := s.Save(context.Background(), &cliproxyauth.Auth{ID: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "original"}}); err != nil {
++						t.Fatal(err)
++					}
++				}
++				readme := filepath.Join(root, "workspace", "README.md")
++				independent := []byte("independent edit\n")
++				if err := os.WriteFile(readme, independent, 0o600); err != nil {
++					t.Fatal(err)
++				}
++				pushErr := errors.New("push rejected")
++				rollbackErr := errors.New("rollback " + phase + " unavailable")
++				var injected *rollbackFailureStorer
++				s.openFn = func(path string) (*git.Repository, error) {
++					repo, err := git.PlainOpen(path)
++					if err != nil {
++						return nil, err
++					}
++					injected = &rollbackFailureStorer{Storer: repo.Storer, phase: phase, fault: rollbackErr}
++					repo.Storer = injected
++					return repo, nil
++				}
++				s.pushFn = func(context.Context, *git.Repository, *git.PushOptions) error {
++					injected.rollback = true
++					return pushErr
++				}
++				_, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "unpublished"}})
++				if !errors.Is(err, pushErr) || !errors.Is(err, rollbackErr) || injected == nil || !injected.injected {
++					t.Fatalf("push and rollback failures were not reached: %v", err)
++				}
++				marker := gitPublicationPath(s.repoDirSnapshot(), "auths/login.json")
++				if _, err := readGitPublication(marker, s.repoDirSnapshot(), authDir); err != nil {
++					t.Errorf("failed rollback lost its recovery journal: %v", err)
++				}
++				restarted := NewGitTokenStore(remote, "", "", "master")
++				restarted.SetBaseDir(authDir)
++				if err := restarted.EnsureRepository(); err != nil {
++					t.Fatalf("restart stayed blocked after transient rollback failure: %v", err)
++				}
++				path := filepath.Join(authDir, "login.json")
++				data, err := os.ReadFile(path)
++				if existing {
++					if err != nil || !bytes.Equal(data, original) {
++						t.Fatalf("restart changed original credentials: %q, %v", data, err)
++					}
++					assertRemoteFileContents(t, remote, "master", "auths/login.json", string(original))
++				} else if !errors.Is(err, os.ErrNotExist) {
++					t.Fatalf("restart activated an unpublished credential: %q, %v", data, err)
++				}
++				if data, err := os.ReadFile(readme); err != nil || !bytes.Equal(data, independent) {
++					t.Fatalf("restart lost unrelated work: %q, %v", data, err)
++				}
++				if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
++					t.Fatalf("successful recovery did not clear journal: %v", err)
++				}
++				if _, err := restarted.Save(context.Background(), &cliproxyauth.Auth{ID: "later.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "later"}}); err != nil {
++					t.Fatalf("recovered store cannot save: %v", err)
++				}
++				assertRemoteTreePath(t, remote, "master", "auths/later.json", true)
++				if existing {
++					assertRemoteFileContents(t, remote, "master", "auths/login.json", string(original))
++				} else {
++					assertRemoteTreePath(t, remote, "master", "auths/login.json", false)
++				}
++			})
++		}
++	}
++}
+diff --git a/internal/authpublication/publication.go b/internal/authpublication/publication.go
+new file mode 100644
+index 00000000..bbd5da26
+--- /dev/null
++++ b/internal/authpublication/publication.go
+@@ -0,0 +1,198 @@
++// Package authpublication keeps remote commits authoritative while their local
++// credential mirror cannot be replaced.
++package authpublication
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io/fs"
++	"os"
++	"path/filepath"
++)
++
++const DirectoryName = ".auth-publications"
++
++var ErrPending = errors.New("credential publication awaits remote reconciliation")
++
++type record struct {
++	Name      string `json:"name"`
++	Data      []byte `json:"data"`
++	Committed bool   `json:"committed"`
++}
++
++type Pending struct {
++	path     string
++	record   record
++	previous []byte
++	finished bool
++}
++
++func markerPath(path string) string {
++	sum := sha256.Sum256([]byte(filepath.Base(path)))
++	return filepath.Join(filepath.Dir(path), DirectoryName, hex.EncodeToString(sum[:])+".json")
++}
++
++// Prepare fences readers before the remote write. A crash before confirmation
++// leaves an incomplete observation, never an activated uncommitted credential.
++func Prepare(path string, data []byte) (*Pending, error) {
++	marker := markerPath(path)
++	previous, err := os.ReadFile(marker)
++	if err != nil && !errors.Is(err, os.ErrNotExist) {
++		return nil, err
++	}
++	p := &Pending{path: path, record: record{Name: filepath.Base(path), Data: data}, previous: previous}
++	return p, writeRecord(marker, p.record)
++}
++
++func (p *Pending) Commit() error {
++	p.record.Committed = true
++	if err := writeRecord(markerPath(p.path), p.record); err != nil {
++		// Keep the prepared barrier if confirmation cannot be written. Runtime
++		// notification can still use the already committed in-memory credential.
++		p.finished = true
++		return err
++	}
++	p.finished = true
++	return nil
++}
++
++func (p *Pending) Abort() error {
++	if p == nil || p.finished {
++		return nil
++	}
++	p.finished = true
++	if len(p.previous) == 0 {
++		return Clear(p.path)
++	}
++	return writeBytes(markerPath(p.path), p.previous)
++}
++
++func load(path string) (record, bool, error) {
++	var r record
++	data, err := os.ReadFile(markerPath(path))
++	if errors.Is(err, os.ErrNotExist) {
++		return r, false, nil
++	}
++	if err != nil {
++		return r, true, err
++	}
++	if err := json.Unmarshal(data, &r); err != nil {
++		return r, true, err
++	}
++	if r.Name != filepath.Base(path) || len(r.Data) == 0 {
++		return r, true, fmt.Errorf("invalid credential publication record")
++	}
++	return r, true, nil
++}
++
++func HasPending(path string) bool {
++	_, exists, _ := load(path)
++	return exists
++}
++
++// ReadFile includes a confirmed remote commit even while the old JSON remains
++// readable. Unconfirmed records keep scans incomplete until backend recovery.
++func ReadFile(path string) ([]byte, error) {
++	r, exists, err := load(path)
++	if err != nil {
++		return nil, err
++	}
++	if !exists {
++		return os.ReadFile(path)
++	}
++	if !r.Committed {
++		return nil, ErrPending
++	}
++	return r.Data, nil
++}
++
++func Clear(path string) error {
++	marker := markerPath(path)
++	err := os.Remove(marker)
++	if err != nil && !errors.Is(err, os.ErrNotExist) {
++		return err
++	}
++	// Remove only an empty record directory; other credentials may still own it.
++	_ = os.Remove(filepath.Dir(marker))
++	return nil
++}
++
++// Repair runs before another local save can merge or publish stale mirror data.
++func Repair(path string) error {
++	if !HasPending(path) {
++		return nil
++	}
++	data, err := ReadFile(path)
++	if err != nil {
++		return err
++	}
++	if err := writeBytes(path, data); err != nil {
++		return err
++	}
++	return Clear(path)
++}
++
++func writeRecord(path string, r record) error {
++	data, err := json.Marshal(r)
++	if err != nil {
++		return err
++	}
++	return writeBytes(path, data)
++}
++
++func writeBytes(path string, data []byte) error {
++	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
++		return err
++	}
++	file, err := os.CreateTemp(filepath.Dir(path), ".publication-*")
++	if err != nil {
++		return err
++	}
++	defer func() { _ = os.Remove(file.Name()) }()
++	if _, err := file.Write(data); err != nil {
++		_ = file.Close()
++		return err
++	}
++	if err := file.Close(); err != nil {
++		return err
++	}
++	return os.Rename(file.Name(), path)
++}
++
++// ReconciledDirectory retires publication records after startup has loaded an
++// authoritative backend snapshot. Callers must exclude concurrent saves.
++func ReconciledDirectory(dir string) error {
++	return fs.WalkDir(os.DirFS(dir), ".", func(relative string, entry fs.DirEntry, err error) error {
++		if errors.Is(err, os.ErrNotExist) {
++			return nil
++		}
++		if err != nil {
++			return err
++		}
++		if entry.IsDir() && entry.Name() == DirectoryName {
++			if err := os.RemoveAll(filepath.Join(dir, filepath.FromSlash(relative))); err != nil {
++				return err
++			}
++			return fs.SkipDir
++		}
++		return nil
++	})
++}
++
++func DiscardUnconfirmed(path string) error {
++	r, exists, err := load(path)
++	if err != nil || !exists || r.Committed {
++		return err
++	}
++	return Clear(path)
++}
++
++func Stat(path string) (os.FileInfo, error) {
++	if HasPending(path) {
++		return os.Stat(markerPath(path))
++	}
++	return os.Stat(path)
++}
+diff --git a/internal/authpublication/publication_test.go b/internal/authpublication/publication_test.go
+new file mode 100644
+index 00000000..9f33d3a9
+--- /dev/null
++++ b/internal/authpublication/publication_test.go
+@@ -0,0 +1,88 @@
++package authpublication
++
++import (
++	"bytes"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestAuthPublicationSurvivesRescanAndRepairsMirror(t *testing.T) {
++	for _, existing := range []bool{false, true} {
++		name := "new"
++		if existing {
++			name = "replacement"
++		}
++		t.Run(name, func(t *testing.T) {
++			dir := t.TempDir()
++			path := filepath.Join(dir, "account.json")
++			if existing {
++				if err := os.WriteFile(path, []byte(`{"access_token":"old"}`), 0o600); err != nil {
++					t.Fatal(err)
++				}
++			}
++			data := []byte(`{"access_token":"committed"}`)
++			pending, err := Prepare(path, data)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if _, err := ReadFile(path); !errors.Is(err, ErrPending) {
++				t.Fatalf("unconfirmed credential became readable: %v", err)
++			}
++			if err := pending.Commit(); err != nil {
++				t.Fatal(err)
++			}
++			// Drop the writer. A fresh reader has only the files left on disk.
++			pending = nil
++			got, err := ReadFile(path)
++			if err != nil || !bytes.Equal(got, data) {
++				t.Fatalf("fresh reader lost committed credential: %q, %v", got, err)
++			}
++			paths, err := Paths(dir)
++			if err != nil || len(paths) != 1 || paths[0] != path {
++				t.Fatalf("scan lost pending credential: %v, %v", paths, err)
++			}
++			if err := Repair(path); err != nil {
++				t.Fatal(err)
++			}
++			got, err = os.ReadFile(path)
++			if err != nil || !bytes.Equal(got, data) || HasPending(path) {
++				t.Fatalf("mirror repair did not retire the overlay: %q, %v", got, err)
++			}
++		})
++	}
++}
++
++func TestAuthPublicationAbortPreservesPreviousCommit(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "account.json")
++	first := []byte(`{"access_token":"committed"}`)
++	pending, err := Prepare(path, first)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := pending.Commit(); err != nil {
++		t.Fatal(err)
++	}
++	failed, err := Prepare(path, []byte(`{"access_token":"rejected"}`))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := failed.Abort(); err != nil {
++		t.Fatal(err)
++	}
++	got, err := ReadFile(path)
++	if err != nil || !bytes.Equal(got, first) {
++		t.Fatalf("failed replacement lost the last committed credential: %q, %v", got, err)
++	}
++	if err := os.WriteFile(path, []byte(`{"access_token":"newer-remote"}`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if err := ReconciledDirectory(filepath.Dir(path)); err != nil {
++		t.Fatal(err)
++	}
++	got, err = ReadFile(path)
++	if err != nil || !bytes.Contains(got, []byte("newer-remote")) || HasPending(path) {
++		t.Fatalf("backend reconciliation kept an obsolete overlay: %q, %v", got, err)
++	}
++}
+diff --git a/internal/store/acquisition_publication_barrier.go b/internal/store/acquisition_publication_barrier.go
+new file mode 100644
+index 00000000..a242f132
+--- /dev/null
++++ b/internal/store/acquisition_publication_barrier.go
+@@ -0,0 +1,35 @@
++package store
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++)
++
++// A process can stop after preparing the reader barrier but before creating the
++// Git journal. No credential commit can precede that journal.
++func discardUnjournaledPublicationBarriers(ctx context.Context, repoDir, authDir string) error {
++	paths, err := authpublication.Paths(authDir)
++	if err != nil {
++		return err
++	}
++	for _, path := range paths {
++		if err := codex.WithFileLockContext(ctx, path, func() error {
++			rel, err := filepath.Rel(repoDir, path)
++			if err != nil {
++				return err
++			}
++			if _, err := os.Stat(gitPublicationPath(repoDir, rel)); !errors.Is(err, os.ErrNotExist) {
++				return err
++			}
++			return authpublication.DiscardUnconfirmed(path)
++		}); err != nil {
++			return err
++		}
++	}
++	return nil
++}
+diff --git a/internal/store/acquisition_publication_list.go b/internal/store/acquisition_publication_list.go
+new file mode 100644
+index 00000000..160bb70d
+--- /dev/null
++++ b/internal/store/acquisition_publication_list.go
+@@ -0,0 +1,30 @@
++package store
++
++import (
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func appendPendingAuthFiles(dir string, entries []*cliproxyauth.Auth, read func(string, string) (*cliproxyauth.Auth, error)) ([]*cliproxyauth.Auth, error) {
++	paths, err := authpublication.Paths(dir)
++	if err != nil {
++		return nil, err
++	}
++	seen := make(map[string]bool, len(entries))
++	for _, auth := range entries {
++		seen[auth.Attributes[cliproxyauth.AttributePath]] = true
++	}
++	for _, path := range paths {
++		if seen[path] {
++			continue
++		}
++		auth, err := read(path, dir)
++		if err != nil {
++			return nil, err
++		}
++		if auth != nil {
++			entries = append(entries, auth)
++		}
++	}
++	return entries, nil
++}
+diff --git a/internal/watcher/auth_file_snapshot.go b/internal/watcher/auth_file_snapshot.go
+index 4162e606..d83cccbb 100644
+--- a/internal/watcher/auth_file_snapshot.go
++++ b/internal/watcher/auth_file_snapshot.go
+@@ -2,10 +2,10 @@ package watcher
+ 
+ import (
+ 	"fmt"
+-	"os"
+ 	"path/filepath"
+ 	"time"
+ 
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
+ 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+ )
+@@ -36,7 +36,7 @@ func (w *Watcher) SnapshotAuthFile(path string) ([]*coreauth.Auth, error) {
+ 	}
+ 	authDir = filepath.Clean(absoluteAuthDir)
+ 	path = filepath.Clean(absolutePath)
+-	data, errReadFile := os.ReadFile(path)
++	data, errReadFile := authpublication.ReadFile(path)
+ 	if errReadFile != nil {
+ 		return nil, fmt.Errorf("read auth file: %w", errReadFile)
+ 	}
+diff --git a/internal/watcher/clients.go b/internal/watcher/clients.go
+index ad880b1c..c918724d 100644
+--- a/internal/watcher/clients.go
++++ b/internal/watcher/clients.go
+@@ -16,6 +16,7 @@ import (
+ 	"strings"
+ 	"time"
+ 
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/redisqueue"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+@@ -88,6 +89,7 @@ func (w *Watcher) reloadClients(rescanAuth bool, affectedOAuthProviders []string
+ 		}
+ 		newFileAuthsByPath := make(map[string]map[string]*coreauth.Auth)
+ 		var incompleteRescanPaths map[string]struct{}
++		var incompleteRescanDir string
+ 
+ 		w.clientsMutex.RLock()
+ 		parser := w.pluginAuthParser
+@@ -96,20 +98,16 @@ func (w *Watcher) reloadClients(rescanAuth bool, affectedOAuthProviders []string
+ 		if resolvedAuthDir, errResolveAuthDir := util.ResolveAuthDir(cfg.AuthDir); errResolveAuthDir != nil {
+ 			log.Errorf("failed to resolve auth directory for hash cache: %v", errResolveAuthDir)
+ 		} else if resolvedAuthDir != "" {
+-			entries, errReadDir := os.ReadDir(resolvedAuthDir)
++			paths, errReadDir := authpublication.Files(resolvedAuthDir)
+ 			if errReadDir != nil {
++				if !errors.Is(errReadDir, fs.ErrNotExist) {
++					incompleteRescanDir = resolvedAuthDir
++				}
+ 				log.Errorf("failed to read auth directory for hash cache: %v", errReadDir)
+ 			} else {
+-				for _, entry := range entries {
+-					if entry == nil || entry.IsDir() {
+-						continue
+-					}
+-					name := entry.Name()
+-					if !strings.HasSuffix(strings.ToLower(name), ".json") {
+-						continue
+-					}
+-					fullPath := filepath.Join(resolvedAuthDir, name)
+-					data, errReadFile := os.ReadFile(fullPath)
++				for _, fullPath := range paths {
++					name := filepath.Base(fullPath)
++					data, errReadFile := authpublication.ReadFile(fullPath)
+ 					if errReadFile != nil {
+ 						if !errors.Is(errReadFile, fs.ErrNotExist) {
+ 							if incompleteRescanPaths == nil {
+@@ -155,6 +153,24 @@ func (w *Watcher) reloadClients(rescanAuth bool, affectedOAuthProviders []string
+ 			}
+ 		}
+ 		w.clientsMutex.Lock()
++		if incompleteRescanDir != "" {
++			markDirMemberIncomplete := func(trackedPath string) {
++				relative, errRel := filepath.Rel(incompleteRescanDir, trackedPath)
++				if errRel != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
++					return
++				}
++				if incompleteRescanPaths == nil {
++					incompleteRescanPaths = make(map[string]struct{})
++				}
++				incompleteRescanPaths[trackedPath] = struct{}{}
++			}
++			for trackedPath := range w.lastAuthHashes {
++				markDirMemberIncomplete(trackedPath)
++			}
++			for trackedPath := range w.fileAuthsByPath {
++				markDirMemberIncomplete(trackedPath)
++			}
++		}
+ 		for normalizedPath := range incompleteRescanPaths {
+ 			if _, ok := w.lastAuthHashes[normalizedPath]; ok {
+ 				newAuthHashes[normalizedPath] = ""
+@@ -222,7 +238,7 @@ func (w *Watcher) addOrUpdateClient(path string) {
+ 
+ func (w *Watcher) addOrUpdateClientLocked(path string) {
+ 	w.observeAuthFile(path)
+-	data, errRead := os.ReadFile(path)
++	data, errRead := authpublication.ReadFile(path)
+ 	if errRead != nil {
+ 		log.Errorf("failed to read auth file %s: %v", filepath.Base(path), errRead)
+ 		return
+@@ -320,7 +336,7 @@ func (w *Watcher) addOrUpdateClientLocked(path string) {
+ 	updates := w.computePerPathUpdatesLocked(oldByID, newByID)
+ 	w.clientsMutex.Unlock()
+ 
+-	if errSynthesize == nil {
++	if errSynthesize == nil && !authpublication.HasPending(path) {
+ 		w.persistAuthAsync(fmt.Sprintf("Sync auth %s", filepath.Base(path)), path)
+ 	}
+ 	w.dispatchAuthUpdates(updates)
+@@ -335,6 +351,10 @@ func (w *Watcher) removeClient(path string) {
+ }
+ 
+ func (w *Watcher) removeClientLocked(path string) {
++	if authpublication.HasPending(path) {
++		w.addOrUpdateClientLocked(path)
++		return
++	}
+ 	w.observeAuthFile(path)
+ 	normalized := w.normalizeAuthPath(path)
+ 	w.clientsMutex.Lock()
+@@ -424,23 +444,15 @@ func (w *Watcher) loadFileClients(cfg *config.Config) int {
+ 		return 0
+ 	}
+ 
+-	entries, errReadDir := os.ReadDir(authDir)
++	paths, errReadDir := authpublication.Files(authDir)
+ 	if errReadDir != nil {
+ 		log.Errorf("error reading auth directory: %v", errReadDir)
+ 		return 0
+ 	}
+-	for _, entry := range entries {
+-		if entry == nil || entry.IsDir() {
+-			continue
+-		}
+-		name := entry.Name()
+-		if !strings.HasSuffix(strings.ToLower(name), ".json") {
+-			continue
+-		}
++	for _, fullPath := range paths {
+ 		authFileCount++
+-		log.Debugf("processing auth file %d: %s", authFileCount, name)
+-		fullPath := filepath.Join(authDir, name)
+-		if data, errReadFile := os.ReadFile(fullPath); errReadFile == nil && len(data) > 0 {
++		log.Debugf("processing auth file %d: %s", authFileCount, filepath.Base(fullPath))
++		if data, errReadFile := authpublication.ReadFile(fullPath); errReadFile == nil && len(data) > 0 {
+ 			successfulAuthCount++
+ 		}
+ 	}
+diff --git a/internal/watcher/events.go b/internal/watcher/events.go
+index f6a55d04..a7c9eace 100644
+--- a/internal/watcher/events.go
++++ b/internal/watcher/events.go
+@@ -13,6 +13,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/fsnotify/fsnotify"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
+ 	log "github.com/sirupsen/logrus"
+ )
+ 
+@@ -166,7 +167,7 @@ func (w *Watcher) observeAuthFile(path string) {
+ }
+ 
+ func (w *Watcher) authFileUnchanged(path string) (bool, error) {
+-	data, errRead := os.ReadFile(path)
++	data, errRead := authpublication.ReadFile(path)
+ 	if errRead != nil {
+ 		return false, errRead
+ 	}
+diff --git a/internal/watcher/publication_overlay_test.go b/internal/watcher/publication_overlay_test.go
+new file mode 100644
+index 00000000..7b7e1bb2
+--- /dev/null
++++ b/internal/watcher/publication_overlay_test.go
+@@ -0,0 +1,195 @@
++package watcher
++
++import (
++	"bytes"
++	"context"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/store"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestWatcherPreservesRemotePublicationAcrossRescans(t *testing.T) {
++	for _, relative := range []string{"account.json", filepath.Join("team", "account.json")} {
++		for _, existing := range []bool{false, true} {
++			name := "new"
++			if existing {
++				name = "replacement"
++			}
++			t.Run(relative+"/"+name, func(t *testing.T) {
++				root := t.TempDir()
++				authDir := filepath.Join(root, "auths")
++				path := filepath.Join(authDir, relative)
++				var uploaded []byte
++				remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++					if r.Method == http.MethodDelete {
++						w.WriteHeader(http.StatusNoContent)
++						return
++					}
++					if r.Method != http.MethodPut {
++						w.WriteHeader(http.StatusBadRequest)
++						return
++					}
++					var err error
++					uploaded, err = io.ReadAll(r.Body)
++					if err != nil {
++						t.Error(err)
++						w.WriteHeader(http.StatusInternalServerError)
++						return
++					}
++					staged, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".auth-acquisition-*", "credential"))
++					if err != nil || len(staged) != 1 {
++						t.Errorf("staged credential: %v, %v", staged, err)
++						w.WriteHeader(http.StatusInternalServerError)
++						return
++					}
++					if err := os.Remove(staged[0]); err != nil {
++						t.Error(err)
++						w.WriteHeader(http.StatusInternalServerError)
++						return
++					}
++					w.Header().Set("ETag", `"committed"`)
++				}))
++				defer remote.Close()
++				tokenStore, err := store.NewObjectTokenStore(store.ObjectStoreConfig{
++					Endpoint: strings.TrimPrefix(remote.URL, "http://"), Bucket: "credentials", AccessKey: "test-key",
++					SecretKey: "test-secret", Region: "us-east-1", LocalRoot: root, PathStyle: true,
++				})
++				if err != nil {
++					t.Fatal(err)
++				}
++				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
++					t.Fatal(err)
++				}
++				cfg := &config.Config{AuthDir: authDir}
++				w := &Watcher{authDir: authDir, config: cfg, authQueue: make(chan AuthUpdate, 1)}
++				var stale *coreauth.Auth
++				if existing {
++					if err := os.WriteFile(path, []byte(`{"type":"codex","access_token":"old"}`), 0o600); err != nil {
++						t.Fatal(err)
++					}
++					w.addOrUpdateClient(path)
++					update, ok := takePublicationUpdate(w, relative)
++					if !ok || update.Auth == nil {
++						t.Fatal("initial watcher scan produced no auth")
++					}
++					stale = update.Auth
++				}
++				record := &coreauth.Auth{ID: relative, Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "committed"}}
++				if _, err := tokenStore.Save(coreauth.WithAuthCreationIntent(context.Background()), record); err != nil {
++					t.Fatal(err)
++				}
++				if !bytes.Contains(uploaded, []byte("committed")) {
++					t.Fatal("remote did not receive the credential")
++				}
++				listed, err := tokenStore.List(context.Background())
++				if err != nil || len(listed) != 1 || listed[0].ID != record.ID || listed[0].Metadata["access_token"] != "committed" {
++					t.Fatalf("store listing lost the pending credential or exposed its journal: %#v, %v", listed, err)
++				}
++				manager := coreauth.NewManager(nil, nil, nil)
++				if _, err := manager.Register(coreauth.WithSkipPersist(context.Background()), record); err != nil {
++					t.Fatal(err)
++				}
++				if stale != nil {
++					if _, err := manager.Update(coreauth.WithSkipPersist(context.Background()), stale); err != nil {
++						t.Fatal(err)
++					}
++				}
++				apply := func(stage string, scan *Watcher) {
++					t.Helper()
++					update, ok := takePublicationUpdate(scan, record.ID)
++					if !ok || update.Auth == nil || update.Action == AuthUpdateActionDelete {
++						t.Fatalf("%s lost committed credential: %#v", stage, update)
++					}
++					if _, err := manager.Update(coreauth.WithSkipPersist(context.Background()), update.Auth); err != nil {
++						t.Fatal(err)
++					}
++					active, ok := manager.GetByID(record.ID)
++					if !ok || active.Metadata["access_token"] != "committed" {
++						t.Fatalf("%s rolled back runtime: %#v", stage, active)
++					}
++				}
++				privateDir := filepath.Join(authDir, ".auth-acquisition-orphan")
++				if err := os.MkdirAll(privateDir, 0o700); err != nil {
++					t.Fatal(err)
++				}
++				if err := os.WriteFile(filepath.Join(privateDir, "uncommitted.json"), []byte(`{"type":"codex","access_token":"uncommitted"}`), 0o600); err != nil {
++					t.Fatal(err)
++				}
++				w.refreshAuthState(true)
++				apply("full rescan", w)
++				if len(w.currentAuths) != 1 {
++					t.Fatal("scan exposed private staging credentials")
++				}
++				w.lastAuthHashes = nil
++				w.addOrUpdateClient(path)
++				if update, ok := takePublicationUpdate(w, record.ID); ok && (update.Auth == nil || update.Auth.Metadata["access_token"] != "committed") {
++					t.Fatalf("incremental read used stale mirror: %#v", update)
++				}
++				w.removeClient(path)
++				if update, ok := takePublicationUpdate(w, record.ID); ok && update.Action == AuthUpdateActionDelete {
++					t.Fatal("mirror removal deleted a remotely committed credential")
++				}
++				fresh := &Watcher{authDir: authDir, config: cfg, authQueue: make(chan AuthUpdate, 1)}
++				fresh.refreshAuthState(false)
++				apply("fresh watcher", fresh)
++				if err := authpublication.Repair(path); err != nil {
++					t.Fatal(err)
++				}
++				if authpublication.HasPending(path) {
++					t.Fatal("repair left publication record active")
++				}
++				fresh.refreshAuthState(true)
++				apply("full rescan after repair", fresh)
++				if err := os.WriteFile(path, []byte(`{"type":"codex","access_token":"edited"}`), 0o600); err != nil {
++					t.Fatal(err)
++				}
++				fresh.addOrUpdateClient(path)
++				update, ok := takePublicationUpdate(fresh, record.ID)
++				if !ok || update.Auth == nil {
++					t.Fatal("ordinary edits stayed blocked after mirror repair")
++				}
++				if _, err := manager.Update(coreauth.WithSkipPersist(context.Background()), update.Auth); err != nil {
++					t.Fatal(err)
++				}
++				active, _ := manager.GetByID(record.ID)
++				if active.Metadata["access_token"] != "edited" {
++					t.Fatal("repaired mirror did not resume normal file updates")
++				}
++				if _, err := tokenStore.Save(coreauth.WithAuthCreationIntent(context.Background()), record); err != nil {
++					t.Fatal(err)
++				}
++				if !authpublication.HasPending(path) {
++					t.Fatal("second publication did not leave a pending overlay")
++				}
++				if err := tokenStore.Delete(context.Background(), record.ID); err != nil {
++					t.Fatal(err)
++				}
++				if authpublication.HasPending(path) {
++					t.Fatal("explicit deletion left a credential overlay active")
++				}
++				fresh.removeClient(path)
++				if update, ok := takePublicationUpdate(fresh, record.ID); !ok || update.Action != AuthUpdateActionDelete {
++					t.Fatal("explicit deletion stayed hidden by the retired publication")
++				}
++
++			})
++		}
++	}
++}
++
++func takePublicationUpdate(w *Watcher, id string) (AuthUpdate, bool) {
++	w.dispatchMu.Lock()
++	defer w.dispatchMu.Unlock()
++	update, ok := w.pendingUpdates[id]
++	w.pendingUpdates, w.pendingOrder = nil, nil
++	return update, ok
++}
+diff --git a/internal/watcher/synthesizer/file.go b/internal/watcher/synthesizer/file.go
+index 8919dfef..abd2a6dc 100644
+--- a/internal/watcher/synthesizer/file.go
++++ b/internal/watcher/synthesizer/file.go
+@@ -6,7 +6,6 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"io/fs"
+-	"os"
+ 	"path/filepath"
+ 	"runtime"
+ 	"strconv"
+@@ -14,6 +13,7 @@ import (
+ 
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
+ 	kimiauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/kimi"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
+ 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
+@@ -36,22 +36,12 @@ func (s *FileSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth, e
+ 		return out, nil
+ 	}
+ 
+-	entries, err := os.ReadDir(ctx.AuthDir)
++	ordered, err := authpublication.Files(ctx.AuthDir)
+ 	if err != nil {
+-		// Not an error if directory doesn't exist
+-		return out, nil
++		ctx.RecordIncompleteFile(ctx.AuthDir)
+ 	}
+-
+-	for _, e := range entries {
+-		if e.IsDir() {
+-			continue
+-		}
+-		name := e.Name()
+-		if !strings.HasSuffix(strings.ToLower(name), ".json") {
+-			continue
+-		}
+-		full := filepath.Join(ctx.AuthDir, name)
+-		data, errRead := os.ReadFile(full)
++	for _, full := range ordered {
++		data, errRead := authpublication.ReadFile(full)
+ 		if errRead != nil {
+ 			if !errors.Is(errRead, fs.ErrNotExist) {
+ 				ctx.RecordIncompleteFile(full)
+@@ -64,7 +54,7 @@ func (s *FileSynthesizer) Synthesize(ctx *SynthesisContext) ([]*coreauth.Auth, e
+ 		}
+ 		auths, errSynthesize := synthesizeFileAuths(ctx, full, data)
+ 		if errSynthesize != nil {
+-			log.WithError(errSynthesize).Warnf("skipping auth file %s", name)
++			log.WithError(errSynthesize).Warnf("skipping auth file %s", filepath.Base(full))
+ 			continue
+ 		}
+ 		if len(auths) == 0 {
+diff --git a/internal/api/handlers/management/auth_files_crud.go b/internal/api/handlers/management/auth_files_crud.go
+index 30fee8de..c9db0c77 100644
+--- a/internal/api/handlers/management/auth_files_crud.go
++++ b/internal/api/handlers/management/auth_files_crud.go
+@@ -18,6 +18,7 @@ import (
+ 
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/clienterror"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+ 	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
+@@ -36,7 +37,7 @@ func (h *Handler) DownloadAuthFile(c *gin.Context) {
+ 		return
+ 	}
+ 	full := filepath.Join(h.cfg.AuthDir, name)
+-	data, err := os.ReadFile(full)
++	data, err := authpublication.ReadFile(full)
+ 	if err != nil {
+ 		if os.IsNotExist(err) {
+ 			c.JSON(404, gin.H{"error": "file not found"})
+@@ -146,21 +147,13 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
+ 	}
+ 	ctx := c.Request.Context()
+ 	if all := c.Query("all"); all == "true" || all == "1" || all == "*" {
+-		entries, err := os.ReadDir(h.cfg.AuthDir)
++		paths, err := authpublication.Files(h.cfg.AuthDir)
+ 		if err != nil {
+ 			c.JSON(500, gin.H{"error": fmt.Sprintf("failed to read auth dir: %v", err)})
+ 			return
+ 		}
+ 		deleted := 0
+-		for _, e := range entries {
+-			if e.IsDir() {
+-				continue
+-			}
+-			name := e.Name()
+-			if !strings.HasSuffix(strings.ToLower(name), ".json") {
+-				continue
+-			}
+-			full := filepath.Join(h.cfg.AuthDir, name)
++		for _, full := range paths {
+ 			if !filepath.IsAbs(full) {
+ 				if abs, errAbs := filepath.Abs(full); errAbs == nil {
+ 					full = abs
+@@ -169,14 +162,14 @@ func (h *Handler) DeleteAuthFile(c *gin.Context) {
+ 			errDelete := func() error {
+ 				release := h.beginSIWCFileMutation(ctx, full)
+ 				defer release()
+-				if errRemove := os.Remove(full); errRemove != nil {
+-					return nil
++				if errRemove := removePublishedAuthFile(ctx, full); errRemove != nil {
++					return errRemove
+ 				}
+ 				if errDel := h.deleteTokenRecord(ctx, full); errDel != nil {
+ 					return errDel
+ 				}
+ 				deleted++
+-				h.removeAuth(ctx, full)
++				h.removeAuthsForPath(ctx, full, "")
+ 				return nil
+ 			}()
+ 			if errDelete != nil {
+@@ -290,7 +283,7 @@ func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) e
+ 	}
+ 	release := h.beginSIWCFileMutation(ctx, dst)
+ 	defer release()
+-	if errWrite := h.writeAuthFileBytes(dst, data, auth); errWrite != nil {
++	if errWrite := h.writeAuthFileBytes(ctx, dst, data); errWrite != nil {
+ 		return fmt.Errorf("failed to write file: %w", errWrite)
+ 	}
+ 	if err := h.upsertAuthRecord(ctx, auth); err != nil {
+@@ -304,25 +297,13 @@ func (h *Handler) writeAuthFile(ctx context.Context, name string, data []byte) e
+ 	return nil
+ }
+ 
+-func (h *Handler) writeAuthFileBytes(dst string, data []byte, auth *coreauth.Auth) error {
+-	if h.shouldLockCodexAuthFile(auth) {
+-		return codex.WithFileLock(dst, func() error {
+-			return os.WriteFile(dst, data, 0o600)
+-		})
+-	}
+-	return os.WriteFile(dst, data, 0o600)
+-}
+-
+-func (h *Handler) shouldLockCodexAuthFile(auth *coreauth.Auth) bool {
+-	if coreauth.IsCodexAuthRecord(auth) {
+-		return true
+-	}
+-	if h != nil && h.authManager != nil && auth != nil && auth.ID != "" {
+-		if existing, ok := h.authManager.GetByID(auth.ID); ok && coreauth.IsCodexAuthRecord(existing) {
+-			return true
++func (h *Handler) writeAuthFileBytes(ctx context.Context, dst string, data []byte) error {
++	return codex.WithFileLockContext(ctx, dst, func() error {
++		if err := authpublication.Repair(dst); err != nil {
++			return err
+ 		}
+-	}
+-	return false
++		return os.WriteFile(dst, data, 0o600)
++	})
+ }
+ 
+ func requestedAuthFileNamesForDelete(c *gin.Context) ([]string, error) {
+@@ -414,7 +395,7 @@ func (h *Handler) deleteAuthFileByName(ctx context.Context, name string) (string
+ 	}
+ 	release := h.beginSIWCFileMutation(ctx, targetPath)
+ 	defer release()
+-	if errRemove := os.Remove(targetPath); errRemove != nil {
++	if errRemove := removePublishedAuthFile(ctx, targetPath); errRemove != nil {
+ 		if os.IsNotExist(errRemove) {
+ 			return filepath.Base(name), http.StatusNotFound, errAuthFileNotFound
+ 		}
+diff --git a/internal/store/acquisition_publication_nested_test.go b/internal/store/acquisition_publication_nested_test.go
+new file mode 100644
+index 00000000..a972585a
+--- /dev/null
++++ b/internal/store/acquisition_publication_nested_test.go
+@@ -0,0 +1,55 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"os"
++	"path/filepath"
++	"testing"
++
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestObjectStoreListsNestedPendingPublication(t *testing.T) {
++	for _, existing := range []bool{false, true} {
++		name := "new"
++		if existing {
++			name = "replacement"
++		}
++		t.Run(name, func(t *testing.T) {
++			dir := t.TempDir()
++			path := filepath.Join(dir, "team", "account.json")
++			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
++				t.Fatal(err)
++			}
++			if existing {
++				if err := os.WriteFile(path, []byte(`{"type":"codex","access_token":"old"}`), 0o600); err != nil {
++					t.Fatal(err)
++				}
++			}
++			var remote []byte
++			s := &ObjectTokenStore{authDir: dir, putObjectFn: func(_ context.Context, key string, data []byte, _ string) error {
++				if key != "auths/team/account.json" {
++					t.Fatalf("nested remote key = %q", key)
++				}
++				remote = append([]byte(nil), data...)
++				staged, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".auth-acquisition-*", "credential"))
++				if err != nil || len(staged) != 1 {
++					t.Fatalf("staged nested credential: %v, %v", staged, err)
++				}
++				return os.Remove(staged[0])
++			}}
++			record := &cliproxyauth.Auth{ID: "team/account.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "committed"}}
++			if _, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), record); err != nil {
++				t.Fatal(err)
++			}
++			if !bytes.Contains(remote, []byte(`"access_token":"committed"`)) {
++				t.Fatalf("remote lost nested credential: %q", remote)
++			}
++			listed, err := s.List(context.Background())
++			if err != nil || len(listed) != 1 || listed[0].ID != record.ID || listed[0].Metadata["access_token"] != "committed" {
++				t.Fatalf("nested committed credential missing from listing: %#v, %v", listed, err)
++			}
++		})
++	}
++}
+diff --git a/internal/api/handlers/management/auth_files_publication.go b/internal/api/handlers/management/auth_files_publication.go
+new file mode 100644
+index 00000000..aa12f901
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_publication.go
+@@ -0,0 +1,22 @@
++package management
++
++import (
++	"context"
++	"os"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++)
++
++func removePublishedAuthFile(ctx context.Context, path string) error {
++	return codex.WithFileLockContext(ctx, path, func() error {
++		err := os.Remove(path)
++		if !os.IsNotExist(err) {
++			return err
++		}
++		// A confirmed remote commit is deletable even if its first mirror failed.
++		// Leave the record active until the backing store confirms deletion.
++		_, errRead := authpublication.ReadFile(path)
++		return errRead
++	})
++}
+diff --git a/internal/api/handlers/management/auth_files_publication_mutations_test.go b/internal/api/handlers/management/auth_files_publication_mutations_test.go
+new file mode 100644
+index 00000000..ecd1d928
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_publication_mutations_test.go
+@@ -0,0 +1,182 @@
++package management
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"mime/multipart"
++	"net/http"
++	"net/http/httptest"
++	"net/http/httputil"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/store"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestManagementMutationsRetireCommittedPublication(t *testing.T) {
++	for _, provider := range []string{"codex", "claude"} {
++		for _, existing := range []bool{false, true} {
++			for _, operation := range []string{"delete", "delete_all", "upload", "multipart"} {
++				t.Run(fmt.Sprintf("%s/existing=%t/%s", provider, existing, operation), func(t *testing.T) {
++					h, path, backend := newCommittedPublicationHandler(t, provider, existing)
++					router := gin.New()
++					router.DELETE("/credentials", h.DeleteAuthFile)
++					router.POST("/credentials", h.UploadAuthFile)
++					var req *http.Request
++					deleting := strings.HasPrefix(operation, "delete")
++					if deleting {
++						query := "name=account.json"
++						if operation == "delete_all" {
++							query = "all=true"
++						}
++						req = httptest.NewRequest(http.MethodDelete, "/credentials?"+query, nil)
++					} else {
++						data := []byte(fmt.Sprintf(`{"type":%q,"access_token":"replacement"}`, provider))
++						if operation == "multipart" {
++							var body bytes.Buffer
++							writer := multipart.NewWriter(&body)
++							part, err := writer.CreateFormFile("file", "account.json")
++							if err != nil {
++								t.Fatal(err)
++							}
++							if _, err := part.Write(data); err != nil {
++								t.Fatal(err)
++							}
++							if err := writer.Close(); err != nil {
++								t.Fatal(err)
++							}
++							req = httptest.NewRequest(http.MethodPost, "/credentials", &body)
++							req.Header.Set("Content-Type", writer.FormDataContentType())
++						} else {
++							req = httptest.NewRequest(http.MethodPost, "/credentials?name=account.json", bytes.NewReader(data))
++							req.Header.Set("Content-Type", "application/json")
++						}
++					}
++					response := httptest.NewRecorder()
++					router.ServeHTTP(response, req)
++					if response.Code != http.StatusOK {
++						t.Fatalf("management mutation: status=%d body=%s", response.Code, response.Body)
++					}
++					if authpublication.HasPending(path) {
++						t.Error("successful mutation left the previous publication authoritative")
++					}
++					if deleting {
++						if len(backend()) != 0 || len(h.authManager.List()) != 0 {
++							t.Fatal("delete retained the remote or active credential")
++						}
++						if _, err := authpublication.ReadFile(path); !os.IsNotExist(err) {
++							t.Fatalf("delete left a readable credential: %v", err)
++						}
++					} else {
++						active, ok := h.authManager.GetByID("account.json")
++						if !ok || active.Metadata["access_token"] != "replacement" {
++							t.Fatalf("upload returned success without activating replacement: %#v", active)
++						}
++						var remote map[string]any
++						if err := json.Unmarshal(backend(), &remote); err != nil || remote["access_token"] != "replacement" {
++							t.Fatalf("upload did not replace the remote credential: %#v, %v", remote, err)
++						}
++					}
++					scanned, err := synthesizer.NewFileSynthesizer().Synthesize(&synthesizer.SynthesisContext{Config: h.cfg, AuthDir: h.cfg.AuthDir})
++					if err != nil || (deleting && len(scanned) != 0) || (!deleting && (len(scanned) != 1 || scanned[0].Metadata["access_token"] != "replacement")) {
++						t.Fatalf("full rescan reverted management mutation: %#v, %v", scanned, err)
++					}
++				})
++			}
++		}
++	}
++}
++
++func newCommittedPublicationHandler(t *testing.T, provider string, existing bool) (*Handler, string, func() []byte) {
++	t.Helper()
++	root := t.TempDir()
++	authDir := filepath.Join(root, "auths")
++	path := filepath.Join(authDir, "account.json")
++	var mu sync.Mutex
++	var remoteBytes []byte
++	first := true
++	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		defer mu.Unlock()
++		if r.URL.Path != "/credentials/auths/account.json" {
++			t.Errorf("unexpected object path: %s", r.URL.Path)
++			w.WriteHeader(http.StatusBadRequest)
++			return
++		}
++		switch r.Method {
++		case http.MethodDelete:
++			remoteBytes = nil
++			w.WriteHeader(http.StatusNoContent)
++		case http.MethodPut:
++			data, err := io.ReadAll(r.Body)
++			if strings.Contains(r.Header.Get("X-Amz-Content-Sha256"), "STREAMING") && err == nil {
++				data, err = io.ReadAll(httputil.NewChunkedReader(bytes.NewReader(data)))
++			}
++			if err != nil {
++				t.Error(err)
++				w.WriteHeader(http.StatusInternalServerError)
++				return
++			}
++			remoteBytes = data
++			if first {
++				first = false
++				staged, err := filepath.Glob(filepath.Join(authDir, ".auth-acquisition-*", "credential"))
++				if err != nil || len(staged) != 1 {
++					t.Errorf("staged credential: %v, %v", staged, err)
++					w.WriteHeader(http.StatusInternalServerError)
++					return
++				}
++				if err := os.Remove(staged[0]); err != nil {
++					t.Error(err)
++					w.WriteHeader(http.StatusInternalServerError)
++					return
++				}
++			}
++			w.Header().Set("ETag", `"committed"`)
++		default:
++			t.Errorf("unexpected object method: %s", r.Method)
++			w.WriteHeader(http.StatusBadRequest)
++		}
++	}))
++	t.Cleanup(remote.Close)
++	tokenStore, err := store.NewObjectTokenStore(store.ObjectStoreConfig{
++		Endpoint: strings.TrimPrefix(remote.URL, "http://"), Bucket: "credentials", AccessKey: "test-key",
++		SecretKey: "test-secret", Region: "us-east-1", LocalRoot: root, PathStyle: true,
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if existing {
++		if err := os.WriteFile(path, []byte(fmt.Sprintf(`{"type":%q,"access_token":"old"}`, provider)), 0o600); err != nil {
++			t.Fatal(err)
++		}
++	}
++	manager := coreauth.NewManager(tokenStore, nil, nil)
++	h := &Handler{cfg: &config.Config{AuthDir: authDir}, authManager: manager, tokenStore: tokenStore}
++	h.postAuthPersistHook = func(ctx context.Context, auth *coreauth.Auth) error {
++		return h.upsertAuthRecord(coreauth.WithSkipPersist(ctx), auth)
++	}
++	if _, err := h.saveTokenRecord(context.Background(), &coreauth.Auth{ID: "account.json", FileName: "account.json", Provider: provider,
++		Metadata: map[string]any{"type": provider, "access_token": "committed"}}); err != nil {
++		t.Fatal(err)
++	}
++	if !authpublication.HasPending(path) {
++		t.Fatal("fixture did not reach remotely committed publication failure")
++	}
++	return h, path, func() []byte {
++		mu.Lock()
++		defer mu.Unlock()
++		return bytes.Clone(remoteBytes)
++	}
++}
+diff --git a/internal/authpublication/paths.go b/internal/authpublication/paths.go
+new file mode 100644
+index 00000000..b66642ec
+--- /dev/null
++++ b/internal/authpublication/paths.go
+@@ -0,0 +1,95 @@
++package authpublication
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io/fs"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++)
++
++// Paths includes credentials whose first local publication failed, so directory
++// scans cannot interpret their absent mirror as a credential deletion.
++func Paths(dir string) ([]string, error) {
++	return discoverPaths(dir, false)
++}
++
++// Files discovers credentials before and after their pending mirror is repaired.
++func Files(dir string) ([]string, error) {
++	return discoverPaths(dir, true)
++}
++
++func discoverPaths(dir string, mirrors bool) ([]string, error) {
++	paths := make(map[string]struct{})
++	err := fs.WalkDir(os.DirFS(dir), ".", func(relative string, entry fs.DirEntry, errWalk error) error {
++		path := filepath.Join(dir, filepath.FromSlash(relative))
++		if errors.Is(errWalk, os.ErrNotExist) {
++			return nil
++		}
++		if errWalk != nil {
++			return errWalk
++		}
++		if entry.IsDir() {
++			if entry.Name() == DirectoryName {
++				nested, errRead := pathsInDirectory(filepath.Dir(path))
++				if errRead != nil {
++					return errRead
++				}
++				for _, name := range nested {
++					paths[name] = struct{}{}
++				}
++				return filepath.SkipDir
++			}
++			if relative != "." && (entry.Name() == ".git" || strings.HasPrefix(entry.Name(), ".auth-acquisition-")) {
++				return filepath.SkipDir
++			}
++			return nil
++		}
++		if mirrors && strings.HasSuffix(strings.ToLower(entry.Name()), ".json") {
++			paths[path] = struct{}{}
++		}
++		return nil
++	})
++	ordered := make([]string, 0, len(paths))
++	for path := range paths {
++		ordered = append(ordered, path)
++	}
++	sort.Strings(ordered)
++	return ordered, err
++}
++
++func pathsInDirectory(dir string) ([]string, error) {
++	entries, err := os.ReadDir(filepath.Join(dir, DirectoryName))
++	if errors.Is(err, os.ErrNotExist) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, err
++	}
++	var paths []string
++	for _, entry := range entries {
++		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
++			continue
++		}
++		data, err := os.ReadFile(filepath.Join(dir, DirectoryName, entry.Name()))
++		if err != nil {
++			return nil, err
++		}
++		var r record
++		if err := json.Unmarshal(data, &r); err != nil {
++			return nil, err
++		}
++		if r.Name == "." || r.Name == ".." || filepath.Base(r.Name) != r.Name || len(r.Data) == 0 {
++			return nil, fmt.Errorf("invalid credential publication path")
++		}
++		path := filepath.Join(dir, r.Name)
++		if markerPath(path) != filepath.Join(dir, DirectoryName, entry.Name()) {
++			return nil, fmt.Errorf("credential publication record does not match its path")
++		}
++		paths = append(paths, path)
++	}
++	return paths, nil
++}
+diff --git a/internal/watcher/dispatcher.go b/internal/watcher/dispatcher.go
+index dc81f181..2bce742b 100644
+--- a/internal/watcher/dispatcher.go
++++ b/internal/watcher/dispatcher.go
+@@ -181,6 +181,52 @@ func (w *Watcher) refreshAuthState(force bool) {
+ 			}
+ 		}
+ 	}
++	incompletePathOrDir := func(rawPath string, checkDir bool) bool {
++		if len(incompletePaths) == 0 {
++			return false
++		}
++		target := rawPath
++		if checkDir {
++			if strings.TrimSpace(rawPath) == "" {
++				return false
++			}
++			target = filepath.Dir(rawPath)
++		}
++		for {
++			normalized := w.normalizeAuthPath(target)
++			if normalized == "" {
++				return false
++			}
++			if _, ok := incompletePaths[normalized]; ok {
++				return true
++			}
++			if abs, errAbs := filepath.Abs(normalized); errAbs == nil {
++				if _, ok := incompletePaths[w.normalizeAuthPath(abs)]; ok {
++					return true
++				}
++			}
++			parent := filepath.Dir(target)
++			if !checkDir || parent == target {
++				return false
++			}
++			target = parent
++		}
++	}
++	if len(incompletePaths) > 0 {
++		for knownPath := range w.lastAuthHashes {
++			if !incompletePathOrDir(knownPath, true) {
++				continue
++			}
++			var knownAbs string
++			if abs, errAbs := filepath.Abs(knownPath); errAbs == nil {
++				knownAbs = w.normalizeAuthPath(abs)
++			}
++			if previousFiles[knownPath] == w.fileObservations[knownPath] &&
++				(knownAbs == "" || previousFiles[knownAbs] == w.fileObservations[knownAbs]) {
++				w.lastAuthHashes[knownPath] = ""
++			}
++		}
++	}
+ 	authPath := func(auth *coreauth.Auth) string {
+ 		path := auth.Attributes[coreauth.AttributePath]
+ 		if path == "" {
+@@ -196,22 +242,11 @@ func (w *Watcher) refreshAuthState(force bool) {
+ 			previousFiles[normalized] != w.fileObservations[normalized]
+ 	}
+ 	incompleteDuringScan := func(auth *coreauth.Auth) bool {
+-		if len(incompletePaths) == 0 {
+-			return false
+-		}
+-		normalized := authPath(auth)
+-		if normalized == "" {
+-			return false
+-		}
+-		if _, ok := incompletePaths[normalized]; ok {
++		if incompletePathOrDir(authPath(auth), false) {
+ 			return true
+ 		}
+-		if abs, errAbs := filepath.Abs(normalized); errAbs == nil {
+-			if _, ok := incompletePaths[w.normalizeAuthPath(abs)]; ok {
+-				return true
+-			}
+-		}
+-		return false
++		// An unreadable auth directory is recorded as incomplete for every file in it.
++		return incompletePathOrDir(auth.Attributes[coreauth.AttributePath], true)
+ 	}
+ 	isFileBackedAuth := func(auth *coreauth.Auth) bool {
+ 		if auth == nil || len(auth.Attributes) == 0 {
+diff --git a/internal/watcher/publication_nested_test.go b/internal/watcher/publication_nested_test.go
+new file mode 100644
+index 00000000..e727e34f
+--- /dev/null
++++ b/internal/watcher/publication_nested_test.go
+@@ -0,0 +1,68 @@
++package watcher
++
++import (
++	"os"
++	"path/filepath"
++	"runtime"
++	"testing"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
++)
++
++func TestWatcherPreservesNestedAuthWhenDirectoryUnreadable(t *testing.T) {
++	root := t.TempDir()
++	dir := filepath.Join(root, "auths")
++	path := filepath.Join(dir, "team", "account.json")
++	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(path, []byte(`{"type":"codex","access_token":"committed"}`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	id := filepath.Join("team", "account.json")
++	w := &Watcher{authDir: dir, config: &config.Config{AuthDir: dir}, authQueue: make(chan AuthUpdate, 1)}
++	w.refreshAuthState(false)
++	if update, ok := takePublicationUpdate(w, id); !ok || update.Auth == nil {
++		t.Fatal("initial scan did not load nested credential")
++	}
++	// A non-directory mount target fails traversal even when tests run as root.
++	if err := os.Rename(dir, filepath.Join(root, "unavailable-auths")); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(dir, []byte("temporarily unavailable"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := os.ReadDir(dir); err == nil || os.IsNotExist(err) {
++		t.Fatalf("fixture did not make directory traversal fail: %v", err)
++	}
++	w.refreshAuthState(true)
++	if update, ok := takePublicationUpdate(w, id); ok && update.Action == AuthUpdateActionDelete {
++		t.Fatal("unreadable parent directory deleted a nested credential")
++	}
++	if w.currentAuths[id] == nil {
++		t.Fatal("incomplete scan discarded the nested runtime credential")
++	}
++}
++
++func TestWatcherScansSymlinkAuthDirectory(t *testing.T) {
++	root := t.TempDir()
++	realDir := filepath.Join(root, "real")
++	alias := filepath.Join(root, "auths")
++	if err := os.MkdirAll(realDir, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Symlink(realDir, alias); err != nil {
++		if runtime.GOOS == "windows" {
++			t.Skipf("symlink unavailable: %v", err)
++		}
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(realDir, "account.json"), []byte(`{"type":"codex","access_token":"committed"}`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	w := &Watcher{authDir: alias, config: &config.Config{AuthDir: alias}, authQueue: make(chan AuthUpdate, 1)}
++	w.refreshAuthState(false)
++	if update, ok := takePublicationUpdate(w, "account.json"); !ok || update.Auth == nil || update.Auth.Metadata["access_token"] != "committed" {
++		t.Fatal("scan lost credential under a symlinked auth directory")
++	}
++}
+diff --git a/internal/api/handlers/management/auth_files_publication_status_test.go b/internal/api/handlers/management/auth_files_publication_status_test.go
+new file mode 100644
+index 00000000..cd8e02fa
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_publication_status_test.go
+@@ -0,0 +1,56 @@
++package management
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestManagementStatusPersistsPendingPublication(t *testing.T) {
++	for _, provider := range []string{"codex", "claude"} {
++		for _, existing := range []bool{false, true} {
++			t.Run(fmt.Sprintf("%s/existing=%t", provider, existing), func(t *testing.T) {
++				h, path, backend := newCommittedPublicationHandler(t, provider, existing)
++				router := gin.New()
++				router.PATCH("/credentials/status", h.PatchAuthFileStatus)
++				for _, disabled := range []bool{true, false} {
++					body := fmt.Sprintf(`{"name":"account.json","disabled":%t}`, disabled)
++					req := httptest.NewRequest(http.MethodPatch, "/credentials/status", bytes.NewBufferString(body))
++					req.Header.Set("Content-Type", "application/json")
++					response := httptest.NewRecorder()
++					router.ServeHTTP(response, req)
++					if response.Code != http.StatusOK {
++						t.Fatalf("status update: %d, %s", response.Code, response.Body)
++					}
++					var remote map[string]any
++					if err := json.Unmarshal(backend(), &remote); err != nil || remote["disabled"] != disabled || remote["access_token"] != "committed" {
++						t.Errorf("status did not persist the committed credential: %#v, %v", remote, err)
++					}
++					if authpublication.HasPending(path) {
++						t.Error("status save skipped publication repair")
++					}
++					scanned, err := synthesizer.NewFileSynthesizer().Synthesize(&synthesizer.SynthesisContext{Config: h.cfg, AuthDir: h.cfg.AuthDir})
++					if err != nil || len(scanned) != 1 {
++						t.Fatalf("status rescan: %#v, %v", scanned, err)
++					}
++					if _, errUpdate := h.authManager.Update(coreauth.WithSkipPersist(context.Background()), scanned[0]); errUpdate != nil {
++						t.Fatal(errUpdate)
++					}
++					active, ok := h.authManager.GetByID("account.json")
++					if !ok || active.Disabled != disabled || active.Metadata["access_token"] != "committed" {
++						t.Fatalf("rescan reverted status: %#v", active)
++					}
++				}
++			})
++		}
++	}
++}
+diff --git a/internal/store/acquisition_publication_bootstrap_test.go b/internal/store/acquisition_publication_bootstrap_test.go
+new file mode 100644
+index 00000000..2a37cca1
+--- /dev/null
++++ b/internal/store/acquisition_publication_bootstrap_test.go
+@@ -0,0 +1,114 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"runtime"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++)
++
++func TestObjectStoreBootstrapReconcilesSymlinkPublication(t *testing.T) {
++	for _, confirmed := range []bool{false, true} {
++		t.Run(fmt.Sprintf("confirmed=%t", confirmed), func(t *testing.T) {
++			root := t.TempDir()
++			authDir := filepath.Join(root, "auths")
++			realDir := filepath.Join(root, "real-auths")
++			if err := os.MkdirAll(realDir, 0o700); err != nil {
++				t.Fatal(err)
++			}
++			if err := os.Symlink(realDir, authDir); err != nil {
++				if runtime.GOOS == "windows" {
++					t.Skipf("symlink unavailable: %v", err)
++				}
++				t.Fatal(err)
++			}
++			committed := []byte(`{"type":"codex","access_token":"newer-remote"}`)
++			configData := []byte("port: 8317\n")
++			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				var data []byte
++				switch r.URL.Path {
++				case "/credentials/":
++					if r.Method == http.MethodHead {
++						return
++					}
++					if r.Method != http.MethodGet || r.URL.Query().Get("prefix") != "auths/" {
++						t.Errorf("unexpected bucket request: %s %s", r.Method, r.URL)
++						w.WriteHeader(http.StatusBadRequest)
++						return
++					}
++					data = []byte(fmt.Sprintf(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>credentials</Name><Prefix>auths/</Prefix><IsTruncated>false</IsTruncated><Contents><Key>auths/account.json</Key><LastModified>2026-01-01T00:00:00Z</LastModified><ETag>"remote"</ETag><Size>%d</Size></Contents></ListBucketResult>`, len(committed)))
++					w.Header().Set("Content-Type", "application/xml")
++				case "/credentials/config/config.yaml":
++					data = configData
++				case "/credentials/auths/account.json":
++					data = committed
++				default:
++					t.Errorf("unexpected startup request: %s %s", r.Method, r.URL)
++					w.WriteHeader(http.StatusBadRequest)
++					return
++				}
++				w.Header().Set("Last-Modified", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat))
++				w.Header().Set("ETag", `"remote"`)
++				w.Header().Set("Content-Length", strconv.Itoa(len(data)))
++				if r.Method != http.MethodHead {
++					_, _ = w.Write(data)
++				}
++			}))
++			defer remote.Close()
++			s, err := NewObjectTokenStore(ObjectStoreConfig{Endpoint: strings.TrimPrefix(remote.URL, "http://"), Bucket: "credentials",
++				AccessKey: "test-key", SecretKey: "test-secret", Region: "us-east-1", LocalRoot: root, PathStyle: true})
++			if err != nil {
++				t.Fatal(err)
++			}
++			path := filepath.Join(authDir, "account.json")
++			pending, err := authpublication.Prepare(path, []byte(`{"type":"codex","access_token":"old-overlay"}`))
++			if err != nil {
++				t.Fatal(err)
++			}
++			if confirmed {
++				if errCommit := pending.Commit(); errCommit != nil {
++					t.Fatal(errCommit)
++				}
++			}
++			outside := filepath.Join(t.TempDir(), "outside.json")
++			outsidePending, err := authpublication.Prepare(outside, []byte(`{"type":"codex","access_token":"unrelated"}`))
++			if err != nil {
++				t.Fatal(err)
++			}
++			if errCommit := outsidePending.Commit(); errCommit != nil {
++				t.Fatal(errCommit)
++			}
++			if errSymlink := os.Symlink(filepath.Dir(outside), filepath.Join(authDir, "external")); errSymlink != nil {
++				t.Fatal(errSymlink)
++			}
++			if errBootstrap := s.Bootstrap(context.Background(), ""); errBootstrap != nil {
++				t.Fatal(errBootstrap)
++			}
++			if !authpublication.HasPending(outside) {
++				t.Fatal("reconciliation followed a nested symlink and removed an unrelated publication")
++			}
++			if mirror, errRead := os.ReadFile(path); errRead != nil || !bytes.Equal(mirror, committed) {
++				t.Fatalf("startup did not load the actual backend credential: %q, %v", mirror, errRead)
++			}
++			if effective, errRead := authpublication.ReadFile(path); errRead != nil || !bytes.Equal(effective, committed) || authpublication.HasPending(path) {
++				t.Fatalf("startup retained a stale publication: %q, %v", effective, errRead)
++			}
++			if errWrite := os.WriteFile(path, []byte(`{"type":"codex","access_token":"edited"}`), 0o600); errWrite != nil {
++				t.Fatal(errWrite)
++			}
++			if effective, errRead := authpublication.ReadFile(path); errRead != nil || !bytes.Contains(effective, []byte("edited")) {
++				t.Fatalf("startup reconciliation still blocks ordinary edits: %q, %v", effective, errRead)
++			}
++		})
++	}
++}
+diff --git a/internal/store/acquisition_publication_status_test.go b/internal/store/acquisition_publication_status_test.go
+new file mode 100644
+index 00000000..8bfe866c
+--- /dev/null
++++ b/internal/store/acquisition_publication_status_test.go
+@@ -0,0 +1,96 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestRemoteStoresDisablePendingPublication(t *testing.T) {
++	for _, backend := range []string{"git", "object", "postgres"} {
++		t.Run(backend, func(t *testing.T) {
++			dir := filepath.Join(t.TempDir(), "workspace", "auths")
++			path := filepath.Join(dir, "account.json")
++			first := true
++			loseFirstMirror := func() error {
++				if !first {
++					return nil
++				}
++				first = false
++				staged, err := filepath.Glob(filepath.Join(dir, ".auth-acquisition-*", "credential"))
++				if err != nil || len(staged) != 1 {
++					t.Fatalf("staged credential: %v, %v", staged, err)
++				}
++				return os.Remove(staged[0])
++			}
++			var s cliproxyauth.Store
++			var remote []byte
++			var gitRemote string
++			switch backend {
++			case "git":
++				gitRemote = filepath.Join(t.TempDir(), "remote.git")
++				if _, err := git.PlainInit(gitRemote, true); err != nil {
++					t.Fatal(err)
++				}
++				gs := NewGitTokenStore(gitRemote, "", "", "")
++				gs.SetBaseDir(dir)
++				if err := gs.EnsureRepository(); err != nil {
++					t.Fatal(err)
++				}
++				gs.pushFn = func(ctx context.Context, repo *git.Repository, opts *git.PushOptions) error {
++					if err := repo.PushContext(ctx, opts); err != nil {
++						return err
++					}
++					return loseFirstMirror()
++				}
++				s = gs
++			case "object":
++				s = &ObjectTokenStore{authDir: dir, putObjectFn: func(_ context.Context, _ string, data []byte, _ string) error {
++					remote = bytes.Clone(data)
++					return loseFirstMirror()
++				}}
++			case "postgres":
++				s = &PostgresStore{authDir: dir, persistAuthFn: func(_ context.Context, _ string, data []byte) error {
++					remote = bytes.Clone(data)
++					return loseFirstMirror()
++				}}
++			}
++			auth := &cliproxyauth.Auth{ID: "account.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "committed"}}
++			if _, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), auth); err != nil {
++				t.Fatal(err)
++			}
++			if _, err := os.Stat(path); !os.IsNotExist(err) || !authpublication.HasPending(path) {
++				t.Fatalf("fixture did not leave a missing committed mirror: %v", err)
++			}
++			auth.Disabled = true
++			auth.Metadata["disabled"] = true
++			if saved, err := s.Save(context.Background(), auth); err != nil || saved != path {
++				t.Fatalf("disable skipped the committed publication: %q, %v", saved, err)
++			}
++			mirror, err := os.ReadFile(path)
++			if err != nil || !bytes.Contains(mirror, []byte(`"disabled":true`)) || !bytes.Contains(mirror, []byte(`"access_token":"committed"`)) || authpublication.HasPending(path) {
++				t.Fatalf("disable lost credential or publication repair: %q, %v", mirror, err)
++			}
++			if gitRemote != "" {
++				assertRemoteFileContents(t, gitRemote, "master", "auths/account.json", string(mirror))
++			} else if !bytes.Equal(remote, mirror) {
++				t.Fatalf("disable did not reach backend: %q, want %q", remote, mirror)
++			}
++			if errRemove := os.Remove(path); errRemove != nil {
++				t.Fatal(errRemove)
++			}
++			if saved, errSave := s.Save(context.Background(), auth); errSave != nil || saved != "" {
++				t.Fatalf("runtime save recreated a deliberately removed credential: %q, %v", saved, errSave)
++			}
++			if _, errStat := os.Stat(path); !os.IsNotExist(errStat) {
++				t.Fatalf("genuine deletion fence lost: %v", errStat)
++			}
 +		})
 +	}
 +}
