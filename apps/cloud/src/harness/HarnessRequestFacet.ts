@@ -7,5 +7,8 @@ export type {
   HarnessRequestFacetPreparationObservation,
   HarnessRequestFacetPreparationRequest,
   HarnessRequestFacetOptions,
+  HarnessRequestFacetCreationRequest,
+  HarnessRequestFacetCreationEvidence,
+  HarnessRequestFacetCreationObservation,
   HarnessRequestFacet,
 } from "./requestFacet/contracts.ts";

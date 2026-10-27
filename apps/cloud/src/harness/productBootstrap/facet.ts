@@ -17,6 +17,7 @@ import type {
   HarnessCProductResumeBindings,
 } from "./facetContracts.ts";
 import { prepareHarnessCProductHost } from "./prepareProductHost.ts";
+import { prepareFreshHarnessCProductHost } from "./prepareFreshProductHost.ts";
 
 /** Builds the facet-local product bootstrap behind one provider-specific public entry. */
 export function composeHarnessCProductFacetOptions<
@@ -122,6 +123,9 @@ export function composeHarnessCProductFacetOptions<
 
     const prepareInert: NonNullable<HarnessRequestFacetOptions["prepareInert"]> = (request) =>
       Effect.gen(function* () {
+        const publisher = env.HARNESS_RESUME_PUBLISHER;
+        if (publisher === undefined)
+          return yield* Effect.fail(failed("Prior publisher is required for inert restoration."));
         const saved = yield* Effect.tryPromise({
           try: () => resume.runStore.execute({ type: "read", runId }),
           catch: (cause) => failed("The committed RunStore checkpoint could not be read.", cause),
@@ -143,12 +147,37 @@ export function composeHarnessCProductFacetOptions<
         const signal = yield* Effect.abortSignal;
         const opened = yield* prepare(
           checkpoint,
-          env.HARNESS_RESUME_PUBLISHER,
+          publisher,
           request.checkpointId,
           request.manifestRevision,
           request.nativeSessionId,
           signal,
         );
+        retainedHost = opened.host;
+        return opened.evidence;
+      });
+
+    const startFresh: NonNullable<HarnessRequestFacetOptions["startFresh"]> = (request) =>
+      Effect.gen(function* () {
+        if (request.targetFacetNonce !== input.facetNonce)
+          return yield* Effect.fail(
+            failed("Fresh product facet identity does not match its request."),
+          );
+        const signal = yield* Effect.abortSignal;
+        const opened = yield* prepareFreshHarnessCProductHost({
+          env,
+          ctx: input.ctx,
+          targetFacetNonce: request.targetFacetNonce,
+          operationId: request.operationId,
+          publisherKey: request.publisherKey,
+          signal,
+          runId,
+          descriptor,
+          expected,
+          capabilities,
+          turnBindings,
+          factory,
+        });
         retainedHost = opened.host;
         return opened.evidence;
       });
@@ -160,6 +189,7 @@ export function composeHarnessCProductFacetOptions<
       verify: (reference, purpose) => turnBindings.verify(reference, purpose),
       open,
       prepareInert,
+      startFresh,
       loadedPreparedRelease: preparedRelease,
     };
   });
