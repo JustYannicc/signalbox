@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import type * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
@@ -1678,6 +1679,35 @@ describe("storage cleanup reports and local file policies", () => {
         expect(fullStatusCalls()).toBe(0);
       }),
     ),
+  );
+  it.live.each(["not a git repository", "gitfile does not point to a valid repository"])(
+    "retains a worktree when Git reports %s",
+    (message) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const git = yield* GitVcsDriver.GitVcsDriver;
+          const { service, fs, worktree } = yield* cleanupFixture().pipe(
+            Effect.provideService(GitVcsDriver.GitVcsDriver, {
+              ...git,
+              execute: (input) =>
+                input.operation === "StorageCleanup.branchChanged"
+                  ? Effect.succeed({
+                      exitCode: ChildProcessSpawner.ExitCode(128),
+                      stdout: "",
+                      stderr: `fatal: ${message}: ${input.cwd}/.git\n`,
+                      stdoutTruncated: false,
+                      stderrTruncated: false,
+                    })
+                  : git.execute(input),
+            }),
+          );
+          expect((yield* service.runNow).entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Repository or branch changed",
+          });
+          expect(yield* fs.exists(worktree)).toBe(true);
+        }),
+      ),
   );
   it("decodes reports from servers without size fields", () => {
     const report = decodeCleanupReport({
