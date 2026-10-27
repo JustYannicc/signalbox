@@ -184,11 +184,13 @@ export function createHarnessProcessResumePlacementDriver(input: {
           operationId: prepare.operationId,
           priorFacetNonce: prepare.publisher.facetNonce,
           expectedFacetGeneration: prepare.expectedFacetGeneration,
+          productBootstrap: operation.productBootstrap,
+          targetPreparedRelease: transition.targetPreparedRelease,
           runStorePublisher: {
             generation: operation.runStore.currentPublisher.generation + 1,
             publisherKey: operation.runStore.nextPublisherKey,
           },
-          facetEnv: {
+          resumeFacetEnv: {
             HARNESS_RESUME_RUN_ID: operation.runId,
             HARNESS_RESUME_CONTROL: transition.nextControl,
             HARNESS_RESUME_PUBLISHER: prepare.publisher,

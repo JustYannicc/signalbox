@@ -28,6 +28,7 @@ import { createChildBusybox } from "../ChildBusybox.ts";
 import { createChildGit } from "../ChildGit.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { KernelCommandForwarder } from "../../kernel/KernelCommandForwarder.ts";
+import type { MachineProgramInventory } from "../MachineProgramInventory.ts";
 import { emptyMachineFilesFixture, machineInventoryFixture } from "../machineInventoryTesting.ts";
 import { sqliteFixture } from "./helpers/sqliteFixture.ts";
 
@@ -118,6 +119,7 @@ export function createCodexLocaleProductComputer(
     readonly nowNs?: () => bigint;
     readonly directory?: KernelPosixMetadata;
     readonly file?: KernelPosixMetadata;
+    readonly machineInventory?: MachineProgramInventory;
     readonly machine?: KernelCommandForwarder;
     readonly orderedMachineRules?: ProductComputerOptions["orderedMachineRules"];
   } = {},
@@ -274,7 +276,7 @@ export function createCodexLocaleProductComputer(
       sed: programsByName("sed"),
       jq: programsByName("jq"),
     },
-    machineInventory: machineInventoryFixture(),
+    machineInventory: options.machineInventory ?? machineInventoryFixture(),
     machine: () => ({
       ...machine,
       files: emptyMachineFilesFixture(),

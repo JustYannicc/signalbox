@@ -1,6 +1,9 @@
 // @effect-diagnostics cryptoRandomUUID:off - each local Workerd scenario owns fresh isolated DO names.
 import { createHarnessDurableState } from "../../HarnessDurableState.ts";
-import type { HarnessProcessExecutionShardInput } from "../../HarnessProcessPlacement.ts";
+import type {
+  HarnessProcessExecutionProcessInput,
+  HarnessProcessExecutionShardInput,
+} from "../../HarnessProcessPlacement.ts";
 import { deterministicShardOwner } from "../../HarnessProcessPlacement.ts";
 import type {
   HarnessProcessResumeOperationInput,
@@ -15,6 +18,7 @@ import {
 } from "./publicResumeStores.fixture.ts";
 import type { ProofShard, ProofPlacementStore } from "./publicResumeShard.fixture.ts";
 import { jsonBytes, reference, releaseMaterial, loadMaterial } from "./releaseMaterial.ts";
+import { transportWasmBytes } from "./transportModule.fixture.ts";
 
 export interface ProofEnv {
   readonly HARNESS_FILES_STORE: DurableObjectNamespace<ProofFilesStore>;
@@ -41,6 +45,7 @@ export async function setup(
     readonly holdWork?: boolean;
     readonly failDispose?: boolean;
     readonly invocationFailure?: "reject" | "failed-finish";
+    readonly omitInitialBootstrap?: boolean;
   } = {},
 ) {
   const runId = `plain-${scenario}-${crypto.randomUUID()}`;
@@ -64,7 +69,7 @@ export async function setup(
   const old = await releaseMaterial(env.OLD_SOURCE, "old");
   const next = await releaseMaterial(env.NEW_SOURCE, "next");
   const third = await releaseMaterial(env.THIRD_SOURCE, "third");
-  await loadMaterial(old);
+  const initialPreparedRelease = await loadMaterial(old);
   await files.configure({ artifacts: { old, next, third }, ...options });
   const initialMaterial = await files.produce("initial", initialCheckpoint);
   const seed = await reference("seed", jsonBytes({ runId }));
@@ -132,7 +137,7 @@ export async function setup(
     requestId: "turn-one",
     input: await reference("turn-one-input", new TextEncoder().encode("append one")),
   };
-  const process = {
+  const process: HarnessProcessExecutionProcessInput = {
     processId: "plain-process",
     codeId: old.artifact.releaseId,
     residentBytes: 1,
@@ -143,8 +148,37 @@ export async function setup(
     priorFacetNonce: fixturePublisher.facetNonce,
     expectedFacetGeneration: 1,
     mainModule: "plain.mjs",
-    modules: { "plain.mjs": { js: env.OLD_SOURCE } },
+    modules: {
+      "plain.mjs": { js: env.OLD_SOURCE },
+      "transport.wasm": { wasm: transportWasmBytes() },
+    },
     entrypoint: "PlainFacet",
+    ...(options.omitInitialBootstrap === true
+      ? {}
+      : {
+          productBootstrap: {
+            provider: "claude-code",
+            preparedReleaseId: initialPreparedRelease.artifact.releaseId,
+            restoreMode: "same-variant-serialized-checkpoint",
+          },
+          targetPreparedRelease: initialPreparedRelease,
+        }),
+    facetEnv: {
+      HARNESS_C_PRODUCT_BOOTSTRAP: "caller-descriptor",
+      HARNESS_C_TARGET_PREPARED_RELEASE: "caller-target",
+      HARNESS_C_PRODUCT_CAPABILITIES: { "proof-platform": "caller-binding" },
+      HARNESS_PROCESS_ID: "caller-process",
+      HARNESS_PROCESS_SHARD_OWNER: "caller-owner",
+      HARNESS_PROCESS_LOADER_ID: "caller-loader",
+      HARNESS_PROCESS_FACET_KEY: "caller-facet",
+      HARNESS_REQUEST_PUBLISHER: { generation: 99, publisherKey: "caller-publisher" },
+      HARNESS_RESUME_RUN_ID: "caller-run",
+      HARNESS_RESUME_CONTROL: "caller-control",
+      HARNESS_RESUME_PUBLISHER: "caller-a-publisher",
+      HARNESS_RESUME_RUN_STORE: "caller-run-store",
+      HARNESS_RESUME_FILES_STORE: "caller-files-store",
+      HARNESS_RESUME_SUPERVISOR: "caller-supervisor",
+    },
     journal: {
       publisher: fixturePublisher,
       runStore: {
@@ -257,7 +291,11 @@ export async function complete(
 
 export async function resumeInput(
   fixture: ProofSetup,
-  options: { readonly observed?: boolean; readonly step?: number } = {},
+  options: {
+    readonly observed?: boolean;
+    readonly step?: number;
+    readonly mismatched?: boolean;
+  } = {},
 ): Promise<HarnessProcessResumeOperationInput> {
   const step = options.step ?? 1;
   const control = fixtureControl(step + 1);
@@ -304,6 +342,11 @@ export async function resumeInput(
       request: entry.request,
       checkpoint: parent.reference,
     },
+    productBootstrap: {
+      provider: "claude-code",
+      preparedReleaseId: target.artifact.releaseId,
+      restoreMode: "cross-variant-fresh-boot",
+    },
     transition: {
       operationId: step === 1 ? "resume-one" : "resume-two",
       control,
@@ -318,7 +361,15 @@ export async function resumeInput(
       residentBytes: 1,
       mainModule: "plain.mjs",
       modules: {
-        "plain.mjs": { js: step === 1 ? fixture.env.NEW_SOURCE : fixture.env.THIRD_SOURCE },
+        "transport.wasm": { wasm: transportWasmBytes() },
+        "plain.mjs": {
+          js:
+            options.mismatched === true
+              ? fixture.env.THIRD_SOURCE
+              : step === 1
+                ? fixture.env.NEW_SOURCE
+                : fixture.env.THIRD_SOURCE,
+        },
       },
       entrypoint: options.observed === false ? "PlainFacet" : "ObservedPlainFacet",
     },

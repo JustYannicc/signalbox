@@ -120,8 +120,7 @@ export class HarnessProcessResumeOwner {
           generation: process.expectedFacetGeneration + 1,
           publisherKey: initial.journal.runStore.nextPublisherKey,
         },
-        facetEnv: {
-          ...process.facetEnv,
+        resumeFacetEnv: {
           HARNESS_RESUME_RUN_ID: input.runId,
           HARNESS_RESUME_CONTROL: input.controllerClaim,
           HARNESS_RESUME_PUBLISHER: initial.journal.publisher,

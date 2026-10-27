@@ -155,6 +155,15 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
         let hydrated = false;
         let saveCalls = 0;
         const release = yield* Effect.promise(() => claudeFixture());
+        const processResumeArtifact = {
+          provider: "claude-code" as const,
+          releaseId: "controlled-claude-process-resume",
+          artifactHash: release.options.identity.artifactHash,
+          artifactRef: release.options.identity.artifactRef,
+          sourceIdentity: release.options.identity.sourceIdentity,
+          fixtureIdentity: "controlled-claude-product-host",
+          createdAt: "2026-10-26T00:00:00.000Z",
+        };
         const programs = yield* Effect.promise(programFixture);
         const host = yield* createProductClaudeHarnessSessionHost({
           continuations: {
@@ -162,6 +171,7 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
           },
           threadId: d.threadId,
           release: release.options,
+          ...(scenario === "turn" ? { processResumeArtifact } : {}),
           programs,
           machineInventory: machine.inventory,
           files: {
@@ -387,6 +397,15 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
           return;
         }
         const session = yield* host.open({ session: sessionInput, bootAttemptId: "recorded-boot" });
+        if (scenario === "turn") {
+          const observed = host.loadedPreparedRelease();
+          NodeAssert.deepEqual(observed.artifact, processResumeArtifact);
+          NodeAssert.equal(
+            observed.plan.release.manifestSha256,
+            processResumeArtifact.artifactHash,
+          );
+          NodeAssert.equal(observed.plan.sourceIdentity, processResumeArtifact.sourceIdentity);
+        }
         NodeAssert.deepEqual(host.commands.systemIdentity, systemIdentity);
         files = host.computer.files;
         NodeAssert.equal(session.providerSession.id, providerSessionId);

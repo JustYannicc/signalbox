@@ -1,9 +1,10 @@
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
 import { KernelProgramExecAdmissionError } from "../kernel/KernelAsyncProgram.ts";
-import type {
-  KernelCommand,
-  KernelCommandChild,
-  KernelCommandForwarder,
+import {
+  KernelForwardingUnavailable,
+  type KernelCommand,
+  type KernelCommandChild,
+  type KernelCommandForwarder,
 } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import { createKernelProcessStreams } from "../kernel/KernelProcessStreams.ts";
@@ -11,6 +12,9 @@ import { KernelProcessSignal } from "../kernel/KernelProcessSignal.ts";
 import type { KernelProgramAdmissionRequest } from "../kernel/KernelProgramAdmission.ts";
 import { KernelOpenFlags } from "../kernel/KernelFileSystem.ts";
 import { inheritsKernelCommandDescriptor } from "../kernel/KernelCommandDescriptors.ts";
+
+const FORWARDING_UNAVAILABLE_EXIT_CODE = 126;
+const encoder = new TextEncoder();
 
 /** Preview descriptor shape without opening, truncating or closing the guest's files. */
 export function assertComputerForwardingSupported(request: KernelProgramAdmissionRequest): void {
@@ -132,15 +136,32 @@ export function createComputerForwardedProgram(
         throw new Error("Forwarded program environment changed after admission");
       }
       assertForwardableDescriptors(context);
-      const child = await machine.spawn(
-        Object.freeze({
-          executable: captured.executable,
-          argv: captured.argv,
-          cwd: context.filesystem.cwd,
-          env: captured.env,
-        }),
-        context.signal,
-      );
+      let child: KernelCommandChild;
+      try {
+        child = await machine.spawn(
+          Object.freeze({
+            executable: captured.executable,
+            argv: captured.argv,
+            cwd: context.filesystem.cwd,
+            env: captured.env,
+          }),
+          context.signal,
+        );
+      } catch (error) {
+        if (!(error instanceof KernelForwardingUnavailable)) throw error;
+        context.signal.throwIfAborted();
+        const stderr = createKernelProcessStreams(context.filesystem, {
+          signal: context.signal,
+        }).stderr.getWriter();
+        try {
+          await stderr.write(encoder.encode(`signalbox: machine unavailable (${error.code})\n`));
+        } catch (writeError) {
+          if (context.signal.aborted) throw writeError;
+        } finally {
+          stderr.releaseLock();
+        }
+        return { exitCode: FORWARDING_UNAVAILABLE_EXIT_CODE, signal: 0, coreDumped: false };
+      }
       return pumpForwardedProgram(context, child);
     },
   });

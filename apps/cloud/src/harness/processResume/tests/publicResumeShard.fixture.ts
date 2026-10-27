@@ -1,9 +1,24 @@
 import { HarnessProcessExecutionShardObject } from "../../HarnessProcessExecutionShardObject.ts";
 import { HarnessProcessPlacementStoreObject } from "../../HarnessProcessPlacementStoreObject.ts";
+import type { HarnessProcessExecutionEnvironment } from "../../HarnessProcessPlacement.ts";
 import type { HarnessProcessResumePreparedRelease } from "../../HarnessProcessResume.ts";
 import type { HarnessProcessPlacementWriter } from "../../HarnessProcessPlacement.ts";
+import type { ProofFilesStore } from "./publicResumeStores.fixture.ts";
+
+type ProofShardEnvironment = HarnessProcessExecutionEnvironment & {
+  readonly HARNESS_FILES_STORE: DurableObjectNamespace<ProofFilesStore>;
+};
 
 export class ProofShard extends HarnessProcessExecutionShardObject {
+  constructor(ctx: DurableObjectState, env: ProofShardEnvironment) {
+    super(ctx, {
+      ...env,
+      HARNESS_C_PRODUCT_CAPABILITIES: {
+        "proof-platform": env.HARNESS_FILES_STORE.getByName("product-capability-proof"),
+      },
+    });
+  }
+
   rehydrate() {
     this.ctx.abort("Reconstruct C durable evidence without replaying execution.");
   }
@@ -59,6 +74,7 @@ export class ProofShard extends HarnessProcessExecutionShardObject {
     };
   }
 }
+
 export class ProofPlacementStore extends HarnessProcessPlacementStoreObject {
   override async releaseWriter(owner: string, writer: HarnessProcessPlacementWriter) {
     const env = this.env as unknown as {
