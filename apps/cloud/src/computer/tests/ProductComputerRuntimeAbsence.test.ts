@@ -56,6 +56,7 @@ function bootComputer(absent: boolean) {
       git: code,
       sed: code,
       jq: code,
+      ugrep: code,
       coreutils: {
         cp: code,
         echo: code,

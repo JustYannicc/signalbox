@@ -27,6 +27,7 @@ export async function programFixture() {
     ripgrep: code,
     git: code,
     jq: code,
+    ugrep: code,
     coreutils: {
       cp: code,
       echo: code,

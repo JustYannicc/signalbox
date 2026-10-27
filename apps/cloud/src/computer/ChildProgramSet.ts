@@ -27,6 +27,7 @@ export const CHILD_PROGRAM_PATHS = Object.freeze({
   grep: "/bin/grep",
   touch: "/bin/touch",
   rg: "/bin/rg",
+  ugrep: "/bin/ugrep",
   echo: "/bin/echo",
   printf: "/bin/printf",
   ls: "/bin/ls",
@@ -47,3 +48,9 @@ export const CHILD_PROGRAM_PATHS = Object.freeze({
 });
 
 export const CHILD_SED_EXECUTABLES = Object.freeze(["/bin/sed", "/usr/bin/sed"] as const);
+
+// The multicall binding uses ugrep bytes without replacing the CLI file in the namespace.
+export const CHILD_UGREP_EXECUTABLES = Object.freeze([
+  "/bin/ugrep",
+  "/usr/local/bin/claude",
+] as const);

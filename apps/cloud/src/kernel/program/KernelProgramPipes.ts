@@ -226,6 +226,8 @@ export function readEndpoint(
   signal?: AbortSignal,
 ): PollableStdio {
   return {
+    // Preview 1 has no FIFO type. Character devices make libc treat this pipe as a TTY.
+    filetype: "unknown",
     supportsNonblocking: true,
     readInto: (target, flags) =>
       (flags & FDFLAGS.NONBLOCK) !== 0 || currentKernelIoMode() === "sync"
@@ -238,6 +240,7 @@ export function readEndpoint(
 
 export function writeEndpoint(pipe: KernelPipe, wakes: KernelWakeRegistry): PollableStdio {
   return {
+    filetype: "unknown",
     supportsNonblocking: true,
     write: (source, flags) =>
       (flags & FDFLAGS.NONBLOCK) !== 0 || currentKernelIoMode() === "sync"

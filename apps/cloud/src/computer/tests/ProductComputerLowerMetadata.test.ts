@@ -135,6 +135,7 @@ describe.skipIf(inventory === undefined)("ProductComputer synchronous lower meta
         git: code,
         sed: code,
         jq: code,
+        ugrep: code,
         coreutils: Object.fromEntries(
           CHILD_COREUTILS_COMMANDS.map((command) => [command, code]),
         ) as Record<(typeof CHILD_COREUTILS_COMMANDS)[number], typeof code>,

@@ -24,7 +24,7 @@ async function fixture() {
   const manifest = {
     schemaVersion: 1,
     programs: Object.fromEntries(
-      ["bash", "busybox", "ripgrep", "sed", "coreutils"].map((name) => [
+      ["bash", "busybox", "ripgrep", "sed", "ugrep", "coreutils"].map((name) => [
         name,
         { ...entry(name, `wasm:${name}`), provenance: entry(`${name}.json`, `source:${name}`) },
       ]),
@@ -54,6 +54,7 @@ it("downloads exact program and provenance bytes from the pinned manifest", asyn
   expect(await NodeFSP.readFile(result.busybox!, "utf8")).toBe("wasm:busybox");
   expect(await NodeFSP.readFile(result.ripgrep!, "utf8")).toBe("wasm:ripgrep");
   expect(await NodeFSP.readFile(result.sed!, "utf8")).toBe("wasm:sed");
+  expect(await NodeFSP.readFile(result.ugrep!, "utf8")).toBe("wasm:ugrep");
   expect(await NodeFSP.readFile(NodePath.join(input.output, "coreutils.tar"), "utf8")).toBe(
     "wasm:coreutils",
   );
@@ -69,6 +70,7 @@ it("downloads exact program and provenance bytes from the pinned manifest", asyn
       { name: "busybox" },
       { name: "ripgrep" },
       { name: "sed" },
+      { name: "ugrep" },
       { name: "coreutils" },
     ],
   });
@@ -83,14 +85,18 @@ it("rejects a changed manifest before downloading programs", async () => {
   expect(input.calls).toEqual([input.manifestPin.url]);
 });
 
-it.each(["corrupt", "missing", "provenance"])(
+it.each(["corrupt", "missing", "provenance", "ugrep", "ugrep-provenance"])(
   "rejects %s input without leaving a usable output",
   async (mode) => {
     const input = await fixture();
     const key =
-      mode === "provenance"
-        ? "https://programs.invalid/bash.json"
-        : "https://programs.invalid/bash";
+      mode === "ugrep"
+        ? "https://programs.invalid/ugrep"
+        : mode === "ugrep-provenance"
+          ? "https://programs.invalid/ugrep.json"
+          : mode === "provenance"
+            ? "https://programs.invalid/bash.json"
+            : "https://programs.invalid/bash";
     if (mode === "missing") input.bodies.delete(key);
     else
       input.bodies.set(key, new TextEncoder().encode(mode === "corrupt" ? "WASM:bash" : "wrong"));

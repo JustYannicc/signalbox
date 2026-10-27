@@ -81,6 +81,7 @@ describe("ProductComputer startup storage cost", () => {
             git: code,
             sed: code,
             jq: code,
+            ugrep: code,
             coreutils: {
               echo: code,
               printf: code,

@@ -24,6 +24,7 @@ import {
 import { COMPUTER_ISOLATE_POLICY } from "./EscalationPolicy.ts";
 import { ComputerEscalationTable } from "./EscalationTable.ts";
 import { qualifyGnuCommand } from "./GnuCommandCompatibility.ts";
+import { qualifyUgrepCommand } from "./UgrepCommand.ts";
 import type { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
 
 export type CommandProgramCodes = ChildProgramCatalogOptions["programs"] & {
@@ -33,6 +34,7 @@ export type CommandProgramCodes = ChildProgramCatalogOptions["programs"] & {
   readonly git: ChildWorkerCode;
   readonly sed: ChildWorkerCode;
   readonly jq: ChildWorkerCode;
+  readonly ugrep: ChildWorkerCode;
 };
 
 export interface CommandGatewayOptions {
@@ -123,8 +125,10 @@ export function createCommandGateway(options: CommandGatewayOptions) {
     }
   };
   const normal = pair(
-    new ComputerEscalationTable(options.orderedMachineRules, COMPUTER_ISOLATE_POLICY, (command) =>
-      qualifyGnuCommand(command, options.filesystem),
+    new ComputerEscalationTable(
+      options.orderedMachineRules,
+      COMPUTER_ISOLATE_POLICY,
+      (command) => qualifyUgrepCommand(command) ?? qualifyGnuCommand(command, options.filesystem),
     ),
     options.machine,
     options.evidence,

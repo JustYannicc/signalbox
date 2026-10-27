@@ -12,6 +12,7 @@ import {
   type MeasuredChildProgramSources,
 } from "./measured.ts";
 import { KERNEL_GNU_SED_ARTIFACT } from "../../src/kernel/KernelGnuPrograms.ts";
+import { KERNEL_UGREP_ARTIFACT } from "../../src/kernel/KernelUgrepProgram.ts";
 import { PRODUCT_COMPUTER_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusyboxProgram.ts";
 import { KERNEL_JQ_ARTIFACT } from "../../src/kernel/KernelJqProgram.ts";
 import { prepareBasePrograms } from "./basic.ts";
@@ -59,6 +60,7 @@ export interface FullChildProgramSources extends ChildProgramSources {
   readonly git: ChildProgramSourceCode;
   readonly sed: ChildProgramSourceCode;
   readonly jq: ChildProgramSourceCode;
+  readonly ugrep: ChildProgramSourceCode;
 }
 
 export type ChildProgramExecutablePath =
@@ -94,6 +96,7 @@ export interface PreparedChildPrograms extends ChildProgramSources {
   readonly git: ChildProgramSourceCode;
   readonly sed: ChildProgramSourceCode;
   readonly jq: ChildProgramSourceCode;
+  readonly ugrep: ChildProgramSourceCode;
   readonly programs: FullChildProgramSources;
   readonly executableFiles: readonly LegacyChildProgramExecutableFile[];
   readonly executableCatalog: LegacyChildProgramExecutableCatalog;
@@ -136,6 +139,12 @@ export async function prepareChildPrograms(
     programDir,
     "product-busybox.wasm",
     PRODUCT_COMPUTER_BUSYBOX_ARTIFACT,
+    artifacts,
+  );
+  const ugrepArtifact = await readPinnedProgram(
+    programDir,
+    "ugrep.wasm",
+    KERNEL_UGREP_ARTIFACT,
     artifacts,
   );
   const jqArtifact = await readPinnedProgram(
@@ -181,6 +190,11 @@ export async function prepareChildPrograms(
     "infra/kernelPrograms/coreutils/patches/0008-nimbus-getgrouplist.patch",
     "infra/kernelPrograms/jq/provenance.json",
     "infra/kernelPrograms/jq/prepare.mjs",
+    "infra/kernelPrograms/ugrep/provenance.json",
+    "infra/kernelPrograms/ugrep/build.sh",
+    "infra/kernelPrograms/ugrep/patches/0001-wasi-disable-vkey-tui.patch",
+    "infra/kernelPrograms/ugrep/compat/wasi-process-unavailable.h",
+    "infra/kernelPrograms/ugrep/compat/wasi-process-unavailable.c",
     "infra/kernelPrograms/git/provenance.json",
     "src/computer/ChildProgramSet.ts",
     "src/computer/ChildProgramCatalog.ts",
@@ -188,6 +202,8 @@ export async function prepareChildPrograms(
     "src/computer/catalog/ChildProgramFactory.ts",
     "src/computer/catalog/JqProgram.ts",
     "src/computer/catalog/SedPrograms.ts",
+    "src/computer/catalog/UgrepPrograms.ts",
+    "src/computer/UgrepCommand.ts",
     "src/computer/CommandGateway.ts",
     "src/computer/CompiledChildWorkerLoader.ts",
     "src/kernel/KernelBashProgram.ts",
@@ -195,6 +211,7 @@ export async function prepareChildPrograms(
     "src/kernel/KernelBusyboxPrograms.ts",
     "src/kernel/KernelJqProgram.ts",
     "src/kernel/KernelGnuPrograms.ts",
+    "src/kernel/KernelUgrepProgram.ts",
     "src/kernel/KernelCoreutilsPrograms.ts",
     "src/kernel/KernelGitProgram.ts",
     "src/kernel/KernelRipgrepProgram.ts",
@@ -213,6 +230,7 @@ export async function prepareChildPrograms(
     git: measured.git,
     sed: busyboxGraph.code,
     jq: measured.graphs.coreutils.code,
+    ugrep: busyboxGraph.code,
   });
   const inventory: ChildProgramSourceInventory = Object.freeze({
     format: "signalbox-child-programs-v1",
@@ -228,6 +246,7 @@ export async function prepareChildPrograms(
       git: programInventory(measured.graphs.git),
       sed: programInventory(busyboxGraph),
       jq: programInventory(measured.graphs.coreutils),
+      ugrep: programInventory(busyboxGraph),
     }),
   });
   const commandExecutableFiles = Object.freeze([
@@ -244,6 +263,7 @@ export async function prepareChildPrograms(
     ...measured.files,
     ...CHILD_SED_EXECUTABLES.map((path) => executableFile(path, sedArtifact)),
     executableFile(CHILD_PROGRAM_PATHS.jq, jqArtifact),
+    executableFile(CHILD_PROGRAM_PATHS.ugrep, ugrepArtifact),
   ]);
   const commandExecutableCatalog = createChildProgramExecutableCatalog(commandExecutableFiles);
   const executableFiles = Object.freeze(

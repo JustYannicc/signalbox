@@ -4,6 +4,7 @@ import type * as NodeStreamWeb from "node:stream/web";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createNodeFs } from "../isolate/NodeFs.ts";
 import { createKernelProcessStreams } from "./KernelProcessStreams.ts";
+import { createKernelSyscallHost } from "./KernelSyscallHost.ts";
 import {
   bytes,
   setup,
@@ -13,6 +14,46 @@ import {
 } from "./tests/kernelProgramPipeFixture.ts";
 
 describe("KernelProgramPipes", () => {
+  it("reports command pipes as non-terminal WASI descriptors", async () => {
+    const observed: number[] = [];
+    const context = setup({
+      kind: "async",
+      run: async (process) => {
+        const owner = createKernelSyscallHost(process);
+        try {
+          for (const fd of [0, 1, 2]) {
+            const result = await owner.call({
+              name: "fd_fdstat_get",
+              args: [fd, 0],
+              memorySize: 24,
+              regions: [{ pointer: 0, bytes: new Uint8Array(24) }],
+            });
+            if (result.kind !== "return" || result.value !== 0)
+              throw new Error(`fd_fdstat_get failed for pipe ${fd}`);
+            const stat = new Uint8Array(24);
+            for (const region of result.regions) stat.set(region.bytes, region.pointer);
+            observed.push(stat[0]!);
+          }
+          return { exitCode: 0, signal: 0, coreDumped: false };
+        } finally {
+          owner.close();
+        }
+      },
+    });
+    const piped = context.host.preparePiped({ filesystem: context.filesystem });
+    try {
+      const child = spawn(context.host, piped);
+      expect(await context.host.exitStatus(child)).toMatchObject({
+        status: "ok",
+        value: { exitCode: 0 },
+      });
+      expect(observed).toEqual([0, 0, 0]);
+      expect(context.host.processes.reap(child).status).toBe("ok");
+    } finally {
+      await context.close(piped);
+    }
+  });
+
   it("terminates a WASI writer with SIGPIPE when its stdout reader closes", async () => {
     const context = setup({ kind: "wasm", module: wasmFdReadWriteCommand(4) });
     const piped = context.host.preparePiped({ filesystem: context.filesystem });

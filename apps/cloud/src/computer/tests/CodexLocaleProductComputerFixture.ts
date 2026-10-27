@@ -292,6 +292,7 @@ export function createCodexLocaleProductComputer(
       git: programsByName("git"),
       sed: programsByName("sed"),
       jq: programsByName("jq"),
+      ugrep: programsByName("ugrep"),
     },
     machineInventory: options.machineInventory ?? machineInventoryFixture(),
     machine: () => ({

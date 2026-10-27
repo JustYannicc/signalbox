@@ -212,6 +212,7 @@ function imageContentFixture() {
       git: code,
       sed: code,
       jq: code,
+      ugrep: code,
       coreutils: Object.fromEntries(CHILD_COREUTILS_COMMANDS.map((name) => [name, code])) as Record<
         (typeof CHILD_COREUTILS_COMMANDS)[number],
         typeof code

@@ -29,6 +29,7 @@ import { createChildBusyboxBindings } from "./catalog/BusyboxPrograms.ts";
 import type { ChildProgramFactory } from "./catalog/ChildProgramFactory.ts";
 import { createChildJqBinding } from "./catalog/JqProgram.ts";
 import { createChildSedBindings } from "./catalog/SedPrograms.ts";
+import { createChildUgrepBindings } from "./catalog/UgrepPrograms.ts";
 
 export interface ChildProgramCodes {
   readonly bash: ChildWorkerCode;
@@ -40,6 +41,7 @@ export interface ChildProgramCodes {
   readonly git?: ChildWorkerCode;
   readonly sed?: ChildWorkerCode;
   readonly jq?: ChildWorkerCode;
+  readonly ugrep?: ChildWorkerCode;
 }
 
 export interface ChildProgramCatalogOptions {
@@ -127,6 +129,18 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     })) {
       bindings.set(path, binding);
     }
+  }
+
+  if (options.programs.ugrep !== undefined) {
+    for (const [path, binding] of createChildUgrepBindings({
+      registry: options.registry,
+      loader: options.loader,
+      capacity,
+      lifetimes,
+      child,
+      code: options.programs.ugrep,
+    }))
+      bindings.set(path, binding);
   }
 
   register(options.registry, KERNEL_RIPGREP_PROGRAM_MANIFEST);

@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "program": "ugrep",
+  "source": {
+    "repository": "https://github.com/Genivia/ugrep",
+    "version": "7.5.0",
+    "commit": "eada75555a2bc033559b182f334e0406bc54a641",
+    "directory": "ugrep-7.5.0",
+    "archive": "ugrep-v7.5.0.tar.gz",
+    "url": "https://codeload.github.com/Genivia/ugrep/tar.gz/refs/tags/v7.5.0",
+    "archiveSha256": "08ed29981e4e9ed07077139519a17273658d6097f90642a14d9dfdf07fb74ee9",
+    "license": {
+      "file": "LICENSE.txt",
+      "spdx": "BSD-3-Clause",
+      "sha256": "486e9ad9225c5feca0477696ce84d42368680a06e36fbbb0f0cb14d1a2aa641f"
+    }
+  },
+  "toolchain": {
+    "sdk": {
+      "version": "34.0",
+      "directory": "wasi-sdk-34.0-arm64-macos",
+      "archive": "wasi-sdk-34.0-arm64-macos.tar.gz",
+      "url": "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-arm64-macos.tar.gz",
+      "archiveSha256": "9c59398106b417f8f14913380fdf0097a8cc0ff4af9eb3ce0065a859e88d49e9"
+    },
+    "compiler": {
+      "clang": "23.1.0-wasi-sdk",
+      "llvmCommit": "895aa2c896ada719451be2e3673c83da8ddf1141"
+    },
+    "host": "arm64 macOS",
+    "target": "wasm32-wasip1"
+  },
+  "patch": {
+    "file": "patches/0001-wasi-disable-vkey-tui.patch",
+    "sha256": "003678633f6c9a743f4a98e72a982a7043fc90e8ac4a81e83c14414db05a9d05"
+  },
+  "compatibility": {
+    "header": "compat/wasi-process-unavailable.h",
+    "headerSha256": "121a0db5f2ede3df12db5d21d0decbf6ee76576f4547daad091f51bb3eabb6b3",
+    "source": "compat/wasi-process-unavailable.c",
+    "sourceSha256": "5dd156b9a933e6e876ae97221513a5c9d5f78212778d18f853ceeb7faf2705e9",
+    "unavailableProcessCalls": ["fork", "execvp", "kill", "popen", "pclose", "system"],
+    "systemNullReturns": 0,
+    "unavailableError": "ENOSYS"
+  },
+  "build": {
+    "script": "build.sh",
+    "scriptSha256": "3deb283ec687f97416c70570e2a6ae5919e4c47347748c8a446f0a99860ea3f8",
+    "sourceDateEpoch": 1761004800,
+    "jobs": 2,
+    "defaultMaxJobs": 1,
+    "cxxFlags": [
+      "-O2",
+      "-fvisibility=hidden",
+      "-DDEFAULT_MAX_JOBS=1",
+      "-fwasm-exceptions",
+      "-mllvm",
+      "-wasm-use-legacy-eh=false"
+    ],
+    "linkFlags": ["-fwasm-exceptions", "-lunwind", "-Wl,--strip-debug"],
+    "configure": [
+      "--build=aarch64-apple-darwin",
+      "--host=wasm32-wasip1",
+      "--disable-sse2",
+      "--disable-avx2",
+      "--disable-neon",
+      "--disable-mmap",
+      "--disable-7zip",
+      "--disable-auto-color",
+      "--disable-pager",
+      "--without-pcre2",
+      "--without-boost-regex",
+      "--without-zlib",
+      "--without-bzlib",
+      "--without-lzma",
+      "--without-lz4",
+      "--without-zstd",
+      "--without-brotli",
+      "--without-bzip3",
+      "--with-bash-completion-dir=no",
+      "--with-fish-completion-dir=no",
+      "--with-zsh-completion-dir=no"
+    ],
+    "cFlags": ["-O2", "-fvisibility=hidden", "-DDEFAULT_MAX_JOBS=1"],
+    "cppFlags": [
+      "-D_WASI_EMULATED_SIGNAL",
+      "-D_WASI_EMULATED_GETPID",
+      "-include compat/wasi-process-unavailable.h"
+    ],
+    "pthreadCFlags": ["-D_WASI_EMULATED_SIGNAL"],
+    "pthreadLibs": ["-lwasi-emulated-signal", "-lwasi-emulated-getpid"]
+  },
+  "artifact": {
+    "bytes": 1522097,
+    "sha256": "c402734f83ded748eefb8e58c71ce9cff8bd76425b4ccbc96a7007654240f438",
+    "imports": [
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "args_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "args_sizes_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "environ_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "environ_sizes_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "clock_time_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_close",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_fdstat_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_fdstat_set_flags",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_filestat_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_prestat_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_prestat_dir_name",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_read",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_readdir",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_seek",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "fd_write",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "path_filestat_get",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "path_open",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "path_rename",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "poll_oneoff",
+        "kind": "function"
+      },
+      {
+        "module": "wasi_snapshot_preview1",
+        "name": "proc_exit",
+        "kind": "function"
+      }
+    ],
+    "exports": [
+      {
+        "name": "memory",
+        "kind": "memory"
+      },
+      {
+        "name": "_start",
+        "kind": "function"
+      }
+    ]
+  }
+}

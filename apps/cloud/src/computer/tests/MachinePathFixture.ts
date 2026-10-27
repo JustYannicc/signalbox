@@ -234,6 +234,7 @@ export function machinePathFixture(
       git: code("git"),
       sed: code("sed"),
       jq: code("jq"),
+      ugrep: code("ugrep"),
       coreutils: Object.fromEntries(
         CHILD_COREUTILS_COMMANDS.map((name) => [name, code(name)]),
       ) as Record<(typeof CHILD_COREUTILS_COMMANDS)[number], ReturnType<typeof code>>,
