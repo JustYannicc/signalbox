@@ -92,15 +92,15 @@ describe("Kernel session stdio", () => {
       await writer.write(new Uint8Array([0, 255, 128, 7, 42]));
       expect(observed).toEqual([]);
       const first = new Uint8Array(3);
-      expect(await f.session.stdio[0].readInto!(first)).toBe(3);
+      expect(await f.session.stdio[0].readInto!(first, 0)).toBe(3);
       expect(first).toEqual(new Uint8Array([0, 255, 128]));
       expect(observed).toEqual([0, 255, 128]);
       const second = new Uint8Array(8).fill(11);
-      expect(await f.session.stdio[0].readInto!(second)).toBe(2);
+      expect(await f.session.stdio[0].readInto!(second, 0)).toBe(2);
       expect(second).toEqual(new Uint8Array([7, 42, 11, 11, 11, 11, 11, 11]));
       expect(observed).toEqual([0, 255, 128, 7, 42]);
       await writer.close();
-      expect(await f.session.stdio[0].readInto!(second)).toBe(0);
+      expect(await f.session.stdio[0].readInto!(second, 0)).toBe(0);
       expect(observed).toEqual([0, 255, 128, 7, 42]);
     } finally {
       await f.close();
@@ -115,7 +115,7 @@ describe("Kernel session stdio", () => {
     });
     try {
       const target = new Uint8Array(8).fill(17);
-      const reading = f.session.stdio[0].readInto!(target);
+      const reading = f.session.stdio[0].readInto!(target, 0);
       expect(reading).toBeInstanceOf(Promise);
       expect(observed).toEqual([]);
       const writer = f.session.stdin.getWriter();
