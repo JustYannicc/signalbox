@@ -7,7 +7,7 @@ import { validateHarnessCProductFiles } from "./filesCheckpoint.ts";
 
 type ProductHostFiles = Omit<HarnessHostFilesOptions, "wakes" | "stdio">;
 
-/** Writes and reads back the checkpoint bytes in the new facet's storage before host seeding. */
+/** Verifies restored files and links before the new facet seeds its host. */
 export function materializeHarnessCProductFiles(input: {
   readonly files: ProductHostFiles;
   readonly threadId: string;
@@ -23,12 +23,35 @@ export function materializeHarnessCProductFiles(input: {
       const slash = file.path.lastIndexOf("/");
       const parent = slash === -1 ? "." : slash === 0 ? "/" : file.path.slice(0, slash);
       if (slash !== -1) fs.mkdirSync(parent, { recursive: true, mode: 0o755 });
-      fs.writeFileSync(file.path, file.bytes, { mode: file.mode });
-      fs.chmodSync(file.path, file.mode);
-      const restored = fs.readFileSync(file.path);
-      const mode = fs.statSync(file.path).mode & 0o7777;
-      if (typeof restored === "string" || !sameBytes(restored, file.bytes) || mode !== file.mode)
-        throw new Error("The restored checkpoint file differs from A's committed bytes or mode.");
+      const existing = lstatIfPresent(fs, file.path);
+      if (file.kind === "symlink") {
+        const target = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+          file.bytes,
+        );
+        if (target.length === 0 || target.includes("\0"))
+          throw new Error("A checkpoint symlink has an invalid target.");
+        if (existing) fs.unlinkSync(file.path);
+        fs.symlinkSync(target, file.path);
+        storage.files.chmod(file.path, file.mode, false);
+      } else {
+        if (existing?.isSymbolicLink()) fs.unlinkSync(file.path);
+        fs.writeFileSync(file.path, file.bytes, { mode: file.mode });
+        fs.chmodSync(file.path, file.mode);
+      }
+      const metadata = fs.lstatSync(file.path);
+      const restored =
+        file.kind === "symlink"
+          ? fs.readlinkSync(file.path, { encoding: "buffer" })
+          : fs.readFileSync(file.path);
+      if (
+        metadata.isSymbolicLink() !== (file.kind === "symlink") ||
+        typeof restored === "string" ||
+        !sameBytes(restored, file.bytes) ||
+        (metadata.mode & 0o7777) !== file.mode
+      )
+        throw new Error(
+          "The restored checkpoint entry differs from its committed bytes, kind or mode.",
+        );
     }
   } catch (cause) {
     throw new Error("A's committed files could not be materialized in the new facet.", { cause });
@@ -38,6 +61,15 @@ export function materializeHarnessCProductFiles(input: {
     } finally {
       wakes.dispose();
     }
+  }
+}
+
+function lstatIfPresent(fs: ReturnType<typeof createNodeFs>["fs"], path: string) {
+  try {
+    return fs.lstatSync(path);
+  } catch (cause) {
+    if (!(cause instanceof Error) || !("code" in cause) || cause.code !== "ENOENT") throw cause;
+    return undefined;
   }
 }
 
@@ -61,10 +93,20 @@ export function captureHarnessCProductFiles(input: {
     storage = createHostStorage({ ...input.files, wakes }, input.threadId);
     const fs = createNodeFs(storage.files).fs;
     return input.paths.map((path) => {
-      const bytes = fs.readFileSync(path);
+      const metadata = fs.lstatSync(path);
+      if (!metadata.isFile() && !metadata.isSymbolicLink())
+        throw new Error("Checkpoint capture requires a regular file or symlink.");
+      const bytes = metadata.isSymbolicLink()
+        ? fs.readlinkSync(path, { encoding: "buffer" })
+        : fs.readFileSync(path);
       if (typeof bytes === "string")
         throw new Error("Checkpoint capture requires binary file bytes.");
-      return { path, mode: fs.statSync(path).mode & 0o7777, bytes: Uint8Array.from(bytes) };
+      return {
+        path,
+        mode: metadata.mode & 0o7777,
+        ...(metadata.isSymbolicLink() ? { kind: "symlink" as const } : {}),
+        bytes: Uint8Array.from(bytes),
+      };
     });
   } finally {
     try {

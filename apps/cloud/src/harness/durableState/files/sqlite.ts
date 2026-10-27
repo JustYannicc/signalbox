@@ -42,6 +42,7 @@ export function requireOwnSchema(
     )`);
     database.sql.exec(`CREATE TABLE ${entryTable} (
       checkpoint_id TEXT NOT NULL, path TEXT NOT NULL, mode INTEGER NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('file', 'symlink')),
       blob_sha256 TEXT NOT NULL, byte_length INTEGER NOT NULL,
       PRIMARY KEY (checkpoint_id, path)
     )`);
@@ -57,9 +58,17 @@ export function requireOwnSchema(
     tables.some((table) => table.type !== "table")
   )
     return fail("CORRUPT");
+  let migrated = false;
   if (!byName.has(admissionReceiptTable)) {
     createAdmissionReceiptTable(database);
-    return { pristine: false, migrated: true };
+    migrated = true;
   }
-  return { pristine: false, migrated: false };
+  const columns = [...database.sql.exec(`PRAGMA table_info(${entryTable})`)];
+  if (!columns.some((column) => column.name === "kind")) {
+    database.sql.exec(
+      `ALTER TABLE ${entryTable} ADD COLUMN kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('file', 'symlink'))`,
+    );
+    migrated = true;
+  }
+  return { pristine: false, migrated };
 }

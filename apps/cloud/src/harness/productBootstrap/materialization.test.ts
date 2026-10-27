@@ -92,7 +92,7 @@ describe("facet-local product checkpoint materialization", () => {
     ).toThrow("invalid or duplicate");
   });
 
-  it("rejects changed file bytes and modes under an unchanged manifest", async () => {
+  it("rejects changed file bytes, kinds and modes under an unchanged manifest", async () => {
     const files = [{ path: "workspace.txt", mode: 0o600, bytes: new Uint8Array([1, 2, 3]) }];
     const manifest = await prepareFilesCheckpoint({
       checkpointId: "checkpoint-a",
@@ -102,6 +102,7 @@ describe("facet-local product checkpoint materialization", () => {
     for (const changed of [
       [{ ...files[0]!, bytes: new Uint8Array([1, 2, 4]) }],
       [{ ...files[0]!, mode: 0o644 }],
+      [{ ...files[0]!, kind: "symlink" }] satisfies HarnessFilesStoreResult["files"],
     ]) {
       const store = {
         execute: async () => ({
@@ -117,7 +118,7 @@ describe("facet-local product checkpoint materialization", () => {
           checkpointId: "checkpoint-a",
           manifestRevision: manifest.manifestSha256,
         }),
-      ).rejects.toThrow("bytes or modes changed");
+      ).rejects.toThrow("bytes, kinds or modes changed");
     }
     expect(() =>
       validateHarnessCProductFiles([

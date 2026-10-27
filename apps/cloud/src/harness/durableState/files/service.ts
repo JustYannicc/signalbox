@@ -163,6 +163,7 @@ export function createHarnessFilesStore(
 
           if (command.type === "readCheckpoint" || command.type === "recoverCheckpoint") {
             const target = database.transactionSync(() => {
+              requireOwnSchema(database, false);
               const current = currentState(database, runId);
               if (!current.state) return fail("MISSING");
               requirePublisher(current.state, command.publisher);
