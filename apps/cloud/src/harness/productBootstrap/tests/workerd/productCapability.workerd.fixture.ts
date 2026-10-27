@@ -9,15 +9,79 @@ import type {
 } from "../../../HarnessCProductCapabilities.ts";
 import { reference as referenceArtifact } from "../../../processResume/tests/releaseMaterial.ts";
 import type { ProductFixtureExecutor } from "./productExecutor.workerd.fixture.ts";
+import { ProductHeapProbe } from "./productHeapProbe.workerd.fixture.ts";
 import { machineInventoryFixture } from "../../../../computer/machineInventoryTesting.ts";
 import type { HarnessFilesCheckpoint } from "../../../HarnessFilesStore.ts";
 import type { HarnessFilesStoreObject } from "../../../HarnessFilesStoreObject.ts";
 import type { HarnessThreadSupervisorPublisher } from "../../../HarnessThreadSupervisor.ts";
+import { HARNESS_PROCESS_RELEASE_ASSET_CHUNK_BYTES } from "../../../HarnessProcessPlacement.ts";
+import type { HarnessRequestFacetFailureCause } from "./memoryFailure.workerd.fixture.ts";
+import {
+  hasProductFixtureR18Range,
+  PRODUCT_FIXTURE_R18_SEED_CHUNK_BYTES,
+  readProductFixtureReleaseAsset,
+  readProductFixtureR18Range,
+  readProductFixtureReleaseRange,
+  seedProductFixtureR18Range,
+  storeProductFixtureReleaseAsset,
+} from "./productChunkStorage.workerd.fixture.ts";
 import {
   createProductFixtureState,
   type FixtureRelease,
   type FixtureState,
 } from "./productInputs.workerd.fixture.ts";
+
+export { PRODUCT_FIXTURE_R18_SEED_CHUNK_BYTES as PRODUCT_FIXTURE_R18_INPUT_SEED_CHUNK_BYTES };
+export const PRODUCT_FIXTURE_R18_INPUT_CHUNK_BYTES = HARNESS_PROCESS_RELEASE_ASSET_CHUNK_BYTES;
+export const PRODUCT_FIXTURE_R18_INPUT_PATHS = [
+  "manifest.json",
+  "worker.js",
+  "codex/Cargo.lock",
+  "codex/engine.wasm",
+  "codex/loader.mjs",
+  "codex/manifest.json",
+] as const;
+
+type R18InputChunk = {
+  readonly totalBytes: number;
+  readonly sha256: string;
+  readonly offset: number;
+  readonly path: string;
+  readonly bytes: Uint8Array;
+};
+export type MemoryModuleInventory = readonly {
+  readonly name: string;
+  readonly type: "js" | "cjs" | "text" | "wasm";
+  readonly bytes: number;
+  readonly sha256: string;
+}[];
+
+export type ProductFixtureMemoryProofFailureCause = HarnessRequestFacetFailureCause;
+export interface ProductFixtureMemoryProofFailure {
+  readonly source: "process" | "shard";
+  readonly processId?: string;
+  readonly error: string;
+  readonly causes: readonly ProductFixtureMemoryProofFailureCause[];
+}
+type ProductFixtureMemoryProofResult =
+  | {
+      readonly runId: string;
+      readonly status: "ready";
+      readonly legacyModuleSetHeld: boolean;
+      readonly moduleInventory: MemoryModuleInventory;
+    }
+  | {
+      readonly runId: string;
+      readonly status: "failed";
+      readonly failure: ProductFixtureMemoryProofFailure;
+    };
+type ProductFixtureMemoryProofReadiness =
+  | {
+      readonly ready: true;
+      readonly legacyModuleSetHeld: boolean;
+      readonly moduleInventory: MemoryModuleInventory;
+    }
+  | Extract<ProductFixtureMemoryProofResult, { readonly status: "failed" }>;
 
 export interface ProductFixtureServiceEnv {
   readonly PRODUCT_EXECUTOR: DurableObjectNamespace<ProductFixtureExecutor>;
@@ -25,13 +89,103 @@ export interface ProductFixtureServiceEnv {
 }
 
 export class ProductFixtureCapability extends DurableObject<ProductFixtureServiceEnv> {
-  async configure(runId: string, initialProvider: HarnessCProductProvider = "claude-code") {
+  #heapProbe = new ProductHeapProbe();
+  #memoryProofWaiters: (() => void)[] = [];
+
+  holdHeapProbe(bytes: number) {
+    return this.#heapProbe.hold(bytes);
+  }
+
+  releaseHeapProbe() {
+    return this.#heapProbe.release();
+  }
+
+  async markMemoryProofReady(
+    runId: string,
+    legacyModuleSetHeld: boolean,
+    moduleInventory: MemoryModuleInventory,
+  ) {
+    const result = { runId, status: "ready", legacyModuleSetHeld, moduleInventory } as const;
+    await this.ctx.storage.put(`fixture/memory-proof/${runId}`, result);
+    for (const resolve of this.#memoryProofWaiters.splice(0)) resolve();
+    return { ready: true, legacyModuleSetHeld, moduleInventory } as const;
+  }
+
+  async markMemoryProofFailed(runId: string, failure: ProductFixtureMemoryProofFailure) {
+    const result = { runId, status: "failed", failure } as const;
+    await this.ctx.storage.put(`fixture/memory-proof/${runId}`, result);
+    for (const resolve of this.#memoryProofWaiters.splice(0)) resolve();
+    return { ready: false } as const;
+  }
+
+  async waitForMemoryProof(runId: string): Promise<ProductFixtureMemoryProofReadiness> {
+    let result = await this.#readMemoryProofResult(runId);
+    if (result === undefined) {
+      const waiting = new Promise<void>((resolve) => this.#memoryProofWaiters.push(resolve));
+      result = await this.#readMemoryProofResult(runId);
+      if (result === undefined) {
+        await waiting;
+        result = await this.#readMemoryProofResult(runId);
+      }
+    }
+    if (result === undefined)
+      throw new Error("The C memory proof ended without an activation result.");
+    if (result.status === "failed") return result;
+    return {
+      ready: true,
+      legacyModuleSetHeld: result.legacyModuleSetHeld,
+      moduleInventory: result.moduleInventory,
+    } as const;
+  }
+
+  async memoryProofStatus(runId: string) {
+    const result = await this.#readMemoryProofResult(runId);
+    if (result === undefined) return { runId, status: "pending" } as const;
+    return result.status === "failed"
+      ? result
+      : ({
+          runId,
+          status: "ready",
+          legacyModuleSetHeld: result.legacyModuleSetHeld,
+          moduleInventory: result.moduleInventory,
+        } as const);
+  }
+
+  async #readMemoryProofResult(runId: string) {
+    return await this.ctx.storage.get<ProductFixtureMemoryProofResult>(
+      `fixture/memory-proof/${runId}`,
+    );
+  }
+
+  async configure(
+    runId: string,
+    initialProvider: HarnessCProductProvider = "claude-code",
+    useR18Modules = false,
+  ) {
     const existing = await this.ctx.storage.get<FixtureState>("fixture/state");
     if (existing?.runId === runId) return this.summary();
+    this.#memoryProofWaiters = [];
     for (const key of (await this.ctx.storage.list({ prefix: "fixture/" })).keys())
       await this.ctx.storage.delete(key);
-    const state = await createProductFixtureState(runId, initialProvider);
-    await this.ctx.storage.put("fixture/state", state);
+    const r18 = useR18Modules ? await this.r18InputModules() : undefined;
+    if (useR18Modules && r18 === undefined)
+      throw new Error("The complete pinned R18 module fixture has not been uploaded.");
+    const { state, releaseFiles } = await createProductFixtureState(runId, initialProvider, r18);
+    for (const provider of ["claude-code", "codex"] as const) {
+      const artifactRef = state.releases[provider].artifact.artifactRef;
+      for (const [path, bytes] of Object.entries(releaseFiles[provider])) {
+        const descriptor = Object.values(
+          state.releases[provider].expected.plan.preparedModules,
+        ).find((module) => module.path === path);
+        const digest = descriptor?.sha256 ?? (await sha256Hex(bytes));
+        await storeProductFixtureReleaseAsset(this.ctx.storage, artifactRef, path, bytes, digest);
+      }
+    }
+    try {
+      await this.ctx.storage.put("fixture/state", state);
+    } catch (cause) {
+      throw new Error("Could not store the prepared product fixture state.", { cause });
+    }
     return this.summary();
   }
 
@@ -81,9 +235,86 @@ export class ProductFixtureCapability extends DurableObject<ProductFixtureServic
     const material = Object.values(state.releases).find(
       (release) => release.artifact.artifactRef === artifactRef,
     );
-    const bytes = material?.files[path];
-    if (bytes === undefined) throw new Error(`Fixture artifact does not contain ${path}.`);
-    return bytes.slice();
+    if (material === undefined) throw new Error("The selected fixture artifact is unavailable.");
+    const asset = await readProductFixtureReleaseAsset(this.ctx.storage, artifactRef, path);
+    if ((await sha256Hex(asset.bytes)) !== asset.sha256)
+      throw new Error(`Fixture artifact integrity failed for ${path}.`);
+    return asset.bytes;
+  }
+
+  async readArtifactChunk(artifactRef: string, path: string, offset: number, length: number) {
+    const state = await this.state();
+    const material = Object.values(state.releases).find(
+      (release) => release.artifact.artifactRef === artifactRef,
+    );
+    if (
+      material === undefined ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      offset % HARNESS_PROCESS_RELEASE_ASSET_CHUNK_BYTES !== 0 ||
+      !Number.isSafeInteger(length) ||
+      length <= 0 ||
+      length > HARNESS_PROCESS_RELEASE_ASSET_CHUNK_BYTES
+    )
+      throw new RangeError("The requested release asset chunk is invalid.");
+    const paths = (await this.ctx.storage.get<string[]>("fixture/release-read-paths")) ?? [];
+    await this.ctx.storage.put("fixture/release-read-paths", [...paths, path]);
+    return readProductFixtureReleaseRange(this.ctx.storage, artifactRef, path, offset, length);
+  }
+
+  async seedR18ModuleChunk(
+    path: string,
+    offset: number,
+    totalBytes: number,
+    sha256: string,
+    buffer: ArrayBuffer,
+  ) {
+    if (!(PRODUCT_FIXTURE_R18_INPUT_PATHS as readonly string[]).includes(path))
+      throw new Error(`Unsupported R18 fixture path: ${path}.`);
+    const bytes = new Uint8Array(buffer);
+    const storedBytes = await seedProductFixtureR18Range(
+      this.ctx.storage,
+      path,
+      offset,
+      totalBytes,
+      sha256,
+      bytes,
+    );
+    return { path, offset, bytes: storedBytes, totalBytes };
+  }
+
+  async readR18InputChunk(path: string, offset: number): Promise<R18InputChunk> {
+    if (!(PRODUCT_FIXTURE_R18_INPUT_PATHS as readonly string[]).includes(path))
+      throw new Error(`Unsupported R18 fixture path: ${path}.`);
+    return { ...(await readProductFixtureR18Range(this.ctx.storage, path, offset)), offset, path };
+  }
+
+  async r18InputModules() {
+    const modules = Object.create(null) as Record<string, Uint8Array>;
+    for (const path of PRODUCT_FIXTURE_R18_INPUT_PATHS) {
+      if (!(await hasProductFixtureR18Range(this.ctx.storage, path))) return undefined;
+      const first = await readProductFixtureR18Range(this.ctx.storage, path, 0);
+      const bytes = new Uint8Array(first.totalBytes);
+      for (
+        let offset = 0;
+        offset < first.totalBytes;
+        offset += PRODUCT_FIXTURE_R18_INPUT_CHUNK_BYTES
+      ) {
+        const chunk =
+          offset === 0 ? { ...first, path } : await this.readR18InputChunk(path, offset);
+        if (chunk.totalBytes !== first.totalBytes || chunk.sha256 !== first.sha256)
+          throw new Error("The R18 fixture metadata changed during assembly.");
+        bytes.set(chunk.bytes, offset);
+      }
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      const actualHash = Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      if (actualHash !== first.sha256)
+        throw new Error(`The staged R18 fixture file has the wrong SHA-256: ${path}.`);
+      modules[path] = bytes;
+    }
+    return modules as Record<(typeof PRODUCT_FIXTURE_R18_INPUT_PATHS)[number], Uint8Array>;
   }
 
   async read(reference: HarnessRunArtifact | string) {
@@ -284,6 +515,7 @@ export class ProductFixtureCapability extends DurableObject<ProductFixtureServic
       ).observation(),
       initialAccessCalls: (await this.ctx.storage.get<number>("fixture/access/initial")) ?? 0,
       turnAccessCalls: (await this.ctx.storage.get<number>("fixture/access/turn")) ?? 0,
+      releaseReadPaths: (await this.ctx.storage.get<string[]>("fixture/release-read-paths")) ?? [],
       modelRequests: (await this.ctx.storage.get<string[]>("fixture/model-requests")) ?? [],
       events: Object.fromEntries(await this.ctx.storage.list({ prefix: "fixture/event/" })),
       runnerEvents: [
@@ -310,6 +542,11 @@ export class ProductFixtureCapability extends DurableObject<ProductFixtureServic
     if (value === undefined) throw new Error("Product fixture was not configured.");
     return value;
   }
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function sameReference(left: HarnessRunArtifact, right: HarnessRunArtifact) {

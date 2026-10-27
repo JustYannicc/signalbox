@@ -57,9 +57,9 @@ async function artifactFixture(
   };
 }
 
-export async function codexFixture() {
+export async function codexFixture(options: { readonly engineBytes?: Uint8Array } = {}) {
   const files = new Map([
-    ["codex/engine.wasm", new Uint8Array([0, 97, 115, 109])],
+    ["codex/engine.wasm", options.engineBytes ?? new Uint8Array([0, 97, 115, 109])],
     ["codex/loader.mjs", encoder.encode("export const load = () => undefined;")],
     ["codex/helper.mjs", encoder.encode("export const helper = 1;")],
     ["codex/Cargo.lock", encoder.encode("synthetic build provenance")],

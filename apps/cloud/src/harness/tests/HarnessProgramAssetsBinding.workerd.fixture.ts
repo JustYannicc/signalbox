@@ -38,7 +38,7 @@ export class ProgramAssetsProbe extends WorkerEntrypoint {
   targetPreparedRelease: {
     artifact: { provider: "codex", releaseId },
   } as HarnessProcessResumePreparedRelease,
-} as HarnessProcessExecutionProcessInput;
+} satisfies HarnessProcessExecutionProcessInput;
 
 interface Env {
   readonly ASSET_PROXY_TEST: DurableObjectNamespace<ProgramAssetsProbeObject>;

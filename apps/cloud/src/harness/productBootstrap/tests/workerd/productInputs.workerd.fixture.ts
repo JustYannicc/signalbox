@@ -18,12 +18,16 @@ import { loadHarnessRelease } from "../../../HarnessReleaseLoader.ts";
 import { productLoadedPreparedRelease } from "../../../ProductHarnessProcessRelease.ts";
 import { dataForDriver } from "../../../adapter/tests/data.ts";
 import { programFixture } from "../../../tests/productHost/commands.ts";
+import { codexEngineBytes } from "./codexEngineWasm.fixture.ts";
 
 export type FixtureRelease = {
   readonly artifact: HarnessReleaseArtifact;
   readonly expected: HarnessProcessResumePreparedRelease;
   readonly trustedComputer: { readonly sourceIdentity: string; readonly manifestSha256: string };
   readonly maxPreparedModuleBytes: number;
+};
+
+type FixtureReleaseSeed = FixtureRelease & {
   readonly files: Readonly<Record<string, Uint8Array>>;
 };
 
@@ -40,6 +44,13 @@ export type FixtureState = {
     readonly files: Awaited<ReturnType<typeof programFixture>>["seed"]["files"];
     readonly bytes: Uint8Array;
   };
+};
+
+export type ProductFixtureStateSeed = {
+  readonly state: FixtureState;
+  readonly releaseFiles: Readonly<
+    Record<HarnessCProductProvider, Readonly<Record<string, Uint8Array>>>
+  >;
 };
 
 const turnCodec = Schema.fromJsonString(Schema.toCodecJson(RunnerTurn));
@@ -82,29 +93,81 @@ const turnFor = async (
   return { reference, json };
 };
 
-async function codexRelease(): Promise<FixtureRelease> {
-  const fixture = await codexFixture();
-  const files = Object.fromEntries(fixture.files);
+async function codexRelease(
+  r18Files?: Readonly<Record<string, Uint8Array>>,
+): Promise<FixtureReleaseSeed> {
+  let files: Record<string, Uint8Array>;
+  let identity: {
+    readonly artifactRef: string;
+    readonly artifactHash: string;
+    readonly sourceIdentity: string;
+  };
+  let source: { read(artifactRef: string, path: string): Promise<Uint8Array> };
+  let trustedComputer: { readonly sourceIdentity: string; readonly manifestSha256: string };
+  let maxPreparedModuleBytes: number;
+  if (r18Files === undefined) {
+    const fixture = await codexFixture({ engineBytes: codexEngineBytes() });
+    files = Object.fromEntries(fixture.files);
+    identity = fixture.options.identity;
+    source = fixture.options.source;
+    trustedComputer = fixture.options.trustedComputer;
+    maxPreparedModuleBytes = fixture.options.maxPreparedModuleBytes;
+  } else {
+    files = Object.fromEntries(Object.entries(r18Files).filter(([path]) => path !== "worker.js"));
+    const manifestBytes = files["manifest.json"];
+    const codexManifestBytes = files["codex/manifest.json"];
+    if (manifestBytes === undefined || codexManifestBytes === undefined)
+      throw new Error("The pinned R18 release is missing its manifests.");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    const commonManifest = JSON.parse(decoder.decode(manifestBytes)) as {
+      readonly sourceIdentity: string;
+      readonly computer: { readonly sourceIdentity: string; readonly manifestSha256: string };
+    };
+    const codexManifest = JSON.parse(decoder.decode(codexManifestBytes)) as {
+      readonly moduleBudgetBytes: number;
+    };
+    const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(manifestBytes).buffer);
+    const artifactHash = Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    identity = {
+      artifactRef: `sha256:${artifactHash}`,
+      artifactHash,
+      sourceIdentity: commonManifest.sourceIdentity,
+    };
+    source = {
+      async read(artifactRef, path) {
+        if (artifactRef !== identity.artifactRef)
+          throw new Error("The fixture release reader received another artifact.");
+        const bytes = files[path];
+        if (bytes === undefined) throw new Error(`Missing fixture release file: ${path}`);
+        return bytes;
+      },
+    };
+    trustedComputer = commonManifest.computer;
+    maxPreparedModuleBytes = codexManifest.moduleBudgetBytes;
+  }
+  const artifactHash = identity.artifactHash;
   const artifact: HarnessReleaseArtifact = {
     provider: "codex",
-    releaseId: "workerd-c-product-codex",
-    artifactHash: fixture.options.identity.artifactHash,
-    artifactRef: fixture.options.identity.artifactRef,
-    sourceIdentity: fixture.options.identity.sourceIdentity,
+    releaseId: r18Files === undefined ? "workerd-c-product-codex" : "codex-r15-b09482bc-r18",
+    artifactHash,
+    artifactRef: identity.artifactRef,
+    sourceIdentity: identity.sourceIdentity,
     fixtureIdentity: "workerd-c-product-codex",
     createdAt: "2026-10-27T00:00:00.000Z",
   };
   const loaded = await loadHarnessRelease({
-    identity: fixture.options.identity,
-    source: fixture.options.source,
-    trustedComputer: fixture.options.trustedComputer,
-    maxPreparedModuleBytes: fixture.options.maxPreparedModuleBytes,
+    identity,
+    source,
+    trustedComputer,
+    maxPreparedModuleBytes,
   });
   return {
     artifact,
     expected: productLoadedPreparedRelease("codex", artifact, loaded),
-    trustedComputer: fixture.options.trustedComputer,
-    maxPreparedModuleBytes: fixture.options.maxPreparedModuleBytes,
+    trustedComputer,
+    maxPreparedModuleBytes,
     files,
   };
 }
@@ -112,10 +175,14 @@ async function codexRelease(): Promise<FixtureRelease> {
 export async function createProductFixtureState(
   runId: string,
   initialProvider: HarnessCProductProvider = "claude-code",
-): Promise<FixtureState> {
+  codexFiles?: Readonly<Record<string, Uint8Array>>,
+): Promise<ProductFixtureStateSeed> {
   const claude = await releaseMaterial("controlled official Claude startup", "workerd-c");
-  const [claudeExpected, codex] = await Promise.all([loadMaterial(claude), codexRelease()]);
-  const claudeRelease: FixtureRelease = {
+  const [claudeExpected, codex] = await Promise.all([
+    loadMaterial(claude),
+    codexRelease(codexFiles),
+  ]);
+  const claudeMetadata: FixtureRelease = {
     artifact: claude.artifact,
     expected: claudeExpected,
     trustedComputer: claude.trustedComputer,
@@ -123,7 +190,6 @@ export async function createProductFixtureState(
       (sum, bytes) => sum + bytes.byteLength,
       0,
     ),
-    files: claude.files,
   };
   const turns = {
     "turn-one": await turnFor(
@@ -145,7 +211,15 @@ export async function createProductFixtureState(
   const state: FixtureState = {
     runId,
     initialProvider,
-    releases: { "claude-code": claudeRelease, codex },
+    releases: {
+      "claude-code": claudeMetadata,
+      codex: {
+        artifact: codex.artifact,
+        expected: codex.expected,
+        trustedComputer: codex.trustedComputer,
+        maxPreparedModuleBytes: codex.maxPreparedModuleBytes,
+      },
+    },
     turns,
     programs: {
       sourceIdentity: program.seed.sourceIdentity,
@@ -154,5 +228,8 @@ export async function createProductFixtureState(
       bytes: await program.seed.read("/usr/bin/git", new AbortController().signal),
     },
   };
-  return state;
+  return {
+    state,
+    releaseFiles: { "claude-code": claude.files, codex: codex.files },
+  };
 }

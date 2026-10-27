@@ -144,6 +144,15 @@ export const prepareProductFixture = (
           maxPreparedModuleBytes: source.maxPreparedModuleBytes,
         }),
         readArtifact: source.readArtifact,
+        readArtifactChunk: async (
+          artifactRef: string,
+          path: string,
+          offset: number,
+          length: number,
+        ) => {
+          const bytes = await source.readArtifact(artifactRef, path);
+          return bytes.slice(offset, offset + length);
+        },
       }),
       [HARNESS_C_PRODUCT_CAPABILITY_KEYS.nativeCheckpoint]: rpc({
         read: async () => nativeBytes.slice(),

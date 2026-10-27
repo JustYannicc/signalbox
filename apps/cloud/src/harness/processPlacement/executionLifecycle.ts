@@ -18,19 +18,14 @@ import {
   type HarnessProcessPublicationReconciler,
   type HarnessProcessPlacement,
 } from "./contracts.ts";
-import {
-  createHarnessProcessFacetAdapter,
-  type HarnessProcessFacetInvokeInput as FacetInvokeInput,
-} from "../HarnessProcessFacet.ts";
+import type { HarnessProcessFacetInvokeInput as FacetInvokeInput } from "../HarnessProcessFacet.ts";
+import { createHarnessProcessFacet as createFacet } from "./facetLoader.ts";
 import { createHarnessProcessPlacement, forgetHarnessProcessPlacement } from "./service.ts";
 import { type HarnessProcessPlacementWriter } from "./storeSchema.ts";
 import { sameClaim } from "./storeSchema.ts";
-import { snapshotHarnessProcessModules } from "./moduleCode.ts";
 import { confirmedProcessPublication } from "./publication.ts";
 import type { ProcessSlotLease } from "../../computer/ProcessSlots.ts";
-import type { HarnessRequestFacetObject } from "../HarnessRequestFacetObject.ts";
 import {
-  createHarnessProcessFacetEnvironment,
   type HarnessProcessExecutionEnvironment,
   type HarnessProcessExecutionProcessInput,
 } from "./executionEnvironment.ts";
@@ -111,15 +106,6 @@ export interface HarnessProcessExecutionSupervisorClient
     readonly control: HarnessProcessControllerClaim;
   }): Promise<{ readonly snapshot: HarnessProcessExecutionControlSnapshot }>;
 }
-
-type HarnessProcessFacetStub = Pick<
-  HarnessRequestFacetObject,
-  "identity" | "prepareInert" | "run" | "dispose"
-> &
-  Rpc.DurableObjectBranded & {
-    /** Implemented only by a host that can observe its verified prepared artifact load. */
-    loadedPreparedRelease: () => Promise<unknown>;
-  };
 
 export interface HarnessProcessExecutionResumeHandle {
   readonly handle: HarnessProcessHandle<FacetInvokeInput>;
@@ -537,58 +523,6 @@ async function stopAndDispose(
   if (!allJoined(joined)) throw new Error("Replacement facet resources have not joined.");
   await facet.dispose();
   return joined;
-}
-
-export function createFacet(
-  context: DurableObjectState,
-  environment: HarnessProcessExecutionEnvironment,
-  process: HarnessProcessExecutionProcessInput,
-  identity: HarnessProcessFacetLocator,
-): HarnessProcessPreparedFacet<FacetInvokeInput> & {
-  readonly readLoadedPreparedRelease: () => Promise<unknown>;
-} {
-  if (
-    !process.mainModule ||
-    !Object.hasOwn(process.modules, process.mainModule) ||
-    !process.entrypoint
-  )
-    throw new TypeError("Process execution code must include a main module and entrypoint.");
-  if (identity.facetKey !== identity.loaderId)
-    throw new TypeError("A process facet key must use its ProcessSlots loader ID.");
-  const modules = snapshotHarnessProcessModules(process.modules, process.mainModule);
-  if (modules === undefined)
-    throw new TypeError(
-      "Process execution code must use JavaScript and Wasm byte modules with a JavaScript main.",
-    );
-  const workerCode: WorkerLoaderWorkerCode = {
-    compatibilityDate: "2026-10-19",
-    compatibilityFlags: ["nodejs_compat"],
-    mainModule: process.mainModule,
-    modules,
-    env: createHarnessProcessFacetEnvironment(process, environment, identity, context),
-    globalOutbound: null,
-  };
-  const worker = environment.LOADER.get(identity.loaderId, () => workerCode);
-  const facetClass = worker.getDurableObjectClass<HarnessProcessFacetStub>(process.entrypoint, {
-    props: {
-      facetKey: identity.facetKey,
-      loaderId: identity.loaderId,
-      shardOwner: identity.shardOwner,
-    },
-  });
-  const facet = context.facets.get<HarnessProcessFacetStub>(identity.facetKey, () => ({
-    class: facetClass,
-  }));
-  return {
-    ...createHarnessProcessFacetAdapter(identity, facet),
-    async readLoadedPreparedRelease() {
-      try {
-        return await facet.loadedPreparedRelease();
-      } catch {
-        return undefined;
-      }
-    },
-  };
 }
 
 function allJoined(joined: HarnessProcessJoined): boolean {

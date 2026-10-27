@@ -48,10 +48,13 @@ const canonicalJson = (value: unknown): string => {
 const expectCode = (operation: Promise<unknown>, code: string) =>
   expect(operation).rejects.toMatchObject({ code });
 
-const createFixture = async (harness: "codex" | "claude-code" = "codex") => {
+const createFixture = async (
+  harness: "codex" | "claude-code" = "codex",
+  payloadBytes = 2_000_000,
+) => {
   const files = new Map<string, Uint8Array>();
   const reads: string[] = [];
-  const payload = new Uint8Array(2_000_000).fill(91);
+  const payload = new Uint8Array(payloadBytes).fill(91);
   const codexRaw = encoder.encode(
     JSON.stringify({ version: "codex-test", modules: ["runtime.js"] }),
   );
@@ -363,6 +366,32 @@ describe("harness release artifact reader", () => {
 
     fixture.files.set(fixture.payloadPath, fixture.payload.slice(0, -1));
     await expectCode(opened.read(fixture.payloadPath), "FILE_SIZE_MISMATCH");
+  });
+
+  it("reads declared files in bounded ranges when the source exposes range reads", async () => {
+    const rangeBytes = 8 * 1024 * 1024;
+    const fixture = await createFixture("codex", rangeBytes + 17);
+    const ranges: Array<{ path: string; offset: number; length: number }> = [];
+    const received: ArrayBuffer[] = [];
+    const opened = await openHarnessReleaseArtifact(fixture.identity, {
+      read: fixture.source.read,
+      async readRange(_artifactRef, path, offset, length) {
+        ranges.push({ path, offset, length });
+        const bytes = fixture.files.get(path);
+        if (bytes === undefined) throw new Error(`Missing fixture file: ${path}`);
+        const chunk = bytes.slice(offset, offset + length);
+        received.push(chunk.buffer);
+        return chunk;
+      },
+    });
+
+    expect(fixture.reads).toEqual([HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH]);
+    expect(await opened.read(fixture.payloadPath)).toEqual(fixture.payload);
+    expect(received.every((buffer) => buffer.byteLength === 0)).toBe(true);
+    expect(ranges.filter((range) => range.path === fixture.payloadPath)).toEqual([
+      { path: fixture.payloadPath, offset: 0, length: rangeBytes },
+      { path: fixture.payloadPath, offset: rangeBytes, length: 17 },
+    ]);
   });
 
   it("does not fetch undeclared paths and isolates verified bytes from caller and source mutation", async () => {

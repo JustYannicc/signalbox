@@ -12,16 +12,15 @@ import type {
 } from "./contracts.ts";
 import type { MachineProgramInventory } from "../../computer/MachineProgramInventory.ts";
 
-export const HARNESS_C_PRODUCT_CAPABILITY_KEYS = {
-  release: "HARNESS_C_PRODUCT_RELEASES",
-  nativeCheckpoint: "HARNESS_C_PRODUCT_NATIVE_CHECKPOINTS",
-  access: "HARNESS_C_PRODUCT_ACCESS",
-  programs: "HARNESS_C_PRODUCT_PROGRAMS",
-  machine: "HARNESS_C_PRODUCT_MACHINE",
-  model: "HARNESS_C_PRODUCT_MODEL",
-  executor: "HARNESS_C_PRODUCT_EXECUTOR",
-  turnGrantSource: "HARNESS_C_PRODUCT_TURN_GRANT_SOURCE",
-} as const;
+import {
+  HARNESS_C_PRODUCT_CAPABILITY_KEYS,
+  HarnessCProductCapabilityError,
+  requireHarnessCProductCapability,
+} from "./capabilityBinding.ts";
+export {
+  HARNESS_C_PRODUCT_CAPABILITY_KEYS,
+  HarnessCProductCapabilityError,
+} from "./capabilityBinding.ts";
 
 export interface HarnessCProductCapabilities<G> {
   readonly release: HarnessCProductReleaseService;
@@ -34,53 +33,43 @@ export interface HarnessCProductCapabilities<G> {
   readonly turnGrantSource?: HarnessCProductTurnGrantSource<G>;
 }
 
-export class HarnessCProductCapabilityError extends Error {
-  readonly _tag = "HarnessCProductCapabilityError";
-  readonly capability: string;
-
-  constructor(capability: string) {
-    super(`Required product bootstrap capability is missing: ${capability}.`);
-    this.capability = capability;
-  }
-}
-
 /** Narrows only named, constructor supplied platform stubs to their local RPC methods. */
 export function narrowHarnessCProductCapabilities<G>(
   supplied: Readonly<Record<string, Fetcher>> | undefined,
 ): HarnessCProductCapabilities<G> {
   if (supplied === undefined)
     throw new HarnessCProductCapabilityError("HARNESS_C_PRODUCT_CAPABILITIES");
-  const release = required<HarnessCProductReleaseService>(
+  const release = requireHarnessCProductCapability<HarnessCProductReleaseService>(
     supplied,
     HARNESS_C_PRODUCT_CAPABILITY_KEYS.release,
-    ["getArtifact", "loaderConfig", "readArtifact"],
+    ["getArtifact", "loaderConfig", "readArtifact", "readArtifactChunk"],
   );
-  const nativeCheckpoint = required<HarnessCProductNativeCheckpointService>(
+  const nativeCheckpoint = requireHarnessCProductCapability<HarnessCProductNativeCheckpointService>(
     supplied,
     HARNESS_C_PRODUCT_CAPABILITY_KEYS.nativeCheckpoint,
     ["read"],
   );
-  const access = required<HarnessCProductAccessService<G>>(
+  const access = requireHarnessCProductCapability<HarnessCProductAccessService<G>>(
     supplied,
     HARNESS_C_PRODUCT_CAPABILITY_KEYS.access,
     ["resolveInitialAccess", "resolveTurnAccess"],
   );
-  const programs = required<HarnessCProductProgramService>(
+  const programs = requireHarnessCProductCapability<HarnessCProductProgramService>(
     supplied,
     HARNESS_C_PRODUCT_CAPABILITY_KEYS.programs,
     ["catalog", "read"],
   );
-  const machine = required<HarnessCProductMachineService>(
+  const machine = requireHarnessCProductCapability<HarnessCProductMachineService>(
     supplied,
     HARNESS_C_PRODUCT_CAPABILITY_KEYS.machine,
     ["inventory"],
   );
-  const model = required<HarnessCProductModelService>(
+  const model = requireHarnessCProductCapability<HarnessCProductModelService>(
     supplied,
     HARNESS_C_PRODUCT_CAPABILITY_KEYS.model,
     ["fetch"],
   );
-  const executor = required<HarnessCProductExecutorService<G>>(
+  const executor = requireHarnessCProductCapability<HarnessCProductExecutorService<G>>(
     supplied,
     HARNESS_C_PRODUCT_CAPABILITY_KEYS.executor,
     ["forward"],
@@ -88,7 +77,7 @@ export function narrowHarnessCProductCapabilities<G>(
   const turnGrantSource =
     supplied[HARNESS_C_PRODUCT_CAPABILITY_KEYS.turnGrantSource] === undefined
       ? undefined
-      : required<HarnessCProductTurnGrantSource<G>>(
+      : requireHarnessCProductCapability<HarnessCProductTurnGrantSource<G>>(
           supplied,
           HARNESS_C_PRODUCT_CAPABILITY_KEYS.turnGrantSource,
           ["issue"],
@@ -117,6 +106,8 @@ export async function productReleaseBindings(
       return {
         source: {
           read: (artifactRef: string, path: string) => service.readArtifact(artifactRef, path),
+          readRange: (artifactRef: string, path: string, offset: number, length: number) =>
+            service.readArtifactChunk(artifactRef, path, offset, length),
         },
         trustedComputer: config.trustedComputer,
         maxPreparedModuleBytes: config.maxPreparedModuleBytes,
@@ -155,18 +146,3 @@ export const productMachineInventory = (
 
 export const productModelTransport = (service: HarnessCProductModelService) => (request: Request) =>
   service.fetch(request);
-
-function required<T>(
-  capabilities: Readonly<Record<string, Fetcher>>,
-  name: string,
-  methods: readonly string[],
-): T {
-  const capability = capabilities[name];
-  if (capability === undefined) throw new HarnessCProductCapabilityError(name);
-  const service = capability as unknown as Record<string, unknown>;
-  for (const method of methods) {
-    if (typeof service[method] !== "function")
-      throw new HarnessCProductCapabilityError(`${name}.${method}`);
-  }
-  return capability as unknown as T;
-}

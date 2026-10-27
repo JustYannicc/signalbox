@@ -1,6 +1,6 @@
 // @effect-diagnostics cryptoRandomUUID:off - The route owns exactly one C proof chain.
 import type { ProductWorkerEnv } from "./productBindings.workerd.fixture.ts";
-import { setupProductRun } from "./productScenarioSetup.workerd.fixture.ts";
+import { productModules, setupProductRun } from "./productScenarioSetup.workerd.fixture.ts";
 
 const publisherFor = (generation: number, facetNonce: string) => ({
   generation,
@@ -84,16 +84,7 @@ export async function runProductScenario(
       codeId: codex.artifact.releaseId,
       residentBytes: 1,
       mainModule: "productFacet.mjs",
-      modules: {
-        "productFacet.mjs": { js: env.PRODUCT_FACET_SOURCE },
-        "codex-engine.wasm": (() => {
-          const binary = atob(env.PRODUCT_CODEX_WASM);
-          const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-          return {
-            wasm: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-          };
-        })(),
-      },
+      modules: productModules(env, "codex", targetPreparedRelease),
       entrypoint: "CodexFacet",
     },
   };
