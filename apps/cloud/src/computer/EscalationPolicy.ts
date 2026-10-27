@@ -29,6 +29,7 @@ export const COMPUTER_ISOLATE_EXECUTABLES = Object.freeze([
   "/bin/sh",
   "/bin/cat",
   "/bin/sed",
+  "/usr/bin/sed",
   "/bin/grep",
   "/bin/touch",
   "/bin/rg",

@@ -79,10 +79,10 @@ export function qualifySed(
   if (scripts.length === 0 || (!inPlace && scripts.length !== 1)) {
     return machine("unqualified-script", "Only one explicit non-editing sed script is qualified");
   }
-  if (operands.length === 0 || operands.some((file) => file === "-" || file === "")) {
+  if ((inPlace && operands.length === 0) || operands.some((file) => file === "-" || file === "")) {
     return machine(
       "unqualified-script",
-      "Sed needs named file operands in the qualified child subset",
+      "In-place sed needs named files; explicit stdin operands are outside the qualified subset",
     );
   }
   if (!scripts.every((script) => simpleSedScript(script, extended))) {

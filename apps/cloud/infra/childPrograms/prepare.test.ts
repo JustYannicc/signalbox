@@ -7,6 +7,7 @@ import type { ChildWorkerCode } from "../../src/computer/ChildWorkerProgram.ts";
 import {
   CHILD_COREUTILS_COMMANDS,
   CHILD_PROGRAM_PATHS,
+  CHILD_SED_EXECUTABLES,
 } from "../../src/computer/ChildProgramSet.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../src/kernel/KernelBashProgram.ts";
 import {
@@ -115,16 +116,16 @@ describe("full child program preparation", () => {
     ).toThrow("Prepared child program is missing coreutils mkdir");
   });
 
-  it("describes each of the 24 executable paths and rejects incomplete seeds", () => {
-    const files = Object.values(CHILD_PROGRAM_PATHS).map((path, index) => ({
+  it("describes every executable path and rejects incomplete seeds", () => {
+    const paths = [...new Set([...Object.values(CHILD_PROGRAM_PATHS), ...CHILD_SED_EXECUTABLES])];
+    const files = paths.map((path, index) => ({
       path,
       bytes: encoder.encode(path),
       sha256: String(index).padStart(64, "0"),
       mode: 0o755 as const,
     }));
     const catalog = createChildProgramExecutableCatalog(files);
-    expect(Object.keys(catalog)).toEqual(Object.values(CHILD_PROGRAM_PATHS));
-    expect(Object.keys(catalog)).toHaveLength(24);
+    expect(Object.keys(catalog)).toEqual(paths);
     expect(catalog["/bin/sed"]).toEqual({
       bytes: encoder.encode("/bin/sed").byteLength,
       sha256: String(Object.values(CHILD_PROGRAM_PATHS).indexOf("/bin/sed")).padStart(64, "0"),
