@@ -145,6 +145,7 @@ export function createHarnessProcessFacetAdapter(
           value: await running,
           stopAcknowledged: false,
           joined: joinedInvocation,
+          processRetained: true,
         };
       } finally {
         active.delete(running);

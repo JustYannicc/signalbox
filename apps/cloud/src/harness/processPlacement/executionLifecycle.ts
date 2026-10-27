@@ -49,7 +49,7 @@ export interface HarnessProcessExecutionProcessResult {
   readonly processId: string;
   readonly requestContextId: string;
   readonly identity: HarnessProcessPlacementIdentity | null;
-  readonly status: "settled" | "unplaceable" | "recoverable" | "recovered";
+  readonly status: "idle" | "settled" | "unplaceable" | "recoverable" | "recovered";
   readonly settlement?: HarnessProcessInvocationSettlement;
   readonly recoveryId?: string;
   readonly error?: {
