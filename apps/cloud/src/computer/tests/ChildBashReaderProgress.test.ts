@@ -7,6 +7,7 @@ import {
   withFailurePreservingCleanup,
 } from "./ChildBashGatewayCommand.ts";
 import { childBashFixture, exited, waitForChildExit } from "./ChildBashFixture.ts";
+import { traceBashReaderFailure } from "./BashReaderTrace.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
@@ -148,12 +149,18 @@ function lifecycleSnapshot(gateway: ReturnType<typeof createBashGateway>) {
 }
 
 describe.skipIf(!bashArtifactAvailable)("public Bash reader progress", () => {
-  it("reaps command-substitution children while all 160 public pipe readers make progress", async () => {
+  it("reaps command-substitution children while all 160 public pipe readers make progress", async (test) => {
     const gateway = createBashGateway();
     const commandController = new AbortController();
     observeProcessTable(gateway);
+    test.onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
     let child: Awaited<ReturnType<typeof publicCommand>> | undefined;
     let commandSettled = false;
+    const close = traceBashReaderFailure(gateway, async (bodyFailed) => {
+      await cleanupGatewayCommand(gateway, child, commandController, bodyFailed || !commandSettled);
+    });
     await withFailurePreservingCleanup(
       async () => {
         child = await publicCommand(gateway, readerScript, commandController.signal);
@@ -175,12 +182,7 @@ describe.skipIf(!bashArtifactAvailable)("public Bash reader progress", () => {
       },
       async (bodyFailed) => {
         try {
-          await cleanupGatewayCommand(
-            gateway,
-            child,
-            commandController,
-            bodyFailed || !commandSettled,
-          );
+          await close(bodyFailed);
         } finally {
           vi.restoreAllMocks();
         }

@@ -2,12 +2,13 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeProcess from "node:process";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
 import type { KernelCommandChild } from "../../kernel/KernelCommandForwarder.ts";
 import { createChildBash } from "../ChildBash.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
 import { createBashGateway } from "./ChildBashGatewayFixture.ts";
+import { traceBashReaderFailure } from "./BashReaderTrace.ts";
 import {
   publicCommand,
   captureText,
@@ -102,18 +103,53 @@ describe.skipIf(!available)("pinned GNU Bash child payload transfers", () => {
       const gateway = createBashGateway();
       const commandController = new AbortController();
       const stopPressure = captureCapacityPressure(gateway);
+      const processes = gateway.fixture.context.processes;
+      const reapsByParent = new Map<number, number[]>();
+      if (jobs === 160) {
+        const waitpid = processes.waitpid.bind(processes);
+        const spy = vi
+          .spyOn(processes, "waitpid")
+          .mockImplementation((parent, selector, options) => {
+            const parentInfo = processes.info(parent);
+            const result = waitpid(parent, selector, options);
+            if (parentInfo.status === "ok" && result.status === "ok" && result.value.pid > 0) {
+              const child = processes.lookupPid(result.value.pid);
+              if (child.status === "error" && child.error.code === "NOT_FOUND") {
+                const reaps = reapsByParent.get(parentInfo.value.pid) ?? [];
+                reaps.push(result.value.pid);
+                reapsByParent.set(parentInfo.value.pid, reaps);
+              }
+            }
+            return result;
+          });
+        onTestFinished(() => {
+          spy.mockRestore();
+        });
+      }
       let child: KernelCommandChild | undefined;
       let commandSettled = false;
-      await withFailurePreservingCleanup(
-        async () => {
-          const command = await publicCommand(gateway, script, commandController.signal);
-          child = command;
-          const stdout = captureText(command.stdout);
-          const stderr = captureText(command.stderr);
-          const result = await within(
-            Promise.all([stdout.settled, stderr.settled, command.exited]),
-            15_000,
-          );
+      const cleanup = async (bodyFailed: boolean) => {
+        stopPressure();
+        await cleanupGatewayCommand(
+          gateway,
+          child,
+          commandController,
+          bodyFailed || !commandSettled,
+        );
+      };
+      const close = jobs === 160 ? traceBashReaderFailure(gateway, cleanup) : cleanup;
+      await withFailurePreservingCleanup(async () => {
+        const command = await publicCommand(gateway, script, commandController.signal);
+        child = command;
+        const stdout = captureText(command.stdout);
+        const stderr = captureText(command.stderr);
+        const completion = Promise.all([stdout.settled, stderr.settled, command.exited]);
+        let finished: Awaited<typeof completion> | undefined;
+        if (jobs === 160) {
+          finished = await completion;
+          commandSettled = true;
+        } else {
+          const result = await within(completion, 15_000);
           commandSettled = result.kind === "completed";
           const message =
             result.kind === "rejected"
@@ -121,28 +157,29 @@ describe.skipIf(!available)("pinned GNU Bash child payload transfers", () => {
               : "Bash did not finish";
           const output = `Bash stderr: ${stderr.text()}; stdout: ${stdout.text()}`;
           expect(result.kind, `${message}; ${output}; ${gatewayTrace(gateway)}`).toBe("completed");
-          if (result.kind === "completed") {
-            const [, , status] = result.value;
-            const stdoutText = stdout.text();
-            const stderrText = stderr.text();
-            expect(
-              status,
-              `Bash stderr: ${stderrText}; stdout: ${stdoutText}; ${gatewayTrace(gateway)}`,
-            ).toEqual(exited());
-            expect(stderrText).toContain("forked\n");
-            expect(stdoutText).toBe("done\n");
+          if (result.kind === "completed") finished = result.value;
+        }
+        if (finished !== undefined) {
+          const [, , status] = finished;
+          const stdoutText = stdout.text();
+          const stderrText = stderr.text();
+          expect(
+            status,
+            `Bash stderr: ${stderrText}; stdout: ${stdoutText}; ${gatewayTrace(gateway)}`,
+          ).toEqual(exited());
+          expect(stderrText).toContain("forked\n");
+          expect(stdoutText).toBe("done\n");
+          if (jobs === 160) {
+            const rootPid = gateway.forkTrace.find(
+              (event) => event.event === "worker-start" && event.command === script,
+            )?.pid;
+            const reaps = typeof rootPid === "number" ? (reapsByParent.get(rootPid) ?? []) : [];
+            const message = `root reaps: ${JSON.stringify(reaps)}; ${gatewayTrace(gateway)}`;
+            expect(reaps, message).toHaveLength(161);
+            expect(new Set(reaps).size, message).toBe(161);
           }
-        },
-        async (bodyFailed) => {
-          stopPressure();
-          await cleanupGatewayCommand(
-            gateway,
-            child,
-            commandController,
-            bodyFailed || !commandSettled,
-          );
-        },
-      );
+        }
+      }, close);
     },
     30_000,
   );
