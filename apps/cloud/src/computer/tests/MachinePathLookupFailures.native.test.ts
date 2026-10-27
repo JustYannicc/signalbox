@@ -76,7 +76,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine lookup failur
       },
     };
     const fixture = machinePathFixture(bashModule!, { files });
-    const path = Array.from({ length: 40 }, (_, index) => `/missing/${index}`).join(":");
+    const path = Array.from({ length: 40 }, (_, index) => `/missing-${index}`).join(":");
     await withLookupFailureFixture(fixture, async () => {
       await fixture.direct("sort", ["sort"]);
       const machineCallsBeforeLookup = fixture.machineCalls.length;

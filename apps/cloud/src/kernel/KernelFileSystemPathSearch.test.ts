@@ -33,7 +33,7 @@ function fixture() {
       return paths.map((path) => entries.get(path));
     },
     async readdir() {
-      return [];
+      return undefined;
     },
     async readlink() {
       throw new Error("No symlinks in this namespace");
