@@ -172,79 +172,89 @@ it("keeps a claim-only crash uncertain and refuses to create or bind a second na
   expect(result.loadedRelease).toBeNull();
 }, 120_000);
 
-it("reconstructs a bound owner, disposes its exact facet, then restores the same UUID and initial checkpoint through native-journal runShard", async () => {
-  const response = await harness.fetch("http://proof/bound-crash");
-  const body = await response.text();
-  expect(response.status, body).toBe(200);
-  const result = JSON.parse(body);
-  expect(result.kind).toBe("public-c-bound-recovery-strict-restore");
-  expect(result.lostReply).toMatchObject({ rejected: true });
-  expect(result.bound.status).toBe("bound");
-  expect(result.bound.nativeSessionId).toMatch(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-  );
-  expect(result.recovered).toMatchObject({
-    status: "bound",
-    nativeSessionId: result.bound.nativeSessionId,
-    identity: result.bound.identity,
-    checkpoint: result.bound.checkpoint,
-    lifecycle: "stopped",
-    control: { epoch: 2 },
-  });
-  expect(result.beforePlacement.lease).toEqual(result.afterPlacement.lease);
-  expect(result.afterPlacement).toMatchObject({
-    identity: result.bound.identity,
-    disposed: true,
-    released: true,
-    termination: { kind: "disposed", facetNonce: result.bound.identity.incarnationNonce },
-  });
-  expect(result.stopped).toMatchObject({
-    lifecycle: "stopped",
-    nativeSessionId: result.bound.nativeSessionId,
-    checkpoint: {
-      checkpointId: result.bound.checkpoint.native.id,
-      manifestSha256: result.bound.checkpoint.filesystem.sha256,
-    },
-    publisher: {
-      generation: 1,
-      facetNonce: result.bound.identity.incarnationNonce,
-    },
-  });
-  expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
-  expect(result.observations["cold/events/inert-restore"]).toEqual([
-    expect.objectContaining({
+it.each([
+  { label: "normal", id: "graceful-recovery" },
+  { label: "maximum-length", id: "g".repeat(256) },
+])(
+  "reconstructs a bound owner and restores the same UUID ($label recovery ID)",
+  async ({ id }) => {
+    const response = await harness.fetch(`http://proof/bound-crash?drainOperationId=${id}`);
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body);
+    expect(result.kind).toBe("public-c-bound-recovery-strict-restore");
+    expect(result.lostReply).toMatchObject({ rejected: true });
+    expect(result.bound.status).toBe("bound");
+    expect(result.bound.nativeSessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(result.recovered).toMatchObject({
+      status: "bound",
       nativeSessionId: result.bound.nativeSessionId,
-      checkpointId: result.bound.checkpoint.native.id,
-      manifestRevision: result.bound.checkpoint.filesystem.sha256,
-      priorFacetNonce: result.bound.identity.incarnationNonce,
-      expectedFacetGeneration: 1,
-    }),
-  ]);
-  expect(result.observations["cold/events/request-runtime-run"]).toHaveLength(1);
-  expect(result.observations["cold/events/facet-invoked"]).toHaveLength(1);
-  expect(result.executed.processes[0]?.status).toBe("settled");
-  const restoredFacetNonce = result.executed.processes[0]?.identity?.incarnationNonce;
-  expect(restoredFacetNonce).toBeTruthy();
-  expect(result.observations["cold/events/facet-disposed"]).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ facetNonce: result.bound.identity.incarnationNonce }),
-      expect.objectContaining({ facetNonce: restoredFacetNonce }),
-    ]),
-  );
-  expect(restoredFacetNonce).not.toBe(result.bound.identity.incarnationNonce);
-  expect(result.committed).toBe("committed");
-  expect(result.restored.nativeSessionId).toBe(result.bound.nativeSessionId);
-  expect(result.restored.requestStatus).toBe("completed");
-  expect(result.terminal).toEqual([
-    expect.objectContaining({
+      identity: result.bound.identity,
+      checkpoint: result.bound.checkpoint,
+      lifecycle: "stopped",
+      control: { epoch: 2 },
+    });
+    expect(result.replay).toEqual(result.recovered);
+    expect(result.stopped.stopAcknowledgementId).toEqual(expect.any(String));
+    expect(result.stopped.stopAcknowledgementId.length).toBeLessThanOrEqual(256);
+    expect(result.beforePlacement.lease).toEqual(result.afterPlacement.lease);
+    expect(result.afterPlacement).toMatchObject({
+      identity: result.bound.identity,
+      disposed: true,
+      released: true,
+      termination: { kind: "disposed", facetNonce: result.bound.identity.incarnationNonce },
+    });
+    expect(result.stopped).toMatchObject({
+      lifecycle: "stopped",
       nativeSessionId: result.bound.nativeSessionId,
-      stopped: true,
-      joined: { invocationRpc: true, fetch: true, ports: true },
-    }),
-  ]);
-  expect(result.placementWriter.writer).toBe(false);
-  expect(result.loadedRelease).toEqual(await loadControlledCodexRelease());
-}, 120_000);
+      checkpoint: {
+        checkpointId: result.bound.checkpoint.native.id,
+        manifestSha256: result.bound.checkpoint.filesystem.sha256,
+      },
+      publisher: {
+        generation: 1,
+        facetNonce: result.bound.identity.incarnationNonce,
+      },
+    });
+    expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
+    expect(result.observations["cold/events/inert-restore"]).toEqual([
+      expect.objectContaining({
+        nativeSessionId: result.bound.nativeSessionId,
+        checkpointId: result.bound.checkpoint.native.id,
+        manifestRevision: result.bound.checkpoint.filesystem.sha256,
+        priorFacetNonce: result.bound.identity.incarnationNonce,
+        expectedFacetGeneration: 1,
+      }),
+    ]);
+    expect(result.observations["cold/events/request-runtime-run"]).toHaveLength(1);
+    expect(result.observations["cold/events/facet-invoked"]).toHaveLength(1);
+    expect(result.executed.processes[0]?.status).toBe("settled");
+    const restoredFacetNonce = result.executed.processes[0]?.identity?.incarnationNonce;
+    expect(restoredFacetNonce).toBeTruthy();
+    expect(result.observations["cold/events/facet-disposed"]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ facetNonce: result.bound.identity.incarnationNonce }),
+        expect.objectContaining({ facetNonce: restoredFacetNonce }),
+      ]),
+    );
+    expect(restoredFacetNonce).not.toBe(result.bound.identity.incarnationNonce);
+    expect(result.committed).toBe("committed");
+    expect(result.restored.nativeSessionId).toBe(result.bound.nativeSessionId);
+    expect(result.restored.requestStatus).toBe("completed");
+    expect(result.terminal).toEqual([
+      expect.objectContaining({
+        nativeSessionId: result.bound.nativeSessionId,
+        stopped: true,
+        joined: { invocationRpc: true, fetch: true, ports: true },
+      }),
+    ]);
+    expect(result.placementWriter.writer).toBe(false);
+    expect(result.loadedRelease).toEqual(await loadControlledCodexRelease());
+  },
+  120_000,
+);
 
 it("recovers after actual C destruction without disposing the lost facet, then restores the same binding through native-journal runShard", async () => {
   const response = await harness.fetch("http://proof/parent-destroyed-crash");
@@ -409,29 +419,40 @@ it("replays a committed writer-release receipt after reply loss and another C de
   expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
 }, 120_000);
 
-it("retires the exact undispatched admission after C destruction and restores its bound checkpoint", async () => {
-  const response = await harness.fetch("http://proof/admission-parent-destruction");
-  const text = await response.text();
-  expect(response.status, text).toBe(200);
-  const result = JSON.parse(text);
-  expect(result.failed.rejected).toBe(true);
-  expect(result.before["cold/events/facet-invoked"]).toBeUndefined();
-  expect(result.before["cold/events/request-runtime-run"]).toBeUndefined();
-  expect(result.afterNonce).not.toBe(result.beforeNonce);
-  expect(result.recovered).toMatchObject({
-    nativeSessionId: result.created.nativeSessionId,
-    checkpoint: result.created.checkpoint,
-    lifecycle: "recoverable",
-  });
-  expect(result.replay).toEqual(result.recovered);
-  expect(result.oldRequestStatus).toBe("withdrawn");
-  expect(result.admittedStepId).toBeNull();
-  expect(result.lateAdmission).toBe("not-applied");
-  expect(result.executed.processes[0]?.status).toBe("settled");
-  expect(result.restored.nativeSessionId).toBe(result.created.nativeSessionId);
-  expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
-  expect(result.observations["cold/events/request-runtime-run"]).toHaveLength(1);
-}, 120_000);
+it.each([
+  { label: "normal", id: "admission-recovery" },
+  { label: "maximum-length", id: "a".repeat(256) },
+])(
+  "retires the exact undispatched admission and restores its checkpoint ($label recovery ID)",
+  async ({ id }) => {
+    const response = await harness.fetch(
+      `http://proof/admission-parent-destruction?drainOperationId=${id}`,
+    );
+    const text = await response.text();
+    expect(response.status, text).toBe(200);
+    const result = JSON.parse(text);
+    expect(result.failed.rejected).toBe(true);
+    expect(result.before["cold/events/facet-invoked"]).toBeUndefined();
+    expect(result.before["cold/events/request-runtime-run"]).toBeUndefined();
+    expect(result.afterNonce).not.toBe(result.beforeNonce);
+    expect(result.recovered).toMatchObject({
+      nativeSessionId: result.created.nativeSessionId,
+      checkpoint: result.created.checkpoint,
+      lifecycle: "recoverable",
+    });
+    expect(result.replay).toEqual(result.recovered);
+    expect(result.evidenceId).toEqual(expect.any(String));
+    expect(result.evidenceId.length).toBeLessThanOrEqual(256);
+    expect(result.oldRequestStatus).toBe("withdrawn");
+    expect(result.admittedStepId).toBeNull();
+    expect(result.lateAdmission).toBe("not-applied");
+    expect(result.executed.processes[0]?.status).toBe("settled");
+    expect(result.restored.nativeSessionId).toBe(result.created.nativeSessionId);
+    expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
+    expect(result.observations["cold/events/request-runtime-run"]).toHaveLength(1);
+  },
+  120_000,
+);
 
 it("keeps dispatched work fenced after parent destruction without releasing its A admission", async () => {
   const response = await harness.fetch("http://proof/dispatched-crash");

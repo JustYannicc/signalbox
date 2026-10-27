@@ -3,6 +3,7 @@ import { readUndispatchedCreation, retireUndispatchedCreation } from "./undispat
 import * as Schema from "effect/Schema";
 import { readCreationPlacement } from "./placementSchema.ts";
 import { CreationRecoveryInput } from "./schemas.ts";
+import { creationRecoveryIds } from "./identity.ts";
 import { createHarnessDurableState } from "../HarnessDurableState.ts";
 import { sameControl, samePublisher } from "../processResume/authority.ts";
 import { hasCode } from "../durableState/errors.ts";
@@ -31,6 +32,7 @@ export async function recoverBoundCreation(
   binding: HarnessProcessCreationBinding,
 ) {
   const input = structuredClone(decodeRecovery(supplied));
+  const recoveryIds = await creationRecoveryIds(input.drainOperationId);
   const key = creationPlacementKey(input.runId);
   let placement = readCreationPlacement(await context.storage.get<unknown>(key));
   if (
@@ -146,7 +148,7 @@ export async function recoverBoundCreation(
       await durable.reconcile({
         control: input.nextControl,
         expectedGeneration: 1,
-        evidenceId: `${input.drainOperationId}/undispatched`,
+        evidenceId: recoveryIds.evidenceId,
         outcome: "notApplied",
         checkpoint: null,
         invocationSettlement: {
@@ -181,7 +183,7 @@ export async function recoverBoundCreation(
       publisher: binding.initialization.publisher,
       expectedGeneration: 1,
       requestId: input.operationId,
-      acknowledgementId: `${input.drainOperationId}/initial-disposed`,
+      acknowledgementId: recoveryIds.acknowledgementId,
     });
   const stopped = await durable.threadSupervisor.execute({
     type: "settleInvocation",

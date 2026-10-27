@@ -473,7 +473,7 @@ async function claimCrash(env: CreationWorkerEnv) {
   };
 }
 
-async function boundCrashRestore(env: CreationWorkerEnv) {
+async function boundCrashRestore(env: CreationWorkerEnv, drainOperationId?: string) {
   const fixture = await setup(env);
   const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
   const request = await offer(env, fixture, "recovered");
@@ -498,11 +498,12 @@ async function boundCrashRestore(env: CreationWorkerEnv) {
   const recoveryInput: HarnessProcessCreationRecoveryInput = {
     runId: fixture.runId,
     operationId: fixture.input.operationId,
-    drainOperationId: `drain-${fixture.runId}`,
+    drainOperationId: drainOperationId ?? `drain-${fixture.runId}`,
     control: fixture.input.controllerClaim,
     nextControl,
   };
   const recovered = await shard.recoverFreshProcess(recoveryInput);
+  const replay = await shard.recoverFreshProcess(recoveryInput);
   const afterPlacement = await shard.creationPlacement(fixture.runId);
   const durable = createHarnessDurableState(env, fixture.runId);
   const stopped = await durable.threadSupervisor.execute({
@@ -523,10 +524,12 @@ async function boundCrashRestore(env: CreationWorkerEnv) {
     lostReply,
     bound,
     recovered,
+    replay,
     beforePlacement,
     afterPlacement,
     stopped: {
       lifecycle: stopped.snapshot.lifecycle,
+      stopAcknowledgementId: stopped.snapshot.stopAcknowledgementId,
       nativeSessionId: stopped.snapshot.nativeSessionId,
       checkpoint: stopped.snapshot.checkpoint,
       publisher: stopped.currentPublisher,
@@ -787,7 +790,7 @@ async function releaseReplyLoss(env: CreationWorkerEnv) {
   };
 }
 
-async function admissionParentDestruction(env: CreationWorkerEnv) {
+async function admissionParentDestruction(env: CreationWorkerEnv, drainOperationId?: string) {
   const fixture = await setup(env);
   const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
   const created = await shard.startFreshProcess(fixture.input);
@@ -816,7 +819,7 @@ async function admissionParentDestruction(env: CreationWorkerEnv) {
   const recoveryInput = {
     runId: fixture.runId,
     operationId: fixture.input.operationId,
-    drainOperationId: `admission-drain-${fixture.runId}`,
+    drainOperationId: drainOperationId ?? `admission-drain-${fixture.runId}`,
     control: fixture.input.controllerClaim,
     nextControl,
   };
@@ -864,6 +867,7 @@ async function admissionParentDestruction(env: CreationWorkerEnv) {
     replay,
     oldRequestStatus: journal.snapshot.requests?.entries[0]?.status,
     admittedStepId: current.snapshot.admittedStepId,
+    evidenceId: current.snapshot.reconciliationEvidenceId,
     lateAdmission: lateAdmission.action,
     ...restored,
   };
@@ -934,7 +938,12 @@ export default {
         case "/claim-crash":
           return json(await claimCrash(env));
         case "/bound-crash":
-          return json(await boundCrashRestore(env));
+          return json(
+            await boundCrashRestore(
+              env,
+              new URL(request.url).searchParams.get("drainOperationId") ?? undefined,
+            ),
+          );
         case "/parent-destroyed-crash":
           return json(await parentDestroyedCrashRestore(env));
         case "/recovery-retries":
@@ -944,7 +953,12 @@ export default {
         case "/release-reply-loss":
           return json(await releaseReplyLoss(env));
         case "/admission-parent-destruction":
-          return json(await admissionParentDestruction(env));
+          return json(
+            await admissionParentDestruction(
+              env,
+              new URL(request.url).searchParams.get("drainOperationId") ?? undefined,
+            ),
+          );
         case "/admission-retry":
           return json(await firstRequestAdmissionRetry(env));
         default:
