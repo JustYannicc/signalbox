@@ -141,9 +141,7 @@ describe("Harness host injected per-turn grants", () => {
         nativeTurnEpoch: turnConfig.epoch,
         publisher: { generation: 11, facetNonce: "request-publisher" },
       });
-      yield* Effect.promise(() =>
-        expect(f.mcp.fetch(new Request(checkpointConfig.servers.executor!.url))).rejects.toThrow(),
-      );
+      expect(turnConfig.servers.executor!.url).toBe(checkpointConfig.servers.executor!.url);
       const turnResponse = yield* Effect.promise(() =>
         f.mcp.fetch(new Request(turnConfig.servers.executor!.url)),
       );
@@ -153,7 +151,7 @@ describe("Harness host injected per-turn grants", () => {
   );
 
   it.effect(
-    "binds each real route to the allocated run epoch and publisher, then rejects replaced credentials at the fake gateway",
+    "rotates run grants behind the same live endpoint and denies a stopped incarnation",
     () =>
       Effect.gen(function* () {
         const f = yield* hostFixture;
@@ -200,9 +198,12 @@ describe("Harness host injected per-turn grants", () => {
           publisher: { generation: 7, facetNonce: "publisher-a" },
         });
         expect(secondConfig.epoch).toBeGreaterThan(firstConfig.epoch);
-        yield* Effect.promise(() =>
-          expect(f.mcp.fetch(new Request(firstConfig.servers.executor!.url))).rejects.toThrow(),
+        expect(secondConfig.servers.executor!.url).toBe(firstConfig.servers.executor!.url);
+        const retainedResponse = yield* Effect.promise(() =>
+          f.mcp.fetch(new Request(firstConfig.servers.executor!.url)),
         );
+        expect(retainedResponse.status).toBe(200);
+        expect(f.forwards.at(-1)?.grant).toBe(secondIssued.grant);
 
         const directGatewayRequest = (
           grant: Grant,
@@ -243,6 +244,11 @@ describe("Harness host injected per-turn grants", () => {
         expect(f.forwards.at(-1)?.grant).toBe(secondIssued.grant);
         yield* session.dispose;
         yield* instance.host.dispose;
+        const stoppedForwards = f.forwards.length;
+        yield* Effect.promise(() =>
+          expect(f.mcp.fetch(new Request(firstConfig.servers.executor!.url))).rejects.toThrow(),
+        );
+        expect(f.forwards).toHaveLength(stoppedForwards);
 
         const replacement = yield* f.make({ turnGrantSource: gateway.source });
         yield* replacement.host.seed("assets");
@@ -257,6 +263,7 @@ describe("Harness host injected per-turn grants", () => {
         const replacementConfig = f.configurations[2]!;
         const replacementIssued = gateway.issued[2]!;
         expect(replacementConfig.epoch).toBe(firstConfig.epoch);
+        expect(replacementConfig.servers.executor!.url).not.toBe(firstConfig.servers.executor!.url);
         expect(replacementIssued.tuple).toEqual({
           runId: replacementTurn.runId,
           nativeTurnEpoch: replacementConfig.epoch,
@@ -336,8 +343,7 @@ describe("Harness host injected per-turn grants", () => {
         const gatewaySignal = yield* Effect.promise(() => called.promise);
         yield* instance.adapter.terminal();
         yield* instance.adapter.saving;
-        expect(Exit.isFailure(yield* Fiber.join(pending))).toBe(true);
-        expect(gatewaySignal.aborted).toBe(true);
+        expect(gatewaySignal.aborted).toBe(false);
 
         const startsBefore = instance.adapter.calls.filter((call) => call === "start").length;
         for (const failure of ["unknown", "throw"] as const) {
@@ -356,6 +362,8 @@ describe("Harness host injected per-turn grants", () => {
             startsBefore,
           );
         }
+        expect(Exit.isFailure(yield* Fiber.join(pending))).toBe(true);
+        expect(gatewaySignal.aborted).toBe(true);
         const callsBefore = f.forwards.length;
         yield* Effect.promise(() => expect(f.mcp.fetch(new Request(firstUrl))).rejects.toThrow());
         expect(f.forwards).toHaveLength(callsBefore);

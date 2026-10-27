@@ -38,11 +38,11 @@ describe("Codex host live-access second turns", () => {
           ]);
           expect(result.firstNativeThreadId).toBe("preinitialized-native-thread");
           expect(result.resumedNativeThreadId).toBe(result.firstNativeThreadId);
-          expect(result.firstRouteEpoch).toBe(1);
-          expect(result.secondRouteEpoch).toBe(2);
-          expect(result.firstRouteRetired).toBe(true);
+          expect(result.sameProcessEndpoint).toBe(true);
+          expect(result.stoppedRouteDenied).toBe(true);
+          expect(result.firstRouteRetired).toBe(false);
           expect(result.secondRouteBody).toBe("executor");
-          expect(result.secondRouteRetired).toBe(true);
+          expect(result.secondRouteRetired).toBe(false);
           expect(result.accessStayedLive).toBe(true);
           expect(result.currentRouteGrantMatches).toBe(true);
         }),
@@ -69,11 +69,11 @@ describe("Codex host live-access second turns", () => {
           ]);
           expect(result.firstNativeThreadId).toBe("preinitialized-native-thread");
           expect(result.resumedNativeThreadId).toBe(result.firstNativeThreadId);
-          expect(result.firstRouteEpoch).toBe(1);
-          expect(result.secondRouteEpoch).toBe(2);
-          expect(result.firstRouteRetired).toBe(true);
+          expect(result.sameProcessEndpoint).toBe(true);
+          expect(result.stoppedRouteDenied).toBe(true);
+          expect(result.firstRouteRetired).toBe(false);
           expect(result.secondRouteBody).toBe("executor");
-          expect(result.secondRouteRetired).toBe(true);
+          expect(result.secondRouteRetired).toBe(false);
           expect(result.accessStayedLive).toBe(true);
           expect(result.currentRouteGrantMatches).toBe(true);
         }),

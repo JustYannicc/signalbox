@@ -18,9 +18,6 @@ const decodeMcpConfiguration = Schema.decodeUnknownSync(
   }),
 );
 
-const routeEpoch = (url: string | undefined) =>
-  url === undefined ? undefined : Number(new URL(url).pathname.split("/").at(-2));
-
 const completeTurn = (
   output: ReadableStreamDefaultController<Uint8Array>,
   turnId = "preinitialized-turn",
@@ -117,6 +114,7 @@ export const runLiveGrantSecondTurn = (
     let resumedNativeThreadId: string | undefined;
     let secondRouteBody: string | undefined;
     let secondRouteRetired: boolean | undefined;
+    let stoppedRouteDenied: boolean | undefined;
     let currentRouteGrantMatches = false;
 
     if (secondTurnStarted) {
@@ -137,6 +135,10 @@ export const runLiveGrantSecondTurn = (
         secondRouteRetired = Exit.isFailure(retiredRoute);
       }
       yield* session.dispose;
+      const stoppedRoute = yield* Effect.tryPromise(() => mcp.fetch(new Request(firstUrl))).pipe(
+        Effect.exit,
+      );
+      stoppedRouteDenied = Exit.isFailure(stoppedRoute);
     }
 
     yield* Fiber.interrupt(terminalConsumer);
@@ -148,8 +150,8 @@ export const runLiveGrantSecondTurn = (
       nativeMethods: peer.sent,
       firstNativeThreadId,
       resumedNativeThreadId,
-      firstRouteEpoch: routeEpoch(firstUrl),
-      secondRouteEpoch: routeEpoch(secondUrl),
+      sameProcessEndpoint: firstUrl === secondUrl,
+      stoppedRouteDenied,
       firstRouteRetired: Exit.isFailure(firstRetiredRoute),
       secondRouteBody,
       secondRouteRetired,

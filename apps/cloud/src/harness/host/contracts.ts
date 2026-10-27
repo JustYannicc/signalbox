@@ -68,7 +68,7 @@ export interface HarnessMcpPublisherIdentity {
 }
 export interface HarnessMcpTurnGrantInput {
   readonly runId: string;
-  /** The epoch allocated by the host for this exact native MCP installation. */
+  /** The host grant generation for this turn; the process endpoint remains stable. */
   readonly nativeTurnEpoch: number;
   readonly publisher: HarnessMcpPublisherIdentity;
   readonly signal: AbortSignal;
@@ -116,7 +116,7 @@ export interface NativeHostBinding {
   ) => Effect.Effect<void, HarnessError>;
   /** Retire restored setup without treating it as a completed turn. */
   readonly retireCheckpointMcp?: (epoch: number) => Effect.Effect<void, HarnessError>;
-  /** Complete the matching native turn before the host retires its MCP route. */
+  /** Complete the matching native turn without retiring its process endpoint. */
   readonly completeMcpTurn?: (epoch: number) => void;
 }
 export interface HarnessHostFilesOptions {
