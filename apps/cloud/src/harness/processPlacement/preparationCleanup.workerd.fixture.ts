@@ -1,5 +1,4 @@
 import { createHarnessProcessFacetAdapter } from "../HarnessProcessFacet.ts";
-import { serializeHarnessRequestFacetFailure } from "../requestFacet/failure.ts";
 import {
   HarnessProcessPlacementError,
   createHarnessProcessPlacement,
@@ -22,11 +21,10 @@ export async function runPreparationCleanupFailureProof(
   env: PreparationCleanupEnvironment,
   contextKey: object,
   controllerClaim: HarnessProcessControllerClaim,
-  mode: "cleanup" | "structured" = "cleanup",
 ) {
-  const owner = `fixture/preparation-${mode}-failure`;
-  const operationId = `${mode === "cleanup" ? "preparation-cleanup" : "structured-checkpoint"}-failure-operation`;
-  const processId = `${mode === "cleanup" ? "preparation-cleanup" : "structured-checkpoint"}-failure-process`;
+  const owner = "fixture/preparation-cleanup-failure";
+  const operationId = "preparation-cleanup-failure-operation";
+  const processId = "preparation-cleanup-failure-process";
   const execution = env.PROCESS_EXECUTION_SHARDS.getByName(owner);
   const shardIncarnationNonce = await execution.executionIncarnationNonce();
   const storeStub = env.PLACEMENT_STORES.getByName(owner);
@@ -112,7 +110,6 @@ export async function runPreparationCleanupFailureProof(
     inFlight: placement.signals.inFlight,
     recoveryCount: records.length,
     lifecycle,
-    ...(mode === "structured" ? { causes: serializeHarnessRequestFacetFailure(failure) } : {}),
   };
   await storeStub.releaseWriter(owner, writer);
   return Response.json(result);

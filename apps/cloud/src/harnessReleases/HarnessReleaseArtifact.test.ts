@@ -372,18 +372,22 @@ describe("harness release artifact reader", () => {
     const rangeBytes = 8 * 1024 * 1024;
     const fixture = await createFixture("codex", rangeBytes + 17);
     const ranges: Array<{ path: string; offset: number; length: number }> = [];
+    const received: ArrayBuffer[] = [];
     const opened = await openHarnessReleaseArtifact(fixture.identity, {
       read: fixture.source.read,
       async readRange(_artifactRef, path, offset, length) {
         ranges.push({ path, offset, length });
         const bytes = fixture.files.get(path);
         if (bytes === undefined) throw new Error(`Missing fixture file: ${path}`);
-        return bytes.slice(offset, offset + length);
+        const chunk = bytes.slice(offset, offset + length);
+        received.push(chunk.buffer);
+        return chunk;
       },
     });
 
     expect(fixture.reads).toEqual([HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH]);
     expect(await opened.read(fixture.payloadPath)).toEqual(fixture.payload);
+    expect(received.every((buffer) => buffer.byteLength === 0)).toBe(true);
     expect(ranges.filter((range) => range.path === fixture.payloadPath)).toEqual([
       { path: fixture.payloadPath, offset: 0, length: rangeBytes },
       { path: fixture.payloadPath, offset: rangeBytes, length: 17 },

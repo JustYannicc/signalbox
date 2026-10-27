@@ -81,6 +81,7 @@ export async function materializeHarnessProcessModules(
   return Object.freeze(materialized);
 }
 
+/** Callers yield mutation and detachment rights over Wasm buffers for the facet lifetime. */
 export function snapshotHarnessProcessModules(
   value: unknown,
   mainModule: string,

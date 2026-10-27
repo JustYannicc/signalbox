@@ -1,3 +1,5 @@
+import { HARNESS_RELEASE_ARTIFACT_RANGE_BYTES } from "../../harnessReleases/HarnessReleaseArtifact.ts";
+
 export type HarnessProcessModuleType = "js" | "cjs" | "text" | "wasm";
 
 export interface HarnessProcessPreparedReleaseAsset {
@@ -45,7 +47,7 @@ export type HarnessProcessReleaseAssetChunkReader = (
   length: number,
 ) => Promise<Uint8Array>;
 
-export const HARNESS_PROCESS_RELEASE_ASSET_CHUNK_BYTES = 8 * 1024 * 1024;
+export const HARNESS_PROCESS_RELEASE_ASSET_CHUNK_BYTES = HARNESS_RELEASE_ARTIFACT_RANGE_BYTES;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

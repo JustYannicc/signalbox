@@ -10,10 +10,6 @@ import type {
   HarnessProcessPreparedFacet,
   HarnessProcessPublicationReceipt,
 } from "./processPlacement/contracts.ts";
-import {
-  restoreHarnessRequestFacetFailure,
-  type HarnessRequestFacetFailure,
-} from "./requestFacet/failure.ts";
 
 const joinedInvocation = Object.freeze({
   invocationRpc: true,
@@ -31,10 +27,6 @@ export type HarnessProcessFacetRequestStub = Pick<
   "run" | "prepareInert" | "dispose"
 > & {
   identity(): Promise<{ readonly facetNonce: string }> | { readonly facetNonce: string };
-  readPreparationFailure?():
-    | Promise<HarnessRequestFacetFailure | undefined>
-    | HarnessRequestFacetFailure
-    | undefined;
 };
 
 export type HarnessProcessFacetPrepareInput = HarnessRequestFacetPreparationRequest;
@@ -104,18 +96,7 @@ export function createHarnessProcessFacetAdapter(
       const next = { ...input };
       if (prepared !== undefined && !samePrepared(prepared, next))
         throw new Error("A process facet cannot be prepared for another operation.");
-      let observed: HarnessRequestFacetPreparationObservation;
-      try {
-        observed = await facet.prepareInert(next);
-      } catch (cause) {
-        let failure: HarnessRequestFacetFailure | undefined;
-        try {
-          failure = await facet.readPreparationFailure?.();
-        } catch {
-          // Preserve the original RPC error if structured failure capture is unavailable.
-        }
-        throw restoreHarnessRequestFacetFailure(failure) ?? cause;
-      }
+      const observed = await facet.prepareInert(next);
       validatePreparationObservation(next, actual.incarnationNonce, observed);
       prepared = next;
       return {

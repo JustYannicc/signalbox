@@ -39,7 +39,7 @@ export interface HarnessReleaseArtifactIdentity {
 
 export interface HarnessReleaseArtifactSource {
   read(artifactRef: string, path: string): Promise<Uint8Array>;
-  /** Optional bounded transport for files larger than one RPC payload. */
+  /** Returns an owned exact buffer; the receiver may detach it after copying. */
   readRange?(
     artifactRef: string,
     path: string,
@@ -79,7 +79,7 @@ const readVerifiedFile = async (
   return bytes;
 };
 
-const ARTIFACT_READ_RANGE_BYTES = 8 * 1024 * 1024;
+export const HARNESS_RELEASE_ARTIFACT_RANGE_BYTES = 8 * 1024 * 1024;
 
 const readArtifactFileInRanges = async (
   source: HarnessReleaseArtifactSource,
@@ -89,11 +89,19 @@ const readArtifactFileInRanges = async (
   sizeError: HarnessReleaseArtifactErrorCode,
 ): Promise<Uint8Array<ArrayBuffer>> => {
   const output = new Uint8Array(bytes);
-  for (let offset = 0; offset < bytes; offset += ARTIFACT_READ_RANGE_BYTES) {
-    const length = Math.min(ARTIFACT_READ_RANGE_BYTES, bytes - offset);
+  for (let offset = 0; offset < bytes; offset += HARNESS_RELEASE_ARTIFACT_RANGE_BYTES) {
+    const length = Math.min(HARNESS_RELEASE_ARTIFACT_RANGE_BYTES, bytes - offset);
     const chunk = await source.readRange!(artifactRef, path, offset, length);
-    if (!(chunk instanceof Uint8Array) || chunk.byteLength !== length) failArtifact(sizeError);
+    if (
+      !(chunk instanceof Uint8Array) ||
+      !(chunk.buffer instanceof ArrayBuffer) ||
+      chunk.byteOffset !== 0 ||
+      chunk.byteLength !== length ||
+      chunk.buffer.byteLength !== length
+    )
+      failArtifact(sizeError);
     output.set(chunk, offset);
+    (chunk.buffer as ArrayBuffer).transfer(0);
   }
   return output;
 };

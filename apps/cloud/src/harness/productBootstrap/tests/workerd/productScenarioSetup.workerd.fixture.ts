@@ -24,6 +24,7 @@ import type { FixtureRelease } from "./productInputs.workerd.fixture.ts";
 import { reference as referenceArtifact } from "../../../processResume/tests/releaseMaterial.ts";
 import { dataForDriver } from "../../../adapter/tests/data.ts";
 import { preparedReleaseAsset } from "../../../HarnessProcessPlacement.ts";
+import { supplementaryMemoryModules } from "./memoryModules.workerd.fixture.ts";
 import { memoryNativeModule } from "./memoryNative.workerd.fixture.ts";
 
 const CAPABILITY_NAME = "product-fixture";
@@ -62,13 +63,14 @@ export function productModules(
   } as const;
 }
 
-function memoryProofModules(
+async function memoryProofModules(
   env: ProductWorkerEnv,
   release: HarnessProcessPreparedRelease,
-): Readonly<Record<string, HarnessProcessFacetModule>> {
+): Promise<Readonly<Record<string, HarnessProcessFacetModule>>> {
   const modules: Record<string, HarnessProcessFacetModule> = {
     "productFacet.mjs": { js: env.PRODUCT_FACET_SOURCE },
     ...memoryNativeModule(env),
+    ...(await supplementaryMemoryModules(env.PRODUCT_FIXTURE.getByName("product-fixture"))),
   };
   for (const moduleKey of Object.keys(release.plan.preparedModules))
     modules[moduleKey === "codex/engine.wasm" ? "codex-engine.wasm" : moduleKey] =
@@ -260,7 +262,7 @@ async function setupProductRunInternal(
     modules:
       memoryProof === undefined
         ? productModules(env, initialProvider, initialRelease.expected)
-        : memoryProofModules(env, initialRelease.expected),
+        : await memoryProofModules(env, initialRelease.expected),
     entrypoint: initialProvider === "codex" ? "CodexFacet" : "ClaudeFacet",
     productBootstrap: {
       provider: initialProvider,

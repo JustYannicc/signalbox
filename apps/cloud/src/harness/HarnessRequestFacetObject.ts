@@ -9,10 +9,6 @@ import {
   type HarnessRequestFacetOptions,
   type HarnessRequestFacet,
 } from "./HarnessRequestFacet.ts";
-import {
-  serializeHarnessRequestFacetFailure,
-  type HarnessRequestFacetFailure,
-} from "./requestFacet/failure.ts";
 
 export function createHarnessRequestFacetClass<Env>(
   compose: (input: {
@@ -31,7 +27,6 @@ export function createHarnessRequestFacetClass<Env>(
     private readonly runtime;
     private loadedPreparedReleaseReader: HarnessRequestFacetOptions["loadedPreparedRelease"] =
       undefined;
-    private lastPreparationFailure: HarnessRequestFacetFailure | undefined;
 
     constructor(ctx: DurableObjectState, env: Env) {
       super(ctx, env);
@@ -69,16 +64,7 @@ export function createHarnessRequestFacetClass<Env>(
 
     async prepareInert(input: Parameters<HarnessRequestFacet["prepareInert"]>[0]) {
       if (this.closed) throw new HarnessRequestFacetError("Harness facet is disposed.");
-      try {
-        return await this.runtime.runPromise(Facet.use((facet) => facet.prepareInert(input)));
-      } catch (cause) {
-        this.lastPreparationFailure = serializeHarnessRequestFacetFailure(cause);
-        throw cause;
-      }
-    }
-
-    readPreparationFailure() {
-      return this.lastPreparationFailure;
+      return this.runtime.runPromise(Facet.use((facet) => facet.prepareInert(input)));
     }
 
     async loadedPreparedRelease() {

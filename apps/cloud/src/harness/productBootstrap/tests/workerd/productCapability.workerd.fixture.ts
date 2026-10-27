@@ -1,3 +1,4 @@
+import type { MemoryModuleInventory } from "./memoryModules.workerd.fixture.ts";
 // @effect-diagnostics nodeBuiltinImport:off - Workerd provides the actual capability RPC boundaries used by the product facet.
 import type { ProductFixtureGrant } from "./productGrant.workerd.fixture.ts";
 import { DurableObject } from "cloudflare:workers";
@@ -15,7 +16,7 @@ import type { HarnessFilesCheckpoint } from "../../../HarnessFilesStore.ts";
 import type { HarnessFilesStoreObject } from "../../../HarnessFilesStoreObject.ts";
 import type { HarnessThreadSupervisorPublisher } from "../../../HarnessThreadSupervisor.ts";
 import { HARNESS_PROCESS_RELEASE_ASSET_CHUNK_BYTES } from "../../../HarnessProcessPlacement.ts";
-import type { HarnessRequestFacetFailureCause } from "../../../requestFacet/failure.ts";
+import type { HarnessRequestFacetFailureCause } from "./memoryFailure.workerd.fixture.ts";
 import {
   hasProductFixtureR18Range,
   PRODUCT_FIXTURE_R18_SEED_CHUNK_BYTES,
@@ -57,14 +58,23 @@ export interface ProductFixtureMemoryProofFailure {
   readonly causes: readonly ProductFixtureMemoryProofFailureCause[];
 }
 type ProductFixtureMemoryProofResult =
-  | { readonly runId: string; readonly status: "ready"; readonly legacyModuleSetHeld: boolean }
+  | {
+      readonly runId: string;
+      readonly status: "ready";
+      readonly legacyModuleSetHeld: boolean;
+      readonly moduleInventory: MemoryModuleInventory;
+    }
   | {
       readonly runId: string;
       readonly status: "failed";
       readonly failure: ProductFixtureMemoryProofFailure;
     };
 type ProductFixtureMemoryProofReadiness =
-  | { readonly ready: true; readonly legacyModuleSetHeld: boolean }
+  | {
+      readonly ready: true;
+      readonly legacyModuleSetHeld: boolean;
+      readonly moduleInventory: MemoryModuleInventory;
+    }
   | Extract<ProductFixtureMemoryProofResult, { readonly status: "failed" }>;
 
 export interface ProductFixtureServiceEnv {
@@ -84,11 +94,15 @@ export class ProductFixtureCapability extends DurableObject<ProductFixtureServic
     return this.#heapProbe.release();
   }
 
-  async markMemoryProofReady(runId: string, legacyModuleSetHeld: boolean) {
-    const result = { runId, status: "ready", legacyModuleSetHeld } as const;
+  async markMemoryProofReady(
+    runId: string,
+    legacyModuleSetHeld: boolean,
+    moduleInventory: MemoryModuleInventory,
+  ) {
+    const result = { runId, status: "ready", legacyModuleSetHeld, moduleInventory } as const;
     await this.ctx.storage.put(`fixture/memory-proof/${runId}`, result);
     for (const resolve of this.#memoryProofWaiters.splice(0)) resolve();
-    return { ready: true, legacyModuleSetHeld } as const;
+    return { ready: true, legacyModuleSetHeld, moduleInventory } as const;
   }
 
   async markMemoryProofFailed(runId: string, failure: ProductFixtureMemoryProofFailure) {
@@ -111,7 +125,11 @@ export class ProductFixtureCapability extends DurableObject<ProductFixtureServic
     if (result === undefined)
       throw new Error("The C memory proof ended without an activation result.");
     if (result.status === "failed") return result;
-    return { ready: true, legacyModuleSetHeld: result.legacyModuleSetHeld } as const;
+    return {
+      ready: true,
+      legacyModuleSetHeld: result.legacyModuleSetHeld,
+      moduleInventory: result.moduleInventory,
+    } as const;
   }
 
   async memoryProofStatus(runId: string) {
@@ -119,7 +137,12 @@ export class ProductFixtureCapability extends DurableObject<ProductFixtureServic
     if (result === undefined) return { runId, status: "pending" } as const;
     return result.status === "failed"
       ? result
-      : ({ runId, status: "ready", legacyModuleSetHeld: result.legacyModuleSetHeld } as const);
+      : ({
+          runId,
+          status: "ready",
+          legacyModuleSetHeld: result.legacyModuleSetHeld,
+          moduleInventory: result.moduleInventory,
+        } as const);
   }
 
   async #readMemoryProofResult(runId: string) {

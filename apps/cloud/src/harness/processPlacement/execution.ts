@@ -103,11 +103,6 @@ async function runLocalShard(
     };
   }
   const { stores, priorRecords, placement, authority } = session;
-  await hooks?.afterPlacementSessionOpened?.({
-    runId: input.runId,
-    executionOperationId: input.executionOperationId,
-    processIds: input.processes.map((process) => process.processId),
-  });
   let ownershipDisposition: "proven-complete" | "retained" = "proven-complete";
   try {
     if (priorRecords.length > 0) {
@@ -189,7 +184,6 @@ async function runLocalShard(
             },
             (identity) => createFacet(context, environment, process, identity),
           );
-          await hooks?.afterInertPreparation?.({ process, handle });
           const activation = await handle.activate(authority);
           requestId = activation.requestId;
           await hooks?.afterActivation?.({ process, handle, activation });
@@ -240,15 +234,6 @@ async function runLocalShard(
             settlement,
           };
         } catch (error) {
-          try {
-            await hooks?.onProcessFailure?.({
-              runId: input.runId,
-              process,
-              failure: error,
-            });
-          } catch {
-            // Diagnostic capture cannot change the process result or cleanup path.
-          }
           if (handle !== undefined && !cleanupAttempted) {
             const disposition = await beforeCleanup(hooks, {
               runId: input.runId,

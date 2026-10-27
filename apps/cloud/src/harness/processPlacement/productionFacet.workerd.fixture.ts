@@ -72,18 +72,6 @@ const TestRequestFacet = createHarnessRequestFacetClass<Record<string, never>>((
           catch: () =>
             new HarnessRequestFacetError("Fixture preparation counter could not be stored."),
         });
-        if (request.operationId === "structured-checkpoint-failure-operation") {
-          const nativeFailure = Object.assign(
-            new Error("Synthetic Codex checkpoint restore failure."),
-            { code: "CODEX_CHECKPOINT_RESTORE", operation: "resume" },
-          );
-          return yield* Effect.fail(
-            new HarnessRequestFacetError(
-              "Harness host could not prepare the committed checkpoint inert.",
-              { cause: nativeFailure },
-            ),
-          );
-        }
         if (request.operationId === "preparation-cleanup-failure-operation") {
           yield* Effect.addFinalizer(() =>
             Effect.gen(function* () {

@@ -80,20 +80,6 @@ export interface HarnessProcessExecutionShardResult {
 
 export interface HarnessProcessExecutionHooks {
   readonly authority?: HarnessProcessExecutionSupervisorClient;
-  readonly afterPlacementSessionOpened?: (input: {
-    readonly runId: string;
-    readonly executionOperationId: string;
-    readonly processIds: readonly string[];
-  }) => Promise<void>;
-  readonly afterInertPreparation?: (input: {
-    readonly process: HarnessProcessExecutionProcessInput;
-    readonly handle: HarnessProcessHandle<FacetInvokeInput>;
-  }) => Promise<void>;
-  readonly onProcessFailure?: (input: {
-    readonly runId: string;
-    readonly process: HarnessProcessExecutionProcessInput;
-    readonly failure: unknown;
-  }) => Promise<void>;
   readonly afterActivation?: (input: {
     readonly process: HarnessProcessExecutionProcessInput;
     readonly handle: HarnessProcessHandle<FacetInvokeInput>;
@@ -593,13 +579,15 @@ export function createFacet(
     identity,
     context,
   );
+  const releaseService = hasPreparedAssets
+    ? narrowHarnessCProductCapabilities(environment.HARNESS_C_PRODUCT_CAPABILITIES).release
+    : undefined;
+  const readArtifactChunk =
+    releaseService === undefined
+      ? undefined
+      : (artifactRef: string, path: string, offset: number, length: number) =>
+          releaseService.readArtifactChunk(artifactRef, path, offset, length);
   const worker = environment.LOADER.get(identity.loaderId, async () => {
-    const readArtifactChunk = hasPreparedAssets
-      ? (artifactRef: string, path: string, offset: number, length: number): Promise<Uint8Array> =>
-          narrowHarnessCProductCapabilities(
-            environment.HARNESS_C_PRODUCT_CAPABILITIES,
-          ).release.readArtifactChunk(artifactRef, path, offset, length)
-      : undefined;
     const workerModules = await materializeHarnessProcessModules(
       modules,
       process.targetPreparedRelease,

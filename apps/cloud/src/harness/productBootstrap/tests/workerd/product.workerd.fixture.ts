@@ -5,116 +5,23 @@ import { HarnessProcessExecutionShardObject } from "../../../HarnessProcessExecu
 import { HarnessProcessPlacementStoreObject } from "../../../HarnessProcessPlacementStoreObject.ts";
 import type { HarnessProcessExecutionHooks } from "../../../processPlacement/executionLifecycle.ts";
 import type { HarnessProcessExecutionShardInput } from "../../../processPlacement/execution.ts";
-import type { HarnessProcessFacetModule } from "../../../HarnessProcessPlacement.ts";
 import type { ProductWorkerEnv } from "./productBindings.workerd.fixture.ts";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../HarnessCProductCapabilities.ts";
-import { serializeHarnessRequestFacetFailure } from "../../../requestFacet/failure.ts";
-import {
-  PRODUCT_FIXTURE_R18_INPUT_CHUNK_BYTES,
-  PRODUCT_FIXTURE_R18_INPUT_PATHS,
-  ProductFixtureCapability,
-} from "./productCapability.workerd.fixture.ts";
+import { serializeHarnessRequestFacetFailure } from "./memoryFailure.workerd.fixture.ts";
+import { ProductFixtureCapability } from "./productCapability.workerd.fixture.ts";
 import type { ProductFixtureMemoryProofFailure } from "./productCapability.workerd.fixture.ts";
 import { ProductFixtureExecutor } from "./productExecutor.workerd.fixture.ts";
 import { ProductHeapProbe } from "./productHeapProbe.workerd.fixture.ts";
 import { setupProductRun } from "./productScenarioSetup.workerd.fixture.ts";
 import { runProductScenario } from "./productScenario.workerd.fixture.ts";
+import {
+  readR18Inputs,
+  legacyModuleMap,
+  copyLegacyModuleSnapshot,
+  memoryModuleInventory,
+  type MemoryModuleInventory,
+} from "./memoryModules.workerd.fixture.ts";
 import { memoryNativeModule } from "./memoryNative.workerd.fixture.ts";
-
-type PreparedRelease = NonNullable<
-  HarnessProcessExecutionShardInput["processes"][number]["targetPreparedRelease"]
->;
-
-async function readR18Inputs(capability: ProductFixtureCapability) {
-  const modules: Record<string, Uint8Array> = Object.create(null);
-  for (const path of PRODUCT_FIXTURE_R18_INPUT_PATHS) {
-    const first = await capability.readR18InputChunk(path, 0);
-    const bytes = new Uint8Array(first.totalBytes);
-    for (
-      let offset = 0;
-      offset < first.totalBytes;
-      offset += PRODUCT_FIXTURE_R18_INPUT_CHUNK_BYTES
-    ) {
-      const chunk = offset === 0 ? first : await capability.readR18InputChunk(path, offset);
-      const expectedLength = Math.min(
-        PRODUCT_FIXTURE_R18_INPUT_CHUNK_BYTES,
-        first.totalBytes - offset,
-      );
-      if (
-        chunk.path !== path ||
-        chunk.offset !== offset ||
-        chunk.totalBytes !== first.totalBytes ||
-        chunk.sha256 !== first.sha256 ||
-        chunk.bytes.byteLength !== expectedLength
-      )
-        throw new Error(`The staged R18 fixture chunk is invalid: ${path} at ${offset}.`);
-      bytes.set(chunk.bytes, offset);
-    }
-    const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer);
-    const sha256 = Array.from(new Uint8Array(digest), (byte) =>
-      byte.toString(16).padStart(2, "0"),
-    ).join("");
-    if (sha256 !== first.sha256) throw new Error(`The staged R18 fixture is corrupt: ${path}.`);
-    modules[path] = bytes;
-  }
-  return modules;
-}
-
-async function legacyModuleMap(
-  source: string,
-  release: PreparedRelease,
-  raw: Readonly<Record<string, Uint8Array>>,
-) {
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  const modules: Record<string, HarnessProcessFacetModule> = {
-    "productFacet.mjs": { js: source },
-  };
-  for (const [moduleKey, descriptor] of Object.entries(release.plan.preparedModules)) {
-    const rawKey = moduleKey === "codex/worker.js" ? "worker.js" : moduleKey;
-    const bytes = raw[rawKey];
-    if (
-      bytes === undefined ||
-      bytes.byteOffset !== 0 ||
-      bytes.byteLength !== descriptor.bytes ||
-      bytes.byteLength !== bytes.buffer.byteLength
-    )
-      throw new Error(`The staged R18 module is missing or has the wrong size: ${rawKey}.`);
-    const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes).buffer);
-    const sha256 = Array.from(new Uint8Array(digest), (byte) =>
-      byte.toString(16).padStart(2, "0"),
-    ).join("");
-    if (sha256 !== descriptor.sha256)
-      throw new Error(`The staged R18 module has the wrong SHA-256: ${rawKey}.`);
-    const name = moduleKey === "codex/engine.wasm" ? "codex-engine.wasm" : moduleKey;
-    modules[name] =
-      descriptor.type === "wasm"
-        ? { wasm: bytes.buffer as ArrayBuffer }
-        : descriptor.type === "text"
-          ? { text: decoder.decode(bytes) }
-          : descriptor.type === "cjs"
-            ? { cjs: decoder.decode(bytes) }
-            : { js: decoder.decode(bytes) };
-  }
-  modules["r18/codex-Cargo.lock"] = { text: decoder.decode(raw["codex/Cargo.lock"]!) };
-  modules["r18/worker.js"] = { js: decoder.decode(raw["worker.js"]!) };
-  modules["r18/codex-manifest.json"] = { text: decoder.decode(raw["codex/manifest.json"]!) };
-  modules["r18/manifest.json"] = { text: decoder.decode(raw["manifest.json"]!) };
-  return Object.freeze(modules);
-}
-
-function copyLegacyModuleSnapshot(
-  modules: Readonly<Record<string, HarnessProcessFacetModule>>,
-): Readonly<Record<string, HarnessProcessFacetModule>> {
-  const snapshot: Record<string, HarnessProcessFacetModule> = Object.create(null);
-  for (const [name, module] of Object.entries(modules)) {
-    if (typeof module === "string") snapshot[name] = module;
-    else if ("wasm" in module) snapshot[name] = Object.freeze({ wasm: module.wasm.slice(0) });
-    else if ("preparedReleaseAsset" in module)
-      throw new TypeError("The legacy memory case cannot retain a release descriptor.");
-    else snapshot[name] = module;
-  }
-  return Object.freeze(snapshot);
-}
 
 export {
   HarnessFilesStoreObject,
@@ -127,7 +34,8 @@ export {
 export class ProductFixtureShard extends HarnessProcessExecutionShardObject {
   #heapProbe = new ProductHeapProbe();
   #memoryProofRunId: string | undefined;
-  #legacyModuleSet: Readonly<Record<string, HarnessProcessFacetModule>> | undefined;
+  #legacyModuleSet: ReturnType<typeof copyLegacyModuleSnapshot> | undefined;
+  #memoryModuleInventory: MemoryModuleInventory = [];
   #ctx: DurableObjectState;
   #env: ProductWorkerEnv;
 
@@ -225,6 +133,11 @@ export class ProductFixtureShard extends HarnessProcessExecutionShardObject {
     );
     if (isMemoryProof) {
       this.#memoryProofRunId = input.runId;
+      const selected = input.processes.find(
+        (process) => process.processId === "product-memory-proof",
+      );
+      if (selected === undefined) throw new Error("The memory process is missing.");
+      this.#memoryModuleInventory = await memoryModuleInventory(selected.modules);
       await this.#setMemoryProofPhase(input.runId, "runShard-entered");
     }
     const running = super.runShard(input, requestContextId);
@@ -322,20 +235,6 @@ export class ProductFixtureShard extends HarnessProcessExecutionShardObject {
 
   protected override processExecutionHooks(): HarnessProcessExecutionHooks | undefined {
     return {
-      afterPlacementSessionOpened: async ({ runId, processIds }) => {
-        if (!processIds.includes("product-memory-proof")) return;
-        await this.#setMemoryProofPhase(runId, "placement-session-opened");
-      },
-      afterInertPreparation: async ({ process }) => {
-        if (process.processId !== "product-memory-proof") return;
-        if (this.#memoryProofRunId === undefined)
-          throw new Error("The held memory proof lost its run identity.");
-        await this.#setMemoryProofPhase(this.#memoryProofRunId, "after-inert-preparation");
-      },
-      onProcessFailure: async ({ runId, process, failure }) => {
-        if (process.processId !== "product-memory-proof") return;
-        await this.recordMemoryProofFailure(runId, process.processId, "process", failure);
-      },
       afterActivation: async ({ process }) => {
         if (process.processId !== "product-memory-proof") return;
         if (this.#memoryProofRunId === undefined)
@@ -344,6 +243,7 @@ export class ProductFixtureShard extends HarnessProcessExecutionShardObject {
         await this.#env.PRODUCT_FIXTURE.getByName("product-fixture").markMemoryProofReady(
           this.#memoryProofRunId,
           this.#legacyModuleSet !== undefined,
+          this.#memoryModuleInventory,
         );
         await this.#setMemoryProofPhase(this.#memoryProofRunId, "activation-held");
         await new Promise<void>(() => undefined);
