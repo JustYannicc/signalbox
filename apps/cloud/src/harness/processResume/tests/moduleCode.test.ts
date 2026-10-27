@@ -148,6 +148,7 @@ describe("C Wasm module input", () => {
     expect(Object.isFrozen(descriptorModule)).toBe(true);
 
     const reads: Array<{ readonly offset: number; readonly length: number }> = [];
+    const receivedBuffers: ArrayBuffer[] = [];
     const loaded = await materializeHarnessProcessModules(
       modules,
       release,
@@ -155,7 +156,9 @@ describe("C Wasm module input", () => {
         reads.push({ offset, length });
         expect(ref).toBe(artifactRef);
         expect(path).toBe("codex/engine.wasm");
-        return bytes.slice(offset, offset + length);
+        const chunk = bytes.slice(offset, offset + length);
+        receivedBuffers.push(chunk.buffer);
+        return chunk;
       },
     );
     const engine = loaded["codex/engine.wasm"];
@@ -168,6 +171,7 @@ describe("C Wasm module input", () => {
     expect(engine.wasm).not.toBe(bytes.buffer);
     expect([...new Uint8Array(engine.wasm).slice(0, 4)]).toEqual([0, 97, 115, 109]);
     expect(engine.wasm.byteLength).toBe(bytes.byteLength);
+    expect(receivedBuffers.map((buffer) => buffer.byteLength)).toEqual([0, 0]);
   });
 
   it("materializes CJS and text assets with their declared WorkerLoader types", async () => {

@@ -19,6 +19,7 @@ import { ProductFixtureExecutor } from "./productExecutor.workerd.fixture.ts";
 import { ProductHeapProbe } from "./productHeapProbe.workerd.fixture.ts";
 import { setupProductRun } from "./productScenarioSetup.workerd.fixture.ts";
 import { runProductScenario } from "./productScenario.workerd.fixture.ts";
+import { memoryNativeModule } from "./memoryNative.workerd.fixture.ts";
 
 type PreparedRelease = NonNullable<
   HarnessProcessExecutionShardInput["processes"][number]["targetPreparedRelease"]
@@ -299,8 +300,8 @@ export class ProductFixtureShard extends HarnessProcessExecutionShardObject {
       selected.targetPreparedRelease,
       raw,
     );
-    this.#legacyModuleSet = legacyModules;
-    const inputModules = copyLegacyModuleSnapshot(legacyModules);
+    this.#legacyModuleSet = Object.freeze({ ...legacyModules, ...memoryNativeModule(this.#env) });
+    const inputModules = copyLegacyModuleSnapshot(this.#legacyModuleSet);
     await this.#setMemoryProofPhase(input.runId, "legacy-module-map-built");
     const processes = input.processes.map((process) =>
       process.processId === selected.processId ? { ...process, modules: inputModules } : process,

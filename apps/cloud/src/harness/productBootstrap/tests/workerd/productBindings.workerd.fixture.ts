@@ -30,6 +30,7 @@ export interface ProductWorkerEnv extends HarnessProcessExecutionEnvironment {
   readonly PRODUCT_FIXTURE: DurableObjectNamespace<ProductFixtureCapability>;
   readonly PRODUCT_EXECUTOR: DurableObjectNamespace<ProductFixtureExecutor>;
   readonly PRODUCT_FACET_SOURCE: string;
+  readonly PRODUCT_MEMORY_NATIVE_WASM?: string;
   readonly HARNESS_FILES_STORE: DurableObjectNamespace<ProductFixtureFilesStore>;
   readonly HARNESS_RUN_STORE: DurableObjectNamespace<ProductFixtureRunStore>;
   readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<HarnessThreadSupervisorObject>;

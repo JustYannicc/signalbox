@@ -1,10 +1,6 @@
 // @effect-diagnostics cryptoRandomUUID:off - Each setup owns a fresh C run and deterministic test authority.
 import * as Effect from "effect/Effect";
-import {
-  ProviderDriverKind,
-  ProviderThreadId,
-  type OrchestrationV2ProviderThread,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, type OrchestrationV2ProviderThread } from "@t3tools/contracts";
 import type { HarnessCheckpoint } from "../../../Harness.ts";
 import { encodeHarnessCProductNativeCheckpoint } from "../../../HarnessCProductCheckpoint.ts";
 import { createHarnessDurableState } from "../../../HarnessDurableState.ts";
@@ -28,6 +24,7 @@ import type { FixtureRelease } from "./productInputs.workerd.fixture.ts";
 import { reference as referenceArtifact } from "../../../processResume/tests/releaseMaterial.ts";
 import { dataForDriver } from "../../../adapter/tests/data.ts";
 import { preparedReleaseAsset } from "../../../HarnessProcessPlacement.ts";
+import { memoryNativeModule } from "./memoryNative.workerd.fixture.ts";
 
 const CAPABILITY_NAME = "product-fixture";
 const controlKey = "product-run-control-key-".repeat(2);
@@ -71,6 +68,7 @@ function memoryProofModules(
 ): Readonly<Record<string, HarnessProcessFacetModule>> {
   const modules: Record<string, HarnessProcessFacetModule> = {
     "productFacet.mjs": { js: env.PRODUCT_FACET_SOURCE },
+    ...memoryNativeModule(env),
   };
   for (const moduleKey of Object.keys(release.plan.preparedModules))
     modules[moduleKey === "codex/engine.wasm" ? "codex-engine.wasm" : moduleKey] =
@@ -120,10 +118,7 @@ async function setupProductRunInternal(
   memoryProof?: ProductMemoryProofRequest,
 ) {
   const runId = memoryProof?.runId ?? `product-workerd-${crypto.randomUUID()}`;
-  const nativeSessionId =
-    memoryProof !== undefined && initialProvider === "codex"
-      ? "00000000-0000-4000-8000-000000000025"
-      : "product-native-session";
+  const nativeSessionId = "product-native-session";
   const capability = env.PRODUCT_FIXTURE.getByName(
     CAPABILITY_NAME,
   ) as unknown as ProductFixtureCapability;
@@ -149,10 +144,6 @@ async function setupProductRunInternal(
   );
   const initialThread: OrchestrationV2ProviderThread = {
     ...initialData.providerThread,
-    // The R18 Codex host rejects the generic non-UUID provider-thread test ID during resume.
-    ...(memoryProof !== undefined && initialProvider === "codex"
-      ? { id: ProviderThreadId.make(nativeSessionId) }
-      : {}),
     nativeThreadRef: {
       driver: initialData.providerThread.driver,
       nativeId: nativeSessionId,

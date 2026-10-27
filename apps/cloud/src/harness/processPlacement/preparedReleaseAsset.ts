@@ -37,6 +37,7 @@ export type MaterializedHarnessProcessFacetModule =
   | { readonly text: string }
   | { readonly wasm: ArrayBuffer };
 
+/** Each result transfers ownership of an exact buffer; the receiver may detach it. */
 export type HarnessProcessReleaseAssetChunkReader = (
   artifactRef: string,
   path: string,
@@ -191,6 +192,8 @@ export async function materializePreparedReleaseAsset(
       if (!isExactChunk(chunk, length))
         throw new TypeError("A prepared process facet asset chunk has the wrong byte length.");
       bytes.set(chunk, offset);
+      // A completed RPC chunk must not remain as a second module set until GC runs.
+      chunk.buffer.transfer(0);
     }
   }
   if ((await sha256Hex(bytes)) !== descriptor.sha256)
