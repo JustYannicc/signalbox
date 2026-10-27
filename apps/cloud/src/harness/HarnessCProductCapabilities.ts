@@ -11,6 +11,10 @@ export {
   productExecutor,
   createHarnessCProductExecutorService,
 } from "./productBootstrap/executor.ts";
+export {
+  productTurnGrantSource,
+  createHarnessCProductTurnGrantSource,
+} from "./productBootstrap/turnGrant.ts";
 export type { HarnessCProductCapabilities } from "./productBootstrap/capabilities.ts";
 export type {
   HarnessCProductAccessService,
@@ -22,4 +26,5 @@ export type {
   HarnessCProductProgramService,
   HarnessCProductReleaseService,
   HarnessCProductTurnGrantSource,
+  HarnessCProductTurnGrantInput,
 } from "./productBootstrap/contracts.ts";

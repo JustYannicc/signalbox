@@ -3,7 +3,8 @@ import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleas
 import type { HarnessRunArtifact } from "../HarnessRunStore.ts";
 import type {
   ExecutorTarget,
-  HarnessMcpTurnGrantSource,
+  HarnessMcpTurnGrant,
+  HarnessMcpTurnGrantInput,
   ProgramSeed,
   ResolvedConnections,
 } from "../HarnessSessionHost.ts";
@@ -52,8 +53,14 @@ export interface HarnessCProductAccessService<G> {
   }): Promise<{ readonly grant: G; readonly connections: ResolvedConnections }>;
 }
 
-/** A product-boundary adapter may issue a fresh grant for each host-owned turn epoch. */
-export type HarnessCProductTurnGrantSource<G> = HarnessMcpTurnGrantSource<G>;
+export interface HarnessCProductTurnGrantInput extends Omit<HarnessMcpTurnGrantInput, "signal"> {
+  /** Closing this stream cancels issuance without transporting a local AbortSignal. */
+  readonly cancellation: ReadableStream<Uint8Array>;
+}
+
+export interface HarnessCProductTurnGrantSource<G> {
+  issue(input: HarnessCProductTurnGrantInput): Promise<HarnessMcpTurnGrant<G> | null>;
+}
 
 export interface HarnessCProductProgramCatalog {
   readonly sourceIdentity: string;

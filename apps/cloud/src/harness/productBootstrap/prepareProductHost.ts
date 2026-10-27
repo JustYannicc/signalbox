@@ -22,6 +22,7 @@ import {
   productReleaseBindings,
 } from "./capabilities.ts";
 import { productExecutor } from "./executor.ts";
+import { productTurnGrantSource } from "./turnGrant.ts";
 import { selectHarnessCProductRelease } from "./selectedArtifact.ts";
 import type {
   HarnessCProductFacetEnvironment,
@@ -133,7 +134,7 @@ export function prepareHarnessCProductHost<
       executor: productExecutor(input.capabilities.executor),
       ...(input.capabilities.turnGrantSource === undefined
         ? {}
-        : { turnGrantSource: input.capabilities.turnGrantSource }),
+        : { turnGrantSource: productTurnGrantSource(input.capabilities.turnGrantSource) }),
     } as Omit<Options, "release" | "processResumeArtifact">;
     if (built.threadId.length === 0)
       return yield* Effect.fail(failed("Product host thread identity is missing."));

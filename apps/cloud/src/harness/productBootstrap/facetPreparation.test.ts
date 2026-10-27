@@ -65,7 +65,8 @@ describe.each(["claude-code", "codex"] as const)("%s product facet preparation",
       const fixture = yield* prepareProductFixture(provider, "cross-variant-fresh-boot", {
         turnGrantSource: source,
       });
-      expect(fixture.observedTurnGrantSources).toEqual([source]);
+      expect(fixture.observedTurnGrantSources[0]).toBeDefined();
+      expect(fixture.observedTurnGrantSources[0]).not.toBe(source);
       const context = fixture.context("publisher-turn");
       yield* fixture.prepared.runtime.run(fixture.input, context).pipe(Effect.flip);
       expect(fixture.observedTurnGrants[0]?.publisher).toEqual({

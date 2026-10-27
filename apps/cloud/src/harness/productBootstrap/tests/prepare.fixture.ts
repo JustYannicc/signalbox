@@ -11,7 +11,11 @@ import { encodeHarnessCProductNativeCheckpoint } from "../../HarnessCProductChec
 import { createMemoryFilePersistencePorts } from "../../../kernel/MemoryFilePersistencePorts.ts";
 import { machineInventoryFixture } from "../../../computer/machineInventoryTesting.ts";
 import { type HarnessCheckpoint } from "../../Harness.ts";
-import type { HostOpenInput, TurnAccess } from "../../HarnessSessionHost.ts";
+import type {
+  HostOpenInput,
+  TurnAccess,
+  HarnessMcpTurnGrantSource,
+} from "../../HarnessSessionHost.ts";
 import type { HarnessFilesStoreResult } from "../../HarnessFilesStore.ts";
 import type { HarnessFacetRequestContext } from "../../HarnessRequestFacet.ts";
 import { HarnessRequestFacetError } from "../../HarnessRequestFacet.ts";
@@ -125,7 +129,7 @@ export const prepareProductFixture = (
     const initialAccesses: Grant[] = [];
     const turnAccesses: Grant[] = [];
     const observedTurnGrants: TurnAccess<Grant>[] = [];
-    const observedTurnGrantSources: Array<HarnessCProductTurnGrantSource<Grant> | undefined> = [];
+    const observedTurnGrantSources: Array<HarnessMcpTurnGrantSource<Grant> | undefined> = [];
     const seeded: string[] = [];
     const openInputs: HostOpenInput<Grant>[] = [];
     const resolvedRequests: string[] = [];
