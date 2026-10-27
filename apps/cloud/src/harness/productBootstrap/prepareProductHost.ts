@@ -23,6 +23,7 @@ import {
 } from "./capabilities.ts";
 import { productExecutor } from "./executor.ts";
 import { selectHarnessCProductRelease } from "./selectedArtifact.ts";
+import { createHarnessCProductCheckpointAccess } from "./checkpointAccess.ts";
 import type {
   HarnessCProductFacetEnvironment,
   HarnessCProductHostPreparationInput,
@@ -191,6 +192,9 @@ export function prepareHarnessCProductHost<
         failed("The product open input changes the committed session identity."),
       );
     let openInput: HostOpenInput<G> = open;
+    let checkpointAccess:
+      | Effect.Success<ReturnType<typeof createHarnessCProductCheckpointAccess<G>>>
+      | undefined;
     if (input.descriptor.restoreMode === "same-variant-serialized-checkpoint") {
       if (native.checkpoint.release.harness !== input.factory.provider)
         return yield* Effect.fail(failed("Serialized checkpoint belongs to another provider."));
@@ -203,10 +207,11 @@ export function prepareHarnessCProductHost<
           }),
         catch: (cause) => failed("Initial product access could not be resolved.", cause),
       });
+      checkpointAccess = yield* createHarnessCProductCheckpointAccess(access, input.signal);
       openInput = {
         ...open,
         checkpoint: native.checkpoint,
-        initialAccess: { ...access, signal: input.signal },
+        initialAccess: checkpointAccess.access,
       };
     }
     const session = yield* host
@@ -220,6 +225,8 @@ export function prepareHarnessCProductHost<
       readInput: (reference, context) =>
         Effect.gen(function* () {
           const turn = yield* input.turnBindings.readTurn(reference, context);
+          const restoredAccess = checkpointAccess?.firstRequestAccess();
+          if (restoredAccess !== undefined) return { turn, access: restoredAccess };
           const access = yield* Effect.tryPromise({
             try: () =>
               input.capabilities.access.resolveTurnAccess({
@@ -236,7 +243,10 @@ export function prepareHarnessCProductHost<
       writeCheckpoint: input.turnBindings.writeCheckpoint,
       verify: input.turnBindings.verify,
     };
-    const runtime = yield* createHarnessRequestTurnRuntime(requestTurnOptions, session);
+    const runtime = yield* createHarnessRequestTurnRuntime(
+      requestTurnOptions,
+      checkpointAccess?.bindSession(session) ?? session,
+    );
     const evidence: HarnessRequestFacetPreparationEvidence = {
       facetNonce: input.facetNonce,
       nativeSessionId,

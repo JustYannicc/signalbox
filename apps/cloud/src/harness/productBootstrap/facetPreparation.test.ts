@@ -16,7 +16,7 @@ describe.each(["claude-code", "codex"] as const)("%s product facet preparation",
         if (mode === "same-variant-serialized-checkpoint") {
           expect(opened.checkpoint).toEqual(fixture.checkpoint);
           expect(opened.initialAccess?.grant).toBe(fixture.initialAccesses[0]);
-          expect(opened.initialAccess?.signal).toBe(fixture.preparationSignal);
+          expect(opened.initialAccess?.signal.aborted).toBe(false);
           expect(fixture.initialAccesses).toHaveLength(1);
         } else {
           expect(opened.checkpoint).toBeUndefined();
@@ -48,6 +48,28 @@ describe.each(["claude-code", "codex"] as const)("%s product facet preparation",
       expect(fixture.initialAccesses).toEqual([]);
       expect(fixture.checkpointWrites()).toBe(0);
     }).pipe(Effect.scoped),
+  );
+  it.effect(
+    "uses checkpoint access for the first restored request, then resolves fresh access",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* prepareProductFixture(
+          provider,
+          "same-variant-serialized-checkpoint",
+        );
+        const first = fixture.context("restored-first");
+        const second = fixture.context("later-request");
+        yield* fixture.prepared.runtime.run(fixture.input, first).pipe(Effect.flip);
+        yield* fixture.prepared.runtime.run(fixture.input, second).pipe(Effect.flip);
+        expect(fixture.observedTurnGrants[0]!.grant).toBe(fixture.initialAccesses[0]);
+        expect(fixture.observedTurnGrants[0]!.signal).toBe(
+          fixture.openInputs[0]!.initialAccess!.signal,
+        );
+        expect(fixture.observedTurnGrants[0]!.signal.aborted).toBe(true);
+        expect(fixture.resolvedRequests).toEqual(["later-request"]);
+        expect(fixture.turnAccesses).toHaveLength(1);
+        expect(fixture.observedTurnGrants[1]!.grant).toBe(fixture.turnAccesses[0]);
+      }).pipe(Effect.scoped),
   );
   it.effect.each(["assets", "programs"] as const)(
     "joins the owned host after %s preparation fails",
