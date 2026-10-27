@@ -55,6 +55,8 @@ export function run() {
                     yield* [];
                   }
                   return Object.assign(messages(), {
+                    initializationResult: async () =>
+                      ({}) as Awaited<ReturnType<ClaudeSdkQuery["initializationResult"]>>,
                     close: () => child.kill("SIGTERM"),
                     setMcpServers: async () => ({ added: [], removed: [], errors: {} }),
                     setModel: async () => {},

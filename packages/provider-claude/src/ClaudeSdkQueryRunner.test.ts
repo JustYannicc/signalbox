@@ -27,6 +27,8 @@ function fakeQuery(messages: ReadonlyArray<SDKMessage> = []): ClaudeSdkQuery {
     yield* messages;
   }
   return Object.assign(frames(), {
+    initializationResult: async () =>
+      ({}) as Awaited<ReturnType<ClaudeSdkQuery["initializationResult"]>>,
     close: () => {},
     setMcpServers: async (_servers: Parameters<ClaudeSdkQuery["setMcpServers"]>[0]) => ({
       added: [],
@@ -59,8 +61,14 @@ describe("portable Claude SDK query lifecycle", () => {
         let launchOptions: unknown;
         let registered: unknown;
         let closed = false;
+        const readinessOrder: string[] = [];
         const query = fakeQuery();
+        query.initializationResult = async () => {
+          readinessOrder.push("ready");
+          return {} as Awaited<ReturnType<ClaudeSdkQuery["initializationResult"]>>;
+        };
         query.setMcpServers = async (servers) => {
+          readinessOrder.push("register-mcp");
           registered = servers;
           return { added: Object.keys(servers), removed: [], errors: {} };
         };
@@ -90,6 +98,7 @@ describe("portable Claude SDK query lifecycle", () => {
         assert.equal(yield* runner.allocateSessionId, "allocated-session");
         assert.deepEqual(launchOptions, options);
         assert.deepEqual(registered, mcpServers);
+        assert.deepEqual(readinessOrder, ["ready", "register-mcp"]);
         assert.deepEqual(events[0], {
           direction: "outgoing",
           stage: "decoded",

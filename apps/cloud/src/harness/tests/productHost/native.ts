@@ -78,6 +78,8 @@ export function nativeFixture(
         }
       }
       return Object.assign(messages(), {
+        initializationResult: async () =>
+          ({}) as Awaited<ReturnType<ClaudeSdkQuery["initializationResult"]>>,
         close() {
           closing = true;
           child.kill("SIGTERM");

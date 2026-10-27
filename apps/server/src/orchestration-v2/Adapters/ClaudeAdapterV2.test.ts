@@ -2603,6 +2603,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 }
                 // The runner exercises this small control surface, not unrelated SDK query APIs.
                 return Object.assign(frames(), {
+                  initializationResult: async () => ({
+                    commands: [],
+                    agents: [],
+                    output_style: "default",
+                    available_output_styles: [],
+                    models: [],
+                    account: {},
+                  }),
                   close: async () => closeNativeSdkFrames(),
                   setMcpServers: async () => ({ added: [], removed: [], errors: {} }),
                   setModel: async () => {},
