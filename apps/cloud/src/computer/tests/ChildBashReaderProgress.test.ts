@@ -1,14 +1,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { KernelHandle } from "../../kernel/KernelAbi.ts";
 import { bashArtifactAvailable, createBashGateway } from "./ChildBashGatewayFixture.ts";
 import {
   captureText,
   cleanupGatewayCommand,
   publicCommand,
-  within,
   withFailurePreservingCleanup,
 } from "./ChildBashGatewayCommand.ts";
-import { childBashFixture, exited } from "./ChildBashFixture.ts";
+import { childBashFixture, exited, waitForChildExit } from "./ChildBashFixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
@@ -161,24 +159,19 @@ describe.skipIf(!bashArtifactAvailable)("public Bash reader progress", () => {
         child = await publicCommand(gateway, readerScript, commandController.signal);
         const stdout = captureText(child.stdout);
         const stderr = captureText(child.stderr);
-        const result = await within(
-          Promise.all([stdout.settled, stderr.settled, child.exited]),
-          15_000,
-        );
-        commandSettled = result.kind === "completed";
+        const [, , status] = await Promise.all([stdout.settled, stderr.settled, child.exited]);
+        commandSettled = true;
         const lifecycle = lifecycleSnapshot(gateway);
         const message = `reader lifecycle: ${JSON.stringify(lifecycle)}; stderr: ${stderr.text()}; stdout: ${stdout.text()}`;
-        expect(result.kind, message).toBe("completed");
-        if (result.kind === "completed") {
-          const [, , status] = result.value;
-          expect(status, message).toEqual(exited());
-          expect(stderr.text(), message).toContain("forked\n");
-          expect(stderr.text(), message).not.toContain("Resource temporarily unavailable");
-          expect(stdout.text(), message).toBe("done\n");
-          expect(lifecycle.peakProcesses, message).toBeLessThanOrEqual(256);
-          expect(lifecycle.forkErrors, message).toBe(0);
-          expect(lifecycle.allRootChildrenReaped, message).toBe(true);
-        }
+        expect(status, message).toEqual(exited());
+        expect(stderr.text(), message).toContain("forked\n");
+        expect(stderr.text(), message).not.toContain("Resource temporarily unavailable");
+        expect(stdout.text(), message).toBe("done\n");
+        expect(lifecycle.rootChildren, message).toBe(161);
+        expect(lifecycle.rootReaps, message).toBe(161);
+        expect(lifecycle.peakProcesses, message).toBeLessThanOrEqual(256);
+        expect(lifecycle.forkErrors, message).toBe(0);
+        expect(lifecycle.allRootChildrenReaped, message).toBe(true);
       },
       async (bodyFailed) => {
         try {
@@ -195,23 +188,6 @@ describe.skipIf(!bashArtifactAvailable)("public Bash reader progress", () => {
     );
   }, 30_000);
 });
-
-async function waitForChildExit(
-  fixture: ReturnType<typeof childBashFixture>,
-  handle: KernelHandle<"process">,
-) {
-  for (;;) {
-    const result = fixture.processes.exitStatus(handle);
-    if (result.status === "ok") return result.value;
-    if (result.status === "error") throw new Error(result.error.message);
-    try {
-      const woke = await fixture.wakes.wait(result.wakeToken, fixture.controller.signal);
-      if (woke.status !== "ok") throw new Error("Process exit wait was interrupted");
-    } finally {
-      fixture.wakes.release(result.wakeToken);
-    }
-  }
-}
 
 it("preserves an opportunistically reaped wait status and leaves it after invalid flags", async () => {
   const fixture = childBashFixture();

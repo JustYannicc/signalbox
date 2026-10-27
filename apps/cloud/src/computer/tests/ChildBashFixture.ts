@@ -1,4 +1,4 @@
-import { kernelError } from "../../kernel/KernelAbi.ts";
+import { kernelError, type KernelHandle } from "../../kernel/KernelAbi.ts";
 import {
   KernelProcessTable,
   type KernelProcessIdentity,
@@ -143,6 +143,23 @@ export function childBashFixture(
       database.close();
     },
   };
+}
+
+export async function waitForChildExit(
+  fixture: ReturnType<typeof childBashFixture>,
+  handle: KernelHandle<"process">,
+) {
+  for (;;) {
+    const result = fixture.processes.exitStatus(handle);
+    if (result.status === "ok") return result.value;
+    if (result.status === "error") throw new Error(result.error.message);
+    try {
+      const woke = await fixture.wakes.wait(result.wakeToken, fixture.controller.signal);
+      if (woke.status !== "ok") throw new Error("Process exit wait was interrupted");
+    } finally {
+      fixture.wakes.release(result.wakeToken);
+    }
+  }
 }
 
 function concat(chunks: readonly Uint8Array[]) {
