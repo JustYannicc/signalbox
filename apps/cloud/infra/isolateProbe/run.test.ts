@@ -11,8 +11,8 @@ import { withDriver } from "./testing/runDriver.ts";
 const routerReady: typeof waitForProbeRouter = async () => {};
 
 describe("isolated deployed probe lifecycle", () => {
-  it("holds measurement until an authenticated real DO canary completes", async () => {
-    await withDriver("success", async ({ run, events }) => {
+  it("holds measurement until its deployed version and the real DO canary complete", async () => {
+    await withDriver("success", async ({ run, requests, events }) => {
       const canaryStarted = Promise.withResolvers<void>();
       const releaseCanary = Promise.withResolvers<void>();
       const phases: string[] = [];
@@ -31,6 +31,14 @@ describe("isolated deployed probe lifecycle", () => {
               ...options,
               fetch: async (request) => {
                 expect(request.headers.get("authorization")).toBe(`Bearer ${secret}`);
+                if (new URL(request.url).pathname === "/probe/health") {
+                  expect(options?.expectedVersionId).toBe(requests[0]?.env.PROBE_VERSION_ID);
+                  return Response.json({
+                    ready: true,
+                    versionId: options?.expectedVersionId,
+                    workerName: new URL(url).hostname.split(".")[0],
+                  });
+                }
                 if (new URL(request.url).pathname === "/")
                   return new Response("Invalid session", { status: 400 });
                 canaryStarted.resolve();
@@ -83,6 +91,8 @@ describe("isolated deployed probe lifecycle", () => {
       );
       expect(requests[1]?.args).not.toContain("--url");
       expect(requests[1]?.env.PROBE_URL).toContain(`sb-${stage}.`);
+      expect(requests[0]?.env.PROBE_VERSION_ID).toMatch(/^[a-f0-9-]{36}$/);
+      expect(new Set(requests.map((request) => request.env.PROBE_VERSION_ID)).size).toBe(1);
       for (const request of requests) {
         expect(request.args.join(" ")).not.toContain(request.env.PROBE_SECRET);
         expect(logs.join("\n")).not.toContain(request.env.PROBE_SECRET);
@@ -136,6 +146,39 @@ describe("isolated deployed probe lifecycle", () => {
       ).rejects.toBe(readinessError);
       expect((await events()).map((event) => event.phase)).toEqual(["deploy", "destroy"]);
       expect(await NodeFSP.readdir(dir)).toEqual(["events"]);
+    });
+  });
+
+  it("destroys the stage without measuring when it never serves its deployed version", async () => {
+    await withDriver("success", async ({ run, events }) => {
+      let now = 0;
+      await expect(
+        runProbe(
+          {},
+          {
+            run,
+            log: () => {},
+            routerReady: (url, secret, options) =>
+              waitForProbeRouter(url, secret, {
+                ...options,
+                timeoutMs: 1_000,
+                now: () => now,
+                wait: async (milliseconds) => {
+                  now += milliseconds;
+                },
+                fetch: async (request) => {
+                  expect(new URL(request.url).pathname).toBe("/probe/health");
+                  return Response.json({
+                    ready: true,
+                    versionId: "old",
+                    workerName: new URL(url).hostname.split(".")[0],
+                  });
+                },
+              }),
+          },
+        ),
+      ).rejects.toThrow("did not serve the expected version");
+      expect((await events()).map((event) => event.phase)).toEqual(["deploy", "destroy"]);
     });
   });
 

@@ -34,6 +34,8 @@ export default Alchemy.Stack(
         PROBE: Cloudflare.DurableObject<ProbeSession>("ProbeSession"),
         LOADER: Cloudflare.WorkerLoader(),
         PROBE_SECRET: yield* Config.Redacted("PROBE_SECRET"),
+        PROBE_VERSION_ID: yield* Config.String("PROBE_VERSION_ID"),
+        PROBE_WORKER_NAME: `sb-${stage}`,
       },
     });
     if (!worker.url) throw new Error("The probe Worker has no URL.");

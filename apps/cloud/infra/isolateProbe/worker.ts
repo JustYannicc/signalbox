@@ -70,7 +70,23 @@ interface Env {
   PROBE: DurableObjectNamespace<ProbeSession>;
   LOADER: WorkerLoader;
   PROBE_SECRET: string;
+  PROBE_VERSION_ID?: string;
+  PROBE_WORKER_NAME?: string;
   DYNAMIC_WORKER_CPU_MS?: string;
+}
+
+function stageHealth(env: Env) {
+  return Response.json(
+    {
+      ready: Boolean(env.PROBE_VERSION_ID && env.PROBE_WORKER_NAME),
+      versionId: env.PROBE_VERSION_ID,
+      workerName: env.PROBE_WORKER_NAME,
+    },
+    {
+      status: env.PROBE_VERSION_ID && env.PROBE_WORKER_NAME ? 200 : 503,
+      headers: { "cache-control": "no-store" },
+    },
+  );
 }
 
 async function rejectedUpload(request: Request, error: unknown) {
@@ -102,6 +118,10 @@ export class ProbeSession extends DurableObject<Env> {
 
   override async fetch(request: Request) {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/probe/session-health") {
+      // Confirm this DO's deployed handler without starting its measured probe or dynamic facet.
+      return stageHealth(this.env);
+    }
     if (url.pathname.startsWith("/root/")) {
       url.pathname = url.pathname.slice("/root".length);
       return probe(new Request(url, request), this.ctx);
@@ -276,6 +296,9 @@ export default {
       return new Response("Unauthorized", { status: 401 });
     }
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/probe/health") {
+      return stageHealth(env);
+    }
     const session = url.searchParams.get("session");
     if (!session || !/^[a-zA-Z0-9-]{1,100}$/.test(session)) {
       return new Response("Invalid session", { status: 400 });
