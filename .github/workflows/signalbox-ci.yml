@@ -169,7 +169,8 @@ jobs:
     needs: cloud_migrations
     if: ${{ !cancelled() && needs.cloud_migrations.outputs.test != 'false' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Full-suite runs on main already take about 18 minutes.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
