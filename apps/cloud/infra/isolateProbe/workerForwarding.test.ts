@@ -41,7 +41,11 @@ export default {fetch(request, env) {
       worker_loaders: [{ binding: "LOADER" }],
       durable_objects: { bindings: [{ name: "PROBE", class_name: "ProbeSession" }] },
       migrations: [{ tag: "v1", new_sqlite_classes: ["ProbeSession"] }],
-      vars: { PROBE_SECRET: "local-probe-only" },
+      vars: {
+        PROBE_SECRET: "local-probe-only",
+        PROBE_VERSION_ID: "forwarding-test-version",
+        PROBE_WORKER_NAME: "probe-forwarding-test",
+      },
     }),
   );
   harness = createTestHarness({
@@ -59,6 +63,21 @@ afterAll(async () => {
 });
 
 describe("probe Durable Object forwarding failures", () => {
+  it("serves authenticated stage health without calling the failing Durable Object", async () => {
+    const health = new URL("/probe/health", endpoint);
+    expect((await fetch(health)).status).toBe(401);
+    const response = await fetch(health, {
+      headers: { authorization: "Bearer local-probe-only" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      ready: true,
+      versionId: "forwarding-test-version",
+      workerName: "probe-forwarding-test",
+    });
+  });
+
   it("keeps a rejected native fetch as HTTP 500 and records its error in proof JSON", async () => {
     const response = await fetch(new URL("/root/status?session=cold-failure", endpoint), {
       headers: { authorization: "Bearer local-probe-only" },

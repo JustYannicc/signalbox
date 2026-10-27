@@ -70,6 +70,8 @@ interface Env {
   PROBE: DurableObjectNamespace<ProbeSession>;
   LOADER: WorkerLoader;
   PROBE_SECRET: string;
+  PROBE_VERSION_ID?: string;
+  PROBE_WORKER_NAME?: string;
   DYNAMIC_WORKER_CPU_MS?: string;
 }
 
@@ -276,6 +278,19 @@ export default {
       return new Response("Unauthorized", { status: 401 });
     }
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/probe/health") {
+      return Response.json(
+        {
+          ready: Boolean(env.PROBE_VERSION_ID && env.PROBE_WORKER_NAME),
+          versionId: env.PROBE_VERSION_ID,
+          workerName: env.PROBE_WORKER_NAME,
+        },
+        {
+          status: env.PROBE_VERSION_ID && env.PROBE_WORKER_NAME ? 200 : 503,
+          headers: { "cache-control": "no-store" },
+        },
+      );
+    }
     const session = url.searchParams.get("session");
     if (!session || !/^[a-zA-Z0-9-]{1,100}$/.test(session)) {
       return new Response("Invalid session", { status: 400 });

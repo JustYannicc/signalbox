@@ -77,7 +77,12 @@ export async function runProbe(
         `Stage file does not authorize automatic cleanup for ${stage}. Recover manually without --stage-file.`,
       );
     const secret = NodeCrypto.randomBytes(32).toString("base64url");
-    const env: NodeJS.ProcessEnv = { ...process.env, PROBE_SECRET: secret };
+    const versionId = NodeCrypto.randomUUID();
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PROBE_SECRET: secret,
+      PROBE_VERSION_ID: versionId,
+    };
     // Never let an ambient shared endpoint choose which Worker receives this run's credential.
     delete env.PROBE_URL;
     const failure = (phase: string, result: Awaited<ReturnType<RunProcess>>) =>
@@ -130,6 +135,7 @@ export async function runProbe(
       const url = probeUrl(deployment.stdout, stage);
       const routerReady = dependencies.routerReady ?? waitForProbeRouter;
       await routerReady(url, secret, {
+        expectedVersionId: versionId,
         ...(options.signal ? { signal: options.signal } : {}),
         onPending: (reason) => log(`Probe setup pending: ${reason}.`),
       });
