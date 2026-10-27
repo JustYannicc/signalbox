@@ -9,6 +9,11 @@ import {
 import { fixtureControl } from "./publicResumeStores.fixture.ts";
 import { reference } from "./releaseMaterial.ts";
 
+const facetTransportObservations = (observations: Readonly<Record<string, unknown>>) =>
+  Object.entries(observations)
+    .filter(([key]) => key.includes("/facet-transport:"))
+    .map(([, value]) => value);
+
 export async function runFirst(fixture: ProofSetup) {
   const running = fixture.shard.runShard(fixture.shardInput, "initial-public-request");
   await Promise.race([
@@ -24,8 +29,19 @@ export async function runFirst(fixture: ProofSetup) {
   return { committed, result };
 }
 
-export async function publicResumeProof(env: ProofEnv, observed: boolean) {
-  const fixture = await setup(env, observed ? "positive" : "missing-observation");
+export async function publicResumeProof(
+  env: ProofEnv,
+  observed: boolean,
+  mismatched = false,
+  transportOptions: {
+    readonly omitInitialBootstrap?: boolean;
+  } = {},
+) {
+  const fixture = await setup(
+    env,
+    mismatched ? "mismatched-observation" : observed ? "positive" : "missing-observation",
+    transportOptions,
+  );
   const shardNonce = await fixture.shard.executionIncarnationNonce();
   const initial = await runFirst(fixture);
   const before = await fixture.a.execute({
@@ -48,7 +64,58 @@ export async function publicResumeProof(env: ProofEnv, observed: boolean) {
   const rehydrated =
     beforeInstance !== (await fixture.a.instance()) &&
     filesInstance !== (await fixture.files.instance());
-  const operation = await resumeInput(fixture, { observed });
+  const operation = await resumeInput(fixture, { observed, mismatched });
+  const invalidBefore = await fixture.a.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: fixtureControl(2),
+  });
+  const invalidBootstrapOperations: unknown[] = [
+    { ...operation, productBootstrap: undefined },
+    { ...operation, productBootstrap: { ...operation.productBootstrap, provider: "agent-sdk" } },
+    {
+      ...operation,
+      productBootstrap: { ...operation.productBootstrap, provider: "codex" },
+    },
+    {
+      ...operation,
+      productBootstrap: { ...operation.productBootstrap, preparedReleaseId: "" },
+    },
+    {
+      ...operation,
+      productBootstrap: {
+        ...operation.productBootstrap,
+        preparedReleaseId: "another-release",
+      },
+    },
+    {
+      ...operation,
+      productBootstrap: { ...operation.productBootstrap, restoreMode: "inferred" },
+    },
+    {
+      ...operation,
+      productBootstrap: { ...operation.productBootstrap, resolveInitialAccess: () => undefined },
+    },
+    { ...operation, localBindings: { resolveTurnAccess: () => undefined } },
+  ];
+  const invalidBootstrapRejected = await Promise.all(
+    invalidBootstrapOperations.map((invalidOperation) =>
+      fixture.shard.resumeProcess(invalidOperation).then(
+        () => false,
+        () => true,
+      ),
+    ),
+  );
+  const invalidAfter = await fixture.a.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: fixtureControl(2),
+  });
+  const invalidEvidence = await fixture.shard.evidence();
+  const invalidBootstrapDidNotDrain =
+    JSON.stringify(invalidBefore.snapshot) === JSON.stringify(invalidAfter.snapshot) &&
+    invalidBefore.currentPublisher.generation === invalidAfter.currentPublisher.generation &&
+    invalidEvidence.resumes.length === 0;
   const resumed = await fixture.shard.resumeProcess(operation).then(
     (value) => ({ ok: true as const, value }),
     (error: unknown) => ({
@@ -76,16 +143,39 @@ export async function publicResumeProof(env: ProofEnv, observed: boolean) {
       sameShard: shardNonce === (await fixture.shard.executionIncarnationNonce()),
       resumed,
       status,
+      previousPublisherGeneration: before.currentPublisher.generation,
+      previousPublication: before.snapshot.lastPublication,
+      previousPublicationOperationId: before.snapshot.lastPublicationOperationId,
+      previousPreparedFacet: before.snapshot.preparedFacet,
+      postResume: await fixture.a.execute({
+        type: "read",
+        runId: fixture.runId,
+        control: fixtureControl(3),
+      }),
       journalFacetCount: journal.snapshot.requests?.facets.length,
       journalRequestCount: journal.snapshot.requests?.entries.length,
       releases: await fixture.placement.releases(),
       evidence: await fixture.shard.evidence(),
       observations,
+      transports: facetTransportObservations(observations),
+      invalidBootstrapRejected: invalidBootstrapRejected.every(Boolean),
+      invalidBootstrapDidNotDrain,
     };
 
   const duplicate = await fixture.shard.resumeProcess(operation);
   const changed = { ...operation, facet: { ...operation.facet, codeId: "changed-duplicate" } };
   const mutatedRejected = await fixture.shard.resumeProcess(changed).then(
+    () => false,
+    () => true,
+  );
+  const changedRestoreMode = {
+    ...operation,
+    productBootstrap: {
+      ...operation.productBootstrap,
+      restoreMode: "same-variant-serialized-checkpoint" as const,
+    },
+  };
+  const changedRestoreModeRejected = await fixture.shard.resumeProcess(changedRestoreMode).then(
     () => false,
     () => true,
   );
@@ -142,6 +232,9 @@ export async function publicResumeProof(env: ProofEnv, observed: boolean) {
     duplicateIdentityMatches:
       duplicate.identity.incarnationNonce === resumed.value.identity.incarnationNonce,
     mutatedRejected,
+    changedRestoreModeRejected,
+    invalidBootstrapRejected: invalidBootstrapRejected.every(Boolean),
+    invalidBootstrapDidNotDrain,
     nextCompleted: nextCompleted.result.status,
     nextStatus: nextResult.processes[0]?.status,
     secondResume,
@@ -157,5 +250,20 @@ export async function publicResumeProof(env: ProofEnv, observed: boolean) {
     releases: await fixture.placement.releases(),
     evidence: await fixture.shard.evidence(),
     observations: finalObservations,
+    transports: facetTransportObservations(finalObservations),
+    expectedProductTransports: [
+      {
+        productBootstrap: fixture.process.productBootstrap ?? null,
+        targetPreparedRelease: fixture.process.targetPreparedRelease ?? null,
+      },
+      {
+        productBootstrap: operation.productBootstrap,
+        targetPreparedRelease: operation.transition.targetPreparedRelease,
+      },
+      {
+        productBootstrap: secondOperation.productBootstrap,
+        targetPreparedRelease: secondOperation.transition.targetPreparedRelease,
+      },
+    ],
   };
 }

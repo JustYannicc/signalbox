@@ -57,7 +57,7 @@ type McpAttempt = {
   // AdapterHarness needs the first setup handed off; later turns may already have this thread loaded.
   readonly handoffRequired: boolean;
   servers: NativeMcpConfiguration["servers"];
-  phase: "configuring" | "ready" | "started" | "completed" | "failed";
+  phase: "configuring" | "ready" | "started" | "completed" | "retired" | "failed";
   mapReads: number;
   installed: McpInstallation | undefined;
   handedOff: boolean;
@@ -183,6 +183,20 @@ export function makeCodexNativeHostBinding(
           }),
         ),
     },
+    retireCheckpointMcp: (epoch) =>
+      Effect.suspend(() => {
+        const attempt = current;
+        if (
+          harness?.checkpoint === undefined ||
+          attempt?.configuration.epoch !== epoch ||
+          attempt.phase !== "ready" ||
+          !attempt.handedOff ||
+          attempt.signal.aborted
+        )
+          return Effect.fail(unavailableInstallation());
+        attempt.phase = "retired";
+        return Effect.void;
+      }),
     completeMcpTurn: (epoch) => {
       const attempt = current;
       if (attempt?.configuration.epoch === epoch && attempt.phase === "started")
@@ -194,7 +208,8 @@ export function makeCodexNativeHostBinding(
         // Retiring terminal routes revokes the old map without aborting the still-live access.
         if (
           previous !== undefined &&
-          (previous.phase !== "completed" || configuration.epoch <= previous.configuration.epoch)
+          ((previous.phase !== "completed" && previous.phase !== "retired") ||
+            configuration.epoch <= previous.configuration.epoch)
         )
           return Effect.fail(unavailableInstallation());
 

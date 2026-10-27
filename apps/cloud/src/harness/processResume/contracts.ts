@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleaseLedger.ts";
 import type { HarnessDurableStatePublicationResult } from "../HarnessDurableState.ts";
 import type { HarnessProcessPlacementIdentity } from "../processPlacement/contracts.ts";
+import type { HarnessProcessFacetModule } from "../processPlacement/moduleCode.ts";
 import type { HarnessReleasePlan } from "../HarnessReleasePlan.ts";
 import type {
   HarnessRequestCheckpoint,
@@ -46,8 +47,20 @@ export interface HarnessProcessResumeFacetCode {
   readonly codeId: string;
   readonly residentBytes: number;
   readonly mainModule: string;
-  readonly modules: Readonly<Record<string, string | { readonly js: string }>>;
+  readonly modules: Readonly<Record<string, HarnessProcessFacetModule>>;
   readonly entrypoint: string;
+}
+
+export type HarnessCProductProvider = "claude-code" | "codex";
+
+export type HarnessCProductRestoreMode =
+  | "same-variant-serialized-checkpoint"
+  | "cross-variant-fresh-boot";
+
+export interface HarnessCProductBootstrapDescriptor {
+  readonly provider: HarnessCProductProvider;
+  readonly preparedReleaseId: HarnessReleaseArtifact["releaseId"];
+  readonly restoreMode: HarnessCProductRestoreMode;
 }
 
 const id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256));
@@ -114,6 +127,7 @@ export interface HarnessProcessResumeOperationInput {
   readonly runStore: HarnessProcessResumeRunStoreBinding;
   readonly transition: HarnessProcessResumeInput;
   readonly facet: HarnessProcessResumeFacetCode;
+  readonly productBootstrap: HarnessCProductBootstrapDescriptor;
 }
 
 export type HarnessProcessResumeStage =

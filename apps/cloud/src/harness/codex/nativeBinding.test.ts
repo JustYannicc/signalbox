@@ -12,6 +12,8 @@ import { HarnessError } from "../Harness.ts";
 import type { NativeThreadLoad } from "../HarnessSessionHost.ts";
 import { bindingFixture, coldThread } from "./tests/nativeBindingFixture.ts";
 import { session } from "./tests/preinitializedFixture.ts";
+import { dataForDriver } from "../adapter/tests/data.ts";
+import { CODEX_DRIVER_KIND } from "@signalbox/provider-codex/defaults";
 
 const launch = vi.hoisted(() =>
   vi.fn<(input: CodexHarnessProcessOptions) => Promise<CodexHarnessProcess>>(),
@@ -217,6 +219,50 @@ describe("Codex native binding", () => {
       ).toBe(true);
       yield* runtime.ensureThread(session);
       expect(f.peer.sent).toEqual(["thread/start"]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("retires only an inert checkpoint MCP setup before installing fresh turn access", () =>
+    Effect.gen(function* () {
+      const f = yield* bindingFixture();
+      launch.mockResolvedValue(f.peer.process);
+      const data = yield* dataForDriver(CODEX_DRIVER_KIND);
+      const runtime = yield* f.binding.factory.open(
+        {
+          ...f.harness,
+          checkpoint: {
+            release: f.harness.release,
+            providerSession: {
+              ...data.providerSession,
+              id: session.providerSessionId,
+              providerInstanceId: session.modelSelection.instanceId,
+            },
+            snapshot: {
+              providerThread: coldThread,
+              providerTurns: [],
+              messages: [],
+              runtimeRequests: [],
+            },
+            revision: { commit: "inert-checkpoint" },
+          },
+        },
+        reporter,
+      );
+      yield* f.binding.configureMcp({ epoch: 1, servers }, new AbortController().signal, resume);
+      yield* runtime.resumeThread(resume.input);
+      const retire = f.binding.retireCheckpointMcp;
+      if (retire === undefined) throw new Error("Checkpoint MCP retirement is missing.");
+      expect(Exit.isFailure(yield* Effect.exit(retire(2)))).toBe(true);
+      yield* retire(1);
+      expect(Exit.isFailure(yield* Effect.exit(retire(1)))).toBe(true);
+      const next = { executor: { url: "https://harness-mcp.invalid/owner/1/2/0" } };
+      yield* f.binding.configureMcp(
+        { epoch: 2, servers: next },
+        new AbortController().signal,
+        resume,
+      );
+      expect(f.peer.sent).toEqual(["thread/resume", "thread/resume"]);
+      expect(decodeMap(f.peer.requests[1]?.params).config.mcp_servers).toEqual(next);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

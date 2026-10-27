@@ -1,4 +1,7 @@
-export { createHarnessRequestTurn } from "./requestTurn/service.ts";
+export {
+  createHarnessRequestTurn,
+  createHarnessRequestTurnRuntime,
+} from "./requestTurn/service.ts";
 export type {
   HarnessRequestTurnGate,
   HarnessRequestTurnInput,

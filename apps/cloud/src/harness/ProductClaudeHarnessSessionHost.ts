@@ -6,10 +6,18 @@ import {
   type ClaudeNativeHostBindingOptions,
 } from "./ClaudeNativeHostBinding.ts";
 import { HarnessError } from "./Harness.ts";
+import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
 import type { HarnessHostOptions } from "./HarnessSessionHost.ts";
+import type { HarnessProcessResumePreparedRelease } from "./processResume/contracts.ts";
+import type { HarnessReleaseArtifact } from "../harnessReleases/HarnessReleaseLedger.ts";
+import {
+  attachProductLoadedPreparedRelease,
+  productLoadedPreparedReleaseObserver,
+} from "./ProductHarnessProcessRelease.ts";
 import {
   createProductHost,
   type ProductHostOptions,
+  type ProductHarnessSessionHost,
   type ProductNativeBinding,
 } from "./host/product.ts";
 
@@ -41,14 +49,25 @@ type ProductClaudeNativeOptions<G> = Omit<
 export type ProductClaudeHarnessHostOptions<G> = ProductHostOptions<
   G,
   ProductClaudeNativeOptions<G>
-> & { readonly continuations: HarnessContinuationPublisher };
+> & {
+  readonly continuations: HarnessContinuationPublisher;
+  /** Supplied by the process-resume caller; product host selection is never inferred. */
+  readonly processResumeArtifact?: HarnessReleaseArtifact;
+};
 
-function claudeBinding<G>(): ProductNativeBinding<G, ProductClaudeNativeOptions<G>> {
+export interface ProductClaudeHarnessSessionHost<G> extends ProductHarnessSessionHost<G> {
+  loadedPreparedRelease(): HarnessProcessResumePreparedRelease;
+}
+
+function claudeBinding<G>(
+  onLoaded: (loaded: LoadedHarnessRelease) => void,
+): ProductNativeBinding<G, ProductClaudeNativeOptions<G>> {
   return {
     harness: "claude-code",
     home: (native) => native.process.identity.homedir,
     build: (native, input, ports) =>
       Effect.gen(function* () {
+        onLoaded(input.loaded);
         const adapter = yield* native.adapter(input);
         if (input.continuationRequests === undefined)
           return yield* new HarnessError({
@@ -77,20 +96,28 @@ function claudeBinding<G>(): ProductNativeBinding<G, ProductClaudeNativeOptions<
 export const createProductClaudeHarnessSessionHost = <G>(
   options: ProductClaudeHarnessHostOptions<G>,
 ) =>
-  Effect.suspend(() =>
-    options.native.harness !== undefined && options.native.harness !== "claude-code"
-      ? Effect.fail(
-          new HarnessError({
-            operation: "open",
-            message: "Claude product host entry/harness mismatch: expected claude-code.",
-          }),
-        )
-      : options.continuations === undefined
-        ? Effect.fail(
-            new HarnessError({
-              operation: "open",
-              message: "Claude product host requires a continuation publisher.",
-            }),
-          )
-        : createProductHost(options, claudeBinding<G>()),
-  );
+  Effect.suspend(() => {
+    if (options.native.harness !== undefined && options.native.harness !== "claude-code")
+      return Effect.fail(
+        new HarnessError({
+          operation: "open",
+          message: "Claude product host entry/harness mismatch: expected claude-code.",
+        }),
+      );
+    if (options.continuations === undefined)
+      return Effect.fail(
+        new HarnessError({
+          operation: "open",
+          message: "Claude product host requires a continuation publisher.",
+        }),
+      );
+
+    const { processResumeArtifact, ...hostOptions } = options;
+    const releaseObserver = productLoadedPreparedReleaseObserver(
+      "claude-code",
+      processResumeArtifact,
+    );
+    return createProductHost(hostOptions, claudeBinding<G>(releaseObserver.capture)).pipe(
+      Effect.map(attachProductLoadedPreparedRelease<G>(releaseObserver)),
+    );
+  });

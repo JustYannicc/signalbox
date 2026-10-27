@@ -4,9 +4,54 @@ import type {
 } from "./contracts.ts";
 import { snapshotHarnessProcessResumeRunStoreBinding } from "./runStoreBinding.ts";
 import { samePreparedRelease, snapshotInput } from "./identity.ts";
+import {
+  snapshotHarnessProcessModules,
+  sameHarnessProcessModules,
+} from "../processPlacement/moduleCode.ts";
 
 const text = (value: unknown, maximum = 256): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= maximum;
+
+function snapshotProductBootstrap(
+  value: unknown,
+  target: HarnessProcessResumeOperationInput["transition"]["targetPreparedRelease"],
+): HarnessProcessResumeOperationInput["productBootstrap"] | undefined {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return undefined;
+
+    const descriptor = value as Record<string, unknown>;
+    const keys = Reflect.ownKeys(descriptor);
+    if (
+      keys.length !== 3 ||
+      keys.some(
+        (key) =>
+          typeof key !== "string" ||
+          (key !== "provider" && key !== "preparedReleaseId" && key !== "restoreMode"),
+      )
+    )
+      return undefined;
+
+    const provider = descriptor.provider;
+    const preparedReleaseId = descriptor.preparedReleaseId;
+    const restoreMode = descriptor.restoreMode;
+    if (
+      (provider !== "claude-code" && provider !== "codex") ||
+      typeof preparedReleaseId !== "string" ||
+      preparedReleaseId.trim().length === 0 ||
+      (restoreMode !== "same-variant-serialized-checkpoint" &&
+        restoreMode !== "cross-variant-fresh-boot") ||
+      provider !== target.artifact.provider ||
+      preparedReleaseId !== target.artifact.releaseId
+    )
+      return undefined;
+
+    return Object.freeze({ provider, preparedReleaseId, restoreMode });
+  } catch {
+    return undefined;
+  }
+}
 
 function snapshotFacetCode(value: unknown): HarnessProcessResumeFacetCode | undefined {
   try {
@@ -25,30 +70,14 @@ function snapshotFacetCode(value: unknown): HarnessProcessResumeFacetCode | unde
     )
       return undefined;
 
-    const modules: Record<string, string | { readonly js: string }> = {};
-    for (const [name, supplied] of Object.entries(facet.modules)) {
-      if (!text(name)) return undefined;
-      if (typeof supplied === "string") {
-        modules[name] = supplied;
-        continue;
-      }
-      if (
-        typeof supplied !== "object" ||
-        supplied === null ||
-        Array.isArray(supplied) ||
-        Object.keys(supplied).length !== 1 ||
-        typeof (supplied as { readonly js?: unknown }).js !== "string"
-      )
-        return undefined;
-      modules[name] = Object.freeze({ js: (supplied as { readonly js: string }).js });
-    }
-    if (!Object.hasOwn(modules, facet.mainModule)) return undefined;
+    const modules = snapshotHarnessProcessModules(facet.modules, facet.mainModule);
+    if (modules === undefined) return undefined;
     return Object.freeze({
       processId: facet.processId,
       codeId: facet.codeId,
       residentBytes: facet.residentBytes as number,
       mainModule: facet.mainModule,
-      modules: Object.freeze(modules),
+      modules,
       entrypoint: facet.entrypoint,
     });
   } catch {
@@ -64,15 +93,17 @@ export function snapshotHarnessProcessResumeOperation(
     if (typeof value !== "object" || value === null) return undefined;
     const supplied = value as Record<string, unknown>;
     if (
-      Object.keys(supplied).some(
+      Reflect.ownKeys(supplied).some(
         (key) =>
-          key !== "runId" &&
-          key !== "previousProcessId" &&
-          key !== "previousOperationId" &&
-          key !== "previousStepId" &&
-          key !== "runStore" &&
-          key !== "transition" &&
-          key !== "facet",
+          typeof key !== "string" ||
+          (key !== "runId" &&
+            key !== "previousProcessId" &&
+            key !== "previousOperationId" &&
+            key !== "previousStepId" &&
+            key !== "runStore" &&
+            key !== "transition" &&
+            key !== "facet" &&
+            key !== "productBootstrap"),
       ) ||
       !text(supplied.runId) ||
       !text(supplied.previousProcessId) ||
@@ -87,6 +118,11 @@ export function snapshotHarnessProcessResumeOperation(
     );
     const facet = snapshotFacetCode(supplied.facet);
     if (runStore === undefined || transition === undefined || facet === undefined) return undefined;
+    const productBootstrap = snapshotProductBootstrap(
+      supplied.productBootstrap,
+      transition.targetPreparedRelease,
+    );
+    if (productBootstrap === undefined) return undefined;
     if (
       runStore.runId !== supplied.runId ||
       runStore.processId !== supplied.previousProcessId ||
@@ -108,6 +144,7 @@ export function snapshotHarnessProcessResumeOperation(
       runStore,
       transition,
       facet,
+      productBootstrap,
     });
   } catch {
     return undefined;
@@ -135,24 +172,6 @@ export function sameHarnessProcessResumeOperation(
     a: HarnessProcessResumeOperationInput["runStore"]["request"]["input"],
     b: HarnessProcessResumeOperationInput["runStore"]["request"]["input"],
   ) => a.id === b.id && a.sha256 === b.sha256 && a.bytes === b.bytes;
-  const sameModuleRecords = (
-    a: HarnessProcessResumeFacetCode["modules"],
-    b: HarnessProcessResumeFacetCode["modules"],
-  ) => {
-    const names = Object.keys(a);
-    return (
-      names.length === Object.keys(b).length &&
-      names.every((name) => {
-        if (!Object.hasOwn(b, name)) return false;
-        const leftModule = a[name];
-        const rightModule = b[name];
-        if (leftModule === undefined || rightModule === undefined) return false;
-        if (typeof leftModule === "string" || typeof rightModule === "string")
-          return leftModule === rightModule;
-        return leftModule.js === rightModule.js;
-      })
-    );
-  };
   return (
     left.runId === right.runId &&
     left.previousProcessId === right.previousProcessId &&
@@ -187,11 +206,14 @@ export function sameHarnessProcessResumeOperation(
       left.transition.targetPreparedRelease,
       right.transition.targetPreparedRelease,
     ) &&
+    left.productBootstrap.provider === right.productBootstrap.provider &&
+    left.productBootstrap.preparedReleaseId === right.productBootstrap.preparedReleaseId &&
+    left.productBootstrap.restoreMode === right.productBootstrap.restoreMode &&
     left.facet.processId === right.facet.processId &&
     left.facet.codeId === right.facet.codeId &&
     left.facet.residentBytes === right.facet.residentBytes &&
     left.facet.mainModule === right.facet.mainModule &&
     left.facet.entrypoint === right.facet.entrypoint &&
-    sameModuleRecords(left.facet.modules, right.facet.modules)
+    sameHarnessProcessModules(left.facet.modules, right.facet.modules)
   );
 }
