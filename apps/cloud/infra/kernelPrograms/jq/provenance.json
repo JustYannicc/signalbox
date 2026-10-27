@@ -1,0 +1,16 @@
+{
+  "package": "@agentos-software/jq",
+  "version": "0.4.0",
+  "registryRoot": "https://releases.rivet.dev/agent-os/",
+  "registryManifestPath": "0.4.0/software/manifest.json",
+  "packagePath": "packages/jq/0b4a0f10b05e696fcb3bbab5cff7dfd06f9f4882a725dc74275b892796e6d13e.aospkg",
+  "packageBytes": 716972,
+  "packageSha256": "0b4a0f10b05e696fcb3bbab5cff7dfd06f9f4882a725dc74275b892796e6d13e",
+  "packageEntry": "bin/jq",
+  "artifact": {
+    "file": "jq.wasm",
+    "bytes": 714592,
+    "sha256": "ea7268d6ac5618536f6bfbc599a1cc2749b0b19451c83cac0be9ca424ae897b3"
+  },
+  "prepareScript": "infra/kernelPrograms/jq/prepare.mjs"
+}

@@ -11,7 +11,11 @@ import { encodeHarnessCProductNativeCheckpoint } from "../../HarnessCProductChec
 import { createMemoryFilePersistencePorts } from "../../../kernel/MemoryFilePersistencePorts.ts";
 import { machineInventoryFixture } from "../../../computer/machineInventoryTesting.ts";
 import { type HarnessCheckpoint } from "../../Harness.ts";
-import type { HostOpenInput, TurnAccess } from "../../HarnessSessionHost.ts";
+import type {
+  HostOpenInput,
+  TurnAccess,
+  HarnessMcpTurnGrantSource,
+} from "../../HarnessSessionHost.ts";
 import type { HarnessFilesStoreResult } from "../../HarnessFilesStore.ts";
 import type { HarnessFacetRequestContext } from "../../HarnessRequestFacet.ts";
 import { HarnessRequestFacetError } from "../../HarnessRequestFacet.ts";
@@ -22,6 +26,7 @@ import {
   HARNESS_C_PRODUCT_CAPABILITY_KEYS,
   narrowHarnessCProductCapabilities,
 } from "../../HarnessCProductCapabilities.ts";
+import type { HarnessCProductTurnGrantSource } from "../../HarnessCProductCapabilities.ts";
 import type {
   HarnessCProductFacetEnvironment,
   HarnessCProductFacetFactory,
@@ -40,6 +45,7 @@ export const prepareProductFixture = (
   faults: {
     readonly failSeed?: "assets" | "programs";
     readonly openNativeSessionId?: string;
+    readonly turnGrantSource?: HarnessCProductTurnGrantSource<Grant>;
     readonly onDispose?: () => void;
   } = {},
 ) =>
@@ -123,13 +129,14 @@ export const prepareProductFixture = (
     const initialAccesses: Grant[] = [];
     const turnAccesses: Grant[] = [];
     const observedTurnGrants: TurnAccess<Grant>[] = [];
+    const observedTurnGrantSources: Array<HarnessMcpTurnGrantSource<Grant> | undefined> = [];
     const seeded: string[] = [];
     const openInputs: HostOpenInput<Grant>[] = [];
     const resolvedRequests: string[] = [];
     let checkpointWrites = 0;
     let disposed = 0;
     const rpc = (value: object) => value as unknown as Fetcher;
-    const capabilityMap = {
+    const capabilityMap: Record<string, Fetcher> = {
       [HARNESS_C_PRODUCT_CAPABILITY_KEYS.release]: rpc({
         getArtifact: async () => source.artifact,
         loaderConfig: async () => ({
@@ -188,6 +195,10 @@ export const prepareProductFixture = (
         }),
       }),
     };
+    if (faults.turnGrantSource !== undefined)
+      capabilityMap[HARNESS_C_PRODUCT_CAPABILITY_KEYS.turnGrantSource] = rpc(
+        faults.turnGrantSource,
+      );
     const capabilities = narrowHarnessCProductCapabilities<Grant>(capabilityMap);
     const env = {
       HARNESS_C_PRODUCT_BOOTSTRAP: {
@@ -247,8 +258,9 @@ export const prepareProductFixture = (
           bootAttemptId: "product-bootstrap",
         }),
       buildTurnBindings: () => Effect.succeed(turnBindings),
-      createHost: (options) =>
-        createRecordingHost({
+      createHost: (options) => {
+        observedTurnGrantSources.push(options.turnGrantSource);
+        return createRecordingHost({
           options,
           source,
           checkpoint,
@@ -261,7 +273,8 @@ export const prepareProductFixture = (
             disposed++;
             faults.onDispose?.();
           },
-        }),
+        });
+      },
     };
     const filesStore = {
       execute: async (command: unknown) => {
@@ -320,6 +333,7 @@ export const prepareProductFixture = (
       initialAccesses,
       turnAccesses,
       observedTurnGrants,
+      observedTurnGrantSources,
       seeded,
       resolvedRequests,
       preparationSignal,

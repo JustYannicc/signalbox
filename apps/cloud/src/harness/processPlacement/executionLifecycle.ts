@@ -54,7 +54,7 @@ export interface HarnessProcessExecutionProcessResult {
   readonly processId: string;
   readonly requestContextId: string;
   readonly identity: HarnessProcessPlacementIdentity | null;
-  readonly status: "settled" | "unplaceable" | "recoverable" | "recovered";
+  readonly status: "idle" | "settled" | "unplaceable" | "recoverable" | "recovered";
   readonly settlement?: HarnessProcessInvocationSettlement;
   readonly recoveryId?: string;
   readonly error?: {
@@ -587,7 +587,12 @@ export function createFacet(
       throw new TypeError("Prepared process facet assets require a selected product release.");
     assertHarnessProcessModuleAssets(modules, process.targetPreparedRelease);
   }
-  const facetEnvironment = createHarnessProcessFacetEnvironment(process, environment, identity);
+  const facetEnvironment = createHarnessProcessFacetEnvironment(
+    process,
+    environment,
+    identity,
+    context,
+  );
   const worker = environment.LOADER.get(identity.loaderId, async () => {
     const readArtifactChunk = hasPreparedAssets
       ? (artifactRef: string, path: string, offset: number, length: number): Promise<Uint8Array> =>

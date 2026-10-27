@@ -93,6 +93,7 @@ export class ProofPlacementStore extends HarnessProcessPlacementStoreObject {
     return {
       writer: true,
       leases: state?.slots.filter((slot) => slot.holder !== undefined).length ?? 0,
+      permits: state?.slots.filter((slot) => slot.holder?.permitted === true).length ?? 0,
       records: records.map((record) => ({
         state: record.state,
         publicationState: record.publicationState,

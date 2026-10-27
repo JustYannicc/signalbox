@@ -3,8 +3,12 @@ import {
   type ChildProgramCatalogOptions,
 } from "../../src/computer/ChildProgramCatalog.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../src/kernel/KernelBashProgram.ts";
-import { KERNEL_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusyboxProgram.ts";
+import {
+  KERNEL_BUSYBOX_ARTIFACT,
+  PRODUCT_COMPUTER_BUSYBOX_ARTIFACT,
+} from "../../src/kernel/KernelBusyboxProgram.ts";
 import { KERNEL_GIT_ARTIFACT } from "../../src/kernel/KernelGitProgram.ts";
+import { KERNEL_JQ_ARTIFACT } from "../../src/kernel/KernelJqProgram.ts";
 import { KERNEL_GNU_SED_ARTIFACT } from "../../src/kernel/KernelGnuPrograms.ts";
 import { KERNEL_RIPGREP_ARTIFACT } from "../../src/kernel/KernelRipgrepProgram.ts";
 import {
@@ -49,9 +53,11 @@ export function createSeededCommandProgramCodes(
   requireProgramCode(programs.bash, "bash");
   requireProgramCode(programs.busyboxCat, "busybox cat");
   requireProgramCode(programs.busyboxApplets, "busybox applets");
+  requireProgramCode(programs.productBusyboxApplets, "ProductComputer BusyBox applets");
   requireProgramCode(programs.ripgrep, "ripgrep");
   requireProgramCode(programs.git, "git");
   requireProgramCode(programs.sed, "GNU sed");
+  requireProgramCode(programs.jq, "jq");
   const coreutilsPrograms = {} as Record<ChildCoreutilsCommand, ChildWorkerCode>;
   for (const command of CHILD_COREUTILS_COMMANDS) {
     const code = programs.coreutils?.[command];
@@ -67,10 +73,15 @@ export function createSeededCommandProgramCodes(
     bash: attachProgramReference(programs.bash, KERNEL_BASH_ARTIFACT.sha256),
     busyboxCat: attachProgramReference(programs.busyboxCat, KERNEL_BUSYBOX_ARTIFACT.sha256),
     busyboxApplets: attachProgramReference(programs.busyboxApplets, KERNEL_BUSYBOX_ARTIFACT.sha256),
+    productBusyboxApplets: attachProgramReference(
+      programs.productBusyboxApplets,
+      PRODUCT_COMPUTER_BUSYBOX_ARTIFACT.sha256,
+    ),
     ripgrep: attachProgramReference(programs.ripgrep, KERNEL_RIPGREP_ARTIFACT.sha256),
     coreutils,
     git: attachProgramReference(programs.git, KERNEL_GIT_ARTIFACT.sha256),
     sed: attachProgramReference(programs.sed, KERNEL_GNU_SED_ARTIFACT.sha256),
+    jq: attachProgramReference(programs.jq, KERNEL_JQ_ARTIFACT.sha256),
   });
 }
 

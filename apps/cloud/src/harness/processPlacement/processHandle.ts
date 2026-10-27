@@ -79,6 +79,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
   #terminalFailure: HarnessProcessFailureRecord | undefined;
   #activationAuthorizationFailed = false;
   #awaitingFirstRequest = false;
+  #requestRetained = false;
   #publicationState: HarnessProcessPlacementRecoveryRecord["publicationState"];
   #publicationReceipt: HarnessProcessPlacementRecoveryRecord["publicationReceipt"];
   #lastCause: unknown;
@@ -385,7 +386,10 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     return activation;
   }
 
-  async invoke(input: Input): Promise<HarnessProcessInvocationSettlement> {
+  async invoke(
+    input: Input,
+    options?: { readonly retainProcess: true },
+  ): Promise<HarnessProcessInvocationSettlement> {
     this.#requireState("active");
     if (this.#permit === undefined || this.#released || this.#cleanupStarted)
       throw new HarnessProcessPlacementError(
@@ -452,6 +456,7 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       joined: joinedNone,
     };
     this.#attempts.add(attempt);
+    this.#requestRetained = false;
     this.#invocationAttempt++;
     // Persist before the RPC so a restart never replays an invocation whose reply may be lost.
     this.#invocationMayHaveStarted = true;
@@ -509,7 +514,15 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
     attempt.joined = settlement.joined;
     this.#joined = settlement.joined;
     this.#invocationReply = "received";
-    if (!attempt.stopAcknowledged || !allJoined(attempt.joined)) {
+    const retained =
+      options?.retainProcess === true &&
+      settlement.processRetained === true &&
+      !attempt.stopAcknowledged &&
+      attempt.joined.invocationRpc &&
+      !attempt.joined.fetch &&
+      !attempt.joined.ports;
+    if (retained) this.#attempts.delete(attempt);
+    if (!retained && (!attempt.stopAcknowledged || !allJoined(attempt.joined))) {
       this.#state = "cleanup-required";
       this.#lastFailure = failureRecord(
         "invocation",
@@ -535,7 +548,57 @@ export class HarnessProcessHandleImpl<Input> implements HarnessProcessHandle<Inp
       );
     }
     this.#pruneSettledAttempts();
+    this.#requestRetained = retained;
     return settlement;
+  }
+
+  async idle(): Promise<void> {
+    this.#requireState("active");
+    if (
+      this.#attempts.size > 0 ||
+      this.#cleanupStarted ||
+      this.#invocationReply !== "received" ||
+      !this.#requestRetained
+    )
+      throw new Error("An unsettled invocation cannot become idle.");
+    await this.#parkForPublication();
+    this.#state = "parked";
+    await this.#persist("parked");
+  }
+
+  async readmit(publication: HarnessProcessPublication): Promise<void> {
+    this.#requireState("parked");
+    const confirmed = this.#confirmPublication(publication);
+    const release = this.#parkRelease;
+    const outcome = this.#parkOutcome;
+    if (
+      confirmed === undefined ||
+      release === undefined ||
+      outcome === undefined ||
+      this.#cleanupStarted
+    )
+      throw new Error("The idle process has no current publication or admission gate.");
+    this.#parkRelease = undefined;
+    release(publication);
+    const admitted = await outcome;
+    this.#parkOutcome = undefined;
+    if (!admitted.ok) {
+      this.#state = "cleanup-required";
+      await this.#persist("cleanup-required");
+      throw admitted.error;
+    }
+    this.#permit = admitted.value.permit;
+    try {
+      await this.#facet.activate(confirmed);
+      this.#state = "active";
+      await this.#persist("active");
+    } catch (cause) {
+      this.#state = "cleanup-required";
+      this.#lastCause = cause;
+      this.#lastFailure = failureRecord("activation", "RPC_FAILED");
+      await this.#persist("cleanup-required");
+      throw cause;
+    }
   }
 
   async park<Value>(

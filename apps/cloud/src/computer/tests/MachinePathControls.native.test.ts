@@ -11,21 +11,53 @@ vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 describe.skipIf(bashModule === undefined)("filesystem discovery controls", () => {
   it.each([
-    { command: "jq", marker: undefined, path: undefined, argv: ["jq"], stdout: "" },
+    {
+      command: "jq",
+      marker: undefined,
+      path: "/usr/bin/jq",
+      argv: ["jq"],
+      stdout: "",
+      decision: "isolate",
+    },
     {
       command: "/usr/bin/jq",
       marker: undefined,
       path: "/usr/bin/jq",
       argv: ["/usr/bin/jq"],
       stdout: "",
+      decision: "isolate",
     },
-    { command: "sort", marker: "/bin/sort", path: "/bin/sort", argv: ["sort"], stdout: "" },
+    {
+      command: "/bin/jq",
+      marker: "/bin/jq",
+      path: "/bin/jq",
+      argv: ["/bin/jq"],
+      stdout: "",
+      decision: "machine",
+    },
+    {
+      command: "sort",
+      marker: "/bin/sort",
+      path: "/bin/sort",
+      argv: ["sort"],
+      stdout: "",
+      decision: "isolate",
+    },
     {
       command: "hash sort; hash -t sort; sort",
       marker: "/bin/sort",
       path: "/bin/sort",
       argv: ["sort"],
       stdout: "/bin/sort\n",
+      decision: "isolate",
+    },
+    {
+      command: "signalbox_control_missing",
+      marker: undefined,
+      path: undefined,
+      argv: [],
+      stdout: "",
+      decision: undefined,
     },
   ])("separates discovery from admission for $command with $marker", async (test) => {
     const calls: Array<{ path: string; argv: readonly string[]; decision: string }> = [];
@@ -56,7 +88,9 @@ describe.skipIf(bashModule === undefined)("filesystem discovery controls", () =>
       expect(result.exitCode).toBe(test.path === undefined ? 127 : 23);
       expect(fixture.stdout()).toBe(test.stdout);
       expect(calls).toEqual(
-        test.path === undefined ? [] : [{ path: test.path, argv: test.argv, decision: "machine" }],
+        test.path === undefined
+          ? []
+          : [{ path: test.path, argv: test.argv, decision: test.decision }],
       );
     } finally {
       await fixture.close();

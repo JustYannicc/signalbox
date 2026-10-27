@@ -4,27 +4,21 @@ import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
 import type { KernelBusyboxPort } from "../kernel/KernelBusyboxPort.ts";
 import type { KernelSyscallPort } from "../kernel/KernelSyscallPort.ts";
+import { createChildBusyboxProgram } from "./ChildBusyboxProgram.ts";
 import { createChildWorkerProgram } from "./ChildWorkerProgram.ts";
 import { createWorkerLoaderDispatch, type ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 import { createWorkerBashHost } from "./WorkerBashHost.ts";
-import { createChildBusyboxProgram } from "./ChildBusyboxProgram.ts";
 import { createChildCoreutilsProgram } from "./ChildCoreutilsProgram.ts";
 import { createWorkerSyscalls } from "./WorkerSyscalls.ts";
 import type { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
 import { KERNEL_BASH_ARTIFACT, type KernelBashCredentials } from "../kernel/KernelBashProgram.ts";
-import { KERNEL_BUSYBOX_VERSION } from "../kernel/KernelBusyboxPrograms.ts";
 import { KERNEL_GNU_SED_ARTIFACT } from "../kernel/KernelGnuPrograms.ts";
 import { KERNEL_RIPGREP_PROGRAM_MANIFEST } from "../kernel/KernelRipgrepProgram.ts";
-import type {
-  ChildWorkerCode,
-  ChildWorkerProgram,
-  ChildWorkerProgramOptions,
-} from "./ChildWorkerProgram.ts";
+import type { ChildWorkerCode, ChildWorkerProgram } from "./ChildWorkerProgram.ts";
 import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
 import type { ChildWorkerReservation } from "./ChildWorkerCapacity.ts";
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
 import {
-  CHILD_BUSYBOX_APPLETS,
   CHILD_COREUTILS_COMMANDS,
   CHILD_PROGRAM_PATHS,
   type ChildCoreutilsCommand,
@@ -34,15 +28,20 @@ import { KERNEL_GIT_PROGRAM_MANIFEST } from "../kernel/KernelGitProgram.ts";
 import { createWorkerGitHost } from "./WorkerGitHost.ts";
 import type { KernelCoreutilsPort } from "../kernel/KernelCoreutilsPort.ts";
 import type { KernelGitPort } from "../kernel/KernelGitPort.ts";
+import { createChildBusyboxBindings } from "./catalog/BusyboxPrograms.ts";
+import type { ChildProgramFactory } from "./catalog/ChildProgramFactory.ts";
+import { createChildJqBinding } from "./catalog/JqProgram.ts";
 
 export interface ChildProgramCodes {
   readonly bash: ChildWorkerCode;
   readonly busyboxCat: ChildWorkerCode;
   readonly busyboxApplets?: ChildWorkerCode;
+  readonly productBusyboxApplets?: ChildWorkerCode;
   readonly ripgrep: ChildWorkerCode;
   readonly coreutils?: Partial<Readonly<Record<ChildCoreutilsCommand, ChildWorkerCode>>>;
   readonly git?: ChildWorkerCode;
   readonly sed?: ChildWorkerCode;
+  readonly jq?: ChildWorkerCode;
 }
 
 export interface ChildProgramCatalogOptions {
@@ -63,11 +62,7 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
   const capacity = options.capacity;
   const lifetimes = options.lifetimes ?? new ChildWorkerLifetimes();
   const reserve = options.reservationFor;
-  const child = (
-    create: (
-      admission: Pick<ChildWorkerProgramOptions<object>, "reservationFor">,
-    ) => ChildWorkerProgram,
-  ): ChildWorkerProgram => {
+  const child: ChildProgramFactory = (create) => {
     let program: ChildWorkerProgram;
     program = create(
       reserve === undefined
@@ -112,31 +107,17 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     ["/bin/bash", { manifest: bashManifest, implementation: bash }],
     ["/bin/sh", { manifest: shManifest, implementation: bash }],
   ]);
-  const catDispatch = createWorkerLoaderDispatch<KernelBusyboxPort>(options.loader);
-  const applets = options.programs.busyboxApplets === undefined ? ["cat"] : CHILD_BUSYBOX_APPLETS;
-  for (const applet of applets) {
-    const manifest = Object.freeze({
-      name: `@nimbus/busybox/${applet}`,
-      version: KERNEL_BUSYBOX_VERSION,
-      abiVersion: ABI_VERSION,
-      requiredCapabilities: Object.freeze([]),
-      entrypoint: `busybox-${KERNEL_BUSYBOX_VERSION}:${applet}`,
-    });
-    register(options.registry, manifest);
-    bindings.set(`/bin/${applet}`, {
-      manifest,
-      implementation: child((admission) =>
-        createChildBusyboxProgram({
-          ...admission,
-          executable: `/bin/${applet}`,
-          code: options.programs.busyboxApplets ?? options.programs.busyboxCat,
-          capacity,
-          lifetimes,
-          dispatch: catDispatch,
-        }),
-      ),
-    });
+  for (const [path, binding] of createChildBusyboxBindings({
+    registry: options.registry,
+    loader: options.loader,
+    capacity,
+    lifetimes,
+    child,
+    programs: options.programs,
+  })) {
+    bindings.set(path, binding);
   }
+  const catDispatch = createWorkerLoaderDispatch<KernelBusyboxPort>(options.loader);
 
   const sedCode = options.programs.sed;
   if (sedCode !== undefined) {
@@ -220,6 +201,21 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
         }),
       ),
     });
+  }
+
+  const jqCode = options.programs.jq;
+  if (jqCode !== undefined) {
+    bindings.set(
+      "/usr/bin/jq",
+      createChildJqBinding({
+        registry: options.registry,
+        loader: options.loader,
+        capacity,
+        lifetimes,
+        child,
+        code: jqCode,
+      }),
+    );
   }
 
   const gitCode = options.programs.git;

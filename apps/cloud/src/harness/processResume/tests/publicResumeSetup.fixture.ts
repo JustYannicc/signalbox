@@ -220,6 +220,7 @@ export async function setup(
     | "commitProcessCheckpoint"
     | "processResumeStatus"
     | "cancelResumeProcess"
+    | "stopIdleProcess"
     | "executionIncarnationNonce"
     | "evidence"
     | "armTransactionFailure"

@@ -256,6 +256,7 @@ export function createCodexLocaleProductComputer(
       bash: programsByName("bash"),
       busyboxCat: programsByName("busybox-cat"),
       busyboxApplets: programsByName("busybox-applets"),
+      productBusyboxApplets: programsByName("busybox-product-applets"),
       ripgrep: programsByName("ripgrep"),
       coreutils: {
         echo: programsByName("echo"),
@@ -268,9 +269,12 @@ export function createCodexLocaleProductComputer(
         pwd: programsByName("pwd"),
         head: programsByName("head"),
         tail: programsByName("tail"),
+        wc: programsByName("wc"),
+        uniq: programsByName("uniq"),
       },
       git: programsByName("git"),
       sed: programsByName("sed"),
+      jq: programsByName("jq"),
     },
     machineInventory: options.machineInventory ?? machineInventoryFixture(),
     machine: () => ({

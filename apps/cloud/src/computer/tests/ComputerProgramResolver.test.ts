@@ -111,6 +111,29 @@ describe("ComputerProgramResolver", () => {
     });
   });
 
+  it("maps an exact jq PATH alias to its separate /usr/bin catalog binding", async () => {
+    const jqBinding = {} as KernelProgramBinding;
+    const fixture = resolverFor({
+      "/workspace/bin/jq": { type: "file", executable: true, lower: true },
+      "/usr/bin/jq": { type: "file", executable: true, lower: true },
+    });
+    const request = command("jq", {
+      path: "/workspace/bin:/usr/bin",
+      filesystem: fixture.filesystem,
+    });
+
+    const result = await fixture.resolver.resolve(
+      withCatalog(request, new Map([[CHILD_PROGRAM_PATHS.jq, jqBinding]])),
+    );
+
+    expect(fixture.requested).toEqual([["/workspace/bin/jq"]]);
+    expect(result.command.executable).toBe("/workspace/bin/jq");
+    expect(result.catalog).toEqual({
+      command: { ...request.command, executable: CHILD_PROGRAM_PATHS.jq },
+      binding: jqBinding,
+    });
+  });
+
   it("uses an explicit machine-only path without consulting PATH", async () => {
     const fixture = resolverFor({
       "/home/node/.local/bin/review_late": { type: "file", executable: true, lower: true },

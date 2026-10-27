@@ -52,6 +52,7 @@ export async function authorizePublication(input: {
   readonly publication: Published;
   readonly request: HarnessProcessPublicationRequest;
   readonly lifecycle: "published" | "accepting";
+  readonly currentCheckpoint?: { readonly checkpointId: string; readonly manifestSha256: string };
 }) {
   const { durable, runId, publication, request } = input;
   const receipt = publication.receipt;
@@ -86,7 +87,7 @@ export async function authorizePublication(input: {
     current.snapshot.facetNonce !== receipt.preparedFacetNonce ||
     current.snapshot.lastPublicationOperationId !== request.operationId ||
     !sameReceipt(current.snapshot.lastPublication, receipt) ||
-    !sameReference(current.snapshot.checkpoint, receipt.checkpoint) ||
+    !sameReference(current.snapshot.checkpoint, input.currentCheckpoint ?? receipt.checkpoint) ||
     !samePublisher(current.currentPublisher, publication.supervisor.currentPublisher)
   )
     throw new Error("The current process authority changed after publication.");
