@@ -7,10 +7,9 @@ import { prepareChildPrograms } from "../../../infra/childPrograms/prepare.ts";
 import { machineInventoryFixture } from "../machineInventoryTesting.ts";
 import { productComputerSixCoreutilsWorkerSource } from "./ProductComputerSixCoreutilsWorkerSource.ts";
 
-export async function startProductComputerSixCoreutilsFixture() {
+export async function startProductComputerSixCoreutilsFixture(programDir: string) {
   const worktreeRoot = NodePath.resolve(import.meta.dirname, "../../../../../");
   const cloudRoot = NodePath.join(worktreeRoot, "apps/cloud");
-  const programDir = NodePath.join(worktreeRoot, ".t3/issue-1255-coreutils-six/programs");
   const workerDir = NodePath.join(worktreeRoot, ".t3/issue-1255-coreutils-six/test-worker");
   const prepared = await prepareChildPrograms({ programDir, cloudRoot });
   const artifacts = new Map(
