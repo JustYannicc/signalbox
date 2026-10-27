@@ -97,7 +97,6 @@ export const createProductClaudeHarnessSessionHost = <G>(
   options: ProductClaudeHarnessHostOptions<G>,
 ) =>
   Effect.suspend(() => {
-    const { processResumeArtifact, ...hostOptions } = options;
     if (options.native.harness !== undefined && options.native.harness !== "claude-code")
       return Effect.fail(
         new HarnessError({
@@ -113,6 +112,7 @@ export const createProductClaudeHarnessSessionHost = <G>(
         }),
       );
 
+    const { processResumeArtifact, ...hostOptions } = options;
     const releaseObserver = productLoadedPreparedReleaseObserver(
       "claude-code",
       processResumeArtifact,

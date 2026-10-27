@@ -77,7 +77,6 @@ export const createProductCodexHarnessSessionHost = <G>(
   options: ProductCodexHarnessHostOptions<G>,
 ) =>
   Effect.suspend(() => {
-    const { processResumeArtifact, ...hostOptions } = options;
     if (options.native.harness !== "codex")
       return Effect.fail(
         new HarnessError({
@@ -86,6 +85,7 @@ export const createProductCodexHarnessSessionHost = <G>(
         }),
       );
 
+    const { processResumeArtifact, ...hostOptions } = options;
     const releaseObserver = productLoadedPreparedReleaseObserver("codex", processResumeArtifact);
     return createProductHost(hostOptions, codexBinding<G>(releaseObserver.capture)).pipe(
       Effect.map(attachProductLoadedPreparedRelease<G>(releaseObserver)),
