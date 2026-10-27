@@ -1948,10 +1948,10 @@ index 61786b4a..9b136f3d 100644
  				}
 diff --git a/internal/auth/codex/filelock.go b/internal/auth/codex/filelock.go
 new file mode 100644
-index 00000000..d738778c
+index 00000000..afc807c1
 --- /dev/null
 +++ b/internal/auth/codex/filelock.go
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,96 @@
 +package codex
 +
 +import (
@@ -1965,15 +1965,30 @@ index 00000000..d738778c
 +	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
 +)
 +
++// Entries include waiters so cancellation cannot replace a mutex still in use.
 +var codexFileLocks sync.Map
++var codexFileLocksMu sync.Mutex
 +
-+func lockForFilePath(authFilePath string) *misc.ContextMutex {
++type filePathLock struct {
++	mutex misc.ContextMutex
++	users int
++}
++
++func lockForFilePath(authFilePath string) (*misc.ContextMutex, func()) {
 +	cleaned := canonicalLockPath(authFilePath)
-+	if actual, ok := codexFileLocks.Load(cleaned); ok {
-+		return actual.(*misc.ContextMutex)
++	codexFileLocksMu.Lock()
++	actual, _ := codexFileLocks.LoadOrStore(cleaned, &filePathLock{})
++	entry := actual.(*filePathLock)
++	entry.users++
++	codexFileLocksMu.Unlock()
++	return &entry.mutex, func() {
++		codexFileLocksMu.Lock()
++		defer codexFileLocksMu.Unlock()
++		entry.users--
++		if entry.users == 0 {
++			codexFileLocks.Delete(cleaned)
++		}
 +	}
-+	actual, _ := codexFileLocks.LoadOrStore(cleaned, &misc.ContextMutex{})
-+	return actual.(*misc.ContextMutex)
 +}
 +
 +// WithFileLock serializes credential updates within and across processes.
@@ -1987,7 +2002,8 @@ index 00000000..d738778c
 +	if ctx == nil {
 +		ctx = context.Background()
 +	}
-+	mu := lockForFilePath(authFilePath)
++	mu, releaseEntry := lockForFilePath(authFilePath)
++	defer releaseEntry()
 +	if err := mu.LockContext(ctx); err != nil {
 +		return err
 +	}
@@ -2034,16 +2050,18 @@ index 00000000..d738778c
 +}
 diff --git a/internal/auth/codex/filelock_test.go b/internal/auth/codex/filelock_test.go
 new file mode 100644
-index 00000000..c069ebcf
+index 00000000..84ef2a7e
 --- /dev/null
 +++ b/internal/auth/codex/filelock_test.go
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,118 @@
 +package codex
 +
 +import (
 +	"context"
 +	"errors"
++	"fmt"
 +	"path/filepath"
++	"strings"
 +	"testing"
 +	"testing/synctest"
 +	"time"
@@ -2056,7 +2074,8 @@ index 00000000..c069ebcf
 +				path := filepath.Join(t.TempDir(), "codex.json")
 +				var release func()
 +				if phase == "process" {
-+					mu := lockForFilePath(path)
++					mu, releaseEntry := lockForFilePath(path)
++					defer releaseEntry()
 +					mu.Lock()
 +					release = mu.Unlock
 +				} else {
@@ -2104,6 +2123,54 @@ index 00000000..c069ebcf
 +	if err := WithFileLockContext(ctx, filepath.Join(t.TempDir(), "codex.json"), func() error { t.Error("canceled callback ran"); return nil }); !errors.Is(err, context.Canceled) {
 +		t.Fatalf("error=%v; want canceled", err)
 +	}
++}
++
++func TestWithFileLockReleasesOneUsePaths(t *testing.T) {
++	dir := t.TempDir()
++	for i := 0; i < 20; i++ {
++		path := filepath.Join(dir, fmt.Sprintf("staged-%d", i))
++		if err := WithFileLockContext(context.Background(), path, func() error { return nil }); err != nil {
++			t.Fatal(err)
++		}
++	}
++	retained := 0
++	codexFileLocks.Range(func(key, _ any) bool {
++		if strings.HasPrefix(key.(string), canonicalLockPath(dir)+string(filepath.Separator)) {
++			retained++
++		}
++		return true
++	})
++	if retained != 0 {
++		t.Fatalf("completed one-use paths retained %d locks", retained)
++	}
++}
++
++func TestWithFileLockCanceledWaiterKeepsActiveEntry(t *testing.T) {
++	synctest.Test(t, func(t *testing.T) {
++		path := filepath.Join(t.TempDir(), "credential")
++		mutex, releaseEntry := lockForFilePath(path)
++		mutex.Lock()
++		ctx, cancel := context.WithCancel(context.Background())
++		done := make(chan error, 1)
++		go func() {
++			done <- WithFileLockContext(ctx, path, func() error { t.Error("canceled waiter ran"); return nil })
++		}()
++		synctest.Wait()
++		cancel()
++		if err := <-done; !errors.Is(err, context.Canceled) {
++			t.Errorf("wait error = %v", err)
++		}
++		next, releaseNext := lockForFilePath(path)
++		if next != mutex {
++			t.Error("canceling a waiter replaced an active mutex")
++		}
++		releaseNext()
++		mutex.Unlock()
++		releaseEntry()
++		if _, retained := codexFileLocks.Load(canonicalLockPath(path)); retained {
++			t.Error("last user left a cached mutex")
++		}
++	})
 +}
 diff --git a/internal/auth/codex/filelock_unix.go b/internal/auth/codex/filelock_unix.go
 index d9ccce8b..5cd33b65 100644
@@ -2316,7 +2383,7 @@ index 00000000..7960686a
 +	m.sem.Release(1)
 +}
 diff --git a/internal/store/gitstore.go b/internal/store/gitstore.go
-index 3c1f0fbe..eda14e18 100644
+index 3c1f0fbe..c0eeecfa 100644
 --- a/internal/store/gitstore.go
 +++ b/internal/store/gitstore.go
 @@ -22,6 +22,7 @@ import (
@@ -2328,7 +2395,7 @@ index 3c1f0fbe..eda14e18 100644
  	log "github.com/sirupsen/logrus"
  )
 @@ -35,7 +36,7 @@ const (
-
+ 
  // GitTokenStore persists token records and auth metadata using git as the backing storage.
  type GitTokenStore struct {
 -	mu        sync.Mutex
@@ -2342,10 +2409,10 @@ index 3c1f0fbe..eda14e18 100644
  	pushFn    func(ctx context.Context, repo *git.Repository, pushOpts *git.PushOptions) error
 +	openFn    func(path string) (*git.Repository, error)
  }
-
+ 
  type resolvedRemoteBranch struct {
 @@ -68,7 +70,14 @@ func NewGitTokenStore(remote, username, password, branch string) *GitTokenStore
-
+ 
  // SetBaseDir updates the default directory used for auth JSON persistence when no explicit path is provided.
  func (s *GitTokenStore) SetBaseDir(dir string) {
 -	s.mu.Lock()
@@ -2358,7 +2425,7 @@ index 3c1f0fbe..eda14e18 100644
 +		return errLock
 +	}
  	defer s.mu.Unlock()
-
+ 
  	clean := strings.TrimSpace(dir)
 @@ -78,7 +87,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
  		s.repoDir = ""
@@ -2375,23 +2442,23 @@ index 3c1f0fbe..eda14e18 100644
  	s.dirLock.Unlock()
 +	return nil
  }
-
+ 
  // AuthDir returns the directory used for auth persistence.
 @@ -431,7 +441,9 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: %w", errWeight)
  	}
-
+ 
 -	s.mu.Lock()
 +	if errLock := s.mu.LockContext(ctx); errLock != nil {
 +		return "", errLock
 +	}
  	defer s.mu.Unlock()
-
+ 
  	path, err := s.resolveAuthPath(auth)
 @@ -462,67 +474,75 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: create dir failed: %w", err)
  	}
-
+ 
 -	if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
 -		if errCodex != nil {
 -			return "", errCodex
@@ -2405,7 +2472,11 @@ index 3c1f0fbe..eda14e18 100644
 -			auth.Metadata["disabled"] = auth.Disabled
 -			if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
 -				setter.SetMetadata(auth.Metadata)
--			}
++	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
 -			if err = auth.Storage.SaveTokenToFile(path); err != nil {
 -				return "", err
 -			}
@@ -2420,11 +2491,7 @@ index 3c1f0fbe..eda14e18 100644
 -				contentsMatch = jsonEqual(existing, raw)
 -			} else if !os.IsNotExist(errRead) {
 -				return "", fmt.Errorf("auth filestore: read existing failed: %w", errRead)
-+	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
-+		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
-+			if errCodex != nil {
-+				return errCodex
- 			}
+-			}
 -			if !contentsMatch {
 -				tmp := path + ".tmp"
 -				if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2449,7 +2516,7 @@ index 3c1f0fbe..eda14e18 100644
 +				raw, errMarshal := json.Marshal(auth.Metadata)
 +				if errMarshal != nil {
 +					return fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
-+				}
+ 				}
 +				contentsMatch := false
 +				if existing, errRead := os.ReadFile(path); errRead == nil {
 +					contentsMatch = jsonEqual(existing, raw)
@@ -2464,7 +2531,7 @@ index 3c1f0fbe..eda14e18 100644
 +					if errRename := os.Rename(tmp, path); errRename != nil {
 +						return fmt.Errorf("auth filestore: rename failed: %w", errRename)
 +					}
- 				}
++				}
 +			default:
 +				return fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
  			}
@@ -2472,27 +2539,27 @@ index 3c1f0fbe..eda14e18 100644
 -			return "", fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
  		}
 -	}
-
+ 
 -	if auth.Attributes == nil {
 -		auth.Attributes = make(map[string]string)
 -	}
 -	auth.Attributes[cliproxyauth.AttributePath] = path
 -	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceGit
 +		return nil
-+	}, func() error {
++	}, func(stagedPath string) error {
 +		if auth.Attributes == nil {
 +			auth.Attributes = make(map[string]string)
 +		}
 +		auth.Attributes[cliproxyauth.AttributePath] = path
 +		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceGit
-
+ 
 -	if strings.TrimSpace(auth.FileName) == "" {
 -		auth.FileName = auth.ID
 -	}
 +		if strings.TrimSpace(auth.FileName) == "" {
 +			auth.FileName = auth.ID
 +		}
-
+ 
 -	messageID := auth.ID
 -	if strings.TrimSpace(messageID) == "" {
 -		messageID = filepath.Base(path)
@@ -2504,10 +2571,10 @@ index 3c1f0fbe..eda14e18 100644
 +		if strings.TrimSpace(messageID) == "" {
 +			messageID = filepath.Base(path)
 +		}
-+		if errCommit := s.commitAndPushContextLocked(ctx, fmt.Sprintf("Update auth %s", strings.TrimSpace(messageID)), relPath); errCommit != nil {
++		if errCommit := s.commitAuthSourceLocked(ctx, fmt.Sprintf("Update auth %s", strings.TrimSpace(messageID)), relPath, path, stagedPath); errCommit != nil {
 +			return errCommit
 +		}
-
+ 
 +		return nil
 +	})
 +	if errPersist != nil {
@@ -2515,8 +2582,21 @@ index 3c1f0fbe..eda14e18 100644
 +	}
  	return path, nil
  }
-
-@@ -1701,13 +1721,22 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 
+@@ -1690,7 +1710,11 @@ func (s *GitTokenStore) commitAndPushInitialLocked(message string, relPaths ...s
+ 	return s.commitAndPushWithOptionsLocked(context.Background(), message, true, relPaths...)
+ }
+ 
+-func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, message string, allowMissingRemote bool, relPaths ...string) (errResult error) {
++func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, message string, allowMissingRemote bool, relPaths ...string) error {
++	return s.commitSourcesAndPushLocked(ctx, message, allowMissingRemote, nil, relPaths...)
++}
++
++func (s *GitTokenStore) commitSourcesAndPushLocked(ctx context.Context, message string, allowMissingRemote bool, sources map[string]string, relPaths ...string) (errResult error) {
+ 	if ctx == nil {
+ 		ctx = context.Background()
+ 	}
+@@ -1701,13 +1725,22 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
  	if repoDir == "" {
  		return fmt.Errorf("git token store: repository path not configured")
  	}
@@ -2540,7 +2620,7 @@ index 3c1f0fbe..eda14e18 100644
  			if errResult == nil {
  				errResult = errCloseWrap
  			} else {
-@@ -1731,6 +1760,27 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+@@ -1731,6 +1764,27 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
  	if errHead != nil && !errors.Is(errHead, plumbing.ErrReferenceNotFound) {
  		return fmt.Errorf("git token store: get base head: %w", errHead)
  	}
@@ -2568,7 +2648,21 @@ index 3c1f0fbe..eda14e18 100644
  	if errHead == nil {
  		if errReset := resetIndexToHead(repo, worktree); errReset != nil {
  			return fmt.Errorf("git token store: reset index before commit: %w", errReset)
-@@ -1785,13 +1835,6 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+@@ -1739,6 +1793,13 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 
+ 	added := false
+ 	for _, rel := range managedPaths {
++		if source, ok := sources[rel]; ok {
++			if err := stageAcquisitionBlob(repo, rel, source); err != nil {
++				return err
++			}
++			added = true
++			continue
++		}
+ 		if _, err = worktree.Add(rel); err != nil {
+ 			if errors.Is(err, gitindex.ErrEntryNotFound) {
+ 				continue
+@@ -1785,13 +1846,6 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
  	}
  	if baseRef != nil {
  		if errValidate := validateManagedTreeChanges(repo, baseRef.Hash(), commitHash, managedPaths); errValidate != nil {
@@ -2582,7 +2676,7 @@ index 3c1f0fbe..eda14e18 100644
  			return fmt.Errorf("git token store: validate commit tree: %w", errValidate)
  		}
  	}
-@@ -1803,14 +1846,9 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+@@ -1803,14 +1857,9 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
  		return errRewrite
  	}
  	if errPush := s.pushRepositoryLocked(ctx, repo, repoDir, allowMissingRemote); errPush != nil {
@@ -2597,11 +2691,11 @@ index 3c1f0fbe..eda14e18 100644
 +	pushed = true
  	return nil
  }
-
-@@ -1887,6 +1925,17 @@ func restoreHeadAndIndex(repo *git.Repository, worktree *git.Worktree, head *plu
+ 
+@@ -1887,6 +1936,17 @@ func restoreHeadAndIndex(repo *git.Repository, worktree *git.Worktree, head *plu
  	return worktree.Reset(&git.ResetOptions{Mode: git.MixedReset, Commit: head.Hash()})
  }
-
+ 
 +func restoreUnpublishedGitState(repo *git.Repository, worktree *git.Worktree, base *plumbing.Reference, unbornBranch plumbing.ReferenceName) error {
 +	if base != nil {
 +		return restoreHeadAndIndex(repo, worktree, base)
@@ -2616,7 +2710,7 @@ index 3c1f0fbe..eda14e18 100644
  func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repository, repoDir string, allowMissingRemote bool) error {
  	if ctx == nil {
  		ctx = context.Background()
-@@ -1896,9 +1945,6 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
+@@ -1896,9 +1956,6 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
  	}
  	headRef, errHead := repo.Head()
  	if errHead != nil {
@@ -2626,7 +2720,7 @@ index 3c1f0fbe..eda14e18 100644
  		return fmt.Errorf("git token store: get head for push: %w", errHead)
  	}
  	if !headRef.Name().IsBranch() {
-@@ -1932,8 +1978,9 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
+@@ -1932,8 +1989,9 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
  			return fmt.Errorf("git token store: push: %w", errPush)
  		}
  	}
@@ -2638,7 +2732,7 @@ index 3c1f0fbe..eda14e18 100644
  	s.maybeRunGC(repoDir)
  	return nil
 diff --git a/internal/store/objectstore.go b/internal/store/objectstore.go
-index 39b8b089..d78a40f3 100644
+index 39b8b089..d104cd18 100644
 --- a/internal/store/objectstore.go
 +++ b/internal/store/objectstore.go
 @@ -12,7 +12,6 @@ import (
@@ -2647,7 +2741,7 @@ index 39b8b089..d78a40f3 100644
  	"strings"
 -	"sync"
  	"time"
-
+ 
  	"github.com/minio/minio-go/v7"
 @@ -49,7 +48,7 @@ type ObjectTokenStore struct {
  	spoolRoot   string
@@ -2657,21 +2751,21 @@ index 39b8b089..d78a40f3 100644
 +	mu          misc.ContextMutex
  	putObjectFn func(ctx context.Context, key string, data []byte, contentType string) error
  }
-
+ 
 @@ -184,68 +183,78 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
  		}
  	}
-
+ 
 -	s.mu.Lock()
 +	if errLock := s.mu.LockContext(ctx); errLock != nil {
 +		return "", errLock
 +	}
  	defer s.mu.Unlock()
-
+ 
  	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
  		return "", fmt.Errorf("object store: create auth directory: %w", err)
  	}
-
+ 
 -	if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
 -		if errCodex != nil {
 -			return "", errCodex
@@ -2694,17 +2788,17 @@ index 39b8b089..d78a40f3 100644
 -			raw, errMarshal := json.Marshal(auth.Metadata)
 -			if errMarshal != nil {
 -				return "", fmt.Errorf("object store: marshal metadata: %w", errMarshal)
-+	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
-+		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
-+			if errCodex != nil {
-+				return errCodex
- 			}
+-			}
 -			contentsMatch := false
 -			if existing, errRead := os.ReadFile(path); errRead == nil {
 -				contentsMatch = jsonEqual(existing, raw)
 -			} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
 -				return "", fmt.Errorf("object store: read existing metadata: %w", errRead)
--			}
++	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
 -			if !contentsMatch {
 -				tmp := path + ".tmp"
 -				if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2721,21 +2815,21 @@ index 39b8b089..d78a40f3 100644
 +				}
 +				if err = auth.Storage.SaveTokenToFile(path); err != nil {
 +					return err
-+				}
+ 				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("object store: rename auth file: %w", errRename)
 +			case auth.Metadata != nil:
 +				auth.Metadata["disabled"] = auth.Disabled
 +				raw, errMarshal := json.Marshal(auth.Metadata)
 +				if errMarshal != nil {
 +					return fmt.Errorf("object store: marshal metadata: %w", errMarshal)
-+				}
+ 				}
 +				contentsMatch := false
 +				if existing, errRead := os.ReadFile(path); errRead == nil {
 +					contentsMatch = jsonEqual(existing, raw)
 +				} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
 +					return fmt.Errorf("object store: read existing metadata: %w", errRead)
- 				}
--				if errRename := os.Rename(tmp, path); errRename != nil {
--					return "", fmt.Errorf("object store: rename auth file: %w", errRename)
++				}
 +				if !contentsMatch {
 +					tmp := path + ".tmp"
 +					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2744,7 +2838,7 @@ index 39b8b089..d78a40f3 100644
 +					if errRename := os.Rename(tmp, path); errRename != nil {
 +						return fmt.Errorf("object store: rename auth file: %w", errRename)
 +					}
- 				}
++				}
 +			default:
 +				return fmt.Errorf("object store: nothing to persist for %s", auth.ID)
  			}
@@ -2752,30 +2846,30 @@ index 39b8b089..d78a40f3 100644
 -			return "", fmt.Errorf("object store: nothing to persist for %s", auth.ID)
  		}
 -	}
-
+ 
 -	if auth.Attributes == nil {
 -		auth.Attributes = make(map[string]string)
 -	}
 -	auth.Attributes[cliproxyauth.AttributePath] = path
 -	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceObjectStore
 +		return nil
-+	}, func() error {
++	}, func(stagedPath string) error {
 +		if auth.Attributes == nil {
 +			auth.Attributes = make(map[string]string)
 +		}
 +		auth.Attributes[cliproxyauth.AttributePath] = path
 +		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceObjectStore
-
+ 
 -	if strings.TrimSpace(auth.FileName) == "" {
 -		auth.FileName = auth.ID
 -	}
 +		if strings.TrimSpace(auth.FileName) == "" {
 +			auth.FileName = auth.ID
 +		}
-
+ 
 -	if err = s.uploadAuth(ctx, path); err != nil {
 -		return "", err
-+		if err = s.uploadAuth(ctx, path); err != nil {
++		if err = s.uploadAuthFrom(ctx, path, stagedPath); err != nil {
 +			return err
 +		}
 +		return nil
@@ -2785,8 +2879,28 @@ index 39b8b089..d78a40f3 100644
  	}
  	return path, nil
  }
+@@ -469,6 +478,10 @@ func (s *ObjectTokenStore) syncAuthFromBucket(ctx context.Context) error {
+ }
+ 
+ func (s *ObjectTokenStore) uploadAuth(ctx context.Context, path string) error {
++	return s.uploadAuthFrom(ctx, path, path)
++}
++
++func (s *ObjectTokenStore) uploadAuthFrom(ctx context.Context, path, source string) error {
+ 	if path == "" {
+ 		return nil
+ 	}
+@@ -476,7 +489,7 @@ func (s *ObjectTokenStore) uploadAuth(ctx context.Context, path string) error {
+ 	if err != nil {
+ 		return fmt.Errorf("object store: resolve auth relative path: %w", err)
+ 	}
+-	data, err := os.ReadFile(path)
++	data, err := os.ReadFile(source)
+ 	if err != nil {
+ 		if errors.Is(err, fs.ErrNotExist) {
+ 			return s.deleteAuthObject(ctx, path)
 diff --git a/internal/store/postgresstore.go b/internal/store/postgresstore.go
-index 69bc318b..7648396f 100644
+index 69bc318b..4d60f2d0 100644
 --- a/internal/store/postgresstore.go
 +++ b/internal/store/postgresstore.go
 @@ -10,7 +10,6 @@ import (
@@ -2795,7 +2909,7 @@ index 69bc318b..7648396f 100644
  	"strings"
 -	"sync"
  	"time"
-
+ 
  	_ "github.com/jackc/pgx/v5/stdlib"
 @@ -46,7 +45,7 @@ type PostgresStore struct {
  	configPath    string
@@ -2805,21 +2919,21 @@ index 69bc318b..7648396f 100644
 +	mu            misc.ContextMutex
  	persistAuthFn func(ctx context.Context, relID string, data []byte) error
  }
-
+ 
 @@ -235,72 +234,82 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		}
  	}
-
+ 
 -	s.mu.Lock()
 +	if errLock := s.mu.LockContext(ctx); errLock != nil {
 +		return "", errLock
 +	}
  	defer s.mu.Unlock()
-
+ 
  	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
  		return "", fmt.Errorf("postgres store: create auth directory: %w", err)
  	}
-
+ 
 -	if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
 -		if errCodex != nil {
 -			return "", errCodex
@@ -2900,27 +3014,27 @@ index 69bc318b..7648396f 100644
 -			return "", fmt.Errorf("postgres store: nothing to persist for %s", auth.ID)
  		}
 -	}
-
+ 
 -	if auth.Attributes == nil {
 -		auth.Attributes = make(map[string]string)
 -	}
 -	auth.Attributes[cliproxyauth.AttributePath] = path
 -	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourcePostgres
 +		return nil
-+	}, func() error {
++	}, func(stagedPath string) error {
 +		if auth.Attributes == nil {
 +			auth.Attributes = make(map[string]string)
 +		}
 +		auth.Attributes[cliproxyauth.AttributePath] = path
 +		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourcePostgres
-
+ 
 -	if strings.TrimSpace(auth.FileName) == "" {
 -		auth.FileName = auth.ID
 -	}
 +		if strings.TrimSpace(auth.FileName) == "" {
 +			auth.FileName = auth.ID
 +		}
-
+ 
 -	relID, err := s.relativeAuthID(path)
 -	if err != nil {
 -		return "", err
@@ -2931,7 +3045,7 @@ index 69bc318b..7648396f 100644
 +		if err != nil {
 +			return err
 +		}
-+		if err = s.upsertAuthRecord(ctx, relID, path); err != nil {
++		if err = s.upsertAuthRecord(ctx, relID, stagedPath); err != nil {
 +			return err
 +		}
 +		return nil
@@ -3474,10 +3588,10 @@ index 4865627c..f5eff4c1 100644
 +}
 diff --git a/internal/store/acquisition_mirror.go b/internal/store/acquisition_mirror.go
 new file mode 100644
-index 00000000..b6b86df5
+index 00000000..d5efc298
 --- /dev/null
 +++ b/internal/store/acquisition_mirror.go
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,85 @@
 +package store
 +
 +import (
@@ -3492,145 +3606,76 @@ index 00000000..b6b86df5
 +	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 +)
 +
-+type acquisitionMirror struct {
-+	path        string
-+	original    []byte
-+	mode        os.FileMode
-+	existed     bool
-+	written     []byte
-+	writtenInfo os.FileInfo
-+}
-+
-+// The destination lock covers commit and rollback so a refresh cannot consume a
-+// failed login, and cleanup cannot wait behind a refresh after the save expires.
-+// Staging lets Codex serialization take its own lock without nesting the target lock.
-+func persistAcquisitionMirror(ctx context.Context, path string, write func(string) error, persist func() error) error {
++// The destination lock excludes refresh writers until the remote commit and local
++// publication finish. Uncommitted credentials never occupy a discoverable JSON path.
++func persistAcquisitionMirror(ctx context.Context, path string, write func(string) error, persist func(string) error) error {
 +	if !cliproxyauth.HasAuthCreationIntent(ctx) {
 +		if errWrite := write(path); errWrite != nil {
 +			return errWrite
 +		}
-+		return persist()
++		return persist(path)
 +	}
 +	return codex.WithFileLockContext(ctx, path, func() error {
-+		mirror, errSnapshot := snapshotAcquisitionMirror(path)
-+		if errSnapshot != nil {
-+			return errSnapshot
++		info, err := os.Lstat(path)
++		existed := err == nil
++		if err != nil && !errors.Is(err, os.ErrNotExist) {
++			return fmt.Errorf("snapshot auth mirror: %w", err)
 +		}
-+		dir, errTemp := os.MkdirTemp(filepath.Dir(path), ".auth-acquisition-*")
-+		if errTemp != nil {
-+			return errTemp
++		if existed && !info.Mode().IsRegular() {
++			return fmt.Errorf("acquisition auth mirror must be a regular file")
++		}
++		var original []byte
++		if existed {
++			original, err = os.ReadFile(path)
++			if err != nil {
++				return fmt.Errorf("snapshot auth mirror: %w", err)
++			}
++		}
++		dir, err := os.MkdirTemp(filepath.Dir(path), ".auth-acquisition-*")
++		if err != nil {
++			return err
 +		}
 +		defer func() { _ = os.RemoveAll(dir) }()
 +		stagedPath := filepath.Join(dir, "credential")
-+		if mirror.existed {
-+			if errSeed := os.WriteFile(stagedPath, mirror.original, 0o600); errSeed != nil {
-+				return errSeed
++		if existed {
++			if err := os.WriteFile(stagedPath, original, 0o600); err != nil {
++				return err
 +			}
 +		}
-+		if errWrite := write(stagedPath); errWrite != nil {
-+			return errWrite
++		if err := write(stagedPath); err != nil {
++			return err
 +		}
-+		// Capture the version before publication, with refresh writers still excluded.
-+		mirror.path = stagedPath
-+		errRemember := mirror.rememberWrite()
-+		mirror.path = path
-+		if errRemember != nil {
-+			return errRemember
++		stagedInfo, err := os.Lstat(stagedPath)
++		if err != nil {
++			return fmt.Errorf("inspect acquired credential: %w", err)
 +		}
-+		if errContext := ctx.Err(); errContext != nil {
-+			return errContext
++		if !stagedInfo.Mode().IsRegular() {
++			return fmt.Errorf("acquired credential must be a regular file")
 +		}
-+		if errRename := os.Rename(stagedPath, path); errRename != nil {
-+			return errRename
++		if err := ctx.Err(); err != nil {
++			return err
 +		}
-+		return mirror.restore(persist())
++		if err := persist(stagedPath); err != nil {
++			return err
++		}
++		// Preserve an independent writer that does not participate in the file lock.
++		currentInfo, err := os.Lstat(path)
++		if existed {
++			if err != nil || !os.SameFile(info, currentInfo) {
++				return fmt.Errorf("auth mirror changed during acquisition")
++			}
++			current, err := os.ReadFile(path)
++			if err != nil {
++				return err
++			}
++			if !bytes.Equal(current, original) {
++				return fmt.Errorf("auth mirror changed during acquisition")
++			}
++		} else if !errors.Is(err, os.ErrNotExist) {
++			return fmt.Errorf("auth mirror appeared during acquisition")
++		}
++		return os.Rename(stagedPath, path)
 +	})
-+}
-+
-+func snapshotAcquisitionMirror(path string) (*acquisitionMirror, error) {
-+	m := &acquisitionMirror{path: path}
-+	info, err := os.Lstat(path)
-+	if errors.Is(err, os.ErrNotExist) {
-+		return m, nil
-+	}
-+	if err != nil {
-+		return nil, fmt.Errorf("snapshot auth mirror: %w", err)
-+	}
-+	// In-place token writers follow links. Refuse acquisitions before they can
-+	// modify a referent that rollback does not own.
-+	if !info.Mode().IsRegular() {
-+		return nil, fmt.Errorf("acquisition auth mirror must be a regular file")
-+	}
-+	m.existed = true
-+	m.mode = info.Mode()
-+	m.original, err = os.ReadFile(path)
-+	if err != nil {
-+		return nil, fmt.Errorf("snapshot auth mirror: %w", err)
-+	}
-+	return m, nil
-+}
-+
-+func (m *acquisitionMirror) rememberWrite() error {
-+	if m == nil {
-+		return nil
-+	}
-+	data, err := os.ReadFile(m.path)
-+	if err != nil {
-+		return fmt.Errorf("read acquired auth mirror: %w", err)
-+	}
-+	info, err := os.Stat(m.path)
-+	if err != nil {
-+		return fmt.Errorf("inspect acquired auth mirror: %w", err)
-+	}
-+	m.written, m.writtenInfo = data, info
-+	return nil
-+}
-+
-+func (m *acquisitionMirror) restore(errSave error) error {
-+	if m == nil || m.writtenInfo == nil || errSave == nil {
-+		return errSave
-+	}
-+	if errRestore := m.restoreWritten(); errRestore != nil {
-+		return errors.Join(errSave, fmt.Errorf("restore failed acquisition mirror: %w", errRestore))
-+	}
-+	return errSave
-+}
-+
-+func (m *acquisitionMirror) restoreWritten() error {
-+	current, err := os.ReadFile(m.path)
-+	if err != nil {
-+		return err
-+	}
-+	info, err := os.Stat(m.path)
-+	if err != nil {
-+		return err
-+	}
-+	// Another writer's credential must survive a failed acquisition.
-+	if !os.SameFile(info, m.writtenInfo) || !bytes.Equal(current, m.written) {
-+		return fmt.Errorf("auth mirror changed after acquisition write")
-+	}
-+	if !m.existed {
-+		return os.Remove(m.path)
-+	}
-+	file, err := os.CreateTemp(filepath.Dir(m.path), ".auth-rollback-*")
-+	if err != nil {
-+		return err
-+	}
-+	tempPath := file.Name()
-+	defer func() { _ = os.Remove(tempPath) }()
-+	if errMode := file.Chmod(m.mode.Perm()); errMode != nil {
-+		_ = file.Close()
-+		return errMode
-+	}
-+	if _, errWrite := file.Write(m.original); errWrite != nil {
-+		_ = file.Close()
-+		return errWrite
-+	}
-+	if errClose := file.Close(); errClose != nil {
-+		return errClose
-+	}
-+
-+	return os.Rename(tempPath, m.path)
 +}
 diff --git a/internal/store/acquisition_mirror_test.go b/internal/store/acquisition_mirror_test.go
 new file mode 100644
@@ -4134,10 +4179,10 @@ index 00000000..e6abe884
 +}
 diff --git a/internal/store/acquisition_git_commit_test.go b/internal/store/acquisition_git_commit_test.go
 new file mode 100644
-index 00000000..665531b6
+index 00000000..303e014d
 --- /dev/null
 +++ b/internal/store/acquisition_git_commit_test.go
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,134 @@
 +package store
 +
 +import (
@@ -4209,11 +4254,23 @@ index 00000000..665531b6
 +					if err := repo.PushContext(ctx, opts); err != nil {
 +						return err
 +					}
-+					var errRead error
-+					committed, errRead = os.ReadFile(path)
-+					if errRead != nil {
-+						return errRead
++					head, err := repo.Head()
++					if err != nil {
++						return err
 +					}
++					commit, err := repo.CommitObject(head.Hash())
++					if err != nil {
++						return err
++					}
++					file, err := commit.File("auths/login.json")
++					if err != nil {
++						return err
++					}
++					contents, err := file.Contents()
++					if err != nil {
++						return err
++					}
++					committed = []byte(contents)
 +					injected = &postPushFailureStorer{Storer: repo.Storer, trackingRef: plumbing.NewRemoteReferenceName("origin", "master")}
 +					if failure == "tracking-ref" {
 +						injected.errTracking = errors.New("tracking ref write failed after successful push")
@@ -4521,5 +4578,198 @@ index 00000000..4b83ad71
 +			}
 +			assertRemoteFileContents(t, remote, "master", "seed", "seed\n")
 +		})
++	}
++}
+diff --git a/internal/store/acquisition_git_stage.go b/internal/store/acquisition_git_stage.go
+new file mode 100644
+index 00000000..2787df69
+--- /dev/null
++++ b/internal/store/acquisition_git_stage.go
+@@ -0,0 +1,61 @@
++package store
++
++import (
++	"context"
++	"fmt"
++	"os"
++	"path/filepath"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/go-git/go-git/v6/plumbing"
++	"github.com/go-git/go-git/v6/plumbing/filemode"
++)
++
++func (s *GitTokenStore) commitAuthSourceLocked(ctx context.Context, message, relPath, path, source string) error {
++	if source == path {
++		return s.commitAndPushContextLocked(ctx, message, relPath)
++	}
++	return s.commitSourcesAndPushLocked(ctx, message, false, map[string]string{filepath.ToSlash(relPath): source}, relPath)
++}
++
++// Insert the private staged content directly into Git's index. Worktree.Add
++// would require publishing an uncommitted credential in the watched directory.
++func stageAcquisitionBlob(repo *git.Repository, relPath, source string) error {
++	data, err := os.ReadFile(source)
++	if err != nil {
++		return fmt.Errorf("git token store: read staged credential: %w", err)
++	}
++	obj := repo.Storer.NewEncodedObject()
++	obj.SetType(plumbing.BlobObject)
++	obj.SetSize(int64(len(data)))
++	writer, err := obj.Writer()
++	if err != nil {
++		return err
++	}
++	if _, err := writer.Write(data); err != nil {
++		_ = writer.Close()
++		return err
++	}
++	if err := writer.Close(); err != nil {
++		return err
++	}
++	hash, err := repo.Storer.SetEncodedObject(obj)
++	if err != nil {
++		return err
++	}
++	index, err := repo.Storer.Index()
++	if err != nil {
++		return err
++	}
++	entry, err := index.Entry(relPath)
++	if err != nil {
++		entry, err = index.Add(relPath)
++		if err != nil {
++			return err
++		}
++	}
++	entry.Hash = hash
++	entry.Mode = filemode.Regular
++	entry.Size = uint32(len(data))
++	return repo.Storer.SetIndex(index)
++}
+diff --git a/internal/store/acquisition_publication_test.go b/internal/store/acquisition_publication_test.go
+new file mode 100644
+index 00000000..6c471fb0
+--- /dev/null
++++ b/internal/store/acquisition_publication_test.go
+@@ -0,0 +1,120 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestAcquisitionPublishesOnlyAfterRemoteCommit(t *testing.T) {
++	for _, backend := range []string{"git", "object", "postgres"} {
++		for _, existing := range []bool{false, true} {
++			for _, succeeds := range []bool{false, true} {
++				name := backend + "/new/failure"
++				if existing {
++					name = backend + "/replacement/failure"
++				}
++				if succeeds {
++					name = strings.TrimSuffix(name, "failure") + "success"
++				}
++				t.Run(name, func(t *testing.T) {
++					dir := filepath.Join(t.TempDir(), "workspace", "auths")
++					path := filepath.Join(dir, "device.json")
++					original := []byte(`{"type":"codex","access_token":"original"}`)
++					remoteErr := errors.New("remote rejected acquisition")
++					reached := false
++					beforeCommit := func() error {
++						reached = true
++						data, err := os.ReadFile(path)
++						if existing {
++							if err != nil || string(data) != string(original) {
++								t.Errorf("uncommitted credential replaced visible mirror: %q, %v", data, err)
++							}
++						} else if !errors.Is(err, os.ErrNotExist) {
++							t.Errorf("uncommitted credential is visible: %q, %v", data, err)
++						}
++						if !succeeds {
++							return remoteErr
++						}
++						return nil
++					}
++					var s cliproxyauth.Store
++					var gitRemote string
++					switch backend {
++					case "git":
++						remote := filepath.Join(t.TempDir(), "remote.git")
++						gitRemote = remote
++						if _, err := git.PlainInit(remote, true); err != nil {
++							t.Fatal(err)
++						}
++						gs := NewGitTokenStore(remote, "", "", "")
++						gs.SetBaseDir(dir)
++						if err := gs.EnsureRepository(); err != nil {
++							t.Fatal(err)
++						}
++						gs.pushFn = func(ctx context.Context, repo *git.Repository, opts *git.PushOptions) error {
++							if err := beforeCommit(); err != nil {
++								return err
++							}
++							return repo.PushContext(ctx, opts)
++						}
++						s = gs
++					case "object":
++						s = &ObjectTokenStore{authDir: dir, putObjectFn: func(_ context.Context, key string, data []byte, _ string) error {
++							if !bytes.Contains(data, []byte(`"replacement"`)) {
++								t.Errorf("remote did not receive acquired credential: %q", data)
++							}
++							if key != "auths/device.json" {
++								t.Errorf("remote key = %q", key)
++							}
++							return beforeCommit()
++						}}
++					case "postgres":
++						s = &PostgresStore{authDir: dir, persistAuthFn: func(_ context.Context, id string, data []byte) error {
++							if !bytes.Contains(data, []byte(`"replacement"`)) {
++								t.Errorf("remote did not receive acquired credential: %q", data)
++							}
++							if id != "device.json" {
++								t.Errorf("remote id = %q", id)
++							}
++							return beforeCommit()
++						}}
++					}
++					if err := os.MkdirAll(dir, 0o700); err != nil {
++						t.Fatal(err)
++					}
++					if existing {
++						if err := os.WriteFile(path, original, 0o600); err != nil {
++							t.Fatal(err)
++						}
++					}
++					saved, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "replacement"}})
++					if !reached {
++						t.Fatal("remote commit was not attempted")
++					}
++					if succeeds {
++						if err != nil || saved != path {
++							t.Fatalf("Save = %q, %v", saved, err)
++						}
++						data, err := os.ReadFile(path)
++						if err != nil || !bytes.Contains(data, []byte(`"replacement"`)) {
++							t.Fatalf("committed credential not published: %q, %v", data, err)
++						}
++						if gitRemote != "" {
++							assertRemoteFileContents(t, gitRemote, "master", "auths/device.json", string(data))
++						}
++					} else if !errors.Is(err, remoteErr) || saved != "" {
++						t.Fatalf("Save = %q, %v", saved, err)
++					}
++				})
++			}
++		}
 +	}
 +}
