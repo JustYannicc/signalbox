@@ -1,33 +1,22 @@
+import { releaseCreationPlacement } from "./releasePlacement.ts";
+import { readUndispatchedCreation, retireUndispatchedCreation } from "./undispatched.ts";
 import * as Schema from "effect/Schema";
 import { readCreationPlacement } from "./placementSchema.ts";
 import { CreationRecoveryInput } from "./schemas.ts";
-import { createProcessSlots } from "../../computer/ProcessSlots.ts";
 import { createHarnessDurableState } from "../HarnessDurableState.ts";
-import {
-  createHarnessProcessPlacementStoreClient,
-  type HarnessProcessPlacementStoreClient,
-} from "../processPlacement/durableStore.ts";
 import { sameControl, samePublisher } from "../processResume/authority.ts";
 import { hasCode } from "../durableState/errors.ts";
 import { sameData } from "../processResume/checkpointContract.ts";
-import { creationInvocationKey } from "./identity.ts";
-import { sameWriter } from "../processPlacement/storeSchema.ts";
 import { readCreationFacet } from "./placement.ts";
 import {
   creationPlacementKey,
   readyCreation,
   type HarnessProcessCreationEnvironment,
-  type HarnessProcessCreationPlacement,
+  type HarnessProcessCreationRecoveryInput,
 } from "./contracts.ts";
 import type { HarnessProcessCreationBinding } from "./journal.ts";
 
-export interface HarnessProcessCreationRecoveryInput {
-  readonly runId: string;
-  readonly operationId: string;
-  readonly drainOperationId: string;
-  readonly control: HarnessProcessCreationPlacement["input"]["controllerClaim"];
-  readonly nextControl: HarnessProcessCreationPlacement["input"]["controllerClaim"];
-}
+export type { HarnessProcessCreationRecoveryInput } from "./contracts.ts";
 
 const decodeRecovery = Schema.decodeUnknownSync(CreationRecoveryInput, {
   onExcessProperty: "error",
@@ -54,12 +43,7 @@ export async function recoverBoundCreation(
     throw new Error("Recovery does not identify the exact bound initial placement.");
   const durable = createHarnessDurableState(environment, input.runId);
   const journal = await durable.runStore.execute({ type: "read", runId: input.runId });
-  if (
-    !journal.snapshot.requests ||
-    journal.snapshot.requests.entries.length !== 0 ||
-    (await context.storage.get(creationInvocationKey(input.runId))) !== undefined
-  )
-    throw new Error("A dispatched initial request requires normal request reconciliation.");
+  const admission = await readUndispatchedCreation(context.storage, input, journal, binding);
   const recoveryKey = `harness-process-creation-recovery/v1/${encodeURIComponent(input.runId)}`;
   await context.storage.transaction(async (transaction) => {
     const prior = await transaction.get<unknown>(recoveryKey);
@@ -85,7 +69,8 @@ export async function recoverBoundCreation(
   if (
     current.snapshot.nativeSessionId !== binding.nativeSessionId ||
     !samePublisher(current.currentPublisher, binding.initialization.publisher) ||
-    current.snapshot.admittedStepId !== null ||
+    (current.snapshot.admittedStepId !== null &&
+      current.snapshot.admittedStepId !== admission?.request.request.requestId) ||
     current.snapshot.checkpoint.checkpointId !== binding.checkpoint.native.id ||
     current.snapshot.checkpoint.manifestSha256 !== binding.checkpoint.filesystem.sha256
   )
@@ -131,53 +116,61 @@ export async function recoverBoundCreation(
     }
     await context.storage.put(key, placement);
   }
-  if (!placement.released) {
-    const store = environment.PLACEMENT_STORES.getByName(
-      placement.owner,
-    ) as unknown as HarnessProcessPlacementStoreClient;
-    const writer = { ...placement.writer, shardIncarnationNonce: incarnationNonce };
-    const currentWriter = await store.readWriter(placement.owner);
-    if (!currentWriter) throw new Error("Initial lease release has no known writer disposition.");
-    if (!sameWriter(currentWriter, writer)) await store.claimWriter(placement.owner, writer);
-    const stores = createHarnessProcessPlacementStoreClient(store, placement.owner, writer);
-    const expectedLease = placement.lease;
-    await createProcessSlots({
-      owner: placement.owner,
-      inFlightLimit: 1,
-      residentByteLimit: Number(environment.RESIDENT_BYTE_LIMIT),
-      store: stores.processSlots,
-      scheduleQuantum: (callback) => {
-        queueMicrotask(callback);
-        return () => {};
-      },
-      invalidate: (loaderId) => {
-        context.facets.abort(loaderId, "Bound initial process stopped.");
-        context.facets.delete(loaderId);
-      },
-      reconcile: async (lease) => {
-        if (
-          lease.token !== expectedLease.token ||
-          lease.loaderId !== expectedLease.loaderId ||
-          lease.codeId !== expectedLease.codeId
-        )
-          throw new Error("Initial recovery encountered another process lease.");
-        return { acknowledged: true };
-      },
+  placement = await releaseCreationPlacement(context, environment, incarnationNonce, placement);
+  if (admission !== undefined) {
+    await retireUndispatchedCreation(
+      context.storage,
+      environment,
+      input,
+      admission,
+      placement.input.run.controlKey,
+    );
+    const state = await durable.threadSupervisor.execute({
+      type: "read",
+      runId: input.runId,
+      control: input.nextControl,
     });
-    await store.releaseWriter(placement.owner, writer);
-    placement = { ...placement, released: true };
-    await context.storage.put(key, placement);
+    if (state.snapshot.admittedStepId !== null || state.snapshot.lifecycle === "indeterminate") {
+      if (state.snapshot.lifecycle === "draining")
+        await durable.threadSupervisor.execute({
+          type: "settleInvocation",
+          runId: input.runId,
+          control: input.nextControl,
+          publisher: binding.initialization.publisher,
+          expectedGeneration: 1,
+          outcome: "indeterminate",
+          invocationRpcJoined: true,
+          fetchJoined: true,
+          callbackPortsJoined: true,
+        });
+      await durable.reconcile({
+        control: input.nextControl,
+        expectedGeneration: 1,
+        evidenceId: `${input.drainOperationId}/undispatched`,
+        outcome: "notApplied",
+        checkpoint: null,
+        invocationSettlement: {
+          invocationRpcJoined: true,
+          fetchJoined: true,
+          callbackPortsJoined: true,
+        },
+        preparedFacetCleanup: null,
+      });
+    }
   }
-  const settled = await durable.threadSupervisor.execute({
+  const terminal = await durable.threadSupervisor.execute({
     type: "read",
     runId: input.runId,
     control: input.nextControl,
   });
-  if (settled.snapshot.lifecycle === "stopped" || settled.snapshot.lifecycle === "settled")
+  if (
+    ["stopped", "settled", "recoverable"].includes(terminal.snapshot.lifecycle) &&
+    terminal.snapshot.admittedStepId === null
+  )
     return {
       ...readyCreation(input.operationId, binding, "bound"),
       control: input.nextControl,
-      lifecycle: settled.snapshot.lifecycle,
+      lifecycle: terminal.snapshot.lifecycle,
     };
   const graceful = placement.termination?.kind === "disposed";
   if (graceful)

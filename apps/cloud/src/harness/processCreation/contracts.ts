@@ -1,3 +1,4 @@
+import type { CreationRecoveryInput } from "./schemas.ts";
 import type {
   HarnessRunInitialization,
   HarnessDurableStateBindings,
@@ -50,6 +51,7 @@ export interface HarnessProcessCreationPlacement {
     | { readonly kind: "disposed"; readonly facetNonce: string }
     | { readonly kind: "parent-destroyed"; readonly observedByIncarnationNonce: string };
   readonly released?: true;
+  readonly releaseWriter?: HarnessProcessPlacementWriter;
 }
 export interface HarnessProcessCreationRunInput {
   readonly runId: string;
@@ -76,3 +78,5 @@ export const readyCreation = (
   nativeSessionId: binding.nativeSessionId,
   checkpoint: structuredClone(binding.checkpoint),
 });
+
+export type HarnessProcessCreationRecoveryInput = typeof CreationRecoveryInput.Type;

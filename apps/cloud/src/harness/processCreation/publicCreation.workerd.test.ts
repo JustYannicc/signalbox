@@ -385,3 +385,63 @@ it("retries the exact offered first request after FilesStore admission fails, be
   ]);
   expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
 }, 120_000);
+
+it("replays a committed writer-release receipt after reply loss and another C destruction", async () => {
+  const response = await harness.fetch("http://proof/release-reply-loss");
+  const text = await response.text();
+  expect(response.status, text).toBe(200);
+  const result = JSON.parse(text);
+  expect(result.lost).toMatchObject({
+    rejected: true,
+    message: "Injected lost reply after committed writer release.",
+  });
+  expect(result.writerAfterFailure.writer).toBe(false);
+  expect(result.placementAfterFailure).toMatchObject({ disposed: true, released: false });
+  expect(result.afterNonce).not.toBe(result.beforeNonce);
+  expect(result.recovered).toMatchObject({
+    nativeSessionId: result.created.nativeSessionId,
+    checkpoint: result.created.checkpoint,
+    lifecycle: "stopped",
+  });
+  expect(result.replay).toEqual(result.recovered);
+  expect(result.restored.nativeSessionId).toBe(result.created.nativeSessionId);
+  expect(result.executed.processes[0]?.status).toBe("settled");
+  expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
+}, 120_000);
+
+it("retires the exact undispatched admission after C destruction and restores its bound checkpoint", async () => {
+  const response = await harness.fetch("http://proof/admission-parent-destruction");
+  const text = await response.text();
+  expect(response.status, text).toBe(200);
+  const result = JSON.parse(text);
+  expect(result.failed.rejected).toBe(true);
+  expect(result.before["cold/events/facet-invoked"]).toBeUndefined();
+  expect(result.before["cold/events/request-runtime-run"]).toBeUndefined();
+  expect(result.afterNonce).not.toBe(result.beforeNonce);
+  expect(result.recovered).toMatchObject({
+    nativeSessionId: result.created.nativeSessionId,
+    checkpoint: result.created.checkpoint,
+    lifecycle: "recoverable",
+  });
+  expect(result.replay).toEqual(result.recovered);
+  expect(result.oldRequestStatus).toBe("withdrawn");
+  expect(result.admittedStepId).toBeNull();
+  expect(result.lateAdmission).toBe("not-applied");
+  expect(result.executed.processes[0]?.status).toBe("settled");
+  expect(result.restored.nativeSessionId).toBe(result.created.nativeSessionId);
+  expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
+  expect(result.observations["cold/events/request-runtime-run"]).toHaveLength(1);
+}, 120_000);
+
+it("keeps dispatched work fenced after parent destruction without releasing its A admission", async () => {
+  const response = await harness.fetch("http://proof/dispatched-crash");
+  const text = await response.text();
+  expect(response.status, text).toBe(200);
+  const result = JSON.parse(text);
+  expect(result.recovery.rejected).toBe(true);
+  expect(result.recovery.message).toBe("Initial recovery checkpoint changed.");
+  expect(result.admittedStepId).toBe(result.requestId);
+  expect(result.controlEpoch).toBe(1);
+  expect(result.observations["cold/events/request-runtime-run"]).toHaveLength(1);
+  expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
+}, 120_000);

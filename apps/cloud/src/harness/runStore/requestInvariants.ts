@@ -43,6 +43,11 @@ export function validateRequests(state: State) {
     if ((entry.status === "completed") !== (entry.finish !== null)) return fail("CORRUPT");
     if (entry.finish && entry.finish.sequence !== (entry.progress?.sequence ?? 0) + 1)
       return fail("CORRUPT");
+    if (
+      entry.status === "withdrawn" &&
+      (entry.progress !== null || entry.finish !== null || entry.reconciliation !== null)
+    )
+      return fail("CORRUPT");
     const outcome = entry.reconciliation?.outcome;
     if (entry.status === "not-applied" && outcome?.type !== "not-applied") return fail("CORRUPT");
     if (outcome?.type === "unknown" && entry.status !== "indeterminate") return fail("CORRUPT");

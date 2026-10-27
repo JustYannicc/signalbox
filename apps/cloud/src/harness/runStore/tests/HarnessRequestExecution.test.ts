@@ -128,3 +128,27 @@ describe("request-scoped durable execution", () => {
     ).rejects.toMatchObject({ code: "STALE_SUPERVISOR" });
   });
 });
+
+it("withdraws only an exact unadmitted offer and fences delayed admission across reconstruction", async () => {
+  const f = await requestFixture();
+  let client = f.client;
+  const offered = offer();
+  await client.call(offered);
+  const withdraw = { type: "request.withdraw", runId, controlKey, request: offered.request };
+  await expect(client.call({ ...withdraw, controlKey: "wrong-".repeat(8) })).rejects.toMatchObject({
+    code: "STALE_SUPERVISOR",
+  });
+  await expect(
+    client.call({ ...withdraw, request: { ...offered.request, input: initial.seed.config } }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+  expect(entry(await client.call(withdraw)).status).toBe("withdrawn");
+  client.close();
+  client = f.file.open();
+  expect((await client.call(withdraw)).action).toBe("not-applied");
+  expect((await client.call(admit())).action).toBe("not-applied");
+  await client.call(offer("next-step"));
+  await client.call(admit("next-step"));
+  await expect(
+    client.call({ ...withdraw, request: offer("next-step").request }),
+  ).rejects.toMatchObject({ code: "CONFLICT" });
+});

@@ -21,7 +21,10 @@ export function publishRequest(state: State, command: Published): Decision {
   // A committed result can be returned to the replacement facet without reviving its execution.
   if (command.type === "request.admit" && entry.status === "completed")
     return { state, action: "committed" };
-  if (command.type === "request.admit" && entry.status === "not-applied")
+  if (
+    command.type === "request.admit" &&
+    (entry.status === "not-applied" || entry.status === "withdrawn")
+  )
     return { state, action: "not-applied" };
   if (entry.generation !== current.generation || entry.facetNonce !== current.facetNonce)
     return fail("PUBLISHER_DENIED");

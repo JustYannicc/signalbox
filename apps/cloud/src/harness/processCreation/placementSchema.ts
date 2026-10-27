@@ -92,16 +92,18 @@ const leaseToken = Schema.declare<ProcessSlotLeaseToken>(
   (value): value is ProcessSlotLeaseToken =>
     typeof value === "string" && value.length > 0 && value.length <= 256,
 );
+const Writer = Schema.Struct({
+  executionOperationId: id,
+  shardIndex: natural,
+  shardIncarnationNonce: id,
+  controllerClaim: Control,
+});
 const Placement = Schema.Struct({
   version: Schema.Literal(1),
   operationId: id,
   owner: id,
-  writer: Schema.Struct({
-    executionOperationId: id,
-    shardIndex: natural,
-    shardIncarnationNonce: id,
-    controllerClaim: Control,
-  }),
+  writer: Writer,
+  releaseWriter: Schema.optionalKey(Writer),
   lease: Schema.Struct({ token: leaseToken, loaderId: id, codeId: id, residentBytes: positive }),
   input: Schema.Unknown,
   identity: Schema.optionalKey(CreationIdentity),
@@ -143,6 +145,14 @@ export function readCreationPlacement(value: unknown): HarnessProcessCreationPla
         record.termination.observedByIncarnationNonce === record.writer.shardIncarnationNonce)
     )
       throw new Error("The creation destruction record does not identify a new parent.");
+    if (
+      record.releaseWriter &&
+      (!record.termination ||
+        record.releaseWriter.executionOperationId !== record.operationId ||
+        record.releaseWriter.shardIndex !== 0 ||
+        !sameControl(record.releaseWriter.controllerClaim, record.writer.controllerClaim))
+    )
+      throw new Error("The creation writer release belongs to another operation.");
     if (record.released && !record.termination)
       throw new Error("The creation lease was released without a termination disposition.");
     return { ...record, input };

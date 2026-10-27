@@ -114,7 +114,10 @@ export async function continueResumedProcess(input: {
       observed.snapshot.supervisor.claimId !== request.runStore.supervisor.claimId ||
       !sameCheckpoint(requests.checkpoint, request.runStore.checkpoint) ||
       requests.entries.some(
-        (entry) => entry.status !== "completed" && entry.status !== "not-applied",
+        (entry) =>
+          entry.status !== "completed" &&
+          entry.status !== "not-applied" &&
+          entry.status !== "withdrawn",
       )
     )
       fail("replacement", "request-changed");

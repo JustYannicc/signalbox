@@ -82,7 +82,10 @@ export function createInitialProcessAuthority(input: {
       facet.operationId !== runStore.processOperationId ||
       !sameCheckpoint(requests.checkpoint, runStore.checkpoint) ||
       requests.entries.some(
-        (entry) => entry.status !== "completed" && entry.status !== "not-applied",
+        (entry) =>
+          entry.status !== "completed" &&
+          entry.status !== "not-applied" &&
+          entry.status !== "withdrawn",
       ) ||
       requests.entries.some((entry) => entry.request.requestId === runStore.request.requestId)
     )
@@ -126,8 +129,29 @@ export function createInitialProcessAuthority(input: {
       control: input.shard.controllerClaim,
     });
     input.assertOwned();
+    const repaired =
+      current.snapshot.lifecycle === "recoverable" &&
+      current.snapshot.reconciliationEvidenceId !== null &&
+      current.snapshot.reconciliationExpectedGeneration === process.expectedFacetGeneration &&
+      current.snapshot.reconciliationOutcome === "notApplied" &&
+      current.snapshot.reconciliationCheckpoint === null &&
+      current.snapshot.reconciliationAdmissionResolution?.outcome === "notApplied" &&
+      current.snapshot.reconciliationAdmissionResolution.expectedCheckpoint.checkpointId ===
+        process.checkpointId &&
+      current.snapshot.reconciliationAdmissionResolution.expectedCheckpoint.manifestSha256 ===
+        process.manifestRevision &&
+      current.snapshot.reconciliationAdmissionResolution.checkpoint.checkpointId ===
+        process.checkpointId &&
+      current.snapshot.reconciliationAdmissionResolution.checkpoint.manifestSha256 ===
+        process.manifestRevision &&
+      current.snapshot.reconciliationInvocationSettlement?.invocationRpcJoined === true &&
+      current.snapshot.reconciliationInvocationSettlement.fetchJoined &&
+      current.snapshot.reconciliationInvocationSettlement.callbackPortsJoined &&
+      current.snapshot.preparedFacet === null;
     if (
-      (current.snapshot.lifecycle !== "stopped" && current.snapshot.lifecycle !== "settled") ||
+      (current.snapshot.lifecycle !== "stopped" &&
+        current.snapshot.lifecycle !== "settled" &&
+        !repaired) ||
       current.snapshot.admittedStepId !== null ||
       !samePublisher(current.currentPublisher, journal.publisher) ||
       current.snapshot.nativeSessionId !== process.nativeSessionId ||

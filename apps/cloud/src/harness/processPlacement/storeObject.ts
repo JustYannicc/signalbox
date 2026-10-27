@@ -7,6 +7,7 @@ import {
   RECOVERY_PREFIX,
   STATE_KEY,
   WRITER_KEY,
+  WRITER_RELEASE_KEY,
   assertWriter,
   parseRecoveryRecord,
   recoveryKey,
@@ -72,15 +73,34 @@ export class HarnessProcessPlacementStoreObject
       await this.ctx.storage.transaction(async (transaction) => {
         await this.#assertOwnerIn(transaction, owner);
         const current = await transaction.get<unknown>(WRITER_KEY);
-        if (current === undefined) throw new Error("Process-placement writer is already released.");
+        if (current === undefined) {
+          const released = await transaction.get<unknown>(WRITER_RELEASE_KEY);
+          if (released !== undefined) {
+            assertWriter(released);
+            if (sameWriter(released, writer)) return;
+          }
+          throw new Error("Process-placement writer has no matching release receipt.");
+        }
         assertWriter(current);
         if (!sameWriter(current, writer))
           throw new Error("ProcessSlots writer claim changed before release.");
+        await transaction.put(WRITER_RELEASE_KEY, writer);
         await transaction.delete(WRITER_KEY);
       });
     } finally {
       if (this.#activeWriter.get(owner)?.identity === identity) this.#activeWriter.delete(owner);
     }
+  }
+
+  async writerReleased(owner: string, writer: HarnessProcessPlacementWriter): Promise<boolean> {
+    assertWriter(writer);
+    return this.ctx.storage.transaction(async (transaction) => {
+      await this.#assertOwnerIn(transaction, owner);
+      const released = await transaction.get<unknown>(WRITER_RELEASE_KEY);
+      if (released === undefined) return false;
+      assertWriter(released);
+      return sameWriter(released, writer);
+    });
   }
 
   async load(

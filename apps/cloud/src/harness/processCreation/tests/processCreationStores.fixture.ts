@@ -41,6 +41,17 @@ export class ColdCreationPlacementStore extends HarnessProcessPlacementStoreObje
     return (await this.ctx.storage.get<number>("cold-creation/writer-claim-failures")) ?? 0;
   }
 
+  async loseNextWriterReleaseReply() {
+    await this.ctx.storage.put("cold-creation/lose-release-reply", true);
+  }
+  override async releaseWriter(owner: string, writer: HarnessProcessPlacementWriter) {
+    await super.releaseWriter(owner, writer);
+    if (await this.ctx.storage.get("cold-creation/lose-release-reply")) {
+      await this.ctx.storage.delete("cold-creation/lose-release-reply");
+      throw new Error("Injected lost reply after committed writer release.");
+    }
+  }
+
   async writerStatus(owner: string) {
     return { writer: (await this.readWriter(owner)) !== undefined };
   }

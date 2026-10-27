@@ -728,6 +728,195 @@ async function firstRequestAdmissionRetry(env: CreationWorkerEnv) {
   };
 }
 
+async function releaseReplyLoss(env: CreationWorkerEnv) {
+  const fixture = await setup(env);
+  const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const store = env.PLACEMENT_STORES.getByName(fixture.owner);
+  const created = await shard.startFreshProcess(fixture.input);
+  const beforeNonce = await shard.executionIncarnationNonce();
+  const nextControl = {
+    ...fixture.input.controllerClaim,
+    epoch: 2,
+    incarnationId: secret("release-recovery"),
+    controlKey: secret("release-control"),
+  };
+  const recoveryInput = {
+    runId: fixture.runId,
+    operationId: fixture.input.operationId,
+    drainOperationId: `release-drain-${fixture.runId}`,
+    control: fixture.input.controllerClaim,
+    nextControl,
+  };
+  await store.loseNextWriterReleaseReply();
+  const lost = await shard.recoverFreshProcess(recoveryInput).then(
+    () => ({ rejected: false, message: "" }),
+    (cause: unknown) => ({ rejected: true, message: errorMessage(cause) }),
+  );
+  const writerAfterFailure = await store.writerStatus(fixture.owner);
+  const placementAfterFailure = await shard.creationPlacement(fixture.runId);
+  await shard.abortIncarnation().catch(() => undefined);
+  const recoveredShard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const afterNonce = await recoveredShard.executionIncarnationNonce();
+  const recovered = await recoveredShard.recoverFreshProcess(recoveryInput);
+  const replay = await recoveredShard.recoverFreshProcess(recoveryInput);
+  const bound = await recoveredShard.processCreationStatus({
+    runId: fixture.runId,
+    control: fixture.input.controllerClaim,
+  });
+  if (bound.status !== "bound")
+    throw new Error("Writer reply loss lost the bound native identity.");
+  const request = await offer(env, fixture, "release-reply-recovered");
+  const restored = await runNativeJournalRestore({
+    env,
+    setup: fixture,
+    shard: recoveredShard,
+    request,
+    bound,
+    nextControl,
+  });
+  return {
+    lost,
+    writerAfterFailure,
+    placementAfterFailure,
+    beforeNonce,
+    afterNonce,
+    created,
+    recovered,
+    replay,
+    ...restored,
+  };
+}
+
+async function admissionParentDestruction(env: CreationWorkerEnv) {
+  const fixture = await setup(env);
+  const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const created = await shard.startFreshProcess(fixture.input);
+  const beforeNonce = await shard.executionIncarnationNonce();
+  const original = await offer(env, fixture, "undispatched");
+  await env.HARNESS_FILES_STORE.getByName(fixture.runId).failNext("admitStep");
+  const failed = await shard
+    .runCreatedProcess(
+      { runId: fixture.runId, operationId: fixture.input.operationId, request: original.offer },
+      `context-${original.requestId}`,
+    )
+    .then(
+      () => ({ rejected: false }),
+      () => ({ rejected: true }),
+    );
+  const before = await env.COLD_CREATION_STORE.getByName("cold-creation").observations();
+  await shard.abortIncarnation().catch(() => undefined);
+  const recoveredShard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const afterNonce = await recoveredShard.executionIncarnationNonce();
+  const nextControl = {
+    ...fixture.input.controllerClaim,
+    epoch: 2,
+    incarnationId: secret("admission-recovery"),
+    controlKey: secret("admission-control"),
+  };
+  const recoveryInput = {
+    runId: fixture.runId,
+    operationId: fixture.input.operationId,
+    drainOperationId: `admission-drain-${fixture.runId}`,
+    control: fixture.input.controllerClaim,
+    nextControl,
+  };
+  const recovered = await recoveredShard.recoverFreshProcess(recoveryInput);
+  const replay = await recoveredShard.recoverFreshProcess(recoveryInput);
+  const durable = createHarnessDurableState(env, fixture.runId);
+  const journal = await durable.runStore.execute({ type: "read", runId: fixture.runId });
+  const current = await durable.threadSupervisor.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: nextControl,
+  });
+  const lateAdmission = await durable.runStore.execute({
+    type: "request.admit",
+    runId: fixture.runId,
+    requestId: original.requestId,
+    publisher: {
+      generation: 1,
+      facetNonce: created.identity.incarnationNonce,
+      publisherKey: fixture.input.requestPublisherKey,
+    },
+  });
+  const bound = await recoveredShard.processCreationStatus({
+    runId: fixture.runId,
+    control: fixture.input.controllerClaim,
+  });
+  if (bound.status !== "bound")
+    throw new Error("Admission recovery lost the initial native identity.");
+  const request = await offer(env, fixture, "after-admission-retirement");
+  const restored = await runNativeJournalRestore({
+    env,
+    setup: fixture,
+    shard: recoveredShard,
+    request,
+    bound,
+    nextControl,
+  });
+  return {
+    failed,
+    before,
+    beforeNonce,
+    afterNonce,
+    created,
+    recovered,
+    replay,
+    oldRequestStatus: journal.snapshot.requests?.entries[0]?.status,
+    admittedStepId: current.snapshot.admittedStepId,
+    lateAdmission: lateAdmission.action,
+    ...restored,
+  };
+}
+
+async function dispatchedCrashRefusal(env: CreationWorkerEnv) {
+  const fixture = await setup(env);
+  const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const created = await shard.startFreshProcess(fixture.input);
+  const request = await offer(env, fixture, "dispatched");
+  const running = shard
+    .runCreatedProcess(
+      { runId: fixture.runId, operationId: fixture.input.operationId, request: request.offer },
+      `context-${request.requestId}`,
+    )
+    .catch(() => undefined);
+  await env.HARNESS_RUN_STORE.getByName(fixture.runId).waitForFinish(request.requestId);
+  await shard.abortIncarnation().catch(() => undefined);
+  await running;
+  const reconstructed = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const nextControl = {
+    ...fixture.input.controllerClaim,
+    epoch: 2,
+    incarnationId: secret("blocked-recovery"),
+    controlKey: secret("blocked-control"),
+  };
+  const recovery = await reconstructed
+    .recoverFreshProcess({
+      runId: fixture.runId,
+      operationId: fixture.input.operationId,
+      drainOperationId: `blocked-drain-${fixture.runId}`,
+      control: fixture.input.controllerClaim,
+      nextControl,
+    })
+    .then(
+      () => ({ rejected: false, message: "" }),
+      (cause: unknown) => ({ rejected: true, message: errorMessage(cause) }),
+    );
+  const state = await createHarnessDurableState(env, fixture.runId).threadSupervisor.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: fixture.input.controllerClaim,
+  });
+  return {
+    recovery,
+    admittedStepId: state.snapshot.admittedStepId,
+    controlEpoch: state.snapshot.controlEpoch,
+    requestId: request.requestId,
+    observations: await env.COLD_CREATION_STORE.getByName("cold-creation").observations(),
+    created,
+  };
+}
+
 function errorMessage(cause: unknown) {
   return cause instanceof Error ? cause.message : String(cause);
 }
@@ -750,6 +939,12 @@ export default {
           return json(await parentDestroyedCrashRestore(env));
         case "/recovery-retries":
           return json(await recoveryRetryFailures(env));
+        case "/dispatched-crash":
+          return json(await dispatchedCrashRefusal(env));
+        case "/release-reply-loss":
+          return json(await releaseReplyLoss(env));
+        case "/admission-parent-destruction":
+          return json(await admissionParentDestruction(env));
         case "/admission-retry":
           return json(await firstRequestAdmissionRetry(env));
         default:
