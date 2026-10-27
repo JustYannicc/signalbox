@@ -8,6 +8,7 @@ import type {
   HarnessCProductNativeCheckpointService,
   HarnessCProductProgramService,
   HarnessCProductReleaseService,
+  HarnessCProductTurnGrantSource,
 } from "./contracts.ts";
 import type { MachineProgramInventory } from "../../computer/MachineProgramInventory.ts";
 
@@ -19,6 +20,7 @@ export const HARNESS_C_PRODUCT_CAPABILITY_KEYS = {
   machine: "HARNESS_C_PRODUCT_MACHINE",
   model: "HARNESS_C_PRODUCT_MODEL",
   executor: "HARNESS_C_PRODUCT_EXECUTOR",
+  turnGrantSource: "HARNESS_C_PRODUCT_TURN_GRANT_SOURCE",
 } as const;
 
 export interface HarnessCProductCapabilities<G> {
@@ -29,6 +31,7 @@ export interface HarnessCProductCapabilities<G> {
   readonly machine: HarnessCProductMachineService;
   readonly model: HarnessCProductModelService;
   readonly executor: HarnessCProductExecutorService<G>;
+  readonly turnGrantSource?: HarnessCProductTurnGrantSource<G>;
 }
 
 export class HarnessCProductCapabilityError extends Error {
@@ -82,6 +85,14 @@ export function narrowHarnessCProductCapabilities<G>(
     HARNESS_C_PRODUCT_CAPABILITY_KEYS.executor,
     ["forward"],
   );
+  const turnGrantSource =
+    supplied[HARNESS_C_PRODUCT_CAPABILITY_KEYS.turnGrantSource] === undefined
+      ? undefined
+      : required<HarnessCProductTurnGrantSource<G>>(
+          supplied,
+          HARNESS_C_PRODUCT_CAPABILITY_KEYS.turnGrantSource,
+          ["issue"],
+        );
   return {
     release,
     nativeCheckpoint,
@@ -90,6 +101,7 @@ export function narrowHarnessCProductCapabilities<G>(
     machine,
     model,
     executor,
+    ...(turnGrantSource === undefined ? {} : { turnGrantSource }),
   };
 }
 

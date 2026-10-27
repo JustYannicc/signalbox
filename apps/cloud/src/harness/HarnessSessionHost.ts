@@ -9,6 +9,10 @@ import { createSeedCatalog } from "./host/seed.ts";
 export type {
   ExecutorMcpPort,
   ExecutorTarget,
+  HarnessMcpPublisherIdentity,
+  HarnessMcpTurnGrant,
+  HarnessMcpTurnGrantInput,
+  HarnessMcpTurnGrantSource,
   HarnessHostFilesOptions,
   HarnessHostOptions,
   HarnessHostSession,
