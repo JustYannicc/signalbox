@@ -21,6 +21,7 @@ beforeAll(async () => {
     `import handler from "./worker.js";
 export { ProbeSession, CodeGeneration } from "./worker.js";
 export default {fetch(request, env) {
+  if (new URL(request.url).pathname === "/probe/session-health") return handler.fetch(request, env);
   return handler.fetch(request, {...env, PROBE: {
     idFromName() { return "forced-startup-failure"; },
     get() { return {async fetch() { throw new Error("native startup failed"); }}; }
@@ -67,6 +68,19 @@ describe("probe Durable Object forwarding failures", () => {
     const health = new URL("/probe/health", endpoint);
     expect((await fetch(health)).status).toBe(401);
     const response = await fetch(health, {
+      headers: { authorization: "Bearer local-probe-only" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      ready: true,
+      versionId: "forwarding-test-version",
+      workerName: "probe-forwarding-test",
+    });
+  });
+
+  it("attests the destination DO version without invoking its measured probe", async () => {
+    const response = await fetch(new URL("/probe/session-health?session=destination", endpoint), {
       headers: { authorization: "Bearer local-probe-only" },
     });
     expect(response.status).toBe(200);

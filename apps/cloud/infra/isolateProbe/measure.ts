@@ -306,6 +306,7 @@ try {
     schemaVersion: 1,
     environment: deployedUrl ? "deployed" : "local-workerd",
     measuredAt: new Date().toISOString(),
+    ...(stageTransport ? { durableObjectStartup: "before-measurement" } : {}),
     runId,
     programWasmInventorySha256: programWasmInventory.inventorySha256,
     preparedModules,

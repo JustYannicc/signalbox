@@ -75,6 +75,20 @@ interface Env {
   DYNAMIC_WORKER_CPU_MS?: string;
 }
 
+function stageHealth(env: Env) {
+  return Response.json(
+    {
+      ready: Boolean(env.PROBE_VERSION_ID && env.PROBE_WORKER_NAME),
+      versionId: env.PROBE_VERSION_ID,
+      workerName: env.PROBE_WORKER_NAME,
+    },
+    {
+      status: env.PROBE_VERSION_ID && env.PROBE_WORKER_NAME ? 200 : 503,
+      headers: { "cache-control": "no-store" },
+    },
+  );
+}
+
 async function rejectedUpload(request: Request, error: unknown) {
   // Unread bytes can abort a forwarded fetch's response. Drain a bounded tail without decoding it.
   const body = request.body;
@@ -104,6 +118,10 @@ export class ProbeSession extends DurableObject<Env> {
 
   override async fetch(request: Request) {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/probe/session-health") {
+      // Confirm this DO's deployed handler without starting its measured probe or dynamic facet.
+      return stageHealth(this.env);
+    }
     if (url.pathname.startsWith("/root/")) {
       url.pathname = url.pathname.slice("/root".length);
       return probe(new Request(url, request), this.ctx);
@@ -279,17 +297,7 @@ export default {
     }
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/probe/health") {
-      return Response.json(
-        {
-          ready: Boolean(env.PROBE_VERSION_ID && env.PROBE_WORKER_NAME),
-          versionId: env.PROBE_VERSION_ID,
-          workerName: env.PROBE_WORKER_NAME,
-        },
-        {
-          status: env.PROBE_VERSION_ID && env.PROBE_WORKER_NAME ? 200 : 503,
-          headers: { "cache-control": "no-store" },
-        },
-      );
+      return stageHealth(env);
     }
     const session = url.searchParams.get("session");
     if (!session || !/^[a-zA-Z0-9-]{1,100}$/.test(session)) {

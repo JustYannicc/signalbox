@@ -10,11 +10,14 @@ async function withStage(
     connections: Set<NodeHttp.IncomingMessage["socket"]>;
     health: (handler: (response: NodeHttp.ServerResponse) => void) => void;
     closeAfter: (path: string) => void;
+    requireSessionReadiness: (session: string) => void;
   }) => Promise<void>,
 ) {
   const requests: string[] = [];
   const connections = new Set<NodeHttp.IncomingMessage["socket"]>();
   let closeAfter: string | undefined;
+  let requiredSession: string | undefined;
+  let sessionReady = false;
   let health = (response: NodeHttp.ServerResponse) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ ready: true, versionId: "upload", workerName: "127" }));
@@ -28,6 +31,29 @@ async function withStage(
       health(response);
     } else if (request.url === "/") {
       response.writeHead(400, { "content-type": "text/plain" }).end("Invalid session");
+    } else if (request.url === `/probe/session-health?session=${requiredSession}`) {
+      sessionReady = true;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          ready: true,
+          versionId: "upload",
+          workerName: "127",
+          retainedBytes: 0,
+          memoryUsage: {},
+          heapStatistics: {},
+        }),
+      );
+    } else if (request.url === `/root/wasm?session=${requiredSession}`) {
+      response.writeHead(sessionReady ? 200 : 500, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify(
+          sessionReady ? { ok: true, value: 42 } : { error: "Error: Worker not found." },
+        ),
+      );
+    } else if (request.url?.startsWith("/probe/session-health?session=")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ready: true, versionId: "upload", workerName: "127" }));
     } else if (request.url === "/root/status?session=readiness") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ retainedBytes: 0, memoryUsage: {}, heapStatistics: {} }));
@@ -55,6 +81,9 @@ async function withStage(
       health: (handler) => {
         health = handler;
       },
+      requireSessionReadiness: (session) => {
+        requiredSession = session;
+      },
       closeAfter: (path) => {
         closeAfter = path;
       },
@@ -67,6 +96,24 @@ async function withStage(
 }
 
 describe("measurement stage transport", () => {
+  it("checks the destination session before its first measurement request", async () => {
+    await withStage(async ({ endpoint, requests, requireSessionReadiness }) => {
+      requireSessionReadiness("fresh-do");
+      const transport = createStageTransport(endpoint, "secret", "upload");
+      try {
+        const result = await transport.request(
+          new URL("/root/wasm?session=fresh-do", endpoint),
+          () => ({ headers: { authorization: "Bearer secret" } }),
+          true,
+        );
+        expect(result.response).toEqual({ status: 200, result: { ok: true, value: 42 } });
+        expect(requests.filter((path) => path === "/root/wasm?session=fresh-do")).toHaveLength(1);
+      } finally {
+        await transport.close();
+      }
+    });
+  });
+
   it("gates every case on the same connection and preserves a case's first failed response", async () => {
     await withStage(async ({ endpoint, requests, connections, health }) => {
       const transport = createStageTransport(endpoint, "secret", "upload");
@@ -106,11 +153,11 @@ describe("measurement stage transport", () => {
         expect(requests).toEqual([
           "/probe/health",
           "/",
-          "/root/status?session=readiness",
+          "/probe/session-health?session=first",
           "/root/jspi?session=first",
           "/probe/health",
           "/",
-          "/root/status?session=readiness",
+          "/probe/session-health?session=second",
           "/root/wasm?session=second",
         ]);
         expect(connections.size).toBe(1);
@@ -161,7 +208,7 @@ describe("measurement stage transport", () => {
         expect(requests).toEqual([
           "/probe/health",
           "/",
-          "/root/status?session=readiness",
+          "/probe/session-health?session=bytes",
           "/upload?session=bytes",
         ]);
         expect(connections.size).toBe(1);
@@ -170,7 +217,7 @@ describe("measurement stage transport", () => {
       }
     });
   });
-  it.each(["/probe/health", "/", "/root/status?session=readiness"])(
+  it.each(["/probe/health", "/", "/probe/session-health?session=never-started"])(
     "fails setup before sending a case when %s closes the checked connection",
     async (path) => {
       await withStage(async ({ endpoint, requests, closeAfter }) => {
@@ -184,7 +231,7 @@ describe("measurement stage transport", () => {
               true,
             ),
           ).rejects.toThrow("stage connection changed before case dispatch");
-          expect(requests.some((request) => request.includes("never-started"))).toBe(false);
+          expect(requests).not.toContain("/root/jspi?session=never-started");
         } finally {
           await transport.close();
         }

@@ -8,6 +8,7 @@ type Wait = (milliseconds: number, signal?: AbortSignal) => Promise<void>;
 
 export interface ProbeRouterReadinessOptions {
   expectedVersionId?: string;
+  session?: string;
   signal?: AbortSignal;
   fetch?: FetchRequest;
   wait?: Wait;
@@ -16,7 +17,11 @@ export interface ProbeRouterReadinessOptions {
   requestTimeoutMs?: number;
   retryIntervalMs?: number;
   onPending?: (
-    reason: "route-not-found" | "stage-version-mismatch" | "durable-object-handler-missing",
+    reason:
+      | "route-not-found"
+      | "stage-version-mismatch"
+      | "durable-object-handler-missing"
+      | "durable-object-worker-missing",
   ) => void;
 }
 
@@ -67,10 +72,20 @@ export async function waitForProbeRouter(
   const pause = options.wait ?? wait;
   const now = options.now ?? (() => performance.now());
   const deadline = now() + timeoutMs;
-  const canary = new URL("/root/status", url);
-  canary.searchParams.set("session", "readiness");
+  if (
+    options.session !== undefined &&
+    (!/^[a-zA-Z0-9-]{1,100}$/.test(options.session) || !options.expectedVersionId)
+  )
+    throw new Error("Probe session readiness requires a valid session and stage version.");
+  const canary = new URL(options.session ? "/probe/session-health" : "/root/status", url);
+  canary.searchParams.set("session", options.session ?? "readiness");
   const health = new URL("/probe/health", url);
   const workerName = new URL(url).hostname.split(".")[0];
+  const matchesStage = (result: unknown) =>
+    record(result) &&
+    result.ready === true &&
+    result.versionId === options.expectedVersionId &&
+    result.workerName === workerName;
   let stageReady = options.expectedVersionId === undefined;
   let routerReady = false;
   const unavailable = () =>
@@ -124,12 +139,7 @@ export async function waitForProbeRouter(
         } catch {
           throw new Error("Probe router returned invalid stage health JSON.");
         }
-        if (
-          record(result) &&
-          result.ready === true &&
-          result.versionId === options.expectedVersionId &&
-          result.workerName === workerName
-        ) {
+        if (matchesStage(result)) {
           stageReady = true;
           continue;
         }
@@ -156,7 +166,11 @@ export async function waitForProbeRouter(
           // Invalid JSON remains an unexpected response below.
         }
         if (response.status === 200) {
-          if (
+          if (options.session) {
+            if (matchesStage(result)) return;
+            options.onPending?.("stage-version-mismatch");
+            retry = true;
+          } else if (
             typeof result?.retainedBytes === "number" &&
             Number.isFinite(result.retainedBytes) &&
             result.retainedBytes >= 0 &&
@@ -164,14 +178,16 @@ export async function waitForProbeRouter(
             record(result.heapStatistics)
           )
             return;
-          throw new Error("Probe router returned an unexpected DO canary response.");
+          if (!retry) throw new Error("Probe router returned an unexpected DO canary response.");
         }
-        if (
-          response.status === 500 &&
-          result?.error === "Error: Handler does not export a fetch() function."
-        ) {
-          options.onPending?.("durable-object-handler-missing");
-          retry = true;
+        if (response.status === 500) {
+          if (result?.error === "Error: Handler does not export a fetch() function.") {
+            options.onPending?.("durable-object-handler-missing");
+            retry = true;
+          } else if (options.session && result?.error === "Error: Worker not found.") {
+            options.onPending?.("durable-object-worker-missing");
+            retry = true;
+          }
         }
       }
       if (!retry)

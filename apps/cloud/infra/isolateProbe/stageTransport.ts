@@ -80,11 +80,14 @@ export function createStageTransport(endpoint: string, secret: string, versionId
   return {
     async request(url: URL, createInit: () => RequestInit, wrapResult = false) {
       if (url.origin !== origin) throw new Error("Probe request left its owned stage.");
+      const session = url.searchParams.get("session");
+      if (!session) throw new Error("Probe case requires a destination session.");
       preDispatchFailure = undefined;
       // Parent-process readiness cannot attest a fresh measurement connection or a later case.
       try {
         await waitForProbeRouter(endpoint, secret, {
           expectedVersionId: versionId,
+          session,
           fetch: (request) => fetcher(request),
           onPending: (reason) => process.stderr.write(`Probe case setup pending: ${reason}.\n`),
         });

@@ -30,9 +30,9 @@ it("checks its own upload before every CLI fixture case on one connection", asyn
       }
     } else if (request.url === "/") {
       response.writeHead(400, { "content-type": "text/plain" }).end("Invalid session");
-    } else if (request.url === "/root/status?session=readiness") {
+    } else if (request.url?.startsWith("/probe/session-health?session=")) {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ retainedBytes: 0, memoryUsage: {}, heapStatistics: {} }));
+      response.end(JSON.stringify({ ready: true, versionId: "cli-upload", workerName: "127" }));
     } else {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ status: 200, result: { ok: true } }));
@@ -91,14 +91,22 @@ it("checks its own upload before every CLI fixture case on one connection", asyn
     );
     expect(evidence.verificationErrors).toEqual([]);
     expect(evidence.rows.map((row: { path: string }) => row.path)).toEqual(["/first", "/second"]);
-    expect(paths.map((path) => (path.startsWith("/run?") ? "/run" : path))).toEqual([
+    expect(
+      paths.map((path) =>
+        path.startsWith("/run?")
+          ? "/run"
+          : path.startsWith("/probe/session-health?")
+            ? "/probe/session-health"
+            : path,
+      ),
+    ).toEqual([
       "/probe/health",
       "/",
-      "/root/status?session=readiness",
+      "/probe/session-health",
       "/run",
       "/probe/health",
       "/",
-      "/root/status?session=readiness",
+      "/probe/session-health",
       "/run",
     ]);
     expect(sockets.size).toBe(1);
