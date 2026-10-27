@@ -1,3 +1,4 @@
+import * as NodeBuffer from "node:buffer";
 import { describe, expect, it } from "vite-plus/test";
 import { createFacetSqliteStorage } from "./FacetSqliteStorage.ts";
 import { KernelFileSystem } from "./KernelFileSystem.ts";
@@ -102,6 +103,43 @@ describe("Kernel session stdio", () => {
       await writer.close();
       expect(await f.session.stdio[0].readInto!(second, 0)).toBe(0);
       expect(observed).toEqual([0, 255, 128, 7, 42]);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("isolates observer mutation from Buffer-backed native reads", async () => {
+    const f = fixture(undefined, (bytes) => {
+      bytes.fill(99);
+    });
+    try {
+      const writer = f.session.stdin.getWriter();
+      await writer.write(new Uint8Array([0, 255, 128]));
+      const target = NodeBuffer.Buffer.alloc(8, 17);
+      expect(await f.session.stdio[0].readInto!(target, 0)).toBe(3);
+      expect([...target]).toEqual([0, 255, 128, 17, 17, 17, 17, 17]);
+      await writer.close();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("retains consumed Buffer bytes independently of later guest memory reuse", async () => {
+    const observed: Uint8Array[] = [];
+    const f = fixture(undefined, (bytes) => {
+      observed.push(bytes);
+    });
+    try {
+      const writer = f.session.stdin.getWriter();
+      await writer.write(new Uint8Array([0, 255, 128, 7]));
+      const target = NodeBuffer.Buffer.alloc(2);
+      expect(await f.session.stdio[0].readInto!(target, 0)).toBe(2);
+      target.fill(99);
+      expect([...observed[0]!]).toEqual([0, 255]);
+      expect(await f.session.stdio[0].readInto!(target, 0)).toBe(2);
+      expect([...observed[0]!]).toEqual([0, 255]);
+      expect([...observed[1]!]).toEqual([128, 7]);
+      await writer.close();
     } finally {
       await f.close();
     }

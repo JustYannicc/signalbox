@@ -54,7 +54,7 @@ export function createKernelSessionStdio(
                 if (observeInput !== undefined && fd === 0 && count > 0) {
                   // Capture the consumed prefix before the guest can reuse its memory.
                   try {
-                    const observed = observeInput(target.slice(0, count));
+                    const observed = observeInput(new Uint8Array(target.subarray(0, count)));
                     if (observed instanceof Promise) void observed.catch(() => undefined);
                   } catch {
                     /* Input ownership stays with the reader. */
