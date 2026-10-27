@@ -22,6 +22,7 @@ export interface KernelSessionStdio {
   readonly dispose: () => Promise<void>;
 }
 
+export type KernelSessionInputObserver = (bytes: Uint8Array) => void | Promise<void>;
 export type KernelSessionOutputObserver = (fd: 1 | 2, bytes: Uint8Array) => void | Promise<void>;
 
 /** Construct the filesystem with this tuple before giving that filesystem to Computer. */
@@ -29,6 +30,7 @@ export function createKernelSessionStdio(
   wakes: KernelWakeRegistry,
   signal?: AbortSignal,
   observe?: KernelSessionOutputObserver,
+  observeInput?: KernelSessionInputObserver,
 ): KernelSessionStdio {
   const inputController = new AbortController();
   const inputSignal =
@@ -47,7 +49,22 @@ export function createKernelSessionStdio(
       ...(endpoint.readInto === undefined
         ? {}
         : {
-            readInto: (target, flags) => track(endpoint.readInto!(target, flags)),
+            readInto: (target, flags) => {
+              const consumed = (count: number) => {
+                if (observeInput !== undefined && fd === 0 && count > 0) {
+                  // Capture the consumed prefix before the guest can reuse its memory.
+                  try {
+                    const observed = observeInput(new Uint8Array(target.subarray(0, count)));
+                    if (observed instanceof Promise) void observed.catch(() => undefined);
+                  } catch {
+                    /* Input ownership stays with the reader. */
+                  }
+                }
+                return count;
+              };
+              const read = endpoint.readInto!(target, flags);
+              return track(read instanceof Promise ? read.then(consumed) : consumed(read));
+            },
           }),
       ...(endpoint.write === undefined
         ? {}

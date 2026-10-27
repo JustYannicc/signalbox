@@ -11,6 +11,7 @@ import {
 import {
   createKernelSessionStdio,
   type KernelSessionOutputObserver,
+  type KernelSessionInputObserver,
 } from "../../kernel/KernelSessionStdio.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { CHILD_PROGRAM_PATHS } from "../../computer/ChildProgramSet.ts";
@@ -51,6 +52,7 @@ export interface ProductHostOptions<G, Native> extends Omit<
   >;
   readonly hydrate?: (input: BindingInput<G>) => Promise<void>;
   readonly observeOutput?: KernelSessionOutputObserver;
+  readonly observeInput?: KernelSessionInputObserver;
   readonly save: (input: BindingInput<G>) => ReturnType<Computer["save"]>;
   readonly port: Computer["port"];
   readonly native: Native;
@@ -88,9 +90,10 @@ function acquireStdio(
   wakes: KernelWakeRegistry,
   signal: AbortSignal,
   observe?: KernelSessionOutputObserver,
+  observeInput?: KernelSessionInputObserver,
 ) {
   return Effect.acquireRelease(
-    Effect.sync(() => createKernelSessionStdio(wakes, signal, observe)),
+    Effect.sync(() => createKernelSessionStdio(wakes, signal, observe, observeInput)),
     (value) => Effect.promise(() => value.dispose()),
   );
 }
@@ -241,7 +244,12 @@ export const createProductHost = <G, Native>(
     const owner = yield* makeFacetLifetime(yield* Scope.Scope);
     return yield* Effect.gen(function* () {
       const wakes = yield* acquireWakes;
-      const stdio = yield* acquireStdio(wakes, owner.signal, options.observeOutput);
+      const stdio = yield* acquireStdio(
+        wakes,
+        owner.signal,
+        options.observeOutput,
+        options.observeInput,
+      );
       const { release: _release, programs, ...runtime } = options;
       const bindings = createProductBindings<G, Native>(
         runtime,
