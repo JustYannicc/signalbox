@@ -40,6 +40,10 @@ export class HarnessProcessExecutionShardObject extends DurableObject<HarnessPro
     return this.#owner().continueProcess(input, requestContextId);
   }
 
+  stopIdleProcess(input: unknown) {
+    return this.#owner().stopIdleProcess(input);
+  }
+
   cancelResumeProcess(input: unknown) {
     return this.#owner().cancelResumeProcess(input);
   }

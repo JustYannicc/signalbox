@@ -75,6 +75,111 @@ afterAll(async () => {
   if (harness !== undefined) await harness.close();
 });
 
+it("retains the resumed native incarnation across two requests and drains only the final turn", async () => {
+  const response = await harness.fetch("http://proof/retained-idle");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.second.status).toBe("idle");
+  expect(result.third.status).toBe("settled");
+  expect(result.second.identity).toMatchObject(result.resumed.identity);
+  expect(result.third.identity).toEqual(result.second.identity);
+  expect(result.conflicting).toBe(true);
+  expect(result.concurrent).toBe(true);
+  expect(result.finalModeConflict).toBe(true);
+  expect(result.normalizedMatch).toBe(true);
+  expect(result.earlierMatch).toBe(true);
+  expect(result.stale).toBe(true);
+  expect(result.duplicatesMatch).toBe(true);
+  expect(result.idleOwnership).toMatchObject({ writer: true, leases: 1, permits: 0 });
+  expect(result.idleEvidence.terminal).toHaveLength(1);
+  expect(
+    result.idleObservations[`proof/event/disposed:${result.resumed.identity.incarnationNonce}`],
+  ).toBeUndefined();
+  expect(result.finalOwnership).toMatchObject({ writer: false, leases: 0 });
+  expect(result.finalEvidence.terminal).toHaveLength(2);
+  expect(result.requests).toEqual([
+    { requestId: "turn-one", generation: 2, status: "completed" },
+    { requestId: "turn-two", generation: 3, status: "completed" },
+    { requestId: "turn-three", generation: 3, status: "completed" },
+  ]);
+});
+
+it("stops an idle process without another turn before releasing its writer and resident lease", async () => {
+  const response = await harness.fetch("http://proof/retained-idle/stop");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.stopped).toEqual({ status: "stopped" });
+  expect(result.duplicateStop).toEqual(result.stopped);
+  expect(result.conflictStop).toBe(true);
+  expect(result.afterStopDenied).toBe(true);
+  expect(result.staleStop).toBe(true);
+  expect(result.idleOwnership).toMatchObject({ writer: true, leases: 1, permits: 0 });
+  expect(result.finalOwnership).toMatchObject({ writer: false, leases: 0 });
+  expect(result.finalEvidence.terminal).toHaveLength(2);
+  expect(result.finalEvidence.terminal.at(-1)).toMatchObject({
+    stopped: true,
+    joined: { invocationRpc: true, fetch: true, ports: true },
+  });
+  expect(result.releases.at(-1).terminal).toHaveLength(2);
+  expect(result.observations[`proof/event/disposed:${result.identity.incarnationNonce}`]).toBe(
+    true,
+  );
+});
+
+it("denies continuation and idle stop after C reconstruction loses the actual process handle", async () => {
+  const response = await harness.fetch("http://proof/retained-idle/reconstruct");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  expect(JSON.parse(body)).toEqual({
+    denied: true,
+    continuationDenied: true,
+    changed: true,
+    staleStop: true,
+  });
+});
+
+it.each(["invocation", "checkpoint"] as const)(
+  "fences keep-alive after an unknown %s outcome without replay or release",
+  async (failure) => {
+    const response = await harness.fetch(`http://proof/retained-idle/failure-${failure}`);
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body);
+    expect(result.denied).toBe(true);
+    expect(result.duplicateDenied).toBe(true);
+    expect(result.nextDenied).toBe(true);
+    expect(result.stopDenied).toBe(true);
+    expect(result.completionDenied).toBe(failure === "checkpoint");
+    expect(result.ownership).toMatchObject({ writer: true, leases: 1, permits: 1 });
+    expect(result.evidence.terminal).toHaveLength(1);
+    expect(result.releases).toHaveLength(1);
+    expect(result.requests).toEqual(["turn-one", "turn-two"]);
+  },
+);
+
+it("stops both idle handles across successive resume cycles in one shard", async () => {
+  const response = await harness.fetch("http://proof/retained-idle/cycle");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.cycles).toHaveLength(2);
+  expect(result.cycles[1].identity.incarnationNonce).not.toBe(
+    result.cycles[0].identity.incarnationNonce,
+  );
+  for (const cycle of result.cycles) {
+    expect(cycle.result).toBe("idle");
+    expect(cycle.before).toMatchObject({ writer: true, leases: 1, permits: 0 });
+    expect(cycle.stopped).toEqual({ status: "stopped" });
+    expect(cycle.duplicate).toEqual(cycle.stopped);
+    expect(cycle.after).toMatchObject({ writer: false, leases: 0 });
+  }
+  expect(result.firstDuplicate).toEqual(result.cycles[0].stopped);
+  expect(result.conflict).toBe(true);
+  expect(result.evidence.terminal).toHaveLength(3);
+});
+
 it("consumes real durable stop evidence after A rehydration in the same shard and rejects a missing observed release", async () => {
   const response = await harness.fetch("http://proof/missing-observation");
   const body = await response.text();

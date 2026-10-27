@@ -169,7 +169,8 @@ jobs:
     needs: cloud_migrations
     if: ${{ !cancelled() && needs.cloud_migrations.outputs.test != 'false' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Full-suite runs on main already take about 18 minutes.
+    timeout-minutes: 30
     env:
       PROGRAMS_RELEASE_TAG: kernel-programs-20261023-6aefd645-2d079609
       COREUTILS_TAR_SHA256: 875eb1dcdb31d6ea53f59b64b6de6bef8e0ebc4680a7698310ab0cfc989d50d9

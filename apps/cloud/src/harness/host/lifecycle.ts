@@ -1,6 +1,7 @@
 import { createContinuationJournal } from "../HarnessContinuationJournal.ts";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
@@ -83,7 +84,13 @@ export const createHostLifecycle = <G>(
       );
       const lock = yield* Semaphore.make(1);
       const boot = createBootState(storage, catalog, options.threadId);
-      const routes = createMcpRoutes(options.executor, owner.signal);
+      const clock = yield* Clock.Clock;
+      const routes = createMcpRoutes(
+        options.executor,
+        owner.signal,
+        () => clock.currentTimeMillisUnsafe(),
+        options.turnGrantSource,
+      );
       let ports: Omit<ComputerBindings, "files"> | undefined;
       const computer = Object.freeze<Computer>({
         threadId: options.threadId,

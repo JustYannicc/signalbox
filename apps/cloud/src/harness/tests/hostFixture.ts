@@ -15,6 +15,7 @@ import {
   type NativeThreadLoad,
   type TurnAccess,
   type ExecutorMcpPort,
+  type HarnessMcpPublisherIdentity,
 } from "../HarnessSessionHost.ts";
 import type { HarnessProcessStartup } from "../HarnessProcessLifetime.ts";
 import { HarnessError, type HarnessOpenInput } from "../Harness.ts";
@@ -26,7 +27,14 @@ const bytes = new TextEncoder().encode("executable-fixture");
 const metadata = { mode: 0o755, uid: 1000, gid: 1000 };
 const credentials = { uid: 1000, gid: 1000, euid: 1000, egid: 1000 };
 const posix = { credentials, umask: 0o022 };
-type Grant = { readonly secret: string };
+export type Grant = {
+  readonly secret: string;
+  readonly claims?: {
+    readonly runId: string;
+    readonly nativeTurnEpoch: number;
+    readonly publisher: HarnessMcpPublisherIdentity;
+  };
+};
 
 export const hostFixture = Effect.gen(function* () {
   const database = yield* Effect.acquireRelease(Effect.sync(hostSqlite), (value) =>

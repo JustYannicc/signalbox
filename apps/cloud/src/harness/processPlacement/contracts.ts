@@ -132,6 +132,8 @@ export interface HarnessProcessInvocationSettlement<Value = unknown> {
   readonly value: Value;
   readonly stopAcknowledged: boolean;
   readonly joined: HarnessProcessJoined;
+  /** The request returned while the facet still owns its native scope and resources. */
+  readonly processRetained?: true;
 }
 
 export interface HarnessProcessObservedFacet {
@@ -284,7 +286,13 @@ export interface HarnessProcessHandle<Input = unknown> {
   activate<Activation extends HarnessProcessPublishedActivation>(
     publisher: HarnessProcessPublicationPublisher<Activation>,
   ): Promise<Activation>;
-  invoke(input: Input): Promise<HarnessProcessInvocationSettlement>;
+  invoke(
+    input: Input,
+    options?: { readonly retainProcess: true },
+  ): Promise<HarnessProcessInvocationSettlement>;
+  /** Resolves after releasing execution capacity, retaining the resident lease. */
+  idle(): Promise<void>;
+  readmit(publication: HarnessProcessPublication): Promise<void>;
   /** The returned promise resolves only after the wait completes and ProcessSlots re-admits. */
   park<Value>(
     waitForResume: () => Promise<{
