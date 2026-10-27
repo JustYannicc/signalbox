@@ -1,4 +1,4 @@
-import { HarnessFilesStoreObject } from "../../../HarnessFilesStoreObject.ts";
+import { ProductFixtureFilesStore as HarnessFilesStoreObject } from "./productStores.workerd.fixture.ts";
 import { ProductFixtureRunStore } from "./productStores.workerd.fixture.ts";
 import { HarnessThreadSupervisorObject } from "../../../HarnessThreadSupervisorObject.ts";
 import { HarnessProcessExecutionShardObject } from "../../../HarnessProcessExecutionShardObject.ts";
@@ -76,10 +76,16 @@ export default {
   async fetch(request: Request, env: ProductWorkerEnv) {
     try {
       const path = new URL(request.url).pathname;
-      if (path !== "/positive" && path !== "/mismatch")
+      if (path !== "/positive" && path !== "/mismatch" && !path.startsWith("/failure/"))
         return Response.json({ error: "unknown scenario" }, { status: 404 });
       const mismatch = path === "/mismatch";
-      return Response.json(await runProductScenario(env, mismatch));
+      return Response.json(
+        await runProductScenario(
+          env,
+          mismatch,
+          path.startsWith("/failure/") ? path.slice("/failure/".length) : undefined,
+        ),
+      );
     } catch (cause) {
       const errors = [];
       for (let error: unknown = cause, i = 0; error !== undefined && i < 8; i++) {

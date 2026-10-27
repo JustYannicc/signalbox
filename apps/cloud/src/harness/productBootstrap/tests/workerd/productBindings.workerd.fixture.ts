@@ -1,7 +1,7 @@
 import type { HarnessProcessExecutionEnvironment } from "../../../HarnessProcessPlacement.ts";
 import type { HarnessProcessExecutionShardObject } from "../../../HarnessProcessExecutionShardObject.ts";
 import type { HarnessProcessPlacementStoreObject } from "../../../HarnessProcessPlacementStoreObject.ts";
-import type { HarnessFilesStoreObject } from "../../../HarnessFilesStoreObject.ts";
+import type { ProductFixtureFilesStore } from "./productStores.workerd.fixture.ts";
 import type { HarnessThreadSupervisorObject } from "../../../HarnessThreadSupervisorObject.ts";
 import type { ProductFixtureRunStore } from "./productStores.workerd.fixture.ts";
 import type { ProductFixtureCapability } from "./productCapability.workerd.fixture.ts";
@@ -25,7 +25,7 @@ export interface ProductWorkerEnv extends HarnessProcessExecutionEnvironment {
   readonly PRODUCT_EXECUTOR: DurableObjectNamespace<ProductFixtureExecutor>;
   readonly PRODUCT_FACET_SOURCE: string;
   readonly PRODUCT_CODEX_WASM: string;
-  readonly HARNESS_FILES_STORE: DurableObjectNamespace<HarnessFilesStoreObject>;
+  readonly HARNESS_FILES_STORE: DurableObjectNamespace<ProductFixtureFilesStore>;
   readonly HARNESS_RUN_STORE: DurableObjectNamespace<ProductFixtureRunStore>;
   readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<HarnessThreadSupervisorObject>;
   readonly PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<ProductFixtureShard>;

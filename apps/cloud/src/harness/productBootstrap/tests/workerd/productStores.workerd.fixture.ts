@@ -1,3 +1,4 @@
+import { HarnessFilesStoreObject as BaseFilesStore } from "../../../HarnessFilesStoreObject.ts";
 import { HarnessRunStoreObject } from "../../../HarnessRunStoreObject.ts";
 
 export class ProductFixtureRunStore extends HarnessRunStoreObject {
@@ -31,5 +32,41 @@ export class ProductFixtureRunStore extends HarnessRunStoreObject {
     )
       this.#finished.get(command.requestId)?.resolve();
     return result;
+  }
+}
+
+export class ProductFixtureFilesStore extends BaseFilesStore {
+  async injectMaterialFault(checkpointId: string, fault: "missing-files" | "changed-files") {
+    const checkpoint = this.ctx.storage.sql
+      .exec(
+        "SELECT checkpoint_id FROM harness_files_checkpoint WHERE checkpoint_id=?",
+        checkpointId,
+      )
+      .toArray();
+    if (checkpoint.length !== 1)
+      throw new Error("Fixture checkpoint for fault injection is missing.");
+    if (fault === "missing-files") {
+      this.ctx.storage.sql.exec(
+        "DELETE FROM harness_files_checkpoint WHERE checkpoint_id=?",
+        checkpointId,
+      );
+      return;
+    }
+    const row = this.ctx.storage.sql
+      .exec<{ sha256: string; bytes: ArrayBuffer }>(
+        "SELECT sha256,bytes FROM harness_files_blob WHERE sha256 IN (SELECT blob_sha256 FROM harness_files_entry WHERE checkpoint_id=?) LIMIT 1",
+        checkpointId,
+      )
+      .one();
+    const bytes = new Uint8Array(row.bytes.slice(0));
+    if (bytes.length === 0) throw new Error("Fixture blob for fault injection is empty.");
+    const first = bytes[0];
+    if (first === undefined) throw new Error("Fixture file bytes are empty.");
+    bytes[0] = first ^ 1;
+    this.ctx.storage.sql.exec(
+      "UPDATE harness_files_blob SET bytes=? WHERE sha256=?",
+      bytes.buffer,
+      row.sha256,
+    );
   }
 }

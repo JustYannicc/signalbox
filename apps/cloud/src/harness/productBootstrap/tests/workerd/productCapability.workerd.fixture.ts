@@ -57,6 +57,10 @@ export class ProductFixtureCapability extends DurableObject<ProductFixtureServic
 
   async getArtifact(provider: HarnessCProductProvider, releaseId: string) {
     const release = await this.release(provider);
+    const fault = await this.ctx.storage.get<string>("fixture/fault");
+    if (provider === "codex" && fault === "missing-artifact") return null;
+    if (provider === "codex" && fault === "changed-artifact")
+      return { ...release.artifact, artifactHash: "0".repeat(64) };
     return release.artifact.releaseId === releaseId ? release.artifact : null;
   }
 
@@ -106,6 +110,18 @@ export class ProductFixtureCapability extends DurableObject<ProductFixtureServic
     return machineInventoryFixture([
       { path: "/usr/bin/machine-tool", mode: 0o755, uid: 1000, gid: 1000 },
     ]);
+  }
+
+  async injectFault(fault: string, native: HarnessRunArtifact) {
+    await this.ctx.storage.put("fixture/fault", fault);
+    if (fault === "missing-native") await this.ctx.storage.delete(`fixture/native/${native.id}`);
+    if (fault === "changed-native") {
+      const bytes = await this.read(native);
+      const first = bytes[0];
+      if (first === undefined) throw new Error("Fixture native bytes are empty.");
+      bytes[0] = first ^ 1;
+      await this.ctx.storage.put(`fixture/native/${native.id}`, bytes);
+    }
   }
 
   async resolveInitialAccess(

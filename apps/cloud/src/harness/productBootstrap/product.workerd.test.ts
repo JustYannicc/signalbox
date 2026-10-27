@@ -127,7 +127,7 @@ it("runs the actual Claude and Codex product factories through C's public shard 
   expect(result.files.claudeTranscript).toContain("product-native-session");
   expect(result.observations.executor).toMatchObject({
     method: "POST",
-    grant: { kind: "turn", requestId: "turn-one", call: 1 },
+    grant: { kind: "turn", requestId: "turn-two", call: 2 },
     signalAborted: false,
     requestSignalAborted: false,
     body: "native-executor-request",
@@ -183,3 +183,31 @@ it("rejects a prepared-release mismatch before publication and records the prepu
   ]);
   expect(result.writer.writer).toBe(false);
 });
+
+it.each([
+  "missing-artifact",
+  "changed-artifact",
+  "missing-native",
+  "changed-native",
+  "missing-files",
+  "changed-files",
+])(
+  "rejects %s through public C resume before prepared identity or publication",
+  async (materialFault) => {
+    const response = await harness.fetch(`http://proof/failure/${materialFault}`);
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body);
+    expect(result.kind).toBe("product-c-workerd-material-failure");
+    expect(result.materialFault).toBe(materialFault);
+    expect(result.rejected.rejected).toBe(true);
+    expect(result.status.status).toBe("retained");
+    expect(result.status.preparedIdentityPersisted).toBe(false);
+    expect(result.status.terminalEvidencePersisted).toBe(true);
+    expect(result.unchangedPublication).toBe(true);
+    expect(result.after.generation).toBe(result.before.generation);
+    expect(result.after.preparedFacet ?? null).toEqual(result.before.preparedFacet ?? null);
+    expect(result.observations.turnAccessCalls).toBe(1);
+    expect(result.writer.writer).toBe(false);
+  },
+);

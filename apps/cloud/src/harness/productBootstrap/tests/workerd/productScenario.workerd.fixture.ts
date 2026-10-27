@@ -13,7 +13,11 @@ const noNativeResume = async (cause: unknown) => ({
   message: cause instanceof Error ? cause.message : String(cause),
 });
 
-export async function runProductScenario(env: ProductWorkerEnv, mismatch: boolean) {
+export async function runProductScenario(
+  env: ProductWorkerEnv,
+  mismatch: boolean,
+  materialFault?: string,
+) {
   const setup = await setupProductClaudeRun(env);
   const {
     runId,
@@ -125,6 +129,60 @@ export async function runProductScenario(env: ProductWorkerEnv, mismatch: boolea
       proof: await shard.evidence(),
       observations: await capability.observations(),
       writer: await placement.writerStatus(setup.owner),
+    };
+  }
+
+  if (materialFault !== undefined) {
+    if (
+      ![
+        "missing-artifact",
+        "changed-artifact",
+        "missing-native",
+        "changed-native",
+        "missing-files",
+        "changed-files",
+      ].includes(materialFault)
+    )
+      throw new Error("Unknown material failure case.");
+    if (materialFault === "missing-files" || materialFault === "changed-files") {
+      await env.HARNESS_FILES_STORE.getByName(runId).injectMaterialFault(
+        firstCheckpoint.filesystem.id,
+        materialFault,
+      );
+    } else {
+      await capability.injectFault(materialFault, firstCheckpoint.native);
+    }
+    const rejected = await shard
+      .resumeProcess(resumeOperation)
+      .then(() => ({ rejected: false, message: "Resume unexpectedly succeeded." }), noNativeResume);
+    const status = await shard.processResumeStatus({
+      runId,
+      operationId: "resume-one",
+      control: control3,
+    });
+    const after = await state.threadSupervisor.execute({ type: "read", runId, control: control3 });
+    return {
+      kind: "product-c-workerd-material-failure",
+      materialFault,
+      rejected,
+      status,
+      before: {
+        generation: beforeResume.currentPublisher.generation,
+        preparedFacet: beforeResume.snapshot.preparedFacet,
+      },
+      after: {
+        generation: after.currentPublisher.generation,
+        preparedFacet: after.snapshot.preparedFacet,
+        lifecycle: after.snapshot.lifecycle,
+      },
+      unchangedPublication:
+        beforeResume.snapshot.lastPublicationOperationId ===
+          after.snapshot.lastPublicationOperationId &&
+        JSON.stringify(beforeResume.snapshot.lastPublication) ===
+          JSON.stringify(after.snapshot.lastPublication),
+      proof: await shard.evidence(),
+      writer: await placement.writerStatus(setup.owner),
+      observations: await capability.observations(),
     };
   }
 
