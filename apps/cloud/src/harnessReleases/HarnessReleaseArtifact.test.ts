@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import * as NodeUtil from "node:util";
 import { Schema } from "effect";
 import {
   HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH,
@@ -386,7 +387,12 @@ describe("harness release artifact reader", () => {
     });
 
     expect(fixture.reads).toEqual([HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH]);
-    expect(await opened.read(fixture.payloadPath)).toEqual(fixture.payload);
+    const payload = await opened.read(fixture.payloadPath);
+    expect(NodeUtil.isDeepStrictEqual(payload, fixture.payload)).toBe(true);
+    const changed = payload.slice();
+    changed[changed.length - 1] = (changed[changed.length - 1] ?? 0) ^ 1;
+    expect(NodeUtil.isDeepStrictEqual(changed, fixture.payload)).toBe(false);
+    expect(NodeUtil.isDeepStrictEqual(payload.subarray(0, -1), fixture.payload)).toBe(false);
     expect(received.every((buffer) => buffer.byteLength === 0)).toBe(true);
     expect(ranges.filter((range) => range.path === fixture.payloadPath)).toEqual([
       { path: fixture.payloadPath, offset: 0, length: rangeBytes },
