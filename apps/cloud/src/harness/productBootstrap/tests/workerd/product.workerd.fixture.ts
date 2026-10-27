@@ -3,12 +3,15 @@ import { ProductFixtureRunStore } from "./productStores.workerd.fixture.ts";
 import { HarnessThreadSupervisorObject } from "../../../HarnessThreadSupervisorObject.ts";
 import { HarnessProcessExecutionShardObject } from "../../../HarnessProcessExecutionShardObject.ts";
 import { HarnessProcessPlacementStoreObject } from "../../../HarnessProcessPlacementStoreObject.ts";
-import type { HarnessProcessExecutionHooks } from "../../../processPlacement/executionLifecycle.ts";
-import type { HarnessProcessExecutionShardInput } from "../../../processPlacement/execution.ts";
+import type { HarnessProcessExecutionHooks } from "../../../HarnessProcessPlacement.ts";
+import type { HarnessProcessExecutionShardInput } from "../../../HarnessProcessPlacement.ts";
 import type { ProductWorkerEnv } from "./productBindings.workerd.fixture.ts";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../HarnessCProductCapabilities.ts";
 import { serializeHarnessRequestFacetFailure } from "./memoryFailure.workerd.fixture.ts";
-import { ProductFixtureCapability } from "./productCapability.workerd.fixture.ts";
+import {
+  ProductFixtureCapability,
+  type MemoryModuleInventory,
+} from "./productCapability.workerd.fixture.ts";
 import type { ProductFixtureMemoryProofFailure } from "./productCapability.workerd.fixture.ts";
 import { ProductFixtureExecutor } from "./productExecutor.workerd.fixture.ts";
 import { ProductHeapProbe } from "./productHeapProbe.workerd.fixture.ts";
@@ -19,7 +22,6 @@ import {
   legacyModuleMap,
   copyLegacyModuleSnapshot,
   memoryModuleInventory,
-  type MemoryModuleInventory,
 } from "./memoryModules.workerd.fixture.ts";
 import { memoryNativeModule } from "./memoryNative.workerd.fixture.ts";
 

@@ -1,9 +1,10 @@
-import type { HarnessProcessExecutionShardInput } from "../../../processPlacement/execution.ts";
+import type { HarnessProcessExecutionShardInput } from "../../../HarnessProcessPlacement.ts";
 import type { HarnessProcessFacetModule } from "../../../HarnessProcessPlacement.ts";
 import {
   PRODUCT_FIXTURE_R18_INPUT_CHUNK_BYTES,
   PRODUCT_FIXTURE_R18_INPUT_PATHS,
   type ProductFixtureCapability,
+  type MemoryModuleInventory,
 } from "./productCapability.workerd.fixture.ts";
 
 type PreparedRelease = NonNullable<
@@ -130,13 +131,6 @@ export async function supplementaryMemoryModules(
   }
   return modules;
 }
-
-export type MemoryModuleInventory = readonly {
-  readonly name: string;
-  readonly type: "js" | "cjs" | "text" | "wasm";
-  readonly bytes: number;
-  readonly sha256: string;
-}[];
 
 export async function memoryModuleInventory(
   modules: Readonly<Record<string, HarnessProcessFacetModule>>,

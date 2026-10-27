@@ -1,4 +1,3 @@
-import type { MemoryModuleInventory } from "./memoryModules.workerd.fixture.ts";
 // @effect-diagnostics nodeBuiltinImport:off - Workerd provides the actual capability RPC boundaries used by the product facet.
 import type { ProductFixtureGrant } from "./productGrant.workerd.fixture.ts";
 import { DurableObject } from "cloudflare:workers";
@@ -50,6 +49,13 @@ type R18InputChunk = {
   readonly path: string;
   readonly bytes: Uint8Array;
 };
+export type MemoryModuleInventory = readonly {
+  readonly name: string;
+  readonly type: "js" | "cjs" | "text" | "wasm";
+  readonly bytes: number;
+  readonly sha256: string;
+}[];
+
 export type ProductFixtureMemoryProofFailureCause = HarnessRequestFacetFailureCause;
 export interface ProductFixtureMemoryProofFailure {
   readonly source: "process" | "shard";

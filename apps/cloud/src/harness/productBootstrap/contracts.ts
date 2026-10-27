@@ -34,6 +34,7 @@ export interface HarnessCProductReleaseService {
     readonly maxPreparedModuleBytes: number;
   }>;
   readArtifact(artifactRef: string, path: string): Promise<Uint8Array>;
+  /** Returns an owned exact buffer; the receiver may detach it after copying. */
   readArtifactChunk(
     artifactRef: string,
     path: string,

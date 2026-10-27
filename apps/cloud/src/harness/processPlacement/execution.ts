@@ -1,11 +1,8 @@
+import { createHarnessProcessFacet as createFacet } from "./facetLoader.ts";
 import { HarnessProcessPlacementError } from "./contracts.ts";
 import type { HarnessProcessFacetInvokeInput as FacetInvokeInput } from "../HarnessProcessFacet.ts";
 import { DURABLE_OBJECT_INVOCATION_LIMIT } from "./limits.ts";
-import {
-  openPlacementSession,
-  createFacet,
-  PlacementCreationFailure,
-} from "./executionLifecycle.ts";
+import { openPlacementSession, PlacementCreationFailure } from "./executionLifecycle.ts";
 import type {
   HarnessProcessExecutionShardInput as PlacementShardInput,
   HarnessProcessExecutionShardResult,

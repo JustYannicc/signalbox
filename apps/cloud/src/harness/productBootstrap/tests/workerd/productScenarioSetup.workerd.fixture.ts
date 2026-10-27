@@ -7,7 +7,7 @@ import { createHarnessDurableState } from "../../../HarnessDurableState.ts";
 import { deterministicShardOwner } from "../../../HarnessProcessPlacement.ts";
 import type { HarnessProcessExecutionShardInput } from "../../../HarnessProcessPlacement.ts";
 import type { HarnessProcessFacetModule } from "../../../HarnessProcessPlacement.ts";
-import type { HarnessProcessPreparedRelease } from "../../../processPlacement/moduleCode.ts";
+import type { HarnessProcessPreparedRelease } from "../../../HarnessProcessPlacement.ts";
 import type {
   HarnessThreadSupervisorControlClaim,
   HarnessThreadSupervisorPublisher,

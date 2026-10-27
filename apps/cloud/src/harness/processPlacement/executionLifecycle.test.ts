@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../HarnessCProductCapabilities.ts";
-import { createFacet } from "./executionLifecycle.ts";
-import type { HarnessProcessExecutionEnvironment } from "./execution.ts";
-import { preparedReleaseAsset } from "./moduleCode.ts";
+import { createHarnessProcessFacet as createFacet } from "../HarnessProcessFacet.ts";
+import type { HarnessProcessExecutionEnvironment } from "../HarnessProcessPlacement.ts";
+import { preparedReleaseAsset } from "../HarnessProcessPlacement.ts";
 
 describe("process facet module loading", () => {
   it("reads prepared assets only on a loader miss and passes the owned Wasm buffer through", async () => {
@@ -132,5 +132,38 @@ describe("process facet module loading", () => {
     expect(get).toHaveBeenCalledTimes(2);
     expect(loads.size).toBe(1);
     expect(readArtifactChunk).toHaveBeenCalledTimes(1);
+
+    const releaseOnlyEnvironment = {
+      ...environment,
+      HARNESS_C_PRODUCT_CAPABILITIES: {
+        [HARNESS_C_PRODUCT_CAPABILITY_KEYS.release]:
+          capabilities[HARNESS_C_PRODUCT_CAPABILITY_KEYS.release],
+      },
+    } as unknown as HarnessProcessExecutionEnvironment;
+    createFacet(context, releaseOnlyEnvironment, process, identity);
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(readArtifactChunk).toHaveBeenCalledTimes(1);
+
+    const missingCapabilityEnvironment = { ...environment };
+    delete missingCapabilityEnvironment.HARNESS_C_PRODUCT_CAPABILITIES;
+    expect(() => createFacet(context, missingCapabilityEnvironment, process, identity)).toThrow(
+      "Required product bootstrap capability is missing: HARNESS_C_PRODUCT_CAPABILITIES",
+    );
+    expect(() =>
+      createFacet(
+        context,
+        {
+          ...environment,
+          HARNESS_C_PRODUCT_CAPABILITIES: {
+            [HARNESS_C_PRODUCT_CAPABILITY_KEYS.release]: {} as Fetcher,
+          },
+        },
+        process,
+        identity,
+      ),
+    ).toThrow(
+      "Required product bootstrap capability is missing: HARNESS_C_PRODUCT_RELEASES.readArtifactChunk",
+    );
+    expect(get).toHaveBeenCalledTimes(3);
   });
 });

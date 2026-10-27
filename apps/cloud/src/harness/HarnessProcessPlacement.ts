@@ -9,9 +9,12 @@ export { HarnessProcessPlacementError } from "./processPlacement/contracts.ts";
 export {
   HARNESS_PROCESS_RELEASE_ASSET_CHUNK_BYTES,
   preparedReleaseAsset,
+  materializeHarnessProcessModules,
+  snapshotHarnessProcessModules,
 } from "./processPlacement/moduleCode.ts";
 export type {
   HarnessProcessFacetModule,
+  HarnessProcessPreparedRelease,
   HarnessProcessPreparedReleaseAsset,
 } from "./processPlacement/moduleCode.ts";
 export type { HarnessProcessPlacementWriter } from "./processPlacement/storeSchema.ts";
@@ -42,6 +45,7 @@ export type {
 export type {
   HarnessCProductCapabilityEnvironment,
   HarnessProcessExecutionEnvironment,
+  HarnessProcessExecutionHooks,
   HarnessProcessExecutionProcessInput,
   HarnessProcessExecutionProductBootstrapInput,
   HarnessProcessExecutionResumeFacetEnvironment,

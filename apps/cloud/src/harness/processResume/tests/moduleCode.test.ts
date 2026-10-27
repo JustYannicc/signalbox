@@ -8,7 +8,7 @@ import {
   materializeHarnessProcessModules,
   preparedReleaseAsset,
   snapshotHarnessProcessModules,
-} from "../../processPlacement/moduleCode.ts";
+} from "../../HarnessProcessPlacement.ts";
 
 const wasmBytes = () => new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]).buffer;
 const publisher = {
