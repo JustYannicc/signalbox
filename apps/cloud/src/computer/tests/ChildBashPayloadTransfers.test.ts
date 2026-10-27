@@ -8,6 +8,7 @@ import type { KernelCommandChild } from "../../kernel/KernelCommandForwarder.ts"
 import { createChildBash } from "../ChildBash.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
 import { createBashGateway } from "./ChildBashGatewayFixture.ts";
+import { traceBashReaderFailure } from "./BashReaderTrace.ts";
 import {
   publicCommand,
   captureText,
@@ -104,45 +105,44 @@ describe.skipIf(!available)("pinned GNU Bash child payload transfers", () => {
       const stopPressure = captureCapacityPressure(gateway);
       let child: KernelCommandChild | undefined;
       let commandSettled = false;
-      await withFailurePreservingCleanup(
-        async () => {
-          const command = await publicCommand(gateway, script, commandController.signal);
-          child = command;
-          const stdout = captureText(command.stdout);
-          const stderr = captureText(command.stderr);
-          const result = await within(
-            Promise.all([stdout.settled, stderr.settled, command.exited]),
-            15_000,
-          );
-          commandSettled = result.kind === "completed";
-          const message =
-            result.kind === "rejected"
-              ? `Bash rejected: ${String(result.error)}`
-              : "Bash did not finish";
-          const output = `Bash stderr: ${stderr.text()}; stdout: ${stdout.text()}`;
-          expect(result.kind, `${message}; ${output}; ${gatewayTrace(gateway)}`).toBe("completed");
-          if (result.kind === "completed") {
-            const [, , status] = result.value;
-            const stdoutText = stdout.text();
-            const stderrText = stderr.text();
-            expect(
-              status,
-              `Bash stderr: ${stderrText}; stdout: ${stdoutText}; ${gatewayTrace(gateway)}`,
-            ).toEqual(exited());
-            expect(stderrText).toContain("forked\n");
-            expect(stdoutText).toBe("done\n");
-          }
-        },
-        async (bodyFailed) => {
-          stopPressure();
-          await cleanupGatewayCommand(
-            gateway,
-            child,
-            commandController,
-            bodyFailed || !commandSettled,
-          );
-        },
-      );
+      const cleanup = async (bodyFailed: boolean) => {
+        stopPressure();
+        await cleanupGatewayCommand(
+          gateway,
+          child,
+          commandController,
+          bodyFailed || !commandSettled,
+        );
+      };
+      const close = jobs === 160 ? traceBashReaderFailure(gateway, cleanup) : cleanup;
+      await withFailurePreservingCleanup(async () => {
+        const command = await publicCommand(gateway, script, commandController.signal);
+        child = command;
+        const stdout = captureText(command.stdout);
+        const stderr = captureText(command.stderr);
+        const result = await within(
+          Promise.all([stdout.settled, stderr.settled, command.exited]),
+          15_000,
+        );
+        commandSettled = result.kind === "completed";
+        const message =
+          result.kind === "rejected"
+            ? `Bash rejected: ${String(result.error)}`
+            : "Bash did not finish";
+        const output = `Bash stderr: ${stderr.text()}; stdout: ${stdout.text()}`;
+        expect(result.kind, `${message}; ${output}; ${gatewayTrace(gateway)}`).toBe("completed");
+        if (result.kind === "completed") {
+          const [, , status] = result.value;
+          const stdoutText = stdout.text();
+          const stderrText = stderr.text();
+          expect(
+            status,
+            `Bash stderr: ${stderrText}; stdout: ${stdoutText}; ${gatewayTrace(gateway)}`,
+          ).toEqual(exited());
+          expect(stderrText).toContain("forked\n");
+          expect(stdoutText).toBe("done\n");
+        }
+      }, close);
     },
     30_000,
   );
