@@ -222,6 +222,8 @@ export function createMcpRoutes<G>(
     session(sessionSignal: AbortSignal) {
       const base = `/${nonce}/${++generation}`;
       let nextEpoch = 0;
+      let closed = false;
+      const endpointPaths = new Map<string, string>();
       let current:
         | { epoch: number; controller: AbortController; paths: string[]; unlisten: () => void }
         | undefined;
@@ -234,6 +236,7 @@ export function createMcpRoutes<G>(
         prior.controller.abort();
       };
       const close = () => {
+        closed = true;
         if (current !== undefined) retire(current.epoch);
       };
       return {
@@ -241,9 +244,10 @@ export function createMcpRoutes<G>(
         retire,
         close,
         async activate(access: TurnAccess<G>, runId?: string): Promise<NativeMcpConfiguration> {
-          if (ownerSignal.aborted || sessionSignal.aborted || access.signal.aborted) throw denied();
+          if (closed || ownerSignal.aborted || sessionSignal.aborted || access.signal.aborted)
+            throw denied();
           validateConnections(access.connections);
-          close();
+          if (current !== undefined) retire(current.epoch);
           const epoch = ++nextEpoch;
           const controller = new AbortController();
           const signal = AbortSignal.any([
@@ -325,7 +329,17 @@ export function createMcpRoutes<G>(
           }
           const servers: Record<string, { readonly url: string }> = {};
           for (const [name, target] of targets) {
-            const path = `${base}/${epoch}/${paths.length}`;
+            // CLI tool closures outlive turns. Resolve their stable endpoint against the current grant.
+            const identity = JSON.stringify([
+              name,
+              target.type,
+              target.type === "direct" ? target.serverId : null,
+            ]);
+            let path = endpointPaths.get(identity);
+            if (path === undefined) {
+              path = `${base}/${endpointPaths.size}`;
+              endpointPaths.set(identity, path);
+            }
             paths.push(path);
             routes.set(path, {
               target,

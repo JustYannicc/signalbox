@@ -164,7 +164,6 @@ export const createHostSession = <G>(
                   }
                   if (matchesTerminal(event, current)) {
                     completeMcpTurn?.(current.epoch);
-                    mcp.retire(current.epoch);
                     current.finishing = true;
                     finishing = current;
                   }
@@ -482,8 +481,8 @@ export const createHostSession = <G>(
                     if (prepared !== undefined && mcp.hasTurnGrantSource) {
                       if (native.retireCheckpointMcp !== undefined)
                         yield* native.retireCheckpointMcp(prepared.configuration.epoch);
-                      // Checkpoint access only loads the native thread. The first real turn gets
-                      // its own publisher-bound grant and configuration epoch.
+                      // Checkpoint access only loads the native thread. Rotate its grant for work
+                      // while retaining the endpoint captured by the same live process.
                       initial = undefined;
                     }
                     const config =

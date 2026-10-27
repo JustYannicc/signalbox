@@ -63,7 +63,7 @@ describe("Harness host turn grants", () => {
   );
 
   it.effect(
-    "rotates grants on one session, retires terminal grants without draining public events and isolates late A",
+    "keeps a live process endpoint through terminal and rotates its grant before continuation",
     () =>
       Effect.gen(function* () {
         const f = yield* hostFixture;
@@ -99,10 +99,9 @@ describe("Harness host turn grants", () => {
         yield* instance.adapter.terminal();
         yield* instance.adapter.saving;
         const terminalForwards = f.forwards.length;
-        yield* Effect.promise(() =>
-          expect(f.mcp.fetch(new Request(first.servers.executor!.url))).rejects.toThrow(),
-        );
-        expect(f.forwards).toHaveLength(terminalForwards);
+        yield* Effect.promise(() => f.mcp.fetch(new Request(first.servers.executor!.url)));
+        expect(f.forwards).toHaveLength(terminalForwards + 1);
+        expect(f.forwards.at(-1)?.grant).toBe(accessA.grant);
         const accessB = f.access("opaque-B");
         const turnB = {
           ...instance.adapter.turn,
@@ -114,7 +113,7 @@ describe("Harness host turn grants", () => {
         yield* session.turn({ turn: turnB, access: accessB });
         yield* instance.adapter.nextStart;
         const second = f.configurations[1]!;
-        expect(second.servers.executor!.url).not.toBe(first.servers.executor!.url);
+        expect(second.servers.executor!.url).toBe(first.servers.executor!.url);
         aController.abort();
         yield* instance.adapter.terminal();
         yield* Effect.promise(async () => {
@@ -222,7 +221,7 @@ describe("Harness host turn grants", () => {
         expect(f.forwards).toHaveLength(failedForwards);
       }).pipe(Effect.scoped),
   );
-  it.effect.each(["access", "terminal", "owner"] as const)(
+  it.effect.each(["access", "stop", "owner"] as const)(
     "aborts an in-flight Executor request when %s ownership ends",
     (end) =>
       Effect.gen(function* () {
@@ -246,10 +245,7 @@ describe("Harness host turn grants", () => {
         ).pipe(Effect.exit, Effect.forkScoped);
         const signal = yield* Effect.promise(() => called.promise);
         if (end === "access") accessOwner.abort();
-        if (end === "terminal") {
-          yield* instance.adapter.terminal();
-          yield* instance.adapter.saving;
-        }
+        if (end === "stop") yield* session.dispose;
         if (end === "owner") yield* instance.host.dispose;
         expect(signal.aborted).toBe(true);
         expect(Exit.isFailure(yield* Fiber.join(pending))).toBe(true);
