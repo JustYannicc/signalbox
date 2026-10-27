@@ -5,6 +5,7 @@ import type {
 import { snapshotHarnessProcessResumeRunStoreBinding } from "./runStoreBinding.ts";
 import { samePreparedRelease, snapshotInput } from "./identity.ts";
 import {
+  assertHarnessProcessModuleAssets,
   snapshotHarnessProcessModules,
   sameHarnessProcessModules,
 } from "../processPlacement/moduleCode.ts";
@@ -53,7 +54,10 @@ function snapshotProductBootstrap(
   }
 }
 
-function snapshotFacetCode(value: unknown): HarnessProcessResumeFacetCode | undefined {
+function snapshotFacetCode(
+  value: unknown,
+  release: HarnessProcessResumeOperationInput["transition"]["targetPreparedRelease"],
+): HarnessProcessResumeFacetCode | undefined {
   try {
     if (typeof value !== "object" || value === null) return undefined;
     const facet = value as Record<string, unknown>;
@@ -72,6 +76,7 @@ function snapshotFacetCode(value: unknown): HarnessProcessResumeFacetCode | unde
 
     const modules = snapshotHarnessProcessModules(facet.modules, facet.mainModule);
     if (modules === undefined) return undefined;
+    assertHarnessProcessModuleAssets(modules, release);
     return Object.freeze({
       processId: facet.processId,
       codeId: facet.codeId,
@@ -116,8 +121,9 @@ export function snapshotHarnessProcessResumeOperation(
     const transition = snapshotInput(
       supplied.transition as HarnessProcessResumeOperationInput["transition"],
     );
-    const facet = snapshotFacetCode(supplied.facet);
-    if (runStore === undefined || transition === undefined || facet === undefined) return undefined;
+    if (runStore === undefined || transition === undefined) return undefined;
+    const facet = snapshotFacetCode(supplied.facet, transition.targetPreparedRelease);
+    if (facet === undefined) return undefined;
     const productBootstrap = snapshotProductBootstrap(
       supplied.productBootstrap,
       transition.targetPreparedRelease,

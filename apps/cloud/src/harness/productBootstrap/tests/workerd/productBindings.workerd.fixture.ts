@@ -8,6 +8,12 @@ import type { ProductFixtureCapability } from "./productCapability.workerd.fixtu
 import type { ProductFixtureExecutor } from "./productExecutor.workerd.fixture.ts";
 
 export type ProductFixtureShard = HarnessProcessExecutionShardObject & {
+  holdHeapProbe(bytes: number): Promise<{ readonly heldBytes: number }>;
+  releaseHeapProbe(): Promise<{ readonly releasedBytes: number }>;
+  startLegacyMemoryProof(
+    input: import("../../../HarnessProcessPlacement.ts").HarnessProcessExecutionShardInput,
+    requestContextId: string,
+  ): Promise<{ readonly started: true }>;
   evidence(): Promise<{
     terminal: {
       stopped: boolean;
@@ -24,7 +30,6 @@ export interface ProductWorkerEnv extends HarnessProcessExecutionEnvironment {
   readonly PRODUCT_FIXTURE: DurableObjectNamespace<ProductFixtureCapability>;
   readonly PRODUCT_EXECUTOR: DurableObjectNamespace<ProductFixtureExecutor>;
   readonly PRODUCT_FACET_SOURCE: string;
-  readonly PRODUCT_CODEX_WASM: string;
   readonly HARNESS_FILES_STORE: DurableObjectNamespace<ProductFixtureFilesStore>;
   readonly HARNESS_RUN_STORE: DurableObjectNamespace<ProductFixtureRunStore>;
   readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<HarnessThreadSupervisorObject>;

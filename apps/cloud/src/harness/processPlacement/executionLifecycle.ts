@@ -25,10 +25,15 @@ import {
 import { createHarnessProcessPlacement, forgetHarnessProcessPlacement } from "./service.ts";
 import { type HarnessProcessPlacementWriter } from "./storeSchema.ts";
 import { sameClaim } from "./storeSchema.ts";
-import { snapshotHarnessProcessModules } from "./moduleCode.ts";
+import {
+  assertHarnessProcessModuleAssets,
+  materializeHarnessProcessModules,
+  snapshotHarnessProcessModules,
+} from "./moduleCode.ts";
 import { confirmedProcessPublication } from "./publication.ts";
 import type { ProcessSlotLease } from "../../computer/ProcessSlots.ts";
 import type { HarnessRequestFacetObject } from "../HarnessRequestFacetObject.ts";
+import { narrowHarnessCProductCapabilities } from "../HarnessCProductCapabilities.ts";
 import {
   createHarnessProcessFacetEnvironment,
   type HarnessProcessExecutionEnvironment,
@@ -75,6 +80,20 @@ export interface HarnessProcessExecutionShardResult {
 
 export interface HarnessProcessExecutionHooks {
   readonly authority?: HarnessProcessExecutionSupervisorClient;
+  readonly afterPlacementSessionOpened?: (input: {
+    readonly runId: string;
+    readonly executionOperationId: string;
+    readonly processIds: readonly string[];
+  }) => Promise<void>;
+  readonly afterInertPreparation?: (input: {
+    readonly process: HarnessProcessExecutionProcessInput;
+    readonly handle: HarnessProcessHandle<FacetInvokeInput>;
+  }) => Promise<void>;
+  readonly onProcessFailure?: (input: {
+    readonly runId: string;
+    readonly process: HarnessProcessExecutionProcessInput;
+    readonly failure: unknown;
+  }) => Promise<void>;
   readonly afterActivation?: (input: {
     readonly process: HarnessProcessExecutionProcessInput;
     readonly handle: HarnessProcessHandle<FacetInvokeInput>;
@@ -560,15 +579,37 @@ export function createFacet(
     throw new TypeError(
       "Process execution code must use JavaScript and Wasm byte modules with a JavaScript main.",
     );
-  const workerCode: WorkerLoaderWorkerCode = {
-    compatibilityDate: "2026-10-19",
-    compatibilityFlags: ["nodejs_compat"],
-    mainModule: process.mainModule,
-    modules,
-    env: createHarnessProcessFacetEnvironment(process, environment, identity),
-    globalOutbound: null,
-  };
-  const worker = environment.LOADER.get(identity.loaderId, () => workerCode);
+  const hasPreparedAssets = Object.values(modules).some(
+    (module) => typeof module !== "string" && "preparedReleaseAsset" in module,
+  );
+  if (hasPreparedAssets) {
+    if (process.productBootstrap === undefined || process.targetPreparedRelease === undefined)
+      throw new TypeError("Prepared process facet assets require a selected product release.");
+    assertHarnessProcessModuleAssets(modules, process.targetPreparedRelease);
+  }
+  const facetEnvironment = createHarnessProcessFacetEnvironment(process, environment, identity);
+  const worker = environment.LOADER.get(identity.loaderId, async () => {
+    const readArtifactChunk = hasPreparedAssets
+      ? (artifactRef: string, path: string, offset: number, length: number): Promise<Uint8Array> =>
+          narrowHarnessCProductCapabilities(
+            environment.HARNESS_C_PRODUCT_CAPABILITIES,
+          ).release.readArtifactChunk(artifactRef, path, offset, length)
+      : undefined;
+    const workerModules = await materializeHarnessProcessModules(
+      modules,
+      process.targetPreparedRelease,
+      readArtifactChunk,
+    );
+    const workerCode: WorkerLoaderWorkerCode = {
+      compatibilityDate: "2026-10-19",
+      compatibilityFlags: ["nodejs_compat"],
+      mainModule: process.mainModule,
+      modules: workerModules,
+      env: facetEnvironment,
+      globalOutbound: null,
+    };
+    return workerCode;
+  });
   const facetClass = worker.getDurableObjectClass<HarnessProcessFacetStub>(process.entrypoint, {
     props: {
       facetKey: identity.facetKey,

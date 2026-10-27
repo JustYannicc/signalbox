@@ -1,11 +1,17 @@
 // @effect-diagnostics cryptoRandomUUID:off - Each setup owns a fresh C run and deterministic test authority.
 import * as Effect from "effect/Effect";
-import { ProviderDriverKind, type OrchestrationV2ProviderThread } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderThreadId,
+  type OrchestrationV2ProviderThread,
+} from "@t3tools/contracts";
 import type { HarnessCheckpoint } from "../../../Harness.ts";
 import { encodeHarnessCProductNativeCheckpoint } from "../../../HarnessCProductCheckpoint.ts";
 import { createHarnessDurableState } from "../../../HarnessDurableState.ts";
 import { deterministicShardOwner } from "../../../HarnessProcessPlacement.ts";
 import type { HarnessProcessExecutionShardInput } from "../../../HarnessProcessPlacement.ts";
+import type { HarnessProcessFacetModule } from "../../../HarnessProcessPlacement.ts";
+import type { HarnessProcessPreparedRelease } from "../../../processPlacement/moduleCode.ts";
 import type {
   HarnessThreadSupervisorControlClaim,
   HarnessThreadSupervisorPublisher,
@@ -18,11 +24,12 @@ import type {
   ProductFixturePlacementStore,
   ProductWorkerEnv,
 } from "./productBindings.workerd.fixture.ts";
+import type { FixtureRelease } from "./productInputs.workerd.fixture.ts";
 import { reference as referenceArtifact } from "../../../processResume/tests/releaseMaterial.ts";
 import { dataForDriver } from "../../../adapter/tests/data.ts";
+import { preparedReleaseAsset } from "../../../HarnessProcessPlacement.ts";
 
 const CAPABILITY_NAME = "product-fixture";
-const nativeSessionId = "product-native-session";
 const controlKey = "product-run-control-key-".repeat(2);
 const supervisor = {
   epoch: 1,
@@ -44,32 +51,90 @@ const controlFor = (epoch: number): HarnessThreadSupervisorControlClaim => ({
   controlKey: `product-controller-key-${epoch}-`.repeat(2),
 });
 
-export function productModules(env: ProductWorkerEnv) {
-  const binary = atob(env.PRODUCT_CODEX_WASM);
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+export function productModules(
+  env: ProductWorkerEnv,
+  provider: "claude-code" | "codex",
+  release: FixtureRelease["expected"],
+) {
   return {
     "productFacet.mjs": { js: env.PRODUCT_FACET_SOURCE },
-    "codex-engine.wasm": {
-      wasm: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-    },
+    "codex-engine.wasm":
+      provider === "codex"
+        ? preparedReleaseAsset(release, "codex/engine.wasm")
+        : { wasm: new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]).buffer },
   } as const;
 }
 
+function memoryProofModules(
+  env: ProductWorkerEnv,
+  release: HarnessProcessPreparedRelease,
+): Readonly<Record<string, HarnessProcessFacetModule>> {
+  const modules: Record<string, HarnessProcessFacetModule> = {
+    "productFacet.mjs": { js: env.PRODUCT_FACET_SOURCE },
+  };
+  for (const moduleKey of Object.keys(release.plan.preparedModules))
+    modules[moduleKey === "codex/engine.wasm" ? "codex-engine.wasm" : moduleKey] =
+      preparedReleaseAsset(release, moduleKey);
+  return Object.freeze(modules);
+}
+
+type ProductMemoryProofRequest = {
+  readonly mode: "before" | "after";
+  readonly runId: string;
+  readonly waitUntil: (promise: Promise<unknown>) => void;
+};
+
+type ProductRunSetup = Extract<
+  Awaited<ReturnType<typeof setupProductRunInternal>>,
+  { readonly capability: ProductFixtureCapability }
+>;
+
+export function setupProductRun(
+  env: ProductWorkerEnv,
+  initialProvider?: "claude-code" | "codex",
+): Promise<ProductRunSetup>;
+export function setupProductRun(
+  env: ProductWorkerEnv,
+  initialProvider: "claude-code" | "codex",
+  memoryProof: ProductMemoryProofRequest,
+): Promise<{ readonly runId: string; readonly owner: string }>;
 export async function setupProductRun(
   env: ProductWorkerEnv,
   initialProvider: "claude-code" | "codex" = "claude-code",
+  memoryProof?: ProductMemoryProofRequest,
 ) {
-  const runId = `product-workerd-${crypto.randomUUID()}`;
+  const result = await setupProductRunInternal(env, initialProvider, memoryProof);
+  if (memoryProof === undefined) {
+    if (!("capability" in result))
+      throw new Error("Product C setup returned before its first run.");
+    return result;
+  }
+  if ("capability" in result)
+    throw new Error("Product C memory proof unexpectedly completed its run.");
+  return result;
+}
+
+async function setupProductRunInternal(
+  env: ProductWorkerEnv,
+  initialProvider: "claude-code" | "codex",
+  memoryProof?: ProductMemoryProofRequest,
+) {
+  const runId = memoryProof?.runId ?? `product-workerd-${crypto.randomUUID()}`;
+  const nativeSessionId =
+    memoryProof !== undefined && initialProvider === "codex"
+      ? "00000000-0000-4000-8000-000000000025"
+      : "product-native-session";
   const capability = env.PRODUCT_FIXTURE.getByName(
     CAPABILITY_NAME,
   ) as unknown as ProductFixtureCapability;
-  const configured = await capability.configure(runId, initialProvider);
+  const configured = await capability.configure(runId, initialProvider, memoryProof !== undefined);
   const claude = await capability.release("claude-code");
   const codex = await capability.release("codex");
   const initialRelease = initialProvider === "codex" ? codex : claude;
   const state = createHarnessDurableState(env, runId);
-  const processId = "product-native-process";
-  const executionOperationId = "product-initial-execution";
+  const processId = memoryProof === undefined ? "product-native-process" : "product-memory-proof";
+  const executionOperationId =
+    memoryProof === undefined ? "product-initial-execution" : "product-memory-proof-execution";
   const shardOwner = `product/${runId}`;
   const control1 = controlFor(1);
   const control2 = controlFor(2);
@@ -84,6 +149,10 @@ export async function setupProductRun(
   );
   const initialThread: OrchestrationV2ProviderThread = {
     ...initialData.providerThread,
+    // The R18 Codex host rejects the generic non-UUID provider-thread test ID during resume.
+    ...(memoryProof !== undefined && initialProvider === "codex"
+      ? { id: ProviderThreadId.make(nativeSessionId) }
+      : {}),
     nativeThreadRef: {
       driver: initialData.providerThread.driver,
       nativeId: nativeSessionId,
@@ -197,7 +266,10 @@ export async function setupProductRun(
     priorFacetNonce: initialPublisher.facetNonce,
     expectedFacetGeneration: 1,
     mainModule: "productFacet.mjs",
-    modules: productModules(env),
+    modules:
+      memoryProof === undefined
+        ? productModules(env, initialProvider, initialRelease.expected)
+        : memoryProofModules(env, initialRelease.expected),
     entrypoint: initialProvider === "codex" ? "CodexFacet" : "ClaudeFacet",
     productBootstrap: {
       provider: initialProvider,
@@ -234,7 +306,15 @@ export async function setupProductRun(
   const placement = env.PLACEMENT_STORES.getByName(
     owner,
   ) as unknown as ProductFixturePlacementStore;
+  if (memoryProof?.mode === "before") {
+    await shard.startLegacyMemoryProof(shardInput, "local-legacy-runShard-baseline");
+    return { runId, owner };
+  }
   const running = shard.runShard(shardInput, "public-runShard-initial");
+  if (memoryProof !== undefined) {
+    memoryProof.waitUntil(running);
+    return { runId, owner };
+  }
   await Promise.race([
     env.HARNESS_RUN_STORE.getByName(runId).waitForFinish("turn-one"),
     running.then(async (result) => {

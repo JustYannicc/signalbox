@@ -386,6 +386,8 @@ export default {
     }
     if (path === "/preparation-cleanup-failure")
       return await runPreparationCleanupFailureProof(env, ctx, controllerClaim);
+    if (path === "/structured-prepare-failure")
+      return await runPreparationCleanupFailureProof(env, ctx, controllerClaim, "structured");
     if (path === "/invocation-reply-loss") {
       const supervisor = env.HARNESS_THREAD_SUPERVISOR.getByName(
         "process-invocation-reply-loss-run",

@@ -28,6 +28,12 @@ export interface HarnessCProductReleaseService {
     readonly maxPreparedModuleBytes: number;
   }>;
   readArtifact(artifactRef: string, path: string): Promise<Uint8Array>;
+  readArtifactChunk(
+    artifactRef: string,
+    path: string,
+    offset: number,
+    length: number,
+  ): Promise<Uint8Array>;
 }
 
 export interface HarnessCProductNativeCheckpointService {

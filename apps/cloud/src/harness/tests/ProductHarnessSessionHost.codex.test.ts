@@ -43,7 +43,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       launch.mockReset();
-      const release = yield* Effect.promise(codexFixture);
+      const release = yield* Effect.promise(() => codexFixture());
       const product = yield* productOptions(release.options);
       const peer = processFixture();
       yield* Effect.addFinalizer(() => Effect.promise(() => peer.process.abort()));
@@ -97,7 +97,7 @@ it.effect(
 it.effect("returns the caller-selected artifact with the actual product loader projection", () =>
   Effect.gen(function* () {
     launch.mockReset();
-    const release = yield* Effect.promise(codexFixture);
+    const release = yield* Effect.promise(() => codexFixture());
     const selected = {
       provider: "codex" as const,
       releaseId: "selected-codex-process-release",
@@ -136,7 +136,7 @@ it.effect("returns the caller-selected artifact with the actual product loader p
 
 it.effect("requires an explicit full release artifact for process resume observation", () =>
   Effect.gen(function* () {
-    const release = yield* Effect.promise(codexFixture);
+    const release = yield* Effect.promise(() => codexFixture());
     const product = yield* productOptions(release.options);
     expect(() => product.host.loadedPreparedRelease()).toThrow(
       "Product process resume requires a caller-selected full HarnessReleaseArtifact.",
@@ -162,7 +162,7 @@ it.effect(
 it.effect("rejects a non-absolute Codex HOME before starting the native engine", () =>
   Effect.gen(function* () {
     launch.mockReset();
-    const release = yield* Effect.promise(codexFixture);
+    const release = yield* Effect.promise(() => codexFixture());
     const product = yield* productOptions(release.options, "relative/home");
     const outcome = yield* product.host
       .open({ session: codexSession, bootAttemptId: "invalid-product-home" })
@@ -175,7 +175,7 @@ it.effect("rejects a non-absolute Codex HOME before starting the native engine",
 it.effect("closes product stdio and Computer after native acquisition fails", () =>
   Effect.gen(function* () {
     launch.mockReset();
-    const release = yield* Effect.promise(codexFixture);
+    const release = yield* Effect.promise(() => codexFixture());
     const product = yield* productOptions(release.options);
     const nativeFailure = new Error("native initialization failed", {
       cause: new Error("missing WASI import"),

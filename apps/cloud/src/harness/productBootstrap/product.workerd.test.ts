@@ -1,22 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - Wrangler needs a filesystem entry point to launch local Workerd.
-import * as NodeBuffer from "node:buffer";
 import * as NodeURL from "node:url";
 import { afterEach, beforeAll, beforeEach, expect, it } from "vite-plus/test";
 import { build } from "esbuild";
 import { createTestHarness } from "wrangler";
-import { codexEngineBytes } from "./tests/workerd/codexEngineWasm.fixture.ts";
 
 let harness: ReturnType<typeof createTestHarness>;
 let productFacetSource: string;
-let codexWasmBase64: string;
 
 beforeAll(async () => {
-  const engineBytes = codexEngineBytes();
-  const engineBuffer = engineBytes.buffer.slice(
-    engineBytes.byteOffset,
-    engineBytes.byteOffset + engineBytes.byteLength,
-  ) as ArrayBuffer;
-  await WebAssembly.compile(engineBuffer.slice(0));
   const bundled = await build({
     entryPoints: [
       NodeURL.fileURLToPath(
@@ -36,7 +27,6 @@ beforeAll(async () => {
   });
   productFacetSource = bundled.outputFiles[0]?.text ?? "";
   if (productFacetSource.length === 0) throw new Error("The product fixture bundle is empty.");
-  codexWasmBase64 = NodeBuffer.Buffer.from(engineBytes).toString("base64");
 }, 60_000);
 
 const makeHarness = () =>
@@ -53,7 +43,6 @@ const makeHarness = () =>
           worker_loaders: [{ binding: "LOADER" }],
           vars: {
             PRODUCT_FACET_SOURCE: productFacetSource,
-            PRODUCT_CODEX_WASM: codexWasmBase64,
             RESIDENT_BYTE_LIMIT: "128000000",
           },
           durable_objects: {
@@ -87,8 +76,7 @@ const makeHarness = () =>
   });
 
 beforeEach(async () => {
-  if (productFacetSource.length === 0 || codexWasmBase64.length === 0)
-    throw new Error("Product fixture inputs were not prepared.");
+  if (productFacetSource.length === 0) throw new Error("Product fixture inputs were not prepared.");
   harness = makeHarness();
   await harness.listen();
 }, 60_000);
@@ -134,6 +122,10 @@ it("runs the actual Claude and Codex product factories through C's public shard 
   });
   expect(result.observations.initialAccessCalls).toBe(1);
   expect(result.observations.turnAccessCalls).toBe(2);
+  // Release verification and WorkerLoader materialization each read the module once.
+  expect(
+    result.observations.releaseReadPaths.filter((path: string) => path === "codex/engine.wasm"),
+  ).toHaveLength(2);
   expect(result.observations.modelRequests).toEqual(expect.arrayContaining(["/root", "/child"]));
   expect(result.proof.terminal).toHaveLength(2);
   expect(
@@ -232,6 +224,9 @@ it("restores Codex checkpoints inertly and starts the first fresh-grant turn thr
   ]);
   expect(result.observations.initialAccessCalls).toBe(2);
   expect(result.observations.turnAccessCalls).toBe(2);
+  expect(
+    result.observations.releaseReadPaths.filter((path: string) => path === "codex/engine.wasm"),
+  ).toHaveLength(4);
   expect(result.observations.executor).toMatchObject({
     grant: { kind: "turn", requestId: "turn-two", call: 2 },
     signalAborted: false,
@@ -249,4 +244,38 @@ it("restores Codex checkpoints inertly and starts the first fresh-grant turn thr
     ),
   ).toBe(true);
   expect(result.writer.writer).toBe(false);
+});
+
+it("returns the structured per-process checkpoint failure through fixture readiness immediately", async () => {
+  const response = await harness.fetch(
+    "http://proof/memory-failure-probe?runId=checkpoint-failure-probe",
+  );
+  const body = await response.json();
+
+  expect(response.status).toBe(500);
+  expect(body).toMatchObject({
+    runId: "checkpoint-failure-probe",
+    status: "failed",
+    failure: {
+      source: "process",
+      processId: "product-memory-proof",
+      error: "The fresh facet could not be prepared inert.",
+      causes: [
+        {
+          _tag: "HarnessProcessPlacementError",
+          kind: "prepare-failed",
+          details: { facetFailureAt: "prepare", facetFailureCode: "rpc-error" },
+        },
+        {
+          _tag: "HarnessRequestFacetError",
+          message: "Harness host could not prepare the committed checkpoint inert.",
+        },
+        {
+          code: "CODEX_CHECKPOINT_RESTORE",
+          operation: "resume",
+          message: "Synthetic Codex checkpoint restore failure.",
+        },
+      ],
+    },
+  });
 });

@@ -190,6 +190,48 @@ describe("process execution Worker entrypoint", () => {
     });
   }, 120_000);
 
+  it("preserves a structured native checkpoint error across the actual request-facet RPC", async () => {
+    const response = await harness.fetch("/structured-prepare-failure");
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body) as {
+      readonly failureKind: string;
+      readonly recoverable: boolean;
+      readonly leaseCount: number;
+      readonly causes: readonly {
+        readonly name: string;
+        readonly message: string;
+        readonly _tag?: string;
+        readonly code?: string;
+        readonly operation?: string;
+        readonly kind?: string;
+      }[];
+    };
+    expect(result.failureKind).toBe("prepare-failed");
+    expect(result.recoverable).toBe(false);
+    expect(result.leaseCount).toBe(0);
+    expect(
+      result.causes.some(
+        (cause) => cause.name === "HarnessProcessPlacementError" && cause.kind === "prepare-failed",
+      ),
+    ).toBe(true);
+    expect(
+      result.causes.some(
+        (cause) =>
+          cause._tag === "HarnessRequestFacetError" &&
+          cause.message === "Harness host could not prepare the committed checkpoint inert.",
+      ),
+    ).toBe(true);
+    expect(
+      result.causes.some(
+        (cause) =>
+          cause.message === "Synthetic Codex checkpoint restore failure." &&
+          cause.code === "CODEX_CHECKPOINT_RESTORE" &&
+          cause.operation === "resume",
+      ),
+    ).toBe(true);
+  }, 120_000);
+
   it("retains confirmed request ownership after a committed RunStore reply is lost", async () => {
     const response = await harness.fetch("/invocation-reply-loss");
     const body = await response.text();

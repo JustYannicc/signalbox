@@ -39,6 +39,13 @@ export interface HarnessReleaseArtifactIdentity {
 
 export interface HarnessReleaseArtifactSource {
   read(artifactRef: string, path: string): Promise<Uint8Array>;
+  /** Optional bounded transport for files larger than one RPC payload. */
+  readRange?(
+    artifactRef: string,
+    path: string,
+    offset: number,
+    length: number,
+  ): Promise<Uint8Array>;
 }
 
 export type HarnessReleaseArtifactRawManifests = DeepReadonly<{
@@ -63,10 +70,32 @@ const readVerifiedFile = async (
     readonly hash: HarnessReleaseArtifactErrorCode;
   },
 ) => {
-  const bytes = copyBytes(await source.read(artifactRef, path));
+  const bytes: Uint8Array<ArrayBuffer> =
+    source.readRange === undefined
+      ? (copyBytes(await source.read(artifactRef, path)) as Uint8Array<ArrayBuffer>)
+      : await readArtifactFileInRanges(source, artifactRef, path, expected.bytes, errors.size);
   if (bytes.byteLength !== expected.bytes) failArtifact(errors.size);
   if ((await sha256Hex(bytes)) !== expected.sha256) failArtifact(errors.hash);
   return bytes;
+};
+
+const ARTIFACT_READ_RANGE_BYTES = 8 * 1024 * 1024;
+
+const readArtifactFileInRanges = async (
+  source: HarnessReleaseArtifactSource,
+  artifactRef: string,
+  path: string,
+  bytes: number,
+  sizeError: HarnessReleaseArtifactErrorCode,
+): Promise<Uint8Array<ArrayBuffer>> => {
+  const output = new Uint8Array(bytes);
+  for (let offset = 0; offset < bytes; offset += ARTIFACT_READ_RANGE_BYTES) {
+    const length = Math.min(ARTIFACT_READ_RANGE_BYTES, bytes - offset);
+    const chunk = await source.readRange!(artifactRef, path, offset, length);
+    if (!(chunk instanceof Uint8Array) || chunk.byteLength !== length) failArtifact(sizeError);
+    output.set(chunk, offset);
+  }
+  return output;
 };
 
 export const openHarnessReleaseArtifact = async (

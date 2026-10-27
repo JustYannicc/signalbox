@@ -50,7 +50,7 @@ export function narrowHarnessCProductCapabilities<G>(
   const release = required<HarnessCProductReleaseService>(
     supplied,
     HARNESS_C_PRODUCT_CAPABILITY_KEYS.release,
-    ["getArtifact", "loaderConfig", "readArtifact"],
+    ["getArtifact", "loaderConfig", "readArtifact", "readArtifactChunk"],
   );
   const nativeCheckpoint = required<HarnessCProductNativeCheckpointService>(
     supplied,
@@ -105,6 +105,8 @@ export async function productReleaseBindings(
       return {
         source: {
           read: (artifactRef: string, path: string) => service.readArtifact(artifactRef, path),
+          readRange: (artifactRef: string, path: string, offset: number, length: number) =>
+            service.readArtifactChunk(artifactRef, path, offset, length),
         },
         trustedComputer: config.trustedComputer,
         maxPreparedModuleBytes: config.maxPreparedModuleBytes,
