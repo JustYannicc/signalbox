@@ -36,6 +36,7 @@ export type ClaudeSdkQuery = Pick<
   | "return"
   | "throw"
   | "close"
+  | "initializationResult"
   | "setMcpServers"
   | "setModel"
   | "applyFlagSettings"
@@ -46,6 +47,21 @@ export type ClaudeSdkQuery = Pick<
 >;
 
 type ClaudeSdkLaunchOptions = Omit<ClaudeAgentSdkQueryOpenInput["options"], "mcpServers">;
+
+export type ClaudeSdkQueryPreCleanupPhase =
+  | "query-acquisition"
+  | "initialization"
+  | "mcp-registration";
+
+export type ClaudeSdkMcpSignalSnapshot =
+  | { readonly present: false }
+  | { readonly present: true; readonly aborted: boolean; readonly reason: unknown };
+
+export interface ClaudeSdkQueryPreCleanupDiagnostic {
+  readonly phase: ClaudeSdkQueryPreCleanupPhase;
+  readonly cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>;
+  readonly mcpSignal: ClaudeSdkMcpSignalSnapshot;
+}
 
 export interface ClaudeSdkQueryRunnerOptions {
   /** Opt in to fail-closed initial MCP registration for native host bindings. */
@@ -60,6 +76,8 @@ export interface ClaudeSdkQueryRunnerOptions {
   /** The native host retains the real Query session for later MCP epochs. */
   readonly onQuerySessionOpened?: (session: ClaudeAgentSdkQuerySession) => void;
   readonly onQuerySessionClosed?: (session: ClaudeAgentSdkQuerySession) => void;
+  /** Capture the original open failure before the prompt queue and acquired Query close. */
+  readonly onPreCleanupDiagnostic?: (diagnostic: ClaudeSdkQueryPreCleanupDiagnostic) => void;
   readonly prepareQuery?: (
     options: ClaudeSdkLaunchOptions,
     input: ClaudeAgentSdkQueryOpenInput,
@@ -92,6 +110,44 @@ export function queryRunnerError(cause: unknown, method: string): ClaudeAgentSdk
   return isClaudeAgentSdkQueryRunnerError(cause)
     ? cause
     : new ClaudeAgentSdkQueryRunnerError({ cause, method });
+}
+
+const snapshotMcpSignal = (signal?: AbortSignal): ClaudeSdkMcpSignalSnapshot =>
+  signal === undefined
+    ? { present: false }
+    : { present: true, aborted: signal.aborted, reason: signal.reason };
+
+function reportPreCleanupDiagnostic(
+  options: ClaudeSdkQueryRunnerOptions,
+  phase: ClaudeSdkQueryPreCleanupPhase,
+  cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
+  signal?: AbortSignal,
+) {
+  return Effect.try({
+    try: () =>
+      options.onPreCleanupDiagnostic?.({
+        phase,
+        cause,
+        mcpSignal: snapshotMcpSignal(signal),
+      }),
+    catch: (diagnosticCause) => queryRunnerError(diagnosticCause, "onPreCleanupDiagnostic"),
+  });
+}
+
+function failAndReportPreCleanup(
+  options: ClaudeSdkQueryRunnerOptions,
+  error: ClaudeAgentSdkQueryRunnerError,
+  signal?: AbortSignal,
+) {
+  return Effect.fail(error).pipe(
+    Effect.onExit((exit) =>
+      Exit.isFailure(exit)
+        ? Effect.uninterruptible(
+            reportPreCleanupDiagnostic(options, "query-acquisition", exit.cause, signal),
+          )
+        : Effect.void,
+    ),
+  );
 }
 
 const mcpSignalAborted = (signal: AbortSignal) =>
@@ -187,25 +243,54 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
       const nativeMcp =
         options.resolveMcpServers === undefined
           ? undefined
-          : yield* options.resolveMcpServers(input);
+          : yield* options
+              .resolveMcpServers(input)
+              .pipe(
+                Effect.onExit((exit) =>
+                  Exit.isFailure(exit)
+                    ? Effect.uninterruptible(
+                        reportPreCleanupDiagnostic(options, "query-acquisition", exit.cause),
+                      )
+                    : Effect.void,
+                ),
+              );
       const mcpServers = nativeMcp?.servers ?? providerMcpServers;
       const mcpSignal = nativeMcp?.signal;
       if (mcpSignal?.aborted)
-        return yield* Effect.fail(
+        return yield* failAndReportPreCleanup(
+          options,
           queryRunnerError(
             mcpSignal.reason ?? new Error("Claude MCP setup aborted."),
             "setMcpServers",
           ),
+          mcpSignal,
         );
       if (options.requireMcpServerRegistration === true && mcpServers === undefined) {
-        return yield* Effect.fail(
+        return yield* failAndReportPreCleanup(
+          options,
           queryRunnerError("Claude MCP configuration was not supplied.", "setMcpServers"),
+          mcpSignal,
         );
       }
       const prepared =
         options.prepareQuery === undefined
           ? queryOptions
-          : yield* options.prepareQuery(queryOptions, input);
+          : yield* options
+              .prepareQuery(queryOptions, input)
+              .pipe(
+                Effect.onExit((exit) =>
+                  Exit.isFailure(exit)
+                    ? Effect.uninterruptible(
+                        reportPreCleanupDiagnostic(
+                          options,
+                          "query-acquisition",
+                          exit.cause,
+                          mcpSignal,
+                        ),
+                      )
+                    : Effect.void,
+                ),
+              );
       const promptQueue = yield* Queue.unbounded<SDKUserMessage>();
       const prompt = Stream.fromQueue(promptQueue).pipe(
         Stream.catchCause((cause) =>
@@ -223,6 +308,7 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
       let queryClosing = false;
       let queryClosed = false;
       let openedQuery: ClaudeSdkQuery | undefined;
+      let phase: ClaudeSdkQueryPreCleanupPhase = "query-acquisition";
       const cleanupOpenedQuery = () =>
         Effect.uninterruptible(
           Effect.gen(function* () {
@@ -252,7 +338,13 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
           Effect.tap((queryRuntime) =>
             restore(
               Effect.gen(function* () {
+                phase = "initialization";
+                yield* Effect.tryPromise({
+                  try: () => queryRuntime.initializationResult(),
+                  catch: (cause) => queryRunnerError(cause, "initializationResult"),
+                });
                 if (mcpServers !== undefined) {
+                  phase = "mcp-registration";
                   if (options.requireMcpServerRegistration === true) {
                     yield* installMcpServers(queryRuntime, mcpServers, mcpSignal);
                     mcpConfigured = true;
@@ -296,18 +388,28 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
           ),
         ),
       );
-      const closeAfterOpenFailure = (cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>) =>
-        cleanupOpenedQuery().pipe(
-          Effect.exit,
-          Effect.flatMap((cleanup) =>
-            Effect.failCause(Exit.isFailure(cleanup) ? Cause.combine(cause, cleanup.cause) : cause),
-          ),
+      const cleanupAfterOpenFailure = (cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>) =>
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const diagnostic = yield* Effect.exit(
+              reportPreCleanupDiagnostic(options, phase, cause, mcpSignal),
+            );
+            const cleanup = yield* Effect.exit(cleanupOpenedQuery());
+            if (Exit.isFailure(diagnostic) && Exit.isFailure(cleanup))
+              return yield* Effect.failCause(Cause.combine(diagnostic.cause, cleanup.cause));
+            if (Exit.isFailure(diagnostic)) return yield* Effect.failCause(diagnostic.cause);
+            if (Exit.isFailure(cleanup)) return yield* Effect.failCause(cleanup.cause);
+          }),
         );
       const queryRuntime = yield* (
         mcpSignal === undefined
           ? queryOpen
           : queryOpen.pipe(Effect.raceFirst(mcpSignalAborted(mcpSignal)))
-      ).pipe(Effect.catchCause(closeAfterOpenFailure));
+      ).pipe(
+        Effect.onExit((exit) =>
+          Exit.isFailure(exit) ? cleanupAfterOpenFailure(exit.cause) : Effect.void,
+        ),
+      );
       const mcpLock = yield* Semaphore.make(1);
       let session: ClaudeAgentSdkQuerySession | undefined;
       const closeQuery = () =>

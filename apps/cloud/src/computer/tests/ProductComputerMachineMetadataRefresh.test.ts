@@ -940,6 +940,7 @@ describe("ProductComputer machine metadata refresh", () => {
     });
     try {
       await fixture.route();
+      const lookupsAfterRefresh = fixture.lookups.length;
       fixture.filesystem.setNextCreateMode(0o700);
       writeGuestPath(mkdirMemory, 64, "usr/wasi-created");
       const rootFd = [...fixture.filesystem.descriptors.entries()].find(
@@ -952,17 +953,7 @@ describe("ProductComputer machine metadata refresh", () => {
         uid: 1000,
         gid: 1000,
       });
-      expect(
-        fixture.lookups
-          .flatMap(({ operations }) => operations)
-          .some(
-            (operation) =>
-              typeof operation === "object" &&
-              operation !== null &&
-              "path" in operation &&
-              operation.path === "/usr/wasi-created",
-          ),
-      ).toBe(true);
+      expect(fixture.lookups).toHaveLength(lookupsAfterRefresh);
       writeGuestPath(mkdirMemory, 64, "usr/wasi-created");
       expect(await mkdirWasi.wasi.run(runMkdir, rootFd, 64, "usr/wasi-created".length)).toBe(20);
 

@@ -1,7 +1,7 @@
 import * as NodeWorkerThreads from "node:worker_threads";
 import { expect, it, onTestFinished } from "vite-plus/test";
 
-function runIsolated(caseName: "cold" | "resume" | "prepared" | "both") {
+function runIsolated(caseName: "cold" | "resume" | "prepared" | "both" | "diagnostic") {
   return new Promise<void>((resolve, reject) => {
     const worker = new NodeWorkerThreads.Worker(
       new URL("./node/tests/claudeNativeBindingWorker.ts", import.meta.url),
@@ -34,3 +34,6 @@ it("hands a cold resume load back exactly once", () => runIsolated("resume"));
 it("preserves caller prepared authority without inventing resolve support", () =>
   runIsolated("prepared"));
 it("preserves caller prepared and resolve overrides", () => runIsolated("both"));
+
+it("forwards pre-cleanup diagnostics through the public native Claude binding", () =>
+  runIsolated("diagnostic"));

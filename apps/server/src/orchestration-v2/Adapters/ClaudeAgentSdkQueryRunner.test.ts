@@ -26,6 +26,15 @@ it.effect("logs successful task stops for replay and omits failed stops", () =>
     const stopTask = vi.fn(async (_taskId: string) => {});
     const query = vi.spyOn(ClaudeSdk, "query").mockReturnValue({
       stopTask,
+      initializationResult: async () => ({
+        commands: [],
+        agents: [],
+        output_style: "default",
+        available_output_styles: [],
+        models: [],
+        account: {},
+      }),
+      close: () => {},
     } as unknown as ClaudeSdk.Query);
     yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
     const threadId = ThreadId.make("thread-stop");
@@ -127,6 +136,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
           'dir=$(dirname "$0")',
           'sleep 600 > "$dir/alive" &',
           'echo $! > "$dir/leftover.pid"',
+          "IFS= read -r initialize",
+          `printf '%s\\n' "$initialize" | "${process.execPath}" -e 'const fs = require("node:fs"); const frame = JSON.parse(fs.readFileSync(0, "utf8")); if (frame.type !== "control_request" || frame.request.subtype !== "initialize") process.exit(1); console.log(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: frame.request_id, response: {} } }));'`,
           "cat > /dev/null",
         ].join("\n"),
       );
