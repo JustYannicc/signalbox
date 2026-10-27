@@ -45,6 +45,7 @@ export function createRecordingHost(input: {
     expect(options.processResumeArtifact).toBe(source.artifact);
     expect(options.machineInventory).toEqual(machineInventoryFixture());
     const session: HarnessHostSession<Grant> = {
+      retireCheckpointAccess: Effect.void,
       release: checkpoint.release,
       providerSession: checkpoint.providerSession,
       events: Stream.never,

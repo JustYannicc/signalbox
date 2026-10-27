@@ -12,7 +12,9 @@ export class ProductFixtureExecutor extends DurableObject {
           url: request.url,
           method: request.method,
           grant,
-          body: request.body === null ? null : new Uint8Array(await request.arrayBuffer()),
+          signalAborted: signal.aborted,
+          requestSignalAborted: request.signal.aborted,
+          body: request.body === null ? null : await request.text(),
         });
         return new Response("fixture executor response", { status: 200 });
       },

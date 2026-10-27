@@ -119,6 +119,8 @@ export interface HarnessHostOptions<G> {
   }) => Effect.Effect<NativeHostBinding, HarnessError, Scope.Scope>;
 }
 export interface HarnessHostSession<G> extends Omit<HarnessSession, "turn"> {
+  /** Retires access installed by inert checkpoint restore before independently authorized work. */
+  readonly retireCheckpointAccess: Effect.Effect<void, HarnessError>;
   readonly turn: (input: {
     readonly turn: RunnerTurn;
     readonly access: TurnAccess<G>;

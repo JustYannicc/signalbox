@@ -6,6 +6,43 @@ import * as Fiber from "effect/Fiber";
 import { hostFixture } from "./hostFixture.ts";
 
 describe("Harness checkpoint initial access", () => {
+  it.effect("retires inert checkpoint access before a fresh first turn can replace it", () =>
+    Effect.gen(function* () {
+      const f = yield* hostFixture;
+      const instance = yield* f.make();
+      yield* instance.host.seed("assets");
+      yield* instance.host.seed("programs");
+      const session = yield* instance.host.open({
+        bootAttemptId: "inert-checkpoint",
+        session: instance.adapter.input.session,
+        checkpoint: instance.checkpoint(),
+        initialAccess: f.access("restore-grant"),
+      });
+      const old = f.configurations[0]!;
+      const turnAccess = f.access("arrived-request");
+      expect(
+        Exit.isFailure(
+          yield* session
+            .turn({ turn: instance.adapter.turn, access: turnAccess })
+            .pipe(Effect.exit),
+        ),
+      ).toBe(true);
+      yield* session.retireCheckpointAccess;
+      const forwards = f.forwards.length;
+      yield* Effect.promise(() =>
+        expect(f.mcp.fetch(new Request(old.servers.executor!.url))).rejects.toThrow(),
+      );
+      expect(f.forwards).toHaveLength(forwards);
+      yield* session.turn({ turn: instance.adapter.turn, access: turnAccess });
+      yield* instance.adapter.nextStart;
+      expect(f.configurations).toHaveLength(2);
+      const current = f.configurations[1]!;
+      expect(current.epoch).not.toBe(old.epoch);
+      yield* Effect.promise(() => f.mcp.fetch(new Request(current.servers.executor!.url)));
+      expect(f.forwards.at(-1)?.grant).toBe(turnAccess.grant);
+      yield* session.dispose;
+    }).pipe(Effect.scoped),
+  );
   it.effect("configures before eager resume and reuses the configuration for the first turn", () =>
     Effect.gen(function* () {
       const f = yield* hostFixture;

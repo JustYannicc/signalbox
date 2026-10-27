@@ -50,6 +50,17 @@ const turnFor = async (driver: string, runId: string, prompt: string) => {
     ...data.turn,
     runId: RunId.make(runId),
     message: { ...data.turn.message, text: prompt },
+    providerThread:
+      driver === "claudeAgent"
+        ? {
+            ...data.turn.providerThread,
+            nativeThreadRef: {
+              driver: data.providerThread.driver,
+              nativeId: "product-native-session",
+              strength: "strong" as const,
+            },
+          }
+        : data.turn.providerThread,
   } as RunnerTurn;
   const json = encodeTurn(turn);
   const bytes = new TextEncoder().encode(json);

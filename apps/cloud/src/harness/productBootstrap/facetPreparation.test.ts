@@ -16,7 +16,7 @@ describe.each(["claude-code", "codex"] as const)("%s product facet preparation",
         if (mode === "same-variant-serialized-checkpoint") {
           expect(opened.checkpoint).toEqual(fixture.checkpoint);
           expect(opened.initialAccess?.grant).toBe(fixture.initialAccesses[0]);
-          expect(opened.initialAccess?.signal.aborted).toBe(false);
+          expect(opened.initialAccess?.signal).toBe(fixture.preparationSignal);
           expect(fixture.initialAccesses).toHaveLength(1);
         } else {
           expect(opened.checkpoint).toBeUndefined();
@@ -50,7 +50,7 @@ describe.each(["claude-code", "codex"] as const)("%s product facet preparation",
     }).pipe(Effect.scoped),
   );
   it.effect(
-    "uses checkpoint access for the first restored request, then resolves fresh access",
+    "resolves fresh access after inert checkpoint preparation and for every later request",
     () =>
       Effect.gen(function* () {
         const fixture = yield* prepareProductFixture(
@@ -61,14 +61,12 @@ describe.each(["claude-code", "codex"] as const)("%s product facet preparation",
         const second = fixture.context("later-request");
         yield* fixture.prepared.runtime.run(fixture.input, first).pipe(Effect.flip);
         yield* fixture.prepared.runtime.run(fixture.input, second).pipe(Effect.flip);
-        expect(fixture.observedTurnGrants[0]!.grant).toBe(fixture.initialAccesses[0]);
-        expect(fixture.observedTurnGrants[0]!.signal).toBe(
-          fixture.openInputs[0]!.initialAccess!.signal,
-        );
+        expect(fixture.observedTurnGrants[0]!.grant).not.toBe(fixture.initialAccesses[0]);
+        expect(fixture.observedTurnGrants[0]!.grant).toBe(fixture.turnAccesses[0]);
         expect(fixture.observedTurnGrants[0]!.signal.aborted).toBe(true);
-        expect(fixture.resolvedRequests).toEqual(["later-request"]);
-        expect(fixture.turnAccesses).toHaveLength(1);
-        expect(fixture.observedTurnGrants[1]!.grant).toBe(fixture.turnAccesses[0]);
+        expect(fixture.resolvedRequests).toEqual(["restored-first", "later-request"]);
+        expect(fixture.turnAccesses).toHaveLength(2);
+        expect(fixture.observedTurnGrants[1]!.grant).toBe(fixture.turnAccesses[1]);
       }).pipe(Effect.scoped),
   );
   it.effect.each(["assets", "programs"] as const)(

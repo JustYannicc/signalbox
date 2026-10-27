@@ -125,8 +125,15 @@ it("runs the actual Claude and Codex product factories through C's public shard 
   expect(result.files.workspace).toBe("after\n");
   expect(result.files.codex).toBe("codex facet hydrated\n");
   expect(result.files.claudeTranscript).toContain("product-native-session");
+  expect(result.observations.executor).toMatchObject({
+    method: "POST",
+    grant: { kind: "turn", requestId: "turn-one", call: 1 },
+    signalAborted: false,
+    requestSignalAborted: false,
+    body: "native-executor-request",
+  });
   expect(result.observations.initialAccessCalls).toBe(1);
-  expect(result.observations.turnAccessCalls).toBe(1);
+  expect(result.observations.turnAccessCalls).toBe(2);
   expect(result.observations.modelRequests).toEqual(expect.arrayContaining(["/root", "/child"]));
   expect(result.proof.terminal).toHaveLength(2);
   expect(

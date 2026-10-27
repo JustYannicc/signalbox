@@ -259,6 +259,9 @@ export class ProductFixtureCapability extends DurableObject<ProductFixtureServic
   async observations() {
     const state = await this.state();
     return {
+      executor: await this.env.PRODUCT_EXECUTOR.getByName(
+        this.ctx.id.name ?? "fixture",
+      ).observation(),
       initialAccessCalls: (await this.ctx.storage.get<number>("fixture/access/initial")) ?? 0,
       turnAccessCalls: (await this.ctx.storage.get<number>("fixture/access/turn")) ?? 0,
       modelRequests: (await this.ctx.storage.get<string[]>("fixture/model-requests")) ?? [],
