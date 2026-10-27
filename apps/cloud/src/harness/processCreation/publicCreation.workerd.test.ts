@@ -45,7 +45,7 @@ const makeHarness = () =>
           worker_loaders: [{ binding: "LOADER" }],
           durable_objects: {
             bindings: [
-              { name: "HARNESS_FILES_STORE", class_name: "HarnessFilesStoreObject" },
+              { name: "HARNESS_FILES_STORE", class_name: "ColdCreationFilesStore" },
               { name: "HARNESS_RUN_STORE", class_name: "ControlledCreationRunStore" },
               { name: "HARNESS_THREAD_SUPERVISOR", class_name: "HarnessThreadSupervisorObject" },
               { name: "PROCESS_EXECUTION_SHARDS", class_name: "ColdCreationShard" },
@@ -57,7 +57,7 @@ const makeHarness = () =>
             {
               tag: "v1",
               new_sqlite_classes: [
-                "HarnessFilesStoreObject",
+                "ColdCreationFilesStore",
                 "ControlledCreationRunStore",
                 "HarnessThreadSupervisorObject",
                 "ColdCreationShard",
@@ -148,6 +148,7 @@ it("creates through public C, stores the peer UUID at generation one, and runs r
       nativeSessionId: result.peerNativeSessionId,
     }),
   ]);
+  expect(result.observations["cold/events/facet-invoked"]).toHaveLength(1);
   expect(result.observations["cold/events/inert-restore"]).toBeUndefined();
   expect(result.observations["cold/events/normal-open"]).toBeUndefined();
   expect(result.loadedRelease).toEqual(await loadControlledCodexRelease());
@@ -195,6 +196,7 @@ it("reconstructs a bound owner, disposes its exact facet, then restores the same
     identity: result.bound.identity,
     disposed: true,
     released: true,
+    termination: { kind: "disposed", facetNonce: result.bound.identity.incarnationNonce },
   });
   expect(result.stopped).toMatchObject({
     lifecycle: "stopped",
@@ -219,6 +221,7 @@ it("reconstructs a bound owner, disposes its exact facet, then restores the same
     }),
   ]);
   expect(result.observations["cold/events/request-runtime-run"]).toHaveLength(1);
+  expect(result.observations["cold/events/facet-invoked"]).toHaveLength(1);
   expect(result.executed.processes[0]?.status).toBe("settled");
   const restoredFacetNonce = result.executed.processes[0]?.identity?.incarnationNonce;
   expect(restoredFacetNonce).toBeTruthy();
@@ -241,4 +244,144 @@ it("reconstructs a bound owner, disposes its exact facet, then restores the same
   ]);
   expect(result.placementWriter.writer).toBe(false);
   expect(result.loadedRelease).toEqual(await loadControlledCodexRelease());
+}, 120_000);
+
+it("recovers after actual C destruction without disposing the lost facet, then restores the same binding through native-journal runShard", async () => {
+  const response = await harness.fetch("http://proof/parent-destroyed-crash");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.kind).toBe("public-c-parent-destroyed-bound-recovery-strict-restore");
+  expect(result.afterIncarnationNonce).not.toBe(result.beforeIncarnationNonce);
+  expect(result.beforeRequestCount).toBe(0);
+  expect(result.beforeObservations["cold/events/request-runtime-run"]).toBeUndefined();
+  expect(result.beforeObservations["cold/events/facet-invoked"]).toBeUndefined();
+  expect(result.bound.status).toBe("bound");
+  expect(result.recovered).toMatchObject({
+    status: "bound",
+    nativeSessionId: result.created.nativeSessionId,
+    identity: result.created.identity,
+    checkpoint: result.created.checkpoint,
+    lifecycle: "settled",
+    control: { epoch: 2 },
+  });
+  expect(result.settled).toMatchObject({
+    lifecycle: "settled",
+    nativeSessionId: result.created.nativeSessionId,
+    checkpoint: {
+      checkpointId: result.created.checkpoint.native.id,
+      manifestSha256: result.created.checkpoint.filesystem.sha256,
+    },
+  });
+  expect(result.afterPlacement).toMatchObject({
+    identity: result.created.identity,
+    disposed: false,
+    released: true,
+    termination: {
+      kind: "parent-destroyed",
+      observedByIncarnationNonce: result.afterIncarnationNonce,
+    },
+  });
+  expect(result.beforePlacement.lease).toEqual(result.afterPlacement.lease);
+  expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
+  expect(result.observations["cold/events/inert-restore"]).toEqual([
+    expect.objectContaining({
+      nativeSessionId: result.created.nativeSessionId,
+      checkpointId: result.created.checkpoint.native.id,
+      manifestRevision: result.created.checkpoint.filesystem.sha256,
+      priorFacetNonce: result.created.identity.incarnationNonce,
+      expectedFacetGeneration: 1,
+    }),
+  ]);
+  expect(result.observations["cold/events/facet-disposed"] ?? []).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ facetNonce: result.created.identity.incarnationNonce }),
+    ]),
+  );
+  expect(result.observations["cold/events/request-runtime-run"]).toEqual([
+    expect.objectContaining({
+      requestId: expect.stringContaining("request-parent-destroyed"),
+      nativeSessionId: result.created.nativeSessionId,
+    }),
+  ]);
+  expect(result.observations["cold/events/facet-invoked"]).toEqual([
+    expect.objectContaining({ requestId: expect.stringContaining("request-parent-destroyed") }),
+  ]);
+  expect(result.executed.processes[0]?.status).toBe("settled");
+  expect(result.restored.nativeSessionId).toBe(result.created.nativeSessionId);
+  expect(result.restored.requestStatus).toBe("completed");
+  expect(result.committed).toBe("committed");
+  expect(result.terminal).toEqual([
+    expect.objectContaining({
+      nativeSessionId: result.created.nativeSessionId,
+      stopped: true,
+      joined: { invocationRpc: true, fetch: true, ports: true },
+    }),
+  ]);
+  expect(result.placementWriter.writer).toBe(false);
+  expect(result.loadedRelease).toEqual(await loadControlledCodexRelease());
+}, 120_000);
+
+it("retries the same bound recovery input after FilesStore control sync and exact facet disposal failures", async () => {
+  const response = await harness.fetch("http://proof/recovery-retries");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.kind).toBe("public-c-bound-recovery-retries");
+  expect(result.syncFailure.rejected).toBe(true);
+  expect(result.syncFailures).toBe(1);
+  expect(result.afterSyncFailure).toMatchObject({
+    disposed: false,
+    released: false,
+    termination: null,
+  });
+  expect(result.disposeFailure).toMatchObject({
+    rejected: true,
+    message: "Injected exact facet disposal failure.",
+  });
+  expect(result.exactDisposeFailures).toBe(1);
+  expect(result.afterDisposeFailure).toMatchObject({
+    disposed: false,
+    released: false,
+    termination: null,
+  });
+  expect(result.recovered).toMatchObject({
+    status: "bound",
+    nativeSessionId: result.created.nativeSessionId,
+    checkpoint: result.created.checkpoint,
+    lifecycle: "stopped",
+    control: result.recoveryInput.nextControl,
+  });
+  expect(result.afterPlacement).toMatchObject({
+    identity: result.created.identity,
+    disposed: true,
+    released: true,
+    termination: { kind: "disposed", facetNonce: result.created.identity.incarnationNonce },
+  });
+  expect(result.lifecycle).toBe("stopped");
+}, 120_000);
+
+it("retries the exact offered first request after FilesStore admission fails, before any native dispatch", async () => {
+  const response = await harness.fetch("http://proof/admission-retry");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.kind).toBe("public-c-first-request-files-admission-retry");
+  expect(result.first.rejected).toBe(true);
+  expect(result.admittedFailures).toBe(1);
+  expect(result.offeredStatus).toBe("offered");
+  expect(result.pendingStepId).toBe(result.requestId);
+  expect(result.observationsAfterFailure["cold/events/request-runtime-run"]).toBeUndefined();
+  expect(result.observationsAfterFailure["cold/events/peer-thread-start"]).toHaveLength(1);
+  expect(result.finalStatus).toBe("completed");
+  expect(result.finalLifecycle).toBe("accepting");
+  expect(result.committed).toBe("committed");
+  expect(result.executed.processes[0]?.status).toBe("settled");
+  expect(result.observations["cold/events/request-runtime-run"]).toEqual([
+    expect.objectContaining({ requestId: result.requestId }),
+  ]);
+  expect(result.observations["cold/events/facet-invoked"]).toEqual([
+    expect.objectContaining({ requestId: result.requestId }),
+  ]);
+  expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
 }, 120_000);

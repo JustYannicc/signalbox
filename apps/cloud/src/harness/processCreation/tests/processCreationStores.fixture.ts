@@ -1,5 +1,36 @@
-import type { HarnessProcessPlacementWriter } from "../../processPlacement/storeSchema.ts";
+import type { HarnessProcessPlacementWriter } from "../../HarnessProcessPlacement.ts";
 import { HarnessProcessPlacementStoreObject } from "../../HarnessProcessPlacementStoreObject.ts";
+import { HarnessFilesStoreObject } from "../../HarnessFilesStoreObject.ts";
+
+type InjectedFilesCommand = "syncControl" | "admitStep";
+
+export class ColdCreationFilesStore extends HarnessFilesStoreObject {
+  async failNext(command: InjectedFilesCommand) {
+    await this.ctx.storage.put(`cold-creation/fail-next/${command}`, true);
+  }
+
+  async injectedFailures(command: InjectedFilesCommand) {
+    return (await this.ctx.storage.get<number>(`cold-creation/failures/${command}`)) ?? 0;
+  }
+
+  override async execute(command: unknown) {
+    const kind =
+      typeof command === "object" && command !== null && "type" in command
+        ? command.type
+        : undefined;
+    if (
+      (kind === "syncControl" || kind === "admitStep") &&
+      (await this.ctx.storage.get(`cold-creation/fail-next/${kind}`)) === true
+    ) {
+      await this.ctx.storage.delete(`cold-creation/fail-next/${kind}`);
+      const key = `cold-creation/failures/${kind}`;
+      const failures = (await this.ctx.storage.get<number>(key)) ?? 0;
+      await this.ctx.storage.put(key, failures + 1);
+      throw new Error(`Injected FilesStore ${kind} failure.`);
+    }
+    return await super.execute(command);
+  }
+}
 
 export class ColdCreationPlacementStore extends HarnessProcessPlacementStoreObject {
   async failNextWriterClaim() {

@@ -3,37 +3,42 @@ import * as Effect from "effect/Effect";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { dataForDriver } from "../../adapter/tests/data.ts";
 import { createHarnessDurableState } from "../../HarnessDurableState.ts";
-import { HarnessFilesStoreObject } from "../../HarnessFilesStoreObject.ts";
 import { HarnessProcessExecutionShardObject } from "../../HarnessProcessExecutionShardObject.ts";
 import type {
   HarnessProcessExecutionEnvironment,
   HarnessProcessExecutionShardInput,
+  HarnessProcessPlacementIdentity,
 } from "../../HarnessProcessPlacement.ts";
 import { deterministicShardOwner } from "../../HarnessProcessPlacement.ts";
 import { HarnessThreadSupervisorObject } from "../../HarnessThreadSupervisorObject.ts";
-import type { HarnessRequestOffer } from "../../HarnessRunStore.ts";
+import type { HarnessRequestCheckpoint, HarnessRequestOffer } from "../../HarnessRunStore.ts";
 import type {
   HarnessRunInitialization,
   HarnessDurableStateBindings,
 } from "../../HarnessDurableState.ts";
-import type { HarnessProcessCreationInput } from "../contracts.ts";
-import type { HarnessProcessCreationEnvironment } from "../contracts.ts";
-import { creationPlacementKey } from "../contracts.ts";
-import type { HarnessProcessCreationRecoveryInput } from "../recovery.ts";
-import { HarnessProcessResumeOwner } from "../../processResume/owner.ts";
+import type { HarnessProcessCreationInput } from "../../HarnessProcessCreation.ts";
+import { creationPlacementKey } from "../../HarnessProcessCreation.ts";
+import type { HarnessProcessCreationRecoveryInput } from "../../HarnessProcessCreation.ts";
 import { reference } from "../../processResume/tests/releaseMaterial.ts";
 import type { ColdCreationPlacementStore } from "./processCreationStores.fixture.ts";
-import { ColdCreationPlacementStore as PlacementStore } from "./processCreationStores.fixture.ts";
+import {
+  ColdCreationFilesStore,
+  ColdCreationPlacementStore as PlacementStore,
+} from "./processCreationStores.fixture.ts";
 import type { ControlledCreationStore } from "./controlledCreationStore.fixture.ts";
 import { ControlledCreationStore as CreationStore } from "./controlledCreationStore.fixture.ts";
 import { ControlledCreationRunStore } from "./controlledCreationRunStore.fixture.ts";
 import { loadControlledCodexRelease } from "./controlledRelease.fixture.ts";
 
-type CreationWorkerEnv = Omit<HarnessProcessExecutionEnvironment, "PLACEMENT_STORES"> &
-  Omit<HarnessDurableStateBindings, "HARNESS_RUN_STORE"> & {
+type CreationWorkerEnv = Omit<
+  HarnessProcessExecutionEnvironment,
+  "PLACEMENT_STORES" | "HARNESS_FILES_STORE"
+> &
+  Omit<HarnessDurableStateBindings, "HARNESS_RUN_STORE" | "HARNESS_FILES_STORE"> & {
     readonly COLD_CREATION_FACET_SOURCE: string;
     readonly COLD_CREATION_STORE: DurableObjectNamespace<ControlledCreationStore>;
     readonly HARNESS_RUN_STORE: DurableObjectNamespace<ControlledCreationRunStore>;
+    readonly HARNESS_FILES_STORE: DurableObjectNamespace<ColdCreationFilesStore>;
     readonly PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<ColdCreationShard>;
     readonly PLACEMENT_STORES: DurableObjectNamespace<ColdCreationPlacementStore>;
   };
@@ -63,17 +68,8 @@ export class ColdCreationShard extends HarnessProcessExecutionShardObject {
     throw new Error("Injected lost reply after the initial identity was bound.");
   }
 
-  override async recoverFreshProcess(input: HarnessProcessCreationRecoveryInput) {
-    const rebuiltOwner = new HarnessProcessResumeOwner(
-      this.ctx,
-      this.env as HarnessProcessCreationEnvironment,
-      this.executionIncarnationNonce(),
-    );
-    return await rebuiltOwner.recoverFreshProcess(input);
-  }
-
-  rehydrate() {
-    this.ctx.abort("Reconstruct the C owner after a claim-only creation interruption.");
+  abortIncarnation() {
+    this.ctx.abort("Reconstruct the actual C execution incarnation.");
   }
 
   async creationPlacement(runId: string) {
@@ -87,6 +83,9 @@ export class ColdCreationShard extends HarnessProcessExecutionShardObject {
       };
       readonly disposed?: true;
       readonly released?: true;
+      readonly termination?:
+        | { readonly kind: "disposed"; readonly facetNonce: string }
+        | { readonly kind: "parent-destroyed"; readonly observedByIncarnationNonce: string };
     }>(creationPlacementKey(runId));
     if (record === undefined) return null;
     return {
@@ -95,6 +94,7 @@ export class ColdCreationShard extends HarnessProcessExecutionShardObject {
       identity: record.identity ?? null,
       disposed: record.disposed === true,
       released: record.released === true,
+      termination: record.termination ?? null,
     };
   }
 
@@ -121,7 +121,7 @@ export class ColdCreationShard extends HarnessProcessExecutionShardObject {
 }
 
 export {
-  HarnessFilesStoreObject,
+  ColdCreationFilesStore,
   ControlledCreationRunStore,
   HarnessThreadSupervisorObject,
   PlacementStore,
@@ -253,6 +253,108 @@ async function commitRequest(input: {
   });
 }
 
+type BoundCreation = {
+  readonly status: "bound" | "created";
+  readonly identity: HarnessProcessPlacementIdentity;
+  readonly nativeSessionId: string;
+  readonly checkpoint: HarnessRequestCheckpoint;
+};
+
+async function runNativeJournalRestore(input: {
+  readonly env: CreationWorkerEnv;
+  readonly setup: Setup;
+  readonly shard: Pick<ColdCreationShard, "runShard" | "commitProcessCheckpoint">;
+  readonly request: Awaited<ReturnType<typeof offer>>;
+  readonly bound: BoundCreation;
+  readonly nextControl: HarnessProcessCreationInput["controllerClaim"];
+}) {
+  const durable = createHarnessDurableState(input.env, input.setup.runId);
+  const restoreOperationId = `strict-restore-${input.setup.runId}`;
+  const publisher = {
+    generation: 1,
+    facetNonce: input.bound.identity.incarnationNonce,
+    publisherKey: input.setup.input.publisherKey,
+  };
+  const requestPublisher = {
+    generation: 1,
+    facetNonce: input.bound.identity.incarnationNonce,
+    publisherKey: input.setup.input.requestPublisherKey,
+  };
+  const process: HarnessProcessExecutionShardInput["processes"][number] = {
+    ...input.setup.input.facet,
+    nativeSessionId: input.bound.nativeSessionId,
+    checkpointId: input.bound.checkpoint.native.id,
+    manifestRevision: input.bound.checkpoint.filesystem.sha256,
+    operationId: restoreOperationId,
+    priorFacetNonce: input.bound.identity.incarnationNonce,
+    expectedFacetGeneration: 1,
+    journal: {
+      publisher,
+      runStore: {
+        runId: input.setup.runId,
+        processId: input.setup.input.facet.processId,
+        processOperationId: input.setup.input.operationId,
+        transitionOperationId: restoreOperationId,
+        controlKey: input.setup.input.run.controlKey,
+        supervisor: {
+          epoch: 1,
+          claimId: input.setup.input.run.claimId,
+          supervisorKey: input.setup.input.run.supervisorKey,
+        },
+        currentPublisher: requestPublisher,
+        nextPublisherKey: secret("next-request-publisher"),
+        request: input.request.offer,
+        checkpoint: input.bound.checkpoint,
+      },
+    },
+  };
+  const shardInput: HarnessProcessExecutionShardInput = {
+    executionMode: "native-journal",
+    runId: input.setup.runId,
+    executionOperationId: input.setup.placementExecutionId,
+    shardOwner: input.setup.ownerPrefix,
+    controllerClaim: input.nextControl,
+    processes: [process],
+  };
+  const running = input.shard.runShard(shardInput, `context-${input.request.requestId}`);
+  const committed = await commitRequest({
+    env: input.env,
+    setup: input.setup,
+    shard: input.shard,
+    request: input.request,
+    processOperationId: restoreOperationId,
+    executionOperationId: input.setup.placementExecutionId,
+    nativeSessionId: input.bound.nativeSessionId,
+    control: input.nextControl,
+    running,
+  });
+  const executed = await running;
+  const after = await durable.threadSupervisor.execute({
+    type: "read",
+    runId: input.setup.runId,
+    control: input.nextControl,
+  });
+  const journal = await durable.runStore.execute({ type: "read", runId: input.setup.runId });
+  return {
+    restored: {
+      nativeSessionId: after.snapshot.nativeSessionId,
+      checkpoint: after.snapshot.checkpoint,
+      generation: after.currentPublisher.generation,
+      facetNonce: after.currentPublisher.facetNonce,
+      requestStatus: journal.snapshot.requests?.entries.at(-1)?.status,
+    },
+    committed: committed.status,
+    executed,
+    observations: await input.env.COLD_CREATION_STORE.getByName("cold-creation").observations(),
+    loadedRelease:
+      (await input.env.COLD_CREATION_STORE.getByName("cold-creation").loadedReleaseObservation()) ??
+      null,
+    placementWriter: await input.env.PLACEMENT_STORES.getByName(input.setup.owner).writerStatus(
+      input.setup.owner,
+    ),
+  };
+}
+
 async function createdRequest(env: CreationWorkerEnv) {
   const fixture = await setup(env);
   const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
@@ -343,7 +445,7 @@ async function claimCrash(env: CreationWorkerEnv) {
     () => ({ rejected: false, message: "" }),
     (cause: unknown) => ({ rejected: true, message: errorMessage(cause) }),
   );
-  await shard.rehydrate().catch(() => undefined);
+  await shard.abortIncarnation().catch(() => undefined);
   const reconstructed = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
   const uncertain = await reconstructed.processCreationStatus({
     runId: fixture.runId,
@@ -374,7 +476,6 @@ async function claimCrash(env: CreationWorkerEnv) {
 async function boundCrashRestore(env: CreationWorkerEnv) {
   const fixture = await setup(env);
   const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
-  const capability = env.COLD_CREATION_STORE.getByName("cold-creation");
   const request = await offer(env, fixture, "recovered");
   await shard.loseNextCreationReplyAfterBind();
   const lostReply = await shard.startFreshProcess(fixture.input).then(
@@ -409,72 +510,14 @@ async function boundCrashRestore(env: CreationWorkerEnv) {
     runId: fixture.runId,
     control: nextControl,
   });
-  const restoreOperationId = `strict-restore-${fixture.runId}`;
-  const publisher = {
-    generation: 1,
-    facetNonce: bound.identity.incarnationNonce,
-    publisherKey: fixture.input.publisherKey,
-  };
-  const requestPublisher = {
-    generation: 1,
-    facetNonce: bound.identity.incarnationNonce,
-    publisherKey: fixture.input.requestPublisherKey,
-  };
-  const process = {
-    ...fixture.input.facet,
-    nativeSessionId: bound.nativeSessionId,
-    checkpointId: bound.checkpoint.native.id,
-    manifestRevision: bound.checkpoint.filesystem.sha256,
-    operationId: restoreOperationId,
-    priorFacetNonce: bound.identity.incarnationNonce,
-    expectedFacetGeneration: 1,
-    journal: {
-      publisher,
-      runStore: {
-        runId: fixture.runId,
-        processId: fixture.input.facet.processId,
-        processOperationId: fixture.input.operationId,
-        transitionOperationId: restoreOperationId,
-        controlKey: fixture.input.run.controlKey,
-        supervisor: {
-          epoch: 1,
-          claimId: fixture.input.run.claimId,
-          supervisorKey: fixture.input.run.supervisorKey,
-        },
-        currentPublisher: requestPublisher,
-        nextPublisherKey: secret("next-request-publisher"),
-        request: request.offer,
-        checkpoint: bound.checkpoint,
-      },
-    },
-  };
-  const shardInput: HarnessProcessExecutionShardInput = {
-    executionMode: "native-journal",
-    runId: fixture.runId,
-    executionOperationId: fixture.placementExecutionId,
-    shardOwner: fixture.ownerPrefix,
-    controllerClaim: nextControl,
-    processes: [process],
-  } as HarnessProcessExecutionShardInput;
-  const running = shard.runShard(shardInput, `context-${request.requestId}`);
-  const committed = await commitRequest({
+  const resumed = await runNativeJournalRestore({
     env,
     setup: fixture,
     shard,
     request,
-    processOperationId: restoreOperationId,
-    executionOperationId: fixture.placementExecutionId,
-    nativeSessionId: bound.nativeSessionId,
-    control: nextControl,
-    running,
+    bound,
+    nextControl,
   });
-  const executed = await running;
-  const after = await durable.threadSupervisor.execute({
-    type: "read",
-    runId: fixture.runId,
-    control: nextControl,
-  });
-  const journal = await durable.runStore.execute({ type: "read", runId: fixture.runId });
   return {
     kind: "public-c-bound-recovery-strict-restore",
     lostReply,
@@ -488,21 +531,200 @@ async function boundCrashRestore(env: CreationWorkerEnv) {
       checkpoint: stopped.snapshot.checkpoint,
       publisher: stopped.currentPublisher,
     },
-    restored: {
-      nativeSessionId: after.snapshot.nativeSessionId,
-      checkpoint: after.snapshot.checkpoint,
-      generation: after.currentPublisher.generation,
-      facetNonce: after.currentPublisher.facetNonce,
-      requestStatus: journal.snapshot.requests?.entries.at(-1)?.status,
+    ...resumed,
+    terminal: await shard.terminalEvidence(),
+  };
+}
+
+async function parentDestroyedCrashRestore(env: CreationWorkerEnv) {
+  const fixture = await setup(env);
+  const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const capability = env.COLD_CREATION_STORE.getByName("cold-creation");
+  const created = await shard.startFreshProcess(fixture.input);
+  const beforePlacement = await shard.creationPlacement(fixture.runId);
+  const request = await offer(env, fixture, "parent-destroyed");
+  const beforeIncarnationNonce = await shard.executionIncarnationNonce();
+  const beforeJournal = await createHarnessDurableState(env, fixture.runId).runStore.execute({
+    type: "read",
+    runId: fixture.runId,
+  });
+  const beforeObservations = await capability.observations();
+  await shard.abortIncarnation().catch(() => undefined);
+  const reconstructed = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const afterIncarnationNonce = await reconstructed.executionIncarnationNonce();
+  if (afterIncarnationNonce === beforeIncarnationNonce)
+    throw new Error("ctx.abort did not create a new C execution incarnation.");
+  const bound = await reconstructed.processCreationStatus({
+    runId: fixture.runId,
+    control: fixture.input.controllerClaim,
+  });
+  if (bound.status !== "bound") throw new Error("The new C incarnation lost the bound identity.");
+  const nextControl = {
+    ...fixture.input.controllerClaim,
+    incarnationId: secret("recovery-incarnation"),
+    epoch: 2,
+    controlKey: secret("recovery-control"),
+  };
+  const recoveryInput: HarnessProcessCreationRecoveryInput = {
+    runId: fixture.runId,
+    operationId: fixture.input.operationId,
+    drainOperationId: `drain-${fixture.runId}`,
+    control: fixture.input.controllerClaim,
+    nextControl,
+  };
+  const recovered = await reconstructed.recoverFreshProcess(recoveryInput);
+  const afterPlacement = await reconstructed.creationPlacement(fixture.runId);
+  const settled = await createHarnessDurableState(env, fixture.runId).threadSupervisor.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: nextControl,
+  });
+  const resumed = await runNativeJournalRestore({
+    env,
+    setup: fixture,
+    shard: reconstructed,
+    request,
+    bound,
+    nextControl,
+  });
+  return {
+    kind: "public-c-parent-destroyed-bound-recovery-strict-restore",
+    beforeIncarnationNonce,
+    afterIncarnationNonce,
+    created,
+    bound,
+    beforePlacement,
+    beforeRequestCount: beforeJournal.snapshot.requests?.entries.length ?? null,
+    beforeObservations,
+    recovered,
+    afterPlacement,
+    settled: {
+      lifecycle: settled.snapshot.lifecycle,
+      nativeSessionId: settled.snapshot.nativeSessionId,
+      checkpoint: settled.snapshot.checkpoint,
     },
+    ...resumed,
+    terminal: await reconstructed.terminalEvidence(),
+  };
+}
+
+async function recoveryRetryFailures(env: CreationWorkerEnv) {
+  const fixture = await setup(env);
+  const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const capability = env.COLD_CREATION_STORE.getByName("cold-creation");
+  const files = env.HARNESS_FILES_STORE.getByName(fixture.runId);
+  const created = await shard.startFreshProcess(fixture.input);
+  const nextControl = {
+    ...fixture.input.controllerClaim,
+    incarnationId: secret("recovery-incarnation"),
+    epoch: 2,
+    controlKey: secret("recovery-control"),
+  };
+  const recoveryInput: HarnessProcessCreationRecoveryInput = Object.freeze({
+    runId: fixture.runId,
+    operationId: fixture.input.operationId,
+    drainOperationId: `drain-${fixture.runId}`,
+    control: fixture.input.controllerClaim,
+    nextControl,
+  });
+
+  await files.failNext("syncControl");
+  const syncFailure = await shard.recoverFreshProcess(recoveryInput).then(
+    () => ({ rejected: false, message: "" }),
+    (cause: unknown) => ({ rejected: true, message: errorMessage(cause) }),
+  );
+  const afterSyncFailure = await shard.creationPlacement(fixture.runId);
+
+  await capability.failNextExactFacetDisposal(created.identity.incarnationNonce);
+  const disposeFailure = await shard.recoverFreshProcess(recoveryInput).then(
+    () => ({ rejected: false, message: "" }),
+    (cause: unknown) => ({ rejected: true, message: errorMessage(cause) }),
+  );
+  const afterDisposeFailure = await shard.creationPlacement(fixture.runId);
+
+  const recovered = await shard.recoverFreshProcess(recoveryInput);
+  const afterPlacement = await shard.creationPlacement(fixture.runId);
+  const settled = await createHarnessDurableState(env, fixture.runId).threadSupervisor.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: nextControl,
+  });
+  return {
+    kind: "public-c-bound-recovery-retries",
+    created,
+    recoveryInput,
+    syncFailure,
+    afterSyncFailure,
+    disposeFailure,
+    afterDisposeFailure,
+    recovered,
+    afterPlacement,
+    lifecycle: settled.snapshot.lifecycle,
+    syncFailures: await files.injectedFailures("syncControl"),
+    exactDisposeFailures: await capability.exactFacetDisposalFailures(),
+    observations: await capability.observations(),
+  };
+}
+
+async function firstRequestAdmissionRetry(env: CreationWorkerEnv) {
+  const fixture = await setup(env);
+  const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const capability = env.COLD_CREATION_STORE.getByName("cold-creation");
+  const files = env.HARNESS_FILES_STORE.getByName(fixture.runId);
+  const created = await shard.startFreshProcess(fixture.input);
+  const request = await offer(env, fixture, "admission-retry");
+  const requestInput = {
+    runId: fixture.runId,
+    operationId: fixture.input.operationId,
+    request: request.offer,
+  };
+  await files.failNext("admitStep");
+  const first = await shard.runCreatedProcess(requestInput, `context-${request.requestId}`).then(
+    () => ({ rejected: false, message: "" }),
+    (cause: unknown) => ({ rejected: true, message: errorMessage(cause) }),
+  );
+  const durable = createHarnessDurableState(env, fixture.runId);
+  const offered = await durable.runStore.execute({ type: "read", runId: fixture.runId });
+  const pending = await durable.threadSupervisor.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: fixture.input.controllerClaim,
+  });
+  const observationsAfterFailure = await capability.observations();
+
+  const running = shard.runCreatedProcess(requestInput, `context-${request.requestId}`);
+  const committed = await commitRequest({
+    env,
+    setup: fixture,
+    shard,
+    request,
+    processOperationId: fixture.input.operationId,
+    executionOperationId: fixture.input.operationId,
+    nativeSessionId: created.nativeSessionId,
+    control: fixture.input.controllerClaim,
+    running,
+  });
+  const executed = await running;
+  const journal = await durable.runStore.execute({ type: "read", runId: fixture.runId });
+  const after = await durable.threadSupervisor.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: fixture.input.controllerClaim,
+  });
+  return {
+    kind: "public-c-first-request-files-admission-retry",
+    created,
+    requestId: request.requestId,
+    first,
+    offeredStatus: offered.snapshot.requests?.entries.at(-1)?.status,
+    pendingStepId: pending.snapshot.admittedStepId,
+    observationsAfterFailure,
+    admittedFailures: await files.injectedFailures("admitStep"),
     committed: committed.status,
     executed,
-    terminal: await shard.terminalEvidence(),
+    finalStatus: journal.snapshot.requests?.entries.at(-1)?.status,
+    finalLifecycle: after.snapshot.lifecycle,
     observations: await capability.observations(),
-    loadedRelease: (await capability.loadedReleaseObservation()) ?? null,
-    placementWriter: await env.PLACEMENT_STORES.getByName(fixture.owner).writerStatus(
-      fixture.owner,
-    ),
   };
 }
 
@@ -524,6 +746,12 @@ export default {
           return json(await claimCrash(env));
         case "/bound-crash":
           return json(await boundCrashRestore(env));
+        case "/parent-destroyed-crash":
+          return json(await parentDestroyedCrashRestore(env));
+        case "/recovery-retries":
+          return json(await recoveryRetryFailures(env));
+        case "/admission-retry":
+          return json(await firstRequestAdmissionRetry(env));
         default:
           return new Response("Not found", { status: 404 });
       }

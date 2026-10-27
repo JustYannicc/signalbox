@@ -1,3 +1,8 @@
+import * as Schema from "effect/Schema";
+import { CreationClaim, CreationBinding, CreationRecord } from "./schemas.ts";
+import { sameControl } from "../processResume/authority.ts";
+import { sameData } from "../processResume/checkpointContract.ts";
+import { NATIVE_SESSION_UUID } from "./identity.ts";
 import type { HarnessRequestCheckpoint } from "../HarnessRunStore.ts";
 import type { HarnessDurableStateInitializationInput } from "../durableState/types.ts";
 import { prepareCheckpoint } from "../durableState/files/content.ts";
@@ -30,51 +35,21 @@ export interface HarnessProcessCreationRecord {
 }
 
 const STORAGE_KEY_PREFIX = "harness-process-creation-v1/";
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SHA256 = /^[a-f0-9]{64}$/;
-
 interface JournalStorage {
   readonly get: <T>(key: string) => Promise<T | undefined>;
   readonly transaction: DurableObjectStorage["transaction"];
 }
 
 const snapshot = <Value>(value: Value): Value => structuredClone(value);
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 function requireNonEmpty(value: unknown, field: string): asserts value is string {
   if (typeof value !== "string" || value.length === 0)
     throw new Error(`Harness process creation ${field} is invalid.`);
 }
 
-function validateClaim(claim: HarnessProcessCreationClaim): void {
-  requireNonEmpty(claim.runId, "run ID");
-  requireNonEmpty(claim.operationId, "operation ID");
-  requireNonEmpty(claim.processId, "process ID");
-  requireNonEmpty(claim.ownerId, "owner ID");
-  requireNonEmpty(claim.ownerIncarnationId, "owner incarnation ID");
-  if (!isObject(claim.controllerClaim))
-    throw new Error("Harness process creation controller claim is invalid.");
-  requireNonEmpty(claim.controllerClaim.ownerId, "controller owner ID");
-  requireNonEmpty(claim.controllerClaim.incarnationId, "controller incarnation ID");
-  requireNonEmpty(claim.controllerClaim.controlKey, "controller key");
-  if (!Number.isSafeInteger(claim.controllerClaim.epoch) || claim.controllerClaim.epoch < 1)
-    throw new Error("Harness process creation controller epoch is invalid.");
-  if (!SHA256.test(claim.descriptorSha256))
-    throw new Error("Harness process creation descriptor hash is invalid.");
-}
-
-function sameControllerClaim(
-  left: HarnessProcessControllerClaim,
-  right: HarnessProcessControllerClaim,
-): boolean {
-  return (
-    left.ownerId === right.ownerId &&
-    left.incarnationId === right.incarnationId &&
-    left.epoch === right.epoch &&
-    left.controlKey === right.controlKey
-  );
-}
+const validateClaim = Schema.decodeUnknownSync(CreationClaim, { onExcessProperty: "error" });
+const decodeBinding = Schema.decodeUnknownSync(CreationBinding, { onExcessProperty: "error" });
+const decodeRecord = Schema.decodeUnknownSync(CreationRecord, { onExcessProperty: "error" });
 
 function sameClaim(left: HarnessProcessCreationClaim, right: HarnessProcessCreationClaim): boolean {
   return (
@@ -84,54 +59,16 @@ function sameClaim(left: HarnessProcessCreationClaim, right: HarnessProcessCreat
     left.ownerId === right.ownerId &&
     left.ownerIncarnationId === right.ownerIncarnationId &&
     left.descriptorSha256 === right.descriptorSha256 &&
-    sameControllerClaim(left.controllerClaim, right.controllerClaim)
-  );
-}
-
-function sameValue(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  if (left instanceof Uint8Array && right instanceof Uint8Array) {
-    return (
-      left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index])
-    );
-  }
-  if (left instanceof ArrayBuffer && right instanceof ArrayBuffer) {
-    return sameValue(new Uint8Array(left), new Uint8Array(right));
-  }
-  if (Array.isArray(left) && Array.isArray(right)) {
-    return (
-      left.length === right.length && left.every((value, index) => sameValue(value, right[index]))
-    );
-  }
-  if (!isObject(left) || !isObject(right)) return false;
-  const leftKeys = Object.keys(left).sort();
-  const rightKeys = Object.keys(right).sort();
-  return (
-    leftKeys.length === rightKeys.length &&
-    leftKeys.every((key, index) => key === rightKeys[index] && sameValue(left[key], right[key]))
+    sameControl(left.controllerClaim, right.controllerClaim)
   );
 }
 
 function readRecord(value: unknown): HarnessProcessCreationRecord {
-  if (
-    !isObject(value) ||
-    (value.phase !== "claimed" && value.phase !== "staged" && value.phase !== "bound")
-  )
-    throw new Error("Harness process creation journal record is corrupt.");
-  const claim = value.claim;
-  if (!isObject(claim)) throw new Error("Harness process creation journal claim is corrupt.");
-  validateClaim(claim as unknown as HarnessProcessCreationClaim);
-  if (value.phase === "claimed") {
-    if ("binding" in value) throw new Error("Harness process creation journal record is corrupt.");
-    return { phase: "claimed", claim: snapshot(claim) as unknown as HarnessProcessCreationClaim };
+  try {
+    return snapshot(decodeRecord(value));
+  } catch (cause) {
+    throw new Error("Harness process creation journal record is corrupt.", { cause });
   }
-  if (!isObject(value.binding))
-    throw new Error("Harness process creation journal record is corrupt.");
-  return {
-    phase: value.phase,
-    claim: snapshot(claim) as unknown as HarnessProcessCreationClaim,
-    binding: snapshot(value.binding) as unknown as HarnessProcessCreationBinding,
-  };
 }
 
 function journalKey(runId: string): string {
@@ -142,7 +79,7 @@ function validateControlBinding(
   claim: HarnessProcessCreationClaim,
   initialization: HarnessDurableStateInitializationInput,
 ): void {
-  if (!sameControllerClaim(claim.controllerClaim, initialization.control))
+  if (!sameControl(claim.controllerClaim, initialization.control))
     throw new Error("Harness process creation initialization uses another controller claim.");
 }
 
@@ -150,7 +87,7 @@ async function validateBinding(
   claim: HarnessProcessCreationClaim,
   binding: HarnessProcessCreationBinding,
 ): Promise<void> {
-  if (!UUID.test(binding.nativeSessionId))
+  if (!NATIVE_SESSION_UUID.test(binding.nativeSessionId))
     throw new Error("Harness process creation native session ID is not a UUID.");
   const initialization = binding.initialization;
   if (initialization.nativeSessionId !== binding.nativeSessionId)
@@ -220,7 +157,7 @@ export class HarnessProcessCreationJournal {
     candidate: HarnessProcessCreationBinding,
   ): Promise<HarnessProcessCreationRecord> {
     const claim = snapshot(input);
-    const binding = snapshot(candidate);
+    const binding = snapshot(decodeBinding(candidate));
     validateClaim(claim);
     await validateBinding(claim, binding);
     return this.#storage.transaction(async (transaction) => {
@@ -239,7 +176,7 @@ export class HarnessProcessCreationJournal {
         await transaction.put(key, snapshot(staged));
         return snapshot(staged);
       }
-      if (record.binding === undefined || !sameValue(record.binding, binding))
+      if (record.binding === undefined || !sameData(record.binding, binding))
         throw new Error("Harness process creation binding is immutable once staged.");
       return snapshot(record);
     });

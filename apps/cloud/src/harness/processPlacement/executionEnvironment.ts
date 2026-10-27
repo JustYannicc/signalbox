@@ -29,11 +29,19 @@ export type HarnessProcessExecutionProductBootstrapInput =
 export interface HarnessProcessExecutionResumeFacetEnvironment {
   readonly HARNESS_RESUME_RUN_ID: string;
   readonly HARNESS_RESUME_CONTROL: HarnessThreadSupervisorControlClaim;
-  readonly HARNESS_RESUME_PUBLISHER?: HarnessThreadSupervisorPublisher;
+  readonly HARNESS_RESUME_PUBLISHER: HarnessThreadSupervisorPublisher;
   readonly HARNESS_RESUME_RUN_STORE: Fetcher;
   readonly HARNESS_RESUME_FILES_STORE: Fetcher;
   readonly HARNESS_RESUME_SUPERVISOR: Fetcher;
 }
+
+export type HarnessProcessCreationFacetEnvironment = Omit<
+  HarnessProcessExecutionResumeFacetEnvironment,
+  "HARNESS_RESUME_PUBLISHER"
+> & {
+  readonly HARNESS_RESUME_CREATION: true;
+  readonly HARNESS_RESUME_PUBLISHER?: never;
+};
 
 export type HarnessProcessExecutionProcessInput = {
   readonly processId: string;
@@ -57,7 +65,11 @@ export type HarnessProcessExecutionProcessInput = {
   readonly resumeFacetEnv?: HarnessProcessExecutionResumeFacetEnvironment;
 } & HarnessProcessExecutionProductBootstrapInput;
 
-export type HarnessProcessExecutionFacetCodeInput = Pick<
+export type HarnessProcessExecutionFacetCodeInput = {
+  readonly resumeFacetEnv?:
+    | HarnessProcessExecutionResumeFacetEnvironment
+    | HarnessProcessCreationFacetEnvironment;
+} & Pick<
   HarnessProcessExecutionProcessInput,
   | "processId"
   | "codeId"
@@ -66,7 +78,6 @@ export type HarnessProcessExecutionFacetCodeInput = Pick<
   | "modules"
   | "entrypoint"
   | "facetEnv"
-  | "resumeFacetEnv"
   | "runStorePublisher"
 > &
   HarnessProcessExecutionProductBootstrapInput;
@@ -90,6 +101,7 @@ const reservedFacetEnvironmentKeys = [
   "HARNESS_RESUME_RUN_ID",
   "HARNESS_RESUME_CONTROL",
   "HARNESS_RESUME_PUBLISHER",
+  "HARNESS_RESUME_CREATION",
   "HARNESS_RESUME_RUN_STORE",
   "HARNESS_RESUME_FILES_STORE",
   "HARNESS_RESUME_SUPERVISOR",
@@ -164,6 +176,9 @@ export function createHarnessProcessFacetEnvironment(
     ...(process.resumeFacetEnv === undefined
       ? {}
       : {
+          ...("HARNESS_RESUME_CREATION" in process.resumeFacetEnv
+            ? { HARNESS_RESUME_CREATION: true }
+            : {}),
           HARNESS_RESUME_RUN_ID: process.resumeFacetEnv.HARNESS_RESUME_RUN_ID,
           HARNESS_RESUME_CONTROL: process.resumeFacetEnv.HARNESS_RESUME_CONTROL,
           ...(process.resumeFacetEnv.HARNESS_RESUME_PUBLISHER === undefined

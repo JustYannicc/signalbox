@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { Artifact, capability, id, integer, positive, Progress, Supervisor } from "./values.ts";
 
-const Checkpoint = Schema.Struct({ native: Artifact, filesystem: Artifact });
+export const Checkpoint = Schema.Struct({ native: Artifact, filesystem: Artifact });
 const Publisher = Schema.Struct({ generation: positive, facetNonce: id, publisherKey: capability });
 const Offer = Schema.Struct({ requestId: id, input: Artifact });
 const Finish = Schema.Struct({

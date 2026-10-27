@@ -1,3 +1,5 @@
+import { activateCreationJournal } from "./journalActivation.ts";
+import { readCreationInput } from "./placementSchema.ts";
 import { createHarnessDurableState } from "../HarnessDurableState.ts";
 import {
   HarnessProcessCreationJournal,
@@ -19,6 +21,7 @@ import { samePreparedRelease, snapshotPreparedRelease } from "../processResume/i
 
 const stable = (value: unknown): unknown => {
   if (value instanceof Uint8Array) return { bytes: Array.from(value) };
+  if (value instanceof ArrayBuffer) return { bytes: Array.from(new Uint8Array(value)) };
   if (Array.isArray(value)) return value.map(stable);
   if (value !== null && typeof value === "object")
     return Object.fromEntries(
@@ -58,7 +61,7 @@ export class HarnessProcessCreationOwner {
   }
 
   async start(supplied: HarnessProcessCreationInput) {
-    const input = structuredClone(supplied);
+    const input = readCreationInput(structuredClone(supplied));
     if (
       !input.runId ||
       !input.operationId ||
@@ -124,7 +127,7 @@ export class HarnessProcessCreationOwner {
       if (record.phase === "staged") await this.#initialize(input, record.binding);
       if (record.phase === "staged") await this.#journal.bind(record.claim);
       await this.#authorize(input, record.binding);
-      await this.#activateJournal(input, record.binding);
+      await activateCreationJournal(this.environment, input, record.binding);
       return readyCreation(input.operationId, record.binding, "bound");
     }
     if (intent.action !== "recorded")
@@ -177,31 +180,8 @@ export class HarnessProcessCreationOwner {
     await this.#initialize(input, binding);
     await this.#journal.bind(claim);
     this.#binding = binding;
-    await this.#activateJournal(input, binding);
+    await activateCreationJournal(this.environment, input, binding);
     return readyCreation(input.operationId, binding, "created");
-  }
-
-  async #activateJournal(
-    input: HarnessProcessCreationInput,
-    binding: HarnessProcessCreationBinding,
-  ) {
-    const durable = createHarnessDurableState(this.environment, input.runId);
-    await durable.runStore.execute({
-      type: "request.mode",
-      runId: input.runId,
-      controlKey: input.run.controlKey,
-      requestId: input.requestModeId,
-      checkpoint: binding.checkpoint,
-    });
-    await durable.runStore.execute({
-      type: "request.replaceFacet",
-      runId: input.runId,
-      controlKey: input.run.controlKey,
-      expectedGeneration: 0,
-      operationId: input.operationId,
-      facetNonce: binding.identity.incarnationNonce,
-      publisherKey: input.requestPublisherKey,
-    });
   }
 
   async recover(input: HarnessProcessCreationRecoveryInput) {

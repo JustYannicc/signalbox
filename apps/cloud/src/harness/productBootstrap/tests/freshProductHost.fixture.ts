@@ -3,26 +3,26 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   HARNESS_C_PRODUCT_CAPABILITY_KEYS,
   type HarnessCProductCapabilities,
-} from "../HarnessCProductCapabilities.ts";
-import type { HarnessCheckpoint } from "../Harness.ts";
-import type { HarnessFacetRequestContext } from "../HarnessRequestFacet.ts";
-import { HarnessRequestFacetError } from "../HarnessRequestFacet.ts";
-import type { HarnessRequestCheckpoint, HarnessRunArtifact } from "../HarnessRunStore.ts";
-import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
-import type { HarnessFilesCheckpoint } from "../HarnessFilesStore.ts";
+} from "../../HarnessCProductCapabilities.ts";
+import type { HarnessCheckpoint } from "../../Harness.ts";
+import type { HarnessFacetRequestContext } from "../../HarnessRequestFacet.ts";
+import { HarnessRequestFacetError } from "../../HarnessRequestFacet.ts";
+import type { HarnessRequestCheckpoint, HarnessRunArtifact } from "../../HarnessRunStore.ts";
+import type { HarnessThreadSupervisorPublisher } from "../../HarnessThreadSupervisor.ts";
+import type { HarnessFilesCheckpoint } from "../../HarnessFilesStore.ts";
 import {
   type HarnessCProductFacetEnvironment,
   type HarnessCProductFacetFactory,
   type HarnessCProductTurnBindings,
   type ProductHostOptions,
   composeHarnessCProductFacetOptions,
-} from "../HarnessCProductFacet.ts";
-import { machineInventoryFixture } from "../../computer/machineInventoryTesting.ts";
-import { prepareCheckpoint } from "../durableState/files/content.ts";
-import { dataForDriver } from "../adapter/tests/data.ts";
+} from "../../HarnessCProductFacet.ts";
+import { machineInventoryFixture } from "../../../computer/machineInventoryTesting.ts";
+import { prepareHarnessFilesCheckpoint as prepareCheckpoint } from "../../HarnessFilesStore.ts";
+import { dataForDriver } from "../../adapter/tests/data.ts";
 import { createFreshProductNativePeer } from "./freshProductHost.peer.fixture.ts";
-import { programFixture } from "../tests/productHost/commands.ts";
-import { releaseSource } from "./tests/artifacts.fixture.ts";
+import { programFixture } from "../../tests/productHost/commands.ts";
+import { releaseSource } from "./artifacts.fixture.ts";
 
 const publisherKey = "p".repeat(32);
 const artifact = (id: string): HarnessRunArtifact => ({
@@ -156,6 +156,7 @@ export const freshProductHostFixture = Effect.gen(function* () {
     HARNESS_C_TARGET_PREPARED_RELEASE: source.expected,
     HARNESS_C_PRODUCT_CAPABILITIES: capabilityMap,
     HARNESS_RESUME_RUN_ID: "run-fresh",
+    HARNESS_RESUME_CREATION: true,
     HARNESS_RESUME_CONTROL: {
       ownerId: "owner",
       incarnationId: "incarnation",
@@ -188,33 +189,35 @@ export const freshProductHostFixture = Effect.gen(function* () {
     { readonly token: string },
     unknown,
     ProductHostOptions<{ readonly token: string }, unknown> & {
-      readonly processResumeArtifact?: import("../../harnessReleases/HarnessReleaseLedger.ts").HarnessReleaseArtifact;
+      readonly processResumeArtifact?: import("../../../harnessReleases/HarnessReleaseLedger.ts").HarnessReleaseArtifact;
     },
     typeof host
   > = {
     provider: "codex",
     createHost: () => Effect.succeed(host),
     buildHostOptions: () => Effect.fail(new HarnessRequestFacetError("Restore path must not run.")),
-    buildFreshHostOptions: ({ selectedRelease }) =>
-      selectedRelease.artifact === source.artifact
-        ? Effect.succeed(options)
-        : Effect.fail(new HarnessRequestFacetError("Wrong release selected.")),
     buildOpenInput: () => Effect.fail(new HarnessRequestFacetError("Restore path must not run.")),
-    buildFreshOpenInput: () =>
-      Effect.succeed({
-        session: {
-          threadId: data.threadId,
-          providerSessionId: data.providerSessionId,
-          modelSelection: data.modelSelection,
-          runtimePolicy: {
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: "/workspace",
+    fresh: {
+      buildHostOptions: ({ selectedRelease }) =>
+        selectedRelease.artifact === source.artifact
+          ? Effect.succeed(options)
+          : Effect.fail(new HarnessRequestFacetError("Wrong release selected.")),
+      buildOpenInput: () =>
+        Effect.succeed({
+          session: {
+            threadId: data.threadId,
+            providerSessionId: data.providerSessionId,
+            modelSelection: data.modelSelection,
+            runtimePolicy: {
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: "/workspace",
+            },
           },
-        },
-        creation: { providerThread: { ...data.turn.providerThread, nativeThreadRef: null } },
-        bootAttemptId: "cold-create",
-      }),
+          creation: { providerThread: { ...data.turn.providerThread, nativeThreadRef: null } },
+          bootAttemptId: "cold-create",
+        }),
+    },
     buildTurnBindings: () => Effect.succeed(turnBindings),
   };
   const facetOptions = yield* composeHarnessCProductFacetOptions(

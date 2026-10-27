@@ -7,6 +7,7 @@ import {
   HarnessRequestFacetError,
   type HarnessFacetRequestRuntime,
   type HarnessRequestFacetCreationEvidence,
+  type HarnessRequestFacet,
   type HarnessRequestFacetOptions,
   type HarnessRequestFacetPreparationEvidence,
   type HarnessRequestFacetPreparationRequest,
@@ -19,7 +20,7 @@ import type { HarnessThreadSupervisorObject } from "../../HarnessThreadSuperviso
 import type { HarnessFilesCheckpoint } from "../../HarnessFilesStore.ts";
 import type { HarnessRunArtifact } from "../../HarnessRunStore.ts";
 import type { HarnessProcessResumePreparedRelease } from "../../HarnessProcessResume.ts";
-import { prepareCheckpoint } from "../../durableState/files/content.ts";
+import { prepareHarnessFilesCheckpoint as prepareCheckpoint } from "../../HarnessFilesStore.ts";
 import { loadControlledCodexRelease } from "./controlledRelease.fixture.ts";
 import type { ControlledCreationStore } from "./controlledCreationStore.fixture.ts";
 
@@ -45,6 +46,7 @@ type StoreClient = Pick<
   | "nativeCheckpoint"
   | "record"
   | "recordLoadedRelease"
+  | "consumeExactFacetDisposalFailure"
 >;
 type RunStoreClient = Pick<HarnessRunStoreObject, "execute">;
 type FilesStoreClient = Pick<HarnessFilesStoreObject, "execute">;
@@ -323,4 +325,18 @@ export class ControlledCreationFacet extends createHarnessRequestFacetClass<Cont
     };
     return Effect.succeed(options);
   },
-) {}
+) {
+  override async run(input: Parameters<HarnessRequestFacet["run"]>[0]) {
+    await fixtureStore(this.env).record("facet-invoked", {
+      requestId: input.requestId,
+      facetNonce: this.facetNonce,
+    });
+    return await super.run(input);
+  }
+
+  override async dispose(expectedFacetNonce: string) {
+    if (await fixtureStore(this.env).consumeExactFacetDisposalFailure(expectedFacetNonce))
+      throw new Error("Injected exact facet disposal failure.");
+    await super.dispose(expectedFacetNonce);
+  }
+}

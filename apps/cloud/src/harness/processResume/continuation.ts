@@ -211,6 +211,7 @@ export async function continueResumedProcess(input: {
     });
     input.assertOwned();
     owned = {
+      kind: "published",
       runId: request.runId,
       placement: boundary.placement,
       durable,

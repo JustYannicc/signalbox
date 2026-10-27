@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
-import { freshProductHostFixture } from "./freshProductHost.fixture.ts";
+import { freshProductHostFixture } from "./tests/freshProductHost.fixture.ts";
 
 describe("fresh product host", () => {
   it.effect(

@@ -8,11 +8,11 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type { HarnessCheckpoint } from "../Harness.ts";
-import type { HarnessHostSession, HostOpenInput } from "../HarnessSessionHost.ts";
-import type { HarnessProcessResumePreparedRelease } from "../HarnessProcessResume.ts";
-import type { ProductHarnessSessionHost } from "../host/product.ts";
-import { dataForDriver } from "../adapter/tests/data.ts";
+import type { HarnessCheckpoint } from "../../Harness.ts";
+import type { HarnessHostSession, HostOpenInput } from "../../HarnessSessionHost.ts";
+import type { HarnessProcessResumePreparedRelease } from "../../HarnessProcessResume.ts";
+import type { ProductHarnessSessionHost } from "../../HarnessCProductFacet.ts";
+import { dataForDriver } from "../../adapter/tests/data.ts";
 
 type FreshData = Effect.Success<ReturnType<typeof dataForDriver>>;
 type Grant = { readonly token: string };

@@ -38,7 +38,6 @@ import { HarnessProcessCreationOwner } from "../processCreation/service.ts";
 import type {
   HarnessProcessCreationInput,
   HarnessProcessCreationRunInput,
-  HarnessProcessCreationEnvironment,
 } from "../processCreation/contracts.ts";
 import type { HarnessProcessCreationRecoveryInput } from "../processCreation/recovery.ts";
 import { validateHarnessProcessResumeRunStoreActive } from "./runStore.ts";
@@ -104,48 +103,74 @@ export class HarnessProcessResumeOwner {
   }
 
   #creationOwner() {
-    if (!this.environment.HARNESS_RUN_STORE || !this.environment.HARNESS_FILES_STORE)
-      throw new Error("Cold creation requires the public durable stores.");
+    const {
+      HARNESS_RUN_STORE,
+      HARNESS_FILES_STORE,
+      HARNESS_THREAD_SUPERVISOR,
+      PLACEMENT_STORES,
+      LOADER,
+      RESIDENT_BYTE_LIMIT,
+    } = this.environment;
+    const namespaces = [
+      HARNESS_RUN_STORE,
+      HARNESS_FILES_STORE,
+      HARNESS_THREAD_SUPERVISOR,
+      PLACEMENT_STORES,
+    ];
+    if (
+      !HARNESS_RUN_STORE ||
+      !HARNESS_FILES_STORE ||
+      !LOADER ||
+      typeof LOADER.get !== "function" ||
+      namespaces.some(
+        (binding) =>
+          !binding || typeof binding.getByName !== "function" || typeof binding.get !== "function",
+      ) ||
+      !Number.isSafeInteger(Number(RESIDENT_BYTE_LIMIT)) ||
+      Number(RESIDENT_BYTE_LIMIT) <= 0
+    )
+      throw new Error(
+        "Cold creation requires the public durable stores, loader, placement, and residency limit.",
+      );
     return (this.#creation ??= new HarnessProcessCreationOwner(
       this.context,
-      this.environment as HarnessProcessCreationEnvironment,
+      {
+        ...this.environment,
+        HARNESS_RUN_STORE,
+        HARNESS_FILES_STORE,
+        // The placement-only environment types this binding without durable-state RPC methods.
+        HARNESS_THREAD_SUPERVISOR: this.environment
+          .HARNESS_THREAD_SUPERVISOR as unknown as HarnessDurableStateBindings["HARNESS_THREAD_SUPERVISOR"],
+      },
       this.incarnationNonce,
     ));
   }
 
-  async startFreshProcess(input: HarnessProcessCreationInput) {
+  async #exclusiveFresh<Result>(operation: () => Promise<Result>): Promise<Result> {
     if (this.#running || this.#current || this.#attempt || this.#resumed || this.#retained)
       throw new Error("This shard already owns process execution.");
     this.#running = true;
     try {
-      return await this.#creationOwner().start(input);
+      return await operation();
     } finally {
       this.#running = false;
     }
   }
 
-  async runCreatedProcess(input: HarnessProcessCreationRunInput, requestContextId: string) {
-    if (this.#running || this.#current || this.#attempt || this.#resumed || this.#retained)
-      throw new Error("This shard already owns process execution.");
-    this.#running = true;
-    try {
-      return await this.#creationOwner().run(input, requestContextId, (owned) => {
+  startFreshProcess(input: HarnessProcessCreationInput) {
+    return this.#exclusiveFresh(() => this.#creationOwner().start(input));
+  }
+
+  runCreatedProcess(input: HarnessProcessCreationRunInput, requestContextId: string) {
+    return this.#exclusiveFresh(() =>
+      this.#creationOwner().run(input, requestContextId, (owned) => {
         this.#current = owned;
-      });
-    } finally {
-      this.#running = false;
-    }
+      }),
+    );
   }
 
-  async recoverFreshProcess(input: HarnessProcessCreationRecoveryInput) {
-    if (this.#running || this.#current || this.#attempt || this.#resumed || this.#retained)
-      throw new Error("This shard already owns process execution.");
-    this.#running = true;
-    try {
-      return await this.#creationOwner().recover(input);
-    } finally {
-      this.#running = false;
-    }
+  recoverFreshProcess(input: HarnessProcessCreationRecoveryInput) {
+    return this.#exclusiveFresh(() => this.#creationOwner().recover(input));
   }
 
   processCreationStatus(input: {
@@ -218,6 +243,7 @@ export class HarnessProcessResumeOwner {
         afterActivation: async ({ handle, activation }) => {
           const active = await initial.afterActivation();
           this.#current = {
+            kind: "published",
             runId: input.runId,
             durable,
             process: prepared,

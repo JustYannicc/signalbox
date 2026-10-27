@@ -14,7 +14,12 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { HarnessError, type HarnessOpenInput, type HarnessSession } from "../Harness.ts";
+import {
+  HarnessError,
+  type HarnessOpenInput,
+  type HarnessCheckpoint,
+  type HarnessSession,
+} from "../Harness.ts";
 import {
   checkpointThreadLoad,
   nativeTurnThreadLoad,
@@ -314,6 +319,16 @@ export const createHostSession = <G>(
       ): HarnessHostSession<G> {
         providerThreadId =
           input.checkpoint?.snapshot.providerThread.id ?? input.creation?.providerThread.id;
+        let createdThread: HarnessCheckpoint["snapshot"]["providerThread"] | undefined;
+        const exportCheckpoint = () =>
+          raw.export().pipe(
+            Effect.tap((checkpoint) =>
+              Effect.sync(() => {
+                if (input.creation !== undefined)
+                  createdThread = checkpoint.snapshot.providerThread;
+              }),
+            ),
+          );
         const dispose = Effect.suspend(() => {
           stop();
           return raw.dispose.pipe(
@@ -331,6 +346,7 @@ export const createHostSession = <G>(
         });
         return {
           ...raw,
+          export: exportCheckpoint,
           get providerSession() {
             return raw.providerSession;
           },
@@ -353,8 +369,33 @@ export const createHostSession = <G>(
           ),
           turn: ({ turn: supplied, access }) =>
             Effect.gen(function* () {
+              let suppliedTurn = supplied;
+              if (input.creation !== undefined) {
+                if (createdThread === undefined) yield* exportCheckpoint();
+                const bound = createdThread;
+                const requested = supplied.providerThread;
+                if (
+                  bound === undefined ||
+                  supplied.threadId !== bound.appThreadId ||
+                  requested.driver !== bound.driver ||
+                  requested.id !== bound.id ||
+                  requested.appThreadId !== bound.appThreadId ||
+                  requested.providerSessionId !== bound.providerSessionId ||
+                  requested.providerInstanceId !== bound.providerInstanceId ||
+                  (requested.nativeThreadRef !== null &&
+                    (requested.nativeThreadRef.driver !== bound.driver ||
+                      requested.nativeThreadRef.nativeId !== bound.nativeThreadRef?.nativeId))
+                )
+                  return yield* Effect.fail(
+                    new HarnessError({
+                      operation: "turn",
+                      message: "Turn identity differs from the created native thread.",
+                    }),
+                  );
+                suppliedTurn = { ...supplied, providerThread: bound };
+              }
               const authorized = snapshotAccess(access);
-              const encoded = yield* encodeTurn(supplied).pipe(
+              const encoded = yield* encodeTurn(suppliedTurn).pipe(
                 Effect.mapError(
                   () =>
                     new HarnessError({

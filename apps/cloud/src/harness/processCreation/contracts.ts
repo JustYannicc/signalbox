@@ -25,7 +25,10 @@ export interface HarnessProcessCreationInput {
   readonly publisherKey: string;
   readonly requestPublisherKey: string;
   readonly requestModeId: string;
-  readonly facet: HarnessProcessExecutionFacetCodeInput & {
+  readonly facet: Omit<
+    HarnessProcessExecutionFacetCodeInput,
+    "resumeFacetEnv" | "runStorePublisher"
+  > & {
     readonly productBootstrap: NonNullable<
       HarnessProcessExecutionFacetCodeInput["productBootstrap"]
     >;
@@ -43,6 +46,9 @@ export interface HarnessProcessCreationPlacement {
   readonly input: HarnessProcessCreationInput;
   readonly identity?: HarnessProcessPlacementIdentity;
   readonly disposed?: true;
+  readonly termination?:
+    | { readonly kind: "disposed"; readonly facetNonce: string }
+    | { readonly kind: "parent-destroyed"; readonly observedByIncarnationNonce: string };
   readonly released?: true;
 }
 export interface HarnessProcessCreationRunInput {

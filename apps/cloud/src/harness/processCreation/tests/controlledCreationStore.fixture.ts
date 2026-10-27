@@ -1,9 +1,26 @@
 import { DurableObject } from "cloudflare:workers";
 import type { HarnessFilesCheckpoint } from "../../HarnessFilesStore.ts";
 import type { HarnessRequestCheckpoint, HarnessRunArtifact } from "../../HarnessRunStore.ts";
-import { prepareCheckpoint } from "../../durableState/files/content.ts";
+import { prepareHarnessFilesCheckpoint as prepareCheckpoint } from "../../HarnessFilesStore.ts";
 
 export class ControlledCreationStore extends DurableObject<Record<string, never>> {
+  async failNextExactFacetDisposal(facetNonce: string) {
+    await this.ctx.storage.put("cold/fail-exact-facet-dispose", facetNonce);
+  }
+
+  async consumeExactFacetDisposalFailure(facetNonce: string) {
+    const configured = await this.ctx.storage.get<string>("cold/fail-exact-facet-dispose");
+    if (configured !== facetNonce) return false;
+    await this.ctx.storage.delete("cold/fail-exact-facet-dispose");
+    const count = (await this.ctx.storage.get<number>("cold/exact-facet-dispose-failures")) ?? 0;
+    await this.ctx.storage.put("cold/exact-facet-dispose-failures", count + 1);
+    return true;
+  }
+
+  async exactFacetDisposalFailures() {
+    return (await this.ctx.storage.get<number>("cold/exact-facet-dispose-failures")) ?? 0;
+  }
+
   async stageCheckpoint(
     requestId: string,
     checkpoint: HarnessFilesCheckpoint,

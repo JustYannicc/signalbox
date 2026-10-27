@@ -79,16 +79,7 @@ export async function openCreationPlacement(
     input,
   };
   await context.storage.put(creationPlacementKey(input.runId), record);
-  const process = {
-    ...input.facet,
-    resumeFacetEnv: {
-      HARNESS_RESUME_RUN_ID: input.runId,
-      HARNESS_RESUME_CONTROL: input.controllerClaim,
-      HARNESS_RESUME_RUN_STORE: environment.HARNESS_RUN_STORE.getByName(input.runId),
-      HARNESS_RESUME_FILES_STORE: environment.HARNESS_FILES_STORE.getByName(input.runId),
-      HARNESS_RESUME_SUPERVISOR: environment.HARNESS_THREAD_SUPERVISOR.getByName(input.runId),
-    },
-  };
+  const process = creationFacetInput(input, environment);
   const stub = createHarnessProcessFacetStub(context, environment, process, locator);
   const observed = await stub.identity();
   if (!observed.facetNonce) throw new Error("The created facet has no constructor identity.");
@@ -102,7 +93,11 @@ export async function openCreationPlacement(
     if (!disposed) {
       await stub.dispose(identity.incarnationNonce);
       disposed = true;
-      record = { ...record, disposed: true };
+      record = {
+        ...record,
+        disposed: true,
+        termination: { kind: "disposed", facetNonce: identity.incarnationNonce },
+      };
       await context.storage.put(creationPlacementKey(input.runId), record);
     }
     return { acknowledged: true as const };
@@ -165,16 +160,24 @@ export function readCreationFacet(
   return createHarnessProcessFacetStub(
     context,
     environment,
-    {
-      ...input.facet,
-      resumeFacetEnv: {
-        HARNESS_RESUME_RUN_ID: input.runId,
-        HARNESS_RESUME_CONTROL: input.controllerClaim,
-        HARNESS_RESUME_RUN_STORE: environment.HARNESS_RUN_STORE.getByName(input.runId),
-        HARNESS_RESUME_FILES_STORE: environment.HARNESS_FILES_STORE.getByName(input.runId),
-        HARNESS_RESUME_SUPERVISOR: environment.HARNESS_THREAD_SUPERVISOR.getByName(input.runId),
-      },
-    },
+    creationFacetInput(input, environment),
     record.identity,
   );
+}
+
+function creationFacetInput(
+  input: HarnessProcessCreationInput,
+  environment: HarnessProcessCreationEnvironment,
+) {
+  return {
+    ...input.facet,
+    resumeFacetEnv: {
+      HARNESS_RESUME_CREATION: true as const,
+      HARNESS_RESUME_RUN_ID: input.runId,
+      HARNESS_RESUME_CONTROL: input.controllerClaim,
+      HARNESS_RESUME_RUN_STORE: environment.HARNESS_RUN_STORE.getByName(input.runId),
+      HARNESS_RESUME_FILES_STORE: environment.HARNESS_FILES_STORE.getByName(input.runId),
+      HARNESS_RESUME_SUPERVISOR: environment.HARNESS_THREAD_SUPERVISOR.getByName(input.runId),
+    },
+  };
 }

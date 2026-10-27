@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
-import { prepareCheckpoint } from "../durableState/files/content.ts";
-import type { HarnessDurableStateInitializationInput } from "../durableState/types.ts";
-import type { HarnessProcessPlacementIdentity } from "../processPlacement/contracts.ts";
+import { prepareHarnessFilesCheckpoint as prepareCheckpoint } from "../HarnessFilesStore.ts";
+import type { HarnessDurableStateInitializationInput } from "../HarnessDurableState.ts";
+import type { HarnessProcessPlacementIdentity } from "../HarnessProcessPlacement.ts";
 import {
   HarnessProcessCreationJournal,
   type HarnessProcessCreationBinding,
   type HarnessProcessCreationClaim,
-} from "./journal.ts";
+} from "../HarnessProcessCreation.ts";
 
 const nativeSessionId = "019b4d15-40e8-7abc-8def-0123456789ab";
 const nextNativeSessionId = "019b4d15-40e8-7abc-8def-1123456789ab";
@@ -249,4 +249,33 @@ describe("HarnessProcessCreationJournal", () => {
     expect(bound).toEqual({ phase: "bound", claim, binding });
     expect(await new HarnessProcessCreationJournal(storage).read(claim.runId)).toEqual(bound);
   });
+});
+
+it("rejects corrupt persisted bindings before reading nested authority or checkpoint fields", async () => {
+  const storage = createStorage();
+  const claim = creationClaim();
+  const binding = await creationBinding(claim);
+  const corruptions = [
+    { phase: "bound", claim, binding: {} },
+    { phase: "staged", claim, binding: { ...binding, checkpoint: null } },
+    {
+      phase: "bound",
+      claim,
+      binding: { ...binding, initialization: { ...binding.initialization, run: {} } },
+    },
+    {
+      phase: "bound",
+      claim,
+      binding: { ...binding, identity: { ...binding.identity, loaderId: 7 } },
+    },
+    { phase: "claimed", claim, binding },
+  ];
+  for (const record of corruptions) {
+    await storage.transaction((transaction) =>
+      transaction.put(`harness-process-creation-v1/${claim.runId}`, record),
+    );
+    await expect(new HarnessProcessCreationJournal(storage).read(claim.runId)).rejects.toThrow(
+      "journal record is corrupt",
+    );
+  }
 });
