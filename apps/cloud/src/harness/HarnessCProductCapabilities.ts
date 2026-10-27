@@ -21,4 +21,5 @@ export type {
   HarnessCProductNativeCheckpointService,
   HarnessCProductProgramService,
   HarnessCProductReleaseService,
+  HarnessCProductTurnGrantSource,
 } from "./productBootstrap/contracts.ts";

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
+import type { HarnessCProductTurnGrantSource } from "../HarnessCProductCapabilities.ts";
 import { prepareProductFixture } from "./tests/prepare.fixture.ts";
+import type { Grant } from "./tests/recordingHost.fixture.ts";
 
 describe.each(["claude-code", "codex"] as const)("%s product facet preparation", (provider) => {
   it.effect.each(["same-variant-serialized-checkpoint", "cross-variant-fresh-boot"] as const)(
@@ -47,6 +50,29 @@ describe.each(["claude-code", "codex"] as const)("%s product facet preparation",
       expect(second.signal.aborted).toBe(false);
       expect(fixture.initialAccesses).toEqual([]);
       expect(fixture.checkpointWrites()).toBe(0);
+    }).pipe(Effect.scoped),
+  );
+  it.effect("wires the optional turn-grant source through the public product facet", () =>
+    Effect.gen(function* () {
+      const clock = yield* Clock.Clock;
+      const source: HarnessCProductTurnGrantSource<Grant> = {
+        issue: async () => ({
+          grant: { kind: "turn", requestId: "issued", call: 1 },
+          endpoint: "https://tools-gateway.test/mcp",
+          expiresAtMs: clock.currentTimeMillisUnsafe() + 60_000,
+        }),
+      };
+      const fixture = yield* prepareProductFixture(provider, "cross-variant-fresh-boot", {
+        turnGrantSource: source,
+      });
+      expect(fixture.observedTurnGrantSources).toEqual([source]);
+      const context = fixture.context("publisher-turn");
+      yield* fixture.prepared.runtime.run(fixture.input, context).pipe(Effect.flip);
+      expect(fixture.observedTurnGrants[0]?.publisher).toEqual({
+        generation: context.publisher.generation,
+        facetNonce: context.publisher.facetNonce,
+      });
+      expect(fixture.observedTurnGrants[0]?.publisher?.facetNonce).toBe("facet-b");
     }).pipe(Effect.scoped),
   );
   it.effect(

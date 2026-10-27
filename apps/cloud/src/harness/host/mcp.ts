@@ -1,6 +1,7 @@
 import type {
   ExecutorMcpPort,
   ExecutorTarget,
+  HarnessMcpTurnGrantSource,
   NativeMcpConfiguration,
   ResolvedConnections,
   TurnAccess,
@@ -31,6 +32,47 @@ export const validateConnections = (connections: ResolvedConnections) => {
       });
     names.add(server.name);
     ids.add(server.id);
+  }
+};
+
+const waitForTurnGrant = <G>(
+  source: HarnessMcpTurnGrantSource<G>,
+  input: Parameters<HarnessMcpTurnGrantSource<G>["issue"]>[0],
+): Promise<Awaited<ReturnType<HarnessMcpTurnGrantSource<G>["issue"]>>> =>
+  new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (complete: () => void) => {
+      if (settled) return;
+      settled = true;
+      input.signal.removeEventListener("abort", abort);
+      complete();
+    };
+    const abort = () => finish(() => reject(denied()));
+    input.signal.addEventListener("abort", abort, { once: true });
+    if (input.signal.aborted) {
+      abort();
+      return;
+    }
+    void Promise.resolve()
+      .then(() => source.issue(input))
+      .then(
+        (grant) => finish(() => resolve(grant)),
+        () => finish(() => reject(denied())),
+      );
+  });
+
+const gatewayEndpoint = (value: unknown): string | undefined => {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim()) return undefined;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      url.username.length === 0 &&
+      url.password.length === 0 &&
+      url.hash.length === 0
+      ? url.toString()
+      : undefined;
+  } catch {
+    return undefined;
   }
 };
 
@@ -120,7 +162,12 @@ async function forwardResponse(operation: Promise<Response>, signal: AbortSignal
   });
 }
 
-export function createMcpRoutes<G>(executor: ExecutorMcpPort<G>, ownerSignal: AbortSignal) {
+export function createMcpRoutes<G>(
+  executor: ExecutorMcpPort<G>,
+  ownerSignal: AbortSignal,
+  now: () => number,
+  turnGrantSource?: HarnessMcpTurnGrantSource<G>,
+) {
   const origin = "https://harness-mcp.invalid";
   // This distinguishes stale native sessions; it grants no access by itself.
   const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
@@ -129,12 +176,24 @@ export function createMcpRoutes<G>(executor: ExecutorMcpPort<G>, ownerSignal: Ab
   let generation = 0;
   const routes = new Map<
     string,
-    { readonly target: ExecutorTarget; readonly grant: G; readonly signal: AbortSignal }
+    {
+      readonly target: ExecutorTarget;
+      readonly grant: G;
+      readonly gatewayEndpoint?: string;
+      readonly expiresAtMs?: number;
+      readonly signal: AbortSignal;
+    }
   >();
   const fetch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const route = url.origin === origin ? routes.get(url.pathname) : undefined;
-    if (route === undefined || route.signal.aborted || request.signal.aborted) throw denied();
+    if (
+      route === undefined ||
+      route.signal.aborted ||
+      request.signal.aborted ||
+      (route.expiresAtMs !== undefined && route.expiresAtMs <= now())
+    )
+      throw denied();
     const signal = AbortSignal.any([request.signal, route.signal]);
     try {
       const forwarded = new Request(request, { signal });
@@ -144,6 +203,9 @@ export function createMcpRoutes<G>(executor: ExecutorMcpPort<G>, ownerSignal: Ab
           return executor.forward({
             target: route.target,
             grant: route.grant,
+            ...(route.gatewayEndpoint === undefined
+              ? {}
+              : { gatewayEndpoint: route.gatewayEndpoint }),
             request: forwarded,
             signal,
           });
@@ -175,20 +237,12 @@ export function createMcpRoutes<G>(executor: ExecutorMcpPort<G>, ownerSignal: Ab
         if (current !== undefined) retire(current.epoch);
       };
       return {
+        hasTurnGrantSource: turnGrantSource !== undefined,
         retire,
         close,
-        activate(access: TurnAccess<G>): NativeMcpConfiguration {
+        async activate(access: TurnAccess<G>, runId?: string): Promise<NativeMcpConfiguration> {
           if (ownerSignal.aborted || sessionSignal.aborted || access.signal.aborted) throw denied();
           validateConnections(access.connections);
-          const targets = new Map<string, ExecutorTarget>([["executor", { type: "executor" }]]);
-          for (const server of access.connections.servers) {
-            if (server.directTools.length > 0)
-              targets.set(server.name, {
-                type: "direct",
-                serverId: server.id,
-                tools: Object.freeze([...new Set(server.directTools)]),
-              });
-          }
           close();
           const epoch = ++nextEpoch;
           const controller = new AbortController();
@@ -198,17 +252,7 @@ export function createMcpRoutes<G>(executor: ExecutorMcpPort<G>, ownerSignal: Ab
             access.signal,
             controller.signal,
           ]);
-          const servers: Record<string, { readonly url: string }> = {};
           const paths: string[] = [];
-          for (const [name, target] of targets) {
-            const path = `${base}/${epoch}/${paths.length}`;
-            paths.push(path);
-            routes.set(path, { target, grant: access.grant, signal });
-            Object.defineProperty(servers, name, {
-              value: Object.freeze({ url: `${origin}${path}` }),
-              enumerable: true,
-            });
-          }
           const abort = () => retire(epoch);
           current = {
             epoch,
@@ -217,6 +261,84 @@ export function createMcpRoutes<G>(executor: ExecutorMcpPort<G>, ownerSignal: Ab
             unlisten: () => signal.removeEventListener("abort", abort),
           };
           signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) {
+            retire(epoch);
+            throw denied();
+          }
+          let grant = access.grant;
+          let endpoint: string | undefined;
+          let expiresAtMs: number | undefined;
+          if (runId !== undefined && turnGrantSource !== undefined) {
+            const publisher = access.publisher;
+            if (
+              publisher === undefined ||
+              !Number.isSafeInteger(publisher.generation) ||
+              publisher.generation < 1 ||
+              publisher.facetNonce.length === 0
+            ) {
+              controller.abort();
+              throw denied();
+            }
+            try {
+              const issued = await waitForTurnGrant(turnGrantSource, {
+                runId,
+                nativeTurnEpoch: epoch,
+                publisher: {
+                  generation: publisher.generation,
+                  facetNonce: publisher.facetNonce,
+                },
+                signal,
+              });
+              const resolvedEndpoint = gatewayEndpoint(issued?.endpoint);
+              if (
+                issued === null ||
+                issued === undefined ||
+                issued.grant === null ||
+                issued.grant === undefined ||
+                resolvedEndpoint === undefined ||
+                (issued.expiresAtMs !== undefined &&
+                  (!Number.isFinite(issued.expiresAtMs) || issued.expiresAtMs <= now())) ||
+                signal.aborted
+              )
+                throw denied();
+              grant = issued.grant;
+              endpoint = resolvedEndpoint;
+              expiresAtMs = issued.expiresAtMs;
+            } catch {
+              controller.abort();
+              throw denied();
+            }
+          }
+          if (ownerSignal.aborted || sessionSignal.aborted || access.signal.aborted) {
+            retire(epoch);
+            throw denied();
+          }
+          if (current?.epoch !== epoch || signal.aborted) throw denied();
+          const targets = new Map<string, ExecutorTarget>([["executor", { type: "executor" }]]);
+          for (const server of access.connections.servers) {
+            if (server.directTools.length > 0)
+              targets.set(server.name, {
+                type: "direct",
+                serverId: server.id,
+                tools: Object.freeze([...new Set(server.directTools)]),
+              });
+          }
+          const servers: Record<string, { readonly url: string }> = {};
+          for (const [name, target] of targets) {
+            const path = `${base}/${epoch}/${paths.length}`;
+            paths.push(path);
+            routes.set(path, {
+              target,
+              grant,
+              ...(endpoint === undefined ? {} : { gatewayEndpoint: endpoint }),
+              ...(expiresAtMs === undefined ? {} : { expiresAtMs }),
+              signal,
+            });
+            Object.defineProperty(servers, name, {
+              value: Object.freeze({ url: `${origin}${path}` }),
+              enumerable: true,
+            });
+          }
           if (signal.aborted) retire(epoch);
           return Object.freeze({ epoch, servers: Object.freeze(servers) });
         },

@@ -25,6 +25,9 @@ export function productExecutor<G>(service: HarnessCProductExecutorService<G>): 
         const response = await service.forward({
           target: input.target,
           grant: input.grant,
+          ...(input.gatewayEndpoint === undefined
+            ? {}
+            : { gatewayEndpoint: input.gatewayEndpoint }),
           request: {
             url: request.url,
             method: request.method,
@@ -80,6 +83,9 @@ export function createHarnessCProductExecutorService<G>(
         const response = await executor.forward({
           target: input.target,
           grant: input.grant,
+          ...(input.gatewayEndpoint === undefined
+            ? {}
+            : { gatewayEndpoint: input.gatewayEndpoint }),
           request,
           signal: controller.signal,
         });

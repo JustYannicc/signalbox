@@ -1,8 +1,32 @@
 import { expect, it } from "vite-plus/test";
 import {
+  createHarnessCProductExecutorService,
   productExecutor,
   type HarnessCProductExecutorService,
 } from "../HarnessCProductCapabilities.ts";
+
+it("carries the injected gateway endpoint through both executor RPC adapters", async () => {
+  const endpoint = "https://tools-gateway.test/mcp";
+  let observedEndpoint: string | undefined;
+  const localExecutor = {
+    async forward(input: { readonly gatewayEndpoint?: string }) {
+      observedEndpoint = input.gatewayEndpoint;
+      return new Response("gateway");
+    },
+  };
+  const service = createHarnessCProductExecutorService(localExecutor);
+  const request = new Request("https://harness-mcp.invalid/turn", { method: "POST", body: "call" });
+  const signal = new AbortController().signal;
+  const response = await productExecutor(service).forward({
+    target: { type: "executor" },
+    grant: "short-lived-turn-grant",
+    gatewayEndpoint: endpoint,
+    request,
+    signal,
+  });
+  expect(observedEndpoint).toBe(endpoint);
+  expect(await response.text()).toBe("gateway");
+});
 
 it("cancels an in-flight executor action when its request aborts", async () => {
   const started = Promise.withResolvers<void>();

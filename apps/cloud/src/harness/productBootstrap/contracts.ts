@@ -1,7 +1,12 @@
 import type { ThreadId } from "@t3tools/contracts";
 import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleaseLedger.ts";
 import type { HarnessRunArtifact } from "../HarnessRunStore.ts";
-import type { ExecutorTarget, ProgramSeed, ResolvedConnections } from "../HarnessSessionHost.ts";
+import type {
+  ExecutorTarget,
+  HarnessMcpTurnGrantSource,
+  ProgramSeed,
+  ResolvedConnections,
+} from "../HarnessSessionHost.ts";
 import type {
   HarnessCProductBootstrapDescriptor,
   HarnessCProductProvider,
@@ -47,6 +52,9 @@ export interface HarnessCProductAccessService<G> {
   }): Promise<{ readonly grant: G; readonly connections: ResolvedConnections }>;
 }
 
+/** A product-boundary adapter may issue a fresh grant for each host-owned turn epoch. */
+export type HarnessCProductTurnGrantSource<G> = HarnessMcpTurnGrantSource<G>;
+
 export interface HarnessCProductProgramCatalog {
   readonly sourceIdentity: string;
   readonly codes: CommandProgramCodes;
@@ -79,6 +87,7 @@ export interface HarnessCProductExecutorResponse {
 export interface HarnessCProductExecutorForwardInput<G> {
   readonly target: ExecutorTarget;
   readonly grant: G;
+  readonly gatewayEndpoint?: string;
   readonly request: HarnessCProductExecutorRequest;
   /** AbortSignal cannot cross Workers RPC; closing this stream revokes the request. */
   readonly cancellation: ReadableStream<Uint8Array>;

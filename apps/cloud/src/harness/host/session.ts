@@ -45,6 +45,7 @@ const sameConnections = Schema.toEquivalence(
 export const snapshotAccess = <G>(access: TurnAccess<G>): TurnAccess<G> => ({
   grant: access.grant,
   signal: access.signal,
+  ...(access.publisher === undefined ? {} : { publisher: { ...access.publisher } }),
   connections: {
     servers: access.connections.servers.map((server) => ({
       ...server,
@@ -252,7 +253,7 @@ export const createHostSession = <G>(
                   message: "Checkpoint access is unavailable.",
                 }),
               );
-            const configuration = yield* Effect.try({
+            const configuration = yield* Effect.tryPromise({
               try: () => mcp.activate(access),
               catch: () =>
                 new HarnessError({ operation: "open", message: "Checkpoint MCP binding failed." }),
@@ -411,17 +412,28 @@ export const createHostSession = <G>(
                         }),
                       );
                     const prepared = initial;
-                    if (prepared !== undefined && !sameAccess(prepared.access, authorized))
+                    if (
+                      prepared !== undefined &&
+                      !mcp.hasTurnGrantSource &&
+                      !sameAccess(prepared.access, authorized)
+                    )
                       return yield* Effect.fail(
                         new HarnessError({
                           operation: "turn",
                           message: "Turn access conflicts with checkpoint access.",
                         }),
                       );
+                    if (prepared !== undefined && mcp.hasTurnGrantSource) {
+                      if (native.retireCheckpointMcp !== undefined)
+                        yield* native.retireCheckpointMcp(prepared.configuration.epoch);
+                      // Checkpoint access only loads the native thread. The first real turn gets
+                      // its own publisher-bound grant and configuration epoch.
+                      initial = undefined;
+                    }
                     const config =
-                      prepared === undefined
-                        ? yield* Effect.try({
-                            try: () => mcp.activate(authorized),
+                      prepared === undefined || mcp.hasTurnGrantSource
+                        ? yield* Effect.tryPromise({
+                            try: () => mcp.activate(authorized, turn.runId),
                             catch: () =>
                               new HarnessError({
                                 operation: "turn",
@@ -458,7 +470,7 @@ export const createHostSession = <G>(
                     const accessSignal = AbortSignal.any([signal, authorized.signal]);
                     const load = nativeTurnThreadLoad(turn, input.session, raw.providerSession.id);
                     const started = yield* restore(
-                      (prepared === undefined
+                      (prepared === undefined || mcp.hasTurnGrantSource
                         ? Effect.suspend(() => native.configureMcp(config, accessSignal, load))
                         : Effect.void
                       ).pipe(
