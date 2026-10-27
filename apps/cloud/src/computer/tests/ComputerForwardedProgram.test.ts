@@ -137,6 +137,32 @@ describe("Computer forwarded programs", () => {
     }
   });
 
+  it("leaves an untyped forwarding rejection outcome unknown", async () => {
+    const fixture = childBusyboxFixture();
+    const failure = new Error("Machine execution outcome is unknown");
+    const command = {
+      executable: "/bin/unknown",
+      argv: fixture.context.args,
+      cwd: fixture.filesystem.cwd,
+      env: fixture.context.env,
+    };
+    try {
+      const program = createComputerForwardedProgram(
+        {
+          spawn: async () => {
+            throw failure;
+          },
+        },
+        command,
+      );
+
+      await expect(program.run(fixture.context)).rejects.toBe(failure);
+      expect(fixture.stderr()).toBe("");
+    } finally {
+      await fixture.close();
+    }
+  });
+
   it("refuses a surviving extra descriptor before a truncating file action can run", async () => {
     const fixture = childBusyboxFixture();
     try {
