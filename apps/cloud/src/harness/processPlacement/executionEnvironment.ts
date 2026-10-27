@@ -13,6 +13,7 @@ import type { HarnessProcessFacetModule } from "./moduleCode.ts";
 
 export interface HarnessCProductCapabilityEnvironment {
   readonly HARNESS_C_PRODUCT_CAPABILITIES?: Readonly<Record<string, Fetcher>>;
+  readonly PROGRAM_ASSETS?: Fetcher;
 }
 
 export type HarnessProcessExecutionProductBootstrapInput =
@@ -78,12 +79,14 @@ const reservedFacetEnvironmentKeys = [
   "HARNESS_RESUME_RUN_STORE",
   "HARNESS_RESUME_FILES_STORE",
   "HARNESS_RESUME_SUPERVISOR",
+  "PROGRAM_ASSETS",
 ] as const;
 
 export function createHarnessProcessFacetEnvironment(
   process: HarnessProcessExecutionProcessInput,
   environment: HarnessCProductCapabilityEnvironment,
   identity: HarnessProcessFacetLocator,
+  context?: DurableObjectState,
 ): Readonly<Record<string, unknown>> {
   const { productBootstrap, targetPreparedRelease } = process;
   if ((productBootstrap === undefined) !== (targetPreparedRelease === undefined))
@@ -100,6 +103,26 @@ export function createHarnessProcessFacetEnvironment(
   const facetEnv = { ...process.facetEnv };
   for (const key of reservedFacetEnvironmentKeys) delete facetEnv[key];
 
+  let programAssets: Fetcher | undefined;
+  if (productBootstrap !== undefined && environment.PROGRAM_ASSETS !== undefined) {
+    if (context === undefined)
+      throw new TypeError("The product PROGRAM_ASSETS binding requires a Worker context.");
+    const exports = (
+      context as unknown as {
+        readonly exports?: {
+          readonly HarnessProgramAssetsBinding?: (options: {
+            readonly props: Record<string, never>;
+          }) => Fetcher;
+        };
+      }
+    ).exports;
+    if (exports?.HarnessProgramAssetsBinding === undefined)
+      throw new TypeError(
+        "The product PROGRAM_ASSETS binding requires HarnessProgramAssetsBinding on ctx.exports.",
+      );
+    programAssets = exports.HarnessProgramAssetsBinding({ props: {} });
+  }
+
   return {
     ...facetEnv,
     ...(productBootstrap === undefined
@@ -111,6 +134,7 @@ export function createHarnessProcessFacetEnvironment(
     ...(environment.HARNESS_C_PRODUCT_CAPABILITIES === undefined
       ? {}
       : { HARNESS_C_PRODUCT_CAPABILITIES: environment.HARNESS_C_PRODUCT_CAPABILITIES }),
+    ...(programAssets === undefined ? {} : { PROGRAM_ASSETS: programAssets }),
     HARNESS_PROCESS_ID: process.processId,
     HARNESS_PROCESS_SHARD_OWNER: identity.shardOwner,
     HARNESS_PROCESS_LOADER_ID: identity.loaderId,
