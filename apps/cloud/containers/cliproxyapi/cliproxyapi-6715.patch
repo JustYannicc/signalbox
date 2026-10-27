@@ -2316,7 +2316,7 @@ index 00000000..7960686a
 +	m.sem.Release(1)
 +}
 diff --git a/internal/store/gitstore.go b/internal/store/gitstore.go
-index 3c1f0fbe..48b0a54f 100644
+index 3c1f0fbe..eda14e18 100644
 --- a/internal/store/gitstore.go
 +++ b/internal/store/gitstore.go
 @@ -22,6 +22,7 @@ import (
@@ -2336,7 +2336,15 @@ index 3c1f0fbe..48b0a54f 100644
  	dirLock   sync.RWMutex
  	baseDir   string
  	repoDir   string
-@@ -68,7 +69,14 @@ func NewGitTokenStore(remote, username, password, branch string) *GitTokenStore
+@@ -47,6 +48,7 @@ type GitTokenStore struct {
+ 	lastGC    time.Time
+ 	pullFn    func(ctx context.Context, worktree *git.Worktree, pullOpts *git.PullOptions) error
+ 	pushFn    func(ctx context.Context, repo *git.Repository, pushOpts *git.PushOptions) error
++	openFn    func(path string) (*git.Repository, error)
+ }
+
+ type resolvedRemoteBranch struct {
+@@ -68,7 +70,14 @@ func NewGitTokenStore(remote, username, password, branch string) *GitTokenStore
 
  // SetBaseDir updates the default directory used for auth JSON persistence when no explicit path is provided.
  func (s *GitTokenStore) SetBaseDir(dir string) {
@@ -2352,7 +2360,7 @@ index 3c1f0fbe..48b0a54f 100644
  	defer s.mu.Unlock()
 
  	clean := strings.TrimSpace(dir)
-@@ -78,7 +86,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
+@@ -78,7 +87,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
  		s.repoDir = ""
  		s.configDir = ""
  		s.dirLock.Unlock()
@@ -2361,7 +2369,7 @@ index 3c1f0fbe..48b0a54f 100644
  	}
  	if abs, err := filepath.Abs(clean); err == nil {
  		clean = abs
-@@ -93,6 +101,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
+@@ -93,6 +102,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
  	s.repoDir = repoDir
  	s.configDir = configDir
  	s.dirLock.Unlock()
@@ -2369,7 +2377,7 @@ index 3c1f0fbe..48b0a54f 100644
  }
 
  // AuthDir returns the directory used for auth persistence.
-@@ -431,7 +440,9 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+@@ -431,7 +441,9 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: %w", errWeight)
  	}
 
@@ -2380,7 +2388,7 @@ index 3c1f0fbe..48b0a54f 100644
  	defer s.mu.Unlock()
 
  	path, err := s.resolveAuthPath(auth)
-@@ -462,67 +473,75 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+@@ -462,67 +474,75 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: create dir failed: %w", err)
  	}
 
@@ -2433,21 +2441,21 @@ index 3c1f0fbe..48b0a54f 100644
 +				}
 +				if err = auth.Storage.SaveTokenToFile(path); err != nil {
 +					return err
-+				}
+ 				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("auth filestore: rename failed: %w", errRename)
 +			case auth.Metadata != nil:
 +				auth.Metadata["disabled"] = auth.Disabled
 +				raw, errMarshal := json.Marshal(auth.Metadata)
 +				if errMarshal != nil {
 +					return fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
- 				}
--				if errRename := os.Rename(tmp, path); errRename != nil {
--					return "", fmt.Errorf("auth filestore: rename failed: %w", errRename)
++				}
 +				contentsMatch := false
 +				if existing, errRead := os.ReadFile(path); errRead == nil {
 +					contentsMatch = jsonEqual(existing, raw)
 +				} else if !os.IsNotExist(errRead) {
 +					return fmt.Errorf("auth filestore: read existing failed: %w", errRead)
- 				}
++				}
 +				if !contentsMatch {
 +					tmp := path + ".tmp"
 +					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2456,7 +2464,7 @@ index 3c1f0fbe..48b0a54f 100644
 +					if errRename := os.Rename(tmp, path); errRename != nil {
 +						return fmt.Errorf("auth filestore: rename failed: %w", errRename)
 +					}
-+				}
+ 				}
 +			default:
 +				return fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
  			}
@@ -2508,7 +2516,16 @@ index 3c1f0fbe..48b0a54f 100644
  	return path, nil
  }
 
-@@ -1705,9 +1724,14 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+@@ -1701,13 +1721,22 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 	if repoDir == "" {
+ 		return fmt.Errorf("git token store: repository path not configured")
+ 	}
+-	repo, err := git.PlainOpen(repoDir)
++	openRepo := git.PlainOpen
++	if s.openFn != nil {
++		openRepo = s.openFn
++	}
++	repo, err := openRepo(repoDir)
  	if err != nil {
  		return fmt.Errorf("git token store: open repo: %w", err)
  	}
@@ -2523,15 +2540,93 @@ index 3c1f0fbe..48b0a54f 100644
  			if errResult == nil {
  				errResult = errCloseWrap
  			} else {
-@@ -1811,6 +1835,7 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+@@ -1731,6 +1760,27 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 	if errHead != nil && !errors.Is(errHead, plumbing.ErrReferenceNotFound) {
+ 		return fmt.Errorf("git token store: get base head: %w", errHead)
+ 	}
++	var unbornBranch plumbing.ReferenceName
++	if baseRef == nil {
++		head, errReference := repo.Reference(plumbing.HEAD, false)
++		if errReference != nil {
++			return fmt.Errorf("git token store: inspect unborn HEAD: %w", errReference)
++		}
++		if head.Type() != plumbing.SymbolicReference || !head.Target().IsBranch() {
++			return fmt.Errorf("git token store: unborn HEAD does not name a branch")
++		}
++		unbornBranch = head.Target()
++	}
++	// Every unpublished mutation belongs to this attempt, including index changes
++	// made before Commit and failures while inspecting or rewriting its result.
++	defer func() {
++		if errResult == nil || pushed {
++			return
++		}
++		if errRestore := restoreUnpublishedGitState(repo, worktree, baseRef, unbornBranch); errRestore != nil {
++			errResult = errors.Join(errResult, fmt.Errorf("git token store: restore unpublished state: %w", errRestore))
++		}
++	}()
+ 	if errHead == nil {
+ 		if errReset := resetIndexToHead(repo, worktree); errReset != nil {
+ 			return fmt.Errorf("git token store: reset index before commit: %w", errReset)
+@@ -1785,13 +1835,6 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 	}
+ 	if baseRef != nil {
+ 		if errValidate := validateManagedTreeChanges(repo, baseRef.Hash(), commitHash, managedPaths); errValidate != nil {
+-			errRestore := restoreHeadAndIndex(repo, worktree, baseRef)
+-			if errRestore != nil {
+-				return errors.Join(
+-					fmt.Errorf("git token store: validate commit tree: %w", errValidate),
+-					fmt.Errorf("git token store: restore head after rejected commit: %w", errRestore),
+-				)
+-			}
+ 			return fmt.Errorf("git token store: validate commit tree: %w", errValidate)
  		}
+ 	}
+@@ -1803,14 +1846,9 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 		return errRewrite
+ 	}
+ 	if errPush := s.pushRepositoryLocked(ctx, repo, repoDir, allowMissingRemote); errPush != nil {
+-		if baseRef == nil {
+-			return errPush
+-		}
+-		if errRestore := restoreHeadAndIndex(repo, worktree, baseRef); errRestore != nil {
+-			return errors.Join(errPush, fmt.Errorf("git token store: restore head after rejected push: %w", errRestore))
+-		}
  		return errPush
  	}
 +	pushed = true
  	return nil
  }
 
-@@ -1932,8 +1957,9 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
+@@ -1887,6 +1925,17 @@ func restoreHeadAndIndex(repo *git.Repository, worktree *git.Worktree, head *plu
+ 	return worktree.Reset(&git.ResetOptions{Mode: git.MixedReset, Commit: head.Hash()})
+ }
+
++func restoreUnpublishedGitState(repo *git.Repository, worktree *git.Worktree, base *plumbing.Reference, unbornBranch plumbing.ReferenceName) error {
++	if base != nil {
++		return restoreHeadAndIndex(repo, worktree, base)
++	}
++	errRemove := repo.Storer.RemoveReference(unbornBranch)
++	if errors.Is(errRemove, plumbing.ErrReferenceNotFound) {
++		errRemove = nil
++	}
++	return errors.Join(errRemove, repo.Storer.SetIndex(&gitindex.Index{Version: 2}))
++}
++
+ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repository, repoDir string, allowMissingRemote bool) error {
+ 	if ctx == nil {
+ 		ctx = context.Background()
+@@ -1896,9 +1945,6 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
+ 	}
+ 	headRef, errHead := repo.Head()
+ 	if errHead != nil {
+-		if errors.Is(errHead, plumbing.ErrReferenceNotFound) {
+-			return nil
+-		}
+ 		return fmt.Errorf("git token store: get head for push: %w", errHead)
+ 	}
+ 	if !headRef.Name().IsBranch() {
+@@ -1932,8 +1978,9 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
  			return fmt.Errorf("git token store: push: %w", errPush)
  		}
  	}
@@ -4163,5 +4258,268 @@ index 00000000..665531b6
 +				assertRemoteFileContents(t, remote, "master", "auths/login.json", string(committed))
 +			})
 +		}
++	}
++}
+diff --git a/internal/store/acquisition_git_rollback_test.go b/internal/store/acquisition_git_rollback_test.go
+new file mode 100644
+index 00000000..4b83ad71
+--- /dev/null
++++ b/internal/store/acquisition_git_rollback_test.go
+@@ -0,0 +1,257 @@
++package store
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	gitconfig "github.com/go-git/go-git/v6/config"
++	"github.com/go-git/go-git/v6/plumbing"
++	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
++	"github.com/go-git/go-git/v6/storage"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++type prePushFailureStorer struct {
++	storage.Storer
++	phase     string
++	fault     error
++	baseline  plumbing.Hash
++	committed bool
++	injected  bool
++	headReads int
++}
++
++func (s *prePushFailureStorer) Reference(name plumbing.ReferenceName) (*plumbing.Reference, error) {
++	if s.committed && !s.injected && name == plumbing.HEAD {
++		s.headReads++
++		if (s.phase == "head" && s.headReads == 1) || ((s.phase == "push-head" || s.phase == "push-head-missing") && s.headReads == 2) {
++			s.injected = true
++			return nil, s.fault
++		}
++	}
++	return s.Storer.Reference(name)
++}
++
++func (s *prePushFailureStorer) SetReference(ref *plumbing.Reference) error {
++	if s.committed && !s.injected && s.phase == "rewrite-ref" && ref.Name().IsBranch() {
++		s.injected = true
++		return s.fault
++	}
++	if err := s.Storer.SetReference(ref); err != nil {
++		return err
++	}
++	if ref.Name().IsBranch() && ref.Hash() != s.baseline {
++		s.committed = true
++	}
++	return nil
++}
++
++func (s *prePushFailureStorer) SetEncodedObject(obj plumbing.EncodedObject) (plumbing.Hash, error) {
++	if s.committed && !s.injected && s.phase == "rewrite-object" && obj.Type() == plumbing.CommitObject {
++		s.injected = true
++		return plumbing.ZeroHash, s.fault
++	}
++	return s.Storer.SetEncodedObject(obj)
++}
++
++func (s *prePushFailureStorer) Close() error {
++	if closer, ok := s.Storer.(interface{ Close() error }); ok {
++		return closer.Close()
++	}
++	return nil
++}
++
++func readGitAcquisitionState(t *testing.T, dir string) (plumbing.Hash, *gitindex.Index) {
++	t.Helper()
++	repo, err := git.PlainOpen(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer func() {
++		if err := repo.Close(); err != nil {
++			t.Error(err)
++		}
++	}()
++	head, errHead := repo.Head()
++	if errHead != nil && !errors.Is(errHead, plumbing.ErrReferenceNotFound) {
++		t.Fatal(errHead)
++	}
++	index, errIndex := repo.Storer.Index()
++	if errIndex != nil {
++		t.Fatal(errIndex)
++	}
++	if head == nil {
++		return plumbing.ZeroHash, index
++	}
++	return head.Hash(), index
++}
++
++func TestGitAcquisitionPrePushFailureRestoresCommitState(t *testing.T) {
++	for _, phase := range []string{"head", "rewrite-object", "rewrite-ref", "push-head", "push-head-missing"} {
++		for _, existing := range []bool{false, true} {
++			name := "new"
++			if existing {
++				name = "replacement"
++			}
++			t.Run(phase+"/"+name, func(t *testing.T) {
++				root := t.TempDir()
++				remote := setupGitRemoteRepository(t, root, "master", testBranchSpec{name: "master", contents: "baseline\n"})
++				s := NewGitTokenStore(remote, "", "", "master")
++				s.SetBaseDir(filepath.Join(root, "workspace", "auths"))
++				if err := s.EnsureRepository(); err != nil {
++					t.Fatal(err)
++				}
++				path := filepath.Join(s.AuthDir(), "login.json")
++				var original []byte
++				if existing {
++					if _, err := s.Save(context.Background(), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "original"}}); err != nil {
++						t.Fatal(err)
++					}
++					var err error
++					original, err = os.ReadFile(path)
++					if err != nil {
++						t.Fatal(err)
++					}
++				}
++				before, _ := readGitAcquisitionState(t, s.repoDirSnapshot())
++				fault := errors.New("post-commit " + phase + " failed")
++				if phase == "push-head-missing" {
++					fault = plumbing.ErrReferenceNotFound
++				}
++				var injected *prePushFailureStorer
++				s.openFn = func(dir string) (*git.Repository, error) {
++					repo, err := git.PlainOpen(dir)
++					if err != nil {
++						return nil, err
++					}
++					injected = &prePushFailureStorer{Storer: repo.Storer, phase: phase, fault: fault, baseline: before}
++					repo.Storer = injected
++					return repo, nil
++				}
++				saved, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "failed-login"}})
++				if !errors.Is(err, fault) || saved != "" || injected == nil || !injected.injected {
++					t.Fatalf("failure not reached: path=%q err=%v", saved, err)
++				}
++				got, errRead := os.ReadFile(path)
++				if existing {
++					if errRead != nil || string(got) != string(original) {
++						t.Errorf("mirror not restored: %q, %v", got, errRead)
++					}
++				} else if !errors.Is(errRead, os.ErrNotExist) {
++					t.Errorf("failed acquisition still readable: %q, %v", got, errRead)
++				}
++				after, index := readGitAcquisitionState(t, s.repoDirSnapshot())
++				if after != before {
++					t.Errorf("unpublished commit remains: before=%s after=%s", before, after)
++				}
++				entry, errEntry := index.Entry("auths/login.json")
++				if existing {
++					repo, err := git.PlainOpen(s.repoDirSnapshot())
++					if err != nil {
++						t.Fatal(err)
++					}
++					commit, err := repo.CommitObject(before)
++					if err != nil {
++						t.Fatal(err)
++					}
++					file, err := commit.File("auths/login.json")
++					if errClose := repo.Close(); errClose != nil {
++						t.Fatal(errClose)
++					}
++					if err != nil || errEntry != nil || entry.Hash != file.Hash {
++						t.Errorf("index not restored: entry=%v err=%v fileErr=%v", entry, errEntry, err)
++					}
++					assertRemoteFileContents(t, remote, "master", "auths/login.json", string(original))
++				} else {
++					if errEntry == nil {
++						t.Error("index retained failed acquisition")
++					}
++					assertRemoteTreePath(t, remote, "master", "auths/login.json", false)
++				}
++				s.openFn = nil
++				if _, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "retry"}}); err != nil {
++					t.Fatalf("retry stayed wedged after transient failure: %v", err)
++				}
++				latest, err := os.ReadFile(path)
++				if err != nil {
++					t.Fatal(err)
++				}
++				assertRemoteFileContents(t, remote, "master", "auths/login.json", string(latest))
++			})
++		}
++	}
++}
++
++func TestGitInitialCommitPrePushFailureRestoresUnbornBranch(t *testing.T) {
++	for _, phase := range []string{"head", "rewrite-object", "rewrite-ref", "push-head", "push-head-missing"} {
++		t.Run(phase, func(t *testing.T) {
++			root := t.TempDir()
++			remote := filepath.Join(root, "remote.git")
++			bare, err := git.PlainInit(remote, true)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := bare.Close(); err != nil {
++				t.Fatal(err)
++			}
++			s := NewGitTokenStore(remote, "", "", "master")
++			s.SetBaseDir(filepath.Join(root, "workspace", "auths"))
++			repo, err := git.PlainInit(s.repoDirSnapshot(), false)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("master"))); err != nil {
++				t.Fatal(err)
++			}
++			if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{remote}}); err != nil {
++				t.Fatal(err)
++			}
++			if err := repo.Close(); err != nil {
++				t.Fatal(err)
++			}
++			if err := disableGitCommitSigning(s.repoDirSnapshot()); err != nil {
++				t.Fatal(err)
++			}
++			path := filepath.Join(s.repoDirSnapshot(), "seed")
++			if err := os.WriteFile(path, []byte("seed\n"), 0o600); err != nil {
++				t.Fatal(err)
++			}
++			fault := errors.New("initial post-commit " + phase + " failed")
++			if phase == "push-head-missing" {
++				fault = plumbing.ErrReferenceNotFound
++			}
++			var injected *prePushFailureStorer
++			s.openFn = func(dir string) (*git.Repository, error) {
++				repo, err := git.PlainOpen(dir)
++				if err != nil {
++					return nil, err
++				}
++				injected = &prePushFailureStorer{Storer: repo.Storer, phase: phase, fault: fault}
++				repo.Storer = injected
++				return repo, nil
++			}
++			s.mu.Lock()
++			err = s.commitAndPushInitialLocked("Initialize store", "seed")
++			s.mu.Unlock()
++			if !errors.Is(err, fault) || injected == nil || !injected.injected {
++				t.Fatalf("failure not reached: %v", err)
++			}
++			head, index := readGitAcquisitionState(t, s.repoDirSnapshot())
++			if head != plumbing.ZeroHash || len(index.Entries) != 0 {
++				t.Errorf("unborn state not restored: HEAD=%s entries=%d", head, len(index.Entries))
++			}
++			s.openFn = nil
++			s.mu.Lock()
++			err = s.commitAndPushInitialLocked("Initialize store", "seed")
++			s.mu.Unlock()
++			if err != nil {
++				t.Fatalf("retry initialization failed: %v", err)
++			}
++			assertRemoteFileContents(t, remote, "master", "seed", "seed\n")
++		})
 +	}
 +}
