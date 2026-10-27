@@ -1,11 +1,12 @@
 import { fail } from "./errors.ts";
 import { blobTable, checkpointTable, entryTable } from "./sqlite.ts";
 import type { HarnessFilesDatabase } from "./types.ts";
-import type { HarnessFilesCheckpoint } from "./contracts.ts";
+import type { HarnessFilesCheckpoint, HarnessFilesStoreFile } from "./contracts.ts";
 
 export type PreparedFile = {
   readonly path: string;
   readonly mode: number;
+  readonly kind: "file" | "symlink";
   readonly bytes: Uint8Array;
   readonly byteLength: number;
   readonly sha256: string;
@@ -57,6 +58,7 @@ export async function prepareCheckpoint(
     files.push({
       path: file.path,
       mode: file.mode,
+      kind: file.kind ?? "file",
       bytes: file.bytes.slice(),
       byteLength: file.bytes.byteLength,
       sha256: await hash(file.bytes),
@@ -64,7 +66,14 @@ export async function prepareCheckpoint(
   }
   files.sort((left, right) => left.path.localeCompare(right.path));
   const manifest = JSON.stringify(
-    files.map(({ path, mode, byteLength, sha256 }) => ({ path, mode, byteLength, sha256 })),
+    // Regular entries retain the original manifest so persisted checkpoints keep their identity.
+    files.map(({ path, mode, kind, byteLength, sha256 }) => ({
+      path,
+      mode,
+      ...(kind === "symlink" ? { kind } : {}),
+      byteLength,
+      sha256,
+    })),
   );
   const manifestSha256 = await hash(new TextEncoder().encode(manifest));
   return {
@@ -122,10 +131,11 @@ export function insertCheckpoint(database: HarnessFilesDatabase, checkpoint: Pre
       );
     }
     database.sql.exec(
-      `INSERT INTO ${entryTable} (checkpoint_id, path, mode, blob_sha256, byte_length) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO ${entryTable} (checkpoint_id, path, mode, kind, blob_sha256, byte_length) VALUES (?, ?, ?, ?, ?, ?)`,
       checkpoint.checkpointId,
       file.path,
       file.mode,
+      file.kind,
       file.sha256,
       file.byteLength,
     );
@@ -156,13 +166,14 @@ export async function readCheckpoint(
     ),
   );
   if (!manifest) return fail("MISSING");
-  const files: { path: string; mode: number; bytes: Uint8Array }[] = [];
+  const files: HarnessFilesStoreFile[] = [];
   let byteCount = 0;
   for (const row of database.sql.exec(
-    `SELECT path, mode, blob_sha256, byte_length FROM ${entryTable} WHERE checkpoint_id = ? ORDER BY path`,
+    `SELECT path, mode, kind, blob_sha256, byte_length FROM ${entryTable} WHERE checkpoint_id = ? ORDER BY path`,
     checkpointId,
   )) {
-    if (typeof row.blob_sha256 !== "string") return fail("CORRUPT");
+    if (typeof row.blob_sha256 !== "string" || (row.kind !== "file" && row.kind !== "symlink"))
+      return fail("CORRUPT");
     const blob = first(
       database.sql.exec(
         `SELECT byte_length, bytes FROM ${blobTable} WHERE sha256 = ?`,
@@ -178,7 +189,12 @@ export async function readCheckpoint(
     )
       return fail("CORRUPT");
     byteCount += bytes.byteLength;
-    files.push({ path: String(row.path), mode: Number(row.mode), bytes });
+    files.push({
+      path: String(row.path),
+      mode: Number(row.mode),
+      ...(row.kind === "symlink" ? { kind: row.kind } : {}),
+      bytes,
+    });
   }
   if (files.length !== manifest.file_count || byteCount !== manifest.byte_count)
     return fail("CORRUPT");

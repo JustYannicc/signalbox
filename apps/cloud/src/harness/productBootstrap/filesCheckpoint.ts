@@ -51,7 +51,7 @@ export async function readHarnessCProductFilesCheckpoint(input: {
     files: result.files,
   });
   if (verified.manifestSha256 !== input.manifestRevision)
-    throw new HarnessCProductFilesError("A's files checkpoint bytes or modes changed.");
+    throw new HarnessCProductFilesError("A's files checkpoint bytes, kinds or modes changed.");
   return {
     ...result,
     files: result.files.map((file) => ({ ...file, bytes: file.bytes.slice() })),
@@ -73,6 +73,7 @@ function validateFiles(files: HarnessFilesStoreResult["files"]): void {
       !Number.isSafeInteger(file.mode) ||
       file.mode < 0 ||
       file.mode > 0o7777 ||
+      (file.kind !== undefined && file.kind !== "file" && file.kind !== "symlink") ||
       !(file.bytes instanceof Uint8Array) ||
       paths.has(file.path)
     )

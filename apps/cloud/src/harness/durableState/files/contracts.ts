@@ -34,6 +34,7 @@ const AdmissionResolution = Schema.Struct({
 
 export const HarnessFilesStoreFile = Schema.Struct({
   path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
+  kind: Schema.optionalKey(Schema.Literals(["file", "symlink"])),
   mode: Schema.Number.check(
     Schema.isInt(),
     Schema.isGreaterThanOrEqualTo(0),
