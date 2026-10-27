@@ -27,7 +27,7 @@ const decodeMcpConfiguration = Schema.decodeUnknownSync(
 );
 
 describe("request-turn native load through the real Codex binding", () => {
-  it.effect("reuses one binding for the next ordinary turn with a fresh MCP route epoch", () =>
+  it.effect("keeps the same MCP endpoint across ordinary request turns", () =>
     Effect.gen(function* () {
       const firstStart = Promise.withResolvers<void>();
       const resumed = Promise.withResolvers<void>();
@@ -154,20 +154,15 @@ describe("request-turn native load through the real Codex binding", () => {
       const secondUrl = resumedConfiguration.config.mcp_servers.executor?.url;
       if (secondUrl === undefined)
         return yield* Effect.die("Second executor route was not installed");
-      expect(secondUrl).not.toBe(firstUrl);
+      expect(secondUrl).toBe(firstUrl);
       expect(resumedConfiguration.threadId).toBe("preinitialized-native-thread");
 
-      const oldRoute = yield* Effect.tryPromise({
+      const retainedRoute = yield* Effect.tryPromise({
         try: () => calibrated.modelTransport(new Request(firstUrl)),
-        catch: (cause) => new HarnessRequestFacetError("Stale MCP route was rejected.", { cause }),
-      }).pipe(Effect.result);
-      expect(Result.isFailure(oldRoute)).toBe(true);
-      const currentRoute = yield* Effect.tryPromise({
-        try: () => calibrated.modelTransport(new Request(secondUrl)),
         catch: (cause) =>
-          new HarnessRequestFacetError("Current MCP route was rejected.", { cause }),
+          new HarnessRequestFacetError("Retained MCP endpoint was rejected.", { cause }),
       });
-      expect(yield* Effect.promise(() => currentRoute.text())).toBe("executor");
+      expect(yield* Effect.promise(() => retainedRoute.text())).toBe("executor");
       expect(calibrated.driver.f.forwards.at(-1)?.grant.secret).toBe(requestId);
 
       yield* completeNativeTurn(calibrated.peer, "preinitialized-turn");
@@ -197,6 +192,14 @@ describe("request-turn native load through the real Codex binding", () => {
       expect(calibrated.launchCount).toBe(1);
       expect(failedStartRows(calibrated.driver)).toEqual([]);
       yield* calibrated.facet.dispose;
+      const forwardsAtStop = calibrated.driver.f.forwards.length;
+      const stoppedRoute = yield* Effect.tryPromise({
+        try: () => calibrated.modelTransport(new Request(firstUrl)),
+        catch: (cause) =>
+          new HarnessRequestFacetError("Stopped MCP endpoint was rejected.", { cause }),
+      }).pipe(Effect.result);
+      expect(Result.isFailure(stoppedRoute)).toBe(true);
+      expect(calibrated.driver.f.forwards).toHaveLength(forwardsAtStop);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });
