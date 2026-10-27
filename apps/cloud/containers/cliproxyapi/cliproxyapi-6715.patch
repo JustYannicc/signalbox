@@ -2316,7 +2316,7 @@ index 00000000..7960686a
 +	m.sem.Release(1)
 +}
 diff --git a/internal/store/gitstore.go b/internal/store/gitstore.go
-index 3c1f0fbe..630733ef 100644
+index 3c1f0fbe..48b0a54f 100644
 --- a/internal/store/gitstore.go
 +++ b/internal/store/gitstore.go
 @@ -22,6 +22,7 @@ import (
@@ -2406,17 +2406,17 @@ index 3c1f0fbe..630733ef 100644
 -			raw, errMarshal := json.Marshal(auth.Metadata)
 -			if errMarshal != nil {
 -				return "", fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
-+	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
-+		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
-+			if errCodex != nil {
-+				return errCodex
- 			}
+-			}
 -			contentsMatch := false
 -			if existing, errRead := os.ReadFile(path); errRead == nil {
 -				contentsMatch = jsonEqual(existing, raw)
 -			} else if !os.IsNotExist(errRead) {
 -				return "", fmt.Errorf("auth filestore: read existing failed: %w", errRead)
--			}
++	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
 -			if !contentsMatch {
 -				tmp := path + ".tmp"
 -				if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2433,21 +2433,21 @@ index 3c1f0fbe..630733ef 100644
 +				}
 +				if err = auth.Storage.SaveTokenToFile(path); err != nil {
 +					return err
- 				}
--				if errRename := os.Rename(tmp, path); errRename != nil {
--					return "", fmt.Errorf("auth filestore: rename failed: %w", errRename)
++				}
 +			case auth.Metadata != nil:
 +				auth.Metadata["disabled"] = auth.Disabled
 +				raw, errMarshal := json.Marshal(auth.Metadata)
 +				if errMarshal != nil {
 +					return fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
  				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("auth filestore: rename failed: %w", errRename)
 +				contentsMatch := false
 +				if existing, errRead := os.ReadFile(path); errRead == nil {
 +					contentsMatch = jsonEqual(existing, raw)
 +				} else if !os.IsNotExist(errRead) {
 +					return fmt.Errorf("auth filestore: read existing failed: %w", errRead)
-+				}
+ 				}
 +				if !contentsMatch {
 +					tmp := path + ".tmp"
 +					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2508,6 +2508,40 @@ index 3c1f0fbe..630733ef 100644
  	return path, nil
  }
 
+@@ -1705,9 +1724,14 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 	if err != nil {
+ 		return fmt.Errorf("git token store: open repo: %w", err)
+ 	}
++	pushed := false
+ 	defer func() {
+ 		if errClose := repo.Close(); errClose != nil {
+ 			errCloseWrap := fmt.Errorf("git token store: close repo: %w", errClose)
++			if pushed {
++				log.Warnf("git token store: push succeeded but repository cleanup failed: %v", errClose)
++				return
++			}
+ 			if errResult == nil {
+ 				errResult = errCloseWrap
+ 			} else {
+@@ -1811,6 +1835,7 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 		}
+ 		return errPush
+ 	}
++	pushed = true
+ 	return nil
+ }
+
+@@ -1932,8 +1957,9 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
+ 			return fmt.Errorf("git token store: push: %w", errPush)
+ 		}
+ 	}
++	// Origin has accepted the commit. A local bookkeeping error cannot undo it.
+ 	if errReference := repo.Storer.SetReference(plumbing.NewHashReference(remoteName, headRef.Hash())); errReference != nil {
+-		return fmt.Errorf("git token store: update remote tracking branch %s: %w", remoteName, errReference)
++		log.Warnf("git token store: push succeeded but updating remote tracking branch %s failed: %v", remoteName, errReference)
+ 	}
+ 	s.maybeRunGC(repoDir)
+ 	return nil
 diff --git a/internal/store/objectstore.go b/internal/store/objectstore.go
 index 39b8b089..d78a40f3 100644
 --- a/internal/store/objectstore.go
@@ -4001,5 +4035,133 @@ index 00000000..e6abe884
 +	got, err := os.ReadFile(path)
 +	if err != nil || string(got) != string(original) {
 +		t.Fatalf("serialization failure changed prior credential: %q, %v", got, err)
++	}
++}
+diff --git a/internal/store/acquisition_git_commit_test.go b/internal/store/acquisition_git_commit_test.go
+new file mode 100644
+index 00000000..665531b6
+--- /dev/null
++++ b/internal/store/acquisition_git_commit_test.go
+@@ -0,0 +1,122 @@
++package store
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/go-git/go-git/v6/plumbing"
++	"github.com/go-git/go-git/v6/storage"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++type postPushFailureStorer struct {
++	storage.Storer
++	trackingRef    plumbing.ReferenceName
++	errTracking    error
++	errClose       error
++	trackingFailed bool
++	closeFailed    bool
++}
++
++func (s *postPushFailureStorer) SetReference(ref *plumbing.Reference) error {
++	if ref.Name() == s.trackingRef && s.errTracking != nil {
++		s.trackingFailed = true
++		return s.errTracking
++	}
++	return s.Storer.SetReference(ref)
++}
++
++func (s *postPushFailureStorer) Close() error {
++	var errClose error
++	if closer, ok := s.Storer.(interface{ Close() error }); ok {
++		errClose = closer.Close()
++	}
++	if s.errClose != nil {
++		s.closeFailed = true
++	}
++	return errors.Join(errClose, s.errClose)
++}
++
++func TestGitAcquisitionKeepsCommittedMirrorAfterLocalFailure(t *testing.T) {
++	for _, failure := range []string{"tracking-ref", "close"} {
++		for _, existing := range []bool{false, true} {
++			name := "new"
++			if existing {
++				name = "replacement"
++			}
++			t.Run(failure+"/"+name, func(t *testing.T) {
++				root := t.TempDir()
++				remote := setupGitRemoteRepository(t, root, "master", testBranchSpec{name: "master", contents: "baseline\n"})
++				s := NewGitTokenStore(remote, "", "", "master")
++				s.SetBaseDir(filepath.Join(root, "workspace", "auths"))
++				if err := s.EnsureRepository(); err != nil {
++					t.Fatal(err)
++				}
++				if existing {
++					_, err := s.Save(context.Background(), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "original"}})
++					if err != nil {
++						t.Fatal(err)
++					}
++				}
++				path := filepath.Join(s.AuthDir(), "login.json")
++				var committed []byte
++				var injected *postPushFailureStorer
++				s.pushFn = func(ctx context.Context, repo *git.Repository, opts *git.PushOptions) error {
++					if err := repo.PushContext(ctx, opts); err != nil {
++						return err
++					}
++					var errRead error
++					committed, errRead = os.ReadFile(path)
++					if errRead != nil {
++						return errRead
++					}
++					injected = &postPushFailureStorer{Storer: repo.Storer, trackingRef: plumbing.NewRemoteReferenceName("origin", "master")}
++					if failure == "tracking-ref" {
++						injected.errTracking = errors.New("tracking ref write failed after successful push")
++					} else {
++						injected.errClose = errors.New("repository close failed after successful push")
++					}
++					repo.Storer = injected
++					return nil
++				}
++				saved, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "replacement"}})
++				if injected == nil || (failure == "tracking-ref" && !injected.trackingFailed) || (failure == "close" && !injected.closeFailed) {
++					t.Fatal("post-push failure was not reached")
++				}
++				if err != nil || saved != path {
++					t.Errorf("committed acquisition reported failure: saved=%q, err=%v", saved, err)
++				}
++				got, errRead := os.ReadFile(path)
++				if errRead != nil || string(got) != string(committed) {
++					t.Errorf("successful push was rolled back locally: got %q, want %q, err=%v", got, committed, errRead)
++				}
++				assertRemoteFileContents(t, remote, "master", "auths/login.json", string(committed))
++				readHead := func(dir string) plumbing.Hash {
++					t.Helper()
++					repo, err := git.PlainOpen(dir)
++					if err != nil {
++						t.Fatal(err)
++					}
++					head, errHead := repo.Head()
++					errClose := repo.Close()
++					if errHead != nil || errClose != nil {
++						t.Fatalf("read repository head: %v, %v", errHead, errClose)
++					}
++					return head.Hash()
++				}
++				if local, remoteHead := readHead(s.repoDirSnapshot()), readHead(remote); local != remoteHead {
++					t.Errorf("successful push rolled back local HEAD: local=%s remote=%s", local, remoteHead)
++				}
++				s.pushFn = nil
++				if _, err := s.Save(context.Background(), &cliproxyauth.Auth{ID: "later.json", FileName: "later.json", Metadata: map[string]any{"type": "codex", "access_token": "later"}}); err != nil {
++					t.Fatalf("next save could not recover local tracking: %v", err)
++				}
++				assertRemoteFileContents(t, remote, "master", "auths/login.json", string(committed))
++			})
++		}
 +	}
 +}
