@@ -215,6 +215,7 @@ jobs:
           cp "$RUNNER_TEMP/signalbox-kernel-programs/busybox.wasm" .t3/1071/programs/busybox.wasm
           cp "$RUNNER_TEMP/signalbox-kernel-programs/rg.wasm" .t3/1071/programs/rg.wasm
           cp "$RUNNER_TEMP/signalbox-kernel-programs/sed.wasm" .t3/1071/programs/sed.wasm
+          cp "$RUNNER_TEMP/signalbox-kernel-programs/ugrep.wasm" .t3/1071/programs/ugrep.wasm
           cp "$RUNNER_TEMP/signalbox-kernel-programs/rg.wasm" .t3/issue-1263/programs/rg.wasm
 
           coreutils_tar="$RUNNER_TEMP/signalbox-kernel-programs/coreutils.tar"
@@ -257,6 +258,7 @@ jobs:
           SIGNALBOX_REQUIRE_CHILD_IO_ARTIFACTS: "1"
           SIGNALBOX_REQUIRE_RIPGREP_ARTIFACT: "1"
           SIGNALBOX_REQUIRE_GNU_ARTIFACTS: "1"
+          SIGNALBOX_REQUIRE_UGREP_ARTIFACT: "1"
         run: |
           filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web')
           if [[ -n "$TEST_PACKAGES" ]]; then

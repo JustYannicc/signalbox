@@ -1,0 +1,55 @@
+--- a/src/vkey.hpp
++++ b/src/vkey.hpp
+@@ -202,11 +202,13 @@
+ 
+ #else
+ 
++#if !defined(__wasi__)
+ #include <termios.h>
+ #include <unistd.h>
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+ #include <sys/select.h>
++#endif
+ 
+ #endif
+ 
+@@ -323,7 +325,9 @@
+ 
+   // Unix/Linux terminal state
+   static int            tty;
++#if !defined(__wasi__)
+   static struct termios oldterm;
++#endif
+ 
+ #endif
+ 
+--- a/src/vkey.cpp
++++ b/src/vkey.cpp
+@@ -35,6 +35,20 @@
+ */
+ 
+ #include "vkey.hpp"
++#ifdef __wasi__
++
++bool VKey::setup(int) { return false; }
++void VKey::cleanup() {}
++int VKey::get() { return -1; }
++int VKey::in(int) { return -1; }
++int VKey::raw_get() { return -1; }
++int VKey::raw_in(int) { return -1; }
++bool VKey::poll(int) { return false; }
++void VKey::flush() {}
++void VKey::map_alt_key(int, const char*) {}
++void VKey::map_fn_key(unsigned, const char*) {}
++
++#else
+ #include <reflex/utf8.h>
+ 
+ #ifdef VKEY_DOS
+@@ -1038,3 +1052,5 @@
+   { 0 }, // FN11 -> 331
+   { 0 }, // FN12 -> 332
+ };
++
++#endif // __wasi__

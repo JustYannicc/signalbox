@@ -222,6 +222,7 @@ function programCodes(): CommandProgramCodes {
     coreutils,
     git: code("git"),
     jq: code("jq"),
+    ugrep: code("ugrep"),
   };
 }
 

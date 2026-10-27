@@ -54,6 +54,7 @@ export function createProductComputer(options: ProductComputerOptions) {
       programs.git,
       programs.sed,
       programs.jq,
+      programs.ugrep,
     ].some((code) => code === undefined) ||
     CHILD_COREUTILS_COMMANDS.some((command) => programs.coreutils?.[command] === undefined)
   )

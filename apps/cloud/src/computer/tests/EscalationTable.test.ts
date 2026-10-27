@@ -76,14 +76,15 @@ describe("ComputerEscalationTable", () => {
     });
   });
 
-  it("exports the 50 exact policy spellings as opt-in frozen data", () => {
-    expect(COMPUTER_ISOLATE_EXECUTABLES).toHaveLength(50);
+  it("exports the 53 exact policy spellings as opt-in frozen data", () => {
+    expect(COMPUTER_ISOLATE_EXECUTABLES).toHaveLength(53);
     expect(COMPUTER_ISOLATE_EXECUTABLES).toEqual([
       "sed",
       "git",
       "head",
       "grep",
       "rg",
+      "ugrep",
       "cat",
       "cd",
       "tail",
@@ -112,6 +113,8 @@ describe("ComputerEscalationTable", () => {
       "/bin/grep",
       "/bin/touch",
       "/bin/rg",
+      "/bin/ugrep",
+      "/usr/local/bin/claude",
       "/bin/echo",
       "/bin/printf",
       "/bin/ls",

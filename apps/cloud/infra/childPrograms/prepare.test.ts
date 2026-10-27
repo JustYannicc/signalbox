@@ -17,6 +17,7 @@ import {
 import { KERNEL_JQ_ARTIFACT } from "../../src/kernel/KernelJqProgram.ts";
 import { KERNEL_GIT_ARTIFACT } from "../../src/kernel/KernelGitProgram.ts";
 import { KERNEL_GNU_SED_ARTIFACT } from "../../src/kernel/KernelGnuPrograms.ts";
+import { KERNEL_UGREP_ARTIFACT } from "../../src/kernel/KernelUgrepProgram.ts";
 import { KERNEL_RIPGREP_ARTIFACT } from "../../src/kernel/KernelRipgrepProgram.ts";
 import { readPinnedProgram } from "./measured.ts";
 import {
@@ -101,6 +102,7 @@ describe("full child program preparation", () => {
     expect(await programReference(codes.git)).toBe(KERNEL_GIT_ARTIFACT.sha256);
     expect(await programReference(codes.sed)).toBe(KERNEL_GNU_SED_ARTIFACT.sha256);
     expect(await programReference(codes.jq)).toBe(KERNEL_JQ_ARTIFACT.sha256);
+    expect(await programReference(codes.ugrep)).toBe(KERNEL_UGREP_ARTIFACT.sha256);
     for (const command of CHILD_COREUTILS_COMMANDS) {
       expect(await programReference(codes.coreutils![command])).toBe(
         coreutilsProvenance.commands[command].sha256,
@@ -227,6 +229,7 @@ function fullProgramSources(): FullChildProgramSources {
     coreutils,
     git: code("git"),
     jq: code("jq"),
+    ugrep: code("ugrep"),
   };
 }
 
