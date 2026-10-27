@@ -565,7 +565,7 @@ export function createFacet(
     compatibilityFlags: ["nodejs_compat"],
     mainModule: process.mainModule,
     modules,
-    env: createHarnessProcessFacetEnvironment(process, environment, identity),
+    env: createHarnessProcessFacetEnvironment(process, environment, identity, context),
     globalOutbound: null,
   };
   const worker = environment.LOADER.get(identity.loaderId, () => workerCode);
