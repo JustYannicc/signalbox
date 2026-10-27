@@ -8,7 +8,7 @@ views {
   // ───────────────────────── States ─────────────────────────
 
   dynamic view state_placement {
-    title 'States/Placement/Walk through'
+    title 'Apps/Hierarchy/States/Placement/Walk through'
     variant sequence
     description 'R-PLC-25 · How one placement lives and ends: placed on a level, resolved by every turn below it (whoever sends), then expired or removed.'
 
@@ -80,7 +80,7 @@ views {
   }
 
   dynamic view state_loan {
-    title 'States/Loan/Walk through'
+    title 'Apps/Hierarchy/States/Loan/Walk through'
     variant sequence
     description 'R-LND-06 · How one loan is offered, used and ends (until or End loan). While active it resolves for everyone in the folder, not just the lender.'
 
@@ -156,7 +156,7 @@ views {
 
   dynamic view folders_gates_assistant_answers {
     variant sequence
-    title 'Workflows/Folders/Gates/Assistant answers a delegated gate'
+    title 'Apps/Hierarchy/Workflows/Gates/Assistant answers a delegated gate'
     description 'R-GAT-05 · A gate ask answered by the assistant on the person\'s behalf: logged with the rule, never pushed; an overturn teaches the Learner.'
 
     include personA, hier, hier.asstA, signalbox, signalbox.thread, signalbox.thread.threadActor, signalbox.attention, signalbox.learner
@@ -211,7 +211,7 @@ views {
 
   dynamic view folders_gates_confirm_in_app {
     variant sequence
-    title 'Workflows/Folders/Gates/Confirm in the app: NeedsDecision and HumanOnly'
+    title 'Apps/Hierarchy/Workflows/Gates/Confirm in the app: NeedsDecision and HumanOnly'
     description 'R-GAT-02, R-GAT-03 · External sessions get a confirm URL instead of an ask; in-app agents are refused human-only operations.'
 
     include personA, personB, mcpClient, hier, hier.company, hier.company.team, hier.company.team.agentTeam, signalbox, signalbox.web, signalbox.operations, signalbox.identity
@@ -287,7 +287,7 @@ views {
 
   dynamic view folders_gates_destructive {
     variant sequence
-    title 'Workflows/Folders/Gates/Run a destructive operation'
+    title 'Apps/Hierarchy/Workflows/Gates/Run a destructive operation'
     description 'R-GAT-01, R-GAT-04 · People with the role act directly; an agent or run gets NeedsDecision and a Ready ask to the level\'s responsible people.'
 
     include personA, personC, hier, hier.asstC, hier.company, hier.company.team, hier.company.team.sharedThread, signalbox, signalbox.operations, signalbox.automations, signalbox.attention
@@ -350,7 +350,7 @@ views {
 
   dynamic view folders_lending_accept_kinds {
     variant sequence
-    title 'Workflows/Folders/Lending/Choose accepted loan kinds for a folder'
+    title 'Apps/Hierarchy/Workflows/Lending/Choose accepted loan kinds for a folder'
     description 'R-ACC-23 · An admin sets which kinds a folder accepts as loans, and can withhold the inherited home pool.'
 
     include personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree
@@ -391,7 +391,7 @@ views {
 
   dynamic view folders_lending_access_request {
     variant sequence
-    title 'Workflows/Folders/Lending/Ask for access: Place or Lend'
+    title 'Apps/Hierarchy/Workflows/Lending/Ask for access: Place or Lend'
     description 'R-LND-08 · A call blocked because nothing on Team\'s chain has it parks the turn behind a Blocker whose only answers are Place (C, who has the role) or Lend (A, who owns one). Part 2: folders_lending_access_request_agent.'
 
     include personB, personC, personA, signalbox, signalbox.thread, signalbox.thread.threadActor, signalbox.gateway, signalbox.attention, signalbox.operations
@@ -460,7 +460,7 @@ views {
 
   dynamic view folders_lending_access_request_agent {
     variant sequence
-    title 'Workflows/Folders/Lending/Ask for access: Team agent needs a person\'s thing'
+    title 'Apps/Hierarchy/Workflows/Lending/Ask for access: Team agent needs a person\'s thing'
     description 'R-LND-09 · Part 2 of folders_lending_access_request: Team\'s agent hits something only A owns; A\'s assistant answers first, but only A can lend.'
 
     include personA, hier, hier.asstA, hier.company, hier.company.team, hier.company.team.agentTeam, signalbox, signalbox.attention, signalbox.operations
@@ -505,7 +505,7 @@ views {
 
   dynamic view folders_lending_company_pool {
     variant sequence
-    title "Workflows/Folders/Lending/An organization lends its pool to employees' assistants"
+    title "Apps/Hierarchy/Workflows/Lending/An organization lends its pool to employees' assistants"
     description 'R-LND-11 · Admin C lends Company pool P2 into A\'s and B\'s top levels so their assistants can run on it.'
 
     include personC, personA, personB, hier, hier.asstA, signalbox, signalbox.operations, signalbox.tree, signalbox.models
@@ -553,7 +553,7 @@ views {
 
   dynamic view folders_lending_end_loan {
     variant sequence
-    title "Workflows/Folders/Lending/End a loan from the lent thing's row"
+    title "Apps/Hierarchy/Workflows/Lending/End a loan from the lent thing's row"
     description 'R-LND-05 · The lender ends a loan from the lent thing\'s own row, via the custody outbound index, even without reach into the destination.'
 
     include personA, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.models, signalbox.models.custody
@@ -592,7 +592,7 @@ views {
 
   dynamic view folders_lending_leaver_loans {
     variant sequence
-    title "Workflows/Folders/Lending/End a leaver's loans"
+    title "Apps/Hierarchy/Workflows/Lending/End a leaver's loans"
     description 'P-OUT-12 · Loans survive leaving; the leaver ends them from the lent thing\'s own row through the outbound index.'
 
     include personA, personC, signalbox, signalbox.web, signalbox.tree, signalbox.models, signalbox.models.custody, signalbox.connections
@@ -635,7 +635,7 @@ views {
 
   dynamic view folders_lending_lend {
     variant sequence
-    title 'Workflows/Folders/Lending/Lend into a folder or thread'
+    title 'Apps/Hierarchy/Workflows/Lending/Lend into a folder or thread'
     description 'R-LND-01, R-LND-02, R-LND-03, R-LND-04 · A lends their thing into folder Team or one thread; B uses it; refused when Team doesn\'t accept the kind.'
 
     include personA, personB, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.models, signalbox.models.custody, signalbox.thread, signalbox.thread.threadActor
@@ -711,7 +711,7 @@ views {
 
   dynamic view folders_lending_make_org {
     variant sequence
-    title 'Workflows/Folders/Lending/Make an organization and auto-lend its pool'
+    title 'Apps/Hierarchy/Workflows/Lending/Make an organization and auto-lend its pool'
     description 'R-LND-10 · Making a folder an organization\'s auto-lends the inherited pool ("lent by A"), revocable.'
 
     include personA, personC, signalbox, signalbox.web, signalbox.operations, signalbox.identity, signalbox.tree, signalbox.models, platform, platform.workos
@@ -758,7 +758,7 @@ views {
 
   dynamic view folders_lending_round_robin {
     variant sequence
-    title 'Workflows/Folders/Lending/Balance turns across several lent pools'
+    title 'Apps/Hierarchy/Workflows/Lending/Balance turns across several lent pools'
     description 'R-LND-07 · Two pools lent into Team: turns spread round-robin, sticky per thread.'
 
     include personA, personB, hier, hier.company, hier.company.team, hier.company.team.sharedThread, hier.company.team.teamPrivateB, signalbox, signalbox.tree, signalbox.gateway, signalbox.models, signalbox.models.custody
@@ -807,7 +807,7 @@ views {
   dynamic view folders_placement_place {
     #v1
     variant sequence
-    title 'Workflows/Folders/Placement/Lifecycle/Place a thing at a level'
+    title 'Apps/Hierarchy/Workflows/Placement/Lifecycle/Place a thing at a level'
     description 'v1 (pool, connection) · R-PLC-01, R-PLC-03 · Place{kind, ref, at, reach}: role checked per kind, version bump, outbox to the custody index; then toggle reach.'
 
     include personC, personA, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.models, signalbox.models.custody
@@ -877,7 +877,7 @@ views {
   dynamic view folders_placement_unplace {
     #v1
     variant sequence
-    title 'Workflows/Folders/Placement/Lifecycle/Remove a placement'
+    title 'Apps/Hierarchy/Workflows/Placement/Lifecycle/Remove a placement'
     description 'v1 · R-PLC-02 · Unplace: running turns finish on their frozen Scope; grant refresh denies the removed item; agents unplacing a pool hit the gate.'
 
     include personC, hier, hier.company, hier.company.team, hier.company.team.agentTeam, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.thread, signalbox.thread.threadActor, signalbox.gateway
@@ -929,7 +929,7 @@ views {
   dynamic view folders_placement_create_then_place {
     #v1
     variant sequence
-    title 'Workflows/Folders/Placement/Lifecycle/Create then place a pool or connection'
+    title 'Apps/Hierarchy/Workflows/Placement/Lifecycle/Create then place a pool or connection'
     description 'v1 · R-PLC-28 · Custody actor created first, then placed; a sweeper deletes custody unplaced past a TTL.'
 
     include personC, signalbox, signalbox.web, signalbox.operations, signalbox.connections, signalbox.tree, signalbox.automations
@@ -974,7 +974,7 @@ views {
   dynamic view folders_placement_kind_pool_connection {
     #v1
     variant sequence
-    title 'Workflows/Folders/Placement/Kinds/Place a pool or a connection'
+    title 'Apps/Hierarchy/Workflows/Placement/Kinds/Place a pool or a connection'
     description 'v1 · R-PLC-12, R-PLC-13 · Pools resolve nearestSet (Admin+ to place, round-robin sticky); connections resolve union by name (no role → lend).'
 
     include personC, personA, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.models, signalbox.connections
@@ -1038,7 +1038,7 @@ views {
 
   dynamic view folders_placement_kind_secret {
     variant sequence
-    title 'Workflows/Folders/Placement/Kinds/Place a secret reference'
+    title 'Apps/Hierarchy/Workflows/Placement/Kinds/Place a secret reference'
     description 'R-PLC-14 · A secret reference placed on a folder; the value stays in the vault. Reach default below vs own-folder-only is an open conflict.'
 
     include personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.gateway, services, services.onepassword
@@ -1083,7 +1083,7 @@ views {
 
   dynamic view folders_placement_kind_skill_plugin {
     variant sequence
-    title 'Workflows/Folders/Placement/Kinds/Place a skill, plugin or MCP server'
+    title 'Apps/Hierarchy/Workflows/Placement/Kinds/Place a skill, plugin or MCP server'
     description 'R-PLC-15, R-PLC-21 · Skills install with a with-vs-without eval and publish at Company with reach below; plugins and MCP servers are config with one home.'
 
     include personA, personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.judge, signalbox.drive, signalbox.harness
@@ -1136,7 +1136,7 @@ views {
 
   dynamic view folders_placement_kind_instructions {
     variant sequence
-    title 'Workflows/Folders/Placement/Kinds/Place AGENTS.md and preview the cascade'
+    title 'Apps/Hierarchy/Workflows/Placement/Kinds/Place AGENTS.md and preview the cascade'
     description 'R-PLC-16 · AGENTS.md cascades top first, nearest block per heading, per-harness blocks; the preview is exactly what a turn gets.'
 
     include personC, personA, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.harness
@@ -1170,7 +1170,7 @@ views {
 
   dynamic view folders_placement_kind_automation {
     variant sequence
-    title 'Workflows/Folders/Placement/Kinds/Place or move an automation'
+    title 'Apps/Hierarchy/Workflows/Placement/Kinds/Place or move an automation'
     description 'R-PLC-17, R-PLC-30 · A definition is placed at its home level and runs on that chain; after a move it runs on the new chain from the next run.'
 
     include personC, personA, signalbox, signalbox.web, signalbox.operations, signalbox.automations, signalbox.tree
@@ -1225,12 +1225,12 @@ views {
 
   dynamic view folders_placement_kind_base_recipe {
     variant sequence
-    title 'Workflows/Folders/Placement/Kinds/Place a Base recipe'
-    description 'R-PLC-19 · baseRecipe resolves nearest with reach below; a subfolder\'s own recipe gets its own Base.'
+    title 'Apps/Hierarchy/Workflows/Placement/Kinds/Place a snapshot recipe'
+    description 'R-PLC-19 · baseRecipe resolves nearest with reach below; a subfolder\'s own recipe gets its own snapshot.'
 
     include personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.bases, signalbox.drive, signalbox.drive.repoActor
 
-    personC -> signalbox.web 'Set Base recipe' {
+    personC -> signalbox.web 'Set snapshot recipe' {
       notes """
         - Admin-only by default, on the repo folder
       """
@@ -1243,14 +1243,14 @@ views {
     signalbox.bases -> signalbox.drive.repoActor 'Key (drive, hash)' {
       navigateTo state_base
       notes """
-        - Two recipes on one drive never share a Base
+        - Two recipes on one drive never share a snapshot
       """
     }
     opt 'subfolder recipe' {
       personC -> signalbox.operations 'Place on subfolder'
-      signalbox.bases -> signalbox.drive.repoActor 'Second Base' {
+      signalbox.bases -> signalbox.drive.repoActor 'Second snapshot' {
         notes """
-          - Threads below the subfolder fork that Base instead
+          - Threads below the subfolder fork that snapshot instead
         """
       }
     }
@@ -1263,7 +1263,7 @@ views {
 
   dynamic view folders_placement_kind_device {
     variant sequence
-    title 'Workflows/Folders/Placement/Kinds/Place a device'
+    title 'Apps/Hierarchy/Workflows/Placement/Kinds/Place a device'
     description 'R-PLC-18 · A device has a home level and a notify setting; a phone homed at Personal never rings for Company work unless a delivery rule names it.'
 
     include personA, signalbox, signalbox.mobile, signalbox.operations, signalbox.attention, signalbox.tree
@@ -1302,7 +1302,7 @@ views {
 
   dynamic view folders_placement_kind_source {
     variant sequence
-    title 'Workflows/Folders/Placement/Kinds/Place a source'
+    title 'Apps/Hierarchy/Workflows/Placement/Kinds/Place a source'
     description 'R-PLC-20 · A source narrows a connection or another drive to one resource, mounted as /sources/<label>/.'
 
     include personA, signalbox, signalbox.web, signalbox.operations, signalbox.connections, signalbox.drive, signalbox.tree
@@ -1337,7 +1337,7 @@ views {
 
   dynamic view folders_placement_kind_setting {
     variant sequence
-    title 'Workflows/Folders/Placement/Kinds/Place a folder setting (egress, default model, delivery rule)'
+    title 'Apps/Hierarchy/Workflows/Placement/Kinds/Place a folder setting (egress, default model, delivery rule)'
     description 'R-PLC-22, R-PLC-23, R-PLC-24, T-APR-11, T-GIT-35 · Settings are placements: one Place step, then each kind feeds its module.'
 
     include personC, signalbox, signalbox.web, signalbox.operations, signalbox.tree, signalbox.computer, signalbox.models, signalbox.attention, signalbox.drive
@@ -1406,7 +1406,7 @@ views {
   dynamic view folders_placement_resolve {
     #v1
     variant sequence
-    title 'Workflows/Folders/Placement/Resolution/Resolve a Place to a Scope'
+    title 'Apps/Hierarchy/Workflows/Placement/Resolution/Resolve a Place to a Scope'
     description 'v1 partial (pools and connections for local keys and MCP sessions) · R-PLC-04, R-PLC-31 · Walk up from the Place, nearest wins per kind, connections union by name, then the purpose filter. Inputs: the Place and the placements above it, nothing about who asks.'
 
     include
@@ -1485,7 +1485,7 @@ views {
 
   dynamic view folders_placement_resolve_shared {
     variant sequence
-    title 'Workflows/Folders/Placement/Resolution/One shared thread resolves the same for A, B and D'
+    title 'Apps/Hierarchy/Workflows/Placement/Resolution/One shared thread resolves the same for A, B and D'
     description 'R-PLC-05, R-PLC-06 · The core rule: Scope = f(Place, placements above it). A, B and outside collaborator D send turns into one Team thread and get the same pool and connections. Nearest wins; anything not above Team only comes in by a loan.'
 
     include
@@ -1561,7 +1561,7 @@ views {
 
   dynamic view folders_placement_resolve_org_chain {
     variant sequence
-    title 'Workflows/Folders/Placement/Resolution/Company agents and runs resolve on folder Company chain only'
+    title 'Apps/Hierarchy/Workflows/Placement/Resolution/Company agents and runs resolve on folder Company chain only'
     description 'R-PLC-07 · Company\'s agent, Company automations and threads filed at Company without a mount have no via, so the chain is Company alone; nothing there → NeedsPool to admin C.'
 
     include
@@ -1620,7 +1620,7 @@ views {
 
   dynamic view folders_placement_change_to_turns {
     variant sequence
-    title 'Workflows/Folders/Placement/Resolution/Placement changes reach running and next turns'
+    title 'Apps/Hierarchy/Workflows/Placement/Resolution/Placement changes reach running and next turns'
     description 'R-PLC-10, R-PLC-11 · A change bumps the Level version; refresh denies only removals the running turn used; additions arrive at the next turn, for A and B alike.'
 
     include personC, personA, personB, signalbox, signalbox.tree, signalbox.thread, signalbox.thread.threadActor, signalbox.gateway
@@ -1673,7 +1673,7 @@ views {
   dynamic view folders_placement_authority {
     #v1
     variant sequence
-    title 'Workflows/Folders/Placement/Resolution/Check who may use a Place'
+    title 'Apps/Hierarchy/Workflows/Placement/Resolution/Check who may use a Place'
     description 'v1 partial (MCP URL, local key) · R-PLC-08, R-PLC-09 · A Place\'s via must be a mount in the creator\'s own tree; a placeId presented by another person is Denied. This limits who may write a Place, never what resolves from it.'
 
     include personA, personB, mcpClient, signalbox, signalbox.web, signalbox.identity, signalbox.tree, signalbox.gateway
@@ -1727,7 +1727,7 @@ views {
 
   dynamic view folders_placement_move_thread {
     variant sequence
-    title 'Workflows/Folders/Placement/Resolution/Moving a thread changes what it resolves'
+    title 'Apps/Hierarchy/Workflows/Placement/Resolution/Moving a thread changes what it resolves'
     description 'R-PLC-29 · After a move the next turn resolves at the new Place; pins and loans clear; past usage stays where it happened.'
 
     include personA, signalbox, signalbox.web, signalbox.operations, signalbox.thread, signalbox.thread.threadActor, signalbox.tree, signalbox.models, signalbox.models.custody

@@ -21,7 +21,7 @@ views {
   dynamic view folders_pools_first_pool {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Connect a first pool at a level'
+    title 'Apps/Hierarchy/Workflows/Pools/Connect a first pool at a level'
     description 'P-ONB-06 (v1; alias T-ENV-25), P-ONB-22 (not v1) · A puts a first pool on a level from its Pool section, or from the NeedsPool card a first send raises.'
 
     include personA, signalbox, signalbox.web, signalbox.thread, signalbox.tree, signalbox.models
@@ -95,7 +95,7 @@ views {
   dynamic view folders_pools_add_account {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Accounts/Add an account into a new or existing pool'
+    title 'Apps/Hierarchy/Workflows/Pools/Accounts/Add an account into a new or existing pool'
     description 'R-POL-01, R-POL-08 (aliases T-PRV-02, T-PRV-04), R-POL-09 · `into` is always explicit; a new pool is created then placed; a failed connect leaves nothing behind.'
 
     include personA, personC, signalbox, signalbox.web, signalbox.models, signalbox.tree, signalbox.automations
@@ -167,7 +167,7 @@ views {
   dynamic view folders_pools_signin_subscription {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Accounts/Sign in a subscription into a pool'
+    title 'Apps/Hierarchy/Workflows/Pools/Accounts/Sign in a subscription into a pool'
     description 'R-POL-03 (v1; aliases T-PRV-08, T-PRV-11), R-POL-04 (not v1; alias T-DSK-14), R-POL-05 (v1; alias T-PRV-41), T-PRV-09 · ChatGPT by device code on any client; Claude by localhost catch on desktop or a pasted code on web and mobile.'
 
     include personA, signalbox, signalbox.web, signalbox.desktop, signalbox.mobile, signalbox.models, modelProviders, modelProviders.openai, modelProviders.anthropic
@@ -231,7 +231,7 @@ views {
   dynamic view folders_pools_human_only_signin {
     #v1
     variant sequence
-    title "Workflows/Folders/Pools/Accounts/Agents can't finish a pool sign-in"
+    title "Apps/Hierarchy/Workflows/Pools/Accounts/Agents can't finish a pool sign-in"
     description 'R-POL-10 · The final provider OAuth step is human-only; agent-class callers get HumanOnly, external sessions also get a confirm URL.'
 
     include personA, hier, hier.asstA, mcpClient, signalbox, signalbox.operations, signalbox.models
@@ -276,7 +276,7 @@ views {
   dynamic view folders_pools_paste_credentials {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Accounts/Paste an API key or credentials into a pool'
+    title 'Apps/Hierarchy/Workflows/Pools/Accounts/Paste an API key or credentials into a pool'
     description 'R-POL-06 (v1; aliases T-PRV-05, T-PRV-13), R-POL-07 (not v1) · API keys for Anthropic, OpenAI, xAI, Gemini, OpenRouter or any OpenAI-compatible endpoint; Cursor and OpenCode credentials later.'
 
     include personA, personC, signalbox, signalbox.web, signalbox.models, modelProviders
@@ -325,7 +325,7 @@ views {
   dynamic view folders_pools_remove_account {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Accounts/Remove an account from a pool'
+    title 'Apps/Hierarchy/Workflows/Pools/Accounts/Remove an account from a pool'
     description 'R-POL-11 (alias T-PRV-10) · The admin removes one account; the provider sign-out runs and pins move to the remaining accounts.'
 
     include personC, signalbox, signalbox.web, signalbox.models, modelProviders
@@ -362,7 +362,7 @@ views {
   dynamic view folders_pools_move_account {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Accounts/Move an account between pools'
+    title 'Apps/Hierarchy/Workflows/Pools/Accounts/Move an account between pools'
     description 'R-POL-12, R-POL-13 · Account-move saga keyed by requestId: source moving{to} and drain, idempotent import, ack, source deletes. Cancel returns it; a crash resumes from the sweeper; never routable from two pools.'
 
     include personC, signalbox, signalbox.web, signalbox.operations, signalbox.automations, hier, hier.topC.poolC, hier.company.poolCo
@@ -418,7 +418,7 @@ views {
   dynamic view folders_pools_token_refresh {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Accounts/Refresh rotating tokens'
+    title 'Apps/Hierarchy/Workflows/Pools/Accounts/Refresh rotating tokens'
     description 'R-POL-24 (alias T-PRV-12) · Custody is the single writer of rotating refresh tokens; a failed refresh marks the account unhealthy for the admin to re-add.'
 
     include personC, signalbox, signalbox.models, signalbox.models.custody, signalbox.models.cpaHost, signalbox.attention, modelProviders
@@ -461,7 +461,7 @@ views {
   dynamic view folders_pools_account_health {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Accounts/Track account health, quota and cooldowns'
+    title 'Apps/Hierarchy/Workflows/Pools/Accounts/Track account health, quota and cooldowns'
     description 'R-POL-15 (aliases T-APR-16, T-PRV-21, T-PRV-22, T-USG-08), R-POL-16 · Periodic quota reads; a 429 triggers a provider check at most every 30 s and an audited cooldown reset.'
 
     include personC, signalbox, signalbox.web, signalbox.models, signalbox.models.custody, signalbox.models.cpaHost, modelProviders
@@ -510,7 +510,7 @@ views {
   dynamic view folders_pools_open_view {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Manage/Open a pool: member and admin views'
+    title 'Apps/Hierarchy/Workflows/Pools/Manage/Open a pool: member and admin views'
     description 'R-POL-17 (v1; alias T-USG-05), R-POL-18 (v1; alias T-SET-17), T-USG-09, T-USG-11 (not v1) · One Models.view, shaped by role: members get remaining usage only, the admin gets accounts and activity.'
 
     include personA, personB, personC, signalbox, signalbox.web, signalbox.mobile, signalbox.models
@@ -571,7 +571,7 @@ views {
   dynamic view folders_pools_configure_routing {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Manage/Configure pool routing'
+    title 'Apps/Hierarchy/Workflows/Pools/Manage/Configure pool routing'
     description 'R-POL-14 · Round robin or fill-first, per-thread affinity, move-on-error; applied live through the pool backend management API.'
 
     include personC, signalbox, signalbox.web, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.models.cpaHost
@@ -616,7 +616,7 @@ views {
 
   dynamic view folders_pools_advice {
     variant sequence
-    title 'Workflows/Folders/Pools/Manage/Pool advice from usage history'
+    title 'Apps/Hierarchy/Workflows/Pools/Manage/Pool advice from usage history'
     description 'not v1 · R-POL-19 · From the usage ledger: a plan bigger than you use, and how many accounts each provider needs.'
 
     include personC, signalbox, signalbox.web, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.tree
@@ -655,7 +655,7 @@ views {
 
   dynamic view folders_pools_pick_assistant_pool {
     variant sequence
-    title "Workflows/Folders/Pools/Manage/Pick the assistant's pool"
+    title "Apps/Hierarchy/Workflows/Pools/Manage/Pick the assistant's pool"
     description "not v1 · R-POL-21 · A preferred flag on the top level's pool placement row, among pools placed or lent there."
 
     include personA, hier, hier.asstA, signalbox, signalbox.web, signalbox.models, signalbox.tree
@@ -685,7 +685,7 @@ views {
 
   dynamic view folders_pools_redeem_credits {
     variant sequence
-    title 'Workflows/Folders/Pools/Manage/Redeem provider reset credits'
+    title 'Apps/Hierarchy/Workflows/Pools/Manage/Redeem provider reset credits'
     description 'not v1 · R-POL-20 (alias T-USG-06) · The admin redeems provider reset credits through a documented provider or pool backend path.'
 
     include personC, signalbox, signalbox.web, signalbox.models, modelProviders
@@ -712,7 +712,7 @@ views {
   dynamic view folders_pools_delete_pool {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Manage/Delete a pool'
+    title 'Apps/Hierarchy/Workflows/Pools/Manage/Delete a pool'
     description 'R-POL-22, R-POL-23 · Agents pass the decision gate; delete saga: retiring, unplace every indexed placement and loan, delete sealed credentials; a sweeper resumes it.'
 
     include personC, hier, hier.asstC, signalbox, signalbox.operations, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.tree, signalbox.automations
@@ -774,7 +774,7 @@ views {
 
   dynamic view folders_pools_needs_pool {
     variant sequence
-    title 'Workflows/Folders/Pools/Routing/NeedsPool with Add pool here'
+    title 'Apps/Hierarchy/Workflows/Pools/Routing/NeedsPool with Add pool here'
     description 'v1 partial · R-POL-02 (aliases T-APR-17, T-PRV-23) · Nothing placed on the chain: NeedsPool with Add pool here, in the model picker, for a local key and on the folder page.'
 
     include personA, personB, personC, signalbox, signalbox.web, signalbox.models, signalbox.tree
@@ -826,7 +826,7 @@ views {
 
   dynamic view folders_pools_model_catalog {
     variant sequence
-    title 'Workflows/Folders/Pools/Routing/List models for the resolved pool'
+    title 'Apps/Hierarchy/Workflows/Pools/Routing/List models for the resolved pool'
     description "v1 partial (a local key lists the same models) · R-POL-31 (alias T-PRV-24) · The resolved pool's /v1/models plus router-for-me/models; limited models still listed with reset times."
 
     include personA, personB, signalbox, signalbox.web, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.models.cpaHost
@@ -876,7 +876,7 @@ views {
 
   dynamic view folders_pools_pins {
     variant sequence
-    title 'Workflows/Folders/Pools/Routing/Pin an account per thread or subject'
+    title 'Apps/Hierarchy/Workflows/Pools/Routing/Pin an account per thread or subject'
     description 'v1 partial · R-POL-25 · A sticky account per (thread or subject, provider); a pin move is audited with a thread notice.'
 
     include personA, personB, signalbox, signalbox.thread, signalbox.gateway, signalbox.models, signalbox.models.api, signalbox.models.custody
@@ -933,7 +933,7 @@ views {
 
   dynamic view folders_pools_failover {
     variant sequence
-    title 'Workflows/Folders/Pools/Routing/Fail over when a pool is exhausted'
+    title 'Apps/Hierarchy/Workflows/Pools/Routing/Fail over when a pool is exhausted'
     description 'v1 partial · R-POL-26 (alias T-APR-13) · Failover across the resolved set; the thread hands off to another provider or pool; A and B are told only when nothing is left.'
 
     include personA, personB, signalbox, signalbox.thread, signalbox.gateway, signalbox.models, signalbox.attention
@@ -984,7 +984,7 @@ views {
 
   dynamic view folders_gateway_grant {
     variant sequence
-    title 'Workflows/Folders/Pools/Gateway/Issue and refresh a model grant'
+    title 'Apps/Hierarchy/Workflows/Pools/Gateway/Issue and refresh a model grant'
     description 'v1 partial (a local key grant is v1; turns are not) · R-MGW-01, R-MGW-03, R-MGW-04 · A signed grant per subject (turn, run step, local key, MCP session); refresh denies only on removals; expired or revoked → Denied → re-grant.'
 
     include personA, personB, signalbox, signalbox.thread, signalbox.harness, signalbox.gateway, signalbox.tree, signalbox.identity, signalbox.connections
@@ -1051,7 +1051,7 @@ views {
 
     dynamic view folders_gateway_model_call {
     variant sequence
-    title 'Workflows/Folders/Pools/Gateway/Make a model call'
+    title 'Apps/Hierarchy/Workflows/Pools/Gateway/Make a model call'
     description 'v1 partial (the same path serves a local key) · R-MGW-02, R-MGW-07, R-MGW-08 · model gateway verifies the grant statelessly and hands the call to Models.serve; Models pins, stamps and streams from the provider.'
 
     include laptopCli, signalbox, signalbox.harness, signalbox.gateway.modelGateway, signalbox.models, modelProviders
@@ -1119,7 +1119,7 @@ views {
   dynamic view folders_gateway_usage_metering {
     #v1 #smell
     variant sequence
-    title 'Workflows/Folders/Pools/Gateway/Count every model call once'
+    title 'Apps/Hierarchy/Workflows/Pools/Gateway/Count every model call once'
     description 'Smell: Model gateway writes into two Models actors (pool host, Pool custody) instead of Models.serve. R-MGW-09, R-MGW-10 · started events batched through a Queue; custody reconciles them against the usage drain; a missing drained row raises an unmetered alert; aborts and isolate deaths count once.'
 
     include signalbox, signalbox.gateway.modelGateway, signalbox.models, signalbox.models.cpaHost, signalbox.models.custody, signalbox.tree, signalbox.observability
@@ -1170,7 +1170,7 @@ views {
 
   dynamic view folders_gateway_egress_filter {
     variant sequence
-    title 'Workflows/Folders/Pools/Gateway/Scrub secrets and PII from model requests'
+    title 'Apps/Hierarchy/Workflows/Pools/Gateway/Scrub secrets and PII from model requests'
     description 'v1 partial · R-MGW-06, R-MGW-12 (not v1) · A deterministic scrubber on every model request (all encodings, streaming holdback); optional PII redaction per folder, off by default.'
 
     include signalbox, signalbox.harness, signalbox.gateway.modelGateway, signalbox.gateway.egress, signalbox.tree, signalbox.models
@@ -1206,7 +1206,7 @@ views {
 
   dynamic view folders_gateway_routing_env_guard {
     variant sequence
-    title 'Workflows/Folders/Pools/Gateway/Refuse repointing the model routes'
+    title 'Apps/Hierarchy/Workflows/Pools/Gateway/Refuse repointing the model routes'
     description 'not v1 · R-MGW-05 · Attempts to repoint model base URLs are refused, and so are folder secrets with routing or telemetry prefixes.'
 
     include personC, signalbox, signalbox.web, signalbox.harness, signalbox.gateway, signalbox.tree
@@ -1245,7 +1245,7 @@ views {
 
     dynamic view folders_gateway_outcome_unknown {
     variant sequence
-    title 'Workflows/Folders/Pools/Gateway/Never blindly retry an unknown outcome'
+    title 'Apps/Hierarchy/Workflows/Pools/Gateway/Never blindly retry an unknown outcome'
     description 'Applies to every mutation, v1 ones included · R-MGW-11 · A transport loss mid-mutation returns OutcomeUnknown; the caller checks the receipt by requestId instead of retrying.'
 
     include personA, mcpClient, signalbox, signalbox.web, signalbox.funnel, signalbox.gateway, signalbox.operations
@@ -1298,7 +1298,7 @@ views {
 
     dynamic view folders_gateway_automation_calls {
     variant sequence
-    title 'Workflows/Folders/Pools/Gateway/Automation model steps call the gateway'
+    title 'Apps/Hierarchy/Workflows/Pools/Gateway/Automation model steps call the gateway'
     description "not v1 · R-MGW-13 · Automation model steps and w.judge are direct gateway calls billed to the pool resolved at the automation's folder."
 
     include signalbox, signalbox.automations, signalbox.judge, signalbox.gateway, signalbox.models
@@ -1340,7 +1340,7 @@ views {
   dynamic view folders_modelgateway_laptop_pool {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Gateway/Use a pool from my laptop'
+    title 'Apps/Hierarchy/Workflows/Pools/Gateway/Use a pool from my laptop'
     description 'P-ONB-09, P-ONB-10 · One command gives local Claude Code or Codex an sbk_ key bound to a Place; device-code login first if needed; --undo reverts.'
 
     include personA, laptopCli, signalbox, signalbox.cli, signalbox.identity, signalbox.gateway, platform, platform.workos
@@ -1390,7 +1390,7 @@ views {
   dynamic view folders_pools_local_key {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/LocalKeys/Use this pool from my laptop'
+    title 'Apps/Hierarchy/Workflows/Pools/LocalKeys/Use this pool from my laptop'
     description 'R-POL-27 (aliases T-DSK-15, T-REM-10), R-POL-28 · A and B each mint their own sbk_ key at folder Company; revoke or rotate makes the next call Denied.'
 
     include personA, personB, laptopCli, signalbox, signalbox.web, signalbox.gateway, signalbox.identity, signalbox.tree
@@ -1437,7 +1437,7 @@ views {
 
   dynamic view folders_pools_local_key_place_change {
     variant sequence
-    title "Workflows/Folders/Pools/LocalKeys/A local key's folder changes under it"
+    title "Apps/Hierarchy/Workflows/Pools/LocalKeys/A local key's folder changes under it"
     description "v1 partial (the key is v1; moving or trashing folders is not) · R-POL-29 · The folder moves, the mount is removed or the folder is trashed: the next grant resolves the new chain or fails Invalid or NeedsPool."
 
     include personA, laptopCli, signalbox, signalbox.gateway, signalbox.tree
@@ -1495,7 +1495,7 @@ views {
   dynamic view folders_pools_cpa_host_lifecycle {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Host/Pool host wakes and sleeps'
+    title 'Apps/Hierarchy/Workflows/Pools/Host/Pool host wakes and sleeps'
     description 'R-POL-30 (alias T-USG-07) · The pool backend wakes on demand and sleeps after 2 idle minutes; sharded by account group as needed.'
 
     include signalbox, signalbox.gateway, signalbox.models, signalbox.models.api, signalbox.models.custody, signalbox.models.cpaHost, signalbox.models.backend.cpaContainer
@@ -1543,7 +1543,7 @@ views {
   dynamic view folders_pools_account_egress {
     #v1
     variant sequence
-    title 'Workflows/Folders/Pools/Host/Stable EU egress per account'
+    title 'Apps/Hierarchy/Workflows/Pools/Host/Stable EU egress per account'
     description 'R-POL-32 · Each pooled account always leaves through its own stable EU proxy identity.'
 
     include signalbox, signalbox.models, signalbox.models.cpaHost, signalbox.models.backend.cpaContainer, signalbox.models.euEgress, modelProviders, modelProviders.openai, modelProviders.anthropic

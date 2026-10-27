@@ -321,7 +321,7 @@ views {
     hier.company.agentCo -> signalbox.gateway "delete pool P2" {
       notes '''
         - Company's agent thread calls a native operation through the tools gateway
-        - Same for deleting a thread, folder, connection or Base, unplacing a pool, force-push
+        - Same for deleting a thread, folder, connection or snapshot, unplacing a pool, force-push
       '''
     }
     signalbox.gateway -> signalbox.operations "invoke op"
@@ -868,7 +868,7 @@ views {
     signalbox.thread.threadActor -> signalbox.computer "open computer" {
       notes '''
         - Mounts the thread's files for the isolate; no VM yet
-        - A machine is forked from the Base only when a real command needs one
+        - A machine is forked from the snapshot only when a real command needs one
       '''
     }
     signalbox.thread.threadActor -> signalbox.harness "turn input" {
@@ -1365,7 +1365,7 @@ views {
           signalbox.computer <- platform.boxd "adopted"
         }
         else "lost" {
-          signalbox.computer -> platform.boxd "fork from Base" {
+          signalbox.computer -> platform.boxd "fork from snapshot" {
             navigateTo state_computer
             notes '''
               - Only regenerable state is lost; source lives in the drive

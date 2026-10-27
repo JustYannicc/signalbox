@@ -21,7 +21,7 @@ model {
       technology '1Password service account · load-secrets-action'
     }
     ci = part 'CI' {
-      description 'moves to the CI on Base automation'
+      description 'moves to the CI on snapshot automation'
       technology 'GitHub Actions · Blacksmith (interim)'
     }
     review = part 'Review & e2e' {
@@ -118,10 +118,10 @@ deployment {
     }
     zone boxdZone 'Machines' {
       technology 'boxd'
-      vm threadVm 'Thread VM (forked from Base)' {
+      vm threadVm 'Thread VM (forked from snapshot)' {
         instanceOf signalbox.computer.execDaemon
       }
-      vm baseSnapshot 'Base snapshot' {
+      vm baseSnapshot 'Snapshot' {
         instanceOf signalbox.bases.snapshots.boxdSnapshots
       }
       vm proxyVm 'EgressProxy bridge' {

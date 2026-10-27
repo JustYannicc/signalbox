@@ -1,16 +1,16 @@
-// Shard 14: Git hosts, PRs and Bases. Not v1 (none of these rows are in v1).
-// Lanes: run threads (CI, Base builds, PR watch, reviews) = hier.company.team.runThread;
+// Shard 14: Git hosts, PRs and Snapshots. Not v1 (none of these rows are in v1).
+// Lanes: run threads (CI, snapshot builds, PR watch, reviews) = hier.company.team.runThread;
 // the work thread people share = hier.company.team.sharedThread (folder Team). In busy PR views the
 // client's hop through the client gateway is collapsed (web → module) to stay under 8 participants.
 // Forge traffic: git transport (push, fetch, ingest) is Drive's; PR API calls go through Connections.
 // Only work_git_forge_adapter opens Drive (its own drill-down); everything else treats Drive as a box.
 views {
 
-  // ───────────────────────── States/Base ─────────────────────────
+  // ───────────────────────── States/Snapshot ─────────────────────────
 
   dynamic view state_base {
-    title 'States/Base/Walk through'
-    description 'W-BAS-05 · walks the Base lifecycle; the state machine itself is the element view state-base'
+    title 'States/Snapshot/Walk through'
+    description 'W-BAS-05 · walks the snapshot lifecycle; the state machine itself is the element view state-base'
 
     autoLayout TopBottom
     include smBase, signalbox.computer, signalbox.bases, signalbox
@@ -23,7 +23,7 @@ views {
     smBase.building -> smBase.ready 'base.ready' {
       notes '''
         - The builder machine of a run thread finished: snapshot saved, chunks exported
-        - The Base status tick reads it from the machine provider and emits `base.ready`
+        - The snapshot status tick reads it from the machine provider and emits `base.ready`
       '''
       navigateTo work_bases_build
     }
@@ -31,7 +31,7 @@ views {
       when 'build failed' {
         smBase.building -> smBase.failed 'base.failed' {
           notes '''
-            - The previous active pointer stays; machines keep forking the last good Base
+            - The previous active pointer stays; machines keep forking the last good snapshot
             - The failure goes to the level agent (assumed)
           '''
           navigateTo work_bases_promote
@@ -40,7 +40,7 @@ views {
     }
     smBase.ready -> smBase.active 'promote' {
       notes '''
-        - `Bases.promote` flips the pointer per (drive, recipeHash) in the Repo actor
+        - `Snapshots.promote` flips the pointer per (drive, recipeHash) in the Repo actor
         - Only after `Ready`; `NotReady` or `Stale` otherwise
       '''
       navigateTo work_bases_promote
@@ -62,18 +62,18 @@ views {
     }
     smBase.superseded -> smBase.retired 'retire' {
       notes '''
-        - `Bases.retire` succeeds only at zero unexpired leases (`InUse` otherwise)
-        - Lossless: anything a Base held is regenerable
+        - `Snapshots.retire` succeeds only at zero unexpired leases (`InUse` otherwise)
+        - Lossless: anything a snapshot held is regenerable
       '''
     }
   }
 
-  // ───────────────────────── Workflows/Work/Bases ─────────────────────────
+  // ───────────────────────── Workflows/Work/Snapshots ─────────────────────────
 
   dynamic view work_bases_build {
     variant sequence
-    title 'Workflows/Work/Bases/Build a Base'
-    description 'W-BAS-02, W-BAS-06 · Base refresh on green main and the nightly cold rebuild'
+    title 'Workflows/Work/Snapshots/Build a snapshot'
+    description 'W-BAS-02, W-BAS-06 · snapshot refresh on green main and the nightly cold rebuild'
 
     include hier.company.team.runThread, hier.company.team, signalbox.drive, signalbox.automations, signalbox.bases, signalbox.computer, platform.boxd, platform.r2, signalbox, platform
 
@@ -87,7 +87,7 @@ views {
         signalbox.drive -> signalbox.automations 'main advanced' {
           notes '''
             - An accept advanced `main` in Drive's merge queue (the Repo record)
-            - Base refresh is a default automation, editable like any other
+            - Snapshot refresh is a default automation, editable like any other
           '''
           navigateTo work_drive_accept
         }
@@ -96,7 +96,7 @@ views {
         signalbox.drive -> signalbox.automations 'forge main ingested' {
           notes '''
             - Protected repos: `main` only moves by ingesting the forge's `main`
-            - Bases key on that ingested `main`
+            - Snapshots key on that ingested `main`
           '''
           navigateTo work_git_forge_ingest
         }
@@ -104,7 +104,7 @@ views {
       else 'nightly' {
         signalbox.automations -> signalbox.automations 'nightly tick' {
           notes '''
-            - Nightly cold rebuild (W-BAS-06): builds from the recipe, not from the previous Base
+            - Nightly cold rebuild (W-BAS-06): builds from the recipe, not from the previous snapshot
             - Catches drift a chain of warm forks hides
           '''
         }
@@ -124,7 +124,7 @@ views {
         '''
       }
       signalbox.bases -> signalbox.drive 'record build' {
-        notes 'Drive keeps Base records and the active pointer in its Repo record'
+        notes 'Drive keeps snapshot records and the active pointer in its Repo record'
       }
       hier.company.team.runThread -> signalbox.computer 'open builder machine' {
         notes '''
@@ -134,8 +134,8 @@ views {
       }
       alt 'starting point' {
         when 'refresh' {
-          signalbox.computer -> platform.boxd 'fork previous Base' {
-            notes 'Forked from the previous Base of the same recipe hash'
+          signalbox.computer -> platform.boxd 'fork previous snapshot' {
+            notes 'Forked from the previous snapshot of the same recipe hash'
           }
         }
         else 'nightly or first build' {
@@ -151,7 +151,7 @@ views {
         '''
       }
       signalbox.computer -> signalbox.bases 'capture' {
-        notes 'Computer captures through Bases, so the dependency stays Computer → Bases (no cycle)'
+        notes 'Computer captures through Snapshots, so the dependency stays Computer → Snapshots (no cycle)'
       }
       signalbox.bases -> platform.r2 'chunk export to R2' {
         notes '''
@@ -165,13 +165,13 @@ views {
       }
     }
     signalbox.automations <- signalbox.bases 'base.ready or base.failed' {
-      notes 'Base status tick turns snapshot status into events; promotion follows'
+      notes 'Snapshot status tick turns snapshot status into events; promotion follows'
       navigateTo work_bases_promote
     }
   }
 
   dynamic view work_bases_cache_budget {
-    title 'Workflows/Work/Bases/Dependency cache budget'
+    title 'Workflows/Work/Snapshots/Dependency cache budget'
     description 'W-BAS-16 · chunk export shares installs per folder; the budget itself is open (#848)'
 
     include signalbox.tree, hier.company.team.runThread, hier.company.team, signalbox.computer, signalbox.bases, platform.r2, signalbox, platform
@@ -183,12 +183,12 @@ views {
 
     signalbox.tree -> signalbox.bases 'recipe per folder' {
       notes '''
-        - Each folder that places its own recipe for the same drive gets its own Base
+        - Each folder that places its own recipe for the same drive gets its own snapshot
         - Many subfolders mean many installs of mostly the same dependencies
       '''
     }
     hier.company.team.runThread -> signalbox.computer 'builder run' {
-      notes 'Each Base refresh run installs dependencies on its builder machine'
+      notes 'Each snapshot refresh run installs dependencies on its builder machine'
       navigateTo work_bases_build
     }
     signalbox.computer -> signalbox.bases 'regenerable chunks' {
@@ -213,8 +213,8 @@ views {
 
   dynamic view work_bases_ci {
     variant sequence
-    title 'Workflows/Work/Bases/Run CI on the Base'
-    description 'W-BAS-10, W-BAS-11, W-BAS-13 · CI on Base triggers, shards as child run threads, CI finished wakes work'
+    title 'Workflows/Work/Snapshots/Run CI on the snapshot'
+    description 'W-BAS-10, W-BAS-11, W-BAS-13 · CI on snapshot triggers, shards as child run threads, CI finished wakes work'
 
     include hier.company.team.sharedThread, hier.company.team.runThread, hier.company.team, signalbox.drive, signalbox.automations, signalbox.computer, signalbox.bases, services.github, signalbox, services
 
@@ -267,7 +267,7 @@ views {
     }
     signalbox.computer -> signalbox.bases 'acquire lease' {
       notes '''
-        - Every shard's VM forks the active Base for the drive's recipe hash
+        - Every shard's VM forks the active snapshot for the drive's recipe hash
         - Lease committed before the create
       '''
       navigateTo work_bases_lease
@@ -304,7 +304,7 @@ views {
 
   dynamic view work_bases_ci_actions {
     variant sequence
-    title 'Workflows/Work/Bases/Run a CI step on GitHub Actions'
+    title 'Workflows/Work/Snapshots/Run a CI step on GitHub Actions'
     description 'W-BAS-12, W-GIT-24 · w.run on github-actions, as the folder\'s GitHub App or a lent login'
 
     include personA, personC, hier.company.team.runThread, hier.company.team, signalbox.web, signalbox.tree, signalbox.automations, signalbox.connections, services.github, signalbox, services
@@ -378,8 +378,8 @@ views {
 
   dynamic view work_bases_folder_page {
     variant sequence
-    title 'Workflows/Work/Bases/Manage a Base from the folder page'
-    description 'W-BAS-07, W-BAS-09 · Base section on the folder page; delete a Base (agents go through the decision gate)'
+    title 'Workflows/Work/Snapshots/Manage a snapshot from the folder page'
+    description 'W-BAS-07, W-BAS-09 · snapshot section on the folder page; delete a snapshot (agents go through the decision gate)'
 
     include personC, hier.company.team.agentTeam, hier.company.team, signalbox.web, signalbox.operations, signalbox.automations, signalbox.bases, signalbox.attention, signalbox
 
@@ -390,7 +390,7 @@ views {
 
     personC -> signalbox.web 'open folder Team' {
       notes '''
-        - The repo folder's page has a Base section
+        - The repo folder's page has a snapshot section
         - A and B see the same section; actions need the role C holds
       '''
     }
@@ -402,8 +402,8 @@ views {
     alt 'action' {
       when 'C rebuilds' {
         personC -> signalbox.web 'rebuild'
-        signalbox.web -> signalbox.automations 'manual Base refresh' {
-          notes '`Manual{Base refresh, by C}`: the same automation as green main'
+        signalbox.web -> signalbox.automations 'manual snapshot refresh' {
+          notes '`Manual{snapshot refresh, by C}`: the same automation as green main'
           navigateTo work_bases_build
         }
         signalbox.automations -> signalbox.bases 'build' {
@@ -411,7 +411,7 @@ views {
         }
       }
       when 'C deletes' {
-        personC -> signalbox.web 'delete Base' {
+        personC -> signalbox.web 'delete snapshot' {
           notes 'People holding the role delete directly'
         }
         signalbox.web -> signalbox.bases 'delete' {
@@ -422,7 +422,7 @@ views {
         }
       }
       else 'an agent deletes' {
-        hier.company.team.agentTeam -> signalbox.operations 'delete Base' {
+        hier.company.team.agentTeam -> signalbox.operations 'delete snapshot' {
           notes 'The agent of folder Team (the drive\'s folder): destructive operations from agents go through the decision gate'
         }
         signalbox.operations -> signalbox.attention 'Ready ask' {
@@ -442,8 +442,8 @@ views {
 
   dynamic view work_bases_lease {
     variant sequence
-    title 'Workflows/Work/Bases/Fork a VM from the current Base'
-    description 'W-BAS-08, W-BAS-14, #1217 · Base lease lifecycle; intent first, acquire idempotent on operationId, leases expire at deleteAfter; resume on the current Base'
+    title 'Workflows/Work/Snapshots/Fork a VM from the current snapshot'
+    description 'W-BAS-08, W-BAS-14, #1217 · snapshot lease lifecycle; intent first, acquire idempotent on operationId, leases expire at deleteAfter; resume on the current snapshot'
 
     include signalbox.thread, signalbox.computer, signalbox.bases, signalbox.drive, signalbox.automations, platform.boxd, signalbox, platform
 
@@ -455,7 +455,7 @@ views {
     signalbox.thread -> signalbox.computer 'escalate command' {
       notes '''
         - A command needs a real machine (build, tests, dev server)
-        - The thread never sees a Base; it only sees its Computer
+        - The thread never sees a snapshot; it only sees its Computer
       '''
       navigateTo work_computer_escalate
     }
@@ -474,13 +474,13 @@ views {
     signalbox.bases -> signalbox.drive 'commit lease' {
       notes 'Committed in Drive\'s Repo record, so the version cannot retire mid-create'
     }
-    alt 'Base available' {
+    alt 'Snapshot available' {
       when 'active version' {
         signalbox.computer <- signalbox.bases 'lease' {
-          notes 'Always the current active version, also when the thread resumes after a Base advance'
+          notes 'Always the current active version, also when the thread resumes after a snapshot advance'
         }
       }
-      else 'no Base yet' {
+      else 'no snapshot yet' {
         signalbox.computer <- signalbox.bases 'none' {
           notes '''
             - The machine starts cold from the recipe
@@ -493,11 +493,11 @@ views {
       notes 'Named `t-{threadId}-g{gen}`; egress and `deleteAfter` set before any command'
       navigateTo state_computer
     }
-    opt 'resume after a Base advance' {
+    opt 'resume after a snapshot advance' {
       signalbox.computer -> signalbox.computer 'apply thread changes' {
         notes '''
-          - Current Base plus the thread's changes from its working ref
-          - The thread does not stay pinned to the old Base
+          - Current snapshot plus the thread's changes from its working ref
+          - The thread does not stay pinned to the old snapshot
         '''
       }
     }
@@ -538,8 +538,8 @@ views {
 
   dynamic view work_bases_place_recipe {
     variant sequence
-    title 'Workflows/Work/Bases/Place a Base recipe'
-    description 'W-BAS-01 · Tree Place{baseRecipe}, nearest wins, admin-only by default; Repo keys Bases by (drive, recipeHash)'
+    title 'Workflows/Work/Snapshots/Place a snapshot recipe'
+    description 'W-BAS-01 · Tree Place{baseRecipe}, nearest wins, admin-only by default; Repo keys Snapshots by (drive, recipeHash)'
 
     include personC, personA, signalbox.web, signalbox.tree, signalbox.drive, signalbox.bases, signalbox
 
@@ -577,15 +577,15 @@ views {
       personC -> signalbox.web 'own recipe on subfolder' {
         notes '''
           - Nearest wins: threads below that subfolder use its recipe
-          - Same drive, new recipe hash, its own Base
+          - Same drive, new recipe hash, its own snapshot
         '''
       }
       signalbox.web -> signalbox.tree 'Place on subfolder'
     }
     signalbox.drive -> signalbox.bases 'live recipe hash' {
       notes '''
-        - Bases are keyed by (drive, recipeHash) in Drive's Repo record
-        - The next Base refresh builds every live recipe hash
+        - Snapshots are keyed by (drive, recipeHash) in Drive's Repo record
+        - The next snapshot refresh builds every live recipe hash
       '''
       navigateTo work_bases_build
     }
@@ -593,8 +593,8 @@ views {
 
   dynamic view work_bases_promote {
     variant sequence
-    title 'Workflows/Work/Bases/Promote a Base or keep the last one'
-    description 'W-BAS-03, W-BAS-04, W-BAS-15 · Base status poll, promote, build failed'
+    title 'Workflows/Work/Snapshots/Promote a snapshot or keep the last one'
+    description 'W-BAS-03, W-BAS-04, W-BAS-15 · snapshot status poll, promote, build failed'
 
     include hier.company.team.agentTeam, hier.company.team, signalbox.automations, signalbox.bases, signalbox.drive, signalbox
 
@@ -606,7 +606,7 @@ views {
     loop 'Tick while builds are pending' {
       signalbox.automations -> signalbox.bases 'status' {
         notes '''
-          - Base status is a default automation on a Tick: polling the machine provider forces on us
+          - Snapshot status is a default automation on a Tick: polling the machine provider forces on us
           - No special-case alarms, no sleep loops
         '''
         navigateTo work_bases_build
@@ -616,7 +616,7 @@ views {
     alt 'result' {
       when 'Ready' {
         signalbox.bases -> signalbox.automations 'base.ready' {
-          notes 'Base refresh was waiting on it with `w.waitForEvent`'
+          notes 'Snapshot refresh was waiting on it with `w.waitForEvent`'
         }
         signalbox.automations -> signalbox.bases 'promote' {
           notes '`promote(drive, recipeHash, version)`; `NotReady` or `Stale` refuse'
@@ -639,7 +639,7 @@ views {
         signalbox.automations -> hier.company.team.agentTeam 'report failure' {
           notes '''
             - To the agent of the drive's folder, Team (assumed); it can fix the recipe or ask
-            - A and B keep working on the last good Base
+            - A and B keep working on the last good snapshot
           '''
         }
       }
@@ -832,7 +832,7 @@ views {
         }
       }
       hier.company.team.runThread -> signalbox.computer 'run on revision' {
-        notes 'Machines fork the Base; nothing touches the forge yet'
+        notes 'Machines fork the snapshot; nothing touches the forge yet'
       }
       alt 'result' {
         when 'all pass' {
@@ -923,7 +923,7 @@ views {
       services.github -> signalbox.automations 'PR event' {
         notes '''
           - CI result, review, comment or conflict (forge webhook via Ingress)
-          - CI on Base results arrive as `run.finished`
+          - CI on snapshot results arrive as `run.finished`
         '''
         navigateTo work_bases_ci
       }
@@ -991,7 +991,7 @@ views {
     opt 'checks badge' {
       personA -> signalbox.web 'open checks'
       parallel {
-        signalbox.web -> signalbox.automations 'CI on Base runs' {
+        signalbox.web -> signalbox.automations 'CI on snapshot runs' {
           navigateTo work_bases_ci
         }
         signalbox.web -> signalbox.connections 'forge statuses'
@@ -1295,7 +1295,7 @@ views {
       }
     }
     signalbox.drive -> signalbox.automations 'main advanced' {
-      notes 'Base refresh, CI and Confirm live key on the ingested `main`'
+      notes 'Snapshot refresh, CI and Confirm live key on the ingested `main`'
       navigateTo work_bases_build
     }
   }
@@ -1424,7 +1424,7 @@ views {
       navigateTo work_git_forge_ingest
     }
     signalbox.drive -> signalbox.drive 'main advances' {
-      notes 'Only now; CI and Bases key on the ingested `main`'
+      notes 'Only now; CI and Snapshots key on the ingested `main`'
     }
   }
 

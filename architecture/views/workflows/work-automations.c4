@@ -249,7 +249,7 @@ views {
     signalbox.automations -> hier.company 'places defaults' {
       navigateTo work_automations_self_healing
       notes """
-        - Git-host sync, PR watch, CI on Base, Base refresh and status, Nightly rebuild, Merge gate, Payment, Custody sweeper, Release followers, Idle-drive eviction, Self-healing loop
+        - Git-host sync, PR watch, CI on snapshot, snapshot refresh and status, Nightly rebuild, Merge gate, Payment, Custody sweeper, Release followers, Idle-drive eviction, Self-healing loop
         - Plus the guards again
       """
     }
@@ -392,7 +392,7 @@ views {
     hier.company.runCo -> signalbox.computer 'repro test first' {
       notes """
         - No fix starts without a test that fails on main
-        - The agent loop runs in the run thread; only the test commands run on a machine forked from the warm Base
+        - The agent loop runs in the run thread; only the test commands run on a machine forked from the warm snapshot
       """
     }
     alt 'repro' {
@@ -826,7 +826,7 @@ views {
         hier.company.team.runThread -> signalbox.computer 'opens, executes' {
           notes """
             - Every machine a run starts is the run's: granted, paid and metered as that run
-            - A VM exists only while commands execute, forked from a warm Base
+            - A VM exists only while commands execute, forked from a warm snapshot
           """
         }
         hier.company.team.runThread <- signalbox.computer 'exit code, files'
@@ -867,13 +867,13 @@ views {
         - No special-case alarms, no sleep-step loops
       """
     }
-    loop 'Base status tick, while pending' {
-      signalbox.automations -> signalbox.bases 'Bases.status' {
+    loop 'Snapshot status tick, while pending' {
+      signalbox.automations -> signalbox.bases 'Snapshots.status' {
         navigateTo work_automations_triggers
         notes 'The vendor forces polling, so the polling is a default automation on a Tick trigger'
       }
       signalbox.bases -> platform.boxd 'snapshot status' {
-        notes 'Only Bases talks to the machine provider; Automations never sees the vendor'
+        notes 'Only Snapshots talks to the machine provider; Automations never sees the vendor'
       }
       signalbox.automations <- signalbox.bases 'pending, ready, failed'
     }

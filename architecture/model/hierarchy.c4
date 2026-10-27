@@ -1,9 +1,10 @@
-// The tree as instances, looking like real use. Two level kinds only: a person's top level and
-// folders (nesting freely). An organization appears only as the owner of a folder. Each person has
-// several top-level folders with their own threads; threads can also sit on the top level itself.
+// The hierarchy app's tree as instances, looking like real use. Two level kinds only: a person's top
+// level and folders (nesting freely). An organization appears only as the owner of a folder. Each person
+// has several top-level folders with their own threads; threads can also sit on the top level itself.
 // Shared folders are mounted into other people's trees: A's "Friends" (owner: A, mounted by B) and
-// "Company" (owner: organization, mounted under each member's "Work"). Resolution is by position
-// only: placed at the thread's folder or above (reach below), nearest wins; anything else is a loan.
+// "Company" (owner: organization, mounted under each member's "Work"). The app's rules (Apps/Hierarchy/
+// Rules): placed at the thread's folder or above (reach below), nearest wins; anything else is a loan.
+// They are rules of this app, not of the primitives (#1507).
 model {
   hier = system 'Tree (example)' {
     // Owner of folder Company (an identity organization); never a level

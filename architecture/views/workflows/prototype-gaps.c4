@@ -142,7 +142,7 @@ views {
 
   dynamic view pgap_pools_share_people {
     variant sequence
-    title 'Workflows/Folders/Pools/Share a pool with people'
+    title 'Apps/Hierarchy/Workflows/Pools/Share a pool with people'
     description 'Prototype gap PG-06 (accounts/SharePoolDialog, PoolBlock: Share, Connect, Leave). Per corrections 1 and 6 a person grant never routes a turn: using the pool takes a placement or a loan.'
 
     include personA, personB, signalbox.web, signalbox.funnel, signalbox.models, signalbox.tree
@@ -384,7 +384,7 @@ views {
 
   dynamic view pgap_home_hide_for_me {
     variant sequence
-    title 'Workflows/Folders/Tree/Home/Hide a folder from my tree, restore it from Archived'
+    title 'Apps/Hierarchy/Workflows/Tree/Home/Hide a folder from my tree, restore it from Archived'
     description 'Prototype gap PG-10 (sidebar/sections/sectionStore, ArchivedList, HomeProjectNode). Per-person view state; the folder and its work are untouched.'
 
     include personA, personB, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.attention

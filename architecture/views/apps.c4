@@ -1,0 +1,98 @@
+// One drill-down per app decided after Basalt's first release (Apps/...). The hierarchy app's existing
+// views (hierarchy.c4, domain.c4, states, workflows and scenarios on folders) sit under Apps/Hierarchy.
+views {
+
+  view app-goals {
+    title 'Apps/Goals/Overview'
+    description '''
+      What is going on while I'm away? The Goals app holds four kinds of record:
+      - **Goal**: where a person is heading. One overarching goal per person; smaller goals nest under it.
+      - **Branch** (alias mission): a pointer to work happening elsewhere (an agent session, a PR, a workflow
+        run, a task done by hand). It opens at the idea and lives: idea (Considering) → mission → back →
+        merged or dropped. Branches nest, and every branch serves a goal.
+      - **Report**: a branch's latest state, a one-line summary, the time and a link. A branch that hasn't
+        reported recently shows as stale; nothing shows working without evidence.
+      - **Base**: the status quo as an explicit record. Nobody edits it; it changes only when a branch merges.
+        Captured workflows fill it.
+
+      Anything that speaks MCP reports through one `report` tool: local Claude Code and Codex through a hook,
+      workflows from a step, connectors through webhooks. A "needs you" report lands in the pipeline lanes
+      (Blocker, Ready, Considering).
+    '''
+
+    include laptopCli with { title 'Local Claude Code · Codex' }
+    include signalbox.gateway.toolGateway with { title 'Tools gateway'; description '/mcp'; navigateTo layer-apps }
+    include signalbox.ingress with { title 'Webhooks' }
+    include signalbox.routine with { navigateTo app-routine }
+    include signalbox.goals, signalbox.goals.*
+    include hier.lanesA with { title 'Pipeline lanes' }
+
+    exclude signalbox, signalbox.gateway, hier
+    exclude * -> *
+    include laptopCli -> signalbox.gateway.toolGateway with { title 'hook' }
+    include signalbox.gateway.toolGateway -> signalbox.goals.report
+    include signalbox.ingress -> signalbox.goals.report
+    include signalbox.routine -> signalbox.goals.report, signalbox.routine -> signalbox.goals.base
+    include signalbox.goals.* -> signalbox.goals.*
+    include signalbox.goals.report -> hier.lanesA
+
+    style laptopCli { color green }
+    style signalbox.gateway.toolGateway, signalbox.ingress { color indigo }
+    style hier.lanesA { color secondary }
+    rank source { laptopCli }
+    autoLayout TopBottom
+  }
+
+  view app-routine {
+    title 'Apps/Personal routine/Overview'
+    description '''
+      How does a process become a workflow? A workflow is a graph of steps, and a person, an agent, code or a
+      device does each step. It starts as a record of how things are done today, every step manual, and steps
+      get automated one at a time. The single source is code in an app; the graph is drawn from that code, and
+      every run is recorded. Rules that hold across steps are first-class, not notes.
+      The first case is a personal routine: its runs show in Signalbox while the existing app keeps doing the
+      work, and its devices become connectors later. Its runs report into Goals and its change merges into the base.
+    '''
+
+    include personA with { title 'Person' }
+    include signalbox.routine
+    include signalbox.goals with { navigateTo app-goals }
+    include signalbox.goals.report, signalbox.goals.base
+
+    exclude signalbox
+    exclude * -> *
+    include personA -> signalbox.routine
+    include signalbox.routine -> signalbox.goals.report, signalbox.routine -> signalbox.goals.base
+
+    style personA { color green }
+    rank source { personA }
+    global style depth
+    autoLayout TopBottom
+  }
+
+  view app-hierarchy {
+    title 'Apps/Hierarchy/Rules'
+    description '''
+      What does the hierarchy app add? It arranges records and grants into folders, one opinionated arrangement
+      of the primitives; other arrangements stay possible. Its rules, not rules of the primitives:
+      - Reach goes down the tree: a placement reaches its level and everything below.
+      - The nearest placement wins, and resolution never depends on who sends.
+      - Anything not above you comes in only by a loan; a mount is the only edge across owners.
+
+      An app can use an account without it being placed anywhere. The app comes after caller identity and
+      app-to-app calls, so it can enforce its grants inside other apps. Click a box for the next cut.
+    '''
+
+    include signalbox.tree with { title 'Hierarchy'; navigateTo m-tree }
+    include domain.level with { navigateTo domain }
+    include domain.placement with { navigateTo domain-placed }
+    include domain.loan with { navigateTo hierarchy-resolution }
+    include domain.mount with { navigateTo hierarchy }
+    include domain.owner
+
+    exclude domain
+
+    style signalbox.tree { color primary }
+    autoLayout TopBottom
+  }
+}
