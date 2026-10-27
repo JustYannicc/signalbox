@@ -134,8 +134,10 @@ export function makeTurnBindings(env: ProductFixtureEnv, ctx: DurableObjectState
             control: env.HARNESS_RESUME_CONTROL,
           });
           const parentCheckpointId = current.snapshot.checkpoint.checkpointId;
-          const paths = ["file.txt", ".claude/projects/-workspace/product-native-session.jsonl"];
+          const paths = ["file.txt"];
           if (env.HARNESS_C_PRODUCT_BOOTSTRAP?.provider === "codex") paths.push("codex-turn.txt");
+          if ((await platform.initialProvider()) === "claude-code")
+            paths.push(".claude/projects/-workspace/product-native-session.jsonl");
           const threadId = checkpoint.snapshot.providerThread.appThreadId;
           if (threadId === null) throw fail("Checkpoint thread identity is missing.");
           const files = captureHarnessCProductFiles({

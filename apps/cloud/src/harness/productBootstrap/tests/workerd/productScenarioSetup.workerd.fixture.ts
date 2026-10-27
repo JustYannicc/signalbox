@@ -55,14 +55,18 @@ export function productModules(env: ProductWorkerEnv) {
   } as const;
 }
 
-export async function setupProductClaudeRun(env: ProductWorkerEnv) {
+export async function setupProductRun(
+  env: ProductWorkerEnv,
+  initialProvider: "claude-code" | "codex" = "claude-code",
+) {
   const runId = `product-workerd-${crypto.randomUUID()}`;
   const capability = env.PRODUCT_FIXTURE.getByName(
     CAPABILITY_NAME,
   ) as unknown as ProductFixtureCapability;
-  const configured = await capability.configure(runId);
+  const configured = await capability.configure(runId, initialProvider);
   const claude = await capability.release("claude-code");
   const codex = await capability.release("codex");
+  const initialRelease = initialProvider === "codex" ? codex : claude;
   const state = createHarnessDurableState(env, runId);
   const processId = "product-native-process";
   const executionOperationId = "product-initial-execution";
@@ -76,7 +80,7 @@ export async function setupProductClaudeRun(env: ProductWorkerEnv) {
   const seed = await referenceArtifact(`seed-${runId}`, new TextEncoder().encode(runId));
 
   const initialData = await Effect.runPromise(
-    dataForDriver(ProviderDriverKind.make("claudeAgent")),
+    dataForDriver(ProviderDriverKind.make(initialProvider === "codex" ? "codex" : "claudeAgent")),
   );
   const initialThread: OrchestrationV2ProviderThread = {
     ...initialData.providerThread,
@@ -87,7 +91,7 @@ export async function setupProductClaudeRun(env: ProductWorkerEnv) {
     },
   };
   const initialCheckpoint: HarnessCheckpoint = {
-    release: claude.expected.plan.release,
+    release: initialRelease.expected.plan.release,
     providerSession: initialData.providerSession,
     snapshot: {
       providerThread: initialThread,
@@ -184,7 +188,7 @@ export async function setupProductClaudeRun(env: ProductWorkerEnv) {
 
   const process = {
     processId,
-    codeId: claude.artifact.releaseId,
+    codeId: initialRelease.artifact.releaseId,
     residentBytes: 1,
     nativeSessionId,
     checkpointId: initialized.files.checkpoint.checkpointId,
@@ -194,13 +198,13 @@ export async function setupProductClaudeRun(env: ProductWorkerEnv) {
     expectedFacetGeneration: 1,
     mainModule: "productFacet.mjs",
     modules: productModules(env),
-    entrypoint: "ClaudeFacet",
+    entrypoint: initialProvider === "codex" ? "CodexFacet" : "ClaudeFacet",
     productBootstrap: {
-      provider: "claude-code" as const,
-      preparedReleaseId: claude.artifact.releaseId,
+      provider: initialProvider,
+      preparedReleaseId: initialRelease.artifact.releaseId,
       restoreMode: "same-variant-serialized-checkpoint" as const,
     },
-    targetPreparedRelease: claude.expected,
+    targetPreparedRelease: initialRelease.expected,
     journal: {
       publisher: initialPublisher,
       runStore: {
@@ -259,7 +263,7 @@ export async function setupProductClaudeRun(env: ProductWorkerEnv) {
   const firstProcess = initialResult.processes[0];
   if (firstProcess?.status !== "settled")
     throw new Error(
-      `The public Claude runShard did not settle: ${JSON.stringify(firstProcess)}; observations: ${JSON.stringify(await capability.observations())}`,
+      `The public initial runShard did not settle: ${JSON.stringify(firstProcess)}; observations: ${JSON.stringify(await capability.observations())}`,
     );
 
   const beforeResume = await state.threadSupervisor.execute({

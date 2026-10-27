@@ -1,4 +1,4 @@
-import { ProviderDriverKind, RunId } from "@t3tools/contracts";
+import { ProviderDriverKind, RunId, RunAttemptId, NodeId, MessageId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
@@ -29,6 +29,7 @@ export type FixtureRelease = {
 
 export type FixtureState = {
   readonly runId: string;
+  readonly initialProvider: HarnessCProductProvider;
   readonly releases: Readonly<Record<HarnessCProductProvider, FixtureRelease>>;
   readonly turns: Readonly<
     Record<string, { readonly reference: HarnessRunArtifact; readonly json: string }>
@@ -44,23 +45,36 @@ export type FixtureState = {
 const turnCodec = Schema.fromJsonString(Schema.toCodecJson(RunnerTurn));
 const encodeTurn = Schema.encodeSync(turnCodec);
 
-const turnFor = async (driver: string, runId: string, prompt: string) => {
+const turnFor = async (
+  driver: string,
+  runId: string,
+  prompt: string,
+  ordinal: number,
+  restored: boolean,
+) => {
   const data = await Effect.runPromise(dataForDriver(ProviderDriverKind.make(driver)));
   const turn = {
     ...data.turn,
     runId: RunId.make(runId),
-    message: { ...data.turn.message, text: prompt },
-    providerThread:
-      driver === "claudeAgent"
-        ? {
-            ...data.turn.providerThread,
-            nativeThreadRef: {
-              driver: data.providerThread.driver,
-              nativeId: "product-native-session",
-              strength: "strong" as const,
-            },
-          }
-        : data.turn.providerThread,
+    runOrdinal: ordinal,
+    providerTurnOrdinal: ordinal,
+    attemptId: RunAttemptId.make(`product-attempt-${ordinal}`),
+    rootNodeId: NodeId.make(`product-root-${ordinal}`),
+    message: {
+      ...data.turn.message,
+      messageId: MessageId.make(`product-message-${ordinal}`),
+      text: prompt,
+    },
+    providerThread: restored
+      ? {
+          ...data.turn.providerThread,
+          nativeThreadRef: {
+            driver: data.providerThread.driver,
+            nativeId: "product-native-session",
+            strength: "strong" as const,
+          },
+        }
+      : data.turn.providerThread,
   } as RunnerTurn;
   const json = encodeTurn(turn);
   const bytes = new TextEncoder().encode(json);
@@ -95,7 +109,10 @@ async function codexRelease(): Promise<FixtureRelease> {
   };
 }
 
-export async function createProductFixtureState(runId: string): Promise<FixtureState> {
+export async function createProductFixtureState(
+  runId: string,
+  initialProvider: HarnessCProductProvider = "claude-code",
+): Promise<FixtureState> {
   const claude = await releaseMaterial("controlled official Claude startup", "workerd-c");
   const [claudeExpected, codex] = await Promise.all([loadMaterial(claude), codexRelease()]);
   const claudeRelease: FixtureRelease = {
@@ -109,12 +126,25 @@ export async function createProductFixtureState(runId: string): Promise<FixtureS
     files: claude.files,
   };
   const turns = {
-    "turn-one": await turnFor("claudeAgent", "product-turn-one", "Run the first controlled turn."),
-    "turn-two": await turnFor("codex", "product-turn-two", "Complete the resumed controlled turn."),
+    "turn-one": await turnFor(
+      initialProvider === "codex" ? "codex" : "claudeAgent",
+      "product-turn-one",
+      "Run the first controlled turn.",
+      1,
+      true,
+    ),
+    "turn-two": await turnFor(
+      "codex",
+      "product-turn-two",
+      "Complete the resumed controlled turn.",
+      2,
+      initialProvider === "codex",
+    ),
   };
   const program = await programFixture();
   const state: FixtureState = {
     runId,
+    initialProvider,
     releases: { "claude-code": claudeRelease, codex },
     turns,
     programs: {

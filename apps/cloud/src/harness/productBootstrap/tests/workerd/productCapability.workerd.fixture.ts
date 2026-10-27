@@ -25,14 +25,18 @@ export interface ProductFixtureServiceEnv {
 }
 
 export class ProductFixtureCapability extends DurableObject<ProductFixtureServiceEnv> {
-  async configure(runId: string) {
+  async configure(runId: string, initialProvider: HarnessCProductProvider = "claude-code") {
     const existing = await this.ctx.storage.get<FixtureState>("fixture/state");
     if (existing?.runId === runId) return this.summary();
     for (const key of (await this.ctx.storage.list({ prefix: "fixture/" })).keys())
       await this.ctx.storage.delete(key);
-    const state = await createProductFixtureState(runId);
+    const state = await createProductFixtureState(runId, initialProvider);
     await this.ctx.storage.put("fixture/state", state);
     return this.summary();
+  }
+
+  async initialProvider() {
+    return (await this.state()).initialProvider;
   }
 
   async summary() {

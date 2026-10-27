@@ -76,7 +76,12 @@ export default {
   async fetch(request: Request, env: ProductWorkerEnv) {
     try {
       const path = new URL(request.url).pathname;
-      if (path !== "/positive" && path !== "/mismatch" && !path.startsWith("/failure/"))
+      if (
+        path !== "/positive" &&
+        path !== "/codex-same" &&
+        path !== "/mismatch" &&
+        !path.startsWith("/failure/")
+      )
         return Response.json({ error: "unknown scenario" }, { status: 404 });
       const mismatch = path === "/mismatch";
       return Response.json(
@@ -84,6 +89,7 @@ export default {
           env,
           mismatch,
           path.startsWith("/failure/") ? path.slice("/failure/".length) : undefined,
+          path === "/codex-same" ? "codex" : "claude-code",
         ),
       );
     } catch (cause) {

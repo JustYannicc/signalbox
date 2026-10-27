@@ -202,6 +202,10 @@ it.each([
     expect(result.materialFault).toBe(materialFault);
     expect(result.rejected.rejected).toBe(true);
     expect(result.status.status).toBe("retained");
+    expect(result.status.failure).toEqual({
+      stage: materialFault.endsWith("files") ? "checkpoint" : "fresh-open",
+      reason: "driver-failed",
+    });
     expect(result.status.preparedIdentityPersisted).toBe(false);
     expect(result.status.terminalEvidencePersisted).toBe(true);
     expect(result.unchangedPublication).toBe(true);
@@ -211,3 +215,38 @@ it.each([
     expect(result.writer.writer).toBe(false);
   },
 );
+
+it("restores Codex checkpoints inertly and starts the first fresh-grant turn through public C", async () => {
+  const response = await harness.fetch("http://proof/codex-same");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.initialProvider).toBe("codex");
+  expect(result.initial.status).toBe("settled");
+  expect(result.resumed.status).toBe("resumed");
+  expect(result.continued.status).toBe("settled");
+  expect(result.restoreModes.codex).toBe("same-variant-serialized-checkpoint");
+  expect(result.completedRequests).toEqual([
+    { requestId: "turn-one", status: "completed", finishStatus: "completed" },
+    { requestId: "turn-two", status: "completed", finishStatus: "completed" },
+  ]);
+  expect(result.observations.initialAccessCalls).toBe(2);
+  expect(result.observations.turnAccessCalls).toBe(2);
+  expect(result.observations.executor).toMatchObject({
+    grant: { kind: "turn", requestId: "turn-two", call: 2 },
+    signalAborted: false,
+    requestSignalAborted: false,
+    body: "native-executor-request",
+  });
+  expect(result.files.codex).toBe("codex facet hydrated\n");
+  expect(result.proof.terminal).toHaveLength(2);
+  expect(
+    result.proof.terminal.every(
+      (row: {
+        stopped: boolean;
+        joined: { invocationRpc: boolean; fetch: boolean; ports: boolean };
+      }) => row.stopped && row.joined.invocationRpc && row.joined.fetch && row.joined.ports,
+    ),
+  ).toBe(true);
+  expect(result.writer.writer).toBe(false);
+});

@@ -1,6 +1,6 @@
 // @effect-diagnostics cryptoRandomUUID:off - The route owns exactly one C proof chain.
 import type { ProductWorkerEnv } from "./productBindings.workerd.fixture.ts";
-import { setupProductClaudeRun } from "./productScenarioSetup.workerd.fixture.ts";
+import { setupProductRun } from "./productScenarioSetup.workerd.fixture.ts";
 
 const publisherFor = (generation: number, facetNonce: string) => ({
   generation,
@@ -17,8 +17,9 @@ export async function runProductScenario(
   env: ProductWorkerEnv,
   mismatch: boolean,
   materialFault?: string,
+  initialProvider: "claude-code" | "codex" = "claude-code",
 ) {
-  const setup = await setupProductClaudeRun(env);
+  const setup = await setupProductRun(env, initialProvider);
   const {
     runId,
     capability,
@@ -65,7 +66,10 @@ export async function runProductScenario(
     productBootstrap: {
       provider: "codex" as const,
       preparedReleaseId: codex.artifact.releaseId,
-      restoreMode: "cross-variant-fresh-boot" as const,
+      restoreMode:
+        initialProvider === "codex"
+          ? ("same-variant-serialized-checkpoint" as const)
+          : ("cross-variant-fresh-boot" as const),
     },
     transition: {
       operationId: "resume-one",
@@ -245,6 +249,7 @@ export async function runProductScenario(
   };
   return {
     kind: "product-c-workerd-public-chain",
+    initialProvider,
     initial: setup.firstProcess,
     resumed,
     continued: continued.processes[0],
@@ -255,7 +260,10 @@ export async function runProductScenario(
     })),
     restoreModes: {
       claude: "same-variant-serialized-checkpoint",
-      codex: "cross-variant-fresh-boot",
+      codex:
+        initialProvider === "codex"
+          ? "same-variant-serialized-checkpoint"
+          : "cross-variant-fresh-boot",
     },
     currentPublication: last.snapshot.lastPublication,
     checkpoints: {

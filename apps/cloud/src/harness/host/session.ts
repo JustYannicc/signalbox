@@ -329,6 +329,8 @@ export const createHostSession = <G>(
                   }),
                 );
               const prepared = initial;
+              if (prepared !== undefined && native.retireCheckpointMcp !== undefined)
+                yield* native.retireCheckpointMcp(prepared.configuration.epoch);
               initial = undefined;
               if (prepared !== undefined) mcp.retire(prepared.configuration.epoch);
             }),

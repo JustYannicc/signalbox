@@ -79,6 +79,8 @@ export interface NativeHostBinding {
     signal: AbortSignal,
     load: NativeThreadLoad,
   ) => Effect.Effect<void, HarnessError>;
+  /** Retire restored setup without treating it as a completed turn. */
+  readonly retireCheckpointMcp?: (epoch: number) => Effect.Effect<void, HarnessError>;
   /** Complete the matching native turn before the host retires its MCP route. */
   readonly completeMcpTurn?: (epoch: number) => void;
 }
