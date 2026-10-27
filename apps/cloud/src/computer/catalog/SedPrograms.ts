@@ -38,7 +38,7 @@ export function createChildSedBindings(options: ChildSedBindingsOptions) {
     }
     bindings.set(executable, {
       manifest,
-      // Both spellings use the same pinned GNU bytes and preserve their dispatch identity.
+      // GNU sed uses the same WASI and process metadata imports as BusyBox.
       implementation: options.child((admission) =>
         createChildBusyboxProgram({
           ...admission,
