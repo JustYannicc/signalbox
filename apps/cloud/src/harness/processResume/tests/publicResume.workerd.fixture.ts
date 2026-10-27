@@ -2,6 +2,7 @@ import { HarnessProcessExecutionEntrypoint } from "../../HarnessProcessExecution
 import { ProofShard, ProofPlacementStore } from "./publicResumeShard.fixture.ts";
 import { ProofFilesStore, ProofRunStore, ProofSupervisor } from "./publicResumeStores.fixture.ts";
 import { publicResumeProof } from "./publicResumeProof.fixture.ts";
+import { publicIdleCycle } from "./publicIdleCycle.fixture.ts";
 import { publicIdleFailure } from "./publicIdleFailure.fixture.ts";
 import { publicIdleProof } from "./publicIdleProof.fixture.ts";
 import {
@@ -26,6 +27,7 @@ export default {
   async fetch(request: Request, env: ProofEnv) {
     try {
       const path = new URL(request.url).pathname;
+      if (path === "/retained-idle/cycle") return Response.json(await publicIdleCycle(env));
       if (path === "/retained-idle/failure-invocation")
         return Response.json(await publicIdleFailure(env, "invocation"));
       if (path === "/retained-idle/failure-checkpoint")

@@ -159,6 +159,27 @@ it.each(["invocation", "checkpoint"] as const)(
   },
 );
 
+it("stops both idle handles across successive resume cycles in one shard", async () => {
+  const response = await harness.fetch("http://proof/retained-idle/cycle");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.cycles).toHaveLength(2);
+  expect(result.cycles[1].identity.incarnationNonce).not.toBe(
+    result.cycles[0].identity.incarnationNonce,
+  );
+  for (const cycle of result.cycles) {
+    expect(cycle.result).toBe("idle");
+    expect(cycle.before).toMatchObject({ writer: true, leases: 1, permits: 0 });
+    expect(cycle.stopped).toEqual({ status: "stopped" });
+    expect(cycle.duplicate).toEqual(cycle.stopped);
+    expect(cycle.after).toMatchObject({ writer: false, leases: 0 });
+  }
+  expect(result.firstDuplicate).toEqual(result.cycles[0].stopped);
+  expect(result.conflict).toBe(true);
+  expect(result.evidence.terminal).toHaveLength(3);
+});
+
 it("consumes real durable stop evidence after A rehydration in the same shard and rejects a missing observed release", async () => {
   const response = await harness.fetch("http://proof/missing-observation");
   const body = await response.text();

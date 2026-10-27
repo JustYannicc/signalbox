@@ -66,12 +66,13 @@ export class HarnessProcessResumeOwner {
       readonly result: Promise<HarnessProcessExecutionShardResult>;
     }
   >();
-  #idleStop:
-    | {
-        readonly request: NormalizedContinuation;
-        readonly result: Promise<{ readonly status: "stopped" }>;
-      }
-    | undefined;
+  readonly #idleStops = new Map<
+    string,
+    {
+      readonly request: NormalizedContinuation;
+      readonly result: Promise<{ readonly status: "stopped" }>;
+    }
+  >();
   #continuation:
     | {
         readonly request: NormalizedContinuation;
@@ -350,7 +351,13 @@ export class HarnessProcessResumeOwner {
 
   stopIdleProcess(supplied: unknown): Promise<{ readonly status: "stopped" }> {
     const request = snapshotContinuation(supplied);
-    const previous = this.#idleStop;
+    const key = JSON.stringify([
+      request.runId,
+      request.processId,
+      request.resumeOperationId,
+      request.runStore.request.requestId,
+    ]);
+    const previous = this.#idleStops.get(key);
     if (previous !== undefined) {
       if (!sameData(previous.request, request))
         return Promise.reject(new Error("Another idle-stop attempt owns this process."));
@@ -400,7 +407,7 @@ export class HarnessProcessResumeOwner {
       .finally(() => {
         this.#running = false;
       });
-    this.#idleStop = { request, result };
+    this.#idleStops.set(key, { request, result });
     return result;
   }
 
