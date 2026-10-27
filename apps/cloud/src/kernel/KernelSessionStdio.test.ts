@@ -5,14 +5,15 @@ import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
 import {
   createKernelSessionStdio,
   type KernelSessionOutputObserver,
+  type KernelSessionInputObserver,
 } from "./KernelSessionStdio.ts";
 import { createKernelProcessStreams } from "./KernelProcessStreams.ts";
 import { sqliteFixture } from "./tests/sqliteFixture.ts";
 
-function fixture(observe?: KernelSessionOutputObserver) {
+function fixture(observe?: KernelSessionOutputObserver, observeInput?: KernelSessionInputObserver) {
   const database = sqliteFixture();
   const wakes = new KernelWakeRegistry();
-  const session = createKernelSessionStdio(wakes, undefined, observe);
+  const session = createKernelSessionStdio(wakes, undefined, observe, observeInput);
   const files = new KernelFileSystem({
     mounts: [{ path: "/", storage: createFacetSqliteStorage(database.storage, () => 1n) }],
     stdio: session.stdio,
@@ -79,6 +80,55 @@ describe("Kernel session stdio", () => {
       await f.close();
     }
   });
+  it("observes only bytes consumed by native reads and cannot change the input", async () => {
+    const observed: number[] = [];
+    const f = fixture(undefined, (bytes) => {
+      observed.push(...bytes);
+      bytes.fill(99);
+      throw new Error("An observer does not own native input");
+    });
+    try {
+      const writer = f.session.stdin.getWriter();
+      await writer.write(new Uint8Array([0, 255, 128, 7, 42]));
+      expect(observed).toEqual([]);
+      const first = new Uint8Array(3);
+      expect(await f.session.stdio[0].readInto!(first)).toBe(3);
+      expect(first).toEqual(new Uint8Array([0, 255, 128]));
+      expect(observed).toEqual([0, 255, 128]);
+      const second = new Uint8Array(8).fill(11);
+      expect(await f.session.stdio[0].readInto!(second)).toBe(2);
+      expect(second).toEqual(new Uint8Array([7, 42, 11, 11, 11, 11, 11, 11]));
+      expect(observed).toEqual([0, 255, 128, 7, 42]);
+      await writer.close();
+      expect(await f.session.stdio[0].readInto!(second)).toBe(0);
+      expect(observed).toEqual([0, 255, 128, 7, 42]);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("observes a blocked read once after data arrives without failing input on observer rejection", async () => {
+    const observed: number[][] = [];
+    const f = fixture(undefined, async (bytes) => {
+      observed.push([...bytes]);
+      throw new Error("Rejected observation does not cancel a native read");
+    });
+    try {
+      const target = new Uint8Array(8).fill(17);
+      const reading = f.session.stdio[0].readInto!(target);
+      expect(reading).toBeInstanceOf(Promise);
+      expect(observed).toEqual([]);
+      const writer = f.session.stdin.getWriter();
+      await writer.write(new Uint8Array([255, 0, 128]));
+      expect(await reading).toBe(3);
+      expect(target).toEqual(new Uint8Array([255, 0, 128, 17, 17, 17, 17, 17]));
+      expect(observed).toEqual([[255, 0, 128]]);
+      await writer.close();
+    } finally {
+      await f.close();
+    }
+  });
+
   it("binds the exact filesystem and rejects mismatched standard descriptors", async () => {
     const f = fixture();
     try {
