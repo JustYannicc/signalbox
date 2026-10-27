@@ -12,7 +12,7 @@ import {
   readAdmissionReceipt,
   resultWithAdmissionReceipt,
 } from "./admissionReceipts.ts";
-import { metaTable, requireOwnSchema } from "./sqlite.ts";
+import { metaTable, migrateFileKinds, requireOwnSchema } from "./sqlite.ts";
 import { decodeState, encodeState } from "./state.ts";
 import type { State } from "./state.ts";
 import type { HarnessFilesStore } from "./types.ts";
@@ -163,10 +163,10 @@ export function createHarnessFilesStore(
 
           if (command.type === "readCheckpoint" || command.type === "recoverCheckpoint") {
             const target = database.transactionSync(() => {
-              requireOwnSchema(database, false);
               const current = currentState(database, runId);
               if (!current.state) return fail("MISSING");
               requirePublisher(current.state, command.publisher);
+              migrateFileKinds(database);
               return current.state;
             });
             const content = await readCheckpoint(database, command.checkpointId, "read");

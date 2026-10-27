@@ -63,12 +63,16 @@ export function requireOwnSchema(
     createAdmissionReceiptTable(database);
     migrated = true;
   }
-  const columns = [...database.sql.exec(`PRAGMA table_info(${entryTable})`)];
-  if (!columns.some((column) => column.name === "kind")) {
-    database.sql.exec(
-      `ALTER TABLE ${entryTable} ADD COLUMN kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('file', 'symlink'))`,
-    );
-    migrated = true;
-  }
+  migrated = migrateFileKinds(database) || migrated;
   return { pristine: false, migrated };
+}
+
+// Checkpoint reads may upgrade file metadata without importing legacy admission authority.
+export function migrateFileKinds(database: HarnessFilesDatabase): boolean {
+  const columns = [...database.sql.exec(`PRAGMA table_info(${entryTable})`)];
+  if (columns.some((column) => column.name === "kind")) return false;
+  database.sql.exec(
+    `ALTER TABLE ${entryTable} ADD COLUMN kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('file', 'symlink'))`,
+  );
+  return true;
 }

@@ -69,7 +69,7 @@ describe("durable checkpoint file kinds", () => {
   );
 
   it.effect.each(["readCheckpoint", "recoverCheckpoint"])(
-    "migrates a legacy regular checkpoint on first %s without changing its manifest",
+    "migrates a legacy regular checkpoint on first %s without importing admission state",
     (type) =>
       Effect.gen(function* () {
         const db = yield* database();
@@ -78,6 +78,7 @@ describe("durable checkpoint file kinds", () => {
         );
         db.exec("ALTER TABLE harness_files_entry DROP COLUMN kind");
         db.exec("DROP TABLE harness_files_admission_receipt");
+        const originalState = db.rows("SELECT state_json FROM harness_files_meta");
         const restored = yield* createHarnessFilesStore(db.storage, runId).execute({
           ...read,
           type,
@@ -85,14 +86,43 @@ describe("durable checkpoint file kinds", () => {
         expect(restored.checkpoint).toEqual(original.checkpoint);
         expect(restored.files).toEqual([regular]);
         expect(db.rows("SELECT kind FROM harness_files_entry")).toEqual([{ kind: "file" }]);
-        expect(db.rows("SELECT count(*) AS count FROM harness_files_admission_receipt")).toEqual([
-          { count: 0 },
-        ]);
+        expect(
+          db.rows("SELECT name FROM sqlite_master WHERE name = 'harness_files_admission_receipt'"),
+        ).toEqual([]);
+        expect(db.rows("SELECT state_json FROM harness_files_meta")).toEqual(originalState);
         const repeated = yield* createHarnessFilesStore(db.storage, runId).execute({
           ...read,
           type,
         });
         expect(repeated).toEqual(restored);
+        const initialized = yield* createHarnessFilesStore(db.storage, runId).execute(
+          initialize([regular]),
+        );
+        expect(initialized.checkpoint).toEqual(original.checkpoint);
+        expect(db.rows("SELECT count(*) AS count FROM harness_files_admission_receipt")).toEqual([
+          { count: 0 },
+        ]);
+      }),
+  );
+
+  it.effect.each(["readCheckpoint", "recoverCheckpoint"])(
+    "rejects an unauthenticated legacy %s before migrating any schema",
+    (type) =>
+      Effect.gen(function* () {
+        const db = yield* database();
+        yield* createHarnessFilesStore(db.storage, runId).execute(initialize([regular]));
+        db.exec("ALTER TABLE harness_files_entry DROP COLUMN kind");
+        db.exec("DROP TABLE harness_files_admission_receipt");
+        const schema = db.rows("SELECT name, sql FROM sqlite_master ORDER BY name");
+        const error = yield* createHarnessFilesStore(db.storage, runId)
+          .execute({
+            ...read,
+            type,
+            publisher: { ...publisher, publisherKey: "wrong-publisher-key-".repeat(4) },
+          })
+          .pipe(Effect.flip);
+        expect(error.code).toBe("STALE_PUBLISHER");
+        expect(db.rows("SELECT name, sql FROM sqlite_master ORDER BY name")).toEqual(schema);
       }),
   );
 
