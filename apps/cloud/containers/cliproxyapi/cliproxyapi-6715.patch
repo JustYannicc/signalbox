@@ -2316,7 +2316,7 @@ index 00000000..7960686a
 +	m.sem.Release(1)
 +}
 diff --git a/internal/store/gitstore.go b/internal/store/gitstore.go
-index 3c1f0fbe..6bc9a880 100644
+index 3c1f0fbe..630733ef 100644
 --- a/internal/store/gitstore.go
 +++ b/internal/store/gitstore.go
 @@ -22,6 +22,7 @@ import (
@@ -2369,15 +2369,6 @@ index 3c1f0fbe..6bc9a880 100644
  }
 
  // AuthDir returns the directory used for auth persistence.
-@@ -422,7 +431,7 @@ func (s *GitTokenStore) ensureRepositoryContextLocked(ctx context.Context) (errR
- }
-
- // Save persists token storage and metadata to the resolved auth file path.
--func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (string, error) {
-+func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (savedPath string, errResult error) {
- 	if auth == nil {
- 		return "", fmt.Errorf("auth filestore: auth is nil")
- 	}
 @@ -431,7 +440,9 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: %w", errWeight)
  	}
@@ -2389,7 +2380,7 @@ index 3c1f0fbe..6bc9a880 100644
  	defer s.mu.Unlock()
 
  	path, err := s.resolveAuthPath(auth)
-@@ -462,48 +473,56 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+@@ -462,67 +473,75 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: create dir failed: %w", err)
  	}
 
@@ -2415,7 +2406,7 @@ index 3c1f0fbe..6bc9a880 100644
 -			raw, errMarshal := json.Marshal(auth.Metadata)
 -			if errMarshal != nil {
 -				return "", fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
-+	mirror, errWrite := writeAcquisitionMirror(ctx, path, func(path string) error {
++	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
 +		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
 +			if errCodex != nil {
 +				return errCodex
@@ -2442,21 +2433,21 @@ index 3c1f0fbe..6bc9a880 100644
 +				}
 +				if err = auth.Storage.SaveTokenToFile(path); err != nil {
 +					return err
-+				}
+ 				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("auth filestore: rename failed: %w", errRename)
 +			case auth.Metadata != nil:
 +				auth.Metadata["disabled"] = auth.Disabled
 +				raw, errMarshal := json.Marshal(auth.Metadata)
 +				if errMarshal != nil {
 +					return fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
-+				}
+ 				}
 +				contentsMatch := false
 +				if existing, errRead := os.ReadFile(path); errRead == nil {
 +					contentsMatch = jsonEqual(existing, raw)
 +				} else if !os.IsNotExist(errRead) {
 +					return fmt.Errorf("auth filestore: read existing failed: %w", errRead)
- 				}
--				if errRename := os.Rename(tmp, path); errRename != nil {
--					return "", fmt.Errorf("auth filestore: rename failed: %w", errRename)
++				}
 +				if !contentsMatch {
 +					tmp := path + ".tmp"
 +					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2465,25 +2456,60 @@ index 3c1f0fbe..6bc9a880 100644
 +					if errRename := os.Rename(tmp, path); errRename != nil {
 +						return fmt.Errorf("auth filestore: rename failed: %w", errRename)
 +					}
- 				}
++				}
 +			default:
 +				return fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
  			}
 -		default:
 -			return "", fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
  		}
-+
+-	}
+
+-	if auth.Attributes == nil {
+-		auth.Attributes = make(map[string]string)
+-	}
+-	auth.Attributes[cliproxyauth.AttributePath] = path
+-	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceGit
++		return nil
++	}, func() error {
++		if auth.Attributes == nil {
++			auth.Attributes = make(map[string]string)
++		}
++		auth.Attributes[cliproxyauth.AttributePath] = path
++		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceGit
+
+-	if strings.TrimSpace(auth.FileName) == "" {
+-		auth.FileName = auth.ID
+-	}
++		if strings.TrimSpace(auth.FileName) == "" {
++			auth.FileName = auth.ID
++		}
+
+-	messageID := auth.ID
+-	if strings.TrimSpace(messageID) == "" {
+-		messageID = filepath.Base(path)
+-	}
+-	if errCommit := s.commitAndPushContextLocked(ctx, fmt.Sprintf("Update auth %s", strings.TrimSpace(messageID)), relPath); errCommit != nil {
+-		return "", errCommit
+-	}
++		messageID := auth.ID
++		if strings.TrimSpace(messageID) == "" {
++			messageID = filepath.Base(path)
++		}
++		if errCommit := s.commitAndPushContextLocked(ctx, fmt.Sprintf("Update auth %s", strings.TrimSpace(messageID)), relPath); errCommit != nil {
++			return errCommit
++		}
+
 +		return nil
 +	})
-+	if errWrite != nil {
-+		return "", errWrite
- 	}
-+	defer func() { errResult = mirror.restore(errResult) }()
++	if errPersist != nil {
++		return "", errPersist
++	}
+ 	return path, nil
+ }
 
- 	if auth.Attributes == nil {
- 		auth.Attributes = make(map[string]string)
 diff --git a/internal/store/objectstore.go b/internal/store/objectstore.go
-index 39b8b089..b1963d5c 100644
+index 39b8b089..d78a40f3 100644
 --- a/internal/store/objectstore.go
 +++ b/internal/store/objectstore.go
 @@ -12,7 +12,6 @@ import (
@@ -2503,16 +2529,7 @@ index 39b8b089..b1963d5c 100644
  	putObjectFn func(ctx context.Context, key string, data []byte, contentType string) error
  }
 
-@@ -158,7 +157,7 @@ func (s *ObjectTokenStore) Bootstrap(ctx context.Context, exampleConfigPath stri
- }
-
- // Save persists authentication metadata to disk and uploads it to the object storage backend.
--func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (string, error) {
-+func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (savedPath string, errResult error) {
- 	if auth == nil {
- 		return "", fmt.Errorf("object store: auth is nil")
- 	}
-@@ -184,55 +183,65 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
+@@ -184,68 +183,78 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
  		}
  	}
 
@@ -2539,11 +2556,7 @@ index 39b8b089..b1963d5c 100644
 -			auth.Metadata["disabled"] = auth.Disabled
 -			if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
 -				setter.SetMetadata(auth.Metadata)
-+	mirror, errWrite := writeAcquisitionMirror(ctx, path, func(path string) error {
-+		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
-+			if errCodex != nil {
-+				return errCodex
- 			}
+-			}
 -			if err = auth.Storage.SaveTokenToFile(path); err != nil {
 -				return "", err
 -			}
@@ -2552,7 +2565,11 @@ index 39b8b089..b1963d5c 100644
 -			raw, errMarshal := json.Marshal(auth.Metadata)
 -			if errMarshal != nil {
 -				return "", fmt.Errorf("object store: marshal metadata: %w", errMarshal)
--			}
++	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
 -			contentsMatch := false
 -			if existing, errRead := os.ReadFile(path); errRead == nil {
 -				contentsMatch = jsonEqual(existing, raw)
@@ -2568,13 +2585,11 @@ index 39b8b089..b1963d5c 100644
 +			case auth.Storage != nil:
 +				if auth.Metadata == nil {
 +					auth.Metadata = make(map[string]any)
- 				}
--				if errRename := os.Rename(tmp, path); errRename != nil {
--					return "", fmt.Errorf("object store: rename auth file: %w", errRename)
++				}
 +				auth.Metadata["disabled"] = auth.Disabled
 +				if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
 +					setter.SetMetadata(auth.Metadata)
- 				}
++				}
 +				if err = auth.Storage.SaveTokenToFile(path); err != nil {
 +					return err
 +				}
@@ -2589,7 +2604,9 @@ index 39b8b089..b1963d5c 100644
 +					contentsMatch = jsonEqual(existing, raw)
 +				} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
 +					return fmt.Errorf("object store: read existing metadata: %w", errRead)
-+				}
+ 				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("object store: rename auth file: %w", errRename)
 +				if !contentsMatch {
 +					tmp := path + ".tmp"
 +					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2598,25 +2615,49 @@ index 39b8b089..b1963d5c 100644
 +					if errRename := os.Rename(tmp, path); errRename != nil {
 +						return fmt.Errorf("object store: rename auth file: %w", errRename)
 +					}
-+				}
+ 				}
 +			default:
 +				return fmt.Errorf("object store: nothing to persist for %s", auth.ID)
  			}
 -		default:
 -			return "", fmt.Errorf("object store: nothing to persist for %s", auth.ID)
  		}
-+
+-	}
+
+-	if auth.Attributes == nil {
+-		auth.Attributes = make(map[string]string)
+-	}
+-	auth.Attributes[cliproxyauth.AttributePath] = path
+-	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceObjectStore
++		return nil
++	}, func() error {
++		if auth.Attributes == nil {
++			auth.Attributes = make(map[string]string)
++		}
++		auth.Attributes[cliproxyauth.AttributePath] = path
++		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceObjectStore
+
+-	if strings.TrimSpace(auth.FileName) == "" {
+-		auth.FileName = auth.ID
+-	}
++		if strings.TrimSpace(auth.FileName) == "" {
++			auth.FileName = auth.ID
++		}
+
+-	if err = s.uploadAuth(ctx, path); err != nil {
+-		return "", err
++		if err = s.uploadAuth(ctx, path); err != nil {
++			return err
++		}
 +		return nil
 +	})
-+	if errWrite != nil {
-+		return "", errWrite
++	if errPersist != nil {
++		return "", errPersist
  	}
-+	defer func() { errResult = mirror.restore(errResult) }()
-
- 	if auth.Attributes == nil {
- 		auth.Attributes = make(map[string]string)
+ 	return path, nil
+ }
 diff --git a/internal/store/postgresstore.go b/internal/store/postgresstore.go
-index 69bc318b..1cd24569 100644
+index 69bc318b..7648396f 100644
 --- a/internal/store/postgresstore.go
 +++ b/internal/store/postgresstore.go
 @@ -10,7 +10,6 @@ import (
@@ -2636,16 +2677,7 @@ index 69bc318b..1cd24569 100644
  	persistAuthFn func(ctx context.Context, relID string, data []byte) error
  }
 
-@@ -209,7 +208,7 @@ func (s *PostgresStore) WorkDir() string {
- func (s *PostgresStore) SetBaseDir(string) {}
-
- // Save persists authentication metadata to disk and PostgreSQL.
--func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (string, error) {
-+func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (savedPath string, errResult error) {
- 	if auth == nil {
- 		return "", fmt.Errorf("postgres store: auth is nil")
- 	}
-@@ -235,55 +234,65 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+@@ -235,72 +234,82 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		}
  	}
 
@@ -2672,7 +2704,11 @@ index 69bc318b..1cd24569 100644
 -			auth.Metadata["disabled"] = auth.Disabled
 -			if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
 -				setter.SetMetadata(auth.Metadata)
--			}
++	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
 -			if err = auth.Storage.SaveTokenToFile(path); err != nil {
 -				return "", err
 -			}
@@ -2687,11 +2723,7 @@ index 69bc318b..1cd24569 100644
 -				contentsMatch = jsonEqual(existing, raw)
 -			} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
 -				return "", fmt.Errorf("postgres store: read existing metadata: %w", errRead)
-+	mirror, errWrite := writeAcquisitionMirror(ctx, path, func(path string) error {
-+		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
-+			if errCodex != nil {
-+				return errCodex
- 			}
+-			}
 -			if !contentsMatch {
 -				tmp := path + ".tmp"
 -				if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2701,11 +2733,13 @@ index 69bc318b..1cd24569 100644
 +			case auth.Storage != nil:
 +				if auth.Metadata == nil {
 +					auth.Metadata = make(map[string]any)
-+				}
+ 				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("postgres store: rename auth file: %w", errRename)
 +				auth.Metadata["disabled"] = auth.Disabled
 +				if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
 +					setter.SetMetadata(auth.Metadata)
-+				}
+ 				}
 +				if err = auth.Storage.SaveTokenToFile(path); err != nil {
 +					return err
 +				}
@@ -2714,15 +2748,13 @@ index 69bc318b..1cd24569 100644
 +				raw, errMarshal := json.Marshal(auth.Metadata)
 +				if errMarshal != nil {
 +					return fmt.Errorf("postgres store: marshal metadata: %w", errMarshal)
- 				}
--				if errRename := os.Rename(tmp, path); errRename != nil {
--					return "", fmt.Errorf("postgres store: rename auth file: %w", errRename)
++				}
 +				contentsMatch := false
 +				if existing, errRead := os.ReadFile(path); errRead == nil {
 +					contentsMatch = jsonEqual(existing, raw)
 +				} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
 +					return fmt.Errorf("postgres store: read existing metadata: %w", errRead)
- 				}
++				}
 +				if !contentsMatch {
 +					tmp := path + ".tmp"
 +					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
@@ -2738,16 +2770,48 @@ index 69bc318b..1cd24569 100644
 -		default:
 -			return "", fmt.Errorf("postgres store: nothing to persist for %s", auth.ID)
  		}
-+
+-	}
+
+-	if auth.Attributes == nil {
+-		auth.Attributes = make(map[string]string)
+-	}
+-	auth.Attributes[cliproxyauth.AttributePath] = path
+-	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourcePostgres
++		return nil
++	}, func() error {
++		if auth.Attributes == nil {
++			auth.Attributes = make(map[string]string)
++		}
++		auth.Attributes[cliproxyauth.AttributePath] = path
++		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourcePostgres
+
+-	if strings.TrimSpace(auth.FileName) == "" {
+-		auth.FileName = auth.ID
+-	}
++		if strings.TrimSpace(auth.FileName) == "" {
++			auth.FileName = auth.ID
++		}
+
+-	relID, err := s.relativeAuthID(path)
+-	if err != nil {
+-		return "", err
+-	}
+-	if err = s.upsertAuthRecord(ctx, relID, path); err != nil {
+-		return "", err
++		relID, err := s.relativeAuthID(path)
++		if err != nil {
++			return err
++		}
++		if err = s.upsertAuthRecord(ctx, relID, path); err != nil {
++			return err
++		}
 +		return nil
 +	})
-+	if errWrite != nil {
-+		return "", errWrite
++	if errPersist != nil {
++		return "", errPersist
  	}
-+	defer func() { errResult = mirror.restore(errResult) }()
-
- 	if auth.Attributes == nil {
- 		auth.Attributes = make(map[string]string)
+ 	return path, nil
+ }
 diff --git a/internal/store/save_lock_context_test.go b/internal/store/save_lock_context_test.go
 new file mode 100644
 index 00000000..a966ae2b
@@ -3281,10 +3345,10 @@ index 4865627c..f5eff4c1 100644
 +}
 diff --git a/internal/store/acquisition_mirror.go b/internal/store/acquisition_mirror.go
 new file mode 100644
-index 00000000..2305416e
+index 00000000..b6b86df5
 --- /dev/null
 +++ b/internal/store/acquisition_mirror.go
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,154 @@
 +package store
 +
 +import (
@@ -3308,17 +3372,18 @@ index 00000000..2305416e
 +	writtenInfo os.FileInfo
 +}
 +
-+// Acquisition serialization uses a separate path so Codex can take its own
-+// serialization lock while the destination's refresh lock protects the baseline.
-+// Runtime saves retain their existing local-first behavior.
-+func writeAcquisitionMirror(ctx context.Context, path string, write func(string) error) (*acquisitionMirror, error) {
++// The destination lock covers commit and rollback so a refresh cannot consume a
++// failed login, and cleanup cannot wait behind a refresh after the save expires.
++// Staging lets Codex serialization take its own lock without nesting the target lock.
++func persistAcquisitionMirror(ctx context.Context, path string, write func(string) error, persist func() error) error {
 +	if !cliproxyauth.HasAuthCreationIntent(ctx) {
-+		return nil, write(path)
++		if errWrite := write(path); errWrite != nil {
++			return errWrite
++		}
++		return persist()
 +	}
-+	var mirror *acquisitionMirror
-+	err := codex.WithFileLockContext(ctx, path, func() error {
-+		var errSnapshot error
-+		mirror, errSnapshot = snapshotAcquisitionMirror(path)
++	return codex.WithFileLockContext(ctx, path, func() error {
++		mirror, errSnapshot := snapshotAcquisitionMirror(path)
 +		if errSnapshot != nil {
 +			return errSnapshot
 +		}
@@ -3349,12 +3414,8 @@ index 00000000..2305416e
 +		if errRename := os.Rename(stagedPath, path); errRename != nil {
 +			return errRename
 +		}
-+		return nil
++		return mirror.restore(persist())
 +	})
-+	if err != nil {
-+		return nil, err
-+	}
-+	return mirror, nil
 +}
 +
 +func snapshotAcquisitionMirror(path string) (*acquisitionMirror, error) {
@@ -3400,8 +3461,7 @@ index 00000000..2305416e
 +	if m == nil || m.writtenInfo == nil || errSave == nil {
 +		return errSave
 +	}
-+	// Cleanup must still run after the acquisition context has expired.
-+	if errRestore := codex.WithFileLock(m.path, m.restoreWritten); errRestore != nil {
++	if errRestore := m.restoreWritten(); errRestore != nil {
 +		return errors.Join(errSave, fmt.Errorf("restore failed acquisition mirror: %w", errRestore))
 +	}
 +	return errSave
@@ -3695,16 +3755,17 @@ index 00000000..58a40859
 +}
 diff --git a/internal/store/acquisition_mirror_concurrency_test.go b/internal/store/acquisition_mirror_concurrency_test.go
 new file mode 100644
-index 00000000..468977ab
+index 00000000..e6abe884
 --- /dev/null
 +++ b/internal/store/acquisition_mirror_concurrency_test.go
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,244 @@
 +package store
 +
 +import (
 +	"bytes"
 +	"context"
 +	"errors"
++	"fmt"
 +	"os"
 +	"path/filepath"
 +	"testing"
@@ -3801,29 +3862,52 @@ index 00000000..468977ab
 +func TestAcquisitionRollbackPreservesLockedRefresh(t *testing.T) {
 +	for _, backend := range []string{"object", "postgres"} {
 +		t.Run(backend, func(t *testing.T) {
-+			dir := t.TempDir()
-+			path := filepath.Join(dir, "login.json")
-+			latest := []byte(`{"type":"codex","access_token":"successful-refresh","refresh_token":"rotated"}`)
-+			remote := func() error {
-+				if err := codexauth.WithFileLock(path, func() error { return os.WriteFile(path, latest, 0o600) }); err != nil {
++			synctest.Test(t, func(t *testing.T) {
++				dir := t.TempDir()
++				path := filepath.Join(dir, "login.json")
++				original := []byte(`{"type":"codex","access_token":"original"}`)
++				if err := os.WriteFile(path, original, 0o600); err != nil {
 +					t.Fatal(err)
 +				}
-+				return context.DeadlineExceeded
-+			}
-+			var s cliproxyauth.Store
-+			if backend == "object" {
-+				s = &ObjectTokenStore{authDir: dir, putObjectFn: func(context.Context, string, []byte, string) error { return remote() }}
-+			} else {
-+				s = &PostgresStore{authDir: dir, persistAuthFn: func(context.Context, string, []byte) error { return remote() }}
-+			}
-+			_, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "failed-login"}})
-+			if !errors.Is(err, context.DeadlineExceeded) {
-+				t.Fatalf("Save error = %v", err)
-+			}
-+			got, err := os.ReadFile(path)
-+			if err != nil || string(got) != string(latest) {
-+				t.Fatalf("rollback overwrote a successful refresh: %q, %v", got, err)
-+			}
++				latest := []byte(`{"type":"codex","access_token":"successful-refresh","refresh_token":"rotated"}`)
++				entered := make(chan struct{})
++				done := make(chan error, 1)
++				go func() {
++					<-entered
++					done <- codexauth.WithFileLock(path, func() error {
++						got, err := os.ReadFile(path)
++						if err != nil {
++							return err
++						}
++						if string(got) != string(original) {
++							return fmt.Errorf("refresh consumed failed login: %q", got)
++						}
++						return os.WriteFile(path, latest, 0o600)
++					})
++				}()
++				remote := func() error {
++					close(entered)
++					synctest.Wait()
++					return context.DeadlineExceeded
++				}
++				var s cliproxyauth.Store
++				if backend == "object" {
++					s = &ObjectTokenStore{authDir: dir, putObjectFn: func(context.Context, string, []byte, string) error { return remote() }}
++				} else {
++					s = &PostgresStore{authDir: dir, persistAuthFn: func(context.Context, string, []byte) error { return remote() }}
++				}
++				_, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "failed-login"}})
++				if !errors.Is(err, context.DeadlineExceeded) {
++					t.Fatalf("Save error = %v", err)
++				}
++				if err := <-done; err != nil {
++					t.Fatal(err)
++				}
++				got, err := os.ReadFile(path)
++				if err != nil || string(got) != string(latest) {
++					t.Fatalf("rollback overwrote a successful refresh: %q, %v", got, err)
++				}
++			})
 +		})
 +	}
 +}
