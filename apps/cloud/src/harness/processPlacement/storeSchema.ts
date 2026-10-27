@@ -11,6 +11,7 @@ import type {
 export const OWNER_KEY = "harness-process-placement-owner-v1";
 export const STATE_KEY = "harness-process-slots-v1";
 export const RECOVERY_PREFIX = "harness-process-placement-recovery-v1/";
+export const WRITER_RELEASE_KEY = "harness-process-placement-writer-release-v1";
 export const WRITER_KEY = "harness-process-placement-writer-v1";
 
 export interface HarnessProcessPlacementWriter {

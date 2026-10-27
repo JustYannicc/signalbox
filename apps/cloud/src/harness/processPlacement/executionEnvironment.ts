@@ -35,6 +35,14 @@ export interface HarnessProcessExecutionResumeFacetEnvironment {
   readonly HARNESS_RESUME_SUPERVISOR: Fetcher;
 }
 
+export type HarnessProcessCreationFacetEnvironment = Omit<
+  HarnessProcessExecutionResumeFacetEnvironment,
+  "HARNESS_RESUME_PUBLISHER"
+> & {
+  readonly HARNESS_RESUME_CREATION: true;
+  readonly HARNESS_RESUME_PUBLISHER?: never;
+};
+
 export type HarnessProcessExecutionProcessInput = {
   readonly processId: string;
   readonly codeId: string;
@@ -57,6 +65,23 @@ export type HarnessProcessExecutionProcessInput = {
   readonly resumeFacetEnv?: HarnessProcessExecutionResumeFacetEnvironment;
 } & HarnessProcessExecutionProductBootstrapInput;
 
+export type HarnessProcessExecutionFacetCodeInput = {
+  readonly resumeFacetEnv?:
+    | HarnessProcessExecutionResumeFacetEnvironment
+    | HarnessProcessCreationFacetEnvironment;
+} & Pick<
+  HarnessProcessExecutionProcessInput,
+  | "processId"
+  | "codeId"
+  | "residentBytes"
+  | "mainModule"
+  | "modules"
+  | "entrypoint"
+  | "facetEnv"
+  | "runStorePublisher"
+> &
+  HarnessProcessExecutionProductBootstrapInput;
+
 export interface HarnessProcessExecutionEnvironment extends HarnessCProductCapabilityEnvironment {
   readonly LOADER: WorkerLoader;
   readonly PLACEMENT_STORES: DurableObjectNamespace;
@@ -76,6 +101,7 @@ const reservedFacetEnvironmentKeys = [
   "HARNESS_RESUME_RUN_ID",
   "HARNESS_RESUME_CONTROL",
   "HARNESS_RESUME_PUBLISHER",
+  "HARNESS_RESUME_CREATION",
   "HARNESS_RESUME_RUN_STORE",
   "HARNESS_RESUME_FILES_STORE",
   "HARNESS_RESUME_SUPERVISOR",
@@ -83,7 +109,7 @@ const reservedFacetEnvironmentKeys = [
 ] as const;
 
 export function createHarnessProcessFacetEnvironment(
-  process: HarnessProcessExecutionProcessInput,
+  process: HarnessProcessExecutionFacetCodeInput,
   environment: HarnessCProductCapabilityEnvironment,
   identity: HarnessProcessFacetLocator,
   context?: DurableObjectState,
@@ -150,9 +176,16 @@ export function createHarnessProcessFacetEnvironment(
     ...(process.resumeFacetEnv === undefined
       ? {}
       : {
+          ...("HARNESS_RESUME_CREATION" in process.resumeFacetEnv
+            ? { HARNESS_RESUME_CREATION: true }
+            : {}),
           HARNESS_RESUME_RUN_ID: process.resumeFacetEnv.HARNESS_RESUME_RUN_ID,
           HARNESS_RESUME_CONTROL: process.resumeFacetEnv.HARNESS_RESUME_CONTROL,
-          HARNESS_RESUME_PUBLISHER: process.resumeFacetEnv.HARNESS_RESUME_PUBLISHER,
+          ...(process.resumeFacetEnv.HARNESS_RESUME_PUBLISHER === undefined
+            ? {}
+            : {
+                HARNESS_RESUME_PUBLISHER: process.resumeFacetEnv.HARNESS_RESUME_PUBLISHER,
+              }),
           HARNESS_RESUME_RUN_STORE: process.resumeFacetEnv.HARNESS_RESUME_RUN_STORE,
           HARNESS_RESUME_FILES_STORE: process.resumeFacetEnv.HARNESS_RESUME_FILES_STORE,
           HARNESS_RESUME_SUPERVISOR: process.resumeFacetEnv.HARNESS_RESUME_SUPERVISOR,

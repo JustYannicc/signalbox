@@ -14,6 +14,7 @@ const resultAction = (entry: RequestMode["entries"][number]): Decision["action"]
     case "completed":
       return "committed";
     case "not-applied":
+    case "withdrawn":
       return "not-applied";
     case "indeterminate":
       return "indeterminate";
@@ -126,6 +127,27 @@ export function transitionRequests(state: State, command: RequestCommand): Decis
         ],
       });
     }
+    case "request.withdraw": {
+      const index = mode.entries.findIndex(
+        (entry) => entry.request.requestId === command.request.requestId,
+      );
+      const entry = mode.entries[index];
+      if (!entry) return fail("MISSING");
+      if (!same(entry.request, command.request)) return fail("CONFLICT");
+      if (entry.status === "withdrawn") return { state, action: "not-applied" };
+      // Cancelling only an unadmitted offer also fences a delayed request.admit RPC.
+      if (entry.status !== "offered" || entry.progress !== null || entry.finish !== null)
+        return fail("CONFLICT");
+      return update(
+        {
+          ...mode,
+          entries: mode.entries.map((row, i) =>
+            i === index ? { ...row, status: "withdrawn" } : row,
+          ),
+        },
+        "not-applied",
+      );
+    }
     case "request.reconcile": {
       const index = mode.entries.findIndex(
         (entry) => entry.request.requestId === command.requestId,
@@ -135,7 +157,12 @@ export function transitionRequests(state: State, command: RequestCommand): Decis
       const reconciliation = { evidence: command.evidence, outcome: command.outcome };
       if (entry.reconciliation && same(entry.reconciliation, reconciliation))
         return { state, action: resultAction(entry) };
-      if (entry.status === "completed" || entry.status === "not-applied") return fail("CONFLICT");
+      if (
+        entry.status === "completed" ||
+        entry.status === "not-applied" ||
+        entry.status === "withdrawn"
+      )
+        return fail("CONFLICT");
       // Reconciliation cannot release a still-current publisher's admitted work.
       if (entry.status !== "indeterminate" || !current || entry.generation === current.generation)
         return fail("CONFLICT");

@@ -26,6 +26,7 @@ export const productOptions = (
   release: ReleaseOptions,
   home = "/home/product-codex",
   processResumeArtifact?: HarnessReleaseArtifact,
+  turnGrantSource?: ProductCodexHarnessHostOptions<unknown>["turnGrantSource"],
 ) =>
   Effect.gen(function* () {
     const database = yield* Effect.acquireRelease(Effect.sync(hostSqlite), (value) =>
@@ -74,6 +75,7 @@ export const productOptions = (
         return new Response("product model transport");
       },
       executor: { forward: async () => new Response("executor") },
+      ...(turnGrantSource === undefined ? {} : { turnGrantSource }),
       save: async () => ({ commit: "unused" }),
       port: async () => ({ fetch: async () => new Response("port") }),
       native: {

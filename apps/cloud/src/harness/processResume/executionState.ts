@@ -18,20 +18,39 @@ import type { HarnessProcessResumePlacementPin } from "./durableState.ts";
 import type { HarnessProcessResumeRunStoreBinding } from "./contracts.ts";
 import type { Published } from "./authority.ts";
 
-export interface OwnedProcessRequest {
+interface OwnedRequestState {
   readonly runId: string;
   readonly placement: HarnessProcessResumePlacementPin;
-  readonly process: HarnessProcessExecutionProcessInput;
   durable: HarnessDurableState;
-  readonly handle: HarnessProcessHandle<HarnessProcessFacetInvokeInput>;
-  readonly publication: Published;
   readonly publisher: HarnessThreadSupervisorPublisher;
   readonly request: HarnessRequestOffer;
   readonly runStorePublisher: HarnessRequestPublisher;
-  readonly journal: HarnessProcessResumeRunStoreBinding;
   readonly parentCheckpoint: HarnessRequestCheckpoint;
   readonly completion: PromiseWithResolvers<HarnessDurableStateCheckpointResult | undefined>;
   readonly settled: PromiseWithResolvers<void>;
   control: HarnessThreadSupervisorControlClaim;
   retained: boolean;
 }
+
+export type OwnedProcessRequest = OwnedRequestState &
+  (
+    | {
+        readonly kind: "created";
+        readonly process: Pick<
+          HarnessProcessExecutionProcessInput,
+          "processId" | "operationId" | "nativeSessionId"
+        >;
+        readonly handle: Pick<
+          HarnessProcessHandle<HarnessProcessFacetInvokeInput>,
+          "identity" | "stop" | "join" | "cleanup"
+        >;
+        readonly journal: Pick<HarnessProcessResumeRunStoreBinding, "controlKey" | "supervisor">;
+      }
+    | {
+        readonly kind: "published";
+        readonly process: HarnessProcessExecutionProcessInput;
+        readonly handle: HarnessProcessHandle<HarnessProcessFacetInvokeInput>;
+        readonly publication: Published;
+        readonly journal: HarnessProcessResumeRunStoreBinding;
+      }
+  );

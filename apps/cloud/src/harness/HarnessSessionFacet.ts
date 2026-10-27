@@ -38,7 +38,7 @@ export interface HarnessSessionFacet {
   readonly threadId: string;
   readonly release: HarnessRelease;
   readonly open: (
-    input: Pick<HarnessOpenInput, "session" | "checkpoint">,
+    input: Pick<HarnessOpenInput, "session" | "checkpoint" | "creation">,
   ) => Effect.Effect<HarnessSession, HarnessError>;
   readonly dispose: Effect.Effect<void, HarnessError>;
 }

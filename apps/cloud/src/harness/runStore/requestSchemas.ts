@@ -1,9 +1,9 @@
 import * as Schema from "effect/Schema";
 import { Artifact, capability, id, integer, positive, Progress, Supervisor } from "./values.ts";
 
-const Checkpoint = Schema.Struct({ native: Artifact, filesystem: Artifact });
+export const Checkpoint = Schema.Struct({ native: Artifact, filesystem: Artifact });
 const Publisher = Schema.Struct({ generation: positive, facetNonce: id, publisherKey: capability });
-const Offer = Schema.Struct({ requestId: id, input: Artifact });
+export const Offer = Schema.Struct({ requestId: id, input: Artifact });
 const Finish = Schema.Struct({
   sequence: positive,
   status: Schema.Literals(["completed", "failed"]),
@@ -46,6 +46,7 @@ export const RequestCommands = Schema.Union([
     supervisor: Supervisor,
     request: Offer,
   }),
+  Schema.Struct({ type: Schema.Literal("request.withdraw"), ...Controlled, request: Offer }),
   Schema.Struct({ type: Schema.Literal("request.admit"), ...Published }),
   Schema.Struct({ type: Schema.Literal("request.check"), ...Published }),
   Schema.Struct({ type: Schema.Literal("request.progress"), ...Published, progress: Progress }),
@@ -63,7 +64,14 @@ const Entry = Schema.Struct({
   request: Offer,
   generation: positive,
   facetNonce: id,
-  status: Schema.Literals(["offered", "admitted", "indeterminate", "completed", "not-applied"]),
+  status: Schema.Literals([
+    "offered",
+    "admitted",
+    "indeterminate",
+    "completed",
+    "not-applied",
+    "withdrawn",
+  ]),
   progress: Schema.NullOr(Progress),
   finish: Schema.NullOr(Finish),
   reconciliation: Schema.NullOr(Reconciliation),
