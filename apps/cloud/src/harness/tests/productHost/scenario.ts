@@ -400,7 +400,10 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
         if (scenario === "turn") {
           const observed = host.loadedPreparedRelease();
           NodeAssert.deepEqual(observed.artifact, processResumeArtifact);
-          NodeAssert.equal(observed.plan.release.manifestSha256, processResumeArtifact.artifactHash);
+          NodeAssert.equal(
+            observed.plan.release.manifestSha256,
+            processResumeArtifact.artifactHash,
+          );
           NodeAssert.equal(observed.plan.sourceIdentity, processResumeArtifact.sourceIdentity);
         }
         NodeAssert.deepEqual(host.commands.systemIdentity, systemIdentity);

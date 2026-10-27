@@ -16,7 +16,8 @@ export function productLoadedPreparedReleaseObserver(
   let observed: HarnessProcessResumePreparedRelease | undefined;
   return {
     capture: (loaded) => {
-      if (selected !== undefined) observed = productLoadedPreparedRelease(provider, selected, loaded);
+      if (selected !== undefined)
+        observed = productLoadedPreparedRelease(provider, selected, loaded);
     },
     read: () => {
       if (selected === undefined)
@@ -65,7 +66,9 @@ export function productLoadedPreparedRelease(
   loaded: LoadedHarnessRelease | undefined,
 ): HarnessProcessResumePreparedRelease {
   if (selected === undefined)
-    throw new Error("Product process resume requires a caller-selected full HarnessReleaseArtifact.");
+    throw new Error(
+      "Product process resume requires a caller-selected full HarnessReleaseArtifact.",
+    );
   if (loaded === undefined)
     throw new Error("The product host has not completed its verified release load.");
   if (selected.provider !== provider || loaded.plan.release.harness !== provider)
