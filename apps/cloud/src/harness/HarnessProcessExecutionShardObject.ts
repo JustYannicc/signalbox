@@ -28,6 +28,25 @@ export class HarnessProcessExecutionShardObject extends DurableObject<HarnessPro
     return this.#owner().runShard(input, requestContextId, this.processExecutionHooks());
   }
 
+  startFreshProcess(input: Parameters<HarnessProcessResumeOwner["startFreshProcess"]>[0]) {
+    return this.#owner().startFreshProcess(input);
+  }
+
+  runCreatedProcess(
+    input: Parameters<HarnessProcessResumeOwner["runCreatedProcess"]>[0],
+    requestContextId: string,
+  ) {
+    return this.#owner().runCreatedProcess(input, requestContextId);
+  }
+
+  recoverFreshProcess(input: Parameters<HarnessProcessResumeOwner["recoverFreshProcess"]>[0]) {
+    return this.#owner().recoverFreshProcess(input);
+  }
+
+  processCreationStatus(input: Parameters<HarnessProcessResumeOwner["processCreationStatus"]>[0]) {
+    return this.#owner().processCreationStatus(input);
+  }
+
   resumeProcess(operation: unknown) {
     return this.#owner().resumeProcess(operation);
   }

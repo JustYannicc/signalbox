@@ -37,6 +37,21 @@ export const validateOpen = (input: HarnessOpenInput) =>
       );
     }
     const checkpoint = input.checkpoint;
+    const creation = input.creation;
+    if (
+      creation !== undefined &&
+      (checkpoint !== undefined ||
+        input.session.initialNativeThreadId !== undefined ||
+        input.session.resumeFromSession !== undefined ||
+        creation.providerThread.nativeThreadRef !== null ||
+        !threadMatches(creation.providerThread, input))
+    )
+      return yield* Effect.fail(
+        new HarnessError({
+          operation: "open",
+          message: "Fresh creation requires an unbound thread in this session.",
+        }),
+      );
     if (checkpoint === undefined) return input;
     const { providerSession, snapshot } = checkpoint;
     if (

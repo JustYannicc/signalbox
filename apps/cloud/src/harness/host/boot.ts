@@ -28,6 +28,9 @@ const openCodec = Schema.fromJsonString(
         initialNativeThreadId: Schema.optionalKey(Schema.String),
         initialProviderItemIdentityVersion: Schema.optionalKey(Schema.Literal(2)),
       }),
+      creation: Schema.optionalKey(
+        Schema.Struct({ providerThread: OrchestrationV2ProviderThread }),
+      ),
       checkpoint: Schema.optionalKey(
         Schema.Struct({
           release: Schema.Struct({

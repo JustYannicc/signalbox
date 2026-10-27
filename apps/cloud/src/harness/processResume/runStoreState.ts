@@ -46,7 +46,10 @@ export const sameArtifact = (
 export const sameCheckpoint = (left: HarnessRequestCheckpoint, right: HarnessRequestCheckpoint) =>
   sameArtifact(left.native, right.native) && sameArtifact(left.filesystem, right.filesystem);
 
-export const sameSupervisor = (snapshot: Snapshot, binding: HarnessProcessResumeRunStoreBinding) =>
+export const sameSupervisor = (
+  snapshot: Snapshot,
+  binding: Pick<HarnessProcessResumeRunStoreBinding, "supervisor">,
+) =>
   snapshot.supervisor.epoch === binding.supervisor.epoch &&
   snapshot.supervisor.claimId === binding.supervisor.claimId;
 

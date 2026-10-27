@@ -34,6 +34,12 @@ import {
 import type { HarnessRequestCheckpoint } from "../HarnessRunStore.ts";
 import type { HarnessProcessInvocationSettlement } from "../processPlacement/contracts.ts";
 import { stopIdleProcess } from "./idleStop.ts";
+import { HarnessProcessCreationOwner } from "../processCreation/service.ts";
+import type {
+  HarnessProcessCreationInput,
+  HarnessProcessCreationRunInput,
+} from "../processCreation/contracts.ts";
+import type { HarnessProcessCreationRecoveryInput } from "../processCreation/recovery.ts";
 import { validateHarnessProcessResumeRunStoreActive } from "./runStore.ts";
 
 export interface ResumeProcessResult {
@@ -51,6 +57,7 @@ interface ExecutionShardExports {
 /** Owns lifecycle state for one real shard context; callers can never supply a context or handle. */
 export class HarnessProcessResumeOwner {
   #running = false;
+  #creation: HarnessProcessCreationOwner | undefined;
   #retained = false;
   #current: OwnedProcessRequest | undefined;
   #attempt: ResumeAttempt | undefined;
@@ -93,6 +100,84 @@ export class HarnessProcessResumeOwner {
     this.environment = environment;
     this.incarnationNonce = incarnationNonce;
     this.#checkpoints = new ProcessCheckpointOwner(context.storage, () => this.#current);
+  }
+
+  #creationOwner() {
+    const {
+      HARNESS_RUN_STORE,
+      HARNESS_FILES_STORE,
+      HARNESS_THREAD_SUPERVISOR,
+      PLACEMENT_STORES,
+      LOADER,
+      RESIDENT_BYTE_LIMIT,
+    } = this.environment;
+    const namespaces = [
+      HARNESS_RUN_STORE,
+      HARNESS_FILES_STORE,
+      HARNESS_THREAD_SUPERVISOR,
+      PLACEMENT_STORES,
+    ];
+    if (
+      !HARNESS_RUN_STORE ||
+      !HARNESS_FILES_STORE ||
+      !LOADER ||
+      typeof LOADER.get !== "function" ||
+      namespaces.some(
+        (binding) =>
+          !binding || typeof binding.getByName !== "function" || typeof binding.get !== "function",
+      ) ||
+      !Number.isSafeInteger(Number(RESIDENT_BYTE_LIMIT)) ||
+      Number(RESIDENT_BYTE_LIMIT) <= 0
+    )
+      throw new Error(
+        "Cold creation requires the public durable stores, loader, placement, and residency limit.",
+      );
+    return (this.#creation ??= new HarnessProcessCreationOwner(
+      this.context,
+      {
+        ...this.environment,
+        HARNESS_RUN_STORE,
+        HARNESS_FILES_STORE,
+        // The placement-only environment types this binding without durable-state RPC methods.
+        HARNESS_THREAD_SUPERVISOR: this.environment
+          .HARNESS_THREAD_SUPERVISOR as unknown as HarnessDurableStateBindings["HARNESS_THREAD_SUPERVISOR"],
+      },
+      this.incarnationNonce,
+    ));
+  }
+
+  async #exclusiveFresh<Result>(operation: () => Promise<Result>): Promise<Result> {
+    if (this.#running || this.#current || this.#attempt || this.#resumed || this.#retained)
+      throw new Error("This shard already owns process execution.");
+    this.#running = true;
+    try {
+      return await operation();
+    } finally {
+      this.#running = false;
+    }
+  }
+
+  startFreshProcess(input: HarnessProcessCreationInput) {
+    return this.#exclusiveFresh(() => this.#creationOwner().start(input));
+  }
+
+  runCreatedProcess(input: HarnessProcessCreationRunInput, requestContextId: string) {
+    return this.#exclusiveFresh(() =>
+      this.#creationOwner().run(input, requestContextId, (owned) => {
+        this.#current = owned;
+      }),
+    );
+  }
+
+  recoverFreshProcess(input: HarnessProcessCreationRecoveryInput) {
+    return this.#exclusiveFresh(() => this.#creationOwner().recover(input));
+  }
+
+  processCreationStatus(input: {
+    readonly runId: string;
+    readonly control: HarnessProcessCreationInput["controllerClaim"];
+  }) {
+    return this.#creationOwner().status(input.runId, input.control);
   }
 
   async runShard(
@@ -158,6 +243,7 @@ export class HarnessProcessResumeOwner {
         afterActivation: async ({ handle, activation }) => {
           const active = await initial.afterActivation();
           this.#current = {
+            kind: "published",
             runId: input.runId,
             durable,
             process: prepared,

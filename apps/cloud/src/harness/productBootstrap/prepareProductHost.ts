@@ -1,29 +1,21 @@
-import { ThreadId } from "@t3tools/contracts";
+import { createSeededProductHost } from "./seededHost.ts";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleaseLedger.ts";
 import type { HarnessRequestFacetPreparationEvidence } from "../HarnessRequestFacet.ts";
 import type { HarnessRequestCheckpoint } from "../HarnessRunStore.ts";
-import type { HarnessRequestTurnOptions } from "../HarnessRequestTurn.ts";
 import type { HarnessProcessResumePreparedRelease } from "../HarnessProcessResume.ts";
 import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
 import type { HarnessError } from "../Harness.ts";
 import type { HostOpenInput } from "../HarnessSessionHost.ts";
 import type { ProductHostOptions, ProductHarnessSessionHost } from "../host/product.ts";
 import { HarnessRequestFacetError } from "../HarnessRequestFacet.ts";
-import { createHarnessRequestTurnRuntime } from "../HarnessRequestTurn.ts";
 import { readHarnessCProductFilesCheckpoint } from "./filesCheckpoint.ts";
 import { materializeHarnessCProductFiles } from "./materializeFiles.ts";
 import { decodeHarnessCProductNativeCheckpoint } from "./nativeCheckpoint.ts";
-import {
-  productMachineInventory,
-  productModelTransport,
-  productProgramBindings,
-  productReleaseBindings,
-} from "./capabilities.ts";
-import { productExecutor } from "./executor.ts";
-import { productTurnGrantSource } from "./turnGrant.ts";
+import { productReleaseBindings } from "./capabilities.ts";
 import { selectHarnessCProductRelease } from "./selectedArtifact.ts";
+import { createHarnessCProductRequestRuntime } from "./requestRuntime.ts";
 import type {
   HarnessCProductFacetEnvironment,
   HarnessCProductHostPreparationInput,
@@ -109,14 +101,6 @@ export function prepareHarnessCProductHost<
         }),
       catch: (cause) => failed("A's committed files checkpoint could not be read.", cause),
     });
-    const programs = yield* Effect.tryPromise({
-      try: () => productProgramBindings(input.factory.provider, input.capabilities.programs),
-      catch: (cause) => failed("The provider program seed could not be prepared.", cause),
-    });
-    const machineInventory = yield* Effect.tryPromise({
-      try: () => productMachineInventory(input.factory.provider, input.capabilities.machine),
-      catch: (cause) => failed("The provider machine inventory could not be prepared.", cause),
-    });
     const providerOptions = yield* input.factory.buildHostOptions({
       env: input.env,
       ctx: input.ctx,
@@ -126,61 +110,25 @@ export function prepareHarnessCProductHost<
       checkpoint: native.checkpoint,
       filesCheckpoint: files,
     });
-    const built = {
-      ...providerOptions,
-      programs: { codes: programs.codes, seed: programs.seed },
-      machineInventory,
-      modelTransport: productModelTransport(input.capabilities.model),
-      executor: productExecutor(input.capabilities.executor),
-      ...(input.capabilities.turnGrantSource === undefined
-        ? {}
-        : { turnGrantSource: productTurnGrantSource(input.capabilities.turnGrantSource) }),
-    } as Omit<Options, "release" | "processResumeArtifact">;
-    if (built.threadId.length === 0)
-      return yield* Effect.fail(failed("Product host thread identity is missing."));
-    const threadId = ThreadId.make(built.threadId);
-    yield* Effect.try({
-      try: () =>
-        materializeHarnessCProductFiles({
-          files: built.files,
-          threadId: built.threadId,
-          checkpoint: files,
+    const { host, threadId } = yield* createSeededProductHost<G, Native, Options, Host>({
+      input,
+      selected,
+      providerOptions,
+      createHost: input.factory.createHost,
+      beforeCreate: (built) =>
+        Effect.try({
+          try: () =>
+            materializeHarnessCProductFiles({
+              files: built.files,
+              threadId: built.threadId,
+              checkpoint: files,
+            }),
+          catch: (cause) =>
+            new HarnessRequestFacetError("A's filesystem checkpoint could not be materialized.", {
+              cause,
+            }),
         }),
-      catch: (cause) => failed("A's filesystem checkpoint could not be materialized.", cause),
     });
-    const options = {
-      ...built,
-      release: selected.release,
-      processResumeArtifact: selected.artifact,
-    } as Options;
-    const host = yield* input.factory
-      .createHost(options)
-      .pipe(
-        Effect.mapError((cause: HarnessError) =>
-          failed("The product host could not be constructed.", cause),
-        ),
-      );
-    yield* Effect.addFinalizer(() =>
-      host.dispose.pipe(
-        Effect.catchCause((cause) =>
-          Effect.die(failed("The product host could not close.", cause)),
-        ),
-      ),
-    );
-    yield* host
-      .seed("assets")
-      .pipe(
-        Effect.mapError((cause: HarnessError) =>
-          failed("Product assets could not be seeded.", cause),
-        ),
-      );
-    yield* host
-      .seed("programs")
-      .pipe(
-        Effect.mapError((cause: HarnessError) =>
-          failed("Product programs could not be seeded.", cause),
-        ),
-      );
     const open = yield* input.factory.buildOpenInput({
       env: input.env,
       checkpoint: native.checkpoint,
@@ -226,41 +174,13 @@ export function prepareHarnessCProductHost<
           failed("Checkpoint access could not be retired after inert restoration.", cause),
         ),
       );
-    const requestTurnOptions: Omit<HarnessRequestTurnOptions<G>, "restore"> = {
-      readInput: (reference, context) =>
-        Effect.gen(function* () {
-          const turn = yield* input.turnBindings.readTurn(reference, context);
-          const access = yield* Effect.tryPromise({
-            try: () =>
-              input.capabilities.access.resolveTurnAccess({
-                threadId,
-                runId: input.runId,
-                requestId: context.requestId,
-              }),
-            catch: (cause) => failed("Turn access could not be resolved.", cause),
-          });
-          return {
-            turn,
-            access: {
-              ...access,
-              signal: context.signal,
-              ...(input.capabilities.turnGrantSource === undefined
-                ? {}
-                : {
-                    publisher: {
-                      generation: context.publisher.generation,
-                      facetNonce: context.publisher.facetNonce,
-                    },
-                  }),
-            },
-          };
-        }),
-      onEvent: input.turnBindings.onEvent,
-      writeResult: input.turnBindings.writeResult,
-      writeCheckpoint: input.turnBindings.writeCheckpoint,
-      verify: input.turnBindings.verify,
-    };
-    const runtime = yield* createHarnessRequestTurnRuntime(requestTurnOptions, session);
+    const runtime = yield* createHarnessCProductRequestRuntime({
+      runId: input.runId,
+      threadId,
+      capabilities: input.capabilities,
+      turnBindings: input.turnBindings,
+      session,
+    });
     const evidence: HarnessRequestFacetPreparationEvidence = {
       facetNonce: input.facetNonce,
       nativeSessionId,

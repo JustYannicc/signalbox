@@ -24,9 +24,19 @@ export type SeedStage = "assets" | "programs";
 export type HostOpenInput<G> = Pick<HarnessOpenInput, "session"> & {
   readonly bootAttemptId: string;
 } & (
-    | { readonly checkpoint?: undefined; readonly initialAccess?: never }
+    | {
+        readonly checkpoint?: undefined;
+        readonly creation?: undefined;
+        readonly initialAccess?: never;
+      }
     | {
         readonly checkpoint: NonNullable<HarnessOpenInput["checkpoint"]>;
+        readonly creation?: never;
+        readonly initialAccess: TurnAccess<G>;
+      }
+    | {
+        readonly checkpoint?: never;
+        readonly creation: NonNullable<HarnessOpenInput["creation"]>;
         readonly initialAccess: TurnAccess<G>;
       }
   );

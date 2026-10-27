@@ -1,4 +1,6 @@
 import { expect, vi } from "vite-plus/test";
+import { ProviderDriverKind, type OrchestrationV2ProviderThread } from "@t3tools/contracts";
+import { dataForDriver } from "../adapter/tests/data.ts";
 import type { ProductComputerOptions } from "../../computer/ProductComputer.ts";
 import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -37,6 +39,61 @@ vi.mock("../../computer/ProductComputer.ts", async (importOriginal) => {
 });
 
 const services = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer);
+
+const productThread = (
+  thread: Effect.Success<ReturnType<typeof dataForDriver>>["providerThread"],
+): OrchestrationV2ProviderThread => ({
+  ...thread,
+  appThreadId: codexSession.threadId,
+  providerSessionId: codexSession.providerSessionId,
+  providerInstanceId: codexSession.modelSelection.instanceId,
+  nativeThreadRef: null,
+});
+
+const productTurn = (
+  turn: Effect.Success<ReturnType<typeof dataForDriver>>["turn"],
+  providerThread: OrchestrationV2ProviderThread,
+) => ({
+  ...turn,
+  threadId: codexSession.threadId,
+  appThread: {
+    ...turn.appThread,
+    id: codexSession.threadId,
+    providerInstanceId: codexSession.modelSelection.instanceId,
+    modelSelection: codexSession.modelSelection,
+    activeProviderThreadId: providerThread.id,
+    lineage: { ...turn.appThread.lineage, rootThreadId: codexSession.threadId },
+  },
+  providerThread,
+  modelSelection: codexSession.modelSelection,
+});
+
+const openColdProductSession = (
+  product: Effect.Success<ReturnType<typeof productOptions>>,
+  bootAttemptId: string,
+) =>
+  Effect.gen(function* () {
+    const data = yield* dataForDriver(ProviderDriverKind.make("codex"));
+    const peer = processFixture();
+    yield* Effect.addFinalizer(() => Effect.promise(() => peer.process.abort()));
+    (yield* Effect.promise(() => peer.output)).enqueue(new TextEncoder().encode(readyLine));
+    launch.mockImplementation(async () => peer.process);
+    const providerThread = productThread(data.providerThread);
+    const access = {
+      grant: {},
+      connections: { servers: [] },
+      signal: new AbortController().signal,
+      publisher: { generation: 1, facetNonce: "product-codex-test-publisher" },
+    };
+    const session = yield* product.host.open({
+      session: codexSession,
+      bootAttemptId,
+      creation: { providerThread },
+      initialAccess: access,
+    });
+    yield* Effect.addFinalizer(() => Effect.orDie(session.dispose));
+    return { data, peer, providerThread, access, session };
+  });
 
 it.effect(
   "routes the public Codex composition through its bound Computer and native transports",
@@ -205,5 +262,85 @@ it.effect("closes product stdio and Computer after native acquisition fails", ()
     ];
     expect(rows).toHaveLength(1);
     expect(String(rows[0]?.error_json)).toContain("missing WASI import");
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
+it.effect("uses the cold native Codex thread for the first fresh-grant turn", () =>
+  Effect.gen(function* () {
+    launch.mockReset();
+    const release = yield* Effect.promise(() => codexFixture());
+    const issuedRuns: string[] = [];
+    const product = yield* productOptions(release.options, undefined, undefined, {
+      issue: async ({ runId }) => {
+        issuedRuns.push(runId);
+        return { grant: { runId }, endpoint: "https://gateway.product.test" };
+      },
+    });
+    const { data, peer, providerThread, access, session } = yield* openColdProductSession(
+      product,
+      "product-codex-cold-open",
+    );
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(peer.sent.filter((method) => method === "thread/start")).toHaveLength(1);
+    expect(peer.sent).not.toContain("thread/resume");
+    expect(peer.sent).not.toContain("turn/start");
+    const initial = yield* session.export();
+    expect(initial.snapshot.providerThread.nativeThreadRef?.nativeId).toBe(
+      "preinitialized-native-thread",
+    );
+    expect(initial.snapshot.providerTurns).toEqual([]);
+    yield* session.retireCheckpointAccess;
+    const turn = productTurn(data.turn, providerThread);
+    expect(turn.providerThread.nativeThreadRef).toBeNull();
+    yield* session.turn({ turn, access });
+    expect(issuedRuns).toEqual([turn.runId]);
+    expect(peer.sent.filter((method) => method === "thread/start")).toHaveLength(1);
+    expect(peer.sent.filter((method) => method === "thread/resume")).toHaveLength(1);
+    expect(peer.sent.filter((method) => method === "turn/start")).toHaveLength(1);
+    expect(peer.sent).toEqual(["thread/start", "thread/read", "thread/resume", "turn/start"]);
+    expect(
+      peer.requests.find((request) => request.method === "thread/resume")?.params,
+    ).toMatchObject({ threadId: initial.snapshot.providerThread.nativeThreadRef?.nativeId });
+    expect(peer.requests.find((request) => request.method === "turn/start")?.params).toMatchObject({
+      threadId: initial.snapshot.providerThread.nativeThreadRef?.nativeId,
+    });
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
+it.effect("rejects a known native thread ID mismatch before native load or turn", () =>
+  Effect.gen(function* () {
+    launch.mockReset();
+    const release = yield* Effect.promise(() => codexFixture());
+    let grantIssueCount = 0;
+    const product = yield* productOptions(release.options, undefined, undefined, {
+      issue: async () => {
+        grantIssueCount++;
+        return { grant: {}, endpoint: "https://gateway.product.test" };
+      },
+    });
+    const { data, peer, providerThread, access, session } = yield* openColdProductSession(
+      product,
+      "product-codex-cold-open-wrong-native-id",
+    );
+    const initial = yield* session.export();
+    yield* session.retireCheckpointAccess;
+    const beforeTurn = [...peer.sent];
+    const turn = productTurn(data.turn, {
+      ...providerThread,
+      nativeThreadRef: {
+        driver: providerThread.driver,
+        nativeId: "wrong-native-thread",
+        strength: "strong",
+      },
+    });
+
+    const outcome = yield* session.turn({ turn, access }).pipe(Effect.exit);
+    expect(Exit.isFailure(outcome)).toBe(true);
+    expect(initial.snapshot.providerThread.nativeThreadRef?.nativeId).toBe(
+      "preinitialized-native-thread",
+    );
+    expect(grantIssueCount).toBe(0);
+    expect(peer.sent).toEqual(beforeTurn);
+    expect(peer.sent).not.toContain("turn/start");
   }).pipe(Effect.scoped, Effect.provide(services)),
 );

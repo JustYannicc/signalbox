@@ -150,6 +150,40 @@ export const openAdapterSession = (
           );
         }
       }
+      if (input.creation !== undefined) {
+        const requested = input.creation.providerThread;
+        state.providerThread = yield* runtime
+          .ensureThread({
+            threadId: input.session.threadId,
+            providerSessionId: input.session.providerSessionId,
+            modelSelection: input.session.modelSelection,
+            runtimePolicy: input.session.runtimePolicy,
+            existingProviderThread: requested,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new HarnessError({
+                  operation: "open",
+                  message: "Native thread creation failed.",
+                  cause,
+                }),
+            ),
+          );
+        if (
+          !threadMatches(state.providerThread, input) ||
+          state.providerThread.id !== requested.id ||
+          state.providerThread.driver !== runtime.driver ||
+          state.providerThread.nativeThreadRef?.driver !== runtime.driver ||
+          !state.providerThread.nativeThreadRef.nativeId
+        )
+          return yield* Effect.fail(
+            new HarnessError({
+              operation: "open",
+              message: "Native creation returned an invalid thread identity.",
+            }),
+          );
+      }
       const check = (operation: HarnessError["operation"]) =>
         Effect.suspend(() =>
           failure.current !== undefined

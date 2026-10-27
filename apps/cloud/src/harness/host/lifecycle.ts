@@ -235,7 +235,7 @@ export const createHostLifecycle = <G>(
                     { ...harness, loadedRelease: loaded },
                     reporter,
                   );
-                  if (harness.checkpoint !== undefined) {
+                  if (harness.checkpoint !== undefined || harness.creation !== undefined) {
                     const access = attempt.initialAccess;
                     if (access === undefined)
                       return yield* Effect.fail(
@@ -320,9 +320,15 @@ export const createHostLifecycle = <G>(
           Effect.gen(function* () {
             const { input, initialAccess } = yield* Effect.try({
               try: () => {
-                const { bootAttemptId, session, checkpoint, initialAccess: access } = supplied;
+                const {
+                  bootAttemptId,
+                  session,
+                  checkpoint,
+                  creation,
+                  initialAccess: access,
+                } = supplied;
                 if (
-                  (checkpoint === undefined) !== (access === undefined) ||
+                  (checkpoint === undefined && creation === undefined) !== (access === undefined) ||
                   (access !== undefined &&
                     (!(access.signal instanceof AbortSignal) || access.signal.aborted))
                 )
@@ -334,6 +340,7 @@ export const createHostLifecycle = <G>(
                     bootAttemptId,
                     session,
                     ...(checkpoint === undefined ? {} : { checkpoint }),
+                    ...(creation === undefined ? {} : { creation }),
                   }),
                   initialAccess,
                 };
@@ -345,7 +352,12 @@ export const createHostLifecycle = <G>(
                 }),
             });
             const hash = yield* Effect.tryPromise({
-              try: () => fingerprint({ session: input.session, checkpoint: input.checkpoint }),
+              try: () =>
+                fingerprint({
+                  session: input.session,
+                  checkpoint: input.checkpoint,
+                  creation: input.creation,
+                }),
               catch: () =>
                 new HarnessError({
                   operation: "open",
