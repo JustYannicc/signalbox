@@ -22,9 +22,11 @@ export async function programFixture() {
     bash: code,
     busyboxCat: code,
     busyboxApplets: code,
+    productBusyboxApplets: code,
     sed: code,
     ripgrep: code,
     git: code,
+    jq: code,
     coreutils: {
       cp: code,
       echo: code,
@@ -36,6 +38,8 @@ export async function programFixture() {
       pwd: code,
       rm: code,
       tail: code,
+      wc: code,
+      uniq: code,
     },
   };
   const seed: ProgramSeed = {

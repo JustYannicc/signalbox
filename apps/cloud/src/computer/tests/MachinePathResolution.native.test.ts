@@ -35,15 +35,15 @@ describe.skipIf(bashModule === undefined)("ProductComputer ordered machine PATH 
       },
       async (fixture) => {
         expect(fixture.files.current().pristine).toBe(true);
-        const result = await fixture.run("command -v sort; sort", "/bin");
+        const result = await fixture.run("command -v awk; awk", "/bin");
         expect(
           result.status.exitCode,
           JSON.stringify({ result, calls: fixture.machineCalls }),
         ).toBe(23);
-        expect(result.stdout).toBe("/bin/sort\n");
+        expect(result.stdout).toBe("/bin/awk\n");
         expect(result.stderr).toBe("");
         expect(fixture.machineCalls.map(({ executable, argv }) => ({ executable, argv }))).toEqual([
-          { executable: "/bin/sort", argv: ["sort"] },
+          { executable: "/bin/awk", argv: ["awk"] },
         ]);
       },
     ));
@@ -70,12 +70,12 @@ describe.skipIf(bashModule === undefined)("ProductComputer ordered machine PATH 
     withFixture(
       {
         inventory: symlinkInventory,
-        before: (filesystem) => writeUpperFile(filesystem, "/bin/sort", "printf UPPER_SORT\n"),
+        before: (filesystem) => writeUpperFile(filesystem, "/bin/awk", "printf UPPER_AWK\n"),
       },
       async (fixture) => {
-        const result = await fixture.run("sort", "/bin");
+        const result = await fixture.run("awk", "/bin");
         expect(result.status.exitCode).toBe(0);
-        expect(result.stdout).toBe("UPPER_SORT");
+        expect(result.stdout).toBe("UPPER_AWK");
         expect(result.stderr).toBe("");
         expect(fixture.machineCalls).toEqual([]);
       },
@@ -151,7 +151,9 @@ async function withFixture(
     await fixture.close();
   } catch (cleanup) {
     if (failure !== undefined)
-      throw new AggregateError([failure, cleanup], "PATH assertions and cleanup failed");
+      throw new AggregateError([failure, cleanup], "PATH assertions and cleanup failed", {
+        cause: cleanup,
+      });
     throw cleanup;
   }
   if (failure !== undefined) throw failure;

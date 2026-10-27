@@ -48,9 +48,11 @@ function bootComputer(absent: boolean) {
       bash: code,
       busyboxCat: code,
       busyboxApplets: code,
+      productBusyboxApplets: code,
       ripgrep: code,
       git: code,
       sed: code,
+      jq: code,
       coreutils: {
         cp: code,
         echo: code,
@@ -62,6 +64,8 @@ function bootComputer(absent: boolean) {
         pwd: code,
         rm: code,
         tail: code,
+        wc: code,
+        uniq: code,
       },
     },
     loader: {

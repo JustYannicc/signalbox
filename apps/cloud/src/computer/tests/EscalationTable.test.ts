@@ -76,8 +76,8 @@ describe("ComputerEscalationTable", () => {
     });
   });
 
-  it("exports the 37 exact policy spellings as opt-in frozen data", () => {
-    expect(COMPUTER_ISOLATE_EXECUTABLES).toHaveLength(37);
+  it("exports the 49 exact policy spellings as opt-in frozen data", () => {
+    expect(COMPUTER_ISOLATE_EXECUTABLES).toHaveLength(49);
     expect(COMPUTER_ISOLATE_EXECUTABLES).toEqual([
       "sed",
       "git",
@@ -98,6 +98,12 @@ describe("ComputerEscalationTable", () => {
       "pwd",
       "bash",
       "sh",
+      "env",
+      "id",
+      "sort",
+      "wc",
+      "uniq",
+      "jq",
       "/bin/bash",
       "/bin/sh",
       "/bin/cat",
@@ -115,6 +121,12 @@ describe("ComputerEscalationTable", () => {
       "/bin/pwd",
       "/bin/head",
       "/bin/tail",
+      "/bin/env",
+      "/bin/id",
+      "/bin/sort",
+      "/bin/wc",
+      "/bin/uniq",
+      "/usr/bin/jq",
       "/usr/bin/git",
     ]);
     expect(Object.isFrozen(COMPUTER_ISOLATE_EXECUTABLES)).toBe(true);

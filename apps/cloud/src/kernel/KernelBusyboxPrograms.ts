@@ -1,8 +1,12 @@
 import { ABI_VERSION, KernelProgramRegistry } from "./KernelAbi.ts";
-import { createKernelBusyboxProgram } from "./KernelBusyboxProgram.ts";
+import {
+  createKernelBusyboxProgram,
+  PRODUCT_COMPUTER_BUSYBOX_ARTIFACT,
+} from "./KernelBusyboxProgram.ts";
 import type { KernelProgramBinding } from "./KernelProgramHost.ts";
 
 export const KERNEL_BUSYBOX_VERSION = "1.37.0+nimbus.e9f019ab";
+export const PRODUCT_COMPUTER_BUSYBOX_VERSION = PRODUCT_COMPUTER_BUSYBOX_ARTIFACT.version;
 
 /** Register only the pinned BusyBox applet that has a kernel handoff proof. */
 export function registerKernelBusyboxCat(

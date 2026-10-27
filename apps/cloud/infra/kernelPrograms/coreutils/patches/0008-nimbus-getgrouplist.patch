@@ -1,0 +1,96 @@
+diff --git a/packages/worker/wasm/nimbus-libc/posix/grp.h b/packages/worker/wasm/nimbus-libc/posix/grp.h
+index 0000000..0000000 100644
+--- a/packages/worker/wasm/nimbus-libc/posix/grp.h
++++ b/packages/worker/wasm/nimbus-libc/posix/grp.h
+@@ -13,5 +13,6 @@
+ struct group *getgrent(void);
+ void setgrent(void);
+ void endgrent(void);
++int getgrouplist(const char *user, gid_t group, gid_t *groups, int *ngroups);
+ int getgroups(int size, gid_t list[]);
+ #endif
+diff --git a/packages/worker/wasm/nimbus-libc/nimbus-accounts.c b/packages/worker/wasm/nimbus-libc/nimbus-accounts.c
+index 0000000..0000000 100644
+--- a/packages/worker/wasm/nimbus-libc/nimbus-accounts.c
++++ b/packages/worker/wasm/nimbus-libc/nimbus-accounts.c
+@@ -8,5 +8,6 @@
+ #include <errno.h>
+ #include <grp.h>
++#include <limits.h>
+ #include <pwd.h>
+ #include <stdint.h>
+ #include <stdlib.h>
+@@ -149,1 +150,73 @@ void endgrent(void) { gr_next = 0; }
+ void endgrent(void) { gr_next = 0; }
++
++static int append_group_id(gid_t gid, gid_t **groups, size_t *count, size_t *capacity)
++{
++	for (size_t i = 0; i < *count; i++) {
++		if ((*groups)[i] == gid) return 0;
++	}
++	if (*count == *capacity) {
++		size_t next = *capacity == 0 ? 8 : *capacity * 2;
++		if (next < *capacity || next > SIZE_MAX / sizeof **groups) {
++			errno = EOVERFLOW;
++			return -1;
++		}
++		gid_t *grown = realloc(*groups, next * sizeof **groups);
++		if (grown == NULL) return -1;
++		*groups = grown;
++		*capacity = next;
++	}
++	(*groups)[(*count)++] = gid;
++	return 0;
++}
++
++/* The host account import owns /etc/group; keep getgrouplist on that same view. */
++int getgrouplist(const char *user, gid_t primary, gid_t *groups, int *ngroups)
++{
++	if (user == NULL || ngroups == NULL || *ngroups < 0) {
++		errno = EINVAL;
++		return -1;
++	}
++	int capacity = groups == NULL ? 0 : *ngroups;
++	gid_t *found = NULL;
++	size_t count = 0;
++	size_t allocated = 0;
++	if (append_group_id(primary, &found, &count, &allocated) != 0) goto fail;
++
++	setgrent();
++	errno = 0;
++	struct group *entry;
++	while ((entry = getgrent()) != NULL) {
++		for (char **member = entry->gr_mem; member != NULL && *member != NULL; member++) {
++			if (strcmp(*member, user) == 0) {
++				if (append_group_id(entry->gr_gid, &found, &count, &allocated) != 0) {
++					int error = errno;
++					endgrent();
++					errno = error;
++					goto fail;
++				}
++				break;
++			}
++		}
++	}
++	int error = errno;
++	endgrent();
++	if (error != 0) {
++		errno = error;
++		goto fail;
++	}
++	if (count > INT_MAX) {
++		errno = EOVERFLOW;
++		goto fail;
++	}
++	*ngroups = (int)count;
++	if (count > (size_t)capacity) {
++		free(found);
++		return -1;
++	}
++	if (count > 0) memcpy(groups, found, count * sizeof *groups);
++	free(found);
++	return (int)count;
++fail:
++	free(found);
++	return -1;
++}
