@@ -2,20 +2,23 @@
 import * as NodeAsyncHooks from "node:async_hooks";
 import { onTestFinished, vi } from "vite-plus/test";
 import { BashWorkerPhase } from "../BashWorkerPhase.ts";
+import * as KernelBashOperations from "../../kernel/KernelBashOperations.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { createBashGateway } from "./ChildBashGatewayFixture.ts";
 import { traceReaderWakes } from "./BashReaderWakeTrace.ts";
 
 type Details = Record<string, unknown>;
 type Operation = Details & { key: number; port: number; pendingId?: string };
+type OperationPort = Pick<KernelBashPort, "call" | "callBash" | "wait" | "exec">;
 
 function readerTrace(gateway: ReturnType<typeof createBashGateway>) {
   const context = new NodeAsyncHooks.AsyncLocalStorage<Operation>();
-  const ports = new Map<KernelBashPort, number>();
+  const ports = new Map<OperationPort, number>();
   const portPids = new Map<number, number>();
   const processes = new Set<number>();
   const operations = new Map<number, Operation>();
   const pendingIds = new Map<string, Operation>();
+  const consumptions = new Map<number, Details>();
   const recent: Details[] = [];
   const restores: (() => void)[] = [];
   const started = performance.now();
@@ -44,7 +47,7 @@ function readerTrace(gateway: ReturnType<typeof createBashGateway>) {
     );
     return promise;
   };
-  const portId = (port: KernelBashPort) => {
+  const portId = (port: OperationPort) => {
     const existing = ports.get(port);
     if (existing !== undefined) return existing;
     const id = ports.size + 1;
@@ -62,6 +65,38 @@ function readerTrace(gateway: ReturnType<typeof createBashGateway>) {
     restores.push(() => spies.forEach((spy) => spy.mockRestore()));
     return id;
   };
+  const createOperations = KernelBashOperations.createKernelBashOperations;
+  const createSpy = vi
+    .spyOn(KernelBashOperations, "createKernelBashOperations")
+    .mockImplementation((port) => {
+      const owned = createOperations(port);
+      const take = owned.take;
+      const id = portId(port);
+      owned.take = (pendingId) => {
+        const operation = pendingIds.get(pendingId);
+        const details = { port: id, operation: operation?.key, pendingId };
+        const consumption: Details = { ...details, entered: record("operation-take", details) };
+        consumptions.set(id, consumption);
+        const pending = take(pendingId);
+        void pending.then(
+          (result) => {
+            consumption.completed = record("operation-consumed", {
+              ...details,
+              resultKind: result.kind,
+            });
+            consumption.resultKind = result.kind;
+          },
+          (error: unknown) => {
+            consumption.rejected = record("operation-take-rejected", {
+              ...details,
+              error: String(error),
+            });
+          },
+        );
+        return pending;
+      };
+      return owned;
+    });
   const startOperation = BashWorkerPhase.prototype.startOperation;
   const startSpy = vi
     .spyOn(BashWorkerPhase.prototype, "startOperation")
@@ -167,6 +202,10 @@ function readerTrace(gateway: ReturnType<typeof createBashGateway>) {
           ...operation,
           pid: portPids.get(operation.port),
         })),
+        consumptions: [...consumptions].map(([port, details]) => ({
+          ...details,
+          pid: portPids.get(port),
+        })),
         ...wakeTrace.snapshot(),
         totalEvents: sequence,
         recent,
@@ -174,6 +213,7 @@ function readerTrace(gateway: ReturnType<typeof createBashGateway>) {
     },
     restore() {
       wakeTrace.restore();
+      createSpy.mockRestore();
       startSpy.mockRestore();
       parkSpy.mockRestore();
       table.waitpid = originalWaitpid;
