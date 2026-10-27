@@ -126,7 +126,7 @@ describe("HarnessProcessSupervisor concurrent admission and publication", () => 
       const stale = yield* f.open();
       const owner = yield* f.open();
       expect(yield* stale.run(turn).pipe(Effect.result)).toMatchObject({
-        failure: { reason: "stale-owner" },
+        failure: { _tag: "HarnessProcessSupervisorStaleOwnerError" },
       });
       const running = yield* owner.run(turn).pipe(Effect.forkScoped);
       yield* f.finish(yield* f.next);
@@ -146,8 +146,12 @@ describe("HarnessProcessSupervisor concurrent admission and publication", () => 
       });
       const running = yield* supervisor.run(turn).pipe(Effect.forkScoped);
       const native = yield* f.next;
-      yield* Deferred.fail(failed, new HarnessProcessSupervisorPortError({ port: "ingress" }));
+      const cause = new Error("private ingress diagnostic");
+      const failure = new HarnessProcessSupervisorPortError({ port: "ingress", cause });
+      expect(failure.cause).toBe(cause);
+      yield* Deferred.fail(failed, failure);
       expect(yield* Fiber.join(running)).toMatchObject({ reason: "ingress-failed" });
+      expect(JSON.stringify(yield* supervisor.snapshot)).not.toContain(cause.message);
       yield* Deferred.await(native.joined);
       expect(f.resumes).toHaveLength(0);
     }),

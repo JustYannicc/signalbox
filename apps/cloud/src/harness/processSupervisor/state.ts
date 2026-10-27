@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   HarnessProcessSupervisorError,
+  HarnessProcessSupervisorStaleOwnerError,
   SupervisorCheckpoint,
   SupervisorIncarnation,
   SupervisorPolicy,
@@ -15,7 +16,9 @@ import {
 
 export const parse = <S extends Schema.Top>(schema: S, input: unknown) =>
   Schema.decodeUnknownEffect(schema)(input).pipe(
-    Effect.mapError(() => new HarnessProcessSupervisorError({ reason: "invalid-input" })),
+    Effect.mapError(
+      (cause) => new HarnessProcessSupervisorError({ reason: "invalid-input", cause }),
+    ),
   );
 
 export const blocker = (
@@ -61,7 +64,9 @@ export const createJournal = (options: HarnessProcessSupervisorOptions) =>
       stored === null
         ? null
         : yield* parse(SupervisorState, structuredClone(stored)).pipe(
-            Effect.mapError(() => new HarnessProcessSupervisorError({ reason: "invalid-store" })),
+            Effect.mapError(
+              (cause) => new HarnessProcessSupervisorError({ reason: "invalid-store", cause }),
+            ),
           );
     if (
       previous !== null &&
@@ -114,7 +119,7 @@ export const createJournal = (options: HarnessProcessSupervisorOptions) =>
     }
     current = traced({ ...current, ownerId, revision: (previous?.revision ?? 0) + 1 }, "claimed");
     if (!(yield* options.store.compareAndSet(previous?.revision ?? null, structuredClone(current))))
-      return yield* new HarnessProcessSupervisorError({ reason: "stale-owner" });
+      return yield* new HarnessProcessSupervisorStaleOwnerError();
     let closed = false;
 
     const change = (
@@ -137,7 +142,7 @@ export const createJournal = (options: HarnessProcessSupervisorOptions) =>
           );
           yield* parse(SupervisorState, next);
           if (!(yield* options.store.compareAndSet(current.revision, structuredClone(next))))
-            return yield* new HarnessProcessSupervisorError({ reason: "stale-owner" });
+            return yield* new HarnessProcessSupervisorStaleOwnerError();
           current = next;
           return structuredClone(current);
         }),

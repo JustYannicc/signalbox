@@ -40,21 +40,19 @@ export const admitRun = (
     yield* journal.assertOpen;
     const state = journal.current();
     const request = { ...turn, kind: "run" as const };
-    const denied = priorDenial(state, request);
-    if (denied !== undefined) return denied;
-    const receipt = state.turns.find(
-      (item) => item.request.requestId === turn.requestId || item.request.turnId === turn.turnId,
-    );
+    const receipt = state.turns.find((item) => item.request.requestId === turn.requestId);
     if (
       state.retries.some((item) => item.requestId === turn.requestId) ||
-      (receipt?.request.requestId === turn.requestId &&
+      (receipt !== undefined &&
         (receipt.request.turnId !== turn.turnId ||
           receipt.request.inputSha256 !== turn.inputSha256))
     )
       return blocker(state, "conflicting-id");
-    if (receipt !== undefined && receipt.request.requestId !== turn.requestId)
-      return yield* deny(journal, request, blocker(state, "conflicting-id"));
     if (receipt !== undefined) return { _tag: "Existing" as const, turnId: turn.turnId };
+    const denied = priorDenial(state, request);
+    if (denied !== undefined) return denied;
+    if (state.turns.some((item) => item.request.turnId === turn.turnId))
+      return yield* deny(journal, request, blocker(state, "conflicting-id"));
     if (busy || (state.phase !== "idle" && state.phase !== "completed"))
       return yield* deny(journal, request, blocker(state, "busy"));
     if (state.checkpoint.completedTurnId === turn.turnId)
@@ -84,8 +82,6 @@ export const admitRetry = (
     yield* journal.assertOpen;
     const state = journal.current();
     const request = { ...retry, kind: "retry" as const, inputSha256: null };
-    const denied = priorDenial(state, request);
-    if (denied !== undefined) return denied;
     const receipt = state.retries.find((item) => item.requestId === retry.requestId);
     if (
       state.turns.some((item) => item.request.requestId === retry.requestId) ||
@@ -93,6 +89,8 @@ export const admitRetry = (
     )
       return blocker(state, "conflicting-id");
     if (receipt !== undefined) return { _tag: "Existing" as const, turnId: retry.turnId };
+    const denied = priorDenial(state, request);
+    if (denied !== undefined) return denied;
     if (state.turn?.turnId !== retry.turnId)
       return yield* deny(journal, request, blocker(state, "conflicting-id"));
     if (busy || state.phase !== "blocked" || state.blocker?.recovery !== "retry")

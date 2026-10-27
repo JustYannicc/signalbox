@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import {
-  HarnessProcessSupervisorError,
+  HarnessProcessSupervisorStaleOwnerError,
   SupervisorCheckpoint,
   SupervisorSignal,
   type HarnessProcessSupervisorBlocker,
@@ -15,7 +15,7 @@ import { resumeThroughCaller } from "./caller.ts";
 import { blocker, parse, sameIncarnation, type SupervisorJournal } from "./state.ts";
 
 type Notice = { readonly _tag: "Reset" } | HarnessProcessSupervisorBlocker;
-const isSupervisorError = Schema.is(HarnessProcessSupervisorError);
+const isStaleOwnerError = Schema.is(HarnessProcessSupervisorStaleOwnerError);
 
 const observe = (journal: SupervisorJournal, supplied: typeof SupervisorSignal.Type) =>
   Effect.gen(function* () {
@@ -149,7 +149,7 @@ export const settleFailure = (journal: SupervisorJournal, cause: Cause.Cause<unk
   const error = Option.getOrUndefined(Cause.findErrorOption(cause));
   const reason = Cause.hasInterrupts(cause)
     ? "cancelled"
-    : isSupervisorError(error) && error.reason === "stale-owner"
+    : isStaleOwnerError(error)
       ? "stale-owner"
       : "effect-uncertain";
   const recovery = reason === "stale-owner" ? "new-owner" : "reconcile";
@@ -178,12 +178,11 @@ export const executeTurn = (
           Effect.gen(function* () {
             if (Cause.hasInterrupts(cause)) return yield* Effect.failCause(cause);
             const error = Option.getOrUndefined(Cause.findErrorOption(cause));
-            const notice =
-              isSupervisorError(error) && error.reason === "stale-owner"
-                ? blocker(journal.current(), "stale-owner", "new-owner")
-                : yield* journal
-                    .park("ingress-failed")
-                    .pipe(Effect.catchCause((failure) => settleFailure(journal, failure)));
+            const notice = isStaleOwnerError(error)
+              ? blocker(journal.current(), "stale-owner", "new-owner")
+              : yield* journal
+                  .park("ingress-failed")
+                  .pipe(Effect.catchCause((failure) => settleFailure(journal, failure)));
             yield* Queue.offer(notices, notice);
           }),
         ),
@@ -250,7 +249,9 @@ export const executeTurn = (
         const outcome = { _tag: "Completed" as const, turnId: active.turn.turnId, checkpoint };
         const committed = yield* journal.change(
           (state) =>
-            state.phase === "blocked"
+            state.phase !== "running" ||
+            !sameIncarnation(state.incarnation, active.incarnation) ||
+            state.turn?.requestId !== turn.requestId
               ? state
               : {
                   ...state,
@@ -267,6 +268,9 @@ export const executeTurn = (
           "completed",
         );
         if (committed.phase === "blocked") return committed.blocker!;
+        // A committed completion racing an accepted reset needs C reconciliation.
+        // Replaying that turn could repeat work that the caller already committed.
+        if (committed.phase !== "completed") return yield* journal.park("effect-uncertain");
         return outcome;
       }
     }),

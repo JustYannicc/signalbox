@@ -30,9 +30,32 @@ describe("HarnessProcessSupervisor durable ownership and cancellation", () => {
       const opened = yield* f
         .open({ store: { ...f.storage.store, read: Effect.succeed({ phase: "running" }) } })
         .pipe(Effect.result);
-      expect(opened).toMatchObject({ failure: { reason: "invalid-store" } });
+      expect(opened).toMatchObject({
+        failure: {
+          reason: "invalid-store",
+          cause: {
+            _tag: "HarnessProcessSupervisorError",
+            reason: "invalid-input",
+            cause: { _tag: "SchemaError" },
+          },
+        },
+      });
       expect(f.storage.writes).toHaveLength(0);
       expect(f.turns).toHaveLength(0);
+    }),
+  );
+
+  it.effect("keeps the validation cause without admitting an invalid turn", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      const supervisor = yield* f.open();
+      expect(
+        yield* supervisor.run({ ...turn, inputSha256: "invalid" }).pipe(Effect.result),
+      ).toMatchObject({
+        failure: { reason: "invalid-input", cause: { _tag: "SchemaError" } },
+      });
+      expect(f.turns).toHaveLength(0);
+      expect((yield* supervisor.snapshot).turns).toEqual([]);
     }),
   );
 

@@ -143,19 +143,22 @@ export type HarnessProcessSupervisorState = typeof SupervisorState.Type;
 export class HarnessProcessSupervisorError extends Schema.TaggedError<HarnessProcessSupervisorError>()(
   "HarnessProcessSupervisorError",
   {
-    reason: Schema.Literals([
-      "invalid-input",
-      "policy-conflict",
-      "invalid-store",
-      "stale-owner",
-      "closed",
-    ]),
+    reason: Schema.Literals(["invalid-input", "policy-conflict", "invalid-store", "closed"]),
+    cause: Schema.optionalKey(Schema.Defect()),
   },
+) {}
+
+export class HarnessProcessSupervisorStaleOwnerError extends Schema.TaggedError<HarnessProcessSupervisorStaleOwnerError>()(
+  "HarnessProcessSupervisorStaleOwnerError",
+  {},
 ) {}
 
 export class HarnessProcessSupervisorPortError extends Schema.TaggedError<HarnessProcessSupervisorPortError>()(
   "HarnessProcessSupervisorPortError",
-  { port: Schema.Literals(["store", "ingress", "turn", "operation"]) },
+  {
+    port: Schema.Literals(["store", "ingress", "turn", "operation"]),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
 ) {}
 
 /** One record per native session; CAS must be durable and linearizable, including null creation.

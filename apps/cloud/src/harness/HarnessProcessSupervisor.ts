@@ -2,6 +2,7 @@ export { createHarnessProcessSupervisor } from "./processSupervisor/service.ts";
 export {
   HarnessProcessSupervisorError,
   HarnessProcessSupervisorPortError,
+  HarnessProcessSupervisorStaleOwnerError,
 } from "./processSupervisor/contracts.ts";
 export type {
   HarnessProcessSupervisorBlocker,
