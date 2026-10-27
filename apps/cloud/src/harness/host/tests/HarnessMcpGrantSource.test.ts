@@ -188,7 +188,7 @@ describe("Harness host injected per-turn grants", () => {
         yield* instance.adapter.saving;
         const secondTurn = laterTurn(firstTurn, "run-two", 2);
         const secondController = new AbortController();
-        const secondAccess = publisherAccess(f, "base-b", 8, "publisher-b", secondController);
+        const secondAccess = publisherAccess(f, "base-b", 7, "publisher-a", secondController);
         yield* session.turn({ turn: secondTurn, access: secondAccess });
         yield* instance.adapter.nextStart;
         const secondConfig = f.configurations[1]!;
