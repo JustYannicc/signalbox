@@ -259,7 +259,9 @@ export async function runProductScenario(
       finishStatus: entry.finish?.status,
     })),
     restoreModes: {
-      ...(initialProvider === "claude" ? { claude: "same-variant-serialized-checkpoint" } : {}),
+      ...(initialProvider === "claude-code"
+        ? { claude: "same-variant-serialized-checkpoint" }
+        : {}),
       codex:
         initialProvider === "codex"
           ? "same-variant-serialized-checkpoint"
