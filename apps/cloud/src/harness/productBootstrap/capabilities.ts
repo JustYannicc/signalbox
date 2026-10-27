@@ -1,4 +1,4 @@
-import type { ExecutorMcpPort, ProgramSeed } from "../HarnessSessionHost.ts";
+import type { ProgramSeed } from "../HarnessSessionHost.ts";
 import type { HarnessCProductProvider } from "../HarnessProcessResume.ts";
 import type {
   HarnessCProductAccessService,
@@ -143,34 +143,6 @@ export const productMachineInventory = (
 
 export const productModelTransport = (service: HarnessCProductModelService) => (request: Request) =>
   service.fetch(request);
-
-export function productExecutor<G>(service: HarnessCProductExecutorService<G>): ExecutorMcpPort<G> {
-  return {
-    forward: async (input) => {
-      input.signal.throwIfAborted();
-      const request = new Request(input.request, { signal: input.signal });
-      const body = request.body === null ? null : new Uint8Array(await request.arrayBuffer());
-      input.signal.throwIfAborted();
-      const response = await service.forward({
-        target: input.target,
-        grant: input.grant,
-        request: {
-          url: request.url,
-          method: request.method,
-          headers: [...request.headers.entries()],
-          body,
-        },
-      });
-      input.signal.throwIfAborted();
-      const headers: [string, string][] = response.headers.map(([name, value]) => [name, value]);
-      return new Response(response.body.slice(), {
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-      });
-    },
-  };
-}
 
 function required<T>(
   capabilities: Readonly<Record<string, Fetcher>>,

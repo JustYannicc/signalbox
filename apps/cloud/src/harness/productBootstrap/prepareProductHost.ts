@@ -16,12 +16,12 @@ import { readHarnessCProductFilesCheckpoint } from "./filesCheckpoint.ts";
 import { materializeHarnessCProductFiles } from "./materializeFiles.ts";
 import { decodeHarnessCProductNativeCheckpoint } from "./nativeCheckpoint.ts";
 import {
-  productExecutor,
   productMachineInventory,
   productModelTransport,
   productProgramBindings,
   productReleaseBindings,
 } from "./capabilities.ts";
+import { productExecutor } from "./executor.ts";
 import { selectHarnessCProductRelease } from "./selectedArtifact.ts";
 import type {
   HarnessCProductFacetEnvironment,

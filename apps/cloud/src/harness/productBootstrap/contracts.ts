@@ -65,23 +65,27 @@ export interface HarnessCProductMachineService {
 export interface HarnessCProductExecutorRequest {
   readonly url: string;
   readonly method: string;
-  readonly headers: ReadonlyArray<readonly [string, string]>;
+  readonly headers: ReadonlyArray<{ readonly name: string; readonly value: string }>;
   readonly body: Uint8Array | null;
 }
 
 export interface HarnessCProductExecutorResponse {
   readonly status: number;
   readonly statusText: string;
-  readonly headers: ReadonlyArray<readonly [string, string]>;
+  readonly headers: ReadonlyArray<{ readonly name: string; readonly value: string }>;
   readonly body: Uint8Array;
 }
 
+export interface HarnessCProductExecutorForwardInput<G> {
+  readonly target: ExecutorTarget;
+  readonly grant: G;
+  readonly request: HarnessCProductExecutorRequest;
+  /** AbortSignal cannot cross Workers RPC; closing this stream revokes the request. */
+  readonly cancellation: ReadableStream<Uint8Array>;
+}
+
 export interface HarnessCProductExecutorService<G> {
-  forward(input: {
-    readonly target: ExecutorTarget;
-    readonly grant: G;
-    readonly request: HarnessCProductExecutorRequest;
-  }): Promise<HarnessCProductExecutorResponse>;
+  forward(input: HarnessCProductExecutorForwardInput<G>): Promise<HarnessCProductExecutorResponse>;
 }
 
 export interface HarnessCProductModelService {
