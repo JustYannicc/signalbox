@@ -193,9 +193,11 @@ export function firstCommandFixture(
         bash: code,
         busyboxCat: code,
         busyboxApplets: code,
+        productBusyboxApplets: code,
         ripgrep: code,
         git: code,
         sed: code,
+        jq: code,
         coreutils: Object.fromEntries(
           CHILD_COREUTILS_COMMANDS.map((name) => [name, code]),
         ) as Record<(typeof CHILD_COREUTILS_COMMANDS)[number], typeof code>,

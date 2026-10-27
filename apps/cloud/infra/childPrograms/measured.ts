@@ -25,6 +25,23 @@ export interface ProgramPin {
   readonly sha256: string;
 }
 
+export async function verifyProgramProvenance(
+  programDir: string,
+  filename: string,
+  expected: ProgramPin & { readonly revision: string },
+): Promise<void> {
+  const manifest = JSON.parse(await NodeFSP.readFile(NodePath.join(programDir, filename), "utf8"));
+  const artifact = manifest.artifact;
+  const revision = manifest.revision ?? manifest.source?.revision ?? manifest.version;
+  if (
+    artifact?.bytes !== expected.bytes ||
+    artifact?.sha256 !== expected.sha256 ||
+    revision !== expected.revision
+  ) {
+    throw new Error(`Prepared child program provenance does not match ${filename}`);
+  }
+}
+
 export async function prepareMeasuredPrograms(options: {
   readonly cloudRoot: string;
   readonly programDir: string;

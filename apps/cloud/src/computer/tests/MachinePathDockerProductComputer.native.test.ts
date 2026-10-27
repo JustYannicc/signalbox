@@ -34,7 +34,11 @@ describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux m
       withLinuxMachine(
         async (fixture) => {
           if (state === "dirty") {
-            const warmup = await fixture.direct("/usr/bin/jq", ["jq", "--version"], "/bin");
+            const warmup = await fixture.direct(
+              "/usr/bin/awk",
+              ["awk", "BEGIN { print 17 }"],
+              "/bin",
+            );
             expect(warmup.status.exitCode).toBe(0);
             expect(warmup.stderr).toBe("");
             expect(fixture.files.current().pristine).toBe(false);
@@ -73,23 +77,18 @@ describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux m
     "runs native commands and both pipeline stages",
     () =>
       withLinuxMachine(async (fixture) => {
-        for (const command of [
-          "jq --version",
-          "sort --version",
-          "uniq --version",
-          "wc --version",
-          "awk 'BEGIN { print 17 }'",
-          "xargs --version",
-          "find --version",
-        ]) {
+        for (const command of ["awk 'BEGIN { print 17 }'", "xargs --version", "find --version"]) {
           const result = await fixture.run(command, path);
           expect(result.status.exitCode, command).toBe(0);
           expect(result.stderr, command).toBe("");
         }
 
-        const pipeline = await fixture.run('printf "b\\na\\nb\\n" | sort | uniq -c', path);
+        const pipeline = await fixture.run(
+          "printf \"b\\na\\nb\\n\" | awk '{ print $0 }' | xargs -n1",
+          path,
+        );
         expect(pipeline.status.exitCode).toBe(0);
-        expect(pipeline.stdout).toBe("      1 a\n      2 b\n");
+        expect(pipeline.stdout).toBe("b\na\nb\n");
         expect(pipeline.stderr).toBe("");
       }),
     120_000,
@@ -100,7 +99,7 @@ describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux m
     () =>
       withLinuxMachine(async (fixture) => {
         const shellPredicates = await fixture.run(
-          '[ -f /usr/bin/sort ]; printf "file=%s\\n" "$?"; [ -x /usr/bin/sort ]; printf "x=%s\\n" "$?"',
+          '[ -f /usr/bin/awk ]; printf "file=%s\\n" "$?"; [ -x /usr/bin/awk ]; printf "x=%s\\n" "$?"',
           path,
         );
         expect(shellPredicates.stdout).toBe("file=0\nx=0\n");
@@ -110,15 +109,15 @@ describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux m
         expect(computerStatBare.status.exitCode).toBe(nativeStatBare.exitCode);
         expect(computerStatBare.stdout).toBe(nativeStatBare.stdout);
 
-        const nativeStat = fixture.native("/usr/bin/stat", ["-c", "%a %u %g %s", "/usr/bin/sort"], {
+        const nativeStat = fixture.native("/usr/bin/stat", ["-c", "%a %u %g %s", "/usr/bin/awk"], {
           LC_ALL: "C",
         });
-        const computerStat = await fixture.run("stat -c '%a %u %g %s' /usr/bin/sort", path);
+        const computerStat = await fixture.run("stat -c '%a %u %g %s' /usr/bin/awk", path);
         expect(nativeStat.exitCode).toBe(0);
         expect(computerStat.status.exitCode).toBe(nativeStat.exitCode);
         expect(computerStat.stdout.trim()).toBe(nativeStat.stdout.trim());
 
-        const lsArgs = ["-ln", "--time-style=+%Y-%m-%dT%H:%M:%S", "/usr/bin/sort"];
+        const lsArgs = ["-ln", "--time-style=+%Y-%m-%dT%H:%M:%S", "/usr/bin/awk"];
         const nativeLs = fixture.native("/usr/bin/ls", lsArgs, { LC_ALL: "C" });
         const computerLs = await fixture.run(`ls ${lsArgs.join(" ")}`, path);
         expect(nativeLs.exitCode).toBe(0);
@@ -130,9 +129,9 @@ describe.skipIf(!dockerProofEnabled)("ProductComputer against the pinned Linux m
           "-tx1",
           "-N",
           "32",
-          "/usr/bin/sort",
+          "/usr/bin/awk",
         ]);
-        const computerBytes = await fixture.run("head -c 32 /usr/bin/sort | od -An -tx1", path);
+        const computerBytes = await fixture.run("head -c 32 /usr/bin/awk | od -An -tx1", path);
         expect(nativeBytes.exitCode).toBe(0);
         expect(computerBytes.status.exitCode).toBe(0);
         expect(computerBytes.stdout.trim()).toBe(nativeBytes.stdout.trim());

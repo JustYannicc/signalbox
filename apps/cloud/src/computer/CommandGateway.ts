@@ -28,9 +28,11 @@ import type { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
 
 export type CommandProgramCodes = ChildProgramCatalogOptions["programs"] & {
   readonly busyboxApplets: ChildWorkerCode;
+  readonly productBusyboxApplets: ChildWorkerCode;
   readonly coreutils: Readonly<Record<ChildCoreutilsCommand, ChildWorkerCode>>;
   readonly git: ChildWorkerCode;
   readonly sed: ChildWorkerCode;
+  readonly jq: ChildWorkerCode;
 };
 
 export interface CommandGatewayOptions {
