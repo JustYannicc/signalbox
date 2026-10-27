@@ -2406,7 +2406,7 @@ index 00000000..7960686a
 +	m.sem.Release(1)
 +}
 diff --git a/internal/store/gitstore.go b/internal/store/gitstore.go
-index 3c1f0fbe..29b71dfa 100644
+index 3c1f0fbe..90777731 100644
 --- a/internal/store/gitstore.go
 +++ b/internal/store/gitstore.go
 @@ -22,6 +22,8 @@ import (
@@ -2501,6 +2501,15 @@ index 3c1f0fbe..29b71dfa 100644
  	defer s.mu.Unlock()
  
  	path, err := s.resolveAuthPath(auth)
+@@ -446,7 +467,7 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+ 	// was deliberately removed. Login and migration callers explicitly mark the
+ 	// save when creating a missing disabled credential is intentional.
+ 	if auth.Disabled && !cliproxyauth.HasAuthCreationIntent(ctx) {
+-		if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
++		if _, statErr := authpublication.Stat(path); os.IsNotExist(statErr) {
+ 			return "", nil
+ 		}
+ 	}
 @@ -462,67 +483,75 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: create dir failed: %w", err)
  	}
@@ -2824,7 +2833,7 @@ index 3c1f0fbe..29b71dfa 100644
  	s.maybeRunGC(repoDir)
  	return nil
 diff --git a/internal/store/objectstore.go b/internal/store/objectstore.go
-index 39b8b089..f827614f 100644
+index 39b8b089..391ab3a2 100644
 --- a/internal/store/objectstore.go
 +++ b/internal/store/objectstore.go
 @@ -12,11 +12,11 @@ import (
@@ -2849,7 +2858,13 @@ index 39b8b089..f827614f 100644
  	putObjectFn func(ctx context.Context, key string, data []byte, contentType string) error
  }
  
-@@ -184,68 +184,78 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
+@@ -179,73 +179,83 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
+ 	// was deliberately removed. Login and migration callers explicitly mark the
+ 	// save when creating a missing disabled credential is intentional.
+ 	if auth.Disabled && !cliproxyauth.HasAuthCreationIntent(ctx) {
+-		if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
++		if _, statErr := authpublication.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
+ 			return "", nil
  		}
  	}
  
@@ -3048,7 +3063,7 @@ index 39b8b089..f827614f 100644
  		return nil, fmt.Errorf("stat auth file: %w", err)
  	}
 diff --git a/internal/store/postgresstore.go b/internal/store/postgresstore.go
-index 69bc318b..89a0b99b 100644
+index 69bc318b..da47006a 100644
 --- a/internal/store/postgresstore.go
 +++ b/internal/store/postgresstore.go
 @@ -10,10 +10,10 @@ import (
@@ -3072,7 +3087,13 @@ index 69bc318b..89a0b99b 100644
  	persistAuthFn func(ctx context.Context, relID string, data []byte) error
  }
  
-@@ -235,72 +235,82 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+@@ -230,77 +230,87 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+ 	// was deliberately removed. Login and migration callers explicitly mark the
+ 	// save when creating a missing disabled credential is intentional.
+ 	if auth.Disabled && !cliproxyauth.HasAuthCreationIntent(ctx) {
+-		if _, statErr := os.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
++		if _, statErr := authpublication.Stat(path); errors.Is(statErr, fs.ErrNotExist) {
+ 			return "", nil
  		}
  	}
  
@@ -6051,7 +6072,7 @@ index 00000000..8c49add3
 +}
 diff --git a/internal/authpublication/publication.go b/internal/authpublication/publication.go
 new file mode 100644
-index 00000000..2579d446
+index 00000000..bbd5da26
 --- /dev/null
 +++ b/internal/authpublication/publication.go
 @@ -0,0 +1,198 @@
@@ -6222,7 +6243,7 @@ index 00000000..2579d446
 +// ReconciledDirectory retires publication records after startup has loaded an
 +// authoritative backend snapshot. Callers must exclude concurrent saves.
 +func ReconciledDirectory(dir string) error {
-+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
++	return fs.WalkDir(os.DirFS(dir), ".", func(relative string, entry fs.DirEntry, err error) error {
 +		if errors.Is(err, os.ErrNotExist) {
 +			return nil
 +		}
@@ -6230,10 +6251,10 @@ index 00000000..2579d446
 +			return err
 +		}
 +		if entry.IsDir() && entry.Name() == DirectoryName {
-+			if err := os.RemoveAll(path); err != nil {
++			if err := os.RemoveAll(filepath.Join(dir, filepath.FromSlash(relative))); err != nil {
 +				return err
 +			}
-+			return filepath.SkipDir
++			return fs.SkipDir
 +		}
 +		return nil
 +	})
@@ -7503,5 +7524,289 @@ index 00000000..e727e34f
 +	w.refreshAuthState(false)
 +	if update, ok := takePublicationUpdate(w, "account.json"); !ok || update.Auth == nil || update.Auth.Metadata["access_token"] != "committed" {
 +		t.Fatal("scan lost credential under a symlinked auth directory")
++	}
++}
+diff --git a/internal/api/handlers/management/auth_files_publication_status_test.go b/internal/api/handlers/management/auth_files_publication_status_test.go
+new file mode 100644
+index 00000000..345c28a2
+--- /dev/null
++++ b/internal/api/handlers/management/auth_files_publication_status_test.go
+@@ -0,0 +1,56 @@
++package management
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
++	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestManagementStatusPersistsPendingPublication(t *testing.T) {
++	for _, provider := range []string{"codex", "claude"} {
++		for _, existing := range []bool{false, true} {
++			t.Run(fmt.Sprintf("%s/existing=%t", provider, existing), func(t *testing.T) {
++				h, path, backend := newCommittedPublicationHandler(t, provider, existing)
++				router := gin.New()
++				router.PATCH("/credentials/status", h.PatchAuthFileStatus)
++				for _, disabled := range []bool{true, false} {
++					body := fmt.Sprintf(`{"name":"account.json","disabled":%t}`, disabled)
++					req := httptest.NewRequest(http.MethodPatch, "/credentials/status", bytes.NewBufferString(body))
++					req.Header.Set("Content-Type", "application/json")
++					response := httptest.NewRecorder()
++					router.ServeHTTP(response, req)
++					if response.Code != http.StatusOK {
++						t.Fatalf("status update: %d, %s", response.Code, response.Body)
++					}
++					var remote map[string]any
++					if err := json.Unmarshal(backend(), &remote); err != nil || remote["disabled"] != disabled || remote["access_token"] != "committed" {
++						t.Errorf("status did not persist the committed credential: %#v, %v", remote, err)
++					}
++					if authpublication.HasPending(path) {
++						t.Error("status save skipped publication repair")
++					}
++					scanned, err := synthesizer.NewFileSynthesizer().Synthesize(&synthesizer.SynthesisContext{Config: h.cfg, AuthDir: h.cfg.AuthDir})
++					if err != nil || len(scanned) != 1 {
++						t.Fatalf("status rescan: %#v, %v", scanned, err)
++					}
++					if _, err := h.authManager.Update(coreauth.WithSkipPersist(context.Background()), scanned[0]); err != nil {
++						t.Fatal(err)
++					}
++					active, ok := h.authManager.GetByID("account.json")
++					if !ok || active.Disabled != disabled || active.Metadata["access_token"] != "committed" {
++						t.Fatalf("rescan reverted status: %#v", active)
++					}
++				}
++			})
++		}
++	}
++}
+diff --git a/internal/store/acquisition_publication_bootstrap_test.go b/internal/store/acquisition_publication_bootstrap_test.go
+new file mode 100644
+index 00000000..d30f63fd
+--- /dev/null
++++ b/internal/store/acquisition_publication_bootstrap_test.go
+@@ -0,0 +1,114 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"runtime"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++)
++
++func TestObjectStoreBootstrapReconcilesSymlinkPublication(t *testing.T) {
++	for _, confirmed := range []bool{false, true} {
++		t.Run(fmt.Sprintf("confirmed=%t", confirmed), func(t *testing.T) {
++			root := t.TempDir()
++			authDir := filepath.Join(root, "auths")
++			realDir := filepath.Join(root, "real-auths")
++			if err := os.MkdirAll(realDir, 0o700); err != nil {
++				t.Fatal(err)
++			}
++			if err := os.Symlink(realDir, authDir); err != nil {
++				if runtime.GOOS == "windows" {
++					t.Skipf("symlink unavailable: %v", err)
++				}
++				t.Fatal(err)
++			}
++			committed := []byte(`{"type":"codex","access_token":"newer-remote"}`)
++			configData := []byte("port: 8317\n")
++			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				var data []byte
++				switch r.URL.Path {
++				case "/credentials/":
++					if r.Method == http.MethodHead {
++						return
++					}
++					if r.Method != http.MethodGet || r.URL.Query().Get("prefix") != "auths/" {
++						t.Errorf("unexpected bucket request: %s %s", r.Method, r.URL)
++						w.WriteHeader(http.StatusBadRequest)
++						return
++					}
++					data = []byte(fmt.Sprintf(`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>credentials</Name><Prefix>auths/</Prefix><IsTruncated>false</IsTruncated><Contents><Key>auths/account.json</Key><LastModified>2026-01-01T00:00:00Z</LastModified><ETag>"remote"</ETag><Size>%d</Size></Contents></ListBucketResult>`, len(committed)))
++					w.Header().Set("Content-Type", "application/xml")
++				case "/credentials/config/config.yaml":
++					data = configData
++				case "/credentials/auths/account.json":
++					data = committed
++				default:
++					t.Errorf("unexpected startup request: %s %s", r.Method, r.URL)
++					w.WriteHeader(http.StatusBadRequest)
++					return
++				}
++				w.Header().Set("Last-Modified", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat))
++				w.Header().Set("ETag", `"remote"`)
++				w.Header().Set("Content-Length", strconv.Itoa(len(data)))
++				if r.Method != http.MethodHead {
++					_, _ = w.Write(data)
++				}
++			}))
++			defer remote.Close()
++			s, err := NewObjectTokenStore(ObjectStoreConfig{Endpoint: strings.TrimPrefix(remote.URL, "http://"), Bucket: "credentials",
++				AccessKey: "test-key", SecretKey: "test-secret", Region: "us-east-1", LocalRoot: root, PathStyle: true})
++			if err != nil {
++				t.Fatal(err)
++			}
++			path := filepath.Join(authDir, "account.json")
++			pending, err := authpublication.Prepare(path, []byte(`{"type":"codex","access_token":"old-overlay"}`))
++			if err != nil {
++				t.Fatal(err)
++			}
++			if confirmed {
++				if err := pending.Commit(); err != nil {
++					t.Fatal(err)
++				}
++			}
++			outside := filepath.Join(t.TempDir(), "outside.json")
++			outsidePending, err := authpublication.Prepare(outside, []byte(`{"type":"codex","access_token":"unrelated"}`))
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := outsidePending.Commit(); err != nil {
++				t.Fatal(err)
++			}
++			if err := os.Symlink(filepath.Dir(outside), filepath.Join(authDir, "external")); err != nil {
++				t.Fatal(err)
++			}
++			if err := s.Bootstrap(context.Background(), ""); err != nil {
++				t.Fatal(err)
++			}
++			if !authpublication.HasPending(outside) {
++				t.Fatal("reconciliation followed a nested symlink and removed an unrelated publication")
++			}
++			if mirror, err := os.ReadFile(path); err != nil || !bytes.Equal(mirror, committed) {
++				t.Fatalf("startup did not load the actual backend credential: %q, %v", mirror, err)
++			}
++			if effective, err := authpublication.ReadFile(path); err != nil || !bytes.Equal(effective, committed) || authpublication.HasPending(path) {
++				t.Fatalf("startup retained a stale publication: %q, %v", effective, err)
++			}
++			if err := os.WriteFile(path, []byte(`{"type":"codex","access_token":"edited"}`), 0o600); err != nil {
++				t.Fatal(err)
++			}
++			if effective, err := authpublication.ReadFile(path); err != nil || !bytes.Contains(effective, []byte("edited")) {
++				t.Fatalf("startup reconciliation still blocks ordinary edits: %q, %v", effective, err)
++			}
++		})
++	}
++}
+diff --git a/internal/store/acquisition_publication_status_test.go b/internal/store/acquisition_publication_status_test.go
+new file mode 100644
+index 00000000..a6e8c47f
+--- /dev/null
++++ b/internal/store/acquisition_publication_status_test.go
+@@ -0,0 +1,96 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/authpublication"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestRemoteStoresDisablePendingPublication(t *testing.T) {
++	for _, backend := range []string{"git", "object", "postgres"} {
++		t.Run(backend, func(t *testing.T) {
++			dir := filepath.Join(t.TempDir(), "workspace", "auths")
++			path := filepath.Join(dir, "account.json")
++			first := true
++			loseFirstMirror := func() error {
++				if !first {
++					return nil
++				}
++				first = false
++				staged, err := filepath.Glob(filepath.Join(dir, ".auth-acquisition-*", "credential"))
++				if err != nil || len(staged) != 1 {
++					t.Fatalf("staged credential: %v, %v", staged, err)
++				}
++				return os.Remove(staged[0])
++			}
++			var s cliproxyauth.Store
++			var remote []byte
++			var gitRemote string
++			switch backend {
++			case "git":
++				gitRemote = filepath.Join(t.TempDir(), "remote.git")
++				if _, err := git.PlainInit(gitRemote, true); err != nil {
++					t.Fatal(err)
++				}
++				gs := NewGitTokenStore(gitRemote, "", "", "")
++				gs.SetBaseDir(dir)
++				if err := gs.EnsureRepository(); err != nil {
++					t.Fatal(err)
++				}
++				gs.pushFn = func(ctx context.Context, repo *git.Repository, opts *git.PushOptions) error {
++					if err := repo.PushContext(ctx, opts); err != nil {
++						return err
++					}
++					return loseFirstMirror()
++				}
++				s = gs
++			case "object":
++				s = &ObjectTokenStore{authDir: dir, putObjectFn: func(_ context.Context, _ string, data []byte, _ string) error {
++					remote = bytes.Clone(data)
++					return loseFirstMirror()
++				}}
++			case "postgres":
++				s = &PostgresStore{authDir: dir, persistAuthFn: func(_ context.Context, _ string, data []byte) error {
++					remote = bytes.Clone(data)
++					return loseFirstMirror()
++				}}
++			}
++			auth := &cliproxyauth.Auth{ID: "account.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "committed"}}
++			if _, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), auth); err != nil {
++				t.Fatal(err)
++			}
++			if _, err := os.Stat(path); !os.IsNotExist(err) || !authpublication.HasPending(path) {
++				t.Fatalf("fixture did not leave a missing committed mirror: %v", err)
++			}
++			auth.Disabled = true
++			auth.Metadata["disabled"] = true
++			if saved, err := s.Save(context.Background(), auth); err != nil || saved != path {
++				t.Fatalf("disable skipped the committed publication: %q, %v", saved, err)
++			}
++			mirror, err := os.ReadFile(path)
++			if err != nil || !bytes.Contains(mirror, []byte(`"disabled":true`)) || !bytes.Contains(mirror, []byte(`"access_token":"committed"`)) || authpublication.HasPending(path) {
++				t.Fatalf("disable lost credential or publication repair: %q, %v", mirror, err)
++			}
++			if gitRemote != "" {
++				assertRemoteFileContents(t, gitRemote, "master", "auths/account.json", string(mirror))
++			} else if !bytes.Equal(remote, mirror) {
++				t.Fatalf("disable did not reach backend: %q, want %q", remote, mirror)
++			}
++			if err := os.Remove(path); err != nil {
++				t.Fatal(err)
++			}
++			if saved, err := s.Save(context.Background(), auth); err != nil || saved != "" {
++				t.Fatalf("runtime save recreated a deliberately removed credential: %q, %v", saved, err)
++			}
++			if _, err := os.Stat(path); !os.IsNotExist(err) {
++				t.Fatalf("genuine deletion fence lost: %v", err)
++			}
++		})
 +	}
 +}
