@@ -21,6 +21,7 @@ export type {
 const TARGETS = new Map<string, "sed" | "grep">([
   ["sed", "sed"],
   ["/bin/sed", "sed"],
+  ["/usr/bin/sed", "sed"],
   ["grep", "grep"],
   ["/bin/grep", "grep"],
 ]);

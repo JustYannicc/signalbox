@@ -2,9 +2,7 @@ import { ABI_VERSION, KernelProgramRegistry } from "../kernel/KernelAbi.ts";
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
-import type { KernelBusyboxPort } from "../kernel/KernelBusyboxPort.ts";
 import type { KernelSyscallPort } from "../kernel/KernelSyscallPort.ts";
-import { createChildBusyboxProgram } from "./ChildBusyboxProgram.ts";
 import { createChildWorkerProgram } from "./ChildWorkerProgram.ts";
 import { createWorkerLoaderDispatch, type ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 import { createChildBashProgram } from "./ChildBashProgram.ts";
@@ -12,7 +10,6 @@ import { createChildCoreutilsProgram } from "./ChildCoreutilsProgram.ts";
 import { createWorkerSyscalls } from "./WorkerSyscalls.ts";
 import type { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
 import { KERNEL_BASH_ARTIFACT, type KernelBashCredentials } from "../kernel/KernelBashProgram.ts";
-import { KERNEL_GNU_SED_ARTIFACT } from "../kernel/KernelGnuPrograms.ts";
 import { KERNEL_RIPGREP_PROGRAM_MANIFEST } from "../kernel/KernelRipgrepProgram.ts";
 import type { ChildWorkerCode, ChildWorkerProgram } from "./ChildWorkerProgram.ts";
 import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
@@ -31,6 +28,7 @@ import type { KernelGitPort } from "../kernel/KernelGitPort.ts";
 import { createChildBusyboxBindings } from "./catalog/BusyboxPrograms.ts";
 import type { ChildProgramFactory } from "./catalog/ChildProgramFactory.ts";
 import { createChildJqBinding } from "./catalog/JqProgram.ts";
+import { createChildSedBindings } from "./catalog/SedPrograms.ts";
 
 export interface ChildProgramCodes {
   readonly bash: ChildWorkerCode;
@@ -118,33 +116,17 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
   })) {
     bindings.set(path, binding);
   }
-  const catDispatch = createWorkerLoaderDispatch<KernelBusyboxPort>(options.loader);
-
-  const sedCode = options.programs.sed;
-  if (sedCode !== undefined) {
-    const artifact = KERNEL_GNU_SED_ARTIFACT;
-    const manifest = Object.freeze({
-      name: "@gnu/sed",
-      version: artifact.version,
-      abiVersion: ABI_VERSION,
-      requiredCapabilities: Object.freeze([]),
-      entrypoint: `gnu-sed:${artifact.sha256}`,
-    });
-    register(options.registry, manifest);
-    bindings.set("/bin/sed", {
-      manifest,
-      // GNU sed uses the same WASI and process metadata imports as BusyBox.
-      implementation: child((admission) =>
-        createChildBusyboxProgram({
-          ...admission,
-          executable: "/bin/sed",
-          code: sedCode,
-          capacity,
-          lifetimes,
-          dispatch: catDispatch,
-        }),
-      ),
-    });
+  if (options.programs.sed !== undefined) {
+    for (const [path, binding] of createChildSedBindings({
+      registry: options.registry,
+      loader: options.loader,
+      capacity,
+      lifetimes,
+      child,
+      code: options.programs.sed,
+    })) {
+      bindings.set(path, binding);
+    }
   }
 
   register(options.registry, KERNEL_RIPGREP_PROGRAM_MANIFEST);
