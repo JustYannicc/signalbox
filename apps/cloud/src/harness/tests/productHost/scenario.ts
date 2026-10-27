@@ -129,7 +129,10 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
                 },
               });
         const commands = commandLoader();
-        const capacity = new ChildWorkerCapacity(2);
+        const capacity = new ChildWorkerCapacity(2, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+          owner: "test/src-harness-tests-producthost-scenario-1",
+        });
         const persistencePorts = createMemoryFilePersistencePorts();
         const at = { repository: "product-test", fork: "thread", commit: "base" };
         persistencePorts.seedFile(at, "/workspace/file.txt", new TextEncoder().encode("before\n"));

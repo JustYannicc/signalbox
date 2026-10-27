@@ -1,4 +1,5 @@
 import type { KernelBusyboxPort } from "../kernel/KernelBusyboxPort.ts";
+import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import { nimbusPlans, type NimbusMemoryPlan } from "./nimbus/NimbusPlans.ts";
 import { MemoryRegions } from "./wasi/MemoryRegions.ts";
 
@@ -10,7 +11,7 @@ const plans: Readonly<Record<string, NimbusMemoryPlan>> = {
 /** Nimbus imports use their own ABI; standard WASI is composed by ChildBusybox. */
 export function createChildBusyboxImports(options: {
   readonly module: WebAssembly.Module;
-  readonly port: KernelBusyboxPort;
+  readonly port: Pick<KernelBusyboxPort, "callBusybox">;
 }) {
   const wasm = WebAssembly as unknown as {
     Suspending: new (handler: (...args: number[]) => Promise<number>) => WebAssembly.ImportValue;
@@ -42,8 +43,12 @@ export function createChildBusyboxImports(options: {
         memorySize: memory.buffer.byteLength,
         regions: regions.snapshot(),
       });
-      regions.apply(result.regions);
-      return result.value;
+      try {
+        regions.apply(result.regions);
+        return result.value;
+      } finally {
+        disposeKernelRpcReply(result);
+      }
     });
   }
   return {

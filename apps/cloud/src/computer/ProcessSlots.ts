@@ -16,6 +16,10 @@ export type {
   ProcessSlotsOptions,
 } from "./processSlots/ProcessSlotTypes.ts";
 export { ProcessSlotStorageError } from "./processSlots/ProcessSlotJournal.ts";
+export {
+  codeId as validateProcessSlotCodeId,
+  ownerNamespace as validateProcessSlotOwner,
+} from "./processSlots/ProcessSlotState.ts";
 
 export async function createProcessSlots(options: ProcessSlotsOptions): Promise<ProcessSlots> {
   ownerNamespace(options.owner);

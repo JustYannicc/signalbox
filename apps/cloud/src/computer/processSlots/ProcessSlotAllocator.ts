@@ -67,6 +67,10 @@ export class ProcessSlotAllocator implements ProcessSlots {
     });
   }
 
+  get inFlightLimit(): number {
+    return this.#options.inFlightLimit;
+  }
+
   async recover(): Promise<void> {
     await this.#lifecycle.recover();
   }

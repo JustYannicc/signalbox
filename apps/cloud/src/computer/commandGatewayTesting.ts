@@ -28,6 +28,7 @@ export type FakeChildRun = (
 
 export interface CommandGatewayFixtureOptions {
   readonly run?: FakeChildRun;
+  readonly onRpcReturn?: (input: ChildWorkerInvocation) => void | Promise<void>;
   readonly orderedMachineRules?: readonly {
     readonly id: string;
     readonly executable: string;
@@ -35,12 +36,16 @@ export interface CommandGatewayFixtureOptions {
     readonly minimumWorkspaceBytes?: number;
   }[];
   readonly capacityLimit?: number;
+  readonly RESIDENT_BYTE_LIMIT?: string;
   readonly cpuAccounting?: KernelCpuAccounting;
 }
 
 export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}) {
   const kernel = childBusyboxFixture();
-  const capacity = new ChildWorkerCapacity(options.capacityLimit ?? 2);
+  const capacity = new ChildWorkerCapacity(options.capacityLimit ?? 2, {
+    owner: "test/command-gateway",
+    RESIDENT_BYTE_LIMIT: options.RESIDENT_BYTE_LIMIT ?? String(104 * 1024 * 1024),
+  });
   const run =
     options.run ??
     (async (_input, invocation) => {
@@ -67,7 +72,9 @@ export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}
           candidate.stopped!();
         },
       };
-      return run(input, invocation);
+      const result = await run(input, invocation);
+      await options.onRpcReturn?.(input);
+      return result;
     },
   };
   const machineChild = emptyChild();

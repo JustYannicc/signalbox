@@ -11,6 +11,7 @@ import {
   writeStdio,
   type FakeChildInvocation,
 } from "./CommandGatewayAdmissionFixture.ts";
+import { observeTicketReservations } from "./ComputerProgramAdmissionTestSupport.ts";
 import { exited } from "./ChildBusyboxFixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
@@ -75,7 +76,7 @@ describe("uniform command gateway admission", () => {
         }
       },
     });
-    const reserve = vi.spyOn(fixture.capacity, "reserve");
+    const reservations = observeTicketReservations(fixture.capacity);
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let child: Awaited<ReturnType<typeof fixture.gateway.exec>> | undefined;
     const command = {
@@ -97,7 +98,8 @@ describe("uniform command gateway admission", () => {
       expect(actualStdout).toEqual(stdout);
       expect(actualStderr).toEqual(stderr);
       expect(status).toEqual(exited(23));
-      expect(reserve).toHaveBeenCalledOnce();
+      expect(reservations.requests).toHaveLength(1);
+      expect(reservations.granted).toEqual(reservations.requests.map((request) => request.codeId));
       expect(reacquire).not.toHaveBeenCalled();
       expect(fixture.capacity.active).toBe(0);
       expect(fixture.machineSpawn).not.toHaveBeenCalled();

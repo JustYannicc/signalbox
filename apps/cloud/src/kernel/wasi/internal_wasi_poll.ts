@@ -10,6 +10,7 @@ import {
 } from "./internal_wasi_descriptors.ts";
 import { WasiClock } from "./internal_wasi_clock.ts";
 import { WasiError, WasiMemory } from "./internal_wasi_memory.ts";
+import { notifyKernelSuspension } from "../KernelSuspension.ts";
 
 const ERRNO_SUCCESS = 0;
 const ERRNO_EBADF = 8;
@@ -308,6 +309,7 @@ export class WasiPoller {
 
       const timer =
         clocks.nextWait === undefined ? undefined : this.#clock.wait(clocks.nextWait, signal);
+      notifyKernelSuspension();
       const winner = await Promise.race([
         ...tasks,
         ...(timer === undefined ? [] : [timer.then(() => undefined as PollEvent | undefined)]),

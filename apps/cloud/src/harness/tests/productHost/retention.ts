@@ -32,7 +32,10 @@ async function runtimePorts(): Promise<
     machineInventory: machineInventoryFixture(),
     commands: {
       loader: commandLoader().loader,
-      capacity: new ChildWorkerCapacity(2),
+      capacity: new ChildWorkerCapacity(2, {
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+        owner: "test/src-harness-tests-producthost-retention-1",
+      }),
       machine: () => ({
         files: emptyMachineFilesFixture(),
         spawn: async () => {

@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
 import { KernelBrokenPipeError, KernelPipe } from "../../kernel/KernelPipe.ts";
+import { KernelProcessSignal } from "../../kernel/KernelProcessSignal.ts";
 import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
 import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
@@ -11,9 +12,10 @@ const SIZE = 16 * 1024 * 1024;
 const PREFIX_SIZE = KERNEL_SYSCALL_MAX_IO_BYTES + 65_536;
 
 it.each(["errno", "signal", "abort"] as const)(
-  "keeps an earlier RPC's accepted prefix on later %s",
+  "preserves accepted bytes and delivers a later %s",
   async (ending) => {
     const controller = new AbortController();
+    const cancellation = new Error("Write cancelled");
     const chunks: Uint8Array[] = [];
     let calls = 0;
     const filesystem = new KernelFileSystem({
@@ -25,7 +27,7 @@ it.each(["errno", "signal", "abort"] as const)(
             calls++;
             if (calls > 1) throw new KernelBrokenPipeError();
             chunks.push(source.slice());
-            if (ending === "abort") controller.abort();
+            if (ending === "abort") controller.abort(cancellation);
             return source.length;
           },
         },
@@ -65,11 +67,22 @@ it.each(["errno", "signal", "abort"] as const)(
     const view = new DataView(memory.buffer);
     view.setUint32(32, 1024, true);
     view.setUint32(36, PREFIX_SIZE, true);
+    view.setUint32(16, 0xeeeeeeee, true);
     const source = new Uint8Array(memory.buffer, 1024, PREFIX_SIZE);
     for (let index = 0; index < source.length; index++) source[index] = (index * 37) & 255;
     try {
-      expect(await child.run(instance.exports.run!, 1, 32, 1, 16)).toBe(0);
-      expect(view.getUint32(16, true)).toBe(KERNEL_SYSCALL_MAX_IO_BYTES);
+      const running = child.run(instance.exports.run!, 1, 32, 1, 16);
+      if (ending === "errno") {
+        expect(await running).toBe(0);
+      } else if (ending === "signal") {
+        await expect(running).rejects.toBeInstanceOf(KernelProcessSignal);
+        await expect(running).rejects.toMatchObject({ signal: 13 });
+      } else {
+        await expect(running).rejects.toBe(cancellation);
+      }
+      expect(view.getUint32(16, true)).toBe(
+        ending === "errno" ? KERNEL_SYSCALL_MAX_IO_BYTES : 0xeeeeeeee,
+      );
       expect(offsets).toEqual([0, KERNEL_SYSCALL_MAX_IO_BYTES]);
       expect(chunks).toEqual([source.slice(0, KERNEL_SYSCALL_MAX_IO_BYTES)]);
       expect(calls).toBe(ending === "abort" ? 1 : 2);
@@ -156,7 +169,7 @@ function largeIo(name: "fd_read" | "fd_write", sigpipe: "epipe" | "terminate" = 
 }
 
 it.each(["abort", "epipe"] as const)(
-  "reports only the accepted prefix of a 16 MiB write on %s",
+  "preserves the accepted prefix of a 16 MiB write on %s",
   async (interruption) => {
     const fixture = largeIo("fd_write");
     try {
@@ -166,8 +179,12 @@ it.each(["abort", "epipe"] as const)(
       expect(fixture.pipe.bufferedBytes).toBe(65_536);
       if (interruption === "abort") fixture.controller.abort();
       else fixture.pipe.closeReader();
-      expect(await running).toBe(0);
-      expect(fixture.view.getUint32(16, true)).toBe(65_536);
+      if (interruption === "abort") {
+        await expect(running).rejects.toBe(fixture.controller.signal.reason);
+      } else {
+        expect(await running).toBe(0);
+      }
+      expect(fixture.view.getUint32(16, true)).toBe(interruption === "abort" ? 0xeeeeeeee : 65_536);
       if (interruption === "abort") {
         const received = new Uint8Array(65_536);
         expect(fixture.pipe.tryReadInto(received)).toBe(received.length);

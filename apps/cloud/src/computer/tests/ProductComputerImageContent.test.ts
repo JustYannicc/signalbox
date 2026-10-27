@@ -199,7 +199,10 @@ function imageContentFixture() {
     threadId: "image-content-public-composition",
     filesystem,
     wakes,
-    capacity: new ChildWorkerCapacity(2),
+    capacity: new ChildWorkerCapacity(2, {
+      owner: "test/image-content-public-composition",
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+    }),
     programs: {
       bash: code,
       busyboxCat: code,

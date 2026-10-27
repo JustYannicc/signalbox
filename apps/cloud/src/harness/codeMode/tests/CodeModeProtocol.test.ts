@@ -12,6 +12,7 @@ import { KernelWakeRegistry } from "../../../kernel/KernelWakeRegistry.ts";
 import { hostClient } from "./client.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
+const syntheticRequest = Object.freeze({ codeId: "test-holder", residentBytes: 0 });
 const code: CodeModeCellCode = { mainModule: "unused.js", modules: {} };
 const loader = {
   run: async (): Promise<never> => {
@@ -25,7 +26,10 @@ describe("CodeMode framed protocol admission", () => {
     const nextEntered = Promise.withResolvers<CodeModeCellEvents>();
     const nextCompletion = Promise.withResolvers<void>();
     const completion = Promise.withResolvers<CodeModeCellCompletion>();
-    const capacity = new ChildWorkerCapacity(1);
+    const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/src-harness-codemode-tests-codemodeprotocol-test-1",
+    });
     let runs = 0;
     const client = hostClient(
       {
@@ -98,8 +102,14 @@ describe("CodeMode framed protocol admission", () => {
   });
 
   it("completes limit plus one cells that each wait for a command", async () => {
-    const commands = new ChildWorkerCapacity();
-    const cells = new ChildWorkerCapacity(commands.limit);
+    const commands = new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/src-harness-codemode-tests-codemodeprotocol-test-2",
+    });
+    const cells = new ChildWorkerCapacity(commands.limit, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/src-harness-codemode-tests-codemodeprotocol-test-3",
+    });
     const ready = Promise.withResolvers<void>();
     const finish = Promise.withResolvers<void>();
     const processDone = Promise.withResolvers<KernelExitStatus>();
@@ -125,6 +135,7 @@ describe("CodeMode framed protocol admission", () => {
               completed++;
             },
             requester,
+            syntheticRequest,
           );
           await events.stopped();
           return { terminated: false, error: null, writes: {} };
@@ -158,8 +169,11 @@ describe("CodeMode framed protocol admission", () => {
   });
 
   it.each(["cancel", "shutdown", "disconnect"])("cancels queued cells on %s", async (action) => {
-    const capacity = new ChildWorkerCapacity(1);
-    const held = await capacity.acquire(new AbortController().signal, undefined);
+    const capacity = new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/src-harness-codemode-tests-codemodeprotocol-test-4",
+    });
+    const held = await capacity.acquire(new AbortController().signal, undefined, syntheticRequest);
     const queued = Promise.withResolvers<void>();
     const acquire = capacity.acquire.bind(capacity);
     vi.spyOn(capacity, "acquire").mockImplementation((...args) => {
@@ -267,6 +281,9 @@ function fromBytes(bytes: Uint8Array) {
     signal: new AbortController().signal,
     loader,
     code,
-    cellCapacity: new ChildWorkerCapacity(1),
+    cellCapacity: new ChildWorkerCapacity(1, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/src-harness-codemode-tests-codemodeprotocol-test-5",
+    }),
   });
 }

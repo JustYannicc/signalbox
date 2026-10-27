@@ -32,6 +32,7 @@ export function allocateAgentOsPipe(
 
   const pipe = new KernelPipe(options.wakes, PIPE_CAPACITY_BYTES);
   const readEnd: PollableStdio = {
+    filetype: "unknown",
     supportsNonblocking: true,
     readInto: (target, flags) =>
       options.asyncMode && (flags & FDFLAGS.NONBLOCK) === 0
@@ -45,6 +46,7 @@ export function allocateAgentOsPipe(
     },
   };
   const writeEnd: PollableStdio = {
+    filetype: "unknown",
     supportsNonblocking: true,
     write: (source, flags) =>
       options.asyncMode && (flags & FDFLAGS.NONBLOCK) === 0

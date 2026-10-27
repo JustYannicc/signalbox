@@ -1,5 +1,5 @@
 // @effect-diagnostics cryptoRandomUUID:off - opaque compiled modules need an identity when their source bytes are unavailable.
-import type { ChildWorkerModules } from "./ChildWorkerProgram.ts";
+import type { ChildWorkerModules } from "./ChildWorkerCode.ts";
 import type { ResolvedChildWorkerLimits } from "./ChildWorkerLimits.ts";
 
 interface ChildWorkerIdentityCode {

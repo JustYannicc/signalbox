@@ -8,6 +8,7 @@ import {
   type KernelBashCredentials,
 } from "../../kernel/KernelBashProgram.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
+import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
 import type { KernelCommand, KernelCommandForwarder } from "../../kernel/KernelCommandForwarder.ts";
 import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
@@ -39,7 +40,9 @@ type RunningBashHost = KernelBashPort & {
   readonly metadata: () => {
     readonly pid: number;
     readonly credentials: KernelBashCredentials;
+    readonly residentByteLimit: number;
   };
+  readonly forkSnapshot: () => KernelBashForkSource | undefined;
 };
 
 function loadBash(root: string) {
@@ -97,6 +100,7 @@ export const machinePathInventory = machineInventoryFixture([
 ]);
 
 export interface MachinePathFixtureOptions {
+  readonly RESIDENT_BYTE_LIMIT?: string;
   readonly threadId?: string;
   readonly home?: string;
   readonly inventory?: MachineProgramInventory;
@@ -135,6 +139,12 @@ export function machinePathFixture(
   const wakes = new KernelWakeRegistry();
   const machineCalls: KernelCommand[] = [];
   const localCalls: string[] = [];
+  const bashWorkerCalls: {
+    readonly pid: number;
+    readonly restored: boolean;
+    readonly residentByteLimit: number;
+    peakResidentWasmBytes: number;
+  }[] = [];
   const inventory = options.inventory ?? machinePathInventory;
   const controlled = options.files === undefined ? controlledMachineFiles(inventory) : undefined;
   const files = options.files ?? controlled!.files;
@@ -149,13 +159,13 @@ export function machinePathFixture(
         host<T>(): T;
         stopped(): void;
       };
-      localCalls.push(input.command.executable);
       try {
         const basename = input.command.executable.slice(
           input.command.executable.lastIndexOf("/") + 1,
         );
         const coreutilsModule = options.coreutilsModules?.[basename as ChildCoreutilsCommand];
         if (coreutilsModule !== undefined) {
+          localCalls.push(input.command.executable);
           return await createChildCoreutils({
             module: coreutilsModule,
             port: port.host<KernelCoreutilsPort>(),
@@ -166,14 +176,31 @@ export function machinePathFixture(
         if (!Object.hasOwn(input.modules, "bash.js")) throw new Error("Unexpected guest body");
         const host = port.host<RunningBashHost>();
         const metadata = host.metadata();
-        return await createChildBash({
+        const snapshot = await host.forkSnapshot();
+        const call = {
+          pid: metadata.pid,
+          restored: snapshot !== undefined,
+          residentByteLimit: metadata.residentByteLimit,
+          peakResidentWasmBytes: 0,
+        };
+        bashWorkerCalls.push(call);
+        if (snapshot === undefined) localCalls.push(input.command.executable);
+        const bash = createChildBash({
           module,
           port: host,
           pid: metadata.pid,
           credentials: metadata.credentials,
           args: input.command.argv,
           env: input.command.env,
-        }).run();
+          snapshot,
+          residentByteLimit: metadata.residentByteLimit,
+        });
+        try {
+          return await bash.run();
+        } finally {
+          await bash.drain();
+          call.peakResidentWasmBytes = bash.peakObservedResidentWasmBytes;
+        }
       } finally {
         port.stopped();
       }
@@ -188,11 +215,15 @@ export function machinePathFixture(
       return recordingChild();
     },
   };
+  const capacity = new ChildWorkerCapacity(4, {
+    RESIDENT_BYTE_LIMIT: options.RESIDENT_BYTE_LIMIT ?? String(104 * 1024 * 1024),
+    owner: "test/machine-path-fixture",
+  });
   const computer = createProductComputer({
     threadId: options.threadId ?? `machine-path-regression-${nextThread++}`,
     filesystem,
     wakes,
-    capacity: new ChildWorkerCapacity(4),
+    capacity,
     loader,
     programs: {
       bash: code("bash"),
@@ -213,11 +244,13 @@ export function machinePathFixture(
   });
   return {
     computer,
+    capacity,
     filesystem,
     files,
     fileLookups: controlled?.calls ?? [],
     machineCalls,
     localCalls,
+    bashWorkerCalls,
     sqlWriteCount: () => sqlWrites,
     async direct(executable: string, argv: readonly string[], path = "/bin:/usr/bin") {
       return observe(

@@ -14,9 +14,12 @@ export interface ProbeRouterReadinessOptions {
   timeoutMs?: number;
   requestTimeoutMs?: number;
   retryIntervalMs?: number;
+  onPending?: (reason: "route-not-found" | "durable-object-handler-missing") => void;
 }
 
 const interrupted = () => new Error("Probe router readiness interrupted.");
+const record = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(interrupted());
@@ -61,12 +64,21 @@ export async function waitForProbeRouter(
   const pause = options.wait ?? wait;
   const now = options.now ?? (() => performance.now());
   const deadline = now() + timeoutMs;
+  const canary = new URL("/root/status", url);
+  canary.searchParams.set("session", "readiness");
+  let routerReady = false;
+  const unavailable = () =>
+    new Error(
+      routerReady
+        ? `Probe Durable Object handler remained unavailable for ${timeoutMs} ms.`
+        : `Probe router remained on Cloudflare's HTML 404 for ${timeoutMs} ms.`,
+    );
 
   while (true) {
     if (options.signal?.aborted) throw interrupted();
     const remainingMs = deadline - now();
     if (remainingMs <= 0) {
-      throw new Error(`Probe router remained on Cloudflare's HTML 404 for ${timeoutMs} ms.`);
+      throw unavailable();
     }
 
     const controller = new AbortController();
@@ -79,9 +91,9 @@ export async function waitForProbeRouter(
       controller.abort();
     }, requestMs);
 
-    let routeNotFound = false;
+    let retry = false;
     try {
-      const request = new Request(url, {
+      const request = new Request(routerReady ? canary : url, {
         method: "GET",
         headers: { authorization: `Bearer ${secret}` },
         redirect: "error",
@@ -90,18 +102,55 @@ export async function waitForProbeRouter(
       });
       const response = await fetchRequest(request);
       const body = await response.text();
+      if (options.signal?.aborted || timedOut) throw interrupted();
       const mediaType = response.headers
         .get("content-type")
         ?.split(";", 1)[0]
         ?.trim()
         .toLowerCase();
 
-      if (response.status === 400 && mediaType === "text/plain" && body === "Invalid session") {
-        return;
+      if (
+        !routerReady &&
+        response.status === 400 &&
+        mediaType === "text/plain" &&
+        body === "Invalid session"
+      ) {
+        // The outer router can be live while the namespace still serves Alchemy's empty precreate class.
+        routerReady = true;
+        continue;
       }
-      routeNotFound =
-        response.status === 404 && mediaType === "text/html" && body.includes("Page not found");
-      if (!routeNotFound) {
+      if (routerReady && mediaType === "application/json") {
+        let result: Record<string, unknown> | undefined;
+        try {
+          const value: unknown = JSON.parse(body);
+          if (record(value)) result = value;
+        } catch {
+          // Invalid JSON remains an unexpected response below.
+        }
+        if (response.status === 200) {
+          if (
+            typeof result?.retainedBytes === "number" &&
+            Number.isFinite(result.retainedBytes) &&
+            result.retainedBytes >= 0 &&
+            record(result.memoryUsage) &&
+            record(result.heapStatistics)
+          )
+            return;
+          throw new Error("Probe router returned an unexpected DO canary response.");
+        }
+        if (
+          response.status === 500 &&
+          result?.error === "Error: Handler does not export a fetch() function."
+        ) {
+          options.onPending?.("durable-object-handler-missing");
+          retry = true;
+        }
+      }
+      if (!retry)
+        retry =
+          response.status === 404 && mediaType === "text/html" && body.includes("Page not found");
+      if (response.status === 404 && retry) options.onPending?.("route-not-found");
+      if (!retry) {
         throw new Error(`Probe router returned an unexpected HTTP ${response.status} response.`);
       }
     } catch (error) {
@@ -126,7 +175,7 @@ export async function waitForProbeRouter(
 
     const delayMs = Math.min(retryIntervalMs, deadline - now());
     if (delayMs <= 0) {
-      throw new Error(`Probe router remained on Cloudflare's HTML 404 for ${timeoutMs} ms.`);
+      throw unavailable();
     }
     await pause(delayMs, options.signal);
   }

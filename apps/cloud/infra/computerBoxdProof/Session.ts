@@ -1,6 +1,7 @@
 // @effect-diagnostics globalDate:off - the disposable proof sets explicit provider expiry deadlines.
 import * as Effect from "effect/Effect";
 import { ThreadId } from "@t3tools/contracts";
+import type { DurableProcessSlotStorage } from "../../src/computer/ChildWorkerCapacity.ts";
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
 import { MachineCommands } from "../../src/computer/MachineCommands.ts";
@@ -59,6 +60,10 @@ const COMMAND_RESULT_CHECKS = [
   ["coreDumpedFalse", "commandCoreDumpedFalse"],
 ] as const satisfies readonly (readonly [keyof ProofCommandResultDiagnostics, string])[];
 const SAFE_CHECK_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
+type ProofOwnerContext = RunnerMachineSocketsOptions["ctx"] & {
+  readonly id: { toString(): string };
+  readonly storage: DurableProcessSlotStorage;
+};
 
 function sourceDiagnosticCheckName(
   step: SourcePreparationStep,
@@ -79,7 +84,7 @@ function commandDiagnosticCheckName(
 }
 
 export async function runComputerBoxdProof(input: {
-  readonly ctx: RunnerMachineSocketsOptions["ctx"];
+  readonly ctx: ProofOwnerContext;
   readonly ownership: ProofOwnership;
   readonly seed: Awaited<ReturnType<typeof decodeProofSeed>>;
   readonly loader: WorkerLoader;
@@ -92,7 +97,12 @@ export async function runComputerBoxdProof(input: {
   const { ownership, seed, signal } = input;
   await ownership.check("kernelSetup", "pending");
   const loader = createProofChildLoader(input.loader);
-  const kernel = proofKernel(ownership.storage, loader, seed);
+  const kernel = proofKernel(ownership.storage, loader, seed, {
+    // Worker Loader calls originate in this DO request; the 2026-10-23 probe measured ten IDs here.
+    limit: 10,
+    owner: `thread/${input.ctx.id.toString()}`,
+    storage: input.ctx.storage,
+  });
   const commandReporter: ProofCommandReporter = async (step, outcome, diagnostics) => {
     await ownership.check(COMMAND_PHASE_CHECKS[step], outcome);
     for (const diagnostic of diagnostics ?? []) {

@@ -150,7 +150,10 @@ export const makeContinuationHostInputs = (
       },
       commands: {
         loader: commands.loader,
-        capacity: new ChildWorkerCapacity(2),
+        capacity: new ChildWorkerCapacity(2, {
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+          owner: "test/src-harness-tests-producthost-continuationhostinputs-1",
+        }),
         systemIdentity,
         machine: (identity) => {
           NodeAssert.deepEqual(identity, systemIdentity);

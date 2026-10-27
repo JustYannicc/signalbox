@@ -129,8 +129,10 @@ export async function runProbe(
       if (deployment.code !== 0) throw failure("deployment", deployment);
       const url = probeUrl(deployment.stdout, stage);
       const routerReady = dependencies.routerReady ?? waitForProbeRouter;
-      if (options.signal) await routerReady(url, secret, { signal: options.signal });
-      else await routerReady(url, secret);
+      await routerReady(url, secret, {
+        ...(options.signal ? { signal: options.signal } : {}),
+        onPending: (reason) => log(`Probe setup pending: ${reason}.`),
+      });
       if (options.signal?.aborted) throw new Error("Probe run interrupted.");
       const measurement = await run({
         command: process.execPath,

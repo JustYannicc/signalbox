@@ -43,7 +43,10 @@ function bootComputer(absent: boolean) {
     threadId: `runtime-absence-${absent}`,
     filesystem,
     wakes,
-    capacity: new ChildWorkerCapacity(2),
+    capacity: new ChildWorkerCapacity(2, {
+      owner: `test/runtime-absence-${absent}`,
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+    }),
     programs: {
       bash: code,
       busyboxCat: code,

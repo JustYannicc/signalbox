@@ -183,7 +183,10 @@ export function firstCommandFixture(
       threadId: "first-machine-command",
       filesystem,
       wakes,
-      capacity: new ChildWorkerCapacity(2),
+      capacity: new ChildWorkerCapacity(2, {
+        owner: "test/first-machine-command",
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      }),
       loader: {
         run: async () => {
           throw new Error("uname must use the machine transport");

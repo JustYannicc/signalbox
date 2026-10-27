@@ -35,6 +35,7 @@ import {
   resolveKernelProgramFileBytes,
 } from "./KernelProgramFileBytes.ts";
 import { KernelProgramAdmissionTicket } from "./KernelProgramAdmissionTicket.ts";
+import { disposeKernelRpcReply } from "../KernelRpcReply.ts";
 
 export interface KernelProgramExecOptions {
   readonly resolve: (path: string) => KernelResult<ResolvedProgram>;
@@ -65,13 +66,19 @@ export function runKernelAsyncProgram(
   const leaveUser = enterCurrentKernelCpuUser();
   let result: Promise<KernelExitStatus>;
   try {
-    result = Promise.resolve(run(completeContext));
+    result = Promise.resolve(run(completeContext)).then((reply) => {
+      try {
+        return validateStatus(reply);
+      } finally {
+        disposeKernelRpcReply(reply);
+      }
+    });
     // Accounting cleanup can fail before the process can await its result.
     void result.catch(() => undefined);
   } finally {
     leaveUser();
   }
-  return result.then(validateStatus);
+  return result;
 }
 
 /** Replaces the current program while retaining its PID and descriptor table. */

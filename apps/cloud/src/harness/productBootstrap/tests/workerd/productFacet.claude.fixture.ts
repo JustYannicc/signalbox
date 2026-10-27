@@ -148,7 +148,10 @@ export class ClaudeFacet extends createHarnessCProductClaudeFacetClass<
         files,
         commands: {
           loader: commands.loader,
-          capacity: new ChildWorkerCapacity(2),
+          capacity: new ChildWorkerCapacity(2, {
+            owner: `test/product-facet-claude/${data.threadId}`,
+            RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+          }),
           systemIdentity: identity,
           machine: () => machine.port,
         },

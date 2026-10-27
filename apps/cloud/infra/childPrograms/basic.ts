@@ -37,7 +37,7 @@ export async function prepareBasePrograms(options: {
     readArtifact(programDir, ARTIFACTS.ripgrep, artifacts),
   ]);
   const [bashGraph, busyboxGraph, ripgrepGraph] = await Promise.all([
-    packageGraph(cloudRoot, "src/computer/ChildBash.ts", "ChildBash", bashMain, sources),
+    packageGraph(cloudRoot, "src/computer/ChildBashWorker.ts", "ChildBash", bashMain, sources),
     packageGraph(cloudRoot, "src/computer/ChildBusybox.ts", "ChildBusybox", busyboxMain, sources),
     packageGraph(cloudRoot, "src/computer/ChildWasi.ts", "ChildRipgrep", ripgrepMain, sources),
   ]);
