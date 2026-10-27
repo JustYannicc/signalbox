@@ -19,6 +19,7 @@ it.each([
   ["ugrep", "-Q", "pattern"],
   ["ugrep", "-z", "pattern"],
   ["ugrep", "-J2", "pattern"],
+  ["ugrep", "-F", "literal"],
   ["ugrep", "-E", "pattern", "file.txt"],
   ["ugrep", "-A101", "pattern"],
   ["ugrep", "-E"],

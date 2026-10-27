@@ -26,7 +26,7 @@ export function qualifyUgrepCommand(command: KernelCommand): GnuCommandQualifica
     ) {
       continue;
     } else if (options && argument.startsWith("-") && argument !== "-") {
-      if (/^-[GEFinI]+$/.test(argument)) continue;
+      if (/^-[GEinI]+$/.test(argument)) continue;
       if (/^-A\d{1,3}$/.test(argument) && Number(argument.slice(2)) <= 100) continue;
       return machine("unqualified-option", `ugrep option ${argument} is outside the stdin subset`);
     } else if (pattern) {
