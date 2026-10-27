@@ -6,6 +6,7 @@ import {
   emptyChild,
   spawnRequest,
 } from "./CommandGatewayAdmissionFixture.ts";
+import { observeTicketReservations } from "./ComputerProgramAdmissionTestSupport.ts";
 import { exited } from "./ChildBusyboxFixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
@@ -39,7 +40,7 @@ describe("nested machine command gateway admission", () => {
       machineStarted.resolve();
       return forwarded;
     });
-    const reserve = vi.spyOn(fixture.capacity, "reserve");
+    const reservations = observeTicketReservations(fixture.capacity);
     const reacquire = vi.spyOn(fixture.capacity, "run");
     let parent: Awaited<ReturnType<typeof fixture.gateway.host.spawn>> | undefined;
     let nested: Awaited<ReturnType<typeof fixture.gateway.host.spawn>> | undefined;
@@ -85,7 +86,8 @@ describe("nested machine command gateway admission", () => {
       expect(fixture.stdout()).toEqual(stdout);
       expect(fixture.stderr()).toBe(new TextDecoder().decode(stderr));
       expect(fixture.read("/workspace/keep.txt")).toBe("prior-write");
-      expect(reserve).toHaveBeenCalledOnce();
+      expect(reservations.requests).toHaveLength(1);
+      expect(reservations.granted).toEqual(reservations.requests.map((request) => request.codeId));
       expect(reacquire).not.toHaveBeenCalled();
       expect(fixture.capacity.active).toBe(1);
 

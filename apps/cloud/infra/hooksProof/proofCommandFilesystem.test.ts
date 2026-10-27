@@ -93,7 +93,10 @@ function fixture() {
       };
     },
     wakes,
-    new ChildWorkerCapacity(),
+    new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/infra-hooksproof-proofcommandfilesystem-test-1",
+    }),
   );
   return {
     database,

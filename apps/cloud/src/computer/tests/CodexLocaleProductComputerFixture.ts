@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import type { KernelBashCredentials } from "../../kernel/KernelBashProgram.ts";
+import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
 import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
@@ -99,7 +100,12 @@ export function loadCodexLocalePrograms(): CodexLocalePrograms | undefined {
 }
 
 type RunningProgramHost = {
-  readonly metadata: () => { readonly pid: number; readonly credentials: KernelBashCredentials };
+  readonly metadata: () => {
+    readonly pid: number;
+    readonly credentials: KernelBashCredentials;
+    readonly residentByteLimit: number;
+  };
+  readonly forkSnapshot: () => KernelBashForkSource | undefined;
 };
 
 interface LoaderInvocation {
@@ -201,14 +207,21 @@ export function createCodexLocaleProductComputer(
             if (command.executable !== "/bin/bash") {
               throw new Error(`Unexpected Bash executable path: ${command.executable}`);
             }
-            result = await createChildBash({
+            const bash = createChildBash({
+              residentByteLimit: metadata.residentByteLimit,
               module: programs.bash,
               credentials: metadata.credentials,
               pid: metadata.pid,
               port: bashPort,
               args: command.argv,
               env: command.env,
-            }).run();
+              snapshot: await bashPort.forkSnapshot(),
+            });
+            try {
+              result = await bash.run();
+            } finally {
+              await bash.drain();
+            }
             break;
           }
           case "sed":
@@ -250,7 +263,11 @@ export function createCodexLocaleProductComputer(
     threadId: "codex-locale-public-product-computer",
     filesystem,
     wakes,
-    capacity: new ChildWorkerCapacity(4),
+    // The fixture models one plain Worker request, whose Dynamic Worker limit is four.
+    capacity: new ChildWorkerCapacity(4, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/codex-locale-public-product-computer",
+    }),
     loader,
     programs: {
       bash: programsByName("bash"),

@@ -29,17 +29,29 @@ it.each([400, 500])(
       await NodeFSP.writeFile(NodePath.join(root, "host/generated", name), `frozen module ${i}`);
       modules.push({ name, type: "esm" });
     }
-    let readinessRequests = 0;
+    const readinessRequests: Request[] = [];
+    const canaryEntered = Promise.withResolvers<void>();
+    const canaryResponse = Promise.withResolvers<Response>();
+    const ready = Response.json({ retainedBytes: 0, memoryUsage: {}, heapStatistics: {} });
     const fetcher = vi.fn<typeof fetch>(async (url, init) => {
       if (url instanceof Request) {
-        readinessRequests++;
-        expect(url.url).toBe(`https://${script}.private.workers.dev/`);
+        readinessRequests.push(url);
         expect(url.method).toBe("GET");
         expect(url.headers.get("authorization")).toBe("Bearer fake-probe-secret");
-        expect(new URL(url.url).search).toBe("");
-        return new Response(routerStatus === 400 ? "Invalid session" : "Worker failed", {
-          status: routerStatus,
-        });
+        expect(url.redirect).toBe("error");
+        expect(url.cache).toBe("no-store");
+        if (readinessRequests.length === 1) {
+          expect(url.url).toBe(`https://${script}.private.workers.dev/`);
+          expect(new URL(url.url).search).toBe("");
+          return new Response(routerStatus === 400 ? "Invalid session" : "Worker failed", {
+            status: routerStatus,
+          });
+        }
+        expect(routerStatus).toBe(400);
+        expect(readinessRequests).toHaveLength(2);
+        expect(url.url).toBe(`https://${script}.private.workers.dev/root/status?session=readiness`);
+        canaryEntered.resolve();
+        return canaryResponse.promise;
       }
       if (init?.method === "PUT") {
         expect(init.body).toBeInstanceOf(FormData);
@@ -79,13 +91,27 @@ it.each([400, 500])(
     });
     const owner = { script };
     const cloud = new Cloudflare("a".repeat(32), "fake-ci-token", fetcher);
-    const deployment = cloud.deploy(owner, root, modules, "fake-probe-secret");
-    if (routerStatus === 400) {
-      expect(await deployment).toBe(`https://${script}.private.workers.dev`);
-    } else {
-      await expect(deployment).rejects.toThrow("unexpected HTTP 500");
+    const deploymentSucceeded = vi.fn();
+    const deployment = cloud.deploy(owner, root, modules, "fake-probe-secret").then((url) => {
+      deploymentSucceeded();
+      return url;
+    });
+    try {
+      if (routerStatus === 400) {
+        await Promise.race([canaryEntered.promise, deployment]);
+        expect(readinessRequests).toHaveLength(2);
+        expect(deploymentSucceeded).not.toHaveBeenCalled();
+        canaryResponse.resolve(ready);
+        expect(await deployment).toBe(`https://${script}.private.workers.dev`);
+        expect(deploymentSucceeded).toHaveBeenCalledOnce();
+      } else {
+        await expect(deployment).rejects.toThrow("unexpected HTTP 500");
+      }
+    } finally {
+      canaryResponse.resolve(ready);
+      await deployment.catch(() => {});
     }
-    expect(readinessRequests).toBe(1);
+    expect(readinessRequests).toHaveLength(routerStatus === 400 ? 2 : 1);
     expect(owner).toEqual({ script, namespace: "namespace", version: "version" });
   },
 );

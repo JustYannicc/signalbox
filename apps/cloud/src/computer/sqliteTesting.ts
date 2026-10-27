@@ -3,6 +3,9 @@ import type { FacetStorage } from "../kernel/FacetSqliteStorage.ts";
 
 export function sqliteFixture() {
   const database = new NodeSqlite.DatabaseSync(":memory:");
+  const statements = new Map<string, NodeSqlite.StatementSync>();
+  const schema = database.prepare("PRAGMA schema_version");
+  let schemaVersion = schema.get()?.schema_version;
   let depth = 0;
   const storage: FacetStorage = {
     sql: {
@@ -10,13 +13,21 @@ export function sqliteFixture() {
         return 0;
       },
       exec(query, ...bindings) {
-        const statement = database.prepare(query);
+        const version = schema.get()?.schema_version;
+        if (version !== schemaVersion) {
+          // Node's cached result columns can outlive a SQLite schema change.
+          statements.clear();
+          schemaVersion = version;
+        }
+        let statement = statements.get(query);
+        if (!statement) {
+          statement = database.prepare(query);
+          statements.set(query, statement);
+        }
         const values: NodeSqlite.SQLInputValue[] = bindings.map((value) =>
           value instanceof ArrayBuffer ? new Uint8Array(value) : value,
         );
-        return statement.columns().length
-          ? statement.all(...values)
-          : (statement.run(...values), []);
+        return statement.all(...values);
       },
     },
     transactionSync(callback) {
@@ -35,5 +46,11 @@ export function sqliteFixture() {
       }
     },
   };
-  return { storage, close: () => database.close() };
+  return {
+    storage,
+    close() {
+      statements.clear();
+      database.close();
+    },
+  };
 }

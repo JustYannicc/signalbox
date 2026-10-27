@@ -1,5 +1,6 @@
 // @effect-diagnostics cryptoRandomUUID:off globalTimers:off - request-owned host notifications run without an Effect runtime.
 import { captureKernelCpuExecution } from "./KernelCpuExecution.ts";
+import { notifyKernelSuspension } from "./KernelSuspension.ts";
 
 export interface WakeToken {
   readonly id: string;
@@ -120,6 +121,7 @@ export class KernelWakeRegistry {
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) this.cancel(token);
       if (entry.completion) this.release(token);
+      else notifyKernelSuspension();
     });
   }
 

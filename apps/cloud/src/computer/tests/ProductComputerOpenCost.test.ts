@@ -63,7 +63,10 @@ describe("ProductComputer startup storage cost", () => {
           threadId: "startup-storage-cost",
           filesystem,
           wakes,
-          capacity: new ChildWorkerCapacity(2),
+          capacity: new ChildWorkerCapacity(2, {
+            RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+            owner: "test/startup-storage-cost",
+          }),
           loader: {
             run: async () => {
               throw new Error("Startup dispatched a child");

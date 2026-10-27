@@ -390,7 +390,10 @@ function makeFixture(hooks: Hooks = {}) {
     threadId: "machine-metadata-refresh",
     filesystem,
     wakes,
-    capacity: new ChildWorkerCapacity(2),
+    capacity: new ChildWorkerCapacity(2, {
+      owner: "test/machine-metadata-refresh",
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+    }),
     loader,
     programs: {
       bash: code,

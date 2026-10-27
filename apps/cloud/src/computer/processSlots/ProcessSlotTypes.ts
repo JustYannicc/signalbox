@@ -20,6 +20,7 @@ export interface ProcessSlotPermit {
 }
 
 export interface ProcessSlots {
+  readonly inFlightLimit: number;
   /** Commits before resolving. Aborts before publication roll back; later aborts may resolve a lease to release. */
   acquire(
     request: ProcessSlotRequest,

@@ -136,7 +136,10 @@ export class SixCoreutilsProbe extends DurableObject {
       threadId: "six-coreutils-public-no-machine",
       filesystem,
       wakes,
-      capacity: new ChildWorkerCapacity(2),
+      capacity: new ChildWorkerCapacity(2, {
+        owner: "test/six-coreutils-public-no-machine",
+        RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      }),
       programs: createSeededCommandProgramCodes(childPrograms as FullChildProgramSources),
       loader: { workerLoader: this.env.LOADER, compiledModules },
       machineInventory: inventory,

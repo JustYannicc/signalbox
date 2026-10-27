@@ -18,7 +18,10 @@ describe("CodeMode registered process", () => {
   it("uses canonical process identity and binary descriptors through fragmented, backpressured frames", async () => {
     const preparedCode = await prepareCodeModeHost();
     const workers = vmWorkerLoader();
-    const capacity = new ChildWorkerCapacity(2);
+    const capacity = new ChildWorkerCapacity(2, {
+      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+      owner: "test/src-harness-codemode-tests-codemodeprocess-test-1",
+    });
     const program = createCodeModeHostProgram({
       loader: createCodeModeWorkerLoader({ loader: workers.loader, policy: { cpuMs: 100 } }),
       capacity,

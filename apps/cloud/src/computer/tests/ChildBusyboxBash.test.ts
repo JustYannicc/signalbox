@@ -67,6 +67,7 @@ describe.skipIf(!available)("actual Bash to BusyBox child source integration", (
     try {
       expect(
         await createChildBash({
+          residentByteLimit: 104 * 1024 * 1024,
           module: bash,
           credentials: bashCredentials,
           pid: fixture.owner.pid,

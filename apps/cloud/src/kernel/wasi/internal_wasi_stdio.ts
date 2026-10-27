@@ -8,6 +8,7 @@ export interface WasiPollResult {
 }
 
 export interface WasiStdio {
+  readonly filetype?: "character" | "unknown";
   /** Guarantees immediate I/O or EAGAIN, with no async work started, when flags include NONBLOCK. */
   readonly supportsNonblocking?: boolean;
   readInto?: (target: Uint8Array, flags: number) => number | Promise<number>;

@@ -226,6 +226,9 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
       expect(result.stdout).toBe("USER_BASH_ALIAS");
       expect(result.stderr).toBe("");
       expect(fixture.localCalls).toEqual(["/bin/bash"]);
+      expect(fixture.bashWorkerCalls.filter((call) => !call.restored)).toHaveLength(1);
+      expect(fixture.bashWorkerCalls.some((call) => call.restored)).toBe(true);
+      expect(new Set(fixture.bashWorkerCalls.map((call) => call.pid)).size).toBe(1);
       expect(fixture.machineCalls).toEqual([]);
     } finally {
       await fixture.close();
