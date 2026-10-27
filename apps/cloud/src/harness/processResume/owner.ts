@@ -26,10 +26,14 @@ import { activeResumeKey, readHarnessProcessResumeDurableRecord } from "./durabl
 import { authorizePublication, sameControl, samePublisher } from "./authority.ts";
 import { sameData } from "./checkpointContract.ts";
 import {
+  assertContinuation,
   continueResumedProcess,
   snapshotContinuation,
-  type HarnessProcessContinuationInput,
+  type NormalizedContinuation,
 } from "./continuation.ts";
+import type { HarnessRequestCheckpoint } from "../HarnessRunStore.ts";
+import type { HarnessProcessInvocationSettlement } from "../processPlacement/contracts.ts";
+import { stopIdleProcess } from "./idleStop.ts";
 import { validateHarnessProcessResumeRunStoreActive } from "./runStore.ts";
 
 export interface ResumeProcessResult {
@@ -52,9 +56,25 @@ export class HarnessProcessResumeOwner {
   #attempt: ResumeAttempt | undefined;
   #resumed: ResumedProcess | undefined;
   readonly #checkpoints;
+  #idle = false;
+  #continuationCheckpoint: HarnessRequestCheckpoint | undefined;
+  #idleSettlement: HarnessProcessInvocationSettlement | undefined;
+  readonly #continuations = new Map<
+    string,
+    {
+      readonly request: NormalizedContinuation;
+      readonly result: Promise<HarnessProcessExecutionShardResult>;
+    }
+  >();
+  #idleStop:
+    | {
+        readonly request: NormalizedContinuation;
+        readonly result: Promise<{ readonly status: "stopped" }>;
+      }
+    | undefined;
   #continuation:
     | {
-        readonly request: HarnessProcessContinuationInput;
+        readonly request: NormalizedContinuation;
         readonly result: Promise<HarnessProcessExecutionShardResult>;
       }
     | undefined;
@@ -248,6 +268,8 @@ export class HarnessProcessResumeOwner {
     return attempt.result.then((resumed) => {
       this.#resumed = resumed;
       this.#continuation = undefined;
+      this.#continuationCheckpoint = resumed.boundary.finish.checkpoint;
+      this.#idle = false;
       this.#attempt = undefined;
       return this.#cached(resumed);
     });
@@ -258,7 +280,7 @@ export class HarnessProcessResumeOwner {
     requestContextId: string,
   ): Promise<HarnessProcessExecutionShardResult> {
     const request = snapshotContinuation(supplied);
-    const previous = this.#continuation;
+    const previous = this.#continuations.get(request.runStore.request.requestId);
     if (previous !== undefined) {
       if (!sameData(previous.request, request))
         return Promise.reject(new Error("Another arrived request owns this continuation."));
@@ -274,8 +296,18 @@ export class HarnessProcessResumeOwner {
       this.#retained
     )
       return Promise.reject(new Error("No idle activated process is available for continuation."));
+    const checkpoint = this.#continuationCheckpoint;
+    if (checkpoint === undefined)
+      return Promise.reject(new Error("The process has no owned checkpoint cursor."));
+    try {
+      assertContinuation(request, resumed, checkpoint);
+    } catch (cause) {
+      return Promise.reject(cause);
+    }
+    const idle = this.#idle;
     const result = Promise.withResolvers<HarnessProcessExecutionShardResult>();
     const attempt = { request, result: result.promise };
+    this.#continuations.set(request.runStore.request.requestId, attempt);
     this.#continuation = attempt;
     this.#running = true;
     void continueResumedProcess({
@@ -284,17 +316,25 @@ export class HarnessProcessResumeOwner {
       durable,
       storage: this.context.storage,
       requestContextId,
+      checkpoint,
+      idle,
+      onIdle: (checkpoint, settlement) => {
+        this.#continuationCheckpoint = checkpoint;
+        this.#idleSettlement = settlement;
+        this.#idle = true;
+      },
       assertOwned: () => {
         if (this.#continuation !== attempt || this.#retained)
           throw new Error("Continuation ownership changed.");
       },
       onOwned: (owned) => {
         this.#current = owned;
-        this.#resumed = undefined;
+        this.#idle = false;
       },
     })
       .then(
         (process) => {
+          if (process.status !== "idle") this.#resumed = undefined;
           result.resolve({ requestContextId, processes: [process] });
         },
         (cause) => {
@@ -306,6 +346,62 @@ export class HarnessProcessResumeOwner {
         this.#running = false;
       });
     return result.promise;
+  }
+
+  stopIdleProcess(supplied: unknown): Promise<{ readonly status: "stopped" }> {
+    const request = snapshotContinuation(supplied);
+    const previous = this.#idleStop;
+    if (previous !== undefined) {
+      if (!sameData(previous.request, request))
+        return Promise.reject(new Error("Another idle-stop attempt owns this process."));
+      return previous.result;
+    }
+    const resumed = this.#resumed;
+    const owned = this.#current;
+    const checkpoint = this.#continuationCheckpoint;
+    const settlement = this.#idleSettlement;
+    if (
+      !this.#idle ||
+      this.#running ||
+      this.#retained ||
+      resumed === undefined ||
+      owned === undefined ||
+      checkpoint === undefined ||
+      settlement === undefined ||
+      !sameData(request.runStore.request, owned.request)
+    )
+      return Promise.reject(new Error("No completed idle process is owned here."));
+    try {
+      assertContinuation(request, resumed, checkpoint);
+    } catch (cause) {
+      return Promise.reject(cause);
+    }
+    this.#running = true;
+    this.#idle = false;
+    const result = stopIdleProcess({
+      request,
+      resumed,
+      owned,
+      checkpoint,
+      settlement,
+      storage: this.context.storage,
+    })
+      .then(
+        () => {
+          this.#resumed = undefined;
+          return { status: "stopped" as const };
+        },
+        (cause) => {
+          this.#retained = true;
+          owned.retained = true;
+          throw cause;
+        },
+      )
+      .finally(() => {
+        this.#running = false;
+      });
+    this.#idleStop = { request, result };
+    return result;
   }
 
   async cancelResumeProcess(supplied: unknown) {

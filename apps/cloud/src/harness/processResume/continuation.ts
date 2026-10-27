@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import type { HarnessRequestCheckpoint } from "../HarnessRunStore.ts";
 import type { HarnessDurableState } from "../HarnessDurableState.ts";
 import type { HarnessProcessExecutionProcessResult } from "../processPlacement/execution.ts";
 import { HarnessProcessResumeRunStoreBindingSchema } from "./contracts.ts";
@@ -7,10 +8,12 @@ import type { ResumedProcess } from "./resumeAttempt.ts";
 import type { OwnedProcessRequest } from "./executionState.ts";
 import { authorizePublication, sameControl } from "./authority.ts";
 import { execute, fail, sameCheckpoint, sameVisibleState } from "./runStoreState.ts";
+import { validateIdleCompletion } from "./idleCompletion.ts";
 import { persistTerminalEvidence } from "./terminalEvidence.ts";
 
 const binding = HarnessProcessResumeRunStoreBindingSchema.fields;
 export const HarnessProcessContinuationInput = Schema.Struct({
+  afterTurn: Schema.optionalKey(Schema.Literals(["keep-alive", "dispose"])),
   runId: binding.runId,
   processId: binding.processId,
   executionOperationId: binding.processOperationId,
@@ -25,12 +28,17 @@ export const HarnessProcessContinuationInput = Schema.Struct({
   }),
 });
 export type HarnessProcessContinuationInput = typeof HarnessProcessContinuationInput.Type;
+export type NormalizedContinuation = Omit<
+  typeof HarnessProcessContinuationInput.Type,
+  "afterTurn"
+> & { readonly afterTurn: "keep-alive" | "dispose" };
 const decode = Schema.decodeUnknownSync(HarnessProcessContinuationInput, {
   onExcessProperty: "error",
 });
 export function snapshotContinuation(value: unknown) {
   try {
-    return structuredClone(decode(value));
+    const decoded = decode(value);
+    return structuredClone({ ...decoded, afterTurn: decoded.afterTurn ?? "dispose" });
   } catch {
     throw new Error(
       "Process continuation requires the exact arrived request and journal capabilities.",
@@ -38,16 +46,11 @@ export function snapshotContinuation(value: unknown) {
   }
 }
 
-export async function continueResumedProcess(input: {
-  readonly request: HarnessProcessContinuationInput;
-  readonly resumed: ResumedProcess;
-  readonly durable: HarnessDurableState;
-  readonly storage: DurableObjectStorage;
-  readonly requestContextId: string;
-  readonly onOwned: (owned: OwnedProcessRequest) => void;
-  readonly assertOwned: () => void;
-}): Promise<HarnessProcessExecutionProcessResult> {
-  const { request, resumed, durable } = input;
+export function assertContinuation(
+  request: NormalizedContinuation,
+  resumed: ResumedProcess,
+  checkpoint: HarnessRequestCheckpoint,
+) {
   const { operation, prepared, publication, boundary } = resumed;
   if (
     request.runId !== operation.runId ||
@@ -60,11 +63,29 @@ export async function continueResumedProcess(input: {
     request.runStore.currentPublisher.facetNonce !== prepared.identity.incarnationNonce ||
     request.runStore.currentPublisher.publisherKey !== operation.runStore.nextPublisherKey ||
     request.runStore.request.requestId === operation.previousStepId ||
-    request.runStore.checkpoint.native.id !== boundary.completion.files.checkpoint.checkpointId ||
-    request.runStore.checkpoint.filesystem.sha256 !==
-      boundary.completion.files.checkpoint.manifestSha256
+    !sameCheckpoint(request.runStore.checkpoint, checkpoint)
   )
     throw new Error("Continuation does not match the activated process and durable checkpoint.");
+}
+
+export async function continueResumedProcess(input: {
+  readonly request: NormalizedContinuation;
+  readonly resumed: ResumedProcess;
+  readonly durable: HarnessDurableState;
+  readonly storage: DurableObjectStorage;
+  readonly checkpoint: HarnessRequestCheckpoint;
+  readonly idle: boolean;
+  readonly onIdle: (
+    checkpoint: HarnessRequestCheckpoint,
+    settlement: import("../processPlacement/contracts.ts").HarnessProcessInvocationSettlement,
+  ) => void;
+  readonly requestContextId: string;
+  readonly onOwned: (owned: OwnedProcessRequest) => void;
+  readonly assertOwned: () => void;
+}): Promise<HarnessProcessExecutionProcessResult> {
+  const { request, resumed, durable } = input;
+  const { operation, prepared, publication, boundary } = resumed;
+  assertContinuation(request, resumed, input.checkpoint);
   const publicationRequest = {
     identity: prepared.identity,
     controllerClaim: request.control,
@@ -132,6 +153,10 @@ export async function continueResumedProcess(input: {
       publication,
       request: publicationRequest,
       lifecycle: "accepting",
+      currentCheckpoint: {
+        checkpointId: request.runStore.checkpoint.native.id,
+        manifestSha256: request.runStore.checkpoint.filesystem.sha256,
+      },
     });
     input.assertOwned();
   };
@@ -144,10 +169,12 @@ export async function continueResumedProcess(input: {
   const controller = new AbortController();
   let owned: OwnedProcessRequest | undefined;
   try {
-    await prepared.handle.park(async () => {
-      await authorize();
-      return { value: undefined, publication };
-    }, controller.signal);
+    if (input.idle) await prepared.handle.readmit(publication);
+    else
+      await prepared.handle.park(async () => {
+        await authorize();
+        return { value: undefined, publication };
+      }, controller.signal);
     await authorize();
     const offered = await execute(
       durable.runStore,
@@ -177,6 +204,10 @@ export async function continueResumedProcess(input: {
       publication,
       request: publicationRequest,
       lifecycle: "accepting",
+      currentCheckpoint: {
+        checkpointId: request.runStore.checkpoint.native.id,
+        manifestSha256: request.runStore.checkpoint.filesystem.sha256,
+      },
     });
     input.assertOwned();
     owned = {
@@ -209,10 +240,27 @@ export async function continueResumedProcess(input: {
       retained: false,
     };
     input.onOwned(owned);
-    const settlement = await prepared.handle.invoke({
-      publisher: request.runStore.currentPublisher,
-      requestId: request.runStore.request.requestId,
-    });
+    const settlement = await prepared.handle.invoke(
+      {
+        publisher: request.runStore.currentPublisher,
+        requestId: request.runStore.request.requestId,
+      },
+      request.afterTurn === "keep-alive" ? { retainProcess: true } : undefined,
+    );
+    if (request.afterTurn === "keep-alive") {
+      const checkpoint = await validateIdleCompletion(owned, settlement);
+      input.assertOwned();
+      await prepared.handle.idle();
+      await input.storage.put(key, { request, phase: "idle", checkpoint });
+      input.onIdle(checkpoint, settlement);
+      return {
+        processId: request.processId,
+        requestContextId: input.requestContextId,
+        identity: prepared.identity,
+        status: "idle",
+        settlement,
+      };
+    }
     await persistTerminalEvidence({ storage: input.storage, owned, settlement });
     await prepared.handle.cleanup();
     await prepared.releasePlacementWriter();

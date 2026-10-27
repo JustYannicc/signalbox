@@ -125,6 +125,7 @@ const createPlainProcess = (exposeLoadedRelease: boolean) =>
                 new HarnessRequestFacetError("The stored plain session is malformed.", { cause }),
             ),
           );
+          let transcript = [...restored.transcript];
           const nativeRef = yield* call(() =>
             reference(checkpoint.checkpoint.checkpointId, native.bytes),
           );
@@ -185,8 +186,8 @@ const createPlainProcess = (exposeLoadedRelease: boolean) =>
                   const fetchResult = yield* call(() => response.text());
                   const callback = yield* call(() => files.callback(context.requestId));
                   yield* context.check;
-                  const transcript = [
-                    ...restored.transcript,
+                  transcript = [
+                    ...transcript,
                     `${PLAIN_VARIANT}:${context.requestId}:${fetchResult}:${callback}`,
                   ];
                   const nextFiles = checkpoint.files.map((file) =>
