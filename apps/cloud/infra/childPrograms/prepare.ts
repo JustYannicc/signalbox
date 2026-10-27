@@ -1,15 +1,18 @@
-// @effect-diagnostics nodeBuiltinImport:off - this file packages local proof artifacts.
 import {
   CHILD_BUSYBOX_APPLETS,
+  CHILD_PRODUCT_BUSYBOX_APPLETS,
   CHILD_PROGRAM_PATHS,
   type ChildCoreutilsCommand,
 } from "../../src/computer/ChildProgramSet.ts";
 import {
   prepareMeasuredPrograms,
   readPinnedProgram,
+  verifyProgramProvenance,
   type MeasuredChildProgramSources,
 } from "./measured.ts";
 import { KERNEL_GNU_SED_ARTIFACT } from "../../src/kernel/KernelGnuPrograms.ts";
+import { PRODUCT_COMPUTER_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusyboxProgram.ts";
+import { KERNEL_JQ_ARTIFACT } from "../../src/kernel/KernelJqProgram.ts";
 import { prepareBasePrograms } from "./basic.ts";
 import {
   readPinnedGitTemplates,
@@ -50,9 +53,11 @@ export interface ChildProgramSources extends MeasuredChildProgramSources {
 
 export interface FullChildProgramSources extends ChildProgramSources {
   readonly busyboxApplets: ChildProgramSourceCode;
+  readonly productBusyboxApplets: ChildProgramSourceCode;
   readonly coreutils: Readonly<Record<ChildCoreutilsCommand, ChildProgramSourceCode>>;
   readonly git: ChildProgramSourceCode;
   readonly sed: ChildProgramSourceCode;
+  readonly jq: ChildProgramSourceCode;
 }
 
 export type ChildProgramExecutablePath =
@@ -82,9 +87,11 @@ export type LegacyChildProgramExecutableCatalog = Readonly<
 
 export interface PreparedChildPrograms extends ChildProgramSources {
   readonly busyboxApplets: ChildProgramSourceCode;
+  readonly productBusyboxApplets: ChildProgramSourceCode;
   readonly coreutils: Readonly<Record<ChildCoreutilsCommand, ChildProgramSourceCode>>;
   readonly git: ChildProgramSourceCode;
   readonly sed: ChildProgramSourceCode;
+  readonly jq: ChildProgramSourceCode;
   readonly programs: FullChildProgramSources;
   readonly executableFiles: readonly LegacyChildProgramExecutableFile[];
   readonly executableCatalog: LegacyChildProgramExecutableCatalog;
@@ -123,6 +130,28 @@ export async function prepareChildPrograms(
     KERNEL_GNU_SED_ARTIFACT,
     artifacts,
   );
+  const productBusyboxArtifact = await readPinnedProgram(
+    programDir,
+    "product-busybox.wasm",
+    PRODUCT_COMPUTER_BUSYBOX_ARTIFACT,
+    artifacts,
+  );
+  const jqArtifact = await readPinnedProgram(
+    programDir,
+    KERNEL_JQ_ARTIFACT.preparedFile,
+    KERNEL_JQ_ARTIFACT,
+    artifacts,
+  );
+  await verifyProgramProvenance(programDir, "product-busybox.provenance.json", {
+    bytes: PRODUCT_COMPUTER_BUSYBOX_ARTIFACT.bytes,
+    sha256: PRODUCT_COMPUTER_BUSYBOX_ARTIFACT.sha256,
+    revision: PRODUCT_COMPUTER_BUSYBOX_ARTIFACT.revision,
+  });
+  await verifyProgramProvenance(programDir, "jq.provenance.json", {
+    bytes: KERNEL_JQ_ARTIFACT.bytes,
+    sha256: KERNEL_JQ_ARTIFACT.sha256,
+    revision: KERNEL_JQ_ARTIFACT.version,
+  });
   const gitTemplates = await readPinnedGitTemplates(programDir);
   for (const file of gitTemplates.dataFiles) {
     artifacts.set(file.path, {
@@ -142,14 +171,26 @@ export async function prepareChildPrograms(
     "infra/childPrograms/gitTemplates.manifest.json",
     "infra/childPrograms/gitTemplateManifest.ts",
     "infra/kernelPrograms/coreutils/provenance.json",
+    "infra/kernelPrograms/coreutils/build-busybox-buffered.sh",
+    "infra/kernelPrograms/coreutils/prepare-product-busybox.mjs",
+    "infra/kernelPrograms/coreutils/patches/0004-busybox-1m-copy-buffer.patch",
+    "infra/kernelPrograms/coreutils/patches/0006-busybox-target-ar.patch",
+    "infra/kernelPrograms/coreutils/patches/0007-busybox-id-applet.patch",
+    "infra/kernelPrograms/coreutils/patches/0008-nimbus-getgrouplist.patch",
+    "infra/kernelPrograms/jq/provenance.json",
+    "infra/kernelPrograms/jq/prepare.mjs",
     "infra/kernelPrograms/git/provenance.json",
     "src/computer/ChildProgramSet.ts",
     "src/computer/ChildProgramCatalog.ts",
+    "src/computer/catalog/BusyboxPrograms.ts",
+    "src/computer/catalog/ChildProgramFactory.ts",
+    "src/computer/catalog/JqProgram.ts",
     "src/computer/CommandGateway.ts",
     "src/computer/CompiledChildWorkerLoader.ts",
     "src/kernel/KernelBashProgram.ts",
     "src/kernel/KernelBusyboxProgram.ts",
     "src/kernel/KernelBusyboxPrograms.ts",
+    "src/kernel/KernelJqProgram.ts",
     "src/kernel/KernelGnuPrograms.ts",
     "src/kernel/KernelCoreutilsPrograms.ts",
     "src/kernel/KernelGitProgram.ts",
@@ -163,10 +204,12 @@ export async function prepareChildPrograms(
     bash: bashGraph.code,
     busyboxCat: busyboxGraph.code,
     busyboxApplets: busyboxGraph.code,
+    productBusyboxApplets: busyboxGraph.code,
     ripgrep: ripgrepGraph.code,
     coreutils: measured.coreutils,
     git: measured.git,
     sed: busyboxGraph.code,
+    jq: measured.graphs.coreutils.code,
   });
   const inventory: ChildProgramSourceInventory = Object.freeze({
     format: "signalbox-child-programs-v1",
@@ -176,10 +219,12 @@ export async function prepareChildPrograms(
       bash: programInventory(bashGraph),
       busyboxCat: programInventory(busyboxGraph),
       busyboxApplets: programInventory(busyboxGraph),
+      productBusyboxApplets: programInventory(busyboxGraph),
       ripgrep: programInventory(ripgrepGraph),
       coreutils: programInventory(measured.graphs.coreutils),
       git: programInventory(measured.graphs.git),
       sed: programInventory(busyboxGraph),
+      jq: programInventory(measured.graphs.coreutils),
     }),
   });
   const commandExecutableFiles = Object.freeze([
@@ -190,8 +235,12 @@ export async function prepareChildPrograms(
     ...CHILD_BUSYBOX_APPLETS.filter((applet) => applet !== "cat").map((applet) =>
       executableFile(CHILD_PROGRAM_PATHS[applet], busyboxArtifact),
     ),
+    ...CHILD_PRODUCT_BUSYBOX_APPLETS.map((applet) =>
+      executableFile(CHILD_PROGRAM_PATHS[applet], productBusyboxArtifact),
+    ),
     ...measured.files,
     executableFile("/bin/sed", sedArtifact),
+    executableFile(CHILD_PROGRAM_PATHS.jq, jqArtifact),
   ]);
   const commandExecutableCatalog = createChildProgramExecutableCatalog(commandExecutableFiles);
   const executableFiles = Object.freeze(

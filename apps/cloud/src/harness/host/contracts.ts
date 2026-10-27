@@ -79,6 +79,8 @@ export interface NativeHostBinding {
     signal: AbortSignal,
     load: NativeThreadLoad,
   ) => Effect.Effect<void, HarnessError>;
+  /** Retire restored setup without treating it as a completed turn. */
+  readonly retireCheckpointMcp?: (epoch: number) => Effect.Effect<void, HarnessError>;
   /** Complete the matching native turn before the host retires its MCP route. */
   readonly completeMcpTurn?: (epoch: number) => void;
 }
@@ -119,6 +121,8 @@ export interface HarnessHostOptions<G> {
   }) => Effect.Effect<NativeHostBinding, HarnessError, Scope.Scope>;
 }
 export interface HarnessHostSession<G> extends Omit<HarnessSession, "turn"> {
+  /** Retires access installed by inert checkpoint restore before independently authorized work. */
+  readonly retireCheckpointAccess: Effect.Effect<void, HarnessError>;
   readonly turn: (input: {
     readonly turn: RunnerTurn;
     readonly access: TurnAccess<G>;

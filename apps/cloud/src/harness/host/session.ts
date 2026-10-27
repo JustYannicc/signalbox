@@ -319,6 +319,22 @@ export const createHostSession = <G>(
             return raw.providerSession;
           },
           dispose,
+          retireCheckpointAccess: lock.withPermits(1)(
+            Effect.gen(function* () {
+              if (closed || signal.aborted || active !== undefined)
+                return yield* Effect.fail(
+                  new HarnessError({
+                    operation: "open",
+                    message: "Checkpoint access cannot be retired from a closed or active session.",
+                  }),
+                );
+              const prepared = initial;
+              if (prepared !== undefined && native.retireCheckpointMcp !== undefined)
+                yield* native.retireCheckpointMcp(prepared.configuration.epoch);
+              initial = undefined;
+              if (prepared !== undefined) mcp.retire(prepared.configuration.epoch);
+            }),
+          ),
           turn: ({ turn: supplied, access }) =>
             Effect.gen(function* () {
               const authorized = snapshotAccess(access);

@@ -216,10 +216,12 @@ function programCodes(): CommandProgramCodes {
     bash: code("bash"),
     busyboxCat: code("busybox-cat"),
     busyboxApplets: code("busybox-applets"),
+    productBusyboxApplets: code("busybox-product-applets"),
     sed: code("gnu-sed"),
     ripgrep: code("ripgrep"),
     coreutils,
     git: code("git"),
+    jq: code("jq"),
   };
 }
 

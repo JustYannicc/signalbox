@@ -130,9 +130,11 @@ describe.skipIf(inventory === undefined)("ProductComputer synchronous lower meta
         bash: code,
         busyboxCat: code,
         busyboxApplets: code,
+        productBusyboxApplets: code,
         ripgrep: code,
         git: code,
         sed: code,
+        jq: code,
         coreutils: Object.fromEntries(
           CHILD_COREUTILS_COMMANDS.map((command) => [command, code]),
         ) as Record<(typeof CHILD_COREUTILS_COMMANDS)[number], typeof code>,

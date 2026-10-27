@@ -7,6 +7,7 @@ import {
 import { ChildWorkerCapacity } from "../../../computer/ChildWorkerCapacity.ts";
 import { createMemoryFilePersistencePorts } from "../../../kernel/MemoryFilePersistencePorts.ts";
 import type { codexFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
+import type { HarnessReleaseArtifact } from "../../../harnessReleases/HarnessReleaseLedger.ts";
 import {
   adapterOptions,
   session as codexSession,
@@ -21,7 +22,11 @@ import {
 
 type ReleaseOptions = Awaited<ReturnType<typeof codexFixture>>["options"];
 
-export const productOptions = (release: ReleaseOptions, home = "/home/product-codex") =>
+export const productOptions = (
+  release: ReleaseOptions,
+  home = "/home/product-codex",
+  processResumeArtifact?: HarnessReleaseArtifact,
+) =>
   Effect.gen(function* () {
     const database = yield* Effect.acquireRelease(Effect.sync(hostSqlite), (value) =>
       Effect.sync(() => value.dispose()),
@@ -35,6 +40,7 @@ export const productOptions = (release: ReleaseOptions, home = "/home/product-co
     const options: ProductCodexHarnessHostOptions<unknown> = {
       threadId: codexSession.threadId,
       release,
+      ...(processResumeArtifact === undefined ? {} : { processResumeArtifact }),
       programs: { codes: programs.codes, seed: programs.seed },
       machineInventory: machineInventoryFixture(),
       files: {

@@ -8,7 +8,7 @@ import { writeUpperFile } from "./MachinePathFixtureSupport.ts";
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discovery", () => {
-  it.each(["jq", "sort", "uniq -c", "wc", "awk", "xargs", "find"])(
+  it.each(["awk", "xargs", "find"])(
     "admits bare %s to the machine with exact argv",
     async (command) => {
       const fixture = machinePathFixture(bashModule!);
@@ -28,7 +28,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
   it("admits both stages of the machine pipeline", async () => {
     const fixture = machinePathFixture(bashModule!);
     try {
-      const result = await fixture.run('printf "b\\na\\nb\\n" | sort | uniq -c');
+      const result = await fixture.run("printf \"b\\na\\nb\\n\" | awk '{ print $0 }' | xargs -n1");
       expect(result.status.exitCode, JSON.stringify({ result, calls: fixture.machineCalls })).toBe(
         23,
       );
@@ -38,8 +38,8 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
           .map((call) => ({ executable: call.executable, argv: call.argv }))
           .sort((a, b) => a.executable.localeCompare(b.executable)),
       ).toEqual([
-        { executable: "/bin/sort", argv: ["sort"] },
-        { executable: "/bin/uniq", argv: ["uniq", "-c"] },
+        { executable: "/bin/awk", argv: ["awk", "{ print $0 }"] },
+        { executable: "/bin/xargs", argv: ["xargs", "-n1"] },
       ]);
     } finally {
       await fixture.close();
@@ -50,7 +50,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
     const machineFiles = controlledMachineFiles(machinePathInventory);
     const first = machinePathFixture(bashModule!, { files: machineFiles.files });
     try {
-      expect((await first.run("sort")).status.exitCode).toBe(23);
+      expect((await first.run("awk 'BEGIN { print 17 }'")).status.exitCode).toBe(23);
       expect(machineFiles.state()).toEqual({ generation: 1, pristine: false });
     } finally {
       await first.close();
@@ -58,7 +58,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
 
     const reopened = machinePathFixture(bashModule!, { files: machineFiles.files });
     try {
-      expect((await reopened.run("uniq -c")).status.exitCode).toBe(23);
+      expect((await reopened.run("printf x | xargs -n1")).status.exitCode).toBe(23);
       expect(machineFiles.calls.length).toBeGreaterThan(0);
       expect(machineFiles.state()).toEqual({ generation: 1, pristine: false });
     } finally {
@@ -70,13 +70,13 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
     const fixture = machinePathFixture(bashModule!);
     try {
       const result = await fixture.run(
-        "command -v sort; type -p sort; hash sort; hash -t sort; sort",
+        "command -v awk; type -p awk; hash awk; hash -t awk; awk",
         "/usr/bin:/bin",
       );
       expect(result.stderr).toBe("");
-      expect(result.stdout).toBe("/usr/bin/sort\n/usr/bin/sort\n/usr/bin/sort\n");
+      expect(result.stdout).toBe("/usr/bin/awk\n/usr/bin/awk\n/usr/bin/awk\n");
       expect(result.status.exitCode).toBe(23);
-      expect(fixture.machineCalls.map((call) => call.executable)).toEqual(["/usr/bin/sort"]);
+      expect(fixture.machineCalls.map((call) => call.executable)).toEqual(["/usr/bin/awk"]);
     } finally {
       await fixture.close();
     }
@@ -116,11 +116,11 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
     const fixture = machinePathFixture(bashModule!);
     try {
       expect(
-        (await fixture.direct("sort", ["custom-argv0", "-n"], "/usr/bin:/bin")).status.exitCode,
+        (await fixture.direct("awk", ["custom-argv0", "-n"], "/usr/bin:/bin")).status.exitCode,
       ).toBe(23);
       expect(
         fixture.machineCalls.map((call) => ({ executable: call.executable, argv: call.argv })),
-      ).toEqual([{ executable: "/usr/bin/sort", argv: ["custom-argv0", "-n"] }]);
+      ).toEqual([{ executable: "/usr/bin/awk", argv: ["custom-argv0", "-n"] }]);
       await expect(fixture.direct("signalbox_nonexistent_r29", ["custom-argv0"])).rejects.toThrow(
         "not found",
       );
@@ -152,7 +152,7 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
     const fixture = machinePathFixture(bashModule!);
     try {
       const result = await fixture.run(
-        '[ -f /usr/bin/sort ]; printf "file=%s\\n" "$?"; [ -x /usr/bin/sort ]; printf "x=%s\\n" "$?"; [ -L /usr/bin/sort ]; printf "L=%s\\n" "$?"',
+        '[ -f /usr/bin/awk ]; printf "file=%s\\n" "$?"; [ -x /usr/bin/awk ]; printf "x=%s\\n" "$?"; [ -L /usr/bin/awk ]; printf "L=%s\\n" "$?"',
         "/usr/bin:/bin",
       );
       expect(result.status.exitCode).toBe(0);
@@ -170,24 +170,24 @@ describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discover
     try {
       fixture.filesystem.mkdir("/workspace/early");
       const fd = fixture.filesystem.open(
-        "/workspace/early/sort",
+        "/workspace/early/awk",
         KernelOpenFlags.O_CREAT | KernelOpenFlags.O_WRONLY,
         0o644,
       );
       fixture.filesystem.close(fd);
       expect(
-        (await fixture.direct("sort", ["sort", "-n"], "/workspace/early:/usr/bin")).status.exitCode,
+        (await fixture.direct("awk", ["awk", "-n"], "/workspace/early:/usr/bin")).status.exitCode,
       ).toBe(23);
-      expect((await fixture.run("sort -n", "/workspace/early:/usr/bin")).status.exitCode).toBe(23);
-      await expect(fixture.direct("sort", ["sort"], "/workspace/early")).rejects.toThrow(
+      expect((await fixture.run("awk -n", "/workspace/early:/usr/bin")).status.exitCode).toBe(23);
+      await expect(fixture.direct("awk", ["awk"], "/workspace/early")).rejects.toThrow(
         "not executable",
       );
-      expect((await fixture.run("sort", "/workspace/early")).status.exitCode).toBe(126);
+      expect((await fixture.run("awk", "/workspace/early")).status.exitCode).toBe(126);
       expect(
         fixture.machineCalls.map((call) => ({ executable: call.executable, argv: call.argv })),
       ).toEqual([
-        { executable: "/usr/bin/sort", argv: ["sort", "-n"] },
-        { executable: "/usr/bin/sort", argv: ["sort", "-n"] },
+        { executable: "/usr/bin/awk", argv: ["awk", "-n"] },
+        { executable: "/usr/bin/awk", argv: ["awk", "-n"] },
       ]);
     } finally {
       await fixture.close();

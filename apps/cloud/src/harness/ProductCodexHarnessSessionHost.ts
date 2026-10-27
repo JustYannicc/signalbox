@@ -4,9 +4,17 @@ import {
   type CodexNativeHostBindingOptions,
 } from "./CodexNativeHostBinding.ts";
 import { HarnessError } from "./Harness.ts";
+import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
+import type { HarnessProcessResumePreparedRelease } from "./processResume/contracts.ts";
+import type { HarnessReleaseArtifact } from "../harnessReleases/HarnessReleaseLedger.ts";
+import {
+  attachProductLoadedPreparedRelease,
+  productLoadedPreparedReleaseObserver,
+} from "./ProductHarnessProcessRelease.ts";
 import {
   createProductHost,
   type ProductHostOptions,
+  type ProductHarnessSessionHost,
   type ProductNativeBinding,
 } from "./host/product.ts";
 
@@ -21,9 +29,18 @@ type ProductCodexNativeOptions = Omit<CodexNativeHostBindingOptions, "process"> 
     };
   };
 };
-export type ProductCodexHarnessHostOptions<G> = ProductHostOptions<G, ProductCodexNativeOptions>;
+export type ProductCodexHarnessHostOptions<G> = ProductHostOptions<G, ProductCodexNativeOptions> & {
+  /** Supplied by the process-resume caller; product host selection is never inferred. */
+  readonly processResumeArtifact?: HarnessReleaseArtifact;
+};
 
-function codexBinding<G>(): ProductNativeBinding<G, ProductCodexNativeOptions> {
+export interface ProductCodexHarnessSessionHost<G> extends ProductHarnessSessionHost<G> {
+  loadedPreparedRelease(): HarnessProcessResumePreparedRelease;
+}
+
+function codexBinding<G>(
+  onLoaded: (loaded: LoadedHarnessRelease) => void,
+): ProductNativeBinding<G, ProductCodexNativeOptions> {
   return {
     harness: "codex",
     home: (native) => {
@@ -34,6 +51,7 @@ function codexBinding<G>(): ProductNativeBinding<G, ProductCodexNativeOptions> {
     },
     build: (native, input, ports) =>
       Effect.sync(() => {
+        onLoaded(input.loaded);
         const { harness: _harness, process, ...bindingOptions } = native;
         const { origin: mcpOrigin, fetch: mcpFetch } = input.mcp;
         const fallbackFetch = process.fetch;
@@ -58,13 +76,18 @@ function codexBinding<G>(): ProductNativeBinding<G, ProductCodexNativeOptions> {
 export const createProductCodexHarnessSessionHost = <G>(
   options: ProductCodexHarnessHostOptions<G>,
 ) =>
-  Effect.suspend(() =>
-    options.native.harness !== "codex"
-      ? Effect.fail(
-          new HarnessError({
-            operation: "open",
-            message: "Codex product host entry/harness mismatch: expected codex.",
-          }),
-        )
-      : createProductHost(options, codexBinding<G>()),
-  );
+  Effect.suspend(() => {
+    if (options.native.harness !== "codex")
+      return Effect.fail(
+        new HarnessError({
+          operation: "open",
+          message: "Codex product host entry/harness mismatch: expected codex.",
+        }),
+      );
+
+    const { processResumeArtifact, ...hostOptions } = options;
+    const releaseObserver = productLoadedPreparedReleaseObserver("codex", processResumeArtifact);
+    return createProductHost(hostOptions, codexBinding<G>(releaseObserver.capture)).pipe(
+      Effect.map(attachProductLoadedPreparedRelease<G>(releaseObserver)),
+    );
+  });

@@ -229,9 +229,11 @@ export function machinePathFixture(
       bash: code("bash"),
       busyboxCat: code("cat"),
       busyboxApplets: code("busybox"),
+      productBusyboxApplets: code("busybox-product"),
       ripgrep: code("rg"),
       git: code("git"),
       sed: code("sed"),
+      jq: code("jq"),
       coreutils: Object.fromEntries(
         CHILD_COREUTILS_COMMANDS.map((name) => [name, code(name)]),
       ) as Record<(typeof CHILD_COREUTILS_COMMANDS)[number], ReturnType<typeof code>>,

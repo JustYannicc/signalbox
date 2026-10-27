@@ -2316,7 +2316,7 @@ index 00000000..7960686a
 +	m.sem.Release(1)
 +}
 diff --git a/internal/store/gitstore.go b/internal/store/gitstore.go
-index 3c1f0fbe..84bf1065 100644
+index 3c1f0fbe..eda14e18 100644
 --- a/internal/store/gitstore.go
 +++ b/internal/store/gitstore.go
 @@ -22,6 +22,7 @@ import (
@@ -2336,7 +2336,15 @@ index 3c1f0fbe..84bf1065 100644
  	dirLock   sync.RWMutex
  	baseDir   string
  	repoDir   string
-@@ -68,7 +69,14 @@ func NewGitTokenStore(remote, username, password, branch string) *GitTokenStore
+@@ -47,6 +48,7 @@ type GitTokenStore struct {
+ 	lastGC    time.Time
+ 	pullFn    func(ctx context.Context, worktree *git.Worktree, pullOpts *git.PullOptions) error
+ 	pushFn    func(ctx context.Context, repo *git.Repository, pushOpts *git.PushOptions) error
++	openFn    func(path string) (*git.Repository, error)
+ }
+
+ type resolvedRemoteBranch struct {
+@@ -68,7 +70,14 @@ func NewGitTokenStore(remote, username, password, branch string) *GitTokenStore
 
  // SetBaseDir updates the default directory used for auth JSON persistence when no explicit path is provided.
  func (s *GitTokenStore) SetBaseDir(dir string) {
@@ -2352,7 +2360,7 @@ index 3c1f0fbe..84bf1065 100644
  	defer s.mu.Unlock()
 
  	clean := strings.TrimSpace(dir)
-@@ -78,7 +86,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
+@@ -78,7 +87,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
  		s.repoDir = ""
  		s.configDir = ""
  		s.dirLock.Unlock()
@@ -2361,7 +2369,7 @@ index 3c1f0fbe..84bf1065 100644
  	}
  	if abs, err := filepath.Abs(clean); err == nil {
  		clean = abs
-@@ -93,6 +101,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
+@@ -93,6 +102,7 @@ func (s *GitTokenStore) SetBaseDir(dir string) {
  	s.repoDir = repoDir
  	s.configDir = configDir
  	s.dirLock.Unlock()
@@ -2369,7 +2377,7 @@ index 3c1f0fbe..84bf1065 100644
  }
 
  // AuthDir returns the directory used for auth persistence.
-@@ -431,7 +440,9 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+@@ -431,7 +441,9 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		return "", fmt.Errorf("auth filestore: %w", errWeight)
  	}
 
@@ -2380,8 +2388,257 @@ index 3c1f0fbe..84bf1065 100644
  	defer s.mu.Unlock()
 
  	path, err := s.resolveAuthPath(auth)
+@@ -462,67 +474,75 @@ func (s *GitTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+ 		return "", fmt.Errorf("auth filestore: create dir failed: %w", err)
+ 	}
+
+-	if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
+-		if errCodex != nil {
+-			return "", errCodex
+-		}
+-	} else {
+-		switch {
+-		case auth.Storage != nil:
+-			if auth.Metadata == nil {
+-				auth.Metadata = make(map[string]any)
+-			}
+-			auth.Metadata["disabled"] = auth.Disabled
+-			if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
+-				setter.SetMetadata(auth.Metadata)
+-			}
+-			if err = auth.Storage.SaveTokenToFile(path); err != nil {
+-				return "", err
+-			}
+-		case auth.Metadata != nil:
+-			auth.Metadata["disabled"] = auth.Disabled
+-			raw, errMarshal := json.Marshal(auth.Metadata)
+-			if errMarshal != nil {
+-				return "", fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
+-			}
+-			contentsMatch := false
+-			if existing, errRead := os.ReadFile(path); errRead == nil {
+-				contentsMatch = jsonEqual(existing, raw)
+-			} else if !os.IsNotExist(errRead) {
+-				return "", fmt.Errorf("auth filestore: read existing failed: %w", errRead)
++	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
+-			if !contentsMatch {
+-				tmp := path + ".tmp"
+-				if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
+-					return "", fmt.Errorf("auth filestore: write temp failed: %w", errWrite)
++		} else {
++			switch {
++			case auth.Storage != nil:
++				if auth.Metadata == nil {
++					auth.Metadata = make(map[string]any)
++				}
++				auth.Metadata["disabled"] = auth.Disabled
++				if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
++					setter.SetMetadata(auth.Metadata)
++				}
++				if err = auth.Storage.SaveTokenToFile(path); err != nil {
++					return err
+ 				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("auth filestore: rename failed: %w", errRename)
++			case auth.Metadata != nil:
++				auth.Metadata["disabled"] = auth.Disabled
++				raw, errMarshal := json.Marshal(auth.Metadata)
++				if errMarshal != nil {
++					return fmt.Errorf("auth filestore: marshal metadata failed: %w", errMarshal)
++				}
++				contentsMatch := false
++				if existing, errRead := os.ReadFile(path); errRead == nil {
++					contentsMatch = jsonEqual(existing, raw)
++				} else if !os.IsNotExist(errRead) {
++					return fmt.Errorf("auth filestore: read existing failed: %w", errRead)
++				}
++				if !contentsMatch {
++					tmp := path + ".tmp"
++					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
++						return fmt.Errorf("auth filestore: write temp failed: %w", errWrite)
++					}
++					if errRename := os.Rename(tmp, path); errRename != nil {
++						return fmt.Errorf("auth filestore: rename failed: %w", errRename)
++					}
+ 				}
++			default:
++				return fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
+ 			}
+-		default:
+-			return "", fmt.Errorf("auth filestore: nothing to persist for %s", auth.ID)
+ 		}
+-	}
+
+-	if auth.Attributes == nil {
+-		auth.Attributes = make(map[string]string)
+-	}
+-	auth.Attributes[cliproxyauth.AttributePath] = path
+-	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceGit
++		return nil
++	}, func() error {
++		if auth.Attributes == nil {
++			auth.Attributes = make(map[string]string)
++		}
++		auth.Attributes[cliproxyauth.AttributePath] = path
++		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceGit
+
+-	if strings.TrimSpace(auth.FileName) == "" {
+-		auth.FileName = auth.ID
+-	}
++		if strings.TrimSpace(auth.FileName) == "" {
++			auth.FileName = auth.ID
++		}
+
+-	messageID := auth.ID
+-	if strings.TrimSpace(messageID) == "" {
+-		messageID = filepath.Base(path)
+-	}
+-	if errCommit := s.commitAndPushContextLocked(ctx, fmt.Sprintf("Update auth %s", strings.TrimSpace(messageID)), relPath); errCommit != nil {
+-		return "", errCommit
+-	}
++		messageID := auth.ID
++		if strings.TrimSpace(messageID) == "" {
++			messageID = filepath.Base(path)
++		}
++		if errCommit := s.commitAndPushContextLocked(ctx, fmt.Sprintf("Update auth %s", strings.TrimSpace(messageID)), relPath); errCommit != nil {
++			return errCommit
++		}
+
++		return nil
++	})
++	if errPersist != nil {
++		return "", errPersist
++	}
+ 	return path, nil
+ }
+
+@@ -1701,13 +1721,22 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 	if repoDir == "" {
+ 		return fmt.Errorf("git token store: repository path not configured")
+ 	}
+-	repo, err := git.PlainOpen(repoDir)
++	openRepo := git.PlainOpen
++	if s.openFn != nil {
++		openRepo = s.openFn
++	}
++	repo, err := openRepo(repoDir)
+ 	if err != nil {
+ 		return fmt.Errorf("git token store: open repo: %w", err)
+ 	}
++	pushed := false
+ 	defer func() {
+ 		if errClose := repo.Close(); errClose != nil {
+ 			errCloseWrap := fmt.Errorf("git token store: close repo: %w", errClose)
++			if pushed {
++				log.Warnf("git token store: push succeeded but repository cleanup failed: %v", errClose)
++				return
++			}
+ 			if errResult == nil {
+ 				errResult = errCloseWrap
+ 			} else {
+@@ -1731,6 +1760,27 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 	if errHead != nil && !errors.Is(errHead, plumbing.ErrReferenceNotFound) {
+ 		return fmt.Errorf("git token store: get base head: %w", errHead)
+ 	}
++	var unbornBranch plumbing.ReferenceName
++	if baseRef == nil {
++		head, errReference := repo.Reference(plumbing.HEAD, false)
++		if errReference != nil {
++			return fmt.Errorf("git token store: inspect unborn HEAD: %w", errReference)
++		}
++		if head.Type() != plumbing.SymbolicReference || !head.Target().IsBranch() {
++			return fmt.Errorf("git token store: unborn HEAD does not name a branch")
++		}
++		unbornBranch = head.Target()
++	}
++	// Every unpublished mutation belongs to this attempt, including index changes
++	// made before Commit and failures while inspecting or rewriting its result.
++	defer func() {
++		if errResult == nil || pushed {
++			return
++		}
++		if errRestore := restoreUnpublishedGitState(repo, worktree, baseRef, unbornBranch); errRestore != nil {
++			errResult = errors.Join(errResult, fmt.Errorf("git token store: restore unpublished state: %w", errRestore))
++		}
++	}()
+ 	if errHead == nil {
+ 		if errReset := resetIndexToHead(repo, worktree); errReset != nil {
+ 			return fmt.Errorf("git token store: reset index before commit: %w", errReset)
+@@ -1785,13 +1835,6 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 	}
+ 	if baseRef != nil {
+ 		if errValidate := validateManagedTreeChanges(repo, baseRef.Hash(), commitHash, managedPaths); errValidate != nil {
+-			errRestore := restoreHeadAndIndex(repo, worktree, baseRef)
+-			if errRestore != nil {
+-				return errors.Join(
+-					fmt.Errorf("git token store: validate commit tree: %w", errValidate),
+-					fmt.Errorf("git token store: restore head after rejected commit: %w", errRestore),
+-				)
+-			}
+ 			return fmt.Errorf("git token store: validate commit tree: %w", errValidate)
+ 		}
+ 	}
+@@ -1803,14 +1846,9 @@ func (s *GitTokenStore) commitAndPushWithOptionsLocked(ctx context.Context, mess
+ 		return errRewrite
+ 	}
+ 	if errPush := s.pushRepositoryLocked(ctx, repo, repoDir, allowMissingRemote); errPush != nil {
+-		if baseRef == nil {
+-			return errPush
+-		}
+-		if errRestore := restoreHeadAndIndex(repo, worktree, baseRef); errRestore != nil {
+-			return errors.Join(errPush, fmt.Errorf("git token store: restore head after rejected push: %w", errRestore))
+-		}
+ 		return errPush
+ 	}
++	pushed = true
+ 	return nil
+ }
+
+@@ -1887,6 +1925,17 @@ func restoreHeadAndIndex(repo *git.Repository, worktree *git.Worktree, head *plu
+ 	return worktree.Reset(&git.ResetOptions{Mode: git.MixedReset, Commit: head.Hash()})
+ }
+
++func restoreUnpublishedGitState(repo *git.Repository, worktree *git.Worktree, base *plumbing.Reference, unbornBranch plumbing.ReferenceName) error {
++	if base != nil {
++		return restoreHeadAndIndex(repo, worktree, base)
++	}
++	errRemove := repo.Storer.RemoveReference(unbornBranch)
++	if errors.Is(errRemove, plumbing.ErrReferenceNotFound) {
++		errRemove = nil
++	}
++	return errors.Join(errRemove, repo.Storer.SetIndex(&gitindex.Index{Version: 2}))
++}
++
+ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repository, repoDir string, allowMissingRemote bool) error {
+ 	if ctx == nil {
+ 		ctx = context.Background()
+@@ -1896,9 +1945,6 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
+ 	}
+ 	headRef, errHead := repo.Head()
+ 	if errHead != nil {
+-		if errors.Is(errHead, plumbing.ErrReferenceNotFound) {
+-			return nil
+-		}
+ 		return fmt.Errorf("git token store: get head for push: %w", errHead)
+ 	}
+ 	if !headRef.Name().IsBranch() {
+@@ -1932,8 +1978,9 @@ func (s *GitTokenStore) pushRepositoryLocked(ctx context.Context, repo *git.Repo
+ 			return fmt.Errorf("git token store: push: %w", errPush)
+ 		}
+ 	}
++	// Origin has accepted the commit. A local bookkeeping error cannot undo it.
+ 	if errReference := repo.Storer.SetReference(plumbing.NewHashReference(remoteName, headRef.Hash())); errReference != nil {
+-		return fmt.Errorf("git token store: update remote tracking branch %s: %w", remoteName, errReference)
++		log.Warnf("git token store: push succeeded but updating remote tracking branch %s failed: %v", remoteName, errReference)
+ 	}
+ 	s.maybeRunGC(repoDir)
+ 	return nil
 diff --git a/internal/store/objectstore.go b/internal/store/objectstore.go
-index 39b8b089..78c8f3e7 100644
+index 39b8b089..d78a40f3 100644
 --- a/internal/store/objectstore.go
 +++ b/internal/store/objectstore.go
 @@ -12,7 +12,6 @@ import (
@@ -2401,7 +2658,7 @@ index 39b8b089..78c8f3e7 100644
  	putObjectFn func(ctx context.Context, key string, data []byte, contentType string) error
  }
 
-@@ -184,7 +183,9 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
+@@ -184,68 +183,78 @@ func (s *ObjectTokenStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (s
  		}
  	}
 
@@ -2412,8 +2669,124 @@ index 39b8b089..78c8f3e7 100644
  	defer s.mu.Unlock()
 
  	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+ 		return "", fmt.Errorf("object store: create auth directory: %w", err)
+ 	}
+
+-	if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
+-		if errCodex != nil {
+-			return "", errCodex
+-		}
+-	} else {
+-		switch {
+-		case auth.Storage != nil:
+-			if auth.Metadata == nil {
+-				auth.Metadata = make(map[string]any)
+-			}
+-			auth.Metadata["disabled"] = auth.Disabled
+-			if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
+-				setter.SetMetadata(auth.Metadata)
+-			}
+-			if err = auth.Storage.SaveTokenToFile(path); err != nil {
+-				return "", err
+-			}
+-		case auth.Metadata != nil:
+-			auth.Metadata["disabled"] = auth.Disabled
+-			raw, errMarshal := json.Marshal(auth.Metadata)
+-			if errMarshal != nil {
+-				return "", fmt.Errorf("object store: marshal metadata: %w", errMarshal)
++	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
+-			contentsMatch := false
+-			if existing, errRead := os.ReadFile(path); errRead == nil {
+-				contentsMatch = jsonEqual(existing, raw)
+-			} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
+-				return "", fmt.Errorf("object store: read existing metadata: %w", errRead)
+-			}
+-			if !contentsMatch {
+-				tmp := path + ".tmp"
+-				if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
+-					return "", fmt.Errorf("object store: write temp auth file: %w", errWrite)
++		} else {
++			switch {
++			case auth.Storage != nil:
++				if auth.Metadata == nil {
++					auth.Metadata = make(map[string]any)
++				}
++				auth.Metadata["disabled"] = auth.Disabled
++				if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
++					setter.SetMetadata(auth.Metadata)
++				}
++				if err = auth.Storage.SaveTokenToFile(path); err != nil {
++					return err
++				}
++			case auth.Metadata != nil:
++				auth.Metadata["disabled"] = auth.Disabled
++				raw, errMarshal := json.Marshal(auth.Metadata)
++				if errMarshal != nil {
++					return fmt.Errorf("object store: marshal metadata: %w", errMarshal)
++				}
++				contentsMatch := false
++				if existing, errRead := os.ReadFile(path); errRead == nil {
++					contentsMatch = jsonEqual(existing, raw)
++				} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
++					return fmt.Errorf("object store: read existing metadata: %w", errRead)
+ 				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("object store: rename auth file: %w", errRename)
++				if !contentsMatch {
++					tmp := path + ".tmp"
++					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
++						return fmt.Errorf("object store: write temp auth file: %w", errWrite)
++					}
++					if errRename := os.Rename(tmp, path); errRename != nil {
++						return fmt.Errorf("object store: rename auth file: %w", errRename)
++					}
+ 				}
++			default:
++				return fmt.Errorf("object store: nothing to persist for %s", auth.ID)
+ 			}
+-		default:
+-			return "", fmt.Errorf("object store: nothing to persist for %s", auth.ID)
+ 		}
+-	}
+
+-	if auth.Attributes == nil {
+-		auth.Attributes = make(map[string]string)
+-	}
+-	auth.Attributes[cliproxyauth.AttributePath] = path
+-	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceObjectStore
++		return nil
++	}, func() error {
++		if auth.Attributes == nil {
++			auth.Attributes = make(map[string]string)
++		}
++		auth.Attributes[cliproxyauth.AttributePath] = path
++		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourceObjectStore
+
+-	if strings.TrimSpace(auth.FileName) == "" {
+-		auth.FileName = auth.ID
+-	}
++		if strings.TrimSpace(auth.FileName) == "" {
++			auth.FileName = auth.ID
++		}
+
+-	if err = s.uploadAuth(ctx, path); err != nil {
+-		return "", err
++		if err = s.uploadAuth(ctx, path); err != nil {
++			return err
++		}
++		return nil
++	})
++	if errPersist != nil {
++		return "", errPersist
+ 	}
+ 	return path, nil
+ }
 diff --git a/internal/store/postgresstore.go b/internal/store/postgresstore.go
-index 69bc318b..47c93837 100644
+index 69bc318b..7648396f 100644
 --- a/internal/store/postgresstore.go
 +++ b/internal/store/postgresstore.go
 @@ -10,7 +10,6 @@ import (
@@ -2433,7 +2806,7 @@ index 69bc318b..47c93837 100644
  	persistAuthFn func(ctx context.Context, relID string, data []byte) error
  }
 
-@@ -235,7 +234,9 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
+@@ -235,72 +234,82 @@ func (s *PostgresStore) Save(ctx context.Context, auth *cliproxyauth.Auth) (stri
  		}
  	}
 
@@ -2444,6 +2817,130 @@ index 69bc318b..47c93837 100644
  	defer s.mu.Unlock()
 
  	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+ 		return "", fmt.Errorf("postgres store: create auth directory: %w", err)
+ 	}
+
+-	if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
+-		if errCodex != nil {
+-			return "", errCodex
+-		}
+-	} else {
+-		switch {
+-		case auth.Storage != nil:
+-			if auth.Metadata == nil {
+-				auth.Metadata = make(map[string]any)
+-			}
+-			auth.Metadata["disabled"] = auth.Disabled
+-			if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
+-				setter.SetMetadata(auth.Metadata)
++	errPersist := persistAcquisitionMirror(ctx, path, func(path string) error {
++		if handled, errCodex := cliproxyauth.PersistCodexAuthFile(ctx, path, auth); handled {
++			if errCodex != nil {
++				return errCodex
+ 			}
+-			if err = auth.Storage.SaveTokenToFile(path); err != nil {
+-				return "", err
+-			}
+-		case auth.Metadata != nil:
+-			auth.Metadata["disabled"] = auth.Disabled
+-			raw, errMarshal := json.Marshal(auth.Metadata)
+-			if errMarshal != nil {
+-				return "", fmt.Errorf("postgres store: marshal metadata: %w", errMarshal)
+-			}
+-			contentsMatch := false
+-			if existing, errRead := os.ReadFile(path); errRead == nil {
+-				contentsMatch = jsonEqual(existing, raw)
+-			} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
+-				return "", fmt.Errorf("postgres store: read existing metadata: %w", errRead)
+-			}
+-			if !contentsMatch {
+-				tmp := path + ".tmp"
+-				if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
+-					return "", fmt.Errorf("postgres store: write temp auth file: %w", errWrite)
++		} else {
++			switch {
++			case auth.Storage != nil:
++				if auth.Metadata == nil {
++					auth.Metadata = make(map[string]any)
+ 				}
+-				if errRename := os.Rename(tmp, path); errRename != nil {
+-					return "", fmt.Errorf("postgres store: rename auth file: %w", errRename)
++				auth.Metadata["disabled"] = auth.Disabled
++				if setter, ok := auth.Storage.(interface{ SetMetadata(map[string]any) }); ok {
++					setter.SetMetadata(auth.Metadata)
+ 				}
++				if err = auth.Storage.SaveTokenToFile(path); err != nil {
++					return err
++				}
++			case auth.Metadata != nil:
++				auth.Metadata["disabled"] = auth.Disabled
++				raw, errMarshal := json.Marshal(auth.Metadata)
++				if errMarshal != nil {
++					return fmt.Errorf("postgres store: marshal metadata: %w", errMarshal)
++				}
++				contentsMatch := false
++				if existing, errRead := os.ReadFile(path); errRead == nil {
++					contentsMatch = jsonEqual(existing, raw)
++				} else if errRead != nil && !errors.Is(errRead, fs.ErrNotExist) {
++					return fmt.Errorf("postgres store: read existing metadata: %w", errRead)
++				}
++				if !contentsMatch {
++					tmp := path + ".tmp"
++					if errWrite := os.WriteFile(tmp, raw, 0o600); errWrite != nil {
++						return fmt.Errorf("postgres store: write temp auth file: %w", errWrite)
++					}
++					if errRename := os.Rename(tmp, path); errRename != nil {
++						return fmt.Errorf("postgres store: rename auth file: %w", errRename)
++					}
++				}
++			default:
++				return fmt.Errorf("postgres store: nothing to persist for %s", auth.ID)
+ 			}
+-		default:
+-			return "", fmt.Errorf("postgres store: nothing to persist for %s", auth.ID)
+ 		}
+-	}
+
+-	if auth.Attributes == nil {
+-		auth.Attributes = make(map[string]string)
+-	}
+-	auth.Attributes[cliproxyauth.AttributePath] = path
+-	auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourcePostgres
++		return nil
++	}, func() error {
++		if auth.Attributes == nil {
++			auth.Attributes = make(map[string]string)
++		}
++		auth.Attributes[cliproxyauth.AttributePath] = path
++		auth.Attributes[cliproxyauth.AttributeSourceBackend] = cliproxyauth.AuthSourcePostgres
+
+-	if strings.TrimSpace(auth.FileName) == "" {
+-		auth.FileName = auth.ID
+-	}
++		if strings.TrimSpace(auth.FileName) == "" {
++			auth.FileName = auth.ID
++		}
+
+-	relID, err := s.relativeAuthID(path)
+-	if err != nil {
+-		return "", err
+-	}
+-	if err = s.upsertAuthRecord(ctx, relID, path); err != nil {
+-		return "", err
++		relID, err := s.relativeAuthID(path)
++		if err != nil {
++			return err
++		}
++		if err = s.upsertAuthRecord(ctx, relID, path); err != nil {
++			return err
++		}
++		return nil
++	})
++	if errPersist != nil {
++		return "", errPersist
+ 	}
+ 	return path, nil
+ }
 diff --git a/internal/store/save_lock_context_test.go b/internal/store/save_lock_context_test.go
 new file mode 100644
 index 00000000..a966ae2b
@@ -2973,5 +3470,1056 @@ index 4865627c..f5eff4c1 100644
 +	}
 +	if got := record.Metadata["account_id"]; got != bundle.TokenData.AccountID {
 +		t.Fatalf("pre-persistence account_id=%v, want token exchange account %q", got, bundle.TokenData.AccountID)
++	}
++}
+diff --git a/internal/store/acquisition_mirror.go b/internal/store/acquisition_mirror.go
+new file mode 100644
+index 00000000..b6b86df5
+--- /dev/null
++++ b/internal/store/acquisition_mirror.go
+@@ -0,0 +1,154 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++type acquisitionMirror struct {
++	path        string
++	original    []byte
++	mode        os.FileMode
++	existed     bool
++	written     []byte
++	writtenInfo os.FileInfo
++}
++
++// The destination lock covers commit and rollback so a refresh cannot consume a
++// failed login, and cleanup cannot wait behind a refresh after the save expires.
++// Staging lets Codex serialization take its own lock without nesting the target lock.
++func persistAcquisitionMirror(ctx context.Context, path string, write func(string) error, persist func() error) error {
++	if !cliproxyauth.HasAuthCreationIntent(ctx) {
++		if errWrite := write(path); errWrite != nil {
++			return errWrite
++		}
++		return persist()
++	}
++	return codex.WithFileLockContext(ctx, path, func() error {
++		mirror, errSnapshot := snapshotAcquisitionMirror(path)
++		if errSnapshot != nil {
++			return errSnapshot
++		}
++		dir, errTemp := os.MkdirTemp(filepath.Dir(path), ".auth-acquisition-*")
++		if errTemp != nil {
++			return errTemp
++		}
++		defer func() { _ = os.RemoveAll(dir) }()
++		stagedPath := filepath.Join(dir, "credential")
++		if mirror.existed {
++			if errSeed := os.WriteFile(stagedPath, mirror.original, 0o600); errSeed != nil {
++				return errSeed
++			}
++		}
++		if errWrite := write(stagedPath); errWrite != nil {
++			return errWrite
++		}
++		// Capture the version before publication, with refresh writers still excluded.
++		mirror.path = stagedPath
++		errRemember := mirror.rememberWrite()
++		mirror.path = path
++		if errRemember != nil {
++			return errRemember
++		}
++		if errContext := ctx.Err(); errContext != nil {
++			return errContext
++		}
++		if errRename := os.Rename(stagedPath, path); errRename != nil {
++			return errRename
++		}
++		return mirror.restore(persist())
++	})
++}
++
++func snapshotAcquisitionMirror(path string) (*acquisitionMirror, error) {
++	m := &acquisitionMirror{path: path}
++	info, err := os.Lstat(path)
++	if errors.Is(err, os.ErrNotExist) {
++		return m, nil
++	}
++	if err != nil {
++		return nil, fmt.Errorf("snapshot auth mirror: %w", err)
++	}
++	// In-place token writers follow links. Refuse acquisitions before they can
++	// modify a referent that rollback does not own.
++	if !info.Mode().IsRegular() {
++		return nil, fmt.Errorf("acquisition auth mirror must be a regular file")
++	}
++	m.existed = true
++	m.mode = info.Mode()
++	m.original, err = os.ReadFile(path)
++	if err != nil {
++		return nil, fmt.Errorf("snapshot auth mirror: %w", err)
++	}
++	return m, nil
++}
++
++func (m *acquisitionMirror) rememberWrite() error {
++	if m == nil {
++		return nil
++	}
++	data, err := os.ReadFile(m.path)
++	if err != nil {
++		return fmt.Errorf("read acquired auth mirror: %w", err)
++	}
++	info, err := os.Stat(m.path)
++	if err != nil {
++		return fmt.Errorf("inspect acquired auth mirror: %w", err)
++	}
++	m.written, m.writtenInfo = data, info
++	return nil
++}
++
++func (m *acquisitionMirror) restore(errSave error) error {
++	if m == nil || m.writtenInfo == nil || errSave == nil {
++		return errSave
++	}
++	if errRestore := m.restoreWritten(); errRestore != nil {
++		return errors.Join(errSave, fmt.Errorf("restore failed acquisition mirror: %w", errRestore))
++	}
++	return errSave
++}
++
++func (m *acquisitionMirror) restoreWritten() error {
++	current, err := os.ReadFile(m.path)
++	if err != nil {
++		return err
++	}
++	info, err := os.Stat(m.path)
++	if err != nil {
++		return err
++	}
++	// Another writer's credential must survive a failed acquisition.
++	if !os.SameFile(info, m.writtenInfo) || !bytes.Equal(current, m.written) {
++		return fmt.Errorf("auth mirror changed after acquisition write")
++	}
++	if !m.existed {
++		return os.Remove(m.path)
++	}
++	file, err := os.CreateTemp(filepath.Dir(m.path), ".auth-rollback-*")
++	if err != nil {
++		return err
++	}
++	tempPath := file.Name()
++	defer func() { _ = os.Remove(tempPath) }()
++	if errMode := file.Chmod(m.mode.Perm()); errMode != nil {
++		_ = file.Close()
++		return errMode
++	}
++	if _, errWrite := file.Write(m.original); errWrite != nil {
++		_ = file.Close()
++		return errWrite
++	}
++	if errClose := file.Close(); errClose != nil {
++		return errClose
++	}
++
++	return os.Rename(tempPath, m.path)
++}
+diff --git a/internal/store/acquisition_mirror_test.go b/internal/store/acquisition_mirror_test.go
+new file mode 100644
+index 00000000..58a40859
+--- /dev/null
++++ b/internal/store/acquisition_mirror_test.go
+@@ -0,0 +1,244 @@
++package store
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestAcquiredAuthRemoteFailurePreservesMirror(t *testing.T) {
++	for _, backend := range []string{"git", "object", "postgres"} {
++		for _, existing := range []bool{false, true} {
++			name := "new"
++			if existing {
++				name = "replacement"
++			}
++			t.Run(backend+"/"+name, func(t *testing.T) {
++				authDir := filepath.Join(t.TempDir(), "workspace", "auths")
++				entered := make(chan struct{})
++				remoteSave := func(ctx context.Context) error {
++					close(entered)
++					<-ctx.Done()
++					return ctx.Err()
++				}
++				var tokenStore cliproxyauth.Store
++				switch backend {
++				case "git":
++					remote := filepath.Join(t.TempDir(), "remote.git")
++					if _, err := git.PlainInit(remote, true); err != nil {
++						t.Fatal(err)
++					}
++					s := NewGitTokenStore(remote, "", "", "")
++					s.SetBaseDir(authDir)
++					if err := s.EnsureRepository(); err != nil {
++						t.Fatal(err)
++					}
++					s.pushFn = func(ctx context.Context, _ *git.Repository, _ *git.PushOptions) error { return remoteSave(ctx) }
++					tokenStore = s
++				case "object":
++					tokenStore = &ObjectTokenStore{authDir: authDir, putObjectFn: func(ctx context.Context, _ string, _ []byte, _ string) error { return remoteSave(ctx) }}
++				case "postgres":
++					tokenStore = &PostgresStore{authDir: authDir, persistAuthFn: func(ctx context.Context, _ string, _ []byte) error { return remoteSave(ctx) }}
++				}
++				if err := os.MkdirAll(authDir, 0o700); err != nil {
++					t.Fatal(err)
++				}
++				path := filepath.Join(authDir, "device.json")
++				original := []byte(`{"type":"codex","access_token":"original","note":"keep"}`)
++				if existing {
++					if err := os.WriteFile(path, original, 0o640); err != nil {
++						t.Fatal(err)
++					}
++				}
++				ctx, cancel := context.WithCancel(cliproxyauth.WithAuthCreationIntent(context.Background()))
++				defer cancel()
++				done := make(chan error, 1)
++				go func() {
++					_, err := tokenStore.Save(ctx, &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "replacement"}})
++					done <- err
++				}()
++				<-entered
++				cancel()
++				if err := <-done; !errors.Is(err, context.Canceled) {
++					t.Fatalf("Save error = %v, want cancellation", err)
++				}
++				got, err := os.ReadFile(path)
++				if !existing {
++					if !errors.Is(err, os.ErrNotExist) {
++						t.Fatalf("failed acquisition left a readable credential: %q, %v", got, err)
++					}
++				} else {
++					if err != nil || string(got) != string(original) {
++						t.Fatalf("failed acquisition replaced prior credentials: %q, %v", got, err)
++					}
++					info, err := os.Stat(path)
++					if err != nil || info.Mode().Perm() != 0o640 {
++						t.Fatalf("old credential permissions were not restored: %v, %v", info, err)
++					}
++				}
++			})
++		}
++	}
++}
++
++func TestGitAcquisitionLeaseFailureRestoresMirrorAndIndex(t *testing.T) {
++	for _, existing := range []bool{false, true} {
++		name := "new"
++		if existing {
++			name = "replacement"
++		}
++		t.Run(name, func(t *testing.T) {
++			root := t.TempDir()
++			remote := setupGitRemoteRepository(t, root, "master", testBranchSpec{name: "master", contents: "baseline\n"})
++			storeA := NewGitTokenStore(remote, "", "", "")
++			storeA.SetBaseDir(filepath.Join(root, "a", "auths"))
++			if err := storeA.EnsureRepository(); err != nil {
++				t.Fatal(err)
++			}
++			path := filepath.Join(storeA.AuthDir(), "device.json")
++			var original []byte
++			if existing {
++				if _, err := storeA.Save(context.Background(), &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "original"}}); err != nil {
++					t.Fatal(err)
++				}
++				var err error
++				original, err = os.ReadFile(path)
++				if err != nil {
++					t.Fatal(err)
++				}
++			}
++			storeB := NewGitTokenStore(remote, "", "", "")
++			storeB.SetBaseDir(filepath.Join(root, "b", "auths"))
++			if err := storeB.EnsureRepository(); err != nil {
++				t.Fatal(err)
++			}
++			repo, err := git.PlainOpen(filepath.Dir(storeA.AuthDir()))
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer func() {
++				if err := repo.Close(); err != nil {
++					t.Error(err)
++				}
++			}()
++			before, err := repo.Head()
++			if err != nil {
++				t.Fatal(err)
++			}
++			record := &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "replacement"}}
++			record.Storage = &callbackTokenStorage{save: func(path string) error {
++				if err := os.WriteFile(path, []byte(`{"type":"codex","access_token":"replacement"}`), 0o600); err != nil {
++					return err
++				}
++				_, err := storeB.Save(context.Background(), &cliproxyauth.Auth{ID: "concurrent.json", FileName: "concurrent.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "independent"}})
++				return err
++			}}
++			if _, err := storeA.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), record); err == nil {
++				t.Fatal("Save succeeded despite the competing remote update")
++			}
++			if existing {
++				got, err := os.ReadFile(path)
++				if err != nil || string(got) != string(original) {
++					t.Fatalf("old mirror was not restored: %q, %v", got, err)
++				}
++			} else if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
++				t.Fatalf("failed new credential remains in mirror: %v", err)
++			}
++			after, err := repo.Head()
++			if err != nil || after.Hash() != before.Hash() {
++				t.Fatalf("local HEAD changed after rejected acquisition: %v, %v", after, err)
++			}
++			index, err := repo.Storer.Index()
++			if err != nil {
++				t.Fatal(err)
++			}
++			entry, err := index.Entry("auths/device.json")
++			if existing {
++				if err != nil {
++					t.Fatal(err)
++				}
++				commit, err := repo.CommitObject(before.Hash())
++				if err != nil {
++					t.Fatal(err)
++				}
++				file, err := commit.File("auths/device.json")
++				if err != nil || entry.Hash != file.Hash {
++					t.Fatalf("index retained the failed credential: %v", err)
++				}
++			} else if err == nil {
++				t.Fatal("index retained the failed new credential")
++			}
++			if _, err := storeA.Save(context.Background(), &cliproxyauth.Auth{ID: "later.json", FileName: "later.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "later"}}); err != nil {
++				t.Fatal(err)
++			}
++			assertRemoteTreePath(t, remote, "master", "auths/concurrent.json", true)
++			assertRemoteTreePath(t, remote, "master", "auths/later.json", true)
++			if existing {
++				assertRemoteFileContents(t, remote, "master", "auths/device.json", string(original))
++			} else {
++				assertRemoteTreePath(t, remote, "master", "auths/device.json", false)
++			}
++		})
++	}
++}
++
++func TestAcquisitionMirrorDoesNotOverwriteIndependentWrite(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "device.json")
++	original := []byte(`{"type":"codex","access_token":"original"}`)
++	independent := []byte(`{"type":"codex","access_token":"independent"}`)
++	if err := os.WriteFile(path, original, 0o600); err != nil {
++		t.Fatal(err)
++	}
++	errRemote := errors.New("remote unavailable")
++	s := &ObjectTokenStore{authDir: dir, putObjectFn: func(context.Context, string, []byte, string) error {
++		if err := os.WriteFile(path, independent, 0o600); err != nil {
++			return err
++		}
++		return errRemote
++	}}
++	ctx := cliproxyauth.WithAuthCreationIntent(context.Background())
++	_, err := s.Save(ctx, &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "replacement"}})
++	if !errors.Is(err, errRemote) {
++		t.Fatalf("Save error = %v, want remote error", err)
++	}
++	got, errRead := os.ReadFile(path)
++	if errRead != nil || string(got) != string(independent) {
++		t.Fatalf("rollback overwrote independent credentials: %q, %v", got, errRead)
++	}
++}
++
++func TestAcquiredAuthSuccessfulSaveKeepsMirror(t *testing.T) {
++	for _, backend := range []string{"object", "postgres"} {
++		t.Run(backend, func(t *testing.T) {
++			dir := t.TempDir()
++			var remote []byte
++			var s cliproxyauth.Store
++			if backend == "object" {
++				s = &ObjectTokenStore{authDir: dir, putObjectFn: func(_ context.Context, _ string, data []byte, _ string) error {
++					remote = append([]byte(nil), data...)
++					return nil
++				}}
++			} else {
++				s = &PostgresStore{authDir: dir, persistAuthFn: func(_ context.Context, _ string, data []byte) error {
++					remote = append([]byte(nil), data...)
++					return nil
++				}}
++			}
++			record := &cliproxyauth.Auth{ID: "device.json", FileName: "device.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "committed"}}
++			path, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), record)
++			if err != nil {
++				t.Fatal(err)
++			}
++			got, err := os.ReadFile(path)
++			if err != nil || string(got) != string(remote) || len(remote) == 0 || path != filepath.Join(dir, record.FileName) {
++				t.Fatalf("committed mirror differs from remote: path=%q, %q != %q, %v", path, got, remote, err)
++			}
++		})
++	}
++}
+diff --git a/internal/store/acquisition_mirror_concurrency_test.go b/internal/store/acquisition_mirror_concurrency_test.go
+new file mode 100644
+index 00000000..e6abe884
+--- /dev/null
++++ b/internal/store/acquisition_mirror_concurrency_test.go
+@@ -0,0 +1,244 @@
++package store
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"testing"
++	"testing/synctest"
++
++	claudeauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/claude"
++	codexauth "github.com/router-for-me/CLIProxyAPI/v8/internal/auth/codex"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++func TestAcquisitionRejectsSymlinkBeforeSerialization(t *testing.T) {
++	for _, backend := range []string{"object", "postgres"} {
++		t.Run(backend, func(t *testing.T) {
++			dir := t.TempDir()
++			path := filepath.Join(dir, "login.json")
++			target := filepath.Join(dir, "target")
++			original := []byte(`{"type":"claude","access_token":"original"}`)
++			if err := os.WriteFile(target, original, 0o600); err != nil {
++				t.Fatal(err)
++			}
++			if err := os.Symlink("target", path); err != nil {
++				t.Fatal(err)
++			}
++			reached := false
++			remote := func() error { reached = true; return context.DeadlineExceeded }
++			var s cliproxyauth.Store
++			if backend == "object" {
++				s = &ObjectTokenStore{authDir: dir, putObjectFn: func(context.Context, string, []byte, string) error { return remote() }}
++			} else {
++				s = &PostgresStore{authDir: dir, persistAuthFn: func(context.Context, string, []byte) error { return remote() }}
++			}
++			record := &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "claude", Storage: &claudeauth.ClaudeTokenStorage{AccessToken: "replacement"}, Metadata: map[string]any{"type": "claude"}}
++			saved, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), record)
++			if reached || err == nil || saved != "" {
++				t.Fatalf("unexpected remote outcome: reached=%v saved=%q err=%v", reached, saved, err)
++			}
++			link, err := os.Readlink(path)
++			if err != nil || link != "target" {
++				t.Fatalf("link changed: %q, %v", link, err)
++			}
++			got, err := os.ReadFile(path)
++			if err != nil || string(got) != string(original) {
++				t.Errorf("acquisition changed symlink-backed credentials: got %q, want %q, err=%v", got, original, err)
++			}
++		})
++	}
++}
++
++func TestAcquisitionSnapshotWaitsForCodexLock(t *testing.T) {
++	for _, backend := range []string{"object", "postgres"} {
++		t.Run(backend, func(t *testing.T) {
++			synctest.Test(t, func(t *testing.T) {
++				dir := t.TempDir()
++				path := filepath.Join(dir, "login.json")
++				if err := codexauth.WriteJSONFileAtomic(path, map[string]any{"type": "codex", "access_token": "original"}); err != nil {
++					t.Fatal(err)
++				}
++				var s cliproxyauth.Store
++				if backend == "object" {
++					s = &ObjectTokenStore{authDir: dir, putObjectFn: func(context.Context, string, []byte, string) error { return context.DeadlineExceeded }}
++				} else {
++					s = &PostgresStore{authDir: dir, persistAuthFn: func(context.Context, string, []byte) error { return context.DeadlineExceeded }}
++				}
++				done := make(chan error, 1)
++				var latest []byte
++				err := codexauth.WithFileLock(path, func() error {
++					go func() {
++						_, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "failed-login"}})
++						done <- err
++					}()
++					synctest.Wait()
++					if err := codexauth.WriteJSONFileAtomic(path, map[string]any{"type": "codex", "access_token": "successful-refresh", "refresh_token": "rotated"}); err != nil {
++						return err
++					}
++					var err error
++					latest, err = os.ReadFile(path)
++					return err
++				})
++				if err != nil {
++					t.Fatal(err)
++				}
++				if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
++					t.Fatalf("Save error = %v", err)
++				}
++				got, err := os.ReadFile(path)
++				if err != nil || string(got) != string(latest) {
++					t.Errorf("failed acquisition rolled back successful locked update: got %q, want %q, err=%v", got, latest, err)
++				}
++			})
++		})
++	}
++}
++
++func TestAcquisitionRollbackPreservesLockedRefresh(t *testing.T) {
++	for _, backend := range []string{"object", "postgres"} {
++		t.Run(backend, func(t *testing.T) {
++			synctest.Test(t, func(t *testing.T) {
++				dir := t.TempDir()
++				path := filepath.Join(dir, "login.json")
++				original := []byte(`{"type":"codex","access_token":"original"}`)
++				if err := os.WriteFile(path, original, 0o600); err != nil {
++					t.Fatal(err)
++				}
++				latest := []byte(`{"type":"codex","access_token":"successful-refresh","refresh_token":"rotated"}`)
++				entered := make(chan struct{})
++				done := make(chan error, 1)
++				go func() {
++					<-entered
++					done <- codexauth.WithFileLock(path, func() error {
++						got, err := os.ReadFile(path)
++						if err != nil {
++							return err
++						}
++						if string(got) != string(original) {
++							return fmt.Errorf("refresh consumed failed login: %q", got)
++						}
++						return os.WriteFile(path, latest, 0o600)
++					})
++				}()
++				remote := func() error {
++					close(entered)
++					synctest.Wait()
++					return context.DeadlineExceeded
++				}
++				var s cliproxyauth.Store
++				if backend == "object" {
++					s = &ObjectTokenStore{authDir: dir, putObjectFn: func(context.Context, string, []byte, string) error { return remote() }}
++				} else {
++					s = &PostgresStore{authDir: dir, persistAuthFn: func(context.Context, string, []byte) error { return remote() }}
++				}
++				_, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "failed-login"}})
++				if !errors.Is(err, context.DeadlineExceeded) {
++					t.Fatalf("Save error = %v", err)
++				}
++				if err := <-done; err != nil {
++					t.Fatal(err)
++				}
++				got, err := os.ReadFile(path)
++				if err != nil || string(got) != string(latest) {
++					t.Fatalf("rollback overwrote a successful refresh: %q, %v", got, err)
++				}
++			})
++		})
++	}
++}
++
++func TestAcquisitionStorageFailurePreservesMirror(t *testing.T) {
++	for _, backend := range []string{"object", "postgres"} {
++		for _, provider := range []string{"codex", "claude"} {
++			for _, existing := range []bool{false, true} {
++				name := "new"
++				if existing {
++					name = "replacement"
++				}
++				t.Run(backend+"/"+provider+"/"+name, func(t *testing.T) {
++					dir := t.TempDir()
++					path := filepath.Join(dir, "login.json")
++					original := []byte(`{"type":"` + provider + `","access_token":"original","note":"keep"}`)
++					if existing {
++						if err := os.WriteFile(path, original, 0o640); err != nil {
++							t.Fatal(err)
++						}
++					}
++					reached := false
++					remote := func(data []byte) error {
++						reached = true
++						if !bytes.Contains(data, []byte(`"replacement"`)) {
++							t.Errorf("remote did not receive acquired credentials: %s", data)
++						}
++						return context.DeadlineExceeded
++					}
++					var s cliproxyauth.Store
++					if backend == "object" {
++						s = &ObjectTokenStore{authDir: dir, putObjectFn: func(_ context.Context, _ string, data []byte, _ string) error { return remote(data) }}
++					} else {
++						s = &PostgresStore{authDir: dir, persistAuthFn: func(_ context.Context, _ string, data []byte) error { return remote(data) }}
++					}
++					record := &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: provider, Metadata: map[string]any{"type": provider}}
++					if provider == "codex" {
++						record.Storage = &codexauth.CodexTokenStorage{AccessToken: "replacement"}
++					} else {
++						record.Storage = &claudeauth.ClaudeTokenStorage{AccessToken: "replacement"}
++					}
++					saved, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), record)
++					if !reached || saved != "" || !errors.Is(err, context.DeadlineExceeded) {
++						t.Fatalf("Save = %q, %v, remote reached=%v", saved, err, reached)
++					}
++					got, err := os.ReadFile(path)
++					if existing {
++						if err != nil || string(got) != string(original) {
++							t.Fatalf("prior credential changed: %q, %v", got, err)
++						}
++					} else if !errors.Is(err, os.ErrNotExist) {
++						t.Fatalf("failed new credential remains readable: %q, %v", got, err)
++					}
++					entries, err := os.ReadDir(dir)
++					if err != nil {
++						t.Fatal(err)
++					}
++					for _, entry := range entries {
++						if entry.IsDir() {
++							t.Fatalf("staging directory remains: %s", entry.Name())
++						}
++					}
++				})
++			}
++		}
++	}
++}
++
++func TestAcquisitionSerializationFailurePreservesMirror(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "login.json")
++	original := []byte(`{"type":"claude","access_token":"original"}`)
++	if err := os.WriteFile(path, original, 0o600); err != nil {
++		t.Fatal(err)
++	}
++	errWrite := errors.New("serialization failed")
++	s := &ObjectTokenStore{authDir: dir, putObjectFn: func(context.Context, string, []byte, string) error {
++		t.Error("remote save after serialization failure")
++		return nil
++	}}
++	record := &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Storage: &callbackTokenStorage{save: func(path string) error {
++		if err := os.WriteFile(path, []byte("partial credential"), 0o600); err != nil {
++			return err
++		}
++		return errWrite
++	}}}
++	_, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), record)
++	if !errors.Is(err, errWrite) {
++		t.Fatalf("Save error = %v", err)
++	}
++	got, err := os.ReadFile(path)
++	if err != nil || string(got) != string(original) {
++		t.Fatalf("serialization failure changed prior credential: %q, %v", got, err)
++	}
++}
+diff --git a/internal/store/acquisition_git_commit_test.go b/internal/store/acquisition_git_commit_test.go
+new file mode 100644
+index 00000000..665531b6
+--- /dev/null
++++ b/internal/store/acquisition_git_commit_test.go
+@@ -0,0 +1,122 @@
++package store
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	"github.com/go-git/go-git/v6/plumbing"
++	"github.com/go-git/go-git/v6/storage"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++type postPushFailureStorer struct {
++	storage.Storer
++	trackingRef    plumbing.ReferenceName
++	errTracking    error
++	errClose       error
++	trackingFailed bool
++	closeFailed    bool
++}
++
++func (s *postPushFailureStorer) SetReference(ref *plumbing.Reference) error {
++	if ref.Name() == s.trackingRef && s.errTracking != nil {
++		s.trackingFailed = true
++		return s.errTracking
++	}
++	return s.Storer.SetReference(ref)
++}
++
++func (s *postPushFailureStorer) Close() error {
++	var errClose error
++	if closer, ok := s.Storer.(interface{ Close() error }); ok {
++		errClose = closer.Close()
++	}
++	if s.errClose != nil {
++		s.closeFailed = true
++	}
++	return errors.Join(errClose, s.errClose)
++}
++
++func TestGitAcquisitionKeepsCommittedMirrorAfterLocalFailure(t *testing.T) {
++	for _, failure := range []string{"tracking-ref", "close"} {
++		for _, existing := range []bool{false, true} {
++			name := "new"
++			if existing {
++				name = "replacement"
++			}
++			t.Run(failure+"/"+name, func(t *testing.T) {
++				root := t.TempDir()
++				remote := setupGitRemoteRepository(t, root, "master", testBranchSpec{name: "master", contents: "baseline\n"})
++				s := NewGitTokenStore(remote, "", "", "master")
++				s.SetBaseDir(filepath.Join(root, "workspace", "auths"))
++				if err := s.EnsureRepository(); err != nil {
++					t.Fatal(err)
++				}
++				if existing {
++					_, err := s.Save(context.Background(), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "original"}})
++					if err != nil {
++						t.Fatal(err)
++					}
++				}
++				path := filepath.Join(s.AuthDir(), "login.json")
++				var committed []byte
++				var injected *postPushFailureStorer
++				s.pushFn = func(ctx context.Context, repo *git.Repository, opts *git.PushOptions) error {
++					if err := repo.PushContext(ctx, opts); err != nil {
++						return err
++					}
++					var errRead error
++					committed, errRead = os.ReadFile(path)
++					if errRead != nil {
++						return errRead
++					}
++					injected = &postPushFailureStorer{Storer: repo.Storer, trackingRef: plumbing.NewRemoteReferenceName("origin", "master")}
++					if failure == "tracking-ref" {
++						injected.errTracking = errors.New("tracking ref write failed after successful push")
++					} else {
++						injected.errClose = errors.New("repository close failed after successful push")
++					}
++					repo.Storer = injected
++					return nil
++				}
++				saved, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "replacement"}})
++				if injected == nil || (failure == "tracking-ref" && !injected.trackingFailed) || (failure == "close" && !injected.closeFailed) {
++					t.Fatal("post-push failure was not reached")
++				}
++				if err != nil || saved != path {
++					t.Errorf("committed acquisition reported failure: saved=%q, err=%v", saved, err)
++				}
++				got, errRead := os.ReadFile(path)
++				if errRead != nil || string(got) != string(committed) {
++					t.Errorf("successful push was rolled back locally: got %q, want %q, err=%v", got, committed, errRead)
++				}
++				assertRemoteFileContents(t, remote, "master", "auths/login.json", string(committed))
++				readHead := func(dir string) plumbing.Hash {
++					t.Helper()
++					repo, err := git.PlainOpen(dir)
++					if err != nil {
++						t.Fatal(err)
++					}
++					head, errHead := repo.Head()
++					errClose := repo.Close()
++					if errHead != nil || errClose != nil {
++						t.Fatalf("read repository head: %v, %v", errHead, errClose)
++					}
++					return head.Hash()
++				}
++				if local, remoteHead := readHead(s.repoDirSnapshot()), readHead(remote); local != remoteHead {
++					t.Errorf("successful push rolled back local HEAD: local=%s remote=%s", local, remoteHead)
++				}
++				s.pushFn = nil
++				if _, err := s.Save(context.Background(), &cliproxyauth.Auth{ID: "later.json", FileName: "later.json", Metadata: map[string]any{"type": "codex", "access_token": "later"}}); err != nil {
++					t.Fatalf("next save could not recover local tracking: %v", err)
++				}
++				assertRemoteFileContents(t, remote, "master", "auths/login.json", string(committed))
++			})
++		}
++	}
++}
+diff --git a/internal/store/acquisition_git_rollback_test.go b/internal/store/acquisition_git_rollback_test.go
+new file mode 100644
+index 00000000..4b83ad71
+--- /dev/null
++++ b/internal/store/acquisition_git_rollback_test.go
+@@ -0,0 +1,257 @@
++package store
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/go-git/go-git/v6"
++	gitconfig "github.com/go-git/go-git/v6/config"
++	"github.com/go-git/go-git/v6/plumbing"
++	gitindex "github.com/go-git/go-git/v6/plumbing/format/index"
++	"github.com/go-git/go-git/v6/storage"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
++)
++
++type prePushFailureStorer struct {
++	storage.Storer
++	phase     string
++	fault     error
++	baseline  plumbing.Hash
++	committed bool
++	injected  bool
++	headReads int
++}
++
++func (s *prePushFailureStorer) Reference(name plumbing.ReferenceName) (*plumbing.Reference, error) {
++	if s.committed && !s.injected && name == plumbing.HEAD {
++		s.headReads++
++		if (s.phase == "head" && s.headReads == 1) || ((s.phase == "push-head" || s.phase == "push-head-missing") && s.headReads == 2) {
++			s.injected = true
++			return nil, s.fault
++		}
++	}
++	return s.Storer.Reference(name)
++}
++
++func (s *prePushFailureStorer) SetReference(ref *plumbing.Reference) error {
++	if s.committed && !s.injected && s.phase == "rewrite-ref" && ref.Name().IsBranch() {
++		s.injected = true
++		return s.fault
++	}
++	if err := s.Storer.SetReference(ref); err != nil {
++		return err
++	}
++	if ref.Name().IsBranch() && ref.Hash() != s.baseline {
++		s.committed = true
++	}
++	return nil
++}
++
++func (s *prePushFailureStorer) SetEncodedObject(obj plumbing.EncodedObject) (plumbing.Hash, error) {
++	if s.committed && !s.injected && s.phase == "rewrite-object" && obj.Type() == plumbing.CommitObject {
++		s.injected = true
++		return plumbing.ZeroHash, s.fault
++	}
++	return s.Storer.SetEncodedObject(obj)
++}
++
++func (s *prePushFailureStorer) Close() error {
++	if closer, ok := s.Storer.(interface{ Close() error }); ok {
++		return closer.Close()
++	}
++	return nil
++}
++
++func readGitAcquisitionState(t *testing.T, dir string) (plumbing.Hash, *gitindex.Index) {
++	t.Helper()
++	repo, err := git.PlainOpen(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer func() {
++		if err := repo.Close(); err != nil {
++			t.Error(err)
++		}
++	}()
++	head, errHead := repo.Head()
++	if errHead != nil && !errors.Is(errHead, plumbing.ErrReferenceNotFound) {
++		t.Fatal(errHead)
++	}
++	index, errIndex := repo.Storer.Index()
++	if errIndex != nil {
++		t.Fatal(errIndex)
++	}
++	if head == nil {
++		return plumbing.ZeroHash, index
++	}
++	return head.Hash(), index
++}
++
++func TestGitAcquisitionPrePushFailureRestoresCommitState(t *testing.T) {
++	for _, phase := range []string{"head", "rewrite-object", "rewrite-ref", "push-head", "push-head-missing"} {
++		for _, existing := range []bool{false, true} {
++			name := "new"
++			if existing {
++				name = "replacement"
++			}
++			t.Run(phase+"/"+name, func(t *testing.T) {
++				root := t.TempDir()
++				remote := setupGitRemoteRepository(t, root, "master", testBranchSpec{name: "master", contents: "baseline\n"})
++				s := NewGitTokenStore(remote, "", "", "master")
++				s.SetBaseDir(filepath.Join(root, "workspace", "auths"))
++				if err := s.EnsureRepository(); err != nil {
++					t.Fatal(err)
++				}
++				path := filepath.Join(s.AuthDir(), "login.json")
++				var original []byte
++				if existing {
++					if _, err := s.Save(context.Background(), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "original"}}); err != nil {
++						t.Fatal(err)
++					}
++					var err error
++					original, err = os.ReadFile(path)
++					if err != nil {
++						t.Fatal(err)
++					}
++				}
++				before, _ := readGitAcquisitionState(t, s.repoDirSnapshot())
++				fault := errors.New("post-commit " + phase + " failed")
++				if phase == "push-head-missing" {
++					fault = plumbing.ErrReferenceNotFound
++				}
++				var injected *prePushFailureStorer
++				s.openFn = func(dir string) (*git.Repository, error) {
++					repo, err := git.PlainOpen(dir)
++					if err != nil {
++						return nil, err
++					}
++					injected = &prePushFailureStorer{Storer: repo.Storer, phase: phase, fault: fault, baseline: before}
++					repo.Storer = injected
++					return repo, nil
++				}
++				saved, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "failed-login"}})
++				if !errors.Is(err, fault) || saved != "" || injected == nil || !injected.injected {
++					t.Fatalf("failure not reached: path=%q err=%v", saved, err)
++				}
++				got, errRead := os.ReadFile(path)
++				if existing {
++					if errRead != nil || string(got) != string(original) {
++						t.Errorf("mirror not restored: %q, %v", got, errRead)
++					}
++				} else if !errors.Is(errRead, os.ErrNotExist) {
++					t.Errorf("failed acquisition still readable: %q, %v", got, errRead)
++				}
++				after, index := readGitAcquisitionState(t, s.repoDirSnapshot())
++				if after != before {
++					t.Errorf("unpublished commit remains: before=%s after=%s", before, after)
++				}
++				entry, errEntry := index.Entry("auths/login.json")
++				if existing {
++					repo, err := git.PlainOpen(s.repoDirSnapshot())
++					if err != nil {
++						t.Fatal(err)
++					}
++					commit, err := repo.CommitObject(before)
++					if err != nil {
++						t.Fatal(err)
++					}
++					file, err := commit.File("auths/login.json")
++					if errClose := repo.Close(); errClose != nil {
++						t.Fatal(errClose)
++					}
++					if err != nil || errEntry != nil || entry.Hash != file.Hash {
++						t.Errorf("index not restored: entry=%v err=%v fileErr=%v", entry, errEntry, err)
++					}
++					assertRemoteFileContents(t, remote, "master", "auths/login.json", string(original))
++				} else {
++					if errEntry == nil {
++						t.Error("index retained failed acquisition")
++					}
++					assertRemoteTreePath(t, remote, "master", "auths/login.json", false)
++				}
++				s.openFn = nil
++				if _, err := s.Save(cliproxyauth.WithAuthCreationIntent(context.Background()), &cliproxyauth.Auth{ID: "login.json", FileName: "login.json", Provider: "codex", Metadata: map[string]any{"type": "codex", "access_token": "retry"}}); err != nil {
++					t.Fatalf("retry stayed wedged after transient failure: %v", err)
++				}
++				latest, err := os.ReadFile(path)
++				if err != nil {
++					t.Fatal(err)
++				}
++				assertRemoteFileContents(t, remote, "master", "auths/login.json", string(latest))
++			})
++		}
++	}
++}
++
++func TestGitInitialCommitPrePushFailureRestoresUnbornBranch(t *testing.T) {
++	for _, phase := range []string{"head", "rewrite-object", "rewrite-ref", "push-head", "push-head-missing"} {
++		t.Run(phase, func(t *testing.T) {
++			root := t.TempDir()
++			remote := filepath.Join(root, "remote.git")
++			bare, err := git.PlainInit(remote, true)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := bare.Close(); err != nil {
++				t.Fatal(err)
++			}
++			s := NewGitTokenStore(remote, "", "", "master")
++			s.SetBaseDir(filepath.Join(root, "workspace", "auths"))
++			repo, err := git.PlainInit(s.repoDirSnapshot(), false)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, plumbing.NewBranchReferenceName("master"))); err != nil {
++				t.Fatal(err)
++			}
++			if _, err := repo.CreateRemote(&gitconfig.RemoteConfig{Name: "origin", URLs: []string{remote}}); err != nil {
++				t.Fatal(err)
++			}
++			if err := repo.Close(); err != nil {
++				t.Fatal(err)
++			}
++			if err := disableGitCommitSigning(s.repoDirSnapshot()); err != nil {
++				t.Fatal(err)
++			}
++			path := filepath.Join(s.repoDirSnapshot(), "seed")
++			if err := os.WriteFile(path, []byte("seed\n"), 0o600); err != nil {
++				t.Fatal(err)
++			}
++			fault := errors.New("initial post-commit " + phase + " failed")
++			if phase == "push-head-missing" {
++				fault = plumbing.ErrReferenceNotFound
++			}
++			var injected *prePushFailureStorer
++			s.openFn = func(dir string) (*git.Repository, error) {
++				repo, err := git.PlainOpen(dir)
++				if err != nil {
++					return nil, err
++				}
++				injected = &prePushFailureStorer{Storer: repo.Storer, phase: phase, fault: fault}
++				repo.Storer = injected
++				return repo, nil
++			}
++			s.mu.Lock()
++			err = s.commitAndPushInitialLocked("Initialize store", "seed")
++			s.mu.Unlock()
++			if !errors.Is(err, fault) || injected == nil || !injected.injected {
++				t.Fatalf("failure not reached: %v", err)
++			}
++			head, index := readGitAcquisitionState(t, s.repoDirSnapshot())
++			if head != plumbing.ZeroHash || len(index.Entries) != 0 {
++				t.Errorf("unborn state not restored: HEAD=%s entries=%d", head, len(index.Entries))
++			}
++			s.openFn = nil
++			s.mu.Lock()
++			err = s.commitAndPushInitialLocked("Initialize store", "seed")
++			s.mu.Unlock()
++			if err != nil {
++				t.Fatalf("retry initialization failed: %v", err)
++			}
++			assertRemoteFileContents(t, remote, "master", "seed", "seed\n")
++		})
 +	}
 +}

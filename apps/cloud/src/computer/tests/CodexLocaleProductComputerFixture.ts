@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import type { KernelBashCredentials } from "../../kernel/KernelBashProgram.ts";
+import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
 import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
@@ -28,6 +29,7 @@ import { createChildBusybox } from "../ChildBusybox.ts";
 import { createChildGit } from "../ChildGit.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { KernelCommandForwarder } from "../../kernel/KernelCommandForwarder.ts";
+import type { MachineProgramInventory } from "../MachineProgramInventory.ts";
 import { emptyMachineFilesFixture, machineInventoryFixture } from "../machineInventoryTesting.ts";
 import { sqliteFixture } from "./helpers/sqliteFixture.ts";
 
@@ -98,7 +100,12 @@ export function loadCodexLocalePrograms(): CodexLocalePrograms | undefined {
 }
 
 type RunningProgramHost = {
-  readonly metadata: () => { readonly pid: number; readonly credentials: KernelBashCredentials };
+  readonly metadata: () => {
+    readonly pid: number;
+    readonly credentials: KernelBashCredentials;
+    readonly residentByteLimit: number;
+  };
+  readonly forkSnapshot: () => KernelBashForkSource | undefined;
 };
 
 interface LoaderInvocation {
@@ -118,6 +125,7 @@ export function createCodexLocaleProductComputer(
     readonly nowNs?: () => bigint;
     readonly directory?: KernelPosixMetadata;
     readonly file?: KernelPosixMetadata;
+    readonly machineInventory?: MachineProgramInventory;
     readonly machine?: KernelCommandForwarder;
     readonly orderedMachineRules?: ProductComputerOptions["orderedMachineRules"];
   } = {},
@@ -199,15 +207,21 @@ export function createCodexLocaleProductComputer(
             if (command.executable !== "/bin/bash") {
               throw new Error(`Unexpected Bash executable path: ${command.executable}`);
             }
-            result = await createChildBash({
-              residentByteLimit: 104 * 1024 * 1024,
+            const bash = createChildBash({
+              residentByteLimit: metadata.residentByteLimit,
               module: programs.bash,
               credentials: metadata.credentials,
               pid: metadata.pid,
               port: bashPort,
               args: command.argv,
               env: command.env,
-            }).run();
+              snapshot: await bashPort.forkSnapshot(),
+            });
+            try {
+              result = await bash.run();
+            } finally {
+              await bash.drain();
+            }
             break;
           }
           case "sed":
@@ -259,6 +273,7 @@ export function createCodexLocaleProductComputer(
       bash: programsByName("bash"),
       busyboxCat: programsByName("busybox-cat"),
       busyboxApplets: programsByName("busybox-applets"),
+      productBusyboxApplets: programsByName("busybox-product-applets"),
       ripgrep: programsByName("ripgrep"),
       coreutils: {
         echo: programsByName("echo"),
@@ -271,11 +286,14 @@ export function createCodexLocaleProductComputer(
         pwd: programsByName("pwd"),
         head: programsByName("head"),
         tail: programsByName("tail"),
+        wc: programsByName("wc"),
+        uniq: programsByName("uniq"),
       },
       git: programsByName("git"),
       sed: programsByName("sed"),
+      jq: programsByName("jq"),
     },
-    machineInventory: machineInventoryFixture(),
+    machineInventory: options.machineInventory ?? machineInventoryFixture(),
     machine: () => ({
       ...machine,
       files: emptyMachineFilesFixture(),
