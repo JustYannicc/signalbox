@@ -259,7 +259,7 @@ export async function runProductScenario(
       finishStatus: entry.finish?.status,
     })),
     restoreModes: {
-      claude: "same-variant-serialized-checkpoint",
+      ...(initialProvider === "claude" ? { claude: "same-variant-serialized-checkpoint" } : {}),
       codex:
         initialProvider === "codex"
           ? "same-variant-serialized-checkpoint"
@@ -268,7 +268,7 @@ export async function runProductScenario(
     currentPublication: last.snapshot.lastPublication,
     checkpoints: {
       initial: setup.initialReferences,
-      claude: firstCheckpoint,
+      firstCompleted: firstCheckpoint,
       codex: finalCheckpoint,
       files: finalFiles.checkpoint,
     },

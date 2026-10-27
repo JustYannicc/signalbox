@@ -225,7 +225,7 @@ it("restores Codex checkpoints inertly and starts the first fresh-grant turn thr
   expect(result.initial.status).toBe("settled");
   expect(result.resumed.status).toBe("resumed");
   expect(result.continued.status).toBe("settled");
-  expect(result.restoreModes.codex).toBe("same-variant-serialized-checkpoint");
+  expect(result.restoreModes).toEqual({ codex: "same-variant-serialized-checkpoint" });
   expect(result.completedRequests).toEqual([
     { requestId: "turn-one", status: "completed", finishStatus: "completed" },
     { requestId: "turn-two", status: "completed", finishStatus: "completed" },

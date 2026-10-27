@@ -275,7 +275,7 @@ export async function setupProductRun(
   const firstEntry = journalBeforeResume.snapshot.requests?.entries.at(-1);
   const firstCheckpoint = journalBeforeResume.snapshot.requests?.checkpoint;
   if (firstEntry === undefined || firstCheckpoint === undefined)
-    throw new Error("The Claude request did not commit its public checkpoint.");
+    throw new Error("The initial request did not commit its public checkpoint.");
 
   return {
     runId,
