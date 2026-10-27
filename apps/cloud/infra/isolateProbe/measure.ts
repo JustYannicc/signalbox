@@ -152,7 +152,10 @@ const stageTransport =
   deployedUrl && process.env.PROBE_VERSION_ID
     ? createStageTransport(deployedUrl, token, process.env.PROBE_VERSION_ID)
     : undefined;
-const request = stageTransport?.request ?? requestJson;
+const request = (url: URL, createInit: () => RequestInit, wrapResult = false) =>
+  stageTransport
+    ? stageTransport.request(url, createInit, wrapResult)
+    : requestJson(url, createInit(), wrapResult);
 
 try {
   const endpoint = deployedUrl ?? (await harness!.listen()).url.toString();
@@ -176,9 +179,8 @@ try {
         ? encodeModuleTransport(input, modules ?? [], {}, payload)
         : JSON.stringify(input),
       ...(hasModuleTransport ? { duplex: "half" } : {}),
-      signal: AbortSignal.timeout(60_000),
     };
-    return request(url, init);
+    return request(url, () => ({ ...init, signal: AbortSignal.timeout(60_000) }));
   };
   if (values.fixture) {
     const dir = NodePath.resolve(values.fixture);
@@ -274,10 +276,10 @@ try {
         path,
         ...(await request(
           url,
-          {
+          () => ({
             headers: { authorization: `Bearer ${token}` },
             signal: AbortSignal.timeout(60_000),
-          },
+          }),
           true,
         )),
       });

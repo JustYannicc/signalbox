@@ -9,17 +9,19 @@ async function withStage(
     requests: string[];
     connections: Set<NodeHttp.IncomingMessage["socket"]>;
     health: (handler: (response: NodeHttp.ServerResponse) => void) => void;
+    closeAfter: (path: string) => void;
   }) => Promise<void>,
 ) {
   const requests: string[] = [];
   const connections = new Set<NodeHttp.IncomingMessage["socket"]>();
+  let closeAfter: string | undefined;
   let health = (response: NodeHttp.ServerResponse) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ ready: true, versionId: "upload", workerName: "127" }));
   };
   const server = NodeHttp.createServer(async (request, response) => {
     requests.push(request.url!);
-    connections.add(request.socket);
+    if (request.url === closeAfter) response.setHeader("connection", "close");
     if (request.headers.authorization !== "Bearer secret") {
       response.writeHead(401).end();
     } else if (request.url === "/probe/health") {
@@ -41,6 +43,7 @@ async function withStage(
       response.writeHead(404, { "content-type": "text/html" }).end("Page not found");
     }
   });
+  server.on("connection", (socket) => connections.add(socket));
   try {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -51,6 +54,9 @@ async function withStage(
       connections,
       health: (handler) => {
         health = handler;
+      },
+      closeAfter: (path) => {
+        closeAfter = path;
       },
     });
   } finally {
@@ -68,7 +74,7 @@ describe("measurement stage transport", () => {
       try {
         const first = await transport.request(
           new URL("/root/jspi?session=first", endpoint),
-          init,
+          () => init,
           true,
         );
         expect(first.response).toEqual({ status: 404, error: "Page not found" });
@@ -76,9 +82,13 @@ describe("measurement stage transport", () => {
         health((response) => {
           healthStarted.resolve(response);
         });
+        let caseStarts = 0;
         const second = transport.request(
           new URL("/root/wasm?session=second", endpoint),
-          init,
+          () => {
+            caseStarts++;
+            return init;
+          },
           true,
         );
         const response = await Promise.race([
@@ -88,9 +98,11 @@ describe("measurement stage transport", () => {
           }),
         ]);
         expect(requests.filter((path) => path.includes("session=second"))).toEqual([]);
+        expect(caseStarts).toBe(0);
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({ ready: true, versionId: "upload", workerName: "127" }));
         await second;
+        expect(caseStarts).toBe(1);
         expect(requests).toEqual([
           "/probe/health",
           "/",
@@ -116,7 +128,7 @@ describe("measurement stage transport", () => {
       });
       try {
         await expect(
-          transport.request(new URL("/root/jspi?session=case", endpoint), {}),
+          transport.request(new URL("/root/jspi?session=case", endpoint), () => ({})),
         ).rejects.toThrow("unexpected HTTP 401");
         expect(requests).toEqual(["/probe/health"]);
       } finally {
@@ -141,7 +153,10 @@ describe("measurement stage transport", () => {
         duplex: "half",
       };
       try {
-        const result = await transport.request(new URL("/upload?session=bytes", endpoint), init);
+        const result = await transport.request(
+          new URL("/upload?session=bytes", endpoint),
+          () => init,
+        );
         expect(result.response).toEqual({ status: 200, result: [0, 255, 13, 10, 128] });
         expect(requests).toEqual([
           "/probe/health",
@@ -155,4 +170,25 @@ describe("measurement stage transport", () => {
       }
     });
   });
+  it.each(["/probe/health", "/", "/root/status?session=readiness"])(
+    "fails setup before sending a case when %s closes the checked connection",
+    async (path) => {
+      await withStage(async ({ endpoint, requests, closeAfter }) => {
+        const transport = createStageTransport(endpoint, "secret", "upload");
+        closeAfter(path);
+        try {
+          await expect(
+            transport.request(
+              new URL("/root/jspi?session=never-started", endpoint),
+              () => ({ headers: { authorization: "Bearer secret" } }),
+              true,
+            ),
+          ).rejects.toThrow("stage connection changed before case dispatch");
+          expect(requests.some((request) => request.includes("never-started"))).toBe(false);
+        } finally {
+          await transport.close();
+        }
+      });
+    },
+  );
 });

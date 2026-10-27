@@ -11,6 +11,7 @@ it("checks its own upload before every CLI fixture case on one connection", asyn
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "probe-case-stage-"));
   const paths: string[] = [];
   const sockets = new Set<NodeHttp.IncomingMessage["socket"]>();
+  let healthHits = 0;
   const healthStarted = Promise.withResolvers<NodeHttp.ServerResponse>();
   const server = NodeHttp.createServer(async (request, response) => {
     paths.push(request.url!);
@@ -21,7 +22,7 @@ it("checks its own upload before every CLI fixture case on one connection", asyn
     if (request.headers.authorization !== "Bearer stage-test") {
       response.writeHead(401).end();
     } else if (request.url === "/probe/health") {
-      if (paths.length === 5) {
+      if (++healthHits === 2) {
         healthStarted.resolve(response);
       } else {
         response.writeHead(200, { "content-type": "application/json" });
