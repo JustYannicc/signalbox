@@ -2,6 +2,8 @@ import { RpcStub } from "cloudflare:workers";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { LocalModelTransport, LocalPoolObject } from "../LocalPoolObject.ts";
 
+export * from "../../FixtureWorkerExports.ts";
+
 export class LocalPool extends LocalPoolObject {}
 
 export default {

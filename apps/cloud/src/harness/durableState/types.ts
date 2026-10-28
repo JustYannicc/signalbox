@@ -28,6 +28,7 @@ export type HarnessSupervisorPrivateCommand = Exclude<
     readonly type:
       | "initialize"
       | "beginDrain"
+      | "retireEvictedFacet"
       | "confirmControlSync"
       | "admitStep"
       | "commitCheckpoint"
@@ -229,6 +230,15 @@ export interface HarnessDurableStateReconcileResult {
 }
 
 export interface HarnessDurableState {
+  retireEvictedFacet(
+    input: Omit<
+      Extract<HarnessThreadSupervisorCommand, { readonly type: "retireEvictedFacet" }>,
+      "runId" | "type"
+    >,
+  ): Promise<{
+    readonly supervisor: HarnessThreadSupervisorResult;
+    readonly files: HarnessFilesStoreResult;
+  }>;
   /** The existing journal authority. The supervisor store adds no run history. */
   readonly runStore: HarnessRunStoreClient;
   readonly filesStore: HarnessFilesStoreClient;

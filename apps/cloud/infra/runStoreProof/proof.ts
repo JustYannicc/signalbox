@@ -1,11 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
-import { HarnessRunStoreObject } from "../../src/harness/HarnessRunStoreObject.ts";
+export * from "../../src/FixtureWorkerExports.ts";
+import type { HarnessRunStoreObject } from "../../src/harness/HarnessRunStoreObject.ts";
 import {
   HarnessRunStoreCommand,
   type HarnessRunStoreResult,
 } from "../../src/harness/HarnessRunStore.ts";
 import * as Schema from "effect/Schema";
-export { HarnessRunStoreObject };
 type Env = {
   RUNS: DurableObjectNamespace<HarnessRunStoreObject>;
   PARENTS: DurableObjectNamespace<SupervisorProof>;

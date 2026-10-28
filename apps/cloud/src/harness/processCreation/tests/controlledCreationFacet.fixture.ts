@@ -197,146 +197,160 @@ async function preparedRuntime(input: {
   };
 }
 
-export class ControlledCreationFacet extends createHarnessRequestFacetClass<ControlledCreationFacetEnvironment>(
-  ({ env, facetNonce }) => {
-    const runId = env.HARNESS_RESUME_RUN_ID;
-    const store = fixtureStore(env);
-    const runStore = env.HARNESS_RESUME_RUN_STORE as unknown as RunStoreClient;
-    const supervisor = env.HARNESS_RESUME_SUPERVISOR as unknown as SupervisorClient;
+export function createControlledCreationFacetClass(
+  transformOptions: (
+    options: HarnessRequestFacetOptions,
+    environment: ControlledCreationFacetEnvironment,
+    facetNonce: string,
+  ) => HarnessRequestFacetOptions = (options) => options,
+) {
+  return class extends createHarnessRequestFacetClass<ControlledCreationFacetEnvironment>(
+    ({ env, facetNonce }) => {
+      const runId = env.HARNESS_RESUME_RUN_ID;
+      const store = fixtureStore(env);
+      const runStore = env.HARNESS_RESUME_RUN_STORE as unknown as RunStoreClient;
+      const supervisor = env.HARNESS_RESUME_SUPERVISOR as unknown as SupervisorClient;
 
-    const options: HarnessRequestFacetOptions = {
-      runId,
-      facetNonce,
-      store: runStore,
-      verify: (artifact: HarnessRunArtifact) =>
-        call(() => store.verifyArtifact(artifact), "The controlled artifact reference is invalid."),
-      open: (checkpoint) =>
-        Effect.gen(function* () {
-          yield* call(
-            () => store.record("normal-open", { facetNonce, checkpointId: checkpoint.native.id }),
-            "The normal-open observation could not be stored.",
-          );
-          const current = yield* call(
-            () => supervisor.execute({ type: "read", runId, control: env.HARNESS_RESUME_CONTROL }),
-            "The normal-open supervisor state could not be read.",
-          );
-          return runtimeFor({
-            runId,
-            facetNonce,
-            nativeSessionId: current.snapshot.nativeSessionId,
-            checkpoint,
-            store,
-            runStore,
-          });
-        }),
-      prepareInert: (request) =>
-        Effect.gen(function* () {
-          const prepared = yield* Effect.tryPromise({
-            try: () => preparedRuntime({ env, facetNonce, request, store }),
-            catch: (cause) => failed("The controlled strict restore failed.", cause),
-          });
-          yield* Effect.addFinalizer(() =>
-            call(
+      const options: HarnessRequestFacetOptions = {
+        runId,
+        facetNonce,
+        store: runStore,
+        verify: (artifact: HarnessRunArtifact) =>
+          call(
+            () => store.verifyArtifact(artifact),
+            "The controlled artifact reference is invalid.",
+          ),
+        open: (checkpoint) =>
+          Effect.gen(function* () {
+            yield* call(
+              () => store.record("normal-open", { facetNonce, checkpointId: checkpoint.native.id }),
+              "The normal-open observation could not be stored.",
+            );
+            const current = yield* call(
               () =>
-                store.record("facet-disposed", {
-                  facetNonce,
-                  nativeSessionId: request.nativeSessionId,
-                  checkpointId: request.checkpointId,
-                }),
-              "The restored facet disposal could not be recorded.",
-            ).pipe(Effect.orDie),
-          );
-          return prepared;
-        }),
-      startFresh: (request) =>
-        Effect.gen(function* () {
-          const created = yield* Effect.tryPromise({
-            try: async (): Promise<HarnessRequestFacetCreationEvidence> => {
-              const nativeSessionId = crypto.randomUUID();
-              const checkpointId = `cold-initial-${request.operationId}`;
-              const nativeBytes = new TextEncoder().encode(
-                encodeJson({
-                  nativeSessionId,
+                supervisor.execute({ type: "read", runId, control: env.HARNESS_RESUME_CONTROL }),
+              "The normal-open supervisor state could not be read.",
+            );
+            return runtimeFor({
+              runId,
+              facetNonce,
+              nativeSessionId: current.snapshot.nativeSessionId,
+              checkpoint,
+              store,
+              runStore,
+            });
+          }),
+        prepareInert: (request) =>
+          Effect.gen(function* () {
+            const prepared = yield* Effect.tryPromise({
+              try: () => preparedRuntime({ env, facetNonce, request, store }),
+              catch: (cause) => failed("The controlled strict restore failed.", cause),
+            });
+            yield* Effect.addFinalizer(() =>
+              call(
+                () =>
+                  store.record("facet-disposed", {
+                    facetNonce,
+                    nativeSessionId: request.nativeSessionId,
+                    checkpointId: request.checkpointId,
+                  }),
+                "The restored facet disposal could not be recorded.",
+              ).pipe(Effect.orDie),
+            );
+            return prepared;
+          }),
+        startFresh: (request) =>
+          Effect.gen(function* () {
+            const created = yield* Effect.tryPromise({
+              try: async (): Promise<HarnessRequestFacetCreationEvidence> => {
+                const nativeSessionId = crypto.randomUUID();
+                const checkpointId = `cold-initial-${request.operationId}`;
+                const nativeBytes = new TextEncoder().encode(
+                  encodeJson({
+                    nativeSessionId,
+                    operationId: request.operationId,
+                    userTurns: 0,
+                  }),
+                );
+                const filesCheckpoint: HarnessFilesCheckpoint = {
+                  checkpointId,
+                  parentCheckpointId: null,
+                  files: [{ path: "native.json", mode: 0o600, bytes: nativeBytes }],
+                };
+                const checkpoint = await store.stageCheckpoint(
+                  `initial-${request.operationId}`,
+                  filesCheckpoint,
+                  nativeBytes,
+                );
+                const prepared = await prepareCheckpoint(filesCheckpoint);
+                if (
+                  checkpoint.native.id !== checkpointId ||
+                  checkpoint.filesystem.sha256 !== prepared.manifestSha256 ||
+                  checkpoint.filesystem.bytes !== prepared.byteCount
+                )
+                  throw new Error("The controlled peer's initial checkpoint references disagree.");
+                await store.record("peer-thread-start", {
                   operationId: request.operationId,
+                  nativeSessionId,
+                  facetNonce,
                   userTurns: 0,
-                }),
-              );
-              const filesCheckpoint: HarnessFilesCheckpoint = {
-                checkpointId,
-                parentCheckpointId: null,
-                files: [{ path: "native.json", mode: 0o600, bytes: nativeBytes }],
-              };
-              const checkpoint = await store.stageCheckpoint(
-                `initial-${request.operationId}`,
-                filesCheckpoint,
-                nativeBytes,
-              );
-              const prepared = await prepareCheckpoint(filesCheckpoint);
-              if (
-                checkpoint.native.id !== checkpointId ||
-                checkpoint.filesystem.sha256 !== prepared.manifestSha256 ||
-                checkpoint.filesystem.bytes !== prepared.byteCount
-              )
-                throw new Error("The controlled peer's initial checkpoint references disagree.");
-              await store.record("peer-thread-start", {
-                operationId: request.operationId,
-                nativeSessionId,
-                facetNonce,
-                userTurns: 0,
-              });
-              return {
-                facetNonce,
-                nativeSessionId,
-                checkpoint,
-                filesCheckpoint,
-                manifestRevision: checkpoint.filesystem.sha256,
-                joined: { invocationRpc: true, fetch: true, ports: true },
-                runtime: runtimeFor({
-                  runId,
+                });
+                return {
                   facetNonce,
                   nativeSessionId,
                   checkpoint,
-                  store,
-                  runStore,
-                }),
-              };
-            },
-            catch: (cause) =>
-              failed("The controlled peer could not create its first thread.", cause),
-          });
-          yield* Effect.addFinalizer(() =>
-            call(
-              () =>
-                store.record("facet-disposed", {
-                  facetNonce,
-                  nativeSessionId: created.nativeSessionId,
-                  checkpointId: created.checkpoint.native.id,
-                }),
-              "The fresh facet disposal could not be recorded.",
-            ).pipe(Effect.orDie),
-          );
-          return created;
-        }),
-      loadedPreparedRelease: async () => {
-        const loaded = await loadControlledCodexRelease();
-        await store.recordLoadedRelease(loaded);
-        return loaded;
-      },
-    };
-    return Effect.succeed(options);
-  },
-) {
-  override async run(input: Parameters<HarnessRequestFacet["run"]>[0]) {
-    await fixtureStore(this.env).record("facet-invoked", {
-      requestId: input.requestId,
-      facetNonce: this.facetNonce,
-    });
-    return await super.run(input);
-  }
+                  filesCheckpoint,
+                  manifestRevision: checkpoint.filesystem.sha256,
+                  joined: { invocationRpc: true, fetch: true, ports: true },
+                  runtime: runtimeFor({
+                    runId,
+                    facetNonce,
+                    nativeSessionId,
+                    checkpoint,
+                    store,
+                    runStore,
+                  }),
+                };
+              },
+              catch: (cause) =>
+                failed("The controlled peer could not create its first thread.", cause),
+            });
+            yield* Effect.addFinalizer(() =>
+              call(
+                () =>
+                  store.record("facet-disposed", {
+                    facetNonce,
+                    nativeSessionId: created.nativeSessionId,
+                    checkpointId: created.checkpoint.native.id,
+                  }),
+                "The fresh facet disposal could not be recorded.",
+              ).pipe(Effect.orDie),
+            );
+            return created;
+          }),
+        loadedPreparedRelease: async () => {
+          const loaded = await loadControlledCodexRelease();
+          await store.recordLoadedRelease(loaded);
+          return loaded;
+        },
+      };
+      return Effect.succeed(transformOptions(options, env, facetNonce));
+    },
+  ) {
+    override async run(input: Parameters<HarnessRequestFacet["run"]>[0]) {
+      await fixtureStore(this.env).record("facet-invoked", {
+        requestId: input.requestId,
+        facetNonce: this.facetNonce,
+      });
+      return await super.run(input);
+    }
 
-  override async dispose(expectedFacetNonce: string) {
-    if (await fixtureStore(this.env).consumeExactFacetDisposalFailure(expectedFacetNonce))
-      throw new Error("Injected exact facet disposal failure.");
-    await super.dispose(expectedFacetNonce);
-  }
+    override async dispose(expectedFacetNonce: string) {
+      if (await fixtureStore(this.env).consumeExactFacetDisposalFailure(expectedFacetNonce))
+        throw new Error("Injected exact facet disposal failure.");
+      await super.dispose(expectedFacetNonce);
+    }
+  };
 }
+
+export class ControlledCreationFacet extends createControlledCreationFacetClass() {}

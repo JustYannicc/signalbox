@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { ProcessFence } from "../../processOwnership/fence.ts";
 import {
   digest,
   HarnessDurableStateAdmissionBinding,
@@ -110,6 +111,18 @@ export const HarnessFilesStoreCommand = Schema.Union([
     runId: id,
     publisher: Publisher,
     checkpointId: id,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("retireEvictedFacet"),
+    runId: id,
+    control: Control,
+    publisher: Publisher,
+    expectedGeneration: positive,
+    checkpoint: CheckpointRef,
+    nativeSessionId: id,
+    sourceFence: ProcessFence,
+    currentFence: ProcessFence,
+    operationId: id,
   }),
   Schema.Struct({
     type: Schema.Literal("publishFacet"),

@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+export * from "../../../../src/FixtureWorkerExports.ts";
 import {
   CODE_MODE_HOST_EXECUTABLE,
   createCodeModeHostProgram,

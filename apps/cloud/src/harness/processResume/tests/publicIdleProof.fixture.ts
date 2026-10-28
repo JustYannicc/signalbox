@@ -98,17 +98,23 @@ export async function publicIdleProof(
         fixture.owner,
       ) as unknown as typeof fixture.shard;
       const currentNonce = await reconstructed.executionIncarnationNonce();
-      const denied = await reconstructed.stopIdleProcess(stopInput).then(
-        () => false,
-        () => true,
-      );
+      const stopped = await reconstructed.stopIdleProcess(stopInput);
+      const duplicateStop = await reconstructed.stopIdleProcess(stopInput);
       const continuationDenied = await reconstructed
         .continueProcess(stopInput, "after-reconstruction")
         .then(
           () => false,
           () => true,
         );
-      return { denied, continuationDenied, changed: nonce !== currentNonce, staleStop };
+      return {
+        stopped,
+        duplicateStop,
+        continuationDenied,
+        changed: nonce !== currentNonce,
+        staleStop,
+        finalOwnership: await fixture.placement.ownership(fixture.owner),
+        terminalCount: (await reconstructed.evidence()).terminal.length,
+      };
     }
     const stopped = await fixture.shard.stopIdleProcess(stopInput);
     const duplicateStop = await fixture.shard.stopIdleProcess(stopInput);

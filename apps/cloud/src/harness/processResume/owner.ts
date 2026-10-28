@@ -20,11 +20,22 @@ import {
   createInitialProcessAuthority,
 } from "./initialExecution.ts";
 import { ProcessCheckpointOwner } from "./checkpoint.ts";
+import {
+  boundaryFromResumed,
+  readProcessBoundary,
+  assertBoundaryCaller,
+  saveProcessBoundary,
+} from "../processOwnership/boundary.ts";
+import { restoreEvictedProcess } from "../processOwnership/restore.ts";
+import { stopEvictedProcess } from "../processOwnership/stopEvicted.ts";
+import { ownedRequestKey } from "../processOwnership/ownedRequest.ts";
+import { saveCreatedProcessBoundary } from "../processOwnership/creationBoundary.ts";
+import { HarnessProcessCreationJournal } from "../processCreation/journal.ts";
 import type { OwnedProcessRequest } from "./executionState.ts";
 import { persistTerminalEvidence } from "./terminalEvidence.ts";
 import { activeResumeKey, readHarnessProcessResumeDurableRecord } from "./durableState.ts";
 import { authorizePublication } from "./authority.ts";
-import { sameData } from "./checkpointContract.ts";
+import { sameData, snapshotCheckpointInput } from "./checkpointContract.ts";
 import {
   assertContinuation,
   continueResumedProcess,
@@ -110,7 +121,16 @@ export class HarnessProcessResumeOwner {
     this.environment = environment;
     this.incarnationNonce = incarnationNonce;
     this.incarnation = incarnation;
-    this.#checkpoints = new ProcessCheckpointOwner(context.storage, () => this.#current);
+    this.#checkpoints = new ProcessCheckpointOwner(context.storage, () => this.#current, {
+      durableForRun: (runId) =>
+        createHarnessDurableState(
+          this.environment as HarnessProcessExecutionEnvironment & HarnessDurableStateBindings,
+          runId,
+        ),
+      assertCurrent: async () => {
+        await this.incarnation.assertCurrent();
+      },
+    });
   }
 
   #creationOwner() {
@@ -170,10 +190,63 @@ export class HarnessProcessResumeOwner {
   }
 
   startFreshProcess(input: HarnessProcessCreationInput) {
-    return this.#exclusiveFresh(() => this.#creationOwner().start(input));
+    return this.#exclusiveFresh(async () => {
+      const result = await this.#creationOwner().start(input);
+      const boundary = await readProcessBoundary(this.context.storage, input.runId);
+      if (boundary === undefined) {
+        const record = await new HarnessProcessCreationJournal(this.context.storage).read(
+          input.runId,
+        );
+        if (record?.phase !== "bound" || !record.binding)
+          throw new Error("Native creation has no durable binding.");
+        await saveCreatedProcessBoundary({
+          storage: this.context.storage,
+          incarnation: this.incarnation,
+          creation: input,
+          binding: record.binding,
+        });
+      } else if (boundary.phase === "ready" && boundary.fence.nonce !== this.incarnationNonce) {
+        const recovered = await restoreEvictedProcess({
+          context: this.context,
+          environment: this.environment as HarnessProcessExecutionEnvironment &
+            HarnessDurableStateBindings,
+          incarnation: this.incarnation,
+          boundary,
+        });
+        this.#resumed = recovered.resumed;
+        this.#continuationCheckpoint = recovered.boundary.checkpoint;
+        return { ...result, identity: recovered.resumed.prepared.identity };
+      }
+      return result;
+    });
   }
 
-  runCreatedProcess(input: HarnessProcessCreationRunInput, requestContextId: string) {
+  async runCreatedProcess(input: HarnessProcessCreationRunInput, requestContextId: string) {
+    const boundary = await readProcessBoundary(this.context.storage, input.runId);
+    const fence = await this.incarnation.assertCurrent();
+    if (
+      boundary !== undefined &&
+      (boundary.fence.nonce !== fence.nonce || this.#resumed !== undefined)
+    ) {
+      if (input.operationId !== boundary.callerOperationId)
+        throw new Error("The first request targets another native creation.");
+      return this.continueProcess(
+        {
+          runId: input.runId,
+          processId: boundary.process.processId,
+          executionOperationId: boundary.placement.executionOperationId,
+          resumeOperationId: boundary.callerOperationId,
+          control: boundary.control,
+          runStore: {
+            ...boundary.runStore,
+            currentPublisher: boundary.callerPublisher,
+            request: input.request,
+            checkpoint: boundary.checkpoint,
+          },
+        },
+        requestContextId,
+      );
+    }
     return this.#exclusiveFresh(() =>
       this.#creationOwner().run(input, requestContextId, async (owned) => {
         this.#current = owned;
@@ -315,13 +388,32 @@ export class HarnessProcessResumeOwner {
     }
   }
 
-  commitProcessCheckpoint(input: unknown) {
+  async commitProcessCheckpoint(supplied: unknown) {
+    const input = snapshotCheckpointInput(supplied);
+    const boundary = await readProcessBoundary(this.context.storage, input.runId);
+    if (
+      boundary !== undefined &&
+      input.processOperationId === boundary.callerOperationId &&
+      input.processOperationId !== boundary.process.operationId
+    ) {
+      if (
+        input.executionOperationId !== boundary.placement.executionOperationId ||
+        input.processId !== boundary.process.processId ||
+        !sameData(input.control, boundary.control) ||
+        !sameData(input.publisher, boundary.prepared.preparedPublisher)
+      )
+        throw new Error("The completion does not identify the current restored process.");
+      return this.#checkpoints.commit({
+        ...input,
+        processOperationId: boundary.process.operationId,
+      });
+    }
     return this.#checkpoints.commit(input);
   }
 
   async resumeProcess(supplied: unknown): Promise<ResumeProcessResult> {
     await this.incarnation.assertCurrent();
-    const operation = snapshotHarnessProcessResumeOperation(supplied);
+    let operation = snapshotHarnessProcessResumeOperation(supplied);
     if (operation === undefined)
       return Promise.reject(
         new Error("Process resume input is invalid or lacks the caller's journal capabilities."),
@@ -374,13 +466,15 @@ export class HarnessProcessResumeOwner {
       },
     });
     this.#attempt = attempt;
-    return attempt.result.then((resumed) => {
+    return attempt.result.then(async (resumed) => {
       this.#resumed = resumed;
       this.#continuation = undefined;
-      this.#continuationCheckpoint = resumed.boundary.finish.checkpoint;
+      this.#continuationCheckpoint = resumed.checkpoint;
       this.#idle = false;
       this.#attempt = undefined;
-      return this.#confirmResumed(resumed);
+      const confirmed = await this.#confirmResumed(resumed, operation);
+      await boundaryFromResumed(this.context.storage, this.incarnation, resumed, durable);
+      return confirmed;
     });
   }
 
@@ -395,6 +489,50 @@ export class HarnessProcessResumeOwner {
         return Promise.reject(new Error("Another arrived request owns this continuation."));
       return previous.result;
     }
+    const result = this.#prepareContinuation(request, requestContextId).catch((cause) => {
+      this.#continuations.delete(request.runStore.request.requestId);
+      throw cause;
+    });
+    this.#continuations.set(request.runStore.request.requestId, { request, result });
+    return result;
+  }
+
+  async #prepareContinuation(request: NormalizedContinuation, requestContextId: string) {
+    await this.incarnation.assertCurrent();
+    const boundary = await readProcessBoundary(this.context.storage, request.runId);
+    if (boundary !== undefined) {
+      assertBoundaryCaller(boundary, request);
+      if (boundary.phase !== "ready" && boundary.phase !== "idle")
+        throw new Error("The process boundary needs explicit repair or is stopped.");
+      if (this.#resumed === undefined) {
+        if (this.#running || this.#attempt !== undefined || this.#retained)
+          throw new Error("Another operation owns process recovery.");
+        this.#running = true;
+        try {
+          const recovered = await restoreEvictedProcess({
+            context: this.context,
+            environment: this.environment as HarnessProcessExecutionEnvironment &
+              HarnessDurableStateBindings,
+            incarnation: this.incarnation,
+            boundary,
+          });
+          this.#resumed = recovered.resumed;
+          this.#continuationCheckpoint = recovered.boundary.checkpoint;
+          this.#idle = false;
+        } finally {
+          this.#running = false;
+        }
+      }
+      request = {
+        ...request,
+        resumeOperationId: this.#resumed.operationId,
+        runStore: { ...request.runStore, currentPublisher: this.#resumed.requestPublisher },
+      };
+    }
+    return this.#continueOwned(request, requestContextId);
+  }
+
+  #continueOwned(request: NormalizedContinuation, requestContextId: string) {
     const resumed = this.#resumed;
     const durable =
       this.#resumed === undefined
@@ -422,7 +560,6 @@ export class HarnessProcessResumeOwner {
     const idle = this.#idle;
     const result = Promise.withResolvers<HarnessProcessExecutionShardResult>();
     const attempt = { request, result: result.promise };
-    this.#continuations.set(request.runStore.request.requestId, attempt);
     this.#continuation = attempt;
     this.#running = true;
     void continueResumedProcess({
@@ -433,10 +570,36 @@ export class HarnessProcessResumeOwner {
       requestContextId,
       checkpoint,
       idle,
-      onIdle: (checkpoint, settlement) => {
+      onStarting: async () => {
+        const boundary = await readProcessBoundary(this.context.storage, request.runId);
+        if (boundary !== undefined)
+          await saveProcessBoundary(this.context.storage, this.incarnation, {
+            ...boundary,
+            phase: "executing",
+          });
+      },
+      onIdle: async (checkpoint, settlement) => {
         this.#continuationCheckpoint = checkpoint;
         this.#idleSettlement = settlement;
         this.#idle = true;
+        const boundary = await readProcessBoundary(this.context.storage, request.runId);
+        const owned = this.#current;
+        if (boundary === undefined || owned === undefined)
+          throw new Error("The completed continuation has no durable process boundary.");
+        await saveProcessBoundary(this.context.storage, this.incarnation, {
+          ...boundary,
+          phase: "idle",
+          checkpoint,
+          lastRequest: {
+            request: owned.request,
+            ownedKey: ownedRequestKey(
+              owned.runId,
+              owned.process.operationId,
+              owned.request.requestId,
+            ),
+            settlement,
+          },
+        });
       },
       assertOwned: () => {
         if (this.#continuation !== attempt || this.#retained)
@@ -453,9 +616,18 @@ export class HarnessProcessResumeOwner {
           if (process.status !== "idle") this.#resumed = undefined;
           result.resolve({ requestContextId, processes: [process] });
         },
-        (cause) => {
+        async (cause) => {
           this.#retained = true;
-          result.reject(cause);
+          try {
+            const boundary = await readProcessBoundary(this.context.storage, request.runId);
+            if (boundary !== undefined)
+              await saveProcessBoundary(this.context.storage, this.incarnation, {
+                ...boundary,
+                phase: "retained",
+              });
+          } finally {
+            result.reject(cause);
+          }
         },
       )
       .finally(() => {
@@ -478,6 +650,46 @@ export class HarnessProcessResumeOwner {
         return Promise.reject(new Error("Another idle-stop attempt owns this process."));
       return previous.result;
     }
+    const result = this.#prepareStop(request).catch((cause) => {
+      this.#idleStops.delete(key);
+      throw cause;
+    });
+    this.#idleStops.set(key, { request, result });
+    return result;
+  }
+
+  async #prepareStop(request: NormalizedContinuation): Promise<{ readonly status: "stopped" }> {
+    await this.incarnation.assertCurrent();
+    const boundary = await readProcessBoundary(this.context.storage, request.runId);
+    if (boundary !== undefined) {
+      assertBoundaryCaller(boundary, request);
+      if (this.#resumed === undefined) {
+        if (this.#running || this.#attempt !== undefined || this.#retained)
+          throw new Error("Another operation owns process stop.");
+        this.#running = true;
+        try {
+          return await stopEvictedProcess({
+            context: this.context,
+            environment: this.environment as HarnessProcessExecutionEnvironment &
+              HarnessDurableStateBindings,
+            incarnation: this.incarnation,
+            boundary,
+            request,
+          });
+        } finally {
+          this.#running = false;
+        }
+      }
+      request = {
+        ...request,
+        resumeOperationId: this.#resumed.operationId,
+        runStore: { ...request.runStore, currentPublisher: this.#resumed.requestPublisher },
+      };
+    }
+    return this.#stopOwned(request);
+  }
+
+  #stopOwned(request: NormalizedContinuation): Promise<{ readonly status: "stopped" }> {
     const resumed = this.#resumed;
     const owned = this.#current;
     const checkpoint = this.#continuationCheckpoint;
@@ -509,7 +721,13 @@ export class HarnessProcessResumeOwner {
       storage: this.context.storage,
     })
       .then(
-        () => {
+        async () => {
+          const boundary = await readProcessBoundary(this.context.storage, request.runId);
+          if (boundary !== undefined)
+            await saveProcessBoundary(this.context.storage, this.incarnation, {
+              ...boundary,
+              phase: "stopped",
+            });
           this.#resumed = undefined;
           return { status: "stopped" as const };
         },
@@ -523,7 +741,6 @@ export class HarnessProcessResumeOwner {
       .finally(() => {
         this.#running = false;
       });
-    this.#idleStops.set(key, { request, result });
     return result;
   }
 
@@ -581,36 +798,40 @@ export class HarnessProcessResumeOwner {
         };
   }
 
-  async #confirmResumed(resumed: ResumedProcess): Promise<ResumeProcessResult> {
-    const { operation, prepared, publication, boundary } = resumed;
+  async #confirmResumed(
+    resumed: ResumedProcess,
+    operation: Parameters<typeof startResumeAttempt>[0]["operation"],
+  ): Promise<ResumeProcessResult> {
+    const { prepared, publication, process } = resumed;
     const durable = createHarnessDurableState(
       this.environment as HarnessProcessExecutionEnvironment & HarnessDurableStateBindings,
-      operation.runId,
+      resumed.runId,
     );
     if (this.#running) throw new Error("The resumed process is not idle.");
     await validateHarnessProcessResumeRunStoreActive({
       store: durable.runStore,
       operation,
       checkpoint: {
-        ...boundary.completion.files.checkpoint,
-        nativeSessionId: boundary.nativeSessionId,
+        checkpointId: resumed.checkpoint.native.id,
+        manifestSha256: resumed.checkpoint.filesystem.sha256,
+        nativeSessionId: resumed.nativeSessionId,
       },
       preparedFacetNonce: prepared.identity.incarnationNonce,
     });
     await authorizePublication({
       durable,
-      runId: operation.runId,
+      runId: resumed.runId,
       publication,
       lifecycle: "accepting",
       request: {
         identity: prepared.identity,
-        controllerClaim: operation.transition.nextControl,
-        operationId: operation.transition.operationId,
-        nativeSessionId: boundary.nativeSessionId,
-        checkpointId: boundary.completion.files.checkpoint.checkpointId,
-        manifestRevision: boundary.completion.files.checkpoint.manifestSha256,
-        priorFacetNonce: operation.transition.publisher.facetNonce,
-        expectedFacetGeneration: operation.transition.expectedFacetGeneration,
+        controllerClaim: resumed.control,
+        operationId: process.operationId,
+        nativeSessionId: resumed.nativeSessionId,
+        checkpointId: resumed.checkpoint.native.id,
+        manifestRevision: resumed.checkpoint.filesystem.sha256,
+        priorFacetNonce: process.priorFacetNonce,
+        expectedFacetGeneration: process.expectedFacetGeneration,
       },
     });
     const { shardOwner, loaderId, facetKey, incarnationNonce } = prepared.identity;

@@ -21,6 +21,7 @@ beforeAll(async () => {
       contents: `
 import {DurableObject} from "cloudflare:workers";
 import {ModuleUploadStore} from "./apps/cloud/infra/isolateProbe/moduleUpload.ts";
+export * from "./apps/cloud/src/FixtureWorkerExports.ts";
 export class StageProbe extends DurableObject {
   store = new ModuleUploadStore(this.ctx.storage.sql);
   async fetch(request) {

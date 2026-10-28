@@ -46,7 +46,28 @@ export class ProofShard extends HarnessProcessExecutionShardObject {
         readonly observed: HarnessProcessResumePreparedRelease;
       };
     }>({ prefix: "harness-process-resume/v1/" });
+    const evictionRestores = await this.ctx.storage.list<{
+      readonly phase: string;
+      readonly durationMs?: number;
+      readonly restoreCount?: number;
+      readonly source: {
+        readonly checkpoint: unknown;
+        readonly threadId: string;
+        readonly prepared: { readonly identity: { readonly incarnationNonce: string } };
+      };
+      readonly publication?: { readonly receipt: { readonly preparedFacetNonce: string } };
+    }>({ prefix: "harness-process-eviction/v1/" });
     return {
+      evictionRestores: [...evictionRestores.values()]
+        .filter((row) => row.phase === "active")
+        .map((row) => ({
+          durationMs: row.durationMs,
+          restoreCount: row.restoreCount,
+          threadId: row.source.threadId,
+          checkpoint: row.source.checkpoint,
+          fromNonce: row.source.prepared.identity.incarnationNonce,
+          toNonce: row.publication?.receipt.preparedFacetNonce,
+        })),
       terminal: [...terminal.values()].map((row) => ({
         stopped: row.stopped,
         joined: row.joined,

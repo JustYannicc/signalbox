@@ -8,8 +8,6 @@ import type {
   HarnessProcessResumePreparedRelease,
 } from "../HarnessProcessResume.ts";
 
-export { HarnessProgramAssetsBinding } from "../HarnessProgramAssetsBinding.ts";
-
 const releaseId = "program-assets-probe-release";
 const processInput = {
   processId: "program-assets-probe-process",
@@ -105,3 +103,4 @@ export default {
     return Response.json(result);
   },
 };
+export * from "../../FixtureWorkerExports.ts";

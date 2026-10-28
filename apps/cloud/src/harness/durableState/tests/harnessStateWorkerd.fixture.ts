@@ -1,6 +1,3 @@
-import { HarnessFilesStoreObject } from "../../HarnessFilesStoreObject.ts";
-import { HarnessRunStoreObject } from "../../HarnessRunStoreObject.ts";
-import { HarnessThreadSupervisorObject } from "../../HarnessThreadSupervisorObject.ts";
 import {
   initializeTopology,
   readTopologySupervisor,
@@ -49,8 +46,6 @@ import {
   replayLegacyR5AfterEviction,
   runLegacyR5Overlap,
 } from "./harnessStateWorkerd.reconciliationLegacyR5Overlap.ts";
-
-export { HarnessFilesStoreObject, HarnessRunStoreObject, HarnessThreadSupervisorObject };
 
 export default {
   async fetch(request: Request, env: WorkerdEnv): Promise<Response> {
@@ -121,3 +116,4 @@ export default {
     return new Response("not found", { status: 404 });
   },
 };
+export * from "../../../FixtureWorkerExports.ts";

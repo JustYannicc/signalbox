@@ -32,6 +32,7 @@ beforeAll(async () => {
   await build({
     stdin: {
       contents: `import module from "./ugrep.wasm";
+export * from "./src/FixtureWorkerExports.ts";
 import {createChildWasi} from "./src/computer/ChildWasi.ts";
 import {KernelFileSystem} from "./src/kernel/KernelFileSystem.ts";
 import {createKernelSyscallHost} from "./src/kernel/KernelSyscallHost.ts";

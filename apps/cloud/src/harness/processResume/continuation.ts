@@ -52,18 +52,18 @@ export function assertContinuation(
   resumed: ResumedProcess,
   checkpoint: HarnessRequestCheckpoint,
 ) {
-  const { operation, prepared, publication, boundary } = resumed;
+  const { prepared, publication, process } = resumed;
   if (
-    request.runId !== operation.runId ||
-    request.processId !== operation.previousProcessId ||
-    request.executionOperationId !== boundary.placement.executionOperationId ||
-    request.resumeOperationId !== operation.transition.operationId ||
-    !sameControl(request.control, operation.transition.nextControl) ||
-    request.runStore.controlKey !== operation.runStore.controlKey ||
+    request.runId !== resumed.runId ||
+    request.processId !== process.processId ||
+    request.executionOperationId !== resumed.placement.executionOperationId ||
+    request.resumeOperationId !== resumed.operationId ||
+    !sameControl(request.control, resumed.control) ||
+    request.runStore.controlKey !== resumed.runStore.controlKey ||
+    !sameData(request.runStore.supervisor, resumed.runStore.supervisor) ||
+    !sameData(request.runStore.currentPublisher, resumed.requestPublisher) ||
     request.runStore.currentPublisher.generation !== publication.receipt.toGeneration ||
     request.runStore.currentPublisher.facetNonce !== prepared.identity.incarnationNonce ||
-    request.runStore.currentPublisher.publisherKey !== operation.runStore.nextPublisherKey ||
-    request.runStore.request.requestId === operation.previousStepId ||
     !sameCheckpoint(request.runStore.checkpoint, checkpoint)
   )
     throw new Error("Continuation does not match the activated process and durable checkpoint.");
@@ -79,23 +79,24 @@ export async function continueResumedProcess(input: {
   readonly onIdle: (
     checkpoint: HarnessRequestCheckpoint,
     settlement: import("../processPlacement/contracts.ts").HarnessProcessInvocationSettlement,
-  ) => void;
+  ) => Promise<void>;
   readonly requestContextId: string;
   readonly onOwned: (owned: OwnedProcessRequest) => Promise<void>;
+  readonly onStarting?: () => Promise<void>;
   readonly assertOwned: () => void;
 }): Promise<HarnessProcessExecutionProcessResult> {
   const { request, resumed, durable } = input;
-  const { operation, prepared, publication, boundary } = resumed;
+  const { process, prepared, publication } = resumed;
   assertContinuation(request, resumed, input.checkpoint);
   const publicationRequest = {
     identity: prepared.identity,
     controllerClaim: request.control,
-    operationId: request.resumeOperationId,
-    nativeSessionId: boundary.nativeSessionId,
-    checkpointId: boundary.completion.files.checkpoint.checkpointId,
-    manifestRevision: boundary.completion.files.checkpoint.manifestSha256,
-    priorFacetNonce: operation.transition.publisher.facetNonce,
-    expectedFacetGeneration: operation.transition.expectedFacetGeneration,
+    operationId: process.operationId,
+    nativeSessionId: resumed.nativeSessionId,
+    checkpointId: resumed.checkpoint.native.id,
+    manifestRevision: resumed.checkpoint.filesystem.sha256,
+    priorFacetNonce: process.priorFacetNonce,
+    expectedFacetGeneration: process.expectedFacetGeneration,
   };
   const authorize = async () => {
     const observed = await execute(
@@ -108,7 +109,7 @@ export async function continueResumedProcess(input: {
     if (
       requests === undefined ||
       facet === undefined ||
-      facet.operationId !== request.resumeOperationId ||
+      facet.operationId !== process.operationId ||
       facet.generation !== request.runStore.currentPublisher.generation ||
       facet.facetNonce !== request.runStore.currentPublisher.facetNonce ||
       observed.snapshot.supervisor.epoch !== request.runStore.supervisor.epoch ||
@@ -169,6 +170,7 @@ export async function continueResumedProcess(input: {
   if (previous !== undefined)
     throw new Error("The continuation already has a durable attempt and cannot be replayed.");
   await authorize();
+  await input.onStarting?.();
   await input.storage.put(key, { request, phase: "reserved" });
   const controller = new AbortController();
   let owned: OwnedProcessRequest | undefined;
@@ -222,19 +224,23 @@ export async function continueResumedProcess(input: {
       handle: prepared.handle,
       publication,
       process: {
-        ...operation.facet,
-        operationId: request.resumeOperationId,
-        nativeSessionId: boundary.nativeSessionId,
+        ...process,
+        operationId: process.operationId,
+        nativeSessionId: resumed.nativeSessionId,
         checkpointId: request.runStore.checkpoint.native.id,
         manifestRevision: request.runStore.checkpoint.filesystem.sha256,
-        expectedFacetGeneration: operation.transition.expectedFacetGeneration,
-        priorFacetNonce: operation.transition.publisher.facetNonce,
+        expectedFacetGeneration: process.expectedFacetGeneration,
+        priorFacetNonce: process.priorFacetNonce,
       },
       publisher: prepared.preparedPublisher,
       request: request.runStore.request,
       runStorePublisher: request.runStore.currentPublisher,
       journal: {
-        ...operation.runStore,
+        ...resumed.runStore,
+        runId: resumed.runId,
+        processId: process.processId,
+        transitionOperationId: resumed.operationId,
+        nextPublisherKey: resumed.requestPublisher.publisherKey,
         ...request.runStore,
         processOperationId: request.resumeOperationId,
       },
@@ -257,7 +263,7 @@ export async function continueResumedProcess(input: {
       input.assertOwned();
       await prepared.handle.idle();
       await input.storage.put(key, { request, phase: "idle", checkpoint });
-      input.onIdle(checkpoint, settlement);
+      await input.onIdle(checkpoint, settlement);
       return {
         processId: request.processId,
         requestContextId: input.requestContextId,

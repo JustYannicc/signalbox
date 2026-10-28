@@ -8,6 +8,7 @@ import { loadControlledCodexRelease } from "./tests/controlledRelease.fixture.ts
 
 let harness: ReturnType<typeof createTestHarness>;
 let facetSource = "";
+let evictionFacetSource = "";
 
 beforeAll(async () => {
   const bundled = await build({
@@ -24,8 +25,25 @@ beforeAll(async () => {
     external: ["cloudflare:workers", "node:*"],
     write: false,
   });
+  const evictionBundled = await build({
+    entryPoints: [
+      NodeURL.fileURLToPath(new URL("./tests/publicCreation.eviction.fixture.ts", import.meta.url)),
+    ],
+    bundle: true,
+    minify: true,
+    format: "esm",
+    platform: "neutral",
+    mainFields: ["module", "main"],
+    conditions: ["workerd", "worker", "browser"],
+    target: "esnext",
+    external: ["cloudflare:workers", "node:*"],
+    write: false,
+  });
   facetSource = bundled.outputFiles[0]?.text ?? "";
+  evictionFacetSource = evictionBundled.outputFiles[0]?.text ?? "";
   if (facetSource.length === 0) throw new Error("The controlled request-facet fixture is empty.");
+  if (evictionFacetSource.length === 0)
+    throw new Error("The creation-eviction request-facet fixture is empty.");
 }, 60_000);
 
 const makeHarness = () =>
@@ -42,6 +60,7 @@ const makeHarness = () =>
           vars: {
             RESIDENT_BYTE_LIMIT: "128000000",
             COLD_CREATION_FACET_SOURCE: facetSource,
+            COLD_CREATION_EVICTION_FACET_SOURCE: evictionFacetSource,
           },
           worker_loaders: [{ binding: "LOADER" }],
           durable_objects: {
@@ -74,6 +93,8 @@ const makeHarness = () =>
 
 beforeEach(async () => {
   if (facetSource.length === 0) throw new Error("Controlled facet source was not prepared.");
+  if (evictionFacetSource.length === 0)
+    throw new Error("Creation-eviction facet source was not prepared.");
   harness = makeHarness();
   await harness.listen();
 }, 60_000);
@@ -156,6 +177,97 @@ it("creates through public C, stores the peer UUID at generation one, and runs r
   expect(result.observations["cold/events/inert-restore"]).toBeUndefined();
   expect(result.observations["cold/events/normal-open"]).toBeUndefined();
   expect(result.loadedRelease).toEqual(await loadControlledCodexRelease());
+}, 120_000);
+
+it("restores a fresh creation checkpoint after C eviction before running request one", async () => {
+  const response = await harness.fetch("http://proof/creation-eviction");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.kind).toBe("public-c-creation-eviction-transparent-restore");
+  expect(result.afterNonce).not.toBe(result.beforeNonce);
+  expect(result.before.threadId).toBe(result.after.threadId);
+  expect(result.before.state).toEqual({
+    native: {
+      nativeSessionId: result.created.nativeSessionId,
+      operationId: result.created.operationId,
+      userTurns: 0,
+      conversation: ["prior: saved conversation"],
+    },
+    workspace: "saved workspace\n",
+  });
+  expect(result.after.state).toEqual({
+    native: {
+      nativeSessionId: result.created.nativeSessionId,
+      operationId: result.created.operationId,
+      userTurns: 1,
+      conversation: ["prior: saved conversation", `request:${result.requestId}`],
+      lastRequestId: result.requestId,
+      sourceFacetNonce: result.restoredFacetNonce,
+      input: expect.any(String),
+    },
+    workspace: `saved workspace\nrequest:${result.requestId}\n`,
+  });
+  expect(result.before.checkpoint).toEqual({
+    checkpointId: result.created.checkpoint.native.id,
+    manifestSha256: result.created.checkpoint.filesystem.sha256,
+  });
+  expect(result.after.publisher.generation).toBeGreaterThan(result.before.publisher.generation);
+  expect(result.after.publisher.facetNonce).toBe(result.restoredFacetNonce);
+  expect(result.restoredFacetNonce).not.toBe(result.created.identity.incarnationNonce);
+  expect(result.after.checkpoint).not.toEqual(result.before.checkpoint);
+  expect(result.after.requestStatus).toBe("completed");
+  expect(result.committed).toBe("committed");
+  expect(result.executed.processes[0]).toMatchObject({ status: "settled" });
+  expect(result.observations["cold/events/peer-thread-start"]).toHaveLength(1);
+  expect(result.observations["cold/events/inert-restore"]).toEqual([
+    expect.objectContaining({
+      facetNonce: result.restoredFacetNonce,
+      nativeSessionId: result.created.nativeSessionId,
+      checkpointId: result.created.checkpoint.native.id,
+      manifestRevision: result.created.checkpoint.filesystem.sha256,
+      priorFacetNonce: result.created.identity.incarnationNonce,
+      expectedFacetGeneration: 1,
+    }),
+  ]);
+  expect(result.observations["cold/events/request-runtime-run"]).toEqual([
+    expect.objectContaining({
+      facetNonce: result.restoredFacetNonce,
+      nativeSessionId: result.created.nativeSessionId,
+      requestId: result.requestId,
+    }),
+  ]);
+  expect(result.observations["cold/events/creation-eviction-restored"]).toEqual([
+    expect.objectContaining({
+      facetNonce: result.restoredFacetNonce,
+      nativeSessionId: result.created.nativeSessionId,
+      sourceCheckpointId: result.created.checkpoint.native.id,
+      priorFacetNonce: result.created.identity.incarnationNonce,
+      expectedFacetGeneration: 1,
+      conversation: ["prior: saved conversation"],
+      workspace: "saved workspace\n",
+    }),
+  ]);
+  expect(result.observations["cold/events/creation-eviction-request"]).toEqual([
+    expect.objectContaining({
+      facetNonce: result.restoredFacetNonce,
+      nativeSessionId: result.created.nativeSessionId,
+      sourceCheckpointId: result.created.checkpoint.native.id,
+      requestId: result.requestId,
+      conversationBefore: ["prior: saved conversation"],
+      workspaceBefore: "saved workspace\n",
+      conversationAfter: ["prior: saved conversation", `request:${result.requestId}`],
+      workspaceAfter: `saved workspace\nrequest:${result.requestId}\n`,
+    }),
+  ]);
+  expect(result.terminal).toEqual([
+    expect.objectContaining({
+      nativeSessionId: result.created.nativeSessionId,
+      facetNonce: result.restoredFacetNonce,
+      stopped: true,
+      joined: { invocationRpc: true, fetch: true, ports: true },
+    }),
+  ]);
 }, 120_000);
 
 it("keeps a claim-only crash uncertain and refuses to create or bind a second native thread", async () => {

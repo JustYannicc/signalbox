@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+export * from "../../FixtureWorkerExports.ts";
 import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
 import { createKernelSessionStdio } from "../../kernel/KernelSessionStdio.ts";

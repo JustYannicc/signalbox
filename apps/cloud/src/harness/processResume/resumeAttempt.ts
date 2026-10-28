@@ -27,15 +27,25 @@ import {
 } from "./runStore.ts";
 
 export interface ResumedProcess {
-  readonly operation: HarnessProcessResumeOperationInput;
+  readonly runId: string;
+  readonly operationId: string;
+  readonly process: import("../processPlacement/execution.ts").HarnessProcessExecutionProcessInput;
+  readonly control: HarnessProcessResumeOperationInput["transition"]["nextControl"];
+  readonly runStore: Pick<
+    HarnessProcessResumeOperationInput["runStore"],
+    "controlKey" | "supervisor"
+  >;
+  readonly requestPublisher: HarnessProcessResumeOperationInput["runStore"]["currentPublisher"];
   readonly prepared: HarnessProcessResumePreparedFacetInstance;
   readonly publication: Extract<
     Awaited<ReturnType<OwnedProcessRequest["durable"]["publishFreshFacet"]>>,
     { status: "published" }
   >;
-  readonly boundary: ProcessTerminalEvidence;
+  readonly nativeSessionId: string;
+  readonly checkpoint: import("../HarnessRunStore.ts").HarnessRequestCheckpoint;
   readonly placement: ProcessTerminalEvidence["placement"];
 }
+
 export interface ResumeAttempt {
   readonly operation: HarnessProcessResumeOperationInput;
   readonly controller: AbortController;
@@ -227,10 +237,33 @@ export function startResumeAttempt(input: {
       );
       check();
       return {
-        operation,
+        runId: operation.runId,
+        operationId: operation.transition.operationId,
+        process: {
+          ...operation.facet,
+          productBootstrap: operation.productBootstrap,
+          targetPreparedRelease: operation.transition.targetPreparedRelease,
+          operationId: operation.transition.operationId,
+          nativeSessionId: boundary.nativeSessionId,
+          checkpointId: boundary.finish.checkpoint.native.id,
+          manifestRevision: boundary.finish.checkpoint.filesystem.sha256,
+          priorFacetNonce: operation.transition.publisher.facetNonce,
+          expectedFacetGeneration: operation.transition.expectedFacetGeneration,
+        },
+        control: operation.transition.nextControl,
+        runStore: {
+          controlKey: operation.runStore.controlKey,
+          supervisor: operation.runStore.supervisor,
+        },
+        requestPublisher: {
+          generation: result.publication.receipt.toGeneration,
+          facetNonce: result.preparedFacet.identity.incarnationNonce,
+          publisherKey: operation.runStore.nextPublisherKey,
+        },
         prepared: result.preparedFacet,
         publication: result.publication,
-        boundary,
+        nativeSessionId: boundary.nativeSessionId,
+        checkpoint: boundary.finish.checkpoint,
         placement: { ...owned.placement, shardIncarnationNonce: input.placementNonce },
       };
     } catch (cause) {

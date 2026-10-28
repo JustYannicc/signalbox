@@ -74,3 +74,4 @@ export default {
     return env.PROBE.get(env.PROBE.idFromName("probe")).fetch(request);
   },
 };
+export * from "../../src/FixtureWorkerExports.ts";

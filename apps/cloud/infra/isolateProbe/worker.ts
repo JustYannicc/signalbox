@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off - measure the workerd wall clock without adding runtime overhead.
 import { DurableObject } from "cloudflare:workers";
+export * from "./FixtureWorkerExports.ts";
 import { codeGenerationBinding } from "./codeGeneration.ts";
 import { childWorkerDispatchBinding } from "./childWorkerDispatch.ts";
 import { FACET_SOURCE } from "./facetSource.ts";

@@ -19,7 +19,7 @@ beforeAll(async () => {
   await NodeFSP.writeFile(
     NodePath.join(directory, "entry.js"),
     `import handler from "./worker.js";
-export { ProbeSession, CodeGeneration } from "./worker.js";
+export * from "./worker.js";
 export default {fetch(request, env) {
   if (new URL(request.url).pathname === "/probe/session-health") return handler.fetch(request, env);
   return handler.fetch(request, {...env, PROBE: {

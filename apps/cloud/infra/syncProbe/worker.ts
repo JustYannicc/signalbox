@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off globalConsole:off cryptoRandomUUID:off -- This is a plain Cloudflare Worker/DO boundary with no Effect runtime.
 import { defineApp } from "./lunora/_generated/app.js";
+export * from "../../src/FixtureWorkerExports.ts";
 import type { ShardDOState } from "lunorash/do";
 import type { ShardNamespaceLike } from "lunorash/runtime";
 import { createEvlogObservabilitySink } from "@signalbox/sync/adapters/evlog";

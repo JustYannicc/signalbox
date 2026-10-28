@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off cryptoRandomUUID:off - the plain Worker boundary timestamps alarms and identifies each constructor without an Effect runtime.
 import { DurableObject } from "cloudflare:workers";
+export * from "../../src/FixtureWorkerExports.ts";
 import * as Schema from "effect/Schema";
 import type { RunnerMachineSockets } from "../../src/computer/RunnerMachineSockets.ts";
 import { ProofOwnership, decodeProofState, type ProofState } from "./Ownership.ts";
