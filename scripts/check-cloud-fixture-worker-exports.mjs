@@ -2,6 +2,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import ts from "typescript-legacy";
 import { generatedMainReachesShared } from "./check-cloud-fixture-worker-exports.generated.mjs";
+import { checkPurposeBuiltProbe } from "./check-cloud-fixture-worker-exports.probes.mjs";
 
 const rootFlag = process.argv.indexOf("--root");
 const suppliedRoot = rootFlag < 0 ? undefined : process.argv[rootFlag + 1];
@@ -343,6 +344,11 @@ if (roots.size === 0 && generatedRoots.length === 0)
   failures.push("No Cloud test Worker roots were discovered from their main configs");
 
 for (const rootPath of roots.keys()) {
+  const probeFailures = await checkPurposeBuiltProbe(rootPath, cloudRoot, sharedExports);
+  if (probeFailures !== undefined) {
+    failures.push(...probeFailures);
+    continue;
+  }
   if (!(await reachesSharedExports(rootPath)))
     failures.push(
       `${NodePath.relative(worktreeRoot, rootPath)} does not re-export FixtureWorkerExports`,

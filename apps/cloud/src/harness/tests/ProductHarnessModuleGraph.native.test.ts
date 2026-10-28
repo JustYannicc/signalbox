@@ -47,8 +47,10 @@ export default {fetch(request,env){return env.STAGE.get(env.STAGE.idFromName("gr
     outfile: NodePath.join(directory, "worker.js"),
     bundle: true,
     format: "esm",
-    platform: "browser",
-    external: ["cloudflare:workers"],
+    platform: "neutral",
+    conditions: ["workerd", "worker"],
+    mainFields: ["module", "main"],
+    external: ["cloudflare:workers", "node:crypto"],
   });
   const configPath = NodePath.join(directory, "wrangler.json");
   await NodeFSP.writeFile(

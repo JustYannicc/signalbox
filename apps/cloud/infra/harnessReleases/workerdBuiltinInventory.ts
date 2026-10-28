@@ -65,7 +65,9 @@ export default {async fetch(){
       outfile: NodePath.join(directory, "worker.js"),
       bundle: true,
       format: "esm",
-      platform: "browser",
+      platform: "neutral",
+      conditions: ["workerd", "worker"],
+      mainFields: ["module", "main"],
       external: ["node:*", "cloudflare:*"],
       define: { "import.meta.main": "false" },
     });

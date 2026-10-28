@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
+import { parse } from "acorn";
 import { prepare } from "./prepare.ts";
 import { readChildProgramWasmInventory } from "./programWasmRegistryGeneration.ts";
 import { JSPI_WASM } from "./wasmFixture.ts";
@@ -84,9 +85,15 @@ describe("public child WASM registry generation", () => {
           NodePath.join(generatedDirectory, module.name),
           "utf8",
         );
-        const imports = source.matchAll(/(?:from\s*|import\s*)["']([^"']+)["']/g);
-        for (const [, specifier] of imports) {
-          if (!specifier?.startsWith(".")) continue;
+        const parsed = parse(source, { ecmaVersion: "latest", sourceType: "module" });
+        for (const statement of parsed.body) {
+          const specifier =
+            statement.type === "ImportDeclaration" ||
+            statement.type === "ExportNamedDeclaration" ||
+            statement.type === "ExportAllDeclaration"
+              ? statement.source?.value
+              : undefined;
+          if (typeof specifier !== "string" || !specifier.startsWith(".")) continue;
           const target = NodePath.posix.normalize(
             NodePath.posix.join(NodePath.posix.dirname(module.name), specifier),
           );

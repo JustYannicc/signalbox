@@ -91,6 +91,66 @@ NodeTest.test("checks the export in the generated main source", async () => {
   );
 });
 
+async function purposeBuiltProbe(root, source, binding = "ProbeShard") {
+  const directory = NodePath.join(root, "apps/cloud/infra/syncProbe");
+  await NodeFSP.mkdir(directory, { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(directory, "worker.ts"), source);
+  await NodeFSP.writeFile(
+    NodePath.join(directory, "alchemy.run.ts"),
+    `const classExports = {${JSON.stringify(binding)}: true};
+Cloudflare.Worker("Probe", {main: "worker.ts", env: toAlchemyBindings(manifest, classExports)});`,
+  );
+}
+
+NodeTest.test("accepts a purpose-built probe with only its own bound class", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\n`,
+    {},
+    async (root) => {
+      await purposeBuiltProbe(root, "export class ProbeShard {}\nexport default {};\n");
+      const result = check(root);
+      NodeAssert.equal(result.status, 0, result.stderr);
+    },
+  );
+});
+
+NodeTest.test("rejects a probe binding whose class has no export", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\n`,
+    {},
+    async (root) => {
+      await purposeBuiltProbe(root, 'export * from "../../src/FixtureWorkerExports.ts";\n');
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+    },
+  );
+});
+
+for (const productionName of ["Fixture", "MissingProductionClass"]) {
+  NodeTest.test(`checks a probe's named production export ${productionName}`, async () => {
+    await withFixture(
+      ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\n`,
+      {},
+      async (root) => {
+        await purposeBuiltProbe(
+          root,
+          `export {${productionName} as ProbeShard} from "../../src/FixtureWorkerExports.ts";\n`,
+        );
+        const result = check(root);
+        if (productionName === "Fixture") NodeAssert.equal(result.status, 0, result.stderr);
+        else {
+          NodeAssert.notEqual(result.status, 0);
+          NodeAssert.match(
+            result.stderr,
+            /declared production export MissingProductionClass does not exist/,
+          );
+        }
+      },
+    );
+  });
+}
+
 NodeTest.test("does not borrow an export template from an unrelated imported module", async () => {
   await withFixture(
     ({ outputDir }) =>
