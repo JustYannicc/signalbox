@@ -43,17 +43,22 @@ export async function fetchExplicitRefs(
     if (matches.length === 0) throw new Error(`couldn't find remote ref ${source}`);
     if (matches.length > 1) throw new Error(`refspec ${source} matches more than one`);
     const match = matches[0]!;
-    selected.push(match);
+    const localRefs = [match.ref];
+    selected.push({ ...match, localRefs });
     if (destination) {
       const ref = destination.startsWith("refs/")
         ? destination
         : `${match.ref.startsWith("refs/tags/") ? "refs/tags/" : "refs/heads/"}${destination}`;
       addUpdate(ref, match.oid, force);
+      localRefs.unshift(ref);
     }
     if (options.remote !== undefined) {
       for (const mapping of configured) {
         const target = mapConfiguredRef(mapping, match.ref);
-        if (target !== undefined) addUpdate(target, match.oid, mapping.startsWith("+"));
+        if (target !== undefined) {
+          addUpdate(target, match.oid, mapping.startsWith("+"));
+          localRefs.unshift(target);
+        }
       }
     }
   }
@@ -78,11 +83,14 @@ export async function fetchExplicitRefs(
     },
   };
   for (const oid of new Set(selected.map(({ oid }) => oid))) {
+    const localRefs = selected.filter((ref) => ref.oid === oid).flatMap((ref) => ref.localRefs);
+    const ref = await findLocalHaveRef(fs, dir, localRefs);
     await fetchObjects({
       ...options,
       fs: objectFs,
       remote: "origin",
       remoteRef: oid,
+      ...(ref === undefined ? {} : { ref }),
       singleBranch: true,
       tags: false,
       prune: false,
@@ -97,15 +105,18 @@ export async function fetchExplicitRefs(
       () => false,
     );
     if (!options.tags && !reachable) continue;
-    await fetchObjects({
-      ...options,
-      fs: objectFs,
-      remote: "origin",
-      remoteRef: tag.oid,
-      singleBranch: true,
-      tags: false,
-      prune: false,
-    });
+    if ((await findLocalHaveRef(fs, dir, [tag.oid])) === undefined) {
+      await fetchObjects({
+        ...options,
+        fs: objectFs,
+        remote: "origin",
+        remoteRef: tag.oid,
+        ...(reachable ? { ref: tag.peeled ?? tag.oid } : {}),
+        singleBranch: true,
+        tags: false,
+        prune: false,
+      });
+    }
     updates.set(tag.ref, { oid: tag.oid, force: false });
   }
   let rejected: NodeGitRouteError | undefined;
@@ -127,6 +138,22 @@ export async function fetchExplicitRefs(
     await git.writeRef({ fs, dir, ref, value: oid, force: true });
   }
   if (rejected !== undefined) throw rejected;
+}
+
+async function findLocalHaveRef(fs: NodeGitFsClient, dir: string, refs: readonly string[]) {
+  // singleBranch uses only `ref` for haves. A bare branch name misses objects
+  // held solely by its remote-tracking ref, causing a full-history transfer.
+  for (const ref of refs) {
+    try {
+      const oid = await git.resolveRef({ fs, dir, ref });
+      await git.readObject({ fs, dir, oid });
+      return ref;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "NotFoundError"))
+        throw error;
+    }
+  }
+  return undefined;
 }
 
 function mapConfiguredRef(mapping: string, source: string): string | undefined {

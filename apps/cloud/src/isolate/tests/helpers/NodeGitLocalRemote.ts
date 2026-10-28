@@ -51,6 +51,7 @@ export function createLocalGitRemote() {
   checked(root, ["init", "-q", "-b", "local", client]);
   checked(client, ["remote", "add", "origin", remote]);
   const requests: string[] = [];
+  const uploadRequests: string[] = [];
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
     requests.push(`${init?.method ?? "GET"} ${url.pathname}`);
@@ -67,6 +68,7 @@ export function createLocalGitRemote() {
     }
     if (url.pathname.endsWith("/git-upload-pack") && init?.method === "POST") {
       const input = new Uint8Array(await new Response(init.body).arrayBuffer());
+      uploadRequests.push(new TextDecoder().decode(input));
       const result = run(remote, ["upload-pack", "--stateless-rpc", "."], input);
       if (result.status !== 0) throw new Error(result.stderr.toString());
       return new Response(new Uint8Array(result.stdout), {
@@ -78,6 +80,7 @@ export function createLocalGitRemote() {
   return {
     fetch,
     requests,
+    uploadRequests,
     oid: (ref: string) => checked(remote, ["rev-parse", ref]),
     remoteGit: (args: readonly string[]) => checked(remote, args),
     git: (args: readonly string[]) => run(client, args),

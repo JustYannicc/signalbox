@@ -188,6 +188,51 @@ describe("NodeGit explicit fetch refspecs", () => {
     },
   );
 
+  it("negotiates from the selected tracking refs without local branches", async () => {
+    const remote = createLocalGitRemote();
+    const fixture = createNodeGitFixture();
+    const fs = createNodeFs(fixture.filesystem).fs;
+    try {
+      await fs.promises.mkdir("/work/repo", { recursive: true });
+      await git.init({ fs, dir: "/work/repo", defaultBranch: "local" });
+      await git.setConfig({
+        fs,
+        dir: "/work/repo",
+        path: "remote.origin.url",
+        value: "https://git.invalid/remote.git",
+      });
+      await git.setConfig({
+        fs,
+        dir: "/work/repo",
+        path: "remote.origin.fetch",
+        value: "+refs/heads/*:refs/remotes/origin/*",
+      });
+      const program = createNodeGitProgram({ local: createLocalGitRunner(), fetch: remote.fetch });
+      const fetch = async () => {
+        const { host, handle } = await spawnGit(
+          fixture.filesystem,
+          program,
+          ["git", "fetch", "-q", "origin", "main", "prototype"],
+          {},
+          "/work/repo",
+        );
+        return finishGit(host, handle);
+      };
+      expect((await fetch()).exitCode, fixture.stderr()).toBe(0);
+      expect(await git.listBranches({ fs, dir: "/work/repo" })).toEqual([]);
+      remote.uploadRequests.length = 0;
+      expect((await fetch()).exitCode, fixture.stderr()).toBe(0);
+      for (const branch of ["main", "prototype"]) {
+        const oid = remote.oid(branch);
+        const request = remote.uploadRequests.find((body) => body.includes(`want ${oid} `));
+        expect(request).toContain(`have ${oid}\n`);
+      }
+    } finally {
+      fixture.close();
+      remote.close();
+    }
+  });
+
   it("routes supported forms and names unsupported forms", () => {
     expect(
       selectNodeGitRoute([
