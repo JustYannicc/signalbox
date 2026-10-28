@@ -8,7 +8,7 @@ import { createNodeFs } from "../../isolate/NodeFs.ts";
 import { dataForDriver } from "../adapter/tests/data.ts";
 import { fixture } from "./tests/fixture.ts";
 import { echoEngine } from "./tests/wasm.ts";
-import { materializeFreshCodexCheckpoint } from "./freshCheckpoint.ts";
+import { materializeFreshCodexCheckpoint } from "../CodexIsolateAdapter.ts";
 
 const home = "/home/test/.codex";
 const path = `${home}/sessions/rollout.jsonl`;

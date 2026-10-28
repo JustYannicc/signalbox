@@ -19,6 +19,7 @@ import { createCodexFetch } from "./CodexNetwork.ts";
 import { makeCodexProcessClient } from "./CodexTransport.ts";
 import type { HarnessProcessObserver } from "./HarnessProcessLifetime.ts";
 import { materializeFreshCodexCheckpoint } from "./codex/freshCheckpoint.ts";
+export { materializeFreshCodexCheckpoint } from "./codex/freshCheckpoint.ts";
 
 export interface CodexIsolateAdapterOptions {
   readonly process: Omit<CodexHarnessProcessOptions, "signal">;

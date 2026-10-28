@@ -4,7 +4,10 @@ export {
 } from "./processResume/errors.ts";
 export { createHarnessProcessResume } from "./processResume/service.ts";
 export { assertHarnessProcessExecutionMode } from "./processResume/initialExecution.ts";
-export { HarnessProcessCheckpointInput } from "./processResume/checkpointContract.ts";
+export {
+  HarnessProcessCheckpointInput,
+  snapshotCheckpointInput,
+} from "./processResume/checkpointContract.ts";
 export { HarnessProcessContinuationInput } from "./processResume/continuation.ts";
 export { HarnessProcessResumeRunStoreBindingSchema } from "./processResume/contracts.ts";
 export { snapshotHarnessProcessResumeRunStoreBinding } from "./processResume/runStoreBinding.ts";

@@ -1,6 +1,6 @@
 import { expect, it } from "vite-plus/test";
 import { prepareHarnessFilesCheckpoint } from "../HarnessFilesStore.ts";
-import { snapshotCheckpointInput } from "./checkpointContract.ts";
+import { snapshotCheckpointInput } from "../HarnessProcessResume.ts";
 
 it("preserves a symlink checkpoint's manifest when freezing process completion input", async () => {
   const control = {
