@@ -4,6 +4,7 @@ import type { ExecSessionHandler } from "./CodexExecSessions.ts";
 import { object, RpcError, string } from "./CodexExecProtocol.ts";
 import { KernelOpenFlags, type KernelFileSystem } from "./KernelFileSystem.ts";
 import { fileUriToGuestPath } from "./execServer/ProcessesLaunch.ts";
+import { assertFileSystemSandboxAccess } from "./execServer/FileSystemSandbox.ts";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const methods = new Set([
@@ -27,11 +28,14 @@ export class CodexExecFileSystem implements ExecSessionHandler {
     if (signal.aborted) throw new DOMException("Filesystem request aborted", "AbortError");
     try {
       const params = object(value);
-      if (params.sandbox !== undefined && params.sandbox !== null) {
-        throw new RpcError(-32600, "Filesystem sandbox requests are unsupported");
-      }
       const path = fileUriToGuestPath(string(params.path, "path"));
       const follow = optionalBoolean(params.followSymlinks, "followSymlinks", true);
+      assertFileSystemSandboxAccess(
+        this.#filesystem,
+        params.sandbox,
+        path,
+        method === "fs/writeFile" || method === "fs/createDirectory" ? "write" : "read",
+      );
       switch (method) {
         case "fs/readFile":
           if (!follow) this.#rejectSymlinks(path);
