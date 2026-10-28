@@ -30,12 +30,12 @@ export async function stopIdleProcess(input: {
     request: {
       identity: resumed.prepared.identity,
       controllerClaim: request.control,
-      operationId: request.resumeOperationId,
-      nativeSessionId: resumed.boundary.nativeSessionId,
-      checkpointId: resumed.boundary.completion.files.checkpoint.checkpointId,
-      manifestRevision: resumed.boundary.completion.files.checkpoint.manifestSha256,
-      priorFacetNonce: resumed.operation.transition.publisher.facetNonce,
-      expectedFacetGeneration: resumed.operation.transition.expectedFacetGeneration,
+      operationId: resumed.process.operationId,
+      nativeSessionId: resumed.nativeSessionId,
+      checkpointId: resumed.checkpoint.native.id,
+      manifestRevision: resumed.checkpoint.filesystem.sha256,
+      priorFacetNonce: resumed.process.priorFacetNonce,
+      expectedFacetGeneration: resumed.process.expectedFacetGeneration,
     },
   });
   await storage.put(key, { request, phase: "reserved" });

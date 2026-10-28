@@ -406,6 +406,25 @@ export function createHarnessFilesStore(
                 saveState(database, current.row, next);
                 return result(next, inserted, prepared.files, prepared.parentCheckpointId);
               }
+              case "retireEvictedFacet": {
+                requireControl(state, command.control);
+                requirePublisher(state, command.publisher);
+                if (
+                  state.lifecycle !== "accepting" ||
+                  state.activeStepId !== null ||
+                  state.pendingPublication !== null ||
+                  state.pendingPublisher !== null ||
+                  command.expectedGeneration !== state.publisher.generation ||
+                  !same(state.checkpoint, command.checkpoint) ||
+                  command.sourceFence.owner !== command.currentFence.owner ||
+                  command.sourceFence.incarnation >= command.currentFence.incarnation ||
+                  command.sourceFence.nonce === command.currentFence.nonce
+                )
+                  return fail("CONFLICT");
+                const next = { ...state, lifecycle: "draining" as const };
+                saveState(database, current.row, next);
+                return result(next, "draining");
+              }
               case "publishFacet": {
                 requireControl(state, command.control);
                 if (

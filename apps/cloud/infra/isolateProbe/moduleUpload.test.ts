@@ -15,7 +15,7 @@ let endpoint: string;
 beforeAll(async () => {
   await prepare();
   directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "probe-module-upload-"));
-  for (const name of ["moduleUpload", "moduleTransport"]) {
+  for (const name of ["moduleUpload", "moduleTransport", "FixtureWorkerExports"]) {
     await NodeFSP.copyFile(
       new URL(`./generated/${name}.js`, import.meta.url),
       NodePath.join(directory, `${name}.js`),
@@ -25,6 +25,7 @@ beforeAll(async () => {
     NodePath.join(directory, "worker.js"),
     `
 import { DurableObject } from "cloudflare:workers";
+export * from "./FixtureWorkerExports.js";
 import { ModuleUploadStore } from "./moduleUpload.js";
 import { encodeModuleTransport } from "./moduleTransport.js";
 function payloadSummary(bytes) {

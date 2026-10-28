@@ -90,3 +90,4 @@ export default {
     return Response.json({ success, cancelled: await issuance, stopped: await service.stopped() });
   },
 };
+export * from "../../../FixtureWorkerExports.ts";

@@ -1,5 +1,6 @@
 // @effect-diagnostics globalDate:off - Cloudflare alarms and request timings use the host wall clock.
 import { DurableObject } from "cloudflare:workers";
+export * from "../FixtureWorkerExports.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";

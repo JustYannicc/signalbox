@@ -43,6 +43,9 @@ export async function captureWorkerdBuiltinInventory(
     compatibilityFlags: flags,
   };
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "builtin-workerd-"));
+  const fixtureWorkerExports = NodeURL.fileURLToPath(
+    new URL("../../src/FixtureWorkerExports.ts", import.meta.url),
+  );
   const harness = createTestHarness();
   let result: unknown;
   try {
@@ -51,6 +54,7 @@ export async function captureWorkerdBuiltinInventory(
       stdin: {
         contents: `import process from "node:process";
 import {captureRuntimeBuiltinInventory} from ${JSON.stringify(entry)};
+export * from ${JSON.stringify(fixtureWorkerExports)};
 export default {async fetch(){
   const inventory = await captureRuntimeBuiltinInventory(${JSON.stringify(requests)}, ${JSON.stringify(profile)});
   return Response.json({modules:Object.keys(inventory.modules).sort(),functions:inventory.functions,
@@ -61,7 +65,9 @@ export default {async fetch(){
       outfile: NodePath.join(directory, "worker.js"),
       bundle: true,
       format: "esm",
-      platform: "browser",
+      platform: "neutral",
+      conditions: ["workerd", "worker"],
+      mainFields: ["module", "main"],
       external: ["node:*", "cloudflare:*"],
       define: { "import.meta.main": "false" },
     });

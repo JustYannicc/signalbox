@@ -263,6 +263,34 @@ export function transition(state: State | null, command: HarnessThreadSupervisor
             : "indeterminate";
       return decide({ ...state, lifecycle, settlement }, lifecycle);
     }
+    case "retireEvictedFacet": {
+      requireControl(state, command.control);
+      requirePublisher(state, command.publisher);
+      requireGeneration(state, command.expectedGeneration);
+      if (
+        state.lifecycle !== "accepting" ||
+        state.admittedStepId !== null ||
+        state.pendingControlSync !== null ||
+        state.prepared !== null ||
+        state.nativeSessionId !== command.nativeSessionId ||
+        !same(state.checkpoint, command.checkpoint) ||
+        command.sourceFence.owner !== command.currentFence.owner ||
+        command.sourceFence.incarnation >= command.currentFence.incarnation ||
+        command.sourceFence.nonce === command.currentFence.nonce
+      )
+        return fail("CONFLICT");
+      // The current fenced C proves destruction of the previous parent and its idle children.
+      return decide(
+        {
+          ...state,
+          lifecycle: "recoverable",
+          stopAcknowledgement: null,
+          settlement: null,
+          lastFailure: null,
+        },
+        "recoverable",
+      );
+    }
     case "prepareFreshFacet": {
       requireControl(state, command.control);
       requirePublisher(state, command.publisher);

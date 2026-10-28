@@ -38,6 +38,7 @@ export class Child extends WorkerEntrypoint {
 
 export function warmStateHost(childWasiSource: string, wasmHash: string) {
   return `import {RpcTarget} from "cloudflare:workers";
+export * from "./src/FixtureWorkerExports.ts";
 import module from "./counter.wasm";
 import {createWorkerLoaderDispatch} from "./src/computer/WorkerLoaderDispatch.ts";
 import {createCompiledChildWorkerLoader} from "./src/computer/CompiledChildWorkerLoader.ts";

@@ -58,6 +58,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // signalbox: transform the workflow adapter so its Cloudflare imports use test mocks.
+    server: { deps: { inline: ["@cloudflare/dynamic-workflows"] } },
     // signalbox: exercise real WASI suspension and isolated ESM unit fixtures on Node 24.
     execArgv: ["--experimental-wasm-jspi", "--experimental-vm-modules"],
     exclude: [

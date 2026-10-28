@@ -1,5 +1,8 @@
 import type { ProcessSlotState, ProcessSlotStore } from "../../computer/ProcessSlots.ts";
 import type {
+  HarnessProcessEvictedRecoveryReceipt,
+  HarnessProcessEvictedRecoveryRequest,
+  HarnessProcessPlacementIdentity,
   HarnessProcessPlacementRecoveryRecord,
   HarnessProcessPlacementRecoveryStore,
 } from "./contracts.ts";
@@ -30,6 +33,19 @@ export interface HarnessProcessPlacementStoreClient {
     owner: string,
     writer: HarnessProcessPlacementWriter,
     loaderId: string,
+  ): Promise<void>;
+  authorizeEvictedRecovery(
+    owner: string,
+    request: HarnessProcessEvictedRecoveryRequest,
+  ): Promise<HarnessProcessEvictedRecoveryReceipt>;
+  readEvictedRecovery(
+    owner: string,
+    sourceFence: HarnessProcessEvictedRecoveryRequest["sourceFence"],
+    identity: HarnessProcessPlacementIdentity,
+  ): Promise<HarnessProcessEvictedRecoveryReceipt | undefined>;
+  completeEvictedRecovery(
+    owner: string,
+    receipt: HarnessProcessEvictedRecoveryReceipt,
   ): Promise<void>;
 }
 

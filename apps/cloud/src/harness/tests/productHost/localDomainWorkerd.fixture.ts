@@ -309,3 +309,4 @@ export default {
     }
   },
 };
+export * from "../../../FixtureWorkerExports.ts";

@@ -21,6 +21,7 @@ beforeAll(async () => {
       contents: `
 import {DurableObject} from "cloudflare:workers";
 import {ModuleUploadStore} from "./apps/cloud/infra/isolateProbe/moduleUpload.ts";
+export * from "./apps/cloud/src/FixtureWorkerExports.ts";
 export class StageProbe extends DurableObject {
   store = new ModuleUploadStore(this.ctx.storage.sql);
   async fetch(request) {
@@ -46,8 +47,10 @@ export default {fetch(request,env){return env.STAGE.get(env.STAGE.idFromName("gr
     outfile: NodePath.join(directory, "worker.js"),
     bundle: true,
     format: "esm",
-    platform: "browser",
-    external: ["cloudflare:workers"],
+    platform: "neutral",
+    conditions: ["workerd", "worker"],
+    mainFields: ["module", "main"],
+    external: ["cloudflare:workers", "node:crypto"],
   });
   const configPath = NodePath.join(directory, "wrangler.json");
   await NodeFSP.writeFile(

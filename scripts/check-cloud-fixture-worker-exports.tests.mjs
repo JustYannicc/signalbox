@@ -1,0 +1,530 @@
+import * as NodeAssert from "node:assert/strict";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+import * as NodeTest from "node:test";
+
+const checker = new URL("./check-cloud-fixture-worker-exports.mjs", import.meta.url);
+
+async function fixtureRoot(mainSource, options = {}) {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cloud-fixture-exports-"));
+  const sourceDir = NodePath.join(root, "apps/cloud/src");
+  const prepareDir = NodePath.join(root, "apps/cloud/infra/isolateProbe");
+  const outputDir = NodePath.join(root, "generated-output");
+  await NodeFSP.mkdir(sourceDir, { recursive: true });
+  await NodeFSP.mkdir(prepareDir, { recursive: true });
+  await NodeFSP.mkdir(outputDir, { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(sourceDir, "FixtureWorkerExports.ts"),
+    'export * from "./worker.ts";\n',
+  );
+  await NodeFSP.writeFile(NodePath.join(sourceDir, "worker.ts"), "export class Fixture {}\n");
+  await NodeFSP.writeFile(
+    NodePath.join(prepareDir, "prepare.ts"),
+    'export const source = "../../src/FixtureWorkerExports.ts";\nexport const output = "FixtureWorkerExports.js";\n',
+  );
+  if (options.unrelatedTarget !== undefined)
+    await NodeFSP.writeFile(NodePath.join(outputDir, "unrelated.ts"), options.unrelatedTarget);
+  if (options.unusedExport === true)
+    await NodeFSP.writeFile(
+      NodePath.join(sourceDir, "unrelatedGeneratedExport.ts"),
+      'export const unrelatedGeneratedSource = `export * from "./unrelated.ts";`;\nexport const sharedMention = "FixtureWorkerExports";\n',
+    );
+  const unusedImport =
+    options.unusedExport === undefined ? "" : 'import "./unrelatedGeneratedExport.ts";\n';
+  const generatedMain =
+    typeof mainSource === "function"
+      ? mainSource({
+          root,
+          sourceDir,
+          outputDir,
+          sharedExports: NodePath.join(sourceDir, "FixtureWorkerExports.ts"),
+        })
+      : mainSource;
+  await NodeFSP.writeFile(
+    NodePath.join(sourceDir, "generatedWorker.test.ts"),
+    `import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+import { createTestHarness } from "wrangler";
+${unusedImport}const mainSource = ${JSON.stringify(generatedMain)};
+const output = ${JSON.stringify(outputDir)};
+await NodeFSP.writeFile(NodePath.join(output, "generated.js"), mainSource);
+const configPath = NodePath.join(output, "wrangler.json");
+await NodeFSP.writeFile(configPath, JSON.stringify({
+  main: "generated.js",
+  compatibility_date: "2026-10-19",
+}));
+createTestHarness({ workers: [{ configPath }] });
+`,
+  );
+  return root;
+}
+
+function check(root) {
+  return NodeChildProcess.spawnSync(
+    process.execPath,
+    [NodeURL.fileURLToPath(checker), "--root", root],
+    { encoding: "utf8" },
+  );
+}
+
+async function withFixture(mainSource, options, run) {
+  const root = await fixtureRoot(mainSource, options);
+  try {
+    await run(root);
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+}
+
+NodeTest.test("checks the export in the generated main source", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\nexport default {};\n`,
+    {},
+    (root) => {
+      const result = check(root);
+      NodeAssert.equal(result.status, 0, result.stderr);
+      NodeAssert.match(result.stdout, /1 generated roots/);
+    },
+  );
+});
+
+async function purposeBuiltProbe(root, source, binding = "ProbeShard") {
+  const directory = NodePath.join(root, "apps/cloud/infra/syncProbe");
+  await NodeFSP.mkdir(directory, { recursive: true });
+  await NodeFSP.writeFile(NodePath.join(directory, "worker.ts"), source);
+  await NodeFSP.writeFile(
+    NodePath.join(directory, "alchemy.run.ts"),
+    `const classExports = {${JSON.stringify(binding)}: true};
+Cloudflare.Worker("Probe", {main: "worker.ts", env: toAlchemyBindings(manifest, classExports)});`,
+  );
+}
+
+NodeTest.test("accepts a purpose-built probe with only its own bound class", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\n`,
+    {},
+    async (root) => {
+      await purposeBuiltProbe(root, "export class ProbeShard {}\nexport default {};\n");
+      const result = check(root);
+      NodeAssert.equal(result.status, 0, result.stderr);
+    },
+  );
+});
+
+NodeTest.test("rejects a probe binding whose class has no export", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\n`,
+    {},
+    async (root) => {
+      await purposeBuiltProbe(root, 'export * from "../../src/FixtureWorkerExports.ts";\n');
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+    },
+  );
+});
+
+for (const productionName of ["Fixture", "MissingProductionClass"]) {
+  NodeTest.test(`checks a probe's named production export ${productionName}`, async () => {
+    await withFixture(
+      ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\n`,
+      {},
+      async (root) => {
+        await purposeBuiltProbe(
+          root,
+          `export {${productionName} as ProbeShard} from "../../src/FixtureWorkerExports.ts";\n`,
+        );
+        const result = check(root);
+        if (productionName === "Fixture") NodeAssert.equal(result.status, 0, result.stderr);
+        else {
+          NodeAssert.notEqual(result.status, 0);
+          NodeAssert.match(
+            result.stderr,
+            /declared production export MissingProductionClass does not exist/,
+          );
+        }
+      },
+    );
+  });
+}
+
+NodeTest.test("does not borrow an export template from an unrelated imported module", async () => {
+  await withFixture(
+    ({ outputDir }) =>
+      `export * from ${JSON.stringify(NodePath.join(outputDir, "unrelated.ts"))};\nexport default {};\n`,
+    { unrelatedTarget: "export const marker = true;\n", unusedExport: true },
+    (root) => {
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+      NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+    },
+  );
+});
+
+NodeTest.test("rejects a generated main whose actual export target is unrelated", async () => {
+  await withFixture(
+    ({ outputDir }) =>
+      `export * from ${JSON.stringify(NodePath.join(outputDir, "unrelated.ts"))};\nexport default {};\n`,
+    { unrelatedTarget: "export const marker = true;\n" },
+    (root) => {
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+      NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+    },
+  );
+});
+
+NodeTest.test("rejects an unresolved export target", async () => {
+  await withFixture(
+    ({ outputDir }) =>
+      `export * from ${JSON.stringify(NodePath.join(outputDir, "missing.ts"))};\nexport default {};\n`,
+    {},
+    (root) => {
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+      NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+    },
+  );
+});
+
+NodeTest.test(
+  "rejects a transformed generated main instead of checking its original template",
+  async () => {
+    await withFixture(
+      ({ sharedExports }) =>
+        `export * from ${JSON.stringify(sharedExports)};\nexport default {};\n`,
+      { unrelatedTarget: "export const marker = true;\n" },
+      async (root) => {
+        const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+        const source = await NodeFSP.readFile(sourcePath, "utf8");
+        const original = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+        const replacement = NodePath.join(root, "generated-output/unrelated.ts");
+        await NodeFSP.writeFile(
+          sourcePath,
+          source.replace(
+            ", mainSource);",
+            `, mainSource.replace(${JSON.stringify(original)}, ${JSON.stringify(replacement)}));`,
+          ),
+        );
+        const result = check(root);
+        NodeAssert.notEqual(result.status, 0);
+        NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+        NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+      },
+    );
+  },
+);
+
+NodeTest.test("rejects an unresolved explicit harness main override", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\nexport default {};\n`,
+    {},
+    async (root) => {
+      const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+      await NodeFSP.appendFile(
+        sourcePath,
+        "\ncreatePublicResumeHarness({ main: chooseWorkerMain() });\n",
+      );
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+      NodeAssert.match(result.stderr, /cannot resolve fixture Worker main override/);
+    },
+  );
+});
+
+NodeTest.test(
+  "does not check an exporting sibling instead of the configured nested main",
+  async () => {
+    await withFixture(
+      ({ sharedExports }) =>
+        `export * from ${JSON.stringify(sharedExports)};\nexport default {};\n`,
+      {},
+      async (root) => {
+        const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+        const source = await NodeFSP.readFile(sourcePath, "utf8");
+        await NodeFSP.writeFile(
+          sourcePath,
+          source
+            .replace(
+              'NodePath.join(output, "generated.js"), mainSource',
+              'NodePath.join(output, "entry.js"), mainSource',
+            )
+            .replace(
+              "createTestHarness(",
+              'await NodeFSP.writeFile(NodePath.join(output, "nested/entry.js"), "export default {};\\n");\ncreateTestHarness(',
+            )
+            .replace('main: "generated.js"', 'main: "nested/entry.js"'),
+        );
+        const result = check(root);
+        NodeAssert.notEqual(result.status, 0);
+        NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+        NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+      },
+    );
+  },
+);
+
+NodeTest.test("resolves a nested main export from that main's output directory", async () => {
+  await withFixture('export * from "../bridge.ts";\nexport default {};\n', {}, async (root) => {
+    const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+    const source = await NodeFSP.readFile(sourcePath, "utf8");
+    const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+    await NodeFSP.writeFile(
+      NodePath.join(root, "generated-output/bridge.ts"),
+      `export * from ${JSON.stringify(shared)};\n`,
+    );
+    await NodeFSP.writeFile(
+      sourcePath,
+      source
+        .replace(
+          'NodePath.join(output, "generated.js")',
+          'NodePath.join(output, "nested/entry.js")',
+        )
+        .replace('main: "generated.js"', 'main: "nested/entry.js"'),
+    );
+    const result = check(root);
+    NodeAssert.equal(result.status, 0, result.stderr);
+  });
+});
+
+NodeTest.test(
+  "honors an existing JavaScript export target before a TypeScript sibling",
+  async () => {
+    await withFixture('export * from "./bridge.js";\nexport default {};\n', {}, async (root) => {
+      const output = NodePath.join(root, "generated-output");
+      const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+      await NodeFSP.writeFile(NodePath.join(output, "bridge.js"), "export const marker = true;\n");
+      await NodeFSP.writeFile(
+        NodePath.join(output, "bridge.ts"),
+        `export * from ${JSON.stringify(shared)};\n`,
+      );
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+      NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+    });
+  },
+);
+
+NodeTest.test("does not infer extension substitution for an unbundled source writer", async () => {
+  await withFixture('export * from "./bridge.js";\nexport default {};\n', {}, async (root) => {
+    const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+    await NodeFSP.writeFile(
+      NodePath.join(root, "generated-output/bridge.ts"),
+      `export * from ${JSON.stringify(shared)};\n`,
+    );
+    const result = check(root);
+    NodeAssert.notEqual(result.status, 0);
+    NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+    NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+  });
+});
+
+NodeTest.test("honors the actual target throughout a transitive export chain", async () => {
+  await withFixture('export * from "./bridge.js";\nexport default {};\n', {}, async (root) => {
+    const output = NodePath.join(root, "generated-output");
+    const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+    await NodeFSP.writeFile(NodePath.join(output, "bridge.js"), 'export * from "./leaf";\n');
+    await NodeFSP.writeFile(NodePath.join(output, "leaf"), "export const marker = true;\n");
+    await NodeFSP.writeFile(
+      NodePath.join(output, "leaf.ts"),
+      `export * from ${JSON.stringify(shared)};\n`,
+    );
+    const result = check(root);
+    NodeAssert.notEqual(result.status, 0);
+    NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+    NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+  });
+});
+
+NodeTest.test("does not borrow a main producer from another output directory", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\nexport default {};\n`,
+    {},
+    async (root) => {
+      const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+      const source = await NodeFSP.readFile(sourcePath, "utf8");
+      await NodeFSP.writeFile(
+        sourcePath,
+        source.replace(
+          'NodePath.join(output, "generated.js"), mainSource',
+          'NodePath.join(output, "unrelated/generated.js"), mainSource',
+        ),
+      );
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+      NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+    },
+  );
+});
+
+NodeTest.test("does not substitute an exporting main next to the test source", async () => {
+  await withFixture("export default {};\n", {}, async (root) => {
+    const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+    await NodeFSP.writeFile(
+      NodePath.join(root, "apps/cloud/src/generated.js"),
+      `export * from ${JSON.stringify(shared)};\n`,
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(root, "generated-output/generated.js"),
+      "export default {};\n",
+    );
+    const result = check(root);
+    NodeAssert.notEqual(result.status, 0);
+    NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+  });
+});
+
+async function buildInputFixture(root, inputSource, unrelatedWriter) {
+  const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+  const source = await NodeFSP.readFile(sourcePath, "utf8");
+  const real = NodePath.join(root, "real-input");
+  const other = NodePath.join(root, "other-input");
+  await NodeFSP.mkdir(real);
+  await NodeFSP.mkdir(other);
+  await NodeFSP.writeFile(NodePath.join(real, "entry.ts"), inputSource);
+  const build = `const real = ${JSON.stringify(real)};
+const other = ${JSON.stringify(other)};
+${unrelatedWriter ? 'await NodeFSP.writeFile(NodePath.join(other, "entry.ts"), mainSource);' : ""}
+await build({entryPoints: [NodePath.join(real, "entry.ts")], bundle: true, outfile: NodePath.join(output, "entry.js")});`;
+  await NodeFSP.writeFile(
+    sourcePath,
+    source
+      .replace('await NodeFSP.writeFile(NodePath.join(output, "generated.js"), mainSource);', build)
+      .replace('main: "generated.js"', 'main: "entry.js"'),
+  );
+}
+
+NodeTest.test("does not borrow an exporting writer for a different build input path", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\n`,
+    {},
+    async (root) => {
+      await buildInputFixture(root, "export default {};\n", true);
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+    },
+  );
+});
+
+NodeTest.test("reads the exact existing build input when it has no generated writer", async () => {
+  await withFixture("export default {};\n", {}, async (root) => {
+    const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+    await buildInputFixture(root, `export * from ${JSON.stringify(shared)};\n`, false);
+    const result = check(root);
+    NodeAssert.equal(result.status, 0, result.stderr);
+  });
+});
+
+for (const inputExports of [false, true]) {
+  NodeTest.test(
+    inputExports
+      ? "resolves generated build input exports from the input directory"
+      : "does not borrow generated build input exports from the output directory",
+    async () => {
+      await withFixture('export * from "./bridge.ts";\n', {}, async (root) => {
+        await buildInputFixture(root, 'export * from "./bridge.ts";\n', false);
+        const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+        const source = await NodeFSP.readFile(sourcePath, "utf8");
+        const buildWithWriter = source.replace(
+          "await build({entryPoints:",
+          'await NodeFSP.writeFile(NodePath.join(real, "entry.ts"), mainSource);\nawait build({entryPoints:',
+        );
+        NodeAssert.notEqual(buildWithWriter, source);
+        await NodeFSP.writeFile(sourcePath, buildWithWriter);
+        const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+        const exporting = `export * from ${JSON.stringify(shared)};\n`;
+        const unrelated = "export default {};\n";
+        await NodeFSP.writeFile(
+          NodePath.join(root, "real-input/bridge.ts"),
+          inputExports ? exporting : unrelated,
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(root, "generated-output/bridge.ts"),
+          inputExports ? unrelated : exporting,
+        );
+        const result = check(root);
+        if (inputExports) NodeAssert.equal(result.status, 0, result.stderr);
+        else {
+          NodeAssert.notEqual(result.status, 0);
+          NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+        }
+      });
+    },
+  );
+}
+
+NodeTest.test("does not use a parent prepared copy for a nested main's target", async () => {
+  await withFixture("export default {};\n", {}, async (root) => {
+    const directory = NodePath.join(root, "apps/cloud/infra/isolateProbe");
+    await NodeFSP.rm(NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts"));
+    for (const name of ["prepare.ts", "worker.ts", "FixtureWorkerExports.ts"]) {
+      await NodeFSP.copyFile(
+        new URL(`../apps/cloud/infra/isolateProbe/${name}`, import.meta.url),
+        NodePath.join(directory, name),
+      );
+    }
+    const original = await NodeFSP.readFile(
+      new URL("../apps/cloud/infra/isolateProbe/workerCpu.test.ts", import.meta.url),
+      "utf8",
+    );
+    const nested = original
+      .replaceAll('"entry.js"', '"nested/entry.js"')
+      .replace(
+        "  await NodeFSP.writeFile(\n",
+        '  await NodeFSP.mkdir(NodePath.join(directory, "nested"), {recursive: true});\n  await NodeFSP.writeFile(\n',
+      )
+      .replace(
+        '  await NodeFSP.writeFile(\n    NodePath.join(directory, "wrangler.json"),',
+        '  await NodeFSP.writeFile(NodePath.join(directory, "nested/worker.js"), "export default {};\\n");\n  await NodeFSP.writeFile(\n    NodePath.join(directory, "wrangler.json"),',
+      );
+    NodeAssert.notEqual(nested, original);
+    await NodeFSP.writeFile(NodePath.join(directory, "workerCpu.test.ts"), nested);
+    const result = check(root);
+    NodeAssert.notEqual(result.status, 0);
+    NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+  });
+});
+
+NodeTest.test("does not approve a stale main that its declared producer overwrites", async () => {
+  await withFixture("export default {};\n", {}, async (root) => {
+    const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+    await NodeFSP.writeFile(
+      NodePath.join(root, "generated-output/generated.js"),
+      `export * from ${JSON.stringify(shared)};\n`,
+    );
+    const result = check(root);
+    NodeAssert.notEqual(result.status, 0);
+    NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+  });
+});
+
+NodeTest.test("does not ignore an unresolved second producer of the configured main", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\n`,
+    {},
+    async (root) => {
+      const path = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+      const source = await NodeFSP.readFile(path, "utf8");
+      await NodeFSP.writeFile(
+        path,
+        source.replace(
+          "const configPath =",
+          'await NodeFSP.writeFile(NodePath.join(output, "generated.js"), unknownWorkerSource());\nconst configPath =',
+        ),
+      );
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+    },
+  );
+});

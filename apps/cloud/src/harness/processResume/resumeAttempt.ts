@@ -1,7 +1,10 @@
 import * as Effect from "effect/Effect";
 import type { HarnessDurableStateBindings } from "../HarnessDurableState.ts";
 import type { HarnessProcessExecutionEnvironment } from "../processPlacement/execution.ts";
-import type { HarnessProcessResumeOperationInput } from "./contracts.ts";
+import type {
+  HarnessProcessResumeCheckpointReference,
+  HarnessProcessResumeOperationInput,
+} from "./contracts.ts";
 import type { OwnedProcessRequest } from "./executionState.ts";
 import { readOwnedTerminal, type DurableOwnedRequest } from "../processOwnership/ownedRequest.ts";
 import { sameControl, samePublisher } from "./authority.ts";
@@ -27,15 +30,25 @@ import {
 } from "./runStore.ts";
 
 export interface ResumedProcess {
-  readonly operation: HarnessProcessResumeOperationInput;
+  readonly runId: string;
+  readonly operationId: string;
+  readonly process: import("../processPlacement/execution.ts").HarnessProcessExecutionProcessInput;
+  readonly control: HarnessProcessResumeOperationInput["transition"]["nextControl"];
+  readonly runStore: Pick<
+    HarnessProcessResumeOperationInput["runStore"],
+    "controlKey" | "supervisor"
+  >;
+  readonly requestPublisher: HarnessProcessResumeOperationInput["runStore"]["currentPublisher"];
   readonly prepared: HarnessProcessResumePreparedFacetInstance;
   readonly publication: Extract<
     Awaited<ReturnType<OwnedProcessRequest["durable"]["publishFreshFacet"]>>,
     { status: "published" }
   >;
-  readonly boundary: ProcessTerminalEvidence;
+  readonly nativeSessionId: string;
+  readonly checkpoint: import("../HarnessRunStore.ts").HarnessRequestCheckpoint;
   readonly placement: ProcessTerminalEvidence["placement"];
 }
+
 export interface ResumeAttempt {
   readonly operation: HarnessProcessResumeOperationInput;
   readonly controller: AbortController;
@@ -59,6 +72,7 @@ export function startResumeAttempt(input: {
   readonly placementNonce: string;
   readonly awaitSourceSettlement: () => Promise<void>;
   readonly onDrainStarted: () => void;
+  readonly readDestructionCheckpoint?: () => Promise<ResumedProcess["checkpoint"]>;
 }) {
   const { operation, owned } = input;
   const completion = Promise.withResolvers<ResumedProcess>();
@@ -105,15 +119,18 @@ export function startResumeAttempt(input: {
       check();
       await input.assertCurrent();
       await save({});
+      const destroyedCheckpoint = await input.readDestructionCheckpoint?.();
       const current = await owned.durable.threadSupervisor.execute({
         type: "read",
         runId: operation.runId,
         control: operation.transition.control,
       });
       if (
-        current.snapshot.lifecycle !== "accepting" ||
+        current.snapshot.lifecycle !==
+          (destroyedCheckpoint === undefined ? "accepting" : "recoverable") ||
         (current.snapshot.admittedStepId !== null &&
           current.snapshot.admittedStepId !== operation.previousStepId) ||
+        (destroyedCheckpoint !== undefined && current.snapshot.admittedStepId !== null) ||
         current.snapshot.nativeSessionId !== owned.process.nativeSessionId ||
         !samePublisher(current.currentPublisher, operation.transition.publisher) ||
         !samePublisher(current.currentPublisher, owned.publisher) ||
@@ -153,50 +170,89 @@ export function startResumeAttempt(input: {
       if (drained.status !== "draining")
         throw new Error("The A drain is pending; process ownership stays reserved.");
       check();
-      await input.awaitSourceSettlement();
+      if (destroyedCheckpoint === undefined) await input.awaitSourceSettlement();
       await input.assertCurrent();
       check();
       if (owned.retained) throw new Error("The previous process still has unresolved ownership.");
-      const key = terminalKey(
-        operation.runId,
-        operation.previousOperationId,
-        operation.previousStepId,
-      );
-      const { durable: _durable, ...source } = owned;
-      const boundary = await readOwnedTerminal(
-        input.context.storage,
-        source,
-        operation.transition.operationId,
-      );
-      if (
-        boundary === undefined ||
-        boundary.version !== 1 ||
-        boundary.runId !== operation.runId ||
-        boundary.processId !== operation.previousProcessId ||
-        boundary.processOperationId !== operation.previousOperationId ||
-        boundary.request.requestId !== operation.previousStepId ||
-        !sameData(boundary.request, operation.runStore.request) ||
-        !sameData(boundary.placement, owned.placement) ||
-        !sameData(boundary.identity, owned.identity) ||
-        !samePublisher(boundary.publisher, operation.transition.publisher)
-      )
-        throw new Error("No exact durable stop evidence belongs to this process transition.");
-      check();
-      const stopped = await settleTerminalEvidence({
-        owned,
-        evidence: boundary,
-        control: operation.transition.nextControl,
-      });
-      const checkpoint = {
-        ...stopped.snapshot.checkpoint,
-        nativeSessionId: stopped.snapshot.nativeSessionId,
-      };
-      const journal = await validateHarnessProcessResumeRunStoreDrain({
-        store: owned.durable.runStore,
-        operation,
-        checkpoint,
-      });
-      await save({ phase: "old-stopped", terminalKey: key });
+      let checkpoint: HarnessProcessResumeCheckpointReference;
+      let committedCheckpoint: ResumedProcess["checkpoint"];
+      let journal: Awaited<ReturnType<typeof validateHarnessProcessResumeRunStoreDrain>>;
+      if (destroyedCheckpoint !== undefined) {
+        const evicted = await owned.durable.threadSupervisor.execute({
+          type: "read",
+          runId: operation.runId,
+          control: operation.transition.nextControl,
+        });
+        if (
+          evicted.snapshot.lifecycle !== "recoverable" ||
+          evicted.snapshot.admittedStepId !== null ||
+          evicted.snapshot.pendingControlSync !== null ||
+          evicted.snapshot.preparedFacet !== null ||
+          evicted.snapshot.nativeSessionId !== owned.process.nativeSessionId ||
+          !samePublisher(evicted.currentPublisher, owned.publisher) ||
+          !sameData(evicted.snapshot.checkpoint, {
+            checkpointId: destroyedCheckpoint.native.id,
+            manifestSha256: destroyedCheckpoint.filesystem.sha256,
+          })
+        )
+          throw new Error(
+            "A did not retain the exact recoverable checkpoint after control transfer.",
+          );
+        checkpoint = {
+          ...evicted.snapshot.checkpoint,
+          nativeSessionId: evicted.snapshot.nativeSessionId,
+        };
+        committedCheckpoint = destroyedCheckpoint;
+        journal = await validateHarnessProcessResumeRunStoreDrain({
+          store: owned.durable.runStore,
+          operation,
+          checkpoint,
+        });
+        // Destruction is not a graceful stop and carries no join receipts.
+        await save({ phase: "old-stopped" });
+      } else {
+        const key = terminalKey(
+          operation.runId,
+          operation.previousOperationId,
+          operation.previousStepId,
+        );
+        const { durable: _durable, ...source } = owned;
+        const boundary = await readOwnedTerminal(
+          input.context.storage,
+          source,
+          operation.transition.operationId,
+        );
+        if (
+          boundary === undefined ||
+          boundary.version !== 1 ||
+          boundary.runId !== operation.runId ||
+          boundary.processId !== operation.previousProcessId ||
+          boundary.processOperationId !== operation.previousOperationId ||
+          boundary.request.requestId !== operation.previousStepId ||
+          !sameData(boundary.request, operation.runStore.request) ||
+          !sameData(boundary.placement, owned.placement) ||
+          !sameData(boundary.identity, owned.identity) ||
+          !samePublisher(boundary.publisher, operation.transition.publisher)
+        )
+          throw new Error("No exact durable stop evidence belongs to this process transition.");
+        check();
+        const stopped = await settleTerminalEvidence({
+          owned,
+          evidence: boundary,
+          control: operation.transition.nextControl,
+        });
+        checkpoint = {
+          ...stopped.snapshot.checkpoint,
+          nativeSessionId: stopped.snapshot.nativeSessionId,
+        };
+        committedCheckpoint = boundary.finish.checkpoint;
+        journal = await validateHarnessProcessResumeRunStoreDrain({
+          store: owned.durable.runStore,
+          operation,
+          checkpoint,
+        });
+        await save({ phase: "old-stopped", terminalKey: key });
+      }
       check();
       const driver = createHarnessProcessResumePlacementDriver({
         operation,
@@ -220,6 +276,7 @@ export function startResumeAttempt(input: {
           retainOwnership() {
             owned.retained = true;
           },
+          ...(destroyedCheckpoint === undefined ? {} : { destroyedSource: checkpoint }),
         },
       });
       const result = await Effect.runPromise(
@@ -227,10 +284,33 @@ export function startResumeAttempt(input: {
       );
       check();
       return {
-        operation,
+        runId: operation.runId,
+        operationId: operation.transition.operationId,
+        process: {
+          ...operation.facet,
+          productBootstrap: operation.productBootstrap,
+          targetPreparedRelease: operation.transition.targetPreparedRelease,
+          operationId: operation.transition.operationId,
+          nativeSessionId: checkpoint.nativeSessionId,
+          checkpointId: checkpoint.checkpointId,
+          manifestRevision: checkpoint.manifestSha256,
+          priorFacetNonce: operation.transition.publisher.facetNonce,
+          expectedFacetGeneration: operation.transition.expectedFacetGeneration,
+        },
+        control: operation.transition.nextControl,
+        runStore: {
+          controlKey: operation.runStore.controlKey,
+          supervisor: operation.runStore.supervisor,
+        },
+        requestPublisher: {
+          generation: result.publication.receipt.toGeneration,
+          facetNonce: result.preparedFacet.identity.incarnationNonce,
+          publisherKey: operation.runStore.nextPublisherKey,
+        },
         prepared: result.preparedFacet,
         publication: result.publication,
-        boundary,
+        nativeSessionId: checkpoint.nativeSessionId,
+        checkpoint: committedCheckpoint,
         placement: { ...owned.placement, shardIncarnationNonce: input.placementNonce },
       };
     } catch (cause) {

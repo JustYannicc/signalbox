@@ -1,25 +1,29 @@
 import type { ProcessSlotLease } from "../../computer/ProcessSlots.ts";
+import {
+  readProcessFence,
+  sameProcessFence,
+  type ProcessFence,
+} from "../processOwnership/fence.ts";
 import type {
   HarnessProcessControllerClaim,
+  HarnessProcessEvictedRecoveryReceipt,
   HarnessProcessFailureCode,
   HarnessProcessFailureRecord,
   HarnessProcessFailureStage,
   HarnessProcessPublicationReceipt,
+  HarnessProcessEvictedRecoveryRequest,
+  HarnessProcessPlacementIdentity,
   HarnessProcessPlacementRecoveryRecord,
+  HarnessProcessPlacementWriter,
 } from "./contracts.ts";
+export type { HarnessProcessPlacementWriter } from "./contracts.ts";
 
 export const OWNER_KEY = "harness-process-placement-owner-v1";
 export const STATE_KEY = "harness-process-slots-v1";
 export const RECOVERY_PREFIX = "harness-process-placement-recovery-v1/";
+export const EVICTED_RECOVERY_PREFIX = "harness-process-placement-evicted-v1/";
 export const WRITER_RELEASE_KEY = "harness-process-placement-writer-release-v1";
 export const WRITER_KEY = "harness-process-placement-writer-v1";
-
-export interface HarnessProcessPlacementWriter {
-  readonly executionOperationId: string;
-  readonly shardIndex: number;
-  readonly shardIncarnationNonce: string;
-  readonly controllerClaim: HarnessProcessControllerClaim;
-}
 
 const failureMessages: Record<HarnessProcessFailureCode, string> = {
   RPC_FAILED: "Facet RPC failed.",
@@ -36,6 +40,74 @@ const failureMessages: Record<HarnessProcessFailureCode, string> = {
 
 export function recoveryKey(loaderId: string): string {
   return `${RECOVERY_PREFIX}${encodeURIComponent(loaderId)}`;
+}
+
+export function evictedRecoveryKey(
+  owner: string,
+  sourceFence: ProcessFence,
+  identity: HarnessProcessPlacementIdentity,
+): string {
+  return [
+    EVICTED_RECOVERY_PREFIX,
+    encodeURIComponent(owner),
+    sourceFence.incarnation,
+    encodeURIComponent(sourceFence.nonce),
+    encodeURIComponent(identity.loaderId),
+    encodeURIComponent(identity.incarnationNonce),
+  ].join("/");
+}
+
+export function parseEvictedRecoveryReceipt(value: unknown): HarnessProcessEvictedRecoveryReceipt {
+  if (!isRecord(value)) throw new Error("Evicted process recovery receipt is invalid.");
+  let sourceFence: ProcessFence;
+  let currentFence: ProcessFence;
+  try {
+    sourceFence = readProcessFence(value.sourceFence);
+    currentFence = readProcessFence(value.currentFence);
+  } catch {
+    throw new Error("Evicted process recovery receipt has an invalid incarnation fence.");
+  }
+  const sourceWriter = value.sourceWriter;
+  const currentWriter = value.currentWriter;
+  const identity = value.identity;
+  const lease = value.lease;
+  const owner = value.owner;
+  const processId = value.processId;
+  if (!nonempty(owner) || !nonempty(processId))
+    throw new Error("Evicted process recovery receipt lacks its owner identity.");
+  if (
+    value.version !== 1 ||
+    (value.state !== "authorized" && value.state !== "completed") ||
+    sourceFence.owner !== owner ||
+    currentFence.owner !== owner ||
+    sourceFence.incarnation >= currentFence.incarnation ||
+    sourceFence.nonce === currentFence.nonce ||
+    !isIdentity(identity) ||
+    identity.shardOwner !== value.owner ||
+    identity.loaderId !== identity.facetKey ||
+    !isLease(lease) ||
+    lease.loaderId !== identity.loaderId ||
+    !isWriter(sourceWriter) ||
+    !isWriter(currentWriter) ||
+    sourceWriter.shardIncarnationNonce !== sourceFence.nonce ||
+    currentWriter.shardIncarnationNonce !== currentFence.nonce ||
+    sourceWriter.executionOperationId !== currentWriter.executionOperationId ||
+    sourceWriter.shardIndex !== currentWriter.shardIndex ||
+    !sameClaim(sourceWriter.controllerClaim, currentWriter.controllerClaim)
+  )
+    throw new Error("Evicted process recovery receipt does not match its source identity.");
+  return {
+    version: 1,
+    owner,
+    sourceFence,
+    currentFence,
+    sourceWriter,
+    currentWriter,
+    processId,
+    identity,
+    lease,
+    state: value.state,
+  };
 }
 
 export function writerIdentityKey(writer: HarnessProcessPlacementWriter): string {
@@ -81,16 +153,62 @@ export function sameWriter(
   );
 }
 
+export function sameProcessSlotLease(left: ProcessSlotLease, right: ProcessSlotLease): boolean {
+  return (
+    left.token === right.token &&
+    left.loaderId === right.loaderId &&
+    left.codeId === right.codeId &&
+    left.residentBytes === right.residentBytes
+  );
+}
+
+export function sameProcessPlacementIdentity(
+  left: HarnessProcessPlacementIdentity,
+  right: HarnessProcessPlacementIdentity,
+): boolean {
+  return (
+    left.shardOwner === right.shardOwner &&
+    left.loaderId === right.loaderId &&
+    left.facetKey === right.facetKey &&
+    left.incarnationNonce === right.incarnationNonce
+  );
+}
+
+export function sameEvictedRecoverySource(
+  receipt: HarnessProcessEvictedRecoveryReceipt,
+  source: Pick<
+    HarnessProcessEvictedRecoveryRequest,
+    "sourceFence" | "sourceWriter" | "processId" | "identity"
+  > & { readonly owner: string },
+): boolean {
+  return (
+    receipt.owner === source.owner &&
+    sameProcessFence(receipt.sourceFence, source.sourceFence) &&
+    receipt.processId === source.processId &&
+    sameWriter(receipt.sourceWriter, source.sourceWriter) &&
+    sameProcessPlacementIdentity(receipt.identity, source.identity)
+  );
+}
+
+export function sameEvictedRecoveryReceipt(
+  left: HarnessProcessEvictedRecoveryReceipt,
+  right: HarnessProcessEvictedRecoveryReceipt,
+): boolean {
+  return (
+    left.owner === right.owner &&
+    sameProcessFence(left.sourceFence, right.sourceFence) &&
+    sameProcessFence(left.currentFence, right.currentFence) &&
+    sameWriter(left.sourceWriter, right.sourceWriter) &&
+    sameWriter(left.currentWriter, right.currentWriter) &&
+    left.processId === right.processId &&
+    sameProcessPlacementIdentity(left.identity, right.identity) &&
+    sameProcessSlotLease(left.lease, right.lease) &&
+    left.state === right.state
+  );
+}
+
 export function assertWriter(value: unknown): asserts value is HarnessProcessPlacementWriter {
-  if (
-    !isRecord(value) ||
-    !nonempty(value.executionOperationId) ||
-    !Number.isSafeInteger(value.shardIndex) ||
-    Number(value.shardIndex) < 0 ||
-    !nonempty(value.shardIncarnationNonce) ||
-    !isClaim(value.controllerClaim)
-  )
-    throw new TypeError("ProcessSlots writer identity is invalid.");
+  if (!isWriter(value)) throw new TypeError("ProcessSlots writer identity is invalid.");
 }
 
 export function parseRecoveryRecord(
@@ -158,6 +276,27 @@ export function parseRecoveryRecord(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isWriter(value: unknown): value is HarnessProcessPlacementWriter {
+  return (
+    isRecord(value) &&
+    nonempty(value.executionOperationId) &&
+    Number.isSafeInteger(value.shardIndex) &&
+    Number(value.shardIndex) >= 0 &&
+    nonempty(value.shardIncarnationNonce) &&
+    isClaim(value.controllerClaim)
+  );
+}
+
+function isIdentity(value: unknown): value is HarnessProcessPlacementIdentity {
+  return (
+    isRecord(value) &&
+    nonempty(value.shardOwner) &&
+    nonempty(value.loaderId) &&
+    nonempty(value.facetKey) &&
+    nonempty(value.incarnationNonce)
+  );
 }
 
 function nonempty(value: unknown): value is string {

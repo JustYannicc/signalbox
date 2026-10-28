@@ -41,6 +41,7 @@ export async function prepareProofWorker(options: {
   const imports = [
     "cloudflare:workers",
     "node:async_hooks",
+    "node:crypto",
     "node:fs",
     ...registry.modules.map(({ moduleName }) => `./${moduleName}`),
   ];
@@ -49,7 +50,9 @@ export async function prepareProofWorker(options: {
     entryPoints: [NodePath.resolve(import.meta.dirname, "worker.ts")],
     outfile: entryPoint,
     bundle: true,
-    platform: "browser",
+    platform: "neutral",
+    conditions: ["workerd", "worker"],
+    mainFields: ["module", "main"],
     format: "esm",
     target: "es2022",
     legalComments: "none",

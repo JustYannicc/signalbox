@@ -31,6 +31,7 @@ const hostSource = (
   wasmHash: string,
   wasmBytes: readonly number[],
 ) => `import {createWorkerLoaderDispatch} from "./src/computer/WorkerLoaderDispatch.ts";
+export * from "./src/FixtureWorkerExports.ts";
 import {createCompiledChildWorkerLoader} from "./src/computer/CompiledChildWorkerLoader.ts";
 const guestSource = ${JSON.stringify(guestSource)};
 const wasmBytes = new Uint8Array(${JSON.stringify(wasmBytes)});
@@ -79,8 +80,10 @@ beforeAll(async () => {
     bundle: true,
     format: "esm",
     platform: "neutral",
+    conditions: ["workerd", "worker"],
+    mainFields: ["module", "main"],
     target: "esnext",
-    external: ["cloudflare:workers"],
+    external: ["cloudflare:workers", "node:crypto"],
     outfile: hostPath,
   });
   const configPath = NodePath.join(directory, "wrangler.jsonc");

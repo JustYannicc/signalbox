@@ -53,6 +53,12 @@ export function createHarnessDurableState(
   const stores = { runId, runStore, filesStore, threadSupervisor };
 
   return {
+    retireEvictedFacet: async (input) => {
+      const command = { ...input, type: "retireEvictedFacet" as const, runId };
+      const supervisor = await threadSupervisor.execute(command);
+      const files = await filesStore.execute(command);
+      return { supervisor, files };
+    },
     runStore,
     filesStore: {
       execute: async (command: HarnessFilesPrivateCommand) => {

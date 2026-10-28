@@ -43,6 +43,7 @@ export default __DEFAULT__;`;
 
 const host = `
 import {codeGenerationBinding} from "./infra/isolateProbe/codeGeneration.ts";
+export * from "./src/FixtureWorkerExports.ts";
 export {CodeGeneration} from "./infra/isolateProbe/codeGeneration.ts";
 import {createNodeGeneratedCodeFetcher,NodeGeneratedCodeCleanupError} from "./src/isolate/NodeGeneratedCode.ts";
 function invoke(fetcher,modules,input,signal,id="proof"){

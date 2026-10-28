@@ -186,3 +186,4 @@ export default {
     return Response.json(await object.finish());
   },
 };
+export * from "../../FixtureWorkerExports.ts";

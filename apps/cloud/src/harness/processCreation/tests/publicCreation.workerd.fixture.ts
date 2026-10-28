@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off cryptoRandomUUID:off - This fixture exercises the real Workerd DO transport.
 import * as Effect from "effect/Effect";
-export { HarnessProcessStoreBinding } from "../../HarnessProcessStoreBinding.ts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { dataForDriver } from "../../adapter/tests/data.ts";
 import { createHarnessDurableState } from "../../HarnessDurableState.ts";
@@ -11,7 +10,6 @@ import type {
   HarnessProcessPlacementIdentity,
 } from "../../HarnessProcessPlacement.ts";
 import { deterministicShardOwner } from "../../HarnessProcessPlacement.ts";
-import { HarnessThreadSupervisorObject } from "../../HarnessThreadSupervisorObject.ts";
 import type { HarnessRequestCheckpoint, HarnessRequestOffer } from "../../HarnessRunStore.ts";
 import type {
   HarnessRunInitialization,
@@ -37,6 +35,7 @@ type CreationWorkerEnv = Omit<
 > &
   Omit<HarnessDurableStateBindings, "HARNESS_RUN_STORE" | "HARNESS_FILES_STORE"> & {
     readonly COLD_CREATION_FACET_SOURCE: string;
+    readonly COLD_CREATION_EVICTION_FACET_SOURCE: string;
     readonly COLD_CREATION_STORE: DurableObjectNamespace<ControlledCreationStore>;
     readonly HARNESS_RUN_STORE: DurableObjectNamespace<ControlledCreationRunStore>;
     readonly HARNESS_FILES_STORE: DurableObjectNamespace<ColdCreationFilesStore>;
@@ -121,13 +120,7 @@ export class ColdCreationShard extends HarnessProcessExecutionShardObject {
   }
 }
 
-export {
-  ColdCreationFilesStore,
-  ControlledCreationRunStore,
-  HarnessThreadSupervisorObject,
-  PlacementStore,
-  CreationStore,
-};
+export { ColdCreationFilesStore, ControlledCreationRunStore, PlacementStore, CreationStore };
 
 interface Setup {
   readonly runId: string;
@@ -141,7 +134,10 @@ function secret(label: string) {
   return `${label}-${crypto.randomUUID()}-${crypto.randomUUID()}`;
 }
 
-async function setup(env: CreationWorkerEnv): Promise<Setup> {
+async function setup(
+  env: CreationWorkerEnv,
+  facetSource = env.COLD_CREATION_FACET_SOURCE,
+): Promise<Setup> {
   const runId = `cold-create-${crypto.randomUUID()}`;
   const ownerPrefix = `cold/${runId}`;
   const placementExecutionId = `placement-${runId}`;
@@ -188,7 +184,7 @@ async function setup(env: CreationWorkerEnv): Promise<Setup> {
       codeId: release.artifact.releaseId,
       residentBytes: 1,
       mainModule: "controlledCreationFacet.mjs",
-      modules: { "controlledCreationFacet.mjs": { js: env.COLD_CREATION_FACET_SOURCE } },
+      modules: { "controlledCreationFacet.mjs": { js: facetSource } },
       entrypoint: "ControlledCreationFacet",
       productBootstrap: {
         provider: "codex",
@@ -429,6 +425,110 @@ async function createdRequest(env: CreationWorkerEnv) {
     placementWriter: await env.PLACEMENT_STORES.getByName(fixture.owner).writerStatus(
       fixture.owner,
     ),
+  };
+}
+
+function checkpointState(files: readonly { readonly path: string; readonly bytes: Uint8Array }[]) {
+  const nativeFile = files.find((file) => file.path === "native.json");
+  const workspaceFile = files.find((file) => file.path === "workspace.txt");
+  if (nativeFile === undefined || workspaceFile === undefined)
+    throw new Error("The creation checkpoint omitted conversation or workspace state.");
+  return {
+    native: JSON.parse(new TextDecoder().decode(nativeFile.bytes)) as {
+      readonly nativeSessionId: string;
+      readonly conversation: readonly string[];
+      readonly userTurns: number;
+    },
+    workspace: new TextDecoder().decode(workspaceFile.bytes),
+  };
+}
+
+async function creationCheckpointEviction(env: CreationWorkerEnv) {
+  const fixture = await setup(env, env.COLD_CREATION_EVICTION_FACET_SOURCE);
+  const shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const capability = env.COLD_CREATION_STORE.getByName("cold-creation");
+  const created = await shard.startFreshProcess(fixture.input);
+  const beforeNonce = await shard.executionIncarnationNonce();
+  const durable = createHarnessDurableState(env, fixture.runId);
+  const beforeSupervisor = await durable.threadSupervisor.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: fixture.input.controllerClaim,
+  });
+  const beforeJournal = await durable.runStore.execute({ type: "read", runId: fixture.runId });
+  const beforeFiles = await durable.filesStore.execute({
+    type: "readCheckpoint",
+    runId: fixture.runId,
+    publisher: beforeSupervisor.currentPublisher,
+    checkpointId: created.checkpoint.native.id,
+  });
+  const beforeState = checkpointState(beforeFiles.files);
+
+  await shard.abortIncarnation().catch(() => undefined);
+  const reconstructed = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  const afterNonce = await reconstructed.executionIncarnationNonce();
+  if (afterNonce === beforeNonce)
+    throw new Error("The public C process owner was not reconstructed after creation.");
+
+  const request = await offer(env, fixture, "creation-eviction");
+  const running = reconstructed.runCreatedProcess(
+    { runId: fixture.runId, operationId: fixture.input.operationId, request: request.offer },
+    `context-${request.requestId}`,
+  );
+  const committed = await commitRequest({
+    env,
+    setup: fixture,
+    shard: reconstructed,
+    request,
+    processOperationId: fixture.input.operationId,
+    executionOperationId: fixture.input.operationId,
+    nativeSessionId: created.nativeSessionId,
+    control: fixture.input.controllerClaim,
+    running,
+  });
+  const executed = await running;
+  const afterSupervisor = await durable.threadSupervisor.execute({
+    type: "read",
+    runId: fixture.runId,
+    control: fixture.input.controllerClaim,
+  });
+  const afterJournal = await durable.runStore.execute({ type: "read", runId: fixture.runId });
+  const afterFiles = await durable.filesStore.execute({
+    type: "readCheckpoint",
+    runId: fixture.runId,
+    publisher: afterSupervisor.currentPublisher,
+    checkpointId: afterSupervisor.snapshot.checkpoint.checkpointId,
+  });
+  const afterState = checkpointState(afterFiles.files);
+  const restoredFacetNonce = executed.processes[0]?.identity?.incarnationNonce;
+  if (restoredFacetNonce === undefined)
+    throw new Error("The first post-eviction request did not return a fresh facet identity.");
+
+  return {
+    kind: "public-c-creation-eviction-transparent-restore",
+    beforeNonce,
+    afterNonce,
+    requestId: request.requestId,
+    restoredFacetNonce,
+    created,
+    before: {
+      threadId: beforeJournal.snapshot.seed.identity.threadId,
+      publisher: beforeSupervisor.currentPublisher,
+      checkpoint: beforeSupervisor.snapshot.checkpoint,
+      state: beforeState,
+    },
+    after: {
+      threadId: afterJournal.snapshot.seed.identity.threadId,
+      publisher: afterSupervisor.currentPublisher,
+      checkpoint: afterSupervisor.snapshot.checkpoint,
+      state: afterState,
+      requestStatus: afterJournal.snapshot.requests?.entries.at(-1)?.status,
+    },
+    committed: committed.status,
+    executed,
+    terminal: await reconstructed.terminalEvidence(),
+    observations: await capability.observations(),
+    loadedRelease: (await capability.loadedReleaseObservation()) ?? null,
   };
 }
 
@@ -940,6 +1040,8 @@ export default {
       switch (new URL(request.url).pathname) {
         case "/fresh":
           return json(await createdRequest(env));
+        case "/creation-eviction":
+          return json(await creationCheckpointEviction(env));
         case "/claim-crash":
           return json(await claimCrash(env));
         case "/bound-crash":
@@ -974,3 +1076,4 @@ export default {
     }
   },
 };
+export * from "../../../FixtureWorkerExports.ts";

@@ -77,6 +77,12 @@ jobs:
       - name: Check unused code
         run: vp run knip:check
 
+      - name: Test fixture Worker export checker
+        run: node --test scripts/check-cloud-fixture-worker-exports.tests.mjs
+
+      - name: Check fixture Worker exports
+        run: node scripts/check-cloud-fixture-worker-exports.mjs
+
       # Fails when an upstream merge brings T3 names the codemod would rename.
       - name: Check user-facing names
         run: node scripts/rebrand/rebrand.ts --check

@@ -1,17 +1,33 @@
 import { DurableObject } from "cloudflare:workers";
-import { assertProcessFenceNonce, claimProcessFence } from "../processOwnership/fence.ts";
+import {
+  assertProcessFenceNonce,
+  claimProcessFence,
+  readProcessFence,
+  receiverFenceKey,
+  sameProcessFence,
+} from "../processOwnership/fence.ts";
 import type { ProcessSlotState } from "../../computer/ProcessSlots.ts";
-import type { HarnessProcessPlacementRecoveryRecord } from "./contracts.ts";
+import type {
+  HarnessProcessEvictedRecoveryReceipt,
+  HarnessProcessEvictedRecoveryRequest,
+  HarnessProcessPlacementRecoveryRecord,
+  HarnessProcessPlacementIdentity,
+} from "./contracts.ts";
 import type { HarnessProcessPlacementStoreClient } from "./durableStore.ts";
 import {
+  evictedRecoveryKey,
   OWNER_KEY,
   RECOVERY_PREFIX,
   STATE_KEY,
   WRITER_KEY,
   WRITER_RELEASE_KEY,
   assertWriter,
+  parseEvictedRecoveryReceipt,
   parseRecoveryRecord,
   recoveryKey,
+  sameClaim,
+  sameProcessPlacementIdentity as sameEvictedIdentity,
+  sameProcessSlotLease as sameLease,
   sameWriter,
   writerIdentityKey,
   type HarnessProcessPlacementWriter,
@@ -213,6 +229,135 @@ export class HarnessProcessPlacementStoreObject
     });
   }
 
+  async authorizeEvictedRecovery(
+    owner: string,
+    request: HarnessProcessEvictedRecoveryRequest,
+  ): Promise<HarnessProcessEvictedRecoveryReceipt> {
+    return this.ctx.storage.transaction(async (transaction) => {
+      await this.#assertOwnerIn(transaction, owner);
+      const receiver = await transaction.get<unknown>(receiverFenceKey(owner));
+      const currentFence = readProcessFence(receiver);
+      assertEvictedRecoveryRequest(owner, request, currentFence);
+
+      const retirementKey = evictedRecoveryKey(owner, request.sourceFence, request.identity);
+      const existingValue = await transaction.get<unknown>(retirementKey);
+      const existing =
+        existingValue === undefined ? undefined : parseEvictedRecoveryReceipt(existingValue);
+      if (existing !== undefined) {
+        assertSameEvictedRecoverySource(existing, owner, request);
+        if (existing.state === "completed") return existing;
+      }
+
+      const writerValue = await transaction.get<unknown>(WRITER_KEY);
+      if (writerValue === undefined)
+        throw new Error("Evicted process recovery has no exact prior writer reservation.");
+      assertWriter(writerValue);
+      const currentWriter = request.currentWriter;
+      if (
+        !sameWriter(writerValue, request.sourceWriter) &&
+        !sameWriter(writerValue, currentWriter) &&
+        (existing === undefined || !sameWriter(writerValue, existing.currentWriter))
+      )
+        throw new Error("Evicted process recovery writer changed outside its exact owner chain.");
+
+      const recoveryRows = await transaction.list<unknown>({ prefix: RECOVERY_PREFIX });
+      if (recoveryRows.size !== 1)
+        throw new Error("Evicted process recovery has additional placement records.");
+      const recoveryValue = await transaction.get<unknown>(recoveryKey(request.identity.loaderId));
+      if (recoveryValue === undefined)
+        throw new Error("Evicted process recovery has no exact placement record.");
+      const recovery = parseRecoveryRecord(recoveryValue, owner);
+      assertEvictedRecoveryRecord(recovery, request);
+
+      const state = await transaction.get<ProcessSlotState>(STATE_KEY);
+      if (state === undefined)
+        throw new Error("Evicted process recovery has no ProcessSlots state.");
+      const leaseHeld = assertExactEvictedLease(state, owner, recovery);
+      if (existing === undefined && !leaseHeld)
+        throw new Error("Evicted process recovery has no held exact placement lease.");
+
+      const receipt = parseEvictedRecoveryReceipt({
+        version: 1,
+        owner,
+        sourceFence: request.sourceFence,
+        currentFence,
+        sourceWriter: request.sourceWriter,
+        currentWriter,
+        processId: request.processId,
+        identity: request.identity,
+        lease: recovery.lease,
+        state: "authorized",
+      });
+      if (existing !== undefined && !sameLease(existing.lease, receipt.lease))
+        throw new Error("Evicted process recovery lease changed after authorization.");
+      await transaction.put(retirementKey, receipt);
+      return receipt;
+    });
+  }
+
+  async readEvictedRecovery(
+    owner: string,
+    sourceFence: HarnessProcessEvictedRecoveryRequest["sourceFence"],
+    identity: HarnessProcessPlacementIdentity,
+  ): Promise<HarnessProcessEvictedRecoveryReceipt | undefined> {
+    return this.ctx.storage.transaction(async (transaction) => {
+      await this.#assertOwnerIn(transaction, owner);
+      const value = await transaction.get<unknown>(
+        evictedRecoveryKey(owner, sourceFence, identity),
+      );
+      if (value === undefined) return undefined;
+      const receipt = parseEvictedRecoveryReceipt(value);
+      if (
+        receipt.owner !== owner ||
+        !sameProcessFence(receipt.sourceFence, sourceFence) ||
+        !sameEvictedIdentity(receipt.identity, identity)
+      )
+        throw new Error("Evicted process recovery receipt belongs to another source identity.");
+      return receipt;
+    });
+  }
+
+  async completeEvictedRecovery(
+    owner: string,
+    supplied: HarnessProcessEvictedRecoveryReceipt,
+  ): Promise<void> {
+    await this.ctx.storage.transaction(async (transaction) => {
+      await this.#assertCurrentWriterIn(transaction, owner, supplied.currentWriter);
+      const currentFence = readProcessFence(
+        await transaction.get<unknown>(receiverFenceKey(owner)),
+      );
+      assertEvictedRecoveryRequest(owner, supplied, currentFence);
+      const retirementKey = evictedRecoveryKey(owner, supplied.sourceFence, supplied.identity);
+      const saved = parseEvictedRecoveryReceipt(await transaction.get<unknown>(retirementKey));
+      assertSameEvictedRecoveryReceipt(saved, owner, supplied);
+      if (saved.state === "completed") return;
+
+      const recoveryKeyValue = recoveryKey(supplied.identity.loaderId);
+      const recoveryValue = await transaction.get<unknown>(recoveryKeyValue);
+      if (recoveryValue === undefined)
+        throw new Error("Evicted process recovery record disappeared before retirement.");
+      const recovery = parseRecoveryRecord(recoveryValue, owner);
+      assertEvictedRecoveryRecord(recovery, supplied);
+      if (!sameLease(recovery.lease, saved.lease))
+        throw new Error("Evicted process recovery lease changed before retirement.");
+
+      const state = await transaction.get<ProcessSlotState>(STATE_KEY);
+      if (
+        state === undefined ||
+        state.owner !== owner ||
+        state.slots.some((slot) => slot.holder !== undefined) ||
+        state.slots.some((slot) => slot.invalidating !== undefined)
+      )
+        throw new Error("Evicted process recovery lease has not been retired by ProcessSlots.");
+      const recoveryRows = await transaction.list<unknown>({ prefix: RECOVERY_PREFIX });
+      if (recoveryRows.size !== 1 || !recoveryRows.has(recoveryKey(supplied.identity.loaderId)))
+        throw new Error("Evicted process recovery has additional placement records.");
+
+      await transaction.delete(recoveryKeyValue);
+      await transaction.put(retirementKey, { ...saved, state: "completed" });
+    });
+  }
+
   async #assertOwnerIn(
     transaction: DurableObjectTransaction,
     owner: string,
@@ -241,6 +386,127 @@ export class HarnessProcessPlacementStoreObject
     if (!sameWriter(current, writer))
       throw new Error("Process-placement mutation came from a stale writer.");
   }
+}
+
+function assertEvictedRecoveryRequest(
+  owner: string,
+  request: HarnessProcessEvictedRecoveryRequest,
+  receiver: ReturnType<typeof readProcessFence>,
+): void {
+  const sourceFence = readProcessFence(request.sourceFence);
+  const currentFence = readProcessFence(request.currentFence);
+  assertWriter(request.sourceWriter);
+  assertWriter(request.currentWriter);
+  if (
+    owner !== sourceFence.owner ||
+    owner !== currentFence.owner ||
+    !sameProcessFence(currentFence, receiver) ||
+    sourceFence.incarnation >= currentFence.incarnation ||
+    sourceFence.nonce === currentFence.nonce ||
+    request.sourceWriter.shardIncarnationNonce !== sourceFence.nonce ||
+    request.currentWriter.shardIncarnationNonce !== currentFence.nonce ||
+    request.sourceWriter.executionOperationId !== request.currentWriter.executionOperationId ||
+    request.sourceWriter.shardIndex !== request.currentWriter.shardIndex ||
+    !sameClaim(request.sourceWriter.controllerClaim, request.currentWriter.controllerClaim) ||
+    request.identity.shardOwner !== owner ||
+    !request.processId ||
+    !request.identity.loaderId ||
+    request.identity.loaderId !== request.identity.facetKey ||
+    !request.identity.incarnationNonce
+  )
+    throw new Error("Evicted process recovery does not match the current parent fence.");
+}
+
+function assertSameEvictedRecoverySource(
+  saved: HarnessProcessEvictedRecoveryReceipt,
+  owner: string,
+  request: HarnessProcessEvictedRecoveryRequest,
+): void {
+  assertEvictedRecoveryRequest(owner, request, request.currentFence);
+  if (
+    saved.owner !== owner ||
+    !sameProcessFence(saved.sourceFence, request.sourceFence) ||
+    saved.processId !== request.processId ||
+    !sameEvictedIdentity(saved.identity, request.identity) ||
+    !sameWriter(saved.sourceWriter, request.sourceWriter) ||
+    !sameWriterLineage(saved.currentWriter, request.currentWriter) ||
+    request.currentFence.incarnation < saved.currentFence.incarnation ||
+    (request.currentFence.incarnation === saved.currentFence.incarnation &&
+      !sameProcessFence(saved.currentFence, request.currentFence))
+  )
+    throw new Error("Evicted process recovery conflicts with its durable retirement receipt.");
+}
+
+function assertSameEvictedRecoveryReceipt(
+  saved: HarnessProcessEvictedRecoveryReceipt,
+  owner: string,
+  supplied: HarnessProcessEvictedRecoveryReceipt,
+): void {
+  assertSameEvictedRecoverySource(saved, owner, supplied);
+  if (
+    !sameProcessFence(saved.currentFence, supplied.currentFence) ||
+    !sameWriter(saved.currentWriter, supplied.currentWriter) ||
+    !sameLease(saved.lease, supplied.lease) ||
+    saved.state !== supplied.state
+  )
+    throw new Error("Evicted process recovery receipt changed before completion.");
+}
+
+function sameWriterLineage(
+  left: HarnessProcessEvictedRecoveryRequest["sourceWriter"],
+  right: HarnessProcessEvictedRecoveryRequest["currentWriter"],
+): boolean {
+  return (
+    left.executionOperationId === right.executionOperationId &&
+    left.shardIndex === right.shardIndex &&
+    sameClaim(left.controllerClaim, right.controllerClaim)
+  );
+}
+
+function assertEvictedRecoveryRecord(
+  record: HarnessProcessPlacementRecoveryRecord,
+  request: HarnessProcessEvictedRecoveryRequest,
+): void {
+  if (
+    record.processId !== request.processId ||
+    record.shardOwner !== request.identity.shardOwner ||
+    record.loaderId !== request.identity.loaderId ||
+    record.facetKey !== request.identity.facetKey ||
+    record.identityState !== "observed" ||
+    record.incarnationNonce !== request.identity.incarnationNonce ||
+    !sameClaim(record.controllerClaim, request.sourceWriter.controllerClaim) ||
+    record.terminalFailure !== undefined ||
+    (record.state !== "active" && record.state !== "parked") ||
+    record.publicationState !== "confirmed" ||
+    record.publicationReceipt?.status !== "confirmed" ||
+    record.publicationReceipt.preparedFacetNonce !== request.identity.incarnationNonce ||
+    (record.invocationMayHaveStarted !== false &&
+      !(record.invocationMayHaveStarted === true && record.invocationReply === "received"))
+  )
+    throw new Error("Evicted process recovery does not identify one idle published facet.");
+}
+
+function assertExactEvictedLease(
+  state: ProcessSlotState,
+  owner: string,
+  record: HarnessProcessPlacementRecoveryRecord,
+): boolean {
+  if (state.version !== 1 || state.owner !== owner || !Array.isArray(state.slots))
+    throw new Error("Evicted process recovery has malformed ProcessSlots state.");
+  const holders = state.slots.filter((slot) => slot.holder !== undefined);
+  if (holders.length === 0) return false;
+  if (holders.length !== 1) throw new Error("Evicted process recovery has additional held leases.");
+  const holder = holders[0]!;
+  const leaseHolder = holder.holder;
+  if (
+    holder.invalidating !== undefined ||
+    leaseHolder === undefined ||
+    leaseHolder.token !== record.lease.token ||
+    holder.codeId !== record.lease.codeId ||
+    leaseHolder.residentBytes !== record.lease.residentBytes
+  )
+    throw new Error("Evicted process recovery lease differs from its ProcessSlots holder.");
+  return true;
 }
 
 function assertInvocationTransition(

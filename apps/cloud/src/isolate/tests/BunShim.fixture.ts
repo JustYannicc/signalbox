@@ -42,3 +42,4 @@ export default {
     return env.PROOF.get(env.PROOF.idFromName("bun-shim-proof")).fetch(request);
   },
 };
+export * from "../../FixtureWorkerExports.ts";

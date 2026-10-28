@@ -1,4 +1,13 @@
-import { HarnessProcessExecutionEntrypoint } from "../../HarnessProcessExecutionEntrypoint.ts";
+import {
+  publicEvictionMatrixProof,
+  publicEvictionPoints,
+  type PublicEvictionPoint,
+} from "./publicEvictionMatrixProof.fixture.ts";
+import {
+  publicResumeAfterEvictionProof,
+  publicResumeAfterEvictionCases,
+  type PublicResumeAfterEvictionCase,
+} from "./publicResumeAfterEviction.fixture.ts";
 export { ProofProcessStoreBinding as HarnessProcessStoreBinding } from "./publicResumeStores.fixture.ts";
 import { ProofShard, ProofPlacementStore } from "./publicResumeShard.fixture.ts";
 import { ProofFilesStore, ProofRunStore, ProofSupervisor } from "./publicResumeStores.fixture.ts";
@@ -17,18 +26,23 @@ import {
   invocationFailureProof,
 } from "./publicResumeFailure.fixture.ts";
 import type { ProofEnv } from "./publicResumeSetup.fixture.ts";
-export {
-  HarnessProcessExecutionEntrypoint,
-  ProofShard,
-  ProofPlacementStore,
-  ProofFilesStore,
-  ProofRunStore,
-  ProofSupervisor,
-};
+export { ProofShard, ProofPlacementStore, ProofFilesStore, ProofRunStore, ProofSupervisor };
 export default {
   async fetch(request: Request, env: ProofEnv) {
     try {
       const path = new URL(request.url).pathname;
+      if (path.startsWith("/eviction/")) {
+        const point = path.slice("/eviction/".length) as PublicEvictionPoint;
+        if (!publicEvictionPoints.includes(point))
+          return new Response("Unknown eviction point", { status: 404 });
+        return Response.json(await publicEvictionMatrixProof(env, point));
+      }
+      if (path.startsWith("/eviction-resume/")) {
+        const scenario = path.slice("/eviction-resume/".length) as PublicResumeAfterEvictionCase;
+        if (!publicResumeAfterEvictionCases.includes(scenario))
+          return new Response("Unknown eviction-resume scenario", { status: 404 });
+        return Response.json(await publicResumeAfterEvictionProof(env, scenario));
+      }
       if (path === "/warm-drain") return Response.json(await publicWarmDrain(env));
       if (path === "/retained-idle/cycle") return Response.json(await publicIdleCycle(env));
       if (path === "/retained-idle/failure-invocation")
@@ -73,3 +87,4 @@ export default {
     }
   },
 };
+export * from "../../../FixtureWorkerExports.ts";

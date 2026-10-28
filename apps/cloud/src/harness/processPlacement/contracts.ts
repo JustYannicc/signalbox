@@ -7,8 +7,16 @@ import type {
   ProcessSlotsOptions,
   ProcessSlotStore,
 } from "../../computer/ProcessSlots.ts";
+import type { ProcessFence } from "../processOwnership/fence.ts";
 import type { HarnessRequestPublisher } from "../HarnessRunStore.ts";
 import type { HarnessRequestCheckpoint } from "../HarnessRunStore.ts";
+
+export interface HarnessProcessPlacementWriter {
+  readonly executionOperationId: string;
+  readonly shardIndex: number;
+  readonly shardIncarnationNonce: string;
+  readonly controllerClaim: HarnessProcessControllerClaim;
+}
 
 export type HarnessProcessPlacementContext = "durable-object" | "worker-request";
 
@@ -17,6 +25,24 @@ export interface HarnessProcessPlacementIdentity {
   readonly loaderId: string;
   readonly facetKey: string;
   readonly incarnationNonce: string;
+}
+
+/** A strictly newer parent fence authorizes retirement of this exact old placement lease. */
+export interface HarnessProcessEvictedRecoveryRequest {
+  readonly sourceFence: ProcessFence;
+  readonly currentFence: ProcessFence;
+  readonly sourceWriter: HarnessProcessPlacementWriter;
+  readonly currentWriter: HarnessProcessPlacementWriter;
+  readonly processId: string;
+  readonly identity: HarnessProcessPlacementIdentity;
+}
+
+/** Durable proof that the old parent incarnation's exact lease was retired. */
+export interface HarnessProcessEvictedRecoveryReceipt extends HarnessProcessEvictedRecoveryRequest {
+  readonly version: 1;
+  readonly owner: string;
+  readonly lease: ProcessSlotLease;
+  readonly state: "authorized" | "completed";
 }
 
 export type HarnessProcessFacetLocator = Omit<HarnessProcessPlacementIdentity, "incarnationNonce">;

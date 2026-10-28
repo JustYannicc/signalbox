@@ -4,7 +4,12 @@ import { HarnessThreadSupervisorError } from "./HarnessThreadSupervisor.ts";
 import { createHarnessThreadSupervisor } from "./HarnessThreadSupervisor.ts";
 import { reserveHarnessThreadSupervisorReconciliation } from "./durableState/supervisor/service.ts";
 import type { HarnessThreadSupervisorReconciliationReservation } from "./durableState/supervisor/service.ts";
-import { claimProcessDatabaseFence, fencedProcessDatabase } from "./processOwnership/fence.ts";
+import {
+  claimProcessDatabaseFence,
+  fencedProcessDatabase,
+  readProcessFence,
+  sameProcessFence,
+} from "./processOwnership/fence.ts";
 
 export class HarnessThreadSupervisorObject extends DurableObject {
   claimProcessFence(fence: unknown) {
@@ -14,6 +19,19 @@ export class HarnessThreadSupervisorObject extends DurableObject {
   execute(command: unknown, fence?: unknown) {
     const runId = this.ctx.id.name;
     if (!runId) throw new HarnessThreadSupervisorError("INVALID");
+    if (
+      typeof command === "object" &&
+      command !== null &&
+      "type" in command &&
+      command.type === "retireEvictedFacet"
+    ) {
+      if (
+        !("currentFence" in command) ||
+        fence === undefined ||
+        !sameProcessFence(readProcessFence(command.currentFence), readProcessFence(fence))
+      )
+        throw new HarnessThreadSupervisorError("INVALID");
+    }
     return Effect.runPromise(
       createHarnessThreadSupervisor(
         fencedProcessDatabase(

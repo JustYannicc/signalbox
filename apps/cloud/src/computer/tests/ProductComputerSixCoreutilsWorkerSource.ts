@@ -30,6 +30,7 @@ export function productComputerSixCoreutilsWorkerSource(input: {
 
   return `${moduleImports}
 import { DurableObject } from "cloudflare:workers";
+export * from ${JSON.stringify(source("src/FixtureWorkerExports.ts"))};
 import { createFacetSqliteStorage } from ${JSON.stringify(source("src/kernel/FacetSqliteStorage.ts"))};
 import { KernelForwardingUnavailable } from ${JSON.stringify(source("src/kernel/KernelCommandForwarder.ts"))};
 import { KernelFileSystem } from ${JSON.stringify(source("src/kernel/KernelFileSystem.ts"))};
