@@ -47,8 +47,6 @@ export const CHILD_PROGRAM_PATHS = Object.freeze({
   jq: "/usr/bin/jq",
 });
 
-export const CHILD_SED_EXECUTABLES = Object.freeze(["/bin/sed", "/usr/bin/sed"] as const);
-
 // The multicall binding uses ugrep bytes without replacing the CLI file in the namespace.
 export const CHILD_UGREP_EXECUTABLES = Object.freeze([
   "/bin/ugrep",

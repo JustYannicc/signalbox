@@ -13,26 +13,19 @@ import {
   type GnuCommandQualification,
 } from "./gnu/CommandQualification.ts";
 import { qualifySed } from "./gnu/SedCommand.ts";
+import { standardChildProgramName } from "./ChildProgramPaths.ts";
 export type {
   GnuCommandMachineReason,
   GnuCommandQualification,
 } from "./gnu/CommandQualification.ts";
-
-const TARGETS = new Map<string, "sed" | "grep">([
-  ["sed", "sed"],
-  ["/bin/sed", "sed"],
-  ["/usr/bin/sed", "sed"],
-  ["grep", "grep"],
-  ["/bin/grep", "grep"],
-]);
 
 /** Qualify only the narrow sed/grep argument subset supported by this classifier. */
 export function qualifyGnuCommand(
   command: KernelCommand,
   filesystem?: Pick<KernelFileSystem, "stat" | "lstat" | "access" | "posixCredentials">,
 ): GnuCommandQualification {
-  const program = TARGETS.get(command.executable);
-  if (program === undefined) return QUALIFIED;
+  const program = standardChildProgramName(command.executable);
+  if (program !== "sed" && program !== "grep") return QUALIFIED;
 
   const environmentIssue = unqualifiedEnvironment(command.env, program);
   if (environmentIssue !== undefined) return machine("unqualified-option", environmentIssue);

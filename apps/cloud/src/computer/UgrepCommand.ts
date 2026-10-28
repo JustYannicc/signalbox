@@ -1,15 +1,17 @@
 import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
+import { childProgramName, standardChildProgramName } from "./ChildProgramPaths.ts";
 import { CHILD_UGREP_EXECUTABLES } from "./ChildProgramSet.ts";
 import { machine, QUALIFIED, type GnuCommandQualification } from "./gnu/CommandQualification.ts";
 
 /** Subprocess, terminal, compression and file-search modes remain machine work. */
 export function qualifyUgrepCommand(command: KernelCommand): GnuCommandQualification | undefined {
-  if (
-    command.executable !== "ugrep" &&
-    !CHILD_UGREP_EXECUTABLES.some((path) => path === command.executable)
-  )
-    return undefined;
-  if (command.executable === "/usr/local/bin/claude" && command.argv[0] !== "ugrep")
+  const program =
+    standardChildProgramName(command.executable) ??
+    (CHILD_UGREP_EXECUTABLES.some((path) => path === command.executable)
+      ? childProgramName(command.executable)
+      : undefined);
+  if (program !== "ugrep" && program !== "claude") return undefined;
+  if (program === "claude" && command.argv[0] !== "ugrep")
     return machine("unqualified-option", "Only the ugrep multicall entry is an isolate program");
 
   let pattern = false;

@@ -7,7 +7,7 @@ import type {
 } from "../../kernel/KernelCommandForwarder.ts";
 import { KernelProgramHost, type KernelInlineProgram } from "../../kernel/KernelProgramHost.ts";
 import { ComputerEscalationTable } from "../EscalationTable.ts";
-import { COMPUTER_ISOLATE_POLICY } from "../EscalationPolicy.ts";
+import { createComputerIsolatePolicy } from "../EscalationPolicy.ts";
 import { createComputerCommands, type ComputerCommandOptions } from "../ComputerCommands.ts";
 import { createTestFilesystem } from "./helpers/filesystem.ts";
 
@@ -292,7 +292,7 @@ describe("createComputerCommands", () => {
         localRuns++;
         return 0;
       },
-      { escalation: new ComputerEscalationTable([], COMPUTER_ISOLATE_POLICY) },
+      { escalation: new ComputerEscalationTable([], createComputerIsolatePolicy(["sed"])) },
     );
     context.filesystem.mkdir("/workspace");
     const command = {

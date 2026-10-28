@@ -1,5 +1,8 @@
 import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
-import { KernelProgramHost } from "../../src/kernel/KernelProgramHost.ts";
+import {
+  KernelProgramHost,
+  type KernelProgramBinding,
+} from "../../src/kernel/KernelProgramHost.ts";
 import type { KernelCommandForwarder } from "../../src/kernel/KernelCommandForwarder.ts";
 import { KernelForwardingUnavailable } from "../../src/kernel/KernelCommandForwarder.ts";
 import {
@@ -12,7 +15,7 @@ import {
 import { ChildWorkerLifetimes } from "../../src/computer/ChildWorkerLifetimes.ts";
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
 import { createComputerProgramAdmission } from "../../src/computer/ComputerProgramAdmission.ts";
-import { COMPUTER_ISOLATE_POLICY } from "../../src/computer/EscalationPolicy.ts";
+import { createComputerIsolatePolicy } from "../../src/computer/EscalationPolicy.ts";
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
 import { qualifyGnuCommand } from "../../src/computer/GnuCommandCompatibility.ts";
 import {
@@ -57,14 +60,29 @@ export function createProofAdmittedCommands(
   };
   let machine: KernelCommandForwarder | undefined;
   const pair = (
-    escalation: ComputerEscalationTable,
+    escalation: (bindings: ReadonlyMap<string, KernelProgramBinding>) => ComputerEscalationTable,
     forward: KernelCommandForwarder,
     processes?: KernelProcessTable,
   ) => {
     const counts = { rootRequests: 0, rootClaims: 0, descendantClaims: 0, forwards: 0 };
     const roots = new WeakSet<object>();
+    const registry = new KernelProgramRegistry();
+    const catalog = createSeededChildProgramCatalog({
+      ...options,
+      registry,
+      capacity: observedCapacity,
+      hostname: "proof-host",
+      lifetimes,
+      reservationFor: (context, implementation) => {
+        const reservation = admission.reservationFor(context, implementation);
+        if (context.admission !== undefined && roots.has(context.admission)) counts.rootClaims++;
+        else counts.descendantClaims++;
+        return reservation;
+      },
+    });
+    const selectedEscalation = escalation(catalog.bindings);
     const admission = createComputerProgramAdmission({
-      escalation,
+      escalation: selectedEscalation,
       capacity: observedCapacity,
       machine: {
         spawn: (command, signal) => {
@@ -74,20 +92,6 @@ export function createProofAdmittedCommands(
       },
     });
     try {
-      const registry = new KernelProgramRegistry();
-      const catalog = createSeededChildProgramCatalog({
-        ...options,
-        registry,
-        capacity: observedCapacity,
-        hostname: "proof-host",
-        lifetimes,
-        reservationFor: (context, implementation) => {
-          const reservation = admission.reservationFor(context, implementation);
-          if (context.admission !== undefined && roots.has(context.admission)) counts.rootClaims++;
-          else counts.descendantClaims++;
-          return reservation;
-        },
-      });
       const host = new KernelProgramHost({
         registry,
         wakes: options.wakes,
@@ -105,17 +109,18 @@ export function createProofAdmittedCommands(
           return decision;
         },
       });
-      return { host, admission, snapshot: () => ({ ...counts }) };
+      return { host, admission, escalation: selectedEscalation, snapshot: () => ({ ...counts }) };
     } catch (error) {
       admission.close();
       throw error;
     }
   };
-  const escalation = new ComputerEscalationTable(
-    [...nestedProofEscalation().rules, { id: "proof-normal-cat", executable: "/bin/cat" }],
-    COMPUTER_ISOLATE_POLICY,
-    qualifyGnuCommand,
-  );
+  const escalation = (bindings: ReadonlyMap<string, KernelProgramBinding>) =>
+    new ComputerEscalationTable(
+      [...nestedProofEscalation().rules, { id: "proof-normal-cat", executable: "/bin/cat" }],
+      createComputerIsolatePolicy(bindings.keys()),
+      qualifyGnuCommand,
+    );
   const normal = pair(escalation, {
     spawn: (command, signal) => {
       if (!machine) throw new Error("Nested proof machine is not bound");
@@ -125,7 +130,7 @@ export function createProofAdmittedCommands(
   let local: ReturnType<typeof pair>;
   try {
     local = pair(
-      new ComputerEscalationTable(),
+      () => new ComputerEscalationTable(),
       {
         async spawn() {
           throw new KernelForwardingUnavailable("POLICY_NOT_READY", "Proof command is local-only");
@@ -146,7 +151,7 @@ export function createProofAdmittedCommands(
     commands,
     host: normal.host,
     isolateHost: local.host,
-    escalation,
+    escalation: normal.escalation,
     bindNestedMachine(forwarder: KernelCommandForwarder) {
       if (machine) throw new Error("Nested proof machine was already bound");
       machine = forwarder;

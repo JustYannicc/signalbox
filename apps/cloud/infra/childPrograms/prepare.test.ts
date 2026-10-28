@@ -1,3 +1,4 @@
+import { childProgramPaths } from "../../src/computer/ChildProgramPaths.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -7,7 +8,6 @@ import type { ChildWorkerCode } from "../../src/computer/ChildWorkerProgram.ts";
 import {
   CHILD_COREUTILS_COMMANDS,
   CHILD_PROGRAM_PATHS,
-  CHILD_SED_EXECUTABLES,
 } from "../../src/computer/ChildProgramSet.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../src/kernel/KernelBashProgram.ts";
 import {
@@ -119,7 +119,10 @@ describe("full child program preparation", () => {
   });
 
   it("describes every executable path and rejects incomplete seeds", () => {
-    const paths = [...new Set([...Object.values(CHILD_PROGRAM_PATHS), ...CHILD_SED_EXECUTABLES])];
+    const paths = Object.values(CHILD_PROGRAM_PATHS).flatMap((path) => {
+      const [, bin, usrBin] = childProgramPaths(path);
+      return [bin, usrBin];
+    });
     const files = paths.map((path, index) => ({
       path,
       bytes: encoder.encode(path),
@@ -130,7 +133,7 @@ describe("full child program preparation", () => {
     expect(Object.keys(catalog)).toEqual(paths);
     expect(catalog["/bin/sed"]).toEqual({
       bytes: encoder.encode("/bin/sed").byteLength,
-      sha256: String(Object.values(CHILD_PROGRAM_PATHS).indexOf("/bin/sed")).padStart(64, "0"),
+      sha256: String(paths.indexOf("/bin/sed")).padStart(64, "0"),
       mode: 0o755,
     });
     expect(() => createChildProgramExecutableCatalog(files.slice(1))).toThrow(

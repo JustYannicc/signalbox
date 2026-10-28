@@ -86,7 +86,7 @@ export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}
     wakes: kernel.context.wakes,
     capacity,
     loader,
-    programs: programCodes(),
+    programs: commandProgramCodes(),
     hostname: "command-gateway-test",
     machine,
     ...(options.orderedMachineRules === undefined
@@ -204,7 +204,7 @@ export function emptyChild(
   };
 }
 
-function programCodes(): CommandProgramCodes {
+export function commandProgramCodes(): CommandProgramCodes {
   const code = (name: string) => ({
     mainModule: `${name}.js`,
     modules: { [`${name}.js`]: "export default class {}" },

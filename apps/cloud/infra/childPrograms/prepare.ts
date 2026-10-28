@@ -2,9 +2,9 @@ import {
   CHILD_BUSYBOX_APPLETS,
   CHILD_PRODUCT_BUSYBOX_APPLETS,
   CHILD_PROGRAM_PATHS,
-  CHILD_SED_EXECUTABLES,
   type ChildCoreutilsCommand,
 } from "../../src/computer/ChildProgramSet.ts";
+import { childProgramPaths } from "../../src/computer/ChildProgramPaths.ts";
 import {
   prepareMeasuredPrograms,
   readPinnedProgram,
@@ -64,8 +64,8 @@ export interface FullChildProgramSources extends ChildProgramSources {
 }
 
 export type ChildProgramExecutablePath =
-  | (typeof CHILD_PROGRAM_PATHS)[keyof typeof CHILD_PROGRAM_PATHS]
-  | (typeof CHILD_SED_EXECUTABLES)[number];
+  | `/bin/${keyof typeof CHILD_PROGRAM_PATHS}`
+  | `/usr/bin/${keyof typeof CHILD_PROGRAM_PATHS}`;
 export type LegacyChildProgramExecutablePath = "/bin/bash" | "/bin/cat" | "/bin/rg";
 
 export interface ChildProgramExecutableFile {
@@ -249,7 +249,7 @@ export async function prepareChildPrograms(
       ugrep: programInventory(busyboxGraph),
     }),
   });
-  const commandExecutableFiles = Object.freeze([
+  const canonicalFiles = [
     executableFile("/bin/bash", bashArtifact),
     executableFile("/bin/cat", busyboxArtifact),
     executableFile("/bin/rg", ripgrepArtifact),
@@ -261,10 +261,19 @@ export async function prepareChildPrograms(
       executableFile(CHILD_PROGRAM_PATHS[applet], productBusyboxArtifact),
     ),
     ...measured.files,
-    ...CHILD_SED_EXECUTABLES.map((path) => executableFile(path, sedArtifact)),
+    executableFile(CHILD_PROGRAM_PATHS.sed, sedArtifact),
     executableFile(CHILD_PROGRAM_PATHS.jq, jqArtifact),
     executableFile(CHILD_PROGRAM_PATHS.ugrep, ugrepArtifact),
-  ]);
+  ];
+  const commandExecutableFiles = Object.freeze(
+    canonicalFiles.flatMap((file) => {
+      const [, bin, usrBin] = childProgramPaths(file.path);
+      return [
+        { ...file, path: bin },
+        { ...file, path: usrBin },
+      ];
+    }),
+  );
   const commandExecutableCatalog = createChildProgramExecutableCatalog(commandExecutableFiles);
   const executableFiles = Object.freeze(
     commandExecutableFiles.filter(
@@ -292,10 +301,9 @@ export async function prepareChildPrograms(
 export function createChildProgramExecutableCatalog(
   files: readonly ChildProgramExecutableFile[],
 ): ChildProgramExecutableCatalog {
-  const expectedPaths = new Set<ChildProgramExecutablePath>([
-    ...Object.values(CHILD_PROGRAM_PATHS),
-    ...CHILD_SED_EXECUTABLES,
-  ]);
+  const expectedPaths = new Set(
+    Object.values(CHILD_PROGRAM_PATHS).flatMap((path) => childProgramPaths(path).slice(1)),
+  );
   if (
     files.length !== expectedPaths.size ||
     files.some((file) => !expectedPaths.delete(file.path)) ||

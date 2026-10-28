@@ -88,6 +88,22 @@ const withCatalog = (
 ): ComputerProgramResolverRequest => ({ ...request, catalog });
 
 describe("ComputerProgramResolver", () => {
+  it("resolves a newly registered catalog program without a separate name list", async () => {
+    const binding = {} as KernelProgramBinding;
+    const fixture = resolverFor({
+      "/usr/bin/new-tool": { type: "file", executable: true, lower: true },
+    });
+    const request = command("new-tool", { path: "/usr/bin", filesystem: fixture.filesystem });
+    const result = await fixture.resolver.resolve(
+      withCatalog(request, new Map([["/bin/new-tool", binding]])),
+    );
+    expect(result.command.executable).toBe("/usr/bin/new-tool");
+    expect(result.catalog).toEqual({
+      command: { ...request.command, executable: "/bin/new-tool" },
+      binding,
+    });
+  });
+
   it("checks PATH in order and returns the selected lower-machine catalog alias", async () => {
     const fixture = resolverFor({
       "/workspace/bin/bash": { type: "file", executable: true, lower: true },

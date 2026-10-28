@@ -1,10 +1,8 @@
 import { KernelProgramExecAdmissionError } from "../kernel/KernelAsyncProgram.ts";
 import type { KernelProgramAdmissionRequest } from "../kernel/KernelProgramAdmission.ts";
 import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
-import { CHILD_PROGRAM_PATHS } from "./ChildProgramSet.ts";
+import { childProgramName } from "./ChildProgramPaths.ts";
 import type { ComputerProgramResolution } from "./ComputerProgramAdmission.ts";
-
-const catalogPaths = new Map<string, string>(Object.entries(CHILD_PROGRAM_PATHS));
 
 export interface ComputerProgramResolverOptions {
   readonly path: readonly string[];
@@ -57,13 +55,14 @@ export class ComputerProgramResolver {
         throw error;
       }
       const resolved = { ...command, executable: path };
-      const name = path.slice(path.lastIndexOf("/") + 1);
-      const catalog = catalogPaths.get(name);
-      const binding = catalog === undefined ? undefined : request.catalog.get(catalog);
-      if (lower && catalog !== undefined && binding !== undefined) {
+      const name = childProgramName(path);
+      const catalog = [...request.catalog].find(
+        ([executable]) => childProgramName(executable) === name,
+      );
+      if (lower && catalog !== undefined) {
         return {
           command: resolved,
-          catalog: { command: { ...resolved, executable: catalog }, binding },
+          catalog: { command: { ...resolved, executable: catalog[0] }, binding: catalog[1] },
         };
       }
       if (!lower) {
