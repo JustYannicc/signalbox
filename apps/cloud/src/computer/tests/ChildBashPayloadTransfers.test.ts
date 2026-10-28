@@ -140,39 +140,24 @@ describe.skipIf(!available)("pinned GNU Bash child payload transfers", () => {
         const stdout = captureText(command.stdout);
         const stderr = captureText(command.stderr);
         const completion = Promise.all([stdout.settled, stderr.settled, command.exited]);
-        let finished: Awaited<typeof completion> | undefined;
-        if (jobs === 160) {
-          finished = await completion;
-          commandSettled = true;
-        } else {
-          const result = await within(completion, 15_000);
-          commandSettled = result.kind === "completed";
-          const message =
-            result.kind === "rejected"
-              ? `Bash rejected: ${String(result.error)}`
-              : "Bash did not finish";
-          const output = `Bash stderr: ${stderr.text()}; stdout: ${stdout.text()}`;
-          expect(result.kind, `${message}; ${output}; ${gatewayTrace(gateway)}`).toBe("completed");
-          if (result.kind === "completed") finished = result.value;
-        }
-        if (finished !== undefined) {
-          const [, , status] = finished;
-          const stdoutText = stdout.text();
-          const stderrText = stderr.text();
-          expect(
-            status,
-            `Bash stderr: ${stderrText}; stdout: ${stdoutText}; ${gatewayTrace(gateway)}`,
-          ).toEqual(exited());
-          expect(stderrText).toContain("forked\n");
-          expect(stdoutText).toBe("done\n");
-          const rootPid = gateway.forkTrace.find(
-            (event) => event.event === "worker-start" && event.command === script,
-          )?.pid;
-          const reaps = typeof rootPid === "number" ? (reapsByParent.get(rootPid) ?? []) : [];
-          const message = `root reaps: ${JSON.stringify(reaps)}; ${gatewayTrace(gateway)}`;
-          expect(reaps, message).toHaveLength(jobs + 1);
-          expect(new Set(reaps).size, message).toBe(jobs + 1);
-        }
+        const finished = await completion;
+        commandSettled = true;
+        const [, , status] = finished;
+        const stdoutText = stdout.text();
+        const stderrText = stderr.text();
+        expect(
+          status,
+          `Bash stderr: ${stderrText}; stdout: ${stdoutText}; ${gatewayTrace(gateway)}`,
+        ).toEqual(exited());
+        expect(stderrText).toContain("forked\n");
+        expect(stdoutText).toBe("done\n");
+        const rootPid = gateway.forkTrace.find(
+          (event) => event.event === "worker-start" && event.command === script,
+        )?.pid;
+        const reaps = typeof rootPid === "number" ? (reapsByParent.get(rootPid) ?? []) : [];
+        const message = `root reaps: ${JSON.stringify(reaps)}; ${gatewayTrace(gateway)}`;
+        expect(reaps, message).toHaveLength(jobs + 1);
+        expect(new Set(reaps).size, message).toBe(jobs + 1);
       }, close);
     },
     30_000,
