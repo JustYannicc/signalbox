@@ -1,7 +1,5 @@
-export { HarnessProcessStoreBinding } from "../../../HarnessProcessStoreBinding.ts";
 import { ProductFixtureFilesStore as HarnessFilesStoreObject } from "./productStores.workerd.fixture.ts";
 import { ProductFixtureRunStore } from "./productStores.workerd.fixture.ts";
-import { HarnessThreadSupervisorObject } from "../../../HarnessThreadSupervisorObject.ts";
 import { HarnessProcessExecutionShardObject } from "../../../HarnessProcessExecutionShardObject.ts";
 import { HarnessProcessPlacementStoreObject } from "../../../HarnessProcessPlacementStoreObject.ts";
 import type { HarnessProcessExecutionHooks } from "../../../HarnessProcessPlacement.ts";
@@ -29,7 +27,6 @@ import { memoryNativeModule } from "./memoryNative.workerd.fixture.ts";
 export {
   HarnessFilesStoreObject,
   ProductFixtureRunStore,
-  HarnessThreadSupervisorObject,
   ProductFixtureCapability,
   ProductFixtureExecutor,
 };
@@ -475,3 +472,4 @@ export default {
     }
   },
 };
+export * from "../../../../FixtureWorkerExports.ts";

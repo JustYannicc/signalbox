@@ -91,8 +91,9 @@ function snapshotFacetCode(
 }
 
 /** Copies the serializable request before any await and rejects extra authority fields. */
-export function snapshotHarnessProcessResumeOperation(
+function snapshotOperation(
   value: unknown,
+  allowPublisherAlias: boolean,
 ): HarnessProcessResumeOperationInput | undefined {
   try {
     if (typeof value !== "object" || value === null) return undefined;
@@ -136,9 +137,10 @@ export function snapshotHarnessProcessResumeOperation(
       runStore.transitionOperationId !== transition.operationId ||
       runStore.request.requestId !== supplied.previousStepId ||
       facet.processId !== supplied.previousProcessId ||
-      runStore.currentPublisher.generation !== transition.expectedFacetGeneration ||
-      runStore.currentPublisher.generation !== transition.publisher.generation ||
-      runStore.currentPublisher.facetNonce !== transition.publisher.facetNonce
+      (!allowPublisherAlias &&
+        (runStore.currentPublisher.generation !== transition.expectedFacetGeneration ||
+          runStore.currentPublisher.generation !== transition.publisher.generation ||
+          runStore.currentPublisher.facetNonce !== transition.publisher.facetNonce))
     )
       return undefined;
 
@@ -155,6 +157,15 @@ export function snapshotHarnessProcessResumeOperation(
   } catch {
     return undefined;
   }
+}
+
+export function snapshotHarnessProcessResumeOperation(value: unknown) {
+  return snapshotOperation(value, false);
+}
+
+/** Only the owner may authorize a public publisher alias before the strict source validation. */
+export function snapshotHarnessProcessResumeCallerOperation(value: unknown) {
+  return snapshotOperation(value, true);
 }
 
 /** A duplicate operation is equal by fields, independent of record insertion order. */

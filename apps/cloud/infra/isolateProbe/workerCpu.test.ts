@@ -17,7 +17,7 @@ beforeAll(async () => {
   await NodeFSP.writeFile(
     NodePath.join(directory, "entry.js"),
     `import handler, { ProbeSession as Base } from "./worker.js";
-export { CodeGeneration, ChildWorkerDispatch } from "./worker.js";
+export * from "./worker.js";
 export class ProbeSession extends Base {
   constructor(ctx, env) {
     super(ctx, {...env, LOADER: {

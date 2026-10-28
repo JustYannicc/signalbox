@@ -9,7 +9,7 @@ import type { HarnessProcessResumeOperationInput } from "../processResume/contra
 import type { OwnedProcessRequest } from "../processResume/executionState.ts";
 import type { ProcessTerminalEvidence } from "../processResume/terminalContract.ts";
 import { sameData } from "../processResume/checkpointContract.ts";
-import { fenceHistoryKey, ProcessFence, sameProcessFence } from "./fence.ts";
+import { fenceHistoryKey, ProcessFence, readProcessFence, sameProcessFence } from "./fence.ts";
 import type { ProcessIncarnation } from "./incarnation.ts";
 
 const journal = HarnessProcessResumeRunStoreBindingSchema.fields;
@@ -154,6 +154,16 @@ export async function reserveOwnedResume(
   storage: DurableObjectStorage,
   operation: HarnessProcessResumeOperationInput,
   incarnation: ProcessIncarnation,
+  eviction?: {
+    readonly receiptKey: string;
+    readonly receipt: unknown;
+    readonly boundaryKey: string;
+    readonly boundary: unknown;
+    readonly expectedRecord: DurableOwnedRequest;
+    readonly sourceFence: ProcessFence;
+    readonly observedBy: ProcessFence;
+    readonly reservationFence: ProcessFence;
+  },
 ) {
   const fence = await incarnation.assertCurrent();
   const key = ownedRequestKey(
@@ -188,12 +198,54 @@ export async function reserveOwnedResume(
       !sameProcessFence(history, record.fence)
     )
       throw new Error("Resume does not identify the exact durable owned process and request.");
+    const evictionMatches = async () => {
+      if (eviction === undefined) return false;
+      const receipt = eviction.receipt as {
+        readonly version?: unknown;
+        readonly phase?: unknown;
+        readonly source?: { readonly phase?: unknown; readonly fence?: unknown };
+        readonly sourceFence?: unknown;
+        readonly observedBy?: unknown;
+      };
+      const source = receipt.source;
+      const boundary = eviction.boundary as { readonly phase?: unknown };
+      if (source === undefined) return false;
+      return (
+        eviction.receiptKey ===
+          `harness-process-evicted-stop/v1/${encodeURIComponent(operation.runId)}/${encodeURIComponent(operation.previousStepId)}` &&
+        eviction.boundaryKey ===
+          `harness-process-boundary/v1/${encodeURIComponent(operation.runId)}` &&
+        eviction.reservationFence.owner === fence.owner &&
+        sameProcessFence(eviction.reservationFence, fence) &&
+        sameProcessFence(eviction.sourceFence, record.fence) &&
+        eviction.sourceFence.owner === eviction.observedBy.owner &&
+        eviction.sourceFence.incarnation < eviction.observedBy.incarnation &&
+        eviction.observedBy.incarnation <= fence.incarnation &&
+        eviction.sourceFence.nonce !== eviction.observedBy.nonce &&
+        receipt.version === 1 &&
+        receipt.phase === "stopped" &&
+        source.phase === "idle" &&
+        sameProcessFence(readProcessFence(source.fence), eviction.sourceFence) &&
+        sameProcessFence(readProcessFence(receipt.sourceFence), eviction.sourceFence) &&
+        sameProcessFence(readProcessFence(receipt.observedBy), eviction.observedBy) &&
+        boundary.phase === "stopped" &&
+        sameData({ ...receipt.source, phase: "stopped" }, eviction.boundary) &&
+        sameData(await transaction.get(eviction.receiptKey), eviction.receipt) &&
+        sameData(await transaction.get(eviction.boundaryKey), eviction.boundary) &&
+        sameData(record, eviction.expectedRecord)
+      );
+    };
+    const matchesEviction = eviction === undefined ? false : await evictionMatches();
     if (record.resumeClaim !== undefined)
       throw new Error("The source step already has a resume reservation; replay is forbidden.");
-    if (record.terminalKey === undefined && !sameProcessFence(record.fence, fence))
-      throw new Error(
-        "The source process has no durable terminal handoff; explicit repair is required.",
-      );
+    if (record.terminalKey === undefined && !sameProcessFence(record.fence, fence)) {
+      if (!matchesEviction)
+        throw new Error(
+          "The source process has no durable terminal handoff or exact parent-destruction receipt; explicit repair is required.",
+        );
+    }
+    if (eviction !== undefined && !matchesEviction)
+      throw new Error("The parent-destruction reservation no longer matches its durable receipt.");
     if (record.terminalKey !== undefined)
       assertTerminal(record, await transaction.get<ProcessTerminalEvidence>(record.terminalKey));
     await transaction.put(key, {

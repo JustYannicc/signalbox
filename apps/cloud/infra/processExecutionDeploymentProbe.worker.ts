@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
+export * from "../src/FixtureWorkerExports.ts";
 import type {
   HarnessProcessExecutionShardInput,
   HarnessProcessExecutionShardResult,

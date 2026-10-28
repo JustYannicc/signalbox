@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as Esbuild from "esbuild";
 import { PROBE_SOURCE } from "./facetSource.ts";
 import { JSPI_WASM } from "./wasmFixture.ts";
 import {
@@ -45,6 +46,24 @@ export const prepare = async (options: PrepareOptions = {}) => {
     new URL("childWorkerLimits.js", dir),
     NodeModule.stripTypeScriptTypes(childWorkerLimits, { mode: "strip" }),
   );
+  // The probe root is copied as separate modules, so its shared production exports need one bundled companion.
+  const fixtureWorkerExports = await Esbuild.build({
+    entryPoints: [
+      NodeURL.fileURLToPath(new URL("../../src/FixtureWorkerExports.ts", import.meta.url)),
+    ],
+    bundle: true,
+    format: "esm",
+    platform: "neutral",
+    conditions: ["workerd", "worker"],
+    mainFields: ["module", "main"],
+    target: "es2023",
+    external: ["cloudflare:workers", "node:*"],
+    write: false,
+  });
+  const fixtureWorkerExportsSource = fixtureWorkerExports.outputFiles[0]?.text;
+  if (fixtureWorkerExportsSource === undefined)
+    throw new Error("Fixture Worker exports bundle is empty.");
+  await NodeFSP.writeFile(new URL("FixtureWorkerExports.js", dir), fixtureWorkerExportsSource);
   // The same prebuilt module graph is uploaded locally and remotely, including the require(ESM) target.
   for (const name of [
     "worker",

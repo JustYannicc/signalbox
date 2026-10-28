@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { ProcessFence } from "../../processOwnership/fence.ts";
 import {
   capability,
   digest,
@@ -119,6 +120,18 @@ export const HarnessThreadSupervisorCommand = Schema.Union([
     invocationRpcJoined: Schema.Boolean,
     fetchJoined: Schema.Boolean,
     callbackPortsJoined: Schema.Boolean,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("retireEvictedFacet"),
+    runId: id,
+    control: Control,
+    publisher: Publisher,
+    expectedGeneration: positive,
+    checkpoint: Checkpoint,
+    nativeSessionId: id,
+    sourceFence: ProcessFence,
+    currentFence: ProcessFence,
+    operationId: id,
   }),
   Schema.Struct({
     type: Schema.Literal("prepareFreshFacet"),

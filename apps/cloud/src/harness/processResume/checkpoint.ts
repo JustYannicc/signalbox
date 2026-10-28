@@ -1,4 +1,7 @@
-import type { HarnessDurableStateCheckpointResult } from "../HarnessDurableState.ts";
+import type {
+  HarnessDurableState,
+  HarnessDurableStateCheckpointResult,
+} from "../HarnessDurableState.ts";
 import type { OwnedProcessRequest } from "./executionState.ts";
 import {
   snapshotCheckpointInput,
@@ -7,28 +10,36 @@ import {
 } from "./checkpointContract.ts";
 import { readCompletedJournal } from "./completedJournal.ts";
 import { sameControl, samePublisher, sameReference } from "./authority.ts";
+import {
+  completionKey,
+  readCommittedCompletion,
+  type CompletionRecord,
+} from "./recoveredCompletion.ts";
 
-interface CompletionRecord {
-  readonly input: HarnessProcessCheckpointInput;
-  readonly phase: "intent" | "committed" | "retained";
-  readonly result?: HarnessDurableStateCheckpointResult;
-  readonly failure?: "commit-unknown" | "receipt-mismatch" | "persistence-unknown";
-}
 interface CompletionAttempt {
   readonly input: HarnessProcessCheckpointInput;
   readonly result: Promise<HarnessDurableStateCheckpointResult>;
+  mode: "pending" | "live" | "durable";
 }
-export const completionKey = (runId: string, processOperationId: string, requestId: string) =>
-  `harness-process-completion/v1/${encodeURIComponent(runId)}/${encodeURIComponent(processOperationId)}/${encodeURIComponent(requestId)}`;
+export interface ProcessCheckpointOwnerOptions {
+  readonly durableForRun?: (runId: string) => HarnessDurableState;
+  readonly assertCurrent?: () => Promise<void>;
+}
 
 /** One commit attempt owns its exact file bytes until a real composed receipt or explicit repair. */
 export class ProcessCheckpointOwner {
   readonly #attempts = new Map<string, CompletionAttempt>();
   readonly storage: DurableObjectStorage;
   readonly active: () => OwnedProcessRequest | undefined;
-  constructor(storage: DurableObjectStorage, active: () => OwnedProcessRequest | undefined) {
+  readonly #options: ProcessCheckpointOwnerOptions;
+  constructor(
+    storage: DurableObjectStorage,
+    active: () => OwnedProcessRequest | undefined,
+    options: ProcessCheckpointOwnerOptions = {},
+  ) {
     this.storage = storage;
     this.active = active;
+    this.#options = options;
   }
 
   commit(supplied: unknown): Promise<HarnessDurableStateCheckpointResult> {
@@ -40,31 +51,87 @@ export class ProcessCheckpointOwner {
         return Promise.reject(
           new Error("A duplicate completion changed its checkpoint bytes or authority."),
         );
-      return existing.result.then(() => this.#readKnown(input));
-    }
-    const owned = this.active();
-    if (
-      owned === undefined ||
-      owned.retained ||
-      input.runId !== owned.runId ||
-      input.processId !== owned.process.processId ||
-      input.executionOperationId !== owned.placement.executionOperationId ||
-      input.processOperationId !== owned.process.operationId ||
-      input.requestId !== owned.request.requestId ||
-      input.nativeSessionId !== owned.process.nativeSessionId ||
-      !sameControl(input.control, owned.control) ||
-      !samePublisher(input.publisher, owned.publisher) ||
-      input.checkpoint.parentCheckpointId !== owned.parentCheckpoint.native.id
-    )
-      return Promise.reject(
-        new Error(
-          "Process completion does not identify the current owned request and parent checkpoint.",
-        ),
+      return existing.result.then(() =>
+        existing.mode === "durable"
+          ? this.#readCommittedWithoutLiveOwner(input, key)
+          : this.#readKnown(input),
       );
+    }
     const result = Promise.withResolvers<HarnessDurableStateCheckpointResult>();
-    this.#attempts.set(key, { input, result: result.promise });
-    void this.#commit(input, owned).then(result.resolve, result.reject);
+    const attempt: CompletionAttempt = {
+      input,
+      result: result.promise,
+      mode: "pending",
+    };
+    // Reserve before the durable preflight so same-incarnation callers still join one attempt.
+    this.#attempts.set(key, attempt);
+    void this.#begin(input, key, attempt).then(result.resolve, (cause) => {
+      if (attempt.mode === "pending" && this.#attempts.get(key) === attempt)
+        this.#attempts.delete(key);
+      result.reject(cause);
+    });
     return result.promise;
+  }
+
+  async #begin(
+    input: HarnessProcessCheckpointInput,
+    key: string,
+    attempt: CompletionAttempt,
+  ): Promise<HarnessDurableStateCheckpointResult> {
+    await this.#options.assertCurrent?.();
+    const prior = await this.storage.get<CompletionRecord>(key);
+    if (prior !== undefined) {
+      if (!sameData(prior.input, input))
+        throw new Error("Persisted completion belongs to another payload.");
+      if (prior.phase !== "committed" || prior.result?.status !== "committed")
+        throw new Error("The completion attempt needs explicit repair; it cannot be replayed.");
+      const owned = this.active();
+      if (owned !== undefined && this.#matchesOwner(input, owned)) {
+        attempt.mode = "live";
+        return await this.#readKnown(input);
+      }
+      attempt.mode = "durable";
+      return await this.#readCommittedWithoutLiveOwner(input, key);
+    }
+
+    const owned = this.active();
+    if (owned === undefined || !this.#matchesOwner(input, owned))
+      throw new Error(
+        "Process completion does not identify the current owned request and parent checkpoint.",
+      );
+    attempt.mode = "live";
+    return await this.#commit(input, owned);
+  }
+
+  #matchesOwner(input: HarnessProcessCheckpointInput, owned: OwnedProcessRequest) {
+    return (
+      !owned.retained &&
+      input.runId === owned.runId &&
+      input.processId === owned.process.processId &&
+      input.executionOperationId === owned.placement.executionOperationId &&
+      input.processOperationId === owned.process.operationId &&
+      input.requestId === owned.request.requestId &&
+      input.nativeSessionId === owned.process.nativeSessionId &&
+      sameControl(input.control, owned.control) &&
+      samePublisher(input.publisher, owned.publisher) &&
+      input.checkpoint.parentCheckpointId === owned.parentCheckpoint.native.id
+    );
+  }
+
+  async #readCommittedWithoutLiveOwner(
+    input: HarnessProcessCheckpointInput,
+    key: string,
+  ): Promise<HarnessDurableStateCheckpointResult> {
+    const { durableForRun, assertCurrent } = this.#options;
+    if (durableForRun === undefined || assertCurrent === undefined)
+      throw new Error("A reconstructed completion requires current durable authorities.");
+    return await readCommittedCompletion({
+      storage: this.storage,
+      durableForRun,
+      assertCurrent,
+      input,
+      key,
+    });
   }
 
   async #commit(input: HarnessProcessCheckpointInput, owned: OwnedProcessRequest) {
@@ -72,6 +139,7 @@ export class ProcessCheckpointOwner {
     let intentWritten = false;
     let result: HarnessDurableStateCheckpointResult | undefined;
     try {
+      await this.#options.assertCurrent?.();
       const prior = await this.storage.get<CompletionRecord>(key);
       if (prior !== undefined) {
         if (!sameData(prior.input, input))
@@ -158,6 +226,7 @@ export class ProcessCheckpointOwner {
   }
 
   async #readKnown(input: HarnessProcessCheckpointInput) {
+    await this.#options.assertCurrent?.();
     const record = await this.storage.get<CompletionRecord>(
       completionKey(input.runId, input.processOperationId, input.requestId),
     );
@@ -168,12 +237,7 @@ export class ProcessCheckpointOwner {
     )
       throw new Error("The completion attempt needs explicit repair; it cannot be replayed.");
     const owned = this.active();
-    if (
-      owned === undefined ||
-      owned.runId !== input.runId ||
-      owned.request.requestId !== input.requestId ||
-      owned.retained
-    )
+    if (owned === undefined || !this.#matchesOwner(input, owned))
       throw new Error("The completed request no longer has live ownership here.");
     const current = await owned.durable.threadSupervisor.execute({
       type: "read",
@@ -188,6 +252,7 @@ export class ProcessCheckpointOwner {
       current.snapshot.checkpoint.manifestSha256 !== journal.finish.checkpoint.filesystem.sha256
     )
       throw new Error("The cached completion no longer has current A and journal authority.");
+    await this.#options.assertCurrent?.();
     return record.result;
   }
 }

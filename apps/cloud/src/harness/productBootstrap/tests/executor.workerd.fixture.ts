@@ -103,3 +103,4 @@ export default {
     return Response.json({ roundTrip, result, remote: await service.observation() });
   },
 };
+export * from "../../../FixtureWorkerExports.ts";

@@ -2,7 +2,6 @@ import { DurableObject } from "cloudflare:workers";
 import { HarnessProcessExecutionEntrypoint } from "../HarnessProcessExecutionEntrypoint.ts";
 import { HarnessProcessExecutionShardObject } from "../HarnessProcessExecutionShardObject.ts";
 import { HarnessProcessPlacementStoreObject } from "../HarnessProcessPlacementStoreObject.ts";
-import { HarnessRunStoreObject } from "../HarnessRunStoreObject.ts";
 import {
   deterministicShardOwner,
   type HarnessProcessControllerClaim,
@@ -35,14 +34,7 @@ import {
 import { runInvocationReadmissionProof } from "./invocationReadmission.workerd.fixture.ts";
 import { TestHarnessProcessRunStoreRequestFacetObject } from "./runStoreFacet.workerd.fixture.ts";
 
-export {
-  HarnessProcessExecutionEntrypoint,
-  HarnessProcessExecutionShardObject,
-  HarnessProcessPlacementStoreObject,
-  HarnessRunStoreObject,
-  TestHarnessProcessRequestFacetObject,
-  TestHarnessProcessRunStoreRequestFacetObject,
-};
+export { TestHarnessProcessRequestFacetObject, TestHarnessProcessRunStoreRequestFacetObject };
 
 const controllerClaim: HarnessProcessControllerClaim = {
   ownerId: "fixture-owner",
@@ -955,3 +947,4 @@ function samePublicationReceipt(
     left.checkpoint.manifestSha256 === right.checkpoint.manifestSha256
   );
 }
+export * from "../../FixtureWorkerExports.ts";
