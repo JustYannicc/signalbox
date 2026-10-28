@@ -1,7 +1,10 @@
 import { CODEX_DRIVER_KIND } from "@signalbox/provider-codex/defaults";
 import type { CodexAdapterV2Options } from "@signalbox/provider-codex/runtime";
 import { makeCodexAdapterV2 } from "@signalbox/provider-codex/runtime";
-import type { CodexAppServerClientFactoryShape } from "@signalbox/provider-codex/clientFactory";
+import type {
+  CodexAppServerClientFactoryShape,
+  CodexAppServerSessionClient,
+} from "@signalbox/provider-codex/clientFactory";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
@@ -15,10 +18,11 @@ import {
 import { createCodexFetch } from "./CodexNetwork.ts";
 import { makeCodexProcessClient } from "./CodexTransport.ts";
 import type { HarnessProcessObserver } from "./HarnessProcessLifetime.ts";
+import { materializeFreshCodexCheckpoint } from "./codex/freshCheckpoint.ts";
 
 export interface CodexIsolateAdapterOptions {
   readonly process: Omit<CodexHarnessProcessOptions, "signal">;
-  readonly adapter: Omit<CodexAdapterV2Options, "clientFactory" | "environment">;
+  readonly adapter: Omit<CodexAdapterV2Options, "clientFactory" | "environment" | "snapshotMode">;
   readonly mcpSessions: McpProviderSessions.McpProviderSessions["Service"];
   readonly modelOrigins: ReadonlyArray<string>;
   readonly onStderr?: (bytes: Uint8Array) => Effect.Effect<void>;
@@ -79,6 +83,7 @@ export function makeCodexIsolateAdapter(options: CodexIsolateAdapterOptions): {
                 cause,
               }),
           });
+          let nativeClient: CodexAppServerSessionClient | undefined;
           const clientFactory: CodexAppServerClientFactoryShape = {
             open: (session) =>
               Effect.gen(function* () {
@@ -109,6 +114,7 @@ export function makeCodexIsolateAdapter(options: CodexIsolateAdapterOptions): {
                     }),
                 });
                 const client = yield* makeCodexProcessClient(process, options.onStderr);
+                nativeClient = client;
                 yield* Effect.tryPromise({
                   try: () => process.ready,
                   catch: (cause) =>
@@ -123,12 +129,53 @@ export function makeCodexIsolateAdapter(options: CodexIsolateAdapterOptions): {
           };
           const adapter = yield* makeCodexAdapterV2({
             ...options.adapter,
+            snapshotMode: "metadata",
             environment: options.process.environment,
             clientFactory,
           }).pipe(
             Effect.provideService(McpProviderSessions.McpProviderSessions, options.mcpSessions),
           );
-          return yield* adapter.openSession(input.session);
+          const runtime = yield* adapter.openSession(input.session);
+          const creation = input.creation;
+          if (creation === undefined) return runtime;
+          let prepared = false;
+          return {
+            ...runtime,
+            get providerSession() {
+              return runtime.providerSession;
+            },
+            ensureThread: (threadInput) =>
+              Effect.gen(function* () {
+                if (
+                  !prepared &&
+                  (threadInput.existingProviderThread?.id !== creation.providerThread.id ||
+                    threadInput.existingProviderThread.nativeThreadRef !== null)
+                )
+                  return yield* new ProviderAdapter.ProviderAdapterEnsureThreadError({
+                    driver: CODEX_DRIVER_KIND,
+                    threadId: input.session.threadId,
+                    cause: "Fresh checkpoint preparation requires the unbound creation thread.",
+                  });
+                const thread = yield* runtime.ensureThread(threadInput);
+                if (prepared) return thread;
+                if (nativeClient === undefined)
+                  return yield* new ProviderAdapter.ProviderAdapterEnsureThreadError({
+                    driver: CODEX_DRIVER_KIND,
+                    threadId: input.session.threadId,
+                    cause: "Fresh checkpoint preparation has no native client.",
+                  });
+                yield* materializeFreshCodexCheckpoint({
+                  runtime,
+                  client: nativeClient.raw,
+                  providerThread: thread,
+                  threadId: input.session.threadId,
+                  files: input.computer.files,
+                  codexHome: options.process.bootstrap.codex_home,
+                });
+                prepared = true;
+                return thread;
+              }),
+          } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
         });
         return yield* open.pipe(
           Scope.provide(sessionScope),

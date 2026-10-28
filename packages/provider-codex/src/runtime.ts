@@ -200,6 +200,8 @@ import {
 } from "./threadConfig.ts";
 
 export interface CodexAdapterV2Options {
+  /** Filesystem checkpoints own native history and only need app-server metadata. */
+  readonly snapshotMode?: "full" | "metadata";
   /** Optional one-input recovery admission, scoped to the binding's logical run and input. */
   readonly nativeRecovery?: CodexNativeRecoveryBinding;
   /** Undefined uses the app MCP session; an explicit map replaces that fallback. */
@@ -6107,7 +6109,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);
               const response = yield* ensureInitialized.pipe(
-                Effect.andThen(client.request("thread/read", { threadId, includeTurns: true })),
+                Effect.andThen(
+                  client.request("thread/read", {
+                    threadId,
+                    includeTurns: adapterOptions.snapshotMode !== "metadata",
+                  }),
+                ),
               );
               return {
                 providerThread: {

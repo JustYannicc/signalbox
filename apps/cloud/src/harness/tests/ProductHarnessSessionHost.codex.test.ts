@@ -18,6 +18,7 @@ import {
   session as codexSession,
 } from "../codex/tests/preinitializedFixture.ts";
 import { productOptions } from "./productHost/codex.ts";
+import { createNodeFs } from "../../isolate/NodeFs.ts";
 
 const launch = vi.hoisted(() =>
   vi.fn<(input: CodexHarnessProcessOptions) => Promise<CodexHarnessProcess>>(),
@@ -71,10 +72,26 @@ const productTurn = (
 const openColdProductSession = (
   product: Effect.Success<ReturnType<typeof productOptions>>,
   bootAttemptId: string,
+  rejectTurnReads = false,
 ) =>
   Effect.gen(function* () {
     const data = yield* dataForDriver(ProviderDriverKind.make("codex"));
-    const peer = processFixture();
+    const path = "/separate/config/codex/sessions/preinitialized.jsonl";
+    const peer = processFixture(undefined, {
+      path,
+      rejectTurnReads,
+      archive: () => {
+        const fs = createNodeFs(product.host.computer.files).fs;
+        fs.mkdirSync("/separate/config/codex/sessions", { recursive: true });
+        fs.writeFileSync(
+          path,
+          JSON.stringify({
+            type: "session_meta",
+            payload: { id: "preinitialized-native-thread" },
+          }) + "\n",
+        );
+      },
+    });
     yield* Effect.addFinalizer(() => Effect.promise(() => peer.process.abort()));
     (yield* Effect.promise(() => peer.output)).enqueue(new TextEncoder().encode(readyLine));
     launch.mockImplementation(async () => peer.process);
@@ -297,13 +314,55 @@ it.effect("uses the cold native Codex thread for the first fresh-grant turn", ()
     expect(peer.sent.filter((method) => method === "thread/start")).toHaveLength(1);
     expect(peer.sent.filter((method) => method === "thread/resume")).toHaveLength(1);
     expect(peer.sent.filter((method) => method === "turn/start")).toHaveLength(1);
-    expect(peer.sent).toEqual(["thread/start", "thread/read", "thread/resume", "turn/start"]);
+    expect(peer.sent).toEqual([
+      "thread/start",
+      "thread/read",
+      "thread/archive",
+      "thread/unarchive",
+      "thread/read",
+      "thread/read",
+      "thread/resume",
+      "turn/start",
+    ]);
     expect(
       peer.requests.find((request) => request.method === "thread/resume")?.params,
     ).toMatchObject({ threadId: initial.snapshot.providerThread.nativeThreadRef?.nativeId });
     expect(peer.requests.find((request) => request.method === "turn/start")?.params).toMatchObject({
       threadId: initial.snapshot.providerThread.nativeThreadRef?.nativeId,
     });
+  }).pipe(Effect.scoped, Effect.provide(services)),
+);
+
+it.effect("exports the native rollout when paginated turn reads are unsupported", () =>
+  Effect.gen(function* () {
+    launch.mockReset();
+    const release = yield* Effect.promise(() => codexFixture());
+    const product = yield* productOptions(release.options);
+    const { peer, session } = yield* openColdProductSession(
+      product,
+      "product-codex-checkpoint-without-turns",
+      true,
+    );
+    yield* session.retireCheckpointAccess;
+    const checkpoint = yield* session.export();
+    const nativeId = checkpoint.snapshot.providerThread.nativeThreadRef?.nativeId;
+    expect(nativeId).toBe("preinitialized-native-thread");
+    expect(checkpoint.snapshot.providerTurns).toEqual([]);
+    expect(checkpoint.snapshot.messages).toEqual([]);
+    const reads = peer.requests.filter((request) => request.method === "thread/read");
+    expect(reads.length).toBeGreaterThan(0);
+    for (const request of reads)
+      expect(request.params).toEqual({ threadId: nativeId, includeTurns: false });
+    expect(
+      peer.requests
+        .filter((request) => ["thread/archive", "thread/unarchive"].includes(request.method))
+        .map((request) => request.params),
+    ).toEqual([{ threadId: nativeId }, { threadId: nativeId }]);
+    const fs = createNodeFs(product.host.computer.files).fs;
+    expect(
+      fs.readFileSync("/separate/config/codex/sessions/preinitialized.jsonl", "utf8"),
+    ).toContain(`"id":"${nativeId}"`);
+    expect(peer.sent).not.toContain("turn/start");
   }).pipe(Effect.scoped, Effect.provide(services)),
 );
 
