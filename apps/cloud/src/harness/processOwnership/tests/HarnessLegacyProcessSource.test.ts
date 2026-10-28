@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { HarnessRunStoreError, readHarnessRunStoreProcessSource } from "../../HarnessRunStore.ts";
-import { assertNoLegacyProcessResumeForSource, readLegacyProcessSource } from "../legacySource.ts";
+import {
+  assertNoLegacyProcessResumeForSource,
+  readLegacyProcessSource,
+} from "../../HarnessLegacyProcessSource.ts";
 import {
   createLegacyAdoptionFixture,
   createLegacyRunStoreFixture,

@@ -3,11 +3,11 @@ import * as NodeSqlite from "node:sqlite";
 import * as Effect from "effect/Effect";
 import { createHarnessRunStore, type HarnessRunDatabase } from "../../../HarnessRunStore.ts";
 import { readHarnessRunStoreProcessSource } from "../../../HarnessRunStore.ts";
-import { terminalKey } from "../../../processResume/terminalContract.ts";
+import { terminalKey } from "../../../HarnessProcessResume.ts";
 import type {
   HarnessLegacyProcessSourceEnvironment,
   HarnessLegacyProcessSourceOperation,
-} from "../../legacySource.ts";
+} from "../../../HarnessLegacyProcessSource.ts";
 
 export const runId = "legacy-process-source-run";
 export const controlKey = "legacy-source-controller-key-".repeat(2);
