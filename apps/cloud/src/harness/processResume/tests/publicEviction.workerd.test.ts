@@ -23,6 +23,7 @@ const cases = [
   { point: "after-turn-3", expected: ["after-turn-3"] },
   { point: "before-stop", expected: ["before-stop"] },
   { point: "double", expected: ["after-turn-1", "after-replace"] },
+  { point: "repeated-published", expected: ["after-replace", "after-turn-2"] },
 ] as const;
 
 const resumeCases = [

@@ -1,5 +1,8 @@
 import { HarnessProcessPlacementStoreObject } from "../../HarnessProcessPlacementStoreObject.ts";
-import type { HarnessProcessPlacementWriter } from "../../HarnessProcessPlacement.ts";
+import type {
+  HarnessProcessPlacementWriter,
+  HarnessProcessPlacementRecoveryRecord,
+} from "../../HarnessProcessPlacement.ts";
 import {
   observePlacementRelease,
   observePlacementWriterClaim,
@@ -28,17 +31,13 @@ export class ObservedPlacementStore extends HarnessProcessPlacementStoreObject {
     await observePlacementWriterClaim(transaction, owner, previous, writer);
   }
 
-  override async removeRecovery(
+  protected override async recoveryRemovedIn(
+    transaction: DurableObjectTransaction,
     owner: string,
     writer: HarnessProcessPlacementWriter,
-    loaderId: string,
+    record: HarnessProcessPlacementRecoveryRecord,
   ) {
-    const record = (await super.listRecovery(owner, writer)).find(
-      (row) => row.loaderId === loaderId,
-    );
-    await super.removeRecovery(owner, writer, loaderId);
-    if (record !== undefined)
-      await this.ctx.storage.put(stopKey(owner, writer, loaderId), { owner, writer, record });
+    await transaction.put(stopKey(owner, writer, record.loaderId), { owner, writer, record });
   }
 
   override async releaseWriter(owner: string, writer: HarnessProcessPlacementWriter) {

@@ -17,6 +17,7 @@ export const publicEvictionPoints = [
   "after-turn-3",
   "before-stop",
   "double",
+  "repeated-published",
 ] as const;
 export type PublicEvictionPoint = (typeof publicEvictionPoints)[number];
 
@@ -165,8 +166,11 @@ async function runSequence(
 }
 
 export async function publicEvictionMatrixProof(env: ProofEnv, point: PublicEvictionPoint) {
-  const points: readonly PublicEvictionPoint[] =
-    point === "double" ? ["after-turn-1", "after-replace"] : [point];
+  const grouped: Partial<Record<PublicEvictionPoint, readonly PublicEvictionPoint[]>> = {
+    double: ["after-turn-1", "after-replace"],
+    "repeated-published": ["after-replace", "after-turn-2"],
+  };
+  const points = grouped[point] ?? [point];
   const baseline = await runSequence(env, `${point}-baseline`, []);
   const candidate = await runSequence(env, `${point}-evicted`, points);
   return { baseline, candidate };

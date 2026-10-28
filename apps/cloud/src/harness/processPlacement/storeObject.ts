@@ -234,8 +234,16 @@ export class HarnessProcessPlacementStoreObject
       )
         throw new Error("Published process ownership requires joined stop before record removal.");
       await transaction.delete(key);
+      await this.recoveryRemovedIn(transaction, owner, writer, record);
     });
   }
+
+  protected async recoveryRemovedIn(
+    _transaction: DurableObjectTransaction,
+    _owner: string,
+    _writer: HarnessProcessPlacementWriter,
+    _record: HarnessProcessPlacementRecoveryRecord,
+  ): Promise<void> {}
 
   async authorizeEvictedRecovery(
     owner: string,

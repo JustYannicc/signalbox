@@ -148,6 +148,9 @@ export function selectPlacementReleaseProof(input: {
       const receipt = parseEvictedRecoveryReceipt(value);
       return { key, receipt };
     })
+    .filter(({ receipt }) =>
+      evidence.sources.some((source) => sameEvictedRecoverySource(receipt, source)),
+    )
     .filter(({ key, receipt }) =>
       followsPlacementWriterClaims(key, receipt, writer, currentFence, input.claims, fences),
     );
@@ -157,7 +160,6 @@ export function selectPlacementReleaseProof(input: {
   if (
     receipt.state !== "completed" ||
     receipt.owner !== owner ||
-    !evidence.sources.some((source) => sameEvictedRecoverySource(receipt, source)) ||
     key !== evictedRecoveryKey(owner, receipt.sourceFence, receipt.identity) ||
     !sameProcessFence(
       readProcessFence(fences.get(fenceHistoryKey(receipt.currentFence.incarnation))),
