@@ -8,17 +8,9 @@ const ports = vi.hoisted(() => ({
   closeProvider: vi.fn(),
 }));
 
-vi.mock("cloudflare:workers", () => ({
-  DurableObject: class {
-    protected ctx: unknown;
-    protected env: unknown;
-
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
+vi.mock("cloudflare:workers", async () =>
+  (await import("../../src/cloudflareWorkersTesting.ts")).createCloudflareWorkersMock(),
+);
 vi.mock("./SeedProtocol.ts", () => ({ decodeProofSeed: ports.decodeSeed }));
 vi.mock("./Provider.ts", () => ({ openProofProvider: ports.openProvider }));
 vi.mock("./Session.ts", () => ({ runComputerBoxdProof: ports.runProof }));

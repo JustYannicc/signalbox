@@ -11,16 +11,9 @@ const ports = vi.hoisted(() => ({
   resume: vi.fn(),
   cleanup: vi.fn(),
 }));
-vi.mock("cloudflare:workers", () => ({
-  DurableObject: class {
-    protected ctx: unknown;
-    protected env: unknown;
-    constructor(ctx: unknown, env: unknown) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
+vi.mock("cloudflare:workers", async () =>
+  (await import("../../src/cloudflareWorkersTesting.ts")).createCloudflareWorkersMock(),
+);
 vi.mock("./SeedProtocol.ts", () => ({
   decodeProofSeed: async (seed: unknown) => seed,
 }));

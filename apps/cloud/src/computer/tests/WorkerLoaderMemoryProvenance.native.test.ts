@@ -80,8 +80,10 @@ beforeAll(async () => {
     bundle: true,
     format: "esm",
     platform: "neutral",
+    conditions: ["workerd", "worker"],
+    mainFields: ["module", "main"],
     target: "esnext",
-    external: ["cloudflare:workers"],
+    external: ["cloudflare:workers", "node:crypto"],
     outfile: hostPath,
   });
   const configPath = NodePath.join(directory, "wrangler.jsonc");
