@@ -105,27 +105,23 @@ describe.skipIf(!available)("pinned GNU Bash child payload transfers", () => {
       const stopPressure = captureCapacityPressure(gateway);
       const processes = gateway.fixture.context.processes;
       const reapsByParent = new Map<number, number[]>();
-      if (jobs === 160) {
-        const waitpid = processes.waitpid.bind(processes);
-        const spy = vi
-          .spyOn(processes, "waitpid")
-          .mockImplementation((parent, selector, options) => {
-            const parentInfo = processes.info(parent);
-            const result = waitpid(parent, selector, options);
-            if (parentInfo.status === "ok" && result.status === "ok" && result.value.pid > 0) {
-              const child = processes.lookupPid(result.value.pid);
-              if (child.status === "error" && child.error.code === "NOT_FOUND") {
-                const reaps = reapsByParent.get(parentInfo.value.pid) ?? [];
-                reaps.push(result.value.pid);
-                reapsByParent.set(parentInfo.value.pid, reaps);
-              }
-            }
-            return result;
-          });
-        onTestFinished(() => {
-          spy.mockRestore();
-        });
-      }
+      const waitpid = processes.waitpid.bind(processes);
+      const spy = vi.spyOn(processes, "waitpid").mockImplementation((parent, selector, options) => {
+        const parentInfo = processes.info(parent);
+        const result = waitpid(parent, selector, options);
+        if (parentInfo.status === "ok" && result.status === "ok" && result.value.pid > 0) {
+          const child = processes.lookupPid(result.value.pid);
+          if (child.status === "error" && child.error.code === "NOT_FOUND") {
+            const reaps = reapsByParent.get(parentInfo.value.pid) ?? [];
+            reaps.push(result.value.pid);
+            reapsByParent.set(parentInfo.value.pid, reaps);
+          }
+        }
+        return result;
+      });
+      onTestFinished(() => {
+        spy.mockRestore();
+      });
       let child: KernelCommandChild | undefined;
       let commandSettled = false;
       const cleanup = async (bodyFailed: boolean) => {
@@ -137,7 +133,7 @@ describe.skipIf(!available)("pinned GNU Bash child payload transfers", () => {
           bodyFailed || !commandSettled,
         );
       };
-      const close = jobs === 160 ? traceBashReaderFailure(gateway, cleanup) : cleanup;
+      const close = traceBashReaderFailure(gateway, cleanup);
       await withFailurePreservingCleanup(async () => {
         const command = await publicCommand(gateway, script, commandController.signal);
         child = command;
@@ -169,15 +165,13 @@ describe.skipIf(!available)("pinned GNU Bash child payload transfers", () => {
           ).toEqual(exited());
           expect(stderrText).toContain("forked\n");
           expect(stdoutText).toBe("done\n");
-          if (jobs === 160) {
-            const rootPid = gateway.forkTrace.find(
-              (event) => event.event === "worker-start" && event.command === script,
-            )?.pid;
-            const reaps = typeof rootPid === "number" ? (reapsByParent.get(rootPid) ?? []) : [];
-            const message = `root reaps: ${JSON.stringify(reaps)}; ${gatewayTrace(gateway)}`;
-            expect(reaps, message).toHaveLength(161);
-            expect(new Set(reaps).size, message).toBe(161);
-          }
+          const rootPid = gateway.forkTrace.find(
+            (event) => event.event === "worker-start" && event.command === script,
+          )?.pid;
+          const reaps = typeof rootPid === "number" ? (reapsByParent.get(rootPid) ?? []) : [];
+          const message = `root reaps: ${JSON.stringify(reaps)}; ${gatewayTrace(gateway)}`;
+          expect(reaps, message).toHaveLength(jobs + 1);
+          expect(new Set(reaps).size, message).toBe(jobs + 1);
         }
       }, close);
     },
