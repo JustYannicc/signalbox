@@ -327,6 +327,7 @@ function isLease(value: unknown): value is ProcessSlotLease {
 
 function isPlacementState(value: unknown): value is HarnessProcessPlacementRecoveryRecord["state"] {
   return (
+    value === "unopened" ||
     value === "identity-unknown" ||
     value === "preparing" ||
     value === "prepared" ||

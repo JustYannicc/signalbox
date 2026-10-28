@@ -258,6 +258,7 @@ async function openPlacement(
         try {
           await options.invalidate(locator.loaderId);
           await slots.release(admission.lease, { acknowledged: true });
+          await recovery.save({ ...provisionalRecord, state: "unopened" });
           await recovery.remove(locator.loaderId);
         } catch (releaseCause) {
           throw new HarnessProcessPlacementError(

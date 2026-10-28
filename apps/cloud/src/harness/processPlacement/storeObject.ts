@@ -81,12 +81,20 @@ export class HarnessProcessPlacementStoreObject
             throw new Error("The current execution incarnation already owns this durable shard.");
         }
         await transaction.put(WRITER_KEY, writer);
+        await this.writerClaimedIn(transaction, owner, current, writer);
       });
     } catch (error) {
       if (this.#activeWriter.get(owner)?.identity === identity) this.#activeWriter.delete(owner);
       throw error;
     }
   }
+
+  protected async writerClaimedIn(
+    _transaction: DurableObjectTransaction,
+    _owner: string,
+    _previous: HarnessProcessPlacementWriter | undefined,
+    _writer: HarnessProcessPlacementWriter,
+  ): Promise<void> {}
 
   async releaseWriter(owner: string, writer: HarnessProcessPlacementWriter): Promise<void> {
     assertWriter(writer);
