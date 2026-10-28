@@ -23,6 +23,7 @@ const decode = Schema.decodeUnknownSync(
   ),
 );
 const settings = Schema.decodeSync(CodexSettings)({});
+const asksForTurns = Schema.is(Schema.Struct({ includeTurns: Schema.Literal(true) }));
 const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   cwd: "/workspace",
   runtimeMode: "full-access",
@@ -40,7 +41,14 @@ export const readyLine =
     params: { upstreamVersion: "0.162.1", engineVersion: "0.1.0" },
   }) + "\n";
 
-export function processFixture(beforeReply?: (method: string) => Promise<void>) {
+export function processFixture(
+  beforeReply?: (method: string) => Promise<void>,
+  checkpoint?: {
+    readonly path: string;
+    readonly archive: () => void;
+    readonly rejectTurnReads?: boolean;
+  },
+) {
   const started = Promise.withResolvers<"ready-wait" | "outbound">();
   const exited = Promise.withResolvers<{ exitCode: number; signal: number; coreDumped: boolean }>();
   const output = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>();
@@ -57,60 +65,71 @@ export function processFixture(beforeReply?: (method: string) => Promise<void>) 
       sent.push(request.method);
       requests.push(request);
       started.resolve("outbound");
+      if (request.method === "thread/archive") checkpoint?.archive();
       const frame =
-        request.method === "thread/start" ||
-        request.method === "thread/resume" ||
-        request.method === "thread/read"
+        request.method === "thread/read" &&
+        checkpoint?.rejectTurnReads &&
+        asksForTurns(request.params)
           ? {
               id: request.id,
-              result: {
-                thread: {
-                  id: "preinitialized-native-thread",
-                  sessionId: "preinitialized-native-thread",
-                  forkedFromId: null,
-                  preview: "",
-                  projectId: null,
-                  ephemeral: false,
-                  modelProvider: "openai",
-                  createdAt: 1782622440,
-                  updatedAt: 1782622440,
-                  status: { type: "idle" },
-                  path: "/home/codex/sessions/preinitialized.jsonl",
-                  cwd: "/workspace",
-                  cliVersion: "0.162.1",
-                  source: "exec",
-                  threadSource: null,
-                  agentNickname: null,
-                  agentRole: null,
-                  gitInfo: null,
-                  name: null,
-                  turns: [],
-                },
-                model: "gpt-5.4",
-                modelProvider: "openai",
-                serviceTier: null,
-                cwd: "/workspace",
-                instructionSources: [],
-                approvalPolicy: "never",
-                approvalsReviewer: "user",
-                sandbox: { type: "dangerFullAccess" },
-                reasoningEffort: "medium",
-              } satisfies CodexSchema.V2ThreadStartResponse,
+              error: { code: -32601, message: "list_turns is not supported yet" },
             }
-          : request.method === "turn/start"
-            ? {
-                id: request.id,
-                result: {
-                  turn: { id: "preinitialized-turn", items: [], status: "inProgress" },
-                } satisfies CodexSchema.V2TurnStartResponse,
-              }
-            : {
-                id: request.id,
-                error: {
-                  code: -32600,
-                  message: "engine is already initialized; wait for signalbox/ready",
-                },
-              };
+          : request.method === "thread/archive"
+            ? { id: request.id, result: {} }
+            : request.method === "thread/start" ||
+                request.method === "thread/resume" ||
+                request.method === "thread/read" ||
+                request.method === "thread/unarchive"
+              ? {
+                  id: request.id,
+                  result: {
+                    thread: {
+                      id: "preinitialized-native-thread",
+                      sessionId: "preinitialized-native-thread",
+                      forkedFromId: null,
+                      preview: "",
+                      projectId: null,
+                      ephemeral: false,
+                      modelProvider: "openai",
+                      createdAt: 1782622440,
+                      updatedAt: 1782622440,
+                      status: { type: "idle" },
+                      path: checkpoint?.path ?? "/home/codex/sessions/preinitialized.jsonl",
+                      cwd: "/workspace",
+                      cliVersion: "0.162.1",
+                      source: "exec",
+                      threadSource: null,
+                      agentNickname: null,
+                      agentRole: null,
+                      gitInfo: null,
+                      name: null,
+                      turns: [],
+                    },
+                    model: "gpt-5.4",
+                    modelProvider: "openai",
+                    serviceTier: null,
+                    cwd: "/workspace",
+                    instructionSources: [],
+                    approvalPolicy: "never",
+                    approvalsReviewer: "user",
+                    sandbox: { type: "dangerFullAccess" },
+                    reasoningEffort: "medium",
+                  } satisfies CodexSchema.V2ThreadStartResponse,
+                }
+              : request.method === "turn/start"
+                ? {
+                    id: request.id,
+                    result: {
+                      turn: { id: "preinitialized-turn", items: [], status: "inProgress" },
+                    } satisfies CodexSchema.V2TurnStartResponse,
+                  }
+                : {
+                    id: request.id,
+                    error: {
+                      code: -32600,
+                      message: "engine is already initialized; wait for signalbox/ready",
+                    },
+                  };
       const reply = async () => {
         await beforeReply?.(request.method);
         const controller = await output.promise;

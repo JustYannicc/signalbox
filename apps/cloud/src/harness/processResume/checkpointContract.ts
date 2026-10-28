@@ -39,7 +39,7 @@ export function snapshotCheckpointInput(supplied: unknown): HarnessProcessCheckp
       ...decoded.checkpoint,
       files: Object.freeze(
         decoded.checkpoint.files.map((file) =>
-          Object.freeze({ path: file.path, mode: file.mode, bytes: file.bytes.slice() }),
+          Object.freeze({ ...file, bytes: file.bytes.slice() }),
         ),
       ),
     }),
