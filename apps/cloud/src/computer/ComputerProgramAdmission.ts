@@ -36,6 +36,7 @@ export interface ComputerProgramAdmissionOptions {
 
 export interface ComputerProgramResolution {
   readonly command: KernelCommand;
+  readonly unavailable?: { readonly code: "ENOEXEC" | "EACCES"; readonly message: string };
   readonly catalog?: {
     readonly command: KernelCommand;
     readonly binding: KernelProgramBinding;
@@ -107,6 +108,15 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
           evidence,
           resolution.catalog?.command,
         );
+        if (
+          resolution.unavailable !== undefined &&
+          !(decision.kind === "machine" && "ruleId" in decision)
+        ) {
+          throw new KernelProgramExecAdmissionError(
+            resolution.unavailable.code,
+            resolution.unavailable.message,
+          );
+        }
         if (decision.kind === "machine") {
           assertComputerForwardingSupported(request);
           return Object.freeze({

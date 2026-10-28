@@ -21,7 +21,8 @@ import {
   createComputerProgramAdmission,
   type ComputerProgramAdmissionOptions,
 } from "./ComputerProgramAdmission.ts";
-import { COMPUTER_ISOLATE_POLICY } from "./EscalationPolicy.ts";
+import { createComputerIsolatePolicy } from "./EscalationPolicy.ts";
+import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
 import { ComputerEscalationTable } from "./EscalationTable.ts";
 import { qualifyGnuCommand } from "./GnuCommandCompatibility.ts";
 import { qualifyUgrepCommand } from "./UgrepCommand.ts";
@@ -77,7 +78,7 @@ export function createCommandGateway(options: CommandGatewayOptions) {
     },
   };
   const pair = (
-    escalation: ComputerEscalationTable,
+    escalation: (bindings: ReadonlyMap<string, KernelProgramBinding>) => ComputerEscalationTable,
     machine: KernelCommandForwarder,
     evidence?: ComputerProgramAdmissionOptions["evidence"],
   ) => {
@@ -96,13 +97,14 @@ export function createCommandGateway(options: CommandGatewayOptions) {
       reservationFor,
     });
     const admission = createComputerProgramAdmission({
-      escalation,
+      escalation: escalation(catalog.bindings),
       machine,
       capacity: options.capacity,
       ...(resolver === undefined
         ? {}
         : {
-            resolve: (request) => resolver.resolve({ ...request, catalog: catalog.bindings }),
+            resolve: (request) =>
+              resolver.resolve({ ...request, catalog: catalog.bindings, aliases: catalog.aliases }),
           }),
       ...(evidence === undefined ? {} : { evidence }),
     });
@@ -125,17 +127,19 @@ export function createCommandGateway(options: CommandGatewayOptions) {
     }
   };
   const normal = pair(
-    new ComputerEscalationTable(
-      options.orderedMachineRules,
-      COMPUTER_ISOLATE_POLICY,
-      (command) => qualifyUgrepCommand(command) ?? qualifyGnuCommand(command, options.filesystem),
-    ),
+    (bindings) =>
+      new ComputerEscalationTable(
+        options.orderedMachineRules,
+        // cd is a shell builtin; its unbound spelling must not become a machine command.
+        createComputerIsolatePolicy([...bindings.keys(), "cd"]),
+        (command) => qualifyUgrepCommand(command) ?? qualifyGnuCommand(command, options.filesystem),
+      ),
     options.machine,
     options.evidence,
   );
   let local: ReturnType<typeof pair>;
   try {
-    local = pair(new ComputerEscalationTable(), localOnly);
+    local = pair(() => new ComputerEscalationTable(), localOnly);
   } catch (error) {
     normal.admission.close();
     throw error;

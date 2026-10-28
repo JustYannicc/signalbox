@@ -10,9 +10,9 @@ import { createProofChildLoader } from "./ChildLoader.ts";
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 const programs = [
-  { path: "/bin/bash", hash: KERNEL_BASH_ARTIFACT.sha256 },
-  { path: "/bin/cat", hash: KERNEL_BUSYBOX_ARTIFACT.sha256 },
-  { path: "/bin/rg", hash: KERNEL_RIPGREP_ARTIFACT.sha256 },
+  { path: "/bin/bash", artifact: KERNEL_BASH_ARTIFACT, hash: KERNEL_BASH_ARTIFACT.sha256 },
+  { path: "/bin/cat", artifact: KERNEL_BUSYBOX_ARTIFACT, hash: KERNEL_BUSYBOX_ARTIFACT.sha256 },
+  { path: "/bin/rg", artifact: KERNEL_RIPGREP_ARTIFACT, hash: KERNEL_RIPGREP_ARTIFACT.sha256 },
 ] as const;
 const emptyWasm = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
 const exit = { exitCode: 17, signal: 0, coreDumped: false };
@@ -24,7 +24,7 @@ async function invocation(program: (typeof programs)[number]): Promise<ChildWork
       mainModule: "entry.js",
       modules: { "entry.js": mainSource, "dependency.js": "export const same = true;" },
     },
-    program.hash,
+    program.artifact,
   );
   if (typeof code.modules !== "function") throw new Error("Expected pinned module factory");
   return {

@@ -1,3 +1,8 @@
+import { childProgramPaths } from "../../src/computer/ChildProgramPaths.ts";
+import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
+import { createChildProgramCatalog } from "../../src/computer/ChildProgramCatalog.ts";
+import { commandProgramCodes } from "../../src/computer/commandGatewayTesting.ts";
+import { childBusyboxFixture } from "../../src/computer/childBusyboxTesting.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -7,7 +12,7 @@ import type { ChildWorkerCode } from "../../src/computer/ChildWorkerProgram.ts";
 import {
   CHILD_COREUTILS_COMMANDS,
   CHILD_PROGRAM_PATHS,
-  CHILD_SED_EXECUTABLES,
+  CHILD_UGREP_EXECUTABLES,
 } from "../../src/computer/ChildProgramSet.ts";
 import { KERNEL_BASH_ARTIFACT } from "../../src/kernel/KernelBashProgram.ts";
 import {
@@ -24,6 +29,7 @@ import {
   createChildProgramExecutableCatalog,
   prepareChildPrograms,
   type FullChildProgramSources,
+  type ChildProgramExecutablePath,
 } from "./prepare.ts";
 import { packageGraph } from "./packageGraph.ts";
 import {
@@ -119,7 +125,14 @@ describe("full child program preparation", () => {
   });
 
   it("describes every executable path and rejects incomplete seeds", () => {
-    const paths = [...new Set([...Object.values(CHILD_PROGRAM_PATHS), ...CHILD_SED_EXECUTABLES])];
+    const paths = [
+      ...new Set(
+        [...Object.values(CHILD_PROGRAM_PATHS), ...CHILD_UGREP_EXECUTABLES].flatMap((path) => {
+          const [, bin, usrBin] = childProgramPaths(path);
+          return [bin, usrBin];
+        }),
+      ),
+    ];
     const files = paths.map((path, index) => ({
       path,
       bytes: encoder.encode(path),
@@ -130,7 +143,7 @@ describe("full child program preparation", () => {
     expect(Object.keys(catalog)).toEqual(paths);
     expect(catalog["/bin/sed"]).toEqual({
       bytes: encoder.encode("/bin/sed").byteLength,
-      sha256: String(Object.values(CHILD_PROGRAM_PATHS).indexOf("/bin/sed")).padStart(64, "0"),
+      sha256: String(paths.indexOf("/bin/sed")).padStart(64, "0"),
       mode: 0o755,
     });
     expect(() => createChildProgramExecutableCatalog(files.slice(1))).toThrow(
@@ -139,6 +152,42 @@ describe("full child program preparation", () => {
     expect(() => createChildProgramExecutableCatalog([...files, files[0]!])).toThrow(
       "Prepared child executables do not cover the full command catalog",
     );
+  });
+
+  it("requires seed files for every registered program's standard paths", async () => {
+    const fixture = childBusyboxFixture();
+    try {
+      const catalog = createChildProgramCatalog({
+        registry: new KernelProgramRegistry(),
+        filesystem: fixture.filesystem,
+        loader: {
+          run: async () => {
+            throw new Error("Seed discovery must not launch a child");
+          },
+        },
+        capacity: {
+          run: async () => {
+            throw new Error("Seed discovery must not acquire capacity");
+          },
+        },
+        programs: commandProgramCodes(),
+        hostname: "seed-catalog-test",
+      });
+      const paths = [
+        ...new Set(
+          [...catalog.bindings.keys()].flatMap((path) => childProgramPaths(path).slice(1)),
+        ),
+      ];
+      const files = paths.map((path) => ({
+        path: path as ChildProgramExecutablePath,
+        bytes: encoder.encode(path),
+        sha256: digest(encoder.encode(path)),
+        mode: 0o755 as const,
+      }));
+      expect(Object.keys(createChildProgramExecutableCatalog(files))).toEqual(paths);
+    } finally {
+      await fixture.close();
+    }
   });
 
   it("checks pinned executable bytes before recording them", async () => {

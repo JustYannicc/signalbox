@@ -117,7 +117,7 @@ describe.skipIf(!available)("pinned GNU sed through the public command gateway",
         await child.dispose();
       }
       await fixture.gateway.drain();
-      expect(dispatched).toEqual(["/usr/bin/sed"]);
+      expect(dispatched).toEqual(["/bin/sed"]);
       expect(fixture.machineSpawn).not.toHaveBeenCalled();
       expect(fixture.capacity.active).toBe(0);
     } finally {

@@ -15,11 +15,7 @@ import type { ChildWorkerCode, ChildWorkerProgram } from "./ChildWorkerProgram.t
 import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
 import type { ChildWorkerReservation } from "./ChildWorkerCapacity.ts";
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
-import {
-  CHILD_COREUTILS_COMMANDS,
-  CHILD_PROGRAM_PATHS,
-  type ChildCoreutilsCommand,
-} from "./ChildProgramSet.ts";
+import { CHILD_COREUTILS_COMMANDS, type ChildCoreutilsCommand } from "./ChildProgramSet.ts";
 import { KERNEL_COREUTILS_VERSION } from "../kernel/KernelCoreutilsPrograms.ts";
 import { KERNEL_GIT_PROGRAM_MANIFEST } from "../kernel/KernelGitProgram.ts";
 import { createWorkerGitHost } from "./WorkerGitHost.ts";
@@ -30,6 +26,7 @@ import type { ChildProgramFactory } from "./catalog/ChildProgramFactory.ts";
 import { createChildJqBinding } from "./catalog/JqProgram.ts";
 import { createChildSedBindings } from "./catalog/SedPrograms.ts";
 import { createChildUgrepBindings } from "./catalog/UgrepPrograms.ts";
+import { registerProgramAliases } from "./catalog/ProgramAliases.ts";
 
 export interface ChildProgramCodes {
   readonly bash: ChildWorkerCode;
@@ -234,21 +231,10 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     });
   }
 
-  if (options.programs.busyboxApplets !== undefined) {
-    for (const [command, path] of Object.entries(CHILD_PROGRAM_PATHS)) {
-      const binding = bindings.get(path);
-      if (binding === undefined) continue;
-      // Logical executable spellings are explicit registrations, independent of PATH lookup.
-      const manifest = Object.freeze({
-        ...binding.manifest,
-        name: `${binding.manifest.name}:command`,
-      });
-      register(options.registry, manifest);
-      bindings.set(command, { manifest, implementation: binding.implementation });
-    }
-  }
+  const aliases = registerProgramAliases(options.registry, bindings);
   return {
     bindings,
+    aliases,
     async drain() {
       try {
         await lifetimes.drain();

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createKernelBashProgram } from "../../kernel/KernelBashProgram.ts";
 import { ComputerEscalationTable } from "../EscalationTable.ts";
-import { COMPUTER_ISOLATE_POLICY } from "../EscalationPolicy.ts";
+import { createComputerIsolatePolicy } from "../EscalationPolicy.ts";
+import { childProgramPaths } from "../ChildProgramPaths.ts";
 import { qualifyGnuCommand } from "../GnuCommandCompatibility.ts";
 import { CHILD_PROGRAM_PATHS } from "../ChildProgramSet.ts";
 import { bashCredentials, childBashFixture, exited } from "./ChildBashFixture.ts";
@@ -33,7 +34,7 @@ describe.skipIf(bashModule === undefined)("filesystem discovery controls", () =>
       path: "/bin/jq",
       argv: ["/bin/jq"],
       stdout: "",
-      decision: "machine",
+      decision: "isolate",
     },
     {
       command: "sort",
@@ -61,7 +62,11 @@ describe.skipIf(bashModule === undefined)("filesystem discovery controls", () =>
     },
   ])("separates discovery from admission for $command with $marker", async (test) => {
     const calls: Array<{ path: string; argv: readonly string[]; decision: string }> = [];
-    const table = new ComputerEscalationTable([], COMPUTER_ISOLATE_POLICY, qualifyGnuCommand);
+    const table = new ComputerEscalationTable(
+      [],
+      createComputerIsolatePolicy(Object.values(CHILD_PROGRAM_PATHS).flatMap(childProgramPaths)),
+      qualifyGnuCommand,
+    );
     const fixture = childBashFixture({
       args: ["bash", "--noprofile", "--norc", "-c", test.command],
       env: { HOME: "/workspace", PATH: "/bin:/usr/bin", LC_ALL: "C" },

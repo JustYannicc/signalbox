@@ -37,12 +37,9 @@ export function createSeededChildProgramCatalog(options: SeededChildProgramCatal
   return createChildProgramCatalog({
     ...options,
     programs: {
-      bash: attachProgramReference(options.programs.bash, KERNEL_BASH_ARTIFACT.sha256),
-      busyboxCat: attachProgramReference(
-        options.programs.busyboxCat,
-        KERNEL_BUSYBOX_ARTIFACT.sha256,
-      ),
-      ripgrep: attachProgramReference(options.programs.ripgrep, KERNEL_RIPGREP_ARTIFACT.sha256),
+      bash: attachProgramReference(options.programs.bash, KERNEL_BASH_ARTIFACT),
+      busyboxCat: attachProgramReference(options.programs.busyboxCat, KERNEL_BUSYBOX_ARTIFACT),
+      ripgrep: attachProgramReference(options.programs.ripgrep, KERNEL_RIPGREP_ARTIFACT),
     },
   });
 }
@@ -66,39 +63,43 @@ export function createSeededCommandProgramCodes(
     requireProgramCode(code, `coreutils ${command}`);
     coreutilsPrograms[command] = attachProgramReference(
       code,
-      coreutilsProvenance.commands[command].sha256,
+      coreutilsProvenance.commands[command],
     );
   }
   const coreutils = Object.freeze(coreutilsPrograms);
 
   return Object.freeze({
-    bash: attachProgramReference(programs.bash, KERNEL_BASH_ARTIFACT.sha256),
-    busyboxCat: attachProgramReference(programs.busyboxCat, KERNEL_BUSYBOX_ARTIFACT.sha256),
-    busyboxApplets: attachProgramReference(programs.busyboxApplets, KERNEL_BUSYBOX_ARTIFACT.sha256),
+    bash: attachProgramReference(programs.bash, KERNEL_BASH_ARTIFACT),
+    busyboxCat: attachProgramReference(programs.busyboxCat, KERNEL_BUSYBOX_ARTIFACT),
+    busyboxApplets: attachProgramReference(programs.busyboxApplets, KERNEL_BUSYBOX_ARTIFACT),
     productBusyboxApplets: attachProgramReference(
       programs.productBusyboxApplets,
-      PRODUCT_COMPUTER_BUSYBOX_ARTIFACT.sha256,
+      PRODUCT_COMPUTER_BUSYBOX_ARTIFACT,
     ),
-    ripgrep: attachProgramReference(programs.ripgrep, KERNEL_RIPGREP_ARTIFACT.sha256),
+    ripgrep: attachProgramReference(programs.ripgrep, KERNEL_RIPGREP_ARTIFACT),
     coreutils,
-    git: attachProgramReference(programs.git, KERNEL_GIT_ARTIFACT.sha256),
-    sed: attachProgramReference(programs.sed, KERNEL_GNU_SED_ARTIFACT.sha256),
-    jq: attachProgramReference(programs.jq, KERNEL_JQ_ARTIFACT.sha256),
-    ugrep: attachProgramReference(programs.ugrep, KERNEL_UGREP_ARTIFACT.sha256),
+    git: attachProgramReference(programs.git, KERNEL_GIT_ARTIFACT),
+    sed: attachProgramReference(programs.sed, KERNEL_GNU_SED_ARTIFACT),
+    jq: attachProgramReference(programs.jq, KERNEL_JQ_ARTIFACT),
+    ugrep: attachProgramReference(programs.ugrep, KERNEL_UGREP_ARTIFACT),
   });
 }
 
 export function attachProgramReference(
   code: ChildProgramSourceCode,
-  sha256: string,
+  artifact: { readonly bytes: number; readonly sha256: string },
 ): ChildWorkerCode {
+  const { bytes, sha256 } = artifact;
   if (Object.hasOwn(code.modules, "program.wasm")) {
     throw new Error("Static child graph already contains program.wasm");
   }
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new TypeError("Invalid pinned child program hash");
+  if (!Number.isSafeInteger(bytes) || bytes < 0)
+    throw new TypeError("Invalid pinned child program size");
   const sources = Object.freeze({ ...code.modules });
   return Object.freeze({
     ...code,
+    executableArtifact: Object.freeze({ bytes, sha256 }),
     modules: () =>
       Object.freeze({
         ...sources,

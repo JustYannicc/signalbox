@@ -6,7 +6,9 @@ import {
   type ComputerEscalationRule,
   type ComputerEscalationPolicy,
 } from "../EscalationTable.ts";
-import { COMPUTER_ISOLATE_EXECUTABLES, COMPUTER_ISOLATE_POLICY } from "../EscalationPolicy.ts";
+import { createComputerIsolatePolicy } from "../EscalationPolicy.ts";
+
+const policy = createComputerIsolatePolicy(["/bin/grep"]);
 
 const command = (executable: string, argv: readonly string[] = ["argv0"]): KernelCommand => ({
   executable,
@@ -21,19 +23,15 @@ describe("ComputerEscalationTable", () => {
     const catalog = command("/bin/grep");
     const table = new ComputerEscalationTable(
       [{ id: "machine-alias", executable: "/usr/bin/grep" }],
-      COMPUTER_ISOLATE_POLICY,
+      policy,
     );
     expect(table.decide(requested, undefined, catalog)).toEqual({
       kind: "machine",
       ruleId: "machine-alias",
     });
-    expect(
-      new ComputerEscalationTable([], COMPUTER_ISOLATE_POLICY).decide(
-        requested,
-        undefined,
-        catalog,
-      ),
-    ).toEqual({ kind: "isolate" });
+    expect(new ComputerEscalationTable([], policy).decide(requested, undefined, catalog)).toEqual({
+      kind: "isolate",
+    });
   });
 
   it("isolates every command when the table is empty", () => {
@@ -76,69 +74,14 @@ describe("ComputerEscalationTable", () => {
     });
   });
 
-  it("exports the 53 exact policy spellings as opt-in frozen data", () => {
-    expect(COMPUTER_ISOLATE_EXECUTABLES).toHaveLength(53);
-    expect(COMPUTER_ISOLATE_EXECUTABLES).toEqual([
-      "sed",
-      "git",
-      "head",
-      "grep",
-      "rg",
-      "ugrep",
-      "cat",
-      "cd",
-      "tail",
-      "echo",
-      "ls",
-      "mkdir",
-      "rm",
-      "cp",
-      "mv",
-      "touch",
-      "printf",
-      "pwd",
-      "bash",
-      "sh",
-      "env",
-      "id",
-      "sort",
-      "wc",
-      "uniq",
-      "jq",
-      "/bin/bash",
-      "/bin/sh",
-      "/bin/cat",
-      "/bin/sed",
-      "/usr/bin/sed",
-      "/bin/grep",
-      "/bin/touch",
-      "/bin/rg",
-      "/bin/ugrep",
-      "/usr/local/bin/claude",
-      "/bin/echo",
-      "/bin/printf",
-      "/bin/ls",
-      "/bin/mkdir",
-      "/bin/rm",
-      "/bin/cp",
-      "/bin/mv",
-      "/bin/pwd",
-      "/bin/head",
-      "/bin/tail",
-      "/bin/env",
-      "/bin/id",
-      "/bin/sort",
-      "/bin/wc",
-      "/bin/uniq",
-      "/usr/bin/jq",
-      "/usr/bin/git",
-    ]);
-    expect(Object.isFrozen(COMPUTER_ISOLATE_EXECUTABLES)).toBe(true);
-    expect(COMPUTER_ISOLATE_POLICY).toEqual({
-      isolateExecutables: COMPUTER_ISOLATE_EXECUTABLES,
-      default: "machine",
-    });
-    expect(Object.isFrozen(COMPUTER_ISOLATE_POLICY)).toBe(true);
+  it("snapshots only the supplied catalog keys as an opt-in frozen policy", () => {
+    const keys = ["/bin/new-tool", "/usr/bin/new-tool", "new-tool"];
+    const snapshot = createComputerIsolatePolicy(keys.values());
+    keys.push("not-installed");
+    expect(snapshot.isolateExecutables).toEqual(["/bin/new-tool", "/usr/bin/new-tool", "new-tool"]);
+    expect(snapshot.default).toBe("machine");
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.isolateExecutables)).toBe(true);
   });
 
   it("uses exact executable identity and the argv tail, with the first matching rule winning", () => {

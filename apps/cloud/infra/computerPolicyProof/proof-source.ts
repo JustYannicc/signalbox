@@ -1,4 +1,4 @@
-import { COMPUTER_ISOLATE_POLICY } from "../../src/computer/EscalationPolicy.ts";
+import { createComputerIsolatePolicy } from "../../src/computer/EscalationPolicy.ts";
 import { ComputerEscalationTable } from "../../src/computer/EscalationTable.ts";
 import { ChildWorkerCapacity } from "../../src/computer/ChildWorkerCapacity.ts";
 import { createComputerCommands } from "../../src/computer/ComputerCommands.ts";
@@ -61,7 +61,8 @@ export async function proveComputerPolicy(input: ComputerPolicyProofInput) {
 
   try {
     const normalMachine = machineCapture();
-    const exactPolicy = new ComputerEscalationTable([], COMPUTER_ISOLATE_POLICY);
+    const policy = createComputerIsolatePolicy([...catalog.bindings.keys(), "sed"]);
+    const exactPolicy = new ComputerEscalationTable([], policy);
     const commands = createComputerCommands({
       kernel: { host, filesystem: input.filesystem },
       escalation: exactPolicy,
@@ -149,7 +150,7 @@ export async function proveComputerPolicy(input: ComputerPolicyProofInput) {
     const orderedMachine = machineCapture();
     const orderedTable = new ComputerEscalationTable(
       [{ id: "explicit-bash-machine", executable: "/bin/bash" }],
-      COMPUTER_ISOLATE_POLICY,
+      policy,
     );
     const orderedDecision = orderedTable.decide(registeredOutsidePolicy);
     assert(

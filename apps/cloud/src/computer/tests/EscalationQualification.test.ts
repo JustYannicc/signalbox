@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ComputerEscalationTable } from "../EscalationTable.ts";
-import { COMPUTER_ISOLATE_POLICY } from "../EscalationPolicy.ts";
+import { createComputerIsolatePolicy } from "../EscalationPolicy.ts";
+import { childProgramPaths } from "../ChildProgramPaths.ts";
+
+const policy = createComputerIsolatePolicy(["sed", "grep"].flatMap(childProgramPaths));
 import { qualifyGnuCommand } from "../GnuCommandCompatibility.ts";
 
 const command = Object.freeze({
@@ -15,7 +18,7 @@ describe("Computer qualification decision", () => {
     const qualify = vi.fn(qualifyGnuCommand);
     const table = new ComputerEscalationTable(
       [{ id: "explicit", executable: "/bin/grep", minimumWorkspaceBytes: 100 }],
-      COMPUTER_ISOLATE_POLICY,
+      policy,
       qualify,
     );
     expect(table.decide(command, { workspaceBytes: 100 })).toEqual({
@@ -43,10 +46,10 @@ describe("Computer qualification decision", () => {
     expect(qualify).not.toHaveBeenCalled();
   });
 
-  it.each(["sed", "/bin/sed", "grep", "/bin/grep"])(
+  it.each(["sed", "grep"].flatMap(childProgramPaths))(
     "keeps qualified %s in the same local decision",
     (executable) => {
-      const table = new ComputerEscalationTable([], COMPUTER_ISOLATE_POLICY, qualifyGnuCommand);
+      const table = new ComputerEscalationTable([], policy, qualifyGnuCommand);
       const argv = executable.endsWith("sed")
         ? ["unrelated-zero", "-n", "1,2p", "source.txt"]
         : ["unrelated-zero", "-n", "x", "source.txt"];

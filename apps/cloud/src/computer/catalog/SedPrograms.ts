@@ -8,7 +8,6 @@ import type { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import type { ChildWorkerCode } from "../ChildWorkerProgram.ts";
 import type { ChildWorkerLifetimes } from "../ChildWorkerLifetimes.ts";
 import type { ChildProgramFactory } from "./ChildProgramFactory.ts";
-import { CHILD_SED_EXECUTABLES } from "../ChildProgramSet.ts";
 
 interface ChildSedBindingsOptions {
   readonly registry: KernelProgramRegistry;
@@ -22,34 +21,33 @@ interface ChildSedBindingsOptions {
 export function createChildSedBindings(options: ChildSedBindingsOptions) {
   const bindings = new Map<string, KernelProgramBinding>();
   const dispatch = createWorkerLoaderDispatch<KernelBusyboxPort>(options.loader);
-  for (const executable of CHILD_SED_EXECUTABLES) {
-    const name = executable === "/bin/sed" ? "@gnu/sed" : "@gnu/sed:usr-bin";
-    const manifest = Object.freeze({
-      name,
-      version: KERNEL_GNU_SED_ARTIFACT.version,
-      abiVersion: ABI_VERSION,
-      requiredCapabilities: Object.freeze([]),
-      entrypoint: `gnu-sed:${KERNEL_GNU_SED_ARTIFACT.sha256}`,
-    });
-    const result = options.registry.register(manifest);
-    if (result.status !== "ok") {
-      const detail = result.status === "error" ? result.error.message : "registration blocked";
-      throw new Error(`Could not register ${name}: ${detail}`);
-    }
-    bindings.set(executable, {
-      manifest,
-      // GNU sed uses the same WASI and process metadata imports as BusyBox.
-      implementation: options.child((admission) =>
-        createChildBusyboxProgram({
-          ...admission,
-          executable,
-          code: options.code,
-          capacity: options.capacity,
-          lifetimes: options.lifetimes,
-          dispatch,
-        }),
-      ),
-    });
+  const executable = "/bin/sed";
+  const name = "@gnu/sed";
+  const manifest = Object.freeze({
+    name,
+    version: KERNEL_GNU_SED_ARTIFACT.version,
+    abiVersion: ABI_VERSION,
+    requiredCapabilities: Object.freeze([]),
+    entrypoint: `gnu-sed:${KERNEL_GNU_SED_ARTIFACT.sha256}`,
+  });
+  const result = options.registry.register(manifest);
+  if (result.status !== "ok") {
+    const detail = result.status === "error" ? result.error.message : "registration blocked";
+    throw new Error(`Could not register ${name}: ${detail}`);
   }
+  bindings.set(executable, {
+    manifest,
+    // GNU sed uses the same WASI and process metadata imports as BusyBox.
+    implementation: options.child((admission) =>
+      createChildBusyboxProgram({
+        ...admission,
+        executable,
+        code: options.code,
+        capacity: options.capacity,
+        lifetimes: options.lifetimes,
+        dispatch,
+      }),
+    ),
+  });
   return bindings;
 }
