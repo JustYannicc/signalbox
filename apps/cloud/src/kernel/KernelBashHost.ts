@@ -19,6 +19,11 @@ import { SyscallMemory } from "./syscall/SyscallMemory.ts";
 import { runAsync } from "./wasi/internal_wasi_calls.ts";
 import { WasiError } from "./wasi/internal_wasi_memory.ts";
 import type { KernelBashForkSource } from "./KernelBashFork.ts";
+import {
+  KernelBashPortBusyError,
+  KernelBashPortClosedError,
+  KernelBashPortCompletedError,
+} from "./KernelBashPortError.ts";
 
 export interface KernelBashForkHost {
   readonly port: KernelBashPort;
@@ -107,13 +112,23 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
     void completion.promise.catch(() => {});
     let completed = false;
     let active: Promise<unknown> | undefined;
+    let activeOperation = "";
+    let portClosed = false;
     let sentSignal = 0;
     let disposed = false;
     let remoteStarted = false;
 
-    const operation = <T>(run: () => Promise<T> | T): Promise<T> => {
-      if (closed || completed || active !== undefined)
-        return Promise.reject(new Error("Bash process port is unavailable or already executing"));
+    const describe = (operation: string) => ({
+      pid: context.identity.pid,
+      commandId: context.identity.handle.id,
+      operation,
+    });
+    const operation = <T>(name: string, run: () => Promise<T> | T): Promise<T> => {
+      if (closed || portClosed)
+        return Promise.reject(new KernelBashPortClosedError(describe(name)));
+      if (completed) return Promise.reject(new KernelBashPortCompletedError(describe(name)));
+      if (active !== undefined)
+        return Promise.reject(new KernelBashPortBusyError(describe(name), activeOperation));
       const execute = () =>
         Promise.resolve().then(() => {
           context.signal.throwIfAborted();
@@ -121,6 +136,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
         });
       const result = context.cpu === undefined ? execute() : context.cpu.run(execute);
       active = result;
+      activeOperation = name;
       void result.then(
         () => {
           active = undefined;
@@ -177,14 +193,14 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
         }
       },
       call: (request) =>
-        operation(() =>
+        operation("call", () =>
           syscalls.call({
             ...request,
             args: preopens.transformArguments(request.name, request.args),
           }),
         ),
       callBash: (request) =>
-        operation(async () => {
+        operation("callBash", async () => {
           const handler = imports.get(`${request.namespace}.${request.name}`);
           if (handler === undefined)
             throw new Error(`Unknown GNU Bash syscall ${request.namespace}.${request.name}`);
@@ -197,7 +213,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
           }
         }),
       fork: () =>
-        operation(async () => {
+        operation("fork", async () => {
           reapCompletedChildren();
           const table = context.filesystem.descriptors.fork(
             [...context.filesystem.descriptors.entries()].map(([fd]) => ({
@@ -256,7 +272,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
           return { kind: "fork" as const, pid: spawned.value.pid, port: child!.port };
         }),
       wait: (pid, flags) =>
-        operation(async () => {
+        operation("wait", async () => {
           for (;;) {
             const cached = takeReapedChild(node, pid, flags);
             if (cached !== undefined) return cached;
@@ -281,7 +297,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
           }
         }),
       exec: (request) =>
-        operation(async () => {
+        operation("exec", async () => {
           try {
             const status = await context.exec({
               ...request,
@@ -299,7 +315,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
         }),
       async complete(result) {
         if (active !== undefined && !context.signal.aborted)
-          throw new Error("Bash process still has an active operation");
+          throw new KernelBashPortBusyError(describe("complete"), activeOperation);
         await active?.catch(() => {});
         if (context.signal.aborted) {
           finish({ kind: "exit", status: { exitCode: 0, signal: 9, coreDumped: false } });
@@ -324,6 +340,7 @@ export function createKernelBashHost(options: KernelBashHostOptions) {
         return kernelOk(undefined);
       },
       async close() {
+        portClosed = true;
         abort();
         finish({ kind: "exit", status: { exitCode: 0, signal: 9, coreDumped: false } });
         await active?.catch(() => {});
