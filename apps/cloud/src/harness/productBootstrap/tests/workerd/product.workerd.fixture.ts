@@ -1,3 +1,4 @@
+export { HarnessProcessStoreBinding } from "../../../HarnessProcessStoreBinding.ts";
 import { ProductFixtureFilesStore as HarnessFilesStoreObject } from "./productStores.workerd.fixture.ts";
 import { ProductFixtureRunStore } from "./productStores.workerd.fixture.ts";
 import { HarnessThreadSupervisorObject } from "../../../HarnessThreadSupervisorObject.ts";
