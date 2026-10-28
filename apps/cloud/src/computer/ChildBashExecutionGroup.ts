@@ -6,6 +6,7 @@ import { disposeKernelRpcReply } from "../kernel/KernelRpcReply.ts";
 import type { KernelBashPort } from "../kernel/KernelBashPort.ts";
 import type { KernelExitStatus } from "../kernel/KernelProcessTable.ts";
 import { isKernelProcessCancelledError } from "../kernel/KernelProcessTable.ts";
+import { isKernelBashStaleExecError } from "../kernel/KernelBashPortError.ts";
 import type { BashCheckpoint } from "./BashCheckpointStore.ts";
 import { BashWorkerPhase } from "./BashWorkerPhase.ts";
 import type { createChildWorkerRunner } from "./ChildWorkerProgram.ts";
@@ -205,9 +206,11 @@ function isOwnedBashCancellation(
   signal: AbortSignal,
   visited = new Set<unknown>(),
 ): boolean {
-  if (!signal.aborted || visited.has(error)) return false;
+  if (visited.has(error)) return false;
   visited.add(error);
-  if (error === signal.reason) return true;
+  // Completion and close already settled the process. Its deferred exec is obsolete work.
+  if (isKernelBashStaleExecError(error)) return true;
+  if (signal.aborted && error === signal.reason) return true;
   if (error instanceof ChildWorkerDispatchError)
     return isOwnedBashCancellation(error.cause, signal, new Set(visited));
   if (error instanceof AggregateError)
@@ -215,5 +218,5 @@ function isOwnedBashCancellation(
       error.errors.length > 0 &&
       error.errors.every((cause) => isOwnedBashCancellation(cause, signal, new Set(visited)))
     );
-  return isKernelProcessCancelledError(error);
+  return signal.aborted && isKernelProcessCancelledError(error);
 }
