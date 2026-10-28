@@ -25,7 +25,11 @@ describe("seeded child program registration", () => {
         hostname: "lazy-program-test",
         programs: { bash: code, busyboxCat: code, ripgrep: code },
       });
-      expect([...catalog.bindings.keys()]).toEqual(["/bin/bash", "/bin/sh", "/bin/cat", "/bin/rg"]);
+      expect([...catalog.bindings.keys()].sort()).toEqual(
+        ["bash", "sh", "cat", "rg"]
+          .flatMap((name) => [name, `/bin/${name}`, `/usr/bin/${name}`])
+          .sort(),
+      );
       expect(open).not.toHaveBeenCalled();
       expect(read).not.toHaveBeenCalled();
       expect(run).not.toHaveBeenCalled();

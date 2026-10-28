@@ -15,6 +15,7 @@ import { CHILD_COREUTILS_COMMANDS } from "./ChildProgramSet.ts";
 import type { ChildWorkerInvocation } from "./ChildWorkerProgram.ts";
 import type { ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 import { childBusyboxFixture, exited } from "./childBusyboxTesting.ts";
+import type { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
 
 export interface FakeChildInvocation {
   readonly host: <T extends object>() => Promise<T>;
@@ -27,6 +28,9 @@ export type FakeChildRun = (
 ) => Promise<KernelCommandExit>;
 
 export interface CommandGatewayFixtureOptions {
+  readonly resolver?: ComputerProgramResolver;
+  readonly programs?: CommandProgramCodes;
+  readonly before?: (filesystem: ReturnType<typeof childBusyboxFixture>["filesystem"]) => void;
   readonly run?: FakeChildRun;
   readonly onRpcReturn?: (input: ChildWorkerInvocation) => void | Promise<void>;
   readonly orderedMachineRules?: readonly {
@@ -42,6 +46,7 @@ export interface CommandGatewayFixtureOptions {
 
 export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}) {
   const kernel = childBusyboxFixture();
+  options.before?.(kernel.filesystem);
   const capacity = new ChildWorkerCapacity(options.capacityLimit ?? 2, {
     owner: "test/command-gateway",
     RESIDENT_BYTE_LIMIT: options.RESIDENT_BYTE_LIMIT ?? String(104 * 1024 * 1024),
@@ -86,9 +91,10 @@ export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}
     wakes: kernel.context.wakes,
     capacity,
     loader,
-    programs: commandProgramCodes(),
+    programs: options.programs ?? commandProgramCodes(),
     hostname: "command-gateway-test",
     machine,
+    ...(options.resolver === undefined ? {} : { resolver: options.resolver }),
     ...(options.orderedMachineRules === undefined
       ? {}
       : { orderedMachineRules: options.orderedMachineRules }),

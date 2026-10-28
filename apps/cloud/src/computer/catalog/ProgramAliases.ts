@@ -8,6 +8,7 @@ export function registerProgramAliases(
 ) {
   // New aliases must not become independent program registrations during this pass.
   const programs = [...bindings];
+  const aliases = new Set<string>();
   for (const [executable, binding] of programs) {
     for (const alias of childProgramPaths(executable)) {
       if (bindings.has(alias)) continue;
@@ -19,6 +20,8 @@ export function registerProgramAliases(
       const result = registry.register(manifest);
       if (result.status !== "ok") throw new Error(`Could not register ${manifest.name}`);
       bindings.set(alias, { manifest, implementation: binding.implementation });
+      aliases.add(alias);
     }
   }
+  return aliases;
 }

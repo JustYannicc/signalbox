@@ -15,6 +15,7 @@ export interface ChildWorkerCode {
   readonly modules: ChildWorkerModules | ChildWorkerModulesFactory;
   readonly entrypoint?: string;
   readonly limits?: ChildWorkerLimits;
+  readonly executableArtifact?: { readonly bytes: number; readonly sha256: string };
 }
 
 export interface ChildWorkerInvocation extends Omit<ChildWorkerCode, "modules"> {

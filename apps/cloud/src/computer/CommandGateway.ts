@@ -103,7 +103,8 @@ export function createCommandGateway(options: CommandGatewayOptions) {
       ...(resolver === undefined
         ? {}
         : {
-            resolve: (request) => resolver.resolve({ ...request, catalog: catalog.bindings }),
+            resolve: (request) =>
+              resolver.resolve({ ...request, catalog: catalog.bindings, aliases: catalog.aliases }),
           }),
       ...(evidence === undefined ? {} : { evidence }),
     });

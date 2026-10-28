@@ -22,6 +22,9 @@ export function createChildBashProgram(
   const continued = createChildWorkerRunner({ ...unreserved, lifetimes });
   return Object.freeze({
     kind: "async" as const,
+    ...(options.code.executableArtifact === undefined
+      ? {}
+      : { executableArtifact: options.code.executableArtifact }),
     prepare: initial.prepare,
     run(context: KernelAsyncProgramContext) {
       const group = new ChildBashExecutionGroup(initial, continued, options.credentials);

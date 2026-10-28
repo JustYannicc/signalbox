@@ -231,9 +231,10 @@ export function createChildProgramCatalog(options: ChildProgramCatalogOptions) {
     });
   }
 
-  registerProgramAliases(options.registry, bindings);
+  const aliases = registerProgramAliases(options.registry, bindings);
   return {
     bindings,
+    aliases,
     async drain() {
       try {
         await lifetimes.drain();

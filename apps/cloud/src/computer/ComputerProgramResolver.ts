@@ -3,6 +3,7 @@ import type { KernelProgramAdmissionRequest } from "../kernel/KernelProgramAdmis
 import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
 import { childProgramName } from "./ChildProgramPaths.ts";
 import type { ComputerProgramResolution } from "./ComputerProgramAdmission.ts";
+import { isCatalogProgramFile } from "./catalog/ProgramFile.ts";
 
 export interface ComputerProgramResolverOptions {
   readonly path: readonly string[];
@@ -14,6 +15,7 @@ export interface ComputerProgramResolverOptions {
 
 export type ComputerProgramResolverRequest = KernelProgramAdmissionRequest & {
   readonly catalog: ReadonlyMap<string, KernelProgramBinding>;
+  readonly aliases?: ReadonlySet<string>;
 };
 
 /** Discovery and admission resolve through the same upper-first namespace. */
@@ -28,7 +30,44 @@ export class ComputerProgramResolver {
     request: ComputerProgramResolverRequest,
   ): Promise<ComputerProgramResolution> => {
     const command = request.command;
-    if (request.target.kind === "resolved") return { command };
+    if (request.target.kind === "resolved") {
+      if (!command.executable.startsWith("/") || !request.aliases?.has(command.executable))
+        return { command };
+      try {
+        await this.#options.overlay.prepare([command.executable], request.signal);
+        const lower = await this.#options.overlay.isLower(command.executable, request.signal);
+        const stat = await request.filesystem.checkExecutable(command.executable, request.signal);
+        if (
+          stat.type === "file" &&
+          (lower ||
+            (await isCatalogProgramFile(
+              request.filesystem,
+              command.executable,
+              request.target.binding,
+              request.signal,
+            )))
+        )
+          return { command };
+        return {
+          command,
+          unavailable: {
+            code: stat.type === "file" ? "ENOEXEC" : "EACCES",
+            message: `Catalog executable is shadowed: ${command.executable}`,
+          },
+        };
+      } catch (error) {
+        const code = errorCode(error);
+        // Catalog identities also work without a materialized machine file.
+        if (code === "ENOENT" || code === "ENOTDIR") return { command };
+        if (code === "EACCES") {
+          return {
+            command,
+            unavailable: { code, message: `Not executable: ${command.executable}` },
+          };
+        }
+        throw error;
+      }
+    }
     const paths = command.executable.includes("/")
       ? [absolutePath(command.executable, command.cwd)]
       : (command.env.PATH ?? this.#options.path.join(":"))

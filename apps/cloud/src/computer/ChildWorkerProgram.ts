@@ -66,6 +66,7 @@ export type ChildWorkerProgram = Extract<
   KernelProgramImplementation,
   { readonly kind: "async" }
 > & {
+  readonly executableArtifact?: ChildWorkerCode["executableArtifact"];
   readonly prepare: (residentBytes?: number) => Promise<ChildWorkerSlotRequest>;
   readonly drain: () => Promise<void>;
 };
@@ -77,6 +78,9 @@ export function createChildWorkerProgram<Host extends object>(
   const runner = createChildWorkerRunner(options);
   return Object.freeze({
     kind: "async" as const,
+    ...(options.code.executableArtifact === undefined
+      ? {}
+      : { executableArtifact: options.code.executableArtifact }),
     ...(options.sigpipe === undefined ? {} : { sigpipe: options.sigpipe }),
     run: (context: KernelAsyncProgramContext) => runner.run(context, options.createHost),
     prepare: runner.prepare,
