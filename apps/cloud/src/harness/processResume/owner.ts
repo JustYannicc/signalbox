@@ -12,6 +12,7 @@ import { runHarnessProcessExecutionShard } from "../processPlacement/execution.t
 import { DURABLE_OBJECT_INVOCATION_LIMIT } from "../processPlacement/limits.ts";
 import {
   snapshotHarnessProcessResumeOperation,
+  snapshotHarnessProcessResumeCallerOperation,
   sameHarnessProcessResumeOperation,
 } from "./operation.ts";
 import { startResumeAttempt, type ResumeAttempt, type ResumedProcess } from "./resumeAttempt.ts";
@@ -28,6 +29,11 @@ import {
 } from "../processOwnership/boundary.ts";
 import { restoreEvictedProcess } from "../processOwnership/restore.ts";
 import { stopEvictedProcess } from "../processOwnership/stopEvicted.ts";
+import { normalizeBoundaryResume } from "../processOwnership/normalizeResume.ts";
+import {
+  assertEvictedStopResumeProof,
+  reserveEvictedStopResume,
+} from "../processOwnership/evictedStopResume.ts";
 import { ownedRequestKey } from "../processOwnership/ownedRequest.ts";
 import { saveCreatedProcessBoundary } from "../processOwnership/creationBoundary.ts";
 import { HarnessProcessCreationJournal } from "../processCreation/journal.ts";
@@ -80,6 +86,7 @@ export class HarnessProcessResumeOwner {
   #retained = false;
   #current: OwnedProcessRequest | undefined;
   #attempt: ResumeAttempt | undefined;
+  #attemptCaller: ResumeAttempt["operation"] | undefined;
   #resumed: ResumedProcess | undefined;
   readonly #checkpoints;
   #idle = false;
@@ -413,13 +420,19 @@ export class HarnessProcessResumeOwner {
 
   async resumeProcess(supplied: unknown): Promise<ResumeProcessResult> {
     await this.incarnation.assertCurrent();
-    let operation = snapshotHarnessProcessResumeOperation(supplied);
+    let operation = snapshotHarnessProcessResumeCallerOperation(supplied);
     if (operation === undefined)
       return Promise.reject(
         new Error("Process resume input is invalid or lacks the caller's journal capabilities."),
       );
     if (this.#attempt !== undefined || this.#resumed !== undefined || this.#retained)
       throw new Error("This shard already owns a resume attempt; replay is forbidden.");
+    const callerOperation = operation;
+    operation = snapshotHarnessProcessResumeOperation(
+      await normalizeBoundaryResume(this.context.storage, operation),
+    );
+    if (operation === undefined)
+      throw new Error("Resume publisher identities do not match the authorized process source.");
     await this.environment.HARNESS_C_PROCESS_STORES?.forRun(operation.runId).runStore.execute({
       type: "read",
       runId: operation.runId,
@@ -431,9 +444,24 @@ export class HarnessProcessResumeOwner {
       operation,
       incarnation: this.incarnation,
     });
-    const source = await reserveOwnedResume(this.context.storage, operation, this.incarnation);
+    const durable = createHarnessDurableState(
+      this.environment as HarnessProcessExecutionEnvironment & HarnessDurableStateBindings,
+      operation.runId,
+    );
+    const evicted = await reserveEvictedStopResume({
+      storage: this.context.storage,
+      environment: this.environment as HarnessProcessExecutionEnvironment &
+        HarnessDurableStateBindings,
+      durable,
+      operation,
+      incarnation: this.incarnation,
+    });
+    const source =
+      evicted?.source ??
+      (await reserveOwnedResume(this.context.storage, operation, this.incarnation));
     const runningSource = source.terminalKey === undefined ? this.#current : undefined;
     if (
+      evicted === undefined &&
       source.terminalKey === undefined &&
       (runningSource === undefined ||
         !sameData(runningSource.handle.identity, source.identity) ||
@@ -442,10 +470,6 @@ export class HarnessProcessResumeOwner {
       throw new Error(
         "The active source has no owned settlement barrier; explicit repair is required.",
       );
-    const durable = createHarnessDurableState(
-      this.environment as HarnessProcessExecutionEnvironment & HarnessDurableStateBindings,
-      operation.runId,
-    );
     const owned = {
       ...source,
       durable,
@@ -454,6 +478,22 @@ export class HarnessProcessResumeOwner {
     const attempt = startResumeAttempt({
       operation,
       owned,
+      ...(evicted === undefined
+        ? {}
+        : {
+            readDestructionCheckpoint: async () =>
+              assertEvictedStopResumeProof({
+                storage: this.context.storage,
+                environment: this.environment as HarnessProcessExecutionEnvironment &
+                  HarnessDurableStateBindings,
+                durable,
+                operation,
+                source,
+                proof: evicted.destruction,
+                currentFence: await this.incarnation.assertCurrent(),
+                requireReservation: true,
+              }),
+          }),
       context: this.context,
       environment: this.environment as HarnessProcessExecutionEnvironment &
         HarnessDurableStateBindings,
@@ -466,12 +506,14 @@ export class HarnessProcessResumeOwner {
       },
     });
     this.#attempt = attempt;
+    this.#attemptCaller = callerOperation;
     return attempt.result.then(async (resumed) => {
       this.#resumed = resumed;
       this.#continuation = undefined;
       this.#continuationCheckpoint = resumed.checkpoint;
       this.#idle = false;
       this.#attempt = undefined;
+      this.#attemptCaller = undefined;
       const confirmed = await this.#confirmResumed(resumed, operation);
       await boundaryFromResumed(this.context.storage, this.incarnation, resumed, durable);
       return confirmed;
@@ -745,12 +787,12 @@ export class HarnessProcessResumeOwner {
   }
 
   async cancelResumeProcess(supplied: unknown) {
-    const operation = snapshotHarnessProcessResumeOperation(supplied);
+    const operation = snapshotHarnessProcessResumeCallerOperation(supplied);
     const attempt = this.#attempt;
     if (
       operation === undefined ||
       attempt === undefined ||
-      !sameHarnessProcessResumeOperation(operation, attempt.operation)
+      !sameHarnessProcessResumeOperation(operation, this.#attemptCaller ?? attempt.operation)
     )
       throw new Error("Cancellation must identify the exact owned resume attempt.");
     await attempt.owned.durable.threadSupervisor.execute({

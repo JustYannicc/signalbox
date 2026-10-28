@@ -1,8 +1,12 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import ts from "typescript-legacy";
+import { generatedMainReachesShared } from "./check-cloud-fixture-worker-exports.generated.mjs";
 
-const worktreeRoot = NodePath.resolve(import.meta.dirname, "..");
+const rootFlag = process.argv.indexOf("--root");
+const suppliedRoot = rootFlag < 0 ? undefined : process.argv[rootFlag + 1];
+if (rootFlag >= 0 && suppliedRoot === undefined) throw new Error("--root requires a worktree path");
+const worktreeRoot = NodePath.resolve(suppliedRoot ?? NodePath.resolve(import.meta.dirname, ".."));
 const cloudRoot = NodePath.join(worktreeRoot, "apps/cloud");
 const sharedExports = NodePath.join(cloudRoot, "src/FixtureWorkerExports.ts");
 const roots = new Map();
@@ -59,8 +63,14 @@ function urlPath(node) {
 function mainSource(node) {
   const literal = stringValue(node);
   if (literal !== undefined) return { kind: "path", value: literal };
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken
+  )
+    return mainSource(node.left) ?? mainSource(node.right);
   const url = urlPath(node);
-  return url === undefined ? undefined : { kind: "url", value: url };
+  if (url !== undefined) return { kind: "url", value: url };
+  return undefined;
 }
 
 function literalText(node, values = []) {
@@ -130,6 +140,34 @@ function collectConfigMains(sourceFile) {
   return mains;
 }
 
+function collectHarnessMainOverrides(sourceFile) {
+  const mains = [];
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      /^create.*Harness$/.test(node.expression.text) &&
+      node.arguments[0] !== undefined &&
+      ts.isObjectLiteralExpression(node.arguments[0])
+    ) {
+      const main = node.arguments[0].properties.find(
+        (property) => propertyName(property) === "main",
+      );
+      if (main !== undefined && ts.isPropertyAssignment(main)) {
+        const value = mainSource(main.initializer);
+        if (value !== undefined) mains.push(value);
+        else
+          failures.push(
+            `${sourceFile.fileName}: cannot resolve fixture Worker main override ${main.initializer.getText(sourceFile)}`,
+          );
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return mains;
+}
+
 function exportStars(sourceFile) {
   const stars = [];
   for (const statement of sourceFile.statements) {
@@ -191,21 +229,6 @@ async function findGeneratedSources(filePath, visited = new Set()) {
   return result;
 }
 
-function containsExportTemplate(sourceFile) {
-  let hasSharedExport = false;
-  const visit = (node) => {
-    if (ts.isTemplateExpression(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      const text = node.getText(sourceFile);
-      if (text.includes("export * from") && sourceFile.text.includes("FixtureWorkerExports"))
-        hasSharedExport = true;
-      if (text.includes('export * from "./worker.js"')) hasSharedExport = true;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  return hasSharedExport;
-}
-
 async function sourceForWranglerMain(configPath, main) {
   const mainPath = NodePath.resolve(NodePath.dirname(configPath), main);
   const stem = NodePath.basename(mainPath, NodePath.extname(mainPath));
@@ -232,10 +255,13 @@ const moduleFiles = sourceFiles.filter((filePath) => /\.(?:ts|tsx|js|mjs)$/.test
 // WorkerLoader facets and release entrypoints are not main workers, so only main config roots enter this set.
 for (const filePath of moduleFiles) {
   const source = await NodeFSP.readFile(filePath, "utf8");
-  if (!source.includes("createTestHarness")) continue;
   const sourceFile = parseSource(filePath, source);
-  for (const main of collectConfigMains(sourceFile))
-    await resolveTestMain(filePath, main, "createTestHarness");
+  if (source.includes("createTestHarness")) {
+    for (const main of collectConfigMains(sourceFile))
+      await resolveTestMain(filePath, main, "createTestHarness");
+  }
+  for (const main of collectHarnessMainOverrides(sourceFile))
+    await resolveTestMain(filePath, main, "harness main override");
 }
 
 for (const filePath of sourceFiles.filter((file) => file.endsWith(".jsonc"))) {
@@ -332,7 +358,13 @@ for (const rootPath of roots.keys()) {
 
 for (const generated of generatedRoots) {
   const candidates = await findGeneratedSources(generated.filePath);
-  const exported = candidates.some(({ sourceFile }) => containsExportTemplate(sourceFile));
+  const exported = await generatedMainReachesShared(generated, candidates, {
+    cloudRoot,
+    worktreeRoot,
+    sharedExports,
+    exportStars,
+    reachesSharedExports,
+  });
   if (!exported) {
     failures.push(
       `${NodePath.relative(worktreeRoot, generated.filePath)} (${generated.main}, ${generated.origin}) has no production export in its generated Worker source`,

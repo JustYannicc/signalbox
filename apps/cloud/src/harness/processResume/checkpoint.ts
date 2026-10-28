@@ -16,8 +16,6 @@ import {
   type CompletionRecord,
 } from "./recoveredCompletion.ts";
 
-export { completionKey };
-
 interface CompletionAttempt {
   readonly input: HarnessProcessCheckpointInput;
   readonly result: Promise<HarnessDurableStateCheckpointResult>;

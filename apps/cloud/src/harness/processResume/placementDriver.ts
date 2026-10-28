@@ -68,6 +68,7 @@ export interface HarnessProcessResumeHandoff {
     drain: ResumeDrain,
   ) => Promise<HarnessProcessResumeCheckpointOutcome<HarnessProcessResumeCheckpointReference>>;
   readonly retainOwnership: () => void;
+  readonly destroyedSource?: HarnessProcessResumeCheckpointReference;
 }
 export function createHarnessProcessResumePlacementDriver(input: {
   readonly operation: HarnessProcessResumeOperationInput;
@@ -159,7 +160,13 @@ export function createHarnessProcessResumePlacementDriver(input: {
           current.snapshot.checkpoint.checkpointId !== checkpoint.checkpointId ||
           current.snapshot.checkpoint.manifestSha256 !== checkpoint.manifestSha256 ||
           current.snapshot.admittedStepId !== null ||
-          current.snapshot.lifecycle !== "stopped"
+          (current.snapshot.lifecycle !== "stopped" &&
+            !(
+              current.snapshot.lifecycle === "recoverable" &&
+              input.handoff.destroyedSource?.nativeSessionId === nativeSessionId &&
+              input.handoff.destroyedSource.checkpointId === checkpoint.checkpointId &&
+              input.handoff.destroyedSource.manifestSha256 === checkpoint.manifestSha256
+            ))
         )
           throw new Error("The durable checkpoint does not match the settled process.");
         const stored = await durable.filesStore.execute({
@@ -243,7 +250,13 @@ export function createHarnessProcessResumePlacementDriver(input: {
           current.snapshot.nativeSessionId !== nativeSessionId ||
           current.snapshot.checkpoint.checkpointId !== checkpoint.checkpointId ||
           current.snapshot.checkpoint.manifestSha256 !== checkpoint.manifestSha256 ||
-          current.snapshot.lifecycle !== "stopped" ||
+          (current.snapshot.lifecycle !== "stopped" &&
+            !(
+              current.snapshot.lifecycle === "recoverable" &&
+              input.handoff.destroyedSource?.nativeSessionId === nativeSessionId &&
+              input.handoff.destroyedSource.checkpointId === checkpoint.checkpointId &&
+              input.handoff.destroyedSource.manifestSha256 === checkpoint.manifestSha256
+            )) ||
           !samePreparedRelease(prepared.identity.preparedRelease, targetPreparedRelease)
         )
           throw new Error("The fresh facet did not restore the selected release and checkpoint.");

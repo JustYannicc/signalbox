@@ -3,6 +3,11 @@ import {
   publicEvictionPoints,
   type PublicEvictionPoint,
 } from "./publicEvictionMatrixProof.fixture.ts";
+import {
+  publicResumeAfterEvictionProof,
+  publicResumeAfterEvictionCases,
+  type PublicResumeAfterEvictionCase,
+} from "./publicResumeAfterEviction.fixture.ts";
 export { ProofProcessStoreBinding as HarnessProcessStoreBinding } from "./publicResumeStores.fixture.ts";
 import { ProofShard, ProofPlacementStore } from "./publicResumeShard.fixture.ts";
 import { ProofFilesStore, ProofRunStore, ProofSupervisor } from "./publicResumeStores.fixture.ts";
@@ -31,6 +36,12 @@ export default {
         if (!publicEvictionPoints.includes(point))
           return new Response("Unknown eviction point", { status: 404 });
         return Response.json(await publicEvictionMatrixProof(env, point));
+      }
+      if (path.startsWith("/eviction-resume/")) {
+        const scenario = path.slice("/eviction-resume/".length) as PublicResumeAfterEvictionCase;
+        if (!publicResumeAfterEvictionCases.includes(scenario))
+          return new Response("Unknown eviction-resume scenario", { status: 404 });
+        return Response.json(await publicResumeAfterEvictionProof(env, scenario));
       }
       if (path === "/warm-drain") return Response.json(await publicWarmDrain(env));
       if (path === "/retained-idle/cycle") return Response.json(await publicIdleCycle(env));

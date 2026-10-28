@@ -3,7 +3,14 @@ import * as NodeURL from "node:url";
 import { build } from "esbuild";
 import { createTestHarness } from "wrangler";
 
-export async function createPublicResumeHarness() {
+export async function createPublicResumeHarness(
+  options: {
+    readonly name?: string;
+    readonly main?: string;
+    readonly supervisorClass?: string;
+  } = {},
+) {
+  const supervisorClass = options.supervisorClass ?? "ProofSupervisor";
   const compile = async (variant: string) => {
     const result = await build({
       entryPoints: [
@@ -29,10 +36,10 @@ export async function createPublicResumeHarness() {
     workers: [
       {
         config: {
-          name: "1396-public-resume-proof",
-          main: NodeURL.fileURLToPath(
-            new URL("./publicResume.workerd.fixture.ts", import.meta.url),
-          ),
+          name: options.name ?? "1396-public-resume-proof",
+          main:
+            options.main ??
+            NodeURL.fileURLToPath(new URL("./publicResume.workerd.fixture.ts", import.meta.url)),
           compatibility_date: "2026-10-19",
           compatibility_flags: ["nodejs_compat", "enable_ctx_exports"],
           worker_loaders: [{ binding: "LOADER" }],
@@ -48,7 +55,7 @@ export async function createPublicResumeHarness() {
               { name: "PLACEMENT_STORES", class_name: "ProofPlacementStore" },
               { name: "HARNESS_FILES_STORE", class_name: "ProofFilesStore" },
               { name: "HARNESS_RUN_STORE", class_name: "ProofRunStore" },
-              { name: "HARNESS_THREAD_SUPERVISOR", class_name: "ProofSupervisor" },
+              { name: "HARNESS_THREAD_SUPERVISOR", class_name: supervisorClass },
             ],
           },
           migrations: [
@@ -59,7 +66,7 @@ export async function createPublicResumeHarness() {
                 "ProofPlacementStore",
                 "ProofFilesStore",
                 "ProofRunStore",
-                "ProofSupervisor",
+                supervisorClass,
               ],
             },
           ],
