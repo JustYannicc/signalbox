@@ -114,11 +114,7 @@ async function resolveTestMain(filePath, main, origin) {
     return;
   }
 
-  const resolved = NodePath.resolve(NodePath.dirname(filePath), main.value);
-  if ((await NodeFSP.stat(resolved).catch(() => undefined))?.isFile()) {
-    addRoot(resolved, origin);
-    return;
-  }
+  // Generated output files may be stale; only the configured producer can prove their exports.
   generatedRoots.push({ filePath, main: main.value, configuration: main.configuration, origin });
 }
 

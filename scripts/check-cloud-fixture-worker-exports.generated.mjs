@@ -1,4 +1,5 @@
 import * as NodePath from "node:path";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeURL from "node:url";
 import ts from "typescript-legacy";
 import { preparedModuleReachesShared } from "./check-cloud-fixture-worker-exports.prepared.mjs";
@@ -263,6 +264,7 @@ function outputRelativePath(node, sourceFile, seen = new Set()) {
   return undefined;
 }
 
+// Wrangler resolves a relative main from its config file, not the test source directory.
 function configurationDirectory(configuration, sourceFile) {
   for (let node = configuration?.parent; node !== undefined; node = node.parent) {
     if (
@@ -307,7 +309,7 @@ function ownsConfiguredMain(producer, main, configDirectory) {
   });
 }
 
-function mainSourceTemplates(sourceFile, main, candidates, configuration) {
+async function mainSourceTemplates(sourceFile, main, candidates, configuration) {
   const writers = [];
   const builds = [];
   const visit = (node) => {
@@ -318,6 +320,7 @@ function mainSourceTemplates(sourceFile, main, candidates, configuration) {
       ) {
         writers.push({
           name: outputRelativePath(node.arguments[0], sourceFile),
+          position: node.pos,
           source: node.arguments[1],
           location: directoryLocation(node.arguments[0], sourceFile),
           outputLocation: directoryLocation(node.arguments[0], sourceFile),
@@ -333,6 +336,7 @@ function mainSourceTemplates(sourceFile, main, candidates, configuration) {
         const resolveDir = namedProperty(stdin, "resolveDir")?.initializer;
         builds.push({
           name: outputRelativePath(outfile, sourceFile),
+          position: node.pos,
           outputLocation: directoryLocation(outfile, sourceFile),
           content: namedProperty(stdin, "contents")?.initializer,
           entries: namedProperty(options, "entryPoints")?.initializer,
@@ -347,11 +351,11 @@ function mainSourceTemplates(sourceFile, main, candidates, configuration) {
   };
   visit(sourceFile);
 
-  const mainName = NodePath.normalize(main);
   const configDirectory = configurationDirectory(configuration, sourceFile);
   const result = [];
   for (const build of builds) {
     if (!ownsConfiguredMain(build, main, configDirectory)) continue;
+    if (build.content !== undefined && build.entries !== undefined) continue;
     if (build.content !== undefined) {
       const content = sourceText(build.content, sourceFile, candidates, {
         baseLocation: build.location,
@@ -359,24 +363,44 @@ function mainSourceTemplates(sourceFile, main, candidates, configuration) {
       });
       if (content !== undefined) result.push(content);
     }
-    if (build.entries === undefined) continue;
+    if (build.entries === undefined || build.content !== undefined) continue;
     const entries = ts.isArrayLiteralExpression(build.entries)
       ? build.entries.elements
       : [build.entries];
-    for (const entry of entries) {
-      const entryName = outputRelativePath(entry, sourceFile);
-      if (entryName === undefined) continue;
-      const mainStem = NodePath.basename(mainName, NodePath.extname(mainName));
-      const entryStem = NodePath.basename(entryName, NodePath.extname(entryName));
-      if (mainStem !== entryStem) continue;
-      for (const writer of writers)
-        if (writer.name === entryName) {
-          const content = sourceText(writer.source, sourceFile, candidates, {
-            baseLocation: build.location,
-            rootSourceFile: sourceFile,
-          });
-          if (content !== undefined) result.push(content);
-        }
+    if (entries.length !== 1) continue;
+    const entry = entries[0];
+    const entryName = outputRelativePath(entry, sourceFile);
+    const entryDirectory = directoryLocation(entry, sourceFile);
+    if (entryName === undefined || entryDirectory === undefined) continue;
+    const inputWriters = writers.filter(
+      (writer) =>
+        writer.name !== undefined &&
+        NodePath.basename(writer.name) === NodePath.basename(entryName) &&
+        sameDirectory(writer.outputLocation, entryDirectory) &&
+        writer.position < build.position,
+    );
+    if (inputWriters.length > 1) continue;
+    if (inputWriters.length === 1) {
+      const content = sourceText(inputWriters[0].source, sourceFile, candidates, {
+        baseLocation: build.location,
+        rootSourceFile: sourceFile,
+      });
+      if (content !== undefined) result.push(content);
+      continue;
+    }
+    const existingPath = staticPathPart(entry, sourceFile);
+    const inputPath =
+      existingPath instanceof URL ? NodeURL.fileURLToPath(existingPath) : existingPath;
+    if (typeof inputPath !== "string" || !NodePath.isAbsolute(inputPath)) continue;
+    const source = await NodeFSP.readFile(inputPath, "utf8").catch(() => undefined);
+    if (source !== undefined) {
+      const inputFile = ts.createSourceFile(inputPath, source, ts.ScriptTarget.Latest, true);
+      result.push({
+        node: ts.factory.createStringLiteral(source),
+        sourceFile: inputFile,
+        baseLocation: { absolutePath: NodePath.dirname(inputPath), sourceFile: inputFile },
+        rootSourceFile: sourceFile,
+      });
     }
   }
   for (const writer of writers)
@@ -562,8 +586,10 @@ function generatedSourceText(template, context) {
 async function targetReachesShared(target, template, candidates, context) {
   const basePath = staticDirectory(template.baseLocation);
   if (NodePath.isAbsolute(target)) return context.reachesSharedExports(NodePath.resolve(target));
-  if (basePath === undefined)
+  if (basePath === undefined) {
+    if (NodePath.normalize(template.baseLocation?.relativeDirectory ?? ".") !== ".") return false;
     return preparedModuleReachesShared(target, template, candidates, context);
+  }
   return context.reachesSharedExports(NodePath.resolve(basePath, target));
 }
 
@@ -572,7 +598,7 @@ export async function generatedMainReachesShared(generated, candidates, context)
     ({ filePath }) => NodePath.resolve(filePath) === NodePath.resolve(generated.filePath),
   );
   if (root === undefined) return false;
-  const candidatesForMain = mainSourceTemplates(
+  const candidatesForMain = await mainSourceTemplates(
     root.sourceFile,
     generated.main,
     candidates,
