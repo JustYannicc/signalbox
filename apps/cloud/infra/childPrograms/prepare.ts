@@ -2,6 +2,7 @@ import {
   CHILD_BUSYBOX_APPLETS,
   CHILD_PRODUCT_BUSYBOX_APPLETS,
   CHILD_PROGRAM_PATHS,
+  CHILD_UGREP_EXECUTABLES,
   type ChildCoreutilsCommand,
 } from "../../src/computer/ChildProgramSet.ts";
 import { childProgramPaths } from "../../src/computer/ChildProgramPaths.ts";
@@ -63,9 +64,12 @@ export interface FullChildProgramSources extends ChildProgramSources {
   readonly ugrep: ChildProgramSourceCode;
 }
 
-export type ChildProgramExecutablePath =
-  | `/bin/${keyof typeof CHILD_PROGRAM_PATHS}`
-  | `/usr/bin/${keyof typeof CHILD_PROGRAM_PATHS}`;
+type SeededProgramPath =
+  | (typeof CHILD_PROGRAM_PATHS)[keyof typeof CHILD_PROGRAM_PATHS]
+  | (typeof CHILD_UGREP_EXECUTABLES)[number];
+export type ChildProgramExecutablePath = ReturnType<typeof childProgramPaths<SeededProgramPath>>[
+  | 1
+  | 2];
 export type LegacyChildProgramExecutablePath = "/bin/bash" | "/bin/cat" | "/bin/rg";
 
 export interface ChildProgramExecutableFile {
@@ -263,7 +267,9 @@ export async function prepareChildPrograms(
     ...measured.files,
     executableFile(CHILD_PROGRAM_PATHS.sed, sedArtifact),
     executableFile(CHILD_PROGRAM_PATHS.jq, jqArtifact),
-    executableFile(CHILD_PROGRAM_PATHS.ugrep, ugrepArtifact),
+    ...CHILD_UGREP_EXECUTABLES.map((path) =>
+      executableFile(childProgramPaths(path)[1], ugrepArtifact),
+    ),
   ];
   const commandExecutableFiles = Object.freeze(
     canonicalFiles.flatMap((file) => {
@@ -302,7 +308,9 @@ export function createChildProgramExecutableCatalog(
   files: readonly ChildProgramExecutableFile[],
 ): ChildProgramExecutableCatalog {
   const expectedPaths = new Set(
-    Object.values(CHILD_PROGRAM_PATHS).flatMap((path) => childProgramPaths(path).slice(1)),
+    [...Object.values(CHILD_PROGRAM_PATHS), ...CHILD_UGREP_EXECUTABLES].flatMap((path) =>
+      childProgramPaths(path).slice(1),
+    ),
   );
   if (
     files.length !== expectedPaths.size ||
