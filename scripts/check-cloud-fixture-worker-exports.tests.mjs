@@ -51,10 +51,12 @@ import { createTestHarness } from "wrangler";
 ${unusedImport}const mainSource = ${JSON.stringify(generatedMain)};
 const output = ${JSON.stringify(outputDir)};
 await NodeFSP.writeFile(NodePath.join(output, "generated.js"), mainSource);
-createTestHarness({ workers: [{ config: {
+const configPath = NodePath.join(output, "wrangler.json");
+await NodeFSP.writeFile(configPath, JSON.stringify({
   main: "generated.js",
   compatibility_date: "2026-10-19",
-}}] });
+}));
+createTestHarness({ workers: [{ configPath }] });
 `,
   );
   return root;
@@ -168,6 +170,128 @@ NodeTest.test("rejects an unresolved explicit harness main override", async () =
       const result = check(root);
       NodeAssert.notEqual(result.status, 0);
       NodeAssert.match(result.stderr, /cannot resolve fixture Worker main override/);
+    },
+  );
+});
+
+NodeTest.test(
+  "does not check an exporting sibling instead of the configured nested main",
+  async () => {
+    await withFixture(
+      ({ sharedExports }) =>
+        `export * from ${JSON.stringify(sharedExports)};\nexport default {};\n`,
+      {},
+      async (root) => {
+        const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+        const source = await NodeFSP.readFile(sourcePath, "utf8");
+        await NodeFSP.writeFile(
+          sourcePath,
+          source
+            .replace(
+              'NodePath.join(output, "generated.js"), mainSource',
+              'NodePath.join(output, "entry.js"), mainSource',
+            )
+            .replace(
+              "createTestHarness(",
+              'await NodeFSP.writeFile(NodePath.join(output, "nested/entry.js"), "export default {};\\n");\ncreateTestHarness(',
+            )
+            .replace('main: "generated.js"', 'main: "nested/entry.js"'),
+        );
+        const result = check(root);
+        NodeAssert.notEqual(result.status, 0);
+        NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+      },
+    );
+  },
+);
+
+NodeTest.test("resolves a nested main export from that main's output directory", async () => {
+  await withFixture('export * from "../bridge.ts";\nexport default {};\n', {}, async (root) => {
+    const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+    const source = await NodeFSP.readFile(sourcePath, "utf8");
+    const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+    await NodeFSP.writeFile(
+      NodePath.join(root, "generated-output/bridge.ts"),
+      `export * from ${JSON.stringify(shared)};\n`,
+    );
+    await NodeFSP.writeFile(
+      sourcePath,
+      source
+        .replace(
+          'NodePath.join(output, "generated.js")',
+          'NodePath.join(output, "nested/entry.js")',
+        )
+        .replace('main: "generated.js"', 'main: "nested/entry.js"'),
+    );
+    const result = check(root);
+    NodeAssert.equal(result.status, 0, result.stderr);
+  });
+});
+
+NodeTest.test(
+  "honors an existing JavaScript export target before a TypeScript sibling",
+  async () => {
+    await withFixture('export * from "./bridge.js";\nexport default {};\n', {}, async (root) => {
+      const output = NodePath.join(root, "generated-output");
+      const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+      await NodeFSP.writeFile(NodePath.join(output, "bridge.js"), "export const marker = true;\n");
+      await NodeFSP.writeFile(
+        NodePath.join(output, "bridge.ts"),
+        `export * from ${JSON.stringify(shared)};\n`,
+      );
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+    });
+  },
+);
+
+NodeTest.test("does not infer extension substitution for an unbundled source writer", async () => {
+  await withFixture('export * from "./bridge.js";\nexport default {};\n', {}, async (root) => {
+    const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+    await NodeFSP.writeFile(
+      NodePath.join(root, "generated-output/bridge.ts"),
+      `export * from ${JSON.stringify(shared)};\n`,
+    );
+    const result = check(root);
+    NodeAssert.notEqual(result.status, 0);
+    NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+  });
+});
+
+NodeTest.test("honors the actual target throughout a transitive export chain", async () => {
+  await withFixture('export * from "./bridge.js";\nexport default {};\n', {}, async (root) => {
+    const output = NodePath.join(root, "generated-output");
+    const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+    await NodeFSP.writeFile(NodePath.join(output, "bridge.js"), 'export * from "./leaf";\n');
+    await NodeFSP.writeFile(NodePath.join(output, "leaf"), "export const marker = true;\n");
+    await NodeFSP.writeFile(
+      NodePath.join(output, "leaf.ts"),
+      `export * from ${JSON.stringify(shared)};\n`,
+    );
+    const result = check(root);
+    NodeAssert.notEqual(result.status, 0);
+    NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
+  });
+});
+
+NodeTest.test("does not borrow a main producer from another output directory", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\nexport default {};\n`,
+    {},
+    async (root) => {
+      const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+      const source = await NodeFSP.readFile(sourcePath, "utf8");
+      await NodeFSP.writeFile(
+        sourcePath,
+        source.replace(
+          'NodePath.join(output, "generated.js"), mainSource',
+          'NodePath.join(output, "unrelated/generated.js"), mainSource',
+        ),
+      );
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /has no production export in its generated Worker source/);
     },
   );
 });

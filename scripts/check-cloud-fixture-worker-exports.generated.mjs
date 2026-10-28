@@ -101,11 +101,18 @@ function directoryLocation(node, sourceFile, seen = new Set()) {
     const method = node.expression.name.text;
     if (
       (method === "join" || method === "resolve") &&
-      node.arguments.length === 2 &&
-      (ts.isStringLiteralLike(node.arguments[1]) ||
-        ts.isNoSubstitutionTemplateLiteral(node.arguments[1]))
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "NodePath" &&
+      node.arguments.length >= 2 &&
+      node.arguments.slice(1).every(ts.isStringLiteralLike)
     )
-      return { expression: node.arguments[0], sourceFile };
+      return {
+        expression: node.arguments[0],
+        sourceFile,
+        relativeDirectory: NodePath.dirname(
+          NodePath.join(...node.arguments.slice(1).map((segment) => segment.text)),
+        ),
+      };
   }
   if (ts.isStringLiteralLike(node) && NodePath.isAbsolute(node.text))
     return { absolutePath: NodePath.dirname(node.text), sourceFile };
@@ -166,7 +173,7 @@ function staticDirectory(location) {
   if (location.absolutePath !== undefined) return location.absolutePath;
   const value = staticPathPart(location.expression, location.sourceFile);
   return typeof value === "string" && NodePath.isAbsolute(value)
-    ? NodePath.resolve(value)
+    ? NodePath.resolve(value, location.relativeDirectory ?? ".")
     : undefined;
 }
 
@@ -219,26 +226,88 @@ function sourceText(expression, sourceFile, candidates, location, seen = new Set
   return undefined;
 }
 
-function lastStringLiteral(node, sourceFile, seen = new Set()) {
+function outputRelativePath(node, sourceFile, seen = new Set()) {
   if (node === undefined) return undefined;
+  node = unwrap(node);
+  if (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node))
+    return NodePath.normalize(node.text);
   if (ts.isIdentifier(node)) {
     if (seen.has(node.text)) return undefined;
     const initializer = findVariable(sourceFile, node.text)?.initializer;
     return initializer === undefined
       ? undefined
-      : lastStringLiteral(initializer, sourceFile, new Set(seen).add(node.text));
+      : outputRelativePath(initializer, sourceFile, new Set(seen).add(node.text));
   }
-  const values = [];
-  const visit = (child) => {
-    if (ts.isStringLiteralLike(child) || ts.isNoSubstitutionTemplateLiteral(child))
-      values.push(child.text);
-    else ts.forEachChild(child, visit);
-  };
-  visit(node);
-  return values.at(-1);
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    const receiver = node.expression.expression;
+    const method = node.expression.name.text;
+    if (
+      ts.isIdentifier(receiver) &&
+      receiver.text === "NodePath" &&
+      (method === "join" || method === "resolve") &&
+      node.arguments.length >= 2
+    ) {
+      const segments = node.arguments.slice(1);
+      if (segments.every(ts.isStringLiteralLike))
+        return NodePath.normalize(NodePath.join(...segments.map((segment) => segment.text)));
+    }
+    if (ts.isIdentifier(receiver) && receiver.text === "NodeURL" && method === "fileURLToPath")
+      return outputRelativePath(node.arguments[0], sourceFile, seen);
+  }
+  if (
+    ts.isNewExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "URL"
+  )
+    return outputRelativePath(node.arguments?.[0], sourceFile, seen);
+  return undefined;
 }
 
-function mainSourceTemplates(sourceFile, main, candidates) {
+function configurationDirectory(configuration, sourceFile) {
+  for (let node = configuration?.parent; node !== undefined; node = node.parent) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "writeFile"
+    )
+      return directoryLocation(node.arguments[0], sourceFile);
+  }
+  return undefined;
+}
+
+function sameDirectory(left, right) {
+  if (left === undefined || right === undefined) return false;
+  const leftPath = staticDirectory(left);
+  const rightPath = staticDirectory(right);
+  if (leftPath !== undefined && rightPath !== undefined) return leftPath === rightPath;
+  return (
+    left.sourceFile === right.sourceFile &&
+    left.expression?.getText(left.sourceFile) === right.expression?.getText(right.sourceFile) &&
+    NodePath.normalize(left.relativeDirectory ?? ".") ===
+      NodePath.normalize(right.relativeDirectory ?? ".")
+  );
+}
+
+function ownsConfiguredMain(producer, main, configDirectory) {
+  if (producer.name !== NodePath.normalize(main)) return false;
+  if (NodePath.isAbsolute(main))
+    return staticDirectory(producer.outputLocation) === NodePath.dirname(main);
+  if (configDirectory === undefined) return false;
+  return sameDirectory(producer.outputLocation, {
+    ...configDirectory,
+    relativeDirectory: NodePath.join(
+      configDirectory.relativeDirectory ?? ".",
+      NodePath.dirname(main),
+    ),
+    ...(configDirectory.absolutePath === undefined
+      ? {}
+      : {
+          absolutePath: NodePath.resolve(configDirectory.absolutePath, NodePath.dirname(main)),
+        }),
+  });
+}
+
+function mainSourceTemplates(sourceFile, main, candidates, configuration) {
   const writers = [];
   const builds = [];
   const visit = (node) => {
@@ -248,9 +317,10 @@ function mainSourceTemplates(sourceFile, main, candidates) {
         node.expression.name.text === "writeFile"
       ) {
         writers.push({
-          name: lastStringLiteral(node.arguments[0], sourceFile),
+          name: outputRelativePath(node.arguments[0], sourceFile),
           source: node.arguments[1],
           location: directoryLocation(node.arguments[0], sourceFile),
+          outputLocation: directoryLocation(node.arguments[0], sourceFile),
         });
       }
       const buildCall =
@@ -262,7 +332,8 @@ function mainSourceTemplates(sourceFile, main, candidates) {
         const outfile = namedProperty(options, "outfile")?.initializer;
         const resolveDir = namedProperty(stdin, "resolveDir")?.initializer;
         builds.push({
-          name: lastStringLiteral(outfile, sourceFile),
+          name: outputRelativePath(outfile, sourceFile),
+          outputLocation: directoryLocation(outfile, sourceFile),
           content: namedProperty(stdin, "contents")?.initializer,
           entries: namedProperty(options, "entryPoints")?.initializer,
           location:
@@ -276,10 +347,11 @@ function mainSourceTemplates(sourceFile, main, candidates) {
   };
   visit(sourceFile);
 
-  const mainName = NodePath.basename(main);
+  const mainName = NodePath.normalize(main);
+  const configDirectory = configurationDirectory(configuration, sourceFile);
   const result = [];
   for (const build of builds) {
-    if (build.name !== mainName) continue;
+    if (!ownsConfiguredMain(build, main, configDirectory)) continue;
     if (build.content !== undefined) {
       const content = sourceText(build.content, sourceFile, candidates, {
         baseLocation: build.location,
@@ -292,7 +364,7 @@ function mainSourceTemplates(sourceFile, main, candidates) {
       ? build.entries.elements
       : [build.entries];
     for (const entry of entries) {
-      const entryName = lastStringLiteral(entry, sourceFile);
+      const entryName = outputRelativePath(entry, sourceFile);
       if (entryName === undefined) continue;
       const mainStem = NodePath.basename(mainName, NodePath.extname(mainName));
       const entryStem = NodePath.basename(entryName, NodePath.extname(entryName));
@@ -308,7 +380,7 @@ function mainSourceTemplates(sourceFile, main, candidates) {
     }
   }
   for (const writer of writers)
-    if (writer.name === mainName) {
+    if (ownsConfiguredMain(writer, main, configDirectory)) {
       const content = sourceText(writer.source, sourceFile, candidates, {
         baseLocation: writer.location,
         rootSourceFile: sourceFile,
@@ -492,9 +564,7 @@ async function targetReachesShared(target, template, candidates, context) {
   if (NodePath.isAbsolute(target)) return context.reachesSharedExports(NodePath.resolve(target));
   if (basePath === undefined)
     return preparedModuleReachesShared(target, template, candidates, context);
-  const path = NodePath.resolve(basePath, target);
-  if (await context.reachesSharedExports(path)) return true;
-  return path.endsWith(".js") && context.reachesSharedExports(`${path.slice(0, -3)}.ts`);
+  return context.reachesSharedExports(NodePath.resolve(basePath, target));
 }
 
 export async function generatedMainReachesShared(generated, candidates, context) {
@@ -502,7 +572,12 @@ export async function generatedMainReachesShared(generated, candidates, context)
     ({ filePath }) => NodePath.resolve(filePath) === NodePath.resolve(generated.filePath),
   );
   if (root === undefined) return false;
-  const candidatesForMain = mainSourceTemplates(root.sourceFile, generated.main, candidates);
+  const candidatesForMain = mainSourceTemplates(
+    root.sourceFile,
+    generated.main,
+    candidates,
+    generated.configuration,
+  );
   const unique = new Map(
     candidatesForMain.map((template) => [
       `${template.sourceFile.fileName}:${template.node.pos}:${template.node.end}`,

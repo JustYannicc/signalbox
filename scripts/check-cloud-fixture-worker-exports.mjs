@@ -119,7 +119,7 @@ async function resolveTestMain(filePath, main, origin) {
     addRoot(resolved, origin);
     return;
   }
-  generatedRoots.push({ filePath, main: main.value, origin });
+  generatedRoots.push({ filePath, main: main.value, configuration: main.configuration, origin });
 }
 
 function collectConfigMains(sourceFile) {
@@ -128,7 +128,7 @@ function collectConfigMains(sourceFile) {
     if (isWorkerConfig(node)) {
       const main = node.properties.find((property) => propertyName(property) === "main");
       const value = mainSource(main.initializer);
-      if (value !== undefined) mains.push(value);
+      if (value !== undefined) mains.push({ ...value, configuration: node });
       else
         failures.push(
           `${sourceFile.fileName}: cannot resolve fixture Worker main ${main.initializer.getText(sourceFile)}`,
@@ -193,11 +193,8 @@ async function reachesSharedExports(filePath, visited = new Set()) {
   const sourceFile = parseSource(resolved, source);
   for (const specifier of exportStars(sourceFile)) {
     const target = NodePath.resolve(NodePath.dirname(resolved), specifier);
-    const candidates = [target, `${target}.ts`, `${target}.tsx`, `${target}.js`, `${target}.mjs`];
-    for (const candidate of candidates) {
-      if ((await NodeFSP.stat(candidate).catch(() => undefined))?.isFile()) {
-        if (await reachesSharedExports(candidate, visited)) return true;
-      }
+    if ((await NodeFSP.stat(target).catch(() => undefined))?.isFile()) {
+      if (await reachesSharedExports(target, visited)) return true;
     }
   }
   return false;
