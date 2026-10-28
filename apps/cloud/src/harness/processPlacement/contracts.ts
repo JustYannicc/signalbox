@@ -223,6 +223,7 @@ export interface HarnessProcessPlacementRecoveryRecord {
   readonly identityState?: "unknown" | "observed";
   readonly lease: ProcessSlotLease;
   readonly state:
+    | "unopened"
     | "identity-unknown"
     | "preparing"
     | "prepared"

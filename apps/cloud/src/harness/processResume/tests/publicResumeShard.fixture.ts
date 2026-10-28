@@ -1,8 +1,11 @@
 import { HarnessProcessExecutionShardObject } from "../../HarnessProcessExecutionShardObject.ts";
-import { HarnessProcessPlacementStoreObject } from "../../HarnessProcessPlacementStoreObject.ts";
+import {
+  ObservedPlacementStore,
+  placementReleaseEvidence,
+  type ObservedPlacementRelease,
+} from "./placementReleaseObserver.fixture.ts";
 import type { HarnessProcessExecutionEnvironment } from "../../HarnessProcessPlacement.ts";
 import type { HarnessProcessResumePreparedRelease } from "../../HarnessProcessResume.ts";
-import type { HarnessProcessPlacementWriter } from "../../HarnessProcessPlacement.ts";
 import type { ProofFilesStore } from "./publicResumeStores.fixture.ts";
 import { failTerminalWrite } from "./terminalWriteFailure.fixture.ts";
 import type { ProcessSlotState } from "../../../computer/ProcessSlots.ts";
@@ -27,6 +30,9 @@ export class ProofShard extends HarnessProcessExecutionShardObject {
   }
   armTransactionFailure(after: boolean) {
     failTerminalWrite(this.ctx.storage, after);
+  }
+  placementReleaseEvidence() {
+    return placementReleaseEvidence(this.ctx.storage);
   }
   async evidence() {
     const terminal = await this.ctx.storage.list<{
@@ -90,15 +96,23 @@ export class ProofShard extends HarnessProcessExecutionShardObject {
   }
 }
 
-export class ProofPlacementStore extends HarnessProcessPlacementStoreObject {
-  override async releaseWriter(owner: string, writer: HarnessProcessPlacementWriter) {
+export class ProofPlacementStore extends ObservedPlacementStore {
+  protected override async beforePlacementRelease({
+    owner,
+    writer,
+    proof,
+  }: ObservedPlacementRelease) {
     const env = this.env as unknown as {
       PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<ProofShard>;
     };
-    const before = await env.PROCESS_EXECUTION_SHARDS.getByName(owner).evidence();
+    const evidence = await env.PROCESS_EXECUTION_SHARDS.getByName(owner).evidence();
     const events = (await this.ctx.storage.get<unknown[]>("proof/releases")) ?? [];
-    await this.ctx.storage.put("proof/releases", [...events, before]);
-    await super.releaseWriter(owner, writer);
+    const proofs = (await this.ctx.storage.get<unknown[]>("proof/release-proofs")) ?? [];
+    await this.ctx.storage.put({
+      "proof/releases": [...events, evidence],
+      "proof/release-proofs": [...proofs, { owner, writer, proof }],
+    });
+    return undefined;
   }
   async ownership(owner: string) {
     const writer = await this.readWriter(owner);
