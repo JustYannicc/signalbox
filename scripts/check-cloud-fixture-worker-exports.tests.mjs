@@ -365,6 +365,44 @@ NodeTest.test("reads the exact existing build input when it has no generated wri
   });
 });
 
+for (const inputExports of [false, true]) {
+  NodeTest.test(
+    inputExports
+      ? "resolves generated build input exports from the input directory"
+      : "does not borrow generated build input exports from the output directory",
+    async () => {
+      await withFixture('export * from "./bridge.ts";\n', {}, async (root) => {
+        await buildInputFixture(root, 'export * from "./bridge.ts";\n', false);
+        const sourcePath = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+        const source = await NodeFSP.readFile(sourcePath, "utf8");
+        const buildWithWriter = source.replace(
+          "await build({entryPoints:",
+          'await NodeFSP.writeFile(NodePath.join(real, "entry.ts"), mainSource);\nawait build({entryPoints:',
+        );
+        NodeAssert.notEqual(buildWithWriter, source);
+        await NodeFSP.writeFile(sourcePath, buildWithWriter);
+        const shared = NodePath.join(root, "apps/cloud/src/FixtureWorkerExports.ts");
+        const exporting = `export * from ${JSON.stringify(shared)};\n`;
+        const unrelated = "export default {};\n";
+        await NodeFSP.writeFile(
+          NodePath.join(root, "real-input/bridge.ts"),
+          inputExports ? exporting : unrelated,
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(root, "generated-output/bridge.ts"),
+          inputExports ? unrelated : exporting,
+        );
+        const result = check(root);
+        if (inputExports) NodeAssert.equal(result.status, 0, result.stderr);
+        else {
+          NodeAssert.notEqual(result.status, 0);
+          NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+        }
+      });
+    },
+  );
+}
+
 NodeTest.test("does not use a parent prepared copy for a nested main's target", async () => {
   await withFixture("export default {};\n", {}, async (root) => {
     const directory = NodePath.join(root, "apps/cloud/infra/isolateProbe");

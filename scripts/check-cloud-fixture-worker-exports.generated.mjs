@@ -386,7 +386,7 @@ async function mainSourceTemplates(sourceFile, main, candidates, configuration) 
     if (inputWriters.length > 1) continue;
     if (inputWriters.length === 1) {
       const content = sourceText(inputWriters[0].source, sourceFile, candidates, {
-        baseLocation: build.location,
+        baseLocation: entryDirectory,
         rootSourceFile: sourceFile,
       });
       if (content !== undefined) result.push(content);
