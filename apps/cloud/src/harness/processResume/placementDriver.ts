@@ -31,6 +31,7 @@ import type { HarnessProcessResumePreDrainSnapshot } from "./terminalEvidence.ts
 import { replaceHarnessProcessResumeRunStoreFacet } from "./runStore.ts";
 import { authorizePublication, sameControl } from "./authority.ts";
 import { ownedPromise } from "./ownedEffect.ts";
+import { processFacetStores } from "../processOwnership/bindings.ts";
 import type {
   HarnessProcessResumeDurableRecord,
   HarnessProcessResumePlacementPin,
@@ -194,15 +195,7 @@ export function createHarnessProcessResumePlacementDriver(input: {
             HARNESS_RESUME_RUN_ID: operation.runId,
             HARNESS_RESUME_CONTROL: transition.nextControl,
             HARNESS_RESUME_PUBLISHER: prepare.publisher,
-            HARNESS_RESUME_RUN_STORE: input.environment.HARNESS_RUN_STORE.getByName(
-              operation.runId,
-            ),
-            HARNESS_RESUME_FILES_STORE: input.environment.HARNESS_FILES_STORE.getByName(
-              operation.runId,
-            ),
-            HARNESS_RESUME_SUPERVISOR: input.environment.HARNESS_THREAD_SUPERVISOR.getByName(
-              operation.runId,
-            ),
+            ...(await processFacetStores(input.environment, operation.runId)),
           },
         };
         const opened = await prepareHarnessProcessExecutionResumeFacet({

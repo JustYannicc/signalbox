@@ -10,6 +10,7 @@ import { authorizePublication, sameControl } from "./authority.ts";
 import { execute, fail, sameCheckpoint, sameVisibleState } from "./runStoreState.ts";
 import { validateIdleCompletion } from "./idleCompletion.ts";
 import { persistTerminalEvidence } from "./terminalEvidence.ts";
+import { retainOwnedRequest } from "../processOwnership/ownedRequest.ts";
 
 const binding = HarnessProcessResumeRunStoreBindingSchema.fields;
 export const HarnessProcessContinuationInput = Schema.Struct({
@@ -80,7 +81,7 @@ export async function continueResumedProcess(input: {
     settlement: import("../processPlacement/contracts.ts").HarnessProcessInvocationSettlement,
   ) => void;
   readonly requestContextId: string;
-  readonly onOwned: (owned: OwnedProcessRequest) => void;
+  readonly onOwned: (owned: OwnedProcessRequest) => Promise<void>;
   readonly assertOwned: () => void;
 }): Promise<HarnessProcessExecutionProcessResult> {
   const { request, resumed, durable } = input;
@@ -216,7 +217,7 @@ export async function continueResumedProcess(input: {
     owned = {
       kind: "published",
       runId: request.runId,
-      placement: boundary.placement,
+      placement: resumed.placement,
       durable,
       handle: prepared.handle,
       publication,
@@ -243,7 +244,7 @@ export async function continueResumedProcess(input: {
       settled: Promise.withResolvers(),
       retained: false,
     };
-    input.onOwned(owned);
+    await input.onOwned(owned);
     const settlement = await prepared.handle.invoke(
       {
         publisher: request.runStore.currentPublisher,
@@ -280,6 +281,7 @@ export async function continueResumedProcess(input: {
     if (owned !== undefined) {
       owned.retained = true;
       owned.completion.resolve(undefined);
+      await retainOwnedRequest(input.storage, owned);
     }
     try {
       await input.storage.put(key, { request, phase: "retained" });

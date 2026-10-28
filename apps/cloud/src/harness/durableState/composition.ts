@@ -16,6 +16,7 @@ import {
 import { publishFreshFacet } from "./publication.ts";
 import { reconcile } from "./reconciliation.ts";
 import { HarnessDurableStateError } from "./errors.ts";
+import type { ProcessFence } from "../processOwnership/fence.ts";
 
 const privateSupervisorCommands = new Set([
   "read",
@@ -27,11 +28,28 @@ const privateSupervisorCommands = new Set([
 export function createHarnessDurableState(
   bindings: HarnessDurableStateBindings,
   runId: string,
+  fence?: ProcessFence,
 ): HarnessDurableState {
   if (!runId) throw new HarnessDurableStateError({ code: "INVALID" });
-  const runStore = bindings.HARNESS_RUN_STORE.getByName(runId);
-  const filesStore = bindings.HARNESS_FILES_STORE.getByName(runId);
-  const threadSupervisor = bindings.HARNESS_THREAD_SUPERVISOR.getByName(runId);
+  const rawRunStore = bindings.HARNESS_RUN_STORE.getByName(runId);
+  const rawFilesStore = bindings.HARNESS_FILES_STORE.getByName(runId);
+  const rawSupervisor = bindings.HARNESS_THREAD_SUPERVISOR.getByName(runId);
+  const scoped =
+    bindings.HARNESS_C_PROCESS_STORES?.forRun(runId) ??
+    (fence === undefined
+      ? undefined
+      : {
+          runStore: { execute: (command: unknown) => rawRunStore.execute(command, fence) },
+          filesStore: { execute: (command: unknown) => rawFilesStore.execute(command, fence) },
+          threadSupervisor: {
+            execute: (command: unknown) => rawSupervisor.execute(command, fence),
+            reserveReconciliation: (input: unknown) =>
+              rawSupervisor.reserveReconciliation(input, fence),
+          },
+        });
+  const runStore = scoped?.runStore ?? rawRunStore;
+  const filesStore = scoped?.filesStore ?? rawFilesStore;
+  const threadSupervisor = scoped?.threadSupervisor ?? rawSupervisor;
   const stores = { runId, runStore, filesStore, threadSupervisor };
 
   return {

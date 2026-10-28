@@ -6,15 +6,45 @@ import type {
   HarnessProcessExecutionShardResult,
 } from "./processPlacement/execution.ts";
 import { HarnessProcessResumeOwner } from "./processResume/owner.ts";
+import { ProcessIncarnation, processContext } from "./processOwnership/incarnation.ts";
+import { createProcessStoreBindings } from "./processOwnership/bindings.ts";
+import type { HarnessDurableStateBindings } from "./HarnessDurableState.ts";
 
 /** The C owner keeps the real DO context and lifecycle state behind this transport. */
 export class HarnessProcessExecutionShardObject extends DurableObject<HarnessProcessExecutionEnvironment> {
   // @effect-diagnostics-next-line cryptoRandomUUID:off - the platform constructor creates the shard incarnation before its request runtime.
   readonly #executionIncarnationNonce = crypto.randomUUID();
+  readonly #incarnation;
+  readonly #processStores;
+  readonly #ready;
   #resumeOwner: HarnessProcessResumeOwner | undefined;
 
-  executionIncarnationNonce() {
+  constructor(ctx: DurableObjectState, env: HarnessProcessExecutionEnvironment) {
+    super(ctx, env);
+    this.#incarnation = new ProcessIncarnation(
+      ctx.storage,
+      ctx.id.name ?? ctx.id.toString(),
+      this.#executionIncarnationNonce,
+    );
+    this.#processStores = createProcessStoreBindings(
+      env as HarnessProcessExecutionEnvironment & Partial<HarnessDurableStateBindings>,
+      this.#incarnation,
+      ctx,
+    );
+    this.#ready = ctx.blockConcurrencyWhile(() =>
+      this.#incarnation.activateRuns(this.#processStores.activate),
+    );
+  }
+
+  async executionIncarnationNonce() {
+    await this.#ready;
+    await this.#incarnation.assertCurrent();
     return this.#executionIncarnationNonce;
+  }
+
+  async processIncarnationFence() {
+    await this.#ready;
+    return this.#incarnation.assertCurrent();
   }
 
   protected processExecutionHooks(): HarnessProcessExecutionHooks | undefined {
@@ -25,21 +55,31 @@ export class HarnessProcessExecutionShardObject extends DurableObject<HarnessPro
     input: HarnessProcessExecutionShardInput,
     requestContextId: string,
   ): Promise<HarnessProcessExecutionShardResult> {
+    await this.#ready;
+    await this.#incarnation.activateRun(input.runId);
     return this.#owner().runShard(input, requestContextId, this.processExecutionHooks());
   }
 
-  startFreshProcess(input: Parameters<HarnessProcessResumeOwner["startFreshProcess"]>[0]) {
+  async startFreshProcess(input: Parameters<HarnessProcessResumeOwner["startFreshProcess"]>[0]) {
+    await this.#ready;
+    await this.#incarnation.activateRun(input.runId);
     return this.#owner().startFreshProcess(input);
   }
 
-  runCreatedProcess(
+  async runCreatedProcess(
     input: Parameters<HarnessProcessResumeOwner["runCreatedProcess"]>[0],
     requestContextId: string,
   ) {
+    await this.#ready;
+    await this.#incarnation.activateRun(input.runId);
     return this.#owner().runCreatedProcess(input, requestContextId);
   }
 
-  recoverFreshProcess(input: Parameters<HarnessProcessResumeOwner["recoverFreshProcess"]>[0]) {
+  async recoverFreshProcess(
+    input: Parameters<HarnessProcessResumeOwner["recoverFreshProcess"]>[0],
+  ) {
+    await this.#ready;
+    await this.#incarnation.activateRun(input.runId);
     return this.#owner().recoverFreshProcess(input);
   }
 
@@ -73,9 +113,10 @@ export class HarnessProcessExecutionShardObject extends DurableObject<HarnessPro
 
   #owner() {
     return (this.#resumeOwner ??= new HarnessProcessResumeOwner(
-      this.ctx,
-      this.env,
+      processContext(this.ctx, this.#incarnation),
+      { ...this.env, HARNESS_C_PROCESS_STORES: this.#processStores },
       this.#executionIncarnationNonce,
+      this.#incarnation,
     ));
   }
 }

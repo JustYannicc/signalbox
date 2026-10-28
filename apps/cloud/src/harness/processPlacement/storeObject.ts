@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { assertProcessFenceNonce, claimProcessFence } from "../processOwnership/fence.ts";
 import type { ProcessSlotState } from "../../computer/ProcessSlots.ts";
 import type { HarnessProcessPlacementRecoveryRecord } from "./contracts.ts";
 import type { HarnessProcessPlacementStoreClient } from "./durableStore.ts";
@@ -24,6 +25,10 @@ export class HarnessProcessPlacementStoreObject
     string,
     { readonly identity: string; readonly incarnation: string }
   >();
+
+  claimProcessFence(fence: unknown) {
+    return claimProcessFence(this.ctx.storage, fence);
+  }
 
   async readWriter(owner: string): Promise<HarnessProcessPlacementWriter | undefined> {
     return await this.ctx.storage.transaction(async (transaction) => {
@@ -52,6 +57,7 @@ export class HarnessProcessPlacementStoreObject
     try {
       await this.ctx.storage.transaction(async (transaction) => {
         await this.#assertOwnerIn(transaction, owner, true);
+        await assertProcessFenceNonce(transaction, owner, writer.shardIncarnationNonce);
         const current = await transaction.get<unknown>(WRITER_KEY);
         if (current !== undefined) {
           assertWriter(current);
@@ -72,6 +78,7 @@ export class HarnessProcessPlacementStoreObject
     try {
       await this.ctx.storage.transaction(async (transaction) => {
         await this.#assertOwnerIn(transaction, owner);
+        await assertProcessFenceNonce(transaction, owner, writer.shardIncarnationNonce);
         const current = await transaction.get<unknown>(WRITER_KEY);
         if (current === undefined) {
           const released = await transaction.get<unknown>(WRITER_RELEASE_KEY);
@@ -227,6 +234,7 @@ export class HarnessProcessPlacementStoreObject
   ): Promise<void> {
     assertWriter(writer);
     await this.#assertOwnerIn(transaction, owner);
+    await assertProcessFenceNonce(transaction, owner, writer.shardIncarnationNonce);
     const current = await transaction.get<unknown>(WRITER_KEY);
     if (current === undefined) throw new Error("Process-placement writer is not claimed.");
     assertWriter(current);

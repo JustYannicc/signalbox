@@ -143,6 +143,7 @@ const requirePublisher = (
 export function createHarnessFilesStore(
   database: HarnessFilesDatabase,
   runId: string,
+  options: { readonly allowCheckpointSchemaMigration?: boolean } = {},
 ): HarnessFilesStore {
   return {
     execute: (input) =>
@@ -166,7 +167,7 @@ export function createHarnessFilesStore(
               const current = currentState(database, runId);
               if (!current.state) return fail("MISSING");
               requirePublisher(current.state, command.publisher);
-              migrateFileKinds(database);
+              migrateFileKinds(database, options.allowCheckpointSchemaMigration ?? true);
               return current.state;
             });
             const content = await readCheckpoint(database, command.checkpointId, "read");

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off cryptoRandomUUID:off - This fixture exercises the real Workerd DO transport.
 import * as Effect from "effect/Effect";
+export { HarnessProcessStoreBinding } from "../../HarnessProcessStoreBinding.ts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { dataForDriver } from "../../adapter/tests/data.ts";
 import { createHarnessDurableState } from "../../HarnessDurableState.ts";
@@ -825,7 +826,11 @@ async function admissionParentDestruction(env: CreationWorkerEnv, drainOperation
   };
   const recovered = await recoveredShard.recoverFreshProcess(recoveryInput);
   const replay = await recoveredShard.recoverFreshProcess(recoveryInput);
-  const durable = createHarnessDurableState(env, fixture.runId);
+  const durable = createHarnessDurableState(
+    env,
+    fixture.runId,
+    await recoveredShard.processIncarnationFence(),
+  );
   const journal = await durable.runStore.execute({ type: "read", runId: fixture.runId });
   const current = await durable.threadSupervisor.execute({
     type: "read",

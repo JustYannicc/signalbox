@@ -2,6 +2,7 @@
 import * as NodeURL from "node:url";
 import { afterEach, beforeAll, beforeEach, expect, it } from "vite-plus/test";
 import { build } from "esbuild";
+import * as NodeProcess from "node:process";
 import { createTestHarness } from "wrangler";
 import { loadControlledCodexRelease } from "./tests/controlledRelease.fixture.ts";
 
@@ -78,7 +79,10 @@ beforeEach(async () => {
 }, 60_000);
 
 afterEach(async () => {
-  if (harness !== undefined) await harness.close();
+  if (harness !== undefined) {
+    await harness.close();
+    NodeProcess.stdout.write("[public-C-harness-close-returned] publicCreation\n");
+  }
 });
 
 it("creates through public C, stores the peer UUID at generation one, and runs request one on that facet", async () => {

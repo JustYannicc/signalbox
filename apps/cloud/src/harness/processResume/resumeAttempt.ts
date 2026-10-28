@@ -3,6 +3,7 @@ import type { HarnessDurableStateBindings } from "../HarnessDurableState.ts";
 import type { HarnessProcessExecutionEnvironment } from "../processPlacement/execution.ts";
 import type { HarnessProcessResumeOperationInput } from "./contracts.ts";
 import type { OwnedProcessRequest } from "./executionState.ts";
+import { readOwnedTerminal, type DurableOwnedRequest } from "../processOwnership/ownedRequest.ts";
 import { sameControl, samePublisher } from "./authority.ts";
 import { sameData } from "./checkpointContract.ts";
 import { createHarnessProcessResume } from "./service.ts";
@@ -33,21 +34,31 @@ export interface ResumedProcess {
     { status: "published" }
   >;
   readonly boundary: ProcessTerminalEvidence;
+  readonly placement: ProcessTerminalEvidence["placement"];
 }
 export interface ResumeAttempt {
   readonly operation: HarnessProcessResumeOperationInput;
   readonly controller: AbortController;
   readonly result: Promise<ResumedProcess>;
-  readonly owned: OwnedProcessRequest;
+  readonly owned: ResumeSource;
   drainStarted: boolean;
 }
 
+type ResumeSource = DurableOwnedRequest & {
+  readonly durable: OwnedProcessRequest["durable"];
+  retained: boolean;
+};
+
 export function startResumeAttempt(input: {
   readonly operation: HarnessProcessResumeOperationInput;
-  readonly owned: OwnedProcessRequest;
+  readonly owned: ResumeSource;
   readonly context: DurableObjectState;
   readonly environment: HarnessProcessExecutionEnvironment & HarnessDurableStateBindings;
   readonly isOwned: (attempt: ResumeAttempt) => boolean;
+  readonly assertCurrent: () => Promise<void>;
+  readonly placementNonce: string;
+  readonly awaitSourceSettlement: () => Promise<void>;
+  readonly onDrainStarted: () => void;
 }) {
   const { operation, owned } = input;
   const completion = Promise.withResolvers<ResumedProcess>();
@@ -92,6 +103,7 @@ export function startResumeAttempt(input: {
           "The persisted resume attempt requires explicit repair; it cannot be replayed.",
         );
       check();
+      await input.assertCurrent();
       await save({});
       const current = await owned.durable.threadSupervisor.execute({
         type: "read",
@@ -130,7 +142,7 @@ export function startResumeAttempt(input: {
       await save({ phase: "draining" });
       check();
       attempt.drainStarted = true;
-      owned.control = operation.transition.nextControl;
+      input.onDrainStarted();
       const drained = await owned.durable.beginDrain({
         control: operation.transition.control,
         publisher: operation.transition.publisher,
@@ -141,7 +153,8 @@ export function startResumeAttempt(input: {
       if (drained.status !== "draining")
         throw new Error("The A drain is pending; process ownership stays reserved.");
       check();
-      await owned.settled.promise;
+      await input.awaitSourceSettlement();
+      await input.assertCurrent();
       check();
       if (owned.retained) throw new Error("The previous process still has unresolved ownership.");
       const key = terminalKey(
@@ -149,7 +162,12 @@ export function startResumeAttempt(input: {
         operation.previousOperationId,
         operation.previousStepId,
       );
-      const boundary = await input.context.storage.get<ProcessTerminalEvidence>(key);
+      const { durable: _durable, ...source } = owned;
+      const boundary = await readOwnedTerminal(
+        input.context.storage,
+        source,
+        operation.transition.operationId,
+      );
       if (
         boundary === undefined ||
         boundary.version !== 1 ||
@@ -159,7 +177,7 @@ export function startResumeAttempt(input: {
         boundary.request.requestId !== operation.previousStepId ||
         !sameData(boundary.request, operation.runStore.request) ||
         !sameData(boundary.placement, owned.placement) ||
-        !sameData(boundary.identity, owned.handle.identity) ||
+        !sameData(boundary.identity, owned.identity) ||
         !samePublisher(boundary.publisher, operation.transition.publisher)
       )
         throw new Error("No exact durable stop evidence belongs to this process transition.");
@@ -182,7 +200,7 @@ export function startResumeAttempt(input: {
       check();
       const driver = createHarnessProcessResumePlacementDriver({
         operation,
-        shard: owned.placement,
+        shard: { ...owned.placement, shardIncarnationNonce: input.placementNonce },
         context: input.context,
         environment: input.environment,
         durable: owned.durable,
@@ -213,6 +231,7 @@ export function startResumeAttempt(input: {
         prepared: result.preparedFacet,
         publication: result.publication,
         boundary,
+        placement: { ...owned.placement, shardIncarnationNonce: input.placementNonce },
       };
     } catch (cause) {
       owned.retained = true;

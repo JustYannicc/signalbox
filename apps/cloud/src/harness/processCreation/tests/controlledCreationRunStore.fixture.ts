@@ -19,8 +19,8 @@ export class ControlledCreationRunStore extends HarnessRunStoreObject {
     await waiter.promise;
   }
 
-  override async execute(command: unknown) {
-    const result = await super.execute(command);
+  override async execute(command: unknown, fence?: unknown) {
+    const result = await super.execute(command, fence);
     if (isRequestFinish(command)) this.#finished.get(command.requestId)?.resolve();
     return result;
   }

@@ -4,6 +4,9 @@ import type { HarnessProcessExecutionEnvironment } from "../../HarnessProcessPla
 import type { HarnessProcessResumePreparedRelease } from "../../HarnessProcessResume.ts";
 import type { HarnessProcessPlacementWriter } from "../../HarnessProcessPlacement.ts";
 import type { ProofFilesStore } from "./publicResumeStores.fixture.ts";
+import { failTerminalWrite } from "./terminalWriteFailure.fixture.ts";
+import type { ProcessSlotState } from "../../../computer/ProcessSlots.ts";
+import type { HarnessProcessPlacementRecoveryRecord } from "../../HarnessProcessPlacement.ts";
 
 type ProofShardEnvironment = HarnessProcessExecutionEnvironment & {
   readonly HARNESS_FILES_STORE: DurableObjectNamespace<ProofFilesStore>;
@@ -23,16 +26,7 @@ export class ProofShard extends HarnessProcessExecutionShardObject {
     this.ctx.abort("Reconstruct C durable evidence without replaying execution.");
   }
   armTransactionFailure(after: boolean) {
-    const storage = this.ctx.storage;
-    const original = storage.transaction.bind(storage);
-    storage.transaction = async <T>(
-      callback: (transaction: DurableObjectTransaction) => Promise<T>,
-    ) => {
-      storage.transaction = original;
-      if (!after) throw new Error("Injected C evidence transaction failure.");
-      const result = await original(callback);
-      throw new Error(`Injected C evidence reply loss after commit: ${typeof result}`);
-    };
+    failTerminalWrite(this.ctx.storage, after);
   }
   async evidence() {
     const terminal = await this.ctx.storage.list<{
@@ -88,8 +82,17 @@ export class ProofPlacementStore extends HarnessProcessPlacementStoreObject {
   async ownership(owner: string) {
     const writer = await this.readWriter(owner);
     if (writer === undefined) return { writer: false, leases: 0, records: [] };
-    const state = await this.load(owner, writer);
-    const records = await this.listRecovery(owner, writer);
+    // Reconstruction fences the retained writer. Diagnostics must not borrow its mutation authority.
+    const { state, records } = await this.ctx.storage.transaction(async (transaction) => ({
+      state: await transaction.get<ProcessSlotState>("harness-process-slots-v1"),
+      records: [
+        ...(
+          await transaction.list<HarnessProcessPlacementRecoveryRecord>({
+            prefix: "harness-process-placement-recovery-v1/",
+          })
+        ).values(),
+      ],
+    }));
     return {
       writer: true,
       leases: state?.slots.filter((slot) => slot.holder !== undefined).length ?? 0,
@@ -103,6 +106,19 @@ export class ProofPlacementStore extends HarnessProcessPlacementStoreObject {
         invocationReply: record.invocationReply,
       })),
     };
+  }
+  async staleWriterRefused(owner: string) {
+    const writer = await this.readWriter(owner);
+    if (writer === undefined)
+      throw new Error("The stale-writer proof requires retained ownership.");
+    try {
+      await super.releaseWriter(owner, writer);
+      return false;
+    } catch (cause) {
+      if (cause instanceof Error && cause.message.includes("stale process-shard incarnation"))
+        return true;
+      throw cause;
+    }
   }
   async releases() {
     return (await this.ctx.storage.get<unknown[]>("proof/releases")) ?? [];

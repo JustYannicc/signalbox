@@ -7,6 +7,7 @@ import {
 } from "./publicResumeSetup.fixture.ts";
 import { fixtureControl } from "./publicResumeStores.fixture.ts";
 import { runFirst } from "./publicResumeProof.fixture.ts";
+import { createHarnessDurableState } from "../../HarnessDurableState.ts";
 
 const rejected = (promise: Promise<unknown>) =>
   promise.then(
@@ -73,7 +74,12 @@ export async function completionFailure(env: ProofEnv, scenario: string) {
   if (scenario === "lost-files") await fixture.files.armFailure("writeCheckpoint", true);
   if (scenario === "partial-supervisor") await fixture.a.armFailure("commitCheckpoint", false);
   if (scenario === "lost-supervisor") await fixture.a.armFailure("commitCheckpoint", true);
-  if (scenario === "stale-authority")
+  if (scenario === "stale-authority") {
+    fixture.durable = createHarnessDurableState(
+      fixture.env,
+      fixture.runId,
+      await fixture.shard.processIncarnationFence(),
+    );
     await fixture.durable.beginDrain({
       control: fixtureControl(2),
       publisher: input.publisher,
@@ -81,6 +87,7 @@ export async function completionFailure(env: ProofEnv, scenario: string) {
       operationId: "external-drain",
       nextControl: fixtureControl(3),
     });
+  }
   if (scenario === "terminal-write" || scenario === "terminal-reply")
     await fixture.shard.armTransactionFailure(scenario === "terminal-reply");
   const denied = await rejected(fixture.shard.commitProcessCheckpoint(supplied));
@@ -204,6 +211,11 @@ export async function cachedAuthorityProof(env: ProofEnv) {
   await runFirst(fixture);
   const operation = await resumeInput(fixture);
   const first = await fixture.shard.resumeProcess(operation);
+  fixture.durable = createHarnessDurableState(
+    fixture.env,
+    fixture.runId,
+    await fixture.shard.processIncarnationFence(),
+  );
   const state = await fixture.a.execute({
     type: "read",
     runId: fixture.runId,
@@ -234,6 +246,7 @@ export async function cachedAuthorityProof(env: ProofEnv) {
   return {
     first,
     duplicateDenied,
+    staleWriterRefused: await fixture.placement.staleWriterRefused(fixture.owner),
     before,
     after,
     status,

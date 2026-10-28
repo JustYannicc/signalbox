@@ -58,6 +58,7 @@ export { HarnessProcessExecutionEntrypoint } from "./harness/HarnessProcessExecu
 export { HarnessProcessExecutionShardObject } from "./harness/HarnessProcessExecutionShardObject.ts";
 export { HarnessProcessPlacementStoreObject } from "./harness/HarnessProcessPlacementStoreObject.ts";
 export { HarnessProgramAssetsBinding } from "./harness/HarnessProgramAssetsBinding.ts";
+export { HarnessProcessStoreBinding } from "./harness/HarnessProcessStoreBinding.ts";
 
 /**
  * Signalbox Cloud: an environment that runs on Cloudflare. Clients connect to

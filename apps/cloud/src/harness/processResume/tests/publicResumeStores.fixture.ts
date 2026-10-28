@@ -2,6 +2,7 @@
 import { HarnessFilesStoreObject } from "../../HarnessFilesStoreObject.ts";
 import { HarnessRunStoreObject } from "../../HarnessRunStoreObject.ts";
 import { HarnessThreadSupervisorObject } from "../../HarnessThreadSupervisorObject.ts";
+import { HarnessProcessStoreBinding } from "../../HarnessProcessStoreBinding.ts";
 import type { HarnessFilesCheckpoint } from "../../HarnessFilesStore.ts";
 import type { HarnessRequestCheckpoint } from "../../HarnessRunStore.ts";
 import { reference, jsonBytes, type ReleaseMaterial } from "./releaseMaterial.ts";
@@ -29,6 +30,30 @@ export interface ProofConfiguration {
 }
 export interface ProofStoreEnv {
   readonly HARNESS_FILES_STORE: DurableObjectNamespace<ProofFilesStore>;
+}
+
+/** The plain peer's observers are fixture RPCs, separate from the fenced product execute method. */
+export class ProofProcessStoreBinding extends HarnessProcessStoreBinding {
+  #files() {
+    return (this.env as unknown as ProofStoreEnv).HARNESS_FILES_STORE.getByName(
+      this.ctx.props.runId,
+    );
+  }
+  configuration() {
+    return this.#files().configuration();
+  }
+  observe(...input: Parameters<ProofFilesStore["observe"]>) {
+    return this.#files().observe(...input);
+  }
+  override fetch(request: Request) {
+    return this.#files().fetch(request);
+  }
+  callback(...input: Parameters<ProofFilesStore["callback"]>) {
+    return this.#files().callback(...input);
+  }
+  produce(...input: Parameters<ProofFilesStore["produce"]>) {
+    return this.#files().produce(...input);
+  }
 }
 
 export class ProofFilesStore extends HarnessFilesStoreObject {
@@ -105,7 +130,7 @@ export class ProofFilesStore extends HarnessFilesStoreObject {
   armFailure(command: string, after: boolean) {
     this.#fault = { command, after };
   }
-  override async execute(command: unknown) {
+  override async execute(command: unknown, fence?: unknown) {
     const kind =
       typeof command === "object" && command !== null && "type" in command
         ? command.type
@@ -118,7 +143,7 @@ export class ProofFilesStore extends HarnessFilesStoreObject {
     const fault = this.#fault?.command === kind ? this.#fault : undefined;
     if (fault !== undefined) this.#fault = undefined;
     if (fault !== undefined && !fault.after) throw new Error("Injected A files write failure.");
-    const result = await super.execute(command);
+    const result = await super.execute(command, fence);
     if (fault !== undefined) throw new Error("Injected lost A files write reply after commit.");
     return result;
   }
@@ -208,8 +233,8 @@ export class ProofRunStore extends HarnessRunStoreObject {
       return;
     await waiter.promise;
   }
-  override async execute(command: unknown) {
-    const result = await super.execute(command);
+  override async execute(command: unknown, fence?: unknown) {
+    const result = await super.execute(command, fence);
     if (
       typeof command === "object" &&
       command !== null &&
@@ -223,6 +248,17 @@ export class ProofRunStore extends HarnessRunStoreObject {
   }
 }
 export class ProofSupervisor extends HarnessThreadSupervisorObject {
+  readonly #drains = new Map<string, PromiseWithResolvers<void>>();
+
+  async waitDrain(operationId: string) {
+    let waiter = this.#drains.get(operationId);
+    if (waiter === undefined) {
+      waiter = Promise.withResolvers();
+      this.#drains.set(operationId, waiter);
+    }
+    if ((await this.ctx.storage.get(`proof/drain/${operationId}`)) !== undefined) return;
+    await waiter.promise;
+  }
   #publicationHold:
     | { entered: PromiseWithResolvers<void>; release: PromiseWithResolvers<void> }
     | undefined;
@@ -251,7 +287,7 @@ export class ProofSupervisor extends HarnessThreadSupervisorObject {
   armFailure(command: string, after: boolean) {
     this.#fault = { command, after };
   }
-  override async execute(command: unknown) {
+  override async execute(command: unknown, fence?: unknown) {
     const kind =
       typeof command === "object" && command !== null && "type" in command
         ? command.type
@@ -259,7 +295,17 @@ export class ProofSupervisor extends HarnessThreadSupervisorObject {
     const fault = this.#fault?.command === kind ? this.#fault : undefined;
     if (fault !== undefined) this.#fault = undefined;
     if (fault !== undefined && !fault.after) throw new Error("Injected A supervisor failure.");
-    const result = await super.execute(command);
+    const result = await super.execute(command, fence);
+    if (
+      kind === "beginDrain" &&
+      typeof command === "object" &&
+      command !== null &&
+      "operationId" in command &&
+      typeof command.operationId === "string"
+    ) {
+      await this.ctx.storage.put(`proof/drain/${command.operationId}`, true);
+      this.#drains.get(command.operationId)?.resolve();
+    }
     if (kind === "publishFreshFacet" && this.#publicationHold !== undefined) {
       this.#publicationHold.entered.resolve();
       await this.#publicationHold.release.promise;

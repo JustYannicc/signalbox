@@ -222,6 +222,7 @@ export async function setup(
     | "cancelResumeProcess"
     | "stopIdleProcess"
     | "executionIncarnationNonce"
+    | "processIncarnationFence"
     | "evidence"
     | "armTransactionFailure"
     | "rehydrate"
