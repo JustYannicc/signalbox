@@ -23,7 +23,7 @@ import { ProcessCheckpointOwner } from "./checkpoint.ts";
 import type { OwnedProcessRequest } from "./executionState.ts";
 import { persistTerminalEvidence } from "./terminalEvidence.ts";
 import { activeResumeKey, readHarnessProcessResumeDurableRecord } from "./durableState.ts";
-import { authorizePublication, sameControl, samePublisher } from "./authority.ts";
+import { authorizePublication } from "./authority.ts";
 import { sameData } from "./checkpointContract.ts";
 import {
   assertContinuation,
@@ -41,6 +41,14 @@ import type {
 } from "../processCreation/contracts.ts";
 import type { HarnessProcessCreationRecoveryInput } from "../processCreation/recovery.ts";
 import { validateHarnessProcessResumeRunStoreActive } from "./runStore.ts";
+import { processFacetStores } from "../processOwnership/bindings.ts";
+import type { ProcessIncarnation } from "../processOwnership/incarnation.ts";
+import { adoptLegacyOwnedRequest } from "../processOwnership/adoptLegacyOwnedRequest.ts";
+import {
+  reserveOwnedResume,
+  saveOwnedRequest,
+  retainOwnedRequest,
+} from "../processOwnership/ownedRequest.ts";
 
 export interface ResumeProcessResult {
   readonly status: "resumed";
@@ -90,15 +98,18 @@ export class HarnessProcessResumeOwner {
   readonly environment: HarnessProcessExecutionEnvironment &
     Partial<Pick<HarnessDurableStateBindings, "HARNESS_RUN_STORE" | "HARNESS_FILES_STORE">>;
   readonly incarnationNonce: string;
+  readonly incarnation: ProcessIncarnation;
   constructor(
     context: DurableObjectState,
     environment: HarnessProcessExecutionEnvironment &
       Partial<Pick<HarnessDurableStateBindings, "HARNESS_RUN_STORE" | "HARNESS_FILES_STORE">>,
     incarnationNonce: string,
+    incarnation: ProcessIncarnation,
   ) {
     this.context = context;
     this.environment = environment;
     this.incarnationNonce = incarnationNonce;
+    this.incarnation = incarnation;
     this.#checkpoints = new ProcessCheckpointOwner(context.storage, () => this.#current);
   }
 
@@ -147,6 +158,7 @@ export class HarnessProcessResumeOwner {
   }
 
   async #exclusiveFresh<Result>(operation: () => Promise<Result>): Promise<Result> {
+    await this.incarnation.assertCurrent();
     if (this.#running || this.#current || this.#attempt || this.#resumed || this.#retained)
       throw new Error("This shard already owns process execution.");
     this.#running = true;
@@ -163,8 +175,9 @@ export class HarnessProcessResumeOwner {
 
   runCreatedProcess(input: HarnessProcessCreationRunInput, requestContextId: string) {
     return this.#exclusiveFresh(() =>
-      this.#creationOwner().run(input, requestContextId, (owned) => {
+      this.#creationOwner().run(input, requestContextId, async (owned) => {
         this.#current = owned;
+        await saveOwnedRequest(this.context.storage, owned, this.incarnation);
       }),
     );
   }
@@ -185,6 +198,7 @@ export class HarnessProcessResumeOwner {
     requestContextId: string,
     hooks?: HarnessProcessExecutionHooks,
   ): Promise<HarnessProcessExecutionShardResult> {
+    await this.incarnation.assertCurrent();
     if (
       this.#running ||
       this.#attempt !== undefined ||
@@ -230,11 +244,10 @@ export class HarnessProcessResumeOwner {
           HARNESS_RESUME_RUN_ID: input.runId,
           HARNESS_RESUME_CONTROL: input.controllerClaim,
           HARNESS_RESUME_PUBLISHER: initial.journal.publisher,
-          HARNESS_RESUME_RUN_STORE: this.environment.HARNESS_RUN_STORE.getByName(input.runId),
-          HARNESS_RESUME_FILES_STORE: this.environment.HARNESS_FILES_STORE.getByName(input.runId),
-          HARNESS_RESUME_SUPERVISOR: this.environment.HARNESS_THREAD_SUPERVISOR.getByName(
+          ...(await processFacetStores(
+            this.environment as HarnessProcessExecutionEnvironment & HarnessDurableStateBindings,
             input.runId,
-          ),
+          )),
         },
       };
       const result = await this.#runBatches({ ...input, processes: [prepared] }, requestContextId, {
@@ -263,6 +276,7 @@ export class HarnessProcessResumeOwner {
             settled: Promise.withResolvers(),
             retained: false,
           };
+          await saveOwnedRequest(this.context.storage, this.#current, this.incarnation);
           await hooks?.afterActivation?.({ process: prepared, handle, activation });
         },
         beforeCleanup: async (cleanup) => {
@@ -284,11 +298,16 @@ export class HarnessProcessResumeOwner {
           } catch {
             owned.retained = true;
             this.#retained = true;
+            await retainOwnedRequest(this.context.storage, owned);
             return "retain";
           }
         },
       });
-      if (result.processes.some((item) => item.status !== "settled")) this.#retained = true;
+      if (result.processes.some((item) => item.status !== "settled")) {
+        this.#retained = true;
+        if (this.#current !== undefined)
+          await retainOwnedRequest(this.context.storage, this.#current);
+      }
       return result;
     } finally {
       this.#running = false;
@@ -300,49 +319,46 @@ export class HarnessProcessResumeOwner {
     return this.#checkpoints.commit(input);
   }
 
-  resumeProcess(supplied: unknown): Promise<ResumeProcessResult> {
+  async resumeProcess(supplied: unknown): Promise<ResumeProcessResult> {
+    await this.incarnation.assertCurrent();
     const operation = snapshotHarnessProcessResumeOperation(supplied);
     if (operation === undefined)
       return Promise.reject(
         new Error("Process resume input is invalid or lacks the caller's journal capabilities."),
       );
-    const previous = this.#attempt;
-    if (previous !== undefined) {
-      if (!sameHarnessProcessResumeOperation(previous.operation, operation))
-        return Promise.reject(new Error("Another immutable resume attempt owns this shard."));
-      return previous.result.then((resumed) => this.#cached(resumed));
-    }
-    if (this.#resumed !== undefined) {
-      if (!sameHarnessProcessResumeOperation(this.#resumed.operation, operation))
-        return Promise.reject(
-          new Error(
-            "The resumed process must complete its next request before another transition.",
-          ),
-        );
-      return this.#cached(this.#resumed);
-    }
-    const owned = this.#current;
+    if (this.#attempt !== undefined || this.#resumed !== undefined || this.#retained)
+      throw new Error("This shard already owns a resume attempt; replay is forbidden.");
+    await this.environment.HARNESS_C_PROCESS_STORES?.forRun(operation.runId).runStore.execute({
+      type: "read",
+      runId: operation.runId,
+    });
+    await adoptLegacyOwnedRequest({
+      storage: this.context.storage,
+      environment: this.environment as HarnessProcessExecutionEnvironment &
+        HarnessDurableStateBindings,
+      operation,
+      incarnation: this.incarnation,
+    });
+    const source = await reserveOwnedResume(this.context.storage, operation, this.incarnation);
+    const runningSource = source.terminalKey === undefined ? this.#current : undefined;
     if (
-      owned === undefined ||
-      owned.retained ||
-      this.#retained ||
-      operation.runId !== owned.runId ||
-      operation.previousProcessId !== owned.process.processId ||
-      operation.previousOperationId !== owned.process.operationId ||
-      operation.previousStepId !== owned.request.requestId ||
-      !sameControl(operation.transition.control, owned.control) ||
-      !samePublisher(operation.transition.publisher, owned.publisher) ||
-      !sameData(operation.runStore.currentPublisher, owned.runStorePublisher) ||
-      !sameData(operation.runStore.request, owned.request) ||
-      !sameData(operation.runStore.checkpoint, owned.parentCheckpoint)
+      source.terminalKey === undefined &&
+      (runningSource === undefined ||
+        !sameData(runningSource.handle.identity, source.identity) ||
+        !sameData(runningSource.request, source.request))
     )
-      return Promise.reject(
-        new Error("Resume does not identify the exact owned process and request."),
+      throw new Error(
+        "The active source has no owned settlement barrier; explicit repair is required.",
       );
-    owned.durable = createHarnessDurableState(
+    const durable = createHarnessDurableState(
       this.environment as HarnessProcessExecutionEnvironment & HarnessDurableStateBindings,
       operation.runId,
     );
+    const owned = {
+      ...source,
+      durable,
+      retained: false,
+    };
     const attempt = startResumeAttempt({
       operation,
       owned,
@@ -350,6 +366,12 @@ export class HarnessProcessResumeOwner {
       environment: this.environment as HarnessProcessExecutionEnvironment &
         HarnessDurableStateBindings,
       isOwned: (candidate) => this.#attempt === candidate,
+      assertCurrent: () => this.incarnation.assertCurrent().then(() => undefined),
+      placementNonce: this.incarnationNonce,
+      awaitSourceSettlement: () => runningSource?.settled.promise ?? Promise.resolve(),
+      onDrainStarted: () => {
+        if (runningSource !== undefined) runningSource.control = operation.transition.nextControl;
+      },
     });
     this.#attempt = attempt;
     return attempt.result.then((resumed) => {
@@ -358,7 +380,7 @@ export class HarnessProcessResumeOwner {
       this.#continuationCheckpoint = resumed.boundary.finish.checkpoint;
       this.#idle = false;
       this.#attempt = undefined;
-      return this.#cached(resumed);
+      return this.#confirmResumed(resumed);
     });
   }
 
@@ -374,7 +396,13 @@ export class HarnessProcessResumeOwner {
       return previous.result;
     }
     const resumed = this.#resumed;
-    const durable = this.#current?.durable;
+    const durable =
+      this.#resumed === undefined
+        ? undefined
+        : createHarnessDurableState(
+            this.environment as HarnessProcessExecutionEnvironment & HarnessDurableStateBindings,
+            request.runId,
+          );
     if (
       resumed === undefined ||
       durable === undefined ||
@@ -414,8 +442,9 @@ export class HarnessProcessResumeOwner {
         if (this.#continuation !== attempt || this.#retained)
           throw new Error("Continuation ownership changed.");
       },
-      onOwned: (owned) => {
+      onOwned: async (owned) => {
         this.#current = owned;
+        await saveOwnedRequest(this.context.storage, owned, this.incarnation);
         this.#idle = false;
       },
     })
@@ -484,9 +513,10 @@ export class HarnessProcessResumeOwner {
           this.#resumed = undefined;
           return { status: "stopped" as const };
         },
-        (cause) => {
+        async (cause) => {
           this.#retained = true;
           owned.retained = true;
+          await retainOwnedRequest(this.context.storage, owned);
           throw cause;
         },
       )
@@ -551,11 +581,13 @@ export class HarnessProcessResumeOwner {
         };
   }
 
-  async #cached(resumed: ResumedProcess): Promise<ResumeProcessResult> {
+  async #confirmResumed(resumed: ResumedProcess): Promise<ResumeProcessResult> {
     const { operation, prepared, publication, boundary } = resumed;
-    const durable = this.#current?.durable;
-    if (durable === undefined || this.#running)
-      throw new Error("The cached resume result has no idle current owner.");
+    const durable = createHarnessDurableState(
+      this.environment as HarnessProcessExecutionEnvironment & HarnessDurableStateBindings,
+      operation.runId,
+    );
+    if (this.#running) throw new Error("The resumed process is not idle.");
     await validateHarnessProcessResumeRunStoreActive({
       store: durable.runStore,
       operation,

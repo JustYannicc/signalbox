@@ -10,6 +10,7 @@ import type {
 } from "../HarnessThreadSupervisor.ts";
 import type { HarnessProcessFacetLocator } from "./contracts.ts";
 import type { HarnessProcessFacetModule } from "./moduleCode.ts";
+import type { ProcessStoreBindings } from "../processOwnership/contracts.ts";
 
 export interface HarnessCProductCapabilityEnvironment {
   readonly HARNESS_C_PRODUCT_CAPABILITIES?: Readonly<Record<string, Fetcher>>;
@@ -83,6 +84,7 @@ export type HarnessProcessExecutionFacetCodeInput = {
   HarnessProcessExecutionProductBootstrapInput;
 
 export interface HarnessProcessExecutionEnvironment extends HarnessCProductCapabilityEnvironment {
+  readonly HARNESS_C_PROCESS_STORES?: ProcessStoreBindings;
   readonly LOADER: WorkerLoader;
   readonly PLACEMENT_STORES: DurableObjectNamespace;
   readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace;

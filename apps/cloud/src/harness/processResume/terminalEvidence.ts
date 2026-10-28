@@ -1,48 +1,17 @@
-import type { HarnessDurableStateCheckpointResult } from "../HarnessDurableState.ts";
-import type {
-  HarnessProcessInvocationSettlement,
-  HarnessProcessPlacementIdentity,
-} from "../processPlacement/contracts.ts";
-import type { HarnessRequestFinish, HarnessRequestOffer } from "../HarnessRunStore.ts";
-import type {
-  HarnessThreadSupervisorControlClaim,
-  HarnessThreadSupervisorPublisher,
-} from "../HarnessThreadSupervisor.ts";
-import type { HarnessProcessResumePlacementPin } from "./durableState.ts";
+import type { HarnessProcessInvocationSettlement } from "../processPlacement/contracts.ts";
+import type { HarnessThreadSupervisorControlClaim } from "../HarnessThreadSupervisor.ts";
 import type { OwnedProcessRequest } from "./executionState.ts";
 import { readCompletedJournal } from "./completedJournal.ts";
 import { samePublisher, sameReference } from "./authority.ts";
 import { sameData } from "./checkpointContract.ts";
+import { markOwnedRequestTerminal } from "../processOwnership/ownedRequest.ts";
 
-export interface HarnessProcessResumePreDrainSnapshot {
-  readonly lifecycle: string;
-  readonly admittedStepId: string | null;
-  readonly checkpoint: { readonly checkpointId: string; readonly manifestSha256: string };
-  readonly nativeSessionId: string;
-  readonly generation: number;
-  readonly facetNonce: string;
-  readonly controlEpoch: number;
-  readonly controlIncarnationId: string;
-}
-export interface ProcessTerminalEvidence {
-  readonly version: 1;
-  readonly runId: string;
-  readonly processId: string;
-  readonly processOperationId: string;
-  readonly request: HarnessRequestOffer;
-  readonly nativeSessionId: string;
-  readonly control: HarnessThreadSupervisorControlClaim;
-  readonly publisher: HarnessThreadSupervisorPublisher;
-  readonly placement: HarnessProcessResumePlacementPin;
-  readonly identity: HarnessProcessPlacementIdentity;
-  readonly finish: HarnessRequestFinish;
-  readonly completion: Extract<HarnessDurableStateCheckpointResult, { status: "committed" }>;
-  readonly acknowledgementId: string;
-  readonly stopped: true;
-  readonly joined: { readonly invocationRpc: true; readonly fetch: true; readonly ports: true };
-}
-export const terminalKey = (runId: string, processOperationId: string, requestId: string) =>
-  `harness-process-terminal/v1/${encodeURIComponent(runId)}/${encodeURIComponent(processOperationId)}/${encodeURIComponent(requestId)}`;
+export { terminalKey } from "./terminalContract.ts";
+export type {
+  HarnessProcessResumePreDrainSnapshot,
+  ProcessTerminalEvidence,
+} from "./terminalContract.ts";
+import { terminalKey, type ProcessTerminalEvidence } from "./terminalContract.ts";
 
 /** This runs while B still owns the handle. A released handle can never create this evidence. */
 export async function persistTerminalEvidence(input: {
@@ -116,6 +85,7 @@ export async function persistTerminalEvidence(input: {
     if (previous !== undefined && !sameData(previous, evidence))
       throw new Error("Process stop evidence changed after persistence.");
     await transaction.put(key, evidence);
+    await markOwnedRequestTerminal(transaction, owned, key);
   });
   const persisted = await input.storage.get<ProcessTerminalEvidence>(key);
   if (!sameData(persisted, evidence))

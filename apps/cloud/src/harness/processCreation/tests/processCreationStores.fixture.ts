@@ -13,7 +13,7 @@ export class ColdCreationFilesStore extends HarnessFilesStoreObject {
     return (await this.ctx.storage.get<number>(`cold-creation/failures/${command}`)) ?? 0;
   }
 
-  override async execute(command: unknown) {
+  override async execute(command: unknown, fence?: unknown) {
     const kind =
       typeof command === "object" && command !== null && "type" in command
         ? command.type
@@ -28,7 +28,7 @@ export class ColdCreationFilesStore extends HarnessFilesStoreObject {
       await this.ctx.storage.put(key, failures + 1);
       throw new Error(`Injected FilesStore ${kind} failure.`);
     }
-    return await super.execute(command);
+    return await super.execute(command, fence);
   }
 }
 

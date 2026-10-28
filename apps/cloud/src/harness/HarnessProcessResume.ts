@@ -41,3 +41,4 @@ export type {
 } from "./processResume/contracts.ts";
 export { HarnessProcessResumeDriverError } from "./processResume/errors.ts";
 export type { HarnessProcessResumeReason } from "./processResume/errors.ts";
+export { terminalKey } from "./processResume/terminalContract.ts";

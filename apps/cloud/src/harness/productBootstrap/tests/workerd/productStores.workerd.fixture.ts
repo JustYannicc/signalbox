@@ -20,8 +20,8 @@ export class ProductFixtureRunStore extends HarnessRunStoreObject {
     await waiter.promise;
   }
 
-  override async execute(command: unknown) {
-    const result = await super.execute(command);
+  override async execute(command: unknown, fence?: unknown) {
+    const result = await super.execute(command, fence);
     if (
       typeof command === "object" &&
       command !== null &&

@@ -4,6 +4,7 @@ import { sameData } from "../processResume/checkpointContract.ts";
 import { createHarnessDurableState } from "../HarnessDurableState.ts";
 import type { OwnedProcessRequest } from "../processResume/executionState.ts";
 import { persistTerminalEvidence } from "../processResume/terminalEvidence.ts";
+import { retainOwnedRequest } from "../processOwnership/ownedRequest.ts";
 import type {
   HarnessProcessCreationInput,
   HarnessProcessCreationEnvironment,
@@ -31,7 +32,7 @@ export async function runCreatedRequest({
   readonly placement: HarnessCreatedProcessPlacement;
   readonly request: HarnessProcessCreationRunInput;
   readonly requestContextId: string;
-  readonly onOwned: (owned: OwnedProcessRequest) => void;
+  readonly onOwned: (owned: OwnedProcessRequest) => Promise<void>;
 }) {
   const durable = createHarnessDurableState(environment, input.runId);
   const checkpoint = binding.checkpoint;
@@ -103,7 +104,7 @@ export async function runCreatedRequest({
     retained: false,
   };
   await context.storage.put(key, { request, phase: "dispatching" });
-  onOwned(owned);
+  await onOwned(owned);
   try {
     const settlement = await placement.invoke({
       publisher,
@@ -126,6 +127,7 @@ export async function runCreatedRequest({
     };
   } catch (cause) {
     owned.retained = true;
+    await retainOwnedRequest(context.storage, owned);
     throw cause;
   } finally {
     owned.settled.resolve();

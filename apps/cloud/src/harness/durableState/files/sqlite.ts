@@ -68,9 +68,10 @@ export function requireOwnSchema(
 }
 
 // Checkpoint reads may upgrade file metadata without importing legacy admission authority.
-export function migrateFileKinds(database: HarnessFilesDatabase): boolean {
+export function migrateFileKinds(database: HarnessFilesDatabase, allowMigration = true): boolean {
   const columns = [...database.sql.exec(`PRAGMA table_info(${entryTable})`)];
   if (columns.some((column) => column.name === "kind")) return false;
+  if (!allowMigration) return fail("CONFLICT");
   database.sql.exec(
     `ALTER TABLE ${entryTable} ADD COLUMN kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('file', 'symlink'))`,
   );

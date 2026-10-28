@@ -1,10 +1,12 @@
 import { HarnessProcessExecutionEntrypoint } from "../../HarnessProcessExecutionEntrypoint.ts";
+export { ProofProcessStoreBinding as HarnessProcessStoreBinding } from "./publicResumeStores.fixture.ts";
 import { ProofShard, ProofPlacementStore } from "./publicResumeShard.fixture.ts";
 import { ProofFilesStore, ProofRunStore, ProofSupervisor } from "./publicResumeStores.fixture.ts";
 import { publicResumeProof } from "./publicResumeProof.fixture.ts";
 import { publicIdleCycle } from "./publicIdleCycle.fixture.ts";
 import { publicIdleFailure } from "./publicIdleFailure.fixture.ts";
 import { publicIdleProof } from "./publicIdleProof.fixture.ts";
+import { publicWarmDrain } from "./publicWarmDrain.fixture.ts";
 import {
   completionFailure,
   resumeFailure,
@@ -27,6 +29,7 @@ export default {
   async fetch(request: Request, env: ProofEnv) {
     try {
       const path = new URL(request.url).pathname;
+      if (path === "/warm-drain") return Response.json(await publicWarmDrain(env));
       if (path === "/retained-idle/cycle") return Response.json(await publicIdleCycle(env));
       if (path === "/retained-idle/failure-invocation")
         return Response.json(await publicIdleFailure(env, "invocation"));
@@ -36,6 +39,8 @@ export default {
       if (path === "/retained-idle/reconstruct")
         return Response.json(await publicIdleProof(env, "reconstruct"));
       if (path === "/retained-idle") return Response.json(await publicIdleProof(env));
+      if (path === "/reconstructed-shard")
+        return Response.json(await publicResumeProof(env, true, false, { reconstructShard: true }));
       const result =
         path === "/invocation/reject"
           ? await invocationFailureProof(env, "reject")

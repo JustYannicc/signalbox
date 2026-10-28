@@ -35,6 +35,7 @@ export async function publicResumeProof(
   mismatched = false,
   transportOptions: {
     readonly omitInitialBootstrap?: boolean;
+    readonly reconstructShard?: boolean;
   } = {},
 ) {
   const fixture = await setup(
@@ -44,6 +45,14 @@ export async function publicResumeProof(
   );
   const shardNonce = await fixture.shard.executionIncarnationNonce();
   const initial = await runFirst(fixture);
+  if (transportOptions.reconstructShard) {
+    try {
+      await fixture.shard.rehydrate();
+    } catch {
+      // The abort closes this RPC; the next call must construct a new shard.
+    }
+    fixture.shard = env.PROCESS_EXECUTION_SHARDS.getByName(fixture.owner);
+  }
   const before = await fixture.a.execute({
     type: "read",
     runId: fixture.runId,
@@ -162,7 +171,10 @@ export async function publicResumeProof(
       invalidBootstrapDidNotDrain,
     };
 
-  const duplicate = await fixture.shard.resumeProcess(operation);
+  const duplicateDenied = await fixture.shard.resumeProcess(operation).then(
+    () => false,
+    () => true,
+  );
   const changed = { ...operation, facet: { ...operation.facet, codeId: "changed-duplicate" } };
   const mutatedRejected = await fixture.shard.resumeProcess(changed).then(
     () => false,
@@ -229,8 +241,7 @@ export async function publicResumeProof(
     aSnapshotRetained: JSON.stringify(before.snapshot) === JSON.stringify(after.snapshot),
     sameShard: shardNonce === (await fixture.shard.executionIncarnationNonce()),
     resumed,
-    duplicateIdentityMatches:
-      duplicate.identity.incarnationNonce === resumed.value.identity.incarnationNonce,
+    duplicateDenied,
     mutatedRejected,
     changedRestoreModeRejected,
     invalidBootstrapRejected: invalidBootstrapRejected.every(Boolean),

@@ -1,5 +1,6 @@
 // @effect-diagnostics cryptoRandomUUID:off - a process lease uses an opaque code namespace.
 import { createProcessSlots } from "../../computer/ProcessSlots.ts";
+import { processFacetStores } from "../processOwnership/bindings.ts";
 import {
   createHarnessProcessPlacementStoreClient,
   type HarnessProcessPlacementStoreClient,
@@ -79,7 +80,7 @@ export async function openCreationPlacement(
     input,
   };
   await context.storage.put(creationPlacementKey(input.runId), record);
-  const process = creationFacetInput(input, environment);
+  const process = await creationFacetInput(input, environment);
   const stub = createHarnessProcessFacetStub(context, environment, process, locator);
   const observed = await stub.identity();
   if (!observed.facetNonce) throw new Error("The created facet has no constructor identity.");
@@ -151,7 +152,7 @@ export async function openCreationPlacement(
 
 export type HarnessCreatedProcessPlacement = Awaited<ReturnType<typeof openCreationPlacement>>;
 
-export function readCreationFacet(
+export async function readCreationFacet(
   context: DurableObjectState,
   environment: HarnessProcessCreationEnvironment,
   record: HarnessProcessCreationPlacement & { readonly identity: HarnessProcessPlacementIdentity },
@@ -160,12 +161,12 @@ export function readCreationFacet(
   return createHarnessProcessFacetStub(
     context,
     environment,
-    creationFacetInput(input, environment),
+    await creationFacetInput(input, environment),
     record.identity,
   );
 }
 
-function creationFacetInput(
+async function creationFacetInput(
   input: HarnessProcessCreationInput,
   environment: HarnessProcessCreationEnvironment,
 ) {
@@ -175,9 +176,7 @@ function creationFacetInput(
       HARNESS_RESUME_CREATION: true as const,
       HARNESS_RESUME_RUN_ID: input.runId,
       HARNESS_RESUME_CONTROL: input.controllerClaim,
-      HARNESS_RESUME_RUN_STORE: environment.HARNESS_RUN_STORE.getByName(input.runId),
-      HARNESS_RESUME_FILES_STORE: environment.HARNESS_FILES_STORE.getByName(input.runId),
-      HARNESS_RESUME_SUPERVISOR: environment.HARNESS_THREAD_SUPERVISOR.getByName(input.runId),
+      ...(await processFacetStores(environment, input.runId)),
     },
   };
 }

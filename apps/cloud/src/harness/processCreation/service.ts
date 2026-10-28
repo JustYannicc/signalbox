@@ -235,7 +235,7 @@ export class HarnessProcessCreationOwner {
   async run(
     supplied: HarnessProcessCreationRunInput,
     requestContextId: string,
-    onOwned: (owned: OwnedProcessRequest) => void,
+    onOwned: (owned: OwnedProcessRequest) => Promise<void>,
   ) {
     const request = structuredClone(supplied);
     const input = this.#input;

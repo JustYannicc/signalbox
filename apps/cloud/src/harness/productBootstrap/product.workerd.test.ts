@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Wrangler needs a filesystem entry point to launch local Workerd.
 import * as NodeURL from "node:url";
+import * as NodeProcess from "node:process";
 import { afterEach, beforeAll, beforeEach, expect, it } from "vite-plus/test";
 import { build } from "esbuild";
 import { createTestHarness } from "wrangler";
@@ -82,7 +83,10 @@ beforeEach(async () => {
 }, 60_000);
 
 afterEach(async () => {
-  if (harness !== undefined) await harness.close();
+  if (harness !== undefined) {
+    await harness.close();
+    NodeProcess.stdout.write("[public-C-harness-close-returned] productBootstrap\n");
+  }
 });
 
 it("runs the actual Claude and Codex product factories through C's public shard APIs", async () => {

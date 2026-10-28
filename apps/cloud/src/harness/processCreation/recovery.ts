@@ -102,7 +102,7 @@ export async function recoverBoundCreation(
         termination: { kind: "parent-destroyed", observedByIncarnationNonce: incarnationNonce },
       };
     } else {
-      const stub = readCreationFacet(context, environment, {
+      const stub = await readCreationFacet(context, environment, {
         ...placement,
         identity: placement.identity,
       });

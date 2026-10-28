@@ -4,21 +4,43 @@ import { HarnessThreadSupervisorError } from "./HarnessThreadSupervisor.ts";
 import { createHarnessThreadSupervisor } from "./HarnessThreadSupervisor.ts";
 import { reserveHarnessThreadSupervisorReconciliation } from "./durableState/supervisor/service.ts";
 import type { HarnessThreadSupervisorReconciliationReservation } from "./durableState/supervisor/service.ts";
+import { claimProcessDatabaseFence, fencedProcessDatabase } from "./processOwnership/fence.ts";
 
 export class HarnessThreadSupervisorObject extends DurableObject {
-  execute(command: unknown) {
+  claimProcessFence(fence: unknown) {
+    claimProcessDatabaseFence(this.ctx.storage, fence);
+  }
+
+  execute(command: unknown, fence?: unknown) {
     const runId = this.ctx.id.name;
     if (!runId) throw new HarnessThreadSupervisorError("INVALID");
     return Effect.runPromise(
-      createHarnessThreadSupervisor(this.ctx.storage, runId).execute(command),
+      createHarnessThreadSupervisor(
+        fencedProcessDatabase(
+          this.ctx.storage,
+          fence,
+          typeof command === "object" &&
+            command !== null &&
+            "type" in command &&
+            command.type === "read",
+        ),
+        runId,
+      ).execute(command),
     );
   }
 
-  reserveReconciliation(input: unknown): Promise<HarnessThreadSupervisorReconciliationReservation> {
+  reserveReconciliation(
+    input: unknown,
+    fence?: unknown,
+  ): Promise<HarnessThreadSupervisorReconciliationReservation> {
     const runId = this.ctx.id.name;
     if (!runId) throw new HarnessThreadSupervisorError("INVALID");
     return Effect.runPromise(
-      reserveHarnessThreadSupervisorReconciliation(this.ctx.storage, runId, input),
+      reserveHarnessThreadSupervisorReconciliation(
+        fencedProcessDatabase(this.ctx.storage, fence),
+        runId,
+        input,
+      ),
     );
   }
 }

@@ -16,6 +16,7 @@ import type {
 } from "../HarnessThreadSupervisor.ts";
 import type { HarnessThreadSupervisorReconciliationRequest } from "./supervisor/reconciliationReceipts.ts";
 import type { HarnessThreadSupervisorReconciliationReservation } from "./supervisor/service.ts";
+import type { ProcessStoreBindings } from "../processOwnership/contracts.ts";
 
 export type HarnessRunInitialization = Extract<
   HarnessRunStoreCommand,
@@ -55,6 +56,7 @@ export interface HarnessThreadSupervisorClient {
 }
 
 export interface HarnessDurableStateBindings {
+  readonly HARNESS_C_PROCESS_STORES?: ProcessStoreBindings;
   readonly HARNESS_RUN_STORE: DurableObjectNamespace<HarnessRunStoreObject>;
   readonly HARNESS_FILES_STORE: DurableObjectNamespace<HarnessFilesStoreObject>;
   readonly HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<HarnessThreadSupervisorObject>;

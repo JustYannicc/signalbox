@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - this test bundles a plain fixture and runs the actual public DO roots in isolated local workerd.
 import * as NodeURL from "node:url";
 import { build } from "esbuild";
+import * as NodeProcess from "node:process";
 import { afterAll, beforeAll, expect, it } from "vite-plus/test";
 import { createTestHarness } from "wrangler";
 
@@ -72,7 +73,10 @@ beforeAll(async () => {
   await harness.listen();
 }, 60_000);
 afterAll(async () => {
-  if (harness !== undefined) await harness.close();
+  if (harness !== undefined) {
+    await harness.close();
+    NodeProcess.stdout.write("[public-C-harness-close-returned] publicResume\n");
+  }
 });
 
 it("retains the resumed native incarnation across two requests and drains only the final turn", async () => {
@@ -238,121 +242,141 @@ it("rejects an actually loaded mismatched release before prepared persistence or
   expect(result.releases[0].terminal).toHaveLength(1);
 });
 
-it("resumes actual verified plain fixture code, then accepts a later request and the next completed boundary", async () => {
-  const response = await harness.fetch("http://proof/positive");
-  const body = await response.text();
-  expect(response.status, body).toBe(200);
-  const result = JSON.parse(body);
-  expect(result.resumed.ok, body).toBe(true);
-  expect(result.invalidBootstrapRejected).toBe(true);
-  expect(result.invalidBootstrapDidNotDrain).toBe(true);
-  expect(result.changedRestoreModeRejected).toBe(true);
-  expect(result.nextStatus).toBe("settled");
-  expect(result.nextCompleted).toBe("committed");
-  expect(result.secondResume.status).toBe("resumed");
-  expect(result.sameShard).toBe(true);
-  expect(result.duplicateIdentityMatches).toBe(true);
-  expect(result.mutatedRejected).toBe(true);
-  expect(
-    new Set([
-      result.initial[0].identity.loaderId,
-      result.resumed.value.identity.loaderId,
-      result.secondResume.identity.loaderId,
-    ]).size,
-  ).toBe(3);
-  expect(
-    new Set([
-      result.initial[0].identity.incarnationNonce,
-      result.resumed.value.identity.incarnationNonce,
-      result.secondResume.identity.incarnationNonce,
-    ]).size,
-  ).toBe(3);
-  expect(result.journalFacetCount).toBe(4);
-  expect(result.journalRequestCount).toBe(2);
-  expect(result.finishes).toEqual([
-    { requestId: "turn-one", status: "completed", generation: 2 },
-    { requestId: "turn-two", status: "completed", generation: 3 },
-  ]);
-  const invoked = Object.keys(result.observations).filter((key) => key.includes("/invoked:"));
-  expect(invoked).toHaveLength(2);
-  expect(result.evidence.terminal).toHaveLength(2);
-  expect(result.evidence.resumes.every((row: { phase: string }) => row.phase === "active")).toBe(
-    true,
+it("drains a current request through the same-incarnation settlement barrier", async () => {
+  const result = await scenario("/warm-drain");
+  expect(result.whileDraining.evidence.terminal).toEqual([]);
+  expect(result.whileDraining.placement.writer).toBe(true);
+  expect(result.whileDraining.placement.leases).toBe(1);
+  expect(result.whileDraining.releases).toEqual([]);
+  expect(result.first.processes[0].status).toBe("settled");
+  expect(result.checkpoint).toBe("committed");
+  expect(result.resumed.status).toBe("resumed");
+  expect(result.duplicateDenied).toBe(true);
+  expect(result.evidence.terminal).toHaveLength(1);
+  expect(result.releases).toHaveLength(1);
+  expect(Object.keys(result.observations).filter((key) => key.includes("/invoked:"))).toHaveLength(
+    1,
   );
-  const transports = result.transports as readonly {
-    readonly wasmAnswer: number;
-    readonly productBootstrap: {
-      readonly provider: string;
-      readonly preparedReleaseId: string;
-      readonly restoreMode: string;
-    };
-    readonly targetPreparedRelease: {
-      readonly artifact: { readonly provider: string; readonly releaseId: string };
-      readonly plan: { readonly release: { readonly manifestSha256: string } };
-    };
-    readonly productCapability: string;
-    readonly resumeRunId: string;
-    readonly resumeControl: { readonly ownerId: string };
-    readonly resumePublisher: { readonly publisherKey: string };
-    readonly processIdentity: {
-      readonly processId: string;
-      readonly shardOwner: string;
-      readonly loaderId: string;
-      readonly facetKey: string;
-    };
-    readonly requestPublisher: { readonly generation: number; readonly publisherKey: string };
-  }[];
-  expect(transports).toHaveLength(3);
-  expect(
-    transports.filter(
-      (row) => row.productBootstrap.restoreMode === "same-variant-serialized-checkpoint",
-    ),
-  ).toHaveLength(1);
-  expect(
-    transports.filter((row) => row.productBootstrap.restoreMode === "cross-variant-fresh-boot"),
-  ).toHaveLength(2);
-  const expectedProductTransports = result.expectedProductTransports as readonly {
-    readonly productBootstrap: { readonly preparedReleaseId: string } | null;
-    readonly targetPreparedRelease: unknown;
-  }[];
-  expect(
-    transports
-      .map(({ productBootstrap, targetPreparedRelease }) => ({
-        productBootstrap,
-        targetPreparedRelease,
-      }))
-      .toSorted((left, right) =>
+});
+
+it.each(["positive", "reconstructed-shard"])(
+  "resumes actual verified plain fixture code (%s), then accepts a later request and the next completed boundary",
+  async (mode) => {
+    const response = await harness.fetch(`http://proof/${mode}`);
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body);
+    expect(result.resumed.ok, body).toBe(true);
+    expect(result.invalidBootstrapRejected).toBe(true);
+    expect(result.invalidBootstrapDidNotDrain).toBe(true);
+    expect(result.changedRestoreModeRejected).toBe(true);
+    expect(result.nextStatus).toBe("settled");
+    expect(result.nextCompleted).toBe("committed");
+    expect(result.secondResume.status).toBe("resumed");
+    expect(result.sameShard).toBe(mode === "positive");
+    expect(result.duplicateDenied).toBe(true);
+    expect(result.mutatedRejected).toBe(true);
+    expect(
+      new Set([
+        result.initial[0].identity.loaderId,
+        result.resumed.value.identity.loaderId,
+        result.secondResume.identity.loaderId,
+      ]).size,
+    ).toBe(3);
+    expect(
+      new Set([
+        result.initial[0].identity.incarnationNonce,
+        result.resumed.value.identity.incarnationNonce,
+        result.secondResume.identity.incarnationNonce,
+      ]).size,
+    ).toBe(3);
+    expect(result.journalFacetCount).toBe(4);
+    expect(result.journalRequestCount).toBe(2);
+    expect(result.finishes).toEqual([
+      { requestId: "turn-one", status: "completed", generation: 2 },
+      { requestId: "turn-two", status: "completed", generation: 3 },
+    ]);
+    const invoked = Object.keys(result.observations).filter((key) => key.includes("/invoked:"));
+    expect(invoked).toHaveLength(2);
+    expect(result.evidence.terminal).toHaveLength(2);
+    expect(result.evidence.resumes.every((row: { phase: string }) => row.phase === "active")).toBe(
+      true,
+    );
+    const transports = result.transports as readonly {
+      readonly wasmAnswer: number;
+      readonly productBootstrap: {
+        readonly provider: string;
+        readonly preparedReleaseId: string;
+        readonly restoreMode: string;
+      };
+      readonly targetPreparedRelease: {
+        readonly artifact: { readonly provider: string; readonly releaseId: string };
+        readonly plan: { readonly release: { readonly manifestSha256: string } };
+      };
+      readonly productCapability: string;
+      readonly resumeRunId: string;
+      readonly resumeControl: { readonly ownerId: string };
+      readonly resumePublisher: { readonly publisherKey: string };
+      readonly processIdentity: {
+        readonly processId: string;
+        readonly shardOwner: string;
+        readonly loaderId: string;
+        readonly facetKey: string;
+      };
+      readonly requestPublisher: { readonly generation: number; readonly publisherKey: string };
+    }[];
+    expect(transports).toHaveLength(3);
+    expect(
+      transports.filter(
+        (row) => row.productBootstrap.restoreMode === "same-variant-serialized-checkpoint",
+      ),
+    ).toHaveLength(1);
+    expect(
+      transports.filter((row) => row.productBootstrap.restoreMode === "cross-variant-fresh-boot"),
+    ).toHaveLength(2);
+    const expectedProductTransports = result.expectedProductTransports as readonly {
+      readonly productBootstrap: { readonly preparedReleaseId: string } | null;
+      readonly targetPreparedRelease: unknown;
+    }[];
+    expect(
+      transports
+        .map(({ productBootstrap, targetPreparedRelease }) => ({
+          productBootstrap,
+          targetPreparedRelease,
+        }))
+        .toSorted((left, right) =>
+          (left.productBootstrap?.preparedReleaseId ?? "").localeCompare(
+            right.productBootstrap?.preparedReleaseId ?? "",
+          ),
+        ),
+    ).toEqual(
+      expectedProductTransports.toSorted((left, right) =>
         (left.productBootstrap?.preparedReleaseId ?? "").localeCompare(
           right.productBootstrap?.preparedReleaseId ?? "",
         ),
       ),
-  ).toEqual(
-    expectedProductTransports.toSorted((left, right) =>
-      (left.productBootstrap?.preparedReleaseId ?? "").localeCompare(
-        right.productBootstrap?.preparedReleaseId ?? "",
-      ),
-    ),
-  );
-  for (const row of transports) {
-    expect(row.wasmAnswer).toBe(42);
-    expect(row.productBootstrap.provider).toBe("claude-code");
-    expect(row.productBootstrap.preparedReleaseId).toBe(
-      row.targetPreparedRelease.artifact.releaseId,
     );
-    expect(row.targetPreparedRelease.artifact.provider).toBe("claude-code");
-    expect(row.targetPreparedRelease.plan.release.manifestSha256).toBeTruthy();
-    expect(row.productCapability).toBe("authorized-workerd-product-capability");
-    expect(row.resumeRunId.startsWith("plain-positive-")).toBe(true);
-    expect(row.resumeControl.ownerId).toBe("plain-process-owner");
-    expect(row.resumePublisher.publisherKey).not.toBe("caller-a-publisher");
-    expect(row.processIdentity.processId).toBe("plain-process");
-    expect(row.processIdentity.shardOwner).not.toBe("caller-owner");
-    expect(row.processIdentity.loaderId).not.toBe("caller-loader");
-    expect(row.processIdentity.facetKey).not.toBe("caller-facet");
-    expect(row.requestPublisher.generation).toBeGreaterThan(0);
-    expect(row.requestPublisher.publisherKey).not.toBe("caller-publisher");
-  }
-});
+    for (const row of transports) {
+      expect(row.wasmAnswer).toBe(42);
+      expect(row.productBootstrap.provider).toBe("claude-code");
+      expect(row.productBootstrap.preparedReleaseId).toBe(
+        row.targetPreparedRelease.artifact.releaseId,
+      );
+      expect(row.targetPreparedRelease.artifact.provider).toBe("claude-code");
+      expect(row.targetPreparedRelease.plan.release.manifestSha256).toBeTruthy();
+      expect(row.productCapability).toBe("authorized-workerd-product-capability");
+      expect(row.resumeRunId.startsWith("plain-positive-")).toBe(true);
+      expect(row.resumeControl.ownerId).toBe("plain-process-owner");
+      expect(row.resumePublisher.publisherKey).not.toBe("caller-a-publisher");
+      expect(row.processIdentity.processId).toBe("plain-process");
+      expect(row.processIdentity.shardOwner).not.toBe("caller-owner");
+      expect(row.processIdentity.loaderId).not.toBe("caller-loader");
+      expect(row.processIdentity.facetKey).not.toBe("caller-facet");
+      expect(row.requestPublisher.generation).toBeGreaterThan(0);
+      expect(row.requestPublisher.publisherKey).not.toBe("caller-publisher");
+    }
+  },
+);
 
 it("forwards the authorized capability when the initial process has no typed bootstrap", async () => {
   const result = await scenario("/transport-without-typed-bindings");
@@ -482,6 +506,7 @@ it("keeps fetch and callback ownership until their actual joins precede durable 
 
 it("reauthenticates cached success and preserves full prepared evidence across C reconstruction", async () => {
   const result = await scenario("/cached-authority");
+  expect(result.staleWriterRefused).toBe(true);
   expect(result.first.status).toBe("resumed");
   expect(result.duplicateDenied).toBe(true);
   expect(result.runDenied).toBe(true);
