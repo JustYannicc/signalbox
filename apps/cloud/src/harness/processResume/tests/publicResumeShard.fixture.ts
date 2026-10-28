@@ -31,6 +31,9 @@ export class ProofShard extends HarnessProcessExecutionShardObject {
   armTransactionFailure(after: boolean) {
     failTerminalWrite(this.ctx.storage, after);
   }
+  placementReleaseEvidence() {
+    return placementReleaseEvidence(this.ctx.storage);
+  }
   async evidence() {
     const terminal = await this.ctx.storage.list<{
       readonly stopped: boolean;
@@ -61,7 +64,6 @@ export class ProofShard extends HarnessProcessExecutionShardObject {
       readonly publication?: { readonly receipt: { readonly preparedFacetNonce: string } };
     }>({ prefix: "harness-process-eviction/v1/" });
     return {
-      placementRelease: await placementReleaseEvidence(this.ctx.storage),
       evictionRestores: [...evictionRestores.values()]
         .filter((row) => row.phase === "active")
         .map((row) => ({
@@ -95,9 +97,21 @@ export class ProofShard extends HarnessProcessExecutionShardObject {
 }
 
 export class ProofPlacementStore extends ObservedPlacementStore {
-  protected override async beforePlacementRelease({ evidence, proof }: ObservedPlacementRelease) {
+  protected override async beforePlacementRelease({
+    owner,
+    writer,
+    proof,
+  }: ObservedPlacementRelease) {
+    const env = this.env as unknown as {
+      PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<ProofShard>;
+    };
+    const evidence = await env.PROCESS_EXECUTION_SHARDS.getByName(owner).evidence();
     const events = (await this.ctx.storage.get<unknown[]>("proof/releases")) ?? [];
-    await this.ctx.storage.put("proof/releases", [...events, { ...evidence, releaseProof: proof }]);
+    const proofs = (await this.ctx.storage.get<unknown[]>("proof/release-proofs")) ?? [];
+    await this.ctx.storage.put({
+      "proof/releases": [...events, evidence],
+      "proof/release-proofs": [...proofs, { owner, writer, proof }],
+    });
     return undefined;
   }
   async ownership(owner: string) {

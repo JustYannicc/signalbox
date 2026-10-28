@@ -2,14 +2,25 @@ import type { ProcessSlotState } from "../../../computer/ProcessSlots.ts";
 import { expect, it, vi } from "vite-plus/test";
 import {
   selectPlacementReleaseProof,
+  ObservedPlacementStore,
   type PlacementReleaseEvidence,
 } from "./placementReleaseObserver.fixture.ts";
 import {
   evictedRecoveryKey,
   parseEvictedRecoveryReceipt,
+  parseRecoveryRecord,
 } from "../../processPlacement/storeSchema.ts";
 
-vi.mock("cloudflare:workers", () => ({ DurableObject: Object }));
+import { durableRootContext } from "../../tests/processIncarnation/durableRootFixture.ts";
+
+vi.mock("cloudflare:workers", () => ({
+  DurableObject: class {
+    constructor(
+      readonly ctx: unknown,
+      readonly env: unknown,
+    ) {}
+  },
+}));
 
 function retirement() {
   const owner = "placement-owner";
@@ -46,6 +57,7 @@ function retirement() {
   });
   const evidence: PlacementReleaseEvidence = {
     terminal: [],
+    terminalOwners: [],
     sources: [
       {
         owner,
@@ -174,3 +186,69 @@ it.each([
   mutate(input);
   expect(() => selectPlacementReleaseProof(input)).toThrow();
 });
+
+it.each(["unpublished", "invoked", "unjoined"] as const)(
+  "observes real placement stop/join before releasing an %s candidate",
+  async (scenario) => {
+    const input = retirement();
+    const durable = durableRootContext(input.owner);
+    const record = parseRecoveryRecord(
+      {
+        version: 1,
+        shardOwner: input.owner,
+        controllerClaim: input.writer.controllerClaim,
+        operationId: "prepare",
+        processId: "native-process",
+        nativeSessionId: "session",
+        checkpointId: "checkpoint",
+        manifestRevision: "manifest",
+        priorFacetNonce: "prior",
+        programCodeId: "code",
+        loaderId: "facet",
+        facetKey: "facet",
+        identityState: "observed",
+        incarnationNonce: "inert-facet",
+        lease: input.receipt.lease,
+        state: "prepared",
+        stopAcknowledged: true,
+        joined: { invocationRpc: true, fetch: true, ports: scenario !== "unjoined" },
+        invocationMayHaveStarted: scenario === "invoked",
+      },
+      input.owner,
+    );
+    const store = new ObservedPlacementStore(
+      durable.context as unknown as DurableObjectState,
+      {
+        PROCESS_EXECUTION_SHARDS: {
+          getByName: () => ({
+            executionIncarnationNonce: async () => input.writer.shardIncarnationNonce,
+            placementReleaseEvidence: async () => input.evidence,
+          }),
+        },
+      } as unknown as ConstructorParameters<typeof ObservedPlacementStore>[1],
+    );
+    try {
+      await store.claimProcessFence(input.receiverFence);
+      await store.claimWriter(input.owner, input.writer);
+      await durable.storage.put("harness-process-slots-v1", input.slots);
+      await store.saveRecovery(input.owner, input.writer, record);
+      await expect(store.releaseWriter(input.owner, input.writer)).rejects.toThrow(
+        "held slots or recovery",
+      );
+      await store.removeRecovery(input.owner, input.writer, record.loaderId);
+      if (scenario === "unpublished") {
+        await store.releaseWriter(input.owner, input.writer);
+        expect(await store.writerReleased(input.owner, input.writer)).toBe(true);
+        expect(await store.readWriter(input.owner)).toBeUndefined();
+      } else {
+        await expect(store.releaseWriter(input.owner, input.writer)).rejects.toThrow();
+        expect(await store.readWriter(input.owner)).toEqual(input.writer);
+      }
+      expect(await durable.storage.list({ prefix: "harness-process-terminal/" })).toEqual(
+        new Map(),
+      );
+    } finally {
+      durable.close();
+    }
+  },
+);
