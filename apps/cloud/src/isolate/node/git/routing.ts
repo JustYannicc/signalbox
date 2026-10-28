@@ -102,6 +102,7 @@ function selectCloneRoute(args: readonly string[], cwd: readonly string[]): Node
 function selectFetchRoute(args: readonly string[], cwd: readonly string[]): NodeGitRoute {
   let depth: number | undefined;
   let tags = false;
+  let noTags = false;
   let prune = false;
   let singleBranch = false;
   let quiet = false;
@@ -119,10 +120,12 @@ function selectFetchRoute(args: readonly string[], cwd: readonly string[]): Node
     }
     if (arg === "--tags") {
       tags = true;
+      noTags = false;
       continue;
     }
     if (arg === "--no-tags") {
       tags = false;
+      noTags = true;
       continue;
     }
     if (arg === "--prune") {
@@ -145,16 +148,25 @@ function selectFetchRoute(args: readonly string[], cwd: readonly string[]): Node
     positional.push(arg);
   }
 
-  if (positional.length > 1) {
-    return reject("git fetch refspecs are not supported by the HTTP adapter");
+  const refspecs = positional.slice(1);
+  for (const refspec of refspecs) {
+    if (refspec.startsWith("^"))
+      return reject(`git fetch negative refspec is not supported: ${refspec}`);
+    if (refspec.includes("*")) return reject(`git fetch glob refspec is not supported: ${refspec}`);
+    const value = refspec.replace(/^\+/, "");
+    if (!value || value.split(":").length > 2 || value.startsWith(":")) {
+      return { kind: "reject", exitCode: 128, message: `invalid refspec '${refspec}'` };
+    }
   }
   const remote = positional[0];
   if (remote === undefined) {
     return {
       kind: "fetch",
+      ...(refspecs.length === 0 ? {} : { refspecs }),
       cwd,
       ...(depth === undefined ? {} : { depth }),
       tags,
+      ...(noTags ? { noTags } : {}),
       prune,
       singleBranch,
       quiet,
@@ -165,10 +177,12 @@ function selectFetchRoute(args: readonly string[], cwd: readonly string[]): Node
     if (typeof url !== "string") return url;
     return {
       kind: "fetch",
+      ...(refspecs.length === 0 ? {} : { refspecs }),
       cwd,
       url,
       ...(depth === undefined ? {} : { depth }),
       tags,
+      ...(noTags ? { noTags } : {}),
       prune,
       singleBranch,
       quiet,
@@ -176,10 +190,12 @@ function selectFetchRoute(args: readonly string[], cwd: readonly string[]): Node
   }
   return {
     kind: "fetch",
+    ...(refspecs.length === 0 ? {} : { refspecs }),
     cwd,
     remote,
     ...(depth === undefined ? {} : { depth }),
     tags,
+    ...(noTags ? { noTags } : {}),
     prune,
     singleBranch,
     quiet,
