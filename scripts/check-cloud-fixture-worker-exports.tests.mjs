@@ -409,3 +409,24 @@ NodeTest.test("does not approve a stale main that its declared producer overwrit
     NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
   });
 });
+
+NodeTest.test("does not ignore an unresolved second producer of the configured main", async () => {
+  await withFixture(
+    ({ sharedExports }) => `export * from ${JSON.stringify(sharedExports)};\n`,
+    {},
+    async (root) => {
+      const path = NodePath.join(root, "apps/cloud/src/generatedWorker.test.ts");
+      const source = await NodeFSP.readFile(path, "utf8");
+      await NodeFSP.writeFile(
+        path,
+        source.replace(
+          "const configPath =",
+          'await NodeFSP.writeFile(NodePath.join(output, "generated.js"), unknownWorkerSource());\nconst configPath =',
+        ),
+      );
+      const result = check(root);
+      NodeAssert.notEqual(result.status, 0);
+      NodeAssert.match(result.stderr, /Cloud fixture Worker export check failed/);
+    },
+  );
+});

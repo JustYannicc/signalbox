@@ -352,6 +352,10 @@ async function mainSourceTemplates(sourceFile, main, candidates, configuration) 
   visit(sourceFile);
 
   const configDirectory = configurationDirectory(configuration, sourceFile);
+  const producers = [...writers, ...builds].filter((producer) =>
+    ownsConfiguredMain(producer, main, configDirectory),
+  );
+  if (producers.length !== 1) return [];
   const result = [];
   for (const build of builds) {
     if (!ownsConfiguredMain(build, main, configDirectory)) continue;
