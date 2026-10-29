@@ -1,9 +1,27 @@
-import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { LocalTailCapture, type TailStorage } from "./LocalTailCapture.fixture.ts";
-import { createLocalTailLog } from "./LocalTailLog.fixture.ts";
+import { createLocalTailLog, type TailLogFile } from "./LocalTailLog.fixture.ts";
+
+function file() {
+  let text = "";
+  let closed = false;
+  const handle: TailLogFile = {
+    async writeFile(value) {
+      if (closed) throw new Error("File is closed");
+      text += value;
+    },
+    async sync() {
+      if (closed) throw new Error("File is closed");
+    },
+    async readFile() {
+      return text;
+    },
+    async close() {
+      closed = true;
+    },
+  };
+  return handle;
+}
 
 function storage() {
   const rows = new Map<string, unknown>();
@@ -55,9 +73,8 @@ describe("incremental Tail capture", () => {
   it("captures every raw sequence once across drains, retries and final catch-up", async () => {
     const { store } = storage();
     const capture = new LocalTailCapture(store, "run");
-    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "signalbox-tail-"));
-    const file = NodePath.join(root, "raw.jsonl");
-    const log = await createLocalTailLog(file, "run");
+    const handle = file();
+    const log = await createLocalTailLog(handle, "run");
     try {
       await capture.append(batch("one"));
       const first = await capture.drain({ after: 0, ids: ["one"] });
@@ -79,10 +96,9 @@ describe("incremental Tail capture", () => {
         '[{"logs":[]}]',
       ]);
       expect(snapshot.terminals).toEqual(["one", "two"]);
-      expect((await NodeFSP.readFile(file, "utf8")).trim().split("\n")).toHaveLength(3);
+      expect((await handle.readFile()).trim().split("\n")).toHaveLength(3);
     } finally {
       await log.close();
-      await NodeFSP.rm(root, { recursive: true });
     }
   });
 
@@ -123,8 +139,7 @@ describe("incremental Tail capture", () => {
     const capture = new LocalTailCapture(store, "run");
     await capture.append(batch("one"));
     const first = await capture.drain({ after: 0, ids: ["one"] });
-    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "signalbox-tail-errors-"));
-    const log = await createLocalTailLog(NodePath.join(root, "raw.jsonl"), "run");
+    const log = await createLocalTailLog(file(), "run");
     try {
       const wrongRun = {
         ...first,
@@ -143,7 +158,31 @@ describe("incremental Tail capture", () => {
       await expect(log.append(second, ["two"])).rejects.toThrow("failed write");
     } finally {
       await log.close();
-      await NodeFSP.rm(root, { recursive: true });
     }
+  });
+
+  it("keeps the cursor fixed until sync succeeds and stops after a sync failure", async () => {
+    const { store } = storage();
+    const capture = new LocalTailCapture(store, "run");
+    await capture.append(batch("one"));
+    const first = await capture.drain({ after: 0, ids: ["one"] });
+    const handle = file();
+    const entered = Promise.withResolvers<void>();
+    const sync = Promise.withResolvers<void>();
+    handle.sync = async () => {
+      entered.resolve();
+      await sync.promise;
+    };
+    const log = await createLocalTailLog(handle, "run");
+    const append = log.append(first, ["one"]);
+    const rejected = expect(append).rejects.toThrow("sync failed");
+    await entered.promise;
+    expect(log.cursor).toBe(0);
+    await expect(log.snapshot()).rejects.toThrow("unavailable");
+    sync.reject(new Error("sync failed"));
+    await rejected;
+    expect(log.cursor).toBe(0);
+    await expect(log.append(first, ["one"])).rejects.toThrow("failed write");
+    await log.close();
   });
 });

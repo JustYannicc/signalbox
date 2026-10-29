@@ -1,4 +1,3 @@
-import * as NodeFSP from "node:fs/promises";
 import {
   tailDigest,
   tailKey,
@@ -7,9 +6,15 @@ import {
   type TailTerminal,
 } from "./LocalTailCapture.fixture.ts";
 
+export interface TailLogFile {
+  writeFile(text: string): Promise<unknown>;
+  sync(): Promise<unknown>;
+  readFile(): Promise<string>;
+  close(): Promise<unknown>;
+}
+
 /** A successful append is durable before its cursor can be sent back to the relay. */
-export async function createLocalTailLog(file: string, runId: string) {
-  const handle = await NodeFSP.open(file, "wx");
+export async function createLocalTailLog(handle: TailLogFile, runId: string) {
   let cursor = 0;
   let failed = false;
   let appending = false;
@@ -80,7 +85,7 @@ export async function createLocalTailLog(file: string, runId: string) {
     async snapshot() {
       if (appending || failed)
         throw new Error("Tail log snapshot is unavailable during or after a failed write");
-      const text = await NodeFSP.readFile(file, "utf8");
+      const text = await handle.readFile();
       const records: TailRecord[] = text
         .split("\n")
         .filter(Boolean)
