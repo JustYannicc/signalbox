@@ -84,6 +84,10 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
   #errorScheduled = false;
   #timeout: ReturnType<typeof setTimeout> | undefined;
 
+  get processHandle(): KernelHandle<"process"> | undefined {
+    return this.#handle;
+  }
+
   constructor(
     host: KernelProgramHost,
     context: NodeChildProcessContext,

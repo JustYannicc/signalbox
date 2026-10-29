@@ -29,6 +29,7 @@ import { abortableValue, applySdkLaunch } from "./claude/SdkRelease.ts";
 import type { PreparedClaudeSdk, SdkSpawnOptions } from "./claude/SdkTypes.ts";
 export type { PreparedClaudeSdk, SdkSpawnOptions, SdkSpawnedProcess } from "./claude/SdkTypes.ts";
 import type { HarnessProcessObserver, HarnessRuntimeReporter } from "./HarnessProcessLifetime.ts";
+import type { ClaudeToolObservation } from "./ClaudeToolObservation.ts";
 
 export interface ClaudeIsolateNativeMcpBridge {
   readonly resolveMcpServers: () => Effect.Effect<
@@ -47,6 +48,7 @@ export interface ClaudeIsolateAdapterOptions {
   readonly nativeMcp?: ClaudeIsolateNativeMcpBridge;
   readonly processObserver?: HarnessProcessObserver;
   readonly onQueryPreCleanupDiagnostic?: (diagnostic: ClaudeSdkQueryPreCleanupDiagnostic) => void;
+  readonly toolObservation?: ClaudeToolObservation;
 }
 
 /** The prepared SDK and CLI share the installed Node personality and Computer files. */
@@ -146,6 +148,9 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
                   prompt,
                   options: {
                     ...queryOptions,
+                    ...(options.toolObservation === undefined
+                      ? {}
+                      : { hooks: options.toolObservation.withHooks(queryOptions.hooks) }),
                     spawnClaudeCodeProcess: (request) => {
                       if (spawned || bridge === undefined)
                         throw new Error("This facet already owns a Claude CLI process");

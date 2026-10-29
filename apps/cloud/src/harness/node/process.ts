@@ -4,7 +4,7 @@ import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeTimers from "node:timers";
 import { NodeProcessExitError } from "../../isolate/NodeProcess.ts";
 import type { NodeBridge } from "../../isolate/NodeBridge.ts";
-import type { NodeChildProcess } from "../../isolate/NodeChildProcess.ts";
+import type { NodeChildProcess, NodeChildProcessObserver } from "../../isolate/NodeChildProcess.ts";
 import type { KernelExitStatus } from "../../kernel/KernelProcessTable.ts";
 import {
   makeReleaseModuleOmittedFailure,
@@ -56,7 +56,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       settle({ status: { exitCode: error.code, signal: 0, coreDumped: false } });
     } else if (!lifetime.signal.aborted) settle({ error });
   };
-  const onChild = (child: NodeChildProcess) => {
+  const onChild: NodeChildProcessObserver = (child, spawn) => {
     liveChildren.add(child);
     const onError = (error: Error) => {
       if (lifetime.signal.aborted) {
@@ -74,6 +74,12 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     );
     children.add(closed);
     void closed.then(() => children.delete(closed));
+    try {
+      input.onChildProcess?.(child, spawn);
+    } catch (error) {
+      // Admission and cleanup must still run after a diagnostic observer fails.
+      childCleanupErrors.push(new Error("Child process observer failed", { cause: error }));
+    }
   };
   let runtime: ReturnType<typeof createHarnessRuntime>;
   let personality: ReturnType<typeof installHarnessPersonality>;
@@ -196,6 +202,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       await startup;
       while (children.size > 0) await Promise.all(children);
       failures.push(...childCleanupErrors);
+      await attempt(() => input.drainChildProcessObservation?.());
       await personality.drain();
       const outputs = [runtime.streams.stdout, runtime.streams.stderr];
       const completed = outputs.map((stream) =>
