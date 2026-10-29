@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import { createHarnessToolTraceLedger } from "../HarnessToolTrace.ts";
-import { observedLedger } from "./toolTraceFixture.ts";
-
-const prefix =
-  "shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval ";
-const suffix = " < /dev/null && pwd -P >| /tmp/cwd-result";
+import {
+  observedLedger,
+  wrapperPrefix as prefix,
+  wrapperSuffix as suffix,
+} from "./toolTraceFixture.ts";
 
 function singleQuote(value: string) {
   return `'${value.replaceAll("'", "'\\''")}'`;

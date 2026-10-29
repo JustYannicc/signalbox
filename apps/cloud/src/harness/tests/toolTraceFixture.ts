@@ -2,9 +2,10 @@ import { createHarnessToolTraceLedger, type HarnessToolTraceOptions } from "../H
 
 export const wrapperPrefix =
   "shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval ";
+export const wrapperSuffix = " < /dev/null && pwd -P >| /tmp/cwd-result";
 
 export function wrappedCommand(command: string) {
-  return `${wrapperPrefix}'${command.replaceAll("'", "'\\''")}' < /dev/null && pwd -P >| /tmp/cwd-result`;
+  return `${wrapperPrefix}'${command.replaceAll("'", "'\\''")}'${wrapperSuffix}`;
 }
 
 export function observedLedger(options: HarnessToolTraceOptions = {}) {
