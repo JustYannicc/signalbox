@@ -553,6 +553,12 @@ jobs:
         with:
           node-version-file: package.json
 
+      - name: Test vendored Gitlink guard
+        run: node --test .github/scripts/check-vendored-gitlinks.test.cjs
+
+      - name: Check vendored Gitlinks
+        run: node .github/scripts/check-vendored-gitlinks.cjs
+
       # Share this checkout rather than consuming another runner for detection.
       # Main and unknown paths keep full coverage; fork guards always run.
       - name: Detect affected jobs
