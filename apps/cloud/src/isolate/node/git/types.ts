@@ -33,11 +33,13 @@ export type NodeGitRoute =
     }
   | {
       readonly kind: "fetch";
+      readonly refspecs?: readonly string[];
       readonly cwd: readonly string[];
       readonly remote?: string;
       readonly url?: string;
       readonly depth?: number;
       readonly tags: boolean;
+      readonly noTags?: boolean;
       readonly prune: boolean;
       readonly singleBranch: boolean;
       readonly quiet: boolean;

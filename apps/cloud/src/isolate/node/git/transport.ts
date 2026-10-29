@@ -3,6 +3,7 @@ import type {
   KernelAsyncProgramContext,
   KernelExitStatus,
 } from "../../../kernel/KernelAsyncProgram.ts";
+import { fetchExplicitRefs } from "./fetch-refspecs.ts";
 import { createGitFs, type NodeGitFsClient } from "./filesystem.ts";
 import { awaitWithAbort, createGitHttpClient } from "./http-client.ts";
 import { NodeGitRouteError, resolveFetchTarget } from "./remote.ts";
@@ -74,11 +75,13 @@ export const runNodeGitHttpCommand = Object.freeze({
           });
         } else {
           const target = await resolveFetchTarget(fs, context.filesystem.cwd, route);
-          await fetchWithPackBudgets({
+          const fetchOptions = {
             fs,
             http: http.http,
             dir: target.dir,
-            remote: target.remote,
+            ...(route.url === undefined || route.refspecs === undefined
+              ? { remote: target.remote }
+              : {}),
             url: target.url,
             ...(route.depth === undefined ? {} : { depth: route.depth }),
             tags: route.tags,
@@ -87,7 +90,17 @@ export const runNodeGitHttpCommand = Object.freeze({
             ...(auth === undefined ? {} : { onAuth: auth }),
             maxObjectBytes: budgets.maxObjectBytes,
             maxTotalObjectBytes: budgets.maxTotalObjectBytes,
-          });
+          };
+          if (route.refspecs === undefined) {
+            await fetchWithPackBudgets(fetchOptions);
+          } else {
+            await fetchExplicitRefs(
+              fetchOptions,
+              route.refspecs,
+              (selected) => fetchWithPackBudgets({ ...fetchOptions, ...selected, ...budgets }),
+              route.noTags !== true,
+            );
+          }
         }
         context.signal.throwIfAborted();
         return success();
@@ -97,7 +110,7 @@ export const runNodeGitHttpCommand = Object.freeze({
     } catch (error) {
       if (context.signal.aborted) throw error;
       const message = error instanceof Error ? error.message : String(error);
-      return this.fail(context, error instanceof NodeGitRouteError ? 129 : 128, message);
+      return this.fail(context, error instanceof NodeGitRouteError ? error.exitCode : 128, message);
     }
   },
 
