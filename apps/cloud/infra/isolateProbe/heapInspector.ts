@@ -148,6 +148,7 @@ export function createHeapInspectorSampler(
 
   let currentGeneration: string | undefined;
   let closed = false;
+  let responseBacklog = 0;
   let active: SampleJob | undefined;
   const seenGenerations = new Set<string>();
   let identity: IdentityState | undefined;
@@ -376,7 +377,8 @@ export function createHeapInspectorSampler(
       notifyIdle();
       return;
     }
-    const job = responseQueue.shift() ?? intervalQueue.shift();
+    const job =
+      responseQueue.shift() ?? (responseBacklog === 0 ? intervalQueue.shift() : undefined);
     if (job === undefined) {
       notifyIdle();
       return;
@@ -463,6 +465,12 @@ export function createHeapInspectorSampler(
   }
 
   return {
+    setResponseBacklog(pending: number) {
+      if (!Number.isSafeInteger(pending) || pending < 0)
+        throw new HeapInspectorGapError("invalid-context");
+      responseBacklog = pending;
+      queueMicrotask(pump);
+    },
     sampleResponse(context: HeapInspectorSampleContext) {
       return enqueue("response", context);
     },

@@ -8,6 +8,27 @@ const context = (generation: string, boundary?: string) => ({
 });
 
 describe("public inspector heap sampling", () => {
+  it("holds intervals for responses waiting outside the inspector queue", async () => {
+    const order: string[] = [];
+    const sampler = createHeapInspectorSampler(async (method) =>
+      method === "Runtime.getIsolateId" ? { id: "a" } : heapUsage(),
+    );
+    sampler.setResponseBacklog(2);
+    const interval = sampler
+      .sampleInterval(context("a", "interval"))
+      .then(() => order.push("interval"));
+    await Promise.resolve();
+    await sampler.sampleResponse(context("a", "first"));
+    order.push("first");
+    sampler.setResponseBacklog(1);
+    await sampler.sampleResponse(context("a", "second"));
+    order.push("second");
+    expect(order).toEqual(["first", "second"]);
+    sampler.setResponseBacklog(0);
+    await interval;
+    expect(order).toEqual(["first", "second", "interval"]);
+    await sampler.close();
+  });
   it("timestamps the inspector call separately from request-progress bookkeeping", async () => {
     let now = 0;
     const sampler = createHeapInspectorSampler(

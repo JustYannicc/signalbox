@@ -61,6 +61,7 @@ interface ResponseSamplingOptions<Context, Value> {
     },
   ) => Promise<Value>;
   readonly onOutcome: (outcome: ResponseSampleOutcome<Context, Value>) => void;
+  readonly onPendingChange?: (pending: number) => void;
   readonly timeoutMs: number;
   readonly maxPending?: number;
   readonly clock?: SamplingClock;
@@ -103,6 +104,14 @@ export function createResponseSamplingQueue<Context, Value>(
   const pending = new Set<SampleJob<Context>>();
   const idleWaiters = new Set<() => void>();
 
+  function reportPending() {
+    try {
+      options.onPendingChange?.(pending.size + (active?.settled ? 1 : 0));
+    } catch {
+      outcomeFailures++;
+    }
+  }
+
   function notifyIdle() {
     if (pending.size || active || deferredOutcomes) return;
     for (const resolve of idleWaiters) resolve();
@@ -119,6 +128,7 @@ export function createResponseSamplingQueue<Context, Value>(
     job.settled = true;
     job.cancelDeadline();
     pending.delete(job);
+    reportPending();
     const index = queue.indexOf(job);
     if (index !== -1) queue.splice(index, 1);
     if (outcome.status === "sampled") sampled++;
@@ -182,6 +192,7 @@ export function createResponseSamplingQueue<Context, Value>(
     } finally {
       // Abort or a deadline does not prove that the transport has actually joined.
       active = undefined;
+      reportPending();
       void pump();
       notifyIdle();
     }
@@ -231,6 +242,7 @@ export function createResponseSamplingQueue<Context, Value>(
         deferGap(job, "queue-capacity");
       } else {
         pending.add(job);
+        reportPending();
         queue.push(job);
         job.cancelDeadline = clock.schedule(
           () => expire(job),

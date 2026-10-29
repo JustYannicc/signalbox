@@ -3,6 +3,28 @@ import { describe, expect, it, vi } from "@effect/vitest";
 import { createResponseSamplingQueue, type ResponseSampleOutcome } from "./heapSampling.ts";
 
 describe("response sampling admission", () => {
+  it("keeps external response demand active until the last transport joins", async () => {
+    const held = Promise.withResolvers<number>();
+    const counts: number[] = [];
+    const queue = createResponseSamplingQueue({
+      generation: "root-1",
+      timeoutMs: 30_000,
+      sample: async () => held.promise,
+      onOutcome: () => undefined,
+      onPendingChange: (count: number) => counts.push(count),
+    });
+    queue.enqueue({
+      id: "0",
+      context: 0,
+      respondedAtMs: performance.timeOrigin + performance.now(),
+    });
+    await Promise.resolve();
+    const closing = queue.close({ cancel: true });
+    expect(counts.at(-1)).toBe(1);
+    held.resolve(0);
+    await closing;
+    expect(counts.at(-1)).toBe(0);
+  });
   it("serves a 112-response burst before admitting one measurement at a time", async () => {
     const release = Promise.withResolvers<void>();
     const first = Promise.withResolvers<void>();
