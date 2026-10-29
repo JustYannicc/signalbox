@@ -1,3 +1,4 @@
+import { log } from "evlog";
 // @effect-diagnostics nodeBuiltinImport:off - hashes binary test captures without a live machine.
 import * as NodeCrypto from "node:crypto";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -59,6 +60,26 @@ function source(
 }
 
 describe("immutable image content through the public lower filesystem", () => {
+  it("serves synchronous ranges only after validation and never exposes its private buffer", async () => {
+    const lower = source();
+    const trace = vi.spyOn(log, "warn").mockImplementation(() => undefined);
+    try {
+      expect(() => lower.readKnown!("/etc/config", 0n, 5)).toThrow(
+        expect.objectContaining({ name: "KernelSynchronousFileBytesUnavailable", fatal: true }),
+      );
+      await lower.read("/etc/config", 0n, 5);
+      expect(lower.readKnown!("/etc/config", 1n, 3)).toEqual(bytes.slice(1, 4));
+      expect(lower.readKnown!("/etc/config", 5n, 10)).toEqual(new Uint8Array());
+      expect(lower.readKnown!("/etc/config", 0n, 0)).toEqual(new Uint8Array());
+      lower.readKnown!("/etc/config", 0n, 5)![0] = 99;
+      expect(lower.readKnown!("/etc/config", 0n, 5)).toEqual(bytes);
+      expect(lower.lookup).not.toHaveBeenCalled();
+      expect(trace).toHaveBeenCalledTimes(1);
+    } finally {
+      trace.mockRestore();
+    }
+  });
+
   it("reads exact binary ranges without a machine, preserving zero reads and EOF", async () => {
     const lower = source();
     expect(await lower.read("/etc/config", 0n, 100)).toEqual(bytes);

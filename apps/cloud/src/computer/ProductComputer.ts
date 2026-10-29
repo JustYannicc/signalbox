@@ -65,6 +65,7 @@ export function createProductComputer(options: ProductComputerOptions) {
   const overlay = options.filesystem.installLowerFileSystem(
     createComputerMachineFileSystem({
       inventory: options.machineInventory,
+      threadId: options.threadId,
       files: transport.files,
       signal,
     }),

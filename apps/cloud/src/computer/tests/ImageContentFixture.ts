@@ -3,8 +3,9 @@ import * as NodeCrypto from "node:crypto";
 import type { MachineProgramInventory } from "../MachineProgramInventory.ts";
 import { machineInventoryFixture } from "../machineInventoryTesting.ts";
 
-export function imageContentInventory(): MachineProgramInventory {
-  const bytes = Uint8Array.from([0, 255, 128, 10, 65]);
+export function imageContentInventory(
+  bytes = Uint8Array.from([0, 255, 128, 10, 65]),
+): MachineProgramInventory {
   const base = machineInventoryFixture([
     { path: "/etc/config", mode: 0o644, uid: 0, gid: 0 },
     { path: "/etc/private", mode: 0o600, uid: 0, gid: 0 },
@@ -16,7 +17,7 @@ export function imageContentInventory(): MachineProgramInventory {
     entries: [
       ...base.entries.map((entry) =>
         entry.type === "file"
-          ? { ...entry, size: "5" }
+          ? { ...entry, size: String(bytes.byteLength) }
           : entry.path === "/etc/locked"
             ? { ...entry, mode: 0o700, uid: 0, gid: 0 }
             : entry,
@@ -44,7 +45,7 @@ export function imageContentInventory(): MachineProgramInventory {
       totalBytes: bytes.length * 3,
       entries: ["/etc/config", "/etc/locked/config", "/etc/private"].map((path) => ({
         path,
-        size: "5",
+        size: String(bytes.byteLength),
         sha256: hash(bytes),
         bytesBase64: Buffer.from(bytes).toString("base64"),
       })),

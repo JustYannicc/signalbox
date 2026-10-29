@@ -40,6 +40,14 @@ export class KernelFileSystemUnavailable extends Error {
   }
 }
 
+/** Verified lower bytes are not currently available without asynchronous I/O. */
+export class KernelSynchronousFileBytesUnavailable extends KernelFileSystemUnavailable {
+  constructor(path: string, options?: KernelFileSystemUnavailableOptions) {
+    super(`Synchronous lower-file bytes are unavailable: ${path}`, options);
+    this.name = "KernelSynchronousFileBytesUnavailable";
+  }
+}
+
 /** A lower entry's native metadata, kept separate from the kernel's virtual inode identity. */
 export interface KernelLowerFileSystemEntry {
   readonly path: string;
@@ -99,6 +107,8 @@ export interface KernelLowerFileSystemSource {
   readlink(path: string, signal?: AbortSignal): Promise<string>;
   /** Optional batch path for warming symlink targets from a refreshed directory snapshot. */
   readlinkMany?(paths: readonly string[], signal?: AbortSignal): Promise<readonly string[]>;
+  /** Reads already verified, authoritative bytes without I/O; undefined means unavailable. */
+  readKnown?(path: string, offset: bigint, length: number): Uint8Array | undefined;
   /** Reads at most `length` bytes from `offset`; file contents are fetched only on demand. */
   read(path: string, offset: bigint, length: number, signal?: AbortSignal): Promise<Uint8Array>;
 }

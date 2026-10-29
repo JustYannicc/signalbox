@@ -1,9 +1,11 @@
+import { log } from "evlog";
 import { MACHINE_FILES_MAX_CONTENT_BYTES } from "@signalbox/runner-protocol/MachineFilesProtocol";
-import type {
-  KernelLowerFileSystemDirectoryEntry,
-  KernelLowerFileSystemDirectoryResult,
-  KernelLowerFileSystemEntry,
-  KernelLowerFileSystemSource,
+import {
+  KernelSynchronousFileBytesUnavailable,
+  type KernelLowerFileSystemDirectoryEntry,
+  type KernelLowerFileSystemDirectoryResult,
+  type KernelLowerFileSystemEntry,
+  type KernelLowerFileSystemSource,
 } from "../kernel/KernelLowerFileSystem.ts";
 import { machineFileMetadata } from "./MachineFileMetadata.ts";
 import type { MachineFilesPort } from "./MachineFilesPort.ts";
@@ -14,6 +16,7 @@ import { createMachineImageContentReader } from "./MachineImageContent.ts";
 
 export interface ComputerMachineFileSystemOptions {
   readonly inventory: MachineProgramInventory;
+  readonly threadId?: string;
   readonly files: MachineFilesPort;
   readonly signal: AbortSignal;
 }
@@ -297,6 +300,36 @@ export function createComputerMachineFileSystem(
       });
       request.check();
       return targets;
+    },
+    readKnown(path, offset, length) {
+      const request = machineFileRequest(options.files, options.signal);
+      request.check();
+      if (offset < 0n || offset > BigInt(Number.MAX_SAFE_INTEGER))
+        throw posixError({ code: "EOVERFLOW", message: "Invalid machine file offset" });
+      if (!Number.isSafeInteger(length) || length < 0)
+        throw posixError({ code: "EINVAL", message: "Invalid machine file read length" });
+      const bytes = contentIsAuthoritative(path)
+        ? imageContent.readKnown(
+            path,
+            Number(offset),
+            Math.min(length, MACHINE_FILES_MAX_CONTENT_BYTES),
+          )
+        : undefined;
+      request.check();
+      if (bytes !== undefined && contentIsAuthoritative(path)) return bytes;
+      // Count failures even when guest code catches the error and the command succeeds.
+      log.warn({
+        action: "computer.filesystem.sync_bytes_unavailable",
+        count: 1,
+        thread: options.threadId === undefined ? undefined : { id: options.threadId },
+      });
+      const context = request.unavailable("Synchronous image content is unavailable", undefined, [
+        { id: "bytes", op: "readRange", path, offset: Number(offset), length },
+      ]).filesystemContext;
+      throw new KernelSynchronousFileBytesUnavailable(
+        path,
+        context === undefined ? undefined : { filesystemContext: context },
+      );
     },
     async read(path, offset, length, signal) {
       const request = machineFileRequest(options.files, options.signal, signal);

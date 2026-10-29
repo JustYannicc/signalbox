@@ -549,7 +549,7 @@ describe("KernelLowerFileSystem", () => {
       const openedFd = fixture.fs.open("/image/tool", KernelOpenFlags.O_RDONLY);
       fd = openedFd;
       expect(() => fixture.fs.read(openedFd, new Uint8Array(4), null)).toThrow(
-        expect.objectContaining({ code: "ENOTSUP" }),
+        expect.objectContaining({ name: "KernelSynchronousFileBytesUnavailable", fatal: true }),
       );
       expect(calls).toEqual({ lookup: [], readdir: [], readlink: [], read: [] });
     } finally {
