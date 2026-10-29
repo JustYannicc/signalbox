@@ -19,12 +19,17 @@ const namespace = path.join(dir, stage + '.namespace');
 fs.appendFileSync(path.join(dir, 'events'), JSON.stringify({phase, stage, hash, fixture}) + '\n');
 if (phase === 'deploy') {
   if (process.env.PROBE_URL) process.exit(92);
-  fs.writeFileSync(worker, hash, {flag: 'wx'});
+  if (process.env.PROBE_VERSION_ID) process.exit(96);
+  const versionId = crypto.randomUUID();
+  fs.writeFileSync(worker, JSON.stringify({hash, versionId}), {flag: 'wx'});
   if (mode === 'partial') process.exit(7);
   fs.writeFileSync(namespace, hash, {flag: 'wx'});
   console.log("url: 'https://sb-" + stage + ".test-account.workers.dev'");
+  if (mode !== 'missing-version') console.log("versionId: '" + (mode === 'invalid-version' ? 'stale' : versionId) + "'");
 } else if (phase === 'measure') {
-  if (fs.readFileSync(worker, 'utf8') !== hash || fs.readFileSync(namespace, 'utf8') !== hash) process.exit(93);
+  const deployed = JSON.parse(fs.readFileSync(worker, 'utf8'));
+  if (deployed.hash !== hash || fs.readFileSync(namespace, 'utf8') !== hash) process.exit(93);
+  if (process.env.PROBE_VERSION_ID !== deployed.versionId) process.exit(97);
   if (process.env.PROBE_URL !== 'https://sb-' + stage + '.test-account.workers.dev/') process.exit(94);
   const json = JSON.stringify({schemaVersion: 1, verificationErrors: mode.includes('measure') ? ['failed proof'] : []});
   if (output) fs.writeFileSync(output, json);
@@ -32,6 +37,7 @@ if (phase === 'deploy') {
   if (mode.includes('measure')) process.exit(9);
 } else {
   if (process.env.PROBE_URL) process.exit(95);
+  if (process.env.PROBE_VERSION_ID) process.exit(98);
   if (mode.includes('cleanup')) process.exit(8);
   fs.rmSync(worker, {force: true});
   fs.rmSync(namespace, {force: true});

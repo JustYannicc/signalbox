@@ -5,6 +5,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - scripts/claude-bunfs/**
+      - apps/cloud/infra/isolateProbe/**
       - .github/workflows/bun-format-canary.yml
       - pnpm-lock.yaml
   schedule:
@@ -97,28 +98,19 @@ jobs:
           node --experimental-strip-types --input-type=module - "$deploy_log" <<'NODE'
           import { appendFileSync, readFileSync } from "node:fs";
           import { waitForProbeRouter } from "./infra/isolateProbe/readiness.ts";
+          import { probeDeployment } from "./infra/isolateProbe/run.ts";
 
           const log = readFileSync(process.argv[2], "utf8");
-          const urls = [...log.matchAll(/\burl:\s*(['"])(https:\/\/[^'"\s]+)\1/gu)];
-          const workerUrl = urls.at(-1)?.[2];
-          if (workerUrl === undefined) throw new Error("Alchemy output did not contain the probe Worker URL.");
-          const url = new URL(workerUrl);
-          const expectedName = `sb-${process.env.STAGE}`;
-          if (
-            url.protocol !== "https:" ||
-            !url.hostname.endsWith(".workers.dev") ||
-            url.hostname.split(".")[0] !== expectedName
-          ) {
-            throw new Error("Alchemy returned a URL outside the isolated probe Worker.");
-          }
-          console.log(`::add-mask::${url.toString()}`);
-          await waitForProbeRouter(url.toString(), process.env.PROBE_SECRET);
-          appendFileSync(process.env.GITHUB_OUTPUT, `worker_url=${url.toString()}\n`);
+          const { url, versionId } = probeDeployment(log, process.env.STAGE);
+          console.log(`::add-mask::${url}`);
+          await waitForProbeRouter(url, process.env.PROBE_SECRET, { expectedVersionId: versionId });
+          appendFileSync(process.env.GITHUB_OUTPUT, `worker_url=${url}\nversion_id=${versionId}\n`);
           NODE
 
       - name: Measure the deployed isolate probe
         env:
           PROBE_URL: ${{ steps.deploy.outputs.worker_url }}
+          PROBE_VERSION_ID: ${{ steps.deploy.outputs.version_id }}
         run: >-
           node --experimental-strip-types apps/cloud/infra/isolateProbe/measure.ts
           --url "$PROBE_URL"

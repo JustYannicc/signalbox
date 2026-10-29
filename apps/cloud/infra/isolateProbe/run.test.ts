@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { runProcess, type RunProcess } from "./process.ts";
 import { waitForProbeRouter } from "./readiness.ts";
-import { probeUrl, runProbe } from "./run.ts";
+import { probeDeployment, probeUrl, runProbe } from "./run.ts";
 import { withDriver } from "./testing/runDriver.ts";
 
 const routerReady: typeof waitForProbeRouter = async () => {};
@@ -32,7 +32,8 @@ describe("isolated deployed probe lifecycle", () => {
               fetch: async (request) => {
                 expect(request.headers.get("authorization")).toBe(`Bearer ${secret}`);
                 if (new URL(request.url).pathname === "/probe/health") {
-                  expect(options?.expectedVersionId).toBe(requests[0]?.env.PROBE_VERSION_ID);
+                  expect(options?.expectedVersionId).toMatch(/^[a-f0-9-]{36}$/);
+                  expect(requests[0]?.env.PROBE_VERSION_ID).toBeUndefined();
                   return Response.json({
                     ready: true,
                     versionId: options?.expectedVersionId,
@@ -91,8 +92,9 @@ describe("isolated deployed probe lifecycle", () => {
       );
       expect(requests[1]?.args).not.toContain("--url");
       expect(requests[1]?.env.PROBE_URL).toContain(`sb-${stage}.`);
-      expect(requests[0]?.env.PROBE_VERSION_ID).toMatch(/^[a-f0-9-]{36}$/);
-      expect(new Set(requests.map((request) => request.env.PROBE_VERSION_ID)).size).toBe(1);
+      expect(requests[0]?.env.PROBE_VERSION_ID).toBeUndefined();
+      expect(requests[1]?.env.PROBE_VERSION_ID).toMatch(/^[a-f0-9-]{36}$/);
+      expect(requests[2]?.env.PROBE_VERSION_ID).toBeUndefined();
       for (const request of requests) {
         expect(request.args.join(" ")).not.toContain(request.env.PROBE_SECRET);
         expect(logs.join("\n")).not.toContain(request.env.PROBE_SECRET);
@@ -128,6 +130,18 @@ describe("isolated deployed probe lifecycle", () => {
       expect(await NodeFSP.readdir(dir)).toEqual(["events"]);
     });
   });
+
+  it.each(["missing-version", "invalid-version"])(
+    "destroys without measuring when deployment returns %s",
+    async (mode) => {
+      await withDriver(mode, async ({ run, events }) => {
+        await expect(runProbe({}, { run, routerReady, log: () => {} })).rejects.toThrow(
+          "valid probe version ID",
+        );
+        expect((await events()).map((event) => event.phase)).toEqual(["deploy", "destroy"]);
+      });
+    },
+  );
 
   it("destroys the owned stage without measuring when router readiness fails", async () => {
     await withDriver("success", async ({ dir, run, events }) => {
@@ -233,6 +247,9 @@ describe("isolated deployed probe lifecycle", () => {
         expect(stages.every((stage) => /^isolate-probe-[a-f0-9]{16}$/.test(stage))).toBe(true);
         const events = await Promise.all([first.events(), second.events()]);
         expect(events[0]?.[0]?.hash).not.toBe(events[1]?.[0]?.hash);
+        expect(first.requests[1]?.env.PROBE_VERSION_ID).not.toBe(
+          second.requests[1]?.env.PROBE_VERSION_ID,
+        );
         for (const [index, context] of [first, second].entries()) {
           expect(events[index]?.map((event) => event.stage)).toEqual([
             stages[index],
@@ -246,12 +263,13 @@ describe("isolated deployed probe lifecycle", () => {
   });
 
   it("recovers only the explicitly named hex stage using existing Alchemy state", async () => {
-    await withDriver("success", async ({ run, events }) => {
+    await withDriver("success", async ({ run, requests, events }) => {
       const stage = "isolate-probe-1234567890abcdef";
       await runProbe({ destroyStage: stage }, { run, log: () => {} });
       expect((await events()).map(({ phase, stage }) => ({ phase, stage }))).toEqual([
         { phase: "destroy", stage },
       ]);
+      expect(requests[0]?.env.PROBE_VERSION_ID).toBeUndefined();
       await expect(runProbe({ destroyStage: "production" }, { run })).rejects.toThrow(
         "exact isolate-probe",
       );
@@ -333,5 +351,15 @@ describe("deployed probe URL validation", () => {
     "https://sb-isolate-probe-12345678.account.workers.dev/run",
   ])("rejects %s", (url) => {
     expect(() => probeUrl(`url: '${url}'`, "isolate-probe-12345678")).toThrow();
+  });
+});
+
+describe("deployed probe version identity", () => {
+  it("reads the stack-owned version with its isolated URL", () => {
+    const versionId = "b0cce207-a938-48c9-9c87-78114459be65";
+    const url = "https://sb-isolate-probe-12345678.account.workers.dev/";
+    expect(
+      probeDeployment(`url: '${url}'\nversionId: '${versionId}'`, "isolate-probe-12345678"),
+    ).toEqual({ url, versionId });
   });
 });
