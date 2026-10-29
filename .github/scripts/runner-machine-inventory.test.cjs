@@ -52,6 +52,12 @@ const pin = {
   },
 };
 
+function releaseNotFound() {
+  return Object.assign(new Error("Command failed: gh api releases/tags/missing"), {
+    stderr: "gh: Not Found (HTTP 404)\n",
+  });
+}
+
 function tempDirectory() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "runner-inventory-test-"));
 }
@@ -115,9 +121,7 @@ test("fails closed when the pinned release or asset is absent", () => {
           outputPath: path.join(directory, "runner.json"),
           pin,
           runGh: () => {
-            throw Object.assign(new Error("HTTP 404: Not Found"), {
-              stderr: "HTTP 404: Not Found",
-            });
+            throw releaseNotFound();
           },
         }),
       /release .* is missing/,
@@ -140,6 +144,121 @@ test("fails closed when the pinned release or asset is absent", () => {
   }
 });
 
+test("creates a missing digest release and verifies its published bytes", () => {
+  const directory = tempDirectory();
+  try {
+    const inventoryPath = path.join(directory, "runner.json");
+    fs.writeFileSync(inventoryPath, bytes);
+    let created = false;
+    let downloaded = false;
+    const calls = [];
+    const runGh = (args) => {
+      calls.push(args);
+      if (args[0] === "api") {
+        if (!created) throw releaseNotFound();
+        return JSON.stringify({
+          tag_name: pin.releaseTag,
+          draft: false,
+          assets: [{ name: "runner.json" }],
+        });
+      }
+      if (args[0] === "release" && args[1] === "create") {
+        assert.equal(args[2], pin.releaseTag);
+        assert.equal(args[3], inventoryPath);
+        assert.equal(args[args.indexOf("--target") + 1], sourceRevision);
+        created = true;
+        return "";
+      }
+      if (args[0] === "release" && args[1] === "download") {
+        downloaded = true;
+        fs.writeFileSync(path.join(args[args.indexOf("--dir") + 1], "runner.json"), bytes);
+        return "";
+      }
+      throw new Error(`Unexpected gh call: ${args.join(" ")}`);
+    };
+
+    assert.deepEqual(
+      publishInventory({
+        inventoryPath,
+        repository: pin.repository,
+        imageRef,
+        sourceRevision,
+        sourceImageId,
+        platform: "linux/amd64",
+        runGh,
+      }),
+      { tag: pin.releaseTag, sha256: pin.sha256 },
+    );
+    assert.equal(created, true);
+    assert.equal(downloaded, true);
+    assert.equal(calls.filter((args) => args[1] === "create").length, 1);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("does not publish after authorization or server errors during release lookup", () => {
+  for (const status of [401, 403, 500]) {
+    const directory = tempDirectory();
+    try {
+      const inventoryPath = path.join(directory, "runner.json");
+      fs.writeFileSync(inventoryPath, bytes);
+      const failure = Object.assign(new Error("Command failed: gh api releases/tags/missing"), {
+        stderr: `gh: Request failed (HTTP ${status})\n`,
+      });
+      const calls = [];
+      assert.throws(
+        () =>
+          publishInventory({
+            inventoryPath,
+            repository: pin.repository,
+            imageRef,
+            sourceRevision,
+            sourceImageId,
+            platform: "linux/amd64",
+            runGh: (args) => {
+              calls.push(args);
+              throw failure;
+            },
+          }),
+        (error) => error === failure,
+      );
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0][0], "api");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("fails when release creation fails and the release is still missing", () => {
+  const directory = tempDirectory();
+  try {
+    const inventoryPath = path.join(directory, "runner.json");
+    fs.writeFileSync(inventoryPath, bytes);
+    const failure = new Error("release creation denied");
+    assert.throws(
+      () =>
+        publishInventory({
+          inventoryPath,
+          repository: pin.repository,
+          imageRef,
+          sourceRevision,
+          sourceImageId,
+          platform: "linux/amd64",
+          runGh: (args) => {
+            if (args[0] === "api") throw releaseNotFound();
+            if (args[0] === "release" && args[1] === "create") throw failure;
+            throw new Error(`Unexpected gh call: ${args.join(" ")}`);
+          },
+        }),
+      (error) => error === failure,
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("accepts a concurrent immutable release only after its asset hash matches", () => {
   const directory = tempDirectory();
   try {
@@ -156,8 +275,7 @@ test("accepts a concurrent immutable release only after its asset hash matches",
       calls.push(args);
       if (args[0] === "api") {
         apiCalls++;
-        if (apiCalls === 1)
-          throw Object.assign(new Error("HTTP 404: Not Found"), { stderr: "HTTP 404: Not Found" });
+        if (apiCalls === 1) throw releaseNotFound();
         return JSON.stringify(release);
       }
       if (args[0] === "release" && args[1] === "create") throw new Error("release already exists");
