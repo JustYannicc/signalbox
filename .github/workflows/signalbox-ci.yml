@@ -167,7 +167,7 @@ jobs:
       - name: Verify preload bundle output
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
-  # Cloud outlasts the other packages combined, so split its files across two
+  # Cloud outlasts the other packages combined, so split its files across three
   # runners and start the remaining package queue alongside them.
   test:
     name: Test ${{ matrix.partition }}
@@ -178,7 +178,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: ${{ fromJSON(needs.cloud_migrations.outputs.test_packages == '@signalbox/cloud' && '["cloud-1","cloud-2"]' || (needs.cloud_migrations.outputs.test_packages == '' || contains(needs.cloud_migrations.outputs.test_packages, '@signalbox/cloud')) && '["packages","cloud-1","cloud-2"]' || '["packages"]') }}
+        partition: ${{ fromJSON(needs.cloud_migrations.outputs.test_packages == '@signalbox/cloud' && '["cloud-1","cloud-2","cloud-3"]' || (needs.cloud_migrations.outputs.test_packages == '' || contains(needs.cloud_migrations.outputs.test_packages, '@signalbox/cloud')) && '["packages","cloud-1","cloud-2","cloud-3"]' || '["packages"]') }}
     env:
       PROGRAMS_RELEASE_TAG: kernel-programs-20261023-6aefd645-2d079609
       COREUTILS_TAR_SHA256: 875eb1dcdb31d6ea53f59b64b6de6bef8e0ebc4680a7698310ab0cfc989d50d9
@@ -262,6 +262,8 @@ jobs:
           TEST_PACKAGES: ${{ needs.cloud_migrations.outputs.test_packages }}
           TEST_PARTITION: ${{ matrix.partition }}
           TEST_PACKAGE_RUNNERS: ${{ matrix.partition == 'packages' && 2 || 1 }}
+          # Cloud tests spawn child workers that need CPU room beyond Vitest's pool.
+          TEST_CPUS_PER_WORKER: ${{ matrix.partition == 'packages' && 1 || 2 }}
           SIGNALBOX_REQUIRE_BASH_ARTIFACT: "1"
           SIGNALBOX_REQUIRE_BUSYBOX_ARTIFACT: "1"
           SIGNALBOX_REQUIRE_COREUTILS_ARTIFACTS: "1"
@@ -273,11 +275,11 @@ jobs:
           # Each package's Vitest pool must share the same runner CPU budget.
           runner_cpus=$(node -p 'require("node:os").availableParallelism()')
           if (( TEST_PACKAGE_RUNNERS > runner_cpus )); then TEST_PACKAGE_RUNNERS=$runner_cpus; fi
-          test_workers=$((runner_cpus / TEST_PACKAGE_RUNNERS))
+          test_workers=$((runner_cpus / TEST_PACKAGE_RUNNERS / TEST_CPUS_PER_WORKER))
           export VITEST_MAX_WORKERS=$((test_workers > 0 ? test_workers : 1))
           echo "Test budget: $runner_cpus CPUs, $TEST_PACKAGE_RUNNERS packages, $VITEST_MAX_WORKERS Vitest workers per package"
           if [[ "$TEST_PARTITION" == cloud-* ]]; then
-            vp run --filter @signalbox/cloud test --shard "${TEST_PARTITION#cloud-}/2"
+            vp run --filter @signalbox/cloud test --shard "${TEST_PARTITION#cloud-}/3"
             exit
           fi
           filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' --filter '!@signalbox/cloud')
