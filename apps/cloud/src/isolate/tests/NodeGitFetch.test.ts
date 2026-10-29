@@ -98,45 +98,56 @@ describe("NodeGit HTTP fetch", () => {
     }
   });
 
-  it("does not publish remote refs or pack indexes when pack indexing fails", async () => {
-    const fixture = createNodeGitFixture();
-    const nodeFs = createNodeFs(fixture.filesystem).fs;
-    const nextCommit = "1111111111111111111111111111111111111111";
-    await initializeFetchRepo(nodeFs);
-    await git.writeRef({
-      fs: nodeFs,
-      dir: "/work/repo",
-      ref: "refs/remotes/upstream/main",
-      value: GIT_FIXTURE_COMMIT,
-    });
-    const server = createSmartHttpServer({
-      authenticate: false,
-      commit: nextCommit,
-      pack: malformedGitPack(),
-    });
-    try {
-      const program = createNodeGitProgram({ local: createLocalGitRunner(), fetch: server.fetch });
-      const { host, handle } = await spawnGit(fixture.filesystem, program, [
-        "/usr/bin/git",
-        "-C",
-        "repo",
-        "fetch",
-        "upstream",
-      ]);
-      const status = await finishGit(host, handle);
+  it.each([[], ["main"]])(
+    "does not publish remote refs or pack indexes when pack indexing fails with refspecs %j",
+    async (...refspecs) => {
+      const fixture = createNodeGitFixture();
+      const nodeFs = createNodeFs(fixture.filesystem).fs;
+      const nextCommit = "1111111111111111111111111111111111111111";
+      await initializeFetchRepo(nodeFs);
+      await git.writeRef({
+        fs: nodeFs,
+        dir: "/work/repo",
+        ref: "refs/remotes/upstream/main",
+        value: GIT_FIXTURE_COMMIT,
+      });
+      const server = createSmartHttpServer({
+        authenticate: false,
+        commit: nextCommit,
+        pack: malformedGitPack(),
+      });
+      try {
+        const program = createNodeGitProgram({
+          local: createLocalGitRunner(),
+          fetch: server.fetch,
+        });
+        const { host, handle } = await spawnGit(fixture.filesystem, program, [
+          "/usr/bin/git",
+          "-C",
+          "repo",
+          "fetch",
+          "upstream",
+          ...refspecs,
+        ]);
+        const status = await finishGit(host, handle);
 
-      expect(status.exitCode).toBe(128);
-      expect(
-        await git.resolveRef({ fs: nodeFs, dir: "/work/repo", ref: "refs/remotes/upstream/main" }),
-      ).toBe(GIT_FIXTURE_COMMIT);
-      expect(await nodeFs.promises.readdir("/work/repo/.git/objects/pack")).toEqual([]);
-      await expect(
-        git.readCommit({ fs: nodeFs, dir: "/work/repo", oid: nextCommit }),
-      ).rejects.toThrow();
-    } finally {
-      fixture.close();
-    }
-  });
+        expect(status.exitCode).toBe(128);
+        expect(
+          await git.resolveRef({
+            fs: nodeFs,
+            dir: "/work/repo",
+            ref: "refs/remotes/upstream/main",
+          }),
+        ).toBe(GIT_FIXTURE_COMMIT);
+        expect(await nodeFs.promises.readdir("/work/repo/.git/objects/pack")).toEqual([]);
+        await expect(
+          git.readCommit({ fs: nodeFs, dir: "/work/repo", oid: nextCommit }),
+        ).rejects.toThrow();
+      } finally {
+        fixture.close();
+      }
+    },
+  );
 });
 
 async function initializeFetchRepo(
