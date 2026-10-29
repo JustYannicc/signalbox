@@ -4,9 +4,12 @@ import type { NodeGitRoute } from "./types.ts";
 import { validateNodeGitHttpUrl } from "./routing.ts";
 
 export class NodeGitRouteError extends Error {
-  constructor(message: string) {
+  readonly exitCode: number;
+
+  constructor(message: string, exitCode = 129) {
     super(message);
     this.name = "NodeGitRouteError";
+    this.exitCode = exitCode;
   }
 }
 
