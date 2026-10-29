@@ -7,18 +7,42 @@ import {
   observePlacementRelease,
   observePlacementWriterClaim,
   stopKey,
-  type PlacementReleaseEvidence,
-  type ObservedPlacementRelease,
+  placementReleaseEvidence as readPlacementReleaseEvidence,
+  type PlacementReleaseEvidence as ProductPlacementReleaseEvidence,
+  type PlacementReleaseProof as ProductPlacementReleaseProof,
 } from "../../HarnessProcessPlacementEvidence.ts";
-export {
-  placementReleaseEvidence,
-  selectPlacementReleaseProof,
-} from "../../HarnessProcessPlacementEvidence.ts";
-export type {
-  PlacementReleaseEvidence,
-  PlacementReleaseProof,
-  ObservedPlacementRelease,
-} from "../../HarnessProcessPlacementEvidence.ts";
+import { equals } from "effect/Equal";
+import {
+  readCreationRetirementEvidence,
+  readModelFence,
+  verifyCreationRetirement,
+  type CreationRetirementEvidence,
+} from "./modelCreationRetirement.fixture.ts";
+export { selectPlacementReleaseProof } from "../../HarnessProcessPlacementEvidence.ts";
+
+export type PlacementReleaseEvidence = ProductPlacementReleaseEvidence & {
+  readonly creations?: readonly CreationRetirementEvidence[];
+};
+export type PlacementReleaseProof =
+  | ProductPlacementReleaseProof
+  | {
+      readonly kind: "creation-parent-destroyed";
+      readonly receipt: ReturnType<typeof verifyCreationRetirement>;
+      readonly terminals: readonly [];
+    };
+export interface ObservedPlacementRelease {
+  readonly owner: string;
+  readonly writer: HarnessProcessPlacementWriter;
+  readonly evidence: PlacementReleaseEvidence;
+  readonly proof: PlacementReleaseProof;
+}
+
+export async function placementReleaseEvidence(storage: DurableObjectStorage) {
+  return {
+    ...(await readPlacementReleaseEvidence(storage)),
+    creations: await readCreationRetirementEvidence(storage),
+  };
+}
 
 // One release gate keeps public C tests and the native qualifier from accepting different evidence.
 export class ObservedPlacementStore extends HarnessProcessPlacementStoreObject {
@@ -41,21 +65,60 @@ export class ObservedPlacementStore extends HarnessProcessPlacementStoreObject {
   }
 
   override async releaseWriter(owner: string, writer: HarnessProcessPlacementWriter) {
-    const { evidence, proof } = await observePlacementRelease(
-      this.ctx.storage,
-      owner,
-      writer,
-      () => {
-        const env = this.env as unknown as {
-          PROCESS_EXECUTION_SHARDS: {
-            getByName(owner: string): {
-              placementReleaseEvidence(): Promise<PlacementReleaseEvidence>;
-            };
-          };
+    // Reject a stale receiver before consulting the current shard's evidence.
+    await super.load(owner, writer);
+    const env = this.env as unknown as {
+      PROCESS_EXECUTION_SHARDS: {
+        getByName(owner: string): {
+          placementReleaseEvidence(): Promise<PlacementReleaseEvidence>;
         };
-        return env.PROCESS_EXECUTION_SHARDS.getByName(owner).placementReleaseEvidence();
-      },
+      };
+    };
+    const evidence = await env.PROCESS_EXECUTION_SHARDS.getByName(owner).placementReleaseEvidence();
+    const creations = (evidence.creations ?? []).filter(
+      (row) =>
+        row.record.claim.ownerId === owner &&
+        row.boundary.phase === "restoring" &&
+        row.boundary.published === false &&
+        row.boundary.requestPublisher.generation === 1,
     );
+    let proof: PlacementReleaseProof;
+    if (creations.length > 0) {
+      if (creations.length !== 1) throw new Error("Creation retirement is ambiguous.");
+      const slots = await super.load(owner, writer);
+      if (
+        slots?.owner !== owner ||
+        slots.slots.some((slot) => slot.holder !== undefined || slot.invalidating !== undefined) ||
+        (await super.listRecovery(owner, writer)).length !== 0
+      )
+        throw new Error("Creation retirement still has held slots or recovery records.");
+      const fences = new Map(evidence.fences);
+      const currentFence = readModelFence(fences.get("harness-process-incarnation/v1/current"));
+      const receiver = await this.ctx.storage.get<unknown>(
+        `harness-process-incarnation/v1/receiver/${encodeURIComponent(owner)}`,
+      );
+      if (!equals(currentFence, readModelFence(receiver)))
+        throw new Error("Creation retirement has another current placement fence.");
+      const receipt = verifyCreationRetirement({
+        owner,
+        writer,
+        currentFence,
+        history: evidence.fences
+          .filter(([key]) => key.startsWith("harness-process-incarnation/v1/history/"))
+          .map(([, value]) => readModelFence(value)),
+        creation: creations[0]!,
+        completed: false,
+        writerReleased: false,
+      });
+      proof = { kind: "creation-parent-destroyed", receipt, terminals: [] };
+    } else {
+      ({ proof } = await observePlacementRelease(
+        this.ctx.storage,
+        owner,
+        writer,
+        async () => evidence,
+      ));
+    }
     const observed = { owner, writer, evidence, proof };
     const sequence = await this.beforePlacementRelease(observed);
     await super.releaseWriter(owner, writer);
