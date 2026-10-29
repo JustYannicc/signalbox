@@ -3,7 +3,7 @@ import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
 import {
   isPrintableAscii,
   simpleBasicPattern,
-  simpleExtendedPattern,
+  simpleGrepExtendedPattern,
 } from "./gnu/CommandPatterns.ts";
 
 import {
@@ -68,7 +68,7 @@ export function qualifyGnuCommand(
 
 function qualifyGrep(argv: readonly string[]): GnuCommandQualification {
   const patterns: string[] = [];
-  const flags = { fixed: false, extended: false };
+  const flags = { fixed: false, extended: false, recursive: false };
   let options = true;
   let fileCount = 0;
 
@@ -116,10 +116,10 @@ function qualifyGrep(argv: readonly string[]): GnuCommandQualification {
   if (patterns.length !== 1) {
     return machine("unqualified-script", "Only one explicit grep pattern is qualified");
   }
-  if (fileCount === 0) {
+  if (fileCount === 0 && flags.recursive) {
     return machine(
       "unqualified-script",
-      "Stdin-only grep has not been qualified through the child stream",
+      "Recursive grep without an explicit file operand is outside the qualified set",
     );
   }
 
@@ -127,7 +127,7 @@ function qualifyGrep(argv: readonly string[]): GnuCommandQualification {
   const safe = flags.fixed
     ? isPrintableAscii(pattern)
     : flags.extended
-      ? simpleExtendedPattern(pattern) !== undefined
+      ? simpleGrepExtendedPattern(pattern)
       : simpleBasicPattern(pattern);
   return safe
     ? QUALIFIED
@@ -138,7 +138,7 @@ function parseGrepShortOptions(
   argv: readonly string[],
   optionIndex: number,
   patterns: string[],
-  flags: { fixed: boolean; extended: boolean },
+  flags: { fixed: boolean; extended: boolean; recursive: boolean },
 ): { readonly kind: "parsed"; readonly lastConsumed: number } | GnuCommandMachineDecision {
   const argument = argv[optionIndex]!;
   const body = argument.slice(1);
@@ -182,8 +182,10 @@ function parseGrepShortOptions(
     switch (option) {
       case "n":
       case "q":
-      case "r":
       case "i":
+        break;
+      case "r":
+        flags.recursive = true;
         break;
       case "E":
         flags.extended = true;

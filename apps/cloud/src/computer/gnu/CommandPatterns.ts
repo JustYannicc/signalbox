@@ -82,6 +82,12 @@ export function simpleExtendedPattern(pattern: string): number | undefined {
   return alternatives(false) && cursor === end ? captures : undefined;
 }
 
+export function simpleGrepExtendedPattern(pattern: string): boolean {
+  return (
+    simpleExtendedPattern(pattern) !== undefined || pattern.split("|").every(simpleBasicPattern)
+  );
+}
+
 function simpleReplacement(value: string, captures: number): boolean {
   for (let index = 0; index < value.length; index++) {
     const character = value[index]!;

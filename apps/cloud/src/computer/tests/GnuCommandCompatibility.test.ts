@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import type { KernelCommand } from "../../kernel/KernelCommandForwarder.ts";
 import { qualifyGnuCommand, type GnuCommandQualification } from "../GnuCommandCompatibility.ts";
 
+import { capturedGrepCases } from "./GrepStdinFixture.ts";
+
 interface SyntheticComparisonCase {
   readonly id: string;
   readonly executable: string;
@@ -163,6 +165,35 @@ function command(
 }
 
 describe("qualifyGnuCommand", () => {
+  it.each(capturedGrepCases)("qualifies captured stdin grep command $commandId", ({ args }) => {
+    const captured = command("/usr/bin/grep", args);
+    expect(qualifyGnuCommand(captured)).toEqual({ kind: "qualified-isolate" });
+  });
+
+  it.each(["needle|", "|needle", "needle||thread", "a.*|b", "a|[b]", "(a|b)|c"])(
+    "keeps unproven or empty grep alternatives unqualified: %s",
+    (pattern) => {
+      expect(qualifyGnuCommand(command("grep", ["-E", pattern]))).toMatchObject({
+        kind: "machine",
+        reason: "unqualified-script",
+      });
+    },
+  );
+
+  it("does not widen sed to top-level alternatives", () => {
+    expect(qualifyGnuCommand(command("sed", ["-E", "s/a|b/x/", "input"]))).toMatchObject({
+      kind: "machine",
+      reason: "unqualified-script",
+    });
+  });
+
+  it("keeps recursive grep without file operands unqualified", () => {
+    expect(qualifyGnuCommand(command("grep", ["-r", "needle"]))).toMatchObject({
+      kind: "machine",
+      reason: "unqualified-script",
+    });
+  });
+
   it.each([
     ["grep", ["needle", "-"]],
     ["grep", ["needle", "-", "-"]],
@@ -236,7 +267,6 @@ describe("qualifyGnuCommand", () => {
       "unqualified-option",
     ],
     ["pattern file", "grep", ["-f", "patterns", "nested/input"], "unqualified-script"],
-    ["stdin pattern", "grep", ["needle"], "unqualified-script"],
     ["wide ERE", "grep", ["-E", ".*", "nested/input"], "unqualified-script"],
     ["sed script file", "sed", ["-f", "script.sed", "nested/input"], "unqualified-script"],
     ["wide sed expression", "sed", ["-E", "s/a.*b/x/", "nested/input"], "unqualified-script"],
