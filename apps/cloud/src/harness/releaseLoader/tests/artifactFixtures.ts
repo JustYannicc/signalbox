@@ -26,20 +26,25 @@ async function artifactFixture(
   files: Map<string, Uint8Array>,
   maxPreparedModuleBytes: number,
   omission?: HarnessReleaseOmissionIdentity,
+  artifactSourceIdentity = sourceIdentity,
 ) {
   const inventory: Record<string, ReleaseFile> = {};
   for (const [path, bytes] of files) inventory[path] = await descriptor(bytes);
   const common = serializeHarnessReleaseArtifactManifest({
     schemaVersion: 1,
     ...composition,
-    sourceIdentity,
+    sourceIdentity: artifactSourceIdentity,
     computer: trustedComputer,
     files: inventory,
     ...(omission === undefined ? {} : { omission }),
   });
   files.set("manifest.json", common);
   const artifactHash = (await descriptor(common)).sha256;
-  const identity = { artifactRef: `sha256:${artifactHash}`, artifactHash, sourceIdentity };
+  const identity = {
+    artifactRef: `sha256:${artifactHash}`,
+    artifactHash,
+    sourceIdentity: artifactSourceIdentity,
+  };
   const reads: string[] = [];
   const source: HarnessReleaseArtifactSource = {
     async read(artifactRef, path) {
@@ -110,6 +115,7 @@ export async function claudeFixture(
     omission?: unknown;
     workerEntries?: unknown;
     omissionIdentity?: HarnessReleaseOmissionIdentity;
+    sourceIdentity?: string;
     assets?: Readonly<Record<string, { bytes: Uint8Array; loader: number; encoding: number }>>;
   } = {},
 ) {
@@ -214,5 +220,6 @@ export async function claudeFixture(
     files,
     cliModuleBytes + sdkBytes.byteLength,
     options.omissionIdentity,
+    options.sourceIdentity,
   );
 }

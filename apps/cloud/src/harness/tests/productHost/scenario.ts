@@ -41,6 +41,7 @@ import {
 } from "./gitRepository.ts";
 import { runRepositoryScenario, type RepositoryScenario } from "./repositoryScenario.ts";
 import { nativeFixture } from "./native.ts";
+import { claudeReleaseVariantsForArtifact } from "./releaseVariants.fixture.ts";
 import { adapter, services } from "./adapter.ts";
 
 type ProductScenario = Scenario | "hydrate" | "start-failure" | RepositoryScenario;
@@ -174,6 +175,7 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
           },
           threadId: d.threadId,
           release: release.options,
+          releaseVariants: claudeReleaseVariantsForArtifact(processResumeArtifact),
           ...(scenario === "turn" ? { processResumeArtifact } : {}),
           programs,
           machineInventory: machine.inventory,
