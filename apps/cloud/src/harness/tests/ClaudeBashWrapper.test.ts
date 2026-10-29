@@ -43,9 +43,9 @@ function spawn(childId: string, processKey: string, command: string, cwd = "/wor
     childId,
     processKey,
     executable: "/bin/bash",
-    argv: ["bash", "-c", "-l", script],
+    argv: ["/bin/bash", "-c", "-l", script],
     cwd,
-    raw: { executable: "/bin/bash", argv: ["bash", "-c", "-l", script], cwd },
+    raw: { executable: "/bin/bash", argv: ["/bin/bash", "-c", "-l", script], cwd },
   };
 }
 
@@ -93,10 +93,10 @@ describe("Claude Bash wrapper extraction", () => {
         },
         pathMappingId: rootMapping.id,
       },
-      children: [{ argv: ["bash", "-c", "-l", wrapper(command)] }],
+      children: [{ argv: ["/bin/bash", "-c", "-l", wrapper(command)] }],
     });
     expect(result.childSpawnObservations.get("child")?.[0]?.argv).toEqual([
-      "bash",
+      "/bin/bash",
       "-c",
       "-l",
       wrapper(command),
@@ -113,9 +113,9 @@ describe("Claude Bash wrapper extraction", () => {
       childId: "double-child",
       processKey: "host",
       executable: "/bin/bash",
-      argv: ["bash", "-c", "-l", script],
+      argv: ["/bin/bash", "-c", "-l", script],
       cwd: "/work",
-      raw: { argv: ["bash", "-c", "-l", script] },
+      raw: { argv: ["/bin/bash", "-c", "-l", script] },
     });
     ledger.observeChildClose("double-child", { closeArgs: [0, null] });
     ledger.observeHook("host", "PostToolUse", terminal(pre), "double");
@@ -139,8 +139,8 @@ describe("Claude Bash wrapper extraction", () => {
     const actualWrapper = wrapper(actualCommand);
     const falseChild = {
       ...spawn("false-child", "host", "printf inner"),
-      argv: ["bash", "-c", "-l", actualWrapper],
-      raw: { argv: ["bash", "-c", "-l", actualWrapper] },
+      argv: ["/bin/bash", "-c", "-l", actualWrapper],
+      raw: { argv: ["/bin/bash", "-c", "-l", actualWrapper] },
     };
     ledger.observeChildSpawn(falseChild);
     ledger.observeChildClose("false-child", { closeArgs: [0, null] });
@@ -164,9 +164,9 @@ describe("Claude Bash wrapper extraction", () => {
       childId: "mismatch-child",
       processKey: "host",
       executable: "/bin/bash",
-      argv: ["bash", "-c", "-l", commandWrapper],
+      argv: ["/bin/bash", "-c", "-l", commandWrapper],
       cwd: "/work",
-      raw: { argv: ["bash", "-c", "-l", commandWrapper] },
+      raw: { argv: ["/bin/bash", "-c", "-l", commandWrapper] },
     });
     ledger.observeChildClose("mismatch-child", { closeArgs: [0, null] });
     ledger.observeHook("host", "PostToolUse", terminal(mismatched), "mismatch");
@@ -178,9 +178,9 @@ describe("Claude Bash wrapper extraction", () => {
       childId: "newline-child",
       processKey: "host",
       executable: "/bin/bash",
-      argv: ["bash", "-c", "-l", newlineScript],
+      argv: ["/bin/bash", "-c", "-l", newlineScript],
       cwd: "/work",
-      raw: { argv: ["bash", "-c", "-l", newlineScript] },
+      raw: { argv: ["/bin/bash", "-c", "-l", newlineScript] },
     });
     ledger.observeChildClose("newline-child", { closeArgs: [0, null] });
     ledger.observeHook("host", "PostToolUse", terminal(newlinePre), "newline");
@@ -192,9 +192,9 @@ describe("Claude Bash wrapper extraction", () => {
       childId: "ansi-child",
       processKey: "host",
       executable: "/bin/bash",
-      argv: ["bash", "-c", "-l", ansiScript],
+      argv: ["/bin/bash", "-c", "-l", ansiScript],
       cwd: "/work",
-      raw: { argv: ["bash", "-c", "-l", ansiScript] },
+      raw: { argv: ["/bin/bash", "-c", "-l", ansiScript] },
     });
     ledger.observeChildClose("ansi-child", { closeArgs: [0, null] });
     ledger.observeHook("host", "PostToolUse", terminal(ansiPre), "ansi");
@@ -206,9 +206,9 @@ describe("Claude Bash wrapper extraction", () => {
       childId: "malformed-child",
       processKey: "host",
       executable: "/bin/bash",
-      argv: ["bash", "-c", "-l", malformedScript],
+      argv: ["/bin/bash", "-c", "-l", malformedScript],
       cwd: "/work",
-      raw: { argv: ["bash", "-c", "-l", malformedScript] },
+      raw: { argv: ["/bin/bash", "-c", "-l", malformedScript] },
     });
     ledger.observeChildClose("malformed-child", { closeArgs: [0, null] });
     ledger.observeHook("host", "PostToolUse", terminal(malformedPre), "malformed");
@@ -220,9 +220,9 @@ describe("Claude Bash wrapper extraction", () => {
       childId: "extra-eval-child",
       processKey: "host",
       executable: "/bin/bash",
-      argv: ["bash", "-c", "-l", extraEvalScript],
+      argv: ["/bin/bash", "-c", "-l", extraEvalScript],
       cwd: "/work",
-      raw: { argv: ["bash", "-c", "-l", extraEvalScript] },
+      raw: { argv: ["/bin/bash", "-c", "-l", extraEvalScript] },
     });
     ledger.observeChildClose("extra-eval-child", { closeArgs: [0, null] });
     ledger.observeHook("host", "PostToolUse", terminal(extraEvalPre), "extra-eval");
@@ -310,5 +310,19 @@ describe("Claude Bash wrapper extraction", () => {
 
     const result = ledger.finalize([{ id: "cwd", name: "Bash" }]);
     expect(result.verdicts[0]).toMatchObject({ kind: "gap", reasons: ["cwd-mapping-mismatch"] });
+  });
+
+  it("rejects a wrapper with an unobserved argv0", () => {
+    const ledger = createHarnessToolTraceLedger();
+    const pre = hook("argv0", "printf exact");
+    ledger.observeHook("host", "PreToolUse", pre, "argv0");
+    const child = spawn("child", "host", "printf exact");
+    ledger.observeChildSpawn({ ...child, argv: ["different-argv0", ...child.argv.slice(1)] });
+    ledger.observeChildClose("child", { closeArgs: [0, null] });
+    ledger.observeHook("host", "PostToolUse", terminal(pre), "argv0");
+    expect(ledger.finalize([{ id: "argv0", name: "Bash" }]).verdicts[0]).toMatchObject({
+      kind: "gap",
+      reasons: ["unsupported-shell-wrapper:unsupported-wrapper-argv"],
+    });
   });
 });

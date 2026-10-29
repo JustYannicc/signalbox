@@ -25,7 +25,13 @@ export function extractClaudeBashWrapper(
   executable: string,
   argv: readonly string[],
 ): ClaudeBashWrapperResult {
-  if (executable !== "/bin/bash" || argv.length !== 4 || argv[1] !== "-c" || argv[2] !== "-l") {
+  if (
+    executable !== "/bin/bash" ||
+    argv.length !== 4 ||
+    argv[0] !== "/bin/bash" ||
+    argv[1] !== "-c" ||
+    argv[2] !== "-l"
+  ) {
     return { kind: "gap", reason: "unsupported-wrapper-argv" };
   }
   const script = argv[3];
