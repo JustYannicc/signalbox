@@ -1,4 +1,8 @@
-import type { HarnessProcessEvictedRecoveryReceipt } from "../../processPlacement/contracts.ts";
+import { equals as sameData } from "effect/Equal";
+import {
+  verifyCreationRetirement,
+  type CreationRetirementEvidence,
+} from "./modelCreationRetirement.fixture.ts";
 import type { HarnessRequestCheckpoint } from "../../HarnessRunStore.ts";
 import type {
   HarnessProcessPlacementIdentity,
@@ -9,8 +13,9 @@ import {
   parseEvictedRecoveryReceipt,
   parseRecoveryRecord,
 } from "../../HarnessProcessPlacementEvidence.ts";
-import type { ProcessFence } from "../../processOwnership/fence.ts";
-import { sameData } from "../checkpointContract.ts";
+type HarnessProcessEvictedRecoveryReceipt = ReturnType<typeof parseEvictedRecoveryReceipt>;
+type ProcessFence = HarnessProcessEvictedRecoveryReceipt["sourceFence"];
+type CreationRetirement = ReturnType<typeof verifyCreationRetirement>;
 
 export interface ModelPhysicalIdentity {
   readonly incarnation: string;
@@ -34,7 +39,8 @@ export interface ModelRecoveryEvidence {
   readonly currentFence: ProcessFence;
   readonly history: readonly ProcessFence[];
   readonly candidate: HarnessProcessPlacementRecoveryRecord;
-  readonly retirement: HarnessProcessEvictedRecoveryReceipt;
+  readonly retirement: HarnessProcessEvictedRecoveryReceipt | CreationRetirement;
+  readonly creation?: CreationRetirementEvidence;
 }
 
 export interface ModelRecoveryExpectation {
@@ -79,6 +85,7 @@ export async function collectModelPhysicalRecovery(
       owner: string,
       writer: HarnessProcessPlacementWriter,
     ): Promise<readonly HarnessProcessPlacementRecoveryRecord[]>;
+    writerReleased(owner: string, writer: HarnessProcessPlacementWriter): Promise<boolean>;
     readEvictedRecovery(
       owner: string,
       fence: ProcessFence,
@@ -97,11 +104,27 @@ export async function collectModelPhysicalRecovery(
   if (matches.length !== 1) throw new Error("Physical recovery candidate is missing or ambiguous.");
   const candidate = matches[0]!;
   assertLiveModelRecoveryCandidate(candidate);
-  const retirement = await placement.readEvictedRecovery(
+  const published = await placement.readEvictedRecovery(
     owner,
     source.boundary.fence,
     source.boundary.identity,
   );
+  const releaseWriter = source.creation?.placement.releaseWriter;
+  if (!published && source.creation && !releaseWriter)
+    throw new Error("Creation retirement has no durable releasing writer.");
+  const retirement =
+    published ??
+    (source.creation &&
+      releaseWriter &&
+      verifyCreationRetirement({
+        owner,
+        writer: releaseWriter,
+        currentFence: source.currentFence,
+        history: source.history,
+        creation: source.creation,
+        completed: true,
+        writerReleased: await placement.writerReleased(owner, releaseWriter),
+      }));
   if (retirement?.state !== "completed")
     throw new Error("Physical recovery lacks a completed durable retirement.");
   return { ...source, candidate, retirement };
@@ -113,7 +136,18 @@ export function verifyModelPhysicalRecovery(
 ) {
   const { boundary, currentFence, history } = evidence;
   const candidate = parseRecoveryRecord(evidence.candidate, evidence.currentFence.owner);
-  const retirement = parseEvictedRecoveryReceipt(evidence.retirement);
+  const retirement =
+    "kind" in evidence.retirement
+      ? verifyCreationRetirement({
+          owner: expected.owner,
+          writer: evidence.retirement.currentWriter,
+          currentFence,
+          history,
+          creation: evidence.retirement.creation,
+          completed: true,
+          writerReleased: evidence.retirement.writerReleased,
+        })
+      : parseEvictedRecoveryReceipt(evidence.retirement);
   const assertBound = (condition: boolean, message: string) => {
     if (!condition) throw new Error(message);
   };
@@ -126,6 +160,13 @@ export function verifyModelPhysicalRecovery(
       sameData(boundary.checkpoint, expected.checkpoint),
     "Model recovery changed its logical native session or committed checkpoint.",
   );
+  if ("kind" in retirement)
+    assertBound(
+      retirement.nativeSessionId === expected.nativeSessionId &&
+        sameData(retirement.checkpoint, expected.checkpoint) &&
+        boundary.generation === 1,
+      "Initial physical recovery changed the creation native checkpoint.",
+    );
   assertBound(
     boundary.identity.incarnationNonce === expected.from.incarnation &&
       boundary.identity.loaderId === expected.from.loaderId &&
@@ -192,14 +233,16 @@ export interface ModelSocketDrain {
   readonly closedAndJoined: boolean;
 }
 
+export interface ModelPhysicalRecoveryInput<Receipt> {
+  readonly fromIncarnation: string;
+  readonly toIncarnation: string;
+  readonly nativeSessionId: string;
+  readonly checkpoint: unknown;
+  readonly receipt: Receipt;
+}
+
 export async function recoverModelPhysicalIncarnation<Receipt>(
-  input: {
-    readonly fromIncarnation: string;
-    readonly toIncarnation: string;
-    readonly nativeSessionId: string;
-    readonly checkpoint: unknown;
-    readonly receipt: Receipt;
-  },
+  input: ModelPhysicalRecoveryInput<Receipt>,
   owner: {
     readonly nativeSessionId: string;
     readonly currentIncarnation: string | undefined;
@@ -209,13 +252,7 @@ export async function recoverModelPhysicalIncarnation<Receipt>(
     readonly physicalOrdinals: ReadonlyMap<string, number>;
     readonly logicalIncarnations: ReadonlyMap<string, number>;
   },
-  verify: (input: {
-    readonly fromIncarnation: string;
-    readonly toIncarnation: string;
-    readonly nativeSessionId: string;
-    readonly checkpoint: unknown;
-    readonly receipt: Receipt;
-  }) => Promise<{
+  verify: (input: ModelPhysicalRecoveryInput<Receipt>) => Promise<{
     readonly durable: boolean;
     readonly retirementCompleted: boolean;
     readonly nativeSessionId: string;
