@@ -21,6 +21,7 @@ export type ExtractReleaseOptions = {
   materialize?: boolean;
   discardDownloadedBinary?: boolean;
   measureRetainedBytes?: (directory: string) => Promise<number>;
+  diagnostics?: (event: Record<string, unknown>) => void;
 };
 
 export type ExtractReleaseResult = {
@@ -204,11 +205,10 @@ export async function extractRelease(
     );
     logDiskUsage("before-extraction", directory, version);
 
-    const result = await extract(
-      binary,
-      output,
-      options.materialize === undefined ? {} : { materialize: options.materialize },
-    );
+    const result = await extract(binary, output, {
+      ...(options.materialize === undefined ? {} : { materialize: options.materialize }),
+      ...(options.diagnostics ? { diagnostics: options.diagnostics } : {}),
+    });
     createdOutput = true;
     await NodeFSP.writeFile(
       NodePath.join(output, ".bun-data/release.json"),
@@ -250,8 +250,7 @@ export async function extractRelease(
       binarySha256: actualHash,
       serializedGraphBytes: result.serializedGraph.bytes,
       moduleRegionBytes,
-      materializedPayloadBytes:
-        options.materialize === false ? 0 : result.serializedGraph.bytes + moduleRegionBytes,
+      materializedPayloadBytes: result.materializedPayloadBytes,
       retainedReleaseBytes,
     };
   } catch (error) {

@@ -5,7 +5,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { extract, modulePath } from "./extract.ts";
-import { fixture } from "./graph-fixture.ts";
+import { fixture, linkedBytecodeFixture } from "./graph-fixture.ts";
+
+const silenceDiagnostics = { diagnostics: () => {} };
 
 describe("unchanged Bun extraction", () => {
   it.each([
@@ -36,7 +38,7 @@ describe("unchanged Bun extraction", () => {
       const binary = NodePath.join(directory, "binary");
       await NodeFSP.writeFile(binary, input.bytes);
       const output = NodePath.join(directory, "out");
-      const manifest = await extract(binary, output);
+      const manifest = await extract(binary, output, silenceDiagnostics);
       expect(await NodeFSP.readFile(NodePath.join(output, "cli"), "utf8")).toBe(
         "export default 1;",
       );
@@ -45,11 +47,106 @@ describe("unchanged Bun extraction", () => {
       expect(manifest.serializedGraph.sha256).toBe(
         NodeCrypto.createHash("sha256").update(graph).digest("hex"),
       );
-      await expect(extract(binary, output)).rejects.toThrow();
+      await expect(extract(binary, output, silenceDiagnostics)).rejects.toThrow();
       expect(await NodeFSP.readFile(NodePath.join(output, "cli"), "utf8")).toBe(
         "export default 1;",
       );
       expect((await NodeFSP.readdir(directory)).sort()).toEqual(["binary", "out"]);
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reports planned region bytes and write filesystems before materializing payloads", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "bun-extract-test-"));
+    try {
+      const input = fixture();
+      const binary = NodePath.join(directory, "binary");
+      await NodeFSP.writeFile(binary, input.bytes);
+      const output = NodePath.join(directory, "out");
+      const events: Record<string, unknown>[] = [];
+      const manifest = await extract(binary, output, {
+        diagnostics: (event) => events.push(event),
+      });
+      const plan = events.find((event) => event.event === "bun-extraction-plan");
+      const filesystems = events.filter((event) => event.event === "bun-extraction-filesystem");
+      const filesystemRoles = filesystems.map((event) => event.role);
+
+      expect(plan).toMatchObject({
+        mode: "materialized",
+        binaryBytes: input.bytes.length,
+        expectedPeakArtifactBytes: input.bytes.length + manifest.serializedGraph.bytes + 17,
+        graphBytes: manifest.serializedGraph.bytes,
+        moduleRegionBytes: 17,
+        payloadBytes: manifest.serializedGraph.bytes + 17,
+        regionBytesByKind: {
+          contents: { bytes: 17, files: 1 },
+          bytecode: { bytes: 0, files: 0 },
+        },
+      });
+      expect(filesystems.length).toBeGreaterThanOrEqual(1);
+      expect(filesystemRoles).toEqual(
+        expect.arrayContaining([
+          "binary-download-partial",
+          "final-output-rename",
+          "partial-stage-root",
+          "serialized-graph-file",
+          "module-artifact-root",
+          "manifest-file",
+          "release-provenance-file",
+          "partial-stage-parent",
+          "os-tmpdir",
+        ]),
+      );
+      expect(JSON.stringify(filesystems)).toContain("df -hP");
+      expect(JSON.stringify(filesystems)).toContain("df -iP");
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("stores linked bytecode once while preserving each module's bytecode range hash", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "bun-extract-test-"));
+    try {
+      const input = linkedBytecodeFixture();
+      const binary = NodePath.join(directory, "binary");
+      await NodeFSP.writeFile(binary, input.bytes);
+      const output = NodePath.join(directory, "out");
+
+      const manifest = await extract(binary, output, silenceDiagnostics);
+      const moduleArtifacts = manifest.modules.map((module) => module.artifacts.bytecode);
+      const linked = (
+        manifest as unknown as {
+          linkedBytecodePayload?: { path?: string; bytes: number; sha256: string };
+        }
+      ).linkedBytecodePayload;
+
+      expect(linked).toMatchObject({
+        path: ".bun-data/linked-bytecode.bin",
+        bytes: input.payload.length,
+        sha256: NodeCrypto.createHash("sha256").update(input.payload).digest("hex"),
+      });
+      expect(new Set(moduleArtifacts.map((artifact) => artifact?.path)).size).toBe(1);
+      expect(moduleArtifacts.map((artifact) => artifact?.storageOffset)).toEqual([0, 4]);
+      expect(moduleArtifacts.map((artifact) => artifact?.bytes)).toEqual([12, 8]);
+      expect(moduleArtifacts.map((artifact) => artifact?.sha256)).toEqual([
+        NodeCrypto.createHash("sha256").update(input.payload).digest("hex"),
+        NodeCrypto.createHash("sha256").update(input.payload.subarray(4)).digest("hex"),
+      ]);
+      expect(await NodeFSP.readFile(NodePath.join(output, String(linked?.path)))).toEqual(
+        Buffer.from(input.payload),
+      );
+      expect(manifest.materializedPayloadBytes).toBe(
+        manifest.serializedGraph.bytes + input.payload.length + 38,
+      );
+      const storedPayload = await NodeFSP.readFile(NodePath.join(output, String(linked?.path)));
+      for (const [index, artifact] of moduleArtifacts.entries()) {
+        const start = artifact?.storageOffset ?? 0;
+        const actual = storedPayload.subarray(start, start + (artifact?.bytes ?? 0));
+        const expected = index === 0 ? input.payload : input.payload.subarray(4);
+        expect(actual).toEqual(Buffer.from(expected));
+        expect(NodeCrypto.createHash("sha256").update(actual).digest("hex")).toBe(artifact?.sha256);
+      }
     } finally {
       await NodeFSP.rm(directory, { recursive: true, force: true });
     }
@@ -62,7 +159,10 @@ describe("unchanged Bun extraction", () => {
       const binary = NodePath.join(directory, "binary");
       await NodeFSP.writeFile(binary, input.bytes);
       const output = NodePath.join(directory, "manifest-only");
-      const manifest = await extract(binary, output, { materialize: false });
+      const manifest = await extract(binary, output, {
+        materialize: false,
+        ...silenceDiagnostics,
+      });
 
       expect(manifest.serializedGraph.path).toBeUndefined();
       expect(manifest.serializedGraph.bytes).toBe(input.graph.byteLength - 8);
@@ -87,9 +187,9 @@ describe("unchanged Bun extraction", () => {
       await NodeFSP.writeFile(binary, input.bytes);
       const output = NodePath.join(directory, "manifest-only");
 
-      await expect(extract(binary, output, { materialize: false })).rejects.toThrow(
-        "Unsafe module path",
-      );
+      await expect(
+        extract(binary, output, { materialize: false, ...silenceDiagnostics }),
+      ).rejects.toThrow("Unsafe module path");
       expect((await NodeFSP.readdir(directory)).sort()).toEqual(["binary"]);
     } finally {
       await NodeFSP.rm(directory, { recursive: true, force: true });
@@ -125,7 +225,7 @@ describe("unchanged Bun extraction", () => {
     };
     try {
       await NodeFSP.writeFile(binary, input.bytes);
-      const caught = await extract(binary, output, { fileOperations }).catch(
+      const caught = await extract(binary, output, { fileOperations, ...silenceDiagnostics }).catch(
         (error: unknown) => error,
       );
 
@@ -172,9 +272,11 @@ describe("unchanged Bun extraction", () => {
     };
     try {
       await NodeFSP.writeFile(binary, input.bytes);
-      const caught = await extract(binary, output, { materialize: false, fileOperations }).catch(
-        (error: unknown) => error,
-      );
+      const caught = await extract(binary, output, {
+        materialize: false,
+        fileOperations,
+        ...silenceDiagnostics,
+      }).catch((error: unknown) => error);
 
       expect(caught).toBeInstanceOf(AggregateError);
       if (!(caught instanceof AggregateError)) throw new Error("Expected cleanup failure details.");
