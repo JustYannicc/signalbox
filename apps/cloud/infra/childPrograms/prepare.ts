@@ -180,6 +180,7 @@ export async function prepareChildPrograms(
     "infra/childPrograms/prepare.ts",
     "infra/childPrograms/basic.ts",
     "infra/childPrograms/runtime.ts",
+    "infra/childPrograms/programCodes.ts",
     "infra/childPrograms/packageGraph.ts",
     "infra/childPrograms/measured.ts",
     "infra/childPrograms/gitTemplates.ts",

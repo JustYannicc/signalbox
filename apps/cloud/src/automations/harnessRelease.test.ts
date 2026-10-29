@@ -47,11 +47,15 @@ type TestMetric = { state: "measured"; value: number } | { state: "unmeasured"; 
 type TestResult = {
   status: string;
   unchangedSource: string;
+  artifact?: { sha256: string };
+  fixture?: { id: string; sha256: string };
+  identity?: { sha256: string };
   environments: Record<
     string,
     {
       checks: Array<{ name: string; status: string }>;
       metrics: Record<string, TestMetric>;
+      resourceCriteria?: unknown;
     }
   >;
 };
@@ -73,6 +77,80 @@ const greenResult = (): TestResult => ({
     ]),
   ) as TestResult["environments"],
 });
+
+const taggedResourceCriteria = (environment: "local-workerd" | "deployed") => ({
+  tag: "harness-release-resource-criteria-v1",
+  source: "normal-public-qualifier",
+  environment,
+  status: "passed",
+  label:
+    environment === "local-workerd"
+      ? "configured-limit completion with measured overshoot"
+      : "platform policy compliance evidence",
+  pins: {
+    measurementRunId: `${environment}-proof-run`,
+    fixtureId: "fixture-1",
+    fixtureSha256: "f".repeat(64),
+    artifactSha256: "a".repeat(64),
+    releaseIdentitySha256: "b".repeat(64),
+  },
+  startupUpperBound: {
+    label: "cold first-successful-RPC latency",
+    interpretation: "startup upper bound",
+    clock: "parent process.hrtime.bigint",
+    startedMonotonicNs: "100",
+    finishedMonotonicNs: "200",
+    milliseconds: 0.0001,
+    includesRpc: true,
+    exactBootTime: false,
+  },
+  ...(environment === "local-workerd"
+    ? {
+        configuredLimit: {
+          criterion: "configured-limit completion with measured overshoot",
+          status: "passed",
+          configuredLimitBytes: 64,
+          deltaMaxObservedBytes: 4,
+          safetyMarginBytes: 8,
+          budgetBytes: 128,
+          assessedBytes: 76,
+          budgetFits: true,
+          calibrationComplete: true,
+          workloadCompleted: true,
+          identityVerified: true,
+          strictByteBound: false,
+          detail: "The workload completed and the empirical budget criterion passed.",
+        },
+      }
+    : {
+        platformPolicyCompliance: {
+          label: "platform policy compliance evidence",
+          status: "passed",
+          evidenceSha256: "c".repeat(64),
+          identityVerified: true,
+        },
+      }),
+  detail: "Resource evidence passed.",
+});
+
+const greenTaggedResourceResult = () => {
+  const result = greenResult();
+  result.artifact = { sha256: "a".repeat(64) };
+  result.fixture = { id: "fixture-1", sha256: "f".repeat(64) };
+  result.identity = { sha256: "b".repeat(64) };
+  for (const environment of ["local-workerd", "deployed"] as const) {
+    result.environments[environment]!.metrics.bootTimeMs = {
+      state: "unmeasured",
+      reason: "The startup upper bound includes the first RPC.",
+    };
+    result.environments[environment]!.metrics.peakHeapBytes = {
+      state: "unmeasured",
+      reason: "The resource criterion does not measure peak heap.",
+    };
+    result.environments[environment]!.resourceCriteria = taggedResourceCriteria(environment);
+  }
+  return result;
+};
 
 describe("harness release watcher", () => {
   it("compiles as an hourly project-only built-in", () => {
@@ -322,6 +400,96 @@ describe("harness release watcher", () => {
     const partialChecks = structuredClone(result);
     partialChecks.environments["local-workerd"]!.checks[0]!.status = "pending";
     expect(isVerifiedHarnessRelease("green", partialChecks)).toBe(false);
+  });
+
+  it("accepts tagged startup upper bounds only when peak heap stays unmeasured", () => {
+    const result = greenTaggedResourceResult();
+    expect(isVerifiedHarnessRelease("green", result)).toBe(true);
+    for (const environment of ["local-workerd", "deployed"] as const) {
+      const assessment = result.environments[environment]!;
+      expect(assessment.metrics.bootTimeMs!.state).toBe("unmeasured");
+      expect(assessment.metrics.peakHeapBytes!.state).toBe("unmeasured");
+      expect(assessment.resourceCriteria).toMatchObject({
+        startupUpperBound: {
+          label: "cold first-successful-RPC latency",
+          interpretation: "startup upper bound",
+          includesRpc: true,
+          exactBootTime: false,
+        },
+      });
+    }
+  });
+
+  it("refuses rejected, incomplete, malformed, and mislabeled resource claims", () => {
+    const rejectedProfile = greenTaggedResourceResult();
+    const localCriteria = taggedResourceCriteria("local-workerd");
+    if (!("configuredLimit" in localCriteria)) throw new Error("Local criteria missing.");
+    rejectedProfile.environments["local-workerd"]!.resourceCriteria = {
+      ...localCriteria,
+      status: "rejected",
+      configuredLimit: {
+        ...localCriteria.configuredLimit,
+        status: "rejected",
+        configuredLimitBytes: 100_663_296,
+        deltaMaxObservedBytes: 101_195_616,
+        safetyMarginBytes: 8_388_608,
+        budgetBytes: 134_217_728,
+        assessedBytes: 210_247_520,
+        budgetFits: false,
+        calibrationComplete: false,
+        workloadCompleted: false,
+      },
+    };
+    expect(isVerifiedHarnessRelease("green", rejectedProfile)).toBe(false);
+
+    const forgedGreenProfile = greenTaggedResourceResult();
+    const forgedLocal = forgedGreenProfile.environments["local-workerd"]!.resourceCriteria as {
+      status: string;
+      configuredLimit: Record<string, unknown>;
+    };
+    Object.assign(forgedLocal.configuredLimit, {
+      configuredLimitBytes: 100_663_296,
+      deltaMaxObservedBytes: 101_195_616,
+      safetyMarginBytes: 8_388_608,
+      budgetBytes: 134_217_728,
+      assessedBytes: 210_247_520,
+      budgetFits: false,
+    });
+    expect(isVerifiedHarnessRelease("green", forgedGreenProfile)).toBe(false);
+
+    const forgedCalibration = greenTaggedResourceResult();
+    const local = forgedCalibration.environments["local-workerd"]!.resourceCriteria as {
+      configuredLimit: Record<string, unknown>;
+    };
+    local.configuredLimit.calibrationComplete = "true";
+    expect(isVerifiedHarnessRelease("green", forgedCalibration)).toBe(false);
+
+    const missingIdentity = greenTaggedResourceResult();
+    const missingIdentityLocal = missingIdentity.environments["local-workerd"]!
+      .resourceCriteria as { configuredLimit: Record<string, unknown> };
+    delete missingIdentityLocal.configuredLimit.identityVerified;
+    expect(isVerifiedHarnessRelease("green", missingIdentity)).toBe(false);
+
+    const measuredPeak = greenTaggedResourceResult();
+    measuredPeak.environments.deployed!.metrics.peakHeapBytes = { state: "measured", value: 128 };
+    expect(isVerifiedHarnessRelease("green", measuredPeak)).toBe(false);
+
+    const mislabeledTiming = greenTaggedResourceResult();
+    const timing = mislabeledTiming.environments.deployed!.resourceCriteria as {
+      startupUpperBound: Record<string, unknown>;
+    };
+    timing.startupUpperBound.interpretation = "exact boot time";
+    expect(isVerifiedHarnessRelease("green", mislabeledTiming)).toBe(false);
+  });
+
+  it("round-trips the resource guard in serialized watcher policy source", () => {
+    const serialized = new Function(
+      `${HARNESS_RELEASE_POLICY_SOURCE}\nreturn isVerifiedHarnessRelease;`,
+    )() as typeof isVerifiedHarnessRelease;
+    expect(serialized("green", greenTaggedResourceResult())).toBe(true);
+    const malformed = greenTaggedResourceResult();
+    (malformed.environments["local-workerd"]!.resourceCriteria as { tag: string }).tag = "unknown";
+    expect(serialized("green", malformed)).toBe(false);
   });
 
   it("retries a failed red handoff by correlation ID before reusing the proof", async () => {

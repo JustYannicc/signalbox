@@ -13,6 +13,7 @@ const computer = { sourceIdentity: "c".repeat(64), manifestSha256: "d".repeat(64
 async function artifact(
   variant: "baseline" | "hooks",
   change?: (cli: Record<string, unknown>, sdk: Record<string, unknown>) => void,
+  workerPaddingBytes = 0,
 ) {
   const files = new Map<string, Uint8Array>();
   const put = (path: string, bytes: Uint8Array) => {
@@ -27,7 +28,10 @@ async function artifact(
     ...(variant === "hooks"
       ? {
           "signalbox/worker-hooks.js": {
-            ...put("cli/worker-hooks.js", encode("export function instantiate(){}")),
+            ...put(
+              "cli/worker-hooks.js",
+              encode("export function instantiate(){}" + " ".repeat(workerPaddingBytes)),
+            ),
             type: "js",
           },
         }
@@ -142,7 +146,11 @@ async function artifact(
   return { fullArtifact, files };
 }
 
-export async function fixture(project: boolean, change?: Parameters<typeof artifact>[1]) {
+export async function fixture(
+  project: boolean,
+  change?: Parameters<typeof artifact>[1],
+  workerPaddingBytes = 0,
+) {
   const database = makeHarnessReleaseLedgerTestDatabase();
   const ledger = createHarnessReleaseLedger(
     project
@@ -150,7 +158,7 @@ export async function fixture(project: boolean, change?: Parameters<typeof artif
       : createHarnessReleaseSqliteStore(database.storage),
   );
   const baseline = await artifact("baseline"),
-    hooks = await artifact("hooks", change);
+    hooks = await artifact("hooks", change, workerPaddingBytes);
   ledger.registerArtifact(baseline.fullArtifact);
   ledger.registerArtifact(hooks.fullArtifact);
   const source = {

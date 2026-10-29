@@ -26,7 +26,19 @@ NIMBUS_COMMIT="e9f019ab4e40cb6037aff7e1a0eaf20842578ed3"
 NIMBUS_ARCHIVE_SHA="f7024781c3dc2be1325efa1279aa9682cd84a2cd48f7782eb87ccd90ff0f1c12"
 BUSYBOX_VERSION="1.37.0"
 BUSYBOX_ARCHIVE_SHA="3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4"
-WASI_SDK_ARCHIVE_SHA="e1e529ea226b1db0b430327809deae9246b580fa3cae32d31c82dfe770233587"
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64)
+    WASI_SDK_PLATFORM="arm64-macos"
+    WASI_SDK_LABEL="25.0 arm64 macOS, clang 19.1.5"
+    WASI_SDK_ARCHIVE_SHA="e1e529ea226b1db0b430327809deae9246b580fa3cae32d31c82dfe770233587"
+    ;;
+  Linux/aarch64|Linux/arm64)
+    WASI_SDK_PLATFORM="arm64-linux"
+    WASI_SDK_LABEL="25.0 arm64 Linux, clang 19.1.5"
+    WASI_SDK_ARCHIVE_SHA="47fccad8b2498f2239e05e1115c3ffc652bf37e7de2f88fb64b2d663c976ce2d"
+    ;;
+  *) fail "unsupported build host: $(uname -s)/$(uname -m)" ;;
+esac
 BUILD_JOBS="${BUILD_JOBS:-2}"
 SOURCE_CACHE_DIR="${SOURCE_CACHE_DIR:-}"
 
@@ -95,7 +107,7 @@ fetch "https://codeload.github.com/AshishKumar4/Nimbus/tar.gz/$NIMBUS_COMMIT" \
   "$NIMBUS_TARBALL" "$NIMBUS_ARCHIVE_SHA" "${SOURCE_CACHE_DIR:+$SOURCE_CACHE_DIR/Nimbus-e9f019ab.tar.gz}"
 fetch "https://busybox.net/downloads/busybox-$BUSYBOX_VERSION.tar.bz2" \
   "$BUSYBOX_TARBALL" "$BUSYBOX_ARCHIVE_SHA" "${SOURCE_CACHE_DIR:+$SOURCE_CACHE_DIR/busybox-1.37.0.tar.bz2}"
-fetch "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-arm64-macos.tar.gz" \
+fetch "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-$WASI_SDK_PLATFORM.tar.gz" \
   "$WASI_SDK_TARBALL" "$WASI_SDK_ARCHIVE_SHA" \
   "${SOURCE_CACHE_DIR:+$SOURCE_CACHE_DIR/wasi-sdk.tar.gz}"
 
@@ -142,7 +154,7 @@ ARTIFACT_SHA="$(sha256 "$ARTIFACT_OUTPUT")"
 ARTIFACT_BYTES="$(wc -c < "$ARTIFACT_OUTPUT" | tr -d ' ')"
 
 NIMBUS_COMMIT="$NIMBUS_COMMIT" NIMBUS_TARBALL="$NIMBUS_TARBALL" \
-  ARTIFACT_PROFILE="$ARTIFACT_PROFILE" \
+  ARTIFACT_PROFILE="$ARTIFACT_PROFILE" WASI_SDK_LABEL="$WASI_SDK_LABEL" \
   BUSYBOX_TARBALL="$BUSYBOX_TARBALL" WASI_SDK_TARBALL="$WASI_SDK_TARBALL" \
   BUILD_RECIPE="$BUILD_RECIPE" BUFFER_PATCH="$HERE/patches/0004-busybox-1m-copy-buffer.patch" \
   AR_PATCH="$HERE/patches/0006-busybox-target-ar.patch" \
@@ -198,7 +210,7 @@ const manifest = {
     },
   },
   toolchain: {
-    wasiSdk: "25.0 arm64 macOS, clang 19.1.5",
+    wasiSdk: process.env.WASI_SDK_LABEL,
     wasiSdkArchiveSha256: hashFile(process.env.WASI_SDK_TARBALL),
     configuredCopyBufferKiB: Number(process.env.CONFIGURED_BUFFER),
     configuredIdApplet: process.env.CONFIGURED_ID || null,

@@ -1,5 +1,8 @@
+import { isHarnessReleaseResourceCriteriaAssessment } from "@t3tools/shared/harnessReleaseResourceCriteria";
+
 export type HarnessReleaseProvider = "claude-code" | "claude-agent-sdk" | "codex";
 export type HarnessReleaseSelection = "current" | "backfill";
+const resourceCriteriaValidator = isHarnessReleaseResourceCriteriaAssessment;
 
 export const HARNESS_RELEASE_WORKFLOW_FILE = ".github/workflows/harness-release-proof.yml";
 export const HARNESS_RELEASE_RESULT_PATH = "result.json";
@@ -206,7 +209,9 @@ export const summarizeHarnessBackfill = (
   };
 };
 
-/** The release CLI's public criteria and measurements are the only green proof. */
+/** Untagged legacy records retain measured metrics; tagged resource records fail closed unless
+ * their upper-bound timing validates and peak heap remains unmeasured.
+ */
 export const isVerifiedHarnessRelease = (
   status: string,
   result: {
@@ -215,6 +220,7 @@ export const isVerifiedHarnessRelease = (
     readonly environments?: Record<
       string,
       | {
+          readonly resourceCriteria?: unknown;
           readonly checks?: ReadonlyArray<{ readonly name: string; readonly status: string }>;
           readonly metrics?: Record<
             string,
@@ -225,6 +231,9 @@ export const isVerifiedHarnessRelease = (
         }
       | undefined
     >;
+    readonly artifact?: { readonly sha256?: unknown };
+    readonly fixture?: { readonly id?: unknown; readonly sha256?: unknown };
+    readonly identity?: { readonly sha256?: unknown };
   } | null,
 ) => {
   if (status !== "green" || result?.status !== "green" || result.unchangedSource !== "passed")
@@ -252,10 +261,41 @@ export const isVerifiedHarnessRelease = (
       assessment.checks.some((check) => check.status !== "passed")
     )
       return false;
-    for (const name of requiredMetrics) {
-      const metric = assessment.metrics?.[name];
-      if (metric?.state !== "measured" || !Number.isFinite(metric.value) || metric.value < 0)
+    const resourceCriteria = assessment.resourceCriteria;
+    if (resourceCriteria !== undefined) {
+      if (
+        typeof result.fixture?.id !== "string" ||
+        typeof result.fixture.sha256 !== "string" ||
+        typeof result.artifact?.sha256 !== "string" ||
+        typeof result.identity?.sha256 !== "string" ||
+        !resourceCriteriaValidator(resourceCriteria, {
+          environment,
+          fixtureId: result.fixture.id,
+          fixtureSha256: result.fixture.sha256,
+          artifactSha256: result.artifact.sha256,
+          releaseIdentitySha256: result.identity.sha256,
+        }) ||
+        (resourceCriteria as { readonly status?: unknown }).status !== "passed"
+      )
         return false;
+      const moduleBytes = assessment.metrics?.moduleBytes;
+      if (
+        moduleBytes?.state !== "measured" ||
+        !Number.isFinite(moduleBytes.value) ||
+        moduleBytes.value < 0
+      )
+        return false;
+      if (
+        assessment.metrics?.bootTimeMs?.state !== "unmeasured" ||
+        assessment.metrics?.peakHeapBytes?.state !== "unmeasured"
+      )
+        return false;
+    } else {
+      for (const name of requiredMetrics) {
+        const metric = assessment.metrics?.[name];
+        if (metric?.state !== "measured" || !Number.isFinite(metric.value) || metric.value < 0)
+          return false;
+      }
     }
   }
   return true;
