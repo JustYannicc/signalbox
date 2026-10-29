@@ -5,10 +5,12 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { readBunGraph, regionNames } from "./bun-graph.ts";
+import { extractionPlan, logExtractionFilesystemPlan } from "./extract-diagnostics.ts";
 import { cachedReader } from "./range-reader.ts";
 
 const READ_CHUNK_BYTES = 1024 * 1024;
 type FileHandle = Awaited<ReturnType<typeof NodeFSP.open>>;
+type ExtractedArtifact = { path?: string; storageOffset?: number; bytes: number; sha256: string };
 export type ExtractFileOperations = {
   open(path: string, flags: string): Promise<FileHandle>;
   remove(path: string): Promise<void>;
@@ -71,8 +73,18 @@ export async function extract(
   {
     materialize = true,
     fileOperations = defaultFileOperations,
-  }: { materialize?: boolean; fileOperations?: ExtractFileOperations } = {},
+    diagnostics,
+  }: {
+    materialize?: boolean;
+    fileOperations?: ExtractFileOperations;
+    diagnostics?: (event: Record<string, unknown>) => void;
+  } = {},
 ) {
+  const emit =
+    diagnostics ??
+    ((event: Record<string, unknown>) => {
+      process.stdout.write(`${JSON.stringify(event)}\n`);
+    });
   const file = await fileOperations.open(binary, "r");
   let stage: string | undefined;
   let sourceClosed = false;
@@ -90,8 +102,23 @@ export async function extract(
       },
     });
     const graph = await readBunGraph(reader);
+    const plan = extractionPlan(graph, materialize);
+    emit({
+      event: "bun-extraction-plan",
+      binaryBytes: size,
+      expectedPeakArtifactBytes: size + plan.payloadBytes,
+      ...plan,
+    });
     const binaryHash = NodeCrypto.createHash("sha256");
     for await (const chunk of NodeFS.createReadStream(binary)) binaryHash.update(chunk);
+    await logExtractionFilesystemPlan({
+      binary,
+      output,
+      stage: `${output}.partial-*`,
+      moduleCount: graph.modules.length,
+      hasLinkedBytecode: graph.linkedBytecodePayload !== undefined,
+      emit,
+    });
     stage = await NodeFSP.mkdtemp(`${output}.partial-`);
     await NodeFSP.mkdir(NodePath.join(stage, ".bun-data"));
     const graphFile = materialize
@@ -112,19 +139,52 @@ export async function extract(
     const serializedGraphSha256 = graphFile
       ? await withClosedFile(graphFile, hashGraph)
       : await hashGraph();
+    const linkedBytecodePath = ".bun-data/linked-bytecode.bin";
+    let linkedBytecodePayload: { path?: string; bytes: number; sha256: string } | undefined;
+    if (graph.linkedBytecodePayload) {
+      const region = graph.linkedBytecodePayload;
+      const linkedFile = materialize
+        ? await fileOperations.open(NodePath.join(stage, linkedBytecodePath), "wx")
+        : undefined;
+      const linkedHash = NodeCrypto.createHash("sha256");
+      const hashLinkedPayload = async () => {
+        for (let offset = 0; offset < region.length; offset += READ_CHUNK_BYTES) {
+          const bytes = await reader.read(
+            graph.offset + region.offset + offset,
+            Math.min(READ_CHUNK_BYTES, region.length - offset),
+          );
+          linkedHash.update(bytes);
+          await linkedFile?.writeFile(bytes);
+        }
+        return linkedHash.digest("hex");
+      };
+      const sha256 = linkedFile
+        ? await withClosedFile(linkedFile, hashLinkedPayload)
+        : await hashLinkedPayload();
+      linkedBytecodePayload = {
+        ...(materialize ? { path: linkedBytecodePath } : {}),
+        bytes: region.length,
+        sha256,
+      };
+    }
     const modules = [];
     const paths = new Set<string>();
     for (const module of graph.modules) {
       const relative = modulePath(module.name);
       if (paths.has(relative)) throw new Error(`Colliding module path: ${module.name}`);
       paths.add(relative);
-      const artifacts: Record<string, { path?: string; bytes: number; sha256: string }> = {};
+      const artifacts: Record<string, ExtractedArtifact> = {};
       for (const kind of regionNames.slice(1)) {
         const region = module.regions[kind];
         if (!region || (kind !== "contents" && !region.length)) continue;
-        const path = kind === "contents" ? relative : `.bun-data/${module.index}.${kind}`;
+        const linkedBytecode = kind === "bytecode" && graph.linkedBytecodePayload !== undefined;
+        const path = linkedBytecode
+          ? linkedBytecodePath
+          : kind === "contents"
+            ? relative
+            : `.bun-data/${module.index}.${kind}`;
         let artifactFile: Awaited<ReturnType<typeof NodeFSP.open>> | undefined;
-        if (materialize) {
+        if (materialize && !linkedBytecode) {
           await NodeFSP.mkdir(NodePath.dirname(NodePath.join(stage, path)), { recursive: true });
           artifactFile = await fileOperations.open(NodePath.join(stage, path), "wx");
         }
@@ -145,6 +205,9 @@ export async function extract(
           : await hashArtifact();
         artifacts[kind] = {
           ...(materialize ? { path } : {}),
+          ...(linkedBytecode && graph.linkedBytecodePayload
+            ? { storageOffset: region.offset - graph.linkedBytecodePayload.offset }
+            : {}),
           bytes: region.length,
           sha256: artifactSha256,
         };
@@ -159,6 +222,8 @@ export async function extract(
         bytes: graph.length,
         sha256: serializedGraphSha256,
       },
+      ...(linkedBytecodePayload ? { linkedBytecodePayload } : {}),
+      materializedPayloadBytes: plan.payloadBytes,
       graph: {
         container: graph.container,
         offsetsSize: graph.offsetsSize,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { decodeModule, readBunGraph } from "./bun-graph.ts";
 
-import { fixture } from "./graph-fixture.ts";
+import { fixture, linkedBytecodeFixture } from "./graph-fixture.ts";
 
 function legacy24Fixture(recordSize = 36, unexplainedBytes = 0) {
   const current = fixture(recordSize);
@@ -62,6 +62,24 @@ describe("Bun graph validation", () => {
       key: "$bunfs/root/cli",
       regions: { contents: { offset: 32, length: 17 } },
     });
+  });
+  it("retains the shared linked bytecode payload and validates module suffix regions", async () => {
+    const f = linkedBytecodeFixture();
+    const parsed = await readBunGraph(f.reader);
+
+    expect(parsed.linkedBytecodePayload).toEqual({ offset: 96, length: f.payload.length });
+    expect(parsed.modules.map((module) => module.regions.bytecode)).toEqual([
+      { offset: 96, length: 12 },
+      { offset: 100, length: 8 },
+    ]);
+
+    const malformed = linkedBytecodeFixture();
+    const data = new DataView(malformed.bytes.buffer);
+    data.setUint32(128 + 128 + 52 + 24, 100, true);
+    data.setUint32(128 + 128 + 52 + 28, 7, true);
+    await expect(readBunGraph(malformed.reader)).rejects.toThrow(
+      "module bytecode is not a suffix of the linked payload",
+    );
   });
   it("rejects unknown flags even when existing records parse", async () => {
     const f = fixture();

@@ -4,8 +4,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it, vi } from "vite-plus/test";
-import { fixture } from "./graph-fixture.ts";
+import { fixture, linkedBytecodeFixture } from "./graph-fixture.ts";
 import { extractRelease, requiredVersions, selectedVersions } from "./releases.ts";
+
+const silenceDiagnostics = { diagnostics: () => {} };
 
 it("preserves the required release set and latest selection", () => {
   expect(selectedVersions("latest", "2.1.309")).toEqual(["2.1.309"]);
@@ -35,7 +37,7 @@ it("keeps release provenance from overwriting an extracted module", async () => 
   );
   try {
     await NodeFSP.writeFile(NodePath.join(directory, "claude-1.2.3-linux-x64"), input.bytes);
-    const output = await extractRelease("1.2.3", directory);
+    const output = await extractRelease("1.2.3", directory, "linux-x64", silenceDiagnostics);
     expect(await NodeFSP.readFile(NodePath.join(output.directory, "release.json"), "utf8")).toBe(
       "export default 1;",
     );
@@ -43,6 +45,38 @@ it("keeps release provenance from overwriting an extracted module", async () => 
       await NodeFSP.readFile(NodePath.join(output.directory, ".bun-data/release.json"), "utf8"),
     );
     expect(provenance.manifest).toEqual(manifest);
+  } finally {
+    vi.unstubAllGlobals();
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("reports shared linked-bytecode storage separately from logical module regions", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "bun-release-test-"));
+  const input = linkedBytecodeFixture();
+  const manifest = {
+    version: "1.2.3",
+    platforms: {
+      "linux-x64": {
+        binary: "claude",
+        size: input.bytes.length,
+        checksum: NodeCrypto.createHash("sha256").update(input.bytes).digest("hex"),
+      },
+    },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json(manifest)),
+  );
+  try {
+    await NodeFSP.writeFile(NodePath.join(directory, "claude-1.2.3-linux-x64"), input.bytes);
+    const output = await extractRelease("1.2.3", directory, "linux-x64", silenceDiagnostics);
+
+    expect(output.moduleRegionBytes).toBe(58);
+    expect(output.materializedPayloadBytes).toBe(output.serializedGraphBytes + 12 + 38);
+    expect(output.materializedPayloadBytes).toBeLessThan(
+      output.serializedGraphBytes + output.moduleRegionBytes,
+    );
   } finally {
     vi.unstubAllGlobals();
     await NodeFSP.rm(directory, { recursive: true, force: true });
@@ -72,6 +106,7 @@ it("keeps proof manifests and provenance while discarding its downloaded raw bin
   );
   try {
     const output = await extractRelease("1.2.3", directory, "linux-x64", {
+      ...silenceDiagnostics,
       materialize: false,
       discardDownloadedBinary: true,
     });
@@ -123,6 +158,7 @@ it("cleans only its downloaded input and partial extraction after a failed relea
   try {
     await expect(
       extractRelease("1.2.3", directory, "linux-x64", {
+        ...silenceDiagnostics,
         materialize: false,
         discardDownloadedBinary: true,
       }),
@@ -157,6 +193,7 @@ it("keeps a completed release when retained-size measurement fails", async () =>
   );
   try {
     const output = await extractRelease("1.2.3", directory, "linux-x64", {
+      ...silenceDiagnostics,
       materialize: false,
       discardDownloadedBinary: true,
       measureRetainedBytes: async () => {
@@ -209,6 +246,7 @@ it("removes an interrupted binary download and preserves its stream error", asyn
   try {
     await expect(
       extractRelease("1.2.3", directory, "linux-x64", {
+        ...silenceDiagnostics,
         materialize: false,
         discardDownloadedBinary: true,
       }),
@@ -241,6 +279,7 @@ it("does not discard a verified binary it did not download", async () => {
     const binary = NodePath.join(directory, "claude-1.2.3-linux-x64");
     await NodeFSP.writeFile(binary, input.bytes);
     await extractRelease("1.2.3", directory, "linux-x64", {
+      ...silenceDiagnostics,
       materialize: false,
       discardDownloadedBinary: true,
     });

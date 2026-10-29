@@ -126,6 +126,7 @@ export async function readBunGraph(reader: BinaryReader) {
     `expected one known module layout, found ${candidates.length}`,
   );
   const candidate = candidates[0]!;
+  let linkedBytecodePayload: Region | undefined;
   if (footerSize === 24) {
     invariant(
       table.offset + table.length === byteCount,
@@ -176,6 +177,7 @@ export async function readBunGraph(reader: BinaryReader) {
         previous = end;
       }
       invariant(previous === payload.length, "incomplete linked bytecode payload");
+      linkedBytecodePayload = payload;
     }
     invariant(cursor === argv.offset, "unrecognized data after module table");
     invariant(argv.offset + argv.length + 1 === byteCount, "unexpected data after compile argv");
@@ -184,11 +186,24 @@ export async function readBunGraph(reader: BinaryReader) {
       "compile argv lacks terminator",
     );
   }
+  if (linkedBytecodePayload) {
+    const payloadEnd = linkedBytecodePayload.offset + linkedBytecodePayload.length;
+    for (const module of candidate.modules) {
+      const bytecode = module.regions.bytecode!;
+      if (bytecode.length === 0) continue;
+      invariant(
+        bytecode.offset >= linkedBytecodePayload.offset &&
+          bytecode.offset + bytecode.length === payloadEnd,
+        `module bytecode is not a suffix of the linked payload: ${module.name}`,
+      );
+    }
+  }
   return {
     ...location,
     byteCount,
     flags,
     entry,
+    linkedBytecodePayload,
     recordSize: candidate.recordSize,
     modules: candidate.modules,
   };
