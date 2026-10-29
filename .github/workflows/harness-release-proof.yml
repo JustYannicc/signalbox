@@ -32,9 +32,10 @@ env:
 jobs:
   proof:
     if: github.ref == 'refs/heads/main'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Match Signalbox CI's GitHub-hosted pool. Builds run serially and tests use two workers.
+    runs-on: ubuntu-latest
     timeout-minutes: 150
-    environment: harness-release-proof
+    environment: cloud-production
     concurrency:
       group: harness-release-${{ inputs.provider }}-${{ inputs.version }}-${{ github.sha }}
       cancel-in-progress: false
@@ -47,6 +48,18 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Validate deployment configuration
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          test "$CLOUDFLARE_ACCOUNT_ID" = bb08132e96fd756e40085cb84baecb98
+          test -n "$CLOUDFLARE_API_TOKEN"
 
       - uses: voidzero-dev/setup-vp@v1
         with:
@@ -96,8 +109,8 @@ jobs:
         id: run
         shell: bash
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.HARNESS_RELEASE_CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.HARNESS_RELEASE_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           GH_TOKEN: ${{ github.token }}
           HARNESS_RELEASE_DEPLOY: "1"
         run: |
@@ -111,8 +124,8 @@ jobs:
       - name: Recover cleanup after cancellation or a failed process
         if: always()
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.HARNESS_RELEASE_CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.HARNESS_RELEASE_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           HARNESS_RELEASE_DEPLOY: "1"
         run: node scripts/harness-releases/run.ts --cleanup --output "$RUNNER_TEMP/harness-release"
 
@@ -123,6 +136,8 @@ jobs:
           name: harness-release-${{ inputs.provider }}-${{ inputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/harness-release/result.json
+            ${{ runner.temp }}/harness-release/command-*.log
+            ${{ runner.temp }}/harness-release/claude-build.json
             ${{ runner.temp }}/harness-release/identity.json
             ${{ runner.temp }}/harness-release/fixture.json
             ${{ runner.temp }}/harness-release/inventory.json
