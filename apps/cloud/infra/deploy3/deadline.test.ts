@@ -1,12 +1,12 @@
 import { isoAt } from "./platform.ts";
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { createDeploy3Name, effectiveDeploy3Deadline, parseDeploy3Name } from "./deadline.ts";
 
 const deadlineMs = 2_000_000_000_000;
 const name = createDeploy3Name({ runId: "a1b2c3d4", deadlineMs, role: "workload" });
 
-NodeTest.test("creates and parses the exact canonical name", () => {
+TestCase.test("creates and parses the exact canonical name", () => {
   NodeAssert.equal(name, "sb1070-d3-a1b2c3d4-2000000000-workload");
   NodeAssert.deepEqual(parseDeploy3Name(name), {
     runId: "a1b2c3d4",
@@ -20,7 +20,7 @@ NodeTest.test("creates and parses the exact canonical name", () => {
   );
 });
 
-NodeTest.test("refuses wrong prefixes, segments, roles, timestamp lengths, and overflow", () => {
+TestCase.test("refuses wrong prefixes, segments, roles, timestamp lengths, and overflow", () => {
   for (const candidate of [
     name.replace("sb1070-d3-", "sb1070-"),
     name.replace("a1b2c3d4", "A1b2c3d4"),
@@ -37,7 +37,7 @@ NodeTest.test("refuses wrong prefixes, segments, roles, timestamp lengths, and o
   NodeAssert.throws(() => createDeploy3Name({ runId: "A1b2c3d4", deadlineMs, role: "workload" }));
 });
 
-NodeTest.test("missing deadline tag uses the name and one monotonic tag overrides it", () => {
+TestCase.test("missing deadline tag uses the name and one monotonic tag overrides it", () => {
   NodeAssert.deepEqual(effectiveDeploy3Deadline(name), parseDeploy3Name(name));
   NodeAssert.deepEqual(
     effectiveDeploy3Deadline(name, ["team:deploy3", "sb1070-d3-deadline-2000003600"]),
@@ -50,7 +50,7 @@ NodeTest.test("missing deadline tag uses the name and one monotonic tag override
   );
 });
 
-NodeTest.test("malformed, duplicate, and nonmonotonic deadline tags refuse the resource", () => {
+TestCase.test("malformed, duplicate, and nonmonotonic deadline tags refuse the resource", () => {
   for (const tags of [
     ["sb1070-d3-deadline-nope"],
     ["sb1070-d3-deadline-2000000000", "sb1070-d3-deadline-2000003600"],

@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { cleanupDeploy3Worker } from "./cloudflare.ts";
 import { createDeploy3Name } from "./deadline.ts";
 
@@ -120,7 +120,7 @@ function fixture(
   return { state, fetchImpl, observe };
 }
 
-NodeTest.test(
+TestCase.test(
   "deletes only the due deploy3 Tail and Worker, then verifies account-wide namespace absence",
   async () => {
     const { state, fetchImpl, observe } = fixture();
@@ -185,7 +185,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "invalid names, future deadlines, malformed tags, and changed Worker tags never mutate",
   async () => {
     const invalidName = fixture();
@@ -244,7 +244,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test("an incomplete namespace page blocks every mutation", async () => {
+TestCase.test("an incomplete namespace page blocks every mutation", async () => {
   const { state, fetchImpl } = fixture({ failNamespacePage2: true });
   const result = await cleanupDeploy3Worker({
     accountId: ACCOUNT,
@@ -260,7 +260,7 @@ NodeTest.test("an incomplete namespace page blocks every mutation", async () => 
   );
 });
 
-NodeTest.test("a partial API failure never produces a clean claim", async () => {
+TestCase.test("a partial API failure never produces a clean claim", async () => {
   const { state, fetchImpl } = fixture({ failWorkerDelete: true });
   const result = await cleanupDeploy3Worker({
     accountId: ACCOUNT,
@@ -280,7 +280,7 @@ NodeTest.test("a partial API failure never produces a clean claim", async () => 
   NodeAssert.ok(result.failures.includes("verify-namespace-absence"));
 });
 
-NodeTest.test("an incomplete Worker page and an oversized response block cleanup", async () => {
+TestCase.test("an incomplete Worker page and an oversized response block cleanup", async () => {
   const pages = fixture({ failWorkerPage2: true });
   const incomplete = await cleanupDeploy3Worker({
     accountId: ACCOUNT,
@@ -308,7 +308,7 @@ NodeTest.test("an incomplete Worker page and an oversized response block cleanup
   NodeAssert.ok(oversized.failures.includes("worker-inventory-incomplete"));
 });
 
-NodeTest.test(
+TestCase.test(
   "a Tail API failure stays visible even when Worker deletion removes the remaining Tail",
   async () => {
     const { state, fetchImpl } = fixture({ failTailDelete: true });

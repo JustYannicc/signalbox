@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { verifyDeploy3TokenExpiry } from "./tokenExpiry.ts";
 
 const expiry = "2026-10-31T14:00:00.000Z";
@@ -13,7 +13,7 @@ const base = {
 };
 const response = (result: unknown) => Response.json({ success: true, result });
 
-NodeTest.test(
+TestCase.test(
   "verifies a future expiry through the actual self endpoint without claiming expired",
   async () => {
     const result = await verifyDeploy3TokenExpiry({
@@ -30,7 +30,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "requires an authoritative matching expired record before claiming expired",
   async () => {
     const result = await verifyDeploy3TokenExpiry({
@@ -46,7 +46,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "a denial, missing expiry, wrong ID, changed expiry or active expired token never proves expiry",
   async () => {
     for (const result of [

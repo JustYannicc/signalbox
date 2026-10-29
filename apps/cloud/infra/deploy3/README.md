@@ -10,4 +10,4 @@ The provisioning, arming, normal export/release and written extension procedure 
 
 The large cleanup function remains cohesive because identity checks, shared-resource preservation, deletion and absence checks use one preflight inventory and one result ledger. The smaller scoped primary deliberately has a narrower responsibility.
 
-Offline Node tests exercise the actual scheduled helper, held owners, concurrent releases, local export corruption, written extensions, deletion order, post-self-delete recovery and expiry status. They establish no live credential access, deployment, provider qualification or native-run permission. Full manifest reviews and operating preflight are still required.
+Focused tests (`vp test run apps/cloud/infra/deploy3`) exercise the actual scheduled helper, held owners, concurrent releases, local export corruption, written extensions, deletion order, post-self-delete recovery and expiry status. They establish no live credential access, deployment, provider qualification or native-run permission. Full manifest reviews and operating preflight are still required.

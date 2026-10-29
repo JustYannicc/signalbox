@@ -1,10 +1,10 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { bootstrapRegistration, controlFixture } from "./control.fixture.ts";
 import { requireDeploy3Bootstrap } from "./bootstrapRegistry.ts";
 import { runRegisteredDeploy3Backstop } from "./registryCleanup.ts";
 
-NodeTest.test(
+TestCase.test(
   "an upload requires a durable bootstrap matching the actual expiring operator token",
   async () => {
     const fixture = controlFixture();
@@ -25,7 +25,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "an interrupted bootstrap is deleted but cannot publish its final receipt until operator expiry verifies",
   async () => {
     const fixture = controlFixture();

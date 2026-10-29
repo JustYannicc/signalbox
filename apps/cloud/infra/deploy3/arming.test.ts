@@ -1,9 +1,9 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { verifyDeploy3Arming } from "./arming.ts";
 import { controlFixture, controlRegistration } from "./control.fixture.ts";
 
-NodeTest.test(
+TestCase.test(
   "arming reads actual runtime, immutable Worker, minute Cron and token expiry without a provider route",
   async () => {
     const fixture = controlFixture();

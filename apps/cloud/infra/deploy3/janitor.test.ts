@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { runDeploy3Sweep } from "./janitor.ts";
 import { createDeploy3Name } from "./deadline.ts";
 
@@ -69,7 +69,7 @@ function janitorTransport(failWorkerPage2 = false) {
   return { state, fetchImpl };
 }
 
-NodeTest.test("hourly backstop deletes only expired, parseable deploy3 Workers", async () => {
+TestCase.test("hourly backstop deletes only expired, parseable deploy3 Workers", async () => {
   const { state, fetchImpl } = janitorTransport();
   const result = await runDeploy3Sweep({
     accountId: ACCOUNT,
@@ -96,7 +96,7 @@ NodeTest.test("hourly backstop deletes only expired, parseable deploy3 Workers",
   NodeAssert.ok(result.failures.some((failure) => failure.includes("invalid-deploy3-name")));
 });
 
-NodeTest.test(
+TestCase.test(
   "an incomplete account inventory produces evidence failure before any deletion",
   async () => {
     const { state, fetchImpl } = janitorTransport(true);

@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { runDeploy3Deadline, requireDeploy3Armed } from "./runtime.ts";
 import { runRegisteredDeploy3Backstop } from "./registryCleanup.ts";
 import { extendDeploy3Control } from "./controlLifecycle.ts";
@@ -11,7 +11,7 @@ import { isoAt } from "./platform.ts";
 
 const deadline = Date.parse(controlRegistration.deadlineUtc);
 
-NodeTest.test(
+TestCase.test(
   "the actual scheduled entry deletes with held consumers; a new janitor posts after self-deletion",
   async () => {
     const fixture = controlFixture();
@@ -75,7 +75,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "GitHub outage cannot make an unreleased owner block the bound deadline",
   async () => {
     const fixture = controlFixture();
@@ -90,7 +90,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "written extension delays both primary and backstop without trusting stale Worker tags",
   async () => {
     const fixture = controlFixture();
@@ -125,7 +125,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test("the native route gate rejects bootstrap and mismatched deadline identities", () => {
+TestCase.test("the native route gate rejects bootstrap and mismatched deadline identities", () => {
   const fixture = controlFixture();
   NodeAssert.throws(() => requireDeploy3Armed({}), /not armed/);
   NodeAssert.equal(
@@ -145,7 +145,7 @@ NodeTest.test("the native route gate rejects bootstrap and mismatched deadline i
   );
 });
 
-NodeTest.test(
+TestCase.test(
   "the bound written extension still holds during a GitHub outage and expires at its replacement deadline",
   async () => {
     const fixture = controlFixture();

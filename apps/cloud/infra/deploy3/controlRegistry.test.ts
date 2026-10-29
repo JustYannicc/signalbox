@@ -1,10 +1,10 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { controlBody, controlDigest, reconcileDeploy3Controls } from "./controlRegistry.ts";
 import { controlFixture, controlRegistration } from "./control.fixture.ts";
 import { releaseDeploy3Owner } from "./controlLifecycle.ts";
 
-NodeTest.test(
+TestCase.test(
   "concurrent independent owner releases persist without overwriting each other",
   async () => {
     const fixture = controlFixture();
@@ -28,7 +28,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "failed local verification publishes no release, and a different owner cannot release it",
   async () => {
     const fixture = controlFixture();
@@ -61,7 +61,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "untrusted comments have no authority and conflicting registrations fail closed",
   async () => {
     const fixture = controlFixture();
@@ -77,7 +77,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "an initial registration cannot smuggle an extension into its 24-hour deadline",
   () => {
     NodeAssert.throws(

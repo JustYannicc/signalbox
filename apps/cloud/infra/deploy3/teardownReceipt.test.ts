@@ -1,12 +1,12 @@
 import { deploy3RegistryApi, RECEIPT_MARKER } from "./registryGitHub.ts";
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { deploy3PublicReceipt, formatDeploy3PublicReceipt } from "./teardownReceipt.ts";
 import { cleanupDeploy3Worker } from "./cloudflare.ts";
 import { fixtureEnvironment, fixtureReceipt, scheduledControlPlane } from "./scheduled.fixture.ts";
 import { deploy3Expiry } from "./expiry.ts";
 
-NodeTest.test(
+TestCase.test(
   "public comments use only fixed receipt fields and never include a supplied payload",
   async () => {
     const api = scheduledControlPlane();

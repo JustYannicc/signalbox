@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import { deploy3BootstrapIdentity, deploy3CleanupToken, deploy3Expiry } from "./expiry.ts";
 
 const start = Date.parse("2026-10-29T12:00:00.000Z");
@@ -11,7 +11,7 @@ const receipt = {
   bundleSha256: "c".repeat(64),
 };
 
-NodeTest.test("cleanup token expires two hours after the receipt-bound 24h deadline", () => {
+TestCase.test("cleanup token expires two hours after the receipt-bound 24h deadline", () => {
   const expiry = deploy3Expiry(receipt);
   NodeAssert.equal(expiry.deadlineUtc, "2026-10-30T12:00:03.456Z");
   const token = deploy3CleanupToken(receipt);
@@ -25,13 +25,13 @@ NodeTest.test("cleanup token expires two hours after the receipt-bound 24h deadl
   );
 });
 
-NodeTest.test("arming rejects a later name deadline and invalid receipt identity", () => {
+TestCase.test("arming rejects a later name deadline and invalid receipt identity", () => {
   NodeAssert.throws(() => deploy3Expiry({ ...receipt, workerId: "*" }));
   NodeAssert.throws(() => deploy3Expiry({ ...receipt, responseSha256: "missing" }));
   NodeAssert.throws(() => deploy3Expiry({ ...receipt, receivedAtUtc: "2026-10-28T12:00:00.000Z" }));
 });
 
-NodeTest.test(
+TestCase.test(
   "only a written coordinator extension moves the deadline and token expiry together",
   () => {
     const extension = {

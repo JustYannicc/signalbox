@@ -1,5 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
-import * as NodeTest from "node:test";
+import * as TestCase from "vite-plus/test";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -29,7 +29,7 @@ async function exportFixture() {
   return { fetchImpl, entries };
 }
 
-NodeTest.test(
+TestCase.test(
   "normal export round-trips every blob, detects corruption and releases only the matching owner",
   async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "deploy3-normal-"));
@@ -117,7 +117,7 @@ NodeTest.test(
   },
 );
 
-NodeTest.test(
+TestCase.test(
   "unfinished journal reservations or omitted blobs cannot count as a full export",
   async () => {
     const fixture = await exportFixture();
