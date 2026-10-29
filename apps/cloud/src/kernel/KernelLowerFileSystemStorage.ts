@@ -78,7 +78,7 @@ export class KernelLowerFileSystemStorage
       lowerMetadata: (inode) => this.#requireIndex().metadata(inode),
       upperFileForLowerInode: (inode) => this.#files.upperInodeForLower(inode),
       copyUpFile: (inode, copyData) => this.#files.copyUpFile(inode, copyData),
-      copyUpFileSync: (inode) => this.#files.copyUpFileSync(inode),
+      copyUpFileSync: (inode, copyData) => this.#files.copyUpFileSync(inode, copyData),
       renameLowerFile: (inode, fromParent, fromName, toParent, toName) =>
         this.#files.renameLowerFile(inode, fromParent, fromName, toParent, toName),
       renameUpperFileWithWhiteout: (fromParent, fromName, toParent, toName, path) =>
@@ -154,9 +154,9 @@ export class KernelLowerFileSystemStorage
     return this.#files.copyUpFile(inode, copyData);
   }
 
-  copyUpFileSync(inode: Inode): Inode {
+  copyUpFileSync(inode: Inode, copyData: boolean): Inode {
     if (!this.isLowerInode(inode)) return inode;
-    return this.#files.copyUpFileSync(inode);
+    return this.#files.copyUpFileSync(inode, copyData);
   }
 
   invalidate(): void {

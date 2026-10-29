@@ -9,8 +9,8 @@ import type {
   Storage,
   Times,
 } from "./storage.ts";
-import { kernelError } from "./filesystem/KernelFileSystemErrors.ts";
 import { currentKernelIoMode } from "./process/KernelExecution.ts";
+import { kernelError } from "./filesystem/KernelFileSystemErrors.ts";
 
 export interface KernelLowerFileSystemUpperNamespace {
   hasLowerSource(): boolean;
@@ -24,14 +24,14 @@ export interface KernelLowerFileSystemUpperNamespace {
   lowerMetadata(inode: Inode): MaybePromise<PosixMetadata>;
   upperFileForLowerInode(inode: Inode): Inode | undefined;
   copyUpFile(inode: Inode, copyData: boolean): Promise<Inode>;
-  copyUpFileSync(inode: Inode): Inode;
+  copyUpFileSync(inode: Inode, copyData: boolean): Inode;
   renameLowerFile(
     inode: Inode,
     fromParent: Inode,
     fromName: string,
     toParent: Inode,
     toName: string,
-  ): Promise<void>;
+  ): MaybePromise<void>;
   renameUpperFileWithWhiteout(
     fromParent: Inode,
     fromName: string,
@@ -180,8 +180,6 @@ export class KernelLowerFileSystemUpperLayer {
         return mapMaybe(this.#namespace.lookupLower(fromPath), (lowerSource) =>
           mapMaybe(this.#namespace.lowerStat(lowerSource), (lowerStat) => {
             if (lowerStat.type !== "file") return lowerMutationError(lowerSource);
-            if (currentKernelIoMode() === "sync")
-              throw kernelError("EXDEV", "Lower file rename requires asynchronous execution");
             return mapMaybe(
               this.#validateLowerDestination(lowerStat, upperToParent, toName, toPath),
               () =>

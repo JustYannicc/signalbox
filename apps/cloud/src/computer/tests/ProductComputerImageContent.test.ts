@@ -1,20 +1,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createNodeFs } from "../../isolate/NodeFs.ts";
-import { createKernelSyscallHost } from "../../kernel/KernelSyscallHost.ts";
-import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
-import { KernelFileSystem, KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
-import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
-import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
-import { CHILD_COREUTILS_COMMANDS } from "../ChildProgramSet.ts";
-import { createProductComputer } from "../ProductComputer.ts";
-import { sqliteFixture } from "../sqliteTesting.ts";
-import { imageContentInventory } from "./ImageContentFixture.ts";
+import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
+import { withImageContentFixture } from "./ProductComputerImageContentFixture.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 describe("public ProductComputer image-content composition", () => {
   it("reads captured bytes and symlinks through WASI without a machine", async () => {
-    await withFixture(async ({ filesystem, syscalls, open, forbidden }) => {
+    await withImageContentFixture(async ({ filesystem, syscalls, open, forbidden }) => {
       for (const path of ["etc/link", "etc/config"]) {
         const opened = await open(path);
         expect(opened).toMatchObject({ kind: "return", value: 0 });
@@ -50,7 +43,7 @@ describe("public ProductComputer image-content composition", () => {
   });
 
   it("denies restricted image bytes through WASI and Node opens and reads", async () => {
-    await withFixture(async ({ filesystem, open, forbidden }) => {
+    await withImageContentFixture(async ({ filesystem, open, forbidden }) => {
       const descriptors = [...filesystem.descriptors.entries()].length;
       const denied = await open("etc/private");
       if (denied.kind === "return" && denied.value === 0) {
@@ -81,7 +74,7 @@ describe("public ProductComputer image-content composition", () => {
   });
 
   it("reads captured bytes through a lower symlink with Node fs", async () => {
-    await withFixture(async ({ filesystem, forbidden }) => {
+    await withImageContentFixture(async ({ filesystem, forbidden }) => {
       const { fs } = createNodeFs(filesystem);
       const bytes = Uint8Array.of(0, 255, 128, 10, 65);
       expect(await fs.promises.readFile("/etc/config")).toEqual(Buffer.from(bytes));
@@ -96,7 +89,7 @@ describe("public ProductComputer image-content composition", () => {
   ])(
     "checks parent permissions when reopening an O_PATH symlink to $target",
     async ({ target, allowed }) => {
-      await withFixture(async ({ filesystem, forbidden }) => {
+      await withImageContentFixture(async ({ filesystem, forbidden }) => {
         const { fs } = createNodeFs(filesystem);
         fs.symlinkSync(target, "/alias");
         await expect(fs.promises.readFile("/etc/locked/config")).rejects.toMatchObject({
@@ -132,7 +125,7 @@ describe("public ProductComputer image-content composition", () => {
   );
 
   it("keeps offsets and EOF on async Node file handles", async () => {
-    await withFixture(async ({ filesystem, forbidden }) => {
+    await withImageContentFixture(async ({ filesystem, forbidden }) => {
       const { fs } = createNodeFs(filesystem);
       const handle = await fs.promises.open("/etc/link", "r");
       try {
@@ -151,7 +144,7 @@ describe("public ProductComputer image-content composition", () => {
   });
 
   it("uses captured bytes for Node callbacks, streams and copies", async () => {
-    await withFixture(async ({ filesystem, forbidden }) => {
+    await withImageContentFixture(async ({ filesystem, forbidden }) => {
       const { fs } = createNodeFs(filesystem);
       const expected = Uint8Array.of(0, 255, 128, 10, 65);
       const callbackBytes = await new Promise((resolve, reject) => {
@@ -170,95 +163,3 @@ describe("public ProductComputer image-content composition", () => {
     });
   });
 });
-
-async function withFixture(
-  operation: (fixture: ReturnType<typeof imageContentFixture>) => Promise<void>,
-) {
-  const fixture = imageContentFixture();
-  try {
-    await operation(fixture);
-  } finally {
-    await fixture.close();
-  }
-}
-
-function imageContentFixture() {
-  const database = sqliteFixture();
-  const storage = createFacetSqliteStorage(database.storage, () => 1n);
-  storage.posix.initialize(storage.root, { uid: 1000, gid: 1000, mode: 0o755 });
-  const filesystem = new KernelFileSystem({
-    mounts: [{ path: "/", storage }],
-    posix: { credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 }, umask: 0o022 },
-  });
-  const wakes = new KernelWakeRegistry();
-  const forbidden = vi.fn(async () => {
-    throw new Error("No machine or command is needed to read image content");
-  });
-  const code = { mainModule: "unused.js", modules: { "unused.js": "export default class {}" } };
-  const computer = createProductComputer({
-    threadId: "image-content-public-composition",
-    filesystem,
-    wakes,
-    capacity: new ChildWorkerCapacity(2, {
-      owner: "test/image-content-public-composition",
-      RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
-    }),
-    programs: {
-      bash: code,
-      busyboxCat: code,
-      busyboxApplets: code,
-      productBusyboxApplets: code,
-      ripgrep: code,
-      git: code,
-      sed: code,
-      jq: code,
-      ugrep: code,
-      coreutils: Object.fromEntries(CHILD_COREUTILS_COMMANDS.map((name) => [name, code])) as Record<
-        (typeof CHILD_COREUTILS_COMMANDS)[number],
-        typeof code
-      >,
-    },
-    loader: { run: forbidden },
-    machineInventory: imageContentInventory(),
-    machine: () => ({
-      files: {
-        current: () => ({ generation: null, generationAbsent: true, pristine: false }),
-        markExecuted: forbidden,
-        lookup: forbidden,
-      },
-      spawn: forbidden,
-    }),
-    signal: new AbortController().signal,
-  });
-  const syscalls = createKernelSyscallHost({
-    filesystem,
-    args: [],
-    env: {},
-    signal: new AbortController().signal,
-  });
-  const open = async (path: string) => {
-    const name = new TextEncoder().encode(path);
-    return syscalls.call({
-      name: "path_open",
-      args: [3, 1, 128, name.byteLength, 0, 2n, 0n, 0, 256],
-      memorySize: 1024,
-      regions: [
-        { pointer: 128, bytes: name, direction: "in" },
-        { pointer: 256, bytes: new Uint8Array(), direction: "out", length: 4 },
-      ],
-    });
-  };
-  return {
-    filesystem,
-    syscalls,
-    forbidden,
-    open,
-    async close() {
-      syscalls.close();
-      await computer.close();
-      wakes.dispose();
-      filesystem.dispose();
-      database.close();
-    },
-  };
-}

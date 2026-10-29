@@ -12,7 +12,10 @@ const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
 /** Retain one private byte copy. Callers receive slices and cannot mutate later reads. */
 export function createMachineImageContentReader(inventory: MachineProgramInventory) {
   let prepared: Promise<ReadonlyMap<string, Uint8Array>> | undefined;
-  return async (path: string, offset: number, length: number) => {
+  let verified: ReadonlyMap<string, Uint8Array> | undefined;
+  const readKnown = (path: string, offset: number, length: number) =>
+    verified?.get(path)?.slice(offset, offset + length);
+  const read = async (path: string, offset: number, length: number) => {
     if (inventory.imageContent === undefined) return undefined;
     if (
       Array.isArray(inventory.imageContent.entries) &&
@@ -20,9 +23,10 @@ export function createMachineImageContentReader(inventory: MachineProgramInvento
     )
       return undefined;
     prepared ??= prepare(inventory);
-    const bytes = (await prepared).get(path);
-    return bytes?.slice(offset, offset + Math.min(length, bytes.byteLength));
+    verified = await prepared;
+    return readKnown(path, offset, length);
   };
+  return Object.assign(read, { readKnown });
 }
 
 async function prepare(inventory: MachineProgramInventory) {
