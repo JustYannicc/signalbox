@@ -32,8 +32,8 @@ env:
 jobs:
   proof:
     if: github.ref == 'refs/heads/main'
-    # Match Signalbox CI's GitHub-hosted pool. Builds run serially and tests use two workers.
-    runs-on: ubuntu-latest
+    # Claude's pinned Git and WASI toolchains target arm64 Linux.
+    runs-on: ${{ inputs.provider == 'claude-code' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 150
     environment: cloud-production
     concurrency:
@@ -104,7 +104,22 @@ jobs:
           python-version: "3.11"
 
       - name: Fetch the pinned runner program inputs
-        run: node scripts/harness-releases/fetchPrograms.ts --output "$RUNNER_TEMP/harness-release-programs"
+        shell: bash
+        run: |
+          if [[ "$PROVIDER" == "claude-code" ]]; then
+            node scripts/harness-releases/fetchProductPrograms.ts --output "$RUNNER_TEMP/harness-release-programs"
+          else
+            node scripts/harness-releases/fetchPrograms.ts --output "$RUNNER_TEMP/harness-release-programs"
+          fi
+
+      - name: Download pinned Runner machine inventory
+        if: inputs.provider == 'claude-code'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node .github/scripts/runner-machine-inventory.cjs download \
+            --output "$RUNNER_TEMP/runner-machine-inventory/runner.json"
 
       - name: Run the frozen release pipeline
         id: run
@@ -115,12 +130,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HARNESS_RELEASE_DEPLOY: "1"
         run: |
+          pair_args=()
+          if [[ "$PROVIDER" == "claude-code" ]]; then
+            pair_args=(--programs "$RUNNER_TEMP/harness-release-programs"
+              --machine-inventory "$RUNNER_TEMP/runner-machine-inventory/runner.json"
+              --max-prepared-module-bytes 128000000)
+          fi
           node scripts/harness-releases/run.ts \
             --provider "$PROVIDER" --version "$VERSION" --run-key "$RUN_KEY" \
             --selection "$SELECTION" --output "$RUNNER_TEMP/harness-release" \
             --bash "$RUNNER_TEMP/harness-release-programs/bash.wasm" \
             --busybox "$RUNNER_TEMP/harness-release-programs/busybox.wasm" \
-            --ripgrep "$RUNNER_TEMP/harness-release-programs/rg.wasm"
+            --ripgrep "$RUNNER_TEMP/harness-release-programs/rg.wasm" \
+            "${pair_args[@]}"
 
       - name: Recover cleanup after cancellation or a failed process
         if: ${{ always() && steps.run.outcome != 'skipped' }}
@@ -139,6 +161,20 @@ jobs:
             ${{ runner.temp }}/harness-release/result.json
             ${{ runner.temp }}/harness-release/command-*.log
             ${{ runner.temp }}/harness-release/claude-build.json
+            ${{ runner.temp }}/harness-release/claude-build-baseline.json
+            ${{ runner.temp }}/harness-release/claude-baseline.provenance.json
+            ${{ runner.temp }}/harness-release/claude-hooks.provenance.json
+            ${{ runner.temp }}/harness-release/claude-sdk/provenance.json
+            ${{ runner.temp }}/harness-release/claude-*.rejected-*/failure.json
+            ${{ runner.temp }}/harness-release/claude-*.rejected-*/manifest.json
+            ${{ runner.temp }}/harness-release/claude-*.rejected-*/module-map.json
+            ${{ runner.temp }}/harness-release/claude-*.rejected-*/provenance.json
+            ${{ runner.temp }}/harness-release/claude-*.rejected-*/result.json
+            ${{ runner.temp }}/harness-release/claude-*.rejected-*/diagnostics/build-context.json
+            ${{ runner.temp }}/harness-release/claude-*.rejected-*/diagnostics/stderr.log
+            ${{ runner.temp }}/harness-release/claude-*.rejected-*/diagnostics/stdout.log
+            ${{ runner.temp }}/harness-release/claude-*.rejected-*/diagnostics/error.log
+            ${{ runner.temp }}/harness-release/claude-pair/
             ${{ runner.temp }}/harness-release/identity.json
             ${{ runner.temp }}/harness-release/fixture.json
             ${{ runner.temp }}/harness-release/inventory.json
@@ -154,6 +190,11 @@ jobs:
             ${{ runner.temp }}/harness-release/[0-9][0-9]-*.json
             ${{ runner.temp }}/harness-release/deployment-cleanup.json
             ${{ runner.temp }}/harness-release/program-inputs.json
+            ${{ runner.temp }}/harness-release-programs/program-pins.json
+            ${{ runner.temp }}/harness-release-programs/verified-inputs.json
+            ${{ runner.temp }}/harness-release-programs/failure.json
+            ${{ runner.temp }}/harness-release-programs/release-manifests/
+            ${{ runner.temp }}/harness-release-programs/.work/**/*.log
             ${{ runner.temp }}/harness-release/probe-host-inventory.json
             ${{ runner.temp }}/harness-release/source-freeze.json
             ${{ runner.temp }}/harness-release/owned-worker.json
@@ -161,4 +202,5 @@ jobs:
             ${{ runner.temp }}/harness-release-programs/program-inputs.json
             ${{ runner.temp }}/harness-release-programs/verified-inputs.json
             ${{ runner.temp }}/harness-release-programs/*.provenance.json
+            ${{ runner.temp }}/harness-release-programs/*build-manifest.json
           if-no-files-found: warn

@@ -18,6 +18,11 @@ const { values } = NodeUtil.parseArgs({
     bash: { type: "string" },
     busybox: { type: "string" },
     ripgrep: { type: "string" },
+    programs: { type: "string" },
+    "machine-inventory": { type: "string" },
+    "sdk-version": { type: "string" },
+    capabilities: { type: "string" },
+    "coverage-corpus": { type: "string" },
     cleanup: { type: "boolean", default: false },
     "run-key": { type: "string" },
     selection: { type: "string", default: "current" },
@@ -64,7 +69,6 @@ if (values.cleanup) {
     "baseline-pin",
     "computer-source-identity",
     "computer-manifest-sha256",
-    "max-prepared-module-bytes",
   ] as const;
   const claudeVariants = variantKeys.some((name) => values[name] !== undefined)
     ? {
@@ -89,6 +93,26 @@ if (values.cleanup) {
       claudeVariants.maxPreparedModuleBytes <= 0)
   )
     throw new Error("CLAUDE_VARIANTS_PUBLICATION_INPUT_INVALID");
+  const claudePair =
+    values.programs || values["machine-inventory"]
+      ? {
+          programs: NodePath.resolve(required(values.programs)),
+          machineInventory: NodePath.resolve(required(values["machine-inventory"])),
+          maxPreparedModuleBytes: Number(required(values["max-prepared-module-bytes"])),
+          ...(values["sdk-version"] ? { sdkVersion: values["sdk-version"] } : {}),
+          ...(values.capabilities ? { capabilities: NodePath.resolve(values.capabilities) } : {}),
+          ...(values["coverage-corpus"]
+            ? { coverageCorpus: NodePath.resolve(values["coverage-corpus"]) }
+            : {}),
+        }
+      : undefined;
+  if (
+    claudePair &&
+    (provider !== "claude-code" ||
+      !Number.isSafeInteger(claudePair.maxPreparedModuleBytes) ||
+      claudePair.maxPreparedModuleBytes <= 0)
+  )
+    throw new Error("CLAUDE_PAIR_INPUT_INVALID");
   const result = await runRelease(
     {
       provider,
@@ -105,6 +129,7 @@ if (values.cleanup) {
       ...(values.ripgrep ? { ripgrep: NodePath.resolve(values.ripgrep) } : {}),
       deploymentCredentials,
       ...(claudeVariants ? { claudeVariants } : {}),
+      ...(claudePair ? { claudePair } : {}),
     }),
   );
   process.stdout.write(

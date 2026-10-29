@@ -256,6 +256,10 @@
       "types": "./src/workloadUsage.ts",
       "import": "./src/workloadUsage.ts"
     },
+    "./harnessReleaseResourceCriteria": {
+      "types": "./src/harnessReleaseResourceCriteria.ts",
+      "import": "./src/harnessReleaseResourceCriteria.ts"
+    },
     "./relayJwt": {
       "types": "./src/relayJwt.ts",
       "import": "./src/relayJwt.ts"

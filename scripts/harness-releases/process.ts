@@ -25,6 +25,7 @@ import {
   type ScanAssessment,
 } from "./runner.ts";
 import { isNodeErrorCode } from "./guards.ts";
+import { buildClaudePairComponents, type ClaudePairBuildInputs } from "./claudePairBuild.ts";
 
 const json = async (path: string): Promise<unknown> =>
   JSON.parse(await NodeFSP.readFile(path, "utf8"));
@@ -219,6 +220,7 @@ export function createProcessOperations(
     bash?: string;
     busybox?: string;
     ripgrep?: string;
+    claudePair?: ClaudePairBuildInputs;
     deploymentCredentials?: ReleaseDeploymentCredentials;
     claudeVariants?: {
       readonly ledger: string;
@@ -268,7 +270,7 @@ export function createProcessOperations(
             if (context.identity.provider !== "claude-code")
               throw new Error("CLAUDE_VARIANTS_PROVIDER_MISMATCH");
             const input = options.claudeVariants!;
-            const built = await freezeArtifact(NodePath.join(context.output, "claude-artifact"));
+            const built = await freezeArtifact(NodePath.join(context.output, "claude-hooks"));
             await node(
               context,
               [
@@ -319,6 +321,10 @@ export function createProcessOperations(
       if (identity.provider === "claude-agent-sdk")
         throw new PendingReleaseProof("The Agent SDK release build adapter is not available.");
       if (identity.provider === "claude-code") {
+        if (!options.claudePair)
+          throw new PendingReleaseProof(
+            "Claude pair production requires full Computer program inputs and a pinned machine inventory.",
+          );
         const adapter = NodePath.join(repository, "scripts/harness-releases/buildClaude.ts");
         const available = await NodeFSP.lstat(adapter).then(
           (stat) => stat.isFile(),
@@ -369,21 +375,7 @@ export function createProcessOperations(
       const release = object(await json(NodePath.join(extracted, ".bun-data/release.json")));
       if (sha256(JSON.stringify(release.manifest)) !== identity.binary?.manifestSha256)
         throw new Error("RELEASE_OFFICIAL_MANIFEST_CHANGED");
-      const artifact = NodePath.join(output, "claude-artifact");
-      await node(context, [
-        "scripts/harness-releases/buildClaude.ts",
-        "--variant",
-        "hooks",
-        "--identity",
-        NodePath.join(output, "identity.json"),
-        "--extracted",
-        extracted,
-        "--output",
-        artifact,
-        "--result",
-        NodePath.join(output, "claude-build.json"),
-      ]);
-      return { artifact, extracted };
+      return buildClaudePairComponents(context, extracted, options.claudePair!, node);
     },
     async scan(context, built) {
       if (context.identity.provider === "codex") {

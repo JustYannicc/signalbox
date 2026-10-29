@@ -1,4 +1,9 @@
 import { object, type FrozenFixture } from "./fixture.ts";
+import {
+  assessPublicQualifierResourceEvidence,
+  type TrustedPublicQualifierResourceEvidence,
+} from "./configuredLimitEvidence.ts";
+import type { HarnessReleaseResourceCriteriaAssessment } from "@t3tools/shared/harnessReleaseResourceCriteria";
 
 export type ProofEnvironment = "local-workerd" | "deployed";
 
@@ -30,6 +35,7 @@ export interface ReleaseCriteriaAssessment {
     readonly bootTimeMs: ReleaseMetric;
     readonly peakHeapBytes: ReleaseMetric;
   };
+  readonly resourceCriteria?: HarnessReleaseResourceCriteriaAssessment;
 }
 
 /** Generic probe verification also accepts results without an assertion. Release proof requires it. */
@@ -100,8 +106,20 @@ export function verifyReleaseCriteria(
   fixture: FrozenFixture,
   raw: unknown,
   environment: ProofEnvironment,
+  trustedResourceEvidence?: TrustedPublicQualifierResourceEvidence,
 ): ReleaseCriteriaAssessment {
-  verifyMeasurement(fixture, raw, environment);
+  const proof = verifyMeasurement(fixture, raw, environment);
+  const resourceCriteria =
+    trustedResourceEvidence?.evidence === undefined
+      ? undefined
+      : assessPublicQualifierResourceEvidence(trustedResourceEvidence.evidence, {
+          environment,
+          measurementRunId: proof.runId,
+          fixtureId: fixture.id,
+          fixtureSha256: fixture.sha256,
+          artifactSha256: trustedResourceEvidence.expectedArtifactSha256,
+          releaseIdentitySha256: trustedResourceEvidence.expectedReleaseIdentitySha256,
+        });
   // The existing probe's `ok` assertion has no scenario contract for these release gates.
   // Only the public Harness proof adapter may establish them when its protocol is available.
   return {
@@ -124,5 +142,6 @@ export function verifyReleaseCriteria(
         reason: "The probe does not measure peak heap in the session facet.",
       },
     },
+    ...(resourceCriteria ? { resourceCriteria } : {}),
   };
 }

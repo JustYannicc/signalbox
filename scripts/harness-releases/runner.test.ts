@@ -12,6 +12,7 @@ import {
 } from "./measurement.ts";
 import { PendingReleaseProof, runRelease, type ReleaseOperations } from "./runner.ts";
 import { createProcessOperations, runCommand } from "./process.ts";
+import { isHarnessReleaseResourceCriteriaAssessment } from "@t3tools/shared/harnessReleaseResourceCriteria";
 import {
   deployReleaseProbeHost,
   measureWithDeploymentIdentity,
@@ -212,6 +213,150 @@ async function installFakeWorkerd(repository: string) {
 }
 
 describe("release runner", () => {
+  it("rejects a public qualifier's 96 MiB resource profile before publication", async () => {
+    const test = await setup();
+    test.operations.assess = syntheticGreen;
+    test.operations.measure = async (_context, directory, environment) => ({
+      ...evidence(await freezeFixture(directory), environment),
+      checks: Object.fromEntries(RELEASE_CRITERIA.map((name) => [name, "passed"])),
+      peakHeapBytes: 100_663_296,
+      resourceCriteria: { tag: "harness-release-resource-criteria-v1", status: "passed" },
+    });
+    test.operations.normalPublicQualifierResourceEvidence = async ({
+      context,
+      fixture,
+      artifactSha256,
+      environment,
+      measurementRunId,
+    }) => ({
+      tag: "harness-release-resource-evidence-v1",
+      source: "normal-public-qualifier",
+      environment,
+      measurementRunId,
+      fixtureId: fixture.id,
+      fixtureSha256: fixture.sha256,
+      artifactSha256,
+      releaseIdentitySha256: context.identity.sha256,
+      startupTiming: {
+        label: "cold first-successful-RPC latency",
+        interpretation: "startup upper bound",
+        clock: "parent process.hrtime.bigint",
+        startedMonotonicNs: "100",
+        finishedMonotonicNs: "200",
+        milliseconds: 0.0001,
+        includesRpc: true,
+        exactBootTime: false,
+      },
+      criterion: {
+        label: "configured-limit completion with measured overshoot",
+        configuredLimit: {
+          configuredLimitBytes: 100_663_296,
+          deltaMaxObservedBytes: 101_195_616,
+          safetyMarginBytes: 8_388_608,
+          budgetBytes: 134_217_728,
+          calibrationComplete: false,
+          workloadCompleted: false,
+          identityVerified: true,
+        },
+      },
+    });
+
+    const result = await runRelease(test.options, test.operations);
+    const assessment = result.environments["local-workerd"]!;
+    expect(result.status).toBe("red");
+    expect(result.publication).toBe("withheld");
+    expect(test.calls).not.toContain("publish");
+    expect(assessment.resourceCriteria).toMatchObject({
+      status: "rejected",
+      configuredLimit: {
+        assessedBytes: 210_247_520,
+        budgetFits: false,
+        strictByteBound: false,
+      },
+    });
+    expect(assessment.metrics.peakHeapBytes.state).toBe("unmeasured");
+    expect(assessment.metrics.peakHeapBytes).not.toHaveProperty("value");
+    expect(
+      isHarnessReleaseResourceCriteriaAssessment(assessment.resourceCriteria, {
+        environment: "local-workerd",
+        measurementRunId: "local-workerd-fresh-run",
+        fixtureId: result.fixture!.id,
+        fixtureSha256: result.fixture!.sha256,
+        artifactSha256: result.artifact!.sha256,
+        releaseIdentitySha256: result.identity!.sha256,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps incomplete public resource evidence pending and ignores raw green flags", async () => {
+    const test = await setup();
+    test.operations.measure = async (_context, directory, environment) => ({
+      ...evidence(await freezeFixture(directory), environment),
+      checks: Object.fromEntries(RELEASE_CRITERIA.map((name) => [name, "passed"])),
+      bootTimeMs: 1,
+      peakHeapBytes: 1,
+      resourceCriteria: { tag: "harness-release-resource-criteria-v1", status: "passed" },
+    });
+    test.operations.normalPublicQualifierResourceEvidence = async ({
+      context,
+      fixture,
+      artifactSha256,
+      environment,
+      measurementRunId,
+    }) => ({
+      tag: "harness-release-resource-evidence-v1",
+      source: "normal-public-qualifier",
+      environment,
+      measurementRunId,
+      fixtureId: fixture.id,
+      fixtureSha256: fixture.sha256,
+      artifactSha256,
+      releaseIdentitySha256: context.identity.sha256,
+      startupTiming: {
+        label: "cold first-successful-RPC latency",
+        interpretation: "startup upper bound",
+        clock: "parent process.hrtime.bigint",
+        startedMonotonicNs: "100",
+        finishedMonotonicNs: "200",
+        milliseconds: 0.0001,
+        includesRpc: true,
+        exactBootTime: false,
+      },
+      criterion:
+        environment === "local-workerd"
+          ? {
+              label: "configured-limit completion with measured overshoot",
+              configuredLimit: {
+                configuredLimitBytes: 64,
+                deltaMaxObservedBytes: 4,
+                safetyMarginBytes: 8,
+                budgetBytes: 128,
+                workloadCompleted: true,
+                identityVerified: true,
+              },
+            }
+          : {
+              label: "platform policy compliance evidence",
+              status: "pending",
+              evidenceSha256: "d".repeat(64),
+              identityVerified: true,
+            },
+    });
+
+    const result = await runRelease(test.options, test.operations);
+    expect(result.status).toBe("pending");
+    expect(result.publication).toBe("withheld");
+    expect(test.calls).not.toContain("publish");
+    expect(result.environments["local-workerd"]!.resourceCriteria).toMatchObject({
+      status: "pending",
+      configuredLimit: { calibrationComplete: false, status: "pending" },
+    });
+    expect(
+      result.environments["local-workerd"]!.checks.every((check) => check.status === "pending"),
+    ).toBe(true);
+    expect(result.environments["local-workerd"]!.metrics.peakHeapBytes.state).toBe("unmeasured");
+  });
+
   it("keeps absent pinned program inputs pending before invoking fixture preparation", async () => {
     const test = await setup();
     const identity = await test.operations.identity("claude-code", "2.1.303");

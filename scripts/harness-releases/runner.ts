@@ -18,6 +18,11 @@ import {
 } from "./releaseIdentity.ts";
 import { assertSourcesUnchanged, freezeSources, type SourceFreeze } from "./sourceFreeze.ts";
 import { assertPathOutside, relativePathWithin } from "./pathContainment.ts";
+import type { NormalPublicQualifierResourceEvidence } from "./configuredLimitEvidence.ts";
+import {
+  isHarnessReleaseResourceCriteriaAssessment,
+  type ExpectedHarnessReleaseResourcePins,
+} from "@t3tools/shared/harnessReleaseResourceCriteria";
 
 export class PendingReleaseProof extends Error {}
 export type GateStatus = "passed" | "pending" | "rejected";
@@ -46,6 +51,13 @@ export interface ReleaseOperations {
     fixture: string,
     environment: ProofEnvironment,
   ): Promise<unknown>;
+  normalPublicQualifierResourceEvidence?(input: {
+    readonly context: ReleaseContext;
+    readonly fixture: FrozenFixture;
+    readonly artifactSha256: string;
+    readonly environment: ProofEnvironment;
+    readonly measurementRunId: string;
+  }): Promise<NormalPublicQualifierResourceEvidence | undefined>;
   cleanup(context: ReleaseContext): Promise<void>;
   publish?(context: ReleaseContext): Promise<void>;
   assess?: typeof verifyReleaseCriteria;
@@ -82,7 +94,10 @@ export async function writeOnce(file: string, value: unknown) {
   await NodeFSP.writeFile(file, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx", mode: 0o444 });
 }
 
-function assessmentStatus(assessment: ReleaseCriteriaAssessment): GateStatus {
+function assessmentStatus(
+  assessment: ReleaseCriteriaAssessment,
+  expectedResourcePins?: ExpectedHarnessReleaseResourcePins,
+): GateStatus {
   if (
     assessment.checks.length !== RELEASE_CRITERIA.length ||
     new Set(assessment.checks.map((check) => check.name)).size !== RELEASE_CRITERIA.length ||
@@ -97,6 +112,23 @@ function assessmentStatus(assessment: ReleaseCriteriaAssessment): GateStatus {
     if (!metric) throw new Error("RELEASE_METRIC_MISSING");
     if (metric.state === "measured" && (!Number.isFinite(metric.value) || metric.value < 0))
       throw new Error("RELEASE_METRIC_INVALID");
+  }
+  if (assessment.resourceCriteria !== undefined) {
+    if (
+      !isHarnessReleaseResourceCriteriaAssessment(assessment.resourceCriteria, expectedResourcePins)
+    )
+      throw new Error("RELEASE_RESOURCE_ASSESSMENT_INVALID");
+    if (assessment.resourceCriteria.status === "rejected") return "rejected";
+    if (assessment.resourceCriteria.status === "pending") return "pending";
+    if (
+      assessment.metrics.bootTimeMs.state !== "unmeasured" ||
+      assessment.metrics.peakHeapBytes.state !== "unmeasured"
+    )
+      throw new Error("RELEASE_RESOURCE_METRIC_MISREPRESENTED");
+    return assessment.checks.every((check) => check.status === "passed") &&
+      assessment.metrics.moduleBytes.state === "measured"
+      ? "passed"
+      : "pending";
   }
   return assessment.checks.every((check) => check.status === "passed") &&
     metrics.every((metric) => metric.state === "measured")
@@ -131,6 +163,7 @@ export async function runRelease(
   const selection = options.selection ?? "current";
   const stages: StageRecord[] = [];
   const environments: ReleaseRunResult["environments"] = {};
+  const resourcePins: Partial<Record<ProofEnvironment, ExpectedHarnessReleaseResourcePins>> = {};
   const freeze = operations.freeze ?? freezeSources;
   let source: SourceFreeze | undefined;
   let identity: OfficialReleaseIdentity | undefined;
@@ -287,10 +320,55 @@ export async function runRelease(
           const verified = verifyMeasurement(frozen, raw, environment);
           if (measurementIds.has(verified.runId)) throw new Error("RELEASE_PROOF_REUSED_RUN_ID");
           measurementIds.add(verified.runId);
-          const assessment = (operations.assess ?? verifyReleaseCriteria)(frozen, raw, environment);
+          const expectedPins = {
+            environment,
+            measurementRunId: verified.runId,
+            fixtureId: frozen.id,
+            fixtureSha256: frozen.sha256,
+            artifactSha256: artifact!.sha256,
+            releaseIdentitySha256: identity!.sha256,
+          } satisfies ExpectedHarnessReleaseResourcePins;
+          resourcePins[environment] = expectedPins;
+          const qualifierEvidence = await operations.normalPublicQualifierResourceEvidence?.({
+            context: current,
+            fixture: frozen,
+            artifactSha256: artifact!.sha256,
+            environment,
+            measurementRunId: verified.runId,
+          });
+          const trustedResourceEvidence =
+            qualifierEvidence === undefined
+              ? undefined
+              : {
+                  evidence: qualifierEvidence,
+                  expectedArtifactSha256: artifact!.sha256,
+                  expectedReleaseIdentitySha256: identity!.sha256,
+                };
+          const resourceAssessment = verifyReleaseCriteria(
+            frozen,
+            raw,
+            environment,
+            trustedResourceEvidence,
+          );
+          const behaviorAssessment =
+            operations.assess && operations.assess !== verifyReleaseCriteria
+              ? operations.assess(frozen, raw, environment, trustedResourceEvidence)
+              : resourceAssessment;
+          const assessment =
+            trustedResourceEvidence === undefined
+              ? behaviorAssessment
+              : {
+                  ...behaviorAssessment,
+                  metrics: {
+                    ...behaviorAssessment.metrics,
+                    bootTimeMs: resourceAssessment.metrics.bootTimeMs,
+                    peakHeapBytes: resourceAssessment.metrics.peakHeapBytes,
+                  },
+                  resourceCriteria: resourceAssessment.resourceCriteria!,
+                };
           environments[environment] = assessment;
           await writeOnce(NodePath.join(output, `${environment}-criteria.json`), assessment);
-          if (assessmentStatus(assessment) === "rejected")
+          if (assessmentStatus(assessment, expectedPins) === "rejected")
             throw new Error("RELEASE_CRITERION_REJECTED");
           return assessment;
         } finally {
@@ -323,7 +401,10 @@ export async function runRelease(
     stages.every((item) => item.status === "passed") &&
     ["local-workerd", "deployed"].every((name) => {
       const assessment = environments[name as ProofEnvironment];
-      return assessment !== undefined && assessmentStatus(assessment) === "passed";
+      return (
+        assessment !== undefined &&
+        assessmentStatus(assessment, resourcePins[name as ProofEnvironment]) === "passed"
+      );
     });
   let status: ReleaseRunResult["status"] = rejected ? "red" : complete ? "green" : "pending";
   if (status === "green" && context && selection === "current" && operations.publish) {
