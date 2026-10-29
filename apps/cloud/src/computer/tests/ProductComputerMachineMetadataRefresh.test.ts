@@ -33,6 +33,12 @@ import { sqliteFixture } from "../sqliteTesting.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
+const inventoryPin = JSON.parse(
+  NodeFS.readFileSync(
+    new URL("../../../../../.github/scripts/runner-machine-inventory.pin.json", import.meta.url),
+    "utf8",
+  ),
+) as { sha256: string };
 const pinnedInventoryPath =
   NodeProcess.env.SIGNALBOX_MACHINE_PATH_INVENTORY_FILE ??
   new URL("../../../infra/kernelPrograms/machine-files/build/runner.json", import.meta.url);
@@ -46,10 +52,9 @@ const pinnedInventoryBytes = NodeFS.existsSync(pinnedInventoryPath)
   : undefined;
 if (
   pinnedInventoryBytes !== undefined &&
-  NodeCrypto.createHash("sha256").update(pinnedInventoryBytes).digest("hex") !==
-    "74186335378f14ba82d2c7ac3dfe3d2708b2b8f4f4b5faf9c009f23127ec4e19"
+  NodeCrypto.createHash("sha256").update(pinnedInventoryBytes).digest("hex") !== inventoryPin.sha256
 )
-  throw new Error("Machine metadata refresh proof requires the frozen runner inventory");
+  throw new Error("Machine metadata refresh proof requires the pinned Runner inventory");
 const pinnedInventory: MachineProgramInventory | undefined =
   pinnedInventoryBytes === undefined
     ? undefined

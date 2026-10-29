@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "repository": "JustYannicc/signalbox",
+  "releaseTag": "runner-machine-files-cc4b52022c56",
+  "assetName": "runner.json",
+  "sha256": "a8744adc51dfe5182f0909efce51ea178ef431d66b40116c8d08ccc2b1457a43",
+  "imageRef": "ghcr.io/justyannicc/signalbox-runner@sha256:cc4b52022c560a1ecbcc8f1c7ad0485d5d519f28e409f6da48b1de441aeb3d18",
+  "sourceImageId": "sha256:b58855e73417a4d7cb7821d6f120c95e14e3bcc042b05997ce8d897da467e7ae",
+  "sourceRevision": "88fb824b8913c7437ca8d96e11f19055a607492a",
+  "platform": "linux/amd64",
+  "captureSha256": "33205a0b75b8553e1aa4349d7ba3d9ef12cd447516f461bf4ed8345d51ca65eb",
+  "sourceArtifact": {
+    "workflow": ".github/workflows/runner-image.yml",
+    "runId": "40658723985",
+    "runAttempt": 1,
+    "artifactId": "12802373209",
+    "artifactName": "runner-machine-files-40658723985-1"
+  }
+}

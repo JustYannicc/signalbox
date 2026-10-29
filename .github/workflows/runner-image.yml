@@ -99,6 +99,7 @@ jobs:
     outputs:
       image: ${{ steps.inventory.outputs.image_ref }}
       machine_file_inventory: ${{ steps.inventory.outputs.artifact_name }}
+      source_image_id: ${{ steps.build.outputs.imageid }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -313,3 +314,39 @@ jobs:
         run: |
           # shellcheck disable=SC2086 # One argument per version id.
           bash .github/scripts/runner-pr-images.sh delete-untagged $IDS
+
+  # Keep each published image's inventory available after its workflow artifact expires.
+  publish-machine-file-inventory:
+    name: Publish Runner machine inventory
+    needs: image
+    if: needs.image.outputs.image != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Download captured inventory
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.image.outputs.machine_file_inventory }}
+          path: ${{ runner.temp }}/runner-machine-inventory
+
+      - name: Publish immutable digest-keyed inventory release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUNNER_IMAGE_REF: ${{ needs.image.outputs.image }}
+          RUNNER_IMAGE_ID: ${{ needs.image.outputs.source_image_id }}
+          RUNNER_PLATFORM: linux/amd64
+        run: |
+          node .github/scripts/publish-runner-machine-inventory.cjs publish \
+            --inventory "$RUNNER_TEMP/runner-machine-inventory/runner.json"

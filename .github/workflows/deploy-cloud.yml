@@ -272,7 +272,7 @@ jobs:
     needs: runner_changes
     if: github.event_name == 'pull_request' && needs.runner_changes.outputs.changed == 'true'
     permissions:
-      contents: read
+      contents: write
       packages: write
     uses: ./.github/workflows/runner-image.yml
     with:
@@ -292,7 +292,7 @@ jobs:
       (needs.deploy_production.result == 'success' ||
       (inputs.dry_run && needs.deploy_production.result == 'skipped'))
     permissions:
-      contents: read
+      contents: write
       packages: write
     uses: ./.github/workflows/runner-image.yml
     with:
