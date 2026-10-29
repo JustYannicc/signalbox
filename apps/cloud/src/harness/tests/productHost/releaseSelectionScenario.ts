@@ -7,7 +7,7 @@ import { hostSqlite } from "../hostSqlite.ts";
 import { makeContinuationHostInputs } from "./continuationHostInputs.ts";
 import { claudeReleaseVariantsFixture } from "./releaseVariants.fixture.ts";
 
-export type ReleaseSelectionScenario = "baseline" | "sdk" | "settings";
+export type ReleaseSelectionScenario = "baseline" | "sdk" | "settings" | "callback-only";
 
 export const run = (scenario: ReleaseSelectionScenario) =>
   Effect.runPromise(
@@ -18,14 +18,17 @@ export const run = (scenario: ReleaseSelectionScenario) =>
         );
         const input = yield* makeContinuationHostInputs(database.open(), false);
         const fixtures = yield* Effect.promise(claudeReleaseVariantsFixture);
-        const expected =
-          scenario === "baseline" ? fixtures.baselineArtifact : fixtures.hooksArtifact;
+        const hooksRegistered = scenario === "sdk" || scenario === "settings";
+        const expected = hooksRegistered ? fixtures.hooksArtifact : fixtures.baselineArtifact;
         const host = yield* createProductClaudeHarnessSessionHost({
           ...input.hostOptions,
           release: fixtures.release,
           releaseVariants: fixtures.releaseVariants,
           ...(scenario === "settings"
             ? { settingsHooks: [{ id: "before-command", event: "pre-tool-use" as const }] }
+            : {}),
+          ...(scenario === "callback-only"
+            ? { settingsHooks: [], hooks: () => Promise.resolve({}) }
             : {}),
           native: {
             ...input.hostOptions.native,
@@ -38,10 +41,8 @@ export const run = (scenario: ReleaseSelectionScenario) =>
         yield* host.seed("programs");
         yield* host.open({ session: input.sessionInput, bootAttemptId: `selection-${scenario}` });
         NodeAssert.deepEqual(host.loadedPreparedRelease().artifact, expected);
-        const selectedReads =
-          scenario === "baseline" ? fixtures.baseline.reads : fixtures.hooks.reads;
-        const unusedReads =
-          scenario === "baseline" ? fixtures.hooks.reads : fixtures.baseline.reads;
+        const selectedReads = hooksRegistered ? fixtures.hooks.reads : fixtures.baseline.reads;
+        const unusedReads = hooksRegistered ? fixtures.baseline.reads : fixtures.hooks.reads;
         NodeAssert.ok(selectedReads.includes("manifest.json"));
         NodeAssert.equal(unusedReads.length, 0);
         yield* host.dispose;

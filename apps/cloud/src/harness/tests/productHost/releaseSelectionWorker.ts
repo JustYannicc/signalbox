@@ -14,7 +14,12 @@ if (port === null) throw new Error("Release selection fixture needs its isolated
 try {
   const { run } = await import("./releaseSelectionScenario.ts");
   const scenario: unknown = NodeWorkerThreads.workerData;
-  if (scenario !== "baseline" && scenario !== "sdk" && scenario !== "settings")
+  if (
+    scenario !== "baseline" &&
+    scenario !== "sdk" &&
+    scenario !== "settings" &&
+    scenario !== "callback-only"
+  )
     throw new Error("Unknown release selection scenario");
   await run(scenario);
   port.postMessage({ ok: true });

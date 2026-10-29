@@ -1,5 +1,4 @@
 import type { ClaudeNativeHostBindingOptions } from "./ClaudeNativeHostBinding.ts";
-import type { HarnessHostOptions } from "./HarnessSessionHost.ts";
 import type { LoadHarnessReleaseOptions } from "./HarnessReleaseLoader.ts";
 import type {
   HarnessReleaseArtifact,
@@ -22,16 +21,10 @@ export interface ProductClaudeHookSignals {
   readonly sdkCallbacks?: ClaudeNativeHostBindingOptions["toolObservation"];
   /** Registrations used to write the session's Claude settings hooks. */
   readonly settingsHooks?: readonly ConfiguredHarnessHook[] | undefined;
-  /** Host callback for configured settings hooks. */
-  readonly hookCallback?: HarnessHostOptions<unknown>["hooks"];
 }
 
 export function claudeProductHooksConfigured(input: ProductClaudeHookSignals): boolean {
-  return (
-    input.sdkCallbacks !== undefined ||
-    (input.settingsHooks?.length ?? 0) > 0 ||
-    input.hookCallback !== undefined
-  );
+  return input.sdkCallbacks !== undefined || (input.settingsHooks?.length ?? 0) > 0;
 }
 
 export function selectProductClaudeHostRelease(input: {
@@ -39,7 +32,6 @@ export function selectProductClaudeHostRelease(input: {
   readonly releaseVariants: ProductClaudeReleaseVariants;
   readonly native: Pick<ClaudeNativeHostBindingOptions, "toolObservation">;
   readonly settingsHooks?: readonly ConfiguredHarnessHook[] | undefined;
-  readonly hooks?: HarnessHostOptions<unknown>["hooks"];
   readonly processResumeArtifact?: HarnessReleaseArtifact;
 }) {
   return selectProductClaudeRelease({
@@ -48,7 +40,6 @@ export function selectProductClaudeHostRelease(input: {
     hookSignals: {
       sdkCallbacks: input.native.toolObservation,
       settingsHooks: input.settingsHooks,
-      hookCallback: input.hooks,
     },
     ...(input.processResumeArtifact === undefined
       ? {}

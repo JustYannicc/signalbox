@@ -2,7 +2,7 @@
 import * as NodeWorkerThreads from "node:worker_threads";
 import { expect, it, onTestFinished } from "vite-plus/test";
 
-it.each(["baseline", "sdk", "settings"])(
+it.each(["baseline", "sdk", "settings", "callback-only"])(
   "opens the catalog-selected Claude artifact for %s hook configuration",
   async (scenario) => {
     const worker = new NodeWorkerThreads.Worker(
