@@ -4,6 +4,7 @@ import type { KernelExitStatus } from "../../kernel/KernelProcessTable.ts";
 import type { KernelProgramHost } from "../../kernel/KernelProgramHost.ts";
 import type { KernelSessionStdio } from "../../kernel/KernelSessionStdio.ts";
 import type { NodeBridge } from "../../isolate/NodeBridge.ts";
+import type { NodeChildProcessObserver } from "../../isolate/NodeChildProcess.ts";
 import type { NodeEnvironmentOptions } from "../../isolate/NodeEnvironment.ts";
 import type {
   NodePreparedModuleResolver,
@@ -40,6 +41,10 @@ export interface NodeHarnessProcessInput {
   readonly addons?: NodeEnvironmentOptions["addons"];
   readonly bun: { readonly main: string; readonly version: string; readonly revision: string };
   readonly modelTransport: (request: Request) => Promise<Response>;
+  /** Runs before start; use errorMonitor to observe errors without changing listener counts. */
+  readonly onChildProcess?: NodeChildProcessObserver;
+  /** Joins passive capture while child files and the Node personality remain available. */
+  readonly drainChildProcessObservation?: () => void | Promise<void>;
   readonly reportReleaseModuleOmitted?: (
     event: ReleaseModuleOmittedEvent,
     failure: ReleaseModuleOmittedFailure,

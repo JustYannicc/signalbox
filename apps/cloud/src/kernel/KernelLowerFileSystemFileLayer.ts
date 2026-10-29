@@ -1,13 +1,16 @@
 import type { PosixMetadata } from "./PosixStorage.ts";
-import type { Inode, Storage } from "./storage.ts";
+import type { Inode, MaybePromise, Storage } from "./storage.ts";
 import type { KernelLowerFileSystemSourceIndex } from "./KernelLowerFileSystemSourceIndex.ts";
 import { basename, childPath, parentPath } from "./KernelLowerFileSystemSourceIndex.ts";
 import type { KernelLowerFileSystemDirectoryLayer } from "./KernelLowerFileSystemDirectoryLayer.ts";
 import type { KernelLowerFileSystemUpperStorage } from "./KernelLowerFileSystemUpperStorage.ts";
-import { currentKernelSignal } from "./process/KernelExecution.ts";
+import { currentKernelIoMode, currentKernelSignal } from "./process/KernelExecution.ts";
 import { kernelError } from "./filesystem/KernelFileSystemErrors.ts";
 
-const COPY_CHUNK_BYTES = 64 * 1024;
+import {
+  copyLowerFileContents,
+  copyLowerFileContentsSync,
+} from "./KernelLowerFileSystemFileCopy.ts";
 
 export class KernelLowerFileSystemFileLayer {
   readonly #upper: Storage;
@@ -73,7 +76,7 @@ export class KernelLowerFileSystemFileLayer {
     return this.#copyIntoStage(inode, path, upperParent, stat, metadata, copyData);
   }
 
-  copyUpFileSync(inode: Inode): Inode {
+  copyUpFileSync(inode: Inode, copyData: boolean): Inode {
     const existing = this.#upperByLowerInode.get(inode);
     if (existing !== undefined) return existing;
     const source = this.#requireSource();
@@ -88,16 +91,16 @@ export class KernelLowerFileSystemFileLayer {
     const upperParent = this.#upperParentSync(source, parentPath(path));
     const existingUpper = this.#upperFileAt(upperParent, basename(path));
     if (existingUpper !== undefined) return this.#remember(inode, existingUpper);
-    return this.#copyIntoStageSync(inode, path, upperParent, stat, metadata);
+    return this.#copyIntoStageSync(inode, path, upperParent, stat, metadata, copyData);
   }
 
-  async renameLowerFile(
+  renameLowerFile(
     inode: Inode,
     fromParent: Inode,
     fromName: string,
     toParent: Inode,
     toName: string,
-  ): Promise<void> {
+  ): MaybePromise<void> {
     const source = this.#requireSource();
     const fromParentPath = this.#directories.upperPath(fromParent);
     const toParentPath = this.#directories.upperPath(toParent);
@@ -105,39 +108,45 @@ export class KernelLowerFileSystemFileLayer {
     const fromPath = childPath(fromParentPath, fromName);
     const toPath = childPath(toParentPath, toName);
     if (fromPath === toPath) return;
-
     const signal = currentKernelSignal();
     signal?.throwIfAborted();
-    const stat = await source.stat(inode, signal);
-    if (stat.type !== "file") throw kernelError("EROFS");
-    const metadata = await source.metadata(inode, signal);
-    const stage = this.#createStage(fromParent, fromParentPath, fromPath, metadata);
-    let published = false;
-    try {
-      await this.#copyContents(source, inode, stage.inode, stat.size, signal);
-      await this.#upper.setTimes(stage.inode, {
-        atimeNs: stat.atimeNs,
-        mtimeNs: stat.mtimeNs,
+    return mapMaybe(source.stat(inode, signal), (stat) => {
+      if (stat.type !== "file") throw kernelError("EROFS");
+      return mapMaybe(source.metadata(inode, signal), (metadata) => {
+        const stage = this.#createStage(fromParent, fromParentPath, fromPath, metadata);
+        let published = false;
+        return withCleanup(
+          () => {
+            const copied =
+              currentKernelIoMode() === "sync"
+                ? copyLowerFileContentsSync(source, this.#upper, inode, stage.inode, stat.size)
+                : copyLowerFileContents(source, this.#upper, inode, stage.inode, stat.size, signal);
+            return mapMaybe(copied, () => {
+              this.#upper.setTimes(stage.inode, { atimeNs: stat.atimeNs, mtimeNs: stat.mtimeNs });
+              signal?.throwIfAborted();
+              const upperInode = this.#overlay!.publishStagingFile({
+                stageParent: fromParent,
+                stageName: stage.name,
+                stagePath: stage.path,
+                targetParent: toParent,
+                targetName: toName,
+                replaceExisting: true,
+                hiddenLowerPath: fromPath,
+              });
+              published = true;
+              this.#remember(inode, upperInode);
+            });
+          },
+          () => {
+            try {
+              if (!published) this.#discardStage(stage);
+            } finally {
+              this.#upper.release(stage.inode);
+            }
+          },
+        );
       });
-      signal?.throwIfAborted();
-      const upperInode = this.#overlay!.publishStagingFile({
-        stageParent: fromParent,
-        stageName: stage.name,
-        stagePath: stage.path,
-        targetParent: toParent,
-        targetName: toName,
-        replaceExisting: true,
-        hiddenLowerPath: fromPath,
-      });
-      published = true;
-      this.#remember(inode, upperInode);
-    } finally {
-      try {
-        if (!published) this.#discardStage(stage);
-      } finally {
-        this.#upper.release(stage.inode);
-      }
-    }
+    });
   }
 
   renameUpperFileWithWhiteout(
@@ -180,7 +189,13 @@ export class KernelLowerFileSystemFileLayer {
     let published = false;
     try {
       if (copyData)
-        await this.#copyContents(this.#requireSource(), lowerInode, stage.inode, stat.size);
+        await copyLowerFileContents(
+          this.#requireSource(),
+          this.#upper,
+          lowerInode,
+          stage.inode,
+          stat.size,
+        );
       await this.#upper.setTimes(stage.inode, { atimeNs: stat.atimeNs, mtimeNs: stat.mtimeNs });
       currentKernelSignal()?.throwIfAborted();
       const upperInode = this.#overlay!.publishStagingFile({
@@ -206,12 +221,21 @@ export class KernelLowerFileSystemFileLayer {
     lowerInode: Inode,
     path: string,
     upperParent: Inode,
-    stat: { readonly atimeNs: bigint; readonly mtimeNs: bigint },
+    stat: { readonly size: bigint; readonly atimeNs: bigint; readonly mtimeNs: bigint },
     metadata: PosixMetadata,
+    copyData: boolean,
   ): Inode {
     const stage = this.#createStage(upperParent, parentPath(path), path, metadata);
     let published = false;
     try {
+      if (copyData)
+        copyLowerFileContentsSync(
+          this.#requireSource(),
+          this.#upper,
+          lowerInode,
+          stage.inode,
+          stat.size,
+        );
       this.#upper.setTimes(stage.inode, { atimeNs: stat.atimeNs, mtimeNs: stat.mtimeNs });
       const upperInode = this.#overlay!.publishStagingFile({
         stageParent: upperParent,
@@ -229,41 +253,6 @@ export class KernelLowerFileSystemFileLayer {
       } finally {
         this.#upper.release(stage.inode);
       }
-    }
-  }
-
-  async #copyContents(
-    source: KernelLowerFileSystemSourceIndex,
-    lowerInode: Inode,
-    upperInode: Inode,
-    size: bigint,
-    signal = currentKernelSignal(),
-  ): Promise<void> {
-    const buffer = new Uint8Array(COPY_CHUNK_BYTES);
-    let offset = 0n;
-    while (offset < size) {
-      signal?.throwIfAborted();
-      const length = Number(
-        size - offset < BigInt(buffer.byteLength) ? size - offset : BigInt(buffer.byteLength),
-      );
-      const target = buffer.subarray(0, length);
-      const bytesRead = await source.readInto(lowerInode, offset, target);
-      if (!Number.isInteger(bytesRead) || bytesRead < 0 || bytesRead > length)
-        throw kernelError("EIO", "Lower file returned an invalid byte count");
-      if (bytesRead === 0) throw kernelError("EIO", "Lower file ended before its metadata size");
-
-      let bytesWritten = 0;
-      while (bytesWritten < bytesRead) {
-        const written = await this.#upper.write(
-          upperInode,
-          offset + BigInt(bytesWritten),
-          target.subarray(bytesWritten, bytesRead),
-        );
-        if (!Number.isInteger(written) || written <= 0 || written > bytesRead - bytesWritten)
-          throw kernelError("EIO", "Upper file returned an invalid byte count");
-        bytesWritten += written;
-      }
-      offset += BigInt(bytesRead);
     }
   }
 
@@ -374,4 +363,25 @@ function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
 
 function isCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
+
+function mapMaybe<A, B>(
+  value: MaybePromise<A>,
+  apply: (value: A) => MaybePromise<B>,
+): MaybePromise<B> {
+  return isPromiseLike(value) ? value.then(apply) : apply(value);
+}
+
+function withCleanup<T>(operation: () => MaybePromise<T>, cleanup: () => void): MaybePromise<T> {
+  let pending = false;
+  try {
+    const result = operation();
+    if (isPromiseLike(result)) {
+      pending = true;
+      return result.finally(cleanup);
+    }
+    return result;
+  } finally {
+    if (!pending) cleanup();
+  }
 }

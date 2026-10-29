@@ -10,7 +10,7 @@ import { createNodeFs } from "../../isolate/NodeFs.ts";
 import { createNodeProcess } from "../../isolate/NodeProcess.ts";
 import { createNodeReadline } from "../../isolate/NodeReadline.ts";
 import { createNodeComputerChildProcess } from "../../isolate/NodeComputerProcess.ts";
-import type { NodeChildProcess } from "../../isolate/NodeChildProcess.ts";
+import type { NodeChildProcessObserver } from "../../isolate/NodeChildProcess.ts";
 import { createNodeBridge, NodeBridgeError } from "../../isolate/NodeBridge.ts";
 import type { NodeBridge } from "../../isolate/NodeBridge.ts";
 import { createNodeBunHost } from "../../isolate/NodeBun.ts";
@@ -30,7 +30,7 @@ export function createHarnessRuntime(
     readonly stdin: AbortSignal;
     readonly output: AbortSignal;
   },
-  onChild: (child: NodeChildProcess) => void,
+  onChild: NodeChildProcessObserver,
   bridge: () => NodeBridge,
 ) {
   input.stdio.assertBound(input.computer.files);

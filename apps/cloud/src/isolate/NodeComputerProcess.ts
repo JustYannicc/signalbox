@@ -3,7 +3,7 @@ import type { KernelProgramHost } from "../kernel/KernelProgramHost.ts";
 import {
   createNodeChildProcess,
   type NodeChildProcessContext,
-  type NodeChildProcess,
+  type NodeChildProcessObserver,
 } from "./NodeChildProcess.ts";
 import { createComputerProcessTransport } from "./node/computerProcess/transport.ts";
 
@@ -12,7 +12,7 @@ export function createNodeComputerChildProcess(
   host: KernelProgramHost,
   process: NodeChildProcessContext,
   computer: ComputerExecPort,
-  onChild?: (child: NodeChildProcess) => void,
+  onChild?: NodeChildProcessObserver,
 ): ReturnType<typeof createNodeChildProcess> {
   if (typeof computer?.exec !== "function") {
     throw new TypeError("child_process requires a Computer exec port");

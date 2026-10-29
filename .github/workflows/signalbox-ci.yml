@@ -167,16 +167,18 @@ jobs:
       - name: Verify preload bundle output
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
-  # Everything except `t3` (apps/server) and the web app, which run in their own jobs.
-  # GitHub-hosted runners have half the vCPUs of upstream's, so run half as many
-  # package suites at once; at 4, CPU-bound property tests hit Vitest's 5s timeout.
+  # Cloud outlasts the other packages combined, so split its files across three
+  # runners and start the remaining package queue alongside them.
   test:
-    name: Test
+    name: Test ${{ matrix.partition }}
     needs: cloud_migrations
     if: ${{ !cancelled() && needs.cloud_migrations.outputs.test != 'false' }}
     runs-on: ubuntu-latest
-    # Full-suite runs on main already take about 18 minutes.
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: ${{ fromJSON(needs.cloud_migrations.outputs.test_packages == '@signalbox/cloud' && '["cloud-1","cloud-2","cloud-3"]' || (needs.cloud_migrations.outputs.test_packages == '' || contains(needs.cloud_migrations.outputs.test_packages, '@signalbox/cloud')) && '["packages","cloud-1","cloud-2","cloud-3"]' || '["packages"]') }}
     env:
       PROGRAMS_RELEASE_TAG: kernel-programs-20261023-6aefd645-2d079609
       COREUTILS_TAR_SHA256: 875eb1dcdb31d6ea53f59b64b6de6bef8e0ebc4680a7698310ab0cfc989d50d9
@@ -202,7 +204,7 @@ jobs:
 
       - name: Cache pinned kernel programs
         id: kernel_program_cache
-        if: ${{ needs.cloud_migrations.outputs.test_packages == '' || contains(needs.cloud_migrations.outputs.test_packages, '@signalbox/cloud') }}
+        if: ${{ matrix.partition != 'packages' }}
         uses: actions/cache@v6
         with:
           path: |
@@ -211,7 +213,7 @@ jobs:
           key: kernel-programs-${{ env.PROGRAMS_RELEASE_TAG }}-${{ hashFiles('scripts/harness-releases/programInputs.ts', 'apps/cloud/infra/kernelPrograms/coreutils/provenance.json') }}
 
       - name: Fetch pinned kernel programs
-        if: ${{ (needs.cloud_migrations.outputs.test_packages == '' || contains(needs.cloud_migrations.outputs.test_packages, '@signalbox/cloud')) && steps.kernel_program_cache.outputs.cache-hit != 'true' }}
+        if: ${{ matrix.partition != 'packages' && steps.kernel_program_cache.outputs.cache-hit != 'true' }}
         run: |
           set -euo pipefail
           node --experimental-strip-types scripts/harness-releases/fetchPrograms.ts \
@@ -271,7 +273,10 @@ jobs:
       - name: Test
         env:
           TEST_PACKAGES: ${{ needs.cloud_migrations.outputs.test_packages }}
-          TEST_PACKAGE_RUNNERS: 2
+          TEST_PARTITION: ${{ matrix.partition }}
+          TEST_PACKAGE_RUNNERS: ${{ matrix.partition == 'packages' && 2 || 1 }}
+          # Cloud tests spawn child workers that need CPU room beyond Vitest's pool.
+          TEST_CPUS_PER_WORKER: ${{ matrix.partition == 'packages' && 1 || 2 }}
           SIGNALBOX_REQUIRE_BASH_ARTIFACT: "1"
           SIGNALBOX_REQUIRE_BUSYBOX_ARTIFACT: "1"
           SIGNALBOX_REQUIRE_COREUTILS_ARTIFACTS: "1"
@@ -284,13 +289,21 @@ jobs:
         run: |
           # Each package's Vitest pool must share the same runner CPU budget.
           runner_cpus=$(node -p 'require("node:os").availableParallelism()')
-          test_workers=$((runner_cpus / TEST_PACKAGE_RUNNERS))
+          if (( TEST_PACKAGE_RUNNERS > runner_cpus )); then TEST_PACKAGE_RUNNERS=$runner_cpus; fi
+          test_workers=$((runner_cpus / TEST_PACKAGE_RUNNERS / TEST_CPUS_PER_WORKER))
           export VITEST_MAX_WORKERS=$((test_workers > 0 ? test_workers : 1))
           echo "Test budget: $runner_cpus CPUs, $TEST_PACKAGE_RUNNERS packages, $VITEST_MAX_WORKERS Vitest workers per package"
-          filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web')
+          if [[ "$TEST_PARTITION" == cloud-* ]]; then
+            vp run --filter @signalbox/cloud test --shard "${TEST_PARTITION#cloud-}/3"
+            exit
+          fi
+          filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' --filter '!@signalbox/cloud')
           if [[ -n "$TEST_PACKAGES" ]]; then
             filters=()
-            for package in $TEST_PACKAGES; do filters+=(--filter "$package"); done
+            for package in $TEST_PACKAGES; do
+              if [[ "$package" != '@signalbox/cloud' ]]; then filters+=(--filter "$package"); fi
+            done
+            if (( ${#filters[@]} == 0 )); then exit; fi
           fi
           vp run --parallel --concurrency-limit "$TEST_PACKAGE_RUNNERS" "${filters[@]}" test
 

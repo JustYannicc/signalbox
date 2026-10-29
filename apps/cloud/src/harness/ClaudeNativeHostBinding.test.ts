@@ -1,7 +1,9 @@
 import * as NodeWorkerThreads from "node:worker_threads";
 import { expect, it, onTestFinished } from "vite-plus/test";
 
-function runIsolated(caseName: "cold" | "resume" | "prepared" | "both" | "diagnostic") {
+function runIsolated(
+  caseName: "cold" | "resume" | "prepared" | "both" | "diagnostic" | "observation",
+) {
   return new Promise<void>((resolve, reject) => {
     const worker = new NodeWorkerThreads.Worker(
       new URL("./node/tests/claudeNativeBindingWorker.ts", import.meta.url),
@@ -37,3 +39,6 @@ it("preserves caller prepared and resolve overrides", () => runIsolated("both"))
 
 it("forwards pre-cleanup diagnostics through the public native Claude binding", () =>
   runIsolated("diagnostic"));
+
+it("registers passive tool observation through the public Claude binding", () =>
+  runIsolated("observation"));

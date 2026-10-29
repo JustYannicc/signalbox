@@ -237,10 +237,10 @@ export class KernelFileSystemOpen {
       if (resolved.stat.type === "symlink") throw kernelError("ELOOP");
       if (resolved.stat.type !== "file") throw kernelError("EINVAL");
       if (mount.readOnly) throw kernelError("EROFS");
-      if (!parsed.truncate || !(mount.storage instanceof KernelLowerFileSystemStorage)) {
+      if (!(mount.storage instanceof KernelLowerFileSystemStorage)) {
         throw kernelError("ENOTSUP", "Lower file writes require asynchronous execution");
       }
-      inode = mount.storage.copyUpFileSync(inode);
+      inode = mount.storage.copyUpFileSync(inode, !parsed.truncate);
       resolved = { ...resolved, inode, stat: runKernelSync(mount.storage.stat(inode)) };
     }
     let ownsPin = retained;

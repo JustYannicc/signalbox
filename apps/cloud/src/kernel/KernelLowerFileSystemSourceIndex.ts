@@ -2,6 +2,7 @@ import { isPosixMetadata } from "./PosixStorage.ts";
 import type { PosixMetadata } from "./PosixStorage.ts";
 import {
   KernelFileSystemUnavailable,
+  KernelSynchronousFileBytesUnavailable,
   type KernelLowerFileSystemDirectoryEntry,
   type KernelLowerFileSystemEntry,
   type KernelLowerFileSystemKnownLookup,
@@ -174,7 +175,13 @@ export class KernelLowerFileSystemSourceIndex {
     if (offset < 0n) throw kernelError("EINVAL");
     if (target.byteLength === 0) return 0;
     if (currentKernelIoMode() === "sync") {
-      throw kernelError("ENOTSUP", "Lower file bytes require asynchronous execution");
+      currentKernelSignal()?.throwIfAborted();
+      const bytes = this.#source.readKnown?.(path, offset, target.byteLength);
+      if (bytes === undefined) throw new KernelSynchronousFileBytesUnavailable(path);
+      if (!(bytes instanceof Uint8Array) || bytes.byteLength > target.byteLength)
+        throw new KernelFileSystemUnavailable("Lower known-read returned invalid bytes");
+      target.set(bytes);
+      return bytes.byteLength;
     }
     return this.#readBytes(path, offset, target, currentKernelSignal());
   }

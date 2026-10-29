@@ -5,6 +5,10 @@ import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/P
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { makeClaudeNativeHostBinding } from "../../ClaudeNativeHostBinding.ts";
+import {
+  createClaudeToolObservation,
+  type ClaudeToolHookInput,
+} from "../../ClaudeToolObservation.ts";
 import { nativeTurnThreadLoad, type NativeThreadLoad } from "../../HarnessThreadLoad.ts";
 import type {
   PreparedClaudeSdk,
@@ -77,7 +81,7 @@ function sdkQuery(
   }) satisfies ClaudeSdkQuery;
 }
 
-function coldSetup(override?: "prepared" | "both" | "diagnostic") {
+function coldSetup(override?: "prepared" | "both" | "diagnostic" | "observation") {
   const f = readinessFixture();
   return Effect.scoped(
     Effect.gen(function* () {
@@ -95,6 +99,11 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic") {
       let fetchedMcp = "";
       let fetchedModel = "";
       let queryOptions: unknown;
+      const observedHooks: string[] = [];
+      const hookReturns: Promise<unknown>[] = [];
+      const toolObservation = createClaudeToolObservation((event) => {
+        observedHooks.push(event.input.hook_event_name + ":" + event.toolUseId);
+      });
       let resolvePrompt!: (message: SDKUserMessage) => void;
       const offeredPrompt = new Promise<SDKUserMessage>((resolve) => {
         resolvePrompt = resolve;
@@ -103,6 +112,34 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic") {
         query: ({ prompt, options }) => {
           order.push("sdk.query");
           queryOptions = options;
+          if (override === "observation") {
+            const base = {
+              session_id: "sdk-session",
+              transcript_path: "/work/transcript",
+              cwd: "/work",
+              tool_name: "Bash",
+              tool_use_id: "call",
+              tool_input: { command: "short" },
+            };
+            const payloads: ClaudeToolHookInput[] = [
+              { ...base, hook_event_name: "PreToolUse" },
+              {
+                ...base,
+                hook_event_name: "PostToolUse",
+                tool_response: { stdout: "exact", exitCode: null },
+              },
+              { ...base, hook_event_name: "PostToolUseFailure", error: "original error" },
+            ];
+            for (const payload of payloads) {
+              const registrations = options.hooks?.[payload.hook_event_name];
+              NodeAssert.equal(registrations?.length, 1);
+              const registration = registrations![0]!;
+              NodeAssert.equal(Object.hasOwn(registration, "matcher"), false);
+              hookReturns.push(
+                registration.hooks[0]!(payload, "call", { signal: new AbortController().signal }),
+              );
+            }
+          } else NodeAssert.equal(options.hooks, undefined);
           const spawn = options.spawnClaudeCodeProcess;
           if (spawn === undefined) throw new Error("SDK launch callback is missing");
           const child = spawn({
@@ -131,6 +168,7 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic") {
         getSubagentMessages: async () => [],
       };
       const binding = makeClaudeNativeHostBinding({
+        ...(override === "observation" ? { toolObservation } : {}),
         process: {
           ...f.input,
           computer: services.computer,
@@ -283,6 +321,18 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic") {
         queryOptions !== undefined && queryOptions !== null && typeof queryOptions === "object",
       );
       NodeAssert.equal(Object.hasOwn(queryOptions, "mcpServers"), false);
+      if (override === "observation") {
+        const returns = yield* Effect.promise(() => Promise.all(hookReturns));
+        yield* Effect.promise(() => toolObservation.drain());
+        NodeAssert.deepEqual(returns, [{}, {}, {}]);
+        NodeAssert.deepEqual(observedHooks, [
+          "PreToolUse:call",
+          "PostToolUse:call",
+          "PostToolUseFailure:call",
+        ]);
+        NodeAssert.deepEqual(toolObservation.snapshot().failures, []);
+        NodeAssert.equal(toolObservation.snapshot().measurements.length, 3);
+      }
       yield* binding.configureMcp({ epoch: 2, servers: {} }, controller.signal, {
         method: "resumeThread",
         input: {
@@ -394,11 +444,13 @@ const run =
       ? () => coldSetup("both")
       : NodeWorkerThreads.workerData === "diagnostic"
         ? () => coldSetup("diagnostic")
-        : NodeWorkerThreads.workerData === "cold"
-          ? coldSetup
-          : NodeWorkerThreads.workerData === "resume"
-            ? resumeSetup
-            : undefined;
+        : NodeWorkerThreads.workerData === "observation"
+          ? () => coldSetup("observation")
+          : NodeWorkerThreads.workerData === "cold"
+            ? coldSetup
+            : NodeWorkerThreads.workerData === "resume"
+              ? resumeSetup
+              : undefined;
 if (run === undefined || NodeWorkerThreads.parentPort === null)
   throw new Error("Invalid native binding test case.");
 const port = NodeWorkerThreads.parentPort;
