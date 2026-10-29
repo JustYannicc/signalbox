@@ -19,23 +19,32 @@ import { sqliteFixture } from "../sqliteTesting.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
+const inventoryPin = JSON.parse(
+  NodeFS.readFileSync(
+    new URL("../../../../../.github/scripts/runner-machine-inventory.pin.json", import.meta.url),
+    "utf8",
+  ),
+) as { sha256: string };
+const inventoryFile =
+  NodeProcess.env.SIGNALBOX_MACHINE_METADATA_INVENTORY_FILE ??
+  NodeProcess.env.SIGNALBOX_MACHINE_PATH_INVENTORY_FILE;
+if (NodeProcess.env.GITHUB_ACTIONS === "true" && inventoryFile === undefined)
+  throw new Error(
+    "ProductComputer lower metadata proof requires the pinned Runner inventory in CI",
+  );
 const inventoryPath =
-  NodeProcess.env.SIGNALBOX_MACHINE_PATH_INVENTORY_FILE ??
+  inventoryFile ??
   new URL("../../../infra/kernelPrograms/machine-files/build/runner.json", import.meta.url);
-if (
-  NodeProcess.env.SIGNALBOX_MACHINE_PATH_INVENTORY_FILE !== undefined &&
-  !NodeFS.existsSync(inventoryPath)
-)
+if (inventoryFile !== undefined && !NodeFS.existsSync(inventoryPath))
   throw new Error("Required machine inventory is missing");
 const inventoryBytes = NodeFS.existsSync(inventoryPath)
   ? NodeFS.readFileSync(inventoryPath)
   : undefined;
 if (
   inventoryBytes !== undefined &&
-  NodeCrypto.createHash("sha256").update(inventoryBytes).digest("hex") !==
-    "74186335378f14ba82d2c7ac3dfe3d2708b2b8f4f4b5faf9c009f23127ec4e19"
+  NodeCrypto.createHash("sha256").update(inventoryBytes).digest("hex") !== inventoryPin.sha256
 )
-  throw new Error("ProductComputer lower metadata proof requires the frozen runner inventory");
+  throw new Error("ProductComputer lower metadata proof requires the pinned Runner inventory");
 const inventory: MachineProgramInventory | undefined =
   inventoryBytes === undefined ? undefined : JSON.parse(inventoryBytes.toString("utf8"));
 

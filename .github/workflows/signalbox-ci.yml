@@ -257,6 +257,19 @@ jobs:
       - name: Test CI change selection
         run: node --test .github/scripts/ci-changes.test.cjs
 
+      - name: Test Runner inventory provisioning
+        run: node --test .github/scripts/runner-machine-inventory.test.cjs
+
+      - name: Download pinned Runner machine inventory
+        id: runner_inventory
+        if: ${{ needs.cloud_migrations.outputs.test_packages == '' || contains(needs.cloud_migrations.outputs.test_packages, '@signalbox/cloud') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          node .github/scripts/runner-machine-inventory.cjs download \
+            --output "$RUNNER_TEMP/runner-machine-inventory/runner.json"
+
       - name: Test
         env:
           TEST_PACKAGES: ${{ needs.cloud_migrations.outputs.test_packages }}
@@ -271,6 +284,8 @@ jobs:
           SIGNALBOX_REQUIRE_RIPGREP_ARTIFACT: "1"
           SIGNALBOX_REQUIRE_GNU_ARTIFACTS: "1"
           SIGNALBOX_REQUIRE_UGREP_ARTIFACT: "1"
+          # Native symlink regressions use a different frozen inventory.
+          SIGNALBOX_MACHINE_METADATA_INVENTORY_FILE: ${{ steps.runner_inventory.outputs.path }}
         run: |
           # Each package's Vitest pool must share the same runner CPU budget.
           runner_cpus=$(node -p 'require("node:os").availableParallelism()')
