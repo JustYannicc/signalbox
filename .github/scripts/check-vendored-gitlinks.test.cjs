@@ -95,10 +95,7 @@ test("rejects vendored Gitlinks and accepts their index-only removal", (t) => {
     nestedGitmodules,
   );
   for (const [filePath, contents] of linkContents) {
-    assert.deepEqual(
-      fs.readFileSync(path.join(repository, filePath, "payload.txt")),
-      contents,
-    );
+    assert.deepEqual(fs.readFileSync(path.join(repository, filePath, "payload.txt")), contents);
   }
   const accepted = runChecker(repository);
   assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
