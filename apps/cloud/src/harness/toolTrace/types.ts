@@ -108,11 +108,26 @@ export interface HarnessToolTraceGap {
   readonly candidateHookSequences?: readonly number[];
 }
 
+export interface HarnessProcessCaptureReceipt {
+  readonly processKey: string;
+  readonly phase: "attached" | "drained";
+  readonly complete: boolean;
+  readonly sequence: number;
+  readonly raw: unknown;
+}
+
 export interface HarnessToolTraceResult {
   readonly verdicts: readonly HarnessToolCallVerdict[];
   readonly hooks: readonly HarnessToolHookReceipt[];
-  readonly childProcesses: ReadonlyMap<string, HarnessChildProcessEvidence>;
-  readonly childSpawnObservations: ReadonlyMap<string, readonly HarnessChildProcessSpawnRecord[]>;
+  readonly processCaptures: readonly HarnessProcessCaptureReceipt[];
+  readonly childProcesses: readonly {
+    readonly childId: string;
+    readonly evidence: HarnessChildProcessEvidence;
+  }[];
+  readonly childSpawnObservations: readonly {
+    readonly childId: string;
+    readonly observations: readonly HarnessChildProcessSpawnRecord[];
+  }[];
   readonly unattachedChildReceipts: readonly {
     readonly childId: string;
     readonly kind: "close" | "trace";
@@ -169,6 +184,7 @@ export interface ShellCandidate {
 }
 
 export interface HarnessToolTraceState {
+  readonly processCaptures: readonly HarnessProcessCaptureReceipt[];
   readonly hooks: readonly HarnessToolHookReceipt[];
   readonly children: ReadonlyMap<string, MutableChildProcess>;
   readonly spawnObservations: ReadonlyMap<string, readonly HarnessChildProcessSpawnRecord[]>;

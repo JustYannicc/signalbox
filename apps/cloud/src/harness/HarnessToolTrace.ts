@@ -15,6 +15,7 @@ export type {
   HarnessToolTraceOptions,
   HarnessToolTracePathMapping,
   HarnessToolTraceJoinProvenance,
+  HarnessProcessCaptureReceipt,
 } from "./toolTrace/types.ts";
 export type {
   ClaudeBashWrapperMatch,

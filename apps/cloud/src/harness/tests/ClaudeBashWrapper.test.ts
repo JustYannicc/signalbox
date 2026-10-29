@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { createHarnessToolTraceLedger } from "../HarnessToolTrace.ts";
+import { observedLedger } from "./toolTraceFixture.ts";
 
 const prefix =
   "shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval ";
@@ -75,7 +76,7 @@ const rootMapping = {
 describe("Claude Bash wrapper extraction", () => {
   it("decodes the observed template, compares the complete command, and records mapping provenance", () => {
     const command = `printf '%s' "quoted $HOME \`command\``;
-    const ledger = createHarnessToolTraceLedger({ pathMapping: rootMapping });
+    const ledger = observedLedger({ pathMapping: rootMapping });
     recordCall(ledger, "call", command, "child", "host", "/private/repo", "/work");
     const result = ledger.finalize([
       { id: "call", name: "Bash", processKey: "host", sessionId: "session" },
@@ -95,17 +96,14 @@ describe("Claude Bash wrapper extraction", () => {
       },
       children: [{ argv: ["/bin/bash", "-c", "-l", wrapper(command)] }],
     });
-    expect(result.childSpawnObservations.get("child")?.[0]?.argv).toEqual([
-      "/bin/bash",
-      "-c",
-      "-l",
-      wrapper(command),
-    ]);
+    expect(
+      result.childSpawnObservations.find((row) => row.childId === "child")?.observations?.[0]?.argv,
+    ).toEqual(["/bin/bash", "-c", "-l", wrapper(command)]);
   });
 
   it("decodes POSIX double quotes and leaves literal eval text inside the command intact", () => {
     const command = `printf '%s' 'eval is data' "$HOME"`;
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const pre = hook("double", command);
     ledger.observeHook("host", "PreToolUse", pre, "double");
     const script = wrapper(command, doubleQuote);
@@ -133,7 +131,7 @@ describe("Claude Bash wrapper extraction", () => {
 
   it("does not mistake an eval inside the decoded command for the outer operand", () => {
     const actualCommand = "eval 'printf inner'";
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const pre = hook("inner", "printf inner");
     ledger.observeHook("host", "PreToolUse", pre, "inner");
     const actualWrapper = wrapper(actualCommand);
@@ -156,7 +154,7 @@ describe("Claude Bash wrapper extraction", () => {
   });
 
   it("gaps command mismatches, trailing-newline changes, unsupported expansions, and malformed wrappers", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const mismatched = hook("mismatch", "printf expected");
     ledger.observeHook("host", "PreToolUse", mismatched, "mismatch");
     const commandWrapper = wrapper("printf different");
@@ -258,7 +256,7 @@ describe("Claude Bash wrapper extraction", () => {
   });
 
   it("compares Unicode command bytes without normalization", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const composed = "printf café";
     const decomposed = "printf cafe\u0301";
     const pre = hook("unicode", composed);
@@ -275,7 +273,7 @@ describe("Claude Bash wrapper extraction", () => {
   });
 
   it("gaps identical overlapping wrapper calls instead of guessing ownership", () => {
-    const ledger = createHarnessToolTraceLedger({ pathMapping: rootMapping });
+    const ledger = observedLedger({ pathMapping: rootMapping });
     const command = "printf overlap";
     const first = hook("first", command, "/private/repo");
     const second = hook("second", command, "/private/repo");
@@ -300,7 +298,7 @@ describe("Claude Bash wrapper extraction", () => {
   });
 
   it("does not map cwd prefixes or suffixes", () => {
-    const ledger = createHarnessToolTraceLedger({ pathMapping: rootMapping });
+    const ledger = observedLedger({ pathMapping: rootMapping });
     const command = "printf cwd";
     const pre = hook("cwd", command, "/private/repo/subdir");
     ledger.observeHook("host", "PreToolUse", pre, "cwd");
@@ -313,7 +311,7 @@ describe("Claude Bash wrapper extraction", () => {
   });
 
   it("rejects a wrapper with an unobserved argv0", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const pre = hook("argv0", "printf exact");
     ledger.observeHook("host", "PreToolUse", pre, "argv0");
     const child = spawn("child", "host", "printf exact");

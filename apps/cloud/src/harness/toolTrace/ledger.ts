@@ -6,6 +6,7 @@ import type {
   HarnessChildProcessSpawnRecord,
   HarnessToolTraceOptions,
   MutableChildProcess,
+  HarnessProcessCaptureReceipt,
 } from "./types.ts";
 import { readField } from "./matching.ts";
 import { finalizeHarnessToolTrace } from "./finalize.ts";
@@ -14,6 +15,7 @@ import { finalizeHarnessToolTrace } from "./finalize.ts";
 export function createHarnessToolTraceLedger(options: HarnessToolTraceOptions = {}) {
   let sequence = 0;
   const hooks: HarnessToolHookReceipt[] = [];
+  const processCaptures: HarnessProcessCaptureReceipt[] = [];
   const children = new Map<string, MutableChildProcess>();
   const spawnObservations = new Map<string, HarnessChildProcessSpawnRecord[]>();
   const unattachedReceipts: {
@@ -24,6 +26,15 @@ export function createHarnessToolTraceLedger(options: HarnessToolTraceOptions = 
   }[] = [];
 
   const nextSequence = () => ++sequence;
+
+  function observeProcessCapture(
+    processKey: string,
+    phase: "attached" | "drained",
+    complete: boolean,
+    raw: unknown,
+  ) {
+    processCaptures.push({ processKey, phase, complete, raw, sequence: nextSequence() });
+  }
 
   function observeHook(
     processKey: string,
@@ -86,6 +97,7 @@ export function createHarnessToolTraceLedger(options: HarnessToolTraceOptions = 
     finalizeHarnessToolTrace(
       {
         hooks,
+        processCaptures,
         children,
         spawnObservations,
         unattachedReceipts,
@@ -94,5 +106,12 @@ export function createHarnessToolTraceLedger(options: HarnessToolTraceOptions = 
       expectedCalls,
     );
 
-  return { observeHook, observeChildSpawn, observeChildClose, observeChildTraceReceipt, finalize };
+  return {
+    observeProcessCapture,
+    observeHook,
+    observeChildSpawn,
+    observeChildClose,
+    observeChildTraceReceipt,
+    finalize,
+  };
 }

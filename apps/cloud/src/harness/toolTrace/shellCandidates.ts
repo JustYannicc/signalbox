@@ -38,7 +38,6 @@ export function findShellCandidates(
       [];
     let unsupportedWrapperReason: string | undefined;
     let cwdMismatch = false;
-    let wrapperCwdMismatch = false;
     for (const child of inWindow) {
       const extraction = shellCommand(child);
       if (extraction === undefined) continue;
@@ -51,7 +50,6 @@ export function findShellCandidates(
       const cwd = matchCwd(command.cwd, child.cwd, pathMapping);
       if (!cwd.matched) {
         cwdMismatch = true;
-        wrapperCwdMismatch ||= extraction.provenance.templateId !== "direct-shell-c-v1";
         continue;
       }
       matches.push({
@@ -71,7 +69,7 @@ export function findShellCandidates(
         : {
             reason: unsupportedWrapperReason
               ? `unsupported-shell-wrapper:${unsupportedWrapperReason}`
-              : cwdMismatch && wrapperCwdMismatch
+              : cwdMismatch
                 ? "cwd-mapping-mismatch"
                 : "no-exact-shell-child-match",
           }),
@@ -90,21 +88,6 @@ type ShellCommandResult = ShellCommandMatch | { readonly kind: "gap"; readonly r
 
 function shellCommand(child: MutableChildProcess): ShellCommandResult | undefined {
   if (child.executable !== "/bin/bash" && child.executable !== "/bin/sh") return;
-  if (child.argv.length === 3 && child.argv[1] === "-c" && typeof child.argv[2] === "string") {
-    return {
-      kind: "matched",
-      command: child.argv[2],
-      provenance: {
-        templateId: "direct-shell-c-v1",
-        operandSpan: {
-          argvIndex: 2,
-          start: 0,
-          end: child.argv[2].length,
-          unit: "utf16-code-units",
-        },
-      },
-    };
-  }
   const wrapper = extractClaudeBashWrapper(child.executable, child.argv);
   if (wrapper.kind === "gap") return wrapper;
   return {

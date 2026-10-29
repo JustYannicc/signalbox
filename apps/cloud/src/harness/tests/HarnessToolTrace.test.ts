@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { createHarnessToolTraceLedger } from "../HarnessToolTrace.ts";
+import { observedLedger, wrappedCommand } from "./toolTraceFixture.ts";
 
 type HookEvent = "PreToolUse" | "PostToolUse" | "PostToolUseFailure";
 
@@ -29,7 +29,7 @@ function spawn(
   script: string,
   cwd = "/work",
   executable = "/bin/bash",
-  argv: readonly string[] = ["bash", "-c", script],
+  argv: readonly string[] = ["/bin/bash", "-c", "-l", wrappedCommand(script)],
 ) {
   return {
     childId,
@@ -51,7 +51,7 @@ function terminal(
 
 describe("harness SDK hook and child trace ledger", () => {
   it("joins overlapping different Bash commands after short child lifecycles and retains raw results", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const firstPre = hook("PreToolUse", "Bash", "call-a", "printf A");
     const secondPre = hook("PreToolUse", "Bash", "call-b", "printf B");
     const success = { stdout: "A", stderr: "", exitCode: 0 };
@@ -108,7 +108,7 @@ describe("harness SDK hook and child trace ledger", () => {
   });
 
   it("gaps both identical overlapping windows when either window could own either spawn", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const firstPre = hook("PreToolUse", "Bash", "call-a", "printf same");
     const secondPre = hook("PreToolUse", "Bash", "call-b", "printf same");
     ledger.observeHook("host", "PreToolUse", firstPre, "call-a");
@@ -146,7 +146,7 @@ describe("harness SDK hook and child trace ledger", () => {
   });
 
   it("does not assign a shared child to the narrower of two identical overlapping windows", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const a = hook("PreToolUse", "Bash", "a", "same");
     const b = hook("PreToolUse", "Bash", "b", "same");
     ledger.observeHook("host", "PreToolUse", a, "a");
@@ -167,7 +167,7 @@ describe("harness SDK hook and child trace ledger", () => {
   });
 
   it("counts duplicate spawn identity as a tool coverage gap", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const pre = hook("PreToolUse", "Bash", "call", "same");
     ledger.observeHook("host", "PreToolUse", pre, "call");
     const child = spawn("duplicate", "host", "same");
@@ -182,7 +182,7 @@ describe("harness SDK hook and child trace ledger", () => {
   });
 
   it("keeps same-ID calls separate by process key and session, and requires exact command, cwd, and shell argv", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     for (const [processKey, childId] of [
       ["host-a", "child-a"],
       ["host-b", "child-b"],
@@ -222,17 +222,17 @@ describe("harness SDK hook and child trace ledger", () => {
     expect(result.verdicts.map((row) => row.kind)).toEqual(["joined", "joined", "gap", "gap"]);
     expect(result.verdicts[2]).toMatchObject({
       kind: "gap",
-      reasons: ["no-exact-shell-child-match"],
+      reasons: ["cwd-mapping-mismatch"],
     });
     expect(result.verdicts[3]).toMatchObject({
       kind: "gap",
-      reasons: ["no-exact-shell-child-match"],
+      reasons: ["unsupported-shell-wrapper:unsupported-wrapper-argv"],
     });
     expect(result.coverage.toolCalls).toEqual({ denominator: 4, joined: 2, noChild: 0, gaps: 2 });
   });
 
   it("emits explicit no-child only for complete non-Bash windows without unattributed children", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const readPre = hook("PreToolUse", "Read", "read-1");
     ledger.observeHook("host", "PreToolUse", readPre, "read-1");
 
@@ -268,7 +268,7 @@ describe("harness SDK hook and child trace ledger", () => {
   });
 
   it("counts missing and duplicate hook coverage, callback ID mismatches, and late orphan children", () => {
-    const ledger = createHarnessToolTraceLedger();
+    const ledger = observedLedger();
     const duplicatePre = hook("PreToolUse", "Read", "duplicate");
     ledger.observeHook("host", "PreToolUse", duplicatePre, "different-callback-id");
     ledger.observeHook("host", "PreToolUse", { ...duplicatePre, tool_input: null }, "duplicate");
@@ -312,13 +312,17 @@ describe("harness SDK hook and child trace ledger", () => {
     expect(secondPre.fields.tool_input).toEqual({ state: "present", value: null });
     expect(result.hooks[2]?.fields.cwd).toEqual({ state: "present", value: "/work" });
     expect(result.hooks[2]?.raw).toBe(extraPost);
-    expect(result.childProcesses.get("late-child")?.closeReceipts[0]?.raw).toEqual({
+    expect(
+      result.childProcesses.find((row) => row.childId === "late-child")?.evidence?.closeReceipts[0]
+        ?.raw,
+    ).toEqual({
       closeArgs: [0, null],
     });
-    expect(result.childSpawnObservations.get("late-child")?.map((row) => row.raw)).toEqual([
-      lateSpawn.raw,
-      { duplicate: true },
-    ]);
+    expect(
+      result.childSpawnObservations
+        .find((row) => row.childId === "late-child")
+        ?.observations?.map((row) => row.raw),
+    ).toEqual([lateSpawn.raw, { duplicate: true }]);
     expect(result.unattachedChildReceipts[0]?.raw).toEqual({ closeArgs: [null, "SIGKILL"] });
     expect(result.coverage.toolCalls).toEqual({ denominator: 3, joined: 0, noChild: 0, gaps: 3 });
     expect(result.coverage.childProcesses).toMatchObject({

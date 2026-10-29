@@ -93,6 +93,23 @@ export function finalizeHarnessToolTrace(
       }
     }
 
+    if (pre !== undefined && terminal !== undefined) {
+      const captures = state.processCaptures.filter(
+        (receipt) => receipt.processKey === pre.processKey,
+      );
+      const attached = captures.filter((receipt) => receipt.phase === "attached");
+      const drained = captures.filter((receipt) => receipt.phase === "drained");
+      if (attached.length !== 1 || drained.length !== 1)
+        reasons.push("process-capture-coverage-unproven");
+      else if (
+        !attached[0]!.complete ||
+        !drained[0]!.complete ||
+        attached[0]!.sequence >= pre.sequence ||
+        drained[0]!.sequence <= terminal.sequence
+      )
+        reasons.push("process-capture-window-incomplete");
+    }
+
     const hooksValid = pre !== undefined && terminal !== undefined && reasons.length === 0;
     if (!hooksValid) {
       return {
@@ -197,8 +214,11 @@ export function finalizeHarnessToolTrace(
     return { kind: "no-child", expected, hooks: { pre, terminal }, children: [] };
   });
 
-  const associatedChildIds = new Set(childOwners.keys());
-  const ownedChildIds = new Set(childOwners.keys());
+  const ownedChildIds = new Set(
+    verdicts.flatMap((verdict) =>
+      verdict.kind === "joined" ? verdict.children.map((child) => child.childId) : [],
+    ),
+  );
   for (const child of children.values()) {
     if (child.childId.length === 0) {
       gaps.push({
@@ -254,7 +274,7 @@ export function finalizeHarnessToolTrace(
   }
   const duplicateHookEvents = duplicateHookCount(hooks);
   const lifecycleIncomplete = [...children.values()].filter(
-    (child) => ownedChildIds.has(child.childId) && child.closeReceipts.length !== 1,
+    (child) => childOwners.has(child.childId) && child.closeReceipts.length !== 1,
   ).length;
   const joined = verdicts.filter((verdict) => verdict.kind === "joined").length;
   const noChild = verdicts.filter((verdict) => verdict.kind === "no-child").length;
@@ -280,10 +300,15 @@ export function finalizeHarnessToolTrace(
   return {
     verdicts,
     hooks: [...hooks],
-    childProcesses: new Map([...children].map(([id, child]) => [id, toEvidence(child)])),
-    childSpawnObservations: new Map(
-      [...spawnObservations].map(([id, observations]) => [id, [...observations]]),
-    ),
+    processCaptures: state.processCaptures.map((receipt) => ({ ...receipt })),
+    childProcesses: [...children].map(([childId, child]) => ({
+      childId,
+      evidence: toEvidence(child),
+    })),
+    childSpawnObservations: [...spawnObservations].map(([childId, observations]) => ({
+      childId,
+      observations: [...observations],
+    })),
     unattachedChildReceipts: [...unattachedReceipts],
     gaps,
     coverage: {
@@ -297,7 +322,7 @@ export function finalizeHarnessToolTrace(
       },
       childProcesses: {
         denominator: children.size,
-        associated: associatedChildIds.size,
+        associated: ownedChildIds.size,
         orphaned: [...children.keys()].filter((id) => !ownedChildIds.has(id)).length,
         lifecycleIncomplete,
       },
