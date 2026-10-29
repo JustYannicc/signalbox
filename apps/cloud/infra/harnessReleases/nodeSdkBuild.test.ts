@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { decodeSdkManifest } from "../../src/harness/releasePlan/schemas.ts";
+import { decodeSdkManifest } from "../../src/harness/HarnessReleaseManifests.ts";
 import { createNodeBridge, installNodeBridge } from "../../src/isolate/NodeBridge.ts";
 import { buildNodeSdk, claudeAgentSdkPackage, sdkFixture } from "./nodeSdkBuildFixture.ts";
 

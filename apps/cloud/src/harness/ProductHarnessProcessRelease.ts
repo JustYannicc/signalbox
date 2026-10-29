@@ -87,3 +87,5 @@ export function productLoadedPreparedRelease(
     throw new Error("The verified product load does not match the selected artifact identity.");
   return observed;
 }
+
+export { samePreparedRelease } from "./processResume/identity.ts";

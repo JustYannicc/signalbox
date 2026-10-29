@@ -159,6 +159,17 @@ async function verify(directory: string) {
 }
 
 async function main(argv: string[]) {
+  if (argv.length === 2 && argv[0] === "--inspect-wasm") {
+    const module = await WebAssembly.compile(await NodeFSP.readFile(argv[1]!));
+    const imports = WebAssembly.Module.imports(module).map(({ module, name, kind }) => ({
+      module,
+      name,
+      kind,
+    }));
+    const exports = WebAssembly.Module.exports(module).map(({ name, kind }) => ({ name, kind }));
+    process.stdout.write(`${JSON.stringify({ imports, exports })}\n`);
+    return;
+  }
   if (argv.length === 1 && argv[0] === "--describe") {
     process.stdout.write(`${JSON.stringify(await describeProductProgramInputs())}\n`);
     return;

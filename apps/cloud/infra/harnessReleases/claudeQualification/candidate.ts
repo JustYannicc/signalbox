@@ -10,7 +10,7 @@ import type {
   HarnessCProductMachineService,
   HarnessCProductProgramService,
   HarnessCProductReleaseService,
-} from "../../../src/harness/productBootstrap/contracts.ts";
+} from "../../../src/harness/HarnessCProductCapabilities.ts";
 import type { LoadHarnessReleaseOptions } from "../../../src/harness/HarnessReleaseLoader.ts";
 import { loadHarnessRelease } from "../../../src/harness/HarnessReleaseLoader.ts";
 import { artifactDirectorySource } from "../prepareArtifact.ts";

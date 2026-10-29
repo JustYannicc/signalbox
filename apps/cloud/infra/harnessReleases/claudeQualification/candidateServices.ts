@@ -4,10 +4,12 @@ import type {
   HarnessCProductMachineService,
   HarnessCProductProgramService,
   HarnessCProductReleaseService,
-} from "../../../src/harness/productBootstrap/contracts.ts";
+} from "../../../src/harness/HarnessCProductCapabilities.ts";
 import type { LoadHarnessReleaseOptions } from "../../../src/harness/HarnessReleaseLoader.ts";
-import { productLoadedPreparedRelease } from "../../../src/harness/ProductHarnessProcessRelease.ts";
-import { samePreparedRelease } from "../../../src/harness/processResume/identity.ts";
+import {
+  productLoadedPreparedRelease,
+  samePreparedRelease,
+} from "../../../src/harness/ProductHarnessProcessRelease.ts";
 import { artifactDirectorySource } from "../prepareArtifact.ts";
 import type { ClaudeQualificationComputerInputs } from "./computerInputs.ts";
 import type { ClaudePairCandidate, ClaudeQualificationVariant } from "./contracts.ts";

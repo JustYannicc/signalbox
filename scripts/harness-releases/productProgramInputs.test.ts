@@ -91,6 +91,24 @@ it("checks fetched bytes against their published size and digest", async () => {
   ).rejects.toThrow("PRODUCT_PROGRAM_DOWNLOAD_TOO_LARGE:asset");
 });
 
+it("inspects WASM ABI through the public infra CLI and rejects invalid modules", async () => {
+  const root = await temporaryDirectory();
+  const file = NodePath.join(root, "module.wasm");
+  const entry = NodePath.resolve(
+    import.meta.dirname,
+    "../../apps/cloud/infra/harnessReleases/productProgramInputs.ts",
+  );
+  await NodeFSP.writeFile(file, Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0));
+  const { stdout } = await execFile(process.execPath, [entry, "--inspect-wasm", file], {
+    encoding: "utf8",
+  });
+  expect(JSON.parse(stdout)).toEqual({ imports: [], exports: [] });
+  await NodeFSP.writeFile(file, "invalid WASM");
+  await expect(execFile(process.execPath, [entry, "--inspect-wasm", file])).rejects.toMatchObject({
+    code: 1,
+  });
+});
+
 it("gets current artifact pins through the public infra boundary", async () => {
   const entry = NodePath.resolve(
     import.meta.dirname,

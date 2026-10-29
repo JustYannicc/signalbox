@@ -1,3 +1,5 @@
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import {
@@ -9,8 +11,15 @@ import {
   verifyPinnedBytes,
 } from "./productProgramArchive.ts";
 import { fetchPinned, readResponseBytes, requireHttps } from "./productProgramAssets.ts";
-import { runBuild, writeJsonOnce, writeOnce } from "./productProgramRuntime.ts";
+import {
+  runBuild,
+  safeBuildEnvironment,
+  writeJsonOnce,
+  writeOnce,
+} from "./productProgramRuntime.ts";
 import type { Pin, ProductProgramPinSnapshot } from "./productProgramTypes.ts";
+
+const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
 export async function fetchJq(
   fetchAsset: typeof fetch,
@@ -47,19 +56,31 @@ export async function fetchJq(
   await NodeFSP.writeFile(archivePath, mountTar, { flag: "wx", mode: 0o600 });
   const jqBytes = await readTarMember(archivePath, `./${pins.jqPackage.packageEntry}`);
   verifyPinnedBytes(jqBytes, pins.files.jq!, "jq.wasm");
-  const module = await WebAssembly.compile(jqBytes);
-  const imports = WebAssembly.Module.imports(module)
-    .map(({ module, name, kind }) => ({ module, name, kind }))
-    .sort(compareAbi);
-  const exports = WebAssembly.Module.exports(module)
-    .map(({ name, kind }) => ({ name, kind }))
-    .sort(compareAbi);
+  const candidatePath = NodePath.join(work, "jq.wasm");
+  await writeOnce(candidatePath, jqBytes);
+  const { stdout } = await execFile(
+    process.execPath,
+    [
+      NodePath.resolve(
+        import.meta.dirname,
+        "../../apps/cloud/infra/harnessReleases/productProgramInputs.ts",
+      ),
+      "--inspect-wasm",
+      candidatePath,
+    ],
+    { encoding: "utf8", env: safeBuildEnvironment(), timeout: 30000, maxBuffer: 1048576 },
+  );
+  const inspected: unknown = JSON.parse(stdout);
+  const imports = [...pins.jqPackage.imports].sort(compareAbi);
+  const exports = [...pins.jqPackage.exports].sort(compareAbi);
   if (
-    JSON.stringify(imports) !== JSON.stringify([...pins.jqPackage.imports].sort(compareAbi)) ||
-    JSON.stringify(exports) !== JSON.stringify([...pins.jqPackage.exports].sort(compareAbi))
-  ) {
+    !isRecord(inspected) ||
+    !Array.isArray(inspected.imports) ||
+    !Array.isArray(inspected.exports) ||
+    JSON.stringify(inspected.imports.sort(compareAbi)) !== JSON.stringify(imports) ||
+    JSON.stringify(inspected.exports.sort(compareAbi)) !== JSON.stringify(exports)
+  )
     throw new Error("PRODUCT_PROGRAM_JQ_ABI_MISMATCH");
-  }
   await writeOnce(NodePath.join(output, pins.files.jq!.file), jqBytes);
   const provenance = {
     package: "@agentos-software/jq",
