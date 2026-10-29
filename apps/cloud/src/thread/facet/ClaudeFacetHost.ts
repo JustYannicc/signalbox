@@ -10,6 +10,7 @@ import {
   createProductClaudeHarnessSessionHost,
   type ProductClaudeHarnessHostOptions,
 } from "../../harness/ProductClaudeHarnessSessionHost.ts";
+import { selectProductClaudeHostRelease } from "../../harness/ProductClaudeReleaseSelection.ts";
 import type { Actor } from "../ThreadAccess.ts";
 import { createThreadClaudeSessions } from "../ThreadClaudeSessions.ts";
 import { createThreadHarnessHost } from "../ThreadHarnessHost.ts";
@@ -76,6 +77,10 @@ export const createClaudeFacetHost = <G>(
           if (live !== undefined) yield* stop(options.threadId);
           const scope = yield* Scope.fork(owner);
           yield* Effect.gen(function* () {
+            const selected = yield* Effect.try({
+              try: () => selectProductClaudeHostRelease(options.host),
+              catch: (cause) => failed("Could not select the facet's Claude release.", cause),
+            });
             const binding = yield* createThreadHarnessHost({
               threadId: options.threadId,
               hello: {
@@ -83,7 +88,7 @@ export const createClaudeFacetHost = <G>(
                 generation: request.generation,
                 token: request.token,
                 machineId,
-                imageVersion: options.host.release.identity.artifactHash,
+                imageVersion: selected.release.identity.artifactHash,
               },
               actor: options.actor,
               access: options.access,
@@ -111,6 +116,8 @@ export const createClaudeFacetHost = <G>(
             });
             const host = yield* createProductClaudeHarnessSessionHost({
               ...options.host,
+              release: selected.release,
+              processResumeArtifact: selected.artifact,
               continuations: binding.continuations,
             });
             yield* host.seed("assets");

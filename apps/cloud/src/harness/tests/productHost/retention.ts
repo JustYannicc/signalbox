@@ -11,6 +11,10 @@ import {
   type ProductClaudeHarnessHostOptions,
 } from "../../ProductClaudeHarnessSessionHost.ts";
 import { claudeFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
+import {
+  claudeReleaseArtifact,
+  claudeReleaseVariantsForArtifact,
+} from "./releaseVariants.fixture.ts";
 import { hostSqlite } from "../hostSqlite.ts";
 import { commandLoader, programFixture } from "./commands.ts";
 import { services } from "./adapter.ts";
@@ -112,6 +116,9 @@ async function makeHost(
     ...(await runtimePorts()),
     threadId: "retention-test",
     release: release.options,
+    releaseVariants: claudeReleaseVariantsForArtifact(
+      claudeReleaseArtifact(release.options.identity, "retention-fixture-baseline"),
+    ),
     programs,
     files: {
       identity: "retention-test",

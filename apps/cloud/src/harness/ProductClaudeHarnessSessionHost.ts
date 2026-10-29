@@ -10,6 +10,11 @@ import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
 import type { HarnessHostOptions } from "./HarnessSessionHost.ts";
 import type { HarnessProcessResumePreparedRelease } from "./processResume/contracts.ts";
 import type { HarnessReleaseArtifact } from "../harnessReleases/HarnessReleaseLedger.ts";
+import type { ConfiguredHarnessHook } from "../hooks/HarnessHookSettings.ts";
+import {
+  selectProductClaudeHostRelease,
+  type ProductClaudeReleaseVariants,
+} from "./ProductClaudeReleaseSelection.ts";
 import {
   attachProductLoadedPreparedRelease,
   productLoadedPreparedReleaseObserver,
@@ -51,7 +56,9 @@ export type ProductClaudeHarnessHostOptions<G> = ProductHostOptions<
   ProductClaudeNativeOptions<G>
 > & {
   readonly continuations: HarnessContinuationPublisher;
-  /** Supplied by the process-resume caller; product host selection is never inferred. */
+  readonly releaseVariants: ProductClaudeReleaseVariants;
+  readonly settingsHooks?: readonly ConfiguredHarnessHook[];
+  /** An existing checkpoint pins the variant and must agree with session hook requirements. */
   readonly processResumeArtifact?: HarnessReleaseArtifact;
 };
 
@@ -112,12 +119,28 @@ export const createProductClaudeHarnessSessionHost = <G>(
         }),
       );
 
-    const { processResumeArtifact, ...hostOptions } = options;
-    const releaseObserver = productLoadedPreparedReleaseObserver(
-      "claude-code",
-      processResumeArtifact,
-    );
-    return createProductHost(hostOptions, claudeBinding<G>(releaseObserver.capture)).pipe(
-      Effect.map(attachProductLoadedPreparedRelease<G>(releaseObserver)),
+    const selected = Effect.try({
+      try: () => selectProductClaudeHostRelease(options),
+      catch: (cause) =>
+        new HarnessError({
+          operation: "open",
+          message: "Claude product release selection failed.",
+          cause,
+        }),
+    });
+    const {
+      processResumeArtifact: _processResumeArtifact,
+      releaseVariants: _releaseVariants,
+      settingsHooks: _settingsHooks,
+      ...hostOptions
+    } = options;
+    return selected.pipe(
+      Effect.flatMap(({ artifact, release }) => {
+        const releaseObserver = productLoadedPreparedReleaseObserver("claude-code", artifact);
+        return createProductHost(
+          { ...hostOptions, release },
+          claudeBinding<G>(releaseObserver.capture),
+        ).pipe(Effect.map(attachProductLoadedPreparedRelease<G>(releaseObserver)));
+      }),
     );
   });

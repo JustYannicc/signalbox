@@ -24,6 +24,10 @@ import { adapter, services } from "./adapter.ts";
 import { commandLoader, programFixture } from "./commands.ts";
 import { machineFixture } from "./machine.ts";
 import { continuationNativeFixture } from "./continuationNative.ts";
+import {
+  claudeReleaseArtifact,
+  claudeReleaseVariantsForArtifact,
+} from "./releaseVariants.fixture.ts";
 
 import type { FacetStorage } from "../../../kernel/FacetSqliteStorage.ts";
 
@@ -133,6 +137,9 @@ export const makeContinuationHostInputs = (
     const hostOptions: ProductClaudeHarnessHostOptions<string> = {
       threadId: d.threadId,
       release: release.options,
+      releaseVariants: claudeReleaseVariantsForArtifact(
+        claudeReleaseArtifact(release.options.identity, "thread-fixture-baseline"),
+      ),
       programs,
       machineInventory: machine.inventory,
       files: {

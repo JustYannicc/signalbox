@@ -18,6 +18,7 @@ import { adapter, services } from "../../../tests/productHost/adapter.ts";
 import { commandLoader } from "../../../tests/productHost/commands.ts";
 import { machineFixture } from "../../../tests/productHost/machine.ts";
 import { nativeFixture } from "../../../tests/productHost/native.ts";
+import { claudeReleaseVariantsForArtifact } from "../../../tests/productHost/releaseVariants.fixture.ts";
 import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import {
   fixture,
@@ -33,7 +34,7 @@ export class ClaudeFacet extends createHarnessCProductClaudeFacetClass<
   ProductFixtureEnv,
   ProductFixtureGrant
 >({
-  buildHostOptions: ({ env, ctx }) =>
+  buildHostOptions: ({ env, ctx, selectedRelease }) =>
     Effect.gen(function* () {
       const deps = yield* services;
       const data = yield* dataForDriver(ProviderDriverKind.make("claudeAgent"));
@@ -144,6 +145,7 @@ export class ClaudeFacet extends createHarnessCProductClaudeFacetClass<
       return {
         threadId: data.threadId,
         continuations: { publish: () => Effect.die(new Error("Unexpected fixture continuation.")) },
+        releaseVariants: claudeReleaseVariantsForArtifact(selectedRelease.artifact),
         native: nativeOptions,
         files,
         commands: {
