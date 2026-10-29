@@ -47,7 +47,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          persist-credentials: false
+          # Immediate auth removal traverses orphaned vendored gitlinks, even with sparse checkout.
+          persist-credentials: true
           sparse-checkout: |
             /*
             !/.repos/
@@ -122,7 +123,7 @@ jobs:
             --ripgrep "$RUNNER_TEMP/harness-release-programs/rg.wasm"
 
       - name: Recover cleanup after cancellation or a failed process
-        if: always()
+        if: ${{ always() && steps.run.outcome != 'skipped' }}
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
