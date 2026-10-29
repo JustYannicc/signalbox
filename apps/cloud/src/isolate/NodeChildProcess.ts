@@ -33,6 +33,11 @@ export { NodeChildProcess as ChildProcess, NodeChildProcess };
 export type { NodeChildProcessWithPipes };
 export type { NodeChildProcessOptions, NodeExecOptions, NodeSyncOptions, ExecCallback };
 export type { NodeChildProcessContext, NodeChildProcessTransport };
+export type NodeChildProcessSpawn = ReturnType<typeof normalizeSpawn>;
+export type NodeChildProcessObserver = (
+  child: NodeChildProcess,
+  spawn: NodeChildProcessSpawn,
+) => void;
 
 type DefaultPipedNodeChildProcessOptions = NodeChildProcessOptions & {
   readonly stdio?: "pipe" | null | undefined;
@@ -42,7 +47,7 @@ export function createNodeChildProcess(
   host: KernelProgramHost,
   process: NodeChildProcessContext,
   transport?: NodeChildProcessTransport,
-  onChild?: (child: NodeChildProcess) => void,
+  onChild?: NodeChildProcessObserver,
 ) {
   if (
     !host ||
@@ -106,7 +111,7 @@ export function createNodeChildProcess(
 
   function startChild(normalized: ReturnType<typeof normalizeSpawn>): NodeChildProcess {
     const child = new NodeChildProcess(host, process, normalized, transport);
-    onChild?.(child);
+    onChild?.(child, normalized);
     child.start();
     return child;
   }
