@@ -118,7 +118,7 @@ function readRelease(repository, tag, runGh = callGh) {
     );
   } catch (error) {
     const detail = `${error.stderr ?? ""}\n${error.message ?? ""}`;
-    if (/HTTP 404: Not Found/.test(detail)) return undefined;
+    if (/\(HTTP 404\)/.test(detail)) return undefined;
     throw error;
   }
 }
