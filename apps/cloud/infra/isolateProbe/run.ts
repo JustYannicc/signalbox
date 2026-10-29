@@ -29,6 +29,18 @@ export function probeUrl(output: string, stage: string) {
   return url.toString();
 }
 
+export function probeDeployment(output: string, stage: string) {
+  const url = probeUrl(output, stage);
+  const versions = [...output.matchAll(/\bversionId:\s*(['"])([^'"\s]+)\1/gu)];
+  const versionId = versions.at(-1)?.[2];
+  if (
+    !versionId ||
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(versionId)
+  )
+    throw new Error("Alchemy output did not contain a valid probe version ID.");
+  return { url, versionId };
+}
+
 interface RunOptions {
   fixture?: string;
   output?: string;
@@ -77,14 +89,13 @@ export async function runProbe(
         `Stage file does not authorize automatic cleanup for ${stage}. Recover manually without --stage-file.`,
       );
     const secret = NodeCrypto.randomBytes(32).toString("base64url");
-    const versionId = NodeCrypto.randomUUID();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PROBE_SECRET: secret,
-      PROBE_VERSION_ID: versionId,
     };
     // Never let an ambient shared endpoint choose which Worker receives this run's credential.
     delete env.PROBE_URL;
+    delete env.PROBE_VERSION_ID;
     const failure = (phase: string, result: Awaited<ReturnType<RunProcess>>) =>
       new Error(
         `Probe ${phase} exited ${result.code}.\n${diagnostics(result.stdout, result.stderr, env)}`,
@@ -132,7 +143,7 @@ export async function runProbe(
     try {
       const deployment = await alchemy("deploy");
       if (deployment.code !== 0) throw failure("deployment", deployment);
-      const url = probeUrl(deployment.stdout, stage);
+      const { url, versionId } = probeDeployment(deployment.stdout, stage);
       const routerReady = dependencies.routerReady ?? waitForProbeRouter;
       await routerReady(url, secret, {
         expectedVersionId: versionId,
@@ -149,7 +160,7 @@ export async function runProbe(
           ...(options.output ? ["--output", NodePath.resolve(options.output)] : []),
         ],
         cwd: cloudDir,
-        env: { ...env, PROBE_URL: url },
+        env: { ...env, PROBE_URL: url, PROBE_VERSION_ID: versionId },
         timeoutMs: 600_000,
         ...(options.signal ? { signal: options.signal } : {}),
       });
