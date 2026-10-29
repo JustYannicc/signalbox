@@ -1,0 +1,41 @@
+name: Sweep expired Deploy #3 Workers
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sweep:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: cloud-production
+      deployment: false
+    concurrency:
+      group: deploy3-expiry-sweep
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      DEPLOY3_CONTROL_WRITER_IDS: ${{ vars.DEPLOY3_CONTROL_WRITER_IDS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Install workspace dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Sweep expired deploy3 Workers
+        run: node --experimental-strip-types apps/cloud/infra/deploy3/janitor.ts
