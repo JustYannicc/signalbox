@@ -25,7 +25,9 @@ const inventoryPin = JSON.parse(
     "utf8",
   ),
 ) as { sha256: string };
-const inventoryFile = NodeProcess.env.SIGNALBOX_MACHINE_PATH_INVENTORY_FILE;
+const inventoryFile =
+  NodeProcess.env.SIGNALBOX_MACHINE_METADATA_INVENTORY_FILE ??
+  NodeProcess.env.SIGNALBOX_MACHINE_PATH_INVENTORY_FILE;
 if (NodeProcess.env.GITHUB_ACTIONS === "true" && inventoryFile === undefined)
   throw new Error(
     "ProductComputer lower metadata proof requires the pinned Runner inventory in CI",

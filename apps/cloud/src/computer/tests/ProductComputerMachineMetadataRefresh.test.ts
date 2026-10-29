@@ -39,13 +39,13 @@ const inventoryPin = JSON.parse(
     "utf8",
   ),
 ) as { sha256: string };
+const inventoryFile =
+  NodeProcess.env.SIGNALBOX_MACHINE_METADATA_INVENTORY_FILE ??
+  NodeProcess.env.SIGNALBOX_MACHINE_PATH_INVENTORY_FILE;
 const pinnedInventoryPath =
-  NodeProcess.env.SIGNALBOX_MACHINE_PATH_INVENTORY_FILE ??
+  inventoryFile ??
   new URL("../../../infra/kernelPrograms/machine-files/build/runner.json", import.meta.url);
-if (
-  NodeProcess.env.SIGNALBOX_MACHINE_PATH_INVENTORY_FILE !== undefined &&
-  !NodeFS.existsSync(pinnedInventoryPath)
-)
+if (inventoryFile !== undefined && !NodeFS.existsSync(pinnedInventoryPath))
   throw new Error("Required machine inventory is missing");
 const pinnedInventoryBytes = NodeFS.existsSync(pinnedInventoryPath)
   ? NodeFS.readFileSync(pinnedInventoryPath)

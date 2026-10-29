@@ -279,7 +279,8 @@ jobs:
           SIGNALBOX_REQUIRE_RIPGREP_ARTIFACT: "1"
           SIGNALBOX_REQUIRE_GNU_ARTIFACTS: "1"
           SIGNALBOX_REQUIRE_UGREP_ARTIFACT: "1"
-          SIGNALBOX_MACHINE_PATH_INVENTORY_FILE: ${{ steps.runner_inventory.outputs.path }}
+          # Native symlink regressions use a different frozen inventory.
+          SIGNALBOX_MACHINE_METADATA_INVENTORY_FILE: ${{ steps.runner_inventory.outputs.path }}
         run: |
           # Each package's Vitest pool must share the same runner CPU budget.
           runner_cpus=$(node -p 'require("node:os").availableParallelism()')
