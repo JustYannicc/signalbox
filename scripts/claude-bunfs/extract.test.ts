@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - verifies extracted bytes in temporary Node filesystem fixtures.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -66,7 +67,10 @@ describe("unchanged Bun extraction", () => {
       const output = NodePath.join(directory, "out");
       const events: Record<string, unknown>[] = [];
       const manifest = await extract(binary, output, {
-        diagnostics: (event) => events.push(event),
+        diagnostics: (event) => {
+          expect(NodeFS.readdirSync(directory)).toEqual(["binary"]);
+          events.push(event);
+        },
       });
       const plan = events.find((event) => event.event === "bun-extraction-plan");
       const filesystems = events.filter((event) => event.event === "bun-extraction-filesystem");

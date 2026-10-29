@@ -6,6 +6,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { extract } from "./extract.ts";
+import { preflightReleaseFilesystem } from "./extract-diagnostics.ts";
 
 export const releaseBase =
   "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases";
@@ -165,6 +166,7 @@ export async function extractRelease(
     !["claude", "claude.exe"].includes(String(artifact.binary))
   )
     throw new Error("Invalid official binary metadata");
+  await preflightReleaseFilesystem(directory, options.diagnostics);
   await NodeFSP.mkdir(directory, { recursive: true });
   const binary = NodePath.join(directory, `claude-${version}-${platform}`);
   const output = NodePath.join(directory, `graph-${version}-${platform}`);

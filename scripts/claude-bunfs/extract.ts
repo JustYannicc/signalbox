@@ -111,16 +111,16 @@ export async function extract(
     });
     const binaryHash = NodeCrypto.createHash("sha256");
     for await (const chunk of NodeFS.createReadStream(binary)) binaryHash.update(chunk);
-    stage = await NodeFSP.mkdtemp(`${output}.partial-`);
-    await NodeFSP.mkdir(NodePath.join(stage, ".bun-data"));
     await logExtractionFilesystemPlan({
       binary,
       output,
-      stage,
+      stage: `${output}.partial-*`,
       moduleCount: graph.modules.length,
       hasLinkedBytecode: graph.linkedBytecodePayload !== undefined,
       emit,
     });
+    stage = await NodeFSP.mkdtemp(`${output}.partial-`);
+    await NodeFSP.mkdir(NodePath.join(stage, ".bun-data"));
     const graphFile = materialize
       ? await fileOperations.open(NodePath.join(stage, ".bun-data/graph.bin"), "wx")
       : undefined;

@@ -117,6 +117,64 @@ function diskUsage(flag: "-hP" | "-iP", path: string) {
   }
 }
 
+type FilesystemTarget = {
+  role: string;
+  path: string;
+  auxiliary?: boolean;
+  writeTarget?: boolean;
+  owner?: string;
+};
+
+async function logFilesystemTarget(
+  item: FilesystemTarget,
+  emit: (event: Record<string, unknown>) => void,
+  moduleCount?: number,
+) {
+  let inspectedPath: string;
+  try {
+    inspectedPath = await existingPath(item.path);
+  } catch (error) {
+    emit({
+      event: "bun-extraction-filesystem",
+      role: item.role,
+      targetPath: item.path,
+      status: "path-unavailable",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    if (!item.auxiliary) throw error;
+    return;
+  }
+  const df = [diskUsage("-hP", inspectedPath), diskUsage("-iP", inspectedPath)];
+  emit({
+    event: "bun-extraction-filesystem",
+    role: item.role,
+    targetPath: item.path,
+    inspectedPath,
+    writeTarget: item.writeTarget ?? !item.auxiliary,
+    usedByExtractor: !item.auxiliary,
+    ...(item.owner ? { owner: item.owner } : {}),
+    ...(moduleCount === undefined ? {} : { moduleCount }),
+    df,
+  });
+  if (
+    !item.auxiliary &&
+    df.some(
+      (result) => result.status !== 0 || result.error || result.stdout.split(/\r?\n/u).length < 2,
+    )
+  )
+    throw new Error(`Extraction filesystem measurements unavailable: ${item.role}`);
+}
+
+/** Inspect an existing ancestor before even creating the release directory or download partial. */
+export async function preflightReleaseFilesystem(
+  directory: string,
+  emit: (event: Record<string, unknown>) => void = (event) => {
+    process.stdout.write(`${JSON.stringify(event)}\n`);
+  },
+) {
+  await logFilesystemTarget({ role: "release-directory", path: directory }, emit);
+}
+
 export async function logExtractionFilesystemPlan(input: {
   binary: string;
   output: string;
@@ -128,13 +186,7 @@ export async function logExtractionFilesystemPlan(input: {
   const output = NodePath.resolve(input.output);
   const stage = NodePath.resolve(input.stage);
   const outputParent = NodePath.dirname(output);
-  const paths: {
-    role: string;
-    path: string;
-    auxiliary?: boolean;
-    writeTarget?: boolean;
-    owner?: string;
-  }[] = [
+  const paths: FilesystemTarget[] = [
     { role: "source-binary-read", path: input.binary, writeTarget: false },
     { role: "binary-download-partial", path: `${input.binary}.partial-*`, writeTarget: true },
     { role: "final-output-rename", path: output },
@@ -168,31 +220,11 @@ export async function logExtractionFilesystemPlan(input: {
   ];
 
   for (const item of paths) {
-    let inspectedPath: string;
-    try {
-      inspectedPath = await existingPath(item.path);
-    } catch (error) {
-      inspectedPath = "";
-      input.emit({
-        event: "bun-extraction-filesystem",
-        role: item.role,
-        targetPath: item.path,
-        status: "path-unavailable",
-        error: error instanceof Error ? error.message : String(error),
-      });
-      continue;
-    }
-    input.emit({
-      event: "bun-extraction-filesystem",
-      role: item.role,
-      targetPath: item.path,
-      inspectedPath,
-      writeTarget: item.writeTarget ?? !item.auxiliary,
-      ...(item.auxiliary ? { usedByExtractor: false } : { usedByExtractor: true }),
-      ...(item.owner ? { owner: item.owner } : {}),
-      ...(item.role === "module-artifact-root" ? { moduleCount: input.moduleCount } : {}),
-      df: [diskUsage("-hP", inspectedPath), diskUsage("-iP", inspectedPath)],
-    });
+    await logFilesystemTarget(
+      item,
+      input.emit,
+      item.role === "module-artifact-root" ? input.moduleCount : undefined,
+    );
   }
   input.emit({
     event: "bun-extraction-filesystem-scope",
