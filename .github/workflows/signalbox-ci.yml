@@ -258,6 +258,7 @@ jobs:
       - name: Test
         env:
           TEST_PACKAGES: ${{ needs.cloud_migrations.outputs.test_packages }}
+          TEST_PACKAGE_RUNNERS: 2
           SIGNALBOX_REQUIRE_BASH_ARTIFACT: "1"
           SIGNALBOX_REQUIRE_BUSYBOX_ARTIFACT: "1"
           SIGNALBOX_REQUIRE_COREUTILS_ARTIFACTS: "1"
@@ -266,12 +267,17 @@ jobs:
           SIGNALBOX_REQUIRE_GNU_ARTIFACTS: "1"
           SIGNALBOX_REQUIRE_UGREP_ARTIFACT: "1"
         run: |
+          # Each package's Vitest pool must share the same runner CPU budget.
+          runner_cpus=$(node -p 'require("node:os").availableParallelism()')
+          test_workers=$((runner_cpus / TEST_PACKAGE_RUNNERS))
+          export VITEST_MAX_WORKERS=$((test_workers > 0 ? test_workers : 1))
+          echo "Test budget: $runner_cpus CPUs, $TEST_PACKAGE_RUNNERS packages, $VITEST_MAX_WORKERS Vitest workers per package"
           filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web')
           if [[ -n "$TEST_PACKAGES" ]]; then
             filters=()
             for package in $TEST_PACKAGES; do filters+=(--filter "$package"); done
           fi
-          vp run --parallel --concurrency-limit 2 "${filters[@]}" test
+          vp run --parallel --concurrency-limit "$TEST_PACKAGE_RUNNERS" "${filters[@]}" test
 
   test_web:
     name: Test Web
