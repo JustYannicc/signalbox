@@ -107,6 +107,12 @@ export default {
         "infra/harnessProof/codeMode/local/prepare.mjs",
         "infra/harnessProof/codeMode/local/run.mjs",
         "infra/harnessProof/codeMode/local/proof.ts",
+        // Release tooling launches these CLI boundaries by filename.
+        "infra/harnessReleases/buildClaudeSdkBundle.ts",
+        "infra/harnessReleases/prepareClaudePairCandidateCli.ts",
+        "infra/harnessReleases/productProgramInputs.ts",
+        "infra/harnessReleases/writeClaudeReleaseLedgerCandidateCli.ts",
+        "infra/harnessReleases/claudeQualification/cli.ts",
         "infra/harnessReleases/artifactCli.ts", // signalbox: standalone artifact preparation and publishing CLI.
         "infra/harnessReleases/harnessReleaseCloudflare.ts", // signalbox: deployment tooling launches this subprocess by filename.
         "infra/hooksProof/prepareClaude.ts", // Standalone hook proof builders.
