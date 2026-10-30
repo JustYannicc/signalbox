@@ -81,15 +81,28 @@ describe("Harness artifact preparation", () => {
     await expect(NodeFSP.lstat(codexOutput)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects an unsupported os.getPriority call before publication", async () => {
+  it("preserves a named-error unsupported call in the candidate artifact", async () => {
+    const { sdk, input } = await setup();
+    const source = "import * as os from 'node:os';\nos.getPriority();";
+    await NodeFSP.writeFile(NodePath.join(sdk, "sdk.js"), source);
+
+    const identity = await prepareHarnessArtifact(input);
+    const artifact = await openHarnessReleaseArtifact(
+      identity,
+      artifactDirectorySource(input.output),
+    );
+    expect(new TextDecoder().decode(await artifact.read("sdk/sdk.js"))).toBe(source);
+  });
+
+  it("rejects an unresolved builtin call before publication", async () => {
     const { sdk, input } = await setup();
     await NodeFSP.writeFile(
       NodePath.join(sdk, "sdk.js"),
-      "import * as os from 'node:os';\nos.getPriority();",
+      "import * as os from 'node:os';\nos[globalThis.priorityMethod]();",
     );
 
     await expect(prepareHarnessArtifact(input)).rejects.toThrow(
-      /NODE_BUILTIN_COVERAGE_FAILED: unsupported-functions=os\.getPriority@/u,
+      /NODE_BUILTIN_COVERAGE_FAILED: unresolved-function-calls=dynamic-builtin-member-call@/u,
     );
     await expect(NodeFSP.lstat(input.output)).rejects.toMatchObject({ code: "ENOENT" });
   });

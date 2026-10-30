@@ -1,9 +1,15 @@
 import { object, type FrozenFixture } from "./fixture.ts";
 import {
   assessPublicQualifierResourceEvidence,
+  type ExpectedDeployedQualifierContext,
   type TrustedPublicQualifierResourceEvidence,
 } from "./configuredLimitEvidence.ts";
 import type { HarnessReleaseResourceCriteriaAssessment } from "@t3tools/shared/harnessReleaseResourceCriteria";
+import {
+  assessPublicQualifierBuiltinEvidence,
+  type TrustedPublicQualifierBuiltinEvidence,
+} from "./builtinEvidence.ts";
+import type { NodeBuiltinReachabilityAssessment } from "./nodeBuiltinGate/reachability.ts";
 
 export type ProofEnvironment = "local-workerd" | "deployed";
 
@@ -17,6 +23,7 @@ export const RELEASE_CRITERIA = [
   "mcp",
   "interrupt",
   "publicHarness",
+  "builtinCoverage",
 ] as const;
 
 export type ReleaseCriterion = (typeof RELEASE_CRITERIA)[number];
@@ -25,6 +32,7 @@ export type ReleaseMetric =
   | { readonly state: "unmeasured"; readonly reason: string };
 
 export interface ReleaseCriteriaAssessment {
+  readonly measurementRunId?: string;
   readonly checks: ReadonlyArray<{
     readonly name: ReleaseCriterion;
     readonly status: "pending" | "passed" | "rejected";
@@ -36,6 +44,8 @@ export interface ReleaseCriteriaAssessment {
     readonly peakHeapBytes: ReleaseMetric;
   };
   readonly resourceCriteria?: HarnessReleaseResourceCriteriaAssessment;
+  readonly deployedResourceContext?: ExpectedDeployedQualifierContext;
+  readonly builtinCriteria?: NodeBuiltinReachabilityAssessment;
 }
 
 /** Generic probe verification also accepts results without an assertion. Release proof requires it. */
@@ -107,6 +117,7 @@ export function verifyReleaseCriteria(
   raw: unknown,
   environment: ProofEnvironment,
   trustedResourceEvidence?: TrustedPublicQualifierResourceEvidence,
+  trustedBuiltinEvidence?: TrustedPublicQualifierBuiltinEvidence,
 ): ReleaseCriteriaAssessment {
   const proof = verifyMeasurement(fixture, raw, environment);
   const resourceCriteria =
@@ -119,15 +130,26 @@ export function verifyReleaseCriteria(
           fixtureSha256: fixture.sha256,
           artifactSha256: trustedResourceEvidence.expectedArtifactSha256,
           releaseIdentitySha256: trustedResourceEvidence.expectedReleaseIdentitySha256,
+          ...(trustedResourceEvidence.expectedDeployedContext
+            ? { expectedDeployedContext: trustedResourceEvidence.expectedDeployedContext }
+            : {}),
         });
+  const builtins = trustedBuiltinEvidence
+    ? assessPublicQualifierBuiltinEvidence(trustedBuiltinEvidence, environment, proof.runId)
+    : undefined;
   // The existing probe's `ok` assertion has no scenario contract for these release gates.
   // Only the public Harness proof adapter may establish them when its protocol is available.
   return {
-    checks: RELEASE_CRITERIA.map((name) => ({
-      name,
-      status: "pending",
-      detail: "The public Harness scenario verifier is not available for this fixture.",
-    })),
+    measurementRunId: proof.runId,
+    checks: RELEASE_CRITERIA.map((name) =>
+      name === "builtinCoverage" && builtins
+        ? builtins.check
+        : {
+            name,
+            status: "pending",
+            detail: "The public Harness scenario verifier is not available for this fixture.",
+          },
+    ),
     metrics: {
       moduleBytes: {
         state: "measured",
@@ -143,5 +165,9 @@ export function verifyReleaseCriteria(
       },
     },
     ...(resourceCriteria ? { resourceCriteria } : {}),
+    ...(builtins ? { builtinCriteria: builtins.assessment } : {}),
+    ...(resourceCriteria && trustedResourceEvidence?.expectedDeployedContext
+      ? { deployedResourceContext: trustedResourceEvidence.expectedDeployedContext }
+      : {}),
   };
 }

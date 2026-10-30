@@ -41,10 +41,12 @@ const criteria = [
   "mcp",
   "interrupt",
   "publicHarness",
+  "builtinCoverage",
 ];
 
 type TestMetric = { state: "measured"; value: number } | { state: "unmeasured"; reason: string };
 type TestResult = {
+  provider?: string;
   status: string;
   unchangedSource: string;
   artifact?: { sha256: string };
@@ -54,20 +56,27 @@ type TestResult = {
     string,
     {
       checks: Array<{ name: string; status: string }>;
+      measurementRunId?: string;
       metrics: Record<string, TestMetric>;
       resourceCriteria?: unknown;
+      deployedResourceContext?: typeof deployedResourceContext;
+      builtinCriteria?: unknown;
     }
   >;
 };
 
 const greenResult = (): TestResult => ({
+  provider: "codex",
   status: "green",
   unchangedSource: "passed",
+  artifact: { sha256: "a".repeat(64) },
   environments: Object.fromEntries(
     ["local-workerd", "deployed"].map((environment) => [
       environment,
       {
         checks: criteria.map((name) => ({ name, status: "passed" })),
+        measurementRunId: `${environment}-proof-run`,
+        builtinCriteria: builtinVerdict(environment),
         metrics: {
           moduleBytes: { state: "measured", value: 1 },
           bootTimeMs: { state: "measured", value: 1 },
@@ -78,15 +87,115 @@ const greenResult = (): TestResult => ({
   ) as TestResult["environments"],
 });
 
+const builtinVerdict = (environment: string) => {
+  const artifactSha256 = "a".repeat(64);
+  const sourceSha256 = "d".repeat(64);
+  const siteId = "c".repeat(64);
+  return {
+    schemaVersion: 1,
+    artifactSha256,
+    coverageStatus: environment === "deployed" ? "passed" : "pending",
+    ...(environment === "deployed" ? { qualifiedRunId: "deployed-proof-run" } : {}),
+    observation: {
+      method: "reached by executed range",
+      limitation: "Control-flow reachability only, without call success or invocation counts.",
+    },
+    evidence: {
+      inventory: {
+        schemaVersion: 1,
+        sourceFiles: [
+          { name: "release.js", bytes: 100, sha256: sourceSha256, sourceUtf16Length: 100 },
+        ],
+        callSites: [
+          {
+            siteId,
+            sourceSha256,
+            module: "release.js",
+            startOffset: 10,
+            endOffset: 30,
+            offsetUnit: "utf16-code-units",
+            line: 1,
+            column: 11,
+            specifier: "os",
+            memberPath: ["getPriority"],
+            status: "unsupported",
+            evidence: "Throws the named unsupported error.",
+            failure: { kind: "named-error", code: "NODE_OS_PRIORITY_UNSUPPORTED" },
+          },
+        ],
+        analysisOnlyCallSites: [],
+        missingBuiltins: [],
+        unknownBuiltinSpecifiers: [],
+        ambiguities: [],
+        functionAmbiguities: [],
+      },
+      corpus: {
+        schemaVersion: 1,
+        runs:
+          environment === "local-workerd"
+            ? []
+            : [
+                {
+                  kind: "release-qualification",
+                  runId: "deployed-proof-run",
+                  artifactSha256,
+                  completed: true,
+                  captureState: "complete",
+                  evidenceSha256: "e".repeat(64),
+                  sources: [
+                    {
+                      module: "release.js",
+                      sourceSha256,
+                      invokedSiteIds: [],
+                      executedByteRanges: [
+                        {
+                          startOffset: 40,
+                          endOffset: 50,
+                          offsetUnit: "utf16-code-units",
+                          executionCount: 1,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+      },
+    },
+    blockers: [],
+    reachedSites: [],
+    unmappedAnalysisSites: [],
+    excludedRuns: [],
+    openObligations: [
+      {
+        kind: "unsupported-fail-loud",
+        siteId,
+        module: "release.js",
+        specifier: "os",
+        memberPath: ["getPriority"],
+        failureCode: "NODE_OS_PRIORITY_UNSUPPORTED",
+        state: environment === "deployed" ? "unreached" : "awaiting-coverage",
+      },
+    ],
+  };
+};
+
+const deployedResourceContext = {
+  deploymentId: "deploy-3",
+  loaderId: "claude-loader",
+  facetId: "qualification-facet",
+  responsePlanSha256: "e".repeat(64),
+  expectedResponses: [
+    { id: "run-1", method: "run" },
+    { id: "dispose-1", method: "dispose" },
+  ],
+};
+
 const taggedResourceCriteria = (environment: "local-workerd" | "deployed") => ({
-  tag: "harness-release-resource-criteria-v1",
+  tag: "harness-release-resource-criteria-v2",
   source: "normal-public-qualifier",
   environment,
-  status: "passed",
-  label:
-    environment === "local-workerd"
-      ? "configured-limit completion with measured overshoot"
-      : "platform policy compliance evidence",
+  status: environment === "local-workerd" ? "not-applicable" : "passed",
+  label: "platform policy compliance evidence",
   pins: {
     measurementRunId: `${environment}-proof-run`,
     fixtureId: "fixture-1",
@@ -104,37 +213,37 @@ const taggedResourceCriteria = (environment: "local-workerd" | "deployed") => ({
     includesRpc: true,
     exactBootTime: false,
   },
-  ...(environment === "local-workerd"
+  ...(environment === "deployed"
     ? {
-        configuredLimit: {
-          criterion: "configured-limit completion with measured overshoot",
-          status: "passed",
-          configuredLimitBytes: 64,
-          deltaMaxObservedBytes: 4,
-          safetyMarginBytes: 8,
-          budgetBytes: 128,
-          assessedBytes: 76,
-          budgetFits: true,
-          calibrationComplete: true,
-          workloadCompleted: true,
-          identityVerified: true,
-          strictByteBound: false,
-          detail: "The workload completed and the empirical budget criterion passed.",
-        },
-      }
-    : {
         platformPolicyCompliance: {
           label: "platform policy compliance evidence",
           status: "passed",
-          evidenceSha256: "c".repeat(64),
           identityVerified: true,
+          collectorRecord: {
+            measurementRunId: "deployed-proof-run",
+            deploymentId: deployedResourceContext.deploymentId,
+            loaderId: deployedResourceContext.loaderId,
+            facetId: deployedResourceContext.facetId,
+            selectedReleaseSha256: "a".repeat(64),
+            responsePlanSha256: deployedResourceContext.responsePlanSha256,
+            workloadCompleted: true,
+            beforeProbe: { status: 200, isolateNonce: "isolate-A" },
+            responses: deployedResourceContext.expectedResponses.map((response) => ({
+              ...response,
+              status: 200,
+              isolateNonce: "isolate-A",
+            })),
+            afterProbe: { status: 200, isolateNonce: "isolate-A" },
+          },
         },
-      }),
+      }
+    : {}),
   detail: "Resource evidence passed.",
 });
 
 const greenTaggedResourceResult = () => {
   const result = greenResult();
+  result.provider = "claude-code";
   result.artifact = { sha256: "a".repeat(64) };
   result.fixture = { id: "fixture-1", sha256: "f".repeat(64) };
   result.identity = { sha256: "b".repeat(64) };
@@ -149,6 +258,7 @@ const greenTaggedResourceResult = () => {
     };
     result.environments[environment]!.resourceCriteria = taggedResourceCriteria(environment);
   }
+  result.environments.deployed!.deployedResourceContext = deployedResourceContext;
   return result;
 };
 
@@ -420,55 +530,31 @@ describe("harness release watcher", () => {
     }
   });
 
-  it("refuses rejected, incomplete, malformed, and mislabeled resource claims", () => {
-    const rejectedProfile = greenTaggedResourceResult();
-    const localCriteria = taggedResourceCriteria("local-workerd");
-    if (!("configuredLimit" in localCriteria)) throw new Error("Local criteria missing.");
-    rejectedProfile.environments["local-workerd"]!.resourceCriteria = {
-      ...localCriteria,
-      status: "rejected",
-      configuredLimit: {
-        ...localCriteria.configuredLimit,
-        status: "rejected",
-        configuredLimitBytes: 100_663_296,
-        deltaMaxObservedBytes: 101_195_616,
-        safetyMarginBytes: 8_388_608,
-        budgetBytes: 134_217_728,
-        assessedBytes: 210_247_520,
-        budgetFits: false,
-        calibrationComplete: false,
-        workloadCompleted: false,
-      },
-    };
-    expect(isVerifiedHarnessRelease("green", rejectedProfile)).toBe(false);
+  it("refuses nonce changes, incomplete plans and retired local memory claims", () => {
+    const changed = greenTaggedResourceResult();
+    const deployed = taggedResourceCriteria("deployed");
+    if (!deployed.platformPolicyCompliance) throw new Error("Deployed policy missing");
+    deployed.platformPolicyCompliance.collectorRecord.responses[1]!.isolateNonce = "isolate-B";
+    changed.environments.deployed!.resourceCriteria = deployed;
+    expect(isVerifiedHarnessRelease("green", changed)).toBe(false);
 
-    const forgedGreenProfile = greenTaggedResourceResult();
-    const forgedLocal = forgedGreenProfile.environments["local-workerd"]!.resourceCriteria as {
-      status: string;
-      configuredLimit: Record<string, unknown>;
-    };
-    Object.assign(forgedLocal.configuredLimit, {
-      configuredLimitBytes: 100_663_296,
-      deltaMaxObservedBytes: 101_195_616,
-      safetyMarginBytes: 8_388_608,
-      budgetBytes: 134_217_728,
-      assessedBytes: 210_247_520,
-      budgetFits: false,
-    });
-    expect(isVerifiedHarnessRelease("green", forgedGreenProfile)).toBe(false);
+    const incomplete = greenTaggedResourceResult();
+    const missing = taggedResourceCriteria("deployed");
+    missing.platformPolicyCompliance!.collectorRecord.responses.pop();
+    incomplete.environments.deployed!.resourceCriteria = missing;
+    expect(isVerifiedHarnessRelease("green", incomplete)).toBe(false);
 
-    const forgedCalibration = greenTaggedResourceResult();
-    const local = forgedCalibration.environments["local-workerd"]!.resourceCriteria as {
-      configuredLimit: Record<string, unknown>;
-    };
-    local.configuredLimit.calibrationComplete = "true";
-    expect(isVerifiedHarnessRelease("green", forgedCalibration)).toBe(false);
+    const absentPlan = greenTaggedResourceResult();
+    delete absentPlan.environments.deployed!.deployedResourceContext;
+    expect(isVerifiedHarnessRelease("green", absentPlan)).toBe(false);
 
-    const missingIdentity = greenTaggedResourceResult();
-    const missingIdentityLocal = missingIdentity.environments["local-workerd"]!
-      .resourceCriteria as { configuredLimit: Record<string, unknown> };
-    delete missingIdentityLocal.configuredLimit.identityVerified;
-    expect(isVerifiedHarnessRelease("green", missingIdentity)).toBe(false);
+    const retiredLocal = greenTaggedResourceResult();
+    retiredLocal.environments["local-workerd"]!.resourceCriteria = {
+      ...taggedResourceCriteria("local-workerd"),
+      status: "passed",
+      label: "configured-limit completion with measured overshoot",
+    };
+    expect(isVerifiedHarnessRelease("green", retiredLocal)).toBe(false);
 
     const measuredPeak = greenTaggedResourceResult();
     measuredPeak.environments.deployed!.metrics.peakHeapBytes = { state: "measured", value: 128 };
@@ -476,10 +562,92 @@ describe("harness release watcher", () => {
 
     const mislabeledTiming = greenTaggedResourceResult();
     const timing = mislabeledTiming.environments.deployed!.resourceCriteria as {
-      startupUpperBound: Record<string, unknown>;
+      startupUpperBound: { exactBootTime: boolean };
     };
-    timing.startupUpperBound.interpretation = "exact boot time";
+    timing.startupUpperBound.exactBootTime = true;
     expect(isVerifiedHarnessRelease("green", mislabeledTiming)).toBe(false);
+  });
+
+  it("requires a complete deployed builtin verdict and retains fail-loud obligations", () => {
+    const result = greenTaggedResourceResult();
+    const local = result.environments["local-workerd"]!;
+    const deployed = result.environments.deployed!;
+    const obligation = {
+      kind: "unsupported-fail-loud",
+      siteId: "c".repeat(64),
+      module: "release.js",
+      specifier: "os",
+      memberPath: ["getPriority"],
+      failureCode: "NODE_OS_PRIORITY_UNSUPPORTED",
+      state: "unreached",
+    };
+    const verdict = deployed.builtinCriteria as Record<string, unknown>;
+    verdict.openObligations = [obligation];
+    expect(isVerifiedHarnessRelease("green", result)).toBe(true);
+    obligation.state = "awaiting-coverage";
+    expect(isVerifiedHarnessRelease("green", result)).toBe(false);
+    obligation.state = "unreached";
+    obligation.failureCode = "";
+    expect(isVerifiedHarnessRelease("green", result)).toBe(false);
+    obligation.failureCode = "NODE_OS_PRIORITY_UNSUPPORTED";
+    verdict.blockers = ["unknown call"];
+    expect(isVerifiedHarnessRelease("green", result)).toBe(false);
+    verdict.blockers = [];
+    delete local.builtinCriteria;
+    expect(isVerifiedHarnessRelease("green", result)).toBe(false);
+  });
+
+  it("rejects omitted obligations and capture-not-started even when summary flags stay green", () => {
+    const missingObligations = greenTaggedResourceResult();
+    const missing = builtinVerdict("deployed");
+    missing.openObligations = [];
+    missingObligations.environments.deployed!.builtinCriteria = missing;
+    expect(isVerifiedHarnessRelease("green", missingObligations)).toBe(false);
+
+    const absentCapture = greenTaggedResourceResult();
+    const absent = builtinVerdict("deployed");
+    absent.evidence.corpus.runs[0]!.captureState = "not-started";
+    absent.evidence.corpus.runs[0]!.sources[0]!.executedByteRanges = [];
+    absentCapture.environments.deployed!.builtinCriteria = absent;
+    expect(isVerifiedHarnessRelease("green", absentCapture)).toBe(false);
+  });
+
+  it("recomputes inherited reached paths before accepting an unreached obligation", () => {
+    const serialized = new Function(
+      `${HARNESS_RELEASE_POLICY_SOURCE}\nreturn isVerifiedHarnessRelease;`,
+    )() as typeof isVerifiedHarnessRelease;
+    const result = greenTaggedResourceResult();
+    const verdict = builtinVerdict("deployed");
+    const originalArtifact = "f".repeat(64);
+    const historical = {
+      ...verdict.evidence.corpus.runs[0]!,
+      kind: "a-series-replay",
+      runId: "A34",
+      artifactSha256: originalArtifact,
+      sources: verdict.evidence.corpus.runs[0]!.sources.map((source) => ({
+        ...source,
+        invokedSiteIds: ["c".repeat(64)],
+      })),
+    };
+    result.environments.deployed!.builtinCriteria = {
+      ...verdict,
+      evidence: {
+        ...verdict.evidence,
+        corpus: {
+          ...verdict.evidence.corpus,
+          runs: [...verdict.evidence.corpus.runs, historical],
+          inheritedArtifacts: [
+            {
+              release: "303",
+              artifactSha256: originalArtifact,
+              inventory: verdict.evidence.inventory,
+            },
+          ],
+        },
+      },
+    };
+    expect(isVerifiedHarnessRelease("green", result)).toBe(false);
+    expect(serialized("green", result)).toBe(false);
   });
 
   it("round-trips the resource guard in serialized watcher policy source", () => {

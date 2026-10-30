@@ -222,12 +222,34 @@ export function scanBuiltinSource(input: BuiltinSource) {
     requires,
     fallbacks.initializers,
   );
+  const sourceSha256 = NodeCrypto.createHash("sha256").update(input.source).digest("hex");
+  const requiredFunctions = functionInventory.requiredFunctions.map((call) => {
+    const startOffset = call.startOffset;
+    const endOffset = call.endOffset;
+    if (startOffset === undefined || endOffset === undefined || endOffset <= startOffset)
+      throw new Error(`NODE_BUILTIN_CALLSITE_RANGE_INVALID: ${input.name}`);
+    const siteId = NodeCrypto.createHash("sha256")
+      .update(
+        JSON.stringify([
+          input.name,
+          sourceSha256,
+          startOffset,
+          endOffset,
+          call.specifier.replace(/^node:/u, ""),
+          call.memberPath,
+        ]),
+      )
+      .digest("hex");
+    return { ...call, siteId };
+  });
   return {
     name: input.name,
     bytes: Buffer.byteLength(input.source),
-    sha256: NodeCrypto.createHash("sha256").update(input.source).digest("hex"),
+    sha256: sourceSha256,
+    sourceUtf16Length: input.source.length,
     requiredSpecifiers: [...references].sort(),
     ambiguities,
     ...functionInventory,
+    requiredFunctions,
   };
 }

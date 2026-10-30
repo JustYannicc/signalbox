@@ -11,14 +11,28 @@ import {
 import { scanBuiltinSource, type BuiltinSource } from "./nodeBuiltinGate/source.ts";
 import { linkPublishedSources } from "./nodeBuiltinGate/publishedGraph.ts";
 import { readPublishedBuiltinSources } from "./nodeBuiltinGate/published.ts";
+import {
+  assessNodeBuiltinReachability,
+  createNodeBuiltinReachabilityInventory,
+  type BuiltinReachabilityCorpus,
+  type NodeBuiltinReachabilityAssessment,
+  type NodeBuiltinReachabilityInventory,
+} from "./nodeBuiltinGate/reachability.ts";
 
 export { scanBuiltinSource } from "./nodeBuiltinGate/source.ts";
 export type { BuiltinSource } from "./nodeBuiltinGate/source.ts";
+export {
+  assessNodeBuiltinReachability,
+  type BuiltinReachabilityCorpus,
+  type NodeBuiltinReachabilityAssessment,
+  type NodeBuiltinReachabilityInventory,
+};
 
 /** Runs before publication, including when provider components came from a build cache. */
 export async function assertPackagedBuiltinCoverage(
   sources: readonly BuiltinSource[],
   runtimeInventory?: RuntimeBuiltinInventory,
+  reachabilitySources: readonly BuiltinSource[] = sources,
 ) {
   const inventory = sources.map(scanBuiltinSource);
   const requiredFunctions = inventory.flatMap((entry) => entry.requiredFunctions);
@@ -33,8 +47,19 @@ export async function assertPackagedBuiltinCoverage(
     functionAmbiguities: inventory.flatMap((entry) => entry.functionAmbiguities),
   });
   assertNodeBuiltinCoverage(report);
+  const sourceByName = new Map(inventory.map((source) => [source.name, source]));
+  const sourceInventory = reachabilitySources.map((source) => {
+    const scanned = sourceByName.get(source.name);
+    if (!scanned) throw new Error("NODE_BUILTIN_REACHABILITY_SOURCE_BINDING_MISMATCH");
+    return scanned;
+  });
   return {
     ...report,
+    reachabilityInventory: createNodeBuiltinReachabilityInventory(
+      report,
+      sourceInventory,
+      inventory,
+    ),
     runtimeProfile: installed.profile,
     ...(installed.capture === undefined ? {} : { runtimeCapture: installed.capture }),
     sources: inventory,
@@ -45,14 +70,22 @@ export async function assertPackagedBuiltinCoverage(
 export async function assertPublishedBuiltinCoverage(
   directory: string,
   runtimeInventory?: RuntimeBuiltinInventory,
+  reachabilityCorpus?: BuiltinReachabilityCorpus,
 ) {
   const { sources, artifact, omission, partitioned } = await readPublishedBuiltinSources(directory);
+  const analysisSources = partitioned ? [...sources, await linkPublishedSources(sources)] : sources;
+  const scanned = await assertPackagedBuiltinCoverage(analysisSources, runtimeInventory, sources);
+  const reachability = assessNodeBuiltinReachability({
+    artifactSha256: artifact.sha256,
+    inventory: scanned.reachabilityInventory,
+    ...(reachabilityCorpus === undefined ? {} : { corpus: reachabilityCorpus }),
+  });
+  if (reachability.coverageStatus === "rejected")
+    throw new Error(`NODE_BUILTIN_REACHABILITY_FAILED: ${reachability.blockers.join("; ")}`);
   return {
-    ...(await assertPackagedBuiltinCoverage(
-      partitioned ? [...sources, await linkPublishedSources(sources)] : sources,
-      runtimeInventory,
-    )),
+    ...scanned,
     artifact,
+    reachability,
     ...(omission === undefined ? {} : { omission }),
   };
 }
@@ -69,5 +102,43 @@ export async function assertExtractedBuiltinCoverage(directory: string) {
       format: module.format,
     });
   }
-  return assertPackagedBuiltinCoverage(sources);
+  const coverage = await assertPackagedBuiltinCoverage(sources);
+  return {
+    ...coverage,
+    sourceArtifactSha256: extraction.manifest.binary.sha256,
+  };
+}
+
+/** Produces exact-source callsite offsets for offline joins with V8 range evidence. */
+export async function scanExtractedBuiltinSources(directory: string) {
+  const extraction = await readExtraction(directory);
+  const sources: BuiltinSource[] = [];
+  for (const module of extraction.manifest.modules) {
+    if (module.loader !== 1) continue;
+    sources.push({
+      name: module.name,
+      source: await extraction.readSource(module),
+      format: module.format,
+    });
+  }
+  const inventory = sources.map(scanBuiltinSource);
+  return {
+    sourceArtifactSha256: extraction.manifest.binary.sha256,
+    sources: inventory.map((source) => {
+      const module = extraction.manifest.modules.find((item) => item.name === source.name);
+      const payloadSha256 = module?.artifacts.contents?.sha256;
+      if (!payloadSha256) throw new Error("NODE_BUILTIN_SOURCE_PAYLOAD_PIN_MISSING");
+      return {
+        name: source.name,
+        bytes: source.bytes,
+        sha256: source.sha256,
+        sourceUtf16Length: source.sourceUtf16Length,
+        payloadSha256,
+        requiredSpecifiers: source.requiredSpecifiers,
+        ambiguities: source.ambiguities,
+        requiredFunctions: source.requiredFunctions,
+        functionAmbiguities: source.functionAmbiguities,
+      };
+    }),
+  };
 }

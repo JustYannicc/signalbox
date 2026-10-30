@@ -19,6 +19,10 @@ export interface NodeBuiltinFunctionCapability {
   readonly memberPath: readonly string[];
   readonly status: NodeBuiltinFunctionStatus;
   readonly evidence: string;
+  readonly failure?: {
+    readonly kind: "named-error";
+    readonly code: string;
+  };
 }
 
 export interface NodeBuiltinFunctionCall {
@@ -27,6 +31,12 @@ export interface NodeBuiltinFunctionCall {
   readonly module: string;
   readonly line: number;
   readonly column: number;
+  /** TypeScript source offsets are UTF-16 code units, matching V8's script ranges. */
+  readonly startOffset?: number;
+  readonly endOffset?: number;
+  readonly offsetUnit?: "utf16-code-units";
+  /** Stable for one exact module body, source location, builtin and export. */
+  readonly siteId?: string;
   readonly guard?: {
     readonly kind: "feature-test" | "optional-call" | "caught-call";
     readonly expression: string;
@@ -65,13 +75,34 @@ export interface NodeBuiltinCoverageReport {
   readonly requiredFunctions: readonly (NodeBuiltinFunctionCall & {
     readonly status: NodeBuiltinFunctionStatus | "guarded";
     readonly evidence: string;
+    readonly failure?: NodeBuiltinFunctionCapability["failure"];
   })[];
   readonly functionAmbiguities: readonly (NodeBuiltinAmbiguity & {
     readonly severity: "warning" | "error";
   })[];
 }
 
+export interface NodeBuiltinSourceInventory {
+  readonly name: string;
+  readonly bytes: number;
+  readonly sha256: string;
+  readonly sourceUtf16Length: number;
+}
+
 const compare = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
+
+export function isNamedRuntimeFailure(
+  value: unknown,
+): value is { readonly kind: "named-error"; readonly code: string } {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    Object.keys(candidate).length === 2 &&
+    candidate.kind === "named-error" &&
+    typeof candidate.code === "string" &&
+    /^[A-Z][A-Z0-9_]{1,127}$/u.test(candidate.code)
+  );
+}
 
 function canonicalSpecifier(specifier: string): string {
   return specifier.startsWith("node:") ? specifier.slice("node:".length) : specifier;
@@ -135,14 +166,20 @@ export function inspectNodeBuiltinCoverage(
           ? "missing"
           : duplicateCapabilityKeys.has(key)
             ? "unknown"
-            : (capability?.status ?? "unknown");
+            : capability?.failure !== undefined &&
+                (capability.status !== "unsupported" || !isNamedRuntimeFailure(capability.failure))
+              ? "unknown"
+              : (capability?.status ?? "unknown");
       const evidence = !known.has(specifier)
         ? `unknown builtin ${call.specifier}`
         : !installed.has(specifier)
           ? `${specifier} is absent from the constructed public Node personality`
           : duplicateCapabilityKeys.has(key)
             ? "conflicting runtime capability records"
-            : (capability?.evidence ?? "runtime inventory has no evidence for this function");
+            : capability?.failure !== undefined &&
+                (capability.status !== "unsupported" || !isNamedRuntimeFailure(capability.failure))
+              ? "invalid fail-loud declaration; named errors are valid only for unsupported callables"
+              : (capability?.evidence ?? "runtime inventory has no evidence for this function");
       if (status === "missing" && installed.has(specifier) && call.guard) {
         return {
           ...call,
@@ -151,7 +188,13 @@ export function inspectNodeBuiltinCoverage(
           evidence: `${evidence}; call skipped when absent by ${call.guard.expression}`,
         };
       }
-      return { ...call, specifier, status, evidence };
+      return {
+        ...call,
+        specifier,
+        status,
+        evidence,
+        ...(capability?.failure && status === "unsupported" ? { failure: capability.failure } : {}),
+      };
     })
     .sort(
       (left, right) =>
@@ -164,10 +207,7 @@ export function inspectNodeBuiltinCoverage(
   const functionAmbiguities = [...(input.functionAmbiguities ?? [])]
     .map((ambiguity) => ({
       ...ambiguity,
-      severity:
-        ambiguity.kind === "dynamic-builtin-member-call"
-          ? ("warning" as const)
-          : ("error" as const),
+      severity: "error" as const,
     }))
     .sort(
       (left, right) =>
@@ -184,11 +224,12 @@ export function inspectNodeBuiltinCoverage(
     status:
       missingBuiltins.length ||
       unknownBuiltinSpecifiers.length ||
+      ambiguities.length > 0 ||
       requiredFunctions.some(
         (call) =>
           call.status !== "supported" &&
           call.status !== "platform-pruned" &&
-          call.status !== "guarded",
+          !(call.status === "unsupported" && isNamedRuntimeFailure(call.failure)),
       ) ||
       functionAmbiguities.some((ambiguity) => ambiguity.severity === "error")
         ? "fail"
@@ -210,6 +251,11 @@ export function assertNodeBuiltinCoverage(report: NodeBuiltinCoverageReport): vo
   );
   const details = [
     report.missingBuiltins.length ? `missing=${report.missingBuiltins.join(",")}` : undefined,
+    report.ambiguities.length
+      ? `unresolved-imports=${report.ambiguities
+          .map((call) => `${call.kind}@${call.module}:${call.line}:${call.column}`)
+          .join(",")}`
+      : undefined,
     report.unknownBuiltinSpecifiers.length
       ? `unknown=${report.unknownBuiltinSpecifiers.join(",")}`
       : undefined,
@@ -223,6 +269,19 @@ export function assertNodeBuiltinCoverage(report: NodeBuiltinCoverageReport): vo
         )
         .join(",")}`;
     }),
+    ...(() => {
+      const calls = report.requiredFunctions.filter((call) => call.status === "guarded");
+      return calls.length
+        ? [
+            `guarded-missing-functions=${calls
+              .map(
+                (call) =>
+                  `${call.specifier}.${call.memberPath.join(".") || "<default>"}@${call.module}:${call.line}:${call.column} (${call.evidence})`,
+              )
+              .join(",")}`,
+          ]
+        : [];
+    })(),
     blockingAmbiguities.length
       ? `unresolved-function-calls=${blockingAmbiguities
           .map((call) => `${call.kind}@${call.module}:${call.line}:${call.column}`)
