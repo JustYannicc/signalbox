@@ -1,6 +1,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
+import { isNamedRuntimeFailure } from "./nodeBuiltinGate/coverage.ts";
 import type {
   NodeBuiltinFunctionCall,
   NodeBuiltinFunctionCapability,
@@ -131,6 +132,7 @@ function parseRuntimeBuiltinInventory(value: unknown): RuntimeBuiltinInventory {
     const memberPath = Reflect.get(functionRecord, "memberPath");
     const status = Reflect.get(functionRecord, "status");
     const evidence = Reflect.get(functionRecord, "evidence");
+    const failure = Reflect.get(functionRecord, "failure");
     if (
       typeof specifier !== "string" ||
       !specifier ||
@@ -138,7 +140,8 @@ function parseRuntimeBuiltinInventory(value: unknown): RuntimeBuiltinInventory {
       typeof status !== "string" ||
       !functionStatuses.has(status as NodeBuiltinFunctionStatus) ||
       typeof evidence !== "string" ||
-      !evidence
+      !evidence ||
+      (failure !== undefined && (status !== "unsupported" || !isNamedRuntimeFailure(failure)))
     )
       throw new Error("NODE_BUILTIN_RUNTIME_INVENTORY_INVALID");
     capabilities.push({
@@ -146,6 +149,7 @@ function parseRuntimeBuiltinInventory(value: unknown): RuntimeBuiltinInventory {
       memberPath,
       status: status as NodeBuiltinFunctionStatus,
       evidence,
+      ...(failure === undefined ? {} : { failure }),
     });
   }
   const capture = Reflect.get(value, "capture");

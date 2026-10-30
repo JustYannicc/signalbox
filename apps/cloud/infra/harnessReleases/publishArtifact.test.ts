@@ -4,9 +4,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { openHarnessReleaseArtifact } from "../../src/harnessReleases/HarnessReleaseArtifact.ts";
-import { harnessArtifactKey } from "../../src/harnessReleases/HarnessReleaseArtifactBucket.ts";
+import {
+  createHarnessArtifactAssetSource,
+  harnessArtifactKey,
+} from "../../src/harnessReleases/HarnessReleaseAssetSource.ts";
 import { prepareHarnessArtifact } from "./prepareArtifact.ts";
-import { cloudflareHarnessArtifactStore, publishHarnessArtifact } from "./publishArtifact.ts";
+import { directoryHarnessArtifactStore, publishHarnessArtifact } from "./publishArtifact.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -160,10 +163,20 @@ describe("Harness artifact publication", () => {
       },
     };
     const result = await publishHarnessArtifact(identity, output, { store, projectId: "alpha" });
-    const source = {
-      read: async (reference: string, path: string) =>
-        store.read(harnessArtifactKey("alpha", reference, path)),
-    };
+    const source = createHarnessArtifactAssetSource(
+      {
+        fetch: async (request) => {
+          const key = new URL(request.url).pathname
+            .slice(1)
+            .split("/")
+            .map(decodeURIComponent)
+            .join("/");
+          return new Response(Uint8Array.from(await store.read(key)).buffer);
+        },
+      },
+      "alpha",
+      result.assetIndex,
+    );
     const reopened = await openHarnessReleaseArtifact(identity, source);
     expect(Array.from(await reopened.read("codex/engine.wasm"))).toEqual([0, 97, 115, 109]);
     expect(result.artifactRef).toBe(identity.artifactRef);
@@ -222,27 +235,16 @@ describe("Harness artifact publication", () => {
     expect(writes).toEqual([]);
   });
 
-  it("escapes literal object-key percent characters once in the Cloudflare request", async () => {
-    const urls: string[] = [];
-    const store = cloudflareHarnessArtifactStore({
-      account: "a".repeat(32),
-      bucket: "example-bucket",
-      token: "test-token",
-      fetcher: async (request) => {
-        urls.push(String(request));
-        return Response.json({ success: true });
-      },
-    });
-    await store.put("harness-releases/alpha/cli/chunks/%2F%24bunfs.js", new Uint8Array([1]));
-    expect(urls[0]).toContain("/cli/chunks/%252F%2524bunfs.js");
-    const refused = cloudflareHarnessArtifactStore({
-      account: "a".repeat(32),
-      bucket: "example-bucket",
-      token: "test-token",
-      fetcher: async () => Response.json({ success: false }),
-    });
-    await expect(refused.put("manifest.json", new Uint8Array())).rejects.toThrow(
-      "HARNESS_ARTIFACT_STORAGE_WRITE_REJECTED",
+  it("deduplicates identical stored chunks and refuses a different payload at the same path", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "1072-deploy-assets-"));
+    roots.push(root);
+    const store = directoryHarnessArtifactStore(root);
+    const key = "chunks/test.bin";
+    await store.put(key, new Uint8Array([1]));
+    await store.put(key, new Uint8Array([1]));
+    await expect(store.put(key, new Uint8Array([2]))).rejects.toThrow(
+      "HARNESS_ARTIFACT_ASSET_COLLISION",
     );
+    expect(Array.from(await store.read(key))).toEqual([1]);
   });
 });

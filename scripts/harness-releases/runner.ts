@@ -18,11 +18,16 @@ import {
 } from "./releaseIdentity.ts";
 import { assertSourcesUnchanged, freezeSources, type SourceFreeze } from "./sourceFreeze.ts";
 import { assertPathOutside, relativePathWithin } from "./pathContainment.ts";
-import type { NormalPublicQualifierResourceEvidence } from "./configuredLimitEvidence.ts";
+import type {
+  ExpectedDeployedQualifierContext,
+  NormalPublicQualifierResourceEvidence,
+} from "./configuredLimitEvidence.ts";
 import {
   isHarnessReleaseResourceCriteriaAssessment,
   type ExpectedHarnessReleaseResourcePins,
 } from "@t3tools/shared/harnessReleaseResourceCriteria";
+import type { PublicQualifierBuiltinEvidence } from "./builtinEvidence.ts";
+import { isHarnessReleaseBuiltinCriteriaAssessment } from "@t3tools/shared/harnessReleaseBuiltinCriteria";
 
 export class PendingReleaseProof extends Error {}
 export type GateStatus = "passed" | "pending" | "rejected";
@@ -57,7 +62,20 @@ export interface ReleaseOperations {
     readonly artifactSha256: string;
     readonly environment: ProofEnvironment;
     readonly measurementRunId: string;
-  }): Promise<NormalPublicQualifierResourceEvidence | undefined>;
+  }): Promise<
+    | {
+        readonly evidence: NormalPublicQualifierResourceEvidence;
+        readonly expectedDeployedContext?: ExpectedDeployedQualifierContext;
+      }
+    | undefined
+  >;
+  normalPublicQualifierBuiltinEvidence?(input: {
+    readonly context: ReleaseContext;
+    readonly fixture: FrozenFixture;
+    readonly artifactSha256: string;
+    readonly environment: ProofEnvironment;
+    readonly measurementRunId: string;
+  }): Promise<PublicQualifierBuiltinEvidence | undefined>;
   cleanup(context: ReleaseContext): Promise<void>;
   publish?(context: ReleaseContext): Promise<void>;
   assess?: typeof verifyReleaseCriteria;
@@ -105,6 +123,27 @@ function assessmentStatus(
   )
     throw new Error("RELEASE_CRITERIA_INCOMPLETE");
   if (assessment.checks.some((check) => check.status === "rejected")) return "rejected";
+  if (assessment.builtinCriteria !== undefined) {
+    if (assessment.builtinCriteria.coverageStatus === "rejected") return "rejected";
+    if (
+      expectedResourcePins?.environment === "deployed" &&
+      assessment.builtinCriteria.coverageStatus === "pending"
+    )
+      return "pending";
+    if (
+      (expectedResourcePins?.environment !== "local-workerd" &&
+        expectedResourcePins?.environment !== "deployed") ||
+      !expectedResourcePins.artifactSha256 ||
+      !isHarnessReleaseBuiltinCriteriaAssessment(assessment.builtinCriteria, {
+        environment: expectedResourcePins.environment,
+        artifactSha256: expectedResourcePins.artifactSha256,
+        ...(expectedResourcePins.measurementRunId
+          ? { measurementRunId: expectedResourcePins.measurementRunId }
+          : {}),
+      })
+    )
+      throw new Error("RELEASE_BUILTIN_ASSESSMENT_INVALID");
+  }
   const metrics = (["moduleBytes", "bootTimeMs", "peakHeapBytes"] as const).map(
     (name) => assessment.metrics[name],
   );
@@ -328,7 +367,6 @@ export async function runRelease(
             artifactSha256: artifact!.sha256,
             releaseIdentitySha256: identity!.sha256,
           } satisfies ExpectedHarnessReleaseResourcePins;
-          resourcePins[environment] = expectedPins;
           const qualifierEvidence = await operations.normalPublicQualifierResourceEvidence?.({
             context: current,
             fixture: frozen,
@@ -340,35 +378,74 @@ export async function runRelease(
             qualifierEvidence === undefined
               ? undefined
               : {
-                  evidence: qualifierEvidence,
+                  ...qualifierEvidence,
                   expectedArtifactSha256: artifact!.sha256,
                   expectedReleaseIdentitySha256: identity!.sha256,
                 };
+          const builtinEvidence = await operations.normalPublicQualifierBuiltinEvidence?.({
+            context: current,
+            fixture: frozen,
+            artifactSha256: artifact!.sha256,
+            environment,
+            measurementRunId: verified.runId,
+          });
+          const trustedBuiltinEvidence = builtinEvidence
+            ? { ...builtinEvidence, expectedArtifactSha256: artifact!.sha256 }
+            : undefined;
+          const pinnedResourceContext = {
+            ...expectedPins,
+            ...(qualifierEvidence?.expectedDeployedContext
+              ? { deployedContext: qualifierEvidence.expectedDeployedContext }
+              : {}),
+          };
+          resourcePins[environment] = pinnedResourceContext;
           const resourceAssessment = verifyReleaseCriteria(
             frozen,
             raw,
             environment,
             trustedResourceEvidence,
+            trustedBuiltinEvidence,
           );
           const behaviorAssessment =
             operations.assess && operations.assess !== verifyReleaseCriteria
-              ? operations.assess(frozen, raw, environment, trustedResourceEvidence)
+              ? operations.assess(
+                  frozen,
+                  raw,
+                  environment,
+                  trustedResourceEvidence,
+                  trustedBuiltinEvidence,
+                )
               : resourceAssessment;
-          const assessment =
-            trustedResourceEvidence === undefined
-              ? behaviorAssessment
-              : {
-                  ...behaviorAssessment,
-                  metrics: {
-                    ...behaviorAssessment.metrics,
+          const requiresClaudePolicy = current.identity.provider !== "codex";
+          const assessment = {
+            measurementRunId: verified.runId,
+            checks: behaviorAssessment.checks.map((check) =>
+              check.name === "builtinCoverage"
+                ? resourceAssessment.checks.find((item) => item.name === check.name)!
+                : check,
+            ),
+            metrics: {
+              ...behaviorAssessment.metrics,
+              ...(trustedResourceEvidence !== undefined || requiresClaudePolicy
+                ? {
                     bootTimeMs: resourceAssessment.metrics.bootTimeMs,
                     peakHeapBytes: resourceAssessment.metrics.peakHeapBytes,
-                  },
-                  resourceCriteria: resourceAssessment.resourceCriteria!,
-                };
+                  }
+                : {}),
+            },
+            ...(resourceAssessment.resourceCriteria
+              ? { resourceCriteria: resourceAssessment.resourceCriteria }
+              : {}),
+            ...(resourceAssessment.deployedResourceContext
+              ? { deployedResourceContext: resourceAssessment.deployedResourceContext }
+              : {}),
+            ...(resourceAssessment.builtinCriteria
+              ? { builtinCriteria: resourceAssessment.builtinCriteria }
+              : {}),
+          };
           environments[environment] = assessment;
           await writeOnce(NodePath.join(output, `${environment}-criteria.json`), assessment);
-          if (assessmentStatus(assessment, expectedPins) === "rejected")
+          if (assessmentStatus(assessment, pinnedResourceContext) === "rejected")
             throw new Error("RELEASE_CRITERION_REJECTED");
           return assessment;
         } finally {

@@ -277,6 +277,8 @@ export function createProcessOperations(
                 "apps/cloud/infra/harnessReleases/artifactCli.ts",
                 "--mode",
                 "publish-claude-variants",
+                "--assets-directory",
+                NodePath.join(context.output, "deployment-assets"),
                 "--ledger",
                 input.ledger,
                 "--baseline-release",

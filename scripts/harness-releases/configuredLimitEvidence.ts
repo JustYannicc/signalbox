@@ -1,43 +1,28 @@
 import {
+  isExpectedDeployedContext,
+  isCollectorRecord,
+  type ExpectedDeployedQualifierContext,
+} from "./deployedNonceCollector.ts";
+export type { ExpectedDeployedQualifierContext } from "./deployedNonceCollector.ts";
+import {
   isHarnessReleaseResourceCriteriaAssessment,
+  type HarnessReleaseDeployedCollectorRecord,
+  type HarnessReleasePlatformPolicyEvidence,
   type HarnessReleaseResourceCriteriaAssessment,
-  type HarnessReleaseResourceStatus,
   type HarnessReleaseStartupUpperBound,
 } from "@t3tools/shared/harnessReleaseResourceCriteria";
 import {
-  assessConfiguredLimitCompletion,
   classifyV8Termination,
-  CONFIGURED_LIMIT_CRITERION,
   DEPLOYED_POLICY_CRITERION,
-  type ConfiguredLimitCompletionInput,
   type V8TerminationEvidence,
 } from "./configuredLimit.ts";
 
-export const RESOURCE_EVIDENCE_TAG = "harness-release-resource-evidence-v1" as const;
-
-export interface ResourceEvidencePins {
-  readonly environment: "local-workerd" | "deployed";
-  readonly measurementRunId: string;
-  readonly fixtureId: string;
-  readonly fixtureSha256: string;
-  readonly artifactSha256: string;
-  readonly releaseIdentitySha256: string;
-}
-
-export interface PublicQualifierConfiguredLimitInput {
-  readonly configuredLimitBytes: number;
-  readonly deltaMaxObservedBytes: number;
-  readonly safetyMarginBytes: number;
-  readonly budgetBytes: number;
-  readonly calibrationComplete?: unknown;
-  readonly workloadCompleted?: unknown;
-  readonly identityVerified?: unknown;
-}
+export const RESOURCE_EVIDENCE_TAG = "harness-release-resource-evidence-v2" as const;
 
 export interface NormalPublicQualifierResourceEvidence {
   readonly tag: typeof RESOURCE_EVIDENCE_TAG;
   readonly source: "normal-public-qualifier";
-  readonly environment: ResourceEvidencePins["environment"];
+  readonly environment: "local-workerd" | "deployed";
   readonly measurementRunId: string;
   readonly fixtureId: string;
   readonly fixtureSha256: string;
@@ -46,15 +31,12 @@ export interface NormalPublicQualifierResourceEvidence {
   readonly startupTiming: HarnessReleaseStartupUpperBound;
   readonly criterion:
     | {
-        readonly label: typeof CONFIGURED_LIMIT_CRITERION;
-        readonly configuredLimit: PublicQualifierConfiguredLimitInput;
+        readonly label: typeof DEPLOYED_POLICY_CRITERION;
         readonly termination?: unknown;
       }
     | {
         readonly label: typeof DEPLOYED_POLICY_CRITERION;
-        readonly status: "pending" | "passed" | "rejected";
-        readonly evidenceSha256: string;
-        readonly identityVerified: boolean;
+        readonly collectorRecord: HarnessReleaseDeployedCollectorRecord;
       };
 }
 
@@ -62,6 +44,17 @@ export interface TrustedPublicQualifierResourceEvidence {
   readonly evidence: unknown;
   readonly expectedArtifactSha256: string;
   readonly expectedReleaseIdentitySha256: string;
+  readonly expectedDeployedContext?: ExpectedDeployedQualifierContext;
+}
+
+export interface ResourceEvidencePins {
+  readonly environment: "local-workerd" | "deployed";
+  readonly measurementRunId: string;
+  readonly fixtureId: string;
+  readonly fixtureSha256: string;
+  readonly artifactSha256: string;
+  readonly releaseIdentitySha256: string;
+  readonly expectedDeployedContext?: ExpectedDeployedQualifierContext;
 }
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
@@ -74,10 +67,6 @@ const hasExactKeys = (value: Record<string, unknown>, keys: ReadonlyArray<string
 
 const isHash = (value: unknown): value is string =>
   typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
-
-const isResourceStatus = (value: unknown): value is HarnessReleaseResourceStatus =>
-  value === "pending" || value === "passed" || value === "rejected";
-const localCriterionKeys = new Set(["label", "configuredLimit", "termination"]);
 
 function terminationClassification(value: unknown) {
   const evidence = asRecord(value);
@@ -104,7 +93,21 @@ function terminationClassification(value: unknown) {
   } as V8TerminationEvidence);
 }
 
-/** Recompute a separate public qualifier record against the runner's frozen pins. */
+function assessmentPins(expected: ResourceEvidencePins) {
+  return {
+    environment: expected.environment,
+    measurementRunId: expected.measurementRunId,
+    fixtureId: expected.fixtureId,
+    fixtureSha256: expected.fixtureSha256,
+    artifactSha256: expected.artifactSha256,
+    releaseIdentitySha256: expected.releaseIdentitySha256,
+    ...(expected.expectedDeployedContext
+      ? { deployedContext: expected.expectedDeployedContext }
+      : {}),
+  };
+}
+
+/** Recompute policy status from the complete trusted collector record and its frozen context. */
 export function assessPublicQualifierResourceEvidence(
   value: unknown,
   expected: ResourceEvidencePins,
@@ -127,6 +130,21 @@ export function assessPublicQualifierResourceEvidence(
   )
     throw new Error("RELEASE_RESOURCE_EVIDENCE_PIN_MISMATCH");
 
+  const baseKeys = [
+    "tag",
+    "source",
+    "environment",
+    "measurementRunId",
+    "fixtureId",
+    "fixtureSha256",
+    "artifactSha256",
+    "releaseIdentitySha256",
+    "startupTiming",
+    "criterion",
+  ];
+  const criterion = asRecord(evidence.criterion);
+  if (!criterion) throw new Error("RELEASE_RESOURCE_CRITERION_INVALID");
+  const startupUpperBound = evidence.startupTiming as HarnessReleaseStartupUpperBound;
   const pins = {
     measurementRunId: expected.measurementRunId,
     fixtureId: expected.fixtureId,
@@ -134,125 +152,95 @@ export function assessPublicQualifierResourceEvidence(
     artifactSha256: expected.artifactSha256,
     releaseIdentitySha256: expected.releaseIdentitySha256,
   };
-  const criterion = asRecord(evidence.criterion);
-  if (!criterion) throw new Error("RELEASE_RESOURCE_CRITERION_INVALID");
-  const startupUpperBound = evidence.startupTiming as HarnessReleaseStartupUpperBound;
-  const base = {
-    tag: "harness-release-resource-criteria-v1" as const,
-    source: "normal-public-qualifier" as const,
-    environment: expected.environment,
-    pins,
-    startupUpperBound,
-  };
-  let assessment: HarnessReleaseResourceCriteriaAssessment;
 
   if (expected.environment === "local-workerd") {
     if (
-      !hasExactKeys(evidence, [
-        "tag",
-        "source",
-        "environment",
-        "measurementRunId",
-        "fixtureId",
-        "fixtureSha256",
-        "artifactSha256",
-        "releaseIdentitySha256",
-        "startupTiming",
-        "criterion",
-      ]) ||
-      criterion.label !== CONFIGURED_LIMIT_CRITERION ||
-      !["label", "configuredLimit"].every((key) => key in criterion) ||
-      Object.keys(criterion).some((key) => !localCriterionKeys.has(key))
+      !hasExactKeys(evidence, baseKeys) ||
+      criterion.label !== DEPLOYED_POLICY_CRITERION ||
+      Object.keys(criterion).some((key) => !["label", "termination"].includes(key))
     )
-      throw new Error("RELEASE_RESOURCE_CRITERION_INVALID");
-    const rawConfiguredLimit = asRecord(criterion.configuredLimit);
-    const requiredLimitInputs = [
-      "configuredLimitBytes",
-      "deltaMaxObservedBytes",
-      "safetyMarginBytes",
-      "budgetBytes",
-    ];
-    const allowedLimitInputs = new Set([
-      ...requiredLimitInputs,
-      "calibrationComplete",
-      "workloadCompleted",
-      "identityVerified",
-    ]);
-    if (
-      !rawConfiguredLimit ||
-      requiredLimitInputs.some((key) => !(key in rawConfiguredLimit)) ||
-      Object.keys(rawConfiguredLimit).some((key) => !allowedLimitInputs.has(key))
-    )
-      throw new Error("RELEASE_RESOURCE_CONFIGURED_LIMIT_INVALID");
-    const configuredLimit = assessConfiguredLimitCompletion(
-      rawConfiguredLimit as unknown as ConfiguredLimitCompletionInput,
-    );
+      throw new Error("RELEASE_RESOURCE_LOCAL_POLICY_CLOSED");
     const termination =
       criterion.termination === undefined
         ? undefined
         : terminationClassification(criterion.termination);
-    if (
-      termination &&
-      termination !== "NO_VERIFIED_TERMINATION" &&
-      configuredLimit.workloadCompleted
-    )
-      throw new Error("RELEASE_RESOURCE_TERMINATION_CONTRADICTS_COMPLETION");
-    assessment = {
-      ...base,
-      status: configuredLimit.status,
-      label: CONFIGURED_LIMIT_CRITERION,
-      configuredLimit,
-      ...(termination ? { terminationClassification: termination } : {}),
-      detail: configuredLimit.detail,
-    };
-  } else {
-    if (
-      !hasExactKeys(evidence, [
-        "tag",
-        "source",
-        "environment",
-        "measurementRunId",
-        "fixtureId",
-        "fixtureSha256",
-        "artifactSha256",
-        "releaseIdentitySha256",
-        "startupTiming",
-        "criterion",
-      ]) ||
-      criterion.label !== DEPLOYED_POLICY_CRITERION ||
-      !hasExactKeys(criterion, ["label", "status", "evidenceSha256", "identityVerified"]) ||
-      !isResourceStatus(criterion.status) ||
-      !isHash(criterion.evidenceSha256) ||
-      typeof criterion.identityVerified !== "boolean"
-    )
-      throw new Error("RELEASE_RESOURCE_PLATFORM_POLICY_INVALID");
-    const sourceStatus = criterion.status;
-    const status: HarnessReleaseResourceStatus =
-      sourceStatus === "rejected"
-        ? "rejected"
-        : criterion.identityVerified === true
-          ? sourceStatus
-          : "pending";
-    assessment = {
-      ...base,
-      status,
+    const assessment: HarnessReleaseResourceCriteriaAssessment = {
+      tag: "harness-release-resource-criteria-v2",
+      source: "normal-public-qualifier",
+      environment: "local-workerd",
+      status: "not-applicable",
       label: DEPLOYED_POLICY_CRITERION,
-      platformPolicyCompliance: {
-        label: DEPLOYED_POLICY_CRITERION,
-        status,
-        evidenceSha256: criterion.evidenceSha256,
-        identityVerified: criterion.identityVerified,
-      },
-      detail:
-        status === "passed"
-          ? "Deployed platform policy compliance evidence passed."
-          : status === "rejected"
-            ? "Deployed platform policy compliance evidence was rejected."
-            : "Deployed platform policy compliance evidence is incomplete.",
+      pins,
+      startupUpperBound,
+      ...(termination ? { terminationClassification: termination } : {}),
+      detail: "Local memory samples are diagnostic; policy qualification requires deployment.",
     };
+    if (!isHarnessReleaseResourceCriteriaAssessment(assessment, assessmentPins(expected)))
+      throw new Error("RELEASE_RESOURCE_ASSESSMENT_INVALID");
+    return assessment;
   }
 
-  if (!isHarnessReleaseResourceCriteriaAssessment(assessment, expected))
+  const rawCollectorRecord = criterion.collectorRecord;
+  if (
+    !hasExactKeys(evidence, baseKeys) ||
+    criterion.label !== DEPLOYED_POLICY_CRITERION ||
+    !hasExactKeys(criterion, ["label", "collectorRecord"]) ||
+    !isCollectorRecord(rawCollectorRecord)
+  )
+    throw new Error("RELEASE_RESOURCE_DEPLOYED_POLICY_INVALID");
+  const context = expected.expectedDeployedContext;
+  if (!isExpectedDeployedContext(context))
+    throw new Error("RELEASE_RESOURCE_DEPLOYED_CONTEXT_MISSING");
+  const collector = rawCollectorRecord;
+  if (
+    collector.measurementRunId !== expected.measurementRunId ||
+    collector.deploymentId !== context.deploymentId ||
+    collector.loaderId !== context.loaderId ||
+    collector.facetId !== context.facetId ||
+    collector.selectedReleaseSha256 !== expected.artifactSha256 ||
+    collector.responsePlanSha256 !== context.responsePlanSha256
+  )
+    throw new Error("RELEASE_RESOURCE_COLLECTOR_PIN_MISMATCH");
+
+  const sequence = [collector.beforeProbe, ...collector.responses, collector.afterProbe];
+  const allSuccessful = sequence.every((observation) => {
+    const row = asRecord(observation);
+    return (
+      row?.status === 200 && typeof row.isolateNonce === "string" && row.isolateNonce.length > 0
+    );
+  });
+  const responsePlanMatches =
+    collector.responses.length === context.expectedResponses.length &&
+    collector.responses.every((response, index) => {
+      const actual = asRecord(response);
+      const planned = context.expectedResponses[index];
+      return actual?.id === planned?.id && actual?.method === planned?.method;
+    });
+  const nonceValues = sequence.map((observation) => asRecord(observation)?.isolateNonce);
+  const nonceStable = allSuccessful && nonceValues.every((nonce) => nonce === nonceValues[0]);
+  const status =
+    collector.workloadCompleted && responsePlanMatches && nonceStable ? "passed" : "rejected";
+  const platformPolicyCompliance: HarnessReleasePlatformPolicyEvidence = {
+    label: DEPLOYED_POLICY_CRITERION,
+    status,
+    identityVerified: true,
+    collectorRecord: collector,
+  };
+  const assessment: HarnessReleaseResourceCriteriaAssessment = {
+    tag: "harness-release-resource-criteria-v2",
+    source: "normal-public-qualifier",
+    environment: "deployed",
+    status,
+    label: DEPLOYED_POLICY_CRITERION,
+    pins,
+    startupUpperBound,
+    platformPolicyCompliance,
+    detail:
+      status === "passed"
+        ? "The completed deployed workload used one isolate nonce for every successful response."
+        : "The deployed collector record shows an incomplete workload, response plan, or isolate nonce.",
+  };
+  if (!isHarnessReleaseResourceCriteriaAssessment(assessment, assessmentPins(expected)))
     throw new Error("RELEASE_RESOURCE_ASSESSMENT_INVALID");
   return assessment;
 }

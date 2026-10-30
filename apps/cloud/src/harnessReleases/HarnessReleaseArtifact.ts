@@ -1,3 +1,4 @@
+import { ASSET_CHUNK_BYTES } from "../assets/ChunkedAsset.ts";
 import {
   copyBytes,
   decodeCanonicalManifestBytes,
@@ -79,7 +80,7 @@ const readVerifiedFile = async (
   return bytes;
 };
 
-export const HARNESS_RELEASE_ARTIFACT_RANGE_BYTES = 8 * 1024 * 1024;
+export const HARNESS_RELEASE_ARTIFACT_RANGE_BYTES = ASSET_CHUNK_BYTES;
 
 const readArtifactFileInRanges = async (
   source: HarnessReleaseArtifactSource,

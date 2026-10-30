@@ -175,6 +175,9 @@ jobs:
             ${{ runner.temp }}/harness-release/claude-*.rejected-*/diagnostics/stdout.log
             ${{ runner.temp }}/harness-release/claude-*.rejected-*/diagnostics/error.log
             ${{ runner.temp }}/harness-release/claude-pair/
+            ${{ runner.temp }}/harness-release/deployment-assets/
+            ${{ runner.temp }}/harness-release/claude-release-variants.json
+            ${{ runner.temp }}/harness-release/claude-release-variants.json.deployment.json
             ${{ runner.temp }}/harness-release/identity.json
             ${{ runner.temp }}/harness-release/fixture.json
             ${{ runner.temp }}/harness-release/inventory.json

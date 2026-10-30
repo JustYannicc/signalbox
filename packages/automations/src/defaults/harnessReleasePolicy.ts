@@ -1,8 +1,14 @@
-import { isHarnessReleaseResourceCriteriaAssessment } from "@t3tools/shared/harnessReleaseResourceCriteria";
+import {
+  isHarnessReleaseResourceCriteriaAssessment,
+  type HarnessReleaseExpectedDeployedContext,
+} from "@t3tools/shared/harnessReleaseResourceCriteria";
+
+import { isHarnessReleaseBuiltinCriteriaAssessment } from "@t3tools/shared/harnessReleaseBuiltinCriteria";
 
 export type HarnessReleaseProvider = "claude-code" | "claude-agent-sdk" | "codex";
 export type HarnessReleaseSelection = "current" | "backfill";
 const resourceCriteriaValidator = isHarnessReleaseResourceCriteriaAssessment;
+const builtinCriteriaValidator = isHarnessReleaseBuiltinCriteriaAssessment;
 
 export const HARNESS_RELEASE_WORKFLOW_FILE = ".github/workflows/harness-release-proof.yml";
 export const HARNESS_RELEASE_RESULT_PATH = "result.json";
@@ -215,12 +221,16 @@ export const summarizeHarnessBackfill = (
 export const isVerifiedHarnessRelease = (
   status: string,
   result: {
+    readonly provider?: string;
     readonly status?: string;
     readonly unchangedSource?: string;
     readonly environments?: Record<
       string,
       | {
           readonly resourceCriteria?: unknown;
+          readonly measurementRunId?: string;
+          readonly deployedResourceContext?: HarnessReleaseExpectedDeployedContext;
+          readonly builtinCriteria?: unknown;
           readonly checks?: ReadonlyArray<{ readonly name: string; readonly status: string }>;
           readonly metrics?: Record<
             string,
@@ -238,6 +248,12 @@ export const isVerifiedHarnessRelease = (
 ) => {
   if (status !== "green" || result?.status !== "green" || result.unchangedSource !== "passed")
     return false;
+  if (
+    result.provider !== "claude-code" &&
+    result.provider !== "claude-agent-sdk" &&
+    result.provider !== "codex"
+  )
+    return false;
   const requiredChecks = [
     "boot",
     "text",
@@ -248,6 +264,7 @@ export const isVerifiedHarnessRelease = (
     "mcp",
     "interrupt",
     "publicHarness",
+    "builtinCoverage",
   ];
   const requiredMetrics = ["moduleBytes", "bootTimeMs", "peakHeapBytes"];
   for (const environment of ["local-workerd", "deployed"]) {
@@ -262,6 +279,21 @@ export const isVerifiedHarnessRelease = (
     )
       return false;
     const resourceCriteria = assessment.resourceCriteria;
+    const requiresClaudePolicy =
+      result.provider === "claude-code" || result.provider === "claude-agent-sdk";
+    if (requiresClaudePolicy && resourceCriteria === undefined) return false;
+    const builtinCriteria = assessment.builtinCriteria;
+    {
+      if (
+        typeof result.artifact?.sha256 !== "string" ||
+        !builtinCriteriaValidator(builtinCriteria, {
+          environment: environment as "local-workerd" | "deployed",
+          artifactSha256: result.artifact.sha256,
+          ...(assessment.measurementRunId ? { measurementRunId: assessment.measurementRunId } : {}),
+        })
+      )
+        return false;
+    }
     if (resourceCriteria !== undefined) {
       if (
         typeof result.fixture?.id !== "string" ||
@@ -274,8 +306,13 @@ export const isVerifiedHarnessRelease = (
           fixtureSha256: result.fixture.sha256,
           artifactSha256: result.artifact.sha256,
           releaseIdentitySha256: result.identity.sha256,
+          ...(assessment.measurementRunId ? { measurementRunId: assessment.measurementRunId } : {}),
+          ...(assessment.deployedResourceContext
+            ? { deployedContext: assessment.deployedResourceContext }
+            : {}),
         }) ||
-        (resourceCriteria as { readonly status?: unknown }).status !== "passed"
+        (resourceCriteria as { readonly status?: unknown }).status !==
+          (environment === "local-workerd" ? "not-applicable" : "passed")
       )
         return false;
       const moduleBytes = assessment.metrics?.moduleBytes;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { assertPackagedBuiltinCoverage } from "../nodeBuiltinGate.ts";
+import { assertPackagedBuiltinCoverage, scanBuiltinSource } from "../nodeBuiltinGate.ts";
 import type { RuntimeBuiltinInventory } from "../runtimeBuiltinInventory.ts";
 
 const inventory: RuntimeBuiltinInventory = {
@@ -24,7 +24,7 @@ const check = (source: string, runtime = inventory) =>
   assertPackagedBuiltinCoverage([{ name: "sdk/sdk.mjs", source }], runtime);
 
 describe("feature-tested builtin calls", () => {
-  it("accepts a synchronous optional constant lookup with an empty catch", async () => {
+  it("keeps a missing optional function as a visible fail-loud obligation", async () => {
     const runtime = {
       ...inventory,
       functions: [
@@ -38,15 +38,17 @@ describe("feature-tested builtin calls", () => {
     };
     const source =
       'const Buffer={}; if(!Buffer.kStringMaxLength)try{Buffer.kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}';
-    const report = await check(source, runtime);
-    expect(report.requiredFunctions).toEqual([
+    const scan = scanBuiltinSource({ name: "sdk/sdk.mjs", source });
+    expect(scan.requiredFunctions).toEqual([
       expect.objectContaining({
         specifier: "process",
         memberPath: ["binding"],
-        status: "guarded",
         guard: expect.objectContaining({ kind: "caught-call" }),
       }),
     ]);
+    await expect(check(source, runtime)).rejects.toThrow(
+      "guarded-missing-functions=process.binding",
+    );
     for (const source of [
       'try{Buffer.kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}',
       'if(!Buffer.other)try{Buffer.kStringMaxLength=process.binding("buffer").kStringMaxLength}catch{}',
@@ -103,27 +105,18 @@ describe("feature-tested builtin calls", () => {
     await expect(check(source)).rejects.toThrow("missing-functions=process.report.getReport");
   });
 
-  it("accepts the unchanged Claude SDK feature test when getReport is absent", async () => {
-    const report = await assertPackagedBuiltinCoverage(
-      [
-        {
-          name: "sdk/sdk.mjs",
-          source: 'typeof process.report?.getReport==="function"?process.report.getReport():null',
-        },
-      ],
-      inventory,
-    );
-
-    expect(report.status).toBe("pass");
-    expect(report.requiredFunctions).toEqual([
-      expect.objectContaining({
-        specifier: "process",
-        memberPath: ["report", "getReport"],
-        module: "sdk/sdk.mjs",
-        status: "guarded",
-        evidence: expect.stringContaining("absent"),
-      }),
-    ]);
+  it("keeps the unchanged Claude SDK feature test visible when getReport is absent", async () => {
+    await expect(
+      assertPackagedBuiltinCoverage(
+        [
+          {
+            name: "sdk/sdk.mjs",
+            source: 'typeof process.report?.getReport==="function"?process.report.getReport():null',
+          },
+        ],
+        inventory,
+      ),
+    ).rejects.toThrow("guarded-missing-functions=process.report.getReport");
   });
 
   it.each([
@@ -141,24 +134,23 @@ describe("feature-tested builtin calls", () => {
     'globalThis.process.report?.["getReport"]?.()',
     "global.process?.report?.getReport?.()",
     "process.report?.header?.getReport?.()",
-  ])("accepts immediate feature detection with safe receivers: %s", async (source) => {
-    const report = await check(source, {
-      ...inventory,
-      functions: [
-        ...inventory.functions,
-        {
-          ...inventory.functions[0]!,
-          memberPath: ["report", "header", "getReport"],
-        },
-      ],
-    });
-    expect(report.status).toBe("pass");
-    expect(report.requiredFunctions).toHaveLength(1);
-    expect(report.requiredFunctions[0]).toMatchObject({
-      status: "guarded",
-      guard: { kind: source.includes("?.()") ? "optional-call" : "feature-test" },
-      evidence: expect.stringContaining("absent"),
-    });
+  ])("keeps immediate feature detection visible for a missing function: %s", async (source) => {
+    await expect(
+      check(source, {
+        ...inventory,
+        functions: [
+          ...inventory.functions,
+          {
+            ...inventory.functions[0]!,
+            memberPath: ["report", "header", "getReport"],
+          },
+        ],
+      }),
+    ).rejects.toThrow(
+      source.includes("header")
+        ? "guarded-missing-functions=process.report.header.getReport"
+        : "guarded-missing-functions=process.report.getReport",
+    );
   });
 
   it.each([
@@ -246,11 +238,9 @@ describe("feature-tested builtin calls", () => {
         },
       ],
     };
-    const report = await check(
-      'import os from "node:os"; typeof os.release === "function" && os.release()',
-      runtime,
-    );
-    expect(report.requiredFunctions[0]).toMatchObject({ specifier: "os", status: "guarded" });
+    await expect(
+      check('import os from "node:os"; typeof os.release === "function" && os.release()', runtime),
+    ).rejects.toThrow("guarded-missing-functions=os.release");
     await expect(
       check(
         'import { release as getRelease } from "node:os"; typeof getRelease === "function" && getRelease()',

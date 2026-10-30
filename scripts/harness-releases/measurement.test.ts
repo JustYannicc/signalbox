@@ -4,8 +4,9 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { assertFixtureUnchanged, freezeFixture, type FrozenFixture } from "./fixture.ts";
 import { RELEASE_CRITERIA, verifyMeasurement, verifyReleaseCriteria } from "./measurement.ts";
-import { CONFIGURED_LIMIT_CRITERION, DEPLOYED_POLICY_CRITERION } from "./configuredLimit.ts";
+import { DEPLOYED_POLICY_CRITERION } from "./configuredLimit.ts";
 import { RESOURCE_EVIDENCE_TAG } from "./configuredLimitEvidence.ts";
+import type { ExpectedDeployedQualifierContext } from "./configuredLimitEvidence.ts";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -68,6 +69,47 @@ const startupTiming = {
   exactBootTime: false,
 } as const;
 
+const expectedDeployedContext: ExpectedDeployedQualifierContext = {
+  deploymentId: "deploy-3-qualification",
+  loaderId: "loader-v1",
+  facetId: "claude-qualifier-facet",
+  responsePlanSha256: "f".repeat(64),
+  expectedResponses: [
+    { id: "turn-create-1", method: "turn.create" },
+    { id: "turn-result-1", method: "turn.result" },
+  ],
+};
+
+function collectorRecord(
+  options: {
+    workloadCompleted?: boolean;
+    beforeNonce?: string;
+    responseNonces?: ReadonlyArray<string>;
+    afterNonce?: string;
+    responseIds?: ReadonlyArray<string>;
+    deploymentId?: string;
+  } = {},
+) {
+  const nonce = "isolate-nonce-A";
+  return {
+    measurementRunId: "native-fixture-run",
+    deploymentId: options.deploymentId ?? expectedDeployedContext.deploymentId,
+    loaderId: expectedDeployedContext.loaderId,
+    facetId: expectedDeployedContext.facetId,
+    selectedReleaseSha256: "c".repeat(64),
+    responsePlanSha256: expectedDeployedContext.responsePlanSha256,
+    workloadCompleted: options.workloadCompleted ?? true,
+    beforeProbe: { status: 200, isolateNonce: options.beforeNonce ?? nonce },
+    responses: expectedDeployedContext.expectedResponses.map((expected, index) => ({
+      id: options.responseIds?.[index] ?? expected.id,
+      method: expected.method,
+      status: 200,
+      isolateNonce: options.responseNonces?.[index] ?? nonce,
+    })),
+    afterProbe: { status: 200, isolateNonce: options.afterNonce ?? nonce },
+  };
+}
+
 function resourceEvidence(
   frozen: FrozenFixture,
   environment: "local-workerd" | "deployed",
@@ -86,24 +128,24 @@ function resourceEvidence(
     criterion:
       criterion ??
       (environment === "local-workerd"
-        ? {
-            label: CONFIGURED_LIMIT_CRITERION,
-            configuredLimit: {
-              configuredLimitBytes: 64,
-              deltaMaxObservedBytes: 4,
-              safetyMarginBytes: 8,
-              budgetBytes: 128,
-              calibrationComplete: true,
-              workloadCompleted: true,
-              identityVerified: true,
-            },
-          }
+        ? { label: DEPLOYED_POLICY_CRITERION }
         : {
             label: DEPLOYED_POLICY_CRITERION,
-            status: "passed",
-            evidenceSha256: "d".repeat(64),
-            identityVerified: true,
+            collectorRecord: collectorRecord(),
           }),
+  };
+}
+
+function trustedResourceEvidence(
+  frozen: FrozenFixture,
+  environment: "local-workerd" | "deployed",
+  evidence = resourceEvidence(frozen, environment),
+) {
+  return {
+    evidence,
+    expectedArtifactSha256: "c".repeat(64),
+    expectedReleaseIdentitySha256: "b".repeat(64),
+    ...(environment === "deployed" ? { expectedDeployedContext } : {}),
   };
 }
 
@@ -115,7 +157,7 @@ describe("release proof identity", () => {
       checks: Object.fromEntries(RELEASE_CRITERIA.map((name) => [name, "passed"])),
       peakHeapBytes: 100,
       bootTimeMs: 1,
-      resourceCriteria: { tag: "harness-release-resource-criteria-v1", status: "passed" },
+      resourceCriteria: { tag: "harness-release-resource-criteria-v2", status: "passed" },
     };
     const assessed = verifyReleaseCriteria(frozen, raw, "local-workerd");
     expect(assessed.checks.every((check) => check.status === "pending")).toBe(true);
@@ -130,25 +172,22 @@ describe("release proof identity", () => {
     expect(() => verifyReleaseCriteria(frozen, raw, "local-workerd")).toThrow("BEHAVIOR_FAILED");
   });
 
-  it("recomputes tagged local evidence from separately pinned public qualifier input", async () => {
+  it("keeps the local configured-limit path closed and preserves diagnostic timing", async () => {
     const { frozen } = await fixture();
     const assessed = verifyReleaseCriteria(frozen, measurement(frozen), "local-workerd", {
-      evidence: resourceEvidence(frozen, "local-workerd"),
-      expectedArtifactSha256: "c".repeat(64),
-      expectedReleaseIdentitySha256: "b".repeat(64),
+      ...trustedResourceEvidence(frozen, "local-workerd"),
     });
     expect(assessed.resourceCriteria).toMatchObject({
-      tag: "harness-release-resource-criteria-v1",
+      tag: "harness-release-resource-criteria-v2",
       source: "normal-public-qualifier",
       environment: "local-workerd",
-      status: "passed",
-      label: CONFIGURED_LIMIT_CRITERION,
+      status: "not-applicable",
+      label: DEPLOYED_POLICY_CRITERION,
       startupUpperBound: {
         interpretation: "startup upper bound",
         includesRpc: true,
         exactBootTime: false,
       },
-      configuredLimit: { status: "passed", assessedBytes: 76, strictByteBound: false },
     });
     expect(assessed.checks.every((check) => check.status === "pending")).toBe(true);
     expect(assessed.metrics.bootTimeMs.state).toBe("unmeasured");
@@ -157,80 +196,142 @@ describe("release proof identity", () => {
       reason: "The probe does not measure peak heap in the session facet.",
     });
     expect(assessed.metrics.peakHeapBytes).not.toHaveProperty("value");
+
+    const closedPath = resourceEvidence(frozen, "local-workerd", {
+      label: "configured-limit completion with measured overshoot",
+      configuredLimit: {
+        configuredLimitBytes: 100_663_296,
+        deltaMaxObservedBytes: 101_195_616,
+        safetyMarginBytes: 8_388_608,
+        budgetBytes: 134_217_728,
+        calibrationComplete: true,
+        workloadCompleted: true,
+        identityVerified: true,
+      },
+    });
+    expect(() =>
+      verifyReleaseCriteria(frozen, measurement(frozen), "local-workerd", {
+        ...trustedResourceEvidence(frozen, "local-workerd", closedPath),
+      }),
+    ).toThrow("LOCAL_POLICY_CLOSED");
   });
 
-  it("rejects the measured 96 MiB profile and keeps missing calibration or identity pending", async () => {
-    const { frozen } = await fixture();
-    for (const budgetBytes of [134_217_728, 128_000_000]) {
-      const evidence = resourceEvidence(frozen, "local-workerd", {
-        label: CONFIGURED_LIMIT_CRITERION,
-        configuredLimit: {
-          configuredLimitBytes: 100_663_296,
-          deltaMaxObservedBytes: 101_195_616,
-          safetyMarginBytes: 8_388_608,
-          budgetBytes,
-          calibrationComplete: false,
-          workloadCompleted: false,
-          identityVerified: true,
-        },
-      });
-      const assessed = verifyReleaseCriteria(frozen, measurement(frozen), "local-workerd", {
-        evidence,
-        expectedArtifactSha256: "c".repeat(64),
-        expectedReleaseIdentitySha256: "b".repeat(64),
-      });
-      expect(assessed.resourceCriteria).toMatchObject({
-        status: "rejected",
-        configuredLimit: {
-          status: "rejected",
-          assessedBytes: 210_247_520,
-          budgetFits: false,
-          strictByteBound: false,
-        },
-      });
-    }
-    for (const missing of ["calibrationComplete", "identityVerified"] as const) {
-      const evidence = resourceEvidence(frozen, "local-workerd");
-      const configuredLimit = evidence.criterion.configuredLimit as Record<string, unknown>;
-      delete configuredLimit[missing];
-      const assessed = verifyReleaseCriteria(frozen, measurement(frozen), "local-workerd", {
-        evidence,
-        expectedArtifactSha256: "c".repeat(64),
-        expectedReleaseIdentitySha256: "b".repeat(64),
-      });
-      expect(assessed.resourceCriteria).toMatchObject({
-        status: "pending",
-        configuredLimit: { status: "pending", [missing]: false },
-      });
-    }
-  });
-
-  it("uses the deployed policy label and distinguishes missing termination from verified OOM", async () => {
+  it("uses the deployed collector nonce sequence, including both isolate probes", async () => {
     const { frozen } = await fixture();
     const deployedRaw = { ...measurement(frozen), environment: "deployed" };
     const deployed = verifyReleaseCriteria(frozen, deployedRaw, "deployed", {
-      evidence: resourceEvidence(frozen, "deployed"),
-      expectedArtifactSha256: "c".repeat(64),
-      expectedReleaseIdentitySha256: "b".repeat(64),
+      ...trustedResourceEvidence(frozen, "deployed"),
     });
     expect(deployed.resourceCriteria).toMatchObject({
       status: "passed",
-      label: "platform policy compliance evidence",
-      platformPolicyCompliance: { status: "passed", identityVerified: true },
+      label: DEPLOYED_POLICY_CRITERION,
+      platformPolicyCompliance: {
+        status: "passed",
+        identityVerified: true,
+        collectorRecord: {
+          beforeProbe: { isolateNonce: "isolate-nonce-A" },
+          afterProbe: { isolateNonce: "isolate-nonce-A" },
+        },
+      },
     });
     expect(deployed.metrics.peakHeapBytes.state).toBe("unmeasured");
 
+    const changed = verifyReleaseCriteria(
+      frozen,
+      deployedRaw,
+      "deployed",
+      trustedResourceEvidence(
+        frozen,
+        "deployed",
+        resourceEvidence(frozen, "deployed", {
+          label: DEPLOYED_POLICY_CRITERION,
+          collectorRecord: collectorRecord({
+            responseNonces: ["isolate-nonce-A", "isolate-nonce-B"],
+          }),
+        }),
+      ),
+    );
+    expect(changed.resourceCriteria).toMatchObject({ status: "rejected" });
+
+    const incomplete = verifyReleaseCriteria(
+      frozen,
+      deployedRaw,
+      "deployed",
+      trustedResourceEvidence(
+        frozen,
+        "deployed",
+        resourceEvidence(frozen, "deployed", {
+          label: DEPLOYED_POLICY_CRITERION,
+          collectorRecord: collectorRecord({ workloadCompleted: false }),
+        }),
+      ),
+    );
+    expect(incomplete.resourceCriteria).toMatchObject({ status: "rejected" });
+
+    const shortened = collectorRecord();
+    shortened.responses.pop();
+    const omittedResponse = verifyReleaseCriteria(
+      frozen,
+      deployedRaw,
+      "deployed",
+      trustedResourceEvidence(
+        frozen,
+        "deployed",
+        resourceEvidence(frozen, "deployed", {
+          label: DEPLOYED_POLICY_CRITERION,
+          collectorRecord: shortened,
+        }),
+      ),
+    );
+    expect(omittedResponse.resourceCriteria).toMatchObject({ status: "rejected" });
+
+    const reordered = verifyReleaseCriteria(
+      frozen,
+      deployedRaw,
+      "deployed",
+      trustedResourceEvidence(
+        frozen,
+        "deployed",
+        resourceEvidence(frozen, "deployed", {
+          label: DEPLOYED_POLICY_CRITERION,
+          collectorRecord: collectorRecord({
+            responseIds: ["turn-result-1", "turn-create-1"],
+          }),
+        }),
+      ),
+    );
+    expect(reordered.resourceCriteria).toMatchObject({ status: "rejected" });
+
+    expect(() =>
+      verifyReleaseCriteria(
+        frozen,
+        deployedRaw,
+        "deployed",
+        trustedResourceEvidence(
+          frozen,
+          "deployed",
+          resourceEvidence(frozen, "deployed", {
+            label: DEPLOYED_POLICY_CRITERION,
+            status: "passed",
+            evidenceSha256: "d".repeat(64),
+            identityVerified: true,
+          }),
+        ),
+      ),
+    ).toThrow("DEPLOYED_POLICY_INVALID");
+
+    const missingContext = trustedResourceEvidence(frozen, "deployed");
+    delete (missingContext as { expectedDeployedContext?: unknown }).expectedDeployedContext;
+    expect(() => verifyReleaseCriteria(frozen, deployedRaw, "deployed", missingContext)).toThrow(
+      "DEPLOYED_CONTEXT_MISSING",
+    );
+  });
+
+  it("keeps termination classification diagnostic and excludes it from the local criterion", async () => {
+    const { frozen } = await fixture();
+
     const evidence = resourceEvidence(frozen, "local-workerd", {
-      label: CONFIGURED_LIMIT_CRITERION,
-      configuredLimit: {
-        configuredLimitBytes: 64,
-        deltaMaxObservedBytes: 4,
-        safetyMarginBytes: 8,
-        budgetBytes: 128,
-        calibrationComplete: true,
-        workloadCompleted: false,
-        identityVerified: true,
-      },
+      label: DEPLOYED_POLICY_CRITERION,
       termination: {
         waited: true,
         timedOut: false,
@@ -239,13 +340,14 @@ describe("release proof identity", () => {
         stderr: "JavaScript heap out of memory",
       },
     });
-    const unverifiedOom = verifyReleaseCriteria(frozen, measurement(frozen), "local-workerd", {
-      evidence,
-      expectedArtifactSha256: "c".repeat(64),
-      expectedReleaseIdentitySha256: "b".repeat(64),
-    });
+    const unverifiedOom = verifyReleaseCriteria(
+      frozen,
+      measurement(frozen),
+      "local-workerd",
+      trustedResourceEvidence(frozen, "local-workerd", evidence),
+    );
     expect(unverifiedOom.resourceCriteria).toMatchObject({
-      status: "pending",
+      status: "not-applicable",
       terminationClassification: "NO_VERIFIED_TERMINATION",
     });
     (evidence.criterion as Record<string, unknown>).termination = {
@@ -256,13 +358,14 @@ describe("release proof identity", () => {
       allocationRequestVerified: true,
       stderr: "JavaScript heap out of memory",
     };
-    const verifiedOom = verifyReleaseCriteria(frozen, measurement(frozen), "local-workerd", {
-      evidence,
-      expectedArtifactSha256: "c".repeat(64),
-      expectedReleaseIdentitySha256: "b".repeat(64),
-    });
+    const verifiedOom = verifyReleaseCriteria(
+      frozen,
+      measurement(frozen),
+      "local-workerd",
+      trustedResourceEvidence(frozen, "local-workerd", evidence),
+    );
     expect(verifiedOom.resourceCriteria).toMatchObject({
-      status: "pending",
+      status: "not-applicable",
       terminationClassification: "V8_HEAP_OOM_PROCESS_TERMINATED",
     });
   });

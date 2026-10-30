@@ -260,6 +260,14 @@
       "types": "./src/harnessReleaseResourceCriteria.ts",
       "import": "./src/harnessReleaseResourceCriteria.ts"
     },
+    "./harnessReleaseInheritedReachability": {
+      "types": "./src/harnessReleaseInheritedReachability.ts",
+      "import": "./src/harnessReleaseInheritedReachability.ts"
+    },
+    "./harnessReleaseBuiltinCriteria": {
+      "types": "./src/harnessReleaseBuiltinCriteria.ts",
+      "import": "./src/harnessReleaseBuiltinCriteria.ts"
+    },
     "./relayJwt": {
       "types": "./src/relayJwt.ts",
       "import": "./src/relayJwt.ts"

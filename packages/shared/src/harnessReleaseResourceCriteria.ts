@@ -1,4 +1,4 @@
-export type HarnessReleaseResourceStatus = "pending" | "passed" | "rejected";
+export type HarnessReleaseResourceStatus = "not-applicable" | "pending" | "passed" | "rejected";
 
 export interface HarnessReleaseResourceCriteriaPins {
   readonly measurementRunId: string;
@@ -19,46 +19,65 @@ export interface HarnessReleaseStartupUpperBound {
   readonly exactBootTime: false;
 }
 
-export interface HarnessReleaseConfiguredLimitAssessment {
-  readonly criterion: "configured-limit completion with measured overshoot";
-  readonly status: HarnessReleaseResourceStatus;
-  readonly configuredLimitBytes: number;
-  readonly deltaMaxObservedBytes: number;
-  readonly safetyMarginBytes: number;
-  readonly budgetBytes: number;
-  readonly assessedBytes: number;
-  readonly budgetFits: boolean;
-  readonly calibrationComplete: boolean;
+export interface HarnessReleaseNonceResponse {
+  readonly id: string;
+  readonly method: string;
+  readonly status: number;
+  readonly isolateNonce: string;
+}
+
+export interface HarnessReleaseNonceProbe {
+  readonly status: number;
+  readonly isolateNonce: string;
+}
+
+export interface HarnessReleaseDeployedCollectorRecord {
+  readonly measurementRunId: string;
+  readonly deploymentId: string;
+  readonly loaderId: string;
+  readonly facetId: string;
+  readonly selectedReleaseSha256: string;
+  readonly responsePlanSha256: string;
   readonly workloadCompleted: boolean;
-  readonly identityVerified: boolean;
-  readonly strictByteBound: false;
-  readonly detail: string;
+  readonly beforeProbe: HarnessReleaseNonceProbe;
+  readonly responses: ReadonlyArray<HarnessReleaseNonceResponse>;
+  readonly afterProbe: HarnessReleaseNonceProbe;
 }
 
 export interface HarnessReleasePlatformPolicyEvidence {
   readonly label: "platform policy compliance evidence";
   readonly status: HarnessReleaseResourceStatus;
-  readonly evidenceSha256: string;
   readonly identityVerified: boolean;
+  readonly collectorRecord: HarnessReleaseDeployedCollectorRecord;
 }
 
 export interface HarnessReleaseResourceCriteriaAssessment {
-  readonly tag: "harness-release-resource-criteria-v1";
+  readonly tag: "harness-release-resource-criteria-v2";
   readonly source: "normal-public-qualifier";
   readonly environment: "local-workerd" | "deployed";
   readonly status: HarnessReleaseResourceStatus;
-  readonly label:
-    | "configured-limit completion with measured overshoot"
-    | "platform policy compliance evidence";
+  readonly label: "platform policy compliance evidence";
   readonly pins: HarnessReleaseResourceCriteriaPins;
   readonly startupUpperBound: HarnessReleaseStartupUpperBound;
-  readonly configuredLimit?: HarnessReleaseConfiguredLimitAssessment;
   readonly platformPolicyCompliance?: HarnessReleasePlatformPolicyEvidence;
   readonly terminationClassification?:
     | "NO_VERIFIED_TERMINATION"
     | "OTHER_TERMINATION"
     | "V8_HEAP_OOM_PROCESS_TERMINATED";
   readonly detail: string;
+}
+
+export interface HarnessReleaseExpectedResponse {
+  readonly id: string;
+  readonly method: string;
+}
+
+export interface HarnessReleaseExpectedDeployedContext {
+  readonly deploymentId: string;
+  readonly loaderId: string;
+  readonly facetId: string;
+  readonly responsePlanSha256: string;
+  readonly expectedResponses: ReadonlyArray<HarnessReleaseExpectedResponse>;
 }
 
 export interface ExpectedHarnessReleaseResourcePins {
@@ -68,6 +87,7 @@ export interface ExpectedHarnessReleaseResourcePins {
   readonly fixtureSha256?: string;
   readonly artifactSha256?: string;
   readonly releaseIdentitySha256?: string;
+  readonly deployedContext?: HarnessReleaseExpectedDeployedContext;
 }
 
 /** Shared fail-closed contract for the runner and serialized watcher policy. */
@@ -85,15 +105,16 @@ export const isHarnessReleaseResourceCriteriaAssessment = (
     typeof candidate === "string" && candidate.length > 0;
   const hash = (candidate: unknown) =>
     typeof candidate === "string" && /^[a-f0-9]{64}$/u.test(candidate);
-  const safeBytes = (candidate: unknown): candidate is number =>
-    typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;
   const validStatus = (candidate: unknown): candidate is HarnessReleaseResourceStatus =>
-    candidate === "pending" || candidate === "passed" || candidate === "rejected";
+    candidate === "not-applicable" ||
+    candidate === "pending" ||
+    candidate === "passed" ||
+    candidate === "rejected";
   const assessment = record(value);
   if (!assessment) return false;
   const environment = assessment.environment;
   if (
-    assessment.tag !== "harness-release-resource-criteria-v1" ||
+    assessment.tag !== "harness-release-resource-criteria-v2" ||
     assessment.source !== "normal-public-qualifier" ||
     (environment !== "local-workerd" && environment !== "deployed") ||
     !validStatus(assessment.status) ||
@@ -109,11 +130,18 @@ export const isHarnessReleaseResourceCriteriaAssessment = (
     "label",
     "pins",
     "startupUpperBound",
-    local ? "configuredLimit" : "platformPolicyCompliance",
-    ...(local && "terminationClassification" in assessment ? ["terminationClassification"] : []),
+    ...(local
+      ? "terminationClassification" in assessment
+        ? ["terminationClassification"]
+        : []
+      : ["platformPolicyCompliance"]),
     "detail",
   ];
-  if (!exactKeys(assessment, expectedAssessmentKeys)) return false;
+  if (
+    !exactKeys(assessment, expectedAssessmentKeys) ||
+    assessment.label !== "platform policy compliance evidence"
+  )
+    return false;
   const pins = record(assessment.pins);
   if (
     !pins ||
@@ -174,91 +202,114 @@ export const isHarnessReleaseResourceCriteriaAssessment = (
   }
 
   if (local) {
-    if (assessment.label !== "configured-limit completion with measured overshoot") return false;
-    const configured = record(assessment.configuredLimit);
-    if (
-      !configured ||
-      !exactKeys(configured, [
-        "criterion",
-        "status",
-        "configuredLimitBytes",
-        "deltaMaxObservedBytes",
-        "safetyMarginBytes",
-        "budgetBytes",
-        "assessedBytes",
-        "budgetFits",
-        "calibrationComplete",
-        "workloadCompleted",
-        "identityVerified",
-        "strictByteBound",
-        "detail",
-      ]) ||
-      configured.criterion !== "configured-limit completion with measured overshoot" ||
-      !validStatus(configured.status) ||
-      !text(configured.detail) ||
-      typeof configured.budgetFits !== "boolean" ||
-      typeof configured.calibrationComplete !== "boolean" ||
-      typeof configured.workloadCompleted !== "boolean" ||
-      typeof configured.identityVerified !== "boolean" ||
-      configured.strictByteBound !== false
-    )
-      return false;
-    const limit = configured.configuredLimitBytes;
-    const delta = configured.deltaMaxObservedBytes;
-    const margin = configured.safetyMarginBytes;
-    const budget = configured.budgetBytes;
-    const assessed = configured.assessedBytes;
-    if (
-      !safeBytes(limit) ||
-      !safeBytes(delta) ||
-      !safeBytes(margin) ||
-      !safeBytes(budget) ||
-      !safeBytes(assessed) ||
-      limit === 0 ||
-      budget === 0 ||
-      !Number.isSafeInteger(limit + delta + margin) ||
-      assessed !== limit + delta + margin ||
-      configured.budgetFits !== assessed <= budget
-    )
-      return false;
-    let configuredStatus: HarnessReleaseResourceStatus = configured.budgetFits
-      ? configured.calibrationComplete &&
-        configured.workloadCompleted &&
-        configured.identityVerified
-        ? "passed"
-        : "pending"
-      : "rejected";
-    if ("terminationClassification" in assessment) {
-      const termination = assessment.terminationClassification;
-      if (
-        termination !== "NO_VERIFIED_TERMINATION" &&
-        termination !== "OTHER_TERMINATION" &&
-        termination !== "V8_HEAP_OOM_PROCESS_TERMINATED"
-      )
-        return false;
-      if (
-        termination !== "NO_VERIFIED_TERMINATION" &&
-        (configured.workloadCompleted || configuredStatus === "passed")
-      )
-        return false;
-    }
-    if (configured.status !== configuredStatus || assessment.status !== configuredStatus)
-      return false;
-    return true;
+    const termination = assessment.terminationClassification;
+    return (
+      assessment.status === "not-applicable" &&
+      (termination === undefined ||
+        termination === "NO_VERIFIED_TERMINATION" ||
+        termination === "OTHER_TERMINATION" ||
+        termination === "V8_HEAP_OOM_PROCESS_TERMINATED")
+    );
   }
 
-  if (assessment.label !== "platform policy compliance evidence") return false;
   const policy = record(assessment.platformPolicyCompliance);
+  const context = expected?.deployedContext;
   if (
     !policy ||
-    !exactKeys(policy, ["label", "status", "evidenceSha256", "identityVerified"]) ||
+    !context ||
+    !text(context.deploymentId) ||
+    !text(context.loaderId) ||
+    !text(context.facetId) ||
+    !hash(context.responsePlanSha256) ||
+    !Array.isArray(context.expectedResponses) ||
+    context.expectedResponses.length === 0 ||
+    !context.expectedResponses.every((response) => {
+      const planned = record(response);
+      return planned !== undefined && text(planned.id) && text(planned.method);
+    }) ||
+    new Set(context.expectedResponses.map((response) => response.id)).size !==
+      context.expectedResponses.length ||
+    !exactKeys(policy, ["label", "status", "identityVerified", "collectorRecord"]) ||
     policy.label !== "platform policy compliance evidence" ||
-    !validStatus(policy.status) ||
-    !hash(policy.evidenceSha256) ||
+    (policy.status !== "pending" && policy.status !== "passed" && policy.status !== "rejected") ||
     typeof policy.identityVerified !== "boolean" ||
-    (policy.status === "passed" && policy.identityVerified !== true) ||
     assessment.status !== policy.status
   )
     return false;
-  return true;
+  const collector = record(policy.collectorRecord);
+  if (
+    !collector ||
+    !exactKeys(collector, [
+      "measurementRunId",
+      "deploymentId",
+      "loaderId",
+      "facetId",
+      "selectedReleaseSha256",
+      "responsePlanSha256",
+      "workloadCompleted",
+      "beforeProbe",
+      "responses",
+      "afterProbe",
+    ]) ||
+    collector.measurementRunId !== pins.measurementRunId ||
+    collector.deploymentId !== context.deploymentId ||
+    collector.loaderId !== context.loaderId ||
+    collector.facetId !== context.facetId ||
+    collector.selectedReleaseSha256 !== pins.artifactSha256 ||
+    collector.responsePlanSha256 !== context.responsePlanSha256 ||
+    !hash(collector.responsePlanSha256) ||
+    typeof collector.workloadCompleted !== "boolean"
+  )
+    return false;
+  const before = record(collector.beforeProbe);
+  const after = record(collector.afterProbe);
+  const responses = collector.responses;
+  if (
+    !before ||
+    !exactKeys(before, ["status", "isolateNonce"]) ||
+    !after ||
+    !exactKeys(after, ["status", "isolateNonce"]) ||
+    !Array.isArray(responses)
+  )
+    return false;
+  const validProbe = (probe: Record<string, unknown>) =>
+    exactKeys(probe, ["status", "isolateNonce"]) &&
+    typeof probe.status === "number" &&
+    Number.isInteger(probe.status) &&
+    typeof probe.isolateNonce === "string";
+  if (!validProbe(before) || !validProbe(after)) return false;
+  const nonceSequence: Array<unknown> = [before.isolateNonce];
+  let responsePlanMatches = responses.length === context.expectedResponses.length;
+  for (const [index, actual] of responses.entries()) {
+    const row = record(actual);
+    const planned = context.expectedResponses[index];
+    if (
+      !row ||
+      !exactKeys(row, ["id", "method", "status", "isolateNonce"]) ||
+      typeof row.id !== "string" ||
+      typeof row.method !== "string" ||
+      typeof row.status !== "number" ||
+      !Number.isInteger(row.status) ||
+      typeof row.isolateNonce !== "string" ||
+      (policy.status === "passed" && !planned)
+    )
+      return false;
+    if (planned === undefined || row.id !== planned.id || row.method !== planned.method)
+      responsePlanMatches = false;
+    nonceSequence.push(row.isolateNonce);
+  }
+  nonceSequence.push(after.isolateNonce);
+  const successful =
+    before.status === 200 &&
+    after.status === 200 &&
+    responses.every((response) => record(response)?.status === 200);
+  const noncesPresent = nonceSequence.every((nonce) => text(nonce));
+  const nonceStable = noncesPresent && nonceSequence.every((nonce) => nonce === nonceSequence[0]);
+  const complete = collector.workloadCompleted && responsePlanMatches && successful && nonceStable;
+  return (
+    policy.identityVerified === true &&
+    (complete
+      ? policy.status === "passed" && assessment.status === "passed"
+      : policy.status === "rejected" && assessment.status === "rejected")
+  );
 };

@@ -75,6 +75,9 @@ export function scanBuiltinFunctionCalls(
           module: file.fileName,
           line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
           column: file.getLineAndCharacterOfPosition(node.getStart(file)).character + 1,
+          startOffset: node.getStart(file),
+          endOffset: node.end,
+          offsetUnit: "utf16-code-units",
           ...(guard === undefined ? {} : { guard }),
         });
       } else if (

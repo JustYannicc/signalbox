@@ -58,6 +58,22 @@ const withFileSystem = (
   }) as ArtifactFileSystem;
 
 describe("Harness artifact preparation", () => {
+  it("excludes bundler diagnostics from the hashed runtime artifact", async () => {
+    const { cli, input } = await setup();
+    await NodeFSP.writeFile(NodePath.join(cli, "metafile.json"), '{"diagnostic":true}');
+    const identity = await prepareHarnessArtifact(input);
+    const artifact = await openHarnessReleaseArtifact(
+      identity,
+      artifactDirectorySource(input.output),
+    );
+    expect(Object.hasOwn(artifact.manifest.files, "cli/metafile.json")).toBe(false);
+    await expect(
+      NodeFSP.stat(NodePath.join(input.output, "cli/metafile.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await NodeFSP.readFile(NodePath.join(cli, "metafile.json"), "utf8")).toBe(
+      '{"diagnostic":true}',
+    );
+  });
   it("rejects unavailable builtins before publishing either provider artifact", async () => {
     const { root, sdk, input } = await setup();
     await NodeFSP.writeFile(NodePath.join(sdk, "sdk.js"), "import 'node:cluster';");
@@ -81,15 +97,28 @@ describe("Harness artifact preparation", () => {
     await expect(NodeFSP.lstat(codexOutput)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects an unsupported os.getPriority call before publication", async () => {
+  it("preserves a named-error unsupported call in the candidate artifact", async () => {
+    const { sdk, input } = await setup();
+    const source = "import * as os from 'node:os';\nos.getPriority();";
+    await NodeFSP.writeFile(NodePath.join(sdk, "sdk.js"), source);
+
+    const identity = await prepareHarnessArtifact(input);
+    const artifact = await openHarnessReleaseArtifact(
+      identity,
+      artifactDirectorySource(input.output),
+    );
+    expect(new TextDecoder().decode(await artifact.read("sdk/sdk.js"))).toBe(source);
+  });
+
+  it("rejects an unresolved builtin call before publication", async () => {
     const { sdk, input } = await setup();
     await NodeFSP.writeFile(
       NodePath.join(sdk, "sdk.js"),
-      "import * as os from 'node:os';\nos.getPriority();",
+      "import * as os from 'node:os';\nos[globalThis.priorityMethod]();",
     );
 
     await expect(prepareHarnessArtifact(input)).rejects.toThrow(
-      /NODE_BUILTIN_COVERAGE_FAILED: unsupported-functions=os\.getPriority@/u,
+      /NODE_BUILTIN_COVERAGE_FAILED: unresolved-function-calls=dynamic-builtin-member-call@/u,
     );
     await expect(NodeFSP.lstat(input.output)).rejects.toMatchObject({ code: "ENOENT" });
   });

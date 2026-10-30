@@ -6,6 +6,8 @@ import { captureCurrentSourceFreeze } from "./computerManifest/sourceFreeze.ts";
 import { prepareHarnessArtifact } from "./prepareArtifact.ts";
 import { resolveCandidateOutputDirectory, writeCandidateFile } from "./candidateOutput.ts";
 import { writeClaudeReleaseLedgerCandidate } from "./writeClaudeReleaseLedgerCandidate.ts";
+import { directoryHarnessArtifactStore, publishHarnessArtifact } from "./publishArtifact.ts";
+import { writeReleaseDeploymentAssets } from "./deploymentAssets.ts";
 
 export interface PrepareClaudePairCandidateInput {
   readonly createdAt: string;
@@ -81,6 +83,34 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
     outputDirectory: NodePath.join(outputDirectory, "ledger"),
     ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
   });
+  const projectId = input.projectId ?? "signalbox";
+  const assetsDirectory = NodePath.join(outputDirectory, "deployment-assets");
+  const store = directoryHarnessArtifactStore(assetsDirectory);
+  const assets = [];
+  for (const variant of ["baseline", "hooks"] as const) {
+    const published = await publishHarnessArtifact(
+      variants[variant],
+      NodePath.join(outputDirectory, variant),
+      { projectId, store },
+    );
+    assets.push(published.assetIndex);
+  }
+  const records = written.descriptor.variants;
+  const deploymentAssets = await writeReleaseDeploymentAssets({
+    directory: assetsDirectory,
+    deployment: {
+      schemaVersion: 1,
+      purpose: "qualification",
+      projectId,
+      claudeVariants: {
+        baseline: { variant: "baseline", fullArtifact: records.baseline.artifact },
+        hooks: { variant: "hooks", fullArtifact: records.hooks.artifact },
+      },
+      // The candidate writer verifies an empty proof ledger before returning these records.
+      ledger: [records.baseline, records.hooks].map(({ artifact }) => ({ artifact, proofs: [] })),
+      assets,
+    },
+  });
   const after = await captureCurrentSourceFreeze(repository);
   if (after.commit !== source.commit || after.sha256 !== source.sha256)
     throw new Error("CLAUDE_PAIR_SOURCE_CHANGED");
@@ -95,6 +125,7 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
     ledger: written.ledgerFile,
     descriptor: written.candidateFile,
     eligibility: written.descriptor.eligibility,
+    deploymentAssets,
   } as const;
   await writeCandidateFile(
     NodePath.join(outputDirectory, "pair.json"),
