@@ -32,9 +32,9 @@ export class PoolBackendError extends Schema.TaggedError<PoolBackendError>()("Po
   }
 }
 
-export interface PoolEndpoint {
-  /** Sends a request to the CLIProxyAPI; managed pools wake their container here. */
-  readonly fetch: (request: Request) => Promise<Response>;
+const isPoolBackendError = Schema.is(PoolBackendError);
+
+export interface PoolEndpointAddress {
   readonly baseUrl: string;
   /** `management.secret-key`. Never leaves the pool object. */
   readonly managementKey: string;
@@ -46,6 +46,13 @@ export interface PoolEndpoint {
    */
   readonly link: boolean;
 }
+
+/** Promise callers remain the external endpoint API; managed containers use the PoolObject runtime. */
+export type PoolEndpoint =
+  | (PoolEndpointAddress & { readonly fetch: (request: Request) => Promise<Response> })
+  | (PoolEndpointAddress & {
+      readonly fetchEffect: (request: Request) => Effect.Effect<Response, PoolBackendError>;
+    });
 
 /** The port the pool image's CLIProxyAPI listens on. */
 export const CLI_PROXY_API_PORT = 8317;
@@ -111,7 +118,7 @@ export const renderConfig = (
     "",
   ].join("\n");
 
-const hostOf = (endpoint: PoolEndpoint) => {
+const hostOf = (endpoint: PoolEndpointAddress) => {
   try {
     return new URL(endpoint.baseUrl).host;
   } catch {
@@ -122,12 +129,36 @@ const hostOf = (endpoint: PoolEndpoint) => {
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
-const send = (endpoint: PoolEndpoint, request: Request) =>
-  Effect.tryPromise({
-    try: () => endpoint.fetch(request),
-    catch: (cause) =>
-      new PoolBackendError({ detail: `${hostOf(endpoint)} could not be reached.`, cause }),
+const requestWithSignal = (request: Request, signal: AbortSignal) =>
+  new Request(request, { signal: AbortSignal.any([request.signal, signal]) });
+
+const unreachable = (endpoint: PoolEndpointAddress, cause?: unknown) =>
+  new PoolBackendError({
+    detail: `${hostOf(endpoint)} could not be reached.`,
+    ...(cause === undefined ? {} : { cause }),
   });
+
+/** Keeps Effect-backed adapters inside the pool runtime and normalizes their typed transport errors. */
+export const effectEndpoint = <E>(
+  address: PoolEndpointAddress,
+  fetch: (request: Request) => Effect.Effect<Response, E>,
+): PoolEndpoint => ({
+  ...address,
+  fetchEffect: (request) =>
+    fetch(request).pipe(
+      Effect.mapError((cause) => (isPoolBackendError(cause) ? cause : unreachable(address, cause))),
+    ),
+});
+
+const send = (endpoint: PoolEndpoint, request: Request) => {
+  if ("fetchEffect" in endpoint) {
+    return endpoint.fetchEffect(request);
+  }
+  return Effect.tryPromise({
+    try: (signal) => endpoint.fetch(requestWithSignal(request, signal)),
+    catch: (cause) => unreachable(endpoint, cause),
+  });
+};
 
 /**
  * A harness's model request (`/v1/messages`, `/v1/responses`, `/v1/models`),
@@ -336,16 +367,12 @@ const servedModels = (endpoint: PoolEndpoint) =>
   });
 
 export const listPoolLinkModels = (endpoint: PoolEndpoint) =>
-  Effect.tryPromise({
-    try: () =>
-      endpoint.fetch(
-        new Request(`${endpoint.baseUrl}/models`, {
-          headers: { authorization: `Bearer ${endpoint.clientKey}` },
-        }),
-      ),
-    catch: (cause) =>
-      new PoolBackendError({ detail: `${hostOf(endpoint)} could not be reached.`, cause }),
-  }).pipe(
+  send(
+    endpoint,
+    new Request(`${endpoint.baseUrl}/models`, {
+      headers: { authorization: `Bearer ${endpoint.clientKey}` },
+    }),
+  ).pipe(
     Effect.filterOrFail(
       (response) => response.status < 300,
       () => new PoolBackendError({ detail: "The linked pool has no cached model metadata." }),

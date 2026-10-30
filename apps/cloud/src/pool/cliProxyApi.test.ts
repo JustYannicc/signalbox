@@ -1,8 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import * as CliProxyApi from "./cliProxyApi.ts";
 import { makeFakeCliProxyApi } from "./testing.ts";
+
+class ContainerCallFailed extends Schema.TaggedError<ContainerCallFailed>()(
+  "ContainerCallFailed",
+  {},
+) {}
 
 const makeEndpoint = (
   baseUrl: string,
@@ -17,6 +23,23 @@ const makeEndpoint = (
 });
 
 describe("CLIProxyAPI model discovery", () => {
+  it.effect("keeps container transport failures tagged as the backend error cause", () =>
+    Effect.gen(function* () {
+      const endpoint = CliProxyApi.effectEndpoint(
+        {
+          baseUrl: "http://cliproxyapi",
+          managementKey: "",
+          clientKey: "client",
+          link: false,
+        },
+        () => Effect.fail(new ContainerCallFailed()),
+      );
+      const error = yield* Effect.flip(CliProxyApi.listModels(endpoint));
+      expect(error._tag).toBe("PoolBackendError");
+      expect(error.cause).toMatchObject({ _tag: "ContainerCallFailed" });
+    }),
+  );
+
   it.effect("reads a linked pool's cached catalog without waiting for live model discovery", () =>
     Effect.gen(function* () {
       const paths: Array<string> = [];

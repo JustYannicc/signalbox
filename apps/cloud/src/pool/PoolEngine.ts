@@ -33,7 +33,7 @@ import type { ModelCallTrace } from "../models/ModelProtocol.ts";
 import * as CliProxyApi from "./cliProxyApi.ts";
 import * as PoolContainer from "./PoolContainer.ts";
 import { unknownRelease } from "./CliProxyApiRuntime.ts";
-import { observePoolCall, PoolTelemetry } from "./PoolTelemetry.ts";
+import { observePoolCall, observePoolCallEffect, PoolTelemetry } from "./PoolTelemetry.ts";
 import * as PoolLimits from "./poolLimits.ts";
 import * as PoolLinks from "./PoolLinks.ts";
 import * as PoolModels from "./poolModels.ts";
@@ -541,44 +541,59 @@ const make = Effect.gen(function* () {
           clientKey: row.client_key,
           link: false,
         };
-    return {
-      ...endpoint,
-      fetch: (request) =>
-        observePoolCall({
-          request,
-          baseUrl: endpoint.baseUrl,
-          backing: endpoint.link ? "linked" : remote ? "external" : "managed",
-          release: remote ? () => unknownRelease : container.release,
-          correlation: {
-            ...(options?.actor && { person: { id: options.actor.userId } }),
-            // Link affinity is caller-supplied; only the model authority supplies a trace.
-            ...(options?.trace && {
-              ...(options.thread && { thread: { id: options.thread } }),
-              turn: { id: options.trace.runId, traceId: options.trace.traceId },
-            }),
-          },
-          submit: telemetry.submit,
-          send: (onSend) => {
-            const sending = () => {
+    const correlation = {
+      ...(options?.actor && { person: { id: options.actor.userId } }),
+      // Link affinity is caller-supplied; only the model authority supplies a trace.
+      ...(options?.trace && {
+        ...(options.thread && { thread: { id: options.thread } }),
+        turn: { id: options.trace.runId, traceId: options.trace.traceId },
+      }),
+    };
+    const backing = endpoint.link ? "linked" : remote ? "external" : "managed";
+    if (remote) {
+      return {
+        ...endpoint,
+        fetch: (request) =>
+          observePoolCall({
+            request,
+            baseUrl: endpoint.baseUrl,
+            backing,
+            release: remote ? () => unknownRelease : container.release,
+            correlation,
+            submit: telemetry.submit,
+            send: (onSend) => {
               onSend();
               options?.onSend?.();
-            };
-            if (remote) {
-              sending();
               return external.fetch(request);
-            }
-            if (options?.passive) {
-              sending();
-              return container.peek(request);
-            }
-            return container.fetch(request, {
-              store: { accessKey: row.store_access_key, secretKey: row.store_secret_key },
-              onSend: sending,
-              ...(options?.models ? { models: { clientKey: row.client_key } } : {}),
-            });
-          },
-        }),
-    };
+            },
+          }),
+      };
+    }
+    return CliProxyApi.effectEndpoint(endpoint, (request) =>
+      observePoolCallEffect({
+        request,
+        baseUrl: endpoint.baseUrl,
+        backing,
+        release: container.release,
+        correlation,
+        submit: telemetry.submit,
+        send: (onSend) => {
+          const sending = () => {
+            onSend();
+            options?.onSend?.();
+          };
+          if (options?.passive) {
+            sending();
+            return container.peek(request);
+          }
+          return container.fetch(request, {
+            store: { accessKey: row.store_access_key, secretKey: row.store_secret_key },
+            onSend: sending,
+            ...(options?.models ? { models: { clientKey: row.client_key } } : {}),
+          });
+        },
+      }),
+    );
   };
 
   /** The routing the pool's admins chose, or the default. */

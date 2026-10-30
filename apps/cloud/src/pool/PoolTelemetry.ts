@@ -1,4 +1,7 @@
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 
 import type { CloudFields } from "../observability/Evlog.ts";
 import {
@@ -71,3 +74,54 @@ export const observePoolCall = async (input: {
   record(response.status, response.status >= 400 ? "http_error" : "response");
   return response;
 };
+
+/** Effect version for the managed container, which shares the PoolObject runtime. */
+export const observePoolCallEffect = <E>(input: {
+  readonly request: Request;
+  readonly baseUrl: string;
+  readonly backing: PoolCallEvent["poolCall"]["backing"];
+  readonly correlation?: Pick<CloudFields, "person" | "thread" | "turn">;
+  readonly release: () => CliProxyApiRelease;
+  readonly send: (onSend: () => void) => Effect.Effect<Response, E>;
+  readonly submit: (event: PoolCallEvent) => void;
+}) =>
+  Effect.gen(function* () {
+    const clock = yield* Clock.Clock;
+    const startedAt = clock.monotonicTimeNanosUnsafe();
+    const kind =
+      input.backing === "linked"
+        ? "link"
+        : isManagementRequest(input.request, input.baseUrl)
+          ? "management"
+          : "model";
+    let release = unknownRelease;
+    const record = (status: number, outcome: PoolCallEvent["poolCall"]["outcome"]) =>
+      input.submit({
+        ...input.correlation,
+        action: "pool.call",
+        cliProxyApi: release,
+        status,
+        poolCall: {
+          backing: input.backing,
+          kind,
+          outcome,
+          headersMs: Math.max(0, Number(clock.monotonicTimeNanosUnsafe() - startedAt) / 1_000_000),
+        },
+      });
+    return yield* Effect.onExit(
+      input.send(() => {
+        // External/link targets can change independently. Model replies prove no release.
+        release = input.backing === "managed" ? input.release() : unknownRelease;
+      }),
+      (exit) =>
+        Effect.sync(() => {
+          if (Exit.isFailure(exit)) {
+            record(502, "transport_error");
+            return;
+          }
+          const response = exit.value;
+          if (kind === "management") release = releaseFromHeaders(response.headers);
+          record(response.status, response.status >= 400 ? "http_error" : "response");
+        }),
+    );
+  });
