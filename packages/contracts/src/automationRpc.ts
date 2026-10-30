@@ -14,6 +14,7 @@ import {
   AutomationRunSummary,
 } from "./automation.ts";
 import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 import { WorkflowDiagnostic, WorkflowGraph, WorkflowMeta } from "./workflow.ts";
 import { TaskLifecycleInput, TaskLifecycleResult } from "./taskLifecycle.ts";
 
@@ -25,6 +26,7 @@ export const AUTOMATION_WS_METHODS = {
   automationsSubscribe: "automations.subscribe",
   automationsSubscribeOne: "automations.subscribeOne",
   automationsSubscribeRun: "automations.subscribeRun",
+  automationsListBlocks: "automations.listBlocks",
   automationsSetEnabled: "automations.setEnabled",
   automationsDelete: "automations.delete",
   automationsRotateWebhook: "automations.rotateWebhook",
@@ -61,6 +63,40 @@ export type AutomationSubscriptionRpcTag =
 export const AutomationListResult = Schema.Struct({ automations: Schema.Array(Automation) });
 export type AutomationListResult = typeof AutomationListResult.Type;
 
+/** A block's origin: a saved folder block, or a static built-in. */
+export const AutomationBlockLibrarySource = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("folder"), projectId: ProjectId }),
+  Schema.Struct({ type: Schema.Literal("builtin"), slug: TrimmedNonEmptyString }),
+]);
+export type AutomationBlockLibrarySource = typeof AutomationBlockLibrarySource.Type;
+
+/**
+ * A block a workflow may name with `w.start`. The availability fields describe
+ * paused and draft-only winners; callers compare the saved block's runtime mode
+ * with their own before deciding whether the winner is safe to start.
+ */
+export const AutomationBlockLibraryEntry = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  description: Schema.NullOr(Schema.String),
+  input: Schema.optionalKey(Schema.Json),
+  output: Schema.optionalKey(Schema.Json),
+  source: AutomationBlockLibrarySource,
+  availability: Schema.Struct({
+    enabled: Schema.Boolean,
+    hasLiveVersion: Schema.Boolean,
+    /** Built-ins inherit the caller's runtime mode and therefore have no fixed ceiling. */
+    runtimeMode: Schema.NullOr(RuntimeMode),
+  }),
+});
+export type AutomationBlockLibraryEntry = typeof AutomationBlockLibraryEntry.Type;
+
+/** The winners visible from one explicitly requested folder/project. */
+export const AutomationBlockLibraryResult = Schema.Struct({
+  projectId: ProjectId,
+  blocks: Schema.Array(AutomationBlockLibraryEntry),
+});
+export type AutomationBlockLibraryResult = typeof AutomationBlockLibraryResult.Type;
+
 /** Every automation with its last run: once on subscribe, then after every change. */
 const SubscribeRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSubscribe, {
   payload: Schema.Struct({}),
@@ -83,6 +119,13 @@ const SubscribeRunRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSubscribeRun, 
   success: AutomationRunDetail,
   error,
   stream: true,
+});
+
+/** Lists the nearest `w.start` winner for each name, without starting built-ins. */
+const ListBlocksRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsListBlocks, {
+  payload: Schema.Struct({ projectId: ProjectId }),
+  success: AutomationBlockLibraryResult,
+  error,
 });
 
 const SetEnabledRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSetEnabled, {
@@ -343,6 +386,7 @@ export const AutomationRpcs = [
   SubscribeRpc,
   SubscribeOneRpc,
   SubscribeRunRpc,
+  ListBlocksRpc,
   SetEnabledRpc,
   DeleteRpc,
   RotateWebhookRpc,

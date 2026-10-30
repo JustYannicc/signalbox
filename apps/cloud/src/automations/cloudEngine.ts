@@ -140,6 +140,23 @@ const make = Effect.gen(function* () {
   const harnessReleaseLedger = yield* HarnessReleaseLedgerService;
   const changedFiles = yield* makeChangedFiles;
   const folders = yield* UserFolders.UserFolders;
+  const listBlocks = (projectId: ProjectId) =>
+    Effect.gen(function* () {
+      const state = yield* folders.state.pipe(
+        Effect.mapError(
+          (cause) =>
+            new AutomationError({
+              message: "Couldn't check access to this project.",
+              cause,
+            }),
+        ),
+      );
+      // Folder resolution includes the requested id by design; authorize it before resolution.
+      if (!state.contexts.some((context) => context.projectIds.includes(projectId))) {
+        return yield* new AutomationError({ message: "This project isn't available to you." });
+      }
+      return yield* engine.listBlocks(projectId);
+    });
   yield* engine.registerBuiltinTools(
     makeCloudBuiltinTools({
       threads,
@@ -265,6 +282,7 @@ const make = Effect.gen(function* () {
   return CloudAutomations.of({
     answerAsk: (command, ask) =>
       engine.answerSignalboxAsk(command, ask).pipe(Effect.andThen(flush)),
+    listBlocks,
     save: (input, newThreadModel) =>
       Effect.gen(function* () {
         if (input.compiled === undefined) {

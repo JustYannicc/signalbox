@@ -6,6 +6,7 @@ import {
   WorkflowMeta,
   type Automation,
   type AutomationAskAnswerInput,
+  type AutomationBlockLibraryResult,
   type AutomationBuiltIn,
   type AutomationDefaults,
   type AutomationDetail,
@@ -42,6 +43,7 @@ import { makeTaskLifecycleRuns } from "./taskLifecycleRuns.ts";
 import { makeAttachments } from "./attachments.ts";
 import { makeAsks, type AutomationAnswerContext } from "./asks.ts";
 import { decodeWorkflowInput, decodeWorkflowOutput } from "./blockContracts.ts";
+import { makeBlockLibrary } from "./blockLibrary.ts";
 import { childSettlement, makeChildRuns } from "./childRuns.ts";
 import { makeBuiltinTools, type BuiltinToolHandler } from "./builtinTools/runner.ts";
 import { makeExternalRuns, type ExternalRuns } from "./external.ts";
@@ -102,6 +104,10 @@ type Store = WorkflowStore.WorkflowStore;
 export type { AuthorizeAutomation, ExternalEvent };
 
 export interface WorkflowEngineShape extends CatalogShape {
+  /** Lists nearest `w.start` winners for an explicitly requested project. */
+  readonly listBlocks: (
+    projectId: ProjectId,
+  ) => Effect.Effect<AutomationBlockLibraryResult, AutomationError>;
   readonly taskLifecycle: (
     input: TaskLifecycleInput,
   ) => Effect.Effect<TaskLifecycleResult, AutomationError>;
@@ -218,6 +224,8 @@ export const makeEngine = <R>(
     const links = yield* RunLinkStore.make;
     const children = yield* makeChildRuns;
     const folders = yield* Effect.serviceOption(AutomationFolders);
+    const projects = (projectId: string) =>
+      Option.isSome(folders) ? folders.value.projects(projectId) : Effect.succeed([projectId]);
     const hosts = yield* HostStore.make;
     const builtinTools = makeBuiltinTools({
       approvalOf: (runId) =>
@@ -460,8 +468,7 @@ export const makeEngine = <R>(
       connections,
       builtinTools,
       callback: (runId) => ingress.createCallback(runId),
-      projects: (projectId) =>
-        Option.isSome(folders) ? folders.value.projects(projectId) : Effect.succeed([projectId]),
+      projects,
       existingChild: (step) =>
         Effect.gen(function* () {
           const link = yield* children.get(step.run_id, step.step_key, step.attempt);
@@ -926,6 +933,7 @@ export const makeEngine = <R>(
       compile: compiler.compile,
       watching: sources.statusOf,
     });
+    const listBlocks = makeBlockLibrary({ store, projects });
     const builtIns = makeBuiltIns({
       store,
       hosts,
@@ -1115,6 +1123,7 @@ export const makeEngine = <R>(
         ),
       emit,
       deliverEvent: events.externalEvent,
+      listBlocks: (projectId) => listBlocks(projectId),
       subscribeList: () => feed.watch("list", catalog.list(), listShows, { keepOnFailure: true }),
       subscribeAutomation: (automationId) =>
         feed.watch(

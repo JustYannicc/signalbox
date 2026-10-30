@@ -14,6 +14,7 @@ export const automationRpcHandlers = () => ({
   [AUTOMATION_WS_METHODS.automationsSubscribeNotices]: failedStream,
   [AUTOMATION_WS_METHODS.automationsSubscribeOne]: failedStream,
   [AUTOMATION_WS_METHODS.automationsSubscribeRun]: failedStream,
+  [AUTOMATION_WS_METHODS.automationsListBlocks]: failed,
   [AUTOMATION_WS_METHODS.automationsSetEnabled]: failed,
   [AUTOMATION_WS_METHODS.automationsDelete]: failed,
   [AUTOMATION_WS_METHODS.automationsRotateWebhook]: failed,

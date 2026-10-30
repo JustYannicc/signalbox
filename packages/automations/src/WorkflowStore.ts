@@ -262,6 +262,14 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map((rows) => rows[0])),
     listAutomations: () =>
       run("listAutomations", sql<AutomationRow>`SELECT * FROM signalbox_automations ORDER BY name`),
+    /** Rows in one scope only; folder library reads never scan sibling projects. */
+    listAutomationsForProject: (projectId: string) =>
+      run(
+        "listAutomationsForProject",
+        sql<AutomationRow>`
+          SELECT * FROM signalbox_automations WHERE project_id = ${projectId} ORDER BY name
+        `,
+      ),
     dueAutomations: (now: string) =>
       run(
         "dueAutomations",

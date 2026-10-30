@@ -2,7 +2,7 @@ import type { NavigationProp } from "@react-navigation/native";
 
 import type { CommandPaletteItem } from "../keyboard/commandPaletteItems";
 
-/** Automations' entries in the command palette: the list, and the services `w.call` reaches. */
+/** Automations' entries in the command palette: the list, the services `w.call` reaches and the blocks `w.start` calls. */
 export function automationPaletteActions(
   navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate">,
 ): CommandPaletteItem[] {
@@ -23,6 +23,17 @@ export function automationPaletteActions(
         navigation.navigate("SettingsSheet", {
           screen: "SettingsContent",
           params: { screen: "SettingsConnectedServices" },
+        }),
+    },
+    {
+      key: "blockLibrary",
+      kind: "action",
+      title: "Block library",
+      searchTerms: ["blocks", "automations", "w.start", "contracts"],
+      run: () =>
+        navigation.navigate("SettingsSheet", {
+          screen: "SettingsContent",
+          params: { screen: "SettingsAutomationBlocks" },
         }),
     },
   ];

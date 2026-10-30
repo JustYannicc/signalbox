@@ -8,12 +8,20 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironmentServerConfig } from "./entities";
+import { useEnvironments } from "./environments";
 import { useEnvironmentQuery } from "./query";
 import { environmentServerConfigsAtom } from "./server";
 import { signalboxContexts } from "./signalboxContexts";
 import { environmentThreadShells } from "./threads";
 
 export const signalboxFolders = createSignalboxFoldersAtoms(connectionAtomRuntime);
+
+/** The connected environments that keep folders. */
+export function useFolderEnvironments() {
+  return useEnvironments().environments.filter(
+    (environment) => environment.serverConfig?.environment.capabilities.folders === true,
+  );
+}
 
 /** Whether the environment keeps folders. Self-hosted servers keep sections instead. */
 export function useEnvironmentHasFolders(environmentId: EnvironmentId | null): boolean {
