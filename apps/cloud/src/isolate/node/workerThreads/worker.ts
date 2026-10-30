@@ -346,6 +346,11 @@ export function createNodeWorkerThreadsWithPorts(
           this.#port.off("messageerror", this.#forwardMessageError);
           this.#port.close();
           try {
+            await ports.drain();
+          } catch (error) {
+            this.#recordFailure(error);
+          }
+          try {
             this.emit("exit", exit.code);
           } catch (error) {
             this.#recordFailure(error);
