@@ -28,7 +28,9 @@ export function readCommandObservation(input: unknown) {
   if (
     method !== "POST" ||
     typeof path !== "string" ||
-    !/^(?:\/turn\/[123]\/dispatch|\/replace\/dispatch|\/observer-calibration)$/.test(path) ||
+    !/^(?:\/turn\/[123]\/dispatch|\/replace\/dispatch|\/observer-calibration|\/claude\/(?:baseline|hooks)\/(?:work|resume|interrupt)\/dispatch)$/.test(
+      path,
+    ) ||
     typeof invocationId !== "string" ||
     !invocationId
   )
