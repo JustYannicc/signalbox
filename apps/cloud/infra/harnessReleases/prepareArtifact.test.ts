@@ -3,7 +3,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { openHarnessReleaseArtifact } from "../../src/harnessReleases/HarnessReleaseArtifact.ts";
-import { artifactDirectorySource, prepareHarnessArtifact } from "./prepareArtifact.ts";
+import {
+  artifactDirectorySource,
+  prepareHarnessArtifact,
+  prepareHarnessQualificationArtifact,
+} from "./prepareArtifact.ts";
 import {
   prepareHarnessArtifactWithFileSystem,
   type ArtifactFileSystem,
@@ -81,6 +85,21 @@ describe("Harness artifact preparation", () => {
       "NODE_BUILTIN_COVERAGE_FAILED: missing=cluster",
     );
     await expect(NodeFSP.lstat(input.output)).rejects.toMatchObject({ code: "ENOENT" });
+    const qualification = await prepareHarnessQualificationArtifact(input);
+    expect(qualification.openFindings).toMatchObject({
+      status: "open",
+      missingBuiltins: ["cluster"],
+    });
+    const prepared = await openHarnessReleaseArtifact(
+      qualification.identity,
+      artifactDirectorySource(input.output),
+    );
+    expect(new TextDecoder().decode(await prepared.read("sdk/sdk.js"))).toBe(
+      "import 'node:cluster';",
+    );
+    await expect(
+      prepareHarnessArtifact({ ...input, output: NodePath.join(root, "release-refused") }),
+    ).rejects.toThrow("NODE_BUILTIN_COVERAGE_FAILED: missing=cluster");
     const codex = NodePath.join(root, "codex");
     await NodeFSP.mkdir(codex);
     await NodeFSP.writeFile(NodePath.join(codex, "manifest.json"), '{"mainModule":"loader.mjs"}');

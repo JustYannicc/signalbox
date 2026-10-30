@@ -1,10 +1,24 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { assertPackagedBuiltinCoverage, type BuiltinSource } from "../nodeBuiltinGate.ts";
+import * as NodeUtil from "node:util";
+import {
+  assertPackagedBuiltinCoverage,
+  inspectPackagedBuiltinCoverage,
+  type BuiltinSource,
+} from "../nodeBuiltinGate.ts";
+import { qualificationBuiltinFindings } from "./findings.ts";
 
-const directory = process.argv[2];
-if (!directory || process.argv.length !== 3)
-  throw new Error("Supply one prepared artifact directory");
+const { values, positionals } = NodeUtil.parseArgs({
+  options: { purpose: { type: "string", default: "release" }, result: { type: "string" } },
+  allowPositionals: true,
+});
+const directory = positionals[0];
+if (
+  !directory ||
+  positionals.length !== 1 ||
+  !["qualification", "release"].includes(values.purpose)
+)
+  throw new Error("Supply one prepared artifact directory and purpose qualification|release");
 const root = await NodeFSP.realpath(directory);
 const sources: BuiltinSource[] = [];
 async function walk(relative: string) {
@@ -20,4 +34,12 @@ async function walk(relative: string) {
   }
 }
 await walk("");
-process.stdout.write(JSON.stringify(await assertPackagedBuiltinCoverage(sources)) + "\n");
+const inspected = await (
+  values.purpose === "qualification"
+    ? inspectPackagedBuiltinCoverage
+    : assertPackagedBuiltinCoverage
+)(sources);
+const findings = qualificationBuiltinFindings(inspected);
+if (values.result)
+  await NodeFSP.writeFile(values.result, JSON.stringify(findings) + "\n", { flag: "wx" });
+else process.stdout.write(JSON.stringify(findings) + "\n");

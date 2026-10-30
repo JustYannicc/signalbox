@@ -29,7 +29,7 @@ export {
 };
 
 /** Runs before publication, including when provider components came from a build cache. */
-export async function assertPackagedBuiltinCoverage(
+export async function inspectPackagedBuiltinCoverage(
   sources: readonly BuiltinSource[],
   runtimeInventory?: RuntimeBuiltinInventory,
   reachabilitySources: readonly BuiltinSource[] = sources,
@@ -46,7 +46,6 @@ export async function assertPackagedBuiltinCoverage(
     ambiguities: inventory.flatMap((entry) => entry.ambiguities),
     functionAmbiguities: inventory.flatMap((entry) => entry.functionAmbiguities),
   });
-  assertNodeBuiltinCoverage(report);
   const sourceByName = new Map(inventory.map((source) => [source.name, source]));
   const sourceInventory = reachabilitySources.map((source) => {
     const scanned = sourceByName.get(source.name);
@@ -66,28 +65,50 @@ export async function assertPackagedBuiltinCoverage(
   };
 }
 
+export async function assertPackagedBuiltinCoverage(
+  sources: readonly BuiltinSource[],
+  runtimeInventory?: RuntimeBuiltinInventory,
+  reachabilitySources: readonly BuiltinSource[] = sources,
+) {
+  const inspected = await inspectPackagedBuiltinCoverage(
+    sources,
+    runtimeInventory,
+    reachabilitySources,
+  );
+  assertNodeBuiltinCoverage(inspected);
+  return inspected;
+}
+
 /** Validates and scans exactly the JavaScript declared in the final bundle manifest. */
+export async function inspectPublishedBuiltinCoverage(
+  directory: string,
+  runtimeInventory?: RuntimeBuiltinInventory,
+) {
+  const { sources, artifact, omission, partitioned } = await readPublishedBuiltinSources(directory);
+  const analysisSources = partitioned ? [...sources, await linkPublishedSources(sources)] : sources;
+  const scanned = await inspectPackagedBuiltinCoverage(analysisSources, runtimeInventory, sources);
+  return {
+    ...scanned,
+    artifact,
+    ...(omission === undefined ? {} : { omission }),
+  };
+}
+
 export async function assertPublishedBuiltinCoverage(
   directory: string,
   runtimeInventory?: RuntimeBuiltinInventory,
   reachabilityCorpus?: BuiltinReachabilityCorpus,
 ) {
-  const { sources, artifact, omission, partitioned } = await readPublishedBuiltinSources(directory);
-  const analysisSources = partitioned ? [...sources, await linkPublishedSources(sources)] : sources;
-  const scanned = await assertPackagedBuiltinCoverage(analysisSources, runtimeInventory, sources);
+  const inspected = await inspectPublishedBuiltinCoverage(directory, runtimeInventory);
+  assertNodeBuiltinCoverage(inspected);
   const reachability = assessNodeBuiltinReachability({
-    artifactSha256: artifact.sha256,
-    inventory: scanned.reachabilityInventory,
+    artifactSha256: inspected.artifact.sha256,
+    inventory: inspected.reachabilityInventory,
     ...(reachabilityCorpus === undefined ? {} : { corpus: reachabilityCorpus }),
   });
   if (reachability.coverageStatus === "rejected")
     throw new Error(`NODE_BUILTIN_REACHABILITY_FAILED: ${reachability.blockers.join("; ")}`);
-  return {
-    ...scanned,
-    artifact,
-    reachability,
-    ...(omission === undefined ? {} : { omission }),
-  };
+  return { ...inspected, reachability };
 }
 
 /** Original extracted code and packaged code share the same builtin-name analysis. */

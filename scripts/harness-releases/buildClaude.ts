@@ -4,7 +4,11 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import { isNodeErrorCode } from "./guards.ts";
-import { assertPublishedBuiltinCoverage } from "./nodeBuiltinGate.ts";
+import {
+  assertPublishedBuiltinCoverage,
+  inspectPublishedBuiltinCoverage,
+} from "./nodeBuiltinGate.ts";
+import { qualificationBuiltinFindings } from "./nodeBuiltinGate/findings.ts";
 import { rebundleClaudeRelease } from "../claude-bunfs/rebundle.ts";
 import type { ReleaseOmissionOptions } from "../claude-bunfs/release-omission.ts";
 import { readClaudeOmission } from "./claudeOmission.ts";
@@ -28,6 +32,7 @@ import { validateClaudeReleaseIdentity, verifyClaudeExtraction } from "./claudeR
 export type { BuildClaudeReleaseResult, ClaudeArtifactEnvelope } from "./claudeBuildOutput.ts";
 
 export interface BuildClaudeReleaseOptions {
+  readonly purpose?: "qualification" | "release";
   readonly identity: OfficialReleaseIdentity;
   readonly extracted: string;
   readonly output: string;
@@ -140,6 +145,9 @@ export async function buildClaudeRelease(
   options: BuildClaudeReleaseOptions,
 ): Promise<BuildClaudeReleaseResult> {
   const variant = options.variant ?? "hooks";
+  const purpose = options.purpose ?? "release";
+  if (purpose !== "qualification" && purpose !== "release")
+    throw new Error("CLAUDE_BUILD_PURPOSE_INVALID");
   if (variant !== "baseline" && variant !== "hooks")
     throw new Error("CLAUDE_BUILD_VARIANT_INVALID");
   const version = options.identity.version;
@@ -218,7 +226,9 @@ export async function buildClaudeRelease(
       bunVersion: null,
       capabilities: options.capabilities ?? emptyCapabilities(inputs),
     });
-    const builtinCoverage = await assertPublishedBuiltinCoverage(bundlePath);
+    const builtinCoverage = await (
+      purpose === "qualification" ? inspectPublishedBuiltinCoverage : assertPublishedBuiltinCoverage
+    )(bundlePath);
     const sourceAfter = await freezeSources(repository);
     assertSourcesUnchanged(sourceBefore, sourceAfter);
     const provenance = {
@@ -247,10 +257,14 @@ export async function buildClaudeRelease(
       },
       buildInputs: inputs.provenance,
       builtinCoverage,
+      ...(purpose === "qualification"
+        ? { releasable: false, openFindings: qualificationBuiltinFindings(builtinCoverage) }
+        : {}),
       capabilities: options.capabilities
         ? { status: "supplied", sha256: sha256(JSON.stringify(options.capabilities)) }
         : { status: "missing" },
       build: {
+        purpose,
         variant,
         node: process.versions.node,
         esbuild: inputs.provenance.packageMapRebinding.bundlerVersion,
@@ -260,6 +274,7 @@ export async function buildClaudeRelease(
         "Build and source scan only. Local, deployed, update and selected-runtime capability proofs remain separate.",
     } satisfies Record<string, unknown>;
     return await publishClaudeBuildOutput({
+      purpose,
       report: scan.report,
       bunCapabilityGaps: scan.inventory.bunCapabilityGaps,
       hasCapabilitySnapshot: Boolean(options.capabilities),
@@ -292,6 +307,7 @@ async function main() {
       "coverage-corpus": { type: "string" },
       "host-configuration": { type: "string" },
       variant: { type: "string" },
+      purpose: { type: "string" },
     },
     allowPositionals: false,
     strict: true,
@@ -302,6 +318,12 @@ async function main() {
   const result = values.result;
   if (values.variant !== undefined && values.variant !== "baseline" && values.variant !== "hooks")
     throw new Error("CLAUDE_BUILD_VARIANT_INVALID");
+  if (
+    values.purpose !== undefined &&
+    values.purpose !== "qualification" &&
+    values.purpose !== "release"
+  )
+    throw new Error("CLAUDE_BUILD_PURPOSE_INVALID");
   if (!identityPath || !extracted || !output || !result)
     throw new Error(
       "Usage: buildClaude.ts --identity <identity.json> --extracted <directory> --output <new-directory> --result <new-result.json> [--variant baseline|hooks] [--capabilities <runtime-capabilities.json>] [--omit-unreachable] [--coverage-corpus <corpus.json>] [--host-configuration product|qualification]",
@@ -324,6 +346,7 @@ async function main() {
     extracted,
     output,
     result,
+    ...(values.purpose ? { purpose: values.purpose } : {}),
     ...(values.variant ? { variant: values.variant } : {}),
     ...(capabilities ? { capabilities } : {}),
     ...(omission ? { omission } : {}),

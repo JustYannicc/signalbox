@@ -256,6 +256,22 @@ describe("Claude release build integration", () => {
       expect(
         (await NodeFSP.readdir(root)).filter((name) => name.startsWith("artifact.rejected-")),
       ).toHaveLength(1);
+      const qualification = NodePath.join(root, "qualification");
+      const built = await buildClaudeRelease({
+        ...input,
+        output: qualification,
+        purpose: "qualification",
+      });
+      expect(built.report.checks.builtinGaps.status).toBe("pending");
+      expect(built.provenance).toMatchObject({
+        releasable: false,
+        build: { purpose: "qualification" },
+        openFindings: { status: "open", missingBuiltins: ["cluster"] },
+        builtinCoverage: { status: "fail" },
+      });
+      expect(
+        await NodeFSP.readFile(NodePath.join(qualification, "manifest.json"), "utf8"),
+      ).toContain("2.1.303");
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

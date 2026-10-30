@@ -3,7 +3,8 @@ import * as NodePath from "node:path";
 import { runTrustedComputerManifestCli } from "./computerManifestCli.ts";
 import { canonicalComputerJson, computerSha256 } from "./computerManifest/identity.ts";
 import { captureCurrentSourceFreeze } from "./computerManifest/sourceFreeze.ts";
-import { prepareHarnessArtifact } from "./prepareArtifact.ts";
+import { prepareHarnessArtifact, prepareHarnessQualificationArtifact } from "./prepareArtifact.ts";
+import type { HarnessReleaseBuiltinFindings } from "../../src/harnessReleases/HarnessReleaseBuiltinFindings.ts";
 import { resolveCandidateOutputDirectory, writeCandidateFile } from "./candidateOutput.ts";
 import { writeClaudeReleaseLedgerCandidate } from "./writeClaudeReleaseLedgerCandidate.ts";
 import { directoryHarnessArtifactStore, publishHarnessArtifact } from "./publishArtifact.ts";
@@ -50,6 +51,7 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
     "baseline" | "hooks",
     Awaited<ReturnType<typeof prepareHarnessArtifact>>
   >;
+  const openFindings = {} as Record<"baseline" | "hooks", HarnessReleaseBuiltinFindings>;
   for (const variant of ["baseline", "hooks"] as const) {
     const cli = variant === "baseline" ? input.baselineCli : input.hooksCli;
     const cliManifest = await NodeFSP.readFile(NodePath.join(cli, "manifest.json"));
@@ -63,13 +65,15 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
         sdkManifestSha256: computerSha256(sdkManifest),
       }),
     );
-    variants[variant] = await prepareHarnessArtifact({
+    const prepared = await prepareHarnessQualificationArtifact({
       harness: "claude-code",
       sourceIdentity,
       computer: computer.trustedComputer,
       components: { cli, sdk: input.sdk },
       output: NodePath.join(outputDirectory, variant),
     });
+    variants[variant] = prepared.identity;
+    openFindings[variant] = prepared.openFindings;
   }
   const written = await writeClaudeReleaseLedgerCandidate({
     createdAt: input.createdAt,
@@ -101,13 +105,18 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
     deployment: {
       schemaVersion: 1,
       purpose: "qualification",
+      releasable: false,
       projectId,
       claudeVariants: {
         baseline: { variant: "baseline", fullArtifact: records.baseline.artifact },
         hooks: { variant: "hooks", fullArtifact: records.hooks.artifact },
       },
       // The candidate writer verifies an empty proof ledger before returning these records.
-      ledger: [records.baseline, records.hooks].map(({ artifact }) => ({ artifact, proofs: [] })),
+      ledger: (["baseline", "hooks"] as const).map((variant) => ({
+        artifact: records[variant].artifact,
+        proofs: [],
+        openFindings: [openFindings[variant]],
+      })),
       assets,
     },
   });
@@ -118,6 +127,7 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
     schema: "signalbox/claude-release-pair-candidate/v1",
     status: "candidate",
     qualification: "pending",
+    releasable: false,
     source,
     trustedComputer: computer.trustedComputer,
     maxPreparedModuleBytes: input.maxPreparedModuleBytes,
