@@ -11,6 +11,90 @@ export * from "../../../FixtureWorkerExports.ts";
 export default {
   async fetch(request: Request) {
     const path = new URL(request.url).pathname;
+    if (path === "/tls") {
+      const tls = DEFAULT_NODE_NATIVE_MODULES.tls!;
+      const Socket = Reflect.get(DEFAULT_NODE_NATIVE_MODULES.net!, "Socket");
+      const TLSSocket = Reflect.get(tls, "TLSSocket");
+      const connect = Reflect.get(tls, "connect");
+      const codes: string[] = [];
+      const identities: boolean[] = [];
+      const servernames: string[] = [];
+      for (const create of [
+        (socket: object) => new TLSSocket(socket),
+        (socket: object) => connect({ socket, rejectUnauthorized: true, enableTrace: false }),
+      ]) {
+        const plain = new Socket();
+        const socket = create(plain);
+        try {
+          identities.push(socket instanceof TLSSocket && socket instanceof Socket);
+          socket.setServername("fixture.test");
+          servernames.push(socket.servername);
+          for (const [member, args] of [
+            ["setSession", [NodeBuffer.Buffer.from("session")]],
+            ["getSession", []],
+            ["getTLSTicket", []],
+            ["isSessionReused", []],
+            ["getCipher", []],
+            ["getSharedSigalgs", []],
+            ["getEphemeralKeyInfo", []],
+            ["getFinished", []],
+            ["getPeerFinished", []],
+            ["getProtocol", []],
+            ["getPeerCertificate", []],
+            ["getCertificate", []],
+            ["getPeerX509Certificate", []],
+            ["getX509Certificate", []],
+            ["setKeyCert", [{}]],
+            ["exportKeyingMaterial", [16, "fixture"]],
+            ["setMaxSendFragment", [512]],
+            ["renegotiate", [{}, () => {}]],
+            ["disableRenegotiation", []],
+            ["enableTrace", []],
+          ] as const) {
+            try {
+              socket[member](...args);
+              codes.push("DID_NOT_THROW");
+            } catch (error) {
+              codes.push(String(Reflect.get(error as object, "code")));
+            }
+          }
+        } finally {
+          socket.destroy();
+          plain.destroy();
+        }
+      }
+      for (const option of [
+        { ALPNProtocols: ["h2"] },
+        { enableTrace: true },
+        { isServer: true },
+        { server: {} },
+        { requestCert: true },
+        { requestOCSP: true },
+        { rejectUnauthorized: false },
+        { SNICallback() {} },
+        { secureContext: {} },
+        { pskCallback() {} },
+        { checkServerIdentity() {} },
+        { minDHSize: 1024 },
+      ]) {
+        for (const create of [
+          (socket: object) => new TLSSocket(socket, option),
+          (socket: object) => connect({ socket, ...option }),
+        ]) {
+          const plain = new Socket();
+          try {
+            const socket = create(plain);
+            socket.destroy();
+            codes.push("DID_NOT_THROW");
+          } catch (error) {
+            codes.push(String(Reflect.get(error as object, "code")));
+          } finally {
+            plain.destroy();
+          }
+        }
+      }
+      return Response.json({ codes, identities, servernames });
+    }
     if (path === "/dsa") {
       const keys: unknown = await request.json();
       if (typeof keys !== "object" || keys === null) throw new TypeError("Missing test keys");

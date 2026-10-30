@@ -2,6 +2,7 @@ import { markNodeBuiltinCapability } from "../../isolate/NodeBuiltinCapabilities
 import { NodeBuiltinUnsupportedError } from "../../isolate/NodeBuiltinFailure.ts";
 import { overrideNativeModule } from "./nativeModuleOverrides.ts";
 import { guardWorkerdCrypto } from "./nativeCryptoGuards.ts";
+import { guardWorkerdTlsOptions, guardWorkerdTlsSocket } from "./nativeTlsGuards.ts";
 
 const ignoredTlsOptions = [
   "ca",
@@ -64,9 +65,11 @@ export function guardWorkerdNativeOptions(modules: Record<string, object>) {
       const native: unknown = Reflect.get(module, member);
       if (!isNativeCallable(native)) throw new TypeError(`Missing ${specifier}.${member}`);
       const guard = (args: readonly unknown[]) => {
-        const options = optionsIn(args);
-        if (specifier === "tls")
+        const options = optionsIn(member === "TLSSocket" ? args.slice(1) : args);
+        if (specifier === "tls") {
           rejectOptions(`${specifier}.${member}`, options, ignoredTlsOptions);
+          guardWorkerdTlsOptions(`${specifier}.${member}`, options);
+        }
         if (specifier === "https")
           rejectOptions(`${specifier}.${member}`, options, [
             ...ignoredTlsOptions,
@@ -98,11 +101,13 @@ export function guardWorkerdNativeOptions(modules: Record<string, object>) {
           new Proxy(native, {
             apply(target, receiver, args) {
               guard(args);
-              return Reflect.apply(target, receiver, args);
+              const result: unknown = Reflect.apply(target, receiver, args);
+              return specifier === "tls" ? guardWorkerdTlsSocket(result) : result;
             },
             construct(target, args, newTarget) {
               guard(args);
-              return Reflect.construct(target, args, newTarget);
+              const result: object = Reflect.construct(target, args, newTarget);
+              return specifier === "tls" ? guardWorkerdTlsSocket(result) : result;
             },
           }),
           {

@@ -28,6 +28,14 @@ it("rejects ignored native options while preserving fetch clients, context propa
     expect(rows).toHaveLength(12);
     for (const row of rows)
       expect(row.code, row.path).toBe("ERR_SIGNALBOX_NODE_BUILTIN_UNSUPPORTED");
+    const tls = await harness.fetch("http://proof/tls");
+    const tlsBody = await tls.text();
+    expect(tls.status, tlsBody).toBe(200);
+    expect(JSON.parse(tlsBody)).toEqual({
+      codes: Array(64).fill("ERR_SIGNALBOX_NODE_BUILTIN_UNSUPPORTED"),
+      identities: [true, true],
+      servernames: ["fixture.test", "fixture.test"],
+    });
     const client = await harness.fetch("http://proof/client");
     expect(await client.json()).toEqual({
       observed: [{ url: "http://model.test/messages", method: "POST", body: "request body" }],
