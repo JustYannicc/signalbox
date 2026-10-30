@@ -19,6 +19,7 @@ import { uuidv4 } from "../../lib/uuid";
 import { signalboxAskCommand } from "../../state/signalboxAsks";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadProjection } from "../../state/use-thread-detail";
+import { AskQuestion } from "../asks/AskQuestion";
 import { RequestActionButton } from "./RequestActionButton";
 import { SignalboxAskHistory } from "./SignalboxAskHistory";
 
@@ -42,11 +43,13 @@ function AskRound(props: {
   const built = buildAskRoundAnswer(ask, drafts);
   const questions = pendingAskQuestions(ask);
   const disabled = !canAnswer || busy;
+  // A draft the question can't accept blocks Send, so nothing the person set is silently dropped.
+  const blocked = built.problems.length > 0;
   const submit = async (deferAll: boolean) => {
     if (
       disabled ||
       inFlight.current ||
-      (!deferAll && built.answers.length === 0 && !comment.trim())
+      (!deferAll && (blocked || (built.answers.length === 0 && !comment.trim())))
     )
       return;
     inFlight.current = true;
@@ -60,7 +63,9 @@ function AskRound(props: {
           commandId: CommandId.make(uuidv4()),
           threadId: threadRef.threadId,
           askId: ask.id,
-          ...built,
+          round: built.round,
+          answers: built.answers,
+          deferredQuestionIds: built.deferredQuestionIds,
           ...(comment.trim() ? { comment: comment.trim() } : {}),
           ...(deferAll
             ? { answers: [], deferredQuestionIds: questions.map((question) => question.id) }
@@ -85,81 +90,18 @@ function AskRound(props: {
       <Text accessibilityRole="header" className="font-t3-bold text-base text-foreground">
         {kindLabels[ask.kind]} · Round {built.round}
       </Text>
-      {questions.map((question) => {
-        const draft = drafts[question.id] ?? emptyDraft;
-        const update = (value: AskDraftAnswer) =>
-          setDrafts((current) => ({ ...current, [question.id]: value }));
-        return (
-          <View key={question.id} className="gap-2">
-            <Text className="font-t3-bold text-sm text-foreground">{question.question}</Text>
-            <Text className="font-sans text-sm text-foreground-muted">Why: {question.why}</Text>
-            <Text className="font-sans text-sm text-foreground-muted">
-              Unblocks: {question.unblocks}
-            </Text>
-            <Text className="font-sans text-sm text-foreground-muted">
-              Whose decision: {question.decisionOwner}
-            </Text>
-            {question.recommendation === null ? null : (
-              <Text className="font-sans text-sm text-foreground-muted">
-                Recommendation:{" "}
-                {typeof question.recommendation === "string"
-                  ? question.recommendation
-                  : JSON.stringify(question.recommendation)}
-              </Text>
-            )}
-            {question.options.map((option, index) => (
-              <RequestActionButton
-                key={`${option.label}:${JSON.stringify(option.value)}`}
-                label={option.label}
-                tone={draft.selectedOptionIndexes.includes(index) ? "primary" : "secondary"}
-                accessibilityState={{ selected: draft.selectedOptionIndexes.includes(index) }}
-                disabled={disabled}
-                onPress={() =>
-                  update({
-                    ...draft,
-                    useRecommendation: false,
-                    selectedOptionIndexes: draft.selectedOptionIndexes.includes(index)
-                      ? draft.selectedOptionIndexes.filter((selected) => selected !== index)
-                      : question.multiSelect
-                        ? [...draft.selectedOptionIndexes, index]
-                        : [index],
-                  })
-                }
-              />
-            ))}
-            {question.recommendation === null ? null : (
-              <RequestActionButton
-                label="Use recommendation"
-                tone={draft.useRecommendation ? "primary" : "secondary"}
-                accessibilityState={{ selected: draft.useRecommendation === true }}
-                disabled={disabled}
-                onPress={() =>
-                  update({
-                    ...draft,
-                    selectedOptionIndexes: [],
-                    useRecommendation: !draft.useRecommendation,
-                  })
-                }
-              />
-            )}
-            {question.surface.kind === "html" ? (
-              <Text className="font-sans text-sm text-foreground-muted">
-                Answer with the options or text below. The custom view is unavailable here.
-              </Text>
-            ) : null}
-            <TextInput
-              accessibilityLabel={`Answer or comment: ${question.question}`}
-              placeholder="Write an answer or add a comment"
-              multiline
-              value={draft.text}
-              editable={!disabled}
-              onChangeText={(text) => update({ ...draft, text })}
-              onFocus={() => props.onInputFocusChange(true)}
-              onBlur={() => props.onInputFocusChange(false)}
-            />
-          </View>
-        );
-      })}
+      {questions.map((question) => (
+        <AskQuestion
+          key={question.id}
+          question={question}
+          draft={drafts[question.id] ?? emptyDraft}
+          problem={built.problems.find((item) => item.questionId === question.id)?.problem}
+          disabled={disabled}
+          environmentId={threadRef.environmentId}
+          onInputFocusChange={props.onInputFocusChange}
+          onChange={(draft) => setDrafts((current) => ({ ...current, [question.id]: draft }))}
+        />
+      ))}
       <TextInput
         accessibilityLabel="Round comment (optional)"
         placeholder="Round comment (optional)"
@@ -192,7 +134,7 @@ function AskRound(props: {
               ? "Save answers, defer remainder"
               : "Save answers"
         }
-        disabled={disabled || (built.answers.length === 0 && !comment.trim())}
+        disabled={disabled || blocked || (built.answers.length === 0 && !comment.trim())}
         onPress={() => void submit(false)}
       />
       <RequestActionButton
