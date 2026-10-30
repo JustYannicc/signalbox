@@ -6,6 +6,8 @@ import * as NodeSqlite from "node:sqlite";
 import { expect, it } from "vite-plus/test";
 import { runHarnessArtifactCli } from "./artifactCli.ts";
 import { fixture } from "./fixtures/claudeReleaseVariants.ts";
+import { readHarnessReleaseDeployment } from "../../src/harnessReleases/HarnessReleaseDeployment.ts";
+import { loadHarnessRelease } from "../../src/harness/HarnessReleaseLoader.ts";
 
 it.each([
   ["green", false],
@@ -59,9 +61,12 @@ it.each([
       const pin = NodePath.join(root, "baseline-pin.json");
       await NodeFSP.writeFile(pin, JSON.stringify(f.input.baselinePin));
       const output = NodePath.join(root, "variants.json");
+      const assets = NodePath.join(root, "assets");
       const args = [
         "--mode",
         "publish-claude-variants",
+        "--assets-directory",
+        assets,
         "--directory",
         NodePath.join(root, "hooks"),
         "--baseline-directory",
@@ -88,6 +93,41 @@ it.each([
       if (status === "green") {
         await runHarnessArtifactCli(args);
         expect(JSON.parse(await NodeFSP.readFile(output, "utf8"))).toEqual(f.input.catalog);
+        const deployed = JSON.parse(await NodeFSP.readFile(`${output}.deployment.json`, "utf8"));
+        const opened = await readHarnessReleaseDeployment(
+          {
+            fetch: async (request) => {
+              const path = new URL(request.url).pathname
+                .slice(1)
+                .split("/")
+                .map(decodeURIComponent)
+                .join("/");
+              return new Response(
+                Uint8Array.from(await NodeFSP.readFile(NodePath.join(assets, path))).buffer,
+              );
+            },
+          },
+          deployed.pin,
+          project ? "project" : "signalbox",
+        );
+        expect(opened.claudeVariants).toEqual(f.input.catalog);
+        for (const variant of ["baseline", "hooks"] as const) {
+          const artifact = opened.claudeVariants![variant].fullArtifact;
+          expect(opened.ledger.getEligibility("claude-code", artifact.releaseId).status).toBe(
+            "green",
+          );
+          const loaded = await loadHarnessRelease({
+            identity: {
+              artifactRef: artifact.artifactRef,
+              artifactHash: artifact.artifactHash,
+              sourceIdentity: artifact.sourceIdentity,
+            },
+            source: opened.source,
+            trustedComputer: f.input.trustedComputer,
+            maxPreparedModuleBytes: 4096,
+          });
+          expect(loaded.plan.harness).toBe("claude-code");
+        }
         await expect(runHarnessArtifactCli(args)).rejects.toMatchObject({ code: "EEXIST" });
         for (const builtVariant of ["hooks", "baseline"] as const) {
           const catalog = NodePath.join(root, `bound-${builtVariant}.json`);

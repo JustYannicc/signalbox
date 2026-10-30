@@ -1,11 +1,21 @@
 import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+import {
+  assertAssetPath,
+  writeChunkedAsset,
+  type ChunkedAsset,
+} from "../../src/assets/ChunkedAsset.ts";
 import {
   HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH,
   openHarnessReleaseArtifact,
   serializeHarnessReleaseArtifactManifest,
   type HarnessReleaseArtifactIdentity,
 } from "../../src/harnessReleases/HarnessReleaseArtifact.ts";
-import { harnessArtifactKey } from "../../src/harnessReleases/HarnessReleaseArtifactBucket.ts";
+import {
+  createHarnessArtifactAssetSource,
+  harnessArtifactKey,
+} from "../../src/harnessReleases/HarnessReleaseAssetSource.ts";
 import { matchesClaudeHostConfiguration } from "../../src/harness/ClaudeHostConfig.ts";
 import { artifactDirectorySource } from "./prepareArtifact.ts";
 
@@ -24,10 +34,20 @@ export const publishHarnessArtifact = async (
     readonly prefix?: string;
   },
 ) => {
-  const selected = { ...identity };
+  const selected = {
+    artifactRef: identity.artifactRef,
+    artifactHash: identity.artifactHash,
+    sourceIdentity: identity.sourceIdentity,
+  };
   const { store, projectId, prefix } = destination;
   const local = artifactDirectorySource(directory);
   const artifact = await openHarnessReleaseArtifact(selected, local);
+  if (
+    ["cli", "sdk", "codex"].some((component) =>
+      Object.hasOwn(artifact.manifest.files, `${component}/metafile.json`),
+    )
+  )
+    throw new Error("HARNESS_ARTIFACT_CONTAINS_DIAGNOSTICS");
   if (artifact.manifest.omission) {
     if (artifact.manifest.omission.configuration.name !== "product")
       throw new Error("HARNESS_ARTIFACT_QUALIFICATION_ONLY");
@@ -40,73 +60,76 @@ export const publishHarnessArtifact = async (
       throw new Error("HARNESS_ARTIFACT_PRODUCT_CONFIGURATION_MISMATCH");
   }
   const key = (path: string) => harnessArtifactKey(projectId, selected.artifactRef, path, prefix);
-  const remote = {
-    read: async (_reference: string, path: string) => store.read(key(path)),
+  const files: Record<string, ChunkedAsset> = {};
+  const put = async (path: string, bytes: Uint8Array, sha256: string) => {
+    const expectedBytes = bytes.byteLength;
+    await store.put(path, bytes);
+    const received = await store.read(path);
+    if (
+      received.byteLength !== expectedBytes ||
+      NodeCrypto.createHash("sha256").update(received).digest("hex") !== sha256
+    )
+      throw new Error("HARNESS_ARTIFACT_UPLOAD_READBACK_FAILED");
   };
   for (const path of Object.keys(artifact.manifest.files).sort()) {
     const bytes = await artifact.read(path);
-    await store.put(key(path), bytes);
-    const received = await remote.read(selected.artifactRef, path);
-    const expected = artifact.manifest.files[path]!;
-    if (
-      received.byteLength !== expected.bytes ||
-      NodeCrypto.createHash("sha256").update(received).digest("hex") !== expected.sha256
-    )
-      throw new Error("HARNESS_ARTIFACT_UPLOAD_READBACK_FAILED");
+    files[path] = await writeChunkedAsset(bytes, key(path), put);
   }
   const manifest = serializeHarnessReleaseArtifactManifest(artifact.manifest);
-  await store.put(key(HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH), manifest);
-  await openHarnessReleaseArtifact(selected, remote);
+  files[HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH] = await writeChunkedAsset(
+    manifest,
+    key(HARNESS_RELEASE_ARTIFACT_MANIFEST_PATH),
+    put,
+  );
+  const assetIndex = {
+    schemaVersion: 1 as const,
+    projectId,
+    artifactRef: selected.artifactRef,
+    sourceIdentity: selected.sourceIdentity,
+    files,
+  };
+  const source = createHarnessArtifactAssetSource(
+    {
+      fetch: async (request) => {
+        const path = new URL(request.url).pathname
+          .slice(1)
+          .split("/")
+          .map(decodeURIComponent)
+          .join("/");
+        return new Response(Uint8Array.from(await store.read(path)).buffer);
+      },
+    },
+    projectId,
+    assetIndex,
+  );
+  await openHarnessReleaseArtifact(selected, source);
   return {
     ...selected,
+    assetIndex,
     projectId,
     files: Object.keys(artifact.manifest.files).length,
     bytes: Object.values(artifact.manifest.files).reduce((total, file) => total + file.bytes, 0),
   };
 };
 
-/** Uses the existing Cloudflare account token; the runtime reads the bucket through its binding. */
-export const cloudflareHarnessArtifactStore = (input: {
-  readonly account: string;
-  readonly bucket: string;
-  readonly token: string;
-  readonly jurisdiction?: "default" | "eu";
-  readonly fetcher?: typeof fetch;
-}): HarnessArtifactPublicationStore => {
-  if (
-    !/^[a-f0-9]{32}$/u.test(input.account) ||
-    !/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u.test(input.bucket) ||
-    input.token.trim() === ""
-  )
-    throw new Error("HARNESS_ARTIFACT_STORAGE_CONFIGURATION_INVALID");
-  const base = `https://api.cloudflare.com/client/v4/accounts/${input.account}/r2/buckets/${input.bucket}/objects/`;
-  const fetcher = input.fetcher ?? fetch;
-  const request = async (key: string, bytes?: Uint8Array) => {
-    const response = await fetcher(base + key.split("/").map(encodeURIComponent).join("/"), {
-      method: bytes === undefined ? "GET" : "PUT",
-      headers: {
-        authorization: `Bearer ${input.token}`,
-        "cf-r2-jurisdiction": input.jurisdiction ?? "eu",
-        ...(bytes === undefined ? {} : { "content-type": "application/octet-stream" }),
-      },
-      ...(bytes === undefined ? {} : { body: Uint8Array.from(bytes).buffer }),
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!response.ok) throw new Error(`HARNESS_ARTIFACT_STORAGE_HTTP_${response.status}`);
-    return response;
-  };
+/** Writes only into the deployment asset directory; existing content must match its pin. */
+export const directoryHarnessArtifactStore = (
+  directory: string,
+): HarnessArtifactPublicationStore => {
+  const root = NodePath.resolve(directory);
+  const file = (key: string) => NodePath.join(root, ...assertAssetPath(key).split("/"));
   return {
     put: async (key, bytes) => {
-      const response = await request(key, bytes);
-      const result: unknown = await response.json();
-      if (
-        result === null ||
-        typeof result !== "object" ||
-        !Object.hasOwn(result, "success") ||
-        Reflect.get(result, "success") !== true
-      )
-        throw new Error("HARNESS_ARTIFACT_STORAGE_WRITE_REJECTED");
+      const target = file(key);
+      await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
+      try {
+        await NodeFSP.writeFile(target, bytes, { flag: "wx", mode: 0o444 });
+      } catch (cause) {
+        if (!(cause instanceof Error && "code" in cause && cause.code === "EEXIST")) throw cause;
+        const existing = await NodeFSP.readFile(target);
+        if (!existing.equals(bytes)) throw new Error("HARNESS_ARTIFACT_ASSET_COLLISION", { cause });
+      }
     },
-    read: async (key) => new Uint8Array(await (await request(key)).arrayBuffer()),
+    read: (key) => NodeFSP.readFile(file(key)),
   };
 };

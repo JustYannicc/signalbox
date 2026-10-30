@@ -58,6 +58,22 @@ const withFileSystem = (
   }) as ArtifactFileSystem;
 
 describe("Harness artifact preparation", () => {
+  it("excludes bundler diagnostics from the hashed runtime artifact", async () => {
+    const { cli, input } = await setup();
+    await NodeFSP.writeFile(NodePath.join(cli, "metafile.json"), '{"diagnostic":true}');
+    const identity = await prepareHarnessArtifact(input);
+    const artifact = await openHarnessReleaseArtifact(
+      identity,
+      artifactDirectorySource(input.output),
+    );
+    expect(Object.hasOwn(artifact.manifest.files, "cli/metafile.json")).toBe(false);
+    await expect(
+      NodeFSP.stat(NodePath.join(input.output, "cli/metafile.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await NodeFSP.readFile(NodePath.join(cli, "metafile.json"), "utf8")).toBe(
+      '{"diagnostic":true}',
+    );
+  });
   it("rejects unavailable builtins before publishing either provider artifact", async () => {
     const { root, sdk, input } = await setup();
     await NodeFSP.writeFile(NodePath.join(sdk, "sdk.js"), "import 'node:cluster';");
