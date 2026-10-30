@@ -102,6 +102,7 @@ import {
 } from "./features/threads/ThreadSettingsSheet";
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
+import { CaptureRouteScreen } from "./features/capture/CaptureRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
@@ -578,6 +579,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitOverview",
   "PublishFolder", // signalbox: #810
   "NewTaskSheet",
+  "Capture", // signalbox: capture overlays the current workspace
   "SettingsLegal",
   "SettingsSheet",
   "ThreadAgents",
@@ -1026,6 +1028,21 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...NESTED_NAVIGATOR_OPTIONS,
         gestureEnabled: true,
         headerShown: false,
+      },
+    }),
+    // signalbox: capture opens a durable draft without starting an agent turn.
+    Capture: createNativeStackScreen({
+      screen: CaptureRouteScreen,
+      linking: "capture",
+      options: {
+        ...SHEET_GLASS_HEADER_OPTIONS,
+        ...(Platform.OS === "android"
+          ? { presentation: "fullScreenModal" as const }
+          : FORM_SHEET_PRESENTATION_OPTIONS),
+        contentStyle: Platform.OS === "ios" ? { backgroundColor: "transparent" } : undefined,
+        headerShown: Platform.OS !== "android",
+        sheetAllowedDetents: Platform.OS === "ios" ? [0.55, 0.92] : undefined,
+        sheetGrabberVisible: Platform.OS === "ios",
       },
     }),
     ...automationStackScreens({ glass: GLASS_HEADER_OPTIONS, solid: SOLID_HEADER_OPTIONS }), // signalbox: automations
