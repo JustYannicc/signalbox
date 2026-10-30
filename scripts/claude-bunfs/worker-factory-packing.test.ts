@@ -8,32 +8,38 @@ import { expect, it } from "vite-plus/test";
 import { workerFactoryBuiltinSources } from "../harness-releases/nodeBuiltinGate/workerFactory.ts";
 import { createWorkerFactory } from "./worker-factory.ts";
 
-it("normalizes 300000 live reads within the hooks packing allowance", () => {
-  const mainSource = `import {sharedValue} from "./worker-hooks.js";export function read(){return [${Array.from(
-    { length: 300000 },
-    () => "sharedValue",
-  ).join(",")}]}`;
-  const workerSource = "var sharedValue=1;function launch(){}";
-  const generated = createWorkerFactory({
-    workerSource,
-    mainSource,
-    workerImport: "./worker-hooks.js",
-    exports: new Map([["sharedValue", "sharedValue"]]),
-    initializers: [],
-    launch: "launch",
-  });
-  const normalized = workerFactoryBuiltinSources([
-    { name: "signalbox/worker-hooks.js", source: generated.workerSource },
-    { name: "signalbox/release.js", source: generated.mainSource },
-  ]);
-  expect(normalized[1]!.source.match(/__signalboxAnalysis0/g)).toHaveLength(300001);
-  const growth =
-    Buffer.byteLength(generated.workerSource) +
-    Buffer.byteLength(generated.mainSource) -
-    Buffer.byteLength(workerSource) -
-    Buffer.byteLength(mainSource);
-  expect(growth).toBeLessThanOrEqual(524288);
-});
+it.each([
+  { binding: "value", references: 30000 },
+  { binding: "sharedValue", references: 300000 },
+])(
+  "normalizes $references live $binding reads within the hooks packing allowance",
+  ({ binding, references }) => {
+    const mainSource = `import {${binding}} from "./worker-hooks.js";export function read(){return [${Array.from(
+      { length: references },
+      () => binding,
+    ).join(",")}]}`;
+    const workerSource = `var ${binding}=1;function launch(){}`;
+    const generated = createWorkerFactory({
+      workerSource,
+      mainSource,
+      workerImport: "./worker-hooks.js",
+      exports: new Map([[binding, binding]]),
+      initializers: [],
+      launch: "launch",
+    });
+    const normalized = workerFactoryBuiltinSources([
+      { name: "signalbox/worker-hooks.js", source: generated.workerSource },
+      { name: "signalbox/release.js", source: generated.mainSource },
+    ]);
+    expect(normalized[1]!.source.match(/__signalboxAnalysis0/g)).toHaveLength(references + 1);
+    const growth =
+      Buffer.byteLength(generated.workerSource) +
+      Buffer.byteLength(generated.mainSource) -
+      Buffer.byteLength(workerSource) -
+      Buffer.byteLength(mainSource);
+    expect(growth).toBeLessThanOrEqual(524288);
+  },
+);
 
 it("preserves live values, function receivers and getter timing across short reader calls", async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "worker-readers-"));
