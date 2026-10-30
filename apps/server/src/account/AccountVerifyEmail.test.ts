@@ -1,6 +1,11 @@
 import type { AccountAuthorizeParams } from "@t3tools/contracts/account";
 import { describe, expect, it } from "@effect/vitest";
-import { EMAIL_VERIFICATION_GRANT, WORKOS_TEST_ENV } from "@signalbox/account/WorkOSTesting";
+import {
+  EMAIL_VERIFICATION_GRANT,
+  MAGIC_AUTH_GRANT,
+  WORKOS_TEST_ENV,
+  type WorkOSCodes,
+} from "@signalbox/account/WorkOSTesting";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -31,7 +36,10 @@ const pausedSignIn = (params: AccountAuthorizeParams) =>
 const WITH_KEY = { ...WORKOS_TEST_ENV, T3CODE_WORKOS_API_KEY: "sk_test" };
 const run = <A, E>(
   effect: Parameters<typeof runAccountTest<A, E>>[0],
-  options: { readonly exchanges?: Array<Record<string, unknown>> } = {},
+  options: {
+    readonly codes?: WorkOSCodes;
+    readonly exchanges?: Array<Record<string, unknown>>;
+  } = {},
 ) => runAccountTest(effect, { codes: CODES, env: WITH_KEY, ...options });
 
 const verify = (id: string, code: string) =>
@@ -40,6 +48,75 @@ const verify = (id: string, code: string) =>
   );
 
 describe("email verification", () => {
+  it.effect(
+    "uses WorkOS Magic Auth for email sign-in and keeps its code page on this origin",
+    () => {
+      const exchanges: Array<Record<string, unknown>> = [];
+      const codes: WorkOSCodes = {
+        ...CODES,
+        "code-magic": { id: "user_magic", email: "magic@example.com" },
+        "code-magic-native": { id: "user_magic", email: "magic@example.com" },
+      };
+      return run(
+        Effect.gen(function* () {
+          const accounts = yield* AccountService.AccountService;
+          const started = yield* accounts.authorize({
+            provider: "email",
+            loginHint: "magic@example.com",
+            origin: "https://unregistered.example",
+            mode: "browser",
+            returnTo: "/threads",
+          });
+          const verifyPage = new URL(started, "https://box.example.com");
+          const id = verifyPage.searchParams.get("verify") ?? "";
+          expect(started.startsWith("/sign-in?")).toBe(true);
+          expect(verifyPage.origin).toBe("https://box.example.com");
+          expect(verifyPage.searchParams.get("email")).toBe("magic@example.com");
+
+          const wrong = yield* Effect.flip(verify(id, "000000"));
+          expect(wrong._tag).toBe("AccountVerificationCodeRejectedError");
+
+          const result = yield* verify(id, "code-magic");
+          expect(result).toMatchObject({ _tag: "BrowserSession", location: "/threads" });
+          expect(
+            exchanges.find(
+              (body) => body.grant_type === MAGIC_AUTH_GRANT && body.code === "code-magic",
+            ),
+          ).toMatchObject({ email: "magic@example.com" });
+          expect(exchanges.some((body) => body.grant_type === EMAIL_VERIFICATION_GRANT)).toBe(
+            false,
+          );
+
+          const nativeStarted = yield* accounts.authorize({
+            provider: "email",
+            loginHint: "magic@example.com",
+            origin: "https://unregistered.example",
+            mode: "native",
+            returnUrl: "signalbox://auth/return",
+            challenge: nativeParams.challenge,
+            via: "web",
+          });
+          const nativeVerifyPage = new URL(nativeStarted, "https://box.example.com");
+          expect(nativeVerifyPage.origin).toBe("https://box.example.com");
+          const nativeResult = yield* verify(
+            nativeVerifyPage.searchParams.get("verify") ?? "",
+            "code-magic-native",
+          );
+          const nativeReturn = new URL(nativeResult.location, "https://box.example.com");
+          expect(nativeResult.location.startsWith("/sign-in?")).toBe(true);
+          expect(nativeReturn.origin).toBe("https://box.example.com");
+          expect(nativeReturn.searchParams.get("returnUrl")).toBe("signalbox://auth/return");
+          const redeemed = yield* accounts.redeemHandoff({
+            handoff: nativeReturn.searchParams.get("handoff") ?? "",
+            verifier: VERIFIER,
+          });
+          expect(redeemed.account.id).toBe("user_magic");
+        }),
+        { codes, exchanges },
+      );
+    },
+  );
+
   it.effect("finishes a browser sign-in after a wrong code, exactly as the callback would", () => {
     const exchanges: Array<Record<string, unknown>> = [];
     return run(

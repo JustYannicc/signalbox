@@ -7,8 +7,8 @@ import { Spinner } from "../components/ui/spinner";
 import { ACCOUNT_PROVIDER_PRESENTATION } from "./accountProviders";
 
 /**
- * Web: one "Continue with …" button per provider the server offers, then
- * email, which opens WorkOS's hosted page (password, email code, sign-up).
+ * The browser collects the email before the server chooses the pinned
+ * hosted flow or a first-party code step. Native clients reuse this page.
  */
 export function WebSignInOptions({
   providers,

@@ -1,4 +1,4 @@
-import { parseAccountReturn } from "@t3tools/client-runtime/account";
+import { buildAccountAuthorizeUrl, parseAccountReturn } from "@t3tools/client-runtime/account";
 import type { AccountProvider, AccountSignInError } from "@t3tools/contracts/account";
 import { useEffect, useRef, useState } from "react";
 
@@ -20,6 +20,7 @@ import { cloudDefaultOrigin } from "./cloudDefault";
 import { appForwardUrl, type AppForward } from "./appForward";
 import { SignInFrame, SignInNotice } from "./SignInFrame";
 import { parseVerifyRequest } from "./verifyEmail";
+import { nativeSignInRequest } from "./nativeSignInRequest";
 import { VerifyEmailScreen } from "./VerifyEmailScreen";
 import { DesktopSignInOptions, WebSignInOptions, type DesktopScreenHint } from "./SignInOptions";
 
@@ -53,6 +54,9 @@ export function SignInScreen({
   // Web-only arrivals: an emailed-code step, or desktop sign-in finishing here.
   const [verifyRequest] = useState(() => (desktop ? null : parseVerifyRequest(searchStr)));
   const [forward] = useState(() => (desktop ? null : appForwardUrl(searchStr)));
+  const [nativeRequest] = useState(() =>
+    desktop ? null : nativeSignInRequest(searchStr, window.location.origin),
+  );
   const [notice, setNotice] = useState<AccountSignInError | null>(null);
   const [email, setEmail] = useState("");
   const selectAccount = search.selectAccount === "1";
@@ -125,6 +129,16 @@ export function SignInScreen({
     setPending(provider);
     setNotice(null);
     try {
+      if (nativeRequest) {
+        window.location.assign(
+          buildAccountAuthorizeUrl({
+            ...nativeRequest,
+            provider,
+            ...(provider === "email" ? { loginHint: email.trim() } : {}),
+          }),
+        );
+        return;
+      }
       startAccountSignIn({
         provider,
         ...(provider === "email" && email.trim() ? { loginHint: email.trim() } : {}),

@@ -160,6 +160,8 @@ const PendingAttempt = Schema.Struct({
   codeVerifier: Schema.String,
   origin: Schema.String,
   target: ReturnTarget,
+  /** AuthKit was pinned to this person's personal organization. */
+  userId: Schema.optionalKey(Schema.String),
   /**
    * Browser mode: also set as a cookie by `authorize`, so only the browser that
    * started a sign-in can finish it (no login CSRF). Native attempts are bound
@@ -174,7 +176,8 @@ const AttemptSeal = Schema.TaggedStruct("attempt", { attempt: PendingAttempt, ex
 /** A sign-in paused until the user types WorkOS's emailed code. */
 const VerificationSeal = Schema.TaggedStruct("verification", {
   attempt: PendingAttempt,
-  pendingToken: Schema.String,
+  pendingToken: Schema.optionalKey(Schema.String),
+  method: Schema.optionalKey(Schema.Literal("magic-auth")),
   email: Schema.String,
   exp: ExpiresAt,
 });

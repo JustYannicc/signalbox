@@ -29,9 +29,10 @@ export const ACCOUNT_VERIFY_EMAIL_PATH = `${ACCOUNT_API_PREFIX}/verify-email`;
 /**
  * Web route that renders the sign-in screen. Callback errors redirect here.
  *
- * Desktop signs in in the system browser (password managers, saved sessions,
- * passkeys) by opening `authorize` with `provider: "email"`, `mode: "native"`,
- * `via: "web"` and a `screenHint`. The callback lands here with `?handoff=` and
+ * Desktop signs in in the system browser by opening `authorize` with
+ * `provider: "email"`, `mode: "native"`, `via: "web"` and a `screenHint`.
+ * Without a known identity, this page collects the provider or email first.
+ * The callback lands here with `?handoff=` and
  * `?returnUrl=`; the page confirms and opens `returnUrl?handoff=…` (errors are
  * forwarded the same way so the app can show them).
  *
@@ -44,8 +45,8 @@ export const ACCOUNT_VERIFY_EMAIL_PATH = `${ACCOUNT_API_PREFIX}/verify-email`;
 export const ACCOUNT_SIGN_IN_ROUTE = "/sign-in";
 
 /**
- * Sign-in options in display order. `email` opens WorkOS's hosted page, which
- * handles password and email-code sign-in plus sign-up for that address.
+ * Sign-in options in display order. Email uses hosted AuthKit only with a
+ * known personal organization; otherwise Signalbox collects WorkOS's emailed code.
  * Adding a WorkOS social provider is one entry here and one in the server's
  * provider map.
  */
@@ -95,7 +96,7 @@ export const AccountAuthorizeParams = Schema.Struct({
   provider: AccountProvider,
   origin: Schema.String,
   mode: AccountAuthorizeMode,
-  /** Prefills the email on WorkOS's page. Only meaningful for `email`. */
+  /** The sign-in email. Only meaningful for `email`. */
   loginHint: Schema.optional(Schema.String),
   /** Ask the provider to show its account picker (after sign-out or "use another account"). */
   selectAccount: Schema.optional(Schema.Literals(["1"])),
@@ -113,8 +114,7 @@ export const AccountAuthorizeParams = Schema.Struct({
    */
   via: Schema.optional(Schema.Literals(["web"])),
   /**
-   * `email` only: which tab WorkOS's hosted page opens on. If the browser
-   * already has a WorkOS session, it skips the page and returns immediately.
+   * `email` only: which hosted tab to open when the personal organization is known.
    */
   screenHint: Schema.optional(Schema.Literals(["sign-in", "sign-up"])),
 });
