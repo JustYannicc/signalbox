@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+// These are Node worker and MessagePort APIs, which have no targetOrigin argument.
+/* oxlint-disable unicorn/require-post-message-target-origin */
+import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import {
   createNodeWorkerThreads,
   NodeWorkerPortBroker,
@@ -9,6 +11,7 @@ import {
   type NodeWorkerStartRequest,
   type NodeWorkerSupervisor,
   type NodeWorkerThreadContext,
+  type NodeWorkerPortEvent,
 } from "../NodeWorkerThreads.ts";
 
 const graph = {
@@ -19,6 +22,9 @@ const graph = {
 const echoUrl = "file:///fixtures/echo.mjs";
 const errorUrl = "file:///fixtures/error.mjs";
 const transferUrl = "file:///fixtures/transfer.mjs";
+const runtimeFailureUrl = "file:///fixtures/runtime-failure.mjs";
+const nestedRuntimeFailureUrl = "file:///fixtures/nested-runtime-failure.mjs";
+const nestedRuntimeHostUrl = "file:///fixtures/nested-runtime-host.mjs";
 const fileLoader: NodeWorkerModuleLoader = {
   reference: graph,
   resolve(filename) {
@@ -97,11 +103,17 @@ class InProcessSupervisor implements NodeWorkerSupervisor {
     const value = request.input.value as {
       readonly workerData: unknown;
       readonly parentPort: object;
+      readonly runtimePort: object;
     };
     const parentPort = request.input.ports.find(
       (entry) => entry.marker === value.parentPort,
     )?.handle;
     if (parentPort === undefined) throw new Error("worker start did not transfer its parentPort");
+    const runtimePort = request.input.ports.find(
+      (entry) => entry.marker === value.runtimePort,
+    )?.handle;
+    if (runtimePort === undefined)
+      throw new Error("worker start did not transfer its host channel");
 
     let child: ReturnType<typeof createNodeWorkerThreads> | undefined;
     let stopped: NodeWorkerExit | undefined;
@@ -132,6 +144,7 @@ class InProcessSupervisor implements NodeWorkerSupervisor {
         threadId: request.threadId,
         isMainThread: false,
         parentPort,
+        runtimePort,
         workerData: value.workerData,
         environmentData: new Map(
           request.environmentData.value as readonly (readonly [unknown, unknown])[],
@@ -178,7 +191,9 @@ class InProcessSupervisor implements NodeWorkerSupervisor {
   }
 }
 
-function harness() {
+function harness(
+  receive?: (event: NodeWorkerPortEvent, next: () => Promise<boolean>) => Promise<boolean>,
+) {
   const broker = new NodeWorkerPortBroker();
   let nextThreadId = 1;
   const allocateThreadId = () => nextThreadId++;
@@ -187,7 +202,15 @@ function harness() {
   const context: NodeWorkerThreadContext = {
     ports: {
       owner: "main",
-      connect: async (receiver) => broker.connect("main", receiver),
+      connect: async (receiver) =>
+        broker.connect(
+          "main",
+          receive === undefined
+            ? receiver
+            : {
+                receive: (event) => receive(event, () => receiver.receive(event)),
+              },
+        ),
       disconnect: () => broker.disconnect("main"),
     },
     threadId: 0,
@@ -378,6 +401,222 @@ describe("Node worker_threads facade", () => {
     expect(order).toEqual(["guest failed", "exit:1"]);
     await h.facade.drain();
     await h.facade.dispose();
+  });
+
+  it("keeps a caught worker failure after message listeners are removed and drains before assertion", async () => {
+    const h = harness();
+    onTestFinished(() => h.facade.dispose());
+    const failure = Object.assign(new Error("unsupported AJV schema"), {
+      code: "AJV_SCHEMA_NOT_PRECOMPILED",
+    });
+    h.supervisor.add(runtimeFailureUrl, async ({ module, finish }) => {
+      const parentPort = module.parentPort;
+      if (parentPort === null) throw new Error("worker has no parentPort");
+      parentPort.on("message", (value) => {
+        const kind = (value as { readonly kind?: string }).kind;
+        if (kind === "fail") {
+          try {
+            module.reportRuntimeFailure(failure);
+          } catch {
+            // Claude catches the compiler error; the host latch must survive it.
+          }
+        } else if (kind === "send-result") {
+          parentPort.postMessage({ kind: "result" });
+        } else if (kind === "finish") {
+          void finish(0);
+        }
+      });
+      parentPort.postMessage({ kind: "ready" });
+    });
+
+    const worker = new h.facade.module.Worker(runtimeFailureUrl);
+    const ready = deferred<void>();
+    const suppressed = deferred<Error>();
+    const exited = deferred<number>();
+    const onMessage = (value: unknown) => {
+      if ((value as { readonly kind?: string }).kind !== "ready") return;
+      worker.removeAllListeners("message");
+      ready.resolve();
+    };
+    worker.on("message", onMessage);
+    worker.on("error", (error) => suppressed.resolve(error as Error));
+    worker.on("exit", (code) => exited.resolve(code as number));
+
+    await ready.promise;
+    worker.postMessage({ kind: "fail" });
+    await expect(h.facade.module.runtimeFailure).rejects.toMatchObject({
+      code: "AJV_SCHEMA_NOT_PRECOMPILED",
+      message: "unsupported AJV schema",
+    });
+
+    const lateMessages: unknown[] = [];
+    worker.on("message", (value) => lateMessages.push(value));
+    await expect(h.facade.module.assertRuntimeCompatibility()).rejects.toMatchObject({
+      code: "AJV_SCHEMA_NOT_PRECOMPILED",
+    });
+    expect(worker.threadId).toBeGreaterThan(0);
+
+    worker.postMessage({ kind: "send-result" });
+    expect(await suppressed.promise).toMatchObject({ code: "AJV_SCHEMA_NOT_PRECOMPILED" });
+    expect(lateMessages).toEqual([]);
+    worker.postMessage({ kind: "finish" });
+    expect(await exited.promise).toBe(0);
+    await expect(h.facade.module.assertRuntimeCompatibility()).rejects.toMatchObject({
+      code: "AJV_SCHEMA_NOT_PRECOMPILED",
+    });
+    await h.facade.dispose();
+  });
+
+  it("forwards compatibility failures from nested workers to the root host", async () => {
+    const h = harness();
+    const failure = Object.assign(new Error("nested unsupported AJV schema"), {
+      code: "AJV_SCHEMA_NOT_PRECOMPILED",
+    });
+    h.supervisor.add(nestedRuntimeFailureUrl, async ({ module, finish }) => {
+      module.reportRuntimeFailure(failure);
+      await finish(0);
+    });
+    h.supervisor.add(nestedRuntimeHostUrl, async ({ module, finish }) => {
+      const nested = new module.Worker(nestedRuntimeFailureUrl);
+      nested.on("exit", () => void finish(0));
+    });
+
+    const root = new h.facade.module.Worker(nestedRuntimeHostUrl);
+    expect(root.threadId).toBeGreaterThan(0);
+    await expect(h.facade.module.runtimeFailure).rejects.toMatchObject({
+      code: "AJV_SCHEMA_NOT_PRECOMPILED",
+      message: "nested unsupported AJV schema",
+    });
+    await expect(h.facade.module.assertRuntimeCompatibility()).rejects.toMatchObject({
+      code: "AJV_SCHEMA_NOT_PRECOMPILED",
+    });
+    await h.facade.dispose();
+  });
+
+  it("checks a reusable worker without waiting for it to exit", async () => {
+    const h = harness();
+    onTestFinished(() => h.facade.dispose());
+    const ready = deferred<void>();
+    h.supervisor.add(echoUrl, ({ module }) => {
+      module.parentPort?.removeAllListeners();
+      module.parentPort?.postMessage("ready");
+    });
+    const worker = new h.facade.module.Worker(echoUrl);
+    worker.once("message", () => ready.resolve());
+    await ready.promise;
+    await h.facade.module.assertRuntimeCompatibility();
+    expect(worker.threadId).toBeGreaterThan(0);
+    await h.facade.module.assertRuntimeCompatibility();
+    await worker.terminate();
+    await h.facade.module.assertRuntimeCompatibility();
+  });
+
+  it("retains worker failures after the guest closes its parentPort", async () => {
+    const h = harness();
+    onTestFinished(() => h.facade.dispose());
+    h.supervisor.add(runtimeFailureUrl, async ({ module, finish }) => {
+      module.parentPort?.removeAllListeners();
+      module.parentPort?.close();
+      module.reportRuntimeFailure(
+        Object.assign(new Error("caught after close"), {
+          code: "AJV_SCHEMA_NOT_PRECOMPILED",
+        }),
+      );
+      await finish(0);
+    });
+    const worker = new h.facade.module.Worker(runtimeFailureUrl);
+    expect(worker.threadId).toBeGreaterThan(0);
+    await expect(h.facade.module.runtimeFailure).rejects.toMatchObject({
+      code: "AJV_SCHEMA_NOT_PRECOMPILED",
+      message: "caught after close",
+    });
+    await expect(h.facade.module.assertRuntimeCompatibility()).rejects.toMatchObject({
+      code: "AJV_SCHEMA_NOT_PRECOMPILED",
+    });
+  });
+
+  it("withholds a checkpoint until an earlier private failure report has arrived", async () => {
+    const held = deferred<void>();
+    const release = deferred<void>();
+    const h = harness(async (event, next) => {
+      const value = event.type === "message" ? event.message.value : undefined;
+      if (
+        value !== null &&
+        typeof value === "object" &&
+        Reflect.get(value, "type") === "signalbox:worker-runtime-failure:v1"
+      ) {
+        held.resolve();
+        await release.promise;
+      }
+      return next();
+    });
+    onTestFinished(async () => {
+      release.resolve();
+      await h.facade.dispose();
+    });
+    h.supervisor.add(runtimeFailureUrl, ({ module }) => {
+      module.reportRuntimeFailure(new Error("held compatibility report"));
+      module.parentPort?.postMessage("guest returned a result");
+    });
+    const result = deferred<void>();
+    const worker = new h.facade.module.Worker(runtimeFailureUrl);
+    worker.on("message", () => result.resolve());
+    await held.promise;
+    const assertion = h.facade.module.assertRuntimeCompatibility();
+    let accepted = false;
+    void assertion.then(
+      () => {
+        accepted = true;
+      },
+      () => undefined,
+    );
+    await result.promise;
+    expect(accepted).toBe(false);
+    release.resolve();
+    await expect(assertion).rejects.toThrow("held compatibility report");
+    await h.facade.dispose();
+    await h.broker.drain();
+    expect(h.broker.residentPorts).toBe(0);
+  });
+
+  it("checks a worker admitted during the final drain before accepting a result", async () => {
+    const held = deferred<void>();
+    const release = deferred<void>();
+    const h = harness(async (event, next) => {
+      const value = event.type === "message" ? event.message.value : undefined;
+      if (
+        value !== null &&
+        typeof value === "object" &&
+        Reflect.get(value, "type") === "signalbox:worker-runtime-failure:v1"
+      ) {
+        held.resolve();
+        await release.promise;
+      }
+      return next();
+    });
+    onTestFinished(async () => {
+      release.resolve();
+      await h.facade.dispose();
+    });
+    h.supervisor.add(runtimeFailureUrl, ({ module }) => {
+      module.reportRuntimeFailure(new Error("failure from newly admitted worker"));
+    });
+    const assertion = h.facade.module.assertRuntimeCompatibility();
+    let accepted = false;
+    void assertion.then(
+      () => {
+        accepted = true;
+      },
+      () => undefined,
+    );
+    queueMicrotask(() => {
+      const worker = new h.facade.module.Worker(runtimeFailureUrl);
+      worker.on("error", () => undefined);
+    });
+    await held.promise;
+    expect(accepted).toBe(false);
+    release.resolve();
+    await expect(assertion).rejects.toThrow("failure from newly admitted worker");
   });
 
   it("rejects drain on start failure without inventing an exit", async () => {

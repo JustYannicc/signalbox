@@ -1,4 +1,5 @@
 import { canonicalNodeBuiltin } from "../isolate/NodeBuiltinMap.ts";
+import { nodeRuntimeNativeModule } from "../isolate/NodeRuntimeCompatibility.ts";
 
 export interface NodeNativeRuntimeProfile {
   readonly runtime: string;
@@ -244,7 +245,8 @@ export function classifyNodeNativeBuiltinCapability(input: {
 
   const selected = selectedModule(modules, canonicalSpecifier);
   const auditedDefault = selectedModule(auditedDefaultModules, canonicalSpecifier);
-  if (selected === undefined || selected !== auditedDefault) return undefined;
+  if (selected === undefined || nodeRuntimeNativeModule(selected) !== auditedDefault)
+    return undefined;
 
   const selectedCallable = resolveCallable(selected, request.memberPath);
   const defaultCallable = resolveCallable(auditedDefault, request.memberPath);

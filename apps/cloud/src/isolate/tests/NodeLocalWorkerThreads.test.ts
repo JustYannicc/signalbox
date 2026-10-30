@@ -241,7 +241,7 @@ describe("same-isolate worker_threads transport", () => {
     expect(order.indexOf("terminal-ack")).toBeLessThan(order.indexOf("exit"));
     expect(h.supervisor.requests[0]?.graph).toEqual(graph);
     expect(h.supervisor.requests[0]?.entry).toEqual({ kind: "file", url: entryUrl });
-    expect(h.supervisor.requests[0]?.input.ports).toHaveLength(2);
+    expect(h.supervisor.requests[0]?.input.ports).toHaveLength(3);
     await h.threads.drain();
     await h.threads.dispose();
     await h.broker.drain();

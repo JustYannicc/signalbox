@@ -18,6 +18,7 @@ import { createBunShim } from "../../isolate/BunShim.ts";
 import { createNodeConstants } from "../../isolate/NodeConstants.ts";
 import { createNodeOs } from "../../isolate/NodeOs.ts";
 import { createNodePath } from "../../isolate/NodePath.ts";
+import { createNodeRuntimeCompatibility } from "../../isolate/NodeRuntimeCompatibility.ts";
 import * as NodeTty from "../../isolate/NodeTty.ts";
 import { DEFAULT_NODE_NATIVE_MODULES } from "./nativeModules.ts";
 import { createHarnessEnvironment } from "./environment.ts";
@@ -131,6 +132,8 @@ export function createHarnessRuntime(
     });
     if (native.names.includes("constants"))
       modules.constants = createNodeConstants(native.require("constants"), fs.fs);
+    const compatibility = createNodeRuntimeCompatibility(modules.worker_threads!);
+    modules.worker_threads = compatibility.module;
     return {
       process,
       streams,
@@ -141,6 +144,7 @@ export function createHarnessRuntime(
       cpu,
       missingBunMembers,
       drainDns: dns.drain,
+      compatibility,
     };
   } catch (error) {
     for (const stream of Object.values(streams)) {

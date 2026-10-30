@@ -137,16 +137,25 @@ export async function openNodeLocalWorkerThread({
     if (startInput === null || typeof startInput !== "object")
       throw new TypeError("Worker start packet is invalid");
     const parentMarker = Reflect.get(startInput, "parentPort");
+    const runtimeMarker = Reflect.get(startInput, "runtimePort");
     const parentEntries = request.input.ports.filter(({ marker }) => marker === parentMarker);
     if (parentEntries.length !== 1)
       throw new TypeError("Worker start packet must transfer its parentPort exactly once");
     const parentEntry = parentEntries[0]!;
+    const runtimeEntries = request.input.ports.filter(({ marker }) => marker === runtimeMarker);
+    if (runtimeEntries.length !== 1 || runtimeEntries[0] === parentEntry)
+      throw new TypeError(
+        "Worker start packet must transfer its private host channel exactly once",
+      );
+    const runtimeEntry = runtimeEntries[0]!;
 
     await broker.transfer(request.owner, context.owner, request.input);
     const workerData = ports.decode({
       ...request.input,
       value: Reflect.get(startInput, "workerData"),
-      ports: request.input.ports.filter(({ marker }) => marker !== parentMarker),
+      ports: request.input.ports.filter(
+        ({ marker }) => marker !== parentMarker && marker !== runtimeMarker,
+      ),
     });
     const environmentEntries = ports.decode(request.environmentData) as readonly (readonly [
       unknown,
@@ -161,6 +170,7 @@ export async function openNodeLocalWorkerThread({
           threadId: request.threadId,
           isMainThread: false,
           parentPort: { id: parentEntry.handle.id, lease: parentEntry.handle.lease },
+          runtimePort: { id: runtimeEntry.handle.id, lease: runtimeEntry.handle.lease },
           workerData,
           environmentData: new Map(environmentEntries),
           env: request.env,

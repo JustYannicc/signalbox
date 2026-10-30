@@ -27,6 +27,8 @@ import {
 export interface RebundleOptions extends BunGraphOptions {
   readonly omission?: ReleaseOmissionOptions;
   readonly partitionHooksWorker?: boolean;
+  /** Requires the host's sticky failure capability for every embedded worker graph. */
+  readonly observeWorkerCompatibility?: boolean;
   readonly extracted: string;
   readonly output: string;
   readonly version: string;
@@ -242,6 +244,23 @@ export async function rebundle(options: RebundleOptions) {
     path: NodePath.relative(output, file.path).split(NodePath.sep).join("/"),
     contents: file.contents,
   }));
+  if (Object.hasOwn(hostEntrypoints, "signalbox/runtime-compatibility")) {
+    const assertion = new TextEncoder().encode(
+      '\nexport {assertAjvCompatibility as assertRuntimeCompatibility} from "./signalbox/runtime-compatibility.js";\n',
+    );
+    const appendAssertion = (files: { path: string; contents: Uint8Array }[]) => {
+      const index = files.findIndex((file) => file.path === "claude.js");
+      if (index < 0) return false;
+      const main = files[index]!;
+      const contents = new Uint8Array(main.contents.byteLength + assertion.byteLength);
+      contents.set(main.contents);
+      contents.set(assertion, main.contents.byteLength);
+      files[index] = { ...main, contents };
+      return true;
+    };
+    if (!appendAssertion(facades) && !appendAssertion(publishedFiles))
+      throw new Error("BUNDLE_MAIN_MODULE_MISSING");
+  }
   const modules = [
     ...inlineLegalNotices(publishedFiles),
     ...facades,
@@ -282,7 +301,9 @@ export async function rebundleClaudeRelease(
   options: Omit<RebundleOptions, "transform" | "verify">,
 ) {
   const { createAjvRebundleTransform } = await import("./rebundle-ajv.ts");
-  const layer = await createAjvRebundleTransform();
+  const layer = await createAjvRebundleTransform({
+    workerCompatibility: options.observeWorkerCompatibility === true,
+  });
   for (const [name, source] of Object.entries(options.layerModules ?? {})) {
     if (Object.hasOwn(layer.layerModules, name)) throw new Error(`BUNDLE_LAYER_DUPLICATE: ${name}`);
     layer.layerModules[name] = source;

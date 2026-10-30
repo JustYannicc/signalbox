@@ -182,6 +182,7 @@ export async function buildClaudeRelease(
       requireBootstrap: inputs.requireBootstrap,
       deferInitialization: true,
       partitionHooksWorker: variant === "hooks",
+      observeWorkerCompatibility: true,
       ...(options.omission ? { omission: options.omission } : {}),
     });
     if (

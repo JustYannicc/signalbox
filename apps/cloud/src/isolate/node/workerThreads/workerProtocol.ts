@@ -40,7 +40,7 @@ export interface NodeWorkerStartRequest {
 
 export interface NodeWorkerExit {
   readonly code: number;
-  /** Actual guest settlement and callback closure, never an RPC disconnect alone. */
+  /** Actual guest settlement and closure of callbacks and final runtime reports, never an RPC disconnect alone. */
   readonly stopped: true;
 }
 
@@ -71,6 +71,8 @@ export interface NodeWorkerThreadContext {
   readonly threadId: number;
   readonly isMainThread: boolean;
   readonly parentPort?: NodeWorkerPortAddress;
+  /** Private host channel, transferred separately from the guest's parentPort. */
+  readonly runtimePort?: NodeWorkerPortAddress;
   readonly workerData?: unknown;
   readonly environmentData?: ReadonlyMap<unknown, unknown>;
   readonly env: Readonly<Record<string, string>>;

@@ -20,6 +20,7 @@ import {
   type NodeWorkerInstance,
   type NodeWorkerOptions,
 } from "./threadModule.ts";
+import { createWorkerRuntimeControl } from "./runtimeControl.ts";
 
 export interface CreateNodeWorkerThreadsOptions {
   readonly supervisor: NodeWorkerSupervisor;
@@ -38,6 +39,8 @@ function assertOptions({ supervisor, moduleLoader, context }: CreateNodeWorkerTh
     typeof context.output !== "function"
   )
     throw new TypeError("worker_threads requires a process context");
+  if (!context.isMainThread && context.runtimePort === undefined)
+    throw new TypeError("Worker runtime reports require a private host channel");
 }
 
 export function createNodeWorkerThreads(options: CreateNodeWorkerThreadsOptions) {
@@ -58,6 +61,22 @@ export function createNodeWorkerThreadsWithPorts(
   let changed = Promise.withResolvers<void>();
   let disposed = false;
   let disposePromise: Promise<void> | undefined;
+  const control = createWorkerRuntimeControl(ports, context);
+  const failure = Promise.withResolvers<never>();
+  const failureWaiters = new Set<(error: unknown) => void>();
+  let failureSettled = false;
+  let failureError: unknown;
+  void failure.promise.catch(() => undefined);
+  void ports.failure.catch(rejectFailure);
+
+  function rejectFailure(error: unknown): void {
+    if (failureSettled) return;
+    failureSettled = true;
+    failureError = error;
+    failure.reject(error);
+    for (const reject of failureWaiters) reject(error);
+    failureWaiters.clear();
+  }
 
   function referencesChanged(): void {
     const previous = changed;
@@ -75,6 +94,7 @@ export function createNodeWorkerThreadsWithPorts(
     readonly #port: ReturnType<NodeWorkerPorts["channel"]>["port1"];
     readonly #runEvents: NodeWorkerRunEvents;
     readonly #onReferenceChange: () => void;
+    readonly #runtimeChannel: ReturnType<typeof control.workerChannel>;
     #startPromise: Promise<NodeWorkerRun> | undefined;
     #stopPromise: Promise<number> | undefined;
     #terminationPromise: Promise<number> | undefined;
@@ -93,19 +113,26 @@ export function createNodeWorkerThreadsWithPorts(
       if (!Number.isInteger(id) || id < 1)
         throw new TypeError("Worker thread id must be a positive integer");
       const channel = ports.channel();
+      const runtimeChannel = control.workerChannel();
       let input: NodeWorkerMessage;
       try {
-        input = ports.encode({ workerData: parsed.workerData, parentPort: channel.port2 }, [
-          ...parsed.transferList,
-          channel.port2,
-        ]);
+        input = ports.encode(
+          {
+            workerData: parsed.workerData,
+            parentPort: channel.port2,
+            runtimePort: runtimeChannel.port,
+          },
+          [...parsed.transferList, channel.port2, runtimeChannel.port],
+        );
       } catch (error) {
         channel.port1.close();
+        runtimeChannel.discard();
         throw error;
       }
 
       this.#threadId = id;
       this.#port = channel.port1;
+      this.#runtimeChannel = runtimeChannel;
       this.#onReferenceChange = referencesChanged;
       this.stdin = parsed.stdin ? this.#createStdin() : null;
       this.stdout = parsed.stdout ? new NodeStream.PassThrough() : null;
@@ -194,7 +221,13 @@ export function createNodeWorkerThreadsWithPorts(
     getHeapSnapshot = unsupported("Worker.getHeapSnapshot");
     cpuUsage = unsupported("Worker.cpuUsage");
 
-    readonly #forwardMessage = (message: unknown) => this.emit("message", message);
+    readonly #forwardMessage = (message: unknown) => {
+      if (control.error !== undefined) {
+        this.#emitError(control.error);
+        return;
+      }
+      this.emit("message", message);
+    };
     readonly #forwardMessageError = (error: unknown) => this.emit("messageerror", error);
 
     #setReferenced(referenced: boolean): void {
@@ -300,13 +333,18 @@ export function createNodeWorkerThreadsWithPorts(
       unreferenced.add(this);
       void (async () => {
         try {
-          this.#port.off("message", this.#forwardMessage);
-          this.#port.off("messageerror", this.#forwardMessageError);
-          this.#port.close();
           this.stdin?.destroy();
           this.stdout?.end();
           this.stderr?.end();
           this.#onReferenceChange();
+          try {
+            await ports.drain();
+          } catch (error) {
+            this.#recordFailure(error);
+          }
+          this.#port.off("message", this.#forwardMessage);
+          this.#port.off("messageerror", this.#forwardMessageError);
+          this.#port.close();
           try {
             await ports.drain();
           } catch (error) {
@@ -320,6 +358,7 @@ export function createNodeWorkerThreadsWithPorts(
         } finally {
           workers.delete(this);
           finishing--;
+          this.#runtimeChannel.stopped();
           this.#onReferenceChange();
         }
       })().then(completion.resolve, (error: unknown) => {
@@ -342,20 +381,6 @@ export function createNodeWorkerThreadsWithPorts(
     }
   }
 
-  const failure = Promise.withResolvers<never>();
-  const failureWaiters = new Set<(error: unknown) => void>();
-  let failureSettled = false;
-  let failureError: unknown;
-  void failure.promise.catch(() => undefined);
-  void ports.failure.catch(rejectFailure);
-  function rejectFailure(error: unknown): void {
-    if (failureSettled) return;
-    failureSettled = true;
-    failureError = error;
-    failure.reject(error);
-    for (const reject of failureWaiters) reject(error);
-    failureWaiters.clear();
-  }
   function waitFor<T>(operation: Promise<T>): Promise<T> {
     if (failureSettled) {
       void operation.catch(() => undefined);
@@ -383,7 +408,11 @@ export function createNodeWorkerThreadsWithPorts(
       referencesChanged();
     }
   };
-  const module = createThreadModule(Worker, ports, context, environmentData);
+  const module = createThreadModule(Worker, ports, context, environmentData, {
+    failure: control.failure,
+    assert: () => waitFor(control.assert()),
+    report: control.report,
+  });
 
   return {
     module,

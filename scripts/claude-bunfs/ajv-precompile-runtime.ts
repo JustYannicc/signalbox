@@ -91,7 +91,6 @@ export class UnsupportedAjvSchemaError extends Error {
       descriptor && "value" in descriptor && typeof descriptor.value === "string"
         ? descriptor.value
         : undefined;
-    recordUnsupportedAjvFailure(this);
   }
 
   toJSON() {
@@ -99,26 +98,85 @@ export class UnsupportedAjvSchemaError extends Error {
   }
 }
 
-// Claude catches compilation errors in optional validators. The host must check this before accepting a result.
-let unsupportedAjvFailure: UnsupportedAjvSchemaError | undefined;
-
-function recordUnsupportedAjvFailure(error: UnsupportedAjvSchemaError) {
-  unsupportedAjvFailure ??= error;
+export interface AjvCompatibilityState {
+  readonly UnsupportedAjvSchemaError: new (
+    site: AjvCompileSite,
+    schema: unknown,
+    reason: string,
+  ) => UnsupportedAjvSchemaError;
+  assertAjvCompatibility(): void;
+  setAjvCompatibilityFailureReporter(reporter: (error: UnsupportedAjvSchemaError) => void): void;
 }
 
-export function assertAjvCompatibility() {
-  if (unsupportedAjvFailure) throw unsupportedAjvFailure;
+/** Each JS realm owns one sticky compatibility latch for its lifetime. */
+export function createAjvCompatibilityState(): AjvCompatibilityState {
+  let unsupportedFailure: UnsupportedAjvSchemaError | undefined;
+  let reporterFailure: AggregateError | undefined;
+  let reporter: ((error: UnsupportedAjvSchemaError) => void) | undefined;
+  let reporterInstalled = false;
+
+  const recordReporterFailure = (cause: unknown) => {
+    if (reporterFailure !== undefined || unsupportedFailure === undefined) return;
+    reporterFailure = Object.assign(
+      new AggregateError([unsupportedFailure, cause], unsupportedFailure.message, {
+        cause: unsupportedFailure,
+      }),
+      { code: unsupportedFailure.code },
+    );
+  };
+
+  const record = (error: UnsupportedAjvSchemaError) => {
+    if (unsupportedFailure !== undefined) return;
+    unsupportedFailure = error;
+    try {
+      reporter?.(error);
+    } catch (cause) {
+      recordReporterFailure(cause);
+    }
+  };
+
+  class RealmUnsupportedAjvSchemaError extends UnsupportedAjvSchemaError {
+    constructor(site: AjvCompileSite, schema: unknown, reason: string) {
+      super(site, schema, reason);
+      record(this);
+    }
+  }
+
+  return {
+    UnsupportedAjvSchemaError: RealmUnsupportedAjvSchemaError,
+    assertAjvCompatibility() {
+      if (reporterFailure !== undefined) throw reporterFailure;
+      if (unsupportedFailure !== undefined) throw unsupportedFailure;
+    },
+    setAjvCompatibilityFailureReporter(nextReporter) {
+      if (reporterInstalled) {
+        if (reporter === nextReporter) return;
+        throw new Error("AJV compatibility failure reporter is already installed");
+      }
+      reporterInstalled = true;
+      reporter = nextReporter;
+      if (unsupportedFailure !== undefined) {
+        try {
+          reporter(unsupportedFailure);
+        } catch (cause) {
+          recordReporterFailure(cause);
+        }
+      }
+    },
+  };
 }
 
-/** Reset only at the beginning of an isolated invocation, before any Claude code executes. */
-export function resetAjvCompatibility() {
-  unsupportedAjvFailure = undefined;
-}
+export const defaultAjvCompatibilityState = createAjvCompatibilityState();
+
+export const assertAjvCompatibility = defaultAjvCompatibilityState.assertAjvCompatibility;
+export const setAjvCompatibilityFailureReporter =
+  defaultAjvCompatibilityState.setAjvCompatibilityFailureReporter;
 
 // This module deliberately has no AJV import. Workers only receive generated validators.
 export function createPrecompiledAjvRegistry(
   entries: readonly PrecompiledSchema[],
   sites: readonly AjvCompileSite[],
+  compatibility: AjvCompatibilityState = defaultAjvCompatibilityState,
 ) {
   const registered = new Map(
     entries.map((entry) => [entry.site.id, { ...entry, key: canonicalSchema(entry.schema) }]),
@@ -128,7 +186,7 @@ export function createPrecompiledAjvRegistry(
     const site = locations.get(siteId) ?? { id: siteId, module: "unknown", offset: 0 };
     const entry = registered.get(siteId);
     if (!entry)
-      throw new UnsupportedAjvSchemaError(
+      throw new compatibility.UnsupportedAjvSchemaError(
         site,
         schema,
         site.reason ?? "No generated validator for this call",
@@ -137,10 +195,14 @@ export function createPrecompiledAjvRegistry(
     try {
       key = canonicalSchema(schema);
     } catch {
-      throw new UnsupportedAjvSchemaError(site, schema, "Runtime schema is not finite JSON");
+      throw new compatibility.UnsupportedAjvSchemaError(
+        site,
+        schema,
+        "Runtime schema is not finite JSON",
+      );
     }
     if (key !== entry.key)
-      throw new UnsupportedAjvSchemaError(
+      throw new compatibility.UnsupportedAjvSchemaError(
         site,
         schema,
         "Runtime schema differs from the build input",

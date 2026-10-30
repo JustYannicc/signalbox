@@ -6,16 +6,22 @@ import {
 } from "./ajv-precompile-interpreter-schema.ts";
 import { Validator, format } from "@cfworker/json-schema";
 import type { SchemaDraft } from "@cfworker/json-schema";
-import { canonicalSchema, UnsupportedAjvSchemaError } from "./ajv-precompile-runtime.ts";
+import {
+  canonicalSchema,
+  defaultAjvCompatibilityState,
+  UnsupportedAjvSchemaError,
+} from "./ajv-precompile-runtime.ts";
 
 import type {
   AjvCompatibleError,
   AjvCompatibleValidator,
+  AjvCompatibilityState,
   AjvMetaValidators,
 } from "./ajv-precompile-runtime.ts";
 export type {
   AjvCompatibleError,
   AjvCompatibleValidator,
+  AjvCompatibilityState,
   AjvMetaValidator,
   AjvMetaValidators,
 } from "./ajv-precompile-runtime.ts";
@@ -74,19 +80,19 @@ function restoreFormats(previous: ReadonlyMap<string, ((value: string) => boolea
   }
 }
 
-function unsupported(reason: string, schema?: unknown): never {
-  throw new UnsupportedAjvSchemaError(
-    { id: "ajv-interpreter", module: "dynamic-schema", offset: 0 },
-    schema,
-    reason,
-  );
-}
-
 /** Only the non-mutating, synchronous AJV subset is accepted. Unknown behavior fails closed. */
 export function createInterpretedAjv(
   metaValidators: AjvMetaValidators,
   dialect: keyof AjvMetaValidators = "draft7",
+  compatibility: AjvCompatibilityState = defaultAjvCompatibilityState,
 ): AjvCompatibleConstructor {
+  function unsupported(reason: string, schema?: unknown): never {
+    throw new compatibility.UnsupportedAjvSchemaError(
+      { id: "ajv-interpreter", module: "dynamic-schema", offset: 0 },
+      schema,
+      reason,
+    );
+  }
   const metaId =
     dialect === "draft7"
       ? "http://json-schema.org/draft-07/schema"
@@ -264,6 +270,7 @@ export function createInterpretedAjv(
         this.opts,
         this.formatAliases,
         this.unsupportedFormats,
+        compatibility,
       );
     }
 
@@ -347,7 +354,7 @@ export function createInterpretedAjv(
       const formatPredicates = new Map(this.formatPredicates);
       const schemaInputs = [prepared, ...this.schemaRegistry.values()];
       const validate: AjvCompatibleValidator = (data) => {
-        const normalized = normalizeValidationData(data, schemaInputs);
+        const normalized = normalizeValidationData(data, schemaInputs, compatibility);
         const previous = new Map<string, ((value: string) => boolean) | undefined>(
           [...formatPredicates].map(([name]) => [name, format[name]]),
         );

@@ -693,20 +693,18 @@ describe("integrated Claude rebundling", () => {
         platform: "linux-x64",
       });
       expect(artifact.ajv.constructors).toHaveLength(1);
-      const path = artifact.manifest.hostEntrypoints["signalbox/ajv-compatibility"];
-      expect(path).toBe("signalbox/ajv-compatibility.js");
+      const path = artifact.manifest.hostEntrypoints["signalbox/runtime-compatibility"];
+      expect(path).toBe("signalbox/runtime-compatibility.js");
       await NodeFSP.writeFile(NodePath.join(output, "package.json"), '{"type":"module"}');
-      const host = await import(NodeURL.pathToFileURL(NodePath.join(output, path!)).href);
       const launcher = await import(
         NodeURL.pathToFileURL(NodePath.join(output, artifact.manifest.mainModule)).href
       );
       const release = launcher.launch();
-      host.resetAjvCompatibility();
-      expect(release.caught({ $dynamicRef: "#node" })).toBe(true);
-      expect(() => host.assertAjvCompatibility()).toThrow();
-      host.resetAjvCompatibility();
+      expect(typeof launcher.assertRuntimeCompatibility).toBe("function");
       expect(release.caught({ type: "string" })).toBe(false);
-      expect(() => host.assertAjvCompatibility()).not.toThrow();
+      expect(() => launcher.assertRuntimeCompatibility()).not.toThrow();
+      expect(release.caught({ $dynamicRef: "#node" })).toBe(true);
+      expect(() => launcher.assertRuntimeCompatibility()).toThrow();
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

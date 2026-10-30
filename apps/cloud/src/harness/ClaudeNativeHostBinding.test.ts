@@ -2,7 +2,17 @@ import * as NodeWorkerThreads from "node:worker_threads";
 import { expect, it, onTestFinished } from "vite-plus/test";
 
 function runIsolated(
-  caseName: "cold" | "resume" | "prepared" | "both" | "diagnostic" | "observation",
+  caseName:
+    | "cold"
+    | "resume"
+    | "prepared"
+    | "both"
+    | "diagnostic"
+    | "observation"
+    | "compatibility"
+    | "result"
+    | "result-failure"
+    | "end-failure",
 ) {
   return new Promise<void>((resolve, reject) => {
     const worker = new NodeWorkerThreads.Worker(
@@ -42,3 +52,12 @@ it("forwards pre-cleanup diagnostics through the public native Claude binding", 
 
 it("registers passive tool observation through the public Claude binding", () =>
   runIsolated("observation"));
+
+it("rejects SDK readiness when the CLI catches an unsupported schema during startup", () =>
+  runIsolated("compatibility"));
+
+it("completes a supported SDK result through the public native binding", () =>
+  runIsolated("result"));
+it("rejects SDK success after a caught runtime failure", () => runIsolated("result-failure"));
+it("rejects SDK stream completion after a caught runtime failure", () =>
+  runIsolated("end-failure"));

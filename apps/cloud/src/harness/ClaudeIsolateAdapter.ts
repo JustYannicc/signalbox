@@ -25,6 +25,7 @@ import { HarnessError, type HarnessOpenInput } from "./Harness.ts";
 import { launchNodeHarnessProcess, type NodeHarnessProcessInput } from "./NodeHarnessProcess.ts";
 import { createSdkProcess } from "./node/SdkProcess.ts";
 import { abortableValue, applySdkLaunch } from "./claude/SdkRelease.ts";
+import { gateClaudeSdkResults } from "./claude/SdkCompatibility.ts";
 
 import type { PreparedClaudeSdk, SdkSpawnOptions } from "./claude/SdkTypes.ts";
 export type { PreparedClaudeSdk, SdkSpawnOptions, SdkSpawnedProcess } from "./claude/SdkTypes.ts";
@@ -92,7 +93,12 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
           loadRelease: async (installed, signal) => {
             bridge = installed;
             try {
-              sdkReady.resolve(await options.loadSdk(installed, signal));
+              const sdk = await options.loadSdk(installed, signal);
+              sdkReady.resolve({
+                ...sdk,
+                query: (request) =>
+                  gateClaudeSdkResults(sdk.query(request), () => process.assertCompatibility()),
+              });
               const request = await launch.wait(signal);
               applySdkLaunch(installed, processInput, request);
               return await options.process.loadRelease(installed, signal);

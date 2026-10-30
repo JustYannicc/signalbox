@@ -3,6 +3,7 @@ import * as NodeUtil from "node:util";
 import { ThreadId } from "@t3tools/contracts";
 import type { ProviderAdapterV2TurnInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Cause from "effect/Cause";
+import * as Stream from "effect/Stream";
 import * as Effect from "effect/Effect";
 import { makeClaudeNativeHostBinding } from "../../ClaudeNativeHostBinding.ts";
 import {
@@ -10,11 +11,7 @@ import {
   type ClaudeToolHookInput,
 } from "../../ClaudeToolObservation.ts";
 import { nativeTurnThreadLoad, type NativeThreadLoad } from "../../HarnessThreadLoad.ts";
-import type {
-  PreparedClaudeSdk,
-  SdkSpawnOptions,
-  SdkSpawnedProcess,
-} from "../../ClaudeIsolateAdapter.ts";
+import type { PreparedClaudeSdk, SdkSpawnOptions } from "../../ClaudeIsolateAdapter.ts";
 import type { ClaudeAgentSdkMcpServers } from "@signalbox/provider-claude/ClaudeQueryRunner";
 import type {
   ClaudeSdkQuery,
@@ -28,60 +25,22 @@ import {
 import type { GuestModule } from "./fixture.ts";
 import { readinessFixture } from "./claudeReadinessFixture.ts";
 import * as NodeWorkerThreads from "node:worker_threads";
+import { createNodeRuntimeCompatibility } from "../../../isolate/NodeRuntimeCompatibility.ts";
 
-type SDKUserMessage = Parameters<
-  import("@signalbox/provider-claude/ClaudeQueryRunner").ClaudeAgentSdkQuerySession["offer"]
->[0];
-type SDKMessage = Exclude<Awaited<ReturnType<ClaudeSdkQuery["next"]>>["value"], void>;
+import { sdkQuery, successfulResult, type SDKUserMessage } from "./claudeSdkQueryFixture.ts";
 
-function sdkQuery(
-  prompt: AsyncIterable<SDKUserMessage>,
-  child: SdkSpawnedProcess,
-  installs: ClaudeAgentSdkMcpServers[],
-  order: string[],
-  offered: (message: SDKUserMessage) => void,
-  initializationResult: ClaudeSdkQuery["initializationResult"],
-  consumePrompt: boolean,
-): ClaudeSdkQuery {
-  let finish!: () => void;
-  const closed = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  if (consumePrompt)
-    void (async () => {
-      const first = await prompt[Symbol.asyncIterator]().next();
-      NodeAssert.equal(first.done, false);
-      if (first.value !== undefined) {
-        order.push("prompt.offer");
-        offered(first.value);
-      }
-    })();
-  async function* messages(): AsyncGenerator<SDKMessage> {
-    await closed;
-    yield* [];
-  }
-  return Object.assign(messages(), {
-    initializationResult,
-    close: () => {
-      order.push("query.close");
-      finish();
-      child.kill("SIGTERM");
-    },
-    setMcpServers: async (servers: ClaudeAgentSdkMcpServers) => {
-      order.push("setMcpServers");
-      installs.push(servers);
-      return { added: Object.keys(servers), removed: [], errors: {} };
-    },
-    setModel: async (_model: string) => {},
-    applyFlagSettings: async (_settings: Parameters<ClaudeSdkQuery["applyFlagSettings"]>[0]) => {},
-    setPermissionMode: async (_mode: Parameters<ClaudeSdkQuery["setPermissionMode"]>[0]) => {},
-    stopTask: async (_taskId: string) => {},
-    backgroundTasks: async (_toolUseId: string) => true,
-    interrupt: async () => undefined,
-  }) satisfies ClaudeSdkQuery;
-}
-
-function coldSetup(override?: "prepared" | "both" | "diagnostic" | "observation") {
+function coldSetup(
+  override?:
+    | "prepared"
+    | "both"
+    | "diagnostic"
+    | "observation"
+    | "compatibility"
+    | "result"
+    | "result-failure"
+    | "end-failure",
+  verified?: () => void,
+) {
   const f = readinessFixture();
   return Effect.scoped(
     Effect.gen(function* () {
@@ -94,8 +53,16 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic" | "observation"
       const order: string[] = [];
       const hasPreparedOverride = override === "prepared" || override === "both";
       const diagnosticCase = override === "diagnostic";
+      const compatibilityCase = override === "compatibility";
+      const resultCase =
+        override === "result" || override === "result-failure" || override === "end-failure";
+      const failureCase =
+        compatibilityCase || override === "result-failure" || override === "end-failure";
+      let reportRuntimeFailure: ((error: unknown) => void) | undefined;
+      let yieldedResult = false;
       const initializationFailure = new Error("host SDK initialization failure");
       const diagnostics: ClaudeSdkQueryPreCleanupDiagnostic[] = [];
+      const childFailure = Promise.withResolvers<unknown>();
       let fetchedMcp = "";
       let fetchedModel = "";
       let queryOptions: unknown;
@@ -149,6 +116,7 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic" | "observation"
             env: { HOME: "/home/test", PATH: "/bin" },
             signal: new AbortController().signal,
           } satisfies SdkSpawnOptions);
+          if (failureCase) child.on("error", (error) => childFailure.resolve(error));
           order.push("spawnClaudeCodeProcess");
           return sdkQuery(
             prompt,
@@ -161,7 +129,26 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic" | "observation"
               if (diagnosticCase) throw initializationFailure;
               return {} as Awaited<ReturnType<ClaudeSdkQuery["initializationResult"]>>;
             },
-            !diagnosticCase,
+            !diagnosticCase && !compatibilityCase,
+            !resultCase
+              ? undefined
+              : async function* () {
+                  const message = await offeredPrompt;
+                  if (failureCase) {
+                    if (reportRuntimeFailure === undefined) throw new Error("No runtime reporter");
+                    try {
+                      throw Object.assign(new Error("caught unsupported result schema"), {
+                        code: "AJV_SCHEMA_NOT_PRECOMPILED",
+                      });
+                    } catch (error) {
+                      reportRuntimeFailure(error);
+                    }
+                  }
+                  if (override !== "end-failure") {
+                    yieldedResult = true;
+                    yield successfulResult(message);
+                  }
+                },
           );
         },
         forkSession: async (sessionId) => ({ sessionId }),
@@ -172,6 +159,57 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic" | "observation"
         process: {
           ...f.input,
           computer: services.computer,
+          ...(!compatibilityCase && !resultCase
+            ? {}
+            : {
+                loadRelease: async (bridge, signal) => {
+                  const release = await f.input.loadRelease(bridge, signal);
+                  if (release === null || typeof release !== "object")
+                    throw new Error("No fixture release");
+                  const launch: unknown = Reflect.get(release, "launch");
+                  const report: unknown = Reflect.get(
+                    bridge.require("worker_threads"),
+                    "reportRuntimeFailure",
+                  );
+                  if (typeof launch !== "function" || typeof report !== "function")
+                    throw new Error("No compatibility capability");
+                  if (resultCase) {
+                    // Exercise the release-export latch independently of the process failure signal.
+                    const realm = createNodeRuntimeCompatibility({});
+                    const realmReport: unknown = Reflect.get(realm.module, "reportRuntimeFailure");
+                    if (typeof realmReport !== "function") throw new Error("No realm reporter");
+                    reportRuntimeFailure = (error) => {
+                      realmReport(error);
+                    };
+                    return {
+                      launch: () => Reflect.apply(launch, release, []),
+                      assertRuntimeCompatibility: async () => {
+                        try {
+                          await realm.assert();
+                        } catch (error) {
+                          order.push("compatibility.reject");
+                          throw error;
+                        }
+                      },
+                    };
+                  }
+                  reportRuntimeFailure = (error) => {
+                    report(error);
+                  };
+                  return {
+                    launch() {
+                      Reflect.apply(launch, release, []);
+                      try {
+                        throw Object.assign(new Error("caught unsupported startup schema"), {
+                          code: "AJV_SCHEMA_NOT_PRECOMPILED",
+                        });
+                      } catch (error) {
+                        report(error);
+                      }
+                    },
+                  };
+                },
+              }),
           ...(!hasPreparedOverride
             ? {}
             : {
@@ -267,6 +305,19 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic" | "observation"
         modelSelection: services.turn.modelSelection,
         runtimePolicy: services.session.runtimePolicy,
       };
+      if (compatibilityCase) {
+        const start = yield* Effect.exit(runtime.startTurn(turn));
+        NodeAssert.equal(start._tag, "Failure");
+        if (start._tag === "Failure")
+          NodeAssert.match(Cause.pretty(start.cause), /caught unsupported startup schema/);
+        NodeAssert.match(
+          NodeUtil.inspect(yield* Effect.promise(() => childFailure.promise)),
+          /caught unsupported startup schema/,
+        );
+        NodeAssert.equal(order.includes("prompt.offer"), false);
+        verified?.();
+        return;
+      }
       if (diagnosticCase) {
         const start = yield* Effect.exit(runtime.startTurn(turn));
         NodeAssert.equal(start._tag, "Failure");
@@ -291,6 +342,26 @@ function coldSetup(override?: "prepared" | "both" | "diagnostic" | "observation"
       }
       yield* runtime.startTurn(turn);
       const offered = yield* Effect.promise(() => offeredPrompt);
+      if (resultCase) {
+        const terminal = yield* Stream.runHead(
+          runtime.events.pipe(Stream.filter((event) => event.type === "turn.terminal")),
+        );
+        NodeAssert.equal(terminal._tag, "Some");
+        if (terminal._tag === "Some" && terminal.value.type === "turn.terminal") {
+          NodeAssert.equal(terminal.value.status, failureCase ? "failed" : "completed");
+        }
+        NodeAssert.equal(yieldedResult, override !== "end-failure");
+        if (failureCase) {
+          const rejected = order.indexOf("compatibility.reject");
+          const closed = order.indexOf("query.close");
+          NodeAssert.ok(
+            rejected >= 0 && (closed === -1 || rejected < closed),
+            "The SDK must reject the runtime compatibility failure before cleanup",
+          );
+        }
+        verified?.();
+        return;
+      }
 
       NodeAssert.equal(fetchedMcp, "canonical-mcp");
       NodeAssert.equal(fetchedModel, "ordinary-model");
@@ -437,20 +508,43 @@ function resumeSetup() {
   );
 }
 
+const caseName: unknown = NodeWorkerThreads.workerData;
 const run =
-  NodeWorkerThreads.workerData === "prepared"
-    ? () => coldSetup("prepared")
-    : NodeWorkerThreads.workerData === "both"
-      ? () => coldSetup("both")
-      : NodeWorkerThreads.workerData === "diagnostic"
-        ? () => coldSetup("diagnostic")
-        : NodeWorkerThreads.workerData === "observation"
-          ? () => coldSetup("observation")
-          : NodeWorkerThreads.workerData === "cold"
-            ? coldSetup
-            : NodeWorkerThreads.workerData === "resume"
-              ? resumeSetup
-              : undefined;
+  caseName === "compatibility" || caseName === "result-failure" || caseName === "end-failure"
+    ? () => {
+        let verified = false;
+        return Effect.exit(
+          coldSetup(caseName, () => {
+            verified = true;
+          }),
+        ).pipe(
+          Effect.map((exit) => {
+            NodeAssert.ok(
+              verified,
+              exit._tag === "Failure"
+                ? Cause.pretty(exit.cause)
+                : "Expected failure assertions did not run",
+            );
+            NodeAssert.equal(exit._tag, "Failure");
+            if (exit._tag === "Failure")
+              NodeAssert.match(
+                Cause.pretty(exit.cause),
+                /caught unsupported (startup|result) schema/,
+              );
+          }),
+        );
+      }
+    : caseName === "prepared" ||
+        caseName === "both" ||
+        caseName === "diagnostic" ||
+        caseName === "observation" ||
+        caseName === "result"
+      ? () => coldSetup(caseName)
+      : caseName === "cold"
+        ? coldSetup
+        : caseName === "resume"
+          ? resumeSetup
+          : undefined;
 if (run === undefined || NodeWorkerThreads.parentPort === null)
   throw new Error("Invalid native binding test case.");
 const port = NodeWorkerThreads.parentPort;

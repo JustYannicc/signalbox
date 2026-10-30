@@ -58,6 +58,8 @@ export interface NodeHarnessProcess {
   /** Set at native exit; exited still waits for output and cleanup. */
   readonly exitStatus: KernelExitStatus | undefined;
   readonly exited: Promise<KernelExitStatus>;
+  /** Fails closed before a provider result is accepted if the installed release reported incompatibility. */
+  readonly assertCompatibility: () => Promise<void>;
   readonly abort: (reason?: unknown, signal?: 9 | 15) => Promise<void>;
   readonly dispose: () => Promise<void>;
 }
