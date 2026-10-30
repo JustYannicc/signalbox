@@ -5,22 +5,28 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { expect, it } from "vite-plus/test";
+import { workerFactoryBuiltinSources } from "../harness-releases/nodeBuiltinGate/workerFactory.ts";
 import { createWorkerFactory } from "./worker-factory.ts";
 
-it("keeps repeated live reads within the hooks packing allowance", () => {
-  const mainSource = `import {value} from "./worker-hooks.js";export function read(){return [${Array.from(
-    { length: 30000 },
-    () => "value",
+it("normalizes 300000 live reads within the hooks packing allowance", () => {
+  const mainSource = `import {sharedValue} from "./worker-hooks.js";export function read(){return [${Array.from(
+    { length: 300000 },
+    () => "sharedValue",
   ).join(",")}]}`;
-  const workerSource = "var value=1;function launch(){}";
+  const workerSource = "var sharedValue=1;function launch(){}";
   const generated = createWorkerFactory({
     workerSource,
     mainSource,
     workerImport: "./worker-hooks.js",
-    exports: new Map([["value", "value"]]),
+    exports: new Map([["sharedValue", "sharedValue"]]),
     initializers: [],
     launch: "launch",
   });
+  const normalized = workerFactoryBuiltinSources([
+    { name: "signalbox/worker-hooks.js", source: generated.workerSource },
+    { name: "signalbox/release.js", source: generated.mainSource },
+  ]);
+  expect(normalized[1]!.source.match(/__signalboxAnalysis0/g)).toHaveLength(300001);
   const growth =
     Buffer.byteLength(generated.workerSource) +
     Buffer.byteLength(generated.mainSource) -

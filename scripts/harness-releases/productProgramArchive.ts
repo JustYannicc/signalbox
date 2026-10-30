@@ -67,7 +67,7 @@ export async function writePinnedTarFiles(options: {
     seen.add(file.path);
     const bytes = await readTarMember(options.archivePath, file.member);
     verifyPinnedBytes(bytes, file, file.member);
-    const target = NodePath.join(options.root, ...file.path.split("/"));
+    const target = NodePath.join(options.root, file.path);
     await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true, mode: 0o755 });
     await NodeFSP.writeFile(target, bytes, { flag: "wx", mode: file.mode });
     await NodeFSP.chmod(target, file.mode);

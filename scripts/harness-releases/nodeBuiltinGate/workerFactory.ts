@@ -246,7 +246,7 @@ export function workerFactoryBuiltinSources(sources: readonly BuiltinSource[]) {
     }
     if (!instance) throw invalid();
     const reads = restoreWorkerFactoryReads(main, instance, exported);
-    mainEdits.push(...reads.edits);
+    for (const edit of reads.edits) mainEdits.push(edit);
     return {
       ...source,
       source:
