@@ -1,6 +1,7 @@
 import { applySourceEdits } from "../../claude-bunfs/source-edits.ts";
 import ts from "typescript-legacy";
 import type { BuiltinSource } from "./source.ts";
+import { restoreWorkerFactoryReads } from "./workerFactoryReads.ts";
 
 const invalid = () => new Error("NODE_BUILTIN_WORKER_FACTORY_SHAPE_CHANGED");
 const parse = (source: BuiltinSource) =>
@@ -244,38 +245,12 @@ export function workerFactoryBuiltinSources(sources: readonly BuiltinSource[]) {
       }
     }
     if (!instance) throw invalid();
-    const used = new Set<number>();
-    const walk = (node: ts.Node): void => {
-      if (
-        ts.isCallExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === "read" &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === instance
-      ) {
-        const index = node.arguments[0];
-        if (
-          node.arguments.length !== 1 ||
-          !index ||
-          !ts.isNumericLiteral(index) ||
-          !exported.has(Number(index.text))
-        )
-          throw invalid();
-        used.add(Number(index.text));
-        mainEdits.push({
-          start: node.getStart(main),
-          end: node.end,
-          text: `__signalboxAnalysis${index.text}`,
-        });
-        return;
-      }
-      ts.forEachChild(node, walk);
-    };
-    walk(main);
+    const reads = restoreWorkerFactoryReads(main, instance, exported);
+    mainEdits.push(...reads.edits);
     return {
       ...source,
       source:
-        `import {${[...used].map((index) => `__signalboxAnalysis${index}`).join(",")}} from "./worker-hooks.js";\n` +
+        `import {${[...reads.used].map((index) => `__signalboxAnalysis${index}`).join(",")}} from "./worker-hooks.js";\n` +
         replace(source.source, mainEdits),
     };
   });

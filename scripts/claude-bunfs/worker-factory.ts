@@ -1,6 +1,7 @@
 import { applySourceEdits } from "./source-edits.ts";
 import ts from "typescript-legacy";
-import { analyzeWorkerFactory, rewriteLexicalReferences } from "./worker-factory-analysis.ts";
+import { analyzeWorkerFactory } from "./worker-factory-analysis.ts";
+import { rewriteLexicalReferences, type LexicalReplacement } from "./worker-factory-rewrite.ts";
 import { ScopedBindings } from "./release-inventory-scope.ts";
 import { bundledFacadeCandidate } from "../harness-releases/nodeBuiltinGate/bundledFacadeShape.ts";
 
@@ -12,6 +13,19 @@ const unique = (source: string, name: string) => {
   while (source.includes(name)) name += "_";
   return name;
 };
+
+function compactReaderName(file: ts.SourceFile) {
+  const identifiers = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) identifiers.add(node.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  for (let index = 0; ; index++) {
+    const name = `$${index.toString(36)}`;
+    if (!identifiers.has(name)) return name;
+  }
+}
 
 /** Only generated builtin facade bodies change; official module bodies stay in their slices. */
 function bindBuiltinFacades(source: string, bindings: string) {
@@ -157,7 +171,8 @@ export function createWorkerFactory(input: {
     // The main module can declare the same names as realm globals; its lexical scope cannot read them.
     `export function parentGlobals(){return globalThis;}\n`;
   const mainFile = parse(input.mainSource);
-  const replacements = new Map<string, string>();
+  const reader = compactReaderName(mainFile);
+  const replacements = new Map<string, LexicalReplacement>();
   const mainEdits: { start: number; end: number; text: string }[] = [];
   for (const statement of mainFile.statements) {
     if (
@@ -174,7 +189,10 @@ export function createWorkerFactory(input: {
         ([name]) => name === (item.propertyName ?? item.name).text,
       );
       if (position < 0) throw shape();
-      replacements.set(item.name.text, `(${instance}.read(${position}))`);
+      replacements.set(item.name.text, {
+        expression: `(${reader}(${position}))`,
+        kind: "value",
+      });
     }
     mainEdits.push({ start: statement.getStart(mainFile), end: statement.end, text: "" });
   }
@@ -219,7 +237,9 @@ export function createWorkerFactory(input: {
         (name) =>
           `get ${JSON.stringify(name)}(){return ${namespaces}[${JSON.stringify(name)}]??= ${namespace}(require(${JSON.stringify(name)}))}`,
       )
-      .join(",")}}});\n`;
+      .join(",")}}});\n` +
+    // Re-read every binding at use time; caching the value loses live updates and getter timing.
+    `const ${reader}=i=>${instance}.read(i);\n`;
   return {
     workerSource,
     mainSource:
