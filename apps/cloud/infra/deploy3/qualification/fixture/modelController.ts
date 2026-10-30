@@ -2,7 +2,7 @@ import { equals } from "effect/Equal";
 import {
   verifyModelPhysicalRecovery,
   type ModelRecoveryEvidence,
-} from "../../../../src/harness/processResume/tests/modelPhysicalRecovery.fixture.ts";
+} from "./modelPhysicalRecovery.fixture.ts";
 import { createCombinedCodexModelPeer, EXPECTATIONS } from "./model/modelPeer.mjs";
 import type { QualifierProof } from "./proof.ts";
 import { assert, control, encoder, jsonBytes, sha256 } from "./common.ts";

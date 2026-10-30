@@ -3,18 +3,32 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
-import { codexFixture } from "../../../src/harness/releaseLoader/tests/artifactFixtures.ts";
-import { codexEngineBytes } from "../../../src/harness/productBootstrap/tests/workerd/codexEngineWasm.fixture.ts";
+import { codexFixture } from "./codexRelease.fixture.ts";
 import { loadHarnessRelease } from "../../../src/harness/HarnessReleaseLoader.ts";
 import { productLoadedPreparedRelease } from "../../../src/harness/ProductHarnessProcessRelease.ts";
 import { fixtureHash, syntheticAssets } from "./syntheticAssets.fixture.ts";
+import { syntheticConfiguration } from "./syntheticConfiguration.fixture.ts";
+import type { SyntheticProviderData } from "./runnerTurn.fixture.ts";
 const encodeTurn = Schema.encodeSync(Schema.fromJsonString(Schema.toCodecJson(RunnerTurn)));
 
 export async function syntheticBundleInput(
   f: Awaited<ReturnType<typeof syntheticAssets>>,
-  turn: typeof RunnerTurn.Type,
+  data: SyntheticProviderData,
 ) {
-  const engineBytes = codexEngineBytes();
+  const { turn } = data;
+  const seed = { home: "/workspace/.home/claude", cwd: "/workspace" };
+  const turns = (variant: "baseline" | "hooks") =>
+    claudeQualificationTurns(
+      {
+        ...turn,
+        providerThread: {
+          ...turn.providerThread,
+          nativeThreadRef: null,
+        },
+      },
+      variant,
+    ).map((turn) => encodeTurn(turn));
+  const engineBytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
   const material = await codexFixture({ engineBytes });
   const loaded = await loadHarnessRelease(material.options);
   const artifact = {
@@ -38,13 +52,7 @@ export async function syntheticBundleInput(
     codex: {
       configuration: await pin(
         "codex.json",
-        Buffer.from(
-          JSON.stringify({
-            schema: "sb1070/qualifier-input/v1",
-            expectedRelease,
-            commandRegistryHashes: [],
-          }),
-        ),
+        Buffer.from(JSON.stringify(await syntheticConfiguration(expectedRelease, turn))),
       ),
       engine: await pin("synthetic-engine.wasm", engineBytes),
       commands: [],
@@ -60,10 +68,10 @@ export async function syntheticBundleInput(
       },
       model: turn.modelSelection.model,
       turnJson: {
-        baseline: claudeQualificationTurns(turn, "baseline").map((turn) => encodeTurn(turn)),
-        hooks: claudeQualificationTurns(turn, "hooks").map((turn) => encodeTurn(turn)),
+        baseline: turns("baseline"),
+        hooks: turns("hooks"),
       },
-      seed: { home: "/workspace/.home/claude", cwd: "/workspace" },
+      seed,
     },
   };
 }

@@ -1,14 +1,13 @@
-import { NATIVE_SESSION_UUID } from "../processCreation/identity.ts";
+import { validateInitialCheckpoint } from "./initialCheckpoint.ts";
 import { createSeededProductHost } from "./seededHost.ts";
-import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleaseLedger.ts";
 import type { HarnessRequestFacetCreationEvidence } from "../HarnessRequestFacet.ts";
 import type { HarnessProcessResumePreparedRelease } from "../HarnessProcessResume.ts";
 import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
-import type { HarnessError, HarnessCheckpoint } from "../Harness.ts";
-import type { HostOpenInput, HarnessHostSession } from "../HarnessSessionHost.ts";
+import type { HarnessError } from "../Harness.ts";
+import type { HostOpenInput } from "../HarnessSessionHost.ts";
 import type { ProductHostOptions, ProductHarnessSessionHost } from "../host/product.ts";
 import { prepareCheckpoint } from "../durableState/files/content.ts";
 import { HarnessRequestFacetError } from "../HarnessRequestFacet.ts";
@@ -29,7 +28,7 @@ type ProductHost<G> = ProductHarnessSessionHost<G> & {
   readonly loadedPreparedRelease: () => HarnessProcessResumePreparedRelease;
 };
 
-/** Opens a Codex thread from its first native create, then retains that same session for turns. */
+/** Retains the session opened by the provider's first native create for subsequent turns. */
 export function prepareFreshHarnessCProductHost<
   Env extends HarnessCProductFacetEnvironment,
   G,
@@ -40,14 +39,17 @@ export function prepareFreshHarnessCProductHost<
   input: HarnessCProductFreshHostPreparationInput<Env, G, Native, Options, Host>,
 ): Effect.Effect<PreparedFreshHarnessCProductHost<Host>, HarnessRequestFacetError, Scope.Scope> {
   return Effect.gen(function* () {
+    const provider = input.factory.provider;
+    const driver = provider === "claude-code" ? "claudeAgent" : "codex";
     if (
-      input.factory.provider !== "codex" ||
-      input.descriptor.provider !== "codex" ||
-      input.expected.artifact.provider !== "codex" ||
+      input.descriptor.provider !== provider ||
+      input.expected.artifact.provider !== provider ||
       input.descriptor.preparedReleaseId !== input.expected.artifact.releaseId
     )
       return yield* Effect.fail(
-        new HarnessRequestFacetError("Fresh product host creation is supported only for Codex."),
+        new HarnessRequestFacetError(
+          "Fresh product host provider does not match the selected release.",
+        ),
       );
 
     const buildFreshHostOptions = input.factory.fresh?.buildHostOptions;
@@ -123,12 +125,12 @@ export function prepareFreshHarnessCProductHost<
       creation.providerThread.appThreadId !== threadId ||
       creation.providerThread.providerSessionId !== open.session.providerSessionId ||
       creation.providerThread.providerInstanceId !== open.session.modelSelection.instanceId ||
-      creation.providerThread.driver !== "codex" ||
+      creation.providerThread.driver !== driver ||
       open.bootAttemptId.length === 0
     )
       return yield* Effect.fail(
         new HarnessRequestFacetError(
-          "Fresh product open input must contain an unbound Codex thread.",
+          "Fresh product open input must contain an unbound thread for the selected provider.",
         ),
       );
 
@@ -243,45 +245,4 @@ export function prepareFreshHarnessCProductHost<
     };
     return { host, runtime, evidence };
   });
-}
-
-function validateInitialCheckpoint<G>(input: {
-  readonly checkpoint: HarnessCheckpoint;
-  readonly session: HarnessHostSession<G>;
-  readonly provider: string;
-  readonly threadId: ThreadId;
-  readonly providerSessionId: string;
-  readonly providerInstanceId: string;
-  readonly creationThread: HarnessCheckpoint["snapshot"]["providerThread"];
-}): string {
-  const { checkpoint, session, provider, threadId, providerSessionId, providerInstanceId } = input;
-  const thread = checkpoint.snapshot.providerThread;
-  const nativeThreadRef = thread.nativeThreadRef;
-  if (
-    checkpoint.release.harness !== provider ||
-    checkpoint.providerSession.id !== providerSessionId ||
-    checkpoint.providerSession.id !== session.providerSession.id ||
-    checkpoint.providerSession.driver !== provider ||
-    checkpoint.providerSession.providerInstanceId !== providerInstanceId ||
-    thread.appThreadId !== threadId ||
-    thread.providerSessionId !== checkpoint.providerSession.id ||
-    thread.providerInstanceId !== providerInstanceId ||
-    thread.driver !== checkpoint.providerSession.driver ||
-    thread.id !== input.creationThread.id ||
-    thread.appThreadId !== input.creationThread.appThreadId ||
-    thread.providerSessionId !== input.creationThread.providerSessionId ||
-    thread.providerInstanceId !== input.creationThread.providerInstanceId ||
-    thread.driver !== input.creationThread.driver ||
-    thread.nativeThreadRef?.driver !== thread.driver ||
-    nativeThreadRef === null ||
-    nativeThreadRef.nativeId === null ||
-    !NATIVE_SESSION_UUID.test(nativeThreadRef.nativeId) ||
-    checkpoint.snapshot.providerTurns.length !== 0 ||
-    checkpoint.snapshot.messages.length !== 0 ||
-    checkpoint.snapshot.runtimeRequests.length !== 0
-  )
-    throw new Error(
-      "The exported checkpoint does not contain this fresh provider session and thread.",
-    );
-  return nativeThreadRef.nativeId;
 }

@@ -1,3 +1,6 @@
+import type { HarnessProcessResumePreparedRelease } from "../../../../src/harness/HarnessProcessResume.ts";
+import { decodePreparedRelease } from "../preparedRelease.schema.ts";
+import { publishSeedCheckpoint } from "./seedPublication.ts";
 import { DurableObject } from "cloudflare:workers";
 import { HarnessFilesStoreObject } from "../../../../src/harness/HarnessFilesStoreObject.ts";
 import type { HarnessFilesCheckpoint } from "../../../../src/harness/HarnessFilesStore.ts";
@@ -5,7 +8,7 @@ import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore
 import type { HarnessThreadSupervisorPublisher } from "../../../../src/harness/HarnessThreadSupervisor.ts";
 import { BlobJournal } from "./blobJournal.ts";
 import { readConfiguration, readAsset } from "./configuration.ts";
-import { assert, control, encoder, fromBase64, jsonBytes, sameArtifact } from "./common.ts";
+import { assert, control, encoder, jsonBytes, sameArtifact } from "./common.ts";
 import { describeFiles } from "./snapshot.ts";
 import { readClaudeQualificationAssets } from "../runtimeAssets.ts";
 
@@ -14,12 +17,6 @@ export interface CapabilityEnvironment {
   CONFIG_SHA256: string;
   HARNESS_FILES_STORE: DurableObjectNamespace<HarnessFilesStoreObject>;
 }
-const seedPublisher = {
-  generation: 1,
-  facetNonce: "seed-only",
-  publisherKey: "qualifier-seed-publisher-key-".repeat(2),
-};
-
 // All mutable proof records belong to this one object. The public A/B/C stores retain lifecycle authority.
 export class QualifierCapabilities<
   Env extends CapabilityEnvironment = CapabilityEnvironment,
@@ -49,14 +46,29 @@ export class QualifierCapabilities<
       imageDigest: config.machineInventory.imageDigest,
     };
   }
-  async prepareClaudeIncarnation(_input: {
-    incarnation: string;
-    loaderId: string;
-    nativeSessionId: string;
-    checkpointId: string;
-    manifestSha256: string;
-    variant: "baseline" | "hooks";
-  }): Promise<unknown> {
+  async recordClaudeLoadedRelease(
+    incarnation: string,
+    loaded: HarnessProcessResumePreparedRelease,
+  ) {
+    const ref = await this.journal.put(
+      `claude-loaded-release-${incarnation}`,
+      jsonBytes(decodePreparedRelease(loaded)),
+    );
+    await this.ctx.storage.put(`claude/loaded-release/${incarnation}`, ref);
+    return ref;
+  }
+  async readClaudeLoadedRelease(incarnation: string) {
+    const ref = await this.ctx.storage.get<HarnessRunArtifact>(
+      `claude/loaded-release/${incarnation}`,
+    );
+    assert(ref, "The actual Claude public loaded-release observation is missing");
+    return decodePreparedRelease(
+      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await this.journal.read(ref))),
+    );
+  }
+  async prepareClaudeIncarnation(
+    _input: import("./claudeScenario.ts").ClaudeIncarnation,
+  ): Promise<unknown> {
     throw new Error("The Claude qualification owner must provide its incarnation boundary");
   }
   async hostConfiguration() {
@@ -226,33 +238,7 @@ export class QualifierCapabilities<
     throw new Error("C4 tools-gateway calls are excluded from this qualifier");
   }
   async seedCheckpoint() {
-    const config = await this.configuration();
-    const runId = `${config.runId}/seed`;
-    const files = config.seed.files.map(({ contentBase64, ...file }) => ({
-      ...file,
-      bytes: fromBase64(contentBase64),
-    }));
-    const store = this.env.HARNESS_FILES_STORE.getByName(runId);
-    const initialized = await store.execute({
-      type: "initialize",
-      runId,
-      control: control(1),
-      publisher: seedPublisher,
-      checkpoint: { checkpointId: config.seed.checkpointId, parentCheckpointId: null, files },
-    });
-    const checkpoint = await store.execute({
-      type: "readCheckpoint",
-      runId,
-      publisher: seedPublisher,
-      checkpointId: config.seed.checkpointId,
-    });
-    assert(
-      checkpoint.checkpoint.manifestSha256 === initialized.checkpoint.manifestSha256 &&
-        checkpoint.files.length === files.length &&
-        checkpoint.files.length > 0,
-      "Public seed checkpoint read must return all frozen files",
-    );
-    return checkpoint;
+    return await publishSeedCheckpoint(await this.configuration(), this.env);
   }
   async stageCheckpoint(
     requestId: string,

@@ -4,16 +4,12 @@ export const ROUTES = [
   { method: "POST", path: "/sequence/release" },
   { method: "GET", path: "/ready" },
   { method: "POST", path: "/observer-calibration" },
-  ...(["baseline", "hooks"] as const).flatMap((variant) => [
-    { method: "POST", path: `/claude/${variant}/calibration` },
-    { method: "POST", path: `/claude/${variant}/work/dispatch` },
-    { method: "POST", path: `/claude/${variant}/resume/dispatch` },
-    { method: "POST", path: `/claude/${variant}/interrupt/dispatch` },
-    { method: "POST", path: `/claude/${variant}/restore` },
-    { method: "POST", path: `/claude/${variant}/inspect` },
-    { method: "POST", path: `/claude/${variant}/release` },
-    { method: "POST", path: `/claude/${variant}/dispose` },
-  ]),
+  ...(["baseline", "hooks"] as const).flatMap((variant) =>
+    ["turn/1", "replace", "turn/2", "turn/3", "finish"].flatMap((step) => [
+      { method: "POST", path: `/claude/${variant}/${step}/dispatch` },
+      { method: "GET", path: `/claude/${variant}/${step}/receipt` },
+    ]),
+  ),
   ...[1, 2, 3].flatMap((turn) => [
     { method: "POST", path: `/turn/${turn}/dispatch` },
     { method: "GET", path: `/turn/${turn}/receipt` },

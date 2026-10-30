@@ -225,7 +225,6 @@ it("times the first public run, checks one module-init nonce, and leaves qualifi
     "grep",
     "resume",
     "mcp",
-    "interrupt",
     "publicHarness",
   ]);
   expect(observed.criteria.find((criterion) => criterion.name === "readEdit")?.events).toHaveLength(
@@ -360,7 +359,7 @@ it("rejects changed module-init nonce and missing action events", async () => {
         return {
           ...trace,
           producerEvents: trace.producerEvents.filter(
-            (value) => (value as { invocationId: string }).invocationId !== "invocation-interrupt",
+            (value) => (value as { invocationId: string }).invocationId !== "invocation-mcp",
           ),
         };
       },

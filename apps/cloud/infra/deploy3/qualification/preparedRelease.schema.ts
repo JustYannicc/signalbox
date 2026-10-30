@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { snapshotPreparedRelease } from "../../../src/harness/processResume/identity.ts";
+import { snapshotPreparedRelease } from "../../../src/harness/ProductHarnessProcessRelease.ts";
 
 const NonEmpty = Schema.String.check(Schema.isPattern(/\S/u));
 const Sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
@@ -9,7 +9,7 @@ const Bytes = Schema.Int.check(
 );
 const File = Schema.Struct({ bytes: Bytes, sha256: Sha256 });
 const Computer = Schema.Struct({ sourceIdentity: Sha256, manifestSha256: Sha256 });
-const PreparedRelease = Schema.Struct({
+export const PreparedRelease = Schema.Struct({
   artifact: Schema.Struct({
     provider: Schema.Literals(["codex", "claude-code"]),
     releaseId: NonEmpty,

@@ -33,7 +33,10 @@ async function setup() {
       model: "synthetic",
     },
     turnJson: ["{}"],
-    seed: { home: "/workspace/.home/claude", cwd: "/workspace" },
+    seed: {
+      home: "/workspace/.home/claude",
+      cwd: "/workspace",
+    },
   });
   const prepared = (variant: "baseline" | "hooks") =>
     productLoadedPreparedRelease(
@@ -44,7 +47,11 @@ async function setup() {
   const configuration = {
     runId: rootRunId,
     claude: {
-      runtime: { ...runtime, turnJson: { baseline: runtime.turnJson, hooks: runtime.turnJson } },
+      runtime: {
+        ...runtime,
+        turnJson: { baseline: runtime.turnJson, hooks: runtime.turnJson },
+        seed: runtime.seed,
+      },
       facetSource: "synthetic",
       environmentPackages: {},
       expected: { baseline: prepared("baseline"), hooks: prepared("hooks") },
@@ -54,6 +61,9 @@ async function setup() {
     variant: "baseline",
     configuration: async () => configuration,
     shard: () => ({
+      startFreshProcess: unavailable,
+      runCreatedProcess: unavailable,
+      processCreationStatus: unavailable,
       runShard: unavailable,
       resumeProcess: unavailable,
       continueProcess: unavailable,

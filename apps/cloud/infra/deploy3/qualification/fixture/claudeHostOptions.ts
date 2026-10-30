@@ -14,12 +14,10 @@ import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../../src/harness/Harne
 import { DEFAULT_NODE_NATIVE_MODULES } from "../../../../src/harness/NodeNativeModules.ts";
 import type { HarnessFilesStoreResult } from "../../../../src/harness/HarnessFilesStore.ts";
 import { createMemoryFilePersistencePorts } from "../../../../src/kernel/MemoryFilePersistencePorts.ts";
-import type { KernelFileSystem } from "../../../../src/kernel/KernelFileSystem.ts";
 import type { HarnessReleaseArtifact } from "../../../../src/harnessReleases/HarnessReleaseLedger.ts";
 import type { LoadHarnessReleaseOptions } from "../../../../src/harness/HarnessReleaseLoader.ts";
 import { QualifierCapabilities } from "./capabilities.ts";
 import { facetState } from "./facetState.ts";
-import { compareBeforeReadiness } from "./snapshot.ts";
 import { assert } from "./common.ts";
 import type { QualifierEnvironment } from "./environment.ts";
 import { readConfiguration } from "./configuration.ts";
@@ -31,19 +29,18 @@ import {
 } from "./claudeConfiguration.ts";
 import { buildClaudeAdapter } from "./claudeAdapter.ts";
 import { createClaudePreparedImports } from "./claudePreparedModules.ts";
-import {
-  claudeNodeRuntimeIdentity,
-  claudeSeedPaths,
-  claudeSystemIdentity,
-  prepareClaudeSeed,
-} from "./claudeSeed.ts";
+import { claudeNodeRuntimeIdentity, claudeSeedPaths, claudeSystemIdentity } from "./claudeSeed.ts";
 import {
   createClaudeContinuationPublisher,
   type ClaudeContinuationCapability,
 } from "./claudeContinuations.ts";
+import { hydrateClaudeFiles } from "./claudeFiles.ts";
 import { sameClaudeReleaseArtifact } from "../../../../src/harnessReleases/ClaudeReleaseVariants.ts";
 
+import type { ClaudeAuthorityBindings } from "./claudeAuthorities.ts";
+
 export type ClaudeFacetEnvironment = QualifierEnvironment &
+  ClaudeAuthorityBindings &
   HarnessCProductFacetEnvironment & {
     readonly HARNESS_PROCESS_LOADER_ID: string;
     readonly QUALIFIER_CLAUDE_VARIANT?: unknown;
@@ -69,8 +66,8 @@ export interface ClaudeFacetBuildInput {
   readonly ctx: DurableObjectState;
   readonly facetNonce: string;
   readonly selectedRelease: SelectedRelease;
-  readonly checkpoint: HarnessCheckpoint;
-  readonly filesCheckpoint: HarnessFilesStoreResult;
+  readonly checkpoint?: HarnessCheckpoint;
+  readonly filesCheckpoint?: HarnessFilesStoreResult;
 }
 
 const decodeTurn = Schema.decodeSync(Schema.fromJsonString(Schema.toCodecJson(RunnerTurn)));
@@ -101,7 +98,7 @@ function claudeContinuationCapability(env: ClaudeFacetEnvironment): ClaudeContin
     | undefined;
   assert(
     typeof candidate?.publishContinuation === "function",
-    "A real public Claude continuation publisher is required",
+    "The disposable Claude continuation fixture is required",
   );
   return supplied as unknown as ClaudeContinuationCapability;
 }
@@ -112,12 +109,9 @@ function assertClaudeMcpAuthorities(env: ClaudeFacetEnvironment) {
   assert(
     typeof access?.resolveInitialAccess === "function" &&
       typeof access.resolveTurnAccess === "function",
-    "A real Claude thread access capability is required for MCP",
+    "The disposable Claude access fixture is required for MCP",
   );
-  assert(
-    typeof executor?.forward === "function",
-    "A real Claude Executor MCP capability is required",
-  );
+  assert(typeof executor?.forward === "function", "The local Claude MCP fixture is required");
 }
 
 function commandLoader(env: ClaudeFacetEnvironment): ChildWorkerLoaderPort {
@@ -141,6 +135,7 @@ export async function claudeConfiguration(env: ClaudeFacetEnvironment) {
   const claude = decodeClaudeFacetConfiguration({
     ...runtime,
     turnJson: runtime.turnJson[variant],
+    seed: runtime.seed,
   });
   assert(host.runId === env.RUN_ID, "Claude qualifier run identity changed");
   return { host, claude };
@@ -149,14 +144,25 @@ export async function claudeConfiguration(env: ClaudeFacetEnvironment) {
 export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
   Effect.gen(function* () {
     const { host, claude } = yield* attempt(() => claudeConfiguration(input.env));
-    const restored = input.filesCheckpoint.files;
-    assert(restored.length > 0, "Claude qualification requires a real public files checkpoint");
+    const restored = input.filesCheckpoint?.files;
+    assert(
+      (input.checkpoint === undefined) === (restored === undefined),
+      "Claude native and file restore inputs must be supplied together",
+    );
+    assert(
+      restored === undefined || restored.length > 0,
+      "Claude restored files checkpoint is empty",
+    );
     assert(claude.turnJson[0], "Claude qualification turn input is missing");
     const turn = decodeTurn(claude.turnJson[0]);
-    const nativeSessionId = input.checkpoint.snapshot.providerThread.nativeThreadRef?.nativeId;
     assert(
-      nativeSessionId && turn.providerThread.nativeThreadRef?.nativeId === nativeSessionId,
-      "Claude turn input does not match the real public native checkpoint",
+      turn.providerThread.nativeThreadRef === null,
+      "Claude qualification templates must be unbound until public creation",
+    );
+    const nativeSessionId = input.checkpoint?.snapshot.providerThread.nativeThreadRef?.nativeId;
+    assert(
+      input.checkpoint === undefined || nativeSessionId,
+      "Claude restored checkpoint has no native identity",
     );
     assert(
       turn.providerThread.driver === "claudeAgent" &&
@@ -188,9 +194,14 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
       cap.prepareClaudeIncarnation({
         incarnation: input.facetNonce,
         loaderId: input.env.HARNESS_PROCESS_LOADER_ID,
-        nativeSessionId,
-        checkpointId: input.filesCheckpoint.checkpoint.checkpointId,
-        manifestSha256: input.filesCheckpoint.checkpoint.manifestSha256,
+        ...(nativeSessionId && input.filesCheckpoint
+          ? {
+              kind: "restored" as const,
+              nativeSessionId,
+              checkpointId: input.filesCheckpoint.checkpoint.checkpointId,
+              manifestSha256: input.filesCheckpoint.checkpoint.manifestSha256,
+            }
+          : { kind: "fresh" as const }),
         variant,
       }),
     );
@@ -285,23 +296,17 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
       observeInput: (bytes: Uint8Array) => state.raw("native-stdin", bytes),
       observeOutput: (fd: number, bytes: Uint8Array) =>
         state.raw(fd === 1 ? "native-stdout" : "native-stderr", bytes),
-      hydrate: async ({ files }: { readonly files: KernelFileSystem }) => {
-        state.boundFiles = files;
-        state.threadId = turn.threadId;
-        const proof = await compareBeforeReadiness(files, restored);
-        for (const entry of restored)
-          if (entry.kind !== "symlink")
-            state.reads.register(entry.path, files.resolve(`/workspace/${entry.path}`).inode);
-        state.reads.phase("repository-readiness");
-        prepareClaudeSeed(files, paths);
-        await cap.append("claude-files-before-readiness", {
-          incarnation: input.facetNonce,
-          restored: restored !== undefined,
-          proof,
-          preparedModuleCount,
-          artifactHash: input.selectedRelease.artifact.artifactHash,
-        });
-      },
+      hydrate: hydrateClaudeFiles({
+        state,
+        cap,
+        paths,
+        turn,
+        restored,
+        nativeSessionId,
+        incarnation: input.facetNonce,
+        preparedModuleCount,
+        artifactHash: input.selectedRelease.artifact.artifactHash,
+      }),
       save: async () => ({ commit: `claude-snapshot-${input.facetNonce}` }),
       port: async () => {
         throw new Error("Claude qualifier excludes network ports");

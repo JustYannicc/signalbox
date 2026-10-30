@@ -1,6 +1,7 @@
 import { ClaudeMcpProbe } from "./fixture/claudeMcpProbe.ts";
 import * as Schema from "effect/Schema";
 import { Deploy3ClaudeAssets } from "./claudeAssets.schema.ts";
+import { ClaudeSeedConfiguration } from "./fixture/configuration.schema.ts";
 
 const NonEmpty = Schema.String.check(Schema.isPattern(/\S/u));
 const Sha256 = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
@@ -27,10 +28,7 @@ export const CombinedFixtureInput = Schema.Struct({
     mcpProbe: ClaudeMcpProbe,
     model: NonEmpty,
     turnJson: Schema.Struct({ baseline: Schema.Array(NonEmpty), hooks: Schema.Array(NonEmpty) }),
-    seed: Schema.Struct({
-      home: Schema.String.check(Schema.isPattern(/^\/\S/u)),
-      cwd: Schema.String.check(Schema.isPattern(/^\/\S/u)),
-    }),
+    seed: ClaudeSeedConfiguration,
   }),
 });
 

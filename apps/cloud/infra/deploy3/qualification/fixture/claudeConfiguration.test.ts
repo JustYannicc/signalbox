@@ -40,7 +40,10 @@ function configuration() {
       model: "claude-sonnet-4-6",
     },
     turnJson: ["{}"],
-    seed: { home: "/home/qualification", cwd: "/workspace" },
+    seed: {
+      home: "/workspace/.home/claude",
+      cwd: "/workspace",
+    },
   };
 }
 

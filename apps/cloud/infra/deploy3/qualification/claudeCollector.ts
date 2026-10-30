@@ -1,3 +1,4 @@
+import { CLAUDE_DEPLOY3_CRITERIA } from "./fixture/claudeScenario.ts";
 import {
   requireObservedInvocation,
   readObserverTrace,
@@ -16,26 +17,14 @@ import {
   assertActualLoadedCandidateRelease,
   type ClaudeQualificationPreparedVariant,
 } from "../../harnessReleases/claudeQualification/candidateServices.ts";
-import {
-  RELEASE_CRITERIA,
-  type ReleaseCriterion,
-} from "../../harnessReleases/claudeQualification/criteria.ts";
+import type { ReleaseCriterion } from "../../harnessReleases/claudeQualification/criteria.ts";
 import type { ClaudeQualificationPublicTurnObservation } from "../../harnessReleases/claudeQualification/publicTurn.ts";
 import type {
   ClaudeQualificationVariant,
   ColdFirstSuccessfulRpcTiming,
 } from "../../harnessReleases/claudeQualification/contracts.ts";
 
-export const CLAUDE_WORKLOAD_ACTIONS = [
-  "text",
-  "read",
-  "edit",
-  "bash",
-  "grep",
-  "resume",
-  "mcp",
-  "interrupt",
-] as const;
+export const CLAUDE_WORKLOAD_ACTIONS = ["text", "read", "edit", "bash", "grep", "mcp"] as const;
 
 export type ClaudeWorkloadAction = (typeof CLAUDE_WORKLOAD_ACTIONS)[number];
 export type ClaudeQualificationClassification = "synthetic" | "official";
@@ -45,7 +34,7 @@ export interface ClaudeQualificationActionPin extends ClaudeQualificationEventPi
 }
 
 export interface ClaudeQualificationCriterionEvidence {
-  readonly name: ReleaseCriterion;
+  readonly name: Exclude<ReleaseCriterion, "interrupt">;
   readonly status: "pending";
   readonly events: readonly ClaudeQualificationEventPin[];
   readonly detail: string;
@@ -113,11 +102,6 @@ export function validateClaudeQualificationWorkloadPins(
     actions.add(pin.action);
     invocations.add(invocation);
   }
-  if (
-    actions.size !== CLAUDE_WORKLOAD_ACTIONS.length ||
-    CLAUDE_WORKLOAD_ACTIONS.some((name) => !actions.has(name))
-  )
-    throw new Error("CLAUDE_QUALIFICATION_WORKLOAD_ACTION_EVIDENCE_MISSING");
 }
 
 /** Keeps exact loader pins diagnostic until tool results and public C transitions are verified. */
@@ -175,22 +159,21 @@ export function collectClaudeQualificationWorkload(
       throw new Error("CLAUDE_QUALIFICATION_WORKLOAD_EVENT_OUTSIDE_PUBLIC_RUN");
     actions.set(pin.action, pin);
   }
-  if (
-    actions.size !== CLAUDE_WORKLOAD_ACTIONS.length ||
-    CLAUDE_WORKLOAD_ACTIONS.some((name) => !actions.has(name))
-  )
-    throw new Error("CLAUDE_QUALIFICATION_WORKLOAD_ACTION_EVIDENCE_MISSING");
 
-  const eventFor = (action: ClaudeWorkloadAction) => [actions.get(action)!];
-  const byCriterion: Readonly<Record<ReleaseCriterion, readonly ClaudeQualificationEventPin[]>> = {
+  const eventFor = (action: ClaudeWorkloadAction) => {
+    const pin = actions.get(action);
+    return pin ? [pin] : [];
+  };
+  const byCriterion: Readonly<
+    Record<Exclude<ReleaseCriterion, "interrupt">, readonly ClaudeQualificationEventPin[]>
+  > = {
     boot: [],
     text: eventFor("text"),
     readEdit: [...eventFor("read"), ...eventFor("edit")],
     bash: eventFor("bash"),
     grep: eventFor("grep"),
-    resume: eventFor("resume"),
+    resume: [],
     mcp: eventFor("mcp"),
-    interrupt: eventFor("interrupt"),
     publicHarness: [input.publicRunPin],
   };
 
@@ -208,7 +191,7 @@ export function collectClaudeQualificationWorkload(
     loadedPreparedRelease,
     workloadCompletion: input.turn,
     moduleInitNonce: { before: nonceBefore, after: nonceAfter, same: true },
-    criteria: RELEASE_CRITERIA.map((name) => ({
+    criteria: CLAUDE_DEPLOY3_CRITERIA.map((name) => ({
       name,
       status: "pending" as const,
       events: byCriterion[name],

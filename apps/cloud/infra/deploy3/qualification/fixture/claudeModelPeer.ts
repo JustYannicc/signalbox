@@ -1,7 +1,7 @@
 import { decodeClaudeMcpProbe, type ClaudeMcpProbe } from "./claudeMcpProbe.ts";
 export const CLAUDE_QUALIFICATION_PROMPTS = {
   work: "SB1070-CLAUDE-WORK-01",
-  interrupt: "SB1070-CLAUDE-INTERRUPT-01",
+  finish: "SB1070-CLAUDE-FINISH-01",
   resume: "SB1070-CLAUDE-RESUME-01",
 } as const;
 
@@ -256,8 +256,7 @@ export class ClaudeQualificationModelPeer {
   readonly #nonce: string;
   #ordinal = 0;
   #requests = 0;
-  #interruptRequests = 0;
-  #interrupts = 0;
+  #finishCompleted = false;
   #toolEvidence = new Map<
     string,
     {
@@ -284,6 +283,7 @@ export class ClaudeQualificationModelPeer {
   }
 
   async fetch(request: Request): Promise<Response> {
+    request.signal.throwIfAborted();
     const url = new URL(request.url);
     if (
       request.method !== "POST" ||
@@ -307,12 +307,13 @@ export class ClaudeQualificationModelPeer {
     const prompt = currentPrompt(messages);
     const ordinal = ++this.#ordinal;
     this.#requests++;
-    if (prompt.includes(CLAUDE_QUALIFICATION_PROMPTS.interrupt)) {
-      this.#interruptRequests++;
-      await waitForInterrupt(request.signal, () => {
-        this.#interrupts++;
-      });
-      throw new DOMException("Claude qualification request interrupted.", "AbortError");
+    if (prompt.includes(CLAUDE_QUALIFICATION_PROMPTS.finish)) {
+      this.#finishCompleted = true;
+      const content = [{ type: "text", text: "sb1070-claude-three-turns-complete" }] as const;
+      const response = makeMessage(body, ordinal, content, "end_turn");
+      return body.stream === true
+        ? streamingResponse(response, content)
+        : jsonResponse(response, `req_sb1070_claude_${ordinal}`);
     }
     if (prompt.includes(CLAUDE_QUALIFICATION_PROMPTS.resume)) {
       this.#resumeCompleted = true;
@@ -386,29 +387,11 @@ export class ClaudeQualificationModelPeer {
       collectorNonce: this.#nonce,
       model: this.#model,
       requests: this.#requests,
-      interruptRequests: this.#interruptRequests,
-      interruptedRequests: this.#interrupts,
+      finishCompleted: this.#finishCompleted,
       workCompleted: this.#workCompleted,
       resumeCompleted: this.#resumeCompleted,
       toolEvidence: [...this.#toolEvidence.values()].map((entry) => ({ ...entry })),
       nativeQualification: false as const,
     };
   }
-}
-
-function waitForInterrupt(signal: AbortSignal, onInterrupt: () => void): Promise<void> {
-  if (signal.aborted) {
-    onInterrupt();
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    signal.addEventListener(
-      "abort",
-      () => {
-        onInterrupt();
-        resolve();
-      },
-      { once: true },
-    );
-  });
 }

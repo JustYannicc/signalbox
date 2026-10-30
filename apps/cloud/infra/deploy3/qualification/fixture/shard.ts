@@ -1,11 +1,11 @@
-import { readCreationRetirementEvidence } from "../../../../src/harness/processResume/tests/modelCreationRetirement.fixture.ts";
-import type { ProcessBoundary } from "../../../../src/harness/processOwnership/boundary.ts";
-import type { ProcessFence } from "../../../../src/harness/processOwnership/fence.ts";
-import { placementReleaseEvidence } from "../../../../src/harness/processResume/tests/placementReleaseObserver.fixture.ts";
+import { readCreationRetirementEvidence } from "./modelCreationRetirement.fixture.ts";
+import type { ProcessBoundary } from "../../../../src/harness/HarnessProcessResume.ts";
+import type { ProcessFence } from "../../../../src/harness/HarnessProcessResume.ts";
+import { placementReleaseEvidence } from "./placementReleaseObserver.fixture.ts";
 import { disposeWorkerLoaderStubs } from "../../../../src/computer/WorkerLoaderDispatch.ts";
 import { HarnessProcessExecutionShardObject } from "../../../../src/harness/HarnessProcessExecutionShardObject.ts";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../../src/harness/HarnessCProductCapabilities.ts";
-import type { ProcessTerminalEvidence } from "../../../../src/harness/processResume/terminalEvidence.ts";
+import type { ProcessTerminalEvidence } from "../../../../src/harness/HarnessProcessResume.ts";
 import type { QualifierEnvironment } from "./environment.ts";
 import { proof } from "./environment.ts";
 import { qualifierFacetLoader } from "./loader.ts";
@@ -15,7 +15,7 @@ import {
   preparedReleaseAsset,
   materializeHarnessProcessModules,
 } from "../../../../src/harness/HarnessProcessPlacement.ts";
-import { assert } from "./common.ts";
+import { assert, jsonBytes, decoder } from "./common.ts";
 
 export class QualifierShard extends HarnessProcessExecutionShardObject {
   private readonly qualifierEnvironment: QualifierEnvironment;
@@ -188,9 +188,14 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
     });
     return {
       terminal: [...terminal].map(([key, value]) => ({ key, value })),
-      completions: [...completions],
-      resumes: [...resumes],
-      creation: [...creation],
+      // These storage records can contain byte arrays; the journal codec preserves them across RPC.
+      completions: [...completions].map(
+        ([key, value]) => [key, decoder.decode(jsonBytes(value))] as const,
+      ),
+      resumes: [...resumes].map(([key, value]) => [key, decoder.decode(jsonBytes(value))] as const),
+      creation: [...creation].map(
+        ([key, value]) => [key, decoder.decode(jsonBytes(value))] as const,
+      ),
       executionIncarnationNonce: await this.executionIncarnationNonce(),
     };
   }

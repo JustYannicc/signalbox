@@ -10,6 +10,7 @@ import { assert, errorRecord } from "./common.ts";
 
 export * from "../../../../src/worker.ts";
 
+export { QualifierClaudeFixtures } from "./claudeFixtureObject.ts";
 export { QualifierProof } from "./proof.ts";
 export { QualifierShard } from "./shard.ts";
 export {

@@ -1,11 +1,18 @@
-import { CLAUDE_QUALIFICATION_PROMPTS } from "./fixture/claudeModelPeer.ts";
+import {
+  CLAUDE_FIXTURE_BINDINGS,
+  requireFixtureMcpProbe,
+} from "./fixture/claudeFixtureServices.ts";
+import { decodeBaseConfiguration } from "./fixture/configuration.schema.ts";
+import { verifySeedConfiguration } from "./fixture/seedConfiguration.ts";
+import { validateMachineProgramInventory } from "../../../src/computer/MachineProgramInventory.ts";
+import { buildEvidencePaths, buildInputEvidence } from "./buildEvidence.ts";
+import { validateClaudeFixtureTurns } from "./validateClaudeTurns.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { build, type BuildOptions, type Metafile, type Plugin } from "esbuild";
 import * as Schema from "effect/Schema";
-import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import { productLoadedPreparedRelease } from "../../../src/harness/ProductHarnessProcessRelease.ts";
 import { decodeCombinedFixtureInput, type FixtureFilePin } from "./bundleInput.ts";
 import { inspectDeploy3AssetRoot } from "./inspectAssets.ts";
@@ -17,7 +24,6 @@ const cloud = NodeURL.fileURLToPath(new URL("../../../", import.meta.url));
 const hash = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const decodeCommandHashes = Schema.decodeUnknownSync(Schema.Array(Schema.String));
-const decodeTurn = Schema.decodeSync(Schema.fromJsonString(Schema.toCodecJson(RunnerTurn)));
 
 async function readFile(pin: typeof FixtureFilePin.Type) {
   const bytes = await NodeFSP.readFile(pin.path);
@@ -31,42 +37,13 @@ export async function buildCombinedFixture(raw: unknown) {
   const input = decodeCombinedFixtureInput(structuredClone(raw));
   if (input.claude.assets.status !== "supplied" || input.claude.assets.purpose !== "qualification")
     throw new Error("DEPLOY3_QUALIFICATION_ASSETS_REQUIRED");
-  const prompts = (["work", "interrupt", "resume"] as const).map(
-    (phase) => CLAUDE_QUALIFICATION_PROMPTS[phase],
-  );
-  const allTurns = [];
-  for (const variant of ["baseline", "hooks"] as const) {
-    const encodedTurns = input.claudeRuntime.turnJson[variant];
-    if (encodedTurns.length !== prompts.length)
-      throw new Error("DEPLOY3_CLAUDE_WORKLOAD_TURNS_REQUIRED");
-    const turns = encodedTurns.map((encoded) => decodeTurn(encoded));
-    const initial = turns[0]!;
-    for (const [index, turn] of turns.entries()) {
-      if (
-        turn.providerThread.driver !== "claudeAgent" ||
-        turn.modelSelection.model !== input.claudeRuntime.model ||
-        turn.modelSelection.instanceId !== initial.modelSelection.instanceId ||
-        turn.threadId !== initial.threadId ||
-        turn.providerThread.id !== initial.providerThread.id ||
-        turn.providerThread.providerSessionId !== initial.providerThread.providerSessionId ||
-        turn.message.text !== prompts[index]
-      )
-        throw new Error("DEPLOY3_CLAUDE_TURN_IDENTITY_MISMATCH");
-    }
-    allTurns.push(...turns);
-  }
-  for (const identities of [
-    allTurns.map((turn) => turn.runId),
-    allTurns.map((turn) => turn.attemptId),
-    allTurns.map((turn) => turn.message.messageId),
-  ])
-    if (new Set(identities.map(String)).size !== allTurns.length)
-      throw new Error("DEPLOY3_CLAUDE_TURN_IDENTITY_REUSED");
+  requireFixtureMcpProbe(input.claudeRuntime.mcpProbe);
+  validateClaudeFixtureTurns(input.claudeRuntime);
   const inspected = await inspectDeploy3AssetRoot(input.assetsDirectory, input.claude);
   const configurationBytes = await readFile(input.codex.configuration);
-  const configuration: unknown = JSON.parse(configurationBytes.toString("utf8"));
-  if (configuration === null || typeof configuration !== "object" || Array.isArray(configuration))
-    throw new Error("DEPLOY3_CODEX_CONFIGURATION_INVALID");
+  const configuration = decodeBaseConfiguration(JSON.parse(configurationBytes.toString("utf8")));
+  validateMachineProgramInventory(configuration.machineInventory);
+  await verifySeedConfiguration(configuration.seed);
   const expectedRelease = decodePreparedRelease(Reflect.get(configuration, "expectedRelease"));
   const expectedCommands = decodeCommandHashes(Reflect.get(configuration, "commandRegistryHashes"));
   if (
@@ -97,6 +74,17 @@ export async function buildCombinedFixture(raw: unknown) {
   const commands = await Promise.all(input.codex.commands.map(readFile));
   if (new Set(input.codex.commands.map((pin) => pin.sha256)).size !== commands.length)
     throw new Error("DEPLOY3_DUPLICATE_COMMAND_MODULE");
+  const variants = inspected.loaded.releaseVariants.catalog;
+  const claudeExpected = {
+    baseline: productLoadedPreparedRelease("claude-code", variants.baseline.fullArtifact, {
+      plan: inspected.loaded.baseline.plan,
+      payloads: new Map(),
+    }),
+    hooks: productLoadedPreparedRelease("claude-code", variants.hooks.fullArtifact, {
+      plan: inspected.loaded.hooks.plan,
+      payloads: new Map(),
+    }),
+  };
   const environmentPackages = await prepareEnvironmentPackages(input.claudeEnvironmentPackages, [
     inspected.loaded.baseline.plan,
     inspected.loaded.hooks.plan,
@@ -186,9 +174,6 @@ export async function buildCombinedFixture(raw: unknown) {
     });
     if (!built.metafile) throw new Error("DEPLOY3_BUILD_METADATA_MISSING");
     metafiles[name] = built.metafile;
-    await NodeFSP.writeFile(NodePath.join(output, `${name}.metafile.json`), json(built.metafile), {
-      flag: "wx",
-    });
   }
   const workflow = await build({
     ...common,
@@ -199,11 +184,6 @@ export async function buildCombinedFixture(raw: unknown) {
   });
   if (!workflow.metafile) throw new Error("DEPLOY3_WORKFLOW_BUILD_METADATA_MISSING");
   metafiles["qualifier-claude-workflow"] = workflow.metafile;
-  await NodeFSP.writeFile(
-    NodePath.join(output, "qualifier-claude-workflow.metafile.json"),
-    json(workflow.metafile),
-    { flag: "wx" },
-  );
   const production = await build({
     entryPoints: [NodePath.join(cloud, "src/worker.ts")],
     bundle: false,
@@ -221,7 +201,6 @@ export async function buildCombinedFixture(raw: unknown) {
   );
   if (!productionExports.length || productionExports.some((name) => !fixtureExports.has(name)))
     throw new Error("DEPLOY3_PRODUCTION_EXPORTS_MISSING");
-  const variants = inspected.loaded.releaseVariants.catalog;
   const config = {
     ...configuration,
     expectedRelease,
@@ -248,16 +227,7 @@ export async function buildCombinedFixture(raw: unknown) {
         NodePath.join(output, "qualifier-claude-implementation.mjs"),
         "utf8",
       ),
-      expected: {
-        baseline: productLoadedPreparedRelease("claude-code", variants.baseline.fullArtifact, {
-          plan: inspected.loaded.baseline.plan,
-          payloads: new Map(),
-        }),
-        hooks: productLoadedPreparedRelease("claude-code", variants.hooks.fullArtifact, {
-          plan: inspected.loaded.hooks.plan,
-          payloads: new Map(),
-        }),
-      },
+      expected: claudeExpected,
     },
   };
   const assets = NodePath.join(output, "assets");
@@ -289,6 +259,19 @@ export async function buildCombinedFixture(raw: unknown) {
     const bytes = await NodeFSP.readFile(NodePath.join(output, path));
     outputs.push({ path, bytes: bytes.length, sha256: hash(bytes) });
   }
+  const evidence = buildEvidencePaths({
+    repository: NodePath.resolve(cloud, "../.."),
+    workingDirectory: cloud,
+    outputDirectory: output,
+    sources,
+  });
+  const publicMetafiles = Object.fromEntries(
+    Object.entries(metafiles).map(([name, value]) => [name, evidence.metafile(value)]),
+  );
+  for (const [name, value] of Object.entries(publicMetafiles))
+    await NodeFSP.writeFile(NodePath.join(output, `${name}.metafile.json`), json(value), {
+      flag: "wx",
+    });
   const manifest = {
     schema: "signalbox/deploy3-combined-build/v1",
     classification: input.classification,
@@ -301,12 +284,13 @@ export async function buildCombinedFixture(raw: unknown) {
       metadata: inspected.loaded.metadata,
     },
     deploymentReady: false,
-    input,
+    input: buildInputEvidence(input),
+    fixtureBindings: CLAUDE_FIXTURE_BINDINGS,
     configSha256: hash(configBytes),
     inventory: final.inventory,
-    sources: Object.fromEntries([...sources].sort(([left], [right]) => left.localeCompare(right))),
+    sources: evidence.sources,
     outputs,
-    metafiles,
+    metafiles: publicMetafiles,
   };
   await NodeFSP.writeFile(NodePath.join(output, "build.json"), json(manifest), { flag: "wx" });
   return manifest;

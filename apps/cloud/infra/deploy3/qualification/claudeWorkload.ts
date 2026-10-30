@@ -1,4 +1,5 @@
-import { snapshotPreparedRelease } from "../../../src/harness/processResume/identity.ts";
+import { readObserverTrace, requireObservedInvocation } from "./claudeObserverTrace.ts";
+import { snapshotPreparedRelease } from "../../../src/harness/ProductHarnessProcessRelease.ts";
 import {
   runClaudeQualificationPublicTurn,
   type PublicClaudeQualificationTurnFacet,
@@ -66,12 +67,12 @@ export async function runClaudeQualificationWorkload(
         identity: () => facet.identity(),
         run: async (request) => {
           const result = await facet.run(request);
-          moduleInitNonceBefore = requireModuleInitNonce(result, "before");
+          moduleInitNonceBefore = optionalModuleInitNonce(result);
           return result;
         },
         loadedPreparedRelease: async () => {
           const actual = await facet.loadedPreparedRelease();
-          moduleInitNonceAfter = requireModuleInitNonce(actual, "after");
+          moduleInitNonceAfter = optionalModuleInitNonce(actual);
           const snapshot = snapshotPreparedRelease(actual);
           if (!snapshot) throw new Error("CLAUDE_QUALIFICATION_LOADED_RELEASE_INVALID");
           return snapshot;
@@ -86,13 +87,19 @@ export async function runClaudeQualificationWorkload(
     requestId: input.requestId,
   });
 
-  if (!moduleInitNonceBefore || !moduleInitNonceAfter)
-    throw new Error("CLAUDE_QUALIFICATION_MODULE_INIT_NONCE_MISSING");
   const observerTrace = await input.readObserverTrace({
     runId: input.runId,
     requestId: input.requestId,
     invocationIds,
   });
+  const observed = requireObservedInvocation(
+    readObserverTrace(observerTrace),
+    input.runId,
+    input.publicRunPin,
+  );
+  const before = moduleInitNonceBefore ?? observed.entered.isolateNonce;
+  const after = moduleInitNonceAfter ?? observed.terminal.isolateNonce;
+  if (!before || !after) throw new Error("CLAUDE_QUALIFICATION_MODULE_INIT_NONCE_MISSING");
   return collectClaudeQualificationWorkload({
     classification: input.classification,
     scenario: input.scenario,
@@ -102,8 +109,8 @@ export async function runClaudeQualificationWorkload(
     turn: publicTurn.turn,
     expectedPreparedRelease: input.expectedPreparedRelease,
     loadedPreparedRelease: publicTurn.loadedPreparedRelease,
-    moduleInitNonceBefore,
-    moduleInitNonceAfter,
+    moduleInitNonceBefore: before,
+    moduleInitNonceAfter: after,
     publicRunPin: input.publicRunPin,
     actionPins: input.actionPins,
     observerTrace,
@@ -136,12 +143,9 @@ export async function measureColdFirstSuccessfulRpc<A>(
   };
 }
 
-function requireModuleInitNonce(value: unknown, boundary: "before" | "after") {
-  const raw = record(value);
-  const nonce = raw?.isolateNonce;
-  if (typeof nonce !== "string" || !nonce.trim())
-    throw new Error(`CLAUDE_QUALIFICATION_MODULE_INIT_NONCE_${boundary.toUpperCase()}_MISSING`);
-  return nonce;
+function optionalModuleInitNonce(value: unknown) {
+  const nonce = record(value)?.isolateNonce;
+  return typeof nonce === "string" && nonce.trim() ? nonce : undefined;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {

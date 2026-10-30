@@ -9,7 +9,7 @@ import type {
 import type { QualifierShard } from "./shard.ts";
 import type { HarnessProcessExecutionEnvironment } from "../../../../src/harness/HarnessProcessPlacement.ts";
 import type { CapabilityEnvironment } from "./capabilities.ts";
-import type { ClaudeContinuationCapability } from "./claudeContinuations.ts";
+import type { QualifierClaudeFixtures } from "./claudeFixtureObject.ts";
 
 export interface QualifierEnvironment
   extends
@@ -19,6 +19,7 @@ export interface QualifierEnvironment
       "PLACEMENT_STORES" | "HARNESS_THREAD_SUPERVISOR" | "PROGRAM_ASSETS"
     >,
     Omit<CapabilityEnvironment, "HARNESS_FILES_STORE"> {
+  CLAUDE_FIXTURES: DurableObjectNamespace<QualifierClaudeFixtures>;
   QUALIFIER: DurableObjectNamespace<QualifierProof>;
   HARNESS_RUN_STORE: DurableObjectNamespace<QualifierRunStore>;
   HARNESS_FILES_STORE: DurableObjectNamespace<QualifierFilesStore>;
@@ -27,12 +28,6 @@ export interface QualifierEnvironment
   PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<QualifierShard>;
   QUALIFIER_COMMANDS: Fetcher;
   QUALIFIER_TAIL: Fetcher;
-  /** Installed only when the public thread command path can commit Claude continuations. */
-  CLAUDE_CONTINUATION_PUBLISHER?: ClaudeContinuationCapability;
-  /** These bindings preserve the actual caller's MCP access and connected tools. */
-  CLAUDE_ACCESS?: Fetcher;
-  /** Claude-only normal Executor MCP capability; Codex keeps the qualifier exclusion. */
-  CLAUDE_EXECUTOR?: Fetcher;
   BUNDLE_SHA256: string;
   RUN_ID: string;
   WORKER_NAME: string;

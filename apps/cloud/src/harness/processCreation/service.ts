@@ -66,8 +66,12 @@ export class HarnessProcessCreationOwner {
       !input.runId ||
       !input.operationId ||
       input.run.seed.identity.runId !== input.runId ||
-      input.facet.productBootstrap.provider !== "codex" ||
-      input.facet.targetPreparedRelease.artifact.provider !== "codex" ||
+      input.facet.productBootstrap.provider !==
+        input.facet.targetPreparedRelease.artifact.provider ||
+      input.facet.productBootstrap.provider !==
+        input.facet.targetPreparedRelease.plan.release.harness ||
+      input.facet.productBootstrap.preparedReleaseId !==
+        input.facet.targetPreparedRelease.artifact.releaseId ||
       input.publisherKey.length < 32 ||
       input.publisherKey.length > 128 ||
       input.requestPublisherKey.length > 128 ||
@@ -85,7 +89,7 @@ export class HarnessProcessCreationOwner {
       input.run.supervisorKey === input.controllerClaim.controlKey
     )
       throw new Error(
-        "Cold creation requires a Codex product, separate authorities, and an exact run seed.",
+        "Cold creation requires a matching product release, separate authorities, and an exact run seed.",
       );
     const owner = this.context.id.name;
     if (!owner) throw new Error("Cold creation requires a named shard owner.");

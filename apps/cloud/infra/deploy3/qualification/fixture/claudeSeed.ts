@@ -22,11 +22,17 @@ export function claudeSeedPaths(input: { home: string; cwd: string }): ClaudeSee
   };
 }
 
-export function prepareClaudeSeed(files: KernelFileSystem, paths: ClaudeSeedPaths): void {
+export function prepareClaudeSeed(
+  files: KernelFileSystem,
+  paths: ClaudeSeedPaths,
+  nativeSessionId: string,
+): void {
   const fs = createNodeFs(files).fs;
-  fs.mkdirSync(paths.home, { recursive: true });
-  fs.mkdirSync(`${paths.home}/.claude`, { recursive: true });
-  fs.mkdirSync(paths.projectState, { recursive: true });
+  const transcript = `${paths.projectState}/${nativeSessionId}.jsonl`;
+  const metadata = fs.lstatSync(transcript);
+  const bytes = fs.readFileSync(transcript);
+  if (!metadata.isFile() || typeof bytes === "string" || bytes.byteLength === 0)
+    throw new Error("Claude qualification requires its restored native transcript.");
 }
 
 export function claudeNodeRuntimeIdentity(home: string): NodeRuntimeIdentity {

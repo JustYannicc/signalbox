@@ -24,13 +24,14 @@ export const createFreshProductNativePeer = (input: {
   readonly data: FreshData;
   readonly preparedRelease: HarnessProcessResumePreparedRelease;
   readonly order: string[];
+  readonly invalidCheckpointDriver?: boolean;
 }) =>
   Effect.gen(function* () {
     const { data, preparedRelease, order } = input;
     const events = yield* Queue.unbounded<RunnerItemType>();
     const opened: HostOpenInput<Grant>[] = [];
     const release = {
-      harness: "codex" as const,
+      harness: preparedRelease.plan.release.harness,
       version: "selected-release",
       manifestSha256: "c".repeat(64),
       modules: {},
@@ -63,7 +64,7 @@ export const createFreshProductNativePeer = (input: {
             nodeId: turn.rootNodeId,
             runAttemptId: turn.attemptId,
             nativeTurnRef: {
-              driver: ProviderDriverKind.make("codex"),
+              driver: data.turn.providerThread.driver,
               nativeId: "fresh-native-turn",
               strength: "strong" as const,
             },
@@ -80,7 +81,7 @@ export const createFreshProductNativePeer = (input: {
             } satisfies RunnerItemType);
           yield* emit({
             type: "provider_turn.updated",
-            driver: ProviderDriverKind.make("codex"),
+            driver: data.turn.providerThread.driver,
             providerTurn,
           });
           const completed = {
@@ -95,12 +96,12 @@ export const createFreshProductNativePeer = (input: {
           };
           yield* emit({
             type: "provider_turn.updated",
-            driver: ProviderDriverKind.make("codex"),
+            driver: data.turn.providerThread.driver,
             providerTurn: completed,
           });
           yield* emit({
             type: "turn.terminal",
-            driver: ProviderDriverKind.make("codex"),
+            driver: data.turn.providerThread.driver,
             providerThreadId: turn.providerThread.id,
             providerTurnId,
             runOrdinal: turn.runOrdinal,
@@ -144,7 +145,9 @@ export const createFreshProductNativePeer = (input: {
               providerThread: {
                 ...currentCheckpoint.snapshot.providerThread,
                 nativeThreadRef: {
-                  driver: ProviderDriverKind.make("codex"),
+                  driver: input.invalidCheckpointDriver
+                    ? ProviderDriverKind.make("codex")
+                    : data.turn.providerThread.driver,
                   nativeId: nativeSessionId,
                   strength: "strong",
                 },

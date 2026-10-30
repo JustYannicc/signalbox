@@ -94,35 +94,26 @@ it("requires and records each real Messages tool result in the frozen order", as
   });
 });
 
-it("aborts only an explicit Claude interrupt request and serves a separate resume request", async () => {
-  const peer = new ClaudeQualificationModelPeer({
-    model,
-    collectorNonce,
-    mcpProbe: {
-      toolName: "mcp__executor__signalbox_call",
-      input: { operation: "echo", input: {} },
-      expectedText: "MCP result",
-    },
-  });
-  const controller = new AbortController();
-  const interrupt = peer.fetch(
-    post(
-      body([{ role: "user", content: CLAUDE_QUALIFICATION_PROMPTS.interrupt }]),
-      controller.signal,
-    ),
-  );
-  controller.abort();
-  await expect(interrupt).rejects.toMatchObject({ name: "AbortError" });
+it("serves two completed turns after the completed-checkpoint replacement", async () => {
+  const peer = new ClaudeQualificationModelPeer({ model, collectorNonce });
+  for (const [phase, text] of [
+    ["resume", "sb1070-claude-resume-observed"],
+    ["finish", "sb1070-claude-three-turns-complete"],
+  ] as const) {
+    const response = await peer.fetch(
+      post(body([{ role: "user", content: CLAUDE_QUALIFICATION_PROMPTS[phase] }])),
+    );
+    expect(await response.json()).toMatchObject({
+      content: [{ type: "text", text }],
+      stop_reason: "end_turn",
+    });
+  }
+  expect(peer.snapshot()).toMatchObject({ resumeCompleted: true, finishCompleted: true });
+});
 
-  const resumed = await peer.fetch(
-    post(body([{ role: "user", content: CLAUDE_QUALIFICATION_PROMPTS.resume }])),
-  );
-  expect(await resumed.json()).toMatchObject({
-    content: [{ type: "text", text: "sb1070-claude-resume-observed" }],
-  });
-  expect(peer.snapshot()).toMatchObject({
-    interruptRequests: 1,
-    interruptedRequests: 1,
-    resumeCompleted: true,
-  });
+it("does not admit a turn with the retired interrupt prompt", async () => {
+  const peer = new ClaudeQualificationModelPeer({ model, collectorNonce });
+  await expect(
+    peer.fetch(post(body([{ role: "user", content: "SB1070-CLAUDE-INTERRUPT-01" }]))),
+  ).rejects.toThrow("missing its frozen prompt marker");
 });

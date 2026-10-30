@@ -5,7 +5,7 @@ import type {
 } from "../../../../src/harness/HarnessContinuations.ts";
 import { HarnessError } from "../../../../src/harness/Harness.ts";
 
-/** Implemented by the qualification capability through the normal thread command path. */
+/** Disposable fixture binding behind the public product continuation contract. */
 export interface ClaudeContinuationCapability {
   publishContinuation(request: HarnessContinuation): Promise<void>;
 }
@@ -20,7 +20,7 @@ export function createClaudeContinuationPublisher(
         catch: (cause) =>
           new HarnessError({
             operation: "turn",
-            message: "Claude continuation could not be committed through the public thread path.",
+            message: "Claude continuation could not be recorded by its qualification fixture.",
             cause,
           }),
       }),

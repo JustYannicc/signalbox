@@ -4,7 +4,7 @@ import { HarnessThreadSupervisorObject } from "../../../../src/harness/HarnessTh
 import {
   ObservedPlacementStore,
   type ObservedPlacementRelease,
-} from "../../../../src/harness/processResume/tests/placementReleaseObserver.fixture.ts";
+} from "./placementReleaseObserver.fixture.ts";
 import type { HarnessProcessPlacementStoreObject } from "../../../../src/harness/HarnessProcessPlacementStoreObject.ts";
 import type { QualifierShard } from "./shard.ts";
 import type { QualifierEnvironment } from "./environment.ts";

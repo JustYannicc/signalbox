@@ -12,20 +12,27 @@ import type {
 } from "../../../../src/harness/HarnessProcessResume.ts";
 import type { HarnessProcessResumePreparedRelease } from "../../../../src/harness/HarnessProcessResume.ts";
 import { samePreparedRelease } from "../../../../src/harness/ProductHarnessProcessRelease.ts";
-import { NATIVE_SESSION_UUID } from "../../../../src/harness/processCreation/identity.ts";
-import { sameData } from "../../../../src/harness/processResume/checkpointContract.ts";
+import {
+  NATIVE_SESSION_UUID,
+  type HarnessProcessCreationInput,
+  type HarnessProcessCreationRunInput,
+} from "../../../../src/harness/HarnessProcessCreation.ts";
+import { sameData } from "../../../../src/harness/HarnessProcessResume.ts";
 import { assert } from "./common.ts";
 
-export type ClaudeVariant = "baseline" | "hooks";
-export type ClaudeStepPhase = "work" | "resume" | "interrupt";
-export interface ClaudeStep {
-  readonly variant: ClaudeVariant;
-  readonly requestId: string;
-  readonly phase: ClaudeStepPhase;
-}
+export type { ClaudeVariant, ClaudeStepPhase, ClaudeStep } from "./claudeScenario.ts";
+import type { ClaudeVariant, ClaudeStepPhase, ClaudeStep } from "./claudeScenario.ts";
+
 export type ClaudeCShard = Pick<
   QualifierShard,
-  "runShard" | "resumeProcess" | "continueProcess" | "commitProcessCheckpoint" | "stopIdleProcess"
+  | "startFreshProcess"
+  | "runCreatedProcess"
+  | "processCreationStatus"
+  | "runShard"
+  | "resumeProcess"
+  | "continueProcess"
+  | "commitProcessCheckpoint"
+  | "stopIdleProcess"
 >;
 export interface ClaudeCTransportOptions {
   readonly variant: ClaudeVariant;
@@ -38,7 +45,13 @@ export interface ClaudeCTransportOptions {
 
 export const claudeLane = (rootRunId: string, variant: ClaudeVariant) => {
   const runId = `${rootRunId}/claude/${variant}`;
-  return { runId, shardOwner: `combined/${runId}`, processId: `official-claude-${variant}` };
+  return {
+    runId,
+    shardOwner: `combined/${runId}`,
+    processId: `official-claude-${variant}`,
+    creationOperationId: `claude-${variant}-create`,
+    resumeOperationId: `claude-${variant}-replace`,
+  };
 };
 const MAIN = "qualifier-claude-facet.mjs";
 const MODULES = {
@@ -93,6 +106,45 @@ export function createClaudeCTransport(options: ClaudeCTransportOptions) {
     }
   };
   return {
+    async startFreshProcess(input: HarnessProcessCreationInput) {
+      const expected = await selected();
+      assert(
+        input.runId === expected.runId &&
+          input.operationId === expected.creationOperationId &&
+          input.run.seed.identity.runId === expected.runId,
+        "Claude fresh creation belongs to another lane",
+      );
+      checkFacet(
+        input.facet,
+        input.facet.productBootstrap,
+        input.facet.targetPreparedRelease,
+        expected,
+      );
+      assert(
+        input.facet.facetEnv?.QUALIFIER_CLAUDE_VARIANT === options.variant,
+        "Claude fresh creation variant label changed",
+      );
+      return await bracket(`${options.variant}-create`, () =>
+        options.shard().startFreshProcess(input),
+      );
+    },
+    async runCreatedProcess(input: HarnessProcessCreationRunInput, requestContextId: string) {
+      const expected = await selected();
+      assert(
+        input.runId === expected.runId &&
+          input.operationId === expected.creationOperationId &&
+          input.request.requestId === requestContextId,
+        "Claude fresh request belongs to another lane",
+      );
+      return await bracket(requestContextId, () =>
+        options.shard().runCreatedProcess(input, requestContextId),
+      );
+    },
+    async processCreationStatus(...args: Parameters<ClaudeCShard["processCreationStatus"]>) {
+      const expected = await selected();
+      assert(args[0].runId === expected.runId, "Claude creation status belongs to another lane");
+      return await options.shard().processCreationStatus(...args);
+    },
     async runShard(input: HarnessProcessExecutionShardInput, requestContextId: string) {
       const expected = await selected();
       assert(
@@ -132,7 +184,9 @@ export function createClaudeCTransport(options: ClaudeCTransportOptions) {
         input.transition.targetPreparedRelease,
         expected,
       );
-      return await options.shard().resumeProcess(input);
+      return await bracket(`${options.variant}-replace`, () =>
+        options.shard().resumeProcess(input),
+      );
     },
     async continueProcess(input: HarnessProcessContinuationInput, requestContextId: string) {
       const expected = await selected();
@@ -160,7 +214,7 @@ export function createClaudeCTransport(options: ClaudeCTransportOptions) {
         input.runId === expected.runId && input.processId === expected.processId,
         "Claude C stop belongs to another lane",
       );
-      return await options.shard().stopIdleProcess(input);
+      return await bracket(`${options.variant}-stop`, () => options.shard().stopIdleProcess(input));
     },
   };
 }

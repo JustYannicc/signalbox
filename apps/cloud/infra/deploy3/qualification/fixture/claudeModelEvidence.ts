@@ -7,6 +7,10 @@ import { sha256 } from "./common.ts";
 
 export interface ClaudePersistedModelRecord extends ClaudeWorkloadRecord {
   readonly artifact?: HarnessRunArtifact;
+  readonly runId?: string;
+  readonly publicRequestId?: string;
+  readonly variant?: "baseline" | "hooks";
+  readonly workflowPhase?: "work" | "resume" | "finish";
 }
 
 export interface ClaudeModelWorkloadEvidence {
@@ -32,7 +36,7 @@ export interface ClaudeModelWorkloadEvidence {
     readonly resultText: string;
   }[];
   readonly criteria: readonly {
-    readonly name: "text" | "readEdit" | "bash" | "grep" | "mcp" | "resume" | "interrupt";
+    readonly name: "text" | "readEdit" | "bash" | "grep" | "mcp" | "resume";
     readonly status: "observed";
   }[];
 }
@@ -44,6 +48,11 @@ export async function collectClaudeModelWorkloadEvidence(input: {
   readonly collectorNonce: string;
   readonly model: string;
   readonly mcpProbe: ClaudeMcpProbe;
+  readonly publicBinding?: {
+    readonly runId: string;
+    readonly variant: "baseline" | "hooks";
+    readonly requests: Readonly<Record<"work" | "resume" | "finish", string>>;
+  };
 }): Promise<ClaudeModelWorkloadEvidence> {
   if (!input.collectorNonce.trim() || !input.model.trim())
     throw new Error("CLAUDE_QUALIFICATION_MODEL_IDENTITY_MISSING");
@@ -52,6 +61,14 @@ export async function collectClaudeModelWorkloadEvidence(input: {
   const responseTexts: string[] = [];
   const requestKinds = new Set<string>();
   for (const record of input.records) {
+    if (
+      input.publicBinding &&
+      (record.runId !== input.publicBinding.runId ||
+        record.variant !== input.publicBinding.variant ||
+        record.workflowPhase === undefined ||
+        record.publicRequestId !== input.publicBinding.requests[record.workflowPhase])
+    )
+      throw new Error("CLAUDE_QUALIFICATION_MODEL_PUBLIC_BINDING_MISMATCH");
     if (
       record.purpose !== "qualification" ||
       record.apiRevision !== "EC1APIr2" ||
@@ -77,16 +94,25 @@ export async function collectClaudeModelWorkloadEvidence(input: {
         string,
         unknown
       >;
-      if (body.model !== input.model || !Array.isArray(body.messages))
+      if (
+        body.model !== input.model ||
+        (record.path !== "/v1/messages/count_tokens" && !Array.isArray(body.messages))
+      )
         throw new Error("CLAUDE_QUALIFICATION_MODEL_REQUEST_CONTENT_INVALID");
-      const lastUser = body.messages
+      const lastUser = (Array.isArray(body.messages) ? body.messages : [])
         .toReversed()
         .find((message) => asRecord(message)?.role === "user");
       const lastUserText = messageText(asRecord(lastUser)?.content);
+      if (
+        input.publicBinding &&
+        record.path !== "/v1/messages/count_tokens" &&
+        record.workflowPhase &&
+        !bodyContainsPhase(body.messages, record.workflowPhase)
+      )
+        throw new Error("CLAUDE_QUALIFICATION_MODEL_PROMPT_OWNER_MISMATCH");
       if (lastUserText.includes(CLAUDE_QUALIFICATION_PROMPTS.work)) requestKinds.add("work");
       if (lastUserText.includes(CLAUDE_QUALIFICATION_PROMPTS.resume)) requestKinds.add("resume");
-      if (lastUserText.includes(CLAUDE_QUALIFICATION_PROMPTS.interrupt))
-        requestKinds.add("interrupt");
+      if (lastUserText.includes(CLAUDE_QUALIFICATION_PROMPTS.finish)) requestKinds.add("finish");
       requests.set(record.ordinal, record);
     } else if (record.phase === "response" || record.phase === "failure") {
       if (terminals.has(record.ordinal))
@@ -103,7 +129,7 @@ export async function collectClaudeModelWorkloadEvidence(input: {
         )
           throw new Error("CLAUDE_QUALIFICATION_MODEL_RESPONSE_WIRE_MISMATCH");
         responseTexts.push(...responseText(bytes, record.contentType ?? ""));
-      } else if (record.failure !== "aborted" || record.modelEvidence === undefined) {
+      } else {
         throw new Error("CLAUDE_QUALIFICATION_MODEL_FAILURE_INVALID");
       }
       terminals.set(record.ordinal, record);
@@ -114,6 +140,12 @@ export async function collectClaudeModelWorkloadEvidence(input: {
   for (let ordinal = 1; ordinal <= requests.size; ordinal++)
     if (!requests.has(ordinal) || !terminals.has(ordinal))
       throw new Error("CLAUDE_QUALIFICATION_MODEL_EXCHANGE_GAP");
+    else if (
+      input.publicBinding &&
+      (requests.get(ordinal)!.publicRequestId !== terminals.get(ordinal)!.publicRequestId ||
+        requests.get(ordinal)!.workflowPhase !== terminals.get(ordinal)!.workflowPhase)
+    )
+      throw new Error("CLAUDE_QUALIFICATION_MODEL_EXCHANGE_PUBLIC_OWNER_CHANGED");
 
   const snapshot = await replayClaudeModel({
     model: input.model,
@@ -129,8 +161,7 @@ export async function collectClaudeModelWorkloadEvidence(input: {
   if (
     !snapshot.workCompleted ||
     !snapshot.resumeCompleted ||
-    snapshot.interruptedRequests !== 1 ||
-    snapshot.interruptRequests !== 1 ||
+    !snapshot.finishCompleted ||
     !actions.has("Write") ||
     !actions.has("Read") ||
     !actions.has("Edit") ||
@@ -143,20 +174,17 @@ export async function collectClaudeModelWorkloadEvidence(input: {
     )
   )
     throw new Error("CLAUDE_QUALIFICATION_MODEL_SEMANTIC_EVIDENCE_MISSING");
-  if (["work", "resume", "interrupt"].some((phase) => !requestKinds.has(phase)))
+  if (["work", "resume", "finish"].some((phase) => !requestKinds.has(phase)))
     throw new Error("CLAUDE_QUALIFICATION_MODEL_PHASE_REQUEST_MISSING");
   if (
     !responseTexts.some((text) =>
       text.includes("I will create, edit, inspect, and verify the file."),
     ) ||
     !responseTexts.some((text) => text.includes("sb1070-claude-workflow-complete")) ||
-    !responseTexts.some((text) => text.includes("sb1070-claude-resume-observed"))
+    !responseTexts.some((text) => text.includes("sb1070-claude-resume-observed")) ||
+    !responseTexts.some((text) => text.includes("sb1070-claude-three-turns-complete"))
   )
     throw new Error("CLAUDE_QUALIFICATION_MODEL_TEXT_RESULT_MISSING");
-  const failedInterrupt = [...terminals.values()].some(
-    (record) => record.phase === "failure" && record.failure === "aborted",
-  );
-  if (!failedInterrupt) throw new Error("CLAUDE_QUALIFICATION_MODEL_INTERRUPT_MISSING");
 
   return {
     schema: "signalbox/claude-qualification-model-workload/v1",
@@ -178,7 +206,7 @@ export async function collectClaudeModelWorkloadEvidence(input: {
       };
     }),
     toolResults: snapshot.toolEvidence,
-    criteria: ["text", "readEdit", "bash", "grep", "mcp", "resume", "interrupt"].map((name) => ({
+    criteria: ["text", "readEdit", "bash", "grep", "mcp", "resume"].map((name) => ({
       name: name as ClaudeModelWorkloadEvidence["criteria"][number]["name"],
       status: "observed" as const,
     })),
@@ -223,4 +251,20 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function bodyContainsPhase(messages: unknown, phase: "work" | "resume" | "finish") {
+  if (!Array.isArray(messages)) return false;
+  const text = messages
+    .filter((message) => asRecord(message)?.role === "user")
+    .map((message) => messageText(asRecord(message)?.content))
+    .join("\n");
+  const actual = text.includes(CLAUDE_QUALIFICATION_PROMPTS.finish)
+    ? "finish"
+    : text.includes(CLAUDE_QUALIFICATION_PROMPTS.resume)
+      ? "resume"
+      : text.includes(CLAUDE_QUALIFICATION_PROMPTS.work)
+        ? "work"
+        : undefined;
+  return phase === actual;
 }

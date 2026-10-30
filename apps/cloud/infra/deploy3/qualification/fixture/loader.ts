@@ -1,5 +1,7 @@
+import { claudeStepRoute } from "./claudeScenario.ts";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../../src/harness/HarnessCProductCapabilities.ts";
-import { observeCommandInvocation } from "../../../../src/harness/tests/CommandObservation.fixture.ts";
+import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
+import { observeCommandInvocation } from "./commandObservation.ts";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { createCompiledChildWorkerLoader } from "../../../../src/computer/CompiledChildWorkerLoader.ts";
 import type { ChildWorkerLoaderPort } from "../../../../src/computer/WorkerLoaderDispatch.ts";
@@ -71,24 +73,19 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
         const actual = await getCode();
         const config = await readConfiguration(env.PROGRAM_ASSETS, env.CONFIG_SHA256);
         if (actual.mainModule === "qualifier-claude-facet.mjs") {
+          const authorities = requireClaudeAuthorities(env);
           const prepared = await prepareClaudeFacetCode(
             {
               ...actual,
               env: {
                 ...actual.env,
-                ...(env.CLAUDE_ACCESS ? { CLAUDE_ACCESS: env.CLAUDE_ACCESS } : {}),
-                ...(env.CLAUDE_EXECUTOR ? { CLAUDE_EXECUTOR: env.CLAUDE_EXECUTOR } : {}),
+                CLAUDE_ACCESS: authorities.access,
+                CLAUDE_EXECUTOR: authorities.executor,
                 HARNESS_C_PRODUCT_CAPABILITIES: {
                   ...actual.env?.HARNESS_C_PRODUCT_CAPABILITIES,
-                  ...(env.CLAUDE_ACCESS
-                    ? { [HARNESS_C_PRODUCT_CAPABILITY_KEYS.access]: env.CLAUDE_ACCESS }
-                    : {}),
-                  ...(env.CLAUDE_EXECUTOR
-                    ? { [HARNESS_C_PRODUCT_CAPABILITY_KEYS.executor]: env.CLAUDE_EXECUTOR }
-                    : {}),
-                  ...(env.CLAUDE_CONTINUATION_PUBLISHER
-                    ? { claudeContinuationPublisher: env.CLAUDE_CONTINUATION_PUBLISHER }
-                    : {}),
+                  [HARNESS_C_PRODUCT_CAPABILITY_KEYS.access]: authorities.access,
+                  [HARNESS_C_PRODUCT_CAPABILITY_KEYS.executor]: authorities.executor,
+                  claudeContinuationPublisher: authorities.continuations,
                 },
               },
             },
@@ -97,18 +94,14 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
           );
           const route = (path: string) => ({ method: "POST", path });
           const calibration = route(`/claude/${prepared.variant}/calibration`);
-          const restore = route(`/claude/${prepared.variant}/restore`);
+          const restore = route(`/claude/${prepared.variant}/replace/dispatch`);
           const step = await proof(env).claudeStepForLoader();
-          const run = route(
-            step
-              ? `/claude/${prepared.variant}/${step.phase}/dispatch`
-              : `/claude/${prepared.variant}/restore`,
-          );
+          const run = route(step ? claudeStepRoute(step) : `/claude/${prepared.variant}/restore`);
           const pin: ObserverLoaderPin = {
             loaderId: name,
             role: "facet",
             entrypoint: "ClaudeFacet",
-            identity: `facet:claude:${prepared.variant}`,
+            identity: `facet:claude:${prepared.variant}:${name}`,
             tag: "actual-claude-facet",
             calls: {
               identity: [{ callId: "*", route: route(`/claude/${prepared.variant}/inspect`) }],
@@ -118,9 +111,20 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
               loadedPreparedRelease: [
                 { callId: "*", route: route(`/claude/${prepared.variant}/release`) },
               ],
-              run: [{ callId: "*", route: run }],
+              startFresh: [{ callId: "*", route: run }],
+              run: [1, 2, 3].map((turn) => ({
+                callId: `${prepared.variant}-turn-${turn}`,
+                route: route(`/claude/${prepared.variant}/turn/${turn}/dispatch`),
+              })),
               prepareInert: [{ callId: "*", route: restore }],
-              dispose: [{ callId: "*", route: route(`/claude/${prepared.variant}/dispose`) }],
+              dispose: [
+                {
+                  callId: "*",
+                  route: route(
+                    `/claude/${prepared.variant}/${actual.env?.HARNESS_RESUME_CREATION === true ? "replace" : "finish"}/dispatch`,
+                  ),
+                },
+              ],
               observerCalibration: [{ callId: "*", route: calibration }],
             },
           };

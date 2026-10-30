@@ -2,31 +2,29 @@ import { QualifierSequenceLifetime } from "./sequenceLifetime.ts";
 import {
   collectModelPhysicalRecovery,
   type ModelRecoveryEvidence,
-} from "../../../../src/harness/processResume/tests/modelPhysicalRecovery.fixture.ts";
-import type { PlacementReleaseProof } from "../../../../src/harness/processResume/tests/placementReleaseObserver.fixture.ts";
+} from "./modelPhysicalRecovery.fixture.ts";
+import type { PlacementReleaseProof } from "./placementReleaseObserver.fixture.ts";
 // @effect-diagnostics cryptoRandomUUID:off - Raw trace artifacts need unique platform capture IDs outside Effect.
 import { ROUTES } from "./routes.ts";
 import { QualifierCapabilities } from "./capabilities.ts";
 import type { QualifierEnvironment } from "./environment.ts";
 import { Lifecycle } from "./lifecycle.ts";
 import { ModelController, type Incarnation } from "./modelController.ts";
+import { ClaudeDispatch, type ClaudeDispatchStep } from "./claudeDispatch.ts";
+import { claudeStepRoute } from "./claudeScenario.ts";
 import { ClaudeController } from "./claudeController.ts";
+import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
 import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore.ts";
 import type {
   HarnessProcessPlacementIdentity,
   HarnessProcessPlacementWriter,
 } from "../../../../src/harness/HarnessProcessPlacement.ts";
-import type { ProcessTerminalEvidence } from "../../../../src/harness/processResume/terminalEvidence.ts";
+import type { ProcessTerminalEvidence } from "../../../../src/harness/HarnessProcessResume.ts";
 import { assert, C4, decoder, errorRecord, fromBase64, jsonBytes } from "./common.ts";
 
 type Step = "turn-1" | "replace" | "turn-2" | "turn-3" | "finish";
-export type ClaudeStepPhase = "work" | "resume" | "interrupt";
-export type ClaudeVariant = "baseline" | "hooks";
-export interface ClaudeStep {
-  readonly variant: ClaudeVariant;
-  readonly requestId: string;
-  readonly phase: ClaudeStepPhase;
-}
+export type { ClaudeStepPhase, ClaudeVariant, ClaudeStep } from "./claudeScenario.ts";
+import type { ClaudeVariant, ClaudeStep } from "./claudeScenario.ts";
 interface StepReceipt {
   schema: "sb1070/step-receipt/v1";
   runId: string;
@@ -64,6 +62,7 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
   readonly #tailWaiters = new Map<string, PromiseWithResolvers<void>>();
   readonly #tailTerminals = new Set<string>();
   readonly claude = new ClaudeController(this, this.ctx.storage);
+  readonly claudeDispatch = new ClaudeDispatch(this, this.ctx.storage, crypto.randomUUID());
   async commandPhase() {
     if (
       !(await this.ctx.storage.get("execution-owner")) &&
@@ -71,7 +70,7 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
     )
       return "/observer-calibration";
     const claudeStep = await this.ctx.storage.get<ClaudeStep>("claude/active-step");
-    if (claudeStep) return `/claude/${claudeStep.variant}/${claudeStep.phase}/dispatch`;
+    if (claudeStep) return claudeStepRoute(claudeStep);
     await this.assertLiveOwner();
     if (this.#phase === "replace") return "/replace/dispatch";
     assert(
@@ -338,6 +337,7 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
   }
   async ready() {
     const config = await this.config();
+    requireClaudeAuthorities(this.env);
     const started = await this.ctx.storage.get("execution-owner");
     assert(started === undefined, "Readiness cannot silently become a repeated native attempt");
     const ready = {
@@ -518,6 +518,24 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       return Response.json(await this.ready());
     if (request.method === "POST" && url.pathname === "/observer-calibration")
       return Response.json(await this.observerCalibration());
+    const claude = url.pathname.match(
+      /^\/claude\/(baseline|hooks)\/(turn\/[123]|replace|finish)\/(dispatch|receipt)$/u,
+    );
+    if (claude) {
+      const variant = claude[1] as ClaudeVariant;
+      const step = claude[2]!.replace("turn/", "turn-") as ClaudeDispatchStep;
+      if (claude[3] === "dispatch" && request.method === "POST") {
+        await this.#sequenceLifetime.check();
+        if (step === "turn-1") await this.waitTailTerminal("actual-facet-calibration");
+        const claimed = await this.claudeDispatch.dispatch(variant, step);
+        this.ctx.waitUntil(this.claudeDispatch.pending(variant, step).then(() => undefined));
+        return Response.json(claimed, { status: 202 });
+      }
+      if (claude[3] === "receipt" && request.method === "GET")
+        return new Response(jsonBytes(await this.claudeDispatch.receipt(variant, step)), {
+          headers: { "content-type": "application/json" },
+        });
+    }
     const match = url.pathname.match(/^\/(turn\/[123]|replace|finish)\/(dispatch|receipt)$/);
     if (match) {
       const step = match[1]!.replace("/", "-") as Step;

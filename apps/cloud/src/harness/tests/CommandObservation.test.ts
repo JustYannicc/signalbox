@@ -16,24 +16,6 @@ describe("per-invocation command observation", () => {
     });
     expect(Object.keys(command)).toEqual(["argv", "cwd", "env"]);
   });
-  it("keeps Claude variant and workload phase distinct on cached command workers", () => {
-    const command = { executable: "bash", argv: ["bash", "-c", "echo qualification"] };
-    for (const variant of ["baseline", "hooks"]) {
-      for (const phase of ["work", "resume", "interrupt"]) {
-        const path = `/claude/${variant}/${phase}/dispatch`;
-        expect(readCommandObservation(observeCommandInvocation(command, path, path))).toEqual({
-          command,
-          call: { route: { method: "POST", path }, invocationId: path },
-        });
-      }
-    }
-    for (const path of [
-      "/claude/other/work/dispatch",
-      "/claude/baseline/unknown/dispatch",
-      "/claude/hooks/work/receipt",
-    ])
-      expect(() => observeCommandInvocation(command, path, "invalid")).toThrow("invalid");
-  });
   it("refuses missing metadata, collisions and undeclared routes", () => {
     expect(() => readCommandObservation({ argv: [] })).toThrow("missing");
     expect(() =>

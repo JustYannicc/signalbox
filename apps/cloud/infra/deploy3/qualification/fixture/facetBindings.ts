@@ -1,3 +1,4 @@
+import { restoreFacetCheckpoint } from "./checkpointLineage.ts";
 import type { CheckpointLineage } from "./checkpointLineage.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -85,9 +86,12 @@ export function turnBindings(
         return ref;
       }),
     writeInitialCheckpoint: (exported, context) =>
-      attempt("Initial checkpoint capture failed", () =>
-        checkpoint(exported, "initial-native-checkpoint", null, context.publisher),
-      ),
+      attempt("Initial checkpoint capture failed", async () => {
+        const id = `initial-native-checkpoint-${context.operationId}`;
+        const written = await checkpoint(exported, id, null, context.publisher);
+        if (lineage) restoreFacetCheckpoint(ctx, id);
+        return written;
+      }),
     writeCheckpoint: (exported, context) =>
       attempt("Completed checkpoint capture failed", async () => {
         const parent = lineage?.current() ?? (await capability.activeCheckpointId());

@@ -2,14 +2,14 @@ import { MessageId, RunAttemptId, RunId } from "@t3tools/contracts";
 import type { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import { CLAUDE_QUALIFICATION_PROMPTS } from "./claudeModelPeer.ts";
 
-/** Deterministic input templates only; native identity comes from the real restored checkpoint. */
+/** Deterministic input templates only; native identity is bound from public fresh creation before dispatch. */
 export function claudeQualificationTurns(
   base: RunnerTurn,
   variant: "baseline" | "hooks",
 ): readonly RunnerTurn[] {
   if (base.providerThread.driver !== "claudeAgent")
     throw new Error("DEPLOY3_CLAUDE_TURN_PROVIDER_MISMATCH");
-  return (["work", "interrupt", "resume"] as const).map((phase, index) => ({
+  return (["work", "resume", "finish"] as const).map((phase, index) => ({
     ...base,
     runId: RunId.make(`${base.runId}/claude-qualification/${variant}/${phase}`),
     attemptId: RunAttemptId.make(`${base.attemptId}/claude-qualification/${variant}/${phase}`),

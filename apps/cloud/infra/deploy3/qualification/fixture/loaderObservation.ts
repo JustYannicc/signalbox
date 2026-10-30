@@ -1,4 +1,4 @@
-import { readCommandObservation } from "../../../../src/harness/tests/CommandObservation.fixture.ts";
+import { readCommandObservation } from "./commandObservation.ts";
 /** Observation at the real WorkerLoader.get boundary. No worker is acquired here. */
 export type ObserverRoute = { readonly method: string; readonly path: string };
 export type ObservedRole = "facet" | "command";
@@ -121,11 +121,11 @@ ${pin.role === "facet" ? "const isolateNonce = crypto.randomUUID();" : ""}
 let runtimeWorkerId;
 function workerIdentity() { return runtimeWorkerId ??= crypto.randomUUID(); }
 class Observed extends Actual {
-  __response(result) {
+  __response(method, result) {
     ${
       pin.role === "facet"
         ? `if (result !== undefined && (result === null || typeof result !== "object" || Array.isArray(result))) throw new TypeError("Facet RPC returned an unsupported nonce response shape");
-    return { ...result, isolateNonce };`
+    return method === "identity" || method === "isolateNonceProbe" || method === "observerCalibration" ? { ...result, isolateNonce } : result;`
         : "return result;"
     }
   }
@@ -157,7 +157,7 @@ class Observed extends Actual {
   __observeSync(method, args, invoke) {
     const call = this.__call(method, args);
     this.__emit(method, call, "entered");
-    try { return this.__response(invoke()); }
+    try { return this.__response(method, invoke()); }
     catch (error) { console.log(JSON.stringify({ observerFailure: { identity: pin.identity,
       invocationId: call.invocationId, name: String(error?.name ?? "Error") } })); throw error; }
     finally { this.__emit(method, call, "terminal"); }
@@ -165,7 +165,7 @@ class Observed extends Actual {
   async __observe(method, args, invoke) {
     const call = this.__call(method, args);
     this.__emit(method, call, "entered");
-    try { return this.__response(await invoke()); }
+    try { return this.__response(method, await invoke()); }
     catch (error) { console.log(JSON.stringify({ observerFailure: { identity: pin.identity,
       invocationId: call.invocationId, name: String(error?.name ?? "Error") } })); throw error; }
     finally { this.__emit(method, call, "terminal"); }

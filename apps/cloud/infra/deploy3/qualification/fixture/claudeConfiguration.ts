@@ -1,3 +1,4 @@
+import { ClaudeSeedConfiguration } from "./configuration.schema.ts";
 import { ClaudeMcpProbe } from "./claudeMcpProbe.ts";
 import * as Schema from "effect/Schema";
 import { readClaudeQualificationAssets } from "../runtimeAssets.ts";
@@ -10,7 +11,6 @@ import type { ProductClaudeReleaseVariants } from "../../../../src/harness/Produ
 import type { ClaudePreparedRelease } from "./claudePreparedModules.ts";
 
 const NonEmpty = Schema.String.check(Schema.isPattern(/\S/u));
-const AbsolutePath = Schema.String.check(Schema.isPattern(/^\/\S/u));
 
 export const CLAUDE_QUALIFICATION_CONFIG_SCHEMA = "sb1070/deploy3-claude-facet/v1" as const;
 export const CLAUDE_QUALIFICATION_API_REVISION = "EC1APIr2" as const;
@@ -36,7 +36,7 @@ const ClaudeFacetConfigurationSchema = Schema.Struct({
     model: NonEmpty,
   }),
   turnJson: Schema.Array(NonEmpty),
-  seed: Schema.Struct({ home: AbsolutePath, cwd: AbsolutePath }),
+  seed: ClaudeSeedConfiguration,
 }).annotate({ parseOptions: { onExcessProperty: "error" } });
 
 export interface ClaudeFacetConfiguration {
@@ -50,7 +50,10 @@ export interface ClaudeFacetConfiguration {
     readonly model: string;
   };
   readonly turnJson: readonly string[];
-  readonly seed: { readonly home: string; readonly cwd: string };
+  readonly seed: {
+    readonly home: string;
+    readonly cwd: "/workspace";
+  };
 }
 
 const decodeConfiguration = Schema.decodeUnknownSync(ClaudeFacetConfigurationSchema, {

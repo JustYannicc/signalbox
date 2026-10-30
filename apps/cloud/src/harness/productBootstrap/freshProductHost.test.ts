@@ -1,20 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
 import { freshProductHostFixture } from "./tests/freshProductHost.fixture.ts";
 
 describe("fresh product host", () => {
-  it.effect(
-    "creates Codex without prior checkpoint reads and runs on the retained native session",
-    () =>
+  it.effect.each(["codex", "claude-code"] as const)(
+    "creates %s without prior checkpoint reads and runs on the retained native session",
+    (provider) =>
       Effect.gen(function* () {
-        const fixture = yield* freshProductHostFixture;
+        const fixture = yield* freshProductHostFixture(provider);
 
         expect(fixture.facetOptions.loadedPreparedRelease?.()).toBe(fixture.source.expected);
         expect(fixture.evidence.nativeSessionId).toBe("123e4567-e89b-12d3-a456-426614174000");
         expect(fixture.evidence.filesCheckpoint).toEqual(fixture.initialFiles);
         expect(fixture.evidence.checkpoint).toEqual(fixture.requestCheckpoint);
-        expect(fixture.evidence.joined).toEqual({ invocationRpc: true, fetch: true, ports: true });
+        expect(fixture.evidence.joined).toEqual({
+          invocationRpc: true,
+          fetch: true,
+          ports: true,
+        });
         expect(fixture.initialCheckpoints).toEqual([fixture.currentCheckpoint]);
         expect(fixture.initialPublishers).toEqual([
           {
@@ -48,6 +53,14 @@ describe("fresh product host", () => {
         expect(fixture.exports).toBe(2);
         expect(fixture.opened).toHaveLength(1);
         expect(fixture.accessCalls).toEqual(["fresh:create-1", "turn:first-turn"]);
+      }).pipe(Effect.scoped),
+  );
+  it.effect.each(["open-driver", "checkpoint-driver"] as const)(
+    "rejects a Codex %s in Claude fresh creation",
+    (invalid) =>
+      Effect.gen(function* () {
+        const result = yield* freshProductHostFixture("claude-code", invalid).pipe(Effect.result);
+        expect(Result.isFailure(result)).toBe(true);
       }).pipe(Effect.scoped),
   );
 });

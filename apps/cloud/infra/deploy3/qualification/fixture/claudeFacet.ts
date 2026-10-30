@@ -37,10 +37,6 @@ const Base = createHarnessCProductClaudeFacetClass<Env, unknown>({
       try: async () => {
         const { claude } = await claudeConfiguration(env);
         const turn = decodeTurn(claude.turnJson[0]!);
-        assert(
-          turn.providerThread.nativeThreadRef?.nativeId === nativeSessionId,
-          "Claude turn input does not carry the committed public native session ID",
-        );
         return {
           session: {
             threadId: turn.threadId,
@@ -59,6 +55,36 @@ const Base = createHarnessCProductClaudeFacetClass<Env, unknown>({
       catch: (cause) =>
         new HarnessRequestFacetError("Claude open input could not be built.", { cause }),
     }),
+  fresh: {
+    buildHostOptions: buildClaudeFacetHostOptions,
+    buildOpenInput: ({ env, operationId }) =>
+      Effect.tryPromise({
+        try: async () => {
+          const { claude } = await claudeConfiguration(env);
+          const turn = decodeTurn(claude.turnJson[0]!);
+          assert(
+            turn.providerThread.nativeThreadRef === null,
+            "Fresh Claude template must be unbound",
+          );
+          return {
+            session: {
+              threadId: turn.threadId,
+              providerSessionId: turn.providerThread.providerSessionId!,
+              modelSelection: turn.modelSelection,
+              runtimePolicy: {
+                cwd: claude.seed.cwd,
+                runtimeMode: "full-access" as const,
+                interactionMode: "default" as const,
+              },
+            },
+            creation: { providerThread: turn.providerThread },
+            bootAttemptId: operationId,
+          };
+        },
+        catch: (cause) =>
+          new HarnessRequestFacetError("Fresh Claude open input could not be built.", { cause }),
+      }),
+  },
   buildTurnBindings: ({ env, ctx }) =>
     Effect.succeed(turnBindings(ctx, claudeCapability(env), facetCheckpointLineage(ctx))),
 });
@@ -71,6 +97,10 @@ export class ClaudeFacet extends Base {
       expected && samePreparedRelease(loaded, expected),
       "Loaded Claude artifact identity differs from C's selected prepared release",
     );
+    const loadedArtifact = await claudeCapability(this.env).recordClaudeLoadedRelease(
+      this.facetNonce,
+      loaded,
+    );
     const encoded = new TextEncoder().encode(JSON.stringify(loaded));
     const digest = await crypto.subtle.digest("SHA-256", encoded.slice().buffer);
     const preparedIdentitySha256 = Array.from(new Uint8Array(digest), (byte) =>
@@ -78,6 +108,7 @@ export class ClaudeFacet extends Base {
     ).join("");
     await claudeCapability(this.env).append("claude-loaded-prepared-release", {
       incarnation: this.facetNonce,
+      loadedArtifact,
       artifact: loaded.artifact,
       plan: {
         release: loaded.plan.release,

@@ -9,17 +9,12 @@ import {
 } from "./claudeCTransport.ts";
 import { ClaudeQualificationModelPeer } from "./claudeModelPeer.ts";
 import { createClaudeWorkloadTransport } from "./claudeModelTransport.ts";
-import { NATIVE_SESSION_UUID } from "../../../../src/harness/processCreation/identity.ts";
+import { NATIVE_SESSION_UUID } from "../../../../src/harness/HarnessProcessCreation.ts";
 import { assert, errorRecord } from "./common.ts";
+import type { ClaudePersistedModelRecord } from "./claudeModelEvidence.ts";
 
-type Incarnation = {
-  readonly incarnation: string;
-  readonly loaderId: string;
-  readonly nativeSessionId: string;
-  readonly checkpointId: string;
-  readonly manifestSha256: string;
-  readonly variant: ClaudeVariant;
-};
+import type { ClaudeIncarnation as Incarnation } from "./claudeScenario.ts";
+export type { ClaudeIncarnation as Incarnation } from "./claudeScenario.ts";
 
 /** Each selected variant has one non-replayable model owner and its own wire journal. */
 export class ClaudeController {
@@ -34,9 +29,10 @@ export class ClaudeController {
     assert(
       input.incarnation.length > 0 &&
         input.loaderId.length > 0 &&
-        NATIVE_SESSION_UUID.test(input.nativeSessionId) &&
-        input.checkpointId.length > 0 &&
-        /^[a-f0-9]{64}$/u.test(input.manifestSha256),
+        (input.kind === "fresh" ||
+          (NATIVE_SESSION_UUID.test(input.nativeSessionId) &&
+            input.checkpointId.length > 0 &&
+            /^[a-f0-9]{64}$/u.test(input.manifestSha256))),
       "Claude public checkpoint identity is incomplete",
     );
     const key = `claude/incarnation/${input.incarnation}`;
@@ -55,7 +51,7 @@ export class ClaudeController {
     assert(
       step.requestId.length > 0 &&
         (step.variant === "baseline" || step.variant === "hooks") &&
-        (step.phase === "work" || step.phase === "resume" || step.phase === "interrupt"),
+        (step.phase === "work" || step.phase === "resume" || step.phase === "finish"),
       "Claude public C step identity is invalid",
     );
     const config = await this.#owner.config();
@@ -103,13 +99,22 @@ export class ClaudeController {
       fetch: (request) => peer.fetch(request),
       modelEvidence: () => peer.snapshot(),
       record: async (record, wire) => {
+        const step = await this.active();
+        assert(step?.variant === variant, "Claude model record lost its public C owner");
         const artifact = wire
           ? await this.#owner.artifact(
               `claude-${variant}-model-${record.ordinal}-${record.phase}`,
               wire,
             )
           : undefined;
-        const value = { ...record, variant, ...(artifact ? { artifact } : {}) };
+        const value = {
+          ...record,
+          variant,
+          runId: claudeLane(config.runId, variant).runId,
+          publicRequestId: step.requestId,
+          workflowPhase: step.phase,
+          ...(artifact ? { artifact } : {}),
+        };
         const appended = await this.#owner.append("claude-model-wire", value);
         await this.#storage.put(
           `claude/model/${variant}/record/${String(record.ordinal).padStart(10, "0")}/${record.phase}`,
@@ -135,18 +140,11 @@ export class ClaudeController {
     try {
       return await (await model).transport(request);
     } catch (cause) {
-      if (
-        !(
-          cause instanceof DOMException &&
-          cause.name === "AbortError" &&
-          step.phase === "interrupt"
-        )
-      )
-        await this.#storage.put(failure, errorRecord(cause));
+      await this.#storage.put(failure, errorRecord(cause));
       throw cause;
     }
   }
-  private async c(variant: ClaudeVariant, phase: ClaudeStepPhase) {
+  async c(variant: ClaudeVariant, phase: ClaudeStepPhase) {
     const config = await this.#owner.config();
     const lane = claudeLane(config.runId, variant);
     return createClaudeCTransport({
@@ -196,6 +194,12 @@ export class ClaudeController {
     return (await model).peer.snapshot();
   }
   async records(variant: ClaudeVariant) {
-    return [...(await this.#storage.list({ prefix: `claude/model/${variant}/record/` })).values()];
+    return [
+      ...(
+        await this.#storage.list<ClaudePersistedModelRecord>({
+          prefix: `claude/model/${variant}/record/`,
+        })
+      ).values(),
+    ];
   }
 }

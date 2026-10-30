@@ -1,4 +1,4 @@
-import { recoverModelPhysicalIncarnation } from "../../../../../src/harness/processResume/tests/modelPhysicalRecovery.fixture.ts";
+import { recoverModelPhysicalIncarnation } from "../modelPhysicalRecovery.fixture.ts";
 import { decodeModelCommandOutput } from "./modelCommandOutput.mjs";
 import { createCombinedCodexModelSocket } from "./modelSocket.mjs";
 

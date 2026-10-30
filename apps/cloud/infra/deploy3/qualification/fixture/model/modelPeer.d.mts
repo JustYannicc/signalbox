@@ -1,4 +1,4 @@
-import type { ModelRecoveryEvidence } from "../../../../../src/harness/processResume/tests/modelPhysicalRecovery.fixture.ts";
+import type { ModelRecoveryEvidence } from "../modelPhysicalRecovery.fixture.ts";
 
 export interface ModelTurnExpectation {
   readonly turn: number;
