@@ -88,7 +88,7 @@ describe("unimplemented public Node calls", () => {
     );
     try {
       const modules = createWorkerdNodeBuiltinFailures(DEFAULT_NODE_NATIVE_MODULES);
-      expect(Reflect.get(modules.tls!, "connect")).toBe(
+      expect(Reflect.get(modules.tls!, "connect")).not.toBe(
         Reflect.get(DEFAULT_NODE_NATIVE_MODULES.tls!, "connect"),
       );
       expect(Reflect.get(inventory.modules.v8!, "getHeapStatistics")).toBe(getHeapStatistics);

@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - isolated in-memory test database, never live userdata.
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as NodeBuffer from "node:buffer";
 import type * as NodeFS from "node:fs";
 import * as NodeSqlite from "node:sqlite";
@@ -193,6 +193,34 @@ describe("Node fs filesystem edge contracts", () => {
       expect((await directory.read())?.name).toBe("first");
       await directory.close();
       await expect(fs.promises.opendir("/missing")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("loads directory metadata in bufferSize batches and releases it on close", async () => {
+    const fixture = filesystemFixture();
+    try {
+      const { fs } = createNodeFs(fixture.kernelFs);
+      fs.mkdirSync("/entries");
+      for (let i = 0; i < 7; i++) fs.writeFileSync(`/entries/${i}`, "entry");
+      const metadata = vi.spyOn(fixture.kernelFs, "lstat");
+      const directory = await fs.promises.opendir("/entries", { bufferSize: 2 });
+      expect(metadata).not.toHaveBeenCalled();
+      const first = await directory.read();
+      expect(first?.isFile()).toBe(true);
+      expect(metadata).toHaveBeenCalledTimes(2);
+      await directory.read();
+      expect(metadata).toHaveBeenCalledTimes(2);
+      await directory.read();
+      expect(metadata).toHaveBeenCalledTimes(4);
+      await directory.close();
+      await expect(directory.read()).rejects.toMatchObject({ code: "EBADF" });
+      for (const bufferSize of [0, -1, 1.5, Infinity]) {
+        await expect(fs.promises.opendir("/entries", { bufferSize })).rejects.toMatchObject({
+          code: "ERR_OUT_OF_RANGE",
+        });
+      }
     } finally {
       fixture.close();
     }

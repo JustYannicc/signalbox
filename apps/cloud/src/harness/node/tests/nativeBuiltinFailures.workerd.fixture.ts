@@ -80,6 +80,14 @@ export default {
       });
     }
     const paths = [
+      ["http", "Agent"],
+      ["http", "Server"],
+      ["http", "createServer"],
+      ["https", "Agent"],
+      ["https", "Server"],
+      ["https", "createServer"],
+      ["net", "Server"],
+      ["net", "createServer"],
       ["http2", "connect"],
       ["perf_hooks", "monitorEventLoopDelay"],
       ["tls", "createSecureContext"],

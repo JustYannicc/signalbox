@@ -8,33 +8,80 @@ import type { NodeDirentLike } from "./metadata.ts";
 
 export class NodeFsDir implements AsyncIterable<NodeDirentLike> {
   readonly path: string | NodeBuffer.Buffer | URL;
-  readonly #entries: NodeDirentLike[];
+  readonly #names: string[];
+  readonly #entry: (name: string) => NodeDirentLike;
+  readonly #asyncEntry: (name: string) => Promise<NodeDirentLike>;
+  readonly #bufferSize: number;
+  readonly #buffer: NodeDirentLike[] = [];
   #index = 0;
   #closed = false;
+  #pending: Promise<NodeDirentLike | null> | undefined;
 
-  constructor(path: PathLike, entries: NodeDirentLike[]) {
+  constructor(
+    path: PathLike,
+    names: string[],
+    entry: (name: string) => NodeDirentLike,
+    asyncEntry: (name: string) => Promise<NodeDirentLike>,
+    bufferSize: number,
+  ) {
     this.path = path;
-    this.#entries = entries;
+    this.#names = names;
+    this.#entry = entry;
+    this.#asyncEntry = asyncEntry;
+    this.#bufferSize = bufferSize;
   }
 
   readSync(): NodeDirentLike | null {
+    if (this.#pending)
+      throw codedError("ERR_DIR_CONCURRENT_OPERATION", "directory read is pending");
     if (this.#closed) throw codedError("EBADF", "directory handle was closed", "scandir");
-    const entries = this.#entries;
-    if (this.#index >= entries.length) return null;
-    return entries[this.#index++] ?? null;
+    if (this.#buffer.length === 0) {
+      const end = Math.min(this.#index + this.#bufferSize, this.#names.length);
+      while (this.#index < end) {
+        const name = this.#names[this.#index++]!;
+        this.#buffer.push(this.#entry(name));
+      }
+    }
+    return this.#buffer.shift() ?? null;
   }
 
   async read(): Promise<NodeDirentLike | null> {
-    return this.readSync();
+    if (this.#pending)
+      throw codedError("ERR_DIR_CONCURRENT_OPERATION", "directory read is pending");
+    if (this.#closed) throw codedError("EBADF", "directory handle was closed", "scandir");
+    this.#pending = (async () => {
+      if (this.#buffer.length === 0) {
+        const end = Math.min(this.#index + this.#bufferSize, this.#names.length);
+        while (this.#index < end) {
+          this.#buffer.push(await this.#asyncEntry(this.#names[this.#index++]!));
+        }
+      }
+      return this.#buffer.shift() ?? null;
+    })();
+    try {
+      return await this.#pending;
+    } finally {
+      this.#pending = undefined;
+    }
   }
 
   closeSync(): void {
+    if (this.#pending)
+      throw codedError("ERR_DIR_CONCURRENT_OPERATION", "directory read is pending");
     if (this.#closed) return;
     this.#closed = true;
+    this.#buffer.length = 0;
+    this.#names.length = 0;
   }
 
   async close(): Promise<void> {
-    this.closeSync();
+    try {
+      await this.#pending;
+    } finally {
+      this.#closed = true;
+      this.#buffer.length = 0;
+      this.#names.length = 0;
+    }
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<NodeDirentLike> {

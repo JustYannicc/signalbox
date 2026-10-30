@@ -33,7 +33,7 @@ it("replaces Workerd placeholders and missing exports with declared named failur
     const body = await response.text();
     expect(response.status, body).toBe(200);
     const result = JSON.parse(body);
-    expect(result).toHaveLength(14);
+    expect(result).toHaveLength(22);
     for (const row of result) {
       expect(row, row.builtin).toMatchObject({
         threw: true,
