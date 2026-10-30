@@ -31,7 +31,11 @@ const nativeConstants = freezeNativeValue(NodeOS.constants) as typeof NodeOS.con
 function unsupported(name: string) {
   return markNodeBuiltinCapability(
     (..._args: unknown[]) => unsupportedNodeOperation(`os.${name}`),
-    { status: "unsupported", evidence: `NodeOs.${name} has no host capability` },
+    {
+      status: "unsupported",
+      evidence: `NodeOs.${name} has no host capability`,
+      failure: { kind: "named-error", code: "ENOTSUP" },
+    },
   );
 }
 

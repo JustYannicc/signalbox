@@ -11,6 +11,7 @@ import * as NodeHttps from "node:https";
 import * as NodeInspector from "node:inspector";
 import * as NodeNet from "node:net";
 import * as NodePerfHooks from "node:perf_hooks";
+import * as NodeProcess from "node:process";
 import * as NodeQuerystring from "node:querystring";
 import * as NodeStream from "node:stream";
 import * as NodeStreamConsumers from "node:stream/consumers";
@@ -29,6 +30,7 @@ import * as NodeZlib from "node:zlib";
 import { createNodeAsyncHooks } from "../../isolate/NodeAsyncHooks.ts";
 import { createNodeInspectorModule } from "../../isolate/NodeInspector.ts";
 import { nodeTlsModule } from "../../isolate/NodeTls.ts";
+import { createWorkerdNodeBuiltinFailures } from "./nativeBuiltinFailures.ts";
 
 function nativeModule(namespace: object): object {
   const value: unknown = Reflect.get(namespace, "default") ?? namespace;
@@ -74,4 +76,8 @@ const nativeModules: Record<string, object> = Object.fromEntries(
 
 nativeModules.inspector = createNodeInspectorModule(nativeModule(NodeInspector));
 
-export const DEFAULT_NODE_NATIVE_MODULES = Object.freeze(nativeModules);
+// Capture the host runtime before the guest installs its own process identity.
+const isWorkerd = NodeProcess.getBuiltinModule("cloudflare:workers") !== undefined;
+export const DEFAULT_NODE_NATIVE_MODULES = Object.freeze(
+  isWorkerd ? createWorkerdNodeBuiltinFailures(nativeModules) : nativeModules,
+);
