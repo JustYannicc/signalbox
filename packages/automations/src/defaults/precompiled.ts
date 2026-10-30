@@ -4535,7 +4535,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "loop",
           id: "s1",
-          line: 1083,
+          line: 1434,
           verb: "for",
           label: {
             text: "For each source in NPM_PACKAGES",
@@ -4545,7 +4545,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "step",
               id: "s2",
-              line: 1085,
+              line: 1436,
               verb: "http",
               label: {
                 text: "Read npm release metadata",
@@ -4563,7 +4563,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "loop",
           id: "s3/s4",
-          line: 453,
+          line: 804,
           verb: "for",
           label: {
             text: "While page <= CODEX_MAX_PAGES",
@@ -4573,7 +4573,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "step",
               id: "s3/s5",
-              line: 458,
+              line: 809,
               verb: "http",
               label: {
                 text: "Read Codex release page",
@@ -4588,7 +4588,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s3/s6",
-              line: 476,
+              line: 827,
               source: "condition",
               label: {
                 text: "!link || selectCodex(releases).length >= CODEX_RELEASE_LIMIT",
@@ -4601,7 +4601,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "end",
                       id: "s3/s7",
-                      line: 476,
+                      line: 827,
                       exit: "helper",
                     },
                   ],
@@ -4617,7 +4617,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "step",
           id: "s8",
-          line: 1093,
+          line: 1444,
           verb: "http",
           label: {
             text: "Read the Signalbox source head",
@@ -4633,7 +4633,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s9",
-          line: 1097,
+          line: 1448,
           source: "condition",
           label: {
             text: '!isRecord(head) || typeof head.sha !== "string"',
@@ -4646,7 +4646,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "end",
                   id: "s10",
-                  line: 1098,
+                  line: 1449,
                   exit: "workflow",
                 },
               ],
@@ -4660,7 +4660,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "loop",
           id: "s11",
-          line: 1106,
+          line: 1457,
           verb: "for",
           label: {
             text: "For each candidate in currentBatch",
@@ -4670,7 +4670,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "step",
               id: "s12/s13",
-              line: 632,
+              line: 983,
               verb: "recall",
               label: {
                 text: "Read the release receipt",
@@ -4685,7 +4685,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "step",
               id: "s12/s14",
-              line: 635,
+              line: 986,
               verb: "recall",
               label: {
                 text: "Read the release tracking thread",
@@ -4700,7 +4700,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s15",
-              line: 641,
+              line: 992,
               source: "condition",
               label: {
                 text: 'disposition === "reuse"',
@@ -4713,7 +4713,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s12/s16",
-                      line: 642,
+                      line: 993,
                       source: "condition",
                       label: {
                         text: 'candidate.selection === "current" && previous?.status === "red" && previous !==…',
@@ -4726,7 +4726,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "branch",
                               id: "s12/s17/s18",
-                              line: 575,
+                              line: 926,
                               source: "condition",
                               label: {
                                 text: 'receipt.handoffStatus === "created"',
@@ -4739,7 +4739,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                     {
                                       type: "end",
                                       id: "s12/s17/s19",
-                                      line: 575,
+                                      line: 926,
                                       exit: "helper",
                                     },
                                   ],
@@ -4753,7 +4753,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "try",
                               id: "s12/s17/s20",
-                              line: 582,
+                              line: 933,
                               label: {
                                 text: "If something fails",
                                 dynamic: false,
@@ -4762,7 +4762,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s12/s17/s21",
-                                  line: 584,
+                                  line: 935,
                                   verb: "call",
                                   label: {
                                     text: "Hand the failed proof to GitHub",
@@ -4785,7 +4785,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "step",
                               id: "s12/s17/s22",
-                              line: 613,
+                              line: 964,
                               verb: "remember",
                               label: {
                                 text: "Store the red proof handoff",
@@ -4811,7 +4811,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "end",
                       id: "s12/s23",
-                      line: 649,
+                      line: 1000,
                       exit: "helper",
                     },
                   ],
@@ -4825,7 +4825,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s24",
-              line: 658,
+              line: 1009,
               source: "condition",
               label: {
                 text: "childThreadId === null",
@@ -4838,7 +4838,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s12/s25",
-                      line: 659,
+                      line: 1010,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -4847,7 +4847,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s26",
-                          line: 660,
+                          line: 1011,
                           verb: "agent",
                           label: {
                             text: "Create a release proof thread",
@@ -4863,7 +4863,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "branch",
                           id: "s12/s27",
-                          line: 671,
+                          line: 1022,
                           source: "condition",
                           label: {
                             text: "childThreadId !== null",
@@ -4876,7 +4876,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s12/s28",
-                                  line: 672,
+                                  line: 1023,
                                   verb: "remember",
                                   label: {
                                     text: "Keep the release tracking thread",
@@ -4914,7 +4914,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s29",
-              line: 691,
+              line: 1042,
               source: "condition",
               label: {
                 text: "childThreadId === null",
@@ -4927,7 +4927,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s12/s30/s31",
-                      line: 560,
+                      line: 911,
                       verb: "remember",
                       label: {
                         text: "Keep the release receipt pending",
@@ -4945,7 +4945,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "end",
                       id: "s12/s32",
-                      line: 706,
+                      line: 1057,
                       exit: "helper",
                     },
                   ],
@@ -4959,7 +4959,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s33",
-              line: 714,
+              line: 1065,
               source: "condition",
               label: {
                 text: "expectedRevision === null",
@@ -4972,7 +4972,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s12/s34",
-                      line: 715,
+                      line: 1066,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -4981,7 +4981,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s35",
-                          line: 716,
+                          line: 1067,
                           verb: "call",
                           label: {
                             text: "Read the selected release revision",
@@ -5012,7 +5012,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s36",
-              line: 732,
+              line: 1083,
               source: "condition",
               label: {
                 text: "expectedRevision === null",
@@ -5025,7 +5025,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s12/s37/s38",
-                      line: 539,
+                      line: 890,
                       source: "condition",
                       label: {
                         text: "previous?.threadUpdate === fingerprint",
@@ -5038,7 +5038,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s12/s37/s39",
-                              line: 539,
+                              line: 890,
                               exit: "helper",
                             },
                           ],
@@ -5052,7 +5052,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s12/s37/s40",
-                      line: 540,
+                      line: 891,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -5061,7 +5061,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s37/s41",
-                          line: 541,
+                          line: 892,
                           verb: "call",
                           label: {
                             text: "Update the release proof thread",
@@ -5080,7 +5080,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s12/s37/s42",
-                          line: 548,
+                          line: 899,
                           exit: "helper",
                         },
                       ],
@@ -5088,7 +5088,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s12/s37/s43",
-                          line: 552,
+                          line: 903,
                           exit: "helper",
                         },
                       ],
@@ -5096,7 +5096,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s12/s44/s31",
-                      line: 560,
+                      line: 911,
                       verb: "remember",
                       label: {
                         text: "Keep the release receipt pending",
@@ -5114,7 +5114,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "end",
                       id: "s12/s45",
-                      line: 758,
+                      line: 1109,
                       exit: "helper",
                     },
                   ],
@@ -5128,7 +5128,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "try",
               id: "s12/s46",
-              line: 767,
+              line: 1118,
               label: {
                 text: "If something fails",
                 dynamic: false,
@@ -5137,7 +5137,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "branch",
                   id: "s12/s47",
-                  line: 768,
+                  line: 1119,
                   source: "condition",
                   label: {
                     text: 'disposition === "read" && previous !== null',
@@ -5150,7 +5150,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s48",
-                          line: 768,
+                          line: 1119,
                           verb: "call",
                           label: {
                             text: "Read the existing exact release run",
@@ -5175,7 +5175,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s49",
-                          line: 776,
+                          line: 1127,
                           verb: "call",
                           label: {
                             text: "Dispatch the exact release proof",
@@ -5202,7 +5202,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s50",
-              line: 800,
+              line: 1151,
               source: "condition",
               label: {
                 text: "run === null || run.workflowFile !== workflowFile || run.headSha !== headSha ||…",
@@ -5215,7 +5215,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s12/s51/s38",
-                      line: 539,
+                      line: 890,
                       source: "condition",
                       label: {
                         text: "previous?.threadUpdate === fingerprint",
@@ -5228,7 +5228,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s12/s51/s39",
-                              line: 539,
+                              line: 890,
                               exit: "helper",
                             },
                           ],
@@ -5242,7 +5242,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s12/s51/s40",
-                      line: 540,
+                      line: 891,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -5251,7 +5251,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s51/s41",
-                          line: 541,
+                          line: 892,
                           verb: "call",
                           label: {
                             text: "Update the release proof thread",
@@ -5270,7 +5270,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s12/s51/s42",
-                          line: 548,
+                          line: 899,
                           exit: "helper",
                         },
                       ],
@@ -5278,7 +5278,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s12/s51/s43",
-                          line: 552,
+                          line: 903,
                           exit: "helper",
                         },
                       ],
@@ -5286,7 +5286,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s12/s52/s31",
-                      line: 560,
+                      line: 911,
                       verb: "remember",
                       label: {
                         text: "Keep the release receipt pending",
@@ -5304,7 +5304,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "end",
                       id: "s12/s53",
-                      line: 834,
+                      line: 1185,
                       exit: "helper",
                     },
                   ],
@@ -5318,7 +5318,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s54",
-              line: 855,
+              line: 1206,
               source: "condition",
               label: {
                 text: 'run.status !== "completed"',
@@ -5331,7 +5331,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s12/s55/s31",
-                      line: 560,
+                      line: 911,
                       verb: "remember",
                       label: {
                         text: "Keep the release receipt pending",
@@ -5349,7 +5349,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "end",
                       id: "s12/s56",
-                      line: 865,
+                      line: 1216,
                       exit: "helper",
                     },
                   ],
@@ -5363,7 +5363,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "try",
               id: "s12/s57",
-              line: 874,
+              line: 1225,
               label: {
                 text: "If something fails",
                 dynamic: false,
@@ -5372,7 +5372,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s12/s58",
-                  line: 875,
+                  line: 1226,
                   verb: "call",
                   label: {
                     text: "Read the completed release proof artifact",
@@ -5395,7 +5395,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s59",
-              line: 899,
+              line: 1250,
               source: "condition",
               label: {
                 text: "verified === null",
@@ -5408,7 +5408,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s12/s60/s38",
-                      line: 539,
+                      line: 890,
                       source: "condition",
                       label: {
                         text: "previous?.threadUpdate === fingerprint",
@@ -5421,7 +5421,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s12/s60/s39",
-                              line: 539,
+                              line: 890,
                               exit: "helper",
                             },
                           ],
@@ -5435,7 +5435,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s12/s60/s40",
-                      line: 540,
+                      line: 891,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -5444,7 +5444,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s60/s41",
-                          line: 541,
+                          line: 892,
                           verb: "call",
                           label: {
                             text: "Update the release proof thread",
@@ -5463,7 +5463,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s12/s60/s42",
-                          line: 548,
+                          line: 899,
                           exit: "helper",
                         },
                       ],
@@ -5471,7 +5471,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s12/s60/s43",
-                          line: 552,
+                          line: 903,
                           exit: "helper",
                         },
                       ],
@@ -5479,7 +5479,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s12/s61/s31",
-                      line: 560,
+                      line: 911,
                       verb: "remember",
                       label: {
                         text: "Keep the release receipt pending",
@@ -5497,7 +5497,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "end",
                       id: "s12/s62",
-                      line: 917,
+                      line: 1268,
                       exit: "helper",
                     },
                   ],
@@ -5511,7 +5511,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "try",
               id: "s12/s63",
-              line: 927,
+              line: 1278,
               label: {
                 text: "If something fails",
                 dynamic: false,
@@ -5520,7 +5520,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s12/s64",
-                  line: 928,
+                  line: 1279,
                   verb: "call",
                   label: {
                     text: "Verify the immutable release result in the project ledger",
@@ -5543,7 +5543,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s65",
-              line: 975,
+              line: 1326,
               source: "condition",
               label: {
                 text: 'status === "green" && candidate.selection === "current" && expectedRevision !==…',
@@ -5556,7 +5556,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s12/s66",
-                      line: 976,
+                      line: 1327,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -5565,7 +5565,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s67",
-                          line: 977,
+                          line: 1328,
                           verb: "call",
                           label: {
                             text: "Read the selected release revision",
@@ -5585,7 +5585,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "branch",
                           id: "s12/s68",
-                          line: 985,
+                          line: 1336,
                           source: "condition",
                           label: {
                             text: "!canPromoteHarnessRelease( { selection: candidate.selection, status, runtimeArt…",
@@ -5598,7 +5598,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s12/s69/s31",
-                                  line: 560,
+                                  line: 911,
                                   verb: "remember",
                                   label: {
                                     text: "Keep the release receipt pending",
@@ -5616,7 +5616,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "end",
                                   id: "s12/s70",
-                                  line: 1002,
+                                  line: 1353,
                                   exit: "helper",
                                 },
                               ],
@@ -5630,7 +5630,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s71",
-                          line: 1011,
+                          line: 1362,
                           verb: "call",
                           label: {
                             text: "Select the proven current release",
@@ -5652,7 +5652,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s72/s31",
-                          line: 560,
+                          line: 911,
                           verb: "remember",
                           label: {
                             text: "Keep the release receipt pending",
@@ -5670,7 +5670,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s12/s73",
-                          line: 1031,
+                          line: 1382,
                           exit: "helper",
                         },
                       ],
@@ -5686,7 +5686,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s74",
-              line: 1041,
+              line: 1392,
               source: "condition",
               label: {
                 text: 'status === "red" && candidate.selection === "current"',
@@ -5699,7 +5699,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s12/s75/s18",
-                      line: 575,
+                      line: 926,
                       source: "condition",
                       label: {
                         text: 'receipt.handoffStatus === "created"',
@@ -5712,7 +5712,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s12/s75/s19",
-                              line: 575,
+                              line: 926,
                               exit: "helper",
                             },
                           ],
@@ -5726,7 +5726,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s12/s75/s20",
-                      line: 582,
+                      line: 933,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -5735,7 +5735,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s12/s75/s21",
-                          line: 584,
+                          line: 935,
                           verb: "call",
                           label: {
                             text: "Hand the failed proof to GitHub",
@@ -5758,7 +5758,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s12/s75/s22",
-                      line: 613,
+                      line: 964,
                       verb: "remember",
                       label: {
                         text: "Store the red proof handoff",
@@ -5784,7 +5784,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "branch",
               id: "s12/s76/s38",
-              line: 539,
+              line: 890,
               source: "condition",
               label: {
                 text: "previous?.threadUpdate === fingerprint",
@@ -5797,7 +5797,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "end",
                       id: "s12/s76/s39",
-                      line: 539,
+                      line: 890,
                       exit: "helper",
                     },
                   ],
@@ -5811,7 +5811,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "try",
               id: "s12/s76/s40",
-              line: 540,
+              line: 891,
               label: {
                 text: "If something fails",
                 dynamic: false,
@@ -5820,7 +5820,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "step",
                   id: "s12/s76/s41",
-                  line: 541,
+                  line: 892,
                   verb: "call",
                   label: {
                     text: "Update the release proof thread",
@@ -5839,7 +5839,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "end",
                   id: "s12/s76/s42",
-                  line: 548,
+                  line: 899,
                   exit: "helper",
                 },
               ],
@@ -5847,7 +5847,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "end",
                   id: "s12/s76/s43",
-                  line: 552,
+                  line: 903,
                   exit: "helper",
                 },
               ],
@@ -5855,7 +5855,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
             {
               type: "step",
               id: "s12/s77",
-              line: 1057,
+              line: 1408,
               verb: "remember",
               label: {
                 text: "Store the release proof status",
@@ -5875,7 +5875,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
         {
           type: "branch",
           id: "s78",
-          line: 1122,
+          line: 1473,
           source: "condition",
           label: {
             text: "allCurrentGreen",
@@ -5888,7 +5888,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "loop",
                   id: "s79",
-                  line: 1124,
+                  line: 1475,
                   verb: "for",
                   label: {
                     text: "For each candidate in backfill",
@@ -5898,7 +5898,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s80",
-                      line: 1125,
+                      line: 1476,
                       verb: "recall",
                       label: {
                         text: "Read a historical release receipt",
@@ -5916,7 +5916,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                 {
                   type: "loop",
                   id: "s81",
-                  line: 1142,
+                  line: 1493,
                   verb: "for",
                   label: {
                     text: "For each candidate in backfillBatch",
@@ -5926,7 +5926,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s82/s13",
-                      line: 632,
+                      line: 983,
                       verb: "recall",
                       label: {
                         text: "Read the release receipt",
@@ -5941,7 +5941,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s82/s14",
-                      line: 635,
+                      line: 986,
                       verb: "recall",
                       label: {
                         text: "Read the release tracking thread",
@@ -5956,7 +5956,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s15",
-                      line: 641,
+                      line: 992,
                       source: "condition",
                       label: {
                         text: 'disposition === "reuse"',
@@ -5969,7 +5969,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "branch",
                               id: "s82/s16",
-                              line: 642,
+                              line: 993,
                               source: "condition",
                               label: {
                                 text: 'candidate.selection === "current" && previous?.status === "red" && previous !==…',
@@ -5982,7 +5982,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                     {
                                       type: "branch",
                                       id: "s82/s17/s18",
-                                      line: 575,
+                                      line: 926,
                                       source: "condition",
                                       label: {
                                         text: 'receipt.handoffStatus === "created"',
@@ -5995,7 +5995,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                             {
                                               type: "end",
                                               id: "s82/s17/s19",
-                                              line: 575,
+                                              line: 926,
                                               exit: "helper",
                                             },
                                           ],
@@ -6009,7 +6009,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                     {
                                       type: "try",
                                       id: "s82/s17/s20",
-                                      line: 582,
+                                      line: 933,
                                       label: {
                                         text: "If something fails",
                                         dynamic: false,
@@ -6018,7 +6018,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                         {
                                           type: "step",
                                           id: "s82/s17/s21",
-                                          line: 584,
+                                          line: 935,
                                           verb: "call",
                                           label: {
                                             text: "Hand the failed proof to GitHub",
@@ -6041,7 +6041,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                     {
                                       type: "step",
                                       id: "s82/s17/s22",
-                                      line: 613,
+                                      line: 964,
                                       verb: "remember",
                                       label: {
                                         text: "Store the red proof handoff",
@@ -6067,7 +6067,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s82/s23",
-                              line: 649,
+                              line: 1000,
                               exit: "helper",
                             },
                           ],
@@ -6081,7 +6081,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s24",
-                      line: 658,
+                      line: 1009,
                       source: "condition",
                       label: {
                         text: "childThreadId === null",
@@ -6094,7 +6094,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "try",
                               id: "s82/s25",
-                              line: 659,
+                              line: 1010,
                               label: {
                                 text: "If something fails",
                                 dynamic: false,
@@ -6103,7 +6103,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s26",
-                                  line: 660,
+                                  line: 1011,
                                   verb: "agent",
                                   label: {
                                     text: "Create a release proof thread",
@@ -6119,7 +6119,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "branch",
                                   id: "s82/s27",
-                                  line: 671,
+                                  line: 1022,
                                   source: "condition",
                                   label: {
                                     text: "childThreadId !== null",
@@ -6132,7 +6132,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                         {
                                           type: "step",
                                           id: "s82/s28",
-                                          line: 672,
+                                          line: 1023,
                                           verb: "remember",
                                           label: {
                                             text: "Keep the release tracking thread",
@@ -6170,7 +6170,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s29",
-                      line: 691,
+                      line: 1042,
                       source: "condition",
                       label: {
                         text: "childThreadId === null",
@@ -6183,7 +6183,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "step",
                               id: "s82/s30/s31",
-                              line: 560,
+                              line: 911,
                               verb: "remember",
                               label: {
                                 text: "Keep the release receipt pending",
@@ -6201,7 +6201,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s82/s32",
-                              line: 706,
+                              line: 1057,
                               exit: "helper",
                             },
                           ],
@@ -6215,7 +6215,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s33",
-                      line: 714,
+                      line: 1065,
                       source: "condition",
                       label: {
                         text: "expectedRevision === null",
@@ -6228,7 +6228,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "try",
                               id: "s82/s34",
-                              line: 715,
+                              line: 1066,
                               label: {
                                 text: "If something fails",
                                 dynamic: false,
@@ -6237,7 +6237,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s35",
-                                  line: 716,
+                                  line: 1067,
                                   verb: "call",
                                   label: {
                                     text: "Read the selected release revision",
@@ -6268,7 +6268,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s36",
-                      line: 732,
+                      line: 1083,
                       source: "condition",
                       label: {
                         text: "expectedRevision === null",
@@ -6281,7 +6281,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "branch",
                               id: "s82/s37/s38",
-                              line: 539,
+                              line: 890,
                               source: "condition",
                               label: {
                                 text: "previous?.threadUpdate === fingerprint",
@@ -6294,7 +6294,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                     {
                                       type: "end",
                                       id: "s82/s37/s39",
-                                      line: 539,
+                                      line: 890,
                                       exit: "helper",
                                     },
                                   ],
@@ -6308,7 +6308,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "try",
                               id: "s82/s37/s40",
-                              line: 540,
+                              line: 891,
                               label: {
                                 text: "If something fails",
                                 dynamic: false,
@@ -6317,7 +6317,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s37/s41",
-                                  line: 541,
+                                  line: 892,
                                   verb: "call",
                                   label: {
                                     text: "Update the release proof thread",
@@ -6336,7 +6336,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "end",
                                   id: "s82/s37/s42",
-                                  line: 548,
+                                  line: 899,
                                   exit: "helper",
                                 },
                               ],
@@ -6344,7 +6344,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "end",
                                   id: "s82/s37/s43",
-                                  line: 552,
+                                  line: 903,
                                   exit: "helper",
                                 },
                               ],
@@ -6352,7 +6352,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "step",
                               id: "s82/s44/s31",
-                              line: 560,
+                              line: 911,
                               verb: "remember",
                               label: {
                                 text: "Keep the release receipt pending",
@@ -6370,7 +6370,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s82/s45",
-                              line: 758,
+                              line: 1109,
                               exit: "helper",
                             },
                           ],
@@ -6384,7 +6384,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s82/s46",
-                      line: 767,
+                      line: 1118,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -6393,7 +6393,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "branch",
                           id: "s82/s47",
-                          line: 768,
+                          line: 1119,
                           source: "condition",
                           label: {
                             text: 'disposition === "read" && previous !== null',
@@ -6406,7 +6406,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s48",
-                                  line: 768,
+                                  line: 1119,
                                   verb: "call",
                                   label: {
                                     text: "Read the existing exact release run",
@@ -6431,7 +6431,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s49",
-                                  line: 776,
+                                  line: 1127,
                                   verb: "call",
                                   label: {
                                     text: "Dispatch the exact release proof",
@@ -6458,7 +6458,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s50",
-                      line: 800,
+                      line: 1151,
                       source: "condition",
                       label: {
                         text: "run === null || run.workflowFile !== workflowFile || run.headSha !== headSha ||…",
@@ -6471,7 +6471,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "branch",
                               id: "s82/s51/s38",
-                              line: 539,
+                              line: 890,
                               source: "condition",
                               label: {
                                 text: "previous?.threadUpdate === fingerprint",
@@ -6484,7 +6484,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                     {
                                       type: "end",
                                       id: "s82/s51/s39",
-                                      line: 539,
+                                      line: 890,
                                       exit: "helper",
                                     },
                                   ],
@@ -6498,7 +6498,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "try",
                               id: "s82/s51/s40",
-                              line: 540,
+                              line: 891,
                               label: {
                                 text: "If something fails",
                                 dynamic: false,
@@ -6507,7 +6507,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s51/s41",
-                                  line: 541,
+                                  line: 892,
                                   verb: "call",
                                   label: {
                                     text: "Update the release proof thread",
@@ -6526,7 +6526,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "end",
                                   id: "s82/s51/s42",
-                                  line: 548,
+                                  line: 899,
                                   exit: "helper",
                                 },
                               ],
@@ -6534,7 +6534,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "end",
                                   id: "s82/s51/s43",
-                                  line: 552,
+                                  line: 903,
                                   exit: "helper",
                                 },
                               ],
@@ -6542,7 +6542,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "step",
                               id: "s82/s52/s31",
-                              line: 560,
+                              line: 911,
                               verb: "remember",
                               label: {
                                 text: "Keep the release receipt pending",
@@ -6560,7 +6560,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s82/s53",
-                              line: 834,
+                              line: 1185,
                               exit: "helper",
                             },
                           ],
@@ -6574,7 +6574,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s54",
-                      line: 855,
+                      line: 1206,
                       source: "condition",
                       label: {
                         text: 'run.status !== "completed"',
@@ -6587,7 +6587,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "step",
                               id: "s82/s55/s31",
-                              line: 560,
+                              line: 911,
                               verb: "remember",
                               label: {
                                 text: "Keep the release receipt pending",
@@ -6605,7 +6605,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s82/s56",
-                              line: 865,
+                              line: 1216,
                               exit: "helper",
                             },
                           ],
@@ -6619,7 +6619,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s82/s57",
-                      line: 874,
+                      line: 1225,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -6628,7 +6628,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s82/s58",
-                          line: 875,
+                          line: 1226,
                           verb: "call",
                           label: {
                             text: "Read the completed release proof artifact",
@@ -6651,7 +6651,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s59",
-                      line: 899,
+                      line: 1250,
                       source: "condition",
                       label: {
                         text: "verified === null",
@@ -6664,7 +6664,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "branch",
                               id: "s82/s60/s38",
-                              line: 539,
+                              line: 890,
                               source: "condition",
                               label: {
                                 text: "previous?.threadUpdate === fingerprint",
@@ -6677,7 +6677,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                     {
                                       type: "end",
                                       id: "s82/s60/s39",
-                                      line: 539,
+                                      line: 890,
                                       exit: "helper",
                                     },
                                   ],
@@ -6691,7 +6691,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "try",
                               id: "s82/s60/s40",
-                              line: 540,
+                              line: 891,
                               label: {
                                 text: "If something fails",
                                 dynamic: false,
@@ -6700,7 +6700,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s60/s41",
-                                  line: 541,
+                                  line: 892,
                                   verb: "call",
                                   label: {
                                     text: "Update the release proof thread",
@@ -6719,7 +6719,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "end",
                                   id: "s82/s60/s42",
-                                  line: 548,
+                                  line: 899,
                                   exit: "helper",
                                 },
                               ],
@@ -6727,7 +6727,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "end",
                                   id: "s82/s60/s43",
-                                  line: 552,
+                                  line: 903,
                                   exit: "helper",
                                 },
                               ],
@@ -6735,7 +6735,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "step",
                               id: "s82/s61/s31",
-                              line: 560,
+                              line: 911,
                               verb: "remember",
                               label: {
                                 text: "Keep the release receipt pending",
@@ -6753,7 +6753,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s82/s62",
-                              line: 917,
+                              line: 1268,
                               exit: "helper",
                             },
                           ],
@@ -6767,7 +6767,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s82/s63",
-                      line: 927,
+                      line: 1278,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -6776,7 +6776,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s82/s64",
-                          line: 928,
+                          line: 1279,
                           verb: "call",
                           label: {
                             text: "Verify the immutable release result in the project ledger",
@@ -6799,7 +6799,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s65",
-                      line: 975,
+                      line: 1326,
                       source: "condition",
                       label: {
                         text: 'status === "green" && candidate.selection === "current" && expectedRevision !==…',
@@ -6812,7 +6812,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "try",
                               id: "s82/s66",
-                              line: 976,
+                              line: 1327,
                               label: {
                                 text: "If something fails",
                                 dynamic: false,
@@ -6821,7 +6821,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s67",
-                                  line: 977,
+                                  line: 1328,
                                   verb: "call",
                                   label: {
                                     text: "Read the selected release revision",
@@ -6841,7 +6841,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "branch",
                                   id: "s82/s68",
-                                  line: 985,
+                                  line: 1336,
                                   source: "condition",
                                   label: {
                                     text: "!canPromoteHarnessRelease( { selection: candidate.selection, status, runtimeArt…",
@@ -6854,7 +6854,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                         {
                                           type: "step",
                                           id: "s82/s69/s31",
-                                          line: 560,
+                                          line: 911,
                                           verb: "remember",
                                           label: {
                                             text: "Keep the release receipt pending",
@@ -6872,7 +6872,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                         {
                                           type: "end",
                                           id: "s82/s70",
-                                          line: 1002,
+                                          line: 1353,
                                           exit: "helper",
                                         },
                                       ],
@@ -6886,7 +6886,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s71",
-                                  line: 1011,
+                                  line: 1362,
                                   verb: "call",
                                   label: {
                                     text: "Select the proven current release",
@@ -6908,7 +6908,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s72/s31",
-                                  line: 560,
+                                  line: 911,
                                   verb: "remember",
                                   label: {
                                     text: "Keep the release receipt pending",
@@ -6926,7 +6926,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "end",
                                   id: "s82/s73",
-                                  line: 1031,
+                                  line: 1382,
                                   exit: "helper",
                                 },
                               ],
@@ -6942,7 +6942,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s74",
-                      line: 1041,
+                      line: 1392,
                       source: "condition",
                       label: {
                         text: 'status === "red" && candidate.selection === "current"',
@@ -6955,7 +6955,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "branch",
                               id: "s82/s75/s18",
-                              line: 575,
+                              line: 926,
                               source: "condition",
                               label: {
                                 text: 'receipt.handoffStatus === "created"',
@@ -6968,7 +6968,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                     {
                                       type: "end",
                                       id: "s82/s75/s19",
-                                      line: 575,
+                                      line: 926,
                                       exit: "helper",
                                     },
                                   ],
@@ -6982,7 +6982,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "try",
                               id: "s82/s75/s20",
-                              line: 582,
+                              line: 933,
                               label: {
                                 text: "If something fails",
                                 dynamic: false,
@@ -6991,7 +6991,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                                 {
                                   type: "step",
                                   id: "s82/s75/s21",
-                                  line: 584,
+                                  line: 935,
                                   verb: "call",
                                   label: {
                                     text: "Hand the failed proof to GitHub",
@@ -7014,7 +7014,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "step",
                               id: "s82/s75/s22",
-                              line: 613,
+                              line: 964,
                               verb: "remember",
                               label: {
                                 text: "Store the red proof handoff",
@@ -7040,7 +7040,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "branch",
                       id: "s82/s76/s38",
-                      line: 539,
+                      line: 890,
                       source: "condition",
                       label: {
                         text: "previous?.threadUpdate === fingerprint",
@@ -7053,7 +7053,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                             {
                               type: "end",
                               id: "s82/s76/s39",
-                              line: 539,
+                              line: 890,
                               exit: "helper",
                             },
                           ],
@@ -7067,7 +7067,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "try",
                       id: "s82/s76/s40",
-                      line: 540,
+                      line: 891,
                       label: {
                         text: "If something fails",
                         dynamic: false,
@@ -7076,7 +7076,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "step",
                           id: "s82/s76/s41",
-                          line: 541,
+                          line: 892,
                           verb: "call",
                           label: {
                             text: "Update the release proof thread",
@@ -7095,7 +7095,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s82/s76/s42",
-                          line: 548,
+                          line: 899,
                           exit: "helper",
                         },
                       ],
@@ -7103,7 +7103,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                         {
                           type: "end",
                           id: "s82/s76/s43",
-                          line: 552,
+                          line: 903,
                           exit: "helper",
                         },
                       ],
@@ -7111,7 +7111,7 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
                     {
                       type: "step",
                       id: "s82/s77",
-                      line: 1057,
+                      line: 1408,
                       verb: "remember",
                       label: {
                         text: "Store the release proof status",
@@ -7139,9 +7139,9 @@ export const PRECOMPILED_BUILT_INS: Readonly<Record<string, CompiledWorkflow>> =
       ],
     },
     script:
-      'export const meta = {\n\tname: "Watch harness releases",\n\tdescription: "Checks current Claude Code, Claude Agent SDK and Codex releases, then works through a bounded historical set. Run builtin:harness-release-watch once with the Signalbox project\'s ID to install its hourly trigger in that project.",\n\tintent: "keep the selected agent harness release backed by exact current-release proof",\n\ttriggers: [{\n\t\tcron: "0 * * * *",\n\t\ttimezone: "Europe/Zurich"\n\t}],\n\toverlap: "skip"\n};\nconst HARNESS_RELEASE_WORKFLOW_FILE = ".github/workflows/harness-release-proof.yml";\nconst HARNESS_RELEASE_RESULT_PATH = "result.json";\nconst HARNESS_RELEASE_BACKFILL_LIMITS = {\n\t"claude-code": 50,\n\t"claude-agent-sdk": 0,\n\t"codex": 10\n};\nconst resourceCriteriaValidator = (value, expected) => {\n\tconst record = (candidate) => candidate !== null && typeof candidate === "object" && !Array.isArray(candidate) ? candidate : undefined;\n\tconst exactKeys = (candidate, names) => Object.keys(candidate).length === names.length && names.every((name) => name in candidate);\n\tconst text = (candidate) => typeof candidate === "string" && candidate.length > 0;\n\tconst hash = (candidate) => typeof candidate === "string" && /^[a-f0-9]{64}$/u.test(candidate);\n\tconst safeBytes = (candidate) => typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;\n\tconst validStatus = (candidate) => candidate === "pending" || candidate === "passed" || candidate === "rejected";\n\tconst assessment = record(value);\n\tif (!assessment) return false;\n\tconst environment = assessment.environment;\n\tif (assessment.tag !== "harness-release-resource-criteria-v1" || assessment.source !== "normal-public-qualifier" || environment !== "local-workerd" && environment !== "deployed" || !validStatus(assessment.status) || !text(assessment.detail)) return false;\n\tconst local = environment === "local-workerd";\n\tconst expectedAssessmentKeys = [\n\t\t"tag",\n\t\t"source",\n\t\t"environment",\n\t\t"status",\n\t\t"label",\n\t\t"pins",\n\t\t"startupUpperBound",\n\t\tlocal ? "configuredLimit" : "platformPolicyCompliance",\n\t\t...local && "terminationClassification" in assessment ? ["terminationClassification"] : [],\n\t\t"detail"\n\t];\n\tif (!exactKeys(assessment, expectedAssessmentKeys)) return false;\n\tconst pins = record(assessment.pins);\n\tif (!pins || !exactKeys(pins, [\n\t\t"measurementRunId",\n\t\t"fixtureId",\n\t\t"fixtureSha256",\n\t\t"artifactSha256",\n\t\t"releaseIdentitySha256"\n\t]) || !text(pins.measurementRunId) || !text(pins.fixtureId) || !hash(pins.fixtureSha256) || !hash(pins.artifactSha256) || !hash(pins.releaseIdentitySha256) || expected?.environment !== undefined && expected.environment !== environment || expected?.measurementRunId !== undefined && expected.measurementRunId !== pins.measurementRunId || expected?.fixtureId !== undefined && expected.fixtureId !== pins.fixtureId || expected?.fixtureSha256 !== undefined && expected.fixtureSha256 !== pins.fixtureSha256 || expected?.artifactSha256 !== undefined && expected.artifactSha256 !== pins.artifactSha256 || expected?.releaseIdentitySha256 !== undefined && expected.releaseIdentitySha256 !== pins.releaseIdentitySha256) return false;\n\tconst timing = record(assessment.startupUpperBound);\n\tif (!timing || !exactKeys(timing, [\n\t\t"label",\n\t\t"interpretation",\n\t\t"clock",\n\t\t"startedMonotonicNs",\n\t\t"finishedMonotonicNs",\n\t\t"milliseconds",\n\t\t"includesRpc",\n\t\t"exactBootTime"\n\t]) || timing.label !== "cold first-successful-RPC latency" || timing.interpretation !== "startup upper bound" || timing.clock !== "parent process.hrtime.bigint" || !text(timing.startedMonotonicNs) || !/^\\d+$/u.test(timing.startedMonotonicNs) || !text(timing.finishedMonotonicNs) || !/^\\d+$/u.test(timing.finishedMonotonicNs) || typeof timing.milliseconds !== "number" || !Number.isFinite(timing.milliseconds) || timing.milliseconds < 0 || timing.includesRpc !== true || timing.exactBootTime !== false) return false;\n\ttry {\n\t\tconst elapsed = BigInt(timing.finishedMonotonicNs) - BigInt(timing.startedMonotonicNs);\n\t\tif (elapsed < 0n || timing.milliseconds !== Number(elapsed) / 1e6) return false;\n\t} catch {\n\t\treturn false;\n\t}\n\tif (local) {\n\t\tif (assessment.label !== "configured-limit completion with measured overshoot") return false;\n\t\tconst configured = record(assessment.configuredLimit);\n\t\tif (!configured || !exactKeys(configured, [\n\t\t\t"criterion",\n\t\t\t"status",\n\t\t\t"configuredLimitBytes",\n\t\t\t"deltaMaxObservedBytes",\n\t\t\t"safetyMarginBytes",\n\t\t\t"budgetBytes",\n\t\t\t"assessedBytes",\n\t\t\t"budgetFits",\n\t\t\t"calibrationComplete",\n\t\t\t"workloadCompleted",\n\t\t\t"identityVerified",\n\t\t\t"strictByteBound",\n\t\t\t"detail"\n\t\t]) || configured.criterion !== "configured-limit completion with measured overshoot" || !validStatus(configured.status) || !text(configured.detail) || typeof configured.budgetFits !== "boolean" || typeof configured.calibrationComplete !== "boolean" || typeof configured.workloadCompleted !== "boolean" || typeof configured.identityVerified !== "boolean" || configured.strictByteBound !== false) return false;\n\t\tconst limit = configured.configuredLimitBytes;\n\t\tconst delta = configured.deltaMaxObservedBytes;\n\t\tconst margin = configured.safetyMarginBytes;\n\t\tconst budget = configured.budgetBytes;\n\t\tconst assessed = configured.assessedBytes;\n\t\tif (!safeBytes(limit) || !safeBytes(delta) || !safeBytes(margin) || !safeBytes(budget) || !safeBytes(assessed) || limit === 0 || budget === 0 || !Number.isSafeInteger(limit + delta + margin) || assessed !== limit + delta + margin || configured.budgetFits !== assessed <= budget) return false;\n\t\tlet configuredStatus = configured.budgetFits ? configured.calibrationComplete && configured.workloadCompleted && configured.identityVerified ? "passed" : "pending" : "rejected";\n\t\tif ("terminationClassification" in assessment) {\n\t\t\tconst termination = assessment.terminationClassification;\n\t\t\tif (termination !== "NO_VERIFIED_TERMINATION" && termination !== "OTHER_TERMINATION" && termination !== "V8_HEAP_OOM_PROCESS_TERMINATED") return false;\n\t\t\tif (termination !== "NO_VERIFIED_TERMINATION" && (configured.workloadCompleted || configuredStatus === "passed")) return false;\n\t\t}\n\t\tif (configured.status !== configuredStatus || assessment.status !== configuredStatus) return false;\n\t\treturn true;\n\t}\n\tif (assessment.label !== "platform policy compliance evidence") return false;\n\tconst policy = record(assessment.platformPolicyCompliance);\n\tif (!policy || !exactKeys(policy, [\n\t\t"label",\n\t\t"status",\n\t\t"evidenceSha256",\n\t\t"identityVerified"\n\t]) || policy.label !== "platform policy compliance evidence" || !validStatus(policy.status) || !hash(policy.evidenceSha256) || typeof policy.identityVerified !== "boolean" || policy.status === "passed" && policy.identityVerified !== true || assessment.status !== policy.status) return false;\n\treturn true;\n};\nconst releaseArtifactName = (provider, version, runId) => `harness-release-${provider}-${version}-${runId}-1`;\nconst isVerifiedHarnessRelease = (status, result) => {\n\tif (status !== "green" || result?.status !== "green" || result.unchangedSource !== "passed") return false;\n\tconst requiredChecks = [\n\t\t"boot",\n\t\t"text",\n\t\t"readEdit",\n\t\t"bash",\n\t\t"grep",\n\t\t"resume",\n\t\t"mcp",\n\t\t"interrupt",\n\t\t"publicHarness"\n\t];\n\tconst requiredMetrics = [\n\t\t"moduleBytes",\n\t\t"bootTimeMs",\n\t\t"peakHeapBytes"\n\t];\n\tfor (const environment of ["local-workerd", "deployed"]) {\n\t\tconst assessment = result.environments?.[environment];\n\t\tif (!assessment?.checks || assessment.checks.length !== requiredChecks.length || requiredChecks.some((name) => assessment.checks?.filter((check) => check.name === name).length !== 1) || assessment.checks.some((check) => check.status !== "passed")) return false;\n\t\tconst resourceCriteria = assessment.resourceCriteria;\n\t\tif (resourceCriteria !== undefined) {\n\t\t\tif (typeof result.fixture?.id !== "string" || typeof result.fixture.sha256 !== "string" || typeof result.artifact?.sha256 !== "string" || typeof result.identity?.sha256 !== "string" || !resourceCriteriaValidator(resourceCriteria, {\n\t\t\t\tenvironment,\n\t\t\t\tfixtureId: result.fixture.id,\n\t\t\t\tfixtureSha256: result.fixture.sha256,\n\t\t\t\tartifactSha256: result.artifact.sha256,\n\t\t\t\treleaseIdentitySha256: result.identity.sha256\n\t\t\t}) || resourceCriteria.status !== "passed") return false;\n\t\t\tconst moduleBytes = assessment.metrics?.moduleBytes;\n\t\t\tif (moduleBytes?.state !== "measured" || !Number.isFinite(moduleBytes.value) || moduleBytes.value < 0) return false;\n\t\t\tif (assessment.metrics?.bootTimeMs?.state !== "unmeasured" || assessment.metrics?.peakHeapBytes?.state !== "unmeasured") return false;\n\t\t} else {\n\t\t\tfor (const name of requiredMetrics) {\n\t\t\t\tconst metric = assessment.metrics?.[name];\n\t\t\t\tif (metric?.state !== "measured" || !Number.isFinite(metric.value) || metric.value < 0) return false;\n\t\t\t}\n\t\t}\n\t}\n\treturn true;\n};\nconst canPromoteHarnessRelease = (input) => {\n\tif (input.selection !== "current" || !input.runtimeArtifactVerified || input.expectedRevision === null || input.currentRevision !== input.expectedRevision) return false;\n\treturn isVerifiedHarnessRelease(input.status, input.result);\n};\nconst ledgerProviderFor = (provider) => provider === "claude-agent-sdk" ? "agent-sdk" : provider;\nconst nextHarnessReleaseBatch = (releases, verifiedCurrentProviders = [], terminalBackfillIds = []) => {\n\tconst ordered = orderReleaseCandidates(releases);\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst requiredCurrentProviders = [\n\t\t"claude-code",\n\t\t"claude-agent-sdk",\n\t\t"codex"\n\t];\n\tconst readyForBackfill = requiredCurrentProviders.every((provider) => current.some((release) => release.provider === provider) && verifiedCurrentProviders.includes(provider));\n\tif (!readyForBackfill) return current;\n\tconst terminal = new Set(terminalBackfillIds);\n\tconst backfill = ordered.filter((release) => release.selection === "backfill" && !terminal.has(release.id));\n\treturn [\n\t\t...current,\n\t\t...backfill.filter((release) => release.provider === "claude-code").slice(0, 1),\n\t\t...backfill.filter((release) => release.provider === "codex").slice(0, 1)\n\t];\n};\nconst orderReleaseCandidates = (releases) => {\n\tconst priority = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 1,\n\t\tcodex: 2\n\t};\n\tconst current = releases.filter((release) => release.selection === "current").sort((left, right) => priority[left.provider] - priority[right.provider]);\n\tconst seenCurrent = new Set();\n\tconst uniqueCurrent = current.filter((release) => {\n\t\tif (seenCurrent.has(release.provider)) return false;\n\t\tseenCurrent.add(release.provider);\n\t\treturn true;\n\t});\n\tconst limits = HARNESS_RELEASE_BACKFILL_LIMITS;\n\tconst counts = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 0,\n\t\tcodex: 0\n\t};\n\tconst seenIds = new Set(uniqueCurrent.map((release) => release.id));\n\tconst backfill = releases.filter((release) => release.selection === "backfill").sort((left, right) => priority[left.provider] - priority[right.provider]).filter((release) => {\n\t\tif (seenIds.has(release.id) || counts[release.provider] >= limits[release.provider]) return false;\n\t\tseenIds.add(release.id);\n\t\tcounts[release.provider] += 1;\n\t\treturn true;\n\t});\n\treturn [...uniqueCurrent, ...backfill];\n};\nconst releaseReceiptKey = (provider, version, headSha) => `${releaseRunKey(provider, version)}:${headSha}`;\nconst releaseReceiptDisposition = (receipt, runKey, headSha) => {\n\tif (receipt?.runKey !== runKey || receipt.headSha !== headSha) return "dispatch";\n\tif (shouldReuseReleaseReceipt(receipt, runKey, headSha)) return "reuse";\n\treturn typeof receipt.workflowRunId === "string" && receipt.workflowRunId !== "" ? "read" : "dispatch";\n};\nconst releaseRunKey = (provider, version) => `harness-release:${provider}:${version}`;\nconst shouldReuseReleaseReceipt = (receipt, runKey, headSha) => receipt?.runKey === runKey && receipt.headSha === headSha && receipt.workflowStatus === "completed" && (receipt.status === "green" && receipt.ledgerStatus === "recorded" && receipt.proofArtifactVerified === true && receipt.runtimeArtifactVerified === true || (receipt.status === "red" || receipt.status === "pending") && receipt.proofArtifactVerified === true);\nconst summarizeHarnessBackfill = (releases, receipts, headSha) => {\n\tconst backfill = orderReleaseCandidates(releases).filter((release) => release.selection === "backfill");\n\tlet green = 0;\n\tlet red = 0;\n\tlet pending = 0;\n\tlet terminal = 0;\n\tfor (const release of backfill) {\n\t\tconst receipt = receipts.find((candidate) => candidate.discoveryId === release.id && candidate.runKey === releaseRunKey(release.provider, release.version) && candidate.headSha === headSha && candidate.workflowStatus === "completed" && candidate.proofArtifactVerified === true);\n\t\tif (receipt === undefined) continue;\n\t\tterminal += 1;\n\t\tif (receipt?.proofStatus === "green") green += 1;\n\t\telse if (receipt?.proofStatus === "red") red += 1;\n\t\telse pending += 1;\n\t}\n\treturn {\n\t\ttotal: backfill.length,\n\t\tterminal,\n\t\tgreen,\n\t\tred,\n\t\tpending,\n\t\tacceptance: backfill.length === 0 ? "pending" : terminal < backfill.length ? "in-progress" : green / backfill.length >= .9 ? "met" : "missed"\n\t};\n};\nconst NPM_PACKAGES = [{\n\t"packageName": "@anthropic-ai/claude-code",\n\t"provider": "claude-code",\n\t"backfillLimit": 50\n}, {\n\t"packageName": "@anthropic-ai/claude-agent-sdk",\n\t"provider": "claude-agent-sdk",\n\t"backfillLimit": 0\n}];\nconst CODEX_RELEASE_LIMIT = 11;\nconst CODEX_MAX_PAGES = 10;\nconst RELEASE_VERSION = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/u;\nfunction isRecord(value) {\n\treturn value !== null && typeof value === "object" && !Array.isArray(value);\n}\nfunction responseJson(value) {\n\tif (!isRecord(value)) return value;\n\tif ("body" in value) return value.body;\n\treturn value;\n}\nfunction compareText(left, right) {\n\treturn left < right ? -1 : left > right ? 1 : 0;\n}\nfunction compareVersions(left, right) {\n\tconst a = left.split(".");\n\tconst b = right.split(".");\n\tfor (let index = 0; index < 3; index += 1) {\n\t\tconst leftPart = a[index] ?? "";\n\t\tconst rightPart = b[index] ?? "";\n\t\tif (leftPart === rightPart) continue;\n\t\treturn leftPart.length === rightPart.length ? compareText(leftPart, rightPart) : leftPart.length - rightPart.length;\n\t}\n\treturn 0;\n}\nfunction compareCandidates(left, right) {\n\treturn compareVersions(right.version, left.version) || compareText(left.upstreamIdentity, right.upstreamIdentity);\n}\nfunction stableVersion(value) {\n\treturn typeof value === "string" && RELEASE_VERSION.test(value);\n}\nfunction makeCandidate(provider, version, upstreamIdentity, selection, provenance) {\n\treturn {\n\t\tid: `${provider}:${version}:${upstreamIdentity}`,\n\t\tprovider,\n\t\tversion,\n\t\tupstreamIdentity,\n\t\tselection,\n\t\tprovenance\n\t};\n}\nfunction parseNpm(packageInfo, source) {\n\tif (!isRecord(packageInfo) || packageInfo.name !== source.packageName || !isRecord(packageInfo.versions) || !isRecord(packageInfo["dist-tags"])) return [];\n\tconst stable = Object.entries(packageInfo.versions).flatMap(([version, metadata]) => {\n\t\tif (!stableVersion(version) || !isRecord(metadata) || metadata.name !== source.packageName || metadata.version !== version) return [];\n\t\tconst dist = isRecord(metadata.dist) ? metadata.dist : {};\n\t\tconst integrity = typeof dist.integrity === "string" && dist.integrity.trim() ? dist.integrity : undefined;\n\t\treturn [{\n\t\t\tversion,\n\t\t\tcandidate: makeCandidate(source.provider, version, `npm:${source.packageName}`, "backfill", {\n\t\t\t\tkind: "npm",\n\t\t\t\tpackageName: source.packageName,\n\t\t\t\t...integrity ? { integrity } : {}\n\t\t\t})\n\t\t}];\n\t}).sort((left, right) => compareCandidates(left.candidate, right.candidate));\n\tconst currentVersion = packageInfo["dist-tags"].latest;\n\tconst current = typeof currentVersion === "string" ? stable.find((release) => release.version === currentVersion) : undefined;\n\treturn [...current ? [{\n\t\t...current.candidate,\n\t\tselection: "current"\n\t}] : [], ...stable.filter((release) => release.version !== current?.version).slice(0, source.backfillLimit).map((release) => release.candidate)];\n}\nfunction parseCodexPage(value) {\n\tif (!Array.isArray(value)) return [];\n\treturn value.flatMap((release) => {\n\t\tif (!isRecord(release) || release.draft !== false || release.prerelease !== false || typeof release.tag_name !== "string") return [];\n\t\tconst tagName = release.tag_name;\n\t\tconst version = /^rust-v(.+)$/u.exec(tagName)?.[1];\n\t\tif (!stableVersion(version)) return [];\n\t\tconst nestedCommit = isRecord(release.commit) && typeof release.commit.sha === "string" ? release.commit.sha : undefined;\n\t\tconst commitSha = typeof release.commit_sha === "string" ? release.commit_sha : nestedCommit;\n\t\tconst targetCommitish = typeof release.target_commitish === "string" ? release.target_commitish : undefined;\n\t\treturn [makeCandidate("codex", version, `github:openai/codex:${tagName}`, "backfill", {\n\t\t\tkind: "github",\n\t\t\trepository: "openai/codex",\n\t\t\ttagName,\n\t\t\t...targetCommitish ? { targetCommitish } : {},\n\t\t\t...commitSha && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(commitSha) ? { commitSha } : {}\n\t\t})];\n\t}).sort(compareCandidates);\n}\nfunction selectCodex(releases) {\n\tconst seenIds = new Set();\n\tconst seenVersions = new Set();\n\treturn releases.filter((release) => !seenIds.has(release.id) && !!seenIds.add(release.id)).sort(compareCandidates).filter((release) => !seenVersions.has(release.version) && !!seenVersions.add(release.version)).slice(0, CODEX_RELEASE_LIMIT).map((release, index) => ({\n\t\t...release,\n\t\tselection: index === 0 ? "current" : "backfill"\n\t}));\n}\nfunction nextLink(header) {\n\treturn /<([^>]+)>\\s*;\\s*rel="?next"?/u.exec(header ?? "")?.[1] ?? null;\n}\nfunction codexNextUrl(_current, candidate) {\n\tconst endpoint = "https://api.github.com/repos/openai/codex/releases";\n\tif (candidate !== endpoint && !candidate.startsWith(`${endpoint}?`)) throw new Error("Codex release discovery returned an unexpected pagination URL");\n\treturn candidate;\n}\nasync function discoverCodex(w) {\n\tconst releases = [];\n\tconst seen = new Set();\n\tconst visited = new Set();\n\tlet next = "https://api.github.com/repos/openai/codex/releases?per_page=100&page=1";\n\tfor (let page = 1; page <= CODEX_MAX_PAGES; page += 1) {\n\t\tw.$arm("s4", 0);\n\t\tif (visited.has(next)) throw new Error("Codex release discovery pagination loop");\n\t\tvisited.add(next);\n\t\tconst response = await w.http("s5", "Read Codex release page", next);\n\t\tif (isRecord(response) && response.ok === false) throw new Error(`Codex release discovery failed with HTTP ${String(response.status)}`);\n\t\tconst body = responseJson(response);\n\t\tif (!Array.isArray(body)) throw new Error("Codex release discovery returned invalid data");\n\t\tfor (const release of parseCodexPage(body)) {\n\t\t\tif (!seen.has(release.id)) {\n\t\t\t\tseen.add(release.id);\n\t\t\t\treleases.push(release);\n\t\t\t}\n\t\t}\n\t\tconst headers = isRecord(response) && isRecord(response.headers) ? response.headers : {};\n\t\tconst linkHeader = Object.entries(headers).find(([name]) => name.toLowerCase() === "link")?.[1];\n\t\tconst link = nextLink(typeof linkHeader === "string" ? linkHeader : null);\n\t\tif (!link || selectCodex(releases).length >= CODEX_RELEASE_LIMIT) {\n\t\t\tw.$arm("s6", 0);\n\t\t\treturn selectCodex(releases);\n\t\t} else {\n\t\t\tw.$arm("s6", 1);\n\t\t}\n\t\tif (page === CODEX_MAX_PAGES) throw new Error(`Codex release discovery exceeded ${CODEX_MAX_PAGES} pages`);\n\t\tnext = codexNextUrl(next, link);\n\t}\n\treturn selectCodex(releases);\n}\nfunction workflowRun(value) {\n\tif (!isRecord(value) || typeof value.runId !== "string" || typeof value.url !== "string" || typeof value.workflowFile !== "string" || typeof value.headSha !== "string" || typeof value.displayTitle !== "string" || typeof value.status !== "string" || value.conclusion !== null && typeof value.conclusion !== "string") return null;\n\treturn {\n\t\trunId: value.runId,\n\t\turl: value.url,\n\t\tworkflowFile: value.workflowFile,\n\t\theadSha: value.headSha,\n\t\tdisplayTitle: value.displayTitle,\n\t\tstatus: value.status,\n\t\tconclusion: value.conclusion\n\t};\n}\nfunction verifiedWorkflowArtifact(value, candidate, headSha, runKey, expectedRun) {\n\tif (expectedRun === null || !isRecord(value) || !isRecord(value.run) || !isRecord(value.artifact) || typeof value.text !== "string") return null;\n\tconst run = workflowRun(value.run);\n\tconst artifact = value.artifact;\n\tif (run === null || run.runId !== expectedRun.runId || run.workflowFile !== HARNESS_RELEASE_WORKFLOW_FILE || run.headSha !== headSha || run.displayTitle !== runKey || run.status !== "completed" || artifact.name !== releaseArtifactName(candidate.provider, candidate.version, run.runId) || artifact.entryPath !== HARNESS_RELEASE_RESULT_PATH || typeof artifact.id !== "string" || typeof artifact.digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(artifact.digest) || typeof artifact.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(artifact.sha256) || typeof artifact.bytes !== "number" || !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) return null;\n\ttry {\n\t\tconst decoded = JSON.parse(value.text);\n\t\tif (!isRecord(decoded) || decoded.schemaVersion !== 1 || decoded.provider !== candidate.provider || decoded.version !== candidate.version || decoded.runKey !== runKey || decoded.selection !== candidate.selection || !isRecord(decoded.source) || decoded.source.commit !== headSha || decoded.status !== "green" && decoded.status !== "red" && decoded.status !== "pending") return null;\n\t\tif (decoded.status === "green" && run.conclusion !== "success") return null;\n\t\treturn {\n\t\t\trun,\n\t\t\tartifact: {\n\t\t\t\tid: artifact.id,\n\t\t\t\tname: artifact.name,\n\t\t\t\tdigest: artifact.digest,\n\t\t\t\tentryPath: artifact.entryPath,\n\t\t\t\tsha256: artifact.sha256,\n\t\t\t\tbytes: artifact.bytes\n\t\t\t},\n\t\t\tresult: decoded\n\t\t};\n\t} catch {\n\t\treturn null;\n\t}\n}\nasync function updateReleaseThread(w, threadId, previous, fingerprint, message) {\n\tif (previous?.threadUpdate === fingerprint) {\n\t\tw.$arm("s38", 0);\n\t\treturn fingerprint;\n\t} else {\n\t\tw.$arm("s38", 1);\n\t}\n\ttry {\n\t\tw.$arm("s40", 0);\n\t\tawait w.call("s41", "Update the release proof thread", "signalbox.t3_thread_send", {\n\t\t\tthreadId,\n\t\t\tmessage\n\t\t});\n\t\treturn fingerprint;\n\t} catch {\n\t\tw.$arm("s40", 1);\n\t\treturn previous?.threadUpdate ?? null;\n\t}\n}\nasync function rememberPending(w, receiptKey, fields) {\n\tawait w.remember("s31", "Keep the release receipt pending", receiptKey, {\n\t\t...fields,\n\t\tstatus: "pending"\n\t});\n}\nasync function handoffRedProof(w, receiptKey, receipt, candidate, runKey, headSha) {\n\tif (receipt.handoffStatus === "created") {\n\t\tw.$arm("s18", 0);\n\t\treturn receipt;\n\t} else {\n\t\tw.$arm("s18", 1);\n\t}\n\tconst result = isRecord(receipt.result) ? receipt.result : {};\n\tconst artifact = isRecord(receipt.workflowArtifact) ? receipt.workflowArtifact : null;\n\tconst stages = Array.isArray(result.stages) ? result.stages.filter((stage) => isRecord(stage) && stage.status === "rejected").map((stage) => isRecord(stage) && typeof stage.name === "string" ? stage.name : null).filter(Boolean).join(", ") : "";\n\tlet next;\n\ttry {\n\t\tw.$arm("s20", 0);\n\t\tif (artifact === null || typeof artifact.id !== "string" || typeof artifact.sha256 !== "string" || typeof receipt.workflowUrl !== "string") throw new Error("The verified red proof receipt has no handoff details.");\n\t\tconst issue = await w.call("s21", "Hand the failed proof to GitHub", "signalbox.github_issue", {\n\t\t\taction: "create",\n\t\t\tcorrelationId: `${runKey}:${headSha}:red`,\n\t\t\ttitle: `Harness proof failed: ${candidate.provider} ${candidate.version}`,\n\t\t\tbody: [\n\t\t\t\t`The exact ${candidate.provider} ${candidate.version} proof returned red.`,\n\t\t\t\t`Run key: ${runKey}`,\n\t\t\t\t`Source head: ${headSha}`,\n\t\t\t\t`Workflow: ${receipt.workflowUrl}`,\n\t\t\t\t`Failed stages: ${stages || "not listed"}`,\n\t\t\t\t`Workflow artifact: ${artifact.id} (${artifact.sha256})`,\n\t\t\t\t"The previous green release remains selected."\n\t\t\t].join("\\n\\n")\n\t\t});\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "created",\n\t\t\thandoff: issue\n\t\t};\n\t} catch {\n\t\tw.$arm("s20", 1);\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "unavailable"\n\t\t};\n\t}\n\tawait w.remember("s22", "Store the red proof handoff", receiptKey, next);\n\treturn next;\n}\nfunction proofStatusOf(value) {\n\treturn value === "green" || value === "red" || value === "pending" ? value : null;\n}\nasync function runRelease(w, candidate, headSha, triggerAt) {\n\tconst runKey = releaseRunKey(candidate.provider, candidate.version);\n\tconst receiptKey = releaseReceiptKey(candidate.provider, candidate.version, headSha);\n\tconst recalled = await w.recall("s13", "Read the release receipt", receiptKey);\n\tconst previous = isRecord(recalled) && recalled.runKey === runKey && recalled.headSha === headSha ? recalled : null;\n\tconst releaseThreadValue = await w.recall("s14", "Read the release tracking thread", runKey);\n\tconst releaseThread = isRecord(releaseThreadValue) && releaseThreadValue.runKey === runKey ? releaseThreadValue : null;\n\tconst disposition = releaseReceiptDisposition(previous, runKey, headSha);\n\tif (disposition === "reuse") {\n\t\tw.$arm("s15", 0);\n\t\tconst reusable = candidate.selection === "current" && previous?.status === "red" && previous !== null ? (w.$arm("s16", 0), await handoffRedProof(w.$frame("s17"), receiptKey, previous, candidate, runKey, headSha)) : (w.$arm("s16", 1), previous);\n\t\tconst result = reusable !== null && isRecord(reusable.result) ? reusable.result : null;\n\t\treturn {\n\t\t\tstatus: reusable?.status,\n\t\t\treused: true,\n\t\t\tverified: reusable?.status === "green" && reusable?.ledgerStatus === "recorded" && reusable?.runtimeArtifactVerified === true && result !== null && isVerifiedHarnessRelease("green", result)\n\t\t};\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tlet childThreadId = releaseThread !== null && typeof releaseThread.childThreadId === "string" ? releaseThread.childThreadId : previous !== null && typeof previous.childThreadId === "string" ? previous.childThreadId : null;\n\tif (childThreadId === null) {\n\t\tw.$arm("s24", 0);\n\t\ttry {\n\t\t\tw.$arm("s25", 0);\n\t\t\tconst child = await w.agent("s26", "Create a release proof thread", { prompt: [\n\t\t\t\t"This thread tracks one exact harness release attempt.",\n\t\t\t\t`Provider: ${candidate.provider}.`,\n\t\t\t\t`Version: ${candidate.version}.`,\n\t\t\t\t`Source head: ${headSha}.`,\n\t\t\t\t`Run key: ${runKey}.`,\n\t\t\t\t"The Signalbox automation owns GitHub dispatch, run readback and immutable artifact verification. Do not run external commands or claim a proof result. The automation will send the verified outcome to this thread."\n\t\t\t].join("\\n\\n") });\n\t\t\tchildThreadId = isRecord(child) && typeof child.threadId === "string" ? child.threadId : null;\n\t\t\tif (childThreadId !== null) {\n\t\t\t\tw.$arm("s27", 0);\n\t\t\t\tawait w.remember("s28", "Keep the release tracking thread", runKey, {\n\t\t\t\t\trunKey,\n\t\t\t\t\tprovider: candidate.provider,\n\t\t\t\t\tversion: candidate.version,\n\t\t\t\t\tchildThreadId\n\t\t\t\t});\n\t\t\t} else {\n\t\t\t\tw.$arm("s27", 1);\n\t\t\t}\n\t\t} catch {\n\t\t\tw.$arm("s25", 1);\n\t\t\tchildThreadId = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s24", 1);\n\t}\n\tif (childThreadId === null) {\n\t\tw.$arm("s29", 0);\n\t\tawait rememberPending(w.$frame("s30"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\treason: "The release proof thread could not be created."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s29", 1);\n\t}\n\tlet expectedRevision = previous !== null && typeof previous.expectedRevision === "number" ? previous.expectedRevision : null;\n\tif (expectedRevision === null) {\n\t\tw.$arm("s33", 0);\n\t\ttry {\n\t\t\tw.$arm("s34", 0);\n\t\t\tconst selection = await w.call("s35", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\texpectedRevision = isRecord(selection) && Number.isSafeInteger(selection.revision) ? selection.revision : null;\n\t\t} catch {\n\t\t\tw.$arm("s34", 1);\n\t\t\texpectedRevision = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s33", 1);\n\t}\n\tif (expectedRevision === null) {\n\t\tw.$arm("s36", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s37"), childThreadId, previous, `ledger-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending because its project ledger is unavailable. Run key: ${runKey}. Source head: ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s44"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tchildThreadId,\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\texpectedRevision: null,\n\t\t\tthreadUpdate,\n\t\t\treason: "The project ledger could not capture a selection revision before proof started."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s36", 1);\n\t}\n\tconst workflowFile = HARNESS_RELEASE_WORKFLOW_FILE;\n\tlet run = null;\n\ttry {\n\t\tw.$arm("s46", 0);\n\t\tconst response = disposition === "read" && previous !== null ? (w.$arm("s47", 0), await w.call("s48", "Read the existing exact release run", "signalbox.github_workflow", {\n\t\t\taction: "read",\n\t\t\tworkflowFile,\n\t\t\trunId: previous.workflowRunId,\n\t\t\theadSha\n\t\t})) : (w.$arm("s47", 1), await w.call("s49", "Dispatch the exact release proof", "signalbox.github_workflow", {\n\t\t\taction: "dispatch",\n\t\t\tworkflowFile,\n\t\t\tref: "main",\n\t\t\theadSha,\n\t\t\tcorrelationId: runKey,\n\t\t\tinputs: {\n\t\t\t\tprovider: candidate.provider,\n\t\t\t\tversion: candidate.version,\n\t\t\t\trunKey,\n\t\t\t\tselection: candidate.selection\n\t\t\t}\n\t\t}));\n\t\trun = workflowRun(response);\n\t} catch {\n\t\tw.$arm("s46", 1);\n\t\trun = null;\n\t}\n\tif (run === null || run.workflowFile !== workflowFile || run.headSha !== headSha || run.displayTitle !== runKey) {\n\t\tw.$arm("s50", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s51"), childThreadId, previous, `workflow-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending. The automation could not confirm a workflow run for ${runKey} at ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s52"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\texpectedRevision,\n\t\t\tchildThreadId,\n\t\t\t...run === null ? {} : {\n\t\t\t\tworkflowRunId: run.runId,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t},\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: run?.status ?? "unknown",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason: "The workflow run did not match the exact release attempt."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s50", 1);\n\t}\n\tconst baseReceipt = {\n\t\t...previous,\n\t\tdiscoveryId: candidate.id,\n\t\tprovider: candidate.provider,\n\t\tversion: candidate.version,\n\t\tselection: candidate.selection,\n\t\trunKey,\n\t\theadSha,\n\t\texpectedRevision,\n\t\tchildThreadId,\n\t\tworkflowRunId: run.runId,\n\t\tworkflowUrl: run.url,\n\t\tworkflowStatus: run.status\n\t};\n\tif (run.status !== "completed") {\n\t\tw.$arm("s54", 0);\n\t\tawait rememberPending(w.$frame("s55"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: run.status\n\t\t};\n\t} else {\n\t\tw.$arm("s54", 1);\n\t}\n\tlet evidence = null;\n\ttry {\n\t\tw.$arm("s57", 0);\n\t\tevidence = await w.call("s58", "Read the completed release proof artifact", "signalbox.github_workflow", {\n\t\t\taction: "artifact",\n\t\t\tworkflowFile,\n\t\t\trunId: run.runId,\n\t\t\theadSha,\n\t\t\tartifactName: releaseArtifactName(candidate.provider, candidate.version, run.runId),\n\t\t\tentryPath: HARNESS_RELEASE_RESULT_PATH\n\t\t});\n\t} catch {\n\t\tw.$arm("s57", 1);\n\t\tevidence = null;\n\t}\n\tconst verified = verifiedWorkflowArtifact(evidence, candidate, headSha, runKey, run);\n\tif (verified === null) {\n\t\tw.$arm("s59", 0);\n\t\tconst reason = "The completed workflow\'s immutable result artifact is unavailable or mismatched.";\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s60"), childThreadId, previous, `completed-artifact-pending:${headSha}`, `The ${candidate.provider} ${candidate.version} workflow completed, but its exact result artifact could not be verified. Status remains pending. Run: ${run.url}`);\n\t\tawait rememberPending(w.$frame("s61"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowUrl: run.url,\n\t\t\treason\n\t\t};\n\t} else {\n\t\tw.$arm("s59", 1);\n\t}\n\tlet recorded = null;\n\ttry {\n\t\tw.$arm("s63", 0);\n\t\trecorded = await w.call("s64", "Verify the immutable release result in the project ledger", "signalbox.harness_release_ledger", {\n\t\t\taction: "record",\n\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowFile,\n\t\t\tworkflowRunId: run.runId,\n\t\t\tartifactName: verified.artifact.name,\n\t\t\tentryPath: verified.artifact.entryPath\n\t\t});\n\t} catch {\n\t\tw.$arm("s63", 1);\n\t\trecorded = null;\n\t}\n\tconst ledgerRecorded = isRecord(recorded) && recorded.status === "recorded";\n\tconst runtimeArtifactVerified = isRecord(recorded) && recorded.runtimeArtifactVerified === true;\n\tconst result = isRecord(recorded) && isRecord(recorded.result) ? recorded.result : verified.result;\n\tconst proofStatus = isRecord(recorded) && proofStatusOf(recorded.proofStatus) !== null ? proofStatusOf(recorded.proofStatus) : proofStatusOf(verified.result.status) ?? "pending";\n\tconst proofArtifactVerified = true;\n\tconst status = proofStatus === "red" && proofArtifactVerified ? "red" : proofStatus === "green" && ledgerRecorded && runtimeArtifactVerified && isVerifiedHarnessRelease("green", result) ? "green" : "pending";\n\tconst reason = isRecord(recorded) && typeof recorded.reason === "string" ? recorded.reason : status === "pending" ? "The immutable proof is verified, but its deployable runtime payload is not available yet." : undefined;\n\tlet stored = {\n\t\t...baseReceipt,\n\t\tstatus,\n\t\tproofStatus,\n\t\tledgerStatus: ledgerRecorded ? "recorded" : "unverified",\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tresult,\n\t\tworkflowArtifact: verified.artifact,\n\t\tthreadUpdate: previous?.threadUpdate ?? null,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n\tif (status === "green" && candidate.selection === "current" && expectedRevision !== null) {\n\t\tw.$arm("s65", 0);\n\t\ttry {\n\t\t\tw.$arm("s66", 0);\n\t\t\tconst latest = await w.call("s67", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\tconst currentRevision = isRecord(latest) && Number.isSafeInteger(latest.revision) ? latest.revision : null;\n\t\t\tif (!canPromoteHarnessRelease({\n\t\t\t\tselection: candidate.selection,\n\t\t\t\tstatus,\n\t\t\t\truntimeArtifactVerified,\n\t\t\t\texpectedRevision,\n\t\t\t\tcurrentRevision,\n\t\t\t\tresult\n\t\t\t})) {\n\t\t\t\tw.$arm("s68", 0);\n\t\t\t\tawait rememberPending(w.$frame("s69"), receiptKey, {\n\t\t\t\t\t...stored,\n\t\t\t\t\tpromotionStatus: "stale",\n\t\t\t\t\treason: "The captured selection revision changed while this proof ran."\n\t\t\t\t});\n\t\t\t\treturn {\n\t\t\t\t\tstatus: "pending",\n\t\t\t\t\trunKey,\n\t\t\t\t\theadSha,\n\t\t\t\t\tworkflowUrl: run.url,\n\t\t\t\t\tpromotion: "stale"\n\t\t\t\t};\n\t\t\t} else {\n\t\t\t\tw.$arm("s68", 1);\n\t\t\t}\n\t\t\tawait w.call("s71", "Select the proven current release", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "promote",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\t\treleaseId: result.candidateId,\n\t\t\t\texpectedRevision,\n\t\t\t\tchangedAt: triggerAt\n\t\t\t});\n\t\t} catch {\n\t\t\tw.$arm("s66", 1);\n\t\t\tawait rememberPending(w.$frame("s72"), receiptKey, {\n\t\t\t\t...stored,\n\t\t\t\tpromotionStatus: "not-selected"\n\t\t\t});\n\t\t\treturn {\n\t\t\t\tstatus: "pending",\n\t\t\t\trunKey,\n\t\t\t\theadSha,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t};\n\t\t}\n\t} else {\n\t\tw.$arm("s65", 1);\n\t}\n\tif (status === "red" && candidate.selection === "current") {\n\t\tw.$arm("s74", 0);\n\t\tstored = await handoffRedProof(w.$frame("s75"), receiptKey, stored, candidate, runKey, headSha);\n\t} else {\n\t\tw.$arm("s74", 1);\n\t}\n\tconst threadMessage = status === "red" ? `The exact ${candidate.provider} ${candidate.version} proof is red. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. The previous green release remains selected.` : status === "green" ? `The exact ${candidate.provider} ${candidate.version} proof is green and selected. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}.` : `The exact ${candidate.provider} ${candidate.version} proof is pending. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. ${reason ?? "The previous green release remains selected."}`;\n\tconst threadUpdate = await updateReleaseThread(w.$frame("s76"), childThreadId, previous, `${headSha}:${run.status}:${status}:${proofStatus}:${runtimeArtifactVerified}`, threadMessage);\n\tconst finalReceipt = {\n\t\t...stored,\n\t\tthreadUpdate\n\t};\n\tawait w.remember("s77", "Store the release proof status", receiptKey, finalReceipt);\n\treturn {\n\t\tstatus,\n\t\tverified: status === "green" && runtimeArtifactVerified,\n\t\tproofStatus,\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tworkflowStatus: run.status,\n\t\tdiscoveryId: candidate.id,\n\t\trunKey,\n\t\theadSha,\n\t\tworkflowUrl: run.url,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n}\nexport default workflow(async (w, _input, trigger) => {\n\tconst candidates = [];\n\tfor (const source of NPM_PACKAGES) {\n\t\tw.$arm("s1", 0);\n\t\tconst packagePath = source.packageName.replace("/", "%2f");\n\t\tconst metadata = responseJson(await w.http("s2", "Read npm release metadata", `https://registry.npmjs.org/${packagePath}`));\n\t\tcandidates.push(...parseNpm(metadata, source));\n\t}\n\tcandidates.push(...await discoverCodex(w.$frame("s3")));\n\tconst ordered = orderReleaseCandidates(candidates);\n\tconst head = responseJson(await w.http("s8", "Read the Signalbox source head", "https://api.github.com/repos/JustYannicc/signalbox/commits/main"));\n\tif (!isRecord(head) || typeof head.sha !== "string") {\n\t\tw.$arm("s9", 0);\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\treason: "The current source head could not be read."\n\t\t};\n\t} else {\n\t\tw.$arm("s9", 1);\n\t}\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst backfill = ordered.filter((release) => release.selection === "backfill");\n\tconst results = [];\n\tconst verifiedCurrentProviders = [];\n\tconst currentBatch = nextHarnessReleaseBatch(candidates).filter((release) => release.selection === "current");\n\tfor (const candidate of currentBatch) {\n\t\tw.$arm("s11", 0);\n\t\tconst result = await runRelease(w.$frame("s12"), candidate, head.sha, trigger.at);\n\t\tresults.push({\n\t\t\tdiscoveryId: candidate.id,\n\t\t\t...result\n\t\t});\n\t\tif (result.verified === true) verifiedCurrentProviders.push(candidate.provider);\n\t}\n\tconst allCurrentGreen = current.length === 3 && current.every((release) => verifiedCurrentProviders.includes(release.provider));\n\tlet backfillSummary = {\n\t\ttotal: backfill.length,\n\t\tterminal: 0,\n\t\tgreen: 0,\n\t\tred: 0,\n\t\tpending: backfill.length,\n\t\tacceptance: "blocked-on-current"\n\t};\n\tif (allCurrentGreen) {\n\t\tw.$arm("s78", 0);\n\t\tconst backfillReceipts = [];\n\t\tfor (const candidate of backfill) {\n\t\t\tw.$arm("s79", 0);\n\t\t\tconst receipt = await w.recall("s80", "Read a historical release receipt", releaseReceiptKey(candidate.provider, candidate.version, head.sha));\n\t\t\tif (isRecord(receipt)) backfillReceipts.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...receipt\n\t\t\t});\n\t\t}\n\t\tconst terminalBackfillIds = backfillReceipts.filter((receipt) => receipt.workflowStatus === "completed" && receipt.proofArtifactVerified === true).map((receipt) => receipt.discoveryId).filter((id) => typeof id === "string");\n\t\tconst backfillBatch = nextHarnessReleaseBatch(candidates, verifiedCurrentProviders, terminalBackfillIds).filter((release) => release.selection === "backfill");\n\t\tfor (const candidate of backfillBatch) {\n\t\t\tw.$arm("s81", 0);\n\t\t\tconst result = await runRelease(w.$frame("s82"), candidate, head.sha, trigger.at);\n\t\t\tresults.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...result\n\t\t\t});\n\t\t\tconst currentReceipts = backfillReceipts.filter((receipt) => receipt.discoveryId !== candidate.id);\n\t\t\tif (result.proofArtifactVerified === true) {\n\t\t\t\tcurrentReceipts.push({\n\t\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t\trunKey: releaseRunKey(candidate.provider, candidate.version),\n\t\t\t\t\theadSha: head.sha,\n\t\t\t\t\tworkflowStatus: result.workflowStatus,\n\t\t\t\t\tproofStatus: result.proofStatus,\n\t\t\t\t\tproofArtifactVerified: true\n\t\t\t\t});\n\t\t\t}\n\t\t\tbackfillReceipts.splice(0, backfillReceipts.length, ...currentReceipts);\n\t\t}\n\t\tbackfillSummary = summarizeHarnessBackfill(candidates, backfillReceipts, head.sha);\n\t} else {\n\t\tw.$arm("s78", 1);\n\t}\n\treturn {\n\t\theadSha: head.sha,\n\t\tcurrent: current.length,\n\t\tbackfillAvailable: backfill.length,\n\t\tbackfillAcceptance: backfillSummary,\n\t\tattempted: results.length,\n\t\tresults\n\t};\n});\n',
+      'export const meta = {\n\tname: "Watch harness releases",\n\tdescription: "Checks current Claude Code, Claude Agent SDK and Codex releases, then works through a bounded historical set. Run builtin:harness-release-watch once with the Signalbox project\'s ID to install its hourly trigger in that project.",\n\tintent: "keep the selected agent harness release backed by exact current-release proof",\n\ttriggers: [{\n\t\tcron: "0 * * * *",\n\t\ttimezone: "Europe/Zurich"\n\t}],\n\toverlap: "skip"\n};\nconst HARNESS_RELEASE_WORKFLOW_FILE = ".github/workflows/harness-release-proof.yml";\nconst HARNESS_RELEASE_RESULT_PATH = "result.json";\nconst HARNESS_RELEASE_BACKFILL_LIMITS = {\n\t"claude-code": 50,\n\t"claude-agent-sdk": 0,\n\t"codex": 10\n};\nconst resourceCriteriaValidator = (value, expected) => {\n\tconst record = (candidate) => candidate !== null && typeof candidate === "object" && !Array.isArray(candidate) ? candidate : undefined;\n\tconst exactKeys = (candidate, names) => Object.keys(candidate).length === names.length && names.every((name) => name in candidate);\n\tconst text = (candidate) => typeof candidate === "string" && candidate.length > 0;\n\tconst hash = (candidate) => typeof candidate === "string" && /^[a-f0-9]{64}$/u.test(candidate);\n\tconst validStatus = (candidate) => candidate === "not-applicable" || candidate === "pending" || candidate === "passed" || candidate === "rejected";\n\tconst assessment = record(value);\n\tif (!assessment) return false;\n\tconst environment = assessment.environment;\n\tif (assessment.tag !== "harness-release-resource-criteria-v2" || assessment.source !== "normal-public-qualifier" || environment !== "local-workerd" && environment !== "deployed" || !validStatus(assessment.status) || !text(assessment.detail)) return false;\n\tconst local = environment === "local-workerd";\n\tconst expectedAssessmentKeys = [\n\t\t"tag",\n\t\t"source",\n\t\t"environment",\n\t\t"status",\n\t\t"label",\n\t\t"pins",\n\t\t"startupUpperBound",\n\t\t...local ? "terminationClassification" in assessment ? ["terminationClassification"] : [] : ["platformPolicyCompliance"],\n\t\t"detail"\n\t];\n\tif (!exactKeys(assessment, expectedAssessmentKeys) || assessment.label !== "platform policy compliance evidence") return false;\n\tconst pins = record(assessment.pins);\n\tif (!pins || !exactKeys(pins, [\n\t\t"measurementRunId",\n\t\t"fixtureId",\n\t\t"fixtureSha256",\n\t\t"artifactSha256",\n\t\t"releaseIdentitySha256"\n\t]) || !text(pins.measurementRunId) || !text(pins.fixtureId) || !hash(pins.fixtureSha256) || !hash(pins.artifactSha256) || !hash(pins.releaseIdentitySha256) || expected?.environment !== undefined && expected.environment !== environment || expected?.measurementRunId !== undefined && expected.measurementRunId !== pins.measurementRunId || expected?.fixtureId !== undefined && expected.fixtureId !== pins.fixtureId || expected?.fixtureSha256 !== undefined && expected.fixtureSha256 !== pins.fixtureSha256 || expected?.artifactSha256 !== undefined && expected.artifactSha256 !== pins.artifactSha256 || expected?.releaseIdentitySha256 !== undefined && expected.releaseIdentitySha256 !== pins.releaseIdentitySha256) return false;\n\tconst timing = record(assessment.startupUpperBound);\n\tif (!timing || !exactKeys(timing, [\n\t\t"label",\n\t\t"interpretation",\n\t\t"clock",\n\t\t"startedMonotonicNs",\n\t\t"finishedMonotonicNs",\n\t\t"milliseconds",\n\t\t"includesRpc",\n\t\t"exactBootTime"\n\t]) || timing.label !== "cold first-successful-RPC latency" || timing.interpretation !== "startup upper bound" || timing.clock !== "parent process.hrtime.bigint" || !text(timing.startedMonotonicNs) || !/^\\d+$/u.test(timing.startedMonotonicNs) || !text(timing.finishedMonotonicNs) || !/^\\d+$/u.test(timing.finishedMonotonicNs) || typeof timing.milliseconds !== "number" || !Number.isFinite(timing.milliseconds) || timing.milliseconds < 0 || timing.includesRpc !== true || timing.exactBootTime !== false) return false;\n\ttry {\n\t\tconst elapsed = BigInt(timing.finishedMonotonicNs) - BigInt(timing.startedMonotonicNs);\n\t\tif (elapsed < 0n || timing.milliseconds !== Number(elapsed) / 1e6) return false;\n\t} catch {\n\t\treturn false;\n\t}\n\tif (local) {\n\t\tconst termination = assessment.terminationClassification;\n\t\treturn assessment.status === "not-applicable" && (termination === undefined || termination === "NO_VERIFIED_TERMINATION" || termination === "OTHER_TERMINATION" || termination === "V8_HEAP_OOM_PROCESS_TERMINATED");\n\t}\n\tconst policy = record(assessment.platformPolicyCompliance);\n\tconst context = expected?.deployedContext;\n\tif (!policy || !context || !text(context.deploymentId) || !text(context.loaderId) || !text(context.facetId) || !hash(context.responsePlanSha256) || !Array.isArray(context.expectedResponses) || context.expectedResponses.length === 0 || !context.expectedResponses.every((response) => {\n\t\tconst planned = record(response);\n\t\treturn planned !== undefined && text(planned.id) && text(planned.method);\n\t}) || new Set(context.expectedResponses.map((response) => response.id)).size !== context.expectedResponses.length || !exactKeys(policy, [\n\t\t"label",\n\t\t"status",\n\t\t"identityVerified",\n\t\t"collectorRecord"\n\t]) || policy.label !== "platform policy compliance evidence" || policy.status !== "pending" && policy.status !== "passed" && policy.status !== "rejected" || typeof policy.identityVerified !== "boolean" || assessment.status !== policy.status) return false;\n\tconst collector = record(policy.collectorRecord);\n\tif (!collector || !exactKeys(collector, [\n\t\t"measurementRunId",\n\t\t"deploymentId",\n\t\t"loaderId",\n\t\t"facetId",\n\t\t"selectedReleaseSha256",\n\t\t"responsePlanSha256",\n\t\t"workloadCompleted",\n\t\t"beforeProbe",\n\t\t"responses",\n\t\t"afterProbe"\n\t]) || collector.measurementRunId !== pins.measurementRunId || collector.deploymentId !== context.deploymentId || collector.loaderId !== context.loaderId || collector.facetId !== context.facetId || collector.selectedReleaseSha256 !== pins.artifactSha256 || collector.responsePlanSha256 !== context.responsePlanSha256 || !hash(collector.responsePlanSha256) || typeof collector.workloadCompleted !== "boolean") return false;\n\tconst before = record(collector.beforeProbe);\n\tconst after = record(collector.afterProbe);\n\tconst responses = collector.responses;\n\tif (!before || !exactKeys(before, ["status", "isolateNonce"]) || !after || !exactKeys(after, ["status", "isolateNonce"]) || !Array.isArray(responses)) return false;\n\tconst validProbe = (probe) => exactKeys(probe, ["status", "isolateNonce"]) && typeof probe.status === "number" && Number.isInteger(probe.status) && typeof probe.isolateNonce === "string";\n\tif (!validProbe(before) || !validProbe(after)) return false;\n\tconst nonceSequence = [before.isolateNonce];\n\tlet responsePlanMatches = responses.length === context.expectedResponses.length;\n\tfor (const [index, actual] of responses.entries()) {\n\t\tconst row = record(actual);\n\t\tconst planned = context.expectedResponses[index];\n\t\tif (!row || !exactKeys(row, [\n\t\t\t"id",\n\t\t\t"method",\n\t\t\t"status",\n\t\t\t"isolateNonce"\n\t\t]) || typeof row.id !== "string" || typeof row.method !== "string" || typeof row.status !== "number" || !Number.isInteger(row.status) || typeof row.isolateNonce !== "string" || policy.status === "passed" && !planned) return false;\n\t\tif (planned === undefined || row.id !== planned.id || row.method !== planned.method) responsePlanMatches = false;\n\t\tnonceSequence.push(row.isolateNonce);\n\t}\n\tnonceSequence.push(after.isolateNonce);\n\tconst successful = before.status === 200 && after.status === 200 && responses.every((response) => record(response)?.status === 200);\n\tconst noncesPresent = nonceSequence.every((nonce) => text(nonce));\n\tconst nonceStable = noncesPresent && nonceSequence.every((nonce) => nonce === nonceSequence[0]);\n\tconst complete = collector.workloadCompleted && responsePlanMatches && successful && nonceStable;\n\treturn policy.identityVerified === true && (complete ? policy.status === "passed" && assessment.status === "passed" : policy.status === "rejected" && assessment.status === "rejected");\n};\nconst inheritedReachability = function deriveHarnessReleaseInheritedReachability(artifactSha256, inventory, corpus) {\n\tconst record = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : undefined;\n\tconst rows = (value) => {\n\t\tif (!Array.isArray(value)) return undefined;\n\t\tconst result = value.map(record);\n\t\treturn result.every((row) => row !== undefined) ? result : undefined;\n\t};\n\tconst text = (value) => typeof value === "string" && value.length > 0;\n\tconst hash = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);\n\tconst natural = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;\n\tconst apiPath = (site) => {\n\t\tif (!text(site.specifier) || !Array.isArray(site.memberPath) || !site.memberPath.every(text)) return undefined;\n\t\tconst specifier = site.specifier.replace(/^node:/u, "");\n\t\treturn {\n\t\t\tkey: JSON.stringify([specifier, site.memberPath]),\n\t\t\tspecifier,\n\t\t\tmemberPath: site.memberPath\n\t\t};\n\t};\n\tconst current = record(inventory);\n\tconst captures = record(corpus);\n\tconst currentCalls = rows(current?.callSites);\n\tconst analysisCalls = rows(current?.analysisOnlyCallSites);\n\tconst runs = rows(captures?.runs);\n\tconst historical = captures?.inheritedArtifacts === undefined ? [] : rows(captures.inheritedArtifacts);\n\tif (!hash(artifactSha256) || !currentCalls || !analysisCalls || !runs || !historical) return undefined;\n\tconst currentByPath = new Map();\n\tfor (const site of [...currentCalls, ...analysisCalls]) {\n\t\tconst path = apiPath(site);\n\t\tif (!path || !hash(site.siteId)) return undefined;\n\t\tconst ids = currentByPath.get(path.key) ?? [];\n\t\tids.push(site.siteId);\n\t\tcurrentByPath.set(path.key, ids);\n\t}\n\tconst historyByArtifact = new Map();\n\tfor (const entry of historical) {\n\t\tif (!hash(entry.artifactSha256) || entry.artifactSha256 === artifactSha256 || historyByArtifact.has(entry.artifactSha256) || !text(entry.release) || !record(entry.inventory)) return undefined;\n\t\thistoryByArtifact.set(entry.artifactSha256, entry);\n\t}\n\tconst inherited = new Map();\n\tconst removed = new Map();\n\tfor (const run of runs) {\n\t\tif (run.artifactSha256 === artifactSha256 || run.kind !== "a-series-replay") continue;\n\t\tif (!hash(run.artifactSha256) || !hash(run.evidenceSha256) || !text(run.runId)) return undefined;\n\t\tconst sources = rows(run.sources);\n\t\tif (!sources) return undefined;\n\t\tif (run.captureState === "not-started") {\n\t\t\tif (sources.some((source) => !Array.isArray(source.executedByteRanges) || !Array.isArray(source.invokedSiteIds) || source.executedByteRanges.length || source.invokedSiteIds.length)) return undefined;\n\t\t\tcontinue;\n\t\t}\n\t\tif (run.captureState !== "complete" && run.captureState !== "incomplete") return undefined;\n\t\tconst entry = historyByArtifact.get(run.artifactSha256);\n\t\tconst original = record(entry?.inventory);\n\t\tconst originalSources = rows(original?.sourceFiles);\n\t\tconst originalCalls = rows(original?.callSites);\n\t\tif (!entry || !original || original.schemaVersion !== 1 || !originalSources || !originalCalls) return undefined;\n\t\tconst pinnedByName = new Map();\n\t\tfor (const source of originalSources) {\n\t\t\tif (!text(source.name) || !hash(source.sha256) || !natural(source.bytes) || !natural(source.sourceUtf16Length) || pinnedByName.has(source.name)) return undefined;\n\t\t\tpinnedByName.set(source.name, source);\n\t\t}\n\t\tconst callById = new Map();\n\t\tfor (const call of originalCalls) {\n\t\t\tconst pinned = text(call.module) ? pinnedByName.get(call.module) : undefined;\n\t\t\tif (!pinned || !hash(call.siteId) || callById.has(call.siteId) || !apiPath(call) || call.sourceSha256 !== pinned.sha256 || call.offsetUnit !== "utf16-code-units" || !natural(call.startOffset) || !natural(call.endOffset) || call.startOffset >= call.endOffset || call.endOffset > Number(pinned.sourceUtf16Length)) return undefined;\n\t\t\tcallById.set(call.siteId, call);\n\t\t}\n\t\tif (sources.length !== originalSources.length) return undefined;\n\t\tconst names = new Set();\n\t\tfor (const source of sources) {\n\t\t\tconst pinned = text(source.module) ? pinnedByName.get(source.module) : undefined;\n\t\t\tconst ranges = rows(source.executedByteRanges);\n\t\t\tconst invocations = source.invokedSiteIds;\n\t\t\tif (!pinned || !text(source.module) || names.has(source.module) || source.sourceSha256 !== pinned.sha256 || !ranges || !Array.isArray(invocations) || !invocations.every(hash) || new Set(invocations).size !== invocations.length) return undefined;\n\t\t\tnames.add(source.module);\n\t\t\tfor (const range of ranges) {\n\t\t\t\tif (!natural(range.startOffset) || !natural(range.endOffset) || range.startOffset >= range.endOffset || range.endOffset > Number(pinned.sourceUtf16Length) || range.offsetUnit !== "utf16-code-units" || !natural(range.executionCount) || range.executionCount === 0) return undefined;\n\t\t\t}\n\t\t\tfor (const id of invocations) if (callById.get(id)?.module !== source.module) return undefined;\n\t\t\tfor (const [id, call] of callById) {\n\t\t\t\tif (call.module !== source.module) continue;\n\t\t\t\tconst invoked = invocations.includes(id);\n\t\t\t\tif (!invoked && !ranges.some((range) => Number(range.startOffset) < Number(call.endOffset) && Number(range.endOffset) > Number(call.startOffset))) continue;\n\t\t\t\tconst path = apiPath(call);\n\t\t\t\tconst observation = {\n\t\t\t\t\trelease: String(entry.release),\n\t\t\t\t\trunId: run.runId,\n\t\t\t\t\tartifactSha256: run.artifactSha256,\n\t\t\t\t\tevidenceSha256: run.evidenceSha256,\n\t\t\t\t\tmodule: source.module,\n\t\t\t\t\tsourceSha256: String(pinned.sha256),\n\t\t\t\t\tsiteId: id,\n\t\t\t\t\tmethod: invoked ? "observed invocation" : "reached by executed range",\n\t\t\t\t\tlabel: `reached (inherited from ${String(entry.release)}/${run.runId})`\n\t\t\t\t};\n\t\t\t\tconst targetIds = currentByPath.get(path.key);\n\t\t\t\tif (targetIds) {\n\t\t\t\t\tfor (const targetId of targetIds) {\n\t\t\t\t\t\tconst observations = inherited.get(targetId) ?? [];\n\t\t\t\t\t\tobservations.push(observation);\n\t\t\t\t\t\tinherited.set(targetId, observations);\n\t\t\t\t\t}\n\t\t\t\t} else {\n\t\t\t\t\tconst disappearance = removed.get(path.key) ?? {\n\t\t\t\t\t\tspecifier: path.specifier,\n\t\t\t\t\t\tmemberPath: path.memberPath,\n\t\t\t\t\t\tinheritedFrom: []\n\t\t\t\t\t};\n\t\t\t\t\tdisappearance.inheritedFrom.push(observation);\n\t\t\t\t\tremoved.set(path.key, disappearance);\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n\treturn {\n\t\tinheritedSites: [...inherited].map(([siteId, inheritedFrom]) => ({\n\t\t\tsiteId,\n\t\t\tinheritedFrom\n\t\t})),\n\t\tremovedApiPaths: [...removed.values()]\n\t};\n};\nconst builtinCriteriaValidator = (value, expected) => {\n\tconst record = (input) => input !== null && typeof input === "object" && !Array.isArray(input) ? input : undefined;\n\tconst text = (input) => typeof input === "string" && input.length > 0;\n\tconst hash = (input) => typeof input === "string" && /^[a-f0-9]{64}$/u.test(input);\n\tconst natural = (input) => typeof input === "number" && Number.isSafeInteger(input) && input >= 0;\n\tconst rows = (input) => {\n\t\tif (!Array.isArray(input)) return undefined;\n\t\tconst result = input.map(record);\n\t\treturn result.every((row) => row !== undefined) ? result : undefined;\n\t};\n\tconst samePath = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((part, index) => text(part) && part === right[index]);\n\tconst assessment = record(value);\n\tconst deployed = expected.environment === "deployed";\n\tif (!assessment || assessment.schemaVersion !== 1 || !hash(expected.artifactSha256) || assessment.artifactSha256 !== expected.artifactSha256 || assessment.coverageStatus !== "passed" && !(assessment.coverageStatus === "pending" && !deployed) || !Array.isArray(assessment.blockers) || assessment.blockers.length !== 0) return false;\n\tconst observation = record(assessment.observation);\n\tif (!observation || observation.method !== "reached by executed range" || !text(observation.limitation)) return false;\n\tconst evidence = record(assessment.evidence);\n\tconst inventory = record(evidence?.inventory);\n\tconst corpus = record(evidence?.corpus);\n\tif (!inventory || inventory.schemaVersion !== 1 || !corpus || corpus.schemaVersion !== 1 || ![\n\t\tinventory.missingBuiltins,\n\t\tinventory.unknownBuiltinSpecifiers,\n\t\tinventory.ambiguities,\n\t\tinventory.functionAmbiguities\n\t].every((items) => Array.isArray(items) && items.length === 0)) return false;\n\tconst sources = rows(inventory.sourceFiles);\n\tconst calls = rows(inventory.callSites);\n\tconst analysis = rows(inventory.analysisOnlyCallSites);\n\tconst runs = rows(corpus.runs);\n\tconst obligations = rows(assessment.openObligations);\n\tconst reportedReached = rows(assessment.reachedSites);\n\tconst unmapped = rows(assessment.unmappedAnalysisSites);\n\tif (!sources || !calls || !analysis || !runs || !obligations || !reportedReached || !unmapped) return false;\n\tconst sourceByName = new Map();\n\tfor (const source of sources) {\n\t\tif (!text(source.name) || !hash(source.sha256) || !natural(source.bytes) || !natural(source.sourceUtf16Length) || sourceByName.has(source.name)) return false;\n\t\tsourceByName.set(source.name, source);\n\t}\n\tconst callById = new Map();\n\tfor (const call of calls) {\n\t\tconst source = text(call.module) ? sourceByName.get(call.module) : undefined;\n\t\tif (!source || !hash(call.siteId) || callById.has(call.siteId) || call.sourceSha256 !== source.sha256 || call.offsetUnit !== "utf16-code-units" || !natural(call.startOffset) || !natural(call.endOffset) || call.startOffset >= call.endOffset || call.endOffset > Number(source.sourceUtf16Length) || !text(call.specifier) || !Array.isArray(call.memberPath) || !call.memberPath.every(text) || call.status !== "supported" && call.status !== "unsupported" && call.status !== "platform-pruned") return false;\n\t\tif (call.status === "unsupported") {\n\t\t\tconst failure = record(call.failure);\n\t\t\tif (!failure || failure.kind !== "named-error" || !text(failure.code)) return false;\n\t\t}\n\t\tcallById.set(call.siteId, call);\n\t}\n\tconst inheritance = inheritedReachability(expected.artifactSha256, inventory, corpus);\n\tif (!inheritance) return false;\n\tconst inheritedById = new Map(inheritance.inheritedSites.map((site) => [site.siteId, site.inheritedFrom]));\n\tif (JSON.stringify(assessment.removedApiPaths ?? []) !== JSON.stringify(inheritance.removedApiPaths)) return false;\n\tconst reached = new Set(inheritedById.keys());\n\tconst runIds = new Set();\n\tlet qualifiedRunId;\n\tfor (const run of runs) {\n\t\tif (!text(run.runId) || runIds.has(run.runId) || !hash(run.artifactSha256) || !hash(run.evidenceSha256) || run.kind !== "a-series-replay" && run.kind !== "release-qualification" || typeof run.completed !== "boolean" || run.captureState !== "complete" && run.captureState !== "incomplete" && run.captureState !== "not-started") return false;\n\t\trunIds.add(run.runId);\n\t\tconst runSources = rows(run.sources);\n\t\tif (!runSources) return false;\n\t\tif (run.artifactSha256 !== expected.artifactSha256) continue;\n\t\tconst captured = run.captureState !== "not-started";\n\t\tconst names = new Set();\n\t\tlet sourcesMatch = runSources.length === sources.length;\n\t\tfor (const source of runSources) {\n\t\t\tif (!text(source.module) || names.has(source.module) || !hash(source.sourceSha256)) return false;\n\t\t\tnames.add(source.module);\n\t\t\tconst pinned = sourceByName.get(source.module);\n\t\t\tif (!pinned || pinned.sha256 !== source.sourceSha256) sourcesMatch = false;\n\t\t\tconst ranges = rows(source.executedByteRanges);\n\t\t\tif (!ranges || !Array.isArray(source.invokedSiteIds) || !source.invokedSiteIds.every(hash)) return false;\n\t\t\tif (!captured && (ranges.length || source.invokedSiteIds.length)) return false;\n\t\t\tfor (const range of ranges) {\n\t\t\t\tif (!natural(range.startOffset) || !natural(range.endOffset) || range.endOffset <= range.startOffset || range.offsetUnit !== "utf16-code-units" || !natural(range.executionCount) || range.executionCount === 0 || pinned && range.endOffset > Number(pinned.sourceUtf16Length)) return false;\n\t\t\t}\n\t\t}\n\t\tif (run.kind === "release-qualification") {\n\t\t\tif (qualifiedRunId || !run.completed || run.captureState !== "complete" || !sourcesMatch) return false;\n\t\t\tif (sources.length > 0 && !runSources.some((source) => source.executedByteRanges.length > 0 || source.invokedSiteIds.length > 0)) return false;\n\t\t\tqualifiedRunId = run.runId;\n\t\t}\n\t\tif (!captured || !sourcesMatch) continue;\n\t\tfor (const source of runSources) {\n\t\t\tconst invocations = source.invokedSiteIds;\n\t\t\tif (new Set(invocations).size !== invocations.length) return false;\n\t\t\tfor (const id of invocations) {\n\t\t\t\tconst call = callById.get(id);\n\t\t\t\tif (!call || call.module !== source.module) return false;\n\t\t\t\treached.add(id);\n\t\t\t}\n\t\t\tconst ranges = rows(source.executedByteRanges);\n\t\t\tfor (const [id, call] of callById) {\n\t\t\t\tif (call.module === source.module && ranges.some((range) => Number(range.startOffset) < Number(call.endOffset) && Number(range.endOffset) > Number(call.startOffset))) reached.add(id);\n\t\t\t}\n\t\t}\n\t}\n\tif (deployed && (!text(expected.measurementRunId) || qualifiedRunId !== expected.measurementRunId || assessment.qualifiedRunId !== expected.measurementRunId)) return false;\n\tconst blockingAnalysis = analysis.filter((site) => site.status !== "supported");\n\tconst allById = new Map([...calls, ...analysis].map((site) => [site.siteId, site]));\n\tif (allById.size !== calls.length + analysis.length) return false;\n\tif (assessment.coverageStatus === "passed" && (!qualifiedRunId || blockingAnalysis.length !== 0)) return false;\n\tif (reportedReached.length !== reached.size || new Set(reportedReached.map((site) => site.siteId)).size !== reached.size || reportedReached.some((site) => !text(site.siteId) || !reached.has(site.siteId) || site.status !== "supported" || allById.get(site.siteId)?.status !== "supported" || JSON.stringify(site.inheritedFrom ?? []) !== JSON.stringify(inheritedById.get(site.siteId) ?? []))) return false;\n\tconst obligationById = new Map();\n\tfor (const obligation of obligations) {\n\t\tif (!hash(obligation.siteId) || obligationById.has(obligation.siteId)) return false;\n\t\tobligationById.set(obligation.siteId, obligation);\n\t}\n\tlet unsupported = 0;\n\tfor (const [id, call] of callById) {\n\t\tif (reached.has(id) && call.status !== "supported") return false;\n\t\tif (call.status !== "unsupported") continue;\n\t\tunsupported += 1;\n\t\tconst obligation = obligationById.get(id);\n\t\tconst failure = record(call.failure);\n\t\tif (!obligation || obligation.kind !== "unsupported-fail-loud" || obligation.module !== call.module || obligation.specifier !== call.specifier || !samePath(obligation.memberPath, call.memberPath) || obligation.failureCode !== failure.code || obligation.state !== (qualifiedRunId ? "unreached" : "awaiting-coverage")) return false;\n\t}\n\tif (obligations.length !== unsupported || unmapped.length !== blockingAnalysis.length) return false;\n\tconst analysisIds = new Set(blockingAnalysis.map((site) => site.siteId));\n\treturn analysisIds.size === blockingAnalysis.length && unmapped.every((site) => hash(site.siteId) && analysisIds.has(site.siteId));\n};\nconst releaseArtifactName = (provider, version, runId) => `harness-release-${provider}-${version}-${runId}-1`;\nconst isVerifiedHarnessRelease = (status, result) => {\n\tif (status !== "green" || result?.status !== "green" || result.unchangedSource !== "passed") return false;\n\tif (result.provider !== "claude-code" && result.provider !== "claude-agent-sdk" && result.provider !== "codex") return false;\n\tconst requiredChecks = [\n\t\t"boot",\n\t\t"text",\n\t\t"readEdit",\n\t\t"bash",\n\t\t"grep",\n\t\t"resume",\n\t\t"mcp",\n\t\t"interrupt",\n\t\t"publicHarness",\n\t\t"builtinCoverage"\n\t];\n\tconst requiredMetrics = [\n\t\t"moduleBytes",\n\t\t"bootTimeMs",\n\t\t"peakHeapBytes"\n\t];\n\tfor (const environment of ["local-workerd", "deployed"]) {\n\t\tconst assessment = result.environments?.[environment];\n\t\tif (!assessment?.checks || assessment.checks.length !== requiredChecks.length || requiredChecks.some((name) => assessment.checks?.filter((check) => check.name === name).length !== 1) || assessment.checks.some((check) => check.status !== "passed")) return false;\n\t\tconst resourceCriteria = assessment.resourceCriteria;\n\t\tconst requiresClaudePolicy = result.provider === "claude-code" || result.provider === "claude-agent-sdk";\n\t\tif (requiresClaudePolicy && resourceCriteria === undefined) return false;\n\t\tconst builtinCriteria = assessment.builtinCriteria;\n\t\t{\n\t\t\tif (typeof result.artifact?.sha256 !== "string" || !builtinCriteriaValidator(builtinCriteria, {\n\t\t\t\tenvironment,\n\t\t\t\tartifactSha256: result.artifact.sha256,\n\t\t\t\t...assessment.measurementRunId ? { measurementRunId: assessment.measurementRunId } : {}\n\t\t\t})) return false;\n\t\t}\n\t\tif (resourceCriteria !== undefined) {\n\t\t\tif (typeof result.fixture?.id !== "string" || typeof result.fixture.sha256 !== "string" || typeof result.artifact?.sha256 !== "string" || typeof result.identity?.sha256 !== "string" || !resourceCriteriaValidator(resourceCriteria, {\n\t\t\t\tenvironment,\n\t\t\t\tfixtureId: result.fixture.id,\n\t\t\t\tfixtureSha256: result.fixture.sha256,\n\t\t\t\tartifactSha256: result.artifact.sha256,\n\t\t\t\treleaseIdentitySha256: result.identity.sha256,\n\t\t\t\t...assessment.measurementRunId ? { measurementRunId: assessment.measurementRunId } : {},\n\t\t\t\t...assessment.deployedResourceContext ? { deployedContext: assessment.deployedResourceContext } : {}\n\t\t\t}) || resourceCriteria.status !== (environment === "local-workerd" ? "not-applicable" : "passed")) return false;\n\t\t\tconst moduleBytes = assessment.metrics?.moduleBytes;\n\t\t\tif (moduleBytes?.state !== "measured" || !Number.isFinite(moduleBytes.value) || moduleBytes.value < 0) return false;\n\t\t\tif (assessment.metrics?.bootTimeMs?.state !== "unmeasured" || assessment.metrics?.peakHeapBytes?.state !== "unmeasured") return false;\n\t\t} else {\n\t\t\tfor (const name of requiredMetrics) {\n\t\t\t\tconst metric = assessment.metrics?.[name];\n\t\t\t\tif (metric?.state !== "measured" || !Number.isFinite(metric.value) || metric.value < 0) return false;\n\t\t\t}\n\t\t}\n\t}\n\treturn true;\n};\nconst canPromoteHarnessRelease = (input) => {\n\tif (input.selection !== "current" || !input.runtimeArtifactVerified || input.expectedRevision === null || input.currentRevision !== input.expectedRevision) return false;\n\treturn isVerifiedHarnessRelease(input.status, input.result);\n};\nconst ledgerProviderFor = (provider) => provider === "claude-agent-sdk" ? "agent-sdk" : provider;\nconst nextHarnessReleaseBatch = (releases, verifiedCurrentProviders = [], terminalBackfillIds = []) => {\n\tconst ordered = orderReleaseCandidates(releases);\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst requiredCurrentProviders = [\n\t\t"claude-code",\n\t\t"claude-agent-sdk",\n\t\t"codex"\n\t];\n\tconst readyForBackfill = requiredCurrentProviders.every((provider) => current.some((release) => release.provider === provider) && verifiedCurrentProviders.includes(provider));\n\tif (!readyForBackfill) return current;\n\tconst terminal = new Set(terminalBackfillIds);\n\tconst backfill = ordered.filter((release) => release.selection === "backfill" && !terminal.has(release.id));\n\treturn [\n\t\t...current,\n\t\t...backfill.filter((release) => release.provider === "claude-code").slice(0, 1),\n\t\t...backfill.filter((release) => release.provider === "codex").slice(0, 1)\n\t];\n};\nconst orderReleaseCandidates = (releases) => {\n\tconst priority = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 1,\n\t\tcodex: 2\n\t};\n\tconst current = releases.filter((release) => release.selection === "current").sort((left, right) => priority[left.provider] - priority[right.provider]);\n\tconst seenCurrent = new Set();\n\tconst uniqueCurrent = current.filter((release) => {\n\t\tif (seenCurrent.has(release.provider)) return false;\n\t\tseenCurrent.add(release.provider);\n\t\treturn true;\n\t});\n\tconst limits = HARNESS_RELEASE_BACKFILL_LIMITS;\n\tconst counts = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 0,\n\t\tcodex: 0\n\t};\n\tconst seenIds = new Set(uniqueCurrent.map((release) => release.id));\n\tconst backfill = releases.filter((release) => release.selection === "backfill").sort((left, right) => priority[left.provider] - priority[right.provider]).filter((release) => {\n\t\tif (seenIds.has(release.id) || counts[release.provider] >= limits[release.provider]) return false;\n\t\tseenIds.add(release.id);\n\t\tcounts[release.provider] += 1;\n\t\treturn true;\n\t});\n\treturn [...uniqueCurrent, ...backfill];\n};\nconst releaseReceiptKey = (provider, version, headSha) => `${releaseRunKey(provider, version)}:${headSha}`;\nconst releaseReceiptDisposition = (receipt, runKey, headSha) => {\n\tif (receipt?.runKey !== runKey || receipt.headSha !== headSha) return "dispatch";\n\tif (shouldReuseReleaseReceipt(receipt, runKey, headSha)) return "reuse";\n\treturn typeof receipt.workflowRunId === "string" && receipt.workflowRunId !== "" ? "read" : "dispatch";\n};\nconst releaseRunKey = (provider, version) => `harness-release:${provider}:${version}`;\nconst shouldReuseReleaseReceipt = (receipt, runKey, headSha) => receipt?.runKey === runKey && receipt.headSha === headSha && receipt.workflowStatus === "completed" && (receipt.status === "green" && receipt.ledgerStatus === "recorded" && receipt.proofArtifactVerified === true && receipt.runtimeArtifactVerified === true || (receipt.status === "red" || receipt.status === "pending") && receipt.proofArtifactVerified === true);\nconst summarizeHarnessBackfill = (releases, receipts, headSha) => {\n\tconst backfill = orderReleaseCandidates(releases).filter((release) => release.selection === "backfill");\n\tlet green = 0;\n\tlet red = 0;\n\tlet pending = 0;\n\tlet terminal = 0;\n\tfor (const release of backfill) {\n\t\tconst receipt = receipts.find((candidate) => candidate.discoveryId === release.id && candidate.runKey === releaseRunKey(release.provider, release.version) && candidate.headSha === headSha && candidate.workflowStatus === "completed" && candidate.proofArtifactVerified === true);\n\t\tif (receipt === undefined) continue;\n\t\tterminal += 1;\n\t\tif (receipt?.proofStatus === "green") green += 1;\n\t\telse if (receipt?.proofStatus === "red") red += 1;\n\t\telse pending += 1;\n\t}\n\treturn {\n\t\ttotal: backfill.length,\n\t\tterminal,\n\t\tgreen,\n\t\tred,\n\t\tpending,\n\t\tacceptance: backfill.length === 0 ? "pending" : terminal < backfill.length ? "in-progress" : green / backfill.length >= .9 ? "met" : "missed"\n\t};\n};\nconst NPM_PACKAGES = [{\n\t"packageName": "@anthropic-ai/claude-code",\n\t"provider": "claude-code",\n\t"backfillLimit": 50\n}, {\n\t"packageName": "@anthropic-ai/claude-agent-sdk",\n\t"provider": "claude-agent-sdk",\n\t"backfillLimit": 0\n}];\nconst CODEX_RELEASE_LIMIT = 11;\nconst CODEX_MAX_PAGES = 10;\nconst RELEASE_VERSION = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/u;\nfunction isRecord(value) {\n\treturn value !== null && typeof value === "object" && !Array.isArray(value);\n}\nfunction responseJson(value) {\n\tif (!isRecord(value)) return value;\n\tif ("body" in value) return value.body;\n\treturn value;\n}\nfunction compareText(left, right) {\n\treturn left < right ? -1 : left > right ? 1 : 0;\n}\nfunction compareVersions(left, right) {\n\tconst a = left.split(".");\n\tconst b = right.split(".");\n\tfor (let index = 0; index < 3; index += 1) {\n\t\tconst leftPart = a[index] ?? "";\n\t\tconst rightPart = b[index] ?? "";\n\t\tif (leftPart === rightPart) continue;\n\t\treturn leftPart.length === rightPart.length ? compareText(leftPart, rightPart) : leftPart.length - rightPart.length;\n\t}\n\treturn 0;\n}\nfunction compareCandidates(left, right) {\n\treturn compareVersions(right.version, left.version) || compareText(left.upstreamIdentity, right.upstreamIdentity);\n}\nfunction stableVersion(value) {\n\treturn typeof value === "string" && RELEASE_VERSION.test(value);\n}\nfunction makeCandidate(provider, version, upstreamIdentity, selection, provenance) {\n\treturn {\n\t\tid: `${provider}:${version}:${upstreamIdentity}`,\n\t\tprovider,\n\t\tversion,\n\t\tupstreamIdentity,\n\t\tselection,\n\t\tprovenance\n\t};\n}\nfunction parseNpm(packageInfo, source) {\n\tif (!isRecord(packageInfo) || packageInfo.name !== source.packageName || !isRecord(packageInfo.versions) || !isRecord(packageInfo["dist-tags"])) return [];\n\tconst stable = Object.entries(packageInfo.versions).flatMap(([version, metadata]) => {\n\t\tif (!stableVersion(version) || !isRecord(metadata) || metadata.name !== source.packageName || metadata.version !== version) return [];\n\t\tconst dist = isRecord(metadata.dist) ? metadata.dist : {};\n\t\tconst integrity = typeof dist.integrity === "string" && dist.integrity.trim() ? dist.integrity : undefined;\n\t\treturn [{\n\t\t\tversion,\n\t\t\tcandidate: makeCandidate(source.provider, version, `npm:${source.packageName}`, "backfill", {\n\t\t\t\tkind: "npm",\n\t\t\t\tpackageName: source.packageName,\n\t\t\t\t...integrity ? { integrity } : {}\n\t\t\t})\n\t\t}];\n\t}).sort((left, right) => compareCandidates(left.candidate, right.candidate));\n\tconst currentVersion = packageInfo["dist-tags"].latest;\n\tconst current = typeof currentVersion === "string" ? stable.find((release) => release.version === currentVersion) : undefined;\n\treturn [...current ? [{\n\t\t...current.candidate,\n\t\tselection: "current"\n\t}] : [], ...stable.filter((release) => release.version !== current?.version).slice(0, source.backfillLimit).map((release) => release.candidate)];\n}\nfunction parseCodexPage(value) {\n\tif (!Array.isArray(value)) return [];\n\treturn value.flatMap((release) => {\n\t\tif (!isRecord(release) || release.draft !== false || release.prerelease !== false || typeof release.tag_name !== "string") return [];\n\t\tconst tagName = release.tag_name;\n\t\tconst version = /^rust-v(.+)$/u.exec(tagName)?.[1];\n\t\tif (!stableVersion(version)) return [];\n\t\tconst nestedCommit = isRecord(release.commit) && typeof release.commit.sha === "string" ? release.commit.sha : undefined;\n\t\tconst commitSha = typeof release.commit_sha === "string" ? release.commit_sha : nestedCommit;\n\t\tconst targetCommitish = typeof release.target_commitish === "string" ? release.target_commitish : undefined;\n\t\treturn [makeCandidate("codex", version, `github:openai/codex:${tagName}`, "backfill", {\n\t\t\tkind: "github",\n\t\t\trepository: "openai/codex",\n\t\t\ttagName,\n\t\t\t...targetCommitish ? { targetCommitish } : {},\n\t\t\t...commitSha && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(commitSha) ? { commitSha } : {}\n\t\t})];\n\t}).sort(compareCandidates);\n}\nfunction selectCodex(releases) {\n\tconst seenIds = new Set();\n\tconst seenVersions = new Set();\n\treturn releases.filter((release) => !seenIds.has(release.id) && !!seenIds.add(release.id)).sort(compareCandidates).filter((release) => !seenVersions.has(release.version) && !!seenVersions.add(release.version)).slice(0, CODEX_RELEASE_LIMIT).map((release, index) => ({\n\t\t...release,\n\t\tselection: index === 0 ? "current" : "backfill"\n\t}));\n}\nfunction nextLink(header) {\n\treturn /<([^>]+)>\\s*;\\s*rel="?next"?/u.exec(header ?? "")?.[1] ?? null;\n}\nfunction codexNextUrl(_current, candidate) {\n\tconst endpoint = "https://api.github.com/repos/openai/codex/releases";\n\tif (candidate !== endpoint && !candidate.startsWith(`${endpoint}?`)) throw new Error("Codex release discovery returned an unexpected pagination URL");\n\treturn candidate;\n}\nasync function discoverCodex(w) {\n\tconst releases = [];\n\tconst seen = new Set();\n\tconst visited = new Set();\n\tlet next = "https://api.github.com/repos/openai/codex/releases?per_page=100&page=1";\n\tfor (let page = 1; page <= CODEX_MAX_PAGES; page += 1) {\n\t\tw.$arm("s4", 0);\n\t\tif (visited.has(next)) throw new Error("Codex release discovery pagination loop");\n\t\tvisited.add(next);\n\t\tconst response = await w.http("s5", "Read Codex release page", next);\n\t\tif (isRecord(response) && response.ok === false) throw new Error(`Codex release discovery failed with HTTP ${String(response.status)}`);\n\t\tconst body = responseJson(response);\n\t\tif (!Array.isArray(body)) throw new Error("Codex release discovery returned invalid data");\n\t\tfor (const release of parseCodexPage(body)) {\n\t\t\tif (!seen.has(release.id)) {\n\t\t\t\tseen.add(release.id);\n\t\t\t\treleases.push(release);\n\t\t\t}\n\t\t}\n\t\tconst headers = isRecord(response) && isRecord(response.headers) ? response.headers : {};\n\t\tconst linkHeader = Object.entries(headers).find(([name]) => name.toLowerCase() === "link")?.[1];\n\t\tconst link = nextLink(typeof linkHeader === "string" ? linkHeader : null);\n\t\tif (!link || selectCodex(releases).length >= CODEX_RELEASE_LIMIT) {\n\t\t\tw.$arm("s6", 0);\n\t\t\treturn selectCodex(releases);\n\t\t} else {\n\t\t\tw.$arm("s6", 1);\n\t\t}\n\t\tif (page === CODEX_MAX_PAGES) throw new Error(`Codex release discovery exceeded ${CODEX_MAX_PAGES} pages`);\n\t\tnext = codexNextUrl(next, link);\n\t}\n\treturn selectCodex(releases);\n}\nfunction workflowRun(value) {\n\tif (!isRecord(value) || typeof value.runId !== "string" || typeof value.url !== "string" || typeof value.workflowFile !== "string" || typeof value.headSha !== "string" || typeof value.displayTitle !== "string" || typeof value.status !== "string" || value.conclusion !== null && typeof value.conclusion !== "string") return null;\n\treturn {\n\t\trunId: value.runId,\n\t\turl: value.url,\n\t\tworkflowFile: value.workflowFile,\n\t\theadSha: value.headSha,\n\t\tdisplayTitle: value.displayTitle,\n\t\tstatus: value.status,\n\t\tconclusion: value.conclusion\n\t};\n}\nfunction verifiedWorkflowArtifact(value, candidate, headSha, runKey, expectedRun) {\n\tif (expectedRun === null || !isRecord(value) || !isRecord(value.run) || !isRecord(value.artifact) || typeof value.text !== "string") return null;\n\tconst run = workflowRun(value.run);\n\tconst artifact = value.artifact;\n\tif (run === null || run.runId !== expectedRun.runId || run.workflowFile !== HARNESS_RELEASE_WORKFLOW_FILE || run.headSha !== headSha || run.displayTitle !== runKey || run.status !== "completed" || artifact.name !== releaseArtifactName(candidate.provider, candidate.version, run.runId) || artifact.entryPath !== HARNESS_RELEASE_RESULT_PATH || typeof artifact.id !== "string" || typeof artifact.digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(artifact.digest) || typeof artifact.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(artifact.sha256) || typeof artifact.bytes !== "number" || !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) return null;\n\ttry {\n\t\tconst decoded = JSON.parse(value.text);\n\t\tif (!isRecord(decoded) || decoded.schemaVersion !== 1 || decoded.provider !== candidate.provider || decoded.version !== candidate.version || decoded.runKey !== runKey || decoded.selection !== candidate.selection || !isRecord(decoded.source) || decoded.source.commit !== headSha || decoded.status !== "green" && decoded.status !== "red" && decoded.status !== "pending") return null;\n\t\tif (decoded.status === "green" && run.conclusion !== "success") return null;\n\t\treturn {\n\t\t\trun,\n\t\t\tartifact: {\n\t\t\t\tid: artifact.id,\n\t\t\t\tname: artifact.name,\n\t\t\t\tdigest: artifact.digest,\n\t\t\t\tentryPath: artifact.entryPath,\n\t\t\t\tsha256: artifact.sha256,\n\t\t\t\tbytes: artifact.bytes\n\t\t\t},\n\t\t\tresult: decoded\n\t\t};\n\t} catch {\n\t\treturn null;\n\t}\n}\nasync function updateReleaseThread(w, threadId, previous, fingerprint, message) {\n\tif (previous?.threadUpdate === fingerprint) {\n\t\tw.$arm("s38", 0);\n\t\treturn fingerprint;\n\t} else {\n\t\tw.$arm("s38", 1);\n\t}\n\ttry {\n\t\tw.$arm("s40", 0);\n\t\tawait w.call("s41", "Update the release proof thread", "signalbox.t3_thread_send", {\n\t\t\tthreadId,\n\t\t\tmessage\n\t\t});\n\t\treturn fingerprint;\n\t} catch {\n\t\tw.$arm("s40", 1);\n\t\treturn previous?.threadUpdate ?? null;\n\t}\n}\nasync function rememberPending(w, receiptKey, fields) {\n\tawait w.remember("s31", "Keep the release receipt pending", receiptKey, {\n\t\t...fields,\n\t\tstatus: "pending"\n\t});\n}\nasync function handoffRedProof(w, receiptKey, receipt, candidate, runKey, headSha) {\n\tif (receipt.handoffStatus === "created") {\n\t\tw.$arm("s18", 0);\n\t\treturn receipt;\n\t} else {\n\t\tw.$arm("s18", 1);\n\t}\n\tconst result = isRecord(receipt.result) ? receipt.result : {};\n\tconst artifact = isRecord(receipt.workflowArtifact) ? receipt.workflowArtifact : null;\n\tconst stages = Array.isArray(result.stages) ? result.stages.filter((stage) => isRecord(stage) && stage.status === "rejected").map((stage) => isRecord(stage) && typeof stage.name === "string" ? stage.name : null).filter(Boolean).join(", ") : "";\n\tlet next;\n\ttry {\n\t\tw.$arm("s20", 0);\n\t\tif (artifact === null || typeof artifact.id !== "string" || typeof artifact.sha256 !== "string" || typeof receipt.workflowUrl !== "string") throw new Error("The verified red proof receipt has no handoff details.");\n\t\tconst issue = await w.call("s21", "Hand the failed proof to GitHub", "signalbox.github_issue", {\n\t\t\taction: "create",\n\t\t\tcorrelationId: `${runKey}:${headSha}:red`,\n\t\t\ttitle: `Harness proof failed: ${candidate.provider} ${candidate.version}`,\n\t\t\tbody: [\n\t\t\t\t`The exact ${candidate.provider} ${candidate.version} proof returned red.`,\n\t\t\t\t`Run key: ${runKey}`,\n\t\t\t\t`Source head: ${headSha}`,\n\t\t\t\t`Workflow: ${receipt.workflowUrl}`,\n\t\t\t\t`Failed stages: ${stages || "not listed"}`,\n\t\t\t\t`Workflow artifact: ${artifact.id} (${artifact.sha256})`,\n\t\t\t\t"The previous green release remains selected."\n\t\t\t].join("\\n\\n")\n\t\t});\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "created",\n\t\t\thandoff: issue\n\t\t};\n\t} catch {\n\t\tw.$arm("s20", 1);\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "unavailable"\n\t\t};\n\t}\n\tawait w.remember("s22", "Store the red proof handoff", receiptKey, next);\n\treturn next;\n}\nfunction proofStatusOf(value) {\n\treturn value === "green" || value === "red" || value === "pending" ? value : null;\n}\nasync function runRelease(w, candidate, headSha, triggerAt) {\n\tconst runKey = releaseRunKey(candidate.provider, candidate.version);\n\tconst receiptKey = releaseReceiptKey(candidate.provider, candidate.version, headSha);\n\tconst recalled = await w.recall("s13", "Read the release receipt", receiptKey);\n\tconst previous = isRecord(recalled) && recalled.runKey === runKey && recalled.headSha === headSha ? recalled : null;\n\tconst releaseThreadValue = await w.recall("s14", "Read the release tracking thread", runKey);\n\tconst releaseThread = isRecord(releaseThreadValue) && releaseThreadValue.runKey === runKey ? releaseThreadValue : null;\n\tconst disposition = releaseReceiptDisposition(previous, runKey, headSha);\n\tif (disposition === "reuse") {\n\t\tw.$arm("s15", 0);\n\t\tconst reusable = candidate.selection === "current" && previous?.status === "red" && previous !== null ? (w.$arm("s16", 0), await handoffRedProof(w.$frame("s17"), receiptKey, previous, candidate, runKey, headSha)) : (w.$arm("s16", 1), previous);\n\t\tconst result = reusable !== null && isRecord(reusable.result) ? reusable.result : null;\n\t\treturn {\n\t\t\tstatus: reusable?.status,\n\t\t\treused: true,\n\t\t\tverified: reusable?.status === "green" && reusable?.ledgerStatus === "recorded" && reusable?.runtimeArtifactVerified === true && result !== null && isVerifiedHarnessRelease("green", result)\n\t\t};\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tlet childThreadId = releaseThread !== null && typeof releaseThread.childThreadId === "string" ? releaseThread.childThreadId : previous !== null && typeof previous.childThreadId === "string" ? previous.childThreadId : null;\n\tif (childThreadId === null) {\n\t\tw.$arm("s24", 0);\n\t\ttry {\n\t\t\tw.$arm("s25", 0);\n\t\t\tconst child = await w.agent("s26", "Create a release proof thread", { prompt: [\n\t\t\t\t"This thread tracks one exact harness release attempt.",\n\t\t\t\t`Provider: ${candidate.provider}.`,\n\t\t\t\t`Version: ${candidate.version}.`,\n\t\t\t\t`Source head: ${headSha}.`,\n\t\t\t\t`Run key: ${runKey}.`,\n\t\t\t\t"The Signalbox automation owns GitHub dispatch, run readback and immutable artifact verification. Do not run external commands or claim a proof result. The automation will send the verified outcome to this thread."\n\t\t\t].join("\\n\\n") });\n\t\t\tchildThreadId = isRecord(child) && typeof child.threadId === "string" ? child.threadId : null;\n\t\t\tif (childThreadId !== null) {\n\t\t\t\tw.$arm("s27", 0);\n\t\t\t\tawait w.remember("s28", "Keep the release tracking thread", runKey, {\n\t\t\t\t\trunKey,\n\t\t\t\t\tprovider: candidate.provider,\n\t\t\t\t\tversion: candidate.version,\n\t\t\t\t\tchildThreadId\n\t\t\t\t});\n\t\t\t} else {\n\t\t\t\tw.$arm("s27", 1);\n\t\t\t}\n\t\t} catch {\n\t\t\tw.$arm("s25", 1);\n\t\t\tchildThreadId = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s24", 1);\n\t}\n\tif (childThreadId === null) {\n\t\tw.$arm("s29", 0);\n\t\tawait rememberPending(w.$frame("s30"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\treason: "The release proof thread could not be created."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s29", 1);\n\t}\n\tlet expectedRevision = previous !== null && typeof previous.expectedRevision === "number" ? previous.expectedRevision : null;\n\tif (expectedRevision === null) {\n\t\tw.$arm("s33", 0);\n\t\ttry {\n\t\t\tw.$arm("s34", 0);\n\t\t\tconst selection = await w.call("s35", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\texpectedRevision = isRecord(selection) && Number.isSafeInteger(selection.revision) ? selection.revision : null;\n\t\t} catch {\n\t\t\tw.$arm("s34", 1);\n\t\t\texpectedRevision = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s33", 1);\n\t}\n\tif (expectedRevision === null) {\n\t\tw.$arm("s36", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s37"), childThreadId, previous, `ledger-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending because its project ledger is unavailable. Run key: ${runKey}. Source head: ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s44"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tchildThreadId,\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\texpectedRevision: null,\n\t\t\tthreadUpdate,\n\t\t\treason: "The project ledger could not capture a selection revision before proof started."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s36", 1);\n\t}\n\tconst workflowFile = HARNESS_RELEASE_WORKFLOW_FILE;\n\tlet run = null;\n\ttry {\n\t\tw.$arm("s46", 0);\n\t\tconst response = disposition === "read" && previous !== null ? (w.$arm("s47", 0), await w.call("s48", "Read the existing exact release run", "signalbox.github_workflow", {\n\t\t\taction: "read",\n\t\t\tworkflowFile,\n\t\t\trunId: previous.workflowRunId,\n\t\t\theadSha\n\t\t})) : (w.$arm("s47", 1), await w.call("s49", "Dispatch the exact release proof", "signalbox.github_workflow", {\n\t\t\taction: "dispatch",\n\t\t\tworkflowFile,\n\t\t\tref: "main",\n\t\t\theadSha,\n\t\t\tcorrelationId: runKey,\n\t\t\tinputs: {\n\t\t\t\tprovider: candidate.provider,\n\t\t\t\tversion: candidate.version,\n\t\t\t\trunKey,\n\t\t\t\tselection: candidate.selection\n\t\t\t}\n\t\t}));\n\t\trun = workflowRun(response);\n\t} catch {\n\t\tw.$arm("s46", 1);\n\t\trun = null;\n\t}\n\tif (run === null || run.workflowFile !== workflowFile || run.headSha !== headSha || run.displayTitle !== runKey) {\n\t\tw.$arm("s50", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s51"), childThreadId, previous, `workflow-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending. The automation could not confirm a workflow run for ${runKey} at ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s52"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\texpectedRevision,\n\t\t\tchildThreadId,\n\t\t\t...run === null ? {} : {\n\t\t\t\tworkflowRunId: run.runId,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t},\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: run?.status ?? "unknown",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason: "The workflow run did not match the exact release attempt."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s50", 1);\n\t}\n\tconst baseReceipt = {\n\t\t...previous,\n\t\tdiscoveryId: candidate.id,\n\t\tprovider: candidate.provider,\n\t\tversion: candidate.version,\n\t\tselection: candidate.selection,\n\t\trunKey,\n\t\theadSha,\n\t\texpectedRevision,\n\t\tchildThreadId,\n\t\tworkflowRunId: run.runId,\n\t\tworkflowUrl: run.url,\n\t\tworkflowStatus: run.status\n\t};\n\tif (run.status !== "completed") {\n\t\tw.$arm("s54", 0);\n\t\tawait rememberPending(w.$frame("s55"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: run.status\n\t\t};\n\t} else {\n\t\tw.$arm("s54", 1);\n\t}\n\tlet evidence = null;\n\ttry {\n\t\tw.$arm("s57", 0);\n\t\tevidence = await w.call("s58", "Read the completed release proof artifact", "signalbox.github_workflow", {\n\t\t\taction: "artifact",\n\t\t\tworkflowFile,\n\t\t\trunId: run.runId,\n\t\t\theadSha,\n\t\t\tartifactName: releaseArtifactName(candidate.provider, candidate.version, run.runId),\n\t\t\tentryPath: HARNESS_RELEASE_RESULT_PATH\n\t\t});\n\t} catch {\n\t\tw.$arm("s57", 1);\n\t\tevidence = null;\n\t}\n\tconst verified = verifiedWorkflowArtifact(evidence, candidate, headSha, runKey, run);\n\tif (verified === null) {\n\t\tw.$arm("s59", 0);\n\t\tconst reason = "The completed workflow\'s immutable result artifact is unavailable or mismatched.";\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s60"), childThreadId, previous, `completed-artifact-pending:${headSha}`, `The ${candidate.provider} ${candidate.version} workflow completed, but its exact result artifact could not be verified. Status remains pending. Run: ${run.url}`);\n\t\tawait rememberPending(w.$frame("s61"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowUrl: run.url,\n\t\t\treason\n\t\t};\n\t} else {\n\t\tw.$arm("s59", 1);\n\t}\n\tlet recorded = null;\n\ttry {\n\t\tw.$arm("s63", 0);\n\t\trecorded = await w.call("s64", "Verify the immutable release result in the project ledger", "signalbox.harness_release_ledger", {\n\t\t\taction: "record",\n\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowFile,\n\t\t\tworkflowRunId: run.runId,\n\t\t\tartifactName: verified.artifact.name,\n\t\t\tentryPath: verified.artifact.entryPath\n\t\t});\n\t} catch {\n\t\tw.$arm("s63", 1);\n\t\trecorded = null;\n\t}\n\tconst ledgerRecorded = isRecord(recorded) && recorded.status === "recorded";\n\tconst runtimeArtifactVerified = isRecord(recorded) && recorded.runtimeArtifactVerified === true;\n\tconst result = isRecord(recorded) && isRecord(recorded.result) ? recorded.result : verified.result;\n\tconst proofStatus = isRecord(recorded) && proofStatusOf(recorded.proofStatus) !== null ? proofStatusOf(recorded.proofStatus) : proofStatusOf(verified.result.status) ?? "pending";\n\tconst proofArtifactVerified = true;\n\tconst status = proofStatus === "red" && proofArtifactVerified ? "red" : proofStatus === "green" && ledgerRecorded && runtimeArtifactVerified && isVerifiedHarnessRelease("green", result) ? "green" : "pending";\n\tconst reason = isRecord(recorded) && typeof recorded.reason === "string" ? recorded.reason : status === "pending" ? "The immutable proof is verified, but its deployable runtime payload is not available yet." : undefined;\n\tlet stored = {\n\t\t...baseReceipt,\n\t\tstatus,\n\t\tproofStatus,\n\t\tledgerStatus: ledgerRecorded ? "recorded" : "unverified",\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tresult,\n\t\tworkflowArtifact: verified.artifact,\n\t\tthreadUpdate: previous?.threadUpdate ?? null,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n\tif (status === "green" && candidate.selection === "current" && expectedRevision !== null) {\n\t\tw.$arm("s65", 0);\n\t\ttry {\n\t\t\tw.$arm("s66", 0);\n\t\t\tconst latest = await w.call("s67", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\tconst currentRevision = isRecord(latest) && Number.isSafeInteger(latest.revision) ? latest.revision : null;\n\t\t\tif (!canPromoteHarnessRelease({\n\t\t\t\tselection: candidate.selection,\n\t\t\t\tstatus,\n\t\t\t\truntimeArtifactVerified,\n\t\t\t\texpectedRevision,\n\t\t\t\tcurrentRevision,\n\t\t\t\tresult\n\t\t\t})) {\n\t\t\t\tw.$arm("s68", 0);\n\t\t\t\tawait rememberPending(w.$frame("s69"), receiptKey, {\n\t\t\t\t\t...stored,\n\t\t\t\t\tpromotionStatus: "stale",\n\t\t\t\t\treason: "The captured selection revision changed while this proof ran."\n\t\t\t\t});\n\t\t\t\treturn {\n\t\t\t\t\tstatus: "pending",\n\t\t\t\t\trunKey,\n\t\t\t\t\theadSha,\n\t\t\t\t\tworkflowUrl: run.url,\n\t\t\t\t\tpromotion: "stale"\n\t\t\t\t};\n\t\t\t} else {\n\t\t\t\tw.$arm("s68", 1);\n\t\t\t}\n\t\t\tawait w.call("s71", "Select the proven current release", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "promote",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\t\treleaseId: result.candidateId,\n\t\t\t\texpectedRevision,\n\t\t\t\tchangedAt: triggerAt\n\t\t\t});\n\t\t} catch {\n\t\t\tw.$arm("s66", 1);\n\t\t\tawait rememberPending(w.$frame("s72"), receiptKey, {\n\t\t\t\t...stored,\n\t\t\t\tpromotionStatus: "not-selected"\n\t\t\t});\n\t\t\treturn {\n\t\t\t\tstatus: "pending",\n\t\t\t\trunKey,\n\t\t\t\theadSha,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t};\n\t\t}\n\t} else {\n\t\tw.$arm("s65", 1);\n\t}\n\tif (status === "red" && candidate.selection === "current") {\n\t\tw.$arm("s74", 0);\n\t\tstored = await handoffRedProof(w.$frame("s75"), receiptKey, stored, candidate, runKey, headSha);\n\t} else {\n\t\tw.$arm("s74", 1);\n\t}\n\tconst threadMessage = status === "red" ? `The exact ${candidate.provider} ${candidate.version} proof is red. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. The previous green release remains selected.` : status === "green" ? `The exact ${candidate.provider} ${candidate.version} proof is green and selected. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}.` : `The exact ${candidate.provider} ${candidate.version} proof is pending. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. ${reason ?? "The previous green release remains selected."}`;\n\tconst threadUpdate = await updateReleaseThread(w.$frame("s76"), childThreadId, previous, `${headSha}:${run.status}:${status}:${proofStatus}:${runtimeArtifactVerified}`, threadMessage);\n\tconst finalReceipt = {\n\t\t...stored,\n\t\tthreadUpdate\n\t};\n\tawait w.remember("s77", "Store the release proof status", receiptKey, finalReceipt);\n\treturn {\n\t\tstatus,\n\t\tverified: status === "green" && runtimeArtifactVerified,\n\t\tproofStatus,\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tworkflowStatus: run.status,\n\t\tdiscoveryId: candidate.id,\n\t\trunKey,\n\t\theadSha,\n\t\tworkflowUrl: run.url,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n}\nexport default workflow(async (w, _input, trigger) => {\n\tconst candidates = [];\n\tfor (const source of NPM_PACKAGES) {\n\t\tw.$arm("s1", 0);\n\t\tconst packagePath = source.packageName.replace("/", "%2f");\n\t\tconst metadata = responseJson(await w.http("s2", "Read npm release metadata", `https://registry.npmjs.org/${packagePath}`));\n\t\tcandidates.push(...parseNpm(metadata, source));\n\t}\n\tcandidates.push(...await discoverCodex(w.$frame("s3")));\n\tconst ordered = orderReleaseCandidates(candidates);\n\tconst head = responseJson(await w.http("s8", "Read the Signalbox source head", "https://api.github.com/repos/JustYannicc/signalbox/commits/main"));\n\tif (!isRecord(head) || typeof head.sha !== "string") {\n\t\tw.$arm("s9", 0);\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\treason: "The current source head could not be read."\n\t\t};\n\t} else {\n\t\tw.$arm("s9", 1);\n\t}\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst backfill = ordered.filter((release) => release.selection === "backfill");\n\tconst results = [];\n\tconst verifiedCurrentProviders = [];\n\tconst currentBatch = nextHarnessReleaseBatch(candidates).filter((release) => release.selection === "current");\n\tfor (const candidate of currentBatch) {\n\t\tw.$arm("s11", 0);\n\t\tconst result = await runRelease(w.$frame("s12"), candidate, head.sha, trigger.at);\n\t\tresults.push({\n\t\t\tdiscoveryId: candidate.id,\n\t\t\t...result\n\t\t});\n\t\tif (result.verified === true) verifiedCurrentProviders.push(candidate.provider);\n\t}\n\tconst allCurrentGreen = current.length === 3 && current.every((release) => verifiedCurrentProviders.includes(release.provider));\n\tlet backfillSummary = {\n\t\ttotal: backfill.length,\n\t\tterminal: 0,\n\t\tgreen: 0,\n\t\tred: 0,\n\t\tpending: backfill.length,\n\t\tacceptance: "blocked-on-current"\n\t};\n\tif (allCurrentGreen) {\n\t\tw.$arm("s78", 0);\n\t\tconst backfillReceipts = [];\n\t\tfor (const candidate of backfill) {\n\t\t\tw.$arm("s79", 0);\n\t\t\tconst receipt = await w.recall("s80", "Read a historical release receipt", releaseReceiptKey(candidate.provider, candidate.version, head.sha));\n\t\t\tif (isRecord(receipt)) backfillReceipts.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...receipt\n\t\t\t});\n\t\t}\n\t\tconst terminalBackfillIds = backfillReceipts.filter((receipt) => receipt.workflowStatus === "completed" && receipt.proofArtifactVerified === true).map((receipt) => receipt.discoveryId).filter((id) => typeof id === "string");\n\t\tconst backfillBatch = nextHarnessReleaseBatch(candidates, verifiedCurrentProviders, terminalBackfillIds).filter((release) => release.selection === "backfill");\n\t\tfor (const candidate of backfillBatch) {\n\t\t\tw.$arm("s81", 0);\n\t\t\tconst result = await runRelease(w.$frame("s82"), candidate, head.sha, trigger.at);\n\t\t\tresults.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...result\n\t\t\t});\n\t\t\tconst currentReceipts = backfillReceipts.filter((receipt) => receipt.discoveryId !== candidate.id);\n\t\t\tif (result.proofArtifactVerified === true) {\n\t\t\t\tcurrentReceipts.push({\n\t\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t\trunKey: releaseRunKey(candidate.provider, candidate.version),\n\t\t\t\t\theadSha: head.sha,\n\t\t\t\t\tworkflowStatus: result.workflowStatus,\n\t\t\t\t\tproofStatus: result.proofStatus,\n\t\t\t\t\tproofArtifactVerified: true\n\t\t\t\t});\n\t\t\t}\n\t\t\tbackfillReceipts.splice(0, backfillReceipts.length, ...currentReceipts);\n\t\t}\n\t\tbackfillSummary = summarizeHarnessBackfill(candidates, backfillReceipts, head.sha);\n\t} else {\n\t\tw.$arm("s78", 1);\n\t}\n\treturn {\n\t\theadSha: head.sha,\n\t\tcurrent: current.length,\n\t\tbackfillAvailable: backfill.length,\n\t\tbackfillAcceptance: backfillSummary,\n\t\tattempted: results.length,\n\t\tresults\n\t};\n});\n',
     runModule: null,
     workerModule:
-      'export function load(workflow) {\nconst meta = {\n\tname: "Watch harness releases",\n\tdescription: "Checks current Claude Code, Claude Agent SDK and Codex releases, then works through a bounded historical set. Run builtin:harness-release-watch once with the Signalbox project\'s ID to install its hourly trigger in that project.",\n\tintent: "keep the selected agent harness release backed by exact current-release proof",\n\ttriggers: [{\n\t\tcron: "0 * * * *",\n\t\ttimezone: "Europe/Zurich"\n\t}],\n\toverlap: "skip"\n};\nconst HARNESS_RELEASE_WORKFLOW_FILE = ".github/workflows/harness-release-proof.yml";\nconst HARNESS_RELEASE_RESULT_PATH = "result.json";\nconst HARNESS_RELEASE_BACKFILL_LIMITS = {\n\t"claude-code": 50,\n\t"claude-agent-sdk": 0,\n\t"codex": 10\n};\nconst resourceCriteriaValidator = (value, expected) => {\n\tconst record = (candidate) => candidate !== null && typeof candidate === "object" && !Array.isArray(candidate) ? candidate : undefined;\n\tconst exactKeys = (candidate, names) => Object.keys(candidate).length === names.length && names.every((name) => name in candidate);\n\tconst text = (candidate) => typeof candidate === "string" && candidate.length > 0;\n\tconst hash = (candidate) => typeof candidate === "string" && /^[a-f0-9]{64}$/u.test(candidate);\n\tconst safeBytes = (candidate) => typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate >= 0;\n\tconst validStatus = (candidate) => candidate === "pending" || candidate === "passed" || candidate === "rejected";\n\tconst assessment = record(value);\n\tif (!assessment) return false;\n\tconst environment = assessment.environment;\n\tif (assessment.tag !== "harness-release-resource-criteria-v1" || assessment.source !== "normal-public-qualifier" || environment !== "local-workerd" && environment !== "deployed" || !validStatus(assessment.status) || !text(assessment.detail)) return false;\n\tconst local = environment === "local-workerd";\n\tconst expectedAssessmentKeys = [\n\t\t"tag",\n\t\t"source",\n\t\t"environment",\n\t\t"status",\n\t\t"label",\n\t\t"pins",\n\t\t"startupUpperBound",\n\t\tlocal ? "configuredLimit" : "platformPolicyCompliance",\n\t\t...local && "terminationClassification" in assessment ? ["terminationClassification"] : [],\n\t\t"detail"\n\t];\n\tif (!exactKeys(assessment, expectedAssessmentKeys)) return false;\n\tconst pins = record(assessment.pins);\n\tif (!pins || !exactKeys(pins, [\n\t\t"measurementRunId",\n\t\t"fixtureId",\n\t\t"fixtureSha256",\n\t\t"artifactSha256",\n\t\t"releaseIdentitySha256"\n\t]) || !text(pins.measurementRunId) || !text(pins.fixtureId) || !hash(pins.fixtureSha256) || !hash(pins.artifactSha256) || !hash(pins.releaseIdentitySha256) || expected?.environment !== undefined && expected.environment !== environment || expected?.measurementRunId !== undefined && expected.measurementRunId !== pins.measurementRunId || expected?.fixtureId !== undefined && expected.fixtureId !== pins.fixtureId || expected?.fixtureSha256 !== undefined && expected.fixtureSha256 !== pins.fixtureSha256 || expected?.artifactSha256 !== undefined && expected.artifactSha256 !== pins.artifactSha256 || expected?.releaseIdentitySha256 !== undefined && expected.releaseIdentitySha256 !== pins.releaseIdentitySha256) return false;\n\tconst timing = record(assessment.startupUpperBound);\n\tif (!timing || !exactKeys(timing, [\n\t\t"label",\n\t\t"interpretation",\n\t\t"clock",\n\t\t"startedMonotonicNs",\n\t\t"finishedMonotonicNs",\n\t\t"milliseconds",\n\t\t"includesRpc",\n\t\t"exactBootTime"\n\t]) || timing.label !== "cold first-successful-RPC latency" || timing.interpretation !== "startup upper bound" || timing.clock !== "parent process.hrtime.bigint" || !text(timing.startedMonotonicNs) || !/^\\d+$/u.test(timing.startedMonotonicNs) || !text(timing.finishedMonotonicNs) || !/^\\d+$/u.test(timing.finishedMonotonicNs) || typeof timing.milliseconds !== "number" || !Number.isFinite(timing.milliseconds) || timing.milliseconds < 0 || timing.includesRpc !== true || timing.exactBootTime !== false) return false;\n\ttry {\n\t\tconst elapsed = BigInt(timing.finishedMonotonicNs) - BigInt(timing.startedMonotonicNs);\n\t\tif (elapsed < 0n || timing.milliseconds !== Number(elapsed) / 1e6) return false;\n\t} catch {\n\t\treturn false;\n\t}\n\tif (local) {\n\t\tif (assessment.label !== "configured-limit completion with measured overshoot") return false;\n\t\tconst configured = record(assessment.configuredLimit);\n\t\tif (!configured || !exactKeys(configured, [\n\t\t\t"criterion",\n\t\t\t"status",\n\t\t\t"configuredLimitBytes",\n\t\t\t"deltaMaxObservedBytes",\n\t\t\t"safetyMarginBytes",\n\t\t\t"budgetBytes",\n\t\t\t"assessedBytes",\n\t\t\t"budgetFits",\n\t\t\t"calibrationComplete",\n\t\t\t"workloadCompleted",\n\t\t\t"identityVerified",\n\t\t\t"strictByteBound",\n\t\t\t"detail"\n\t\t]) || configured.criterion !== "configured-limit completion with measured overshoot" || !validStatus(configured.status) || !text(configured.detail) || typeof configured.budgetFits !== "boolean" || typeof configured.calibrationComplete !== "boolean" || typeof configured.workloadCompleted !== "boolean" || typeof configured.identityVerified !== "boolean" || configured.strictByteBound !== false) return false;\n\t\tconst limit = configured.configuredLimitBytes;\n\t\tconst delta = configured.deltaMaxObservedBytes;\n\t\tconst margin = configured.safetyMarginBytes;\n\t\tconst budget = configured.budgetBytes;\n\t\tconst assessed = configured.assessedBytes;\n\t\tif (!safeBytes(limit) || !safeBytes(delta) || !safeBytes(margin) || !safeBytes(budget) || !safeBytes(assessed) || limit === 0 || budget === 0 || !Number.isSafeInteger(limit + delta + margin) || assessed !== limit + delta + margin || configured.budgetFits !== assessed <= budget) return false;\n\t\tlet configuredStatus = configured.budgetFits ? configured.calibrationComplete && configured.workloadCompleted && configured.identityVerified ? "passed" : "pending" : "rejected";\n\t\tif ("terminationClassification" in assessment) {\n\t\t\tconst termination = assessment.terminationClassification;\n\t\t\tif (termination !== "NO_VERIFIED_TERMINATION" && termination !== "OTHER_TERMINATION" && termination !== "V8_HEAP_OOM_PROCESS_TERMINATED") return false;\n\t\t\tif (termination !== "NO_VERIFIED_TERMINATION" && (configured.workloadCompleted || configuredStatus === "passed")) return false;\n\t\t}\n\t\tif (configured.status !== configuredStatus || assessment.status !== configuredStatus) return false;\n\t\treturn true;\n\t}\n\tif (assessment.label !== "platform policy compliance evidence") return false;\n\tconst policy = record(assessment.platformPolicyCompliance);\n\tif (!policy || !exactKeys(policy, [\n\t\t"label",\n\t\t"status",\n\t\t"evidenceSha256",\n\t\t"identityVerified"\n\t]) || policy.label !== "platform policy compliance evidence" || !validStatus(policy.status) || !hash(policy.evidenceSha256) || typeof policy.identityVerified !== "boolean" || policy.status === "passed" && policy.identityVerified !== true || assessment.status !== policy.status) return false;\n\treturn true;\n};\nconst releaseArtifactName = (provider, version, runId) => `harness-release-${provider}-${version}-${runId}-1`;\nconst isVerifiedHarnessRelease = (status, result) => {\n\tif (status !== "green" || result?.status !== "green" || result.unchangedSource !== "passed") return false;\n\tconst requiredChecks = [\n\t\t"boot",\n\t\t"text",\n\t\t"readEdit",\n\t\t"bash",\n\t\t"grep",\n\t\t"resume",\n\t\t"mcp",\n\t\t"interrupt",\n\t\t"publicHarness"\n\t];\n\tconst requiredMetrics = [\n\t\t"moduleBytes",\n\t\t"bootTimeMs",\n\t\t"peakHeapBytes"\n\t];\n\tfor (const environment of ["local-workerd", "deployed"]) {\n\t\tconst assessment = result.environments?.[environment];\n\t\tif (!assessment?.checks || assessment.checks.length !== requiredChecks.length || requiredChecks.some((name) => assessment.checks?.filter((check) => check.name === name).length !== 1) || assessment.checks.some((check) => check.status !== "passed")) return false;\n\t\tconst resourceCriteria = assessment.resourceCriteria;\n\t\tif (resourceCriteria !== undefined) {\n\t\t\tif (typeof result.fixture?.id !== "string" || typeof result.fixture.sha256 !== "string" || typeof result.artifact?.sha256 !== "string" || typeof result.identity?.sha256 !== "string" || !resourceCriteriaValidator(resourceCriteria, {\n\t\t\t\tenvironment,\n\t\t\t\tfixtureId: result.fixture.id,\n\t\t\t\tfixtureSha256: result.fixture.sha256,\n\t\t\t\tartifactSha256: result.artifact.sha256,\n\t\t\t\treleaseIdentitySha256: result.identity.sha256\n\t\t\t}) || resourceCriteria.status !== "passed") return false;\n\t\t\tconst moduleBytes = assessment.metrics?.moduleBytes;\n\t\t\tif (moduleBytes?.state !== "measured" || !Number.isFinite(moduleBytes.value) || moduleBytes.value < 0) return false;\n\t\t\tif (assessment.metrics?.bootTimeMs?.state !== "unmeasured" || assessment.metrics?.peakHeapBytes?.state !== "unmeasured") return false;\n\t\t} else {\n\t\t\tfor (const name of requiredMetrics) {\n\t\t\t\tconst metric = assessment.metrics?.[name];\n\t\t\t\tif (metric?.state !== "measured" || !Number.isFinite(metric.value) || metric.value < 0) return false;\n\t\t\t}\n\t\t}\n\t}\n\treturn true;\n};\nconst canPromoteHarnessRelease = (input) => {\n\tif (input.selection !== "current" || !input.runtimeArtifactVerified || input.expectedRevision === null || input.currentRevision !== input.expectedRevision) return false;\n\treturn isVerifiedHarnessRelease(input.status, input.result);\n};\nconst ledgerProviderFor = (provider) => provider === "claude-agent-sdk" ? "agent-sdk" : provider;\nconst nextHarnessReleaseBatch = (releases, verifiedCurrentProviders = [], terminalBackfillIds = []) => {\n\tconst ordered = orderReleaseCandidates(releases);\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst requiredCurrentProviders = [\n\t\t"claude-code",\n\t\t"claude-agent-sdk",\n\t\t"codex"\n\t];\n\tconst readyForBackfill = requiredCurrentProviders.every((provider) => current.some((release) => release.provider === provider) && verifiedCurrentProviders.includes(provider));\n\tif (!readyForBackfill) return current;\n\tconst terminal = new Set(terminalBackfillIds);\n\tconst backfill = ordered.filter((release) => release.selection === "backfill" && !terminal.has(release.id));\n\treturn [\n\t\t...current,\n\t\t...backfill.filter((release) => release.provider === "claude-code").slice(0, 1),\n\t\t...backfill.filter((release) => release.provider === "codex").slice(0, 1)\n\t];\n};\nconst orderReleaseCandidates = (releases) => {\n\tconst priority = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 1,\n\t\tcodex: 2\n\t};\n\tconst current = releases.filter((release) => release.selection === "current").sort((left, right) => priority[left.provider] - priority[right.provider]);\n\tconst seenCurrent = new Set();\n\tconst uniqueCurrent = current.filter((release) => {\n\t\tif (seenCurrent.has(release.provider)) return false;\n\t\tseenCurrent.add(release.provider);\n\t\treturn true;\n\t});\n\tconst limits = HARNESS_RELEASE_BACKFILL_LIMITS;\n\tconst counts = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 0,\n\t\tcodex: 0\n\t};\n\tconst seenIds = new Set(uniqueCurrent.map((release) => release.id));\n\tconst backfill = releases.filter((release) => release.selection === "backfill").sort((left, right) => priority[left.provider] - priority[right.provider]).filter((release) => {\n\t\tif (seenIds.has(release.id) || counts[release.provider] >= limits[release.provider]) return false;\n\t\tseenIds.add(release.id);\n\t\tcounts[release.provider] += 1;\n\t\treturn true;\n\t});\n\treturn [...uniqueCurrent, ...backfill];\n};\nconst releaseReceiptKey = (provider, version, headSha) => `${releaseRunKey(provider, version)}:${headSha}`;\nconst releaseReceiptDisposition = (receipt, runKey, headSha) => {\n\tif (receipt?.runKey !== runKey || receipt.headSha !== headSha) return "dispatch";\n\tif (shouldReuseReleaseReceipt(receipt, runKey, headSha)) return "reuse";\n\treturn typeof receipt.workflowRunId === "string" && receipt.workflowRunId !== "" ? "read" : "dispatch";\n};\nconst releaseRunKey = (provider, version) => `harness-release:${provider}:${version}`;\nconst shouldReuseReleaseReceipt = (receipt, runKey, headSha) => receipt?.runKey === runKey && receipt.headSha === headSha && receipt.workflowStatus === "completed" && (receipt.status === "green" && receipt.ledgerStatus === "recorded" && receipt.proofArtifactVerified === true && receipt.runtimeArtifactVerified === true || (receipt.status === "red" || receipt.status === "pending") && receipt.proofArtifactVerified === true);\nconst summarizeHarnessBackfill = (releases, receipts, headSha) => {\n\tconst backfill = orderReleaseCandidates(releases).filter((release) => release.selection === "backfill");\n\tlet green = 0;\n\tlet red = 0;\n\tlet pending = 0;\n\tlet terminal = 0;\n\tfor (const release of backfill) {\n\t\tconst receipt = receipts.find((candidate) => candidate.discoveryId === release.id && candidate.runKey === releaseRunKey(release.provider, release.version) && candidate.headSha === headSha && candidate.workflowStatus === "completed" && candidate.proofArtifactVerified === true);\n\t\tif (receipt === undefined) continue;\n\t\tterminal += 1;\n\t\tif (receipt?.proofStatus === "green") green += 1;\n\t\telse if (receipt?.proofStatus === "red") red += 1;\n\t\telse pending += 1;\n\t}\n\treturn {\n\t\ttotal: backfill.length,\n\t\tterminal,\n\t\tgreen,\n\t\tred,\n\t\tpending,\n\t\tacceptance: backfill.length === 0 ? "pending" : terminal < backfill.length ? "in-progress" : green / backfill.length >= .9 ? "met" : "missed"\n\t};\n};\nconst NPM_PACKAGES = [{\n\t"packageName": "@anthropic-ai/claude-code",\n\t"provider": "claude-code",\n\t"backfillLimit": 50\n}, {\n\t"packageName": "@anthropic-ai/claude-agent-sdk",\n\t"provider": "claude-agent-sdk",\n\t"backfillLimit": 0\n}];\nconst CODEX_RELEASE_LIMIT = 11;\nconst CODEX_MAX_PAGES = 10;\nconst RELEASE_VERSION = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/u;\nfunction isRecord(value) {\n\treturn value !== null && typeof value === "object" && !Array.isArray(value);\n}\nfunction responseJson(value) {\n\tif (!isRecord(value)) return value;\n\tif ("body" in value) return value.body;\n\treturn value;\n}\nfunction compareText(left, right) {\n\treturn left < right ? -1 : left > right ? 1 : 0;\n}\nfunction compareVersions(left, right) {\n\tconst a = left.split(".");\n\tconst b = right.split(".");\n\tfor (let index = 0; index < 3; index += 1) {\n\t\tconst leftPart = a[index] ?? "";\n\t\tconst rightPart = b[index] ?? "";\n\t\tif (leftPart === rightPart) continue;\n\t\treturn leftPart.length === rightPart.length ? compareText(leftPart, rightPart) : leftPart.length - rightPart.length;\n\t}\n\treturn 0;\n}\nfunction compareCandidates(left, right) {\n\treturn compareVersions(right.version, left.version) || compareText(left.upstreamIdentity, right.upstreamIdentity);\n}\nfunction stableVersion(value) {\n\treturn typeof value === "string" && RELEASE_VERSION.test(value);\n}\nfunction makeCandidate(provider, version, upstreamIdentity, selection, provenance) {\n\treturn {\n\t\tid: `${provider}:${version}:${upstreamIdentity}`,\n\t\tprovider,\n\t\tversion,\n\t\tupstreamIdentity,\n\t\tselection,\n\t\tprovenance\n\t};\n}\nfunction parseNpm(packageInfo, source) {\n\tif (!isRecord(packageInfo) || packageInfo.name !== source.packageName || !isRecord(packageInfo.versions) || !isRecord(packageInfo["dist-tags"])) return [];\n\tconst stable = Object.entries(packageInfo.versions).flatMap(([version, metadata]) => {\n\t\tif (!stableVersion(version) || !isRecord(metadata) || metadata.name !== source.packageName || metadata.version !== version) return [];\n\t\tconst dist = isRecord(metadata.dist) ? metadata.dist : {};\n\t\tconst integrity = typeof dist.integrity === "string" && dist.integrity.trim() ? dist.integrity : undefined;\n\t\treturn [{\n\t\t\tversion,\n\t\t\tcandidate: makeCandidate(source.provider, version, `npm:${source.packageName}`, "backfill", {\n\t\t\t\tkind: "npm",\n\t\t\t\tpackageName: source.packageName,\n\t\t\t\t...integrity ? { integrity } : {}\n\t\t\t})\n\t\t}];\n\t}).sort((left, right) => compareCandidates(left.candidate, right.candidate));\n\tconst currentVersion = packageInfo["dist-tags"].latest;\n\tconst current = typeof currentVersion === "string" ? stable.find((release) => release.version === currentVersion) : undefined;\n\treturn [...current ? [{\n\t\t...current.candidate,\n\t\tselection: "current"\n\t}] : [], ...stable.filter((release) => release.version !== current?.version).slice(0, source.backfillLimit).map((release) => release.candidate)];\n}\nfunction parseCodexPage(value) {\n\tif (!Array.isArray(value)) return [];\n\treturn value.flatMap((release) => {\n\t\tif (!isRecord(release) || release.draft !== false || release.prerelease !== false || typeof release.tag_name !== "string") return [];\n\t\tconst tagName = release.tag_name;\n\t\tconst version = /^rust-v(.+)$/u.exec(tagName)?.[1];\n\t\tif (!stableVersion(version)) return [];\n\t\tconst nestedCommit = isRecord(release.commit) && typeof release.commit.sha === "string" ? release.commit.sha : undefined;\n\t\tconst commitSha = typeof release.commit_sha === "string" ? release.commit_sha : nestedCommit;\n\t\tconst targetCommitish = typeof release.target_commitish === "string" ? release.target_commitish : undefined;\n\t\treturn [makeCandidate("codex", version, `github:openai/codex:${tagName}`, "backfill", {\n\t\t\tkind: "github",\n\t\t\trepository: "openai/codex",\n\t\t\ttagName,\n\t\t\t...targetCommitish ? { targetCommitish } : {},\n\t\t\t...commitSha && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(commitSha) ? { commitSha } : {}\n\t\t})];\n\t}).sort(compareCandidates);\n}\nfunction selectCodex(releases) {\n\tconst seenIds = new Set();\n\tconst seenVersions = new Set();\n\treturn releases.filter((release) => !seenIds.has(release.id) && !!seenIds.add(release.id)).sort(compareCandidates).filter((release) => !seenVersions.has(release.version) && !!seenVersions.add(release.version)).slice(0, CODEX_RELEASE_LIMIT).map((release, index) => ({\n\t\t...release,\n\t\tselection: index === 0 ? "current" : "backfill"\n\t}));\n}\nfunction nextLink(header) {\n\treturn /<([^>]+)>\\s*;\\s*rel="?next"?/u.exec(header ?? "")?.[1] ?? null;\n}\nfunction codexNextUrl(_current, candidate) {\n\tconst endpoint = "https://api.github.com/repos/openai/codex/releases";\n\tif (candidate !== endpoint && !candidate.startsWith(`${endpoint}?`)) throw new Error("Codex release discovery returned an unexpected pagination URL");\n\treturn candidate;\n}\nasync function discoverCodex(w) {\n\tconst releases = [];\n\tconst seen = new Set();\n\tconst visited = new Set();\n\tlet next = "https://api.github.com/repos/openai/codex/releases?per_page=100&page=1";\n\tfor (let page = 1; page <= CODEX_MAX_PAGES; page += 1) {\n\t\tw.$arm("s4", 0);\n\t\tif (visited.has(next)) throw new Error("Codex release discovery pagination loop");\n\t\tvisited.add(next);\n\t\tconst response = await w.http("s5", "Read Codex release page", next);\n\t\tif (isRecord(response) && response.ok === false) throw new Error(`Codex release discovery failed with HTTP ${String(response.status)}`);\n\t\tconst body = responseJson(response);\n\t\tif (!Array.isArray(body)) throw new Error("Codex release discovery returned invalid data");\n\t\tfor (const release of parseCodexPage(body)) {\n\t\t\tif (!seen.has(release.id)) {\n\t\t\t\tseen.add(release.id);\n\t\t\t\treleases.push(release);\n\t\t\t}\n\t\t}\n\t\tconst headers = isRecord(response) && isRecord(response.headers) ? response.headers : {};\n\t\tconst linkHeader = Object.entries(headers).find(([name]) => name.toLowerCase() === "link")?.[1];\n\t\tconst link = nextLink(typeof linkHeader === "string" ? linkHeader : null);\n\t\tif (!link || selectCodex(releases).length >= CODEX_RELEASE_LIMIT) {\n\t\t\tw.$arm("s6", 0);\n\t\t\treturn selectCodex(releases);\n\t\t} else {\n\t\t\tw.$arm("s6", 1);\n\t\t}\n\t\tif (page === CODEX_MAX_PAGES) throw new Error(`Codex release discovery exceeded ${CODEX_MAX_PAGES} pages`);\n\t\tnext = codexNextUrl(next, link);\n\t}\n\treturn selectCodex(releases);\n}\nfunction workflowRun(value) {\n\tif (!isRecord(value) || typeof value.runId !== "string" || typeof value.url !== "string" || typeof value.workflowFile !== "string" || typeof value.headSha !== "string" || typeof value.displayTitle !== "string" || typeof value.status !== "string" || value.conclusion !== null && typeof value.conclusion !== "string") return null;\n\treturn {\n\t\trunId: value.runId,\n\t\turl: value.url,\n\t\tworkflowFile: value.workflowFile,\n\t\theadSha: value.headSha,\n\t\tdisplayTitle: value.displayTitle,\n\t\tstatus: value.status,\n\t\tconclusion: value.conclusion\n\t};\n}\nfunction verifiedWorkflowArtifact(value, candidate, headSha, runKey, expectedRun) {\n\tif (expectedRun === null || !isRecord(value) || !isRecord(value.run) || !isRecord(value.artifact) || typeof value.text !== "string") return null;\n\tconst run = workflowRun(value.run);\n\tconst artifact = value.artifact;\n\tif (run === null || run.runId !== expectedRun.runId || run.workflowFile !== HARNESS_RELEASE_WORKFLOW_FILE || run.headSha !== headSha || run.displayTitle !== runKey || run.status !== "completed" || artifact.name !== releaseArtifactName(candidate.provider, candidate.version, run.runId) || artifact.entryPath !== HARNESS_RELEASE_RESULT_PATH || typeof artifact.id !== "string" || typeof artifact.digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(artifact.digest) || typeof artifact.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(artifact.sha256) || typeof artifact.bytes !== "number" || !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) return null;\n\ttry {\n\t\tconst decoded = JSON.parse(value.text);\n\t\tif (!isRecord(decoded) || decoded.schemaVersion !== 1 || decoded.provider !== candidate.provider || decoded.version !== candidate.version || decoded.runKey !== runKey || decoded.selection !== candidate.selection || !isRecord(decoded.source) || decoded.source.commit !== headSha || decoded.status !== "green" && decoded.status !== "red" && decoded.status !== "pending") return null;\n\t\tif (decoded.status === "green" && run.conclusion !== "success") return null;\n\t\treturn {\n\t\t\trun,\n\t\t\tartifact: {\n\t\t\t\tid: artifact.id,\n\t\t\t\tname: artifact.name,\n\t\t\t\tdigest: artifact.digest,\n\t\t\t\tentryPath: artifact.entryPath,\n\t\t\t\tsha256: artifact.sha256,\n\t\t\t\tbytes: artifact.bytes\n\t\t\t},\n\t\t\tresult: decoded\n\t\t};\n\t} catch {\n\t\treturn null;\n\t}\n}\nasync function updateReleaseThread(w, threadId, previous, fingerprint, message) {\n\tif (previous?.threadUpdate === fingerprint) {\n\t\tw.$arm("s38", 0);\n\t\treturn fingerprint;\n\t} else {\n\t\tw.$arm("s38", 1);\n\t}\n\ttry {\n\t\tw.$arm("s40", 0);\n\t\tawait w.call("s41", "Update the release proof thread", "signalbox.t3_thread_send", {\n\t\t\tthreadId,\n\t\t\tmessage\n\t\t});\n\t\treturn fingerprint;\n\t} catch {\n\t\tw.$arm("s40", 1);\n\t\treturn previous?.threadUpdate ?? null;\n\t}\n}\nasync function rememberPending(w, receiptKey, fields) {\n\tawait w.remember("s31", "Keep the release receipt pending", receiptKey, {\n\t\t...fields,\n\t\tstatus: "pending"\n\t});\n}\nasync function handoffRedProof(w, receiptKey, receipt, candidate, runKey, headSha) {\n\tif (receipt.handoffStatus === "created") {\n\t\tw.$arm("s18", 0);\n\t\treturn receipt;\n\t} else {\n\t\tw.$arm("s18", 1);\n\t}\n\tconst result = isRecord(receipt.result) ? receipt.result : {};\n\tconst artifact = isRecord(receipt.workflowArtifact) ? receipt.workflowArtifact : null;\n\tconst stages = Array.isArray(result.stages) ? result.stages.filter((stage) => isRecord(stage) && stage.status === "rejected").map((stage) => isRecord(stage) && typeof stage.name === "string" ? stage.name : null).filter(Boolean).join(", ") : "";\n\tlet next;\n\ttry {\n\t\tw.$arm("s20", 0);\n\t\tif (artifact === null || typeof artifact.id !== "string" || typeof artifact.sha256 !== "string" || typeof receipt.workflowUrl !== "string") throw new Error("The verified red proof receipt has no handoff details.");\n\t\tconst issue = await w.call("s21", "Hand the failed proof to GitHub", "signalbox.github_issue", {\n\t\t\taction: "create",\n\t\t\tcorrelationId: `${runKey}:${headSha}:red`,\n\t\t\ttitle: `Harness proof failed: ${candidate.provider} ${candidate.version}`,\n\t\t\tbody: [\n\t\t\t\t`The exact ${candidate.provider} ${candidate.version} proof returned red.`,\n\t\t\t\t`Run key: ${runKey}`,\n\t\t\t\t`Source head: ${headSha}`,\n\t\t\t\t`Workflow: ${receipt.workflowUrl}`,\n\t\t\t\t`Failed stages: ${stages || "not listed"}`,\n\t\t\t\t`Workflow artifact: ${artifact.id} (${artifact.sha256})`,\n\t\t\t\t"The previous green release remains selected."\n\t\t\t].join("\\n\\n")\n\t\t});\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "created",\n\t\t\thandoff: issue\n\t\t};\n\t} catch {\n\t\tw.$arm("s20", 1);\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "unavailable"\n\t\t};\n\t}\n\tawait w.remember("s22", "Store the red proof handoff", receiptKey, next);\n\treturn next;\n}\nfunction proofStatusOf(value) {\n\treturn value === "green" || value === "red" || value === "pending" ? value : null;\n}\nasync function runRelease(w, candidate, headSha, triggerAt) {\n\tconst runKey = releaseRunKey(candidate.provider, candidate.version);\n\tconst receiptKey = releaseReceiptKey(candidate.provider, candidate.version, headSha);\n\tconst recalled = await w.recall("s13", "Read the release receipt", receiptKey);\n\tconst previous = isRecord(recalled) && recalled.runKey === runKey && recalled.headSha === headSha ? recalled : null;\n\tconst releaseThreadValue = await w.recall("s14", "Read the release tracking thread", runKey);\n\tconst releaseThread = isRecord(releaseThreadValue) && releaseThreadValue.runKey === runKey ? releaseThreadValue : null;\n\tconst disposition = releaseReceiptDisposition(previous, runKey, headSha);\n\tif (disposition === "reuse") {\n\t\tw.$arm("s15", 0);\n\t\tconst reusable = candidate.selection === "current" && previous?.status === "red" && previous !== null ? (w.$arm("s16", 0), await handoffRedProof(w.$frame("s17"), receiptKey, previous, candidate, runKey, headSha)) : (w.$arm("s16", 1), previous);\n\t\tconst result = reusable !== null && isRecord(reusable.result) ? reusable.result : null;\n\t\treturn {\n\t\t\tstatus: reusable?.status,\n\t\t\treused: true,\n\t\t\tverified: reusable?.status === "green" && reusable?.ledgerStatus === "recorded" && reusable?.runtimeArtifactVerified === true && result !== null && isVerifiedHarnessRelease("green", result)\n\t\t};\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tlet childThreadId = releaseThread !== null && typeof releaseThread.childThreadId === "string" ? releaseThread.childThreadId : previous !== null && typeof previous.childThreadId === "string" ? previous.childThreadId : null;\n\tif (childThreadId === null) {\n\t\tw.$arm("s24", 0);\n\t\ttry {\n\t\t\tw.$arm("s25", 0);\n\t\t\tconst child = await w.agent("s26", "Create a release proof thread", { prompt: [\n\t\t\t\t"This thread tracks one exact harness release attempt.",\n\t\t\t\t`Provider: ${candidate.provider}.`,\n\t\t\t\t`Version: ${candidate.version}.`,\n\t\t\t\t`Source head: ${headSha}.`,\n\t\t\t\t`Run key: ${runKey}.`,\n\t\t\t\t"The Signalbox automation owns GitHub dispatch, run readback and immutable artifact verification. Do not run external commands or claim a proof result. The automation will send the verified outcome to this thread."\n\t\t\t].join("\\n\\n") });\n\t\t\tchildThreadId = isRecord(child) && typeof child.threadId === "string" ? child.threadId : null;\n\t\t\tif (childThreadId !== null) {\n\t\t\t\tw.$arm("s27", 0);\n\t\t\t\tawait w.remember("s28", "Keep the release tracking thread", runKey, {\n\t\t\t\t\trunKey,\n\t\t\t\t\tprovider: candidate.provider,\n\t\t\t\t\tversion: candidate.version,\n\t\t\t\t\tchildThreadId\n\t\t\t\t});\n\t\t\t} else {\n\t\t\t\tw.$arm("s27", 1);\n\t\t\t}\n\t\t} catch {\n\t\t\tw.$arm("s25", 1);\n\t\t\tchildThreadId = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s24", 1);\n\t}\n\tif (childThreadId === null) {\n\t\tw.$arm("s29", 0);\n\t\tawait rememberPending(w.$frame("s30"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\treason: "The release proof thread could not be created."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s29", 1);\n\t}\n\tlet expectedRevision = previous !== null && typeof previous.expectedRevision === "number" ? previous.expectedRevision : null;\n\tif (expectedRevision === null) {\n\t\tw.$arm("s33", 0);\n\t\ttry {\n\t\t\tw.$arm("s34", 0);\n\t\t\tconst selection = await w.call("s35", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\texpectedRevision = isRecord(selection) && Number.isSafeInteger(selection.revision) ? selection.revision : null;\n\t\t} catch {\n\t\t\tw.$arm("s34", 1);\n\t\t\texpectedRevision = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s33", 1);\n\t}\n\tif (expectedRevision === null) {\n\t\tw.$arm("s36", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s37"), childThreadId, previous, `ledger-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending because its project ledger is unavailable. Run key: ${runKey}. Source head: ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s44"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tchildThreadId,\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\texpectedRevision: null,\n\t\t\tthreadUpdate,\n\t\t\treason: "The project ledger could not capture a selection revision before proof started."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s36", 1);\n\t}\n\tconst workflowFile = HARNESS_RELEASE_WORKFLOW_FILE;\n\tlet run = null;\n\ttry {\n\t\tw.$arm("s46", 0);\n\t\tconst response = disposition === "read" && previous !== null ? (w.$arm("s47", 0), await w.call("s48", "Read the existing exact release run", "signalbox.github_workflow", {\n\t\t\taction: "read",\n\t\t\tworkflowFile,\n\t\t\trunId: previous.workflowRunId,\n\t\t\theadSha\n\t\t})) : (w.$arm("s47", 1), await w.call("s49", "Dispatch the exact release proof", "signalbox.github_workflow", {\n\t\t\taction: "dispatch",\n\t\t\tworkflowFile,\n\t\t\tref: "main",\n\t\t\theadSha,\n\t\t\tcorrelationId: runKey,\n\t\t\tinputs: {\n\t\t\t\tprovider: candidate.provider,\n\t\t\t\tversion: candidate.version,\n\t\t\t\trunKey,\n\t\t\t\tselection: candidate.selection\n\t\t\t}\n\t\t}));\n\t\trun = workflowRun(response);\n\t} catch {\n\t\tw.$arm("s46", 1);\n\t\trun = null;\n\t}\n\tif (run === null || run.workflowFile !== workflowFile || run.headSha !== headSha || run.displayTitle !== runKey) {\n\t\tw.$arm("s50", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s51"), childThreadId, previous, `workflow-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending. The automation could not confirm a workflow run for ${runKey} at ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s52"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\texpectedRevision,\n\t\t\tchildThreadId,\n\t\t\t...run === null ? {} : {\n\t\t\t\tworkflowRunId: run.runId,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t},\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: run?.status ?? "unknown",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason: "The workflow run did not match the exact release attempt."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s50", 1);\n\t}\n\tconst baseReceipt = {\n\t\t...previous,\n\t\tdiscoveryId: candidate.id,\n\t\tprovider: candidate.provider,\n\t\tversion: candidate.version,\n\t\tselection: candidate.selection,\n\t\trunKey,\n\t\theadSha,\n\t\texpectedRevision,\n\t\tchildThreadId,\n\t\tworkflowRunId: run.runId,\n\t\tworkflowUrl: run.url,\n\t\tworkflowStatus: run.status\n\t};\n\tif (run.status !== "completed") {\n\t\tw.$arm("s54", 0);\n\t\tawait rememberPending(w.$frame("s55"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: run.status\n\t\t};\n\t} else {\n\t\tw.$arm("s54", 1);\n\t}\n\tlet evidence = null;\n\ttry {\n\t\tw.$arm("s57", 0);\n\t\tevidence = await w.call("s58", "Read the completed release proof artifact", "signalbox.github_workflow", {\n\t\t\taction: "artifact",\n\t\t\tworkflowFile,\n\t\t\trunId: run.runId,\n\t\t\theadSha,\n\t\t\tartifactName: releaseArtifactName(candidate.provider, candidate.version, run.runId),\n\t\t\tentryPath: HARNESS_RELEASE_RESULT_PATH\n\t\t});\n\t} catch {\n\t\tw.$arm("s57", 1);\n\t\tevidence = null;\n\t}\n\tconst verified = verifiedWorkflowArtifact(evidence, candidate, headSha, runKey, run);\n\tif (verified === null) {\n\t\tw.$arm("s59", 0);\n\t\tconst reason = "The completed workflow\'s immutable result artifact is unavailable or mismatched.";\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s60"), childThreadId, previous, `completed-artifact-pending:${headSha}`, `The ${candidate.provider} ${candidate.version} workflow completed, but its exact result artifact could not be verified. Status remains pending. Run: ${run.url}`);\n\t\tawait rememberPending(w.$frame("s61"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowUrl: run.url,\n\t\t\treason\n\t\t};\n\t} else {\n\t\tw.$arm("s59", 1);\n\t}\n\tlet recorded = null;\n\ttry {\n\t\tw.$arm("s63", 0);\n\t\trecorded = await w.call("s64", "Verify the immutable release result in the project ledger", "signalbox.harness_release_ledger", {\n\t\t\taction: "record",\n\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowFile,\n\t\t\tworkflowRunId: run.runId,\n\t\t\tartifactName: verified.artifact.name,\n\t\t\tentryPath: verified.artifact.entryPath\n\t\t});\n\t} catch {\n\t\tw.$arm("s63", 1);\n\t\trecorded = null;\n\t}\n\tconst ledgerRecorded = isRecord(recorded) && recorded.status === "recorded";\n\tconst runtimeArtifactVerified = isRecord(recorded) && recorded.runtimeArtifactVerified === true;\n\tconst result = isRecord(recorded) && isRecord(recorded.result) ? recorded.result : verified.result;\n\tconst proofStatus = isRecord(recorded) && proofStatusOf(recorded.proofStatus) !== null ? proofStatusOf(recorded.proofStatus) : proofStatusOf(verified.result.status) ?? "pending";\n\tconst proofArtifactVerified = true;\n\tconst status = proofStatus === "red" && proofArtifactVerified ? "red" : proofStatus === "green" && ledgerRecorded && runtimeArtifactVerified && isVerifiedHarnessRelease("green", result) ? "green" : "pending";\n\tconst reason = isRecord(recorded) && typeof recorded.reason === "string" ? recorded.reason : status === "pending" ? "The immutable proof is verified, but its deployable runtime payload is not available yet." : undefined;\n\tlet stored = {\n\t\t...baseReceipt,\n\t\tstatus,\n\t\tproofStatus,\n\t\tledgerStatus: ledgerRecorded ? "recorded" : "unverified",\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tresult,\n\t\tworkflowArtifact: verified.artifact,\n\t\tthreadUpdate: previous?.threadUpdate ?? null,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n\tif (status === "green" && candidate.selection === "current" && expectedRevision !== null) {\n\t\tw.$arm("s65", 0);\n\t\ttry {\n\t\t\tw.$arm("s66", 0);\n\t\t\tconst latest = await w.call("s67", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\tconst currentRevision = isRecord(latest) && Number.isSafeInteger(latest.revision) ? latest.revision : null;\n\t\t\tif (!canPromoteHarnessRelease({\n\t\t\t\tselection: candidate.selection,\n\t\t\t\tstatus,\n\t\t\t\truntimeArtifactVerified,\n\t\t\t\texpectedRevision,\n\t\t\t\tcurrentRevision,\n\t\t\t\tresult\n\t\t\t})) {\n\t\t\t\tw.$arm("s68", 0);\n\t\t\t\tawait rememberPending(w.$frame("s69"), receiptKey, {\n\t\t\t\t\t...stored,\n\t\t\t\t\tpromotionStatus: "stale",\n\t\t\t\t\treason: "The captured selection revision changed while this proof ran."\n\t\t\t\t});\n\t\t\t\treturn {\n\t\t\t\t\tstatus: "pending",\n\t\t\t\t\trunKey,\n\t\t\t\t\theadSha,\n\t\t\t\t\tworkflowUrl: run.url,\n\t\t\t\t\tpromotion: "stale"\n\t\t\t\t};\n\t\t\t} else {\n\t\t\t\tw.$arm("s68", 1);\n\t\t\t}\n\t\t\tawait w.call("s71", "Select the proven current release", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "promote",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\t\treleaseId: result.candidateId,\n\t\t\t\texpectedRevision,\n\t\t\t\tchangedAt: triggerAt\n\t\t\t});\n\t\t} catch {\n\t\t\tw.$arm("s66", 1);\n\t\t\tawait rememberPending(w.$frame("s72"), receiptKey, {\n\t\t\t\t...stored,\n\t\t\t\tpromotionStatus: "not-selected"\n\t\t\t});\n\t\t\treturn {\n\t\t\t\tstatus: "pending",\n\t\t\t\trunKey,\n\t\t\t\theadSha,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t};\n\t\t}\n\t} else {\n\t\tw.$arm("s65", 1);\n\t}\n\tif (status === "red" && candidate.selection === "current") {\n\t\tw.$arm("s74", 0);\n\t\tstored = await handoffRedProof(w.$frame("s75"), receiptKey, stored, candidate, runKey, headSha);\n\t} else {\n\t\tw.$arm("s74", 1);\n\t}\n\tconst threadMessage = status === "red" ? `The exact ${candidate.provider} ${candidate.version} proof is red. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. The previous green release remains selected.` : status === "green" ? `The exact ${candidate.provider} ${candidate.version} proof is green and selected. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}.` : `The exact ${candidate.provider} ${candidate.version} proof is pending. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. ${reason ?? "The previous green release remains selected."}`;\n\tconst threadUpdate = await updateReleaseThread(w.$frame("s76"), childThreadId, previous, `${headSha}:${run.status}:${status}:${proofStatus}:${runtimeArtifactVerified}`, threadMessage);\n\tconst finalReceipt = {\n\t\t...stored,\n\t\tthreadUpdate\n\t};\n\tawait w.remember("s77", "Store the release proof status", receiptKey, finalReceipt);\n\treturn {\n\t\tstatus,\n\t\tverified: status === "green" && runtimeArtifactVerified,\n\t\tproofStatus,\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tworkflowStatus: run.status,\n\t\tdiscoveryId: candidate.id,\n\t\trunKey,\n\t\theadSha,\n\t\tworkflowUrl: run.url,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n}\nconst __signalboxWorkflow = workflow(async (w, _input, trigger) => {\n\tconst candidates = [];\n\tfor (const source of NPM_PACKAGES) {\n\t\tw.$arm("s1", 0);\n\t\tconst packagePath = source.packageName.replace("/", "%2f");\n\t\tconst metadata = responseJson(await w.http("s2", "Read npm release metadata", `https://registry.npmjs.org/${packagePath}`));\n\t\tcandidates.push(...parseNpm(metadata, source));\n\t}\n\tcandidates.push(...await discoverCodex(w.$frame("s3")));\n\tconst ordered = orderReleaseCandidates(candidates);\n\tconst head = responseJson(await w.http("s8", "Read the Signalbox source head", "https://api.github.com/repos/JustYannicc/signalbox/commits/main"));\n\tif (!isRecord(head) || typeof head.sha !== "string") {\n\t\tw.$arm("s9", 0);\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\treason: "The current source head could not be read."\n\t\t};\n\t} else {\n\t\tw.$arm("s9", 1);\n\t}\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst backfill = ordered.filter((release) => release.selection === "backfill");\n\tconst results = [];\n\tconst verifiedCurrentProviders = [];\n\tconst currentBatch = nextHarnessReleaseBatch(candidates).filter((release) => release.selection === "current");\n\tfor (const candidate of currentBatch) {\n\t\tw.$arm("s11", 0);\n\t\tconst result = await runRelease(w.$frame("s12"), candidate, head.sha, trigger.at);\n\t\tresults.push({\n\t\t\tdiscoveryId: candidate.id,\n\t\t\t...result\n\t\t});\n\t\tif (result.verified === true) verifiedCurrentProviders.push(candidate.provider);\n\t}\n\tconst allCurrentGreen = current.length === 3 && current.every((release) => verifiedCurrentProviders.includes(release.provider));\n\tlet backfillSummary = {\n\t\ttotal: backfill.length,\n\t\tterminal: 0,\n\t\tgreen: 0,\n\t\tred: 0,\n\t\tpending: backfill.length,\n\t\tacceptance: "blocked-on-current"\n\t};\n\tif (allCurrentGreen) {\n\t\tw.$arm("s78", 0);\n\t\tconst backfillReceipts = [];\n\t\tfor (const candidate of backfill) {\n\t\t\tw.$arm("s79", 0);\n\t\t\tconst receipt = await w.recall("s80", "Read a historical release receipt", releaseReceiptKey(candidate.provider, candidate.version, head.sha));\n\t\t\tif (isRecord(receipt)) backfillReceipts.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...receipt\n\t\t\t});\n\t\t}\n\t\tconst terminalBackfillIds = backfillReceipts.filter((receipt) => receipt.workflowStatus === "completed" && receipt.proofArtifactVerified === true).map((receipt) => receipt.discoveryId).filter((id) => typeof id === "string");\n\t\tconst backfillBatch = nextHarnessReleaseBatch(candidates, verifiedCurrentProviders, terminalBackfillIds).filter((release) => release.selection === "backfill");\n\t\tfor (const candidate of backfillBatch) {\n\t\t\tw.$arm("s81", 0);\n\t\t\tconst result = await runRelease(w.$frame("s82"), candidate, head.sha, trigger.at);\n\t\t\tresults.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...result\n\t\t\t});\n\t\t\tconst currentReceipts = backfillReceipts.filter((receipt) => receipt.discoveryId !== candidate.id);\n\t\t\tif (result.proofArtifactVerified === true) {\n\t\t\t\tcurrentReceipts.push({\n\t\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t\trunKey: releaseRunKey(candidate.provider, candidate.version),\n\t\t\t\t\theadSha: head.sha,\n\t\t\t\t\tworkflowStatus: result.workflowStatus,\n\t\t\t\t\tproofStatus: result.proofStatus,\n\t\t\t\t\tproofArtifactVerified: true\n\t\t\t\t});\n\t\t\t}\n\t\t\tbackfillReceipts.splice(0, backfillReceipts.length, ...currentReceipts);\n\t\t}\n\t\tbackfillSummary = summarizeHarnessBackfill(candidates, backfillReceipts, head.sha);\n\t} else {\n\t\tw.$arm("s78", 1);\n\t}\n\treturn {\n\t\theadSha: head.sha,\n\t\tcurrent: current.length,\n\t\tbackfillAvailable: backfill.length,\n\t\tbackfillAcceptance: backfillSummary,\n\t\tattempted: results.length,\n\t\tresults\n\t};\n});\n\nreturn __signalboxWorkflow;\n}\n',
+      'export function load(workflow) {\nconst meta = {\n\tname: "Watch harness releases",\n\tdescription: "Checks current Claude Code, Claude Agent SDK and Codex releases, then works through a bounded historical set. Run builtin:harness-release-watch once with the Signalbox project\'s ID to install its hourly trigger in that project.",\n\tintent: "keep the selected agent harness release backed by exact current-release proof",\n\ttriggers: [{\n\t\tcron: "0 * * * *",\n\t\ttimezone: "Europe/Zurich"\n\t}],\n\toverlap: "skip"\n};\nconst HARNESS_RELEASE_WORKFLOW_FILE = ".github/workflows/harness-release-proof.yml";\nconst HARNESS_RELEASE_RESULT_PATH = "result.json";\nconst HARNESS_RELEASE_BACKFILL_LIMITS = {\n\t"claude-code": 50,\n\t"claude-agent-sdk": 0,\n\t"codex": 10\n};\nconst resourceCriteriaValidator = (value, expected) => {\n\tconst record = (candidate) => candidate !== null && typeof candidate === "object" && !Array.isArray(candidate) ? candidate : undefined;\n\tconst exactKeys = (candidate, names) => Object.keys(candidate).length === names.length && names.every((name) => name in candidate);\n\tconst text = (candidate) => typeof candidate === "string" && candidate.length > 0;\n\tconst hash = (candidate) => typeof candidate === "string" && /^[a-f0-9]{64}$/u.test(candidate);\n\tconst validStatus = (candidate) => candidate === "not-applicable" || candidate === "pending" || candidate === "passed" || candidate === "rejected";\n\tconst assessment = record(value);\n\tif (!assessment) return false;\n\tconst environment = assessment.environment;\n\tif (assessment.tag !== "harness-release-resource-criteria-v2" || assessment.source !== "normal-public-qualifier" || environment !== "local-workerd" && environment !== "deployed" || !validStatus(assessment.status) || !text(assessment.detail)) return false;\n\tconst local = environment === "local-workerd";\n\tconst expectedAssessmentKeys = [\n\t\t"tag",\n\t\t"source",\n\t\t"environment",\n\t\t"status",\n\t\t"label",\n\t\t"pins",\n\t\t"startupUpperBound",\n\t\t...local ? "terminationClassification" in assessment ? ["terminationClassification"] : [] : ["platformPolicyCompliance"],\n\t\t"detail"\n\t];\n\tif (!exactKeys(assessment, expectedAssessmentKeys) || assessment.label !== "platform policy compliance evidence") return false;\n\tconst pins = record(assessment.pins);\n\tif (!pins || !exactKeys(pins, [\n\t\t"measurementRunId",\n\t\t"fixtureId",\n\t\t"fixtureSha256",\n\t\t"artifactSha256",\n\t\t"releaseIdentitySha256"\n\t]) || !text(pins.measurementRunId) || !text(pins.fixtureId) || !hash(pins.fixtureSha256) || !hash(pins.artifactSha256) || !hash(pins.releaseIdentitySha256) || expected?.environment !== undefined && expected.environment !== environment || expected?.measurementRunId !== undefined && expected.measurementRunId !== pins.measurementRunId || expected?.fixtureId !== undefined && expected.fixtureId !== pins.fixtureId || expected?.fixtureSha256 !== undefined && expected.fixtureSha256 !== pins.fixtureSha256 || expected?.artifactSha256 !== undefined && expected.artifactSha256 !== pins.artifactSha256 || expected?.releaseIdentitySha256 !== undefined && expected.releaseIdentitySha256 !== pins.releaseIdentitySha256) return false;\n\tconst timing = record(assessment.startupUpperBound);\n\tif (!timing || !exactKeys(timing, [\n\t\t"label",\n\t\t"interpretation",\n\t\t"clock",\n\t\t"startedMonotonicNs",\n\t\t"finishedMonotonicNs",\n\t\t"milliseconds",\n\t\t"includesRpc",\n\t\t"exactBootTime"\n\t]) || timing.label !== "cold first-successful-RPC latency" || timing.interpretation !== "startup upper bound" || timing.clock !== "parent process.hrtime.bigint" || !text(timing.startedMonotonicNs) || !/^\\d+$/u.test(timing.startedMonotonicNs) || !text(timing.finishedMonotonicNs) || !/^\\d+$/u.test(timing.finishedMonotonicNs) || typeof timing.milliseconds !== "number" || !Number.isFinite(timing.milliseconds) || timing.milliseconds < 0 || timing.includesRpc !== true || timing.exactBootTime !== false) return false;\n\ttry {\n\t\tconst elapsed = BigInt(timing.finishedMonotonicNs) - BigInt(timing.startedMonotonicNs);\n\t\tif (elapsed < 0n || timing.milliseconds !== Number(elapsed) / 1e6) return false;\n\t} catch {\n\t\treturn false;\n\t}\n\tif (local) {\n\t\tconst termination = assessment.terminationClassification;\n\t\treturn assessment.status === "not-applicable" && (termination === undefined || termination === "NO_VERIFIED_TERMINATION" || termination === "OTHER_TERMINATION" || termination === "V8_HEAP_OOM_PROCESS_TERMINATED");\n\t}\n\tconst policy = record(assessment.platformPolicyCompliance);\n\tconst context = expected?.deployedContext;\n\tif (!policy || !context || !text(context.deploymentId) || !text(context.loaderId) || !text(context.facetId) || !hash(context.responsePlanSha256) || !Array.isArray(context.expectedResponses) || context.expectedResponses.length === 0 || !context.expectedResponses.every((response) => {\n\t\tconst planned = record(response);\n\t\treturn planned !== undefined && text(planned.id) && text(planned.method);\n\t}) || new Set(context.expectedResponses.map((response) => response.id)).size !== context.expectedResponses.length || !exactKeys(policy, [\n\t\t"label",\n\t\t"status",\n\t\t"identityVerified",\n\t\t"collectorRecord"\n\t]) || policy.label !== "platform policy compliance evidence" || policy.status !== "pending" && policy.status !== "passed" && policy.status !== "rejected" || typeof policy.identityVerified !== "boolean" || assessment.status !== policy.status) return false;\n\tconst collector = record(policy.collectorRecord);\n\tif (!collector || !exactKeys(collector, [\n\t\t"measurementRunId",\n\t\t"deploymentId",\n\t\t"loaderId",\n\t\t"facetId",\n\t\t"selectedReleaseSha256",\n\t\t"responsePlanSha256",\n\t\t"workloadCompleted",\n\t\t"beforeProbe",\n\t\t"responses",\n\t\t"afterProbe"\n\t]) || collector.measurementRunId !== pins.measurementRunId || collector.deploymentId !== context.deploymentId || collector.loaderId !== context.loaderId || collector.facetId !== context.facetId || collector.selectedReleaseSha256 !== pins.artifactSha256 || collector.responsePlanSha256 !== context.responsePlanSha256 || !hash(collector.responsePlanSha256) || typeof collector.workloadCompleted !== "boolean") return false;\n\tconst before = record(collector.beforeProbe);\n\tconst after = record(collector.afterProbe);\n\tconst responses = collector.responses;\n\tif (!before || !exactKeys(before, ["status", "isolateNonce"]) || !after || !exactKeys(after, ["status", "isolateNonce"]) || !Array.isArray(responses)) return false;\n\tconst validProbe = (probe) => exactKeys(probe, ["status", "isolateNonce"]) && typeof probe.status === "number" && Number.isInteger(probe.status) && typeof probe.isolateNonce === "string";\n\tif (!validProbe(before) || !validProbe(after)) return false;\n\tconst nonceSequence = [before.isolateNonce];\n\tlet responsePlanMatches = responses.length === context.expectedResponses.length;\n\tfor (const [index, actual] of responses.entries()) {\n\t\tconst row = record(actual);\n\t\tconst planned = context.expectedResponses[index];\n\t\tif (!row || !exactKeys(row, [\n\t\t\t"id",\n\t\t\t"method",\n\t\t\t"status",\n\t\t\t"isolateNonce"\n\t\t]) || typeof row.id !== "string" || typeof row.method !== "string" || typeof row.status !== "number" || !Number.isInteger(row.status) || typeof row.isolateNonce !== "string" || policy.status === "passed" && !planned) return false;\n\t\tif (planned === undefined || row.id !== planned.id || row.method !== planned.method) responsePlanMatches = false;\n\t\tnonceSequence.push(row.isolateNonce);\n\t}\n\tnonceSequence.push(after.isolateNonce);\n\tconst successful = before.status === 200 && after.status === 200 && responses.every((response) => record(response)?.status === 200);\n\tconst noncesPresent = nonceSequence.every((nonce) => text(nonce));\n\tconst nonceStable = noncesPresent && nonceSequence.every((nonce) => nonce === nonceSequence[0]);\n\tconst complete = collector.workloadCompleted && responsePlanMatches && successful && nonceStable;\n\treturn policy.identityVerified === true && (complete ? policy.status === "passed" && assessment.status === "passed" : policy.status === "rejected" && assessment.status === "rejected");\n};\nconst inheritedReachability = function deriveHarnessReleaseInheritedReachability(artifactSha256, inventory, corpus) {\n\tconst record = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : undefined;\n\tconst rows = (value) => {\n\t\tif (!Array.isArray(value)) return undefined;\n\t\tconst result = value.map(record);\n\t\treturn result.every((row) => row !== undefined) ? result : undefined;\n\t};\n\tconst text = (value) => typeof value === "string" && value.length > 0;\n\tconst hash = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);\n\tconst natural = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;\n\tconst apiPath = (site) => {\n\t\tif (!text(site.specifier) || !Array.isArray(site.memberPath) || !site.memberPath.every(text)) return undefined;\n\t\tconst specifier = site.specifier.replace(/^node:/u, "");\n\t\treturn {\n\t\t\tkey: JSON.stringify([specifier, site.memberPath]),\n\t\t\tspecifier,\n\t\t\tmemberPath: site.memberPath\n\t\t};\n\t};\n\tconst current = record(inventory);\n\tconst captures = record(corpus);\n\tconst currentCalls = rows(current?.callSites);\n\tconst analysisCalls = rows(current?.analysisOnlyCallSites);\n\tconst runs = rows(captures?.runs);\n\tconst historical = captures?.inheritedArtifacts === undefined ? [] : rows(captures.inheritedArtifacts);\n\tif (!hash(artifactSha256) || !currentCalls || !analysisCalls || !runs || !historical) return undefined;\n\tconst currentByPath = new Map();\n\tfor (const site of [...currentCalls, ...analysisCalls]) {\n\t\tconst path = apiPath(site);\n\t\tif (!path || !hash(site.siteId)) return undefined;\n\t\tconst ids = currentByPath.get(path.key) ?? [];\n\t\tids.push(site.siteId);\n\t\tcurrentByPath.set(path.key, ids);\n\t}\n\tconst historyByArtifact = new Map();\n\tfor (const entry of historical) {\n\t\tif (!hash(entry.artifactSha256) || entry.artifactSha256 === artifactSha256 || historyByArtifact.has(entry.artifactSha256) || !text(entry.release) || !record(entry.inventory)) return undefined;\n\t\thistoryByArtifact.set(entry.artifactSha256, entry);\n\t}\n\tconst inherited = new Map();\n\tconst removed = new Map();\n\tfor (const run of runs) {\n\t\tif (run.artifactSha256 === artifactSha256 || run.kind !== "a-series-replay") continue;\n\t\tif (!hash(run.artifactSha256) || !hash(run.evidenceSha256) || !text(run.runId)) return undefined;\n\t\tconst sources = rows(run.sources);\n\t\tif (!sources) return undefined;\n\t\tif (run.captureState === "not-started") {\n\t\t\tif (sources.some((source) => !Array.isArray(source.executedByteRanges) || !Array.isArray(source.invokedSiteIds) || source.executedByteRanges.length || source.invokedSiteIds.length)) return undefined;\n\t\t\tcontinue;\n\t\t}\n\t\tif (run.captureState !== "complete" && run.captureState !== "incomplete") return undefined;\n\t\tconst entry = historyByArtifact.get(run.artifactSha256);\n\t\tconst original = record(entry?.inventory);\n\t\tconst originalSources = rows(original?.sourceFiles);\n\t\tconst originalCalls = rows(original?.callSites);\n\t\tif (!entry || !original || original.schemaVersion !== 1 || !originalSources || !originalCalls) return undefined;\n\t\tconst pinnedByName = new Map();\n\t\tfor (const source of originalSources) {\n\t\t\tif (!text(source.name) || !hash(source.sha256) || !natural(source.bytes) || !natural(source.sourceUtf16Length) || pinnedByName.has(source.name)) return undefined;\n\t\t\tpinnedByName.set(source.name, source);\n\t\t}\n\t\tconst callById = new Map();\n\t\tfor (const call of originalCalls) {\n\t\t\tconst pinned = text(call.module) ? pinnedByName.get(call.module) : undefined;\n\t\t\tif (!pinned || !hash(call.siteId) || callById.has(call.siteId) || !apiPath(call) || call.sourceSha256 !== pinned.sha256 || call.offsetUnit !== "utf16-code-units" || !natural(call.startOffset) || !natural(call.endOffset) || call.startOffset >= call.endOffset || call.endOffset > Number(pinned.sourceUtf16Length)) return undefined;\n\t\t\tcallById.set(call.siteId, call);\n\t\t}\n\t\tif (sources.length !== originalSources.length) return undefined;\n\t\tconst names = new Set();\n\t\tfor (const source of sources) {\n\t\t\tconst pinned = text(source.module) ? pinnedByName.get(source.module) : undefined;\n\t\t\tconst ranges = rows(source.executedByteRanges);\n\t\t\tconst invocations = source.invokedSiteIds;\n\t\t\tif (!pinned || !text(source.module) || names.has(source.module) || source.sourceSha256 !== pinned.sha256 || !ranges || !Array.isArray(invocations) || !invocations.every(hash) || new Set(invocations).size !== invocations.length) return undefined;\n\t\t\tnames.add(source.module);\n\t\t\tfor (const range of ranges) {\n\t\t\t\tif (!natural(range.startOffset) || !natural(range.endOffset) || range.startOffset >= range.endOffset || range.endOffset > Number(pinned.sourceUtf16Length) || range.offsetUnit !== "utf16-code-units" || !natural(range.executionCount) || range.executionCount === 0) return undefined;\n\t\t\t}\n\t\t\tfor (const id of invocations) if (callById.get(id)?.module !== source.module) return undefined;\n\t\t\tfor (const [id, call] of callById) {\n\t\t\t\tif (call.module !== source.module) continue;\n\t\t\t\tconst invoked = invocations.includes(id);\n\t\t\t\tif (!invoked && !ranges.some((range) => Number(range.startOffset) < Number(call.endOffset) && Number(range.endOffset) > Number(call.startOffset))) continue;\n\t\t\t\tconst path = apiPath(call);\n\t\t\t\tconst observation = {\n\t\t\t\t\trelease: String(entry.release),\n\t\t\t\t\trunId: run.runId,\n\t\t\t\t\tartifactSha256: run.artifactSha256,\n\t\t\t\t\tevidenceSha256: run.evidenceSha256,\n\t\t\t\t\tmodule: source.module,\n\t\t\t\t\tsourceSha256: String(pinned.sha256),\n\t\t\t\t\tsiteId: id,\n\t\t\t\t\tmethod: invoked ? "observed invocation" : "reached by executed range",\n\t\t\t\t\tlabel: `reached (inherited from ${String(entry.release)}/${run.runId})`\n\t\t\t\t};\n\t\t\t\tconst targetIds = currentByPath.get(path.key);\n\t\t\t\tif (targetIds) {\n\t\t\t\t\tfor (const targetId of targetIds) {\n\t\t\t\t\t\tconst observations = inherited.get(targetId) ?? [];\n\t\t\t\t\t\tobservations.push(observation);\n\t\t\t\t\t\tinherited.set(targetId, observations);\n\t\t\t\t\t}\n\t\t\t\t} else {\n\t\t\t\t\tconst disappearance = removed.get(path.key) ?? {\n\t\t\t\t\t\tspecifier: path.specifier,\n\t\t\t\t\t\tmemberPath: path.memberPath,\n\t\t\t\t\t\tinheritedFrom: []\n\t\t\t\t\t};\n\t\t\t\t\tdisappearance.inheritedFrom.push(observation);\n\t\t\t\t\tremoved.set(path.key, disappearance);\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n\treturn {\n\t\tinheritedSites: [...inherited].map(([siteId, inheritedFrom]) => ({\n\t\t\tsiteId,\n\t\t\tinheritedFrom\n\t\t})),\n\t\tremovedApiPaths: [...removed.values()]\n\t};\n};\nconst builtinCriteriaValidator = (value, expected) => {\n\tconst record = (input) => input !== null && typeof input === "object" && !Array.isArray(input) ? input : undefined;\n\tconst text = (input) => typeof input === "string" && input.length > 0;\n\tconst hash = (input) => typeof input === "string" && /^[a-f0-9]{64}$/u.test(input);\n\tconst natural = (input) => typeof input === "number" && Number.isSafeInteger(input) && input >= 0;\n\tconst rows = (input) => {\n\t\tif (!Array.isArray(input)) return undefined;\n\t\tconst result = input.map(record);\n\t\treturn result.every((row) => row !== undefined) ? result : undefined;\n\t};\n\tconst samePath = (left, right) => Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((part, index) => text(part) && part === right[index]);\n\tconst assessment = record(value);\n\tconst deployed = expected.environment === "deployed";\n\tif (!assessment || assessment.schemaVersion !== 1 || !hash(expected.artifactSha256) || assessment.artifactSha256 !== expected.artifactSha256 || assessment.coverageStatus !== "passed" && !(assessment.coverageStatus === "pending" && !deployed) || !Array.isArray(assessment.blockers) || assessment.blockers.length !== 0) return false;\n\tconst observation = record(assessment.observation);\n\tif (!observation || observation.method !== "reached by executed range" || !text(observation.limitation)) return false;\n\tconst evidence = record(assessment.evidence);\n\tconst inventory = record(evidence?.inventory);\n\tconst corpus = record(evidence?.corpus);\n\tif (!inventory || inventory.schemaVersion !== 1 || !corpus || corpus.schemaVersion !== 1 || ![\n\t\tinventory.missingBuiltins,\n\t\tinventory.unknownBuiltinSpecifiers,\n\t\tinventory.ambiguities,\n\t\tinventory.functionAmbiguities\n\t].every((items) => Array.isArray(items) && items.length === 0)) return false;\n\tconst sources = rows(inventory.sourceFiles);\n\tconst calls = rows(inventory.callSites);\n\tconst analysis = rows(inventory.analysisOnlyCallSites);\n\tconst runs = rows(corpus.runs);\n\tconst obligations = rows(assessment.openObligations);\n\tconst reportedReached = rows(assessment.reachedSites);\n\tconst unmapped = rows(assessment.unmappedAnalysisSites);\n\tif (!sources || !calls || !analysis || !runs || !obligations || !reportedReached || !unmapped) return false;\n\tconst sourceByName = new Map();\n\tfor (const source of sources) {\n\t\tif (!text(source.name) || !hash(source.sha256) || !natural(source.bytes) || !natural(source.sourceUtf16Length) || sourceByName.has(source.name)) return false;\n\t\tsourceByName.set(source.name, source);\n\t}\n\tconst callById = new Map();\n\tfor (const call of calls) {\n\t\tconst source = text(call.module) ? sourceByName.get(call.module) : undefined;\n\t\tif (!source || !hash(call.siteId) || callById.has(call.siteId) || call.sourceSha256 !== source.sha256 || call.offsetUnit !== "utf16-code-units" || !natural(call.startOffset) || !natural(call.endOffset) || call.startOffset >= call.endOffset || call.endOffset > Number(source.sourceUtf16Length) || !text(call.specifier) || !Array.isArray(call.memberPath) || !call.memberPath.every(text) || call.status !== "supported" && call.status !== "unsupported" && call.status !== "platform-pruned") return false;\n\t\tif (call.status === "unsupported") {\n\t\t\tconst failure = record(call.failure);\n\t\t\tif (!failure || failure.kind !== "named-error" || !text(failure.code)) return false;\n\t\t}\n\t\tcallById.set(call.siteId, call);\n\t}\n\tconst inheritance = inheritedReachability(expected.artifactSha256, inventory, corpus);\n\tif (!inheritance) return false;\n\tconst inheritedById = new Map(inheritance.inheritedSites.map((site) => [site.siteId, site.inheritedFrom]));\n\tif (JSON.stringify(assessment.removedApiPaths ?? []) !== JSON.stringify(inheritance.removedApiPaths)) return false;\n\tconst reached = new Set(inheritedById.keys());\n\tconst runIds = new Set();\n\tlet qualifiedRunId;\n\tfor (const run of runs) {\n\t\tif (!text(run.runId) || runIds.has(run.runId) || !hash(run.artifactSha256) || !hash(run.evidenceSha256) || run.kind !== "a-series-replay" && run.kind !== "release-qualification" || typeof run.completed !== "boolean" || run.captureState !== "complete" && run.captureState !== "incomplete" && run.captureState !== "not-started") return false;\n\t\trunIds.add(run.runId);\n\t\tconst runSources = rows(run.sources);\n\t\tif (!runSources) return false;\n\t\tif (run.artifactSha256 !== expected.artifactSha256) continue;\n\t\tconst captured = run.captureState !== "not-started";\n\t\tconst names = new Set();\n\t\tlet sourcesMatch = runSources.length === sources.length;\n\t\tfor (const source of runSources) {\n\t\t\tif (!text(source.module) || names.has(source.module) || !hash(source.sourceSha256)) return false;\n\t\t\tnames.add(source.module);\n\t\t\tconst pinned = sourceByName.get(source.module);\n\t\t\tif (!pinned || pinned.sha256 !== source.sourceSha256) sourcesMatch = false;\n\t\t\tconst ranges = rows(source.executedByteRanges);\n\t\t\tif (!ranges || !Array.isArray(source.invokedSiteIds) || !source.invokedSiteIds.every(hash)) return false;\n\t\t\tif (!captured && (ranges.length || source.invokedSiteIds.length)) return false;\n\t\t\tfor (const range of ranges) {\n\t\t\t\tif (!natural(range.startOffset) || !natural(range.endOffset) || range.endOffset <= range.startOffset || range.offsetUnit !== "utf16-code-units" || !natural(range.executionCount) || range.executionCount === 0 || pinned && range.endOffset > Number(pinned.sourceUtf16Length)) return false;\n\t\t\t}\n\t\t}\n\t\tif (run.kind === "release-qualification") {\n\t\t\tif (qualifiedRunId || !run.completed || run.captureState !== "complete" || !sourcesMatch) return false;\n\t\t\tif (sources.length > 0 && !runSources.some((source) => source.executedByteRanges.length > 0 || source.invokedSiteIds.length > 0)) return false;\n\t\t\tqualifiedRunId = run.runId;\n\t\t}\n\t\tif (!captured || !sourcesMatch) continue;\n\t\tfor (const source of runSources) {\n\t\t\tconst invocations = source.invokedSiteIds;\n\t\t\tif (new Set(invocations).size !== invocations.length) return false;\n\t\t\tfor (const id of invocations) {\n\t\t\t\tconst call = callById.get(id);\n\t\t\t\tif (!call || call.module !== source.module) return false;\n\t\t\t\treached.add(id);\n\t\t\t}\n\t\t\tconst ranges = rows(source.executedByteRanges);\n\t\t\tfor (const [id, call] of callById) {\n\t\t\t\tif (call.module === source.module && ranges.some((range) => Number(range.startOffset) < Number(call.endOffset) && Number(range.endOffset) > Number(call.startOffset))) reached.add(id);\n\t\t\t}\n\t\t}\n\t}\n\tif (deployed && (!text(expected.measurementRunId) || qualifiedRunId !== expected.measurementRunId || assessment.qualifiedRunId !== expected.measurementRunId)) return false;\n\tconst blockingAnalysis = analysis.filter((site) => site.status !== "supported");\n\tconst allById = new Map([...calls, ...analysis].map((site) => [site.siteId, site]));\n\tif (allById.size !== calls.length + analysis.length) return false;\n\tif (assessment.coverageStatus === "passed" && (!qualifiedRunId || blockingAnalysis.length !== 0)) return false;\n\tif (reportedReached.length !== reached.size || new Set(reportedReached.map((site) => site.siteId)).size !== reached.size || reportedReached.some((site) => !text(site.siteId) || !reached.has(site.siteId) || site.status !== "supported" || allById.get(site.siteId)?.status !== "supported" || JSON.stringify(site.inheritedFrom ?? []) !== JSON.stringify(inheritedById.get(site.siteId) ?? []))) return false;\n\tconst obligationById = new Map();\n\tfor (const obligation of obligations) {\n\t\tif (!hash(obligation.siteId) || obligationById.has(obligation.siteId)) return false;\n\t\tobligationById.set(obligation.siteId, obligation);\n\t}\n\tlet unsupported = 0;\n\tfor (const [id, call] of callById) {\n\t\tif (reached.has(id) && call.status !== "supported") return false;\n\t\tif (call.status !== "unsupported") continue;\n\t\tunsupported += 1;\n\t\tconst obligation = obligationById.get(id);\n\t\tconst failure = record(call.failure);\n\t\tif (!obligation || obligation.kind !== "unsupported-fail-loud" || obligation.module !== call.module || obligation.specifier !== call.specifier || !samePath(obligation.memberPath, call.memberPath) || obligation.failureCode !== failure.code || obligation.state !== (qualifiedRunId ? "unreached" : "awaiting-coverage")) return false;\n\t}\n\tif (obligations.length !== unsupported || unmapped.length !== blockingAnalysis.length) return false;\n\tconst analysisIds = new Set(blockingAnalysis.map((site) => site.siteId));\n\treturn analysisIds.size === blockingAnalysis.length && unmapped.every((site) => hash(site.siteId) && analysisIds.has(site.siteId));\n};\nconst releaseArtifactName = (provider, version, runId) => `harness-release-${provider}-${version}-${runId}-1`;\nconst isVerifiedHarnessRelease = (status, result) => {\n\tif (status !== "green" || result?.status !== "green" || result.unchangedSource !== "passed") return false;\n\tif (result.provider !== "claude-code" && result.provider !== "claude-agent-sdk" && result.provider !== "codex") return false;\n\tconst requiredChecks = [\n\t\t"boot",\n\t\t"text",\n\t\t"readEdit",\n\t\t"bash",\n\t\t"grep",\n\t\t"resume",\n\t\t"mcp",\n\t\t"interrupt",\n\t\t"publicHarness",\n\t\t"builtinCoverage"\n\t];\n\tconst requiredMetrics = [\n\t\t"moduleBytes",\n\t\t"bootTimeMs",\n\t\t"peakHeapBytes"\n\t];\n\tfor (const environment of ["local-workerd", "deployed"]) {\n\t\tconst assessment = result.environments?.[environment];\n\t\tif (!assessment?.checks || assessment.checks.length !== requiredChecks.length || requiredChecks.some((name) => assessment.checks?.filter((check) => check.name === name).length !== 1) || assessment.checks.some((check) => check.status !== "passed")) return false;\n\t\tconst resourceCriteria = assessment.resourceCriteria;\n\t\tconst requiresClaudePolicy = result.provider === "claude-code" || result.provider === "claude-agent-sdk";\n\t\tif (requiresClaudePolicy && resourceCriteria === undefined) return false;\n\t\tconst builtinCriteria = assessment.builtinCriteria;\n\t\t{\n\t\t\tif (typeof result.artifact?.sha256 !== "string" || !builtinCriteriaValidator(builtinCriteria, {\n\t\t\t\tenvironment,\n\t\t\t\tartifactSha256: result.artifact.sha256,\n\t\t\t\t...assessment.measurementRunId ? { measurementRunId: assessment.measurementRunId } : {}\n\t\t\t})) return false;\n\t\t}\n\t\tif (resourceCriteria !== undefined) {\n\t\t\tif (typeof result.fixture?.id !== "string" || typeof result.fixture.sha256 !== "string" || typeof result.artifact?.sha256 !== "string" || typeof result.identity?.sha256 !== "string" || !resourceCriteriaValidator(resourceCriteria, {\n\t\t\t\tenvironment,\n\t\t\t\tfixtureId: result.fixture.id,\n\t\t\t\tfixtureSha256: result.fixture.sha256,\n\t\t\t\tartifactSha256: result.artifact.sha256,\n\t\t\t\treleaseIdentitySha256: result.identity.sha256,\n\t\t\t\t...assessment.measurementRunId ? { measurementRunId: assessment.measurementRunId } : {},\n\t\t\t\t...assessment.deployedResourceContext ? { deployedContext: assessment.deployedResourceContext } : {}\n\t\t\t}) || resourceCriteria.status !== (environment === "local-workerd" ? "not-applicable" : "passed")) return false;\n\t\t\tconst moduleBytes = assessment.metrics?.moduleBytes;\n\t\t\tif (moduleBytes?.state !== "measured" || !Number.isFinite(moduleBytes.value) || moduleBytes.value < 0) return false;\n\t\t\tif (assessment.metrics?.bootTimeMs?.state !== "unmeasured" || assessment.metrics?.peakHeapBytes?.state !== "unmeasured") return false;\n\t\t} else {\n\t\t\tfor (const name of requiredMetrics) {\n\t\t\t\tconst metric = assessment.metrics?.[name];\n\t\t\t\tif (metric?.state !== "measured" || !Number.isFinite(metric.value) || metric.value < 0) return false;\n\t\t\t}\n\t\t}\n\t}\n\treturn true;\n};\nconst canPromoteHarnessRelease = (input) => {\n\tif (input.selection !== "current" || !input.runtimeArtifactVerified || input.expectedRevision === null || input.currentRevision !== input.expectedRevision) return false;\n\treturn isVerifiedHarnessRelease(input.status, input.result);\n};\nconst ledgerProviderFor = (provider) => provider === "claude-agent-sdk" ? "agent-sdk" : provider;\nconst nextHarnessReleaseBatch = (releases, verifiedCurrentProviders = [], terminalBackfillIds = []) => {\n\tconst ordered = orderReleaseCandidates(releases);\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst requiredCurrentProviders = [\n\t\t"claude-code",\n\t\t"claude-agent-sdk",\n\t\t"codex"\n\t];\n\tconst readyForBackfill = requiredCurrentProviders.every((provider) => current.some((release) => release.provider === provider) && verifiedCurrentProviders.includes(provider));\n\tif (!readyForBackfill) return current;\n\tconst terminal = new Set(terminalBackfillIds);\n\tconst backfill = ordered.filter((release) => release.selection === "backfill" && !terminal.has(release.id));\n\treturn [\n\t\t...current,\n\t\t...backfill.filter((release) => release.provider === "claude-code").slice(0, 1),\n\t\t...backfill.filter((release) => release.provider === "codex").slice(0, 1)\n\t];\n};\nconst orderReleaseCandidates = (releases) => {\n\tconst priority = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 1,\n\t\tcodex: 2\n\t};\n\tconst current = releases.filter((release) => release.selection === "current").sort((left, right) => priority[left.provider] - priority[right.provider]);\n\tconst seenCurrent = new Set();\n\tconst uniqueCurrent = current.filter((release) => {\n\t\tif (seenCurrent.has(release.provider)) return false;\n\t\tseenCurrent.add(release.provider);\n\t\treturn true;\n\t});\n\tconst limits = HARNESS_RELEASE_BACKFILL_LIMITS;\n\tconst counts = {\n\t\t"claude-code": 0,\n\t\t"claude-agent-sdk": 0,\n\t\tcodex: 0\n\t};\n\tconst seenIds = new Set(uniqueCurrent.map((release) => release.id));\n\tconst backfill = releases.filter((release) => release.selection === "backfill").sort((left, right) => priority[left.provider] - priority[right.provider]).filter((release) => {\n\t\tif (seenIds.has(release.id) || counts[release.provider] >= limits[release.provider]) return false;\n\t\tseenIds.add(release.id);\n\t\tcounts[release.provider] += 1;\n\t\treturn true;\n\t});\n\treturn [...uniqueCurrent, ...backfill];\n};\nconst releaseReceiptKey = (provider, version, headSha) => `${releaseRunKey(provider, version)}:${headSha}`;\nconst releaseReceiptDisposition = (receipt, runKey, headSha) => {\n\tif (receipt?.runKey !== runKey || receipt.headSha !== headSha) return "dispatch";\n\tif (shouldReuseReleaseReceipt(receipt, runKey, headSha)) return "reuse";\n\treturn typeof receipt.workflowRunId === "string" && receipt.workflowRunId !== "" ? "read" : "dispatch";\n};\nconst releaseRunKey = (provider, version) => `harness-release:${provider}:${version}`;\nconst shouldReuseReleaseReceipt = (receipt, runKey, headSha) => receipt?.runKey === runKey && receipt.headSha === headSha && receipt.workflowStatus === "completed" && (receipt.status === "green" && receipt.ledgerStatus === "recorded" && receipt.proofArtifactVerified === true && receipt.runtimeArtifactVerified === true || (receipt.status === "red" || receipt.status === "pending") && receipt.proofArtifactVerified === true);\nconst summarizeHarnessBackfill = (releases, receipts, headSha) => {\n\tconst backfill = orderReleaseCandidates(releases).filter((release) => release.selection === "backfill");\n\tlet green = 0;\n\tlet red = 0;\n\tlet pending = 0;\n\tlet terminal = 0;\n\tfor (const release of backfill) {\n\t\tconst receipt = receipts.find((candidate) => candidate.discoveryId === release.id && candidate.runKey === releaseRunKey(release.provider, release.version) && candidate.headSha === headSha && candidate.workflowStatus === "completed" && candidate.proofArtifactVerified === true);\n\t\tif (receipt === undefined) continue;\n\t\tterminal += 1;\n\t\tif (receipt?.proofStatus === "green") green += 1;\n\t\telse if (receipt?.proofStatus === "red") red += 1;\n\t\telse pending += 1;\n\t}\n\treturn {\n\t\ttotal: backfill.length,\n\t\tterminal,\n\t\tgreen,\n\t\tred,\n\t\tpending,\n\t\tacceptance: backfill.length === 0 ? "pending" : terminal < backfill.length ? "in-progress" : green / backfill.length >= .9 ? "met" : "missed"\n\t};\n};\nconst NPM_PACKAGES = [{\n\t"packageName": "@anthropic-ai/claude-code",\n\t"provider": "claude-code",\n\t"backfillLimit": 50\n}, {\n\t"packageName": "@anthropic-ai/claude-agent-sdk",\n\t"provider": "claude-agent-sdk",\n\t"backfillLimit": 0\n}];\nconst CODEX_RELEASE_LIMIT = 11;\nconst CODEX_MAX_PAGES = 10;\nconst RELEASE_VERSION = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/u;\nfunction isRecord(value) {\n\treturn value !== null && typeof value === "object" && !Array.isArray(value);\n}\nfunction responseJson(value) {\n\tif (!isRecord(value)) return value;\n\tif ("body" in value) return value.body;\n\treturn value;\n}\nfunction compareText(left, right) {\n\treturn left < right ? -1 : left > right ? 1 : 0;\n}\nfunction compareVersions(left, right) {\n\tconst a = left.split(".");\n\tconst b = right.split(".");\n\tfor (let index = 0; index < 3; index += 1) {\n\t\tconst leftPart = a[index] ?? "";\n\t\tconst rightPart = b[index] ?? "";\n\t\tif (leftPart === rightPart) continue;\n\t\treturn leftPart.length === rightPart.length ? compareText(leftPart, rightPart) : leftPart.length - rightPart.length;\n\t}\n\treturn 0;\n}\nfunction compareCandidates(left, right) {\n\treturn compareVersions(right.version, left.version) || compareText(left.upstreamIdentity, right.upstreamIdentity);\n}\nfunction stableVersion(value) {\n\treturn typeof value === "string" && RELEASE_VERSION.test(value);\n}\nfunction makeCandidate(provider, version, upstreamIdentity, selection, provenance) {\n\treturn {\n\t\tid: `${provider}:${version}:${upstreamIdentity}`,\n\t\tprovider,\n\t\tversion,\n\t\tupstreamIdentity,\n\t\tselection,\n\t\tprovenance\n\t};\n}\nfunction parseNpm(packageInfo, source) {\n\tif (!isRecord(packageInfo) || packageInfo.name !== source.packageName || !isRecord(packageInfo.versions) || !isRecord(packageInfo["dist-tags"])) return [];\n\tconst stable = Object.entries(packageInfo.versions).flatMap(([version, metadata]) => {\n\t\tif (!stableVersion(version) || !isRecord(metadata) || metadata.name !== source.packageName || metadata.version !== version) return [];\n\t\tconst dist = isRecord(metadata.dist) ? metadata.dist : {};\n\t\tconst integrity = typeof dist.integrity === "string" && dist.integrity.trim() ? dist.integrity : undefined;\n\t\treturn [{\n\t\t\tversion,\n\t\t\tcandidate: makeCandidate(source.provider, version, `npm:${source.packageName}`, "backfill", {\n\t\t\t\tkind: "npm",\n\t\t\t\tpackageName: source.packageName,\n\t\t\t\t...integrity ? { integrity } : {}\n\t\t\t})\n\t\t}];\n\t}).sort((left, right) => compareCandidates(left.candidate, right.candidate));\n\tconst currentVersion = packageInfo["dist-tags"].latest;\n\tconst current = typeof currentVersion === "string" ? stable.find((release) => release.version === currentVersion) : undefined;\n\treturn [...current ? [{\n\t\t...current.candidate,\n\t\tselection: "current"\n\t}] : [], ...stable.filter((release) => release.version !== current?.version).slice(0, source.backfillLimit).map((release) => release.candidate)];\n}\nfunction parseCodexPage(value) {\n\tif (!Array.isArray(value)) return [];\n\treturn value.flatMap((release) => {\n\t\tif (!isRecord(release) || release.draft !== false || release.prerelease !== false || typeof release.tag_name !== "string") return [];\n\t\tconst tagName = release.tag_name;\n\t\tconst version = /^rust-v(.+)$/u.exec(tagName)?.[1];\n\t\tif (!stableVersion(version)) return [];\n\t\tconst nestedCommit = isRecord(release.commit) && typeof release.commit.sha === "string" ? release.commit.sha : undefined;\n\t\tconst commitSha = typeof release.commit_sha === "string" ? release.commit_sha : nestedCommit;\n\t\tconst targetCommitish = typeof release.target_commitish === "string" ? release.target_commitish : undefined;\n\t\treturn [makeCandidate("codex", version, `github:openai/codex:${tagName}`, "backfill", {\n\t\t\tkind: "github",\n\t\t\trepository: "openai/codex",\n\t\t\ttagName,\n\t\t\t...targetCommitish ? { targetCommitish } : {},\n\t\t\t...commitSha && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu.test(commitSha) ? { commitSha } : {}\n\t\t})];\n\t}).sort(compareCandidates);\n}\nfunction selectCodex(releases) {\n\tconst seenIds = new Set();\n\tconst seenVersions = new Set();\n\treturn releases.filter((release) => !seenIds.has(release.id) && !!seenIds.add(release.id)).sort(compareCandidates).filter((release) => !seenVersions.has(release.version) && !!seenVersions.add(release.version)).slice(0, CODEX_RELEASE_LIMIT).map((release, index) => ({\n\t\t...release,\n\t\tselection: index === 0 ? "current" : "backfill"\n\t}));\n}\nfunction nextLink(header) {\n\treturn /<([^>]+)>\\s*;\\s*rel="?next"?/u.exec(header ?? "")?.[1] ?? null;\n}\nfunction codexNextUrl(_current, candidate) {\n\tconst endpoint = "https://api.github.com/repos/openai/codex/releases";\n\tif (candidate !== endpoint && !candidate.startsWith(`${endpoint}?`)) throw new Error("Codex release discovery returned an unexpected pagination URL");\n\treturn candidate;\n}\nasync function discoverCodex(w) {\n\tconst releases = [];\n\tconst seen = new Set();\n\tconst visited = new Set();\n\tlet next = "https://api.github.com/repos/openai/codex/releases?per_page=100&page=1";\n\tfor (let page = 1; page <= CODEX_MAX_PAGES; page += 1) {\n\t\tw.$arm("s4", 0);\n\t\tif (visited.has(next)) throw new Error("Codex release discovery pagination loop");\n\t\tvisited.add(next);\n\t\tconst response = await w.http("s5", "Read Codex release page", next);\n\t\tif (isRecord(response) && response.ok === false) throw new Error(`Codex release discovery failed with HTTP ${String(response.status)}`);\n\t\tconst body = responseJson(response);\n\t\tif (!Array.isArray(body)) throw new Error("Codex release discovery returned invalid data");\n\t\tfor (const release of parseCodexPage(body)) {\n\t\t\tif (!seen.has(release.id)) {\n\t\t\t\tseen.add(release.id);\n\t\t\t\treleases.push(release);\n\t\t\t}\n\t\t}\n\t\tconst headers = isRecord(response) && isRecord(response.headers) ? response.headers : {};\n\t\tconst linkHeader = Object.entries(headers).find(([name]) => name.toLowerCase() === "link")?.[1];\n\t\tconst link = nextLink(typeof linkHeader === "string" ? linkHeader : null);\n\t\tif (!link || selectCodex(releases).length >= CODEX_RELEASE_LIMIT) {\n\t\t\tw.$arm("s6", 0);\n\t\t\treturn selectCodex(releases);\n\t\t} else {\n\t\t\tw.$arm("s6", 1);\n\t\t}\n\t\tif (page === CODEX_MAX_PAGES) throw new Error(`Codex release discovery exceeded ${CODEX_MAX_PAGES} pages`);\n\t\tnext = codexNextUrl(next, link);\n\t}\n\treturn selectCodex(releases);\n}\nfunction workflowRun(value) {\n\tif (!isRecord(value) || typeof value.runId !== "string" || typeof value.url !== "string" || typeof value.workflowFile !== "string" || typeof value.headSha !== "string" || typeof value.displayTitle !== "string" || typeof value.status !== "string" || value.conclusion !== null && typeof value.conclusion !== "string") return null;\n\treturn {\n\t\trunId: value.runId,\n\t\turl: value.url,\n\t\tworkflowFile: value.workflowFile,\n\t\theadSha: value.headSha,\n\t\tdisplayTitle: value.displayTitle,\n\t\tstatus: value.status,\n\t\tconclusion: value.conclusion\n\t};\n}\nfunction verifiedWorkflowArtifact(value, candidate, headSha, runKey, expectedRun) {\n\tif (expectedRun === null || !isRecord(value) || !isRecord(value.run) || !isRecord(value.artifact) || typeof value.text !== "string") return null;\n\tconst run = workflowRun(value.run);\n\tconst artifact = value.artifact;\n\tif (run === null || run.runId !== expectedRun.runId || run.workflowFile !== HARNESS_RELEASE_WORKFLOW_FILE || run.headSha !== headSha || run.displayTitle !== runKey || run.status !== "completed" || artifact.name !== releaseArtifactName(candidate.provider, candidate.version, run.runId) || artifact.entryPath !== HARNESS_RELEASE_RESULT_PATH || typeof artifact.id !== "string" || typeof artifact.digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(artifact.digest) || typeof artifact.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(artifact.sha256) || typeof artifact.bytes !== "number" || !Number.isSafeInteger(artifact.bytes) || artifact.bytes <= 0) return null;\n\ttry {\n\t\tconst decoded = JSON.parse(value.text);\n\t\tif (!isRecord(decoded) || decoded.schemaVersion !== 1 || decoded.provider !== candidate.provider || decoded.version !== candidate.version || decoded.runKey !== runKey || decoded.selection !== candidate.selection || !isRecord(decoded.source) || decoded.source.commit !== headSha || decoded.status !== "green" && decoded.status !== "red" && decoded.status !== "pending") return null;\n\t\tif (decoded.status === "green" && run.conclusion !== "success") return null;\n\t\treturn {\n\t\t\trun,\n\t\t\tartifact: {\n\t\t\t\tid: artifact.id,\n\t\t\t\tname: artifact.name,\n\t\t\t\tdigest: artifact.digest,\n\t\t\t\tentryPath: artifact.entryPath,\n\t\t\t\tsha256: artifact.sha256,\n\t\t\t\tbytes: artifact.bytes\n\t\t\t},\n\t\t\tresult: decoded\n\t\t};\n\t} catch {\n\t\treturn null;\n\t}\n}\nasync function updateReleaseThread(w, threadId, previous, fingerprint, message) {\n\tif (previous?.threadUpdate === fingerprint) {\n\t\tw.$arm("s38", 0);\n\t\treturn fingerprint;\n\t} else {\n\t\tw.$arm("s38", 1);\n\t}\n\ttry {\n\t\tw.$arm("s40", 0);\n\t\tawait w.call("s41", "Update the release proof thread", "signalbox.t3_thread_send", {\n\t\t\tthreadId,\n\t\t\tmessage\n\t\t});\n\t\treturn fingerprint;\n\t} catch {\n\t\tw.$arm("s40", 1);\n\t\treturn previous?.threadUpdate ?? null;\n\t}\n}\nasync function rememberPending(w, receiptKey, fields) {\n\tawait w.remember("s31", "Keep the release receipt pending", receiptKey, {\n\t\t...fields,\n\t\tstatus: "pending"\n\t});\n}\nasync function handoffRedProof(w, receiptKey, receipt, candidate, runKey, headSha) {\n\tif (receipt.handoffStatus === "created") {\n\t\tw.$arm("s18", 0);\n\t\treturn receipt;\n\t} else {\n\t\tw.$arm("s18", 1);\n\t}\n\tconst result = isRecord(receipt.result) ? receipt.result : {};\n\tconst artifact = isRecord(receipt.workflowArtifact) ? receipt.workflowArtifact : null;\n\tconst stages = Array.isArray(result.stages) ? result.stages.filter((stage) => isRecord(stage) && stage.status === "rejected").map((stage) => isRecord(stage) && typeof stage.name === "string" ? stage.name : null).filter(Boolean).join(", ") : "";\n\tlet next;\n\ttry {\n\t\tw.$arm("s20", 0);\n\t\tif (artifact === null || typeof artifact.id !== "string" || typeof artifact.sha256 !== "string" || typeof receipt.workflowUrl !== "string") throw new Error("The verified red proof receipt has no handoff details.");\n\t\tconst issue = await w.call("s21", "Hand the failed proof to GitHub", "signalbox.github_issue", {\n\t\t\taction: "create",\n\t\t\tcorrelationId: `${runKey}:${headSha}:red`,\n\t\t\ttitle: `Harness proof failed: ${candidate.provider} ${candidate.version}`,\n\t\t\tbody: [\n\t\t\t\t`The exact ${candidate.provider} ${candidate.version} proof returned red.`,\n\t\t\t\t`Run key: ${runKey}`,\n\t\t\t\t`Source head: ${headSha}`,\n\t\t\t\t`Workflow: ${receipt.workflowUrl}`,\n\t\t\t\t`Failed stages: ${stages || "not listed"}`,\n\t\t\t\t`Workflow artifact: ${artifact.id} (${artifact.sha256})`,\n\t\t\t\t"The previous green release remains selected."\n\t\t\t].join("\\n\\n")\n\t\t});\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "created",\n\t\t\thandoff: issue\n\t\t};\n\t} catch {\n\t\tw.$arm("s20", 1);\n\t\tnext = {\n\t\t\t...receipt,\n\t\t\thandoffStatus: "unavailable"\n\t\t};\n\t}\n\tawait w.remember("s22", "Store the red proof handoff", receiptKey, next);\n\treturn next;\n}\nfunction proofStatusOf(value) {\n\treturn value === "green" || value === "red" || value === "pending" ? value : null;\n}\nasync function runRelease(w, candidate, headSha, triggerAt) {\n\tconst runKey = releaseRunKey(candidate.provider, candidate.version);\n\tconst receiptKey = releaseReceiptKey(candidate.provider, candidate.version, headSha);\n\tconst recalled = await w.recall("s13", "Read the release receipt", receiptKey);\n\tconst previous = isRecord(recalled) && recalled.runKey === runKey && recalled.headSha === headSha ? recalled : null;\n\tconst releaseThreadValue = await w.recall("s14", "Read the release tracking thread", runKey);\n\tconst releaseThread = isRecord(releaseThreadValue) && releaseThreadValue.runKey === runKey ? releaseThreadValue : null;\n\tconst disposition = releaseReceiptDisposition(previous, runKey, headSha);\n\tif (disposition === "reuse") {\n\t\tw.$arm("s15", 0);\n\t\tconst reusable = candidate.selection === "current" && previous?.status === "red" && previous !== null ? (w.$arm("s16", 0), await handoffRedProof(w.$frame("s17"), receiptKey, previous, candidate, runKey, headSha)) : (w.$arm("s16", 1), previous);\n\t\tconst result = reusable !== null && isRecord(reusable.result) ? reusable.result : null;\n\t\treturn {\n\t\t\tstatus: reusable?.status,\n\t\t\treused: true,\n\t\t\tverified: reusable?.status === "green" && reusable?.ledgerStatus === "recorded" && reusable?.runtimeArtifactVerified === true && result !== null && isVerifiedHarnessRelease("green", result)\n\t\t};\n\t} else {\n\t\tw.$arm("s15", 1);\n\t}\n\tlet childThreadId = releaseThread !== null && typeof releaseThread.childThreadId === "string" ? releaseThread.childThreadId : previous !== null && typeof previous.childThreadId === "string" ? previous.childThreadId : null;\n\tif (childThreadId === null) {\n\t\tw.$arm("s24", 0);\n\t\ttry {\n\t\t\tw.$arm("s25", 0);\n\t\t\tconst child = await w.agent("s26", "Create a release proof thread", { prompt: [\n\t\t\t\t"This thread tracks one exact harness release attempt.",\n\t\t\t\t`Provider: ${candidate.provider}.`,\n\t\t\t\t`Version: ${candidate.version}.`,\n\t\t\t\t`Source head: ${headSha}.`,\n\t\t\t\t`Run key: ${runKey}.`,\n\t\t\t\t"The Signalbox automation owns GitHub dispatch, run readback and immutable artifact verification. Do not run external commands or claim a proof result. The automation will send the verified outcome to this thread."\n\t\t\t].join("\\n\\n") });\n\t\t\tchildThreadId = isRecord(child) && typeof child.threadId === "string" ? child.threadId : null;\n\t\t\tif (childThreadId !== null) {\n\t\t\t\tw.$arm("s27", 0);\n\t\t\t\tawait w.remember("s28", "Keep the release tracking thread", runKey, {\n\t\t\t\t\trunKey,\n\t\t\t\t\tprovider: candidate.provider,\n\t\t\t\t\tversion: candidate.version,\n\t\t\t\t\tchildThreadId\n\t\t\t\t});\n\t\t\t} else {\n\t\t\t\tw.$arm("s27", 1);\n\t\t\t}\n\t\t} catch {\n\t\t\tw.$arm("s25", 1);\n\t\t\tchildThreadId = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s24", 1);\n\t}\n\tif (childThreadId === null) {\n\t\tw.$arm("s29", 0);\n\t\tawait rememberPending(w.$frame("s30"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\treason: "The release proof thread could not be created."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s29", 1);\n\t}\n\tlet expectedRevision = previous !== null && typeof previous.expectedRevision === "number" ? previous.expectedRevision : null;\n\tif (expectedRevision === null) {\n\t\tw.$arm("s33", 0);\n\t\ttry {\n\t\t\tw.$arm("s34", 0);\n\t\t\tconst selection = await w.call("s35", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\texpectedRevision = isRecord(selection) && Number.isSafeInteger(selection.revision) ? selection.revision : null;\n\t\t} catch {\n\t\t\tw.$arm("s34", 1);\n\t\t\texpectedRevision = null;\n\t\t}\n\t} else {\n\t\tw.$arm("s33", 1);\n\t}\n\tif (expectedRevision === null) {\n\t\tw.$arm("s36", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s37"), childThreadId, previous, `ledger-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending because its project ledger is unavailable. Run key: ${runKey}. Source head: ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s44"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tchildThreadId,\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: previous?.workflowStatus ?? "not-started",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\texpectedRevision: null,\n\t\t\tthreadUpdate,\n\t\t\treason: "The project ledger could not capture a selection revision before proof started."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s36", 1);\n\t}\n\tconst workflowFile = HARNESS_RELEASE_WORKFLOW_FILE;\n\tlet run = null;\n\ttry {\n\t\tw.$arm("s46", 0);\n\t\tconst response = disposition === "read" && previous !== null ? (w.$arm("s47", 0), await w.call("s48", "Read the existing exact release run", "signalbox.github_workflow", {\n\t\t\taction: "read",\n\t\t\tworkflowFile,\n\t\t\trunId: previous.workflowRunId,\n\t\t\theadSha\n\t\t})) : (w.$arm("s47", 1), await w.call("s49", "Dispatch the exact release proof", "signalbox.github_workflow", {\n\t\t\taction: "dispatch",\n\t\t\tworkflowFile,\n\t\t\tref: "main",\n\t\t\theadSha,\n\t\t\tcorrelationId: runKey,\n\t\t\tinputs: {\n\t\t\t\tprovider: candidate.provider,\n\t\t\t\tversion: candidate.version,\n\t\t\t\trunKey,\n\t\t\t\tselection: candidate.selection\n\t\t\t}\n\t\t}));\n\t\trun = workflowRun(response);\n\t} catch {\n\t\tw.$arm("s46", 1);\n\t\trun = null;\n\t}\n\tif (run === null || run.workflowFile !== workflowFile || run.headSha !== headSha || run.displayTitle !== runKey) {\n\t\tw.$arm("s50", 0);\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s51"), childThreadId, previous, `workflow-unavailable:${headSha}`, `The exact ${candidate.provider} ${candidate.version} proof is pending. The automation could not confirm a workflow run for ${runKey} at ${headSha}.`);\n\t\tawait rememberPending(w.$frame("s52"), receiptKey, {\n\t\t\t...previous,\n\t\t\tdiscoveryId: candidate.id,\n\t\t\tprovider: candidate.provider,\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\texpectedRevision,\n\t\t\tchildThreadId,\n\t\t\t...run === null ? {} : {\n\t\t\t\tworkflowRunId: run.runId,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t},\n\t\t\tledgerStatus: "unverified",\n\t\t\tworkflowStatus: run?.status ?? "unknown",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason: "The workflow run did not match the exact release attempt."\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha\n\t\t};\n\t} else {\n\t\tw.$arm("s50", 1);\n\t}\n\tconst baseReceipt = {\n\t\t...previous,\n\t\tdiscoveryId: candidate.id,\n\t\tprovider: candidate.provider,\n\t\tversion: candidate.version,\n\t\tselection: candidate.selection,\n\t\trunKey,\n\t\theadSha,\n\t\texpectedRevision,\n\t\tchildThreadId,\n\t\tworkflowRunId: run.runId,\n\t\tworkflowUrl: run.url,\n\t\tworkflowStatus: run.status\n\t};\n\tif (run.status !== "completed") {\n\t\tw.$arm("s54", 0);\n\t\tawait rememberPending(w.$frame("s55"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowStatus: run.status\n\t\t};\n\t} else {\n\t\tw.$arm("s54", 1);\n\t}\n\tlet evidence = null;\n\ttry {\n\t\tw.$arm("s57", 0);\n\t\tevidence = await w.call("s58", "Read the completed release proof artifact", "signalbox.github_workflow", {\n\t\t\taction: "artifact",\n\t\t\tworkflowFile,\n\t\t\trunId: run.runId,\n\t\t\theadSha,\n\t\t\tartifactName: releaseArtifactName(candidate.provider, candidate.version, run.runId),\n\t\t\tentryPath: HARNESS_RELEASE_RESULT_PATH\n\t\t});\n\t} catch {\n\t\tw.$arm("s57", 1);\n\t\tevidence = null;\n\t}\n\tconst verified = verifiedWorkflowArtifact(evidence, candidate, headSha, runKey, run);\n\tif (verified === null) {\n\t\tw.$arm("s59", 0);\n\t\tconst reason = "The completed workflow\'s immutable result artifact is unavailable or mismatched.";\n\t\tconst threadUpdate = await updateReleaseThread(w.$frame("s60"), childThreadId, previous, `completed-artifact-pending:${headSha}`, `The ${candidate.provider} ${candidate.version} workflow completed, but its exact result artifact could not be verified. Status remains pending. Run: ${run.url}`);\n\t\tawait rememberPending(w.$frame("s61"), receiptKey, {\n\t\t\t...baseReceipt,\n\t\t\tledgerStatus: "unverified",\n\t\t\tproofArtifactVerified: false,\n\t\t\truntimeArtifactVerified: false,\n\t\t\tthreadUpdate,\n\t\t\treason\n\t\t});\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowUrl: run.url,\n\t\t\treason\n\t\t};\n\t} else {\n\t\tw.$arm("s59", 1);\n\t}\n\tlet recorded = null;\n\ttry {\n\t\tw.$arm("s63", 0);\n\t\trecorded = await w.call("s64", "Verify the immutable release result in the project ledger", "signalbox.harness_release_ledger", {\n\t\t\taction: "record",\n\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\tversion: candidate.version,\n\t\t\tselection: candidate.selection,\n\t\t\trunKey,\n\t\t\theadSha,\n\t\t\tworkflowFile,\n\t\t\tworkflowRunId: run.runId,\n\t\t\tartifactName: verified.artifact.name,\n\t\t\tentryPath: verified.artifact.entryPath\n\t\t});\n\t} catch {\n\t\tw.$arm("s63", 1);\n\t\trecorded = null;\n\t}\n\tconst ledgerRecorded = isRecord(recorded) && recorded.status === "recorded";\n\tconst runtimeArtifactVerified = isRecord(recorded) && recorded.runtimeArtifactVerified === true;\n\tconst result = isRecord(recorded) && isRecord(recorded.result) ? recorded.result : verified.result;\n\tconst proofStatus = isRecord(recorded) && proofStatusOf(recorded.proofStatus) !== null ? proofStatusOf(recorded.proofStatus) : proofStatusOf(verified.result.status) ?? "pending";\n\tconst proofArtifactVerified = true;\n\tconst status = proofStatus === "red" && proofArtifactVerified ? "red" : proofStatus === "green" && ledgerRecorded && runtimeArtifactVerified && isVerifiedHarnessRelease("green", result) ? "green" : "pending";\n\tconst reason = isRecord(recorded) && typeof recorded.reason === "string" ? recorded.reason : status === "pending" ? "The immutable proof is verified, but its deployable runtime payload is not available yet." : undefined;\n\tlet stored = {\n\t\t...baseReceipt,\n\t\tstatus,\n\t\tproofStatus,\n\t\tledgerStatus: ledgerRecorded ? "recorded" : "unverified",\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tresult,\n\t\tworkflowArtifact: verified.artifact,\n\t\tthreadUpdate: previous?.threadUpdate ?? null,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n\tif (status === "green" && candidate.selection === "current" && expectedRevision !== null) {\n\t\tw.$arm("s65", 0);\n\t\ttry {\n\t\t\tw.$arm("s66", 0);\n\t\t\tconst latest = await w.call("s67", "Read the selected release revision", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "selection",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider)\n\t\t\t});\n\t\t\tconst currentRevision = isRecord(latest) && Number.isSafeInteger(latest.revision) ? latest.revision : null;\n\t\t\tif (!canPromoteHarnessRelease({\n\t\t\t\tselection: candidate.selection,\n\t\t\t\tstatus,\n\t\t\t\truntimeArtifactVerified,\n\t\t\t\texpectedRevision,\n\t\t\t\tcurrentRevision,\n\t\t\t\tresult\n\t\t\t})) {\n\t\t\t\tw.$arm("s68", 0);\n\t\t\t\tawait rememberPending(w.$frame("s69"), receiptKey, {\n\t\t\t\t\t...stored,\n\t\t\t\t\tpromotionStatus: "stale",\n\t\t\t\t\treason: "The captured selection revision changed while this proof ran."\n\t\t\t\t});\n\t\t\t\treturn {\n\t\t\t\t\tstatus: "pending",\n\t\t\t\t\trunKey,\n\t\t\t\t\theadSha,\n\t\t\t\t\tworkflowUrl: run.url,\n\t\t\t\t\tpromotion: "stale"\n\t\t\t\t};\n\t\t\t} else {\n\t\t\t\tw.$arm("s68", 1);\n\t\t\t}\n\t\t\tawait w.call("s71", "Select the proven current release", "signalbox.harness_release_ledger", {\n\t\t\t\taction: "promote",\n\t\t\t\tprovider: ledgerProviderFor(candidate.provider),\n\t\t\t\treleaseId: result.candidateId,\n\t\t\t\texpectedRevision,\n\t\t\t\tchangedAt: triggerAt\n\t\t\t});\n\t\t} catch {\n\t\t\tw.$arm("s66", 1);\n\t\t\tawait rememberPending(w.$frame("s72"), receiptKey, {\n\t\t\t\t...stored,\n\t\t\t\tpromotionStatus: "not-selected"\n\t\t\t});\n\t\t\treturn {\n\t\t\t\tstatus: "pending",\n\t\t\t\trunKey,\n\t\t\t\theadSha,\n\t\t\t\tworkflowUrl: run.url\n\t\t\t};\n\t\t}\n\t} else {\n\t\tw.$arm("s65", 1);\n\t}\n\tif (status === "red" && candidate.selection === "current") {\n\t\tw.$arm("s74", 0);\n\t\tstored = await handoffRedProof(w.$frame("s75"), receiptKey, stored, candidate, runKey, headSha);\n\t} else {\n\t\tw.$arm("s74", 1);\n\t}\n\tconst threadMessage = status === "red" ? `The exact ${candidate.provider} ${candidate.version} proof is red. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. The previous green release remains selected.` : status === "green" ? `The exact ${candidate.provider} ${candidate.version} proof is green and selected. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}.` : `The exact ${candidate.provider} ${candidate.version} proof is pending. Run key: ${runKey}. Source head: ${headSha}. Workflow: ${run.url}. ${reason ?? "The previous green release remains selected."}`;\n\tconst threadUpdate = await updateReleaseThread(w.$frame("s76"), childThreadId, previous, `${headSha}:${run.status}:${status}:${proofStatus}:${runtimeArtifactVerified}`, threadMessage);\n\tconst finalReceipt = {\n\t\t...stored,\n\t\tthreadUpdate\n\t};\n\tawait w.remember("s77", "Store the release proof status", receiptKey, finalReceipt);\n\treturn {\n\t\tstatus,\n\t\tverified: status === "green" && runtimeArtifactVerified,\n\t\tproofStatus,\n\t\tproofArtifactVerified,\n\t\truntimeArtifactVerified,\n\t\tworkflowStatus: run.status,\n\t\tdiscoveryId: candidate.id,\n\t\trunKey,\n\t\theadSha,\n\t\tworkflowUrl: run.url,\n\t\t...reason === undefined ? {} : { reason }\n\t};\n}\nconst __signalboxWorkflow = workflow(async (w, _input, trigger) => {\n\tconst candidates = [];\n\tfor (const source of NPM_PACKAGES) {\n\t\tw.$arm("s1", 0);\n\t\tconst packagePath = source.packageName.replace("/", "%2f");\n\t\tconst metadata = responseJson(await w.http("s2", "Read npm release metadata", `https://registry.npmjs.org/${packagePath}`));\n\t\tcandidates.push(...parseNpm(metadata, source));\n\t}\n\tcandidates.push(...await discoverCodex(w.$frame("s3")));\n\tconst ordered = orderReleaseCandidates(candidates);\n\tconst head = responseJson(await w.http("s8", "Read the Signalbox source head", "https://api.github.com/repos/JustYannicc/signalbox/commits/main"));\n\tif (!isRecord(head) || typeof head.sha !== "string") {\n\t\tw.$arm("s9", 0);\n\t\treturn {\n\t\t\tstatus: "pending",\n\t\t\treason: "The current source head could not be read."\n\t\t};\n\t} else {\n\t\tw.$arm("s9", 1);\n\t}\n\tconst current = ordered.filter((release) => release.selection === "current");\n\tconst backfill = ordered.filter((release) => release.selection === "backfill");\n\tconst results = [];\n\tconst verifiedCurrentProviders = [];\n\tconst currentBatch = nextHarnessReleaseBatch(candidates).filter((release) => release.selection === "current");\n\tfor (const candidate of currentBatch) {\n\t\tw.$arm("s11", 0);\n\t\tconst result = await runRelease(w.$frame("s12"), candidate, head.sha, trigger.at);\n\t\tresults.push({\n\t\t\tdiscoveryId: candidate.id,\n\t\t\t...result\n\t\t});\n\t\tif (result.verified === true) verifiedCurrentProviders.push(candidate.provider);\n\t}\n\tconst allCurrentGreen = current.length === 3 && current.every((release) => verifiedCurrentProviders.includes(release.provider));\n\tlet backfillSummary = {\n\t\ttotal: backfill.length,\n\t\tterminal: 0,\n\t\tgreen: 0,\n\t\tred: 0,\n\t\tpending: backfill.length,\n\t\tacceptance: "blocked-on-current"\n\t};\n\tif (allCurrentGreen) {\n\t\tw.$arm("s78", 0);\n\t\tconst backfillReceipts = [];\n\t\tfor (const candidate of backfill) {\n\t\t\tw.$arm("s79", 0);\n\t\t\tconst receipt = await w.recall("s80", "Read a historical release receipt", releaseReceiptKey(candidate.provider, candidate.version, head.sha));\n\t\t\tif (isRecord(receipt)) backfillReceipts.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...receipt\n\t\t\t});\n\t\t}\n\t\tconst terminalBackfillIds = backfillReceipts.filter((receipt) => receipt.workflowStatus === "completed" && receipt.proofArtifactVerified === true).map((receipt) => receipt.discoveryId).filter((id) => typeof id === "string");\n\t\tconst backfillBatch = nextHarnessReleaseBatch(candidates, verifiedCurrentProviders, terminalBackfillIds).filter((release) => release.selection === "backfill");\n\t\tfor (const candidate of backfillBatch) {\n\t\t\tw.$arm("s81", 0);\n\t\t\tconst result = await runRelease(w.$frame("s82"), candidate, head.sha, trigger.at);\n\t\t\tresults.push({\n\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t...result\n\t\t\t});\n\t\t\tconst currentReceipts = backfillReceipts.filter((receipt) => receipt.discoveryId !== candidate.id);\n\t\t\tif (result.proofArtifactVerified === true) {\n\t\t\t\tcurrentReceipts.push({\n\t\t\t\t\tdiscoveryId: candidate.id,\n\t\t\t\t\trunKey: releaseRunKey(candidate.provider, candidate.version),\n\t\t\t\t\theadSha: head.sha,\n\t\t\t\t\tworkflowStatus: result.workflowStatus,\n\t\t\t\t\tproofStatus: result.proofStatus,\n\t\t\t\t\tproofArtifactVerified: true\n\t\t\t\t});\n\t\t\t}\n\t\t\tbackfillReceipts.splice(0, backfillReceipts.length, ...currentReceipts);\n\t\t}\n\t\tbackfillSummary = summarizeHarnessBackfill(candidates, backfillReceipts, head.sha);\n\t} else {\n\t\tw.$arm("s78", 1);\n\t}\n\treturn {\n\t\theadSha: head.sha,\n\t\tcurrent: current.length,\n\t\tbackfillAvailable: backfill.length,\n\t\tbackfillAcceptance: backfillSummary,\n\t\tattempted: results.length,\n\t\tresults\n\t};\n});\n\nreturn __signalboxWorkflow;\n}\n',
   },
 };

@@ -9,6 +9,7 @@ import {
   harnessReleaseLedgerLayer,
 } from "./HarnessReleaseLedgerService.ts";
 import type { HarnessReleaseSqliteDatabase } from "./HarnessReleaseSqliteStore.ts";
+import { builtinCriteriaFixture } from "./tests/builtinCriteriaFixture.ts";
 
 const fixture = () => {
   const database = new NodeSqlite.DatabaseSync(":memory:");
@@ -110,6 +111,7 @@ describe("project harness ledger service", () => {
             "mcp",
             "interrupt",
             "publicHarness",
+            "builtinCoverage",
           ];
           const result = {
             schemaVersion: 1,
@@ -120,11 +122,14 @@ describe("project harness ledger service", () => {
             status: "green",
             source: { commit: sourceHead },
             unchangedSource: "passed",
+            artifact: { sha256: "a".repeat(64) },
             environments: Object.fromEntries(
               ["local-workerd", "deployed"].map((environment) => [
                 environment,
                 {
                   checks: checks.map((name) => ({ name, status: "passed" })),
+                  measurementRunId: "deployed-proof-run",
+                  builtinCriteria: builtinCriteriaFixture(environment, "a".repeat(64)),
                   metrics: {
                     moduleBytes: { state: "measured", value: 1 },
                     bootTimeMs: { state: "measured", value: 1 },
@@ -187,7 +192,15 @@ describe("project harness ledger service", () => {
               githubLayer(() =>
                 Effect.succeed({
                   ...artifact,
-                  text: JSON.stringify({ ...result, environments: {} }),
+                  text: JSON.stringify({
+                    ...result,
+                    environments: Object.fromEntries(
+                      Object.entries(result.environments).map(([environment, evidence]) => {
+                        const { builtinCriteria: _omitted, ...withoutBuiltinEvidence } = evidence;
+                        return [environment, withoutBuiltinEvidence];
+                      }),
+                    ),
+                  }),
                 }),
               ),
             ),
