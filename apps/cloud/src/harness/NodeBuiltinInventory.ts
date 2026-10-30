@@ -11,7 +11,7 @@ import {
   classifyNodeNativeBuiltinCapability,
   type NodeNativeRuntimeProfile,
 } from "./NodeNativeBuiltinCapabilities.ts";
-import { DEFAULT_NODE_NATIVE_MODULES } from "./node/nativeModules.ts";
+import { DEFAULT_NODE_NATIVE_MODULES } from "./NodeNativeModules.ts";
 
 export type NodeBuiltinFunctionStatus =
   | "supported"

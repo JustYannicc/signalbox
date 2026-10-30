@@ -27,10 +27,12 @@ import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeZlib from "node:zlib";
-import { createNodeAsyncHooks } from "../../isolate/NodeAsyncHooks.ts";
-import { createNodeInspectorModule } from "../../isolate/NodeInspector.ts";
-import { nodeTlsModule } from "../../isolate/NodeTls.ts";
-import { createWorkerdNodeBuiltinFailures } from "./nativeBuiltinFailures.ts";
+import { createNodeAsyncHooks } from "../isolate/NodeAsyncHooks.ts";
+import { createNodeInspectorModule } from "../isolate/NodeInspector.ts";
+import { nodeTlsModule } from "../isolate/NodeTls.ts";
+import { createWorkerdNodeBuiltinFailures } from "./node/nativeBuiltinFailures.ts";
+
+export { createWorkerdNodeBuiltinFailures } from "./node/nativeBuiltinFailures.ts";
 
 function nativeModule(namespace: object): object {
   const value: unknown = Reflect.get(namespace, "default") ?? namespace;

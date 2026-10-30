@@ -1,5 +1,7 @@
-import { DEFAULT_NODE_NATIVE_MODULES } from "../nativeModules.ts";
+import { DEFAULT_NODE_NATIVE_MODULES } from "../../NodeNativeModules.ts";
 import { getNodeBuiltinCapability } from "../../../isolate/NodeBuiltinCapabilities.ts";
+
+export * from "../../../FixtureWorkerExports.ts";
 
 export default {
   fetch() {

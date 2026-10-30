@@ -3,8 +3,10 @@ import {
   createHarnessNodeBuiltinInventory,
   inspectNodeBuiltinFunctionCapabilities,
 } from "../../NodeBuiltinInventory.ts";
-import { DEFAULT_NODE_NATIVE_MODULES } from "../nativeModules.ts";
-import { createWorkerdNodeBuiltinFailures } from "../nativeBuiltinFailures.ts";
+import {
+  DEFAULT_NODE_NATIVE_MODULES,
+  createWorkerdNodeBuiltinFailures,
+} from "../../NodeNativeModules.ts";
 import { fixture } from "./fixture.ts";
 
 // The distinct paths from the retained Claude 2.1.312 unsupported/missing-site report.

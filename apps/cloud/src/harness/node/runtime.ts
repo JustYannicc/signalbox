@@ -20,7 +20,7 @@ import { createNodeOs } from "../../isolate/NodeOs.ts";
 import { createNodePath } from "../../isolate/NodePath.ts";
 import { createNodeRuntimeCompatibility } from "../../isolate/NodeRuntimeCompatibility.ts";
 import * as NodeTty from "../../isolate/NodeTty.ts";
-import { DEFAULT_NODE_NATIVE_MODULES } from "./nativeModules.ts";
+import { DEFAULT_NODE_NATIVE_MODULES } from "../NodeNativeModules.ts";
 import { createHarnessEnvironment } from "./environment.ts";
 import type { NodeHarnessProcessInput } from "./types.ts";
 
