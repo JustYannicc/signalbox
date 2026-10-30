@@ -211,6 +211,8 @@ export const prepareHarnessArtifactWithFileSystem = async (
         }
         if (!childStat.isFile()) throw new Error("HARNESS_ARTIFACT_SPECIAL_FILE");
 
+        // The bundler analysis is a diagnostic, never a runtime release input.
+        if (childRelative === "metafile.json") continue;
         const bytes = await readSourceFile(filesystem, root, childAbsolute, childStat);
         if (component === "cli" && childRelative === "manifest.json") {
           // Keep the full artifact reader as the validation boundary so malformed source

@@ -2,7 +2,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { prepareHarnessArtifact } from "./prepareArtifact.ts";
-import { cloudflareHarnessArtifactStore, publishHarnessArtifact } from "./publishArtifact.ts";
+import { publishCodexRelease } from "./publishCodexRelease.ts";
 import { publishClaudeVariants } from "./publishClaudeVariants.ts";
 
 export const runHarnessArtifactCli = async (args: readonly string[]) => {
@@ -18,9 +18,10 @@ export const runHarnessArtifactCli = async (args: readonly string[]) => {
       cli: { type: "string" },
       sdk: { type: "string" },
       directory: { type: "string" },
+      "assets-directory": { type: "string" },
       "artifact-hash": { type: "string" },
+      release: { type: "string" },
       "project-id": { type: "string" },
-      prefix: { type: "string" },
       result: { type: "string" },
       ledger: { type: "string" },
       "baseline-directory": { type: "string" },
@@ -57,28 +58,33 @@ export const runHarnessArtifactCli = async (args: readonly string[]) => {
       output,
     });
   } else if (values.mode === "publish") {
-    const account = process.env.CLOUDFLARE_ACCOUNT_ID ?? "";
-    const token = process.env.CLOUDFLARE_API_TOKEN ?? "";
-    const bucket = process.env.HARNESS_RELEASE_ARTIFACT_BUCKET ?? "";
-    delete process.env.CLOUDFLARE_API_TOKEN;
-    if (!values["artifact-hash"] || !values["source-identity"] || !values["project-id"])
-      throw new Error("Pass the expected artifact hash, source identity and authorized project.");
-    const store = cloudflareHarnessArtifactStore({ account, token, bucket });
-    result = await publishHarnessArtifact(
-      {
+    if (
+      values.harness !== "codex" ||
+      !values.ledger ||
+      !values.release ||
+      !values["artifact-hash"] ||
+      !values["source-identity"] ||
+      !values["project-id"] ||
+      !values["assets-directory"]
+    )
+      throw new Error(
+        "Pass --harness codex, the qualified ledger/release, artifact hash, source identity, project and deployment assets directory. Claude publishes through publish-claude-variants.",
+      );
+    result = await publishCodexRelease({
+      ledger: NodePath.resolve(values.ledger),
+      releaseId: values.release,
+      identity: {
         artifactRef: `sha256:${values["artifact-hash"]}`,
         artifactHash: values["artifact-hash"],
         sourceIdentity: values["source-identity"],
       },
-      output,
-      {
-        store,
-        projectId: values["project-id"],
-        ...(values.prefix ? { prefix: values.prefix } : {}),
-      },
-    );
+      directory: output,
+      projectId: values["project-id"],
+      assetsDirectory: NodePath.resolve(values["assets-directory"]),
+    });
   } else if (values.mode === "publish-claude-variants") {
     if (
+      !values["assets-directory"] ||
       !values.ledger ||
       !values["baseline-directory"] ||
       !values["baseline-release"] ||
@@ -95,6 +101,7 @@ export const runHarnessArtifactCli = async (args: readonly string[]) => {
     if (!Number.isSafeInteger(maxPreparedModuleBytes) || maxPreparedModuleBytes <= 0)
       throw new Error("CLAUDE_VARIANTS_MODULE_ALLOWANCE_INVALID");
     await publishClaudeVariants({
+      assetsDirectory: NodePath.resolve(values["assets-directory"]),
       ledger: NodePath.resolve(values.ledger),
       ...(values["project-id"] ? { projectId: values["project-id"] } : {}),
       baselineReleaseId: values["baseline-release"],
