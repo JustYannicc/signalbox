@@ -33,7 +33,7 @@ describe("runtime inventory declarations for retained unknown adapters", () => {
       ].map(([specifier, ...memberPath]) => ({ specifier: specifier!, memberPath }));
       const records = inspectNodeBuiltinFunctionCapabilities(inventory.modules, requests);
       expect(records.map(({ status }) => status)).toEqual([
-        "conditional",
+        "unsupported",
         "conditional",
         "conditional",
         "conditional",
@@ -59,7 +59,8 @@ describe("runtime inventory declarations for retained unknown adapters", () => {
         expect(record.failure).toEqual({ kind: "named-error", code: "ENOTSUP" });
         expect(() => {
           if (typeof callable !== "function") throw new TypeError("Expected a callable");
-          Reflect.apply(callable, module, []);
+          if (record.memberPath[0] === "ChildProcess") Reflect.construct(callable, []);
+          else Reflect.apply(callable, module, []);
         }).toThrowError(expect.objectContaining({ code: record.failure?.code }));
       }
       const process = inventory.modules.process!;

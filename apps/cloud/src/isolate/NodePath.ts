@@ -2,7 +2,7 @@
 import * as NodePath from "node:path";
 
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
-import { NodeSystemError } from "./node/process/NodeError.ts";
+import { NodeSystemError, unsupportedNodeOperation } from "./node/process/NodeError.ts";
 import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
 import { declaredPathFunctions } from "./node/path/capabilities.ts";
 
@@ -54,13 +54,11 @@ export function createNodePath(filesystem: NodePathFileSystem) {
         "resolve",
       );
     }
-    // The host has no per-drive cwd table; drive-relative input is anchored at its drive root.
-    const rooted = paths.map((path) => {
-      const match = windowsDriveRelative.exec(path);
-      return match ? `${match[1]}\\${path.slice(2)}` : path;
-    });
+    if (paths.some((path) => windowsDriveRelative.test(path))) {
+      unsupportedNodeOperation("path.win32.resolve drive-relative paths");
+    }
     // A POSIX guest cwd becomes a root-relative Windows path, as Node does without a drive cwd.
-    return NodePath.win32.resolve(cwd, ...rooted);
+    return NodePath.win32.resolve(cwd, ...paths);
   };
 
   const relativeWin32 = (from: string, to: string) =>
@@ -89,7 +87,7 @@ export function createNodePath(filesystem: NodePathFileSystem) {
   for (const name of ["resolve", "relative", "toNamespacedPath"] as const) {
     markNodeBuiltinCapability(win32[name], {
       status: "conditional",
-      evidence: `NodePath.win32.${name} has no per-drive cwd table: drive-relative paths are anchored at their drive root. Call-site arguments must establish this is acceptable.`,
+      evidence: `NodePath.win32.${name} uses the session cwd and throws ENOTSUP for drive-relative paths because the guest has no per-drive cwd table.`,
     });
   }
 

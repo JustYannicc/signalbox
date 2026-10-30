@@ -130,14 +130,27 @@ export function createNodeChildProcess(
       : { spawnSync: unsupportedSync, execSync: unsupportedSync, execFileSync: unsupportedSync };
   const fork = (..._args: unknown[]): never => unsupportedNodeOperation("child_process.fork IPC");
 
+  function ChildProcess(..._args: unknown[]): never {
+    return unsupportedNodeOperation("child_process.ChildProcess direct construction");
+  }
+  // Spawned children retain the public instanceof check without exposing host-only constructor args.
+  Object.defineProperty(ChildProcess, Symbol.hasInstance, {
+    value: (value: unknown) => value instanceof NodeChildProcess,
+  });
+  markNodeBuiltinCapability(ChildProcess, {
+    status: "unsupported",
+    evidence:
+      "Direct ChildProcess construction has no process host and throws ENOTSUP; use spawn or exec to obtain a child.",
+    failure: { kind: "named-error", code: "ENOTSUP" },
+  });
+
   for (const [name, callable] of Object.entries({
     spawn,
     ...asyncMethods,
-    ChildProcess: NodeChildProcess,
   })) {
     markNodeBuiltinCapability(callable, {
       status: "conditional",
-      evidence: `NodeChildProcess.${name} uses kernel admission and process-owned I/O with a limited Node option set. The exported ChildProcess constructor requires host-owned context; a bare Node constructor is not supported.`,
+      evidence: `NodeChildProcess.${name} uses kernel admission and process-owned I/O with a limited Node option set.`,
     });
   }
   for (const [name, callable] of Object.entries(syncMethods)) {
@@ -158,7 +171,7 @@ export function createNodeChildProcess(
   }
 
   return Object.freeze({
-    ChildProcess: NodeChildProcess,
+    ChildProcess,
     spawn,
     exec: asyncMethods.exec,
     execFile: asyncMethods.execFile,

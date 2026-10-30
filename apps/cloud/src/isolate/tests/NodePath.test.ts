@@ -64,7 +64,9 @@ describe("Node path facet", () => {
     const path = createNodePath(host("/posix/session").filesystem);
 
     expect(path.win32.resolve("folder", "file.txt")).toBe("\\posix\\session\\folder\\file.txt");
-    expect(path.win32.resolve("D:relative.txt")).toBe("D:\\relative.txt");
+    expect(() => path.win32.resolve("D:relative.txt")).toThrow(
+      expect.objectContaining({ code: "ENOTSUP" }),
+    );
     expect(path.win32.join("C:\\work", "folder")).toBe("C:\\work\\folder");
   });
 
@@ -125,7 +127,14 @@ describe("Node path facet", () => {
     for (const name of ["resolve", "relative", "toNamespacedPath"] as const) {
       expect(getNodeBuiltinCapability(path.win32[name])?.status).toBe("conditional");
     }
-    expect(path.win32.relative("D:one", "D:two")).toBe("..\\two");
-    expect(path.win32.toNamespacedPath("D:one")).toBe("\\\\?\\D:\\one");
+    expect(path.win32.relative("D:\\one", "D:\\two")).toBe("..\\two");
+    expect(path.win32.toNamespacedPath("D:\\one")).toBe("\\\\?\\D:\\one");
+    for (const resolve of [
+      () => path.win32.resolve("D:one"),
+      () => path.win32.relative("D:one", "D:two"),
+      () => path.win32.toNamespacedPath("D:one"),
+    ]) {
+      expect(resolve).toThrow(expect.objectContaining({ code: "ENOTSUP" }));
+    }
   });
 });

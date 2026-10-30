@@ -159,6 +159,29 @@ function controlledChild(disposeGate = Promise.resolve()) {
 }
 
 describe("Node child_process through Computer", () => {
+  it("rejects unsupported process ownership and detached execution before admission", async () => {
+    const exec = vi.fn<ComputerExecPort["exec"]>(async () => echoChild());
+    const h = harness({ exec });
+    try {
+      for (const options of [{ uid: 0 }, { gid: 0 }, { detached: true }]) {
+        for (const launch of [
+          () => h.childProcess.spawn("tool", options),
+          () => h.childProcess.exec("tool", options),
+          () => h.childProcess.execFile("tool", options),
+        ]) {
+          expect(launch).toThrow(expect.objectContaining({ code: "ENOTSUP" }));
+        }
+      }
+      expect(() => h.childProcess.ChildProcess()).toThrow(
+        expect.objectContaining({ code: "ENOTSUP" }),
+      );
+      expect(exec).not.toHaveBeenCalled();
+      expect(h.host.processes.size).toBe(0);
+    } finally {
+      await h.close();
+    }
+  });
+
   it("admits a real PID synchronously and preserves binary I/O and the complete command", async () => {
     const exec = vi.fn<ComputerExecPort["exec"]>(async () => echoChild());
     const h = harness({ exec });
@@ -174,6 +197,7 @@ describe("Node child_process through Computer", () => {
       child.on("exit", () => order.push("exit"));
       child.on("close", () => order.push("close"));
       expect(child.pid).toBeGreaterThan(1);
+      expect(child).toBeInstanceOf(h.childProcess.ChildProcess);
       expect(h.host.processes.lookupPid(child.pid!)).toMatchObject({
         status: "ok",
         value: { info: { pid: child.pid } },

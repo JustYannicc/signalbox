@@ -9,6 +9,33 @@ export * from "../../../FixtureWorkerExports.ts";
 
 export default {
   async fetch(request: Request) {
+    if (new URL(request.url).pathname === "/debuglog") {
+      const util = DEFAULT_NODE_NATIVE_MODULES.util!;
+      const debuglog = Reflect.get(util, "debuglog");
+      const lines: string[] = [];
+      const originalWrite = process.stderr.write;
+      const originalDebug = process.env.NODE_DEBUG;
+      process.stderr.write = (text: string | Uint8Array) => {
+        lines.push(String(text));
+        return true;
+      };
+      process.env.NODE_DEBUG = "guest*,literal.dot";
+      try {
+        debuglog("other")("hidden");
+        debuglog("guest-io")("read %d bytes", 7);
+        debuglog("literal.dot")("included");
+        debuglog("literalXdot")("hidden");
+        return Response.json({
+          lines,
+          pid: process.pid,
+          capability: getNodeBuiltinCapability(debuglog),
+        });
+      } finally {
+        process.stderr.write = originalWrite;
+        if (originalDebug === undefined) delete process.env.NODE_DEBUG;
+        else process.env.NODE_DEBUG = originalDebug;
+      }
+    }
     if (new URL(request.url).pathname === "/native-behavior") {
       const methods = Reflect.get(DEFAULT_NODE_NATIVE_MODULES.http!, "METHODS");
       if (Reflect.get(DEFAULT_NODE_NATIVE_MODULES.stream!, "Duplex") !== NodeStream.Duplex) {
@@ -64,6 +91,7 @@ export default {
       ["vm", "SourceTextModule"],
       ["vm", "SyntheticModule"],
       ["vm", "createContext"],
+      ["vm", "isContext"],
       ["vm", "runInContext"],
       ["vm", "runInThisContext"],
     ];

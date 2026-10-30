@@ -41,7 +41,6 @@ describe("native builtin inventory", () => {
         "process.stdout.off",
       ],
       conditional: [
-        "child_process.ChildProcess",
         "child_process.exec",
         "child_process.execFile",
         "child_process.spawn",
@@ -55,13 +54,14 @@ describe("native builtin inventory", () => {
         "path.win32.toNamespacedPath",
         "readline.createInterface",
         "tls.TLSSocket",
-        "vm.isContext",
       ],
       unsupported: [
+        "child_process.ChildProcess",
         "child_process.execFileSync",
         "child_process.execSync",
         "child_process.spawnSync",
         "tty.ReadStream",
+        "vm.isContext",
       ],
     } as const;
     const rows = Object.entries(expected).flatMap(([status, paths]) =>
@@ -76,7 +76,12 @@ describe("native builtin inventory", () => {
       functions: rows.map((row) => ({
         ...row,
         ...(row.status === "unsupported"
-          ? { failure: { kind: "named-error", code: "ENOTSUP" } }
+          ? {
+              failure: {
+                kind: "named-error",
+                code: row.specifier === "vm" ? "ERR_SIGNALBOX_NODE_BUILTIN_UNSUPPORTED" : "ENOTSUP",
+              },
+            }
           : {}),
       })),
     });

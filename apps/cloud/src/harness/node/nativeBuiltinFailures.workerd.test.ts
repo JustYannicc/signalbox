@@ -1,7 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off - Exercise the default modules in local Workerd.
 import * as NodeURL from "node:url";
 import { expect, it } from "vite-plus/test";
+import { Schema } from "effect";
 import { createTestHarness } from "wrangler";
+
+const decodeDebuglogResponse = Schema.decodeUnknownSync(
+  Schema.Struct({
+    lines: Schema.Array(Schema.String),
+    pid: Schema.Number,
+    capability: Schema.Struct({ status: Schema.String }),
+  }),
+);
 
 it("replaces Workerd placeholders and missing exports with declared named failures", async () => {
   const harness = createTestHarness({
@@ -24,7 +33,7 @@ it("replaces Workerd placeholders and missing exports with declared named failur
     const body = await response.text();
     expect(response.status, body).toBe(200);
     const result = JSON.parse(body);
-    expect(result).toHaveLength(13);
+    expect(result).toHaveLength(14);
     for (const row of result) {
       expect(row, row.builtin).toMatchObject({
         threw: true,
@@ -35,6 +44,13 @@ it("replaces Workerd placeholders and missing exports with declared named failur
         },
       });
     }
+    const debuglogResponse = await harness.fetch("http://proof/debuglog");
+    const debuglog = decodeDebuglogResponse(await debuglogResponse.json());
+    expect(debuglog.lines).toEqual([
+      `GUEST-IO ${debuglog.pid}: read 7 bytes\n`,
+      `LITERAL.DOT ${debuglog.pid}: included\n`,
+    ]);
+    expect(debuglog.capability.status).toBe("supported");
     const native = await harness.fetch("http://proof/native-behavior");
     expect(await native.json()).toEqual({
       hasGet: true,

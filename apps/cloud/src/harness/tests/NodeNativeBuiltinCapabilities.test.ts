@@ -148,7 +148,7 @@ describe("native Node builtin evidence", () => {
       "supported",
       "supported",
       "conditional",
-      "conditional",
+      "unsupported",
     ]);
     for (const request of paths) {
       expect(
