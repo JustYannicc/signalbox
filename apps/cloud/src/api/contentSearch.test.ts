@@ -188,6 +188,27 @@ const setup = Effect.gen(function* () {
   return { raw, mcp };
 });
 
+type Search = Effect.Success<typeof setup>["raw" | "mcp"];
+const follow = (search: Search, replay: Search, firstCursor: string) =>
+  Effect.gen(function* () {
+    const pages: ProjectSearchContentsResult[] = [];
+    let cursor = firstCursor;
+    for (let index = 0; index < 20; index++) {
+      const continuation = { ...request, cursor };
+      const page = yield* search(continuation);
+      expect(yield* search(continuation)).toEqual(page);
+      expect(yield* replay(continuation)).toEqual(page);
+      pages.push(page);
+      if (page.nextCursor === undefined) {
+        expect(page.truncated).toBe(false);
+        return { ...page, matches: pages.flatMap((result) => result.matches) };
+      }
+      expect(page.truncated).toBe(true);
+      cursor = page.nextCursor;
+    }
+    return yield* Effect.die("Content search did not finish within twenty pages.");
+  });
+
 describe("content search API continuation (#812)", () => {
   it.effect("returns an empty raw API page until the caller supplies its continuation", () =>
     Effect.gen(function* () {
@@ -196,9 +217,7 @@ describe("content search API continuation (#812)", () => {
       expect(first.matches).toEqual([]);
       expect(first.truncated).toBe(true);
       if (first.nextCursor === undefined) return yield* Effect.die("Expected a continuation.");
-      const continuation = { ...request, cursor: first.nextCursor };
-      expect(yield* raw(continuation)).toEqual(completed);
-      expect(yield* raw(continuation)).toEqual(completed);
+      expect(yield* follow(raw, raw, first.nextCursor)).toEqual(completed);
       const restarted = yield* raw(request);
       expect(restarted.matches).toEqual([]);
       expect(restarted.truncated).toBe(true);
@@ -217,12 +236,8 @@ describe("content search API continuation (#812)", () => {
       if (firstRaw.nextCursor === undefined || firstMcp.nextCursor === undefined) {
         return yield* Effect.die("Expected API and MCP continuations.");
       }
-      const continuation = { ...request, cursor: firstRaw.nextCursor };
-      const throughMcp = yield* mcp(continuation);
-      expect(throughMcp).toEqual(completed);
-      expect(throughMcp).toEqual(yield* raw(continuation));
-      expect(yield* mcp(continuation)).toEqual(throughMcp);
-      expect(yield* mcp({ ...request, cursor: firstMcp.nextCursor })).toEqual(completed);
+      expect(yield* follow(mcp, raw, firstRaw.nextCursor)).toEqual(completed);
+      expect(yield* follow(raw, mcp, firstMcp.nextCursor)).toEqual(completed);
     }).pipe(Effect.scoped),
   );
 });

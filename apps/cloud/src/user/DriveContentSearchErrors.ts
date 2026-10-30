@@ -54,6 +54,8 @@ export class ContentSearchFailed extends Schema.TaggedError<ContentSearchFailed>
       "cursor_read",
       "cursor_bind",
       "cursor_save",
+      "cursor_page_read",
+      "cursor_page_save",
     ]),
     cause: Schema.Defect(),
   },
