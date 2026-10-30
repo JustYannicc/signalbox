@@ -141,6 +141,62 @@ async function setup() {
       calls.push(environment);
       return evidence(await freezeFixture(directory), environment);
     },
+    normalPublicQualifierBuiltinEvidence: async ({
+      fixture,
+      artifactSha256,
+      environment,
+      measurementRunId,
+    }) => {
+      const sourceFiles = fixture.inventory
+        .filter((module) => module.type === "js")
+        .map((module) => ({
+          name: module.name,
+          bytes: module.bytes,
+          sha256: module.sha256,
+          sourceUtf16Length: "export class Proof {}".length,
+        }));
+      return {
+        inventory: {
+          schemaVersion: 1,
+          sourceFiles,
+          callSites: [],
+          analysisOnlyCallSites: [],
+          missingBuiltins: [],
+          unknownBuiltinSpecifiers: [],
+          ambiguities: [],
+          functionAmbiguities: [],
+        },
+        corpus: {
+          schemaVersion: 1,
+          runs:
+            environment === "local-workerd"
+              ? []
+              : [
+                  {
+                    kind: "release-qualification",
+                    runId: measurementRunId,
+                    artifactSha256,
+                    completed: true,
+                    captureState: "complete",
+                    evidenceSha256: fixture.sha256,
+                    sources: sourceFiles.map((source) => ({
+                      module: source.name,
+                      sourceSha256: source.sha256,
+                      invokedSiteIds: [],
+                      executedByteRanges: [
+                        {
+                          startOffset: 0,
+                          endOffset: source.sourceUtf16Length,
+                          offsetUnit: "utf16-code-units",
+                          executionCount: 1,
+                        },
+                      ],
+                    })),
+                  },
+                ],
+        },
+      };
+    },
     cleanup: async () => {
       calls.push("cleanup");
     },
@@ -213,146 +269,151 @@ async function installFakeWorkerd(repository: string) {
 }
 
 describe("release runner", () => {
-  it("rejects a public qualifier's 96 MiB resource profile before publication", async () => {
+  it("keeps Claude eligibility pending without trusted nonce and builtin evidence", async () => {
     const test = await setup();
+    delete test.operations.normalPublicQualifierBuiltinEvidence;
     test.operations.assess = syntheticGreen;
-    test.operations.measure = async (_context, directory, environment) => ({
-      ...evidence(await freezeFixture(directory), environment),
-      checks: Object.fromEntries(RELEASE_CRITERIA.map((name) => [name, "passed"])),
-      peakHeapBytes: 100_663_296,
-      resourceCriteria: { tag: "harness-release-resource-criteria-v1", status: "passed" },
-    });
-    test.operations.normalPublicQualifierResourceEvidence = async ({
-      context,
-      fixture,
-      artifactSha256,
-      environment,
-      measurementRunId,
-    }) => ({
-      tag: "harness-release-resource-evidence-v1",
-      source: "normal-public-qualifier",
-      environment,
-      measurementRunId,
-      fixtureId: fixture.id,
-      fixtureSha256: fixture.sha256,
-      artifactSha256,
-      releaseIdentitySha256: context.identity.sha256,
-      startupTiming: {
-        label: "cold first-successful-RPC latency",
-        interpretation: "startup upper bound",
-        clock: "parent process.hrtime.bigint",
-        startedMonotonicNs: "100",
-        finishedMonotonicNs: "200",
-        milliseconds: 0.0001,
-        includesRpc: true,
-        exactBootTime: false,
+    const result = await runRelease(
+      {
+        ...test.options,
+        provider: "claude-code",
+        version: "2.1.312",
       },
-      criterion: {
-        label: "configured-limit completion with measured overshoot",
-        configuredLimit: {
-          configuredLimitBytes: 100_663_296,
-          deltaMaxObservedBytes: 101_195_616,
-          safetyMarginBytes: 8_388_608,
-          budgetBytes: 134_217_728,
-          calibrationComplete: false,
-          workloadCompleted: false,
-          identityVerified: true,
-        },
-      },
-    });
-
-    const result = await runRelease(test.options, test.operations);
-    const assessment = result.environments["local-workerd"]!;
-    expect(result.status).toBe("red");
+      test.operations,
+    );
+    expect(result.status).toBe("pending");
     expect(result.publication).toBe("withheld");
     expect(test.calls).not.toContain("publish");
-    expect(assessment.resourceCriteria).toMatchObject({
-      status: "rejected",
-      configuredLimit: {
-        assessedBytes: 210_247_520,
-        budgetFits: false,
-        strictByteBound: false,
-      },
-    });
-    expect(assessment.metrics.peakHeapBytes.state).toBe("unmeasured");
-    expect(assessment.metrics.peakHeapBytes).not.toHaveProperty("value");
     expect(
-      isHarnessReleaseResourceCriteriaAssessment(assessment.resourceCriteria, {
-        environment: "local-workerd",
-        measurementRunId: "local-workerd-fresh-run",
-        fixtureId: result.fixture!.id,
-        fixtureSha256: result.fixture!.sha256,
-        artifactSha256: result.artifact!.sha256,
-        releaseIdentitySha256: result.identity!.sha256,
-      }),
-    ).toBe(true);
+      result.environments.deployed!.checks.find((check) => check.name === "builtinCoverage")
+        ?.status,
+    ).toBe("pending");
+    expect(result.environments.deployed!.resourceCriteria).toBeUndefined();
+    expect(result.environments.deployed!.metrics.peakHeapBytes.state).toBe("unmeasured");
   });
 
-  it("keeps incomplete public resource evidence pending and ignores raw green flags", async () => {
+  it("keeps Codex eligibility pending without trusted builtin evidence despite a green behavior verifier", async () => {
+    const test = await setup();
+    delete test.operations.normalPublicQualifierBuiltinEvidence;
+    test.operations.assess = syntheticGreen;
+    const result = await runRelease(test.options, test.operations);
+    expect(result.status).toBe("pending");
+    expect(result.publication).toBe("withheld");
+    expect(
+      result.environments.deployed!.checks.find((check) => check.name === "builtinCoverage")
+        ?.status,
+    ).toBe("pending");
+    expect(result.environments.deployed!.builtinCriteria).toBeUndefined();
+  });
+
+  it.each([false, true])(
+    "derives deployed resource eligibility from every RPC nonce, changed=%s",
+    async (changed) => {
+      const test = await setup();
+      test.operations.assess = syntheticGreen;
+      const expectedDeployedContext = {
+        deploymentId: "deploy-3",
+        loaderId: "claude-loader",
+        facetId: "qualification-facet",
+        responsePlanSha256: "f".repeat(64),
+        expectedResponses: [
+          { id: "run-1", method: "run" },
+          { id: "dispose-1", method: "dispose" },
+        ],
+      };
+      test.operations.normalPublicQualifierResourceEvidence = async ({
+        context,
+        fixture,
+        artifactSha256,
+        environment,
+        measurementRunId,
+      }) => ({
+        evidence: {
+          tag: "harness-release-resource-evidence-v2",
+          source: "normal-public-qualifier",
+          environment,
+          measurementRunId,
+          fixtureId: fixture.id,
+          fixtureSha256: fixture.sha256,
+          artifactSha256,
+          releaseIdentitySha256: context.identity.sha256,
+          startupTiming: {
+            label: "cold first-successful-RPC latency",
+            interpretation: "startup upper bound",
+            clock: "parent process.hrtime.bigint",
+            startedMonotonicNs: "100",
+            finishedMonotonicNs: "200",
+            milliseconds: 0.0001,
+            includesRpc: true,
+            exactBootTime: false,
+          },
+          criterion:
+            environment === "local-workerd"
+              ? { label: "platform policy compliance evidence" }
+              : {
+                  label: "platform policy compliance evidence",
+                  collectorRecord: {
+                    measurementRunId,
+                    deploymentId: expectedDeployedContext.deploymentId,
+                    loaderId: expectedDeployedContext.loaderId,
+                    facetId: expectedDeployedContext.facetId,
+                    selectedReleaseSha256: artifactSha256,
+                    responsePlanSha256: expectedDeployedContext.responsePlanSha256,
+                    workloadCompleted: true,
+                    beforeProbe: { status: 200, isolateNonce: "isolate-A" },
+                    responses: expectedDeployedContext.expectedResponses.map((response, index) => ({
+                      ...response,
+                      status: 200,
+                      isolateNonce: changed && index === 1 ? "isolate-B" : "isolate-A",
+                    })),
+                    afterProbe: { status: 200, isolateNonce: "isolate-A" },
+                  },
+                },
+        },
+        ...(environment === "deployed" ? { expectedDeployedContext } : {}),
+      });
+      const result = await runRelease(test.options, test.operations);
+      expect(result.environments["local-workerd"]!.resourceCriteria).toMatchObject({
+        status: "not-applicable",
+        label: "platform policy compliance evidence",
+      });
+      expect(result.environments.deployed!.resourceCriteria).toMatchObject({
+        status: changed ? "rejected" : "passed",
+      });
+      expect(result.environments.deployed!.deployedResourceContext).toEqual(
+        expectedDeployedContext,
+      );
+      expect(result.environments.deployed!.metrics.peakHeapBytes.state).toBe("unmeasured");
+      expect(result.status).toBe(changed ? "red" : "green");
+      expect(result.publication).toBe(changed ? "withheld" : "published");
+      expect(
+        isHarnessReleaseResourceCriteriaAssessment(result.environments.deployed!.resourceCriteria, {
+          environment: "deployed",
+          artifactSha256: result.artifact!.sha256,
+          deployedContext: expectedDeployedContext,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it("keeps absent public resource evidence pending despite raw green flags", async () => {
     const test = await setup();
     test.operations.measure = async (_context, directory, environment) => ({
       ...evidence(await freezeFixture(directory), environment),
       checks: Object.fromEntries(RELEASE_CRITERIA.map((name) => [name, "passed"])),
       bootTimeMs: 1,
       peakHeapBytes: 1,
-      resourceCriteria: { tag: "harness-release-resource-criteria-v1", status: "passed" },
+      resourceCriteria: { tag: "harness-release-resource-criteria-v2", status: "passed" },
     });
-    test.operations.normalPublicQualifierResourceEvidence = async ({
-      context,
-      fixture,
-      artifactSha256,
-      environment,
-      measurementRunId,
-    }) => ({
-      tag: "harness-release-resource-evidence-v1",
-      source: "normal-public-qualifier",
-      environment,
-      measurementRunId,
-      fixtureId: fixture.id,
-      fixtureSha256: fixture.sha256,
-      artifactSha256,
-      releaseIdentitySha256: context.identity.sha256,
-      startupTiming: {
-        label: "cold first-successful-RPC latency",
-        interpretation: "startup upper bound",
-        clock: "parent process.hrtime.bigint",
-        startedMonotonicNs: "100",
-        finishedMonotonicNs: "200",
-        milliseconds: 0.0001,
-        includesRpc: true,
-        exactBootTime: false,
-      },
-      criterion:
-        environment === "local-workerd"
-          ? {
-              label: "configured-limit completion with measured overshoot",
-              configuredLimit: {
-                configuredLimitBytes: 64,
-                deltaMaxObservedBytes: 4,
-                safetyMarginBytes: 8,
-                budgetBytes: 128,
-                workloadCompleted: true,
-                identityVerified: true,
-              },
-            }
-          : {
-              label: "platform policy compliance evidence",
-              status: "pending",
-              evidenceSha256: "d".repeat(64),
-              identityVerified: true,
-            },
-    });
-
     const result = await runRelease(test.options, test.operations);
     expect(result.status).toBe("pending");
     expect(result.publication).toBe("withheld");
     expect(test.calls).not.toContain("publish");
-    expect(result.environments["local-workerd"]!.resourceCriteria).toMatchObject({
-      status: "pending",
-      configuredLimit: { calibrationComplete: false, status: "pending" },
-    });
+    expect(result.environments["local-workerd"]!.resourceCriteria).toBeUndefined();
     expect(
-      result.environments["local-workerd"]!.checks.every((check) => check.status === "pending"),
+      result.environments["local-workerd"]!.checks.filter(
+        (check) => check.name !== "builtinCoverage",
+      ).every((check) => check.status === "pending"),
     ).toBe(true);
     expect(result.environments["local-workerd"]!.metrics.peakHeapBytes.state).toBe("unmeasured");
   });
@@ -780,9 +841,11 @@ describe("release runner", () => {
     expect(result.status).toBe("pending");
     expect(result.publication).toBe("withheld");
     expect(result.unchangedSource).toBe("passed");
-    expect(result.environments.deployed?.checks.every((check) => check.status === "pending")).toBe(
-      true,
-    );
+    expect(
+      result.environments.deployed?.checks
+        .filter((check) => check.name !== "builtinCoverage")
+        .every((check) => check.status === "pending"),
+    ).toBe(true);
     expect(test.calls).toEqual([
       "build",
       "prepare-deployment",
@@ -870,15 +933,39 @@ describe("release runner", () => {
     expect(test.calls).not.toContain("publish");
   });
 
-  it.each(RELEASE_CRITERIA)("requires the %s criterion in each environment", async (name) => {
+  it.each(RELEASE_CRITERIA.filter((name) => name !== "builtinCoverage"))(
+    "requires the %s criterion in each environment",
+    async (name) => {
+      const test = await setup();
+      test.operations.assess = (_fixture, _raw, environment) => ({
+        ...syntheticGreen(),
+        checks: syntheticGreen().checks.map((check) =>
+          check.name === name && environment === "deployed"
+            ? { ...check, status: "pending" }
+            : check,
+        ),
+      });
+      const result = await runRelease(test.options, test.operations);
+      expect(result.status).toBe("pending");
+      expect(test.calls).not.toContain("publish");
+    },
+  );
+
+  it("requires trusted deployed builtin evidence independently of local preparation", async () => {
     const test = await setup();
-    test.operations.assess = (_fixture, _raw, environment) => ({
-      ...syntheticGreen(),
-      checks: syntheticGreen().checks.map((check) =>
-        check.name === name && environment === "deployed" ? { ...check, status: "pending" } : check,
-      ),
-    });
+    const builtinEvidence = test.operations.normalPublicQualifierBuiltinEvidence!;
+    test.operations.normalPublicQualifierBuiltinEvidence = (input) =>
+      input.environment === "deployed" ? Promise.resolve(undefined) : builtinEvidence(input);
+    test.operations.assess = syntheticGreen;
     const result = await runRelease(test.options, test.operations);
+    expect(
+      result.environments["local-workerd"]!.checks.find((check) => check.name === "builtinCoverage")
+        ?.status,
+    ).toBe("passed");
+    expect(
+      result.environments.deployed!.checks.find((check) => check.name === "builtinCoverage")
+        ?.status,
+    ).toBe("pending");
     expect(result.status).toBe("pending");
     expect(test.calls).not.toContain("publish");
   });

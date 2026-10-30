@@ -19,6 +19,7 @@ const roots = [
   "packages/runner-protocol/src",
   "packages/provider-core/src",
   "packages/shared/src",
+  "packages/shared/package.json",
   ".github/workflows",
   "package.json",
   "apps/cloud/package.json",

@@ -105,7 +105,7 @@ describe("Node builtin coverage", () => {
     expect(() => assertNodeBuiltinCoverage(coverage)).toThrow(diagnostic);
   });
 
-  it("keeps dynamic builtin member calls as source-located warnings", () => {
+  it("fails closed on computed builtin member calls", () => {
     const coverage = inspectNodeBuiltinCoverage({
       builtinModules: ["os"],
       requiredSpecifiers: ["os"],
@@ -121,15 +121,13 @@ describe("Node builtin coverage", () => {
       ],
     });
 
-    expect(coverage).toMatchObject({
-      status: "pass",
-      functionCallScope: "static-direct-calls",
-      functionAmbiguities: [
-        { kind: "dynamic-builtin-member-call", module: "claude.js", line: 8, column: 3 },
-      ],
+    expect(coverage.status).toBe("fail");
+    expect(coverage.functionAmbiguities[0]).toMatchObject({
+      kind: "dynamic-builtin-member-call",
+      module: "claude.js",
+      severity: "error",
     });
-    expect(() => assertNodeBuiltinCoverage(coverage)).not.toThrow();
-    expect(coverage.functionAmbiguities[0]).toMatchObject({ severity: "warning" });
+    expect(() => assertNodeBuiltinCoverage(coverage)).toThrow("unresolved-function-calls=");
   });
   it("keeps unresolved loader calls blocking", () => {
     const coverage = inspectNodeBuiltinCoverage({

@@ -52,16 +52,7 @@ describe("published release helper shapes", () => {
         cpu: { execution: false, processAccounting: false },
       },
     });
-    if (scan.functionAmbiguities.some(({ kind }) => kind === "dynamic-builtin-loader-call")) {
-      await expect(result).rejects.toThrow("unresolved-function-calls=");
-    } else {
-      await expect(result).resolves.toMatchObject({
-        status: "pass",
-        functionAmbiguities: expect.arrayContaining([
-          expect.objectContaining({ severity: "warning" }),
-        ]),
-      });
-    }
+    await expect(result).rejects.toThrow("unresolved-function-calls=");
   });
 
   it("does not attribute a shadowed namespace to the outer builtin", () => {

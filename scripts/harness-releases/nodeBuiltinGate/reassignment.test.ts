@@ -85,16 +85,7 @@ describe("reassigned builtin aliases", () => {
     const scan = scanBuiltinSource(input);
     expect(scan.functionAmbiguities.length).toBeGreaterThan(0);
     const result = assertPackagedBuiltinCoverage([input], inventory);
-    if (scan.functionAmbiguities.some(({ kind }) => kind === "dynamic-builtin-loader-call")) {
-      await expect(result).rejects.toThrow("unresolved-function-calls=");
-    } else {
-      await expect(result).resolves.toMatchObject({
-        status: "pass",
-        functionAmbiguities: expect.arrayContaining([
-          expect.objectContaining({ severity: "warning" }),
-        ]),
-      });
-    }
+    await expect(result).rejects.toThrow("unresolved-function-calls=");
   });
 
   it.each([

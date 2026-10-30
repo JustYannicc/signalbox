@@ -1,3 +1,4 @@
+import { deriveHarnessReleaseInheritedReachability } from "@t3tools/shared/harnessReleaseInheritedReachability";
 import {
   canPromoteHarnessRelease,
   HARNESS_RELEASE_BACKFILL_LIMITS,
@@ -16,12 +17,15 @@ import {
 } from "./harnessReleasePolicy.ts";
 import { workflowFunctionSource } from "./workflowFunctionSource.ts";
 import { isHarnessReleaseResourceCriteriaAssessment } from "@t3tools/shared/harnessReleaseResourceCriteria";
+import { isHarnessReleaseBuiltinCriteriaAssessment } from "@t3tools/shared/harnessReleaseBuiltinCriteria";
 
 export const HARNESS_RELEASE_POLICY_SOURCE = [
   `const HARNESS_RELEASE_WORKFLOW_FILE = ${JSON.stringify(HARNESS_RELEASE_WORKFLOW_FILE)};`,
   `const HARNESS_RELEASE_RESULT_PATH = ${JSON.stringify(HARNESS_RELEASE_RESULT_PATH)};`,
   `const HARNESS_RELEASE_BACKFILL_LIMITS = ${JSON.stringify(HARNESS_RELEASE_BACKFILL_LIMITS)};`,
   `const resourceCriteriaValidator = ${workflowFunctionSource(isHarnessReleaseResourceCriteriaAssessment)};`,
+  `const inheritedReachability = ${workflowFunctionSource(deriveHarnessReleaseInheritedReachability)};`,
+  `const builtinCriteriaValidator = ${workflowFunctionSource(isHarnessReleaseBuiltinCriteriaAssessment)};`,
   `const releaseArtifactName = ${workflowFunctionSource(releaseArtifactName)};`,
   `const isVerifiedHarnessRelease = ${workflowFunctionSource(isVerifiedHarnessRelease)};`,
   `const canPromoteHarnessRelease = ${workflowFunctionSource(canPromoteHarnessRelease)};`,
