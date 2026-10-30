@@ -1,10 +1,57 @@
+// @effect-diagnostics nodeBuiltinImport:off - Exercise the native stream exports used by the Node personality.
 import { DEFAULT_NODE_NATIVE_MODULES } from "../../NodeNativeModules.ts";
 import { getNodeBuiltinCapability } from "../../../isolate/NodeBuiltinCapabilities.ts";
+import * as NodeStream from "node:stream";
+import * as NodeStreamConsumers from "node:stream/consumers";
+import { createNodePath } from "../../../isolate/NodePath.ts";
 
 export * from "../../../FixtureWorkerExports.ts";
 
 export default {
-  fetch() {
+  async fetch(request: Request) {
+    if (new URL(request.url).pathname === "/native-behavior") {
+      const methods = Reflect.get(DEFAULT_NODE_NATIVE_MODULES.http!, "METHODS");
+      if (Reflect.get(DEFAULT_NODE_NATIVE_MODULES.stream!, "Duplex") !== NodeStream.Duplex) {
+        throw new Error("The tested Duplex is not the public runtime export");
+      }
+      const duplex = new NodeStream.Duplex({
+        read() {},
+        write(chunk, _encoding, done) {
+          this.push(chunk);
+          done();
+        },
+        final(done) {
+          this.push(null);
+          done();
+        },
+      });
+      const output = NodeStreamConsumers.buffer(duplex);
+      duplex.end("native duplex bytes");
+      const path = createNodePath({ cwd: "/session", chdir() {} });
+      const pathBehavior = ["posix", "win32"].map((flavor) => {
+        const module = flavor === "posix" ? path.posix : path.win32;
+        const sample = flavor === "posix" ? "/a/../b/report.txt" : "C:\\a\\..\\b\\report.txt";
+        return {
+          flavor,
+          basename: module.basename(sample, ".txt"),
+          dirname: module.dirname(sample),
+          extname: module.extname(sample),
+          absolute: module.isAbsolute(sample),
+          relative: module.isAbsolute("relative"),
+          join: module.join("a", "..", "b"),
+          normalize: module.normalize(sample),
+          parse: module.parse(sample),
+        };
+      });
+      return Response.json({
+        hasGet: methods.includes("GET"),
+        hasInventedMethod: methods.includes("SIGNALBOX_INVALID_METHOD"),
+        duplex: (await output).toString(),
+        pathBehavior,
+        resolved: path.resolve("src"),
+        relative: path.relative("a", "b"),
+      });
+    }
     const paths = [
       ["http2", "connect"],
       ["perf_hooks", "monitorEventLoopDelay"],

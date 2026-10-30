@@ -1,9 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off - PassThrough supplies streams for the explicit host context in these tests.
 import * as NodeStream from "node:stream";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 
 import { createNodeProcess, type NodeProcessHostContext } from "../NodeProcess.ts";
 import { createNodePath } from "../NodePath.ts";
+import { getNodeBuiltinCapability } from "../NodeBuiltinCapabilities.ts";
 
 function host(initialCwd: string): NodeProcessHostContext {
   let cwd = initialCwd;
@@ -89,5 +91,41 @@ describe("Node path facet", () => {
       failure = error;
     }
     expect(failure).toMatchObject({ code: "ESTALE" });
+  });
+
+  it("binds pure path declarations to native POSIX and Windows behavior without sharing metadata", () => {
+    const path = createNodePath(host("/session").filesystem);
+    for (const flavor of ["posix", "win32"] as const) {
+      const module = path[flavor];
+      const native = NodePath[flavor];
+      const sample =
+        flavor === "posix" ? "/one/../two/archive.tar.gz" : "C:\\one\\..\\two\\archive.tar.gz";
+      expect(module.basename(sample, ".gz")).toBe(native.basename(sample, ".gz"));
+      expect(module.dirname(sample)).toBe(native.dirname(sample));
+      expect(module.extname(sample)).toBe(".gz");
+      expect(module.isAbsolute(sample)).toBe(true);
+      expect(module.isAbsolute("relative")).toBe(false);
+      expect(module.join("one", "..", "two")).toBe(native.join("one", "..", "two"));
+      expect(module.normalize(sample)).toBe(native.normalize(sample));
+      expect(module.parse(sample)).toEqual(native.parse(sample));
+      for (const name of [
+        "basename",
+        "dirname",
+        "extname",
+        "isAbsolute",
+        "join",
+        "normalize",
+        "parse",
+      ] as const) {
+        expect(getNodeBuiltinCapability(module[name])?.status).toBe("supported");
+        expect(module[name]).not.toBe(native[name]);
+        expect(getNodeBuiltinCapability(native[name])).toBeUndefined();
+      }
+    }
+    for (const name of ["resolve", "relative", "toNamespacedPath"] as const) {
+      expect(getNodeBuiltinCapability(path.win32[name])?.status).toBe("conditional");
+    }
+    expect(path.win32.relative("D:one", "D:two")).toBe("..\\two");
+    expect(path.win32.toNamespacedPath("D:one")).toBe("\\\\?\\D:\\one");
   });
 });

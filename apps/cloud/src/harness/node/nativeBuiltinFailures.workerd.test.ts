@@ -35,6 +35,44 @@ it("replaces Workerd placeholders and missing exports with declared named failur
         },
       });
     }
+    const native = await harness.fetch("http://proof/native-behavior");
+    expect(await native.json()).toEqual({
+      hasGet: true,
+      hasInventedMethod: false,
+      duplex: "native duplex bytes",
+      resolved: "/session/src",
+      relative: "../b",
+      pathBehavior: [
+        {
+          flavor: "posix",
+          basename: "report",
+          dirname: "/a/../b",
+          extname: ".txt",
+          absolute: true,
+          relative: false,
+          join: "b",
+          normalize: "/b/report.txt",
+          parse: { root: "/", dir: "/a/../b", base: "report.txt", ext: ".txt", name: "report" },
+        },
+        {
+          flavor: "win32",
+          basename: "report",
+          dirname: "C:\\a\\..\\b",
+          extname: ".txt",
+          absolute: true,
+          relative: false,
+          join: "b",
+          normalize: "C:\\b\\report.txt",
+          parse: {
+            root: "C:\\",
+            dir: "C:\\a\\..\\b",
+            base: "report.txt",
+            ext: ".txt",
+            name: "report",
+          },
+        },
+      ],
+    });
   } finally {
     await harness.close();
   }

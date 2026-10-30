@@ -4,6 +4,7 @@ import { createDnsTransport, type DnsHost } from "./node/dns/transport.ts";
 import { createResolverClass } from "./node/dns/resolver.ts";
 import { createLookup } from "./node/dns/lookup.ts";
 import { invalid, unsupported } from "./node/dns/errors.ts";
+import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
 
 export type { DnsHost } from "./node/dns/transport.ts";
 
@@ -177,6 +178,13 @@ export function createNodeDns(host: DnsHost = { fetch: globalThis.fetch.bind(glo
   Object.defineProperty(dns.lookup, Symbol.for("nodejs.util.promisify.custom"), {
     value: promises.lookup,
   });
+  for (const callable of [dns.lookup, promises.lookup, PromiseResolver]) {
+    markNodeBuiltinCapability(callable, {
+      status: "conditional",
+      evidence:
+        "NodeDns uses kernel hosts entries and DNS-over-HTTPS, not the native OS resolver. ADDRCONFIG and custom UDP resolver/local-address semantics are unavailable.",
+    });
+  }
   // Native ESM namespaces carry a default export; it must not point back to the host's resolver.
   Object.defineProperty(dns, "default", { value: dns, enumerable: false });
   Object.defineProperty(promises, "default", { value: promises, enumerable: false });

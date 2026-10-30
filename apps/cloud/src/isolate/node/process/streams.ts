@@ -23,9 +23,20 @@ const installedMethods = new WeakMap<object, Set<string>>();
 const streamMethods = [
   {
     stream: "stdin",
-    names: ["off", "on", "read", "removeListener", "setEncoding", "ref", "unref"],
+    names: [
+      "off",
+      "on",
+      "pause",
+      "read",
+      "removeListener",
+      "resume",
+      "setEncoding",
+      "unshift",
+      "ref",
+      "unref",
+    ],
   },
-  { stream: "stdout", names: ["end", "on", "once", "removeListener", "write"] },
+  { stream: "stdout", names: ["end", "off", "on", "once", "removeListener", "write"] },
   { stream: "stderr", names: ["on", "write"] },
 ] as const;
 

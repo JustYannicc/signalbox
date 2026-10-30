@@ -36,6 +36,10 @@ const AUDITED_PROFILE = {
 
 // Keep each audited path and its rationale as one diffable source record.
 const declarationData = String.raw`[
+  {"specifier":"http","memberPath":["METHODS","includes"],"status":"supported","evidence":"METHODS.includes: The native HTTP method array uses Array.includes over Workerd's exported method names. This declaration is local to that exact array path, not Array.prototype.includes globally."},
+  {"specifier":"stream","memberPath":["Duplex"],"status":"supported","evidence":"Duplex: Workerd re-exports its Node streams_duplex implementation. Construction and ordinary readable/writable stream behavior are available; this does not grant socket connectivity."},
+  {"specifier":"tls","memberPath":["TLSSocket"],"status":"conditional","evidence":"TLSSocket: Workerd's constructor wraps its platform socket transport. Server mode, enableTrace, requestCert, rejectUnauthorized=false and ALPN customization are unavailable; connectivity also requires permitted platform egress."},
+  {"specifier":"vm","memberPath":["isContext"],"status":"conditional","evidence":"isContext: Workerd checks a private marker on its placeholder context object, not an executable V8 context. Node VM context execution remains unavailable."},
   {"specifier":"assert","memberPath":[],"status":"supported","evidence":"(callable module root): The Workerd assert module re-exports its native internal assert implementation; Cloudflare's Node compatibility table lists assertion testing as supported."},
   {"specifier":"async_hooks","memberPath":["AsyncLocalStorage"],"status":"supported","evidence":"AsyncLocalStorage construction creates the native async context storage used by Signalbox run/getStore. This declaration covers construction only; it does not declare enterWith or disable supported."},
   {"specifier":"async_hooks","memberPath":["AsyncResource"],"status":"conditional","evidence":"AsyncResource: Workerd binds and runs callbacks in the current async context, but triggerAsyncId options are unsupported and asyncId/triggerAsyncId return zero."},

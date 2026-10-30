@@ -3,6 +3,8 @@ import * as NodePath from "node:path";
 
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import { NodeSystemError } from "./node/process/NodeError.ts";
+import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
+import { declaredPathFunctions } from "./node/path/capabilities.ts";
 
 export type NodePathFileSystem = Pick<KernelFileSystem, "cwd" | "chdir">;
 
@@ -37,6 +39,7 @@ export function createNodePath(filesystem: NodePathFileSystem) {
 
   const posix = {
     ...NodePath.posix,
+    ...declaredPathFunctions(NodePath.posix, "posix"),
     resolve: resolvePosix,
     relative: relativePosix,
   };
@@ -71,10 +74,24 @@ export function createNodePath(filesystem: NodePathFileSystem) {
 
   const win32 = {
     ...NodePath.win32,
+    ...declaredPathFunctions(NodePath.win32, "win32"),
     resolve: resolveWin32,
     relative: relativeWin32,
     toNamespacedPath: toNamespacedPathWin32,
   };
+
+  for (const name of ["resolve", "relative"] as const) {
+    markNodeBuiltinCapability(posix[name], {
+      status: "supported",
+      evidence: `NodePath.posix.${name} resolves against the current session filesystem cwd, including changes made by process.chdir.`,
+    });
+  }
+  for (const name of ["resolve", "relative", "toNamespacedPath"] as const) {
+    markNodeBuiltinCapability(win32[name], {
+      status: "conditional",
+      evidence: `NodePath.win32.${name} has no per-drive cwd table: drive-relative paths are anchored at their drive root. Call-site arguments must establish this is acceptable.`,
+    });
+  }
 
   Object.assign(posix, { posix, win32 });
   Object.assign(win32, { posix, win32 });

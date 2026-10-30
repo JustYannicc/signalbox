@@ -128,6 +128,45 @@ describe("native Node builtin evidence", () => {
     ).toBe("conditional");
   });
 
+  it("keeps native unknown-path dispositions tied to the exact profile, module and path", () => {
+    const includes = Array.prototype.includes;
+    const Duplex = () => ({});
+    const TLSSocket = () => ({});
+    const modules = {
+      http: { METHODS: ["GET"] },
+      stream: { Duplex },
+      tls: { TLSSocket },
+      vm: { isContext: () => false },
+    };
+    const paths = [
+      { specifier: "http", memberPath: ["METHODS", "includes"] },
+      { specifier: "stream", memberPath: ["Duplex"] },
+      { specifier: "tls", memberPath: ["TLSSocket"] },
+      { specifier: "vm", memberPath: ["isContext"] },
+    ];
+    expect(paths.map((request) => classifyNative(modules, request)?.status)).toEqual([
+      "supported",
+      "supported",
+      "conditional",
+      "conditional",
+    ]);
+    for (const request of paths) {
+      expect(
+        classifyNodeBuiltinForProfile(modules, request, {
+          ...auditedProfile,
+          workerdVersion: "other",
+        }),
+      ).toBeUndefined();
+      expect(
+        classifyNative({ ...modules, [request.specifier]: {} }, request, modules),
+      ).toBeUndefined();
+    }
+    expect(getNodeBuiltinCapability(includes)).toBeUndefined();
+    expect(
+      classifyNative({ events: { includes } }, { specifier: "events", memberPath: ["includes"] }),
+    ).toBeUndefined();
+  });
+
   it("resolves nested and submodule paths without invoking accessors", () => {
     const stream = { promises: { pipeline: () => "nested" } };
     const streamPromises = { pipeline: () => "submodule" };

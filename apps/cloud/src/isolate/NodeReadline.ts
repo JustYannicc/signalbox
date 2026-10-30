@@ -1,5 +1,6 @@
 import { StreamLineInterface, unsupportedReadline } from "./node/readline/Interface.ts";
 import type { ReadlineOptions } from "./node/readline/Interface.ts";
+import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
 
 export type { ReadlineOptions } from "./node/readline/Interface.ts";
 
@@ -10,6 +11,11 @@ export function createNodeReadline() {
     completer?: unknown,
     terminal?: boolean,
   ) => new StreamLineInterface(input, output, completer, terminal);
+  markNodeBuiltinCapability(createInterface, {
+    status: "conditional",
+    evidence:
+      "NodeReadline.createInterface supports non-terminal stream framing and iteration; terminal mode and completers throw ERR_METHOD_NOT_IMPLEMENTED.",
+  });
   const module = {
     Interface: StreamLineInterface,
     createInterface,
