@@ -25,7 +25,7 @@ function isReferenceCallCallee(node: ts.Identifier): boolean {
   );
 }
 
-export type LexicalReplacement = string | { readonly expression: string; readonly kind: "value" };
+export type LexicalReplacement = string | { readonly expression: string };
 
 export function rewriteLexicalReferences(
   source: string,

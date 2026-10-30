@@ -191,7 +191,6 @@ export function createWorkerFactory(input: {
       if (position < 0) throw shape();
       replacements.set(item.name.text, {
         expression: `(${reader}(${position}))`,
-        kind: "value",
       });
     }
     mainEdits.push({ start: statement.getStart(mainFile), end: statement.end, text: "" });

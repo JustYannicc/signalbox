@@ -46,6 +46,14 @@ export function restoreWorkerFactoryReads(
     edits.push({ start: statement.getStart(main), end: statement.end, text: "" });
   }
   const used = new Set<number>();
+  const instanceDeclaration = main.statements.flatMap((statement) =>
+    ts.isVariableStatement(statement)
+      ? statement.declarationList.declarations.filter(
+          (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === instance,
+        )
+      : [],
+  );
+  if (instanceDeclaration.length > 1) throw invalid();
   const walk = (node: ts.Node): void => {
     if (ts.isVariableStatement(node) && declarations.has(node)) return;
     const compact =
@@ -70,7 +78,11 @@ export function restoreWorkerFactoryReads(
       return;
     }
     // The producer reserves this name across every lexical scope, so aliases cannot escape or shadow.
-    if (ts.isIdentifier(node) && readers.has(node.text)) throw invalid();
+    if (
+      ts.isIdentifier(node) &&
+      (readers.has(node.text) || (node.text === instance && node !== instanceDeclaration[0]?.name))
+    )
+      throw invalid();
     ts.forEachChild(node, walk);
   };
   walk(main);
