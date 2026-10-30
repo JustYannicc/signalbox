@@ -162,6 +162,12 @@ through the pages you have visited, like a browser's back and forward buttons.
 `capture.open` (`mod+shift+space`) opens [quick capture](./thread-sidebar.md#quick-capture)
 from anywhere in the app, terminals excepted.
 
+On Mac, `Cmd+Shift+Space` also opens quick capture while you're using another app.
+Change or disable the global shortcut in **Settings → SnapShots → Quick capture**.
+Enter saves without opening the main window. Escape and Cmd+W keep what you've written
+as a draft before hiding the panel. Failed saves stay on your Mac until Signalbox can
+save them; open Signalbox to reconnect and retry.
+
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`

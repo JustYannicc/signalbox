@@ -638,6 +638,12 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   ...KEYBINDING_SEARCH_ITEMS,
   {
+    id: "quick-capture-shortcut",
+    title: "Global quick capture shortcut",
+    to: "/settings/snap-shot",
+    searchTerms: ["quick capture global mac keyboard hotkey draft cmd shift space"],
+  },
+  {
     id: "snap-shot-enabled",
     title: "SnapShots",
     searchTerms: ["window capture screenshot"],

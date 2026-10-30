@@ -17,6 +17,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopCaptureShutdown from "../capture/DesktopCaptureShutdown.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
@@ -627,6 +628,89 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect(
+    "waits for the capture commit before stopping backends or invoking quitAndInstall",
+    () =>
+      Effect.gen(function* () {
+        const requested = yield* Deferred.make<string>();
+        let stopped = false;
+        const harness = makeHarness({
+          stopBackend: Effect.sync(() => {
+            stopped = true;
+          }),
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const capture = yield* DesktopCaptureShutdown.DesktopCaptureShutdown;
+            yield* capture.register({
+              request: (requestId) => Deferred.succeed(requested, requestId).pipe(Effect.as(true)),
+              release: () => Effect.void,
+            });
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            harness.emit("update-downloaded", { version: "1.2.4" });
+            yield* flushCallbacks;
+            const installing = yield* updates.install.pipe(Effect.forkChild);
+            const requestId = yield* Deferred.await(requested);
+            assert.isFalse(stopped);
+            assert.equal(harness.quitAndInstalls(), 0);
+            assert.equal(harness.updateRestartMarkers.size, 0);
+            yield* capture.complete({ requestId, error: null });
+            const result = yield* Fiber.join(installing);
+            assert.isTrue(result.accepted);
+            assert.isTrue(stopped);
+            assert.equal(harness.quitAndInstalls(), 1);
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      }),
+  );
+
+  it.effect(
+    "leaves the app and backends running with a visible error when the capture flush fails",
+    () =>
+      Effect.gen(function* () {
+        const requested = yield* Deferred.make<string>();
+        let stopped = false;
+        const releases: Array<string | null> = [];
+        const harness = makeHarness({
+          stopBackend: Effect.sync(() => {
+            stopped = true;
+          }),
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const capture = yield* DesktopCaptureShutdown.DesktopCaptureShutdown;
+            yield* capture.register({
+              request: (requestId) => Deferred.succeed(requested, requestId).pipe(Effect.as(true)),
+              release: (error) =>
+                Effect.sync(() => {
+                  releases.push(error);
+                }),
+            });
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            harness.emit("update-downloaded", { version: "1.2.4" });
+            yield* flushCallbacks;
+            const installing = yield* updates.install.pipe(Effect.forkChild);
+            const requestId = yield* Deferred.await(requested);
+            yield* capture.complete({ requestId, error: "File commit failed" });
+            const result = yield* Fiber.join(installing);
+            assert.isFalse(result.completed);
+            assert.equal(result.state.errorContext, "install");
+            assert.include(result.state.message, "Quick capture couldn't finish saving");
+            assert.isFalse(stopped);
+            assert.equal(harness.quitAndInstalls(), 0);
+            assert.deepEqual(harness.installSteps, []);
+            assert.equal(harness.updateRestartMarkers.size, 0);
+            assert.isFalse(yield* Ref.get((yield* DesktopState.DesktopState).quitting));
+            assert.isString(releases[0]);
+            assert.isNull(releases.at(-1));
+            assert.isFalse(yield* updates.isActionActive);
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      }),
+  );
 
   it.effect("marks the backend stop for an install as an update restart", () => {
     let markersAtStop: ReadonlyArray<string> = [];

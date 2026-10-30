@@ -104,11 +104,12 @@ export default defineConfig({
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
       entry: ["src/preload.ts"],
+      outputOptions: { codeSplitting: false },
       deps: {
-        // Sandboxed Electron preloads cannot reliably resolve package imports
-        // from inside the packaged ASAR. Bundle Clerk's preload bridge into the
-        // preload artifact instead of leaving a runtime require() behind.
-        alwaysBundle: (id) => id === "@clerk/electron" || id.startsWith("@clerk/electron/"),
+        // Sandboxed preloads can require Electron, but cannot resolve packages or shared chunks.
+        alwaysBundle: (id) => id !== "electron" && !id.startsWith("node:"),
+        neverBundle: (id) => id === "electron" || id.startsWith("node:"),
+        onlyBundle: false,
       },
     },
     {
