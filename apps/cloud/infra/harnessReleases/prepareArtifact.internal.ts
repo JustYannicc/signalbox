@@ -126,10 +126,11 @@ export const artifactDirectorySource = (directory: string) => ({
   },
 });
 
-export const prepareHarnessArtifactWithFileSystem = async (
+const prepareArtifact = async (
   input: PrepareHarnessArtifactInput,
-  filesystem: ArtifactFileSystem = NodeFSP,
-): Promise<HarnessReleaseArtifactIdentity> => {
+  filesystem: ArtifactFileSystem,
+  purpose: "qualification" | "release",
+) => {
   const componentNames =
     input.harness === "codex" ? (["codex"] as const) : (["cli", "sdk"] as const);
   const supplied = Object.keys(input.components).filter(
@@ -248,7 +249,7 @@ export const prepareHarnessArtifactWithFileSystem = async (
       components[component] = { manifest: `${component}/manifest.json` };
     }
 
-    await verifyArtifactNodeBuiltins(artifactOutput.path);
+    const openFindings = await verifyArtifactNodeBuiltins(artifactOutput.path, purpose);
 
     const manifestBytes = serializeHarnessReleaseArtifactManifest({
       schemaVersion: 1,
@@ -271,9 +272,18 @@ export const prepareHarnessArtifactWithFileSystem = async (
     );
     await openHarnessReleaseArtifact(identity, artifactDirectorySource(artifactOutput.path));
     await artifactOutput.publish();
-    return identity;
+    return { identity, openFindings };
   } catch (cause) {
     await artifactOutput.cleanup();
     throw cause;
   }
 };
+
+export const prepareHarnessArtifactWithFileSystem = async (
+  input: PrepareHarnessArtifactInput,
+  filesystem: ArtifactFileSystem = NodeFSP,
+): Promise<HarnessReleaseArtifactIdentity> =>
+  (await prepareArtifact(input, filesystem, "release")).identity;
+
+export const prepareHarnessQualificationArtifact = (input: PrepareHarnessArtifactInput) =>
+  prepareArtifact(input, NodeFSP, "qualification");

@@ -62,6 +62,50 @@ const unusedBinding = {
 };
 
 describe("embedded release catalog and ledger", () => {
+  it("retains open qualification findings in the bundled ledger and refuses release promotion", () => {
+    const finding = {
+      schemaVersion: 1,
+      status: "open",
+      sources: [],
+      missingBuiltins: ["cluster"],
+      unknownBuiltinSpecifiers: [],
+      importAmbiguities: [],
+      calls: [
+        {
+          specifier: "os",
+          memberPath: ["getPriority"],
+          status: "unsupported",
+          failure: { kind: "named-error", code: "ENOSYS" },
+        },
+      ],
+      callAmbiguities: [],
+    };
+    const input = {
+      ...deployment(),
+      purpose: "qualification",
+      releasable: false,
+      ledger: [{ artifact: { ...artifact }, proofs: [], openFindings: [finding] }],
+    };
+    const opened = openHarnessReleaseQualificationInputs(input, unusedBinding, "project");
+    expect(opened.releasable).toBe(false);
+    expect(opened.ledger.getEligibility("codex", "official").status).toBe("pending");
+    expect(opened.ledger.getOpenFindings("codex", "official")).toEqual([finding]);
+    const changed = opened.ledger.getOpenFindings("codex", "official");
+    Reflect.set(changed[0]!, "status", "cleared");
+    expect(opened.ledger.getOpenFindings("codex", "official")[0]!.status).toBe("open");
+    expect(() =>
+      openHarnessReleaseDeployment(
+        {
+          ...input,
+          purpose: "release",
+          releasable: true,
+          ledger: [{ ...input.ledger[0]!, proofs: [proof("local-workerd"), proof("deployed-do")] }],
+        },
+        unusedBinding,
+        "project",
+      ),
+    ).toThrow("HARNESS_DEPLOYMENT_OPEN_FINDINGS");
+  });
   it("keeps candidate qualification inputs out of the release selector", () => {
     const input = deployment();
     input.purpose = "qualification";

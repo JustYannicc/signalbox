@@ -23,6 +23,7 @@ export interface BuildClaudeReleaseResult {
 }
 
 interface PublishClaudeBuildOutputOptions {
+  readonly purpose?: "qualification" | "release";
   readonly report: ReleaseReport;
   readonly bunCapabilityGaps: ReadonlyArray<{ readonly reason: string }>;
   readonly hasCapabilitySnapshot: boolean;
@@ -89,6 +90,23 @@ export async function publishClaudeBuildOutput(
   let report = options.report;
   if (!options.hasCapabilitySnapshot)
     report = markCapabilitySnapshotPending(report, options.bunCapabilityGaps);
+  if (options.purpose === "qualification")
+    report = {
+      ...report,
+      checks: {
+        ...report.checks,
+        builtinGaps: {
+          status: "pending",
+          diagnostics: [
+            {
+              code: "QUALIFICATION_BUILTIN_FINDINGS_OPEN",
+              message:
+                "Builtin findings remain open until the qualification workload supplies its corpus; this bundle is not releasable.",
+            },
+          ],
+        },
+      },
+    };
   report = recordReleaseCheck(
     report,
     report.release,
