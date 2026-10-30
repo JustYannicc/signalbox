@@ -22,6 +22,8 @@ export async function buildClaudePairComponents(
   const sdk = NodePath.join(context.output, "claude-sdk");
   await node(context, [
     "scripts/harness-releases/buildClaudeSdk.ts",
+    "--purpose",
+    "qualification",
     "--output",
     sdk,
     ...(input.sdkVersion ? ["--version", input.sdkVersion] : []),
@@ -39,6 +41,8 @@ export async function buildClaudePairComponents(
   for (const variant of ["baseline", "hooks"] as const) {
     await node(context, [
       "scripts/harness-releases/buildClaude.ts",
+      "--purpose",
+      "qualification",
       "--variant",
       variant,
       "--identity",

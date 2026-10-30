@@ -12,6 +12,7 @@ import type {
   HarnessReleaseProof,
 } from "./HarnessReleaseLedger.ts";
 import { normalizeArtifact, normalizeProof, releaseEligibility } from "./internal/records.ts";
+import { HarnessReleaseBuiltinFindings } from "./HarnessReleaseBuiltinFindings.ts";
 
 const Artifact = Schema.Struct({
   provider: Schema.Literals(["claude-code", "agent-sdk", "codex"]),
@@ -22,10 +23,15 @@ const Artifact = Schema.Struct({
   fixtureIdentity: Schema.String,
   createdAt: Schema.String,
 });
-const Entry = Schema.Struct({ artifact: Artifact, proofs: Schema.Array(Schema.Unknown) });
+const Entry = Schema.Struct({
+  artifact: Artifact,
+  proofs: Schema.Array(Schema.Unknown),
+  openFindings: Schema.optionalKey(Schema.Array(HarnessReleaseBuiltinFindings)),
+});
 export const HarnessReleaseDeployment = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   purpose: Schema.Literals(["release", "qualification"]),
+  releasable: Schema.optionalKey(Schema.Boolean),
   projectId: Schema.String,
   ledger: Schema.Array(Entry),
   assets: Schema.Array(HarnessReleaseAssetIndex),
@@ -62,16 +68,25 @@ const openDeployment = (
 ) => {
   const deployment = decode(structuredClone(input));
   if (deployment.purpose !== purpose) throw new Error("HARNESS_DEPLOYMENT_PURPOSE_MISMATCH");
+  if (deployment.releasable !== undefined && deployment.releasable !== (purpose === "release"))
+    throw new Error("HARNESS_DEPLOYMENT_NOT_RELEASABLE");
   if (!projectId.trim() || deployment.projectId !== projectId)
     throw new Error("HARNESS_DEPLOYMENT_PROJECT_MISMATCH");
   const records = new Map<
     string,
-    { artifact: HarnessReleaseArtifact; proofs: readonly HarnessReleaseProof[] }
+    {
+      artifact: HarnessReleaseArtifact;
+      proofs: readonly HarnessReleaseProof[];
+      openFindings: readonly HarnessReleaseBuiltinFindings[];
+    }
   >();
   const byReference = new Map<string, HarnessReleaseArtifact>();
   const proofIds = new Set<string>();
   const key = (provider: string, releaseId: string) => JSON.stringify([provider, releaseId]);
   for (const entry of deployment.ledger) {
+    const openFindings = entry.openFindings ?? [];
+    if (purpose === "release" && openFindings.length > 0)
+      throw new Error("HARNESS_DEPLOYMENT_OPEN_FINDINGS");
     const artifact = normalizeArtifact(entry.artifact);
     if (
       !/^[a-f0-9]{64}$/u.test(artifact.artifactHash) ||
@@ -97,7 +112,7 @@ const openDeployment = (
     });
     if (purpose === "release" && releaseEligibility(proofs).status !== "green")
       throw new Error("HARNESS_DEPLOYMENT_NOT_QUALIFIED");
-    records.set(key(artifact.provider, artifact.releaseId), { artifact, proofs });
+    records.set(key(artifact.provider, artifact.releaseId), { artifact, proofs, openFindings });
     byReference.set(artifact.artifactRef, artifact);
   }
   const sources = new Map<string, HarnessReleaseArtifactSource>();
@@ -111,7 +126,14 @@ const openDeployment = (
   }
   if (sources.size === 0 || sources.size !== records.size)
     throw new Error("HARNESS_DEPLOYMENT_ASSET_MISSING");
-  const ledger: Pick<HarnessReleaseLedger, "getArtifact" | "getEligibility" | "listProofs"> = {
+  const ledger: Pick<HarnessReleaseLedger, "getArtifact" | "getEligibility" | "listProofs"> & {
+    getOpenFindings: (
+      provider: string,
+      releaseId: string,
+    ) => readonly HarnessReleaseBuiltinFindings[];
+  } = {
+    getOpenFindings: (provider, releaseId) =>
+      structuredClone(records.get(key(provider, releaseId))?.openFindings ?? []),
     getArtifact: (provider, releaseId) =>
       structuredClone(records.get(key(provider, releaseId))?.artifact ?? null),
     getEligibility: (provider, releaseId) => {
@@ -136,7 +158,7 @@ const openDeployment = (
     readRange: async (reference, path, offset, length) =>
       selected(reference).readRange!(reference, path, offset, length),
   };
-  return { ledger, source, claudeVariants };
+  return { ledger, source, claudeVariants, releasable: purpose === "release" };
 };
 
 /** Only qualified releases enter the normal selector. Records live in this deployment. */

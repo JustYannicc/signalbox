@@ -3,7 +3,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
-import { assertPublishedBuiltinCoverage } from "./nodeBuiltinGate.ts";
+import {
+  assertPublishedBuiltinCoverage,
+  inspectPublishedBuiltinCoverage,
+} from "./nodeBuiltinGate.ts";
+import { qualificationBuiltinFindings } from "./nodeBuiltinGate/findings.ts";
 import {
   parseNpmPackageMetadata,
   selectNpmReleases,
@@ -27,6 +31,7 @@ const digest = (bytes: Uint8Array | string) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
 export interface BuildClaudeSdkOptions {
+  readonly purpose?: "qualification" | "release";
   readonly output: string;
   readonly version?: string;
   readonly repository?: string;
@@ -41,7 +46,7 @@ export interface BuildClaudeSdkResult {
   readonly manifestSha256: string;
   readonly provenanceSha256: string;
   readonly componentSha256: string;
-  readonly builtinGuard: "passed";
+  readonly builtinGuard: "passed" | "pending";
 }
 
 /** Use npm's current stable SDK tag, then freeze its exact official npm identity. */
@@ -73,6 +78,11 @@ export async function resolveClaudeSdkReleaseIdentity(
 export async function buildClaudeSdk(
   options: BuildClaudeSdkOptions,
 ): Promise<BuildClaudeSdkResult> {
+  const purpose = options.purpose ?? "release";
+  if (purpose !== "qualification" && purpose !== "release")
+    throw new Error("CLAUDE_BUILD_PURPOSE_INVALID");
+  const inspect =
+    purpose === "qualification" ? inspectPublishedBuiltinCoverage : assertPublishedBuiltinCoverage;
   const repository = await NodeFSP.realpath(
     options.repository ?? NodePath.resolve(import.meta.dirname, "../.."),
   );
@@ -104,7 +114,7 @@ export async function buildClaudeSdk(
       graph,
     });
     stage = "builtin-guard";
-    const firstCoverage = await assertPublishedBuiltinCoverage(candidate);
+    const firstCoverage = await inspect(candidate);
     stage = "source-freeze-recheck";
     const sourceAfterBuild = await freezeSources(repository);
     assertSourcesUnchanged(sourceBefore, sourceAfterBuild);
@@ -112,6 +122,10 @@ export async function buildClaudeSdk(
     const provenance = {
       schemaVersion: 1,
       status: "prepared",
+      purpose,
+      ...(purpose === "qualification"
+        ? { releasable: false, openFindings: qualificationBuiltinFindings(firstCoverage) }
+        : {}),
       release: {
         provider: identity.provider,
         version: identity.version,
@@ -137,7 +151,7 @@ export async function buildClaudeSdk(
         createRequireRewrites: built.createRequireRewrites,
       },
       builtinGuard: {
-        status: "passed",
+        status: purpose === "qualification" ? "pending" : "passed",
         artifactSha256: firstCoverage.artifact.sha256,
         requiredHostModules: built.manifest.requiredHostModules,
       },
@@ -149,7 +163,7 @@ export async function buildClaudeSdk(
     });
 
     stage = "final-acceptance";
-    const finalCoverage = await assertPublishedBuiltinCoverage(candidate);
+    const finalCoverage = await inspect(candidate);
     const sourceAtAcceptance = await freezeSources(repository);
     assertSourcesUnchanged(sourceBefore, sourceAtAcceptance);
     const artifact = await freezeArtifact(candidate);
@@ -170,7 +184,7 @@ export async function buildClaudeSdk(
       manifestSha256: built.manifestSha256,
       provenanceSha256: digest(provenanceBytes),
       componentSha256: artifact.sha256,
-      builtinGuard: "passed",
+      builtinGuard: purpose === "qualification" ? "pending" : "passed",
     };
   } catch (error) {
     try {
@@ -226,6 +240,7 @@ async function main() {
       version: { type: "string" },
       output: { type: "string" },
       repository: { type: "string" },
+      purpose: { type: "string" },
     },
     allowPositionals: false,
     strict: true,
@@ -235,8 +250,15 @@ async function main() {
       "Usage: node scripts/harness-releases/buildClaudeSdk.ts --output <new-directory> " +
         "[--version <exact-stable-version>] [--repository <repo-root>]",
     );
+  if (
+    values.purpose !== undefined &&
+    values.purpose !== "qualification" &&
+    values.purpose !== "release"
+  )
+    throw new Error("CLAUDE_BUILD_PURPOSE_INVALID");
   const result = await buildClaudeSdk({
     output: values.output,
+    ...(values.purpose ? { purpose: values.purpose } : {}),
     ...(values.version ? { version: values.version } : {}),
     ...(values.repository ? { repository: values.repository } : {}),
   });
