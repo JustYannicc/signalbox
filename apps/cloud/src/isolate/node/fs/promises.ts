@@ -3,7 +3,7 @@
  */
 import type * as NodeBuffer from "node:buffer";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { unsupportedFs } from "./errors.ts";
+import { callFs, unsupportedFs } from "./errors.ts";
 import { statfsSync } from "./sync.ts";
 import type { appendFileSync, readFileSync, writeFileSync } from "./files.ts";
 import type { mkdirSync, mkdtempSync, readdirSync, rmSync } from "./directories.ts";
@@ -12,10 +12,11 @@ import { pathString, type PathLike } from "./path.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
 import { NodeFileHandle } from "./file-handle.ts";
 import { createAsyncOperations } from "./async-operations.ts";
-import { runAsync, type AsyncLeafRunner } from "./operations.ts";
+import { fsOperation, leaf, runAsync, type AsyncLeafRunner } from "./operations.ts";
 import { chmodOperation, chownOperation } from "./permission-ops.ts";
 import { NodeFsDir } from "./directory.ts";
 import { createNodeFsGlob } from "./glob.ts";
+import { nodeDirent } from "./metadata.ts";
 
 export interface OpenDirectoryOptions {
   encoding?: BufferEncoding | "buffer";
@@ -79,8 +80,36 @@ export function createPromisesApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLea
     },
     async opendir(path: PathLike, options: OpenDirectoryOptions = {}): Promise<NodeFsDir> {
       if (options.recursive) throw unsupportedFs("opendir", pathString(path));
-      const entries = await operations.readdir(path, { ...options, withFileTypes: true });
-      return new NodeFsDir(path, entries as import("./metadata.ts").NodeDirentLike[]);
+      const bufferSize = options.bufferSize ?? 32;
+      if (!Number.isSafeInteger(bufferSize) || bufferSize < 1) {
+        throw Object.assign(new RangeError("opendir bufferSize must be a positive safe integer"), {
+          code: "ERR_OUT_OF_RANGE",
+        });
+      }
+      const absolute = pathString(await operations.realpath(path));
+      // Storage currently snapshots names. Defer metadata so bufferSize bounds retained Dirents.
+      const names = await operations.readdir(absolute);
+      const entry = (name: string) => {
+        const type = kernelFs.lstat(
+          `${absolute.endsWith("/") ? absolute : `${absolute}/`}${name}`,
+        ).type;
+        return nodeDirent({ name, type }, pathString(path), options.encoding ?? "utf8");
+      };
+      return new NodeFsDir(
+        path,
+        names as string[],
+        (name) => callFs("scandir", absolute, () => entry(name)),
+        (name) =>
+          runAsync(
+            fsOperation(
+              "scandir",
+              absolute,
+              leaf(() => entry(name)),
+            ),
+            runLeaf,
+          ),
+        bufferSize,
+      );
     },
     async readFile(
       path: PathLike | NodeFileHandle | number,

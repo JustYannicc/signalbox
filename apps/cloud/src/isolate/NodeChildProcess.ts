@@ -23,6 +23,7 @@ import {
 } from "./node/childProcess/exec.ts";
 import { createSyncMethods } from "./node/childProcess/sync.ts";
 import { resolveGuestExecutable } from "./node/childProcess/resolveExecutable.ts";
+import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
 
 /* Adapted from Rivet agentOS's child_process bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * Signalbox keeps shell composition and callback semantics while the process host owns admission and I/O.
@@ -129,8 +130,48 @@ export function createNodeChildProcess(
       : { spawnSync: unsupportedSync, execSync: unsupportedSync, execFileSync: unsupportedSync };
   const fork = (..._args: unknown[]): never => unsupportedNodeOperation("child_process.fork IPC");
 
+  function ChildProcess(..._args: unknown[]): never {
+    return unsupportedNodeOperation("child_process.ChildProcess direct construction");
+  }
+  // Spawned children retain the public instanceof check without exposing host-only constructor args.
+  Object.defineProperty(ChildProcess, Symbol.hasInstance, {
+    value: (value: unknown) => value instanceof NodeChildProcess,
+  });
+  markNodeBuiltinCapability(ChildProcess, {
+    status: "unsupported",
+    evidence:
+      "Direct ChildProcess construction has no process host and throws ENOTSUP; use spawn or exec to obtain a child.",
+    failure: { kind: "named-error", code: "ENOTSUP" },
+  });
+
+  for (const [name, callable] of Object.entries({
+    spawn,
+    ...asyncMethods,
+  })) {
+    markNodeBuiltinCapability(callable, {
+      status: "conditional",
+      evidence: `NodeChildProcess.${name} uses kernel admission and process-owned I/O with a limited Node option set.`,
+    });
+  }
+  for (const [name, callable] of Object.entries(syncMethods)) {
+    markNodeBuiltinCapability(
+      callable,
+      transport === undefined
+        ? {
+            status: "conditional",
+            evidence: `NodeChildProcess.${name} requires inline kernel execution and its supported Node options.`,
+          }
+        : {
+            status: "unsupported",
+            evidence:
+              "Synchronous child_process execution is unavailable through the Computer exec port.",
+            failure: { kind: "named-error", code: "ENOTSUP" },
+          },
+    );
+  }
+
   return Object.freeze({
-    ChildProcess: NodeChildProcess,
+    ChildProcess,
     spawn,
     exec: asyncMethods.exec,
     execFile: asyncMethods.execFile,

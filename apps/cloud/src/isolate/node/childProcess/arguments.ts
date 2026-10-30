@@ -12,6 +12,9 @@ export interface NodeChildProcessOptions {
   readonly signal?: AbortSignal;
   readonly timeout?: number;
   readonly killSignal?: string | number;
+  readonly detached?: boolean;
+  readonly uid?: number;
+  readonly gid?: number;
   readonly agentosPty?: boolean | { readonly cols?: number; readonly rows?: number };
 }
 
@@ -61,6 +64,10 @@ export function normalizeSpawn(
       throw new TypeError('The "args" argument must contain only strings');
   }
   if (options.agentosPty) unsupportedNodeOperation("child_process.pty");
+  if (options.detached) unsupportedNodeOperation("child_process.detached");
+  for (const field of ["uid", "gid"] as const) {
+    if (options[field] !== undefined) unsupportedNodeOperation(`child_process.${field}`);
+  }
   const stdio = normalizeStdio(options.stdio);
   const shell = normalizeShell(options.shell);
   const argv0 = options.argv0 === undefined ? (shell ?? file) : String(options.argv0);

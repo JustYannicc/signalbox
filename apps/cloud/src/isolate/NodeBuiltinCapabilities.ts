@@ -9,7 +9,7 @@ export type NodeBuiltinCapabilityDeclaration = Readonly<{
   failure?: NodeBuiltinFailure;
 }>;
 
-type Callable = (...args: never[]) => unknown;
+type Callable = ((...args: never[]) => unknown) | (abstract new (...args: never[]) => unknown);
 
 const declarations = new WeakMap<object, NodeBuiltinCapabilityDeclaration>();
 

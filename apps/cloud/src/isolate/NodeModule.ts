@@ -2,6 +2,7 @@
 import * as NodeURL from "node:url";
 import { canonicalNodeBuiltin, NODE_BUILTIN_ROUTES } from "./NodeBuiltinMap.ts";
 import type { NodeBridge } from "./NodeBridge.ts";
+import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
 
 export type NodePreparedModuleResolver = (specifier: string, referrer: string) => unknown;
 export type NodePreparedModuleResolve = (specifier: string, referrer: string) => string;
@@ -70,6 +71,11 @@ export function createNodeModule(
   function Module(): never {
     return unavailable("Module construction");
   }
+  markNodeBuiltinCapability(createRequire, {
+    status: "conditional",
+    evidence:
+      "NodeModule.createRequire resolves builtins through the installed bridge and nonbuiltins only through the prepared release graph. It has no filesystem or node_modules fallback, cache, extensions or main.",
+  });
   const module = Object.assign(Module, {
     createRequire,
     isBuiltin: (specifier: string) =>

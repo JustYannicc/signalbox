@@ -210,7 +210,7 @@ const conditionalPromises: readonly CapabilityEntry[] = [
   ],
   [
     "opendir",
-    "The adapter returns a guest-backed directory handle; recursive opendir is explicitly unsupported.",
+    "The adapter snapshots guest directory names and buffers at most bufferSize Dirents. Recursive opendir is explicitly unsupported; storage does not yet provide paged name enumeration.",
   ],
 ];
 
