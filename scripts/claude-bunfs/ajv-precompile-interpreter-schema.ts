@@ -1,6 +1,10 @@
 import type { Schema, OutputUnit } from "@cfworker/json-schema";
-import type { AjvCompatibleError, AjvMetaValidators } from "./ajv-precompile-runtime.ts";
-import { canonicalSchema, UnsupportedAjvSchemaError } from "./ajv-precompile-runtime.ts";
+import type {
+  AjvCompatibilityState,
+  AjvCompatibleError,
+  AjvMetaValidators,
+} from "./ajv-precompile-runtime.ts";
+import { canonicalSchema, defaultAjvCompatibilityState } from "./ajv-precompile-runtime.ts";
 
 const schemaValues = new Set([
   "additionalItems",
@@ -53,15 +57,19 @@ const rejectedKeywords = new Set([
   ...formatLimits,
 ]);
 
-function unsupported(reason: string, schema?: unknown): never {
-  throw new UnsupportedAjvSchemaError(
+function unsupported(reason: string, schema: unknown, compatibility: AjvCompatibilityState): never {
+  throw new compatibility.UnsupportedAjvSchemaError(
     { id: "ajv-interpreter", module: "dynamic-schema", offset: 0 },
     schema,
     reason,
   );
 }
 
-export function normalizeValidationData(input: unknown, schema: unknown): unknown {
+export function normalizeValidationData(
+  input: unknown,
+  schema: unknown,
+  compatibility: AjvCompatibilityState = defaultAjvCompatibilityState,
+): unknown {
   const undefinedConstraint = (value: unknown): string | undefined => {
     if (!value || typeof value !== "object") return;
     const record = value as Record<string, unknown>;
@@ -82,24 +90,41 @@ export function normalizeValidationData(input: unknown, schema: unknown): unknow
   const ancestors = new Set<object>();
   const visit = (value: unknown): unknown => {
     if (value === undefined && rejectsUndefined)
-      unsupported(`Undefined values with ${rejectsUndefined} require a compiler profile`);
+      unsupported(
+        `Undefined values with ${rejectsUndefined} require a compiler profile`,
+        undefined,
+        compatibility,
+      );
     if (typeof value === "number" && !Number.isFinite(value))
-      unsupported("Non-finite validation data requires a compiler profile");
+      unsupported(
+        "Non-finite validation data requires a compiler profile",
+        undefined,
+        compatibility,
+      );
     if (!value || typeof value !== "object") return value;
-    if (ancestors.has(value)) unsupported("Cyclic validation data requires a compiler profile");
+    if (ancestors.has(value))
+      unsupported("Cyclic validation data requires a compiler profile", undefined, compatibility);
     const array = Array.isArray(value);
     const prototype: object | null = Object.getPrototypeOf(value);
     if (
       array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
     )
-      unsupported("Validation data with a custom prototype requires a compiler profile");
+      unsupported(
+        "Validation data with a custom prototype requires a compiler profile",
+        undefined,
+        compatibility,
+      );
     ancestors.add(value);
     const normalized: object = array ? [] : Object.create(prototype);
     for (const key of Reflect.ownKeys(value)) {
       if (array && key === "length") continue;
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (!descriptor || !("value" in descriptor))
-        unsupported("Validation data accessors require a compiler profile");
+        unsupported(
+          "Validation data accessors require a compiler profile",
+          undefined,
+          compatibility,
+        );
       Object.defineProperty(normalized, key, {
         configurable: true,
         enumerable: descriptor.enumerable === true,
@@ -110,13 +135,18 @@ export function normalizeValidationData(input: unknown, schema: unknown): unknow
     ancestors.delete(value);
     if (array) {
       const length: unknown = Object.getOwnPropertyDescriptor(value, "length")?.value;
-      if (typeof length !== "number") unsupported("Invalid validation array length");
+      if (typeof length !== "number")
+        unsupported("Invalid validation array length", undefined, compatibility);
       for (let index = 0; index < length; index++) {
         if (
           !Object.hasOwn(normalized, index) ||
           Object.getOwnPropertyDescriptor(normalized, index)?.value === undefined
         )
-          unsupported("Sparse or undefined array entries require a compiler profile");
+          unsupported(
+            "Sparse or undefined array entries require a compiler profile",
+            undefined,
+            compatibility,
+          );
       }
       return normalized;
     }
@@ -137,18 +167,23 @@ export function prepareInterpretedSchema(
   options: Record<string, unknown>,
   formats: ReadonlyMap<string, string>,
   unsupportedFormats: ReadonlySet<string>,
+  compatibility: AjvCompatibilityState = defaultAjvCompatibilityState,
 ): Schema | boolean {
   let schema: unknown;
   try {
     schema = JSON.parse(canonicalSchema(input));
   } catch {
-    unsupported("Schema must contain finite JSON values without cycles or accessors", input);
+    unsupported(
+      "Schema must contain finite JSON values without cycles or accessors",
+      input,
+      compatibility,
+    );
   }
   const strictSchema = options.strictSchema ?? options.strict ?? true;
   const visit = (node: unknown): void => {
     if (typeof node === "boolean") return;
     if (!node || typeof node !== "object" || Array.isArray(node))
-      unsupported("Expected an object or boolean schema", input);
+      unsupported("Expected an object or boolean schema", input, compatibility);
     const record = node as Record<string, unknown>;
     if (typeof record.$schema === "string" && options.validateSchema !== false) {
       const declared = record.$schema.replace(/#$/, "");
@@ -157,7 +192,11 @@ export function prepareInterpretedSchema(
           ? "http://json-schema.org/draft-07/schema"
           : `https://json-schema.org/draft/${dialect === "2020" ? "2020-12" : "2019-09"}/schema`;
       if (declared !== expected)
-        unsupported(`Schema dialect ${declared} does not match AJV ${dialect}`, input);
+        unsupported(
+          `Schema dialect ${declared} does not match AJV ${dialect}`,
+          input,
+          compatibility,
+        );
     }
     for (const [key, value] of Object.entries(record)) {
       const inactive =
@@ -177,25 +216,28 @@ export function prepareInterpretedSchema(
             ? key === "prefixItems"
             : key === "additionalItems";
       if (inactive) {
-        if (strictSchema) unsupported(`Unknown AJV ${dialect} keyword ${key}`, input);
+        if (strictSchema)
+          unsupported(`Unknown AJV ${dialect} keyword ${key}`, input, compatibility);
         delete record[key];
         continue;
       }
-      if (rejectedKeywords.has(key)) unsupported(`Unsupported AJV schema keyword ${key}`, input);
+      if (rejectedKeywords.has(key))
+        unsupported(`Unsupported AJV schema keyword ${key}`, input, compatibility);
       if (!keywords.has(key)) {
-        if (strictSchema) unsupported(`Unknown AJV schema keyword ${key}`, input);
+        if (strictSchema) unsupported(`Unknown AJV schema keyword ${key}`, input, compatibility);
         delete record[key];
         continue;
       }
       if (key === "format") {
         if (options.validateFormats === false) delete record.format;
         else if (typeof value === "string" && unsupportedFormats.has(value))
-          unsupported(`Unsupported AJV format ${value}`, input);
+          unsupported(`Unsupported AJV format ${value}`, input, compatibility);
         else if (typeof value === "string" && formats.has(value)) {
           const alias = formats.get(value);
           if (alias) record.format = alias;
           else delete record.format;
-        } else if (strictSchema) unsupported(`Unknown AJV format ${String(value)}`, input);
+        } else if (strictSchema)
+          unsupported(`Unknown AJV format ${String(value)}`, input, compatibility);
         else delete record.format;
       } else if (schemaMaps.has(key) && value && typeof value === "object")
         Object.values(value).forEach(visit);

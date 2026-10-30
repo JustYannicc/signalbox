@@ -18,9 +18,8 @@ import {
 } from "./ajv-precompile.ts";
 import { createInterpretedAjv } from "./ajv-precompile-interpreter.ts";
 import {
-  assertAjvCompatibility,
+  createAjvCompatibilityState,
   createPrecompiledAjvRegistry,
-  resetAjvCompatibility,
   UnsupportedAjvSchemaError,
 } from "./ajv-precompile-runtime.ts";
 
@@ -637,9 +636,9 @@ describe("AJV dynamic-schema interpreter", () => {
     ).toBe(false);
     const { code, context } = await bundleRegistry(
       `import {createInterpretedAjv} from 'generated:interpreter';
-      import {assertAjvCompatibility,resetAjvCompatibility} from './ajv-precompile-runtime.ts';
-      const Ajv=createInterpretedAjv({draft7:()=>true,'2019':()=>true,'2020':()=>true});
-      export function reject(options,schema=false){resetAjvCompatibility();let typed=false,latched=false;try{if(schema)new Ajv({strict:false}).compile(options);else new Ajv(options)}catch(error){typed=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}try{assertAjvCompatibility()}catch(error){latched=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}return typed&&latched}`,
+      import {createAjvCompatibilityState} from './ajv-precompile-runtime.ts';
+      const meta={draft7:()=>true,'2019':()=>true,'2020':()=>true};
+      export function reject(options,schema=false){const compatibility=createAjvCompatibilityState();const Ajv=createInterpretedAjv(meta,'draft7',compatibility);let typed=false,latched=false;try{if(schema)new Ajv({strict:false}).compile(options);else new Ajv(options)}catch(error){typed=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}try{compatibility.assertAjvCompatibility()}catch(error){latched=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}return typed&&latched}`,
       new Map(),
     );
     new NodeVM.Script(code).runInContext(context);
@@ -670,10 +669,10 @@ describe("AJV dynamic-schema interpreter", () => {
   it("matches defaultMeta and latches unsupported public state under the code-generation ban", async () => {
     const { code, context } = await bundleRegistry(
       `import {createInterpretedAjv} from 'generated:interpreter';
-      import {assertAjvCompatibility,resetAjvCompatibility} from './ajv-precompile-runtime.ts';
+      import {createAjvCompatibilityState} from './ajv-precompile-runtime.ts';
       const meta={draft7:()=>true,'2019':()=>true,'2020':()=>true};
       export const compilers=['draft7','2019','2020'].map(dialect=>new (createInterpretedAjv(meta,dialect))({strict:false}));
-      export function reject(check){resetAjvCompatibility();let typed=false,latched=false;try{check()}catch(error){typed=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}try{assertAjvCompatibility()}catch(error){latched=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}return typed&&latched}
+      export function reject(check){const compatibility=createAjvCompatibilityState();const ajv=new (createInterpretedAjv(meta,'draft7',compatibility))({strict:false});let typed=false,latched=false;try{check(ajv)}catch(error){typed=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}try{compatibility.assertAjvCompatibility()}catch(error){latched=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}return typed&&latched}
       export const ajv=compilers[0];`,
       new Map(),
     );
@@ -685,15 +684,15 @@ describe("AJV dynamic-schema interpreter", () => {
       ).toBe(reference.defaultMeta());
     for (const property of ["logger", "scope", "refs", "schemas", "formats", "RULES"])
       for (const script of [
-        `Registry.reject(()=>Registry.ajv[${JSON.stringify(property)}])`,
-        `Registry.reject(function(){Registry.ajv[${JSON.stringify(property)}]={}})`,
-        `Registry.reject(function(){'use strict';Registry.ajv[${JSON.stringify(property)}]={}})`,
+        `Registry.reject(ajv=>ajv[${JSON.stringify(property)}])`,
+        `Registry.reject(function(ajv){ajv[${JSON.stringify(property)}]={}})`,
+        `Registry.reject(function(ajv){'use strict';ajv[${JSON.stringify(property)}]={}})`,
       ])
         expect(new NodeVM.Script(script).runInContext(context)).toBe(true);
     expect(() => new ReferenceAjv().validateSchema({ type: "garbage" }, true)).toThrow();
     expect(
       new NodeVM.Script(
-        "Registry.reject(()=>Registry.ajv.validateSchema({type:'garbage'},true))",
+        "Registry.reject(ajv=>ajv.validateSchema({type:'garbage'},true))",
       ).runInContext(context),
     ).toBe(true);
     for (const declaration of [
@@ -713,7 +712,7 @@ describe("AJV dynamic-schema interpreter", () => {
       expect(rejected).toBe(true);
       expect(
         new NodeVM.Script(
-          `Registry.reject(()=>Registry.ajv.validateSchema(${JSON.stringify(schema)}))`,
+          `Registry.reject(ajv=>ajv.validateSchema(${JSON.stringify(schema)}))`,
         ).runInContext(context),
       ).toBe(true);
     }
@@ -733,7 +732,7 @@ describe("AJV dynamic-schema interpreter", () => {
     expect(reference.getSchema("")).toBe(validate);
     expect(
       new NodeVM.Script(
-        "Registry.ajv.compile({type:'string'});Registry.reject(()=>Registry.ajv.getSchema(''))",
+        "Registry.ajv.compile({type:'string'});Registry.reject(ajv=>ajv.getSchema(''))",
       ).runInContext(context),
     ).toBe(true);
   });
@@ -747,9 +746,10 @@ describe("AJV dynamic-schema interpreter", () => {
     expect(reference.compile({ enum: [{ b: 1 }] })({ a: undefined })).toBe(false);
     const { code, context } = await bundleRegistry(
       `import {createInterpretedAjv} from 'generated:interpreter';
-      import {assertAjvCompatibility,resetAjvCompatibility} from './ajv-precompile-runtime.ts';
-      export const ajv=new (createInterpretedAjv({draft7:()=>true,'2019':()=>true,'2020':()=>true}))({strict:false});
-      export function check(schema,data){resetAjvCompatibility();let typed=false,latched=false;try{ajv.compile(schema)(data)}catch(error){typed=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}try{assertAjvCompatibility()}catch(error){latched=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}return typed&&latched}`,
+      import {assertAjvCompatibility,createAjvCompatibilityState} from './ajv-precompile-runtime.ts';
+      const meta={draft7:()=>true,'2019':()=>true,'2020':()=>true};
+      export const ajv=new (createInterpretedAjv(meta))({strict:false});
+      export function check(schema,data){const compatibility=createAjvCompatibilityState();const Ajv=createInterpretedAjv(meta,'draft7',compatibility);const isolated=new Ajv({strict:false});let typed=false,latched=false;try{isolated.compile(schema)(data)}catch(error){typed=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}try{compatibility.assertAjvCompatibility()}catch(error){latched=error.code==='AJV_SCHEMA_NOT_PRECOMPILED'}return typed&&latched}`,
       new Map(),
     );
     new NodeVM.Script(code).runInContext(context);
@@ -765,12 +765,6 @@ describe("AJV dynamic-schema interpreter", () => {
   });
 
   it("latches unsupported public API calls even when a caller catches them", () => {
-    const Interpreted = createInterpretedAjv({
-      draft7: () => true,
-      "2019": () => true,
-      "2020": () => true,
-    });
-    const ajv = new Interpreted({ strict: false });
     for (const name of [
       "addMetaSchema",
       "removeSchema",
@@ -780,7 +774,13 @@ describe("AJV dynamic-schema interpreter", () => {
       "removeKeyword",
       "$dataMetaSchema",
     ]) {
-      resetAjvCompatibility();
+      const compatibility = createAjvCompatibilityState();
+      const Interpreted = createInterpretedAjv(
+        { draft7: () => true, "2019": () => true, "2020": () => true },
+        "draft7",
+        compatibility,
+      );
+      const ajv = new Interpreted({ strict: false });
       const method: unknown = Reflect.get(ajv, name);
       if (typeof method !== "function") throw new Error(`Missing public API ${name}`);
       try {
@@ -788,27 +788,34 @@ describe("AJV dynamic-schema interpreter", () => {
       } catch (error) {
         expect(error).toBeInstanceOf(UnsupportedAjvSchemaError);
       }
-      expect(() => assertAjvCompatibility()).toThrow(new RegExp(name.replace("$", "\\$")));
+      expect(() => compatibility.assertAjvCompatibility()).toThrow(
+        new RegExp(name.replace("$", "\\$")),
+      );
     }
-    resetAjvCompatibility();
   });
 
   it("rejects an unsupported registered schema at registration, before any unrelated compile", () => {
-    const Interpreted = createInterpretedAjv({
-      draft7: () => true,
-      "2019": () => true,
-      "2020": () => true,
-    });
-    resetAjvCompatibility();
+    const compatibility = createAjvCompatibilityState();
+    const Interpreted = createInterpretedAjv(
+      { draft7: () => true, "2019": () => true, "2020": () => true },
+      "draft7",
+      compatibility,
+    );
     const ajv = new Interpreted({ strict: false });
     expect(() => ajv.addSchema({ $id: "urn:unused", type: "number", multipleOf: 2 })).toThrow(
       UnsupportedAjvSchemaError,
     );
-    expect(() => assertAjvCompatibility()).toThrow(/multipleOf/);
-    resetAjvCompatibility();
+    expect(() => compatibility.assertAjvCompatibility()).toThrow(/multipleOf/);
+    const afterFirst = createAjvCompatibilityState();
+    const Accepted = createInterpretedAjv(
+      { draft7: () => true, "2019": () => true, "2020": () => true },
+      "draft7",
+      afterFirst,
+    );
+    const accepted = new Accepted({ strict: false });
     let reads = 0;
     expect(() =>
-      ajv.addSchema({
+      accepted.addSchema({
         $id: "urn:accessor",
         get type() {
           reads++;
@@ -817,12 +824,54 @@ describe("AJV dynamic-schema interpreter", () => {
       }),
     ).toThrow(UnsupportedAjvSchemaError);
     expect(reads).toBe(0);
-    expect(() => assertAjvCompatibility()).toThrow(/accessors/);
-    resetAjvCompatibility();
-    ajv.addSchema({ $id: "urn:accepted", type: "string" });
-    expect(ajv.compile({ type: "boolean" })(true)).toBe(true);
-    expect(() => assertAjvCompatibility()).not.toThrow();
+    expect(() => afterFirst.assertAjvCompatibility()).toThrow(/accessors/);
+    const successState = createAjvCompatibilityState();
+    const Success = createInterpretedAjv(
+      { draft7: () => true, "2019": () => true, "2020": () => true },
+      "draft7",
+      successState,
+    );
+    const success = new Success({ strict: false });
+    success.addSchema({ $id: "urn:accepted", type: "string" });
+    expect(success.compile({ type: "boolean" })(true)).toBe(true);
+    expect(() => successState.assertAjvCompatibility()).not.toThrow();
   });
+
+  it.each(["before", "after"] as const)(
+    "preserves the first AJV error when a %s-installed reporter throws",
+    (installation) => {
+      const compatibility = createAjvCompatibilityState();
+      const reporterFailure = new Error("report channel failed");
+      const reporter = () => {
+        throw reporterFailure;
+      };
+      if (installation === "before") compatibility.setAjvCompatibilityFailureReporter(reporter);
+      const first = new compatibility.UnsupportedAjvSchemaError(
+        { id: "first", module: "fixture", offset: 0 },
+        { unknown: true },
+        "first unsupported schema",
+      );
+      if (installation === "after") compatibility.setAjvCompatibilityFailureReporter(reporter);
+      const later = new compatibility.UnsupportedAjvSchemaError(
+        { id: "later", module: "fixture", offset: 1 },
+        false,
+        "later schema",
+      );
+      expect(later).not.toBe(first);
+      try {
+        compatibility.assertAjvCompatibility();
+        throw new Error("The compatibility assertion accepted unsupported input");
+      } catch (error) {
+        expect(error).toMatchObject({
+          code: "AJV_SCHEMA_NOT_PRECOMPILED",
+          message: first.message,
+          cause: first,
+          errors: [first, reporterFailure],
+        });
+        expect(() => compatibility.assertAjvCompatibility()).toThrow(error);
+      }
+    },
+  );
 
   it("treats own undefined object values as missing without changing key counts", () => {
     const Interpreted = createInterpretedAjv({
@@ -838,26 +887,29 @@ describe("AJV dynamic-schema interpreter", () => {
       { type: "object", minProperties: 1, properties: { a: { type: "string" } } },
       { type: "object", maxProperties: 0, properties: { a: { type: "string" } } },
     ];
-    resetAjvCompatibility();
     for (const schema of schemas) {
       const expected = reference.compile(schema);
       const actual = interpreted.compile(schema);
       for (const data of [{ a: undefined }, Object.freeze({ a: undefined })])
         expect(actual(data)).toBe(expected(data));
     }
-    expect(() => assertAjvCompatibility()).not.toThrow();
     for (const mixed of [
       { type: "object", properties: { a: { type: "string" } }, additionalProperties: false },
       { type: "object", additionalProperties: { type: "string" } },
       { type: "object", patternProperties: { "^a": { type: "string" } } },
     ]) {
-      resetAjvCompatibility();
-      expect(() => interpreted.compile(mixed)({ a: undefined })).toThrow(
+      const compatibility = createAjvCompatibilityState();
+      const Interpreted = createInterpretedAjv(
+        { draft7: () => true, "2019": () => true, "2020": () => true },
+        "draft7",
+        compatibility,
+      );
+      const current = new Interpreted({ strict: false });
+      expect(() => current.compile(mixed)({ a: undefined })).toThrow(
         /Undefined values with additionalProperties/,
       );
-      expect(() => assertAjvCompatibility()).toThrow(UnsupportedAjvSchemaError);
+      expect(() => compatibility.assertAjvCompatibility()).toThrow(UnsupportedAjvSchemaError);
     }
-    resetAjvCompatibility();
     let reads = 0;
     const accessor = {
       get a() {
@@ -867,15 +919,14 @@ describe("AJV dynamic-schema interpreter", () => {
     };
     expect(() => interpreted.compile(schemas[0])(accessor)).toThrow(/accessors/);
     expect(reads).toBe(0);
-    resetAjvCompatibility();
   });
   it("keeps unsupported schemas visible after Claude catches their exceptions", () => {
-    resetAjvCompatibility();
-    const Interpreted = createInterpretedAjv({
-      draft7: () => true,
-      "2019": () => true,
-      "2020": () => true,
-    });
+    const compatibility = createAjvCompatibilityState();
+    const Interpreted = createInterpretedAjv(
+      { draft7: () => true, "2019": () => true, "2020": () => true },
+      "draft7",
+      compatibility,
+    );
     const ajv = new Interpreted({ strict: false });
     const caught = () => {
       try {
@@ -886,11 +937,11 @@ describe("AJV dynamic-schema interpreter", () => {
       }
     };
     expect(caught()).toBe("unchecked");
-    expect(() => assertAjvCompatibility()).toThrow(UnsupportedAjvSchemaError);
+    expect(() => compatibility.assertAjvCompatibility()).toThrow(UnsupportedAjvSchemaError);
     expect(ajv.compile({ type: "string" })("ok")).toBe(true);
-    expect(() => assertAjvCompatibility()).toThrow(/multipleOf/);
-    resetAjvCompatibility();
-    expect(() => assertAjvCompatibility()).not.toThrow();
+    expect(() => compatibility.assertAjvCompatibility()).toThrow(/multipleOf/);
+    expect(Object.hasOwn(compatibility, "resetAjvCompatibility")).toBe(false);
+    expect(() => compatibility.assertAjvCompatibility()).toThrow(/multipleOf/);
   });
   it("returns one required-field error unless allErrors is enabled", () => {
     const Interpreted = createInterpretedAjv({
@@ -983,6 +1034,8 @@ describe("AJV dynamic-schema interpreter", () => {
     );
     const conditional = {
       if: { properties: { x: { const: 1 } } },
+      // JSON Schema uses this keyword for the conditional branch.
+      // oxlint-disable-next-line unicorn/no-thenable
       then: { required: ["y"] },
       unevaluatedProperties: false,
     };

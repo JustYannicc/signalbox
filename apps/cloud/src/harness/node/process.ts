@@ -38,6 +38,8 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     finish = resolve;
   });
   let releaseOmissionFailure: ReleaseModuleOmittedFailure | undefined;
+  const releaseReady = Promise.withResolvers<void>();
+  void releaseReady.promise.catch(() => undefined);
   const processInput: NodeHarnessProcessInput = {
     ...input,
     reportReleaseModuleOmitted: (event) => {
@@ -52,6 +54,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     finish(value);
   };
   const failed = (error: unknown) => {
+    releaseReady.reject(error);
     if (error instanceof NodeProcessExitError) {
       settle({ status: { exitCode: error.code, signal: 0, coreDumped: false } });
     } else if (!lifetime.signal.aborted) settle({ error });
@@ -84,6 +87,9 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
   let runtime: ReturnType<typeof createHarnessRuntime>;
   let personality: ReturnType<typeof installHarnessPersonality>;
   let allocated: ReturnType<typeof createHarnessRuntime> | undefined;
+  let runtimeCompatibilityRequired = false;
+  let releaseCompatibility: (() => unknown) | undefined;
+  let assertInstalledCompatibility: NodeHarnessProcess["assertCompatibility"] = async () => {};
   try {
     runtime = createHarnessRuntime(
       processInput,
@@ -96,6 +102,18 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       () => bridge,
     );
     allocated = runtime;
+    void runtime.compatibility.failure.catch(failed);
+    runtimeCompatibilityRequired =
+      input.loadedRelease?.plan.harness === "claude-code" &&
+      Object.hasOwn(input.loadedRelease.plan.hostEntrypoints, "signalbox/runtime-compatibility");
+    assertInstalledCompatibility = async () => {
+      await runtime.compatibility.assert();
+      if (releaseCompatibility === undefined) {
+        if (runtimeCompatibilityRequired) throw new Error("NODE_RUNTIME_COMPATIBILITY_UNOBSERVED");
+        return;
+      }
+      await Reflect.apply(releaseCompatibility, undefined, []);
+    };
     personality = installHarnessPersonality(runtime, processInput, lifetime.signal);
     bridge = personality.bridge;
     realm.commit();
@@ -126,6 +144,9 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       stderr: input.stdio.stderr,
       exitStatus: undefined,
       exited,
+      assertCompatibility: async () => {
+        throw error;
+      },
       abort: dispose,
       dispose,
     };
@@ -151,6 +172,13 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     const launch: unknown = Reflect.get(release, "launch");
     if (typeof launch !== "function")
       throw new TypeError("Prepared Node release must export launch()");
+    const releaseAssert: unknown = Reflect.get(release, "assertRuntimeCompatibility");
+    if (typeof releaseAssert === "function") {
+      releaseCompatibility = releaseAssert.bind(release);
+    } else if (runtimeCompatibilityRequired) {
+      throw new Error("NODE_RUNTIME_COMPATIBILITY_UNOBSERVED");
+    }
+    releaseReady.resolve();
     await Reflect.apply(launch, release, []);
   };
   const startup = Promise.resolve()
@@ -163,6 +191,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     if (restoring) return;
     forced = true;
     const stopped = reason ?? new DOMException("Node harness aborted", "AbortError");
+    releaseReady.reject(stopped);
     settle({ status: { exitCode: 0, signal, coreDumped: false } });
     for (const child of liveChildren) {
       try {
@@ -195,7 +224,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       try {
         await run();
       } catch (error) {
-        failures.push(error);
+        if (!failures.includes(error)) failures.push(error);
       }
     };
     try {
@@ -222,6 +251,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
         ),
       );
     } finally {
+      await attempt(() => assertInstalledCompatibility());
       externalSignal.removeEventListener("abort", externalAbort);
       output.abort();
       input.stdio.finish();
@@ -259,6 +289,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     force(reason, signal);
     await exited;
     await personality.drainReports();
+    await assertInstalledCompatibility();
     // A reused process can finish turns before shutdown. Late imports still belong to this
     // realm, so disposal checks their latch without rewriting an already published exit.
     if (releaseOmissionFailure !== undefined) throw releaseOmissionFailure;
@@ -271,6 +302,10 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       return outcome !== undefined && "status" in outcome ? outcome.status : undefined;
     },
     exited,
+    assertCompatibility: async () => {
+      await releaseReady.promise;
+      await assertInstalledCompatibility();
+    },
     abort,
     dispose: () => abort(),
   };

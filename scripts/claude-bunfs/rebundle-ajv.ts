@@ -15,6 +15,7 @@ const require = NodeModule.createRequire(import.meta.url);
 const prefix = "signalbox:ajv/";
 const adapter = `${prefix}adapter`;
 const runtime = `${prefix}registry-runtime`;
+const workerReporter = `${prefix}worker-reporter`;
 
 /** Resolve compiler-only helper imports while producing portable, compiler-free modules. */
 async function portable(
@@ -43,9 +44,11 @@ async function portable(
           build.onResolve({ filter: /^signalbox:ajv\// }, (args) =>
             args.path === runtime
               ? { path: runtime, external: true }
-              : Object.hasOwn(virtual, args.path)
-                ? { path: args.path, namespace: "ajv-generated" }
-                : undefined,
+              : args.path === workerReporter
+                ? { path: workerReporter, external: true }
+                : Object.hasOwn(virtual, args.path)
+                  ? { path: args.path, namespace: "ajv-generated" }
+                  : undefined,
           );
           // The adapter and host must share one sticky compatibility failure state.
           build.onResolve({ filter: /ajv-precompile-runtime\.ts$/ }, () => ({
@@ -72,7 +75,7 @@ async function portable(
   return result.outputFiles[0]!.text;
 }
 
-export async function createAjvRebundleTransform() {
+export async function createAjvRebundleTransform(options: { workerCompatibility?: boolean } = {}) {
   const metas = precompileAjvMetaValidators();
   const virtual: Record<string, string> = {};
   for (const [dialect, validator] of Object.entries(metas))
@@ -85,22 +88,35 @@ export async function createAjvRebundleTransform() {
   );
   const compatibility = `${prefix}compatibility`;
   const layerModules: Record<string, string> = {
-    [compatibility]: `export {assertAjvCompatibility, resetAjvCompatibility} from ${JSON.stringify(runtime)};`,
+    [compatibility]: `export {assertAjvCompatibility} from ${JSON.stringify(runtime)};`,
     [adapter]: await portable(
       `import {createInterpretedAjv} from ${JSON.stringify(interpreterPath)};
       import draft7 from '${prefix}meta/draft7';
       import meta2019 from '${prefix}meta/2019';
       import meta2020 from '${prefix}meta/2020';
       export const createAjv=(dialect)=>createInterpretedAjv({draft7,'2019':meta2019,'2020':meta2020},dialect);
-      export {resetAjvCompatibility,assertAjvCompatibility} from '${runtime}';`,
+      export {assertAjvCompatibility} from '${runtime}';`,
       virtual,
     ),
     [runtime]: await portable(
-      await import("node:fs/promises").then((fs) => fs.readFile(runtimePath, "utf8")),
+      `${options.workerCompatibility ? `import {reportAjvCompatibilityFailure} from '${workerReporter}';` : ""}
+      ${await import("node:fs/promises").then((fs) => fs.readFile(runtimePath, "utf8"))}
+      ${options.workerCompatibility ? "setAjvCompatibilityFailureReporter(reportAjvCompatibilityFailure);" : ""}`,
       {},
       "ts",
     ),
   };
+  if (options.workerCompatibility) {
+    layerModules[workerReporter] = `
+      import * as WorkerThreads from "node:worker_threads";
+      export function reportAjvCompatibilityFailure(error) {
+        const report = WorkerThreads.reportRuntimeFailure;
+        if (typeof report !== "function")
+          throw new Error("AJV_RUNTIME_COMPATIBILITY_UNOBSERVED");
+        report(error);
+      }
+    `;
+  }
   const diagnostics: AjvDiagnostic[] = [];
   const constructors: ReturnType<typeof replaceEmbeddedAjvConstructors>["constructors"] = [];
   const guardedSources = new Set<string>();
@@ -160,15 +176,23 @@ export async function createAjvRebundleTransform() {
       if (!entry) throw new Error(`AJV_WORKER_GRAPH_UNRESOLVED: ${target}`);
       const visited = new Set<string>();
       const pending = [entry[0]];
+      let hasGuardedSource = false;
+      let hasObservedWorkerReporter = false;
+      let firstGuardedSource: string | undefined;
       while (pending.length) {
         const path = pending.pop()!;
         if (visited.has(path)) continue;
         visited.add(path);
         const output = metafile.outputs[path];
         if (!output) throw new Error(`AJV_WORKER_GRAPH_UNRESOLVED: ${path}`);
-        for (const [source, input] of Object.entries(output.inputs))
-          if (input.bytesInOutput > 0 && guardedSources.has(source))
-            throw new Error(`AJV_WORKER_COMPATIBILITY_UNOBSERVED: ${target}: ${source}`);
+        for (const [source, input] of Object.entries(output.inputs)) {
+          if (input.bytesInOutput <= 0) continue;
+          if (guardedSources.has(source)) {
+            hasGuardedSource = true;
+            firstGuardedSource ??= source;
+          }
+          if (source === `signalbox-layer:${workerReporter}`) hasObservedWorkerReporter = true;
+        }
         for (const dependency of output.imports) {
           if (dependency.external) continue;
           const dependencyPath = Object.hasOwn(metafile.outputs, dependency.path)
@@ -179,12 +203,17 @@ export async function createAjvRebundleTransform() {
           pending.push(dependencyPath);
         }
       }
+      if (hasGuardedSource && (!options.workerCompatibility || !hasObservedWorkerReporter)) {
+        throw new Error(
+          `AJV_WORKER_COMPATIBILITY_UNOBSERVED: ${target}: ${firstGuardedSource ?? "generated-worker-graph"}`,
+        );
+      }
     }
   };
   // Pass this same layerModules object: transform adds validators while the graph is loading.
   return {
     layerModules,
-    hostEntrypoints: { "signalbox/ajv-compatibility": compatibility },
+    hostEntrypoints: { "signalbox/runtime-compatibility": compatibility },
     transform,
     verify,
     report: () => ({

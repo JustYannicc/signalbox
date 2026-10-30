@@ -13,11 +13,16 @@ const digest = (value: Uint8Array | string) =>
   NodeCrypto.createHash("sha256").update(value).digest("hex");
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
-async function makeExtraction(root: string, version: string, source: string) {
+async function makeExtraction(
+  root: string,
+  version: string,
+  source: string,
+  workerSource = "export const workerMarker=1;",
+) {
   const extracted = NodePath.join(root, `extracted-${version}`);
   const workerName = "/$bunfs/root/src/plugins/functionHooks/hooks-worker/hooks-worker.js";
   const payload = Buffer.from(`${source}\nexport const workerUrl=${JSON.stringify(workerName)};`);
-  const worker = Buffer.from("export const workerMarker=1;");
+  const worker = Buffer.from(workerSource);
   const binary = Buffer.from(`synthetic-official-binary-${version}`);
   const binarySha256 = digest(binary);
   const officialManifest = {
@@ -147,8 +152,15 @@ describe("Claude release build integration", () => {
         function unused() { process.getBuiltinModule('cluster'); }
         export const sourceMarker = "same-code";
       `;
-        const first = await makeExtraction(root, "2.1.302", source);
-        const second = await makeExtraction(root, "2.1.303", source);
+        const workerSource = `
+          class Base {} class Embedded extends Base {
+            _addVocabularies() {} _addDefaultMetaSchema() {} defaultMeta() {}
+          }
+          const library = { Ajv: Embedded };
+          export const validate = schema => new library.Ajv({ strict: false }).compile(schema);
+        `;
+        const first = await makeExtraction(root, "2.1.302", source, workerSource);
+        const second = await makeExtraction(root, "2.1.303", source, workerSource);
         const firstOutput = NodePath.join(root, "artifact-2.1.302");
         const secondOutput = NodePath.join(root, "artifact-2.1.303");
         const identityFile = NodePath.join(root, "identity-2.1.302.json");
@@ -191,6 +203,9 @@ describe("Claude release build integration", () => {
           variant === "hooks" ? ["hooks-worker"] : [],
         );
         expect(secondResult.provenance.build).toMatchObject({ variant });
+        expect(secondManifest.hostEntrypoints["signalbox/runtime-compatibility"]).toBe(
+          "signalbox/runtime-compatibility.js",
+        );
         expect(firstManifest.release.binarySha256).not.toBe(secondManifest.release.binarySha256);
         expect(firstManifest.moduleMap.sha256).toBe(secondManifest.moduleMap.sha256);
         expect(await NodeFSP.readFile(NodePath.join(firstOutput, "claude.js"), "utf8")).toBe(

@@ -1,5 +1,6 @@
 import type * as NodeEvents from "node:events";
 import type * as NodeStream from "node:stream";
+import { markNodeBuiltinCapability } from "../../NodeBuiltinCapabilities.ts";
 
 import { NodeWorkerMessagePort } from "./ports.ts";
 import { NodeWorkerPorts } from "./portRuntime.ts";
@@ -207,6 +208,10 @@ export interface NodeWorkerThreadsModule {
   readonly resourceLimits: NodeWorkerThreadContext["resourceLimits"];
   readonly threadId: number;
   readonly workerData: unknown;
+  /** Signalbox host capability for failures that must survive guest listeners. */
+  readonly runtimeFailure: Promise<never>;
+  assertRuntimeCompatibility(): Promise<void>;
+  reportRuntimeFailure(error: unknown): void;
   getEnvironmentData(key: unknown): unknown;
   setEnvironmentData(key: unknown, value: unknown): void;
   receiveMessageOnPort(..._args: readonly unknown[]): never;
@@ -225,6 +230,11 @@ export function createThreadModule(
   ports: NodeWorkerPorts,
   context: NodeWorkerThreadContext,
   environmentData: Map<unknown, unknown>,
+  compatibility: {
+    readonly failure: Promise<never>;
+    readonly assert: () => Promise<void>;
+    readonly report: (error: unknown) => void;
+  },
 ): NodeWorkerThreadsModule {
   class MessageChannel {
     readonly port1: NodeWorkerMessagePort;
@@ -249,6 +259,17 @@ export function createThreadModule(
     resourceLimits: context.resourceLimits,
     threadId: context.threadId,
     workerData: context.workerData,
+    runtimeFailure: compatibility.failure,
+    assertRuntimeCompatibility: markNodeBuiltinCapability(compatibility.assert, {
+      status: "supported",
+      evidence:
+        "Acknowledges private worker control checkpoints and checks the host-owned sticky failure latch without waiting for reusable workers to exit.",
+    }),
+    reportRuntimeFailure: markNodeBuiltinCapability(compatibility.report, {
+      status: "supported",
+      evidence:
+        "Preserves the first failure in a host-owned latch and forwards it through a private parent control port independent of guest listeners.",
+    }),
     getEnvironmentData(key: unknown): unknown {
       return environmentData.get(key);
     },
