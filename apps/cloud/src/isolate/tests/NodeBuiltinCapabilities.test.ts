@@ -53,4 +53,29 @@ describe("Node builtin capability metadata", () => {
       }),
     ).toThrow("evidence must be non-empty");
   });
+
+  it("freezes named failures and refuses a conflicting error code or status", () => {
+    const callable = () => undefined;
+    const failure = { kind: "named-error" as const, code: "ENOTSUP" };
+    const declaration = { status: "unsupported" as const, evidence: "No host capability", failure };
+    markNodeBuiltinCapability(callable, declaration);
+    failure.code = "changed";
+    expect(getNodeBuiltinCapability(callable)?.failure).toEqual({
+      kind: "named-error",
+      code: "ENOTSUP",
+    });
+    expect(Object.isFrozen(getNodeBuiltinCapability(callable)?.failure)).toBe(true);
+    expect(() => markNodeBuiltinCapability(callable, declaration)).toThrow(
+      "different capability metadata",
+    );
+    expect(() =>
+      markNodeBuiltinCapability(() => undefined, { ...declaration, status: "supported" }),
+    ).toThrow("unsupported callable");
+    expect(() =>
+      markNodeBuiltinCapability(() => undefined, {
+        ...declaration,
+        failure: { kind: "named-error", code: " " },
+      }),
+    ).toThrow("non-empty code");
+  });
 });

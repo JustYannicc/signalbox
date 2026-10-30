@@ -1,6 +1,9 @@
 import { createNodeBridge, type NodeBridge } from "../isolate/NodeBridge.ts";
 import { canonicalNodeBuiltin } from "../isolate/NodeBuiltinMap.ts";
-import { getNodeBuiltinCapability } from "../isolate/NodeBuiltinCapabilities.ts";
+import {
+  getNodeBuiltinCapability,
+  type NodeBuiltinFailure,
+} from "../isolate/NodeBuiltinCapabilities.ts";
 import { systemIdentityForThread, type SystemIdentity } from "@t3tools/contracts/systemIdentity";
 import { createHarnessRuntime } from "./node/runtime.ts";
 import type { NodeHarnessProcessInput } from "./NodeHarnessProcess.ts";
@@ -8,7 +11,7 @@ import {
   classifyNodeNativeBuiltinCapability,
   type NodeNativeRuntimeProfile,
 } from "./NodeNativeBuiltinCapabilities.ts";
-import { DEFAULT_NODE_NATIVE_MODULES } from "./node/nativeModules.ts";
+import { DEFAULT_NODE_NATIVE_MODULES } from "./NodeNativeModules.ts";
 
 export type NodeBuiltinFunctionStatus =
   | "supported"
@@ -26,6 +29,7 @@ export interface NodeBuiltinFunctionRequest {
 export interface NodeBuiltinFunctionCapability extends NodeBuiltinFunctionRequest {
   readonly status: NodeBuiltinFunctionStatus;
   readonly evidence: string;
+  readonly failure?: NodeBuiltinFailure;
 }
 
 export interface NodeBuiltinTargetProfile {

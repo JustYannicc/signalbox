@@ -13,9 +13,15 @@ describe("native builtin inventory", () => {
     expect(result).toMatchObject({
       functions: [
         { status: "supported" },
-        { status: "unsupported" },
+        {
+          status: "unsupported",
+          failure: { kind: "named-error", code: "ERR_SIGNALBOX_NODE_BUILTIN_UNSUPPORTED" },
+        },
         { status: "conditional" },
-        { status: "missing" },
+        {
+          status: "unsupported",
+          failure: { kind: "named-error", code: "ERR_SIGNALBOX_NODE_BUILTIN_UNSUPPORTED" },
+        },
         { status: "supported" },
       ],
       profile: {

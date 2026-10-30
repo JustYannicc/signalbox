@@ -293,7 +293,13 @@ function markEntries(
     if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "function") {
       throw new TypeError("Expected fs." + name + " to be an own callable property");
     }
-    markNodeBuiltinCapability(descriptor.value, { status, evidence });
+    markNodeBuiltinCapability(descriptor.value, {
+      status,
+      evidence,
+      ...(status === "unsupported"
+        ? { failure: { kind: "named-error", code: "ENOTSUP" } as const }
+        : {}),
+    });
   }
 }
 

@@ -17,6 +17,7 @@ import { createProcessCredentialGetters } from "./node/process/credentials.ts";
 import { nodeExecveUnavailable } from "./node/process/execve.ts";
 import { exposeNodeProcessStreams, type NodeProcessStdin } from "./node/process/streams.ts";
 import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
+import { createUnsupportedNodeBuiltin } from "./NodeBuiltinFailure.ts";
 import { createNodeSystemMetrics } from "./NodeSystemMetrics.ts";
 
 /* Adapted from Rivet agentOS's Node process bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
@@ -94,7 +95,11 @@ function validateExitCode(code: unknown): number {
 function unsupportedMeasurement(name: string) {
   return markNodeBuiltinCapability(
     (..._args: unknown[]) => unsupportedNodeOperation(`process.${name}`),
-    { status: "unsupported", evidence: `HostProcess.${name} has no host measurement capability` },
+    {
+      status: "unsupported",
+      evidence: `HostProcess.${name} has no host measurement capability`,
+      failure: { kind: "named-error", code: "ENOTSUP" },
+    },
   );
 }
 
@@ -277,6 +282,18 @@ class HostProcess extends NodeEvents.EventEmitter {
 
   // Kernel accounting stays exact when available; the shared profile supplies the fallback.
   getActiveResourcesInfo = unsupportedMeasurement("getActiveResourcesInfo");
+  _getActiveHandles = unsupportedMeasurement("_getActiveHandles");
+  _getActiveRequests = unsupportedMeasurement("_getActiveRequests");
+  send = createUnsupportedNodeBuiltin(
+    "process.send",
+    "HostProcess has no Node IPC message channel. This remains an open implementation obligation.",
+  );
+  channel = {
+    unref: createUnsupportedNodeBuiltin(
+      "process.channel.unref",
+      "HostProcess has no Node IPC channel lifetime. This remains an open implementation obligation.",
+    ),
+  };
   umask = (mask?: number | string) => processUmask(this.#host.filesystem, mask);
   uptime = () => Number(this.#monotonicNowNs() - this.#startTimeNs) / 1_000_000_000;
 }
