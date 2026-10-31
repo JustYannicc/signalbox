@@ -67,6 +67,8 @@ export function makeClaudeNativeHostBinding(
   let installation: PreparedThread | undefined;
   let initialMcpRead = false;
   let startedAnyTurn = false;
+  // The adapter retains this handoff for the whole session while MCP epochs rotate.
+  let handedOffThread: OrchestrationV2ProviderThread | undefined;
   let configuring = false;
   let lastEpoch = 0;
 
@@ -109,9 +111,16 @@ export function makeClaudeNativeHostBinding(
     Effect.gen(function* () {
       const ready = installation;
       const key = yield* Effect.try({ try: () => claudeNativeLoadKey(load), catch: unavailable });
-      if (ready === undefined || ready.signal.aborted || ready.handoffUsed || key !== ready.key)
+      if (
+        ready === undefined ||
+        ready.signal.aborted ||
+        ready.handoffUsed ||
+        key !== ready.key ||
+        (handedOffThread !== undefined && !sameClaudeThread(ready.thread, handedOffThread))
+      )
         return yield* Effect.fail(unavailable());
       ready.handoffUsed = true;
+      handedOffThread = ready.thread;
       return ready.thread;
     });
 
@@ -197,6 +206,7 @@ export function makeClaudeNativeHostBinding(
         thread.providerSessionId !== input.session.providerSessionId ||
         thread.providerInstanceId !== runtime.instanceId ||
         thread.nativeThreadRef?.strength !== "strong" ||
+        (handedOffThread !== undefined && !sameClaudeThread(thread, handedOffThread)) ||
         (requested !== undefined && !matchesRequestedClaudeThread(thread, requested))
       )
         return yield* Effect.fail(
@@ -296,7 +306,10 @@ export function makeClaudeNativeHostBinding(
                     !sameClaudeThread(turnInput.providerThread, ready.thread) ||
                     turnInput.threadId !== input.session.threadId ||
                     turnInput.appThread.id !== turnInput.threadId ||
-                    (!startedAnyTurn && input.checkpoint === undefined && !ready.handoffUsed)
+                    (!startedAnyTurn &&
+                      input.checkpoint === undefined &&
+                      (handedOffThread === undefined ||
+                        !sameClaudeThread(turnInput.providerThread, handedOffThread)))
                   )
                     return yield* Effect.fail(unavailable());
                   ready.started = true;

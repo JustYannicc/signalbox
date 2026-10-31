@@ -305,6 +305,34 @@ function coldSetup(
         modelSelection: services.turn.modelSelection,
         runtimePolicy: services.session.runtimePolicy,
       };
+      const duplicateHandoff = yield* Effect.exit(
+        load.method === "ensureThread"
+          ? runtime.ensureThread(load.input)
+          : runtime.resumeThread(load.input),
+      );
+      NodeAssert.equal(duplicateHandoff._tag, "Failure");
+      const changedIdentity = yield* Effect.exit(
+        runtime.startTurn({
+          ...turn,
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: providerThread.driver,
+              nativeId: "another-native-thread",
+              strength: "strong",
+            },
+          },
+        }),
+      );
+      NodeAssert.equal(changedIdentity._tag, "Failure");
+      const changedSettings = yield* Effect.exit(
+        runtime.startTurn({
+          ...turn,
+          modelSelection: { ...turn.modelSelection, model: "another-model" },
+        }),
+      );
+      NodeAssert.equal(changedSettings._tag, "Failure");
+      NodeAssert.equal(order.includes("sdk.query"), false);
       if (compatibilityCase) {
         const start = yield* Effect.exit(runtime.startTurn(turn));
         NodeAssert.equal(start._tag, "Failure");
