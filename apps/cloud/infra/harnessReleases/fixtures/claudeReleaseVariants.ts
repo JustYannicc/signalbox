@@ -131,7 +131,7 @@ async function artifact(
     files: Object.fromEntries(
       [...files].map(([path, bytes]) => [path, { bytes: bytes.length, sha256: hash(bytes) }]),
     ),
-    omission: { configuration: { name: "product" } },
+    ...(cli.omission === undefined ? {} : { omission: { configuration: { name: "product" } } }),
   });
   files.set("manifest.json", bytes);
   const fullArtifact = {
@@ -150,6 +150,7 @@ export async function fixture(
   project: boolean,
   change?: Parameters<typeof artifact>[1],
   workerPaddingBytes = 0,
+  changeBaseline?: Parameters<typeof artifact>[1],
 ) {
   const database = makeHarnessReleaseLedgerTestDatabase();
   const ledger = createHarnessReleaseLedger(
@@ -157,7 +158,7 @@ export async function fixture(
       ? createHarnessProjectReleaseSqliteStore(database.storage, "project")
       : createHarnessReleaseSqliteStore(database.storage),
   );
-  const baseline = await artifact("baseline"),
+  const baseline = await artifact("baseline", changeBaseline),
     hooks = await artifact("hooks", change, workerPaddingBytes);
   ledger.registerArtifact(baseline.fullArtifact);
   ledger.registerArtifact(hooks.fullArtifact);

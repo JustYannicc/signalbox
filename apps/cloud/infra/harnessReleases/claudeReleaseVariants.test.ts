@@ -55,6 +55,44 @@ it.each([false, true])(
   },
 );
 
+it("opens a full pair without optional omission metadata", async () => {
+  const omit = (cli: Record<string, unknown>) => {
+    delete cli.omission;
+  };
+  const f = await fixture(false, omit, 0, omit);
+  try {
+    const result = await validateClaudeReleaseVariantArtifacts(f.input);
+    expect(result.baseline.plan.workerEntries).toEqual({});
+    expect(result.hooks.plan.workerEntries["hooks-worker"]?.export).toBe("instantiate");
+    expect(result.baseline.qualification.status).toBe("pending");
+    expect(result.hooks.qualification.status).toBe("pending");
+  } finally {
+    f.close();
+  }
+});
+
+it.each(["baseline", "hooks"] as const)(
+  "rejects omission metadata present only in %s",
+  async (present) => {
+    const omit = (cli: Record<string, unknown>) => {
+      delete cli.omission;
+    };
+    const f = await fixture(
+      false,
+      present === "baseline" ? omit : undefined,
+      0,
+      present === "hooks" ? omit : undefined,
+    );
+    try {
+      await expect(validateClaudeReleaseVariantArtifacts(f.input)).rejects.toThrow(
+        "CLAUDE_VARIANTS_OMISSION_MISMATCH",
+      );
+    } finally {
+      f.close();
+    }
+  },
+);
+
 it.each([
   [
     "OFFICIAL_CLI",
@@ -94,6 +132,41 @@ it.each([
     f.close();
   }
 });
+
+it("rejects malformed present omission configuration", async () => {
+  const f = await fixture(false, (cli) => {
+    const omission = cli.omission as Record<string, unknown>;
+    omission.configuration = { ...(omission.configuration as object), evidence: "changed" };
+  });
+  try {
+    await expect(validateClaudeReleaseVariantArtifacts(f.input)).rejects.toThrow(
+      "INVALID_OMISSION",
+    );
+  } finally {
+    f.close();
+  }
+});
+
+it.each(["binarySha256", "provenance"] as const)(
+  "rejects invalid present corpus %s",
+  async (field) => {
+    const invalidate = (cli: Record<string, unknown>) => {
+      const omission = cli.omission as Record<string, unknown>;
+      omission.corpus = {
+        ...(omission.corpus as object),
+        [field]: field === "binarySha256" ? "9".repeat(64) : [],
+      };
+    };
+    const f = await fixture(false, invalidate, 0, invalidate);
+    try {
+      await expect(validateClaudeReleaseVariantArtifacts(f.input)).rejects.toThrow(
+        "CLAUDE_VARIANTS_CORPUS_INVALID",
+      );
+    } finally {
+      f.close();
+    }
+  },
+);
 
 it("reads every prepared payload rather than trusting two matching manifest labels", async () => {
   const f = await fixture(false);
