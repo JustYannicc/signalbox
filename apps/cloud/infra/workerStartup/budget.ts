@@ -2,8 +2,9 @@ import * as Schema from "effect/Schema";
 
 // https://developers.cloudflare.com/workers/platform/limits/#worker-startup-time
 export const WORKER_STARTUP_LIMIT_MS = 1_000;
-// Provisional until upload startup_time_ms calibrates local samples against Cloudflare CPU.
-export const WORKER_STARTUP_BUDGET_MS = WORKER_STARTUP_LIMIT_MS / 2;
+// One upload measured 178.898 ms locally and 448 ms remotely (~2.5x).
+// 300 ms leaves margin below the remote limit; recalibrate as more uploads report timings.
+export const WORKER_STARTUP_BUDGET_MS = 300;
 
 const NonNegative = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));
 const Profile = Schema.Struct({

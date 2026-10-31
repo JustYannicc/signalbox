@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import type { BundleOutput } from "alchemy/Bundle/Bundle";
-import { requireStartupBudget, WORKER_STARTUP_BUDGET_MS } from "./budget.ts";
+import { requireStartupBudget } from "./budget.ts";
 import { sha256, startupPayload, type StartupCompatibility } from "./payload.ts";
 import { profilerRuntime, StartupRuntime } from "./runtime.ts";
 import { requireStartupInvocation } from "./invocation.ts";
@@ -13,7 +13,8 @@ const Evidence = Schema.Struct({
   schema: Schema.Literal("signalbox/worker-startup-profile/v2"),
   status: Schema.Literal("passed"),
   payloadSha256: Hash,
-  budgetMs: Schema.Literal(WORKER_STARTUP_BUDGET_MS),
+  // The producer's budget is metadata; raw samples must pass the current budget below.
+  budgetMs: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0)),
   profileFile: Schema.String,
   profileSha256: Hash,
   invocationSha256: Hash,
