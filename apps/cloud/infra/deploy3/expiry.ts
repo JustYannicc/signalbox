@@ -81,7 +81,8 @@ export function deploy3Expiry(receipt: Deploy3UploadReceipt) {
   };
 }
 
-export function deploy3CleanupToken(receipt: Deploy3UploadReceipt) {
+export function deploy3CleanupToken(receipt: Deploy3UploadReceipt, accountId: string) {
+  if (!/^[a-f0-9]{32}$/.test(accountId)) throw new Error("Invalid cleanup token account ID");
   const expiry = deploy3Expiry(receipt);
   return {
     name: `${receipt.workerName}-deadline`,
@@ -90,7 +91,12 @@ export function deploy3CleanupToken(receipt: Deploy3UploadReceipt) {
       {
         effect: "allow" as const,
         permissionGroups: [{ id: INDIVIDUAL_WORKER_ADMIN }],
-        resources: { [`com.cloudflare.edge.worker.script.${receipt.workerId}`]: "*" },
+        // Cloudflare rejects a flat Worker resource; the account is its required parent.
+        resources: {
+          [`com.cloudflare.api.account.${accountId}`]: {
+            [`com.cloudflare.edge.worker.script.${receipt.workerId}`]: "*",
+          },
+        },
       },
     ],
   };

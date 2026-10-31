@@ -27,11 +27,12 @@ export default Alchemy.Stack(
       ),
       stage,
     );
+    const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
     const operator = yield* deploy3OperatorToken(plan);
     const cleanup = plan.receipt
       ? yield* Cloudflare.ApiToken.AccountApiToken(
           "Deploy3DeadlineToken",
-          deploy3CleanupToken(plan.receipt),
+          deploy3CleanupToken(plan.receipt, accountId),
         )
       : undefined;
     return {
