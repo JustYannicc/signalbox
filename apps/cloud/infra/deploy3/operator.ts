@@ -56,8 +56,7 @@ async function main() {
     if (!state) throw new Error("Export has no registered deployment");
     const exported = await exportDeploy3Locally({
       ...source,
-      runId,
-      registrationSha256: state.registrationSha256,
+      registration: state.registration,
     });
     process.stdout.write(`Local export verified ${exported.verifiedLocalExportSha256}\n`);
     return;

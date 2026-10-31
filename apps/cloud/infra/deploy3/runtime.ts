@@ -1,7 +1,6 @@
 import * as Schema from "effect/Schema";
 import {
-  controlBody,
-  controlDigest,
+  deploy3RegistrationSha256,
   decodeControlEvent,
   type Deploy3ControlRegistration,
 } from "./controlRegistry.ts";
@@ -102,7 +101,7 @@ export async function runDeploy3Deadline(input: {
     // Keep every owner held when the public registry is unavailable, then delete at the bound deadline.
     state = {
       registration,
-      registrationSha256: await controlDigest(controlBody(registration)),
+      registrationSha256: await deploy3RegistrationSha256(registration),
       deadlineUtc: expiry.deadlineUtc,
       cleanupTokenExpiresOn: expiry.tokenExpiresOn,
       ownersNotReleased: registration.owners.map((row) => row.owner),
