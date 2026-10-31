@@ -154,6 +154,12 @@ export default {
         "infra/deploy3/alchemy.run.ts!",
         "infra/deploy3/credentials.alchemy.run.ts!",
         "infra/deploy3/operator.ts!",
+        "infra/deploy3/qualification/build.ts", // Standalone qualification bundle CLI.
+        // The qualification builder passes these source paths to esbuild.
+        "infra/deploy3/qualification/fixture/facet.ts",
+        "infra/deploy3/qualification/fixture/claudeFacet.ts",
+        "infra/deploy3/qualification/fixture/worker.ts",
+        "infra/deploy3/qualification/fixture/claudeWorkflow.ts",
         "infra/syncProbe/worker.ts!",
         "infra/isolateProbe/alchemy.run.ts!",
         "infra/isolateProbe/ci.ts!",
