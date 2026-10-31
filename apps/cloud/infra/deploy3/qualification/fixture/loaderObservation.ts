@@ -116,6 +116,8 @@ function shim(main: string, original: string, runId: string, pin: ObserverLoader
         ? "export default Observed;"
         : `export { Observed as ${pin.entrypoint} };`;
   return `${importLine}
+// Native personality replaces global console when the guest starts.
+const hostLog = console.log.bind(console);
 const pin = ${config};
 ${pin.role === "facet" ? "let isolateNonce;\nfunction getIsolateNonce() { return isolateNonce ??= crypto.randomUUID(); }" : ""}
 let runtimeWorkerId;
@@ -145,11 +147,11 @@ class Observed extends Actual {
     }
   }
   __emit(method, call, milestone) {
-    console.log(JSON.stringify({ producerEvent: { schema: "sb1070/producer/v1", runId: pin.runId,
+    hostLog(JSON.stringify({ producerEvent: { schema: "sb1070/producer/v1", runId: pin.runId,
       identity: pin.identity, producerClass: pin.producerClass, workerId: workerIdentity(),
       entrypoint: pin.entrypoint, tag: pin.tag, route: call.route, milestone,
       invocationId: call.invocationId, ${pin.role === "facet" ? "isolateNonce: getIsolateNonce()," : ""} } }));
-    if (milestone === "entered") console.log(JSON.stringify({ observerIdentity: {
+    if (milestone === "entered") hostLog(JSON.stringify({ observerIdentity: {
       loaderId: pin.loaderId, workerId: workerIdentity(), identity: pin.identity,
       facetNonce: typeof this.facetNonce === "string" ? this.facetNonce : null,
       invocationId: call.invocationId, ${pin.role === "facet" ? "isolateNonce: getIsolateNonce()," : ""} } }));
@@ -158,7 +160,7 @@ class Observed extends Actual {
     const call = this.__call(method, args);
     this.__emit(method, call, "entered");
     try { return this.__response(method, invoke()); }
-    catch (error) { console.log(JSON.stringify({ observerFailure: { identity: pin.identity,
+    catch (error) { hostLog(JSON.stringify({ observerFailure: { identity: pin.identity,
       invocationId: call.invocationId, name: String(error?.name ?? "Error") } })); throw error; }
     finally { this.__emit(method, call, "terminal"); }
   }
@@ -166,7 +168,7 @@ class Observed extends Actual {
     const call = this.__call(method, args);
     this.__emit(method, call, "entered");
     try { return this.__response(method, await invoke()); }
-    catch (error) { console.log(JSON.stringify({ observerFailure: { identity: pin.identity,
+    catch (error) { hostLog(JSON.stringify({ observerFailure: { identity: pin.identity,
       invocationId: call.invocationId, name: String(error?.name ?? "Error") } })); throw error; }
     finally { this.__emit(method, call, "terminal"); }
   }

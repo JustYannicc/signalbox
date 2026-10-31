@@ -124,14 +124,14 @@ export function createFreshRequestPreparation(
         created = { input, observation };
         return structuredClone(observation);
       }).pipe(
-        Effect.onError(() =>
+        Effect.onError((cause) =>
           Effect.gen(function* () {
             state.poison();
             const cleanup = yield* Effect.exit(Scope.close(scope, Exit.void));
             if (Exit.isFailure(cleanup)) {
               const failure = new HarnessRequestFacetError(
                 "Fresh native preparation cleanup is unknown.",
-                { cause: Cause.squash(cleanup.cause) },
+                { cause: Cause.combine(cause, cleanup.cause) },
               );
               unresolvedCleanup = { scope, failure };
               return yield* Effect.die(failure);

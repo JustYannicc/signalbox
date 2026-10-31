@@ -70,7 +70,8 @@ export function createCombinedCodexModelSocket({
   const retiredIncarnations = new Set();
 
   function failSocket(server, cause) {
-    const error = cause instanceof Error ? cause : new Error(String(cause));
+    const error =
+      cause instanceof Error ? cause : new Error("Combined Codex model socket failed.", { cause });
     metrics.failures.push({ message: error.message, code: error.closeCode ?? 1011 });
     try {
       onFailure(error);

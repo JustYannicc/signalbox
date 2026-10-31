@@ -39,10 +39,11 @@ export const createHostLifecycle = <G>(
       const storage = yield* Effect.acquireRelease(
         Effect.try({
           try: () => createHostStorage(options.files, options.threadId),
-          catch: () =>
+          catch: (cause) =>
             new HarnessError({
               operation: "open",
               message: "Canonical Harness storage could not be opened.",
+              cause,
             }),
         }),
         (value) =>
@@ -293,10 +294,11 @@ export const createHostLifecycle = <G>(
             Effect.gen(function* () {
               yield* Effect.try({
                 try: check,
-                catch: () =>
+                catch: (cause) =>
                   new HarnessError({
                     operation: "open",
                     message: "Harness host requires reconstruction.",
+                    cause,
                   }),
               });
               if (occupied !== undefined)
@@ -308,10 +310,11 @@ export const createHostLifecycle = <G>(
                 );
               yield* Effect.tryPromise({
                 try: (signal) => boot.seed(stage, AbortSignal.any([signal, owner.signal])),
-                catch: () =>
+                catch: (cause) =>
                   new HarnessError({
                     operation: "open",
                     message: "Harness seed failed; reconstruct before retrying.",
+                    cause,
                   }),
               });
             }),
@@ -345,10 +348,11 @@ export const createHostLifecycle = <G>(
                   initialAccess,
                 };
               },
-              catch: () =>
+              catch: (cause) =>
                 new HarnessError({
                   operation: "open",
                   message: "Harness open input is invalid.",
+                  cause,
                 }),
             });
             const hash = yield* Effect.tryPromise({
@@ -358,20 +362,22 @@ export const createHostLifecycle = <G>(
                   checkpoint: input.checkpoint,
                   creation: input.creation,
                 }),
-              catch: () =>
+              catch: (cause) =>
                 new HarnessError({
                   operation: "open",
                   message: "Harness open input is invalid.",
+                  cause,
                 }),
             });
             return yield* lock.withPermits(1)(
               Effect.gen(function* () {
                 yield* Effect.try({
                   try: check,
-                  catch: () =>
+                  catch: (cause) =>
                     new HarnessError({
                       operation: "open",
                       message: "Harness host requires reconstruction.",
+                      cause,
                     }),
                 });
                 const prior = attempts.get(input.bootAttemptId);
@@ -408,10 +414,11 @@ export const createHostLifecycle = <G>(
                   modelTransport: options.modelTransport,
                 }).pipe(
                   Effect.mapError(
-                    () =>
+                    (cause) =>
                       new HarnessError({
                         operation: "open",
                         message: "Harness session or checkpoint identity is invalid.",
+                        cause,
                       }),
                   ),
                 );
@@ -426,10 +433,11 @@ export const createHostLifecycle = <G>(
                         ...(initialAccess === undefined ? [] : [initialAccess.signal]),
                       ]),
                     ),
-                  catch: () =>
+                  catch: (cause) =>
                     new HarnessError({
                       operation: "open",
                       message: "Harness boot validation or admission failed.",
+                      cause,
                     }),
                 });
                 const attempt: Attempt = {

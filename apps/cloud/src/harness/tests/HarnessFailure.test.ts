@@ -77,6 +77,51 @@ const failure = () =>
   });
 
 describe("Harness failure details", () => {
+  it("keeps error codes and nested object causes in the durable error codec", () => {
+    const native = Object.assign(
+      new Error("MCP configuration failed", {
+        cause: {
+          name: "McpHandshakeError",
+          message: "Fixture initialization failed",
+          code: "ETIMEDOUT",
+          cause: Object.assign(new Error("native transport closed"), { code: "EPIPE" }),
+        },
+      }),
+      { code: "NATIVE_MCP_START" },
+    );
+    const original = new HarnessError({
+      operation: "turn",
+      message: "Native MCP configuration or turn start failed.",
+      cause: Cause.fail(native),
+    });
+
+    const json = JSON.stringify(encodeHarnessError(original));
+    const recovered = decodeHarnessError(JSON.parse(json));
+    expect(json).not.toContain("[object Object]");
+    expect(recovered.cause).toMatchObject({
+      reasons: [
+        {
+          error: {
+            name: "Error",
+            message: "MCP configuration failed",
+            code: "NATIVE_MCP_START",
+            stack: expect.any(String),
+            cause: {
+              name: "McpHandshakeError",
+              code: "ETIMEDOUT",
+              cause: {
+                message: "native transport closed",
+                code: "EPIPE",
+                stack: expect.any(String),
+              },
+            },
+          },
+        },
+      ],
+    });
+    expect(encodeHarnessError(recovered)).toEqual(JSON.parse(json));
+  });
+
   it("round-trips typed release omission details and trace", () => {
     const cause = makeReleaseModuleOmittedFailure({
       code: "RELEASE_MODULE_OMITTED",

@@ -7,6 +7,7 @@ it.each(["ClaudeFacet", "CodexFacet"] as const)(
   "keeps exact %s results and creates one isolate nonce only during an RPC",
   async (entrypoint) => {
     const logs: unknown[] = [];
+    const guestLogs: string[] = [];
     const code = observeWorkerCode(
       {
         compatibilityDate: "2026-10-19",
@@ -48,6 +49,7 @@ it.each(["ClaudeFacet", "CodexFacet"] as const)(
         return result;
       }
       async startFresh() {
+        context.console = { log: (text: string) => guestLogs.push(text) };
         return native;
       }
     }
@@ -89,5 +91,6 @@ it.each(["ClaudeFacet", "CodexFacet"] as const)(
     expect(events.length).toBeGreaterThan(0);
     expect(new Set(events.map((event) => event.isolateNonce)).size).toBe(1);
     expect(result).not.toHaveProperty("isolateNonce");
+    expect(guestLogs).toEqual([]);
   },
 );

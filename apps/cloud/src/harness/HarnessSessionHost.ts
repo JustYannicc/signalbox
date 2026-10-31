@@ -66,10 +66,11 @@ export const createHarnessSessionHost = <G>(
     };
     const loaded = yield* Effect.tryPromise({
       try: () => loadHarnessRelease(options.release),
-      catch: () =>
+      catch: (cause) =>
         new HarnessError({
           operation: "open",
           message: "Harness release could not be verified.",
+          cause,
         }),
     });
     const catalog = yield* Effect.tryPromise({
@@ -80,10 +81,11 @@ export const createHarnessSessionHost = <G>(
           thread: options.threadId,
           filesystem: options.files.identity,
         }),
-      catch: () =>
+      catch: (cause) =>
         new HarnessError({
           operation: "open",
           message: "Harness seed catalog is invalid.",
+          cause,
         }),
     });
     const { release: _release, programs: _programs, ...hostOptions } = options;

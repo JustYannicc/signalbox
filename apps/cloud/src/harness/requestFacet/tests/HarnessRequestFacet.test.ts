@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -526,7 +527,13 @@ describe("request-scoped Harness facet", () => {
       const firstFailure = yield* Effect.flip(facet.prepareInert(input));
       expect(firstFailure).toBeInstanceOf(HarnessRequestFacetError);
       expect(firstFailure.message).toBe("Harness preparation cleanup is unknown.");
-      expect(firstFailure.cause).toBe(cleanupCause);
+      expect(Cause.isCause(firstFailure.cause)).toBe(true);
+      if (!Cause.isCause(firstFailure.cause)) throw new Error("Missing complete preparation cause");
+      expect(firstFailure.cause.reasons).toHaveLength(2);
+      expect(firstFailure.cause.reasons).toMatchObject([
+        { _tag: "Fail", error: { cause: callbackCause } },
+        { _tag: "Die", defect: cleanupCause },
+      ]);
 
       const firstDisposeFailure = yield* Effect.exit(facet.dispose);
       const secondDisposeFailure = yield* Effect.exit(facet.dispose);

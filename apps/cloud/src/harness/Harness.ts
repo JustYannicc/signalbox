@@ -48,6 +48,7 @@ function makeErrorSchema(causeValue: Schema.Codec<unknown, unknown, never, never
     _tag: Schema.Literal(errorEnvelopeTag),
     name: Schema.String,
     message: Schema.String,
+    code: Schema.optionalKey(causeValue),
     stack: Schema.optionalKey(Schema.String),
     cause: Schema.optionalKey(causeValue),
   });
@@ -60,6 +61,7 @@ function makeErrorSchema(causeValue: Schema.Codec<unknown, unknown, never, never
             ? new Error(fields.message)
             : new Error(fields.message, { cause: fields.cause });
         error.name = fields.name;
+        if (fields.code !== undefined) Object.assign(error, { code: fields.code });
         if (fields.stack !== undefined) error.stack = fields.stack;
         return error;
       }),
@@ -67,6 +69,7 @@ function makeErrorSchema(causeValue: Schema.Codec<unknown, unknown, never, never
         _tag: errorEnvelopeTag,
         name: error.name,
         message: error.message,
+        ...("code" in error ? { code: error.code } : {}),
         ...(typeof error.stack === "string" ? { stack: error.stack } : {}),
         ...(error.cause === undefined ? {} : { cause: error.cause }),
       })),
@@ -79,6 +82,7 @@ function makeAggregateErrorSchema(causeValue: Schema.Codec<unknown, unknown, nev
     _tag: Schema.Literal(aggregateErrorEnvelopeTag),
     name: Schema.String,
     message: Schema.String,
+    code: Schema.optionalKey(causeValue),
     stack: Schema.optionalKey(Schema.String),
     cause: Schema.optionalKey(causeValue),
     errors: Schema.Array(causeValue),
@@ -92,6 +96,7 @@ function makeAggregateErrorSchema(causeValue: Schema.Codec<unknown, unknown, nev
             ? new AggregateError(fields.errors, fields.message)
             : new AggregateError(fields.errors, fields.message, { cause: fields.cause });
         error.name = fields.name;
+        if (fields.code !== undefined) Object.assign(error, { code: fields.code });
         if (fields.stack !== undefined) error.stack = fields.stack;
         return error;
       }),
@@ -99,6 +104,7 @@ function makeAggregateErrorSchema(causeValue: Schema.Codec<unknown, unknown, nev
         _tag: aggregateErrorEnvelopeTag,
         name: error.name,
         message: error.message,
+        ...("code" in error ? { code: error.code } : {}),
         ...(typeof error.stack === "string" ? { stack: error.stack } : {}),
         ...(error.cause === undefined ? {} : { cause: error.cause }),
         errors: Array.from(error.errors),
@@ -120,6 +126,15 @@ const harnessCauseSchema: Schema.Codec<unknown, unknown, never, never> = Schema.
       ReleaseModuleOmittedFailure,
       makeAggregateErrorSchema(harnessCauseSchema),
       makeErrorSchema(harnessCauseSchema),
+      Schema.Array(harnessCauseSchema),
+      Schema.Record(Schema.String, harnessCauseSchema).pipe(
+        Schema.check(
+          Schema.makeFilter((value) => {
+            const prototype = Object.getPrototypeOf(value);
+            return prototype === Object.prototype || prototype === null;
+          }),
+        ),
+      ),
       Schema.Defect(),
     ]);
   },
@@ -144,10 +159,17 @@ const harnessProcessStartupSchema = Schema.Struct({
 
 export class HarnessError extends Schema.TaggedError<HarnessError>()("HarnessError", {
   operation: Schema.Literals(["open", "turn", "control", "export", "events", "dispose", "journal"]),
+  name: Schema.optionalKey(Schema.String),
   message: Schema.String,
+  code: Schema.optionalKey(Schema.Union([Schema.String, Schema.Number])),
+  stack: Schema.optionalKey(Schema.String),
   cause: Schema.optionalKey(harnessCauseSchema),
   nativeStartup: Schema.optionalKey(harnessProcessStartupSchema),
 }) {}
+
+const encodeHarnessFailure = Schema.encodeSync(Schema.toCodecJson(harnessCauseSchema));
+const failureJson = Schema.decodeUnknownSync(Schema.Json);
+export const serializeHarnessFailure = (cause: unknown) => failureJson(encodeHarnessFailure(cause));
 
 export interface HarnessOpenInput {
   readonly loadedRelease?: LoadedHarnessRelease;

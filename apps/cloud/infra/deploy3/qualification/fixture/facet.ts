@@ -23,7 +23,16 @@ import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../../src/harness/Harne
 import { facetState } from "./facetState.ts";
 import { turnBindings } from "./facetBindings.ts";
 import { capture, compareBeforeReadiness } from "./snapshot.ts";
-import { assert, HOME, CODEX_HOME, MODEL_ORIGIN, jsonBytes, sha256, toBase64 } from "./common.ts";
+import {
+  assert,
+  HOME,
+  CODEX_HOME,
+  MODEL_ORIGIN,
+  errorRecord,
+  jsonBytes,
+  sha256,
+  toBase64,
+} from "./common.ts";
 import {
   assertQualifierCodexFacetConfiguration,
   type QualifierCodexFacetConfiguration,
@@ -240,7 +249,7 @@ const buildOptions = (
             state.queue(() =>
               cap.append("native-process-abandoned", {
                 incarnation: facetNonce,
-                cause: String(cause),
+                cause: errorRecord(cause),
               }),
             );
           },

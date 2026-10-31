@@ -1,5 +1,6 @@
 import { createHarnessProcessFacet as createFacet } from "./facetLoader.ts";
 import { HarnessProcessPlacementError } from "./contracts.ts";
+import { serializeHarnessFailure } from "../Harness.ts";
 import type { HarnessProcessFacetInvokeInput as FacetInvokeInput } from "../HarnessProcessFacet.ts";
 import { DURABLE_OBJECT_INVOCATION_LIMIT } from "./limits.ts";
 import { openPlacementSession, PlacementCreationFailure } from "./executionLifecycle.ts";
@@ -94,6 +95,7 @@ async function runLocalShard(
                 ? cause.cause.kind
                 : "recovery-unresolved",
             message: cause.message,
+            cause: serializeHarnessFailure(cause),
           },
         };
       }),
@@ -251,6 +253,7 @@ async function runLocalShard(
                 error: {
                   kind: "resume-evidence-unavailable",
                   message: "Process termination evidence is incomplete or not durable.",
+                  cause: serializeHarnessFailure(error),
                 },
               };
             }
@@ -291,6 +294,10 @@ async function runLocalShard(
             error: {
               kind: failure?.kind ?? "execution-failed",
               message: errorMessage(failure?.kind ?? "execution-failed"),
+              cause: serializeHarnessFailure(error),
+              ...(cleanupError === undefined
+                ? {}
+                : { cleanupCause: serializeHarnessFailure(cleanupError) }),
               ...(failure?.details?.identityMismatch === undefined
                 ? {}
                 : { identityMismatch: failure.details.identityMismatch }),

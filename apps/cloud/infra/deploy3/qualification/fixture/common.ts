@@ -39,15 +39,6 @@ export const jsonBytes = (value: unknown) =>
             : field,
     ),
   );
-export const errorRecord = (cause: unknown): unknown =>
-  cause instanceof Error
-    ? {
-        name: cause.name,
-        message: cause.message,
-        stack: cause.stack,
-        cause: cause.cause === undefined ? undefined : errorRecord(cause.cause),
-      }
-    : String(cause);
 export const control = (epoch: number) => ({
   ownerId: "combined-qualifier",
   incarnationId: `controller-${epoch}`,
@@ -70,3 +61,4 @@ export function sameArtifact(
 ) {
   return left.id === right.id && left.bytes === right.bytes && left.sha256 === right.sha256;
 }
+export { serializeHarnessFailure as errorRecord } from "../../../../src/harness/Harness.ts";

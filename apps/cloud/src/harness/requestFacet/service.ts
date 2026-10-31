@@ -116,18 +116,18 @@ export const createHarnessRequestFacet = (
         if (Exit.isFailure(cleanup)) {
           const cleanupFailure = failure(
             "Harness preparation cleanup is unknown.",
-            Cause.squash(cleanup.cause),
+            Cause.combine(cause, cleanup.cause),
           );
           unresolvedPreparationCleanup = { scope: preparationScope, failure: cleanupFailure };
           preparationFailure = cleanupFailure;
           return yield* Effect.fail(cleanupFailure);
         }
 
-        const underlying = Cause.squash(cause);
+        const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined;
+        const underlying =
+          reason !== undefined && Cause.isFailReason(reason) ? reason.error : undefined;
         const preparationError =
-          underlying instanceof HarnessRequestFacetError
-            ? underlying
-            : failure(message, underlying);
+          underlying instanceof HarnessRequestFacetError ? underlying : failure(message, cause);
         preparationFailure = preparationError;
         return yield* Effect.fail(preparationError);
       });
