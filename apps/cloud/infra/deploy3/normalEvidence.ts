@@ -5,7 +5,11 @@ import {
   syncLocalEvidenceDirectory,
 } from "./localEvidenceFiles.ts";
 import * as Schema from "effect/Schema";
-import { controlDigest } from "./controlRegistry.ts";
+import {
+  controlDigest,
+  deploy3RegistrationSha256,
+  type Deploy3ControlRegistration,
+} from "./controlRegistry.ts";
 import { boundedOperation } from "./platform.ts";
 import { EvidenceEntries, inspectEvidenceInventory } from "./evidenceInventory.ts";
 
@@ -44,14 +48,17 @@ async function save(directory: string, name: string, bytes: Uint8Array) {
 export async function exportDeploy3Locally(input: {
   readonly origin: string;
   readonly qualifierRunId: string;
-  readonly runId: string;
-  readonly registrationSha256: string;
+  readonly registration: Deploy3ControlRegistration;
   readonly directory: string;
   readonly fetchImpl?: typeof fetch;
 }) {
+  if (!input.registration) {
+    throw new Error("Normal export requires the canonical deployment registration");
+  }
+  const runId = input.registration.runId;
+  const registrationSha256 = await deploy3RegistrationSha256(input.registration);
   if (
-    !/^[a-f0-9]{8}$/.test(input.runId) ||
-    !/^[a-f0-9]{64}$/.test(input.registrationSha256) ||
+    !/^[a-f0-9]{8}$/.test(runId) ||
     !input.qualifierRunId ||
     new URL(input.origin).protocol !== "https:"
   ) {
@@ -121,8 +128,8 @@ export async function exportDeploy3Locally(input: {
   files.push(inventoryFile);
   const manifest = {
     schema: "sb1070/deploy3-local-export/v1",
-    runId: input.runId,
-    registrationSha256: input.registrationSha256,
+    runId,
+    registrationSha256,
     inventorySha256: inventoryFile.sha256,
     files,
   };
@@ -133,16 +140,20 @@ export async function exportDeploy3Locally(input: {
 
 export async function verifyDeploy3LocalExport(input: {
   readonly directory: string;
-  readonly runId: string;
-  readonly registrationSha256: string;
+  readonly registration: Deploy3ControlRegistration;
 }) {
+  if (!input.registration) {
+    throw new Error("Local export verification requires the canonical deployment registration");
+  }
+  const runId = input.registration.runId;
+  const registrationSha256 = await deploy3RegistrationSha256(input.registration);
   const raw = new TextDecoder().decode(
     await readLocalEvidenceBytes(input.directory, "manifest.json"),
   );
   const manifest = decodeManifestJson(raw);
   if (
-    manifest.runId !== input.runId ||
-    manifest.registrationSha256 !== input.registrationSha256 ||
+    manifest.runId !== runId ||
+    manifest.registrationSha256 !== registrationSha256 ||
     manifest.files.length < 2 ||
     new Set(manifest.files.map((file) => file.name)).size !== manifest.files.length ||
     manifest.files.filter(

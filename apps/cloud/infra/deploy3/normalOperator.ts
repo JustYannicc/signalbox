@@ -34,8 +34,8 @@ export async function releaseDeploy3FromLocalEvidence(input: {
       );
       if (!state) throw new Error("Normal release has no registered deployment");
       const verified = await verifyDeploy3LocalExport({
-        ...input,
-        registrationSha256: state.registrationSha256,
+        directory: input.directory,
+        registration: state.registration,
       });
       const raw = await readLocalEvidenceText(input.explicitReleaseFile);
       const release = decodeExplicitReleaseJson(raw);

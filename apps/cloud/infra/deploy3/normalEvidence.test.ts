@@ -12,6 +12,7 @@ import { releaseDeploy3Owner } from "./controlLifecycle.ts";
 
 async function exportFixture() {
   const bytes = new TextEncoder().encode("full local evidence");
+  const requests: string[] = [];
   const ref = {
     id: "journal-1",
     bytes: bytes.length,
@@ -22,11 +23,13 @@ async function exportFixture() {
     ["journal/record/0000000001", { sequence: 1, kind: "result", payload: ref }],
     ["journal/reservation/0000000001", { sequence: 1, kind: "result", payloadHash: ref.sha256 }],
   ];
-  const fetchImpl: typeof fetch = async (input) =>
-    String(input).includes("/export/page")
+  const fetchImpl: typeof fetch = async (input) => {
+    requests.push(String(input));
+    return String(input).includes("/export/page")
       ? Response.json({ entries, next: null })
       : new Response(bytes);
-  return { fetchImpl, entries };
+  };
+  return { fetchImpl, entries, requests };
 }
 
 TestCase.test(
@@ -38,15 +41,53 @@ TestCase.test(
       const state = (await fixture.api().read()).controls[0]!;
       const directory = NodePath.join(root, "export");
       const source = await exportFixture();
+      const bareJsonSha256 = await controlDigest(JSON.stringify(state.registration));
+      NodeAssert.notEqual(bareJsonSha256, state.registrationSha256);
+
+      const invokeLegacyExporter = exportDeploy3Locally as unknown as (input: {
+        readonly origin: string;
+        readonly qualifierRunId: string;
+        readonly runId: string;
+        readonly registrationSha256: string;
+        readonly directory: string;
+        readonly fetchImpl: typeof fetch;
+      }) => Promise<unknown>;
+      const legacyDirectory = NodePath.join(root, "legacy-export");
+      await NodeAssert.rejects(
+        invokeLegacyExporter({
+          origin: "https://qualifier.example",
+          qualifierRunId: "source-run",
+          runId: state.registration.runId,
+          registrationSha256: bareJsonSha256,
+          directory: legacyDirectory,
+          fetchImpl: source.fetchImpl,
+        }),
+        /canonical deployment registration/,
+      );
+      NodeAssert.equal(source.requests.length, 0);
+      await NodeAssert.rejects(NodeFSP.access(legacyDirectory));
+
       const input = {
         origin: "https://qualifier.example",
         qualifierRunId: "source-run",
-        runId: "deadbeef",
-        registrationSha256: state.registrationSha256,
+        registration: state.registration,
         directory,
         fetchImpl: source.fetchImpl,
       };
       const verified = await exportDeploy3Locally(input);
+      const manifestPath = NodePath.join(directory, "manifest.json");
+      const originalManifest = await NodeFSP.readFile(manifestPath, "utf8");
+      const manifest = JSON.parse(originalManifest);
+      NodeAssert.equal(manifest.runId, state.registration.runId);
+      NodeAssert.equal(manifest.registrationSha256, state.registrationSha256);
+      manifest.registrationSha256 = bareJsonSha256;
+      await NodeFSP.writeFile(manifestPath, JSON.stringify(manifest));
+      await NodeAssert.rejects(
+        verifyDeploy3LocalExport({ directory, registration: state.registration }),
+        /Local evidence manifest identity differs/,
+      );
+      await NodeFSP.writeFile(manifestPath, originalManifest);
+
       const releaseFile = NodePath.join(root, "release.json");
       await NodeFSP.writeFile(
         releaseFile,
@@ -74,7 +115,10 @@ TestCase.test(
       );
       NodeAssert.equal(fixture.comments.length, 1);
       await NodeFSP.writeFile(NodePath.join(directory, "blob-0.bin"), "full local evidence");
-      NodeAssert.deepEqual(await verifyDeploy3LocalExport(input), verified);
+      NodeAssert.deepEqual(
+        await verifyDeploy3LocalExport({ directory, registration: state.registration }),
+        verified,
+      );
       await releaseDeploy3FromLocalEvidence(release);
       NodeAssert.deepEqual((await fixture.api().read()).controls[0]!.ownersNotReleased, ["1255"]);
       await NodeAssert.rejects(

@@ -138,6 +138,14 @@ export function controlBody(value: unknown) {
   return CONTROL_MARKER + JSON.stringify(decodeControlEvent(value));
 }
 
+export async function deploy3RegistrationSha256(registration: Deploy3ControlRegistration) {
+  const event = decodeControlEvent(registration);
+  if (event.kind !== "registered") {
+    throw new Error("Registration digest requires a registered control event");
+  }
+  return controlDigest(controlBody(event));
+}
+
 /** Append-only release records preserve independent owners when updates arrive concurrently. */
 export async function reconcileDeploy3Controls(
   comments: readonly Deploy3ControlComment[],
