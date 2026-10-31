@@ -83,7 +83,7 @@ describe("asset child worker loader", () => {
   it("does not resolve the code callback again for a cached loader ID", async () => {
     const hash = await sha256(bytes);
     const resolveAsset = vi.fn(async () => bytes);
-    const workers = new Map<string, WorkerStub>();
+    const workers = new Map<string | null, WorkerStub>();
     const get = vi.fn<WorkerLoader["get"]>().mockImplementation((name, code) => {
       let worker = workers.get(name);
       if (worker === undefined) {

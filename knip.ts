@@ -153,6 +153,7 @@ export default {
         "infra/syncProbe/alchemy.run.ts!",
         "infra/deploy3/alchemy.run.ts!",
         "infra/deploy3/credentials.alchemy.run.ts!",
+        "infra/workerStartup/cli.ts", // Maintainer startup profiling runs this CLI directly.
         "infra/deploy3/operator.ts!",
         "infra/deploy3/qualification/build.ts", // Standalone qualification bundle CLI.
         // The qualification builder passes these source paths to esbuild.
