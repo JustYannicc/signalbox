@@ -2,6 +2,7 @@ import { placementReleaseEvidence } from "./placementReleaseObserver.fixture.ts"
 import { disposeWorkerLoaderStubs } from "../../../../src/computer/WorkerLoaderDispatch.ts";
 import { HarnessProcessExecutionShardObject } from "../../../../src/harness/HarnessProcessExecutionShardObject.ts";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../../src/harness/HarnessCProductCapabilities.ts";
+import { createQualifierShardEnvironment } from "../shardEnvironment.ts";
 import type { QualifierEnvironment } from "./environment.ts";
 import { proof } from "./environment.ts";
 import { qualifierFacetLoader } from "./loader.ts";
@@ -24,18 +25,10 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
       QualifierCommands: env.QUALIFIER_COMMANDS,
       QualifierTail: env.QUALIFIER_TAIL,
     };
-    super(ctx, {
-      ...env,
-      LOADER: qualifierFacetLoader(env, exports.QualifierTail),
-      HARNESS_C_PRODUCT_CAPABILITIES: {
-        ...Object.fromEntries(
-          Object.values(HARNESS_C_PRODUCT_CAPABILITY_KEYS)
-            .filter((key) => key !== HARNESS_C_PRODUCT_CAPABILITY_KEYS.turnGrantSource)
-            .map((key) => [key, cap]),
-        ),
-        qualifierCommands: exports.QualifierCommands,
-      },
-    });
+    super(
+      ctx,
+      createQualifierShardEnvironment(env, qualifierFacetLoader(env, exports.QualifierTail), cap),
+    );
     this.qualifierEnvironment = env;
   }
   async observerCalibration() {

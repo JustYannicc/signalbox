@@ -2,7 +2,13 @@ import * as Schema from "effect/Schema";
 import type { ChildWorkerLoaderPort } from "../../../src/computer/WorkerLoaderDispatch.ts";
 import { parseDeploy3Name } from "../deadline.ts";
 
-const Hash = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
+export const QualifierHash = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
+export const QualifierRunId = Schema.String.check(
+  Schema.isPattern(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu),
+);
+export const QualifierWorkerName = Schema.String.check(
+  Schema.makeFilter((value) => parseDeploy3Name(value)?.role === "workload"),
+);
 const ResidentBytes = Schema.String.check(
   Schema.makeFilter((value) => /^[1-9][0-9]*$/u.test(value) && Number.isSafeInteger(Number(value))),
 );
@@ -22,14 +28,9 @@ function qualifierConfigurationSchema<
   assets: Assets;
 }) {
   return Schema.Struct({
-    RUN_ID: Schema.String.check(
-      Schema.isPattern(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu),
-    ),
-    WORKER_NAME: Schema.String.check(
-      Schema.makeFilter((value) => parseDeploy3Name(value)?.role === "workload"),
-    ),
-    CONFIG_SHA256: Hash,
-    BUNDLE_SHA256: Hash,
+    RUN_ID: QualifierRunId,
+    WORKER_NAME: QualifierWorkerName,
+    CONFIG_SHA256: QualifierHash,
     RESIDENT_BYTE_LIMIT: ResidentBytes,
     OBSERVER_GUARD_ONLY: Schema.optionalKey(Schema.Literal("1")),
     QUALIFIER: ports.namespace("Qualifier", "QualifierProof"),
@@ -46,7 +47,7 @@ function qualifierConfigurationSchema<
   });
 }
 
-function hasMethods(value: unknown, methods: readonly string[]) {
+export function hasQualifierMethods(value: unknown, methods: readonly string[]) {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -55,28 +56,35 @@ function hasMethods(value: unknown, methods: readonly string[]) {
 }
 
 const Namespace = Schema.declare<DurableObjectNamespace>((value): value is DurableObjectNamespace =>
-  hasMethods(value, ["get", "getByName", "idFromName"]),
+  hasQualifierMethods(value, ["get", "getByName", "idFromName"]),
 );
 const Loader = Schema.declare<WorkerLoader>((value): value is WorkerLoader =>
-  hasMethods(value, ["get", "load"]),
+  hasQualifierMethods(value, ["get", "load"]),
 );
-const Fetcher = Schema.declare<Fetcher>((value): value is Fetcher => hasMethods(value, ["fetch"]));
+const Fetcher = Schema.declare<Fetcher>((value): value is Fetcher =>
+  hasQualifierMethods(value, ["fetch"]),
+);
 
 type QualifierTailPort = Fetcher & {
   tail(items: TraceItem[]): Promise<void>;
   captureOuter(items: TraceItem[]): Promise<unknown>;
 };
 
-export const QualifierRuntimeConfiguration = qualifierConfigurationSchema({
+export const QualifierShardRuntimeConfiguration = qualifierConfigurationSchema({
   namespace: () => Namespace,
   loader: Loader,
   commands: Schema.declare<Fetcher & ChildWorkerLoaderPort>(
-    (value): value is Fetcher & ChildWorkerLoaderPort => hasMethods(value, ["fetch", "run"]),
+    (value): value is Fetcher & ChildWorkerLoaderPort =>
+      hasQualifierMethods(value, ["fetch", "run"]),
   ),
   tail: Schema.declare<QualifierTailPort>((value): value is QualifierTailPort =>
-    hasMethods(value, ["fetch", "tail", "captureOuter"]),
+    hasQualifierMethods(value, ["fetch", "tail", "captureOuter"]),
   ),
   assets: Fetcher,
+});
+export const QualifierRuntimeConfiguration = Schema.Struct({
+  ...QualifierShardRuntimeConfiguration.fields,
+  BUNDLE_SHA256: QualifierHash,
 });
 export type QualifierRuntimeConfiguration = typeof QualifierRuntimeConfiguration.Type;
 const decodeRuntime = Schema.decodeUnknownSync(QualifierRuntimeConfiguration);
@@ -85,7 +93,7 @@ export function assertQualifierRuntimeConfiguration(value: unknown) {
   decodeRuntime(value);
 }
 
-export const QualifierPlannedConfiguration = qualifierConfigurationSchema({
+export const QualifierShardPlannedConfiguration = qualifierConfigurationSchema({
   namespace: (resourceId, className) =>
     Schema.Struct({
       type: Schema.Literal("durable_object_namespace"),
@@ -102,6 +110,10 @@ export const QualifierPlannedConfiguration = qualifierConfigurationSchema({
     entrypoint: Schema.Literal("QualifierTail"),
   }),
   assets: Schema.Struct({ type: Schema.Literal("assets") }),
+});
+export const QualifierPlannedConfiguration = Schema.Struct({
+  ...QualifierShardPlannedConfiguration.fields,
+  BUNDLE_SHA256: QualifierHash,
 });
 
 export const decodeQualifierPlannedConfiguration = Schema.decodeUnknownSync(

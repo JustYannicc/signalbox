@@ -9,6 +9,11 @@ import { buildCombinedFixture } from "./buildFixture.ts";
 import { decodeCombinedFixtureInput } from "./bundleInput.ts";
 import { fixtureHash, syntheticAssets } from "./syntheticAssets.fixture.ts";
 import { syntheticBundleInput } from "./syntheticBundle.fixture.ts";
+import { validateQualifierFacetEnvironments } from "./validateFacetEnvironments.ts";
+import { deploy3QualifierEnvironmentInputs } from "../qualifierEnvironment.ts";
+import { decodeConfiguration } from "./fixture/configuration.schema.ts";
+import { validateDeploy3Plan } from "../deploymentPlan.ts";
+import { validateDeploy3PlanAssets } from "../validatePlanAssets.ts";
 
 it.effect(
   "combined bundle contains both product facets and pins their compiled source",
@@ -85,6 +90,85 @@ it.effect(
               "utf8",
             ),
           );
+          const configurationHash = fixtureHash(
+            await NodeFSP.readFile(
+              NodePath.join(input.outputDirectory, "assets/qualifier/config.json"),
+            ),
+          );
+          const environment = deploy3QualifierEnvironmentInputs({
+            RUN_ID: config.runId,
+            WORKER_NAME: config.workerName,
+            CONFIG_SHA256: configurationHash,
+          });
+          const boundaries = validateQualifierFacetEnvironments(
+            environment,
+            decodeConfiguration(config),
+          );
+          expect(boundaries.map(({ provider, phase }) => `${provider}/${phase}`)).toEqual([
+            "baseline/fresh",
+            "baseline/restored",
+            "hooks/fresh",
+            "hooks/restored",
+            "codex/fresh",
+            "codex/restored",
+          ]);
+          for (const boundary of boundaries) {
+            if (boundary.provider === "codex") {
+              expect(boundary.environment).toMatchObject({
+                QUALIFIER_CONFIGURATION: { runId: config.runId, workerName: config.workerName },
+              });
+            } else {
+              expect(boundary.environment).toMatchObject({
+                RUN_ID: config.runId,
+                CONFIG_SHA256: configurationHash,
+                QUALIFIER_CLAUDE_VARIANT: boundary.provider,
+              });
+            }
+          }
+          for (const key of [
+            "RUN_ID",
+            "CONFIG_SHA256",
+            "PROGRAM_ASSETS",
+            "QUALIFIER_COMMANDS",
+            "CLAUDE_FIXTURES",
+          ]) {
+            expect(() =>
+              validateQualifierFacetEnvironments(
+                { ...environment, [key]: undefined },
+                decodeConfiguration(config),
+              ),
+            ).toThrow(key);
+          }
+          const stage = config.runId.slice(0, 8);
+          const deployment = validateDeploy3Plan(
+            {
+              runId: stage,
+              owners: ["1070"],
+              startedAtUtc: "2026-10-30T00:00:00.000Z",
+              main: NodePath.join(input.outputDirectory, "qualifier-worker.mjs"),
+              assetsDirectory: NodePath.join(input.outputDirectory, "assets"),
+              compatibilityDate: "2026-10-19",
+              compatibilityFlags: ["nodejs_compat"],
+              vars: {
+                RUN_ID: config.runId,
+                WORKER_NAME: config.workerName,
+                CONFIG_SHA256: configurationHash,
+                BUNDLE_SHA256: fixtureHash(
+                  await NodeFSP.readFile(
+                    NodePath.join(input.outputDirectory, "qualifier-worker.mjs"),
+                  ),
+                ),
+              },
+            },
+            stage,
+          );
+          await expect(validateDeploy3PlanAssets(deployment)).resolves.toHaveLength(6);
+          await expect(
+            validateDeploy3PlanAssets({
+              ...deployment,
+              environment: { ...deployment.environment, CONFIG_SHA256: "a".repeat(64) },
+            }),
+          ).rejects.toThrow("PLAN_CONFIGURATION_HASH_MISMATCH");
           expect(config.claude.runtime.assets.assets.purpose).toBe("qualification");
           expect(config.claude.runtime.seed).toEqual({
             home: "/workspace/.home/claude",

@@ -24,11 +24,12 @@ import { facetState } from "./facetState.ts";
 import { turnBindings } from "./facetBindings.ts";
 import { capture, compareBeforeReadiness } from "./snapshot.ts";
 import { assert, HOME, CODEX_HOME, MODEL_ORIGIN, jsonBytes, sha256, toBase64 } from "./common.ts";
+import {
+  assertQualifierCodexFacetConfiguration,
+  type QualifierCodexFacetConfiguration,
+} from "../facetEnvironmentContract.ts";
 
-type Env = HarnessCProductFacetEnvironment & {
-  HARNESS_PROCESS_LOADER_ID: string;
-  QUALIFIER_CONFIGURATION: { runId: string; workerName: string };
-};
+type Env = HarnessCProductFacetEnvironment & typeof QualifierCodexFacetConfiguration.Type;
 function capability(env: Env) {
   const supplied = env.HARNESS_C_PRODUCT_CAPABILITIES?.[HARNESS_C_PRODUCT_CAPABILITY_KEYS.release];
   assert(
@@ -56,6 +57,7 @@ const buildOptions = (
 ) =>
   Effect.gen(function* () {
     const { env, ctx, facetNonce } = input;
+    assertQualifierCodexFacetConfiguration(env);
     const cap = capability(env);
     const config = yield* Effect.promise(() => cap.hostConfiguration());
     yield* Effect.promise(() =>

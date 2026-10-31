@@ -1,6 +1,16 @@
 export const CLAUDE_PHASES = ["work", "resume", "finish"] as const;
 export type ClaudeStepPhase = (typeof CLAUDE_PHASES)[number];
 export type ClaudeVariant = "baseline" | "hooks";
+export const claudeLane = (rootRunId: string, variant: ClaudeVariant) => {
+  const runId = `${rootRunId}/claude/${variant}`;
+  return {
+    runId,
+    shardOwner: `combined/${runId}`,
+    processId: `official-claude-${variant}`,
+    creationOperationId: `claude-${variant}-create`,
+    resumeOperationId: `claude-${variant}-replace`,
+  };
+};
 export interface ClaudeStep {
   readonly variant: ClaudeVariant;
   readonly requestId: string;

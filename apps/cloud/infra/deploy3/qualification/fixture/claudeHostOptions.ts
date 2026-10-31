@@ -19,7 +19,10 @@ import type { LoadHarnessReleaseOptions } from "../../../../src/harness/HarnessR
 import { QualifierCapabilities } from "./capabilities.ts";
 import { facetState } from "./facetState.ts";
 import { assert } from "./common.ts";
-import type { QualifierEnvironment } from "./environment.ts";
+import {
+  assertQualifierClaudeFacetConfiguration,
+  type QualifierClaudeFacetConfiguration,
+} from "../facetEnvironmentContract.ts";
 import { readConfiguration } from "./configuration.ts";
 import {
   decodeClaudeFacetConfiguration,
@@ -39,7 +42,7 @@ import { sameClaudeReleaseArtifact } from "../../../../src/harnessReleases/Claud
 
 import type { ClaudeAuthorityBindings } from "./claudeAuthorities.ts";
 
-export type ClaudeFacetEnvironment = QualifierEnvironment &
+export type ClaudeFacetEnvironment = typeof QualifierClaudeFacetConfiguration.Type &
   ClaudeAuthorityBindings &
   HarnessCProductFacetEnvironment & {
     readonly HARNESS_PROCESS_LOADER_ID: string;
@@ -124,6 +127,7 @@ function commandLoader(env: ClaudeFacetEnvironment): ChildWorkerLoaderPort {
 }
 
 export async function claudeConfiguration(env: ClaudeFacetEnvironment) {
+  assertQualifierClaudeFacetConfiguration(env);
   const cap = claudeCapability(env);
   const host = await cap.hostConfiguration();
   const assets = env.PROGRAM_ASSETS;

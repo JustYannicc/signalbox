@@ -143,19 +143,41 @@ test("both runtime releases load from full ledger rows through the exact public 
   }
 });
 
-test("resumed loader derives its variant from C's actual selected release and refuses a conflicting label", async () => {
-  const f = await setup();
-  try {
-    for (const variant of ["baseline", "hooks"] as const) {
+test.each(["baseline", "hooks"] as const)(
+  "%s loader preserves its configuration inputs and rejects another variant",
+  async (variant) => {
+    const f = await setup();
+    try {
       const code = {
         compatibilityDate: "2026-10-19",
         mainModule: "qualifier-claude-facet.mjs",
         modules: {},
-        env: { HARNESS_C_TARGET_PREPARED_RELEASE: f.configuration.claude.expected[variant] },
+        env: {
+          HARNESS_C_TARGET_PREPARED_RELEASE: f.configuration.claude.expected[variant],
+          HARNESS_C_PRODUCT_CAPABILITIES: {},
+        },
       };
-      const prepared = await prepareClaudeFacetCode(code, f.configuration, f.fixture.binding);
+      const inputs = {
+        RUN_ID: rootRunId,
+        CONFIG_SHA256: "a".repeat(64),
+        authorities: {
+          access: f.fixture.binding,
+          executor: f.fixture.binding,
+          continuations: f.fixture.binding,
+        },
+      };
+      const prepared = await prepareClaudeFacetCode(
+        code,
+        f.configuration,
+        f.fixture.binding,
+        inputs,
+      );
       expect(prepared.variant).toBe(variant);
-      expect(prepared.code.env.QUALIFIER_CLAUDE_VARIANT).toBe(variant);
+      expect(prepared.code.env).toMatchObject({
+        RUN_ID: rootRunId,
+        CONFIG_SHA256: inputs.CONFIG_SHA256,
+        QUALIFIER_CLAUDE_VARIANT: variant,
+      });
       expect(prepared.code.modules).toHaveProperty("qualifier-claude-implementation.mjs");
       await expect(
         prepareClaudeFacetCode(
@@ -168,10 +190,11 @@ test("resumed loader derives its variant from C's actual selected release and re
           },
           f.configuration,
           f.fixture.binding,
+          inputs,
         ),
       ).rejects.toThrow("SELECTED_VARIANT_MISMATCH");
+    } finally {
+      await f.fixture.dispose();
     }
-  } finally {
-    await f.fixture.dispose();
-  }
-});
+  },
+);
