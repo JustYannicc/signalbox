@@ -98,7 +98,11 @@ export function createHarnessRequestFacetClass<Env>(
           "This product facet cannot observe a verified prepared release.",
         );
       return this.runRequest(
-        Effect.promise(async () => read()),
+        Effect.tryPromise({
+          try: async () => read(),
+          catch: (cause) =>
+            new HarnessRequestFacetError("Harness prepared release query failed.", { cause }),
+        }),
         "Harness prepared release query failed.",
       );
     }

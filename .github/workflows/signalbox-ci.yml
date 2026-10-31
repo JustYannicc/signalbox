@@ -83,6 +83,9 @@ jobs:
       - name: Check fixture Worker exports
         run: node scripts/check-cloud-fixture-worker-exports.mjs
 
+      - name: Check harness failure causes
+        run: node scripts/harness-releases/causeBoundaryGate.ts
+
       # Fails when an upstream merge brings T3 names the codemod would rename.
       - name: Check user-facing names
         run: node scripts/rebrand/rebrand.ts --check

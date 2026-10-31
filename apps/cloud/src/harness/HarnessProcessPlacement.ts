@@ -4,6 +4,7 @@ export { createHarnessProcessFacetAdapter } from "./HarnessProcessFacet.ts";
 export {
   createHarnessProcessFacetEnvironment,
   deterministicShardOwner,
+  runHarnessProcessExecutionShard,
 } from "./processPlacement/execution.ts";
 export { HarnessProcessPlacementError } from "./processPlacement/contracts.ts";
 export {

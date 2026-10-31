@@ -1,13 +1,9 @@
 import { expect, it, vi } from "vite-plus/test";
-import { runHarnessProcessExecutionShard } from "./execution.ts";
-import { openPlacementSession, PlacementCreationFailure } from "./executionLifecycle.ts";
-import type { HarnessProcessExecutionEnvironment } from "./executionEnvironment.ts";
-import { HarnessProcessPlacementError } from "./contracts.ts";
-
-vi.mock("./executionLifecycle.ts", async (original) => ({
-  ...(await original<typeof import("./executionLifecycle.ts")>()),
-  openPlacementSession: vi.fn(),
-}));
+import {
+  runHarnessProcessExecutionShard,
+  HarnessProcessPlacementError,
+  type HarnessProcessExecutionEnvironment,
+} from "../HarnessProcessPlacement.ts";
 
 it("returns the original coded startup cause when placement opening needs recovery", async () => {
   const native = Object.assign(
@@ -24,9 +20,28 @@ it("returns the original coded startup cause when placement opening needs recove
     undefined,
     { cause: native },
   );
-  vi.mocked(openPlacementSession).mockRejectedValueOnce(
-    new PlacementCreationFailure(placement, []),
-  );
+  const claimWriter = vi.fn(async () => undefined);
+  const releaseWriter = vi.fn(async () => undefined);
+  const environment = {
+    RESIDENT_BYTE_LIMIT: "1",
+    PLACEMENT_STORES: {
+      getByName: () => ({
+        claimWriter,
+        releaseWriter,
+        listRecovery: async () => [],
+        load: async () => {
+          throw placement;
+        },
+      }),
+    },
+    HARNESS_THREAD_SUPERVISOR: {
+      getByName: () => ({
+        execute: async () => ({
+          snapshot: { ownerId: "owner", controlIncarnationId: "incarnation", controlEpoch: 1 },
+        }),
+      }),
+    },
+  } as unknown as HarnessProcessExecutionEnvironment;
   const input = {
     runId: "run",
     executionOperationId: "operation",
@@ -58,25 +73,31 @@ it("returns the original coded startup cause when placement opening needs recove
     input,
     "request",
     {} as DurableObjectState,
-    {} as HarnessProcessExecutionEnvironment,
+    environment,
     "shard-incarnation",
   );
 
   expect(result.processes[0]?.status).toBe("recoverable");
+  expect(claimWriter).toHaveBeenCalledOnce();
+  expect(releaseWriter).not.toHaveBeenCalled();
   expect(JSON.parse(JSON.stringify(result.processes[0]?.error))).toMatchObject({
-    kind: "prepare-failed",
+    kind: "recovery-unresolved",
     message: "Existing process state needs repair.",
     cause: {
       cause: {
-        name: "HarnessProcessPlacementError",
-        message: "The process could not open.",
+        name: "ProcessSlotStorageError",
+        message: "Process-slot storage load failed",
         cause: {
-          message: native.message,
-          code: "NATIVE_START",
-          stack: native.stack,
+          name: "HarnessProcessPlacementError",
+          message: "The process could not open.",
           cause: {
-            code: "MCP_HANDSHAKE",
-            cause: { message: "Fixture connection closed", stack: expect.any(String) },
+            message: native.message,
+            code: "NATIVE_START",
+            stack: native.stack,
+            cause: {
+              code: "MCP_HANDSHAKE",
+              cause: { message: "Fixture connection closed", stack: expect.any(String) },
+            },
           },
         },
       },

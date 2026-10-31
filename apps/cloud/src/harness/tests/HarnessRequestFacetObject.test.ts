@@ -108,8 +108,10 @@ it.each(["throw", "reject"] as const)(
         throw new Error("Missing typed RPC failure");
       expect(failure.cause).toMatchObject([
         {
-          _tag: "Die",
-          defect: { message: original.message, code: "RELEASE_READ", stack: original.stack },
+          _tag: "Fail",
+          error: {
+            cause: { message: original.message, code: "RELEASE_READ", stack: original.stack },
+          },
         },
       ]);
     } finally {
