@@ -64,6 +64,14 @@ export interface ClaudeSdkQueryPreCleanupDiagnostic {
 }
 
 export interface ClaudeSdkQueryRunnerOptions {
+  readonly onProgress?: (
+    stage:
+      | "sdk-initializing"
+      | "sdk-initialized"
+      | "mcp-initializing"
+      | "mcp-registration-acknowledged"
+      | "prompt-offered",
+  ) => void;
   /** Opt in to fail-closed initial MCP registration for native host bindings. */
   readonly requireMcpServerRegistration?: boolean;
   /** Replace provider-derived servers at the native Query.open boundary. */
@@ -339,15 +347,19 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
             restore(
               Effect.gen(function* () {
                 phase = "initialization";
+                yield* Effect.sync(() => options.onProgress?.("sdk-initializing"));
                 yield* Effect.tryPromise({
                   try: () => queryRuntime.initializationResult(),
                   catch: (cause) => queryRunnerError(cause, "initializationResult"),
                 });
+                yield* Effect.sync(() => options.onProgress?.("sdk-initialized"));
                 if (mcpServers !== undefined) {
                   phase = "mcp-registration";
+                  yield* Effect.sync(() => options.onProgress?.("mcp-initializing"));
                   if (options.requireMcpServerRegistration === true) {
                     yield* installMcpServers(queryRuntime, mcpServers, mcpSignal);
                     mcpConfigured = true;
+                    yield* Effect.sync(() => options.onProgress?.("mcp-registration-acknowledged"));
                   } else {
                     // Default provider sessions keep their established warning-only policy.
                     // Error texts and mcp_status can echo headers, so only server names are logged.
@@ -372,6 +384,10 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
                         threadId: input.threadId,
                         servers: failed,
                       });
+                    } else {
+                      yield* Effect.sync(() =>
+                        options.onProgress?.("mcp-registration-acknowledged"),
+                      );
                     }
                   }
                 }
@@ -488,6 +504,7 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
                   )
                 : Queue.offer(promptQueue, message).pipe(
                     Effect.asVoid,
+                    Effect.tap(() => Effect.sync(() => options.onProgress?.("prompt-offered"))),
                     Effect.tap(() =>
                       logProtocolEvent({
                         direction: "outgoing",
@@ -518,6 +535,7 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
             }
             mcpConfigurationInFlight = true;
             mcpConfigured = false;
+            options.onProgress?.("mcp-initializing");
             return Effect.uninterruptibleMask((restore) =>
               mcpLock
                 .withPermits(1)(
@@ -533,6 +551,7 @@ export function makeClaudeAgentSdkQueryRunner(options: ClaudeSdkQueryRunnerOptio
                             )
                           : Effect.sync(() => {
                               mcpConfigured = true;
+                              options.onProgress?.("mcp-registration-acknowledged");
                             }),
                       ),
                     ),

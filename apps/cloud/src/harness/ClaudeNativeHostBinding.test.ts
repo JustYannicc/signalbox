@@ -61,3 +61,27 @@ it("completes a supported SDK result through the public native binding", () =>
 it("rejects SDK success after a caught runtime failure", () => runIsolated("result-failure"));
 it("rejects SDK stream completion after a caught runtime failure", () =>
   runIsolated("end-failure"));
+
+it("keeps denied tool gates and unfinished MCP handshakes distinct through the public binding", () =>
+  new Promise<void>((resolve, reject) => {
+    const worker = new NodeWorkerThreads.Worker(
+      new URL("./node/tests/claudeTurnProgressWorker.ts", import.meta.url),
+    );
+    onTestFinished(async () => {
+      await worker.terminate();
+    });
+    let result: unknown;
+    worker.on("message", (message: unknown) => {
+      result = message;
+    });
+    worker.on("error", reject);
+    worker.on("exit", (code) => {
+      try {
+        expect(code).toBe(0);
+        expect(result).toEqual({ ok: true });
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }));
