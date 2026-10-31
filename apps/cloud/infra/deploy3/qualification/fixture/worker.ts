@@ -52,9 +52,9 @@ export default class QualifierWorker extends WorkerEntrypoint<QualifierEnvironme
     return await proof(this.env).guardDrain(invocationIds);
   }
   override async fetch(request: Request) {
+    assertQualifierRuntimeConfiguration(this.env);
     let deployment;
     try {
-      assertQualifierRuntimeConfiguration(this.env);
       deployment = requireDeploy3Armed(this.env);
     } catch {
       return new Response("Deployment is not armed", { status: 503 });
