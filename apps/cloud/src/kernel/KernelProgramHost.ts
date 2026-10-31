@@ -239,7 +239,7 @@ export class KernelProgramHost {
       if (result.status !== "would_block") return result;
       try {
         const woken = await this.wakes.wait(result.wakeToken, signal);
-        if (woken.status !== "ok") return kernelError("CANCELLED", woken.error.message);
+        if (woken.status !== "ok") return woken;
       } finally {
         this.wakes.release(result.wakeToken);
       }

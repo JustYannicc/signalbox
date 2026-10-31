@@ -308,7 +308,7 @@ async function wait(process: BashProcess, pid: number, options: number) {
     if (result.status !== "would_block") return result;
     try {
       const woke = await context.wakes.wait(result.wakeToken, context.signal);
-      if (woke.status !== "ok") return kernelError("CANCELLED", woke.error.message);
+      if (woke.status !== "ok") return woke;
     } finally {
       context.wakes.release(result.wakeToken);
     }
