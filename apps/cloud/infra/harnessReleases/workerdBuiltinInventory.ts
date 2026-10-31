@@ -9,6 +9,7 @@ import { build } from "esbuild";
 import { createTestHarness } from "wrangler";
 import type { NodeBuiltinFunctionRequest } from "../../src/harness/NodeBuiltinInventory.ts";
 import { COMPATIBILITY_DATE } from "../stage.ts";
+import { requireWorkerdLaunchAdmission } from "./workerdLaunchAdmission.ts";
 
 const flags = ["legacy_module_registry", "nodejs_compat"];
 const hash = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
@@ -23,6 +24,7 @@ function readText(object: object, name: string): string {
 export async function captureWorkerdBuiltinInventory(
   requests: readonly NodeBuiltinFunctionRequest[],
 ) {
+  await requireWorkerdLaunchAdmission();
   if (process.env.MINIFLARE_WORKERD_PATH) throw new Error("NODE_BUILTIN_NATIVE_BINARY_OVERRIDE");
   const require = NodeModule.createRequire(new URL("../../package.json", import.meta.url));
   const wranglerPath = require.resolve("wrangler/package.json");
@@ -82,6 +84,8 @@ export default {async fetch(){
         compatibility_flags: flags,
       }),
     );
+    // Bundling can outlast the reservation, so recheck before Wrangler starts Workerd.
+    await requireWorkerdLaunchAdmission();
     await harness.update({ workers: [{ configPath }] });
     await harness.listen();
     const response = await harness.fetch("/");

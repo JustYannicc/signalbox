@@ -260,6 +260,9 @@ jobs:
       - name: Test Runner inventory provisioning
         run: node --test .github/scripts/runner-machine-inventory.test.cjs
 
+      - name: Test Workerd admission lifecycle
+        run: node --test .github/scripts/workerd-admission.test.cjs
+
       - name: Download pinned Runner machine inventory
         id: runner_inventory
         if: ${{ needs.cloud_migrations.outputs.test_packages == '' || contains(needs.cloud_migrations.outputs.test_packages, '@signalbox/cloud') }}
@@ -269,6 +272,10 @@ jobs:
         run: |
           node .github/scripts/runner-machine-inventory.cjs download \
             --output "$RUNNER_TEMP/runner-machine-inventory/runner.json"
+
+      - name: Reserve this runner for Workerd tests
+        id: workerd_admission
+        run: node .github/scripts/workerd-admission.cjs reserve
 
       - name: Test
         env:
@@ -306,6 +313,10 @@ jobs:
             if (( ${#filters[@]} == 0 )); then exit; fi
           fi
           vp run --parallel --concurrency-limit "$TEST_PACKAGE_RUNNERS" "${filters[@]}" test
+
+      - name: Release this runner's Workerd reservation
+        if: ${{ always() && steps.workerd_admission.outcome == 'success' }}
+        run: node .github/scripts/workerd-admission.cjs release
 
   test_web:
     name: Test Web
