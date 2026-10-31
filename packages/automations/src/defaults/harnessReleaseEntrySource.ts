@@ -1,4 +1,8 @@
-export const HARNESS_RELEASE_ENTRY_SOURCE = `export default workflow(async (w, _input: unknown, trigger: { at: string }) => {
+let source: string | undefined;
+
+export const getHarnessReleaseEntrySource = () => {
+  if (source === undefined)
+    source = `export default workflow(async (w, _input: unknown, trigger: { at: string }) => {
   const candidates: Candidate[] = [];
   for (const source of NPM_PACKAGES) {
     const packagePath = source.packageName.replace("/", "%2f");
@@ -89,3 +93,5 @@ export const HARNESS_RELEASE_ENTRY_SOURCE = `export default workflow(async (w, _
   };
 });
 `;
+  return source;
+};

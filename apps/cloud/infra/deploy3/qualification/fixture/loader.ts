@@ -3,15 +3,15 @@ import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../../src/harness/Harne
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
 import { observeCommandInvocation } from "./commandObservation.ts";
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { createCompiledChildWorkerLoader } from "../../../../src/computer/CompiledChildWorkerLoader.ts";
+import { createAssetChildWorkerLoader } from "../../../../src/computer/CompiledChildWorkerLoader.ts";
 import type { ChildWorkerLoaderPort } from "../../../../src/computer/WorkerLoaderDispatch.ts";
 import type { ChildWorkerInvocation } from "../../../../src/computer/ChildWorkerProgram.ts";
 import { observeWorkerCode, type ObserverLoaderPin } from "./loaderObservation.ts";
 import type { QualifierEnvironment } from "./environment.ts";
 import { proof } from "./environment.ts";
-import { readConfiguration } from "./configuration.ts";
+import { readAsset, readConfiguration } from "./configuration.ts";
 import { assert, sha256 } from "./common.ts";
-import { COMMAND_REGISTRY } from "./programRegistry.ts";
+import { COMMAND_ASSETS } from "./programRegistry.ts";
 import { prepareClaudeFacetCode } from "../prepareClaudeFacet.ts";
 
 function facetPin(
@@ -202,7 +202,11 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
     };
     // @effect-diagnostics-next-line cryptoRandomUUID:off - The platform command boundary assigns the raw trace identity before entering the child.
     const invocationId = crypto.randomUUID();
-    return await createCompiledChildWorkerLoader(loader, COMMAND_REGISTRY).run(
+    return await createAssetChildWorkerLoader(loader, async (hash) => {
+      const asset = COMMAND_ASSETS.get(hash);
+      if (asset === undefined) return undefined;
+      return (await readAsset(this.env.PROGRAM_ASSETS, { ...asset, sha256: hash })).buffer;
+    }).run(
       { ...input, command: observeCommandInvocation(input.command, phase, invocationId) },
       target,
     );

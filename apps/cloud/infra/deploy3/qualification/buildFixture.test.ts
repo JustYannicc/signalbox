@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { dataForDriver } from "./runnerTurn.fixture.ts";
 import { buildCombinedFixture } from "./buildFixture.ts";
+import { decodeCombinedFixtureInput } from "./bundleInput.ts";
 import { fixtureHash, syntheticAssets } from "./syntheticAssets.fixture.ts";
 import { syntheticBundleInput } from "./syntheticBundle.fixture.ts";
 
@@ -17,7 +18,29 @@ it.effect(
       yield* Effect.promise(async () => {
         const f = await syntheticAssets();
         try {
-          const input = await syntheticBundleInput(f, data);
+          const base = await syntheticBundleInput(f, data);
+          const command = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
+          const commandPath = NodePath.join(f.root, "command.wasm");
+          await NodeFSP.writeFile(commandPath, command);
+          const commandHash = fixtureHash(command);
+          const configuration = JSON.parse(
+            await NodeFSP.readFile(base.codex.configuration.path, "utf8"),
+          );
+          configuration.commandRegistryHashes = [commandHash];
+          const configurationBytes = Buffer.from(JSON.stringify(configuration));
+          await NodeFSP.writeFile(base.codex.configuration.path, configurationBytes);
+          const input = decodeCombinedFixtureInput({
+            ...base,
+            codex: {
+              ...base.codex,
+              configuration: {
+                path: base.codex.configuration.path,
+                bytes: configurationBytes.length,
+                sha256: fixtureHash(configurationBytes),
+              },
+              commands: [{ path: commandPath, bytes: command.length, sha256: commandHash }],
+            },
+          });
           const result = await buildCombinedFixture(input);
           expect(result.classification).toBe("synthetic");
           expect(result.nativeStarted).toBe(false);
@@ -37,6 +60,23 @@ it.effect(
           ]);
           for (const pin of result.outputs) {
             const bytes = await NodeFSP.readFile(NodePath.join(input.outputDirectory, pin.path));
+            expect(fixtureHash(bytes)).toBe(pin.sha256);
+          }
+          const workerOutputs = Object.values(result.metafiles["qualifier-worker"]!.outputs);
+          expect(
+            workerOutputs
+              .flatMap((output) => output.imports)
+              .filter((module) => module.path.endsWith(".wasm")),
+          ).toEqual([]);
+          for (const pin of input.codex.commands) {
+            const bytes = await NodeFSP.readFile(
+              NodePath.join(
+                input.outputDirectory,
+                "assets/qualifier/commands",
+                `${pin.sha256}.wasm`,
+              ),
+            );
+            expect(bytes.byteLength).toBe(pin.bytes);
             expect(fixtureHash(bytes)).toBe(pin.sha256);
           }
           const config = JSON.parse(

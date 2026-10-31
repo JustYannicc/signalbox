@@ -1,9 +1,9 @@
 import { compileWorkflow } from "@signalbox/automation-compiler/compileWorkflow";
 import { BUILT_IN_AUTOMATIONS } from "@signalbox/automations/defaults/registry";
-import { HARNESS_RELEASE_WATCH } from "@signalbox/automations/defaults/harnessRelease";
-import { HARNESS_RELEASE_DISCOVERY_SOURCE } from "@signalbox/automations/defaults/harnessReleaseDiscoverySource";
-import { HARNESS_RELEASE_EXECUTION_SOURCE } from "@signalbox/automations/defaults/harnessReleaseExecutionSource";
-import { HARNESS_RELEASE_POLICY_SOURCE } from "@signalbox/automations/defaults/harnessReleasePolicySource";
+import { getHarnessReleaseWatchSource } from "@signalbox/automations/defaults/harnessRelease";
+import { getHarnessReleaseDiscoverySource } from "@signalbox/automations/defaults/harnessReleaseDiscoverySource";
+import { getHarnessReleaseExecutionSource } from "@signalbox/automations/defaults/harnessReleaseExecutionSource";
+import { getHarnessReleasePolicySource } from "@signalbox/automations/defaults/harnessReleasePolicySource";
 import {
   canPromoteHarnessRelease,
   isVerifiedHarnessRelease,
@@ -18,6 +18,11 @@ import {
   type HarnessReleaseCandidate,
 } from "@signalbox/automations/defaults/harnessReleasePolicy";
 import { describe, expect, it } from "@effect/vitest";
+
+const HARNESS_RELEASE_WATCH = getHarnessReleaseWatchSource();
+const HARNESS_RELEASE_DISCOVERY_SOURCE = getHarnessReleaseDiscoverySource();
+const HARNESS_RELEASE_EXECUTION_SOURCE = getHarnessReleaseExecutionSource();
+const HARNESS_RELEASE_POLICY_SOURCE = getHarnessReleasePolicySource();
 
 const candidate = (
   provider: HarnessReleaseCandidate["provider"],

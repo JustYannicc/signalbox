@@ -620,12 +620,20 @@ function proofStatusOf(value: unknown) {
   return value === "green" || value === "red" || value === "pending" ? value : null;
 }
 
-export const HARNESS_RELEASE_EXECUTION_SOURCE = [
-  workflowFunctionSource(workflowRun),
-  workflowFunctionSource(verifiedWorkflowArtifact),
-  workflowFunctionSource(updateReleaseThread),
-  workflowFunctionSource(rememberPending),
-  workflowFunctionSource(handoffRedProof),
-  workflowFunctionSource(proofStatusOf),
-  workflowFunctionSource(runRelease),
-].join("\n");
+const buildSource = () =>
+  [
+    workflowFunctionSource(workflowRun),
+    workflowFunctionSource(verifiedWorkflowArtifact),
+    workflowFunctionSource(updateReleaseThread),
+    workflowFunctionSource(rememberPending),
+    workflowFunctionSource(handoffRedProof),
+    workflowFunctionSource(proofStatusOf),
+    workflowFunctionSource(runRelease),
+  ].join("\n");
+
+let source: string | undefined;
+
+export const getHarnessReleaseExecutionSource = () => {
+  if (source === undefined) source = buildSource();
+  return source;
+};

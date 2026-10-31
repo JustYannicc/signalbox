@@ -81,14 +81,16 @@ export const acceptCompiled = (
 export const layer = Layer.effectContext(
   Effect.sync(() => {
     const staged = new Map<string, CompiledWorkflow>();
-    const builtIns = new Map(
-      BUILT_IN_AUTOMATIONS.flatMap((builtIn) => {
-        const compiled = PRECOMPILED_BUILT_INS[builtIn.slug];
-        return compiled ? [[builtIn.source, compiled] as const] : [];
-      }),
-    );
+    let builtIns: Map<string, CompiledWorkflow> | undefined;
+    const builtInsFor = () =>
+      (builtIns ??= new Map(
+        BUILT_IN_AUTOMATIONS.flatMap((builtIn) => {
+          const compiled = PRECOMPILED_BUILT_INS[builtIn.slug];
+          return compiled ? [[builtIn.source, compiled] as const] : [];
+        }),
+      ));
     const compile = (source: string) => {
-      const compiled = staged.get(source) ?? builtIns.get(source);
+      const compiled = staged.get(source) ?? builtInsFor().get(source);
       return compiled ? ({ ok: true, workflow: compiled } as const) : NOT_COMPILED;
     };
     return Context.make(AutomationCompiler, AutomationCompiler.of({ compile })).pipe(

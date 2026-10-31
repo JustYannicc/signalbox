@@ -2,7 +2,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { requireWorkerdLaunchAdmission } from "./workerdLaunchAdmission.ts";
+import {
+  requireWorkerdLaunchAdmission,
+  requireWorkerdLaunchAdmissionSync,
+} from "./workerdLaunchAdmission.ts";
 import { captureWorkerdBuiltinInventory } from "./workerdBuiltinInventory.ts";
 
 const createTestHarness = vi.hoisted(() =>
@@ -102,5 +105,12 @@ describe("Workerd launch admission", () => {
     await requireWorkerdLaunchAdmission();
     await NodeFSP.writeFile(path, JSON.stringify(reserved({ reservationState: "RELEASED" })));
     await expect(requireWorkerdLaunchAdmission()).rejects.toThrow("WORKERD_LAUNCH_REFUSED");
+  });
+
+  it("refuses a release synchronously at the actual child spawn seam", async () => {
+    const path = await activeFile(reserved());
+    expect(requireWorkerdLaunchAdmissionSync()).toBeUndefined();
+    await NodeFSP.writeFile(path, JSON.stringify(reserved({ reservationState: "RELEASED" })));
+    expect(() => requireWorkerdLaunchAdmissionSync()).toThrow("WORKERD_LAUNCH_REFUSED");
   });
 });

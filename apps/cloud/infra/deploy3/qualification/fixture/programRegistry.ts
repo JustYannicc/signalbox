@@ -1,1 +1,1 @@
-export { COMMAND_REGISTRY } from "signalbox:deploy3-command-registry";
+export { COMMAND_ASSETS } from "signalbox:deploy3-command-registry";
