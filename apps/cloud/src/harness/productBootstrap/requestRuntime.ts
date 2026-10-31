@@ -20,6 +20,7 @@ export function createHarnessCProductRequestRuntime<G>(input: {
   readonly session: HarnessHostSession<G>;
 }): Effect.Effect<HarnessFacetRequestRuntime, HarnessRequestFacetError, Scope.Scope> {
   const options: Omit<HarnessRequestTurnOptions<G>, "restore"> = {
+    ...(input.turnBindings.deadline === undefined ? {} : { deadline: input.turnBindings.deadline }),
     readInput: (reference, context) =>
       Effect.gen(function* () {
         const turn = yield* input.turnBindings.readTurn(reference, context);

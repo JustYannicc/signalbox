@@ -23,6 +23,8 @@ export interface HarnessRequestTurnInput<G> {
 export type HarnessRequestTurnTerminal = Extract<RunnerItem, { readonly kind: "provider" }>;
 
 export interface HarnessRequestTurnOptions<G> {
+  /** Bound synchronous callers without imposing a duration limit on ordinary agent turns. */
+  readonly deadline?: { readonly stageIdleMs: number; readonly totalMs: number };
   /** Restore committed native and filesystem bytes before returning host construction options. */
   readonly restore: (
     checkpoint: HarnessRequestCheckpoint,

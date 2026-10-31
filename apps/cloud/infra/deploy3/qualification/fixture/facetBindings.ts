@@ -55,6 +55,10 @@ export function turnBindings(
     return { checkpoint: refs, filesCheckpoint };
   }
   return {
+    deadline: {
+      stageIdleMs: 45_000,
+      totalMs: 180_000,
+    },
     readTurn: (reference) =>
       attempt("Frozen turn input could not be read", async () =>
         decodeTurn(decoder.decode(await capability.read(reference))),

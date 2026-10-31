@@ -1,6 +1,7 @@
 import type { OrchestrationV2ProviderThread } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
+import { observeClaudeMcpResponse } from "./claude/McpProgress.ts";
 import {
   CLAUDE_PROVIDER,
   type ClaudeAdapterV2Options,
@@ -275,7 +276,9 @@ export function makeClaudeNativeHostBinding(
           ...input,
           modelTransport: (request: Request) =>
             new URL(request.url).origin === mcp.origin
-              ? mcp.fetch(request)
+              ? mcp
+                  .fetch(request)
+                  .then((response) => observeClaudeMcpResponse(response, reporter.turnMilestone))
               : input.modelTransport(request),
         };
         return isolate.open(routedInput, reporter).pipe(

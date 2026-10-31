@@ -49,6 +49,7 @@ export interface HarnessCProductResumeBindings {
 }
 
 export interface HarnessCProductTurnBindings<G> {
+  readonly deadline?: HarnessRequestTurnOptions<G>["deadline"];
   readonly readTurn: (
     reference: HarnessRunArtifact,
     context: HarnessFacetRequestContext,
