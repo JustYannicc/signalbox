@@ -14,6 +14,7 @@ import {
   type HarnessRuntimeReporter,
 } from "../HarnessProcessLifetime.ts";
 import type { TurnState } from "./state.ts";
+import { encodeHarnessTurnMilestone, type HarnessTurnStage } from "../HarnessTurnProgress.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.toCodecJson(ProviderAdapterV2Event));
 const eventRecord = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
@@ -26,6 +27,8 @@ export const makeAdapterFailure = (
   const controller = new AbortController();
   let failure: HarnessError | undefined;
   let omissionFailure: HarnessError | undefined;
+  let milestoneTurn: TurnState["active"];
+  const milestones = new Set<HarnessTurnStage>();
   const record = (error: HarnessError) => {
     const recorded = (failure ??= error);
     controller.abort(recorded);
@@ -36,6 +39,22 @@ export const makeAdapterFailure = (
     Queue.failCauseUnsafe(output, Cause.fail(recorded));
   };
   const reporter: HarnessRuntimeReporter = {
+    turnMilestone: (stage) => {
+      const current = state.active;
+      if (current === undefined || failure !== undefined) return;
+      if (milestoneTurn !== current) {
+        milestoneTurn = current;
+        milestones.clear();
+      }
+      if (milestones.has(stage)) return;
+      milestones.add(stage);
+      Queue.offerUnsafe(output, {
+        kind: "log",
+        runId: current.input.runId,
+        level: "info",
+        message: encodeHarnessTurnMilestone(stage),
+      });
+    },
     releaseModuleOmitted: (event, omission = makeReleaseModuleOmittedFailure(event)) => {
       const current = state.active;
       Queue.offerUnsafe(output, {

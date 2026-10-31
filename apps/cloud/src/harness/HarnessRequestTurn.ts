@@ -8,3 +8,4 @@ export type {
   HarnessRequestTurnOptions,
   HarnessRequestTurnTerminal,
 } from "./requestTurn/contracts.ts";
+export { createHarnessTurnStageDeadline } from "./requestTurn/stages.ts";

@@ -3,6 +3,7 @@ import type { ClaudeSdkQuery } from "@signalbox/provider-claude/ClaudeSdkQueryRu
 export function gateClaudeSdkResults(
   query: ClaudeSdkQuery,
   assertCompatibility: () => Promise<void>,
+  observe?: (message: Exclude<Awaited<ReturnType<ClaudeSdkQuery["next"]>>["value"], void>) => void,
 ): ClaudeSdkQuery {
   let guardedQuery: ClaudeSdkQuery;
   guardedQuery = new Proxy(query, {
@@ -17,6 +18,7 @@ export function gateClaudeSdkResults(
       if (property === "next")
         return async (...args: Parameters<ClaudeSdkQuery["next"]>) => {
           const result = await target.next(...args);
+          if (!result.done) observe?.(result.value);
           if (result.done || result.value.type === "result") await assertCompatibility();
           return result;
         };

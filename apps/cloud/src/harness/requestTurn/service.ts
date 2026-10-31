@@ -14,6 +14,11 @@ import type { HarnessRequestTurnOptions, HarnessRequestTurnTerminal } from "./co
 import { observeEvent, type RequestEvents } from "./events.ts";
 import { createRequestGate, failure } from "./gate.ts";
 import { gateHost } from "./host.ts";
+import { createHarnessTurnStageDeadline, type HarnessTurnStageDeadline } from "./stages.ts";
+
+import { parseHarnessTurnMilestone } from "../HarnessTurnProgress.ts";
+
+type ActiveRequestEvents = RequestEvents & { readonly deadline: HarnessTurnStageDeadline };
 
 const turnCodec = Schema.fromJsonString(Schema.toCodecJson(RunnerTurn));
 const encodeTurn = Schema.encodeEffect(turnCodec);
@@ -75,7 +80,7 @@ const createPreparedHarnessRequestRuntime = <G>(
   gate: Effect.Success<typeof createRequestGate>,
 ): Effect.Effect<HarnessFacetRequestRuntime, HarnessRequestFacetError> =>
   Effect.gen(function* () {
-    let active: RequestEvents | undefined;
+    let active: ActiveRequestEvents | undefined;
     const broken = yield* Deferred.make<never, HarnessRequestFacetError>();
     yield* session.events.pipe(
       Stream.rechunk(1),
@@ -86,9 +91,14 @@ const createPreparedHarnessRequestRuntime = <G>(
             if (work === undefined)
               return yield* Effect.fail(failure("Harness emitted productive work while idle."));
             const terminal = yield* observeEvent(item, work);
+            const stage = item.kind === "log" ? parseHarnessTurnMilestone(item.message) : undefined;
+            const newStage = stage !== undefined && !work.deadline.hasSeen(stage);
             const reference = yield* gate.admit(() => options.onEvent(item, current));
             yield* gate.admit(() => options.verify(reference, "progress"));
-            yield* gate.admit(() => current.progress("event", reference));
+            yield* gate.admit(() =>
+              current.progress(newStage ? `stage:${stage}` : "event", reference),
+            );
+            if (stage !== undefined) yield* work.deadline.accept(stage);
             if (terminal) yield* Deferred.succeed(work.done, work.terminal!);
           }),
         ),
@@ -107,51 +117,59 @@ const createPreparedHarnessRequestRuntime = <G>(
             catch: (cause) => failure("Harness has an active request.", cause),
           });
           return yield* Effect.gen(function* () {
-            yield* gate.admit(() => options.verify(reference, "input"));
-            const supplied = yield* gate.admit(() => options.readInput(reference, current));
-            const turn = yield* encodeTurn(supplied.turn).pipe(
-              Effect.flatMap(decodeTurn),
-              Effect.mapError((cause) => failure("Harness turn artifact is invalid.", cause)),
+            const deadline = yield* createHarnessTurnStageDeadline(
+              () => gate.leave(),
+              options.deadline,
             );
-            const done = yield* Deferred.make<
-              HarnessRequestTurnTerminal,
-              HarnessRequestFacetError
-            >();
-            active = { turn, done };
-            yield* gate
-              .admit(() =>
-                session.turn({
-                  turn,
-                  access: {
-                    ...supplied.access,
-                    signal: AbortSignal.any([
-                      supplied.access.signal,
-                      current.signal,
-                      gate.signal(),
-                    ]),
-                  },
-                }),
-              )
-              .pipe(Effect.mapError(atStage("Canonical Harness turn failed to start.")));
-            const terminal = yield* Deferred.await(done);
-            gate.seal();
-            yield* gate.drain;
-            const saved = yield* gate
-              .admit(() => session.export())
-              .pipe(Effect.mapError(atStage("Canonical Harness checkpoint export failed.")));
-            const committed = yield* gate.admit(() => options.writeCheckpoint(saved, current));
-            yield* gate.admit(() => options.verify(committed.native, "native"));
-            yield* gate.admit(() => options.verify(committed.filesystem, "filesystem"));
-            const result = yield* gate.admit(() =>
-              options.writeResult({ turn, terminal }, current),
+            return yield* Effect.gen(function* () {
+              yield* gate.admit(() => options.verify(reference, "input"));
+              const supplied = yield* gate.admit(() => options.readInput(reference, current));
+              const turn = yield* encodeTurn(supplied.turn).pipe(
+                Effect.flatMap(decodeTurn),
+                Effect.mapError((cause) => failure("Harness turn artifact is invalid.", cause)),
+              );
+              const done = yield* Deferred.make<
+                HarnessRequestTurnTerminal,
+                HarnessRequestFacetError
+              >();
+              active = { turn, done, deadline };
+              yield* gate
+                .admit(() =>
+                  session.turn({
+                    turn,
+                    access: {
+                      ...supplied.access,
+                      signal: AbortSignal.any([
+                        supplied.access.signal,
+                        current.signal,
+                        gate.signal(),
+                      ]),
+                    },
+                  }),
+                )
+                .pipe(Effect.mapError(atStage("Canonical Harness turn failed to start.")));
+              const terminal = yield* Deferred.await(done);
+              gate.seal();
+              yield* gate.drain;
+              const saved = yield* gate
+                .admit(() => session.export())
+                .pipe(Effect.mapError(atStage("Canonical Harness checkpoint export failed.")));
+              const committed = yield* gate.admit(() => options.writeCheckpoint(saved, current));
+              yield* gate.admit(() => options.verify(committed.native, "native"));
+              yield* gate.admit(() => options.verify(committed.filesystem, "filesystem"));
+              const result = yield* gate.admit(() =>
+                options.writeResult({ turn, terminal }, current),
+              );
+              yield* gate.admit(() => options.verify(result, "result"));
+              yield* gate.drain;
+              const status = terminal.event.status === "completed" ? "completed" : "failed";
+              return { status, result, checkpoint: committed } as const;
+            }).pipe(
+              (effect) => gate.withRequest(effect, current),
+              Effect.raceFirst(Deferred.await(broken)),
+              Effect.raceFirst(deadline.timeout),
             );
-            yield* gate.admit(() => options.verify(result, "result"));
-            yield* gate.drain;
-            const status = terminal.event.status === "completed" ? "completed" : "failed";
-            return { status, result, checkpoint: committed } as const;
           }).pipe(
-            (effect) => gate.withRequest(effect, current),
-            Effect.raceFirst(Deferred.await(broken)),
             Effect.ensuring(
               Effect.sync(() => {
                 active = undefined;

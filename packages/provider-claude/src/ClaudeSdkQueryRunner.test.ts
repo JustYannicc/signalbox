@@ -62,6 +62,7 @@ describe("portable Claude SDK query lifecycle", () => {
         let registered: unknown;
         let closed = false;
         const readinessOrder: string[] = [];
+        const progress: string[] = [];
         const query = fakeQuery();
         query.initializationResult = async () => {
           readinessOrder.push("ready");
@@ -86,6 +87,7 @@ describe("portable Claude SDK query lifecycle", () => {
           forkSession: async () => ({ sessionId: "forked-session" }),
           subagentLaunchToolUseId: async () => null,
           protocolLogger: () => (event) => Effect.sync(() => void events.push(event)),
+          onProgress: (stage) => progress.push(stage),
         });
         const mcpServers = {
           signalbox: {
@@ -99,6 +101,12 @@ describe("portable Claude SDK query lifecycle", () => {
         assert.deepEqual(launchOptions, options);
         assert.deepEqual(registered, mcpServers);
         assert.deepEqual(readinessOrder, ["ready", "register-mcp"]);
+        assert.deepEqual(progress, [
+          "sdk-initializing",
+          "sdk-initialized",
+          "mcp-initializing",
+          "mcp-registration-acknowledged",
+        ]);
         assert.deepEqual(events[0], {
           direction: "outgoing",
           stage: "decoded",
@@ -108,6 +116,13 @@ describe("portable Claude SDK query lifecycle", () => {
         const iterator = prompt[Symbol.asyncIterator]();
         const message = makeClaudeUserMessage({ text: "hello" });
         yield* session.offer(message);
+        assert.deepEqual(progress, [
+          "sdk-initializing",
+          "sdk-initialized",
+          "mcp-initializing",
+          "mcp-registration-acknowledged",
+          "prompt-offered",
+        ]);
         assert.deepEqual(yield* Effect.promise(() => iterator.next()), {
           value: message,
           done: false,

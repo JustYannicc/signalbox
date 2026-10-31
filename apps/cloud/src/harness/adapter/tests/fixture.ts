@@ -26,6 +26,7 @@ import type {
 } from "../../HarnessProcessLifetime.ts";
 
 import { dataForDriver } from "./data.ts";
+import type { HarnessTurnStage } from "../../HarnessTurnProgress.ts";
 
 export const fixtureForDriver = (selectedDriver: ProviderDriverKind) =>
   Effect.gen(function* () {
@@ -301,6 +302,11 @@ export const fixtureForDriver = (selectedDriver: ProviderDriverKind) =>
         if (runtimeReporter === undefined)
           throw new Error("Harness runtime reporter is unavailable");
         runtimeReporter.releaseModuleOmitted(event);
+      },
+      reportTurnMilestone(stage: HarnessTurnStage) {
+        if (runtimeReporter?.turnMilestone === undefined)
+          throw new Error("Harness turn milestone reporter is unavailable");
+        runtimeReporter.turnMilestone(stage);
       },
     };
   });

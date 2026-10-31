@@ -86,7 +86,10 @@ const Base = createHarnessCProductClaudeFacetClass<Env, unknown>({
       }),
   },
   buildTurnBindings: ({ env, ctx }) =>
-    Effect.succeed(turnBindings(ctx, claudeCapability(env), facetCheckpointLineage(ctx))),
+    Effect.succeed({
+      ...turnBindings(ctx, claudeCapability(env), facetCheckpointLineage(ctx)),
+      deadline: { stageIdleMs: 45_000, totalMs: 180_000 },
+    }),
 });
 
 export class ClaudeFacet extends Base {
