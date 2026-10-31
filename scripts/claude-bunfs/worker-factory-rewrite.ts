@@ -25,14 +25,16 @@ function isReferenceCallCallee(node: ts.Identifier): boolean {
   );
 }
 
+export type LexicalReplacement = string | { readonly expression: string };
+
 export function rewriteLexicalReferences(
   source: string,
-  replacements: ReadonlyMap<string, string>,
+  replacements: ReadonlyMap<string, LexicalReplacement>,
   filename = "worker-factory.js",
 ): string {
   if (!replacements.size) return source;
   const context = createContext(source, filename);
-  const importedSymbols = new Map<ts.Symbol, string>();
+  const importedSymbols = new Map<ts.Symbol, LexicalReplacement>();
   for (const statement of context.file.statements) {
     if (!ts.isImportDeclaration(statement) || !statement.importClause) continue;
     const clause = statement.importClause;
@@ -61,11 +63,12 @@ export function rewriteLexicalReferences(
       const symbol = referenceSymbol(node, context.checker);
       const replacement = symbol ? importedSymbols.get(symbol) : undefined;
       if (replacement !== undefined) {
+        const expression = typeof replacement === "string" ? replacement : replacement.expression;
         const text = ts.isShorthandPropertyAssignment(node.parent)
-          ? `${node.text}: ${replacement}`
-          : isReferenceCallCallee(node)
-            ? `(0, ${replacement})`
-            : replacement;
+          ? `${node.text}: ${expression}`
+          : typeof replacement === "string" && isReferenceCallCallee(node)
+            ? `(0, ${expression})`
+            : expression;
         edits.push({ start: node.getStart(context.file), end: node.end, text });
       }
     }

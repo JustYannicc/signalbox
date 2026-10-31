@@ -222,7 +222,7 @@ export async function extractGitTemplates(
     const relativePath = file.assetPath.replace(/^git-templates\//, "");
     if (!safeRelative(relativePath))
       throw new Error("PRODUCT_PROGRAM_TEMPLATE_OUTPUT_PATH_INVALID");
-    const target = NodePath.join(output, "git-templates", ...relativePath.split("/"));
+    const target = NodePath.join(output, "git-templates", relativePath);
     await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true, mode: 0o755 });
     await NodeFSP.writeFile(target, bytes, { flag: "wx", mode: file.mode });
     await NodeFSP.chmod(target, file.mode);
@@ -236,12 +236,12 @@ export async function extractGitTemplates(
   for (const directory of pins.gitTemplates.directories) {
     if (!safeRelative(directory.assetPath.replace(/^git-templates\//, "")))
       throw new Error("PRODUCT_PROGRAM_TEMPLATE_DIRECTORY_INVALID");
-    await NodeFSP.mkdir(NodePath.join(output, ...directory.assetPath.split("/")), {
+    await NodeFSP.mkdir(NodePath.join(output, directory.assetPath), {
       recursive: true,
       mode: Number.parseInt(directory.mode, 8),
     });
     await NodeFSP.chmod(
-      NodePath.join(output, ...directory.assetPath.split("/")),
+      NodePath.join(output, directory.assetPath),
       Number.parseInt(directory.mode, 8),
     );
   }
