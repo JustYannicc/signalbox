@@ -24,7 +24,7 @@ views {
       include signalbox.models with { title 'Model pools' }
       include signalbox.drive
       // One box: a second Computer part here makes LikeC4 wrap both in a Computer box and break the groups.
-      include signalbox.bases with { title 'Computer escalation + Bases'; description 'escalation table · VM lifecycle · Base leases' }
+      include signalbox.bases with { title 'Computer escalation + Snapshots'; description 'escalation table · VM lifecycle · snapshot leases' }
       include signalbox.search
       include signalbox.automations with { title 'Automations engine' }
       include signalbox.judge

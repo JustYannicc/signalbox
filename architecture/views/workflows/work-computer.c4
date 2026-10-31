@@ -2,7 +2,7 @@
 // egress, terminals, devices) and previews. None of this is v1 (corr. 4).
 //
 // Binding (corr. 2, 7): Claude Code and Codex always run in the isolate tier (Thread DO + Dynamic
-// Workers). A machine, forked from a warm Base, only executes commands; it is never the agent's home.
+// Workers). A machine, forked from a warm snapshot, only executes commands; it is never the agent's home.
 // Views that open Computer's internals say so in their description ("Computer's own internal flow")
 // and enter through `signalbox.computer.api`; other modules stay black boxes.
 views {
@@ -30,10 +30,10 @@ views {
         - `createKey` is committed in the Thread before the machine provider is called
       '''
     }
-    smVm.creating -> smVm.configuring 'forked from Base' {
+    smVm.creating -> smVm.configuring 'forked from snapshot' {
       navigateTo work_bases_lease
       notes '''
-        - Forked from the warm Base under a Base lease (`expiresAt = deleteAfter`)
+        - Forked from the warm snapshot under a snapshot lease (`expiresAt = deleteAfter`)
         - Timeout → retry → ALREADY_EXISTS → adopt; never a second machine
       '''
     }
@@ -75,7 +75,7 @@ views {
           navigateTo work_threads_lifecycle_archive
           notes '''
             - Archive deletes the VM at once; nothing needs saving because everything was already pulled
-            - Unarchive starts with No VM and forks again from the Base on demand
+            - Unarchive starts with No VM and forks again from the snapshot on demand
           '''
         }
       }
@@ -433,7 +433,7 @@ views {
     title 'Workflows/Work/Computer/Escalation/Escalate a command to a VM'
     description '''
       W-CMP-04, W-CMP-05, W-CMP-13, W-CMP-14, W-CMP-21. Computer's own internal flow:
-      one command goes to a VM forked from the warm Base, inside a push/run/pull bracket.
+      one command goes to a VM forked from the warm snapshot, inside a push/run/pull bracket.
     '''
 
     include
@@ -449,7 +449,7 @@ views {
     opt 'recipe predicts escalation (W-CMP-05)' {
       signalbox.computer.vmLifecycle -> platform.boxd 'pre-fork' {
         notes '''
-          - Fork starts during model think time, so warm-Base latency hides
+          - Fork starts during model think time, so warm-snapshot latency hides
           - Same create path as below, just earlier
         '''
       }
@@ -482,14 +482,14 @@ views {
       }
     }
     opt 'no VM attached' {
-      signalbox.computer.vmLifecycle -> signalbox.bases 'acquire Base lease' {
+      signalbox.computer.vmLifecycle -> signalbox.bases 'acquire snapshot lease' {
         navigateTo work_bases_lease
         notes '''
           - Intent persisted first, then `acquire(drive, recipeHash, operationId)`: idempotent on operationId
           - Lease expires at the VM's `deleteAfter`, so no hold is orphaned; #1071 ships a None adapter (cold create)
         '''
       }
-      signalbox.computer.vmLifecycle -> platform.boxd 'fork from warm Base' {
+      signalbox.computer.vmLifecycle -> platform.boxd 'fork from warm snapshot' {
         navigateTo state_computer
         notes '- `createKey` committed in the Thread first; name `t-{threadId}-g{gen}`'
       }
@@ -507,7 +507,7 @@ views {
         - The daemon dialed out to the Thread; it holds no agent, model token or grant
       '''
     }
-    opt 'lockfile differs from Base sha (W-CMP-13)' {
+    opt 'lockfile differs from snapshot sha (W-CMP-13)' {
       signalbox.computer.vmLifecycle -> signalbox.computer.execDaemon 'recipe prepare' {
         notes '- Lockfile-diff install before the command'
       }
@@ -612,8 +612,8 @@ views {
       else 'no VM' {
         signalbox.computer.backend.kernelFs -> platform.r2 'fetch chunk (R2)' {
           notes '''
-            - Base chunk export, content-addressed, written once by the builder
-            - Read straight from R2; the Bases module is not on the read path
+            - Snapshot chunk export, content-addressed, written once by the builder
+            - Read straight from R2; the Snapshots module is not on the read path
           '''
         }
       }
@@ -768,7 +768,7 @@ views {
           else 'bound host' {
             signalbox.gateway.egress.egressProxy -> signalbox.gateway.egress.egressProxy 'terminate TLS' {
               notes '''
-                - Bound hosts only; Signalbox CA is baked into the Base
+                - Bound hosts only; Signalbox CA is baked into the snapshot
                 - No fill of its own: it holds no secret
               '''
             }
@@ -1174,7 +1174,7 @@ views {
 
   dynamic view work_computer_vm_parity {
     title 'Workflows/Work/Computer/VM/Every command on a VM (parity mode)'
-    description 'W-CMP-25. computer.escalate = always sends every command (not the agent) to a Base-forked VM; the parity suite compares transcripts across placements. Claude Code and Codex stay in the isolate tier either way.'
+    description 'W-CMP-25. computer.escalate = always sends every command (not the agent) to a snapshot-forked VM; the parity suite compares transcripts across placements. Claude Code and Codex stay in the isolate tier either way.'
 
     include signalbox.harness, signalbox.computer, signalbox.bases, platform.boxd
 
@@ -1185,7 +1185,7 @@ views {
       '''
     }
     signalbox.computer -> signalbox.bases 'acquire lease'
-    signalbox.computer -> platform.boxd 'run on Base-forked VM' {
+    signalbox.computer -> platform.boxd 'run on snapshot-forked VM' {
       navigateTo work_computer_escalate
       notes '- Every command takes the push · run · pull bracket; the VM never hosts the agent'
     }
@@ -1205,7 +1205,7 @@ views {
 
   dynamic view work_computer_vm_reconcile {
     title 'Workflows/Work/Computer/VM/Machine reconcile'
-    description 'W-CMP-10. Hourly default automation sweeps machines and releases stale Base leases.'
+    description 'W-CMP-10. Hourly default automation sweeps machines and releases stale snapshot leases.'
 
     include signalbox.automations, signalbox.computer, signalbox.bases, platform.boxd
 
@@ -1524,7 +1524,7 @@ views {
         navigateTo state_computer
         notes '''
           - Hibernated: the dev server resumes frozen as it was
-          - Deleted: fork from the Base and rerun the agent\'s own start command; the model never sees it
+          - Deleted: fork from the snapshot and rerun the agent\'s own start command; the model never sees it
           - **Open question:** processes that can\'t be rerun faithfully
         '''
       }
@@ -1611,7 +1611,7 @@ views {
         }
         signalbox.harness -> signalbox.actorhost 'load as isolate' {
           notes '''
-            - worker-bundler output, no machine and no Base
+            - worker-bundler output, no machine and no snapshot
             - Assumption: Computer owns this verb (`port` on a worker build); recorded, not asked
           '''
         }

@@ -27,7 +27,7 @@ model {
     repoActor = actor 'Repo' {
       #port
       icon tech:git
-      description 'Drive port: accept and sync land here · merge queue · sync mode · Base records'
+      description 'Drive port: accept and sync land here · merge queue · sync mode · snapshot records'
       technology 'Durable Object · one per drive'
     }
   }

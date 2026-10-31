@@ -1,7 +1,7 @@
-// The tree, split into readable cuts of the same model (model/hierarchy.c4).
+// The hierarchy app's tree, split into readable cuts of the same model (model/hierarchy.c4). Its rules: Apps/Hierarchy/Rules.
 views {
   view hierarchy {
-    title 'Hierarchy/Top levels, mounts, top layers'
+    title 'Apps/Hierarchy/Top levels, mounts, top layers'
     description '''
       How does each person's world sit around one shared folder? Each person has a top layer (assistant + pipeline)
       over their own top level. Folder Company, owned by the organization, is mounted into every member's tree (mount = the
@@ -28,7 +28,7 @@ views {
   }
 
   view hierarchy-trees {
-    title 'Hierarchy/Three trees in real use'
+    title 'Apps/Hierarchy/Three trees in real use'
     description '''
       What does a tree look like in real use? Several top-level folders per person, each with its own threads; threads on
       the top level too. Private threads stay in one tree. Shared folders are mounted: A's Friends into B's tree,
@@ -44,9 +44,9 @@ views {
   }
 
   view hierarchy-resolution {
-    title 'Hierarchy/Resolution in the shared thread'
+    title 'Apps/Hierarchy/Resolution in the shared thread'
     description '''
-      Which pool and connections does the shared thread use, for A and for B? Only what is placed on Team or above
+      Which pool and accounts does the shared thread use, for A and for B? The hierarchy app's rule: only what is placed on Team or above
       (Company), nearest wins: pool P2 and Confluence, the same whoever sends. A's own pool P1 reaches only A's tree.
       A's Google account gets in only by an explicit loan into Team. Costs roll up Team → Company, never to A or B.
     '''
@@ -67,7 +67,7 @@ views {
 
   dynamic view hierarchy-asks {
     variant sequence
-    title 'Hierarchy/Asks route to each person'
+    title 'Apps/Hierarchy/Asks route to each person'
     description '''
       Where does an ask from the shared thread land? In the decider's own pipeline lanes, never in a shared inbox:
       A answers a merge gate from Ready, B picks an option from Considering, admin C places or lends a pool from Blocker.

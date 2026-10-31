@@ -10,7 +10,7 @@ views {
   dynamic view scn_032_share_private_chat_with_folder {
     #decided
     variant sequence
-    title 'Scenarios/Folders/Widening/Share With Folder'
+    title 'Apps/Hierarchy/Scenarios/Widening/Share With Folder'
     description '''
       What happens when A shares a private chat with everyone in folder Company?
       Decided: #225 §3 and #242 (2026-10-14). The whole history moves, the confirm names what becomes visible, resources never change.
@@ -78,7 +78,7 @@ views {
   dynamic view scn_033_share_confirm_names_unreadable_sources {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Widening/Share Read Check'
+    title 'Apps/Hierarchy/Scenarios/Widening/Share Read Check'
     description '''
       Does the share confirm say who can't open what the thread read?
       Assumption: yes. The confirm (decided #242) adds per-viewer failures for sources outside the folder's own chain; A shares anyway, shares with the rest, or forks privately. Never a silent leak, never a blanket block (pending #483). Why: #242 already makes the confirm name personal-connector output, and this is the narrowest check that keeps "visibility never changes resources" (#225 §3).
@@ -146,7 +146,7 @@ views {
   dynamic view scn_034_shared_thread_reads_unviewable_source {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Widening/Later Unreadable Read'
+    title 'Apps/Hierarchy/Scenarios/Widening/Later Unreadable Read'
     description '''
       What happens when an already-shared thread later needs something a viewer can't open?
       Assumption: a personal source enters only through an explicit loan, and the loan confirm is the per-viewer check; on reopen, unreadable turns are withheld from that viewer, who is not removed (pending #483). Why: use outside the chain is a revocable loan with lender consent; dropping viewers would narrow a shared thread, which only Admins or a sole author may do (#242).
@@ -219,7 +219,7 @@ views {
   dynamic view scn_035_add_outside_collaborator_to_thread {
     #decided #assumption
     variant sequence
-    title 'Scenarios/Folders/Widening/Add One Person'
+    title 'Apps/Hierarchy/Scenarios/Widening/Add One Person'
     description '''
       How does A add one outside collaborator to a single thread?
       Decided: #225 §3 (2026-10-14) and #244. A chat shared with people runs on its home's chain; the confirm says what D will see.
@@ -289,7 +289,7 @@ views {
   dynamic view scn_038_admin_changes_default_visibility {
     #decided #assumption
     variant sequence
-    title 'Scenarios/Folders/Widening/Default Visibility'
+    title 'Apps/Hierarchy/Scenarios/Widening/Default Visibility'
     description '''
       What changes when a folder Admin sets new chats to be shared with members?
       Decided: #310 and #229 d5 (2026-10-14). Per-folder default, private by default, inherited down, Admin-only, never retroactive, applied from every entry point.
@@ -349,7 +349,7 @@ views {
   dynamic view scn_036_viewer_tries_to_send {
     #decided
     variant sequence
-    title 'Scenarios/Folders/Roles/Viewer Cannot Send'
+    title 'Apps/Hierarchy/Scenarios/Roles/Viewer Cannot Send'
     description '''
       Can a Viewer send in a shared thread?
       Decided: #241 and #244 (2026-10-14). The composer is disabled with the reason, and the server refuses the send on every surface.
@@ -401,7 +401,7 @@ views {
   dynamic view scn_037_viewer_drives_own_capture {
     #decided
     variant sequence
-    title 'Scenarios/Folders/Roles/Viewer Drives Own Thread'
+    title 'Apps/Hierarchy/Scenarios/Roles/Viewer Drives Own Thread'
     description '''
       Can a Viewer drive the thread that was started for them?
       Decided: #225 §4 (2026-10-14), #241. The author or the person a thread was started for drives it regardless of role, and nothing else.
@@ -452,7 +452,7 @@ views {
   dynamic view scn_046_lower_grant_cannot_remove {
     #decided
     variant sequence
-    title 'Scenarios/Folders/Roles/Lower Grant'
+    title 'Apps/Hierarchy/Scenarios/Roles/Lower Grant'
     description '''
       Can an Admin take away someone's inherited access by granting a lower role below?
       Decided: #225 §4 (2026-10-14), #237. A grant below adds access; it never removes inherited access.
@@ -509,7 +509,7 @@ views {
   dynamic view scn_039_mention_person_without_access {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Mentions/Mention Without Access'
+    title 'Apps/Hierarchy/Scenarios/Mentions/Mention Without Access'
     description '''
       What happens when B mentions someone who can't see the thread?
       Assumption: the prototype behaviour ships: share-and-notify in one click, or send without notifying; nobody without access is ever notified (pending #40). Why: one click (principle 1), and sharing moves the whole history only on a confirm, which the banner is (#225 §3).
@@ -566,7 +566,7 @@ views {
   dynamic view scn_040_mention_teammate_in_private_chat {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Mentions/Mention In Private Chat'
+    title 'Apps/Hierarchy/Scenarios/Mentions/Mention In Private Chat'
     description '''
       What happens when A mentions a teammate inside a private chat?
       Assumption: the same as any thread the mentioned person can't see: offer to share, never auto-share, never notify without access (pending #40). Why: one rule for every mention beats a private-chat exception, and the confirm keeps private by default (#225 §3).
@@ -621,7 +621,7 @@ views {
   dynamic view scn_041_author_unshares_alone {
     #decided
     variant sequence
-    title 'Scenarios/Folders/Narrowing/Unshare Alone'
+    title 'Apps/Hierarchy/Scenarios/Narrowing/Unshare Alone'
     description '''
       Can the author make a shared thread private again while nobody else has written?
       Decided: #225 §3 and #242 (2026-10-14). Yes, only while nobody else has written; people who saw it keep what they saw.
@@ -671,7 +671,7 @@ views {
   dynamic view scn_042_author_unshare_refused {
     #decided
     variant sequence
-    title 'Scenarios/Folders/Narrowing/Unshare After Reply'
+    title 'Apps/Hierarchy/Scenarios/Narrowing/Unshare After Reply'
     description '''
       Can the author unshare after a teammate wrote in the thread?
       Decided: #242 and #225 §3 (2026-10-14). No: once someone else has written, only an Admin can unshare; anyone may fork privately. The prototype's missing Admin override is a build gap, not a rule.
@@ -729,7 +729,7 @@ views {
   dynamic view scn_043_remove_poster_from_people_share {
     #assumption
     variant sequence
-    title 'Scenarios/Folders/Narrowing/Remove A Poster'
+    title 'Apps/Hierarchy/Scenarios/Narrowing/Remove A Poster'
     description '''
       Can the author remove someone from a "specific people" share after they posted?
       Assumption: it follows the unshare rule. The author removes a person only while that person hasn't written; afterwards only an Admin of the thread's folder can, and anyone may fork privately (pending #242 comment). Why: #225 §3 / #242 (2026-10-14) unshare rule; a person's turns aren't the author's to hide.
@@ -789,7 +789,7 @@ views {
   dynamic view scn_044_folder_agent_forgets_unshared {
     #decided #assumption
     variant sequence
-    title 'Scenarios/Folders/Narrowing/Agent Forgets Thread'
+    title 'Apps/Hierarchy/Scenarios/Narrowing/Agent Forgets Thread'
     description '''
       Does the folder agent forget a thread after it's unshared?
       Decided: #225 §3 (2026-10-14). Yes: the folder agent's memory of it is dropped.
@@ -845,7 +845,7 @@ views {
   dynamic view scn_045_admin_narrows_team_folder {
     #decided #assumption
     variant sequence
-    title 'Scenarios/Folders/Narrowing/Narrow A Folder'
+    title 'Apps/Hierarchy/Scenarios/Narrowing/Narrow A Folder'
     description '''
       What happens when an Admin narrows folder Team inside Company?
       Decided: #229 d3/d4 and #247 (2026-10-14). General access is a per-folder flag, not a grant; plain members lose sight, explicit roles keep theirs.
@@ -901,7 +901,7 @@ views {
   dynamic view scn_047_teammate_private_chat_invisible {
     #decided
     variant sequence
-    title 'Scenarios/Folders/PrivateChats/Invisible To Others'
+    title 'Apps/Hierarchy/Scenarios/PrivateChats/Invisible To Others'
     description '''
       What does a teammate see of someone's private chat in a shared folder?
       Decided: #846 (2026-10-17) and #334 (2026-10-18). Nothing: no title, count or existence, even for Admins; this supersedes the #225 §5 / #243 metadata row. Costs appear only in folder totals (design A14).
@@ -951,7 +951,7 @@ views {
   dynamic view scn_048_link_to_private_chat {
     #decided
     variant sequence
-    title 'Scenarios/Folders/PrivateChats/Private Link'
+    title 'Apps/Hierarchy/Scenarios/PrivateChats/Private Link'
     description '''
       What does B see when opening a link to someone else's private chat?
       Decided: #37 prototype, #243 and #334 (2026-10-18). "Not found"; existence is never confirmed, no title, snippet or count.
@@ -995,7 +995,7 @@ views {
   dynamic view scn_049_admin_cannot_read_private_chat {
     #decided
     variant sequence
-    title 'Scenarios/Folders/PrivateChats/No Admin Back Door'
+    title 'Apps/Hierarchy/Scenarios/PrivateChats/No Admin Back Door'
     description '''
       Can a folder Admin read a member's private chat?
       Decided: #270 (2026-10-16) and #312 (2026-10-14). No admin back door; a leaver's private chats are sealed; only an Enterprise opt-in makes chats Admin-visible, with notice to every member. eDiscovery is parked (#225 §13).
@@ -1055,7 +1055,7 @@ views {
   dynamic view scn_050_private_chat_resolves_company_chain {
     #decided
     variant sequence
-    title 'Scenarios/Folders/PrivateChats/Private Chat Chain'
+    title 'Apps/Hierarchy/Scenarios/PrivateChats/Private Chat Chain'
     description '''
       Whose resources does a private chat in folder Company run on?
       Decided: #225 §2 (2026-10-14). Company's chain via A's mount, same as a shared chat; visibility never changes resources (binding rule: chain from Place {level, via}, nearest wins).
@@ -1110,7 +1110,7 @@ views {
   dynamic view scn_051_search_skips_private_chats {
     #decided
     variant sequence
-    title 'Scenarios/Folders/PrivateChats/Search Skips Private'
+    title 'Apps/Hierarchy/Scenarios/PrivateChats/Search Skips Private'
     description '''
       Can search or an agent find a member's private chat?
       Decided: #846 (2026-10-17), #334 (2026-10-18) and #860. No: private chats leak nothing to search, even for Admins; hits are re-checked against current access. The older #225 §5 / #243 metadata row is superseded.
@@ -1161,7 +1161,7 @@ views {
   dynamic view scn_052_request_for_private_context {
     #decided
     variant sequence
-    title 'Scenarios/Folders/PrivateChats/Ask For Private Context'
+    title 'Apps/Hierarchy/Scenarios/PrivateChats/Ask For Private Context'
     description '''
       What happens when someone asks for what a member found in a private chat?
       Decided: #225 §5 (2026-10-14) and #245 (2026-10-16). Never automatic: it goes to the author's assistant first, which answers within A's policy, approves one step, or asks A.
@@ -1223,7 +1223,7 @@ views {
   dynamic view scn_053_author_pulls_from_own_private_chat {
     #decided
     variant sequence
-    title 'Scenarios/Folders/PrivateChats/Pull From Own Chat'
+    title 'Apps/Hierarchy/Scenarios/PrivateChats/Pull From Own Chat'
     description '''
       Can A ask the folder agent to use A's own private chat?
       Decided: #225 §5 (2026-10-14). Yes, without an ask: the author's request just happens. Answers cross, not access; a card records what crossed.
@@ -1272,7 +1272,7 @@ views {
   dynamic view scn_054_enterprise_admin_visible_chats {
     #decided #assumption
     variant sequence
-    title 'Scenarios/Folders/PrivateChats/Enterprise Opt In'
+    title 'Apps/Hierarchy/Scenarios/PrivateChats/Enterprise Opt In'
     description '''
       What changes when an Enterprise organization opts in to Admin-visible chats?
       Decided: #270 point 4 (2026-10-16). Admins can read chats made from now on; members are told up front.
