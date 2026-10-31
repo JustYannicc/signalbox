@@ -97,17 +97,21 @@ export async function validateClaudeReleaseVariantArtifacts(input: {
     hookCli = record(hooks.manifests.cli);
   same(baseCli.sourceModules, hookCli.sourceModules, "SOURCE_MODULES");
   same(baseCli.assets, hookCli.assets, "ASSETS");
-  const baseOmission = record(baseCli.omission),
-    hookOmission = record(hookCli.omission);
-  const corpus = record(baseOmission.corpus);
-  if (
-    corpus.binarySha256 !== baseline.plan.cli.binarySha256 ||
-    !Array.isArray(corpus.provenance) ||
-    corpus.provenance.length === 0
-  )
-    throw new Error("CLAUDE_VARIANTS_CORPUS_INVALID");
-  same(baseOmission.corpus, hookOmission.corpus, "CORPUS_PROVENANCE");
-  same(baseOmission.configuration, hookOmission.configuration, "CONFIGURATION");
+  if (baseCli.omission !== undefined || hookCli.omission !== undefined) {
+    if (baseCli.omission === undefined || hookCli.omission === undefined)
+      throw new Error("CLAUDE_VARIANTS_OMISSION_MISMATCH");
+    const baseOmission = record(baseCli.omission),
+      hookOmission = record(hookCli.omission);
+    const corpus = record(baseOmission.corpus);
+    if (
+      corpus.binarySha256 !== baseline.plan.cli.binarySha256 ||
+      !Array.isArray(corpus.provenance) ||
+      corpus.provenance.length === 0
+    )
+      throw new Error("CLAUDE_VARIANTS_CORPUS_INVALID");
+    same(baseOmission.corpus, hookOmission.corpus, "CORPUS_PROVENANCE");
+    same(baseOmission.configuration, hookOmission.configuration, "CONFIGURATION");
+  }
   return { catalog, baseline, hooks };
 }
 
@@ -116,6 +120,9 @@ export async function writeClaudeReleaseVariantCatalog(
   input: Parameters<typeof validateClaudeReleaseVariantArtifacts>[0] & { readonly output: string },
 ) {
   const validated = await validateClaudeReleaseVariantArtifacts(input);
+  // Qualification can inspect full graphs; publication still requires omission provenance.
+  record(record(validated.baseline.manifests.cli).omission);
+  record(record(validated.hooks.manifests.cli).omission);
   // Opening both graphs awaits I/O; a newer failure may have arrived during those reads.
   for (const { fullArtifact } of [validated.catalog.baseline, validated.catalog.hooks])
     if (input.ledger.getEligibility("claude-code", fullArtifact.releaseId).status !== "green")
