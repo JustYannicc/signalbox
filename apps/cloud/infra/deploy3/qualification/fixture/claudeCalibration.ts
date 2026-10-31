@@ -1,7 +1,10 @@
 import type { Computer } from "../../../../src/computer/Computer.ts";
 import { createProductComputer } from "../../../../src/computer/ProductComputer.ts";
 import { ChildWorkerCapacity } from "../../../../src/computer/ChildWorkerCapacity.ts";
-import { createFacetSqliteStorage } from "../../../../src/kernel/FacetSqliteStorage.ts";
+import {
+  createFacetSqliteStorage,
+  type FacetStorage,
+} from "../../../../src/kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem } from "../../../../src/kernel/KernelFileSystem.ts";
 import { KernelWakeRegistry } from "../../../../src/kernel/KernelWakeRegistry.ts";
 import { createKernelSessionStdio } from "../../../../src/kernel/KernelSessionStdio.ts";
@@ -16,8 +19,8 @@ import type { loadClaudeQualificationRuntime } from "./claudeConfiguration.ts";
 
 /** Calibration owns a separate personality and never launches the inspected CLI or a child. */
 export async function calibrateClaudePreparedRelease(input: {
-  readonly ctx: DurableObjectState;
-  readonly capability: QualifierCapabilities;
+  readonly ctx: { readonly storage: FacetStorage };
+  readonly capability: Pick<QualifierCapabilities, "catalog" | "inventory" | "read">;
   readonly release: Awaited<ReturnType<typeof loadClaudeQualificationRuntime>>;
   readonly home: string;
 }) {
@@ -144,8 +147,13 @@ export async function calibrateClaudePreparedRelease(input: {
   for (const entry of closed)
     if (entry.status === "rejected" && !failures.includes(entry.reason))
       failures.push(entry.reason);
-  files.dispose();
-  wakes.dispose();
+  for (const dispose of [() => files.dispose(), () => wakes.dispose()]) {
+    try {
+      dispose();
+    } catch (error) {
+      if (!failures.includes(error)) failures.push(error);
+    }
+  }
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1)
     throw new AggregateError(failures, "Claude calibration or cleanup failed");
