@@ -487,7 +487,7 @@ describe("one-shot wake tokens", () => {
     expect(wakes.size).toBe(0);
   });
 
-  it("expires both waiting and abandoned completed notifications without evicting live tokens", async () => {
+  it("expires unclaimed notifications without evicting active waiters", async () => {
     vi.useFakeTimers();
     const wakes = registry({ maxTokens: 2, ttlMs: 50 });
     const detach = vi.fn();
@@ -504,7 +504,9 @@ describe("one-shot wake tokens", () => {
       error: { code: "RESOURCE_LIMIT" },
     });
     await vi.advanceTimersByTimeAsync(50);
-    await expect(waiting).resolves.toMatchObject({ status: "error", error: { code: "EXPIRED" } });
+    expect(wakes.has(pending)).toBe(true);
+    wakes.signal(pending);
+    await expect(waiting).resolves.toEqual(kernelOk(undefined));
     await expect(wakes.wait(completed)).resolves.toMatchObject({
       status: "error",
       error: { code: "INVALID_HANDLE" },

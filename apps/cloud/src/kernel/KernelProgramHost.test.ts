@@ -57,6 +57,32 @@ const wasmNoop = new WebAssembly.Module(
 );
 
 describe("KernelProgramHost", () => {
+  it.each(["EXPIRED", "CANCELLED", "IO_ERROR"] as const)(
+    "preserves wake error %s in exit status",
+    async (code) => {
+      const { host, wakes } = hostFor({ kind: "wasm", module: wasmNoop });
+      const registered = wakes.register(() => () => {});
+      if (registered.status !== "ok") throw new Error("Wake registration failed");
+      vi.spyOn(host.processes, "exitStatus").mockReturnValue({
+        status: "would_block",
+        wakeToken: registered.value,
+      });
+      vi.spyOn(wakes, "wait").mockResolvedValue({
+        status: "error",
+        error: { code, message: "original wake failure" },
+      });
+      try {
+        await expect(host.exitStatus({ id: "test", kind: "process" })).resolves.toEqual({
+          status: "error",
+          error: { code, message: "original wake failure" },
+        });
+        expect(wakes.size).toBe(0);
+      } finally {
+        wakes.dispose();
+      }
+    },
+  );
+
   it("resolves only an exact executable binding and matching registered manifest", () => {
     const { host, wakes } = hostFor({ kind: "wasm", module: wasmNoop });
     try {

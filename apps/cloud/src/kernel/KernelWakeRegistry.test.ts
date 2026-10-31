@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
+import { vi } from "vite-plus/test";
+
 import { KernelCpuAccounting } from "./KernelCpuAccounting.ts";
 import { KernelCpuExecution } from "./KernelCpuExecution.ts";
 import { KernelWakeRegistry } from "./KernelWakeRegistry.ts";
@@ -44,4 +46,80 @@ describe("KernelWakeRegistry CPU delivery", () => {
     expect(execution.root.stop()).toEqual({ userNs: 0n, systemNs: 0n });
     wakes.dispose();
   });
+});
+
+describe("KernelWakeRegistry ownership", () => {
+  it("reclaims unclaimed pending and completed registrations", async () => {
+    vi.useFakeTimers();
+    const wakes = new KernelWakeRegistry();
+    const unsubscribe = vi.fn();
+    try {
+      wakes.register(() => unsubscribe);
+      wakes.register((notify) => {
+        notify();
+        return unsubscribe;
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(wakes.size).toBe(0);
+      expect(unsubscribe).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      wakes.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([90_000, 120_000, 180_000])("retains an active wait for %i ms", async (duration) => {
+    vi.useFakeTimers();
+    const wakes = new KernelWakeRegistry();
+    const unsubscribe = vi.fn();
+    let notify = () => {};
+    try {
+      const registered = wakes.register((wake) => {
+        notify = wake;
+        return unsubscribe;
+      });
+      if (registered.status !== "ok") throw new Error("Wake registration failed");
+      const waiting = wakes.wait(registered.value);
+      await vi.advanceTimersByTimeAsync(duration);
+      expect(wakes.has(registered.value)).toBe(true);
+      expect(unsubscribe).not.toHaveBeenCalled();
+      notify();
+      await expect(waiting).resolves.toEqual({ status: "ok", value: undefined });
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+      expect(wakes.size).toBe(0);
+    } finally {
+      wakes.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["abort", "release", "dispose"] as const)(
+    "cleans up a long wait on %s",
+    async (action) => {
+      vi.useFakeTimers();
+      const wakes = new KernelWakeRegistry();
+      const unsubscribe = vi.fn();
+      const controller = new AbortController();
+      try {
+        const registered = wakes.register(() => unsubscribe);
+        if (registered.status !== "ok") throw new Error("Wake registration failed");
+        const waiting = wakes.wait(registered.value, controller.signal);
+        await vi.advanceTimersByTimeAsync(180_000);
+        if (action === "abort") controller.abort();
+        else if (action === "release") wakes.release(registered.value);
+        else wakes.dispose();
+        await expect(waiting).resolves.toMatchObject({
+          status: "error",
+          error: { code: "CANCELLED" },
+        });
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+        expect(wakes.size).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        wakes.dispose();
+        vi.useRealTimers();
+      }
+    },
+  );
 });

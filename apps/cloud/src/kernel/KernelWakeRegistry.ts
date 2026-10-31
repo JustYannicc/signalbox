@@ -105,6 +105,9 @@ export class KernelWakeRegistry {
     const resumeCpu = cpuContext?.pause();
     return new Promise((resolve, reject) => {
       const abort = () => this.cancel(token);
+      // Claiming the wait transfers cleanup to signal, abort, release or request disposal.
+      // Elapsed time only identifies registrations that nobody claimed.
+      clearTimeout(entry.timer);
       entry.waiter = (result) => {
         signal?.removeEventListener("abort", abort);
         const complete = () => {
