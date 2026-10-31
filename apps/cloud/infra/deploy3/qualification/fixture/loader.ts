@@ -200,8 +200,10 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
       },
       load: (code) => original.load(code),
     };
+    // @effect-diagnostics-next-line cryptoRandomUUID:off - The platform command boundary assigns the raw trace identity before entering the child.
+    const invocationId = crypto.randomUUID();
     return await createCompiledChildWorkerLoader(loader, COMMAND_REGISTRY).run(
-      { ...input, command: observeCommandInvocation(input.command, phase, crypto.randomUUID()) },
+      { ...input, command: observeCommandInvocation(input.command, phase, invocationId) },
       target,
     );
   }
@@ -219,6 +221,7 @@ export class QualifierTail extends WorkerEntrypoint<QualifierEnvironment> {
       const raw = JSON.stringify(item);
       const bytes = new TextEncoder().encode(raw);
       assert(bytes.length < 96 * 1024, "Raw dynamic trace exceeds the complete forwarding limit");
+      // @effect-diagnostics-next-line globalConsole:off - The observer ingests this exact JSON log payload from the platform tail.
       console.log(
         JSON.stringify({
           qualifierRawTrace: { raw, bytes: bytes.length, sha256: await sha256(bytes) },

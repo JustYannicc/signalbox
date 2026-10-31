@@ -1,4 +1,4 @@
-import type { QualifierProof } from "./proof.ts";
+import type { QualifierExecutionContext } from "./proofContext.ts";
 import type { Configuration } from "./configuration.ts";
 import type {
   HarnessRequestCheckpoint,
@@ -27,16 +27,20 @@ import {
   errorRecord,
 } from "./common.ts";
 
-type Created = Awaited<ReturnType<ReturnType<QualifierProof["shard"]>["startFreshProcess"]>>;
+type Created = Awaited<
+  ReturnType<ReturnType<QualifierExecutionContext["shard"]>["startFreshProcess"]>
+>;
 
 export class Lifecycle {
   #created: Created | undefined;
-  #resumed: Awaited<ReturnType<ReturnType<QualifierProof["shard"]>["resumeProcess"]>> | undefined;
+  #resumed:
+    | Awaited<ReturnType<ReturnType<QualifierExecutionContext["shard"]>["resumeProcess"]>>
+    | undefined;
   #checkpoint: HarnessRequestCheckpoint | undefined;
   #turnOneOffer: HarnessRequestOffer | undefined;
   #lastContinuation: HarnessProcessContinuationInput | undefined;
-  readonly owner: QualifierProof;
-  constructor(owner: QualifierProof) {
+  readonly owner: QualifierExecutionContext;
+  constructor(owner: QualifierExecutionContext) {
     this.owner = owner;
   }
   currentCheckpoint() {

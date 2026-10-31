@@ -1,4 +1,4 @@
-import type { QualifierShard } from "./shard.ts";
+import type { HarnessProcessExecutionShardObject } from "../../../../src/harness/HarnessProcessExecutionShardObject.ts";
 import type { Configuration } from "./configuration.ts";
 import type { HarnessProcessExecutionShardInput } from "../../../../src/harness/HarnessProcessPlacement.ts";
 import type { HarnessProcessResumeOperationInput } from "../../../../src/harness/HarnessProcessResume.ts";
@@ -24,7 +24,7 @@ export type { ClaudeVariant, ClaudeStepPhase, ClaudeStep } from "./claudeScenari
 import type { ClaudeVariant, ClaudeStepPhase, ClaudeStep } from "./claudeScenario.ts";
 
 export type ClaudeCShard = Pick<
-  QualifierShard,
+  HarnessProcessExecutionShardObject,
   | "startFreshProcess"
   | "runCreatedProcess"
   | "processCreationStatus"

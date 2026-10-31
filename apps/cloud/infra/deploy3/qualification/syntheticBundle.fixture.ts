@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - This standalone Node build adapter prepares and verifies local deployment files before Worker bundling.
 import { claudeQualificationTurns } from "./fixture/claudeTurns.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";

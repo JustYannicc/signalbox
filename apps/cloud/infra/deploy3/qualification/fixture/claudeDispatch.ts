@@ -1,4 +1,4 @@
-import type { QualifierProof } from "./proof.ts";
+import type { QualifierExecutionContext } from "./proofContext.ts";
 import { ClaudeLifecycle } from "./claudeLifecycle.ts";
 import type { ClaudeVariant } from "./claudeScenario.ts";
 import { assert, errorRecord } from "./common.ts";
@@ -17,12 +17,16 @@ export interface ClaudeStepReceipt {
 
 /** Durable one-shot claims prevent a receipt read or an owner reset from replaying native work. */
 export class ClaudeDispatch {
-  readonly #owner: QualifierProof;
+  readonly #owner: QualifierExecutionContext;
   readonly #storage: DurableObjectStorage;
   readonly #incarnation: string;
   readonly #lifecycles: Record<ClaudeVariant, ClaudeLifecycle>;
   readonly #pending = new Map<string, Promise<ClaudeStepReceipt>>();
-  constructor(owner: QualifierProof, storage: DurableObjectStorage, incarnation: string) {
+  constructor(
+    owner: QualifierExecutionContext,
+    storage: DurableObjectStorage,
+    incarnation: string,
+  ) {
     this.#owner = owner;
     this.#storage = storage;
     this.#incarnation = incarnation;

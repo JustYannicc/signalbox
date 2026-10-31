@@ -1,5 +1,5 @@
 import type { Configuration } from "./configuration.ts";
-import type { CapabilityEnvironment } from "./capabilities.ts";
+import type { HarnessFilesStoreObject } from "../../../../src/harness/HarnessFilesStoreObject.ts";
 import { verifySeedConfiguration } from "./seedConfiguration.ts";
 import { assert, control } from "./common.ts";
 
@@ -9,7 +9,10 @@ const seedPublisher = {
   publisherKey: "qualifier-seed-publisher-key-".repeat(2),
 };
 
-export async function publishSeedCheckpoint(config: Configuration, env: CapabilityEnvironment) {
+export async function publishSeedCheckpoint(
+  config: Configuration,
+  env: { readonly HARNESS_FILES_STORE: DurableObjectNamespace<HarnessFilesStoreObject> },
+) {
   const runId = `${config.runId}/seed`;
   const { checkpoint: seed } = await verifySeedConfiguration(config.seed);
   const files = seed.files;

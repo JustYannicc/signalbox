@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - This standalone Node build adapter prepares and verifies local deployment files before Worker bundling.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";

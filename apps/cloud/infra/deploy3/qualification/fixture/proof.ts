@@ -3,7 +3,6 @@ import {
   collectModelPhysicalRecovery,
   type ModelRecoveryEvidence,
 } from "./modelPhysicalRecovery.fixture.ts";
-import type { PlacementReleaseProof } from "./placementReleaseObserver.fixture.ts";
 // @effect-diagnostics cryptoRandomUUID:off - Raw trace artifacts need unique platform capture IDs outside Effect.
 import { ROUTES } from "./routes.ts";
 import { QualifierCapabilities } from "./capabilities.ts";
@@ -15,11 +14,7 @@ import { claudeStepRoute } from "./claudeScenario.ts";
 import { ClaudeController } from "./claudeController.ts";
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
 import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore.ts";
-import type {
-  HarnessProcessPlacementIdentity,
-  HarnessProcessPlacementWriter,
-} from "../../../../src/harness/HarnessProcessPlacement.ts";
-import type { ProcessTerminalEvidence } from "../../../../src/harness/HarnessProcessResume.ts";
+import type { HarnessProcessPlacementIdentity } from "../../../../src/harness/HarnessProcessPlacement.ts";
 import { assert, C4, decoder, errorRecord, fromBase64, jsonBytes } from "./common.ts";
 
 type Step = "turn-1" | "replace" | "turn-2" | "turn-3" | "finish";
@@ -36,14 +31,8 @@ interface StepReceipt {
   result?: unknown;
   failure?: unknown;
 }
-export interface WriterRelease {
-  sequence: number;
-  beforeSequence: number;
-  owner: string;
-  writer: HarnessProcessPlacementWriter;
-  terminals: readonly ProcessTerminalEvidence[];
-  releaseProof: PlacementReleaseProof;
-}
+export type { WriterRelease } from "./proofRecords.ts";
+import type { WriterRelease } from "./proofRecords.ts";
 const sequence: readonly Step[] = ["turn-1", "replace", "turn-2", "turn-3", "finish"];
 
 export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> {

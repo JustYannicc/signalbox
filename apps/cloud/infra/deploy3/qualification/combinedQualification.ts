@@ -6,7 +6,7 @@ import {
   collectClaudeModelWorkloadEvidence,
   type ClaudePersistedModelRecord,
 } from "./fixture/claudeModelEvidence.ts";
-import type { ClaudeWorkflowObservation } from "./fixture/claudeWorkflow.ts";
+import type { ClaudeWorkflowObservation } from "./fixture/claudeWorkflowContracts.ts";
 import { claudeLane } from "./fixture/claudeCTransport.ts";
 import type { ClaudeMcpProbe } from "./fixture/claudeMcpProbe.ts";
 import type { HarnessRunArtifact } from "../../../src/harness/HarnessRunStore.ts";

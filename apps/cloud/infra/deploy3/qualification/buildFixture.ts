@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - This standalone Node build adapter prepares and verifies local deployment files before Worker bundling.
 import {
   CLAUDE_FIXTURE_BINDINGS,
   requireFixtureMcpProbe,

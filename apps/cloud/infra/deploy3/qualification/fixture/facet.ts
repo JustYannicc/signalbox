@@ -182,8 +182,10 @@ const buildOptions = (
         const transcriptPaths = files
           .filter((file) => file.path.includes("/.codex/sessions/") && file.path.endsWith(".jsonl"))
           .map((file) => file.path);
+        // @effect-diagnostics-next-line cryptoRandomUUID:off - The product save callback assigns an immutable capture ID outside the request Effect.
+        const captureId = crypto.randomUUID();
         const artifact = await cap.artifact(
-          `before-export-${facetNonce}-${crypto.randomUUID()}`,
+          `before-export-${facetNonce}-${captureId}`,
           jsonBytes({
             schema: "sb1070/pre-export-computer-files/v1",
             incarnation: facetNonce,

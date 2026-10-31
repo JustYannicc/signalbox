@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { RunnerTurn, RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
-import type { QualifierProof } from "./proof.ts";
+import type { QualifierExecutionContext } from "./proofContext.ts";
 import { claudeLane, type ClaudeVariant } from "./claudeCTransport.ts";
 import {
   claudeCreationInput,
@@ -28,9 +28,9 @@ export class ClaudeLifecycle {
   #firstRequest: HarnessRequestOffer | undefined;
   #lastContinuation: HarnessProcessContinuationInput | undefined;
   #completedTurns = 0;
-  readonly owner: QualifierProof;
+  readonly owner: QualifierExecutionContext;
   readonly variant: ClaudeVariant;
-  constructor(owner: QualifierProof, variant: ClaudeVariant) {
+  constructor(owner: QualifierExecutionContext, variant: ClaudeVariant) {
     this.owner = owner;
     this.variant = variant;
   }

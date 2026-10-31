@@ -1,4 +1,4 @@
-import type { QualifierProof } from "./proof.ts";
+import type { QualifierExecutionContext } from "./proofContext.ts";
 import {
   createClaudeCTransport,
   claudeLane,
@@ -18,10 +18,10 @@ export type { ClaudeIncarnation as Incarnation } from "./claudeScenario.ts";
 
 /** Each selected variant has one non-replayable model owner and its own wire journal. */
 export class ClaudeController {
-  readonly #owner: QualifierProof;
+  readonly #owner: QualifierExecutionContext;
   readonly #storage: DurableObjectStorage;
   readonly #models = new Map<ClaudeVariant, ReturnType<ClaudeController["openModel"]>>();
-  constructor(owner: QualifierProof, storage: DurableObjectStorage) {
+  constructor(owner: QualifierExecutionContext, storage: DurableObjectStorage) {
     this.#owner = owner;
     this.#storage = storage;
   }

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - This standalone Node build adapter prepares and verifies local deployment files before Worker bundling.
 import * as NodeFSP from "node:fs/promises";
 import { buildCombinedFixture } from "./buildFixture.ts";
 import { decodeCombinedFixtureInput } from "./bundleInput.ts";

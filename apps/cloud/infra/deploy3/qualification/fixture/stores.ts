@@ -6,7 +6,7 @@ import {
   type ObservedPlacementRelease,
 } from "./placementReleaseObserver.fixture.ts";
 import type { HarnessProcessPlacementStoreObject } from "../../../../src/harness/HarnessProcessPlacementStoreObject.ts";
-import type { QualifierShard } from "./shard.ts";
+import type { QualifierShardPort } from "./namespacePorts.ts";
 import type { QualifierEnvironment } from "./environment.ts";
 import { proof } from "./environment.ts";
 import { assert } from "./common.ts";
@@ -109,7 +109,7 @@ export class QualifierPlacementStore extends ObservedPlacementStore {
   }: ObservedPlacementRelease) {
     const env = this.env as QualifierEnvironment;
     const shard = env.PROCESS_EXECUTION_SHARDS.getByName(owner) as unknown as Pick<
-      QualifierShard,
+      QualifierShardPort,
       "evidence"
     >;
     const before = await proof(env).append("placement-before-release", {

@@ -1,15 +1,15 @@
 import type { Deploy3RuntimeEnvironment } from "../../runtime.ts";
-import type { QualifierProof } from "./proof.ts";
+import type { HarnessFilesStoreObject } from "../../../../src/harness/HarnessFilesStoreObject.ts";
+import type { HarnessThreadSupervisorObject } from "../../../../src/harness/HarnessThreadSupervisorObject.ts";
 import type {
-  QualifierRunStore,
-  QualifierFilesStore,
-  QualifierSupervisor,
-  QualifierPlacementStore,
-} from "./stores.ts";
-import type { QualifierShard } from "./shard.ts";
+  QualifierProofPort,
+  QualifierRunStorePort,
+  QualifierPlacementStorePort,
+  QualifierShardPort,
+  QualifierClaudeFixturesPort,
+} from "./namespacePorts.ts";
 import type { HarnessProcessExecutionEnvironment } from "../../../../src/harness/HarnessProcessPlacement.ts";
 import type { CapabilityEnvironment } from "./capabilities.ts";
-import type { QualifierClaudeFixtures } from "./claudeFixtureObject.ts";
 
 export interface QualifierEnvironment
   extends
@@ -19,13 +19,13 @@ export interface QualifierEnvironment
       "PLACEMENT_STORES" | "HARNESS_THREAD_SUPERVISOR" | "PROGRAM_ASSETS"
     >,
     Omit<CapabilityEnvironment, "HARNESS_FILES_STORE"> {
-  CLAUDE_FIXTURES: DurableObjectNamespace<QualifierClaudeFixtures>;
-  QUALIFIER: DurableObjectNamespace<QualifierProof>;
-  HARNESS_RUN_STORE: DurableObjectNamespace<QualifierRunStore>;
-  HARNESS_FILES_STORE: DurableObjectNamespace<QualifierFilesStore>;
-  HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<QualifierSupervisor>;
-  PLACEMENT_STORES: DurableObjectNamespace<QualifierPlacementStore>;
-  PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<QualifierShard>;
+  CLAUDE_FIXTURES: DurableObjectNamespace<QualifierClaudeFixturesPort>;
+  QUALIFIER: DurableObjectNamespace<QualifierProofPort>;
+  HARNESS_RUN_STORE: DurableObjectNamespace<QualifierRunStorePort>;
+  HARNESS_FILES_STORE: DurableObjectNamespace<HarnessFilesStoreObject>;
+  HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<HarnessThreadSupervisorObject>;
+  PLACEMENT_STORES: DurableObjectNamespace<QualifierPlacementStorePort>;
+  PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<QualifierShardPort>;
   QUALIFIER_COMMANDS: Fetcher;
   QUALIFIER_TAIL: Fetcher;
   BUNDLE_SHA256: string;

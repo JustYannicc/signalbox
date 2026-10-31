@@ -1,7 +1,7 @@
 import type { ClaudeMcpProbe } from "./claudeMcpProbe.ts";
 import { ClaudeQualificationModelPeer } from "./claudeModelPeer.ts";
 import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore.ts";
-import type { ClaudePersistedModelRecord } from "./claudeModelEvidence.ts";
+import type { ClaudePersistedModelRecord } from "./claudeModelRecords.ts";
 import { sameData } from "../../../../src/harness/HarnessProcessResume.ts";
 
 /** Replays retained wire bytes; a peer's self-reported counters cannot replace its tool results. */

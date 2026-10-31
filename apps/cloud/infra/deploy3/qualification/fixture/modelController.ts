@@ -4,14 +4,11 @@ import {
   type ModelRecoveryEvidence,
 } from "./modelPhysicalRecovery.fixture.ts";
 import { createCombinedCodexModelPeer, EXPECTATIONS } from "./model/modelPeer.mjs";
-import type { QualifierProof } from "./proof.ts";
+import type { QualifierExecutionContext } from "./proofContext.ts";
 import { assert, control, encoder, jsonBytes, sha256 } from "./common.ts";
 
-export interface Incarnation {
-  incarnation: string;
-  loaderId: string;
-  restored: boolean;
-}
+export type { ModelIncarnation as Incarnation } from "./proofRecords.ts";
+import type { ModelIncarnation as Incarnation } from "./proofRecords.ts";
 export class ModelController {
   readonly peer;
   #initial: Incarnation | undefined;
@@ -19,8 +16,8 @@ export class ModelController {
   #nativeSessionId: string | undefined;
   #logicalReplacements = 0;
   #preparing = false;
-  readonly owner: QualifierProof;
-  constructor(owner: QualifierProof) {
+  readonly owner: QualifierExecutionContext;
+  constructor(owner: QualifierExecutionContext) {
     this.owner = owner;
     this.peer = createCombinedCodexModelPeer({
       WebSocketPair,

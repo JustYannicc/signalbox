@@ -1,8 +1,5 @@
 import { claudeQualificationColdTimer } from "../claudeWorkload.ts";
-import type {
-  ColdFirstSuccessfulRpcTimer,
-  ColdFirstSuccessfulRpcTiming,
-} from "../../../harnessReleases/claudeQualification/contracts.ts";
+import type { ColdFirstSuccessfulRpcTimer } from "../../../harnessReleases/claudeQualification/contracts.ts";
 import { claudeLane, type ClaudeVariant } from "./claudeCTransport.ts";
 import type { ClaudeLifecycle } from "./claudeLifecycle.ts";
 import { assert } from "./common.ts";
@@ -13,21 +10,12 @@ export type {
 } from "./claudeModelEvidence.ts";
 export { collectCombinedQualification } from "../combinedQualification.ts";
 
-export type ClaudeWorkflowPhase = "work" | "resume" | "finish";
-export type ClaudeWorkflowTurnReceipt = Awaited<ReturnType<ClaudeLifecycle["turn"]>>;
-export interface ClaudeWorkflowObservation {
-  readonly schema: "signalbox/claude-qualification-public-c-workflow/v2";
-  readonly purpose: "qualification";
-  readonly variant: ClaudeVariant;
-  readonly lane: ReturnType<typeof claudeLane>;
-  readonly status: "observed";
-  readonly qualification: "pending";
-  readonly firstPublicCall: "startFreshProcess";
-  readonly coldStartupUpperBound: ColdFirstSuccessfulRpcTiming;
-  readonly turns: readonly ClaudeWorkflowTurnReceipt[];
-  readonly replacement: Awaited<ReturnType<ClaudeLifecycle["replace"]>>;
-  readonly completion: Awaited<ReturnType<ClaudeLifecycle["finish"]>>;
-}
+export type {
+  ClaudeWorkflowPhase,
+  ClaudeWorkflowTurnReceipt,
+  ClaudeWorkflowObservation,
+} from "./claudeWorkflowContracts.ts";
+import type { ClaudeWorkflowObservation } from "./claudeWorkflowContracts.ts";
 
 /** Parent timing encloses fresh creation and the first completed public request, without warmup. */
 export async function runClaudeQualificationWorkflow(input: {

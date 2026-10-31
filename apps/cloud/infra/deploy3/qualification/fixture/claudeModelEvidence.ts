@@ -2,16 +2,10 @@ import type { ClaudeMcpProbe } from "./claudeMcpProbe.ts";
 import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore.ts";
 import { CLAUDE_QUALIFICATION_PROMPTS } from "./claudeModelPeer.ts";
 import { replayClaudeModel } from "./claudeModelReplay.ts";
-import type { ClaudeWorkloadRecord } from "./claudeModelTransport.ts";
 import { sha256 } from "./common.ts";
 
-export interface ClaudePersistedModelRecord extends ClaudeWorkloadRecord {
-  readonly artifact?: HarnessRunArtifact;
-  readonly runId?: string;
-  readonly publicRequestId?: string;
-  readonly variant?: "baseline" | "hooks";
-  readonly workflowPhase?: "work" | "resume" | "finish";
-}
+export type { ClaudePersistedModelRecord } from "./claudeModelRecords.ts";
+import type { ClaudePersistedModelRecord } from "./claudeModelRecords.ts";
 
 export interface ClaudeModelWorkloadEvidence {
   readonly schema: "signalbox/claude-qualification-model-workload/v1";
