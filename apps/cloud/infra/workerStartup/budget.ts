@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 // https://developers.cloudflare.com/workers/platform/limits/#worker-startup-time
 export const WORKER_STARTUP_LIMIT_MS = 1_000;
+// Provisional until upload startup_time_ms calibrates local samples against Cloudflare CPU.
 export const WORKER_STARTUP_BUDGET_MS = WORKER_STARTUP_LIMIT_MS / 2;
 
 const NonNegative = Schema.Number.check(Schema.isFinite(), Schema.isGreaterThanOrEqualTo(0));

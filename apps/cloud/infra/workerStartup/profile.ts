@@ -2,7 +2,6 @@
 import * as NodeFSP from "node:fs/promises";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 import * as Schema from "effect/Schema";
 import { requireWorkerdLaunchAdmissionSync } from "../harnessReleases/workerdLaunchAdmission.ts";
 import { requireStartupBudget, WORKER_STARTUP_BUDGET_MS } from "./budget.ts";
@@ -12,6 +11,12 @@ import { serializeStartupPayload, sha256, startupPayload } from "./payload.ts";
 import { readStartupBundle } from "./prebuilt.ts";
 import { runStartupProfiler } from "./process.ts";
 import { freeBytes } from "./processResources.ts";
+import {
+  startupProfileLimits as limits,
+  startupProfilePaths,
+  startupProfilerCommand,
+} from "./command.ts";
+import { writeStartupInvocation } from "./invocation.ts";
 
 export const StartupProfileInput = Schema.Struct({
   main: Schema.String,
@@ -20,19 +25,6 @@ export const StartupProfileInput = Schema.Struct({
 });
 const decodeInput = Schema.decodeUnknownSync(StartupProfileInput);
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
-const limits = {
-  deadlineMs: 90_000,
-  sampleMs: 500,
-  terminateMs: 10_000,
-  killWaitMs: 10_000,
-  rssBytes: 6 * 1_024 ** 3,
-  heapMiB: 1_536,
-  profileBytes: 32 * 1_024 ** 2,
-  logBytes: 8 * 1_024 ** 2,
-  outputBytes: 128 * 1_024 ** 2,
-  diskFloorBytes: 10 * 1_024 ** 3,
-  headroomBytes: 1_024 ** 3,
-};
 /** One cold profile, no retry. Its final receipt is usable only for the exact prebuilt upload. */
 export async function profileWorkerStartup(raw: unknown) {
   const input = decodeInput(raw);
@@ -42,7 +34,9 @@ export async function profileWorkerStartup(raw: unknown) {
   const bundle = await readStartupBundle(input, input.compatibility);
   const runtime = await profilerRuntime();
   const serialized = await serializeStartupPayload(bundle, input.compatibility);
-  const output = `${input.main}.startup-profile`;
+  const { output, workerFile, profileFile, ledgerFile, configFile } = startupProfilePaths(
+    input.main,
+  );
   if (
     (await freeBytes(NodePath.dirname(input.main))) <
     limits.diskFloorBytes + limits.headroomBytes
@@ -52,32 +46,13 @@ export async function profileWorkerStartup(raw: unknown) {
   await NodeFSP.mkdir(output, { mode: 0o700 });
   await NodeFSP.mkdir(NodePath.join(output, "tmp"));
   await NodeFSP.mkdir(NodePath.join(output, "cache"));
-  const workerFile = NodePath.join(output, "worker.bundle");
-  const profileFile = NodePath.join(output, "startup.cpuprofile");
-  const ledgerFile = NodePath.join(output, "native-children.jsonl");
-  const configFile = NodePath.join(output, "wrangler.json");
   await NodeFSP.writeFile(workerFile, serialized.bytes, { flag: "wx" });
   await NodeFSP.writeFile(
     configFile,
     json({ name: "startup-profile", compatibility_date: input.compatibility.date }),
     { flag: "wx" },
   );
-  const command = [
-    runtime.nodeExecutable,
-    `--max-old-space-size=${limits.heapMiB}`,
-    "--no-warnings",
-    "--import",
-    NodeURL.fileURLToPath(new URL("./profileHook.ts", import.meta.url)),
-    runtime.wranglerCli,
-    "check",
-    "startup",
-    "--worker",
-    workerFile,
-    "--outfile",
-    profileFile,
-    "--config",
-    configFile,
-  ];
+  const command = startupProfilerCommand(runtime, input.main);
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(([key]) =>
       [
@@ -125,10 +100,17 @@ export async function profileWorkerStartup(raw: unknown) {
     NodePath.join(NodePath.dirname(input.main), destination),
     NodeFSP.constants.COPYFILE_EXCL,
   );
+  const invocationSha256 = await writeStartupInvocation(
+    input.main,
+    serialized.payload.sha256,
+    runtime,
+    profile,
+  );
   const evidence = decodeStartupEvidence({
-    schema: "signalbox/worker-startup-profile/v1",
+    schema: "signalbox/worker-startup-profile/v2",
     status: "passed",
     payloadSha256: serialized.payload.sha256,
+    invocationSha256,
     budgetMs: WORKER_STARTUP_BUDGET_MS,
     profileFile: destination,
     profileSha256: sha256(profile),

@@ -4,6 +4,7 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -19,13 +20,14 @@ import {
 } from "./runtime.ts";
 import { deploy3Workload } from "./stack.ts";
 import { verifyDeploy3TokenExpiry } from "./tokenExpiry.ts";
+import { uploadEvidenceLayer } from "./uploadEvidence.ts";
 
 const decodeDeploy3PlanJson = Schema.decodeEffect(Schema.fromJsonString(Deploy3Plan));
 
 export default Alchemy.Stack(
   "Signalbox1070Deploy3",
   {
-    providers: Cloudflare.providers(),
+    providers: Cloudflare.providers().pipe(Layer.provideMerge(uploadEvidenceLayer)),
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Hashing and serializing a deployment payload runs in the standalone Node build adapter.
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
+import * as Schema from "effect/Schema";
 import type { BundleOutput } from "alchemy/Bundle/Bundle";
 
 export interface StartupCompatibility {
@@ -88,4 +89,40 @@ export async function serializeStartupPayload(
     payload,
     bytes: Buffer.from(await response.arrayBuffer()),
   };
+}
+
+const decodeMetadata = Schema.decodeUnknownSync(
+  Schema.Struct({
+    main_module: Schema.String,
+    compatibility_date: Schema.String,
+    compatibility_flags: Schema.Array(Schema.String),
+  }),
+);
+
+/** Decode the same retained multipart bytes that the official Wrangler command consumed. */
+export async function serializedStartupPayload(bytes: Uint8Array) {
+  const raw = Buffer.from(bytes);
+  const firstLine = raw.indexOf("\n");
+  if (firstLine < 2) throw new Error("WORKER_STARTUP_MULTIPART_INVALID");
+  const boundary = raw.subarray(2, firstLine).toString().trim();
+  const form = await new Response(raw, {
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+  }).formData();
+  const metadata = decodeMetadata(JSON.parse(String(form.get("metadata"))));
+  const files = [];
+  for (const [path, module] of form.entries()) {
+    if (path === "metadata") continue;
+    if (!(module instanceof Blob) || module.type !== moduleType(path))
+      throw new Error("WORKER_STARTUP_MULTIPART_MODULE_INVALID");
+    files.push({ path, content: new Uint8Array(await module.arrayBuffer()), hash: "recomputed" });
+  }
+  const main = files.find((file) => file.path === metadata.main_module);
+  if (!main) throw new Error("WORKER_STARTUP_MULTIPART_ENTRY_MISSING");
+  return startupPayload(
+    { hash: "recomputed", files: [main, ...files.filter((file) => file !== main)] },
+    {
+      date: metadata.compatibility_date,
+      flags: metadata.compatibility_flags,
+    },
+  );
 }

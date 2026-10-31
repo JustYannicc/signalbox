@@ -37,12 +37,13 @@ const profile = (activeUs: number) =>
     }),
   );
 const evidence = (bytes: Buffer) => ({
-  schema: "signalbox/worker-startup-profile/v1",
+  schema: "signalbox/worker-startup-profile/v2",
   status: "passed",
   payloadSha256: startupPayload(bundle, compatibility).sha256,
   budgetMs: 500,
   profileFile: "startup.cpuprofile",
   profileSha256: sha256(bytes),
+  invocationSha256: "e".repeat(64),
   runtime,
   invocation: { wranglerExitCode: 0, workerdStarts: 1, workerdClosed: true, guardPassed: true },
 });

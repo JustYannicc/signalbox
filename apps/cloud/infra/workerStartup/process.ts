@@ -117,7 +117,6 @@ export async function runStartupProfiler(
   };
 
   const inspectGroup = async (group: number) => {
-    adapter.admission();
     return adapter.groupProcesses(group);
   };
 
@@ -136,14 +135,28 @@ export async function runStartupProfiler(
         stopTimers.push(
           setTimeout(() => {
             timerExpired = true;
+            try {
+              NodeFS.writeFileSync(
+                NodePath.join(input.output, "uncertain-closure.json"),
+                json({
+                  status: "WORKER_STARTUP_UNCERTAIN_CHILD_CLOSURE",
+                  wranglerPid: child?.pid ?? null,
+                  wranglerWaited: childClosed,
+                  terminal: terminal ?? null,
+                  lastObservedOwnedGroup: rows,
+                  failure: errorText(failure),
+                  supervisionRetained: true,
+                }),
+                { flag: "wx" },
+              );
+            } catch (cause) {
+              terminationErrors.push(errorText(cause));
+            }
           }, input.limits.killWaitMs),
         );
       }, input.limits.terminateMs),
     );
   };
-
-  const stillRunning = () => !childClosed && !timerExpired;
-  const cleanupPending = () => !timerExpired;
 
   const signalHandler = () => stop(new Error("WORKER_STARTUP_INTERRUPTED"));
   const sample = async () => {
@@ -245,12 +258,7 @@ export async function runStartupProfiler(
     tick();
     interval = setInterval(tick, input.limits.sampleMs);
 
-    await Promise.race([
-      closed,
-      (async () => {
-        while (stillRunning()) await new Promise((resolve) => setTimeout(resolve, 25));
-      })(),
-    ]);
+    await closed;
     clearInterval(interval);
     interval = undefined;
     await sampleInFlight;
@@ -286,17 +294,6 @@ export async function runStartupProfiler(
       stop(new Error(`WORKER_STARTUP_LEDGER_INVALID: ${ledgerError}`));
     }
 
-    if (failure !== undefined && child?.pid) {
-      while (cleanupPending()) {
-        try {
-          rows = await inspectGroup(child.pid);
-        } catch (cause) {
-          if (failure === undefined) appendFailure(cause);
-        }
-        if (childClosed && rows.length === 0) break;
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-    }
     if (childClosed && child?.pid && failure === undefined) {
       try {
         adapter.admission();
@@ -321,18 +318,34 @@ export async function runStartupProfiler(
     }
   } catch (cause) {
     stop(cause);
-    if (child && !childClosed) {
-      while (stillRunning()) await new Promise((resolve) => setTimeout(resolve, 25));
-    }
   } finally {
-    shuttingDown = true;
     if (interval) clearInterval(interval);
+    await sampleInFlight;
+    if (child) {
+      // A deadline stops profiling and signals once; it cannot transfer ownership of live children.
+      await closed;
+      if (child.pid !== undefined) {
+        const group = child.pid;
+        const ownedGroupClosed = async () => {
+          try {
+            rows = await inspectGroup(group);
+            if (rows.length === 0) return true;
+            stop(new Error("WORKER_STARTUP_DESCENDANTS_AFTER_WRANGLER_EXIT"));
+          } catch (cause) {
+            stop(cause);
+          }
+          return false;
+        };
+        while (!(await ownedGroupClosed()))
+          await new Promise((resolve) => setTimeout(resolve, input.limits.sampleMs));
+      }
+    }
+    shuttingDown = true;
     if (deadline) clearTimeout(deadline);
     for (const timer of stopTimers) clearTimeout(timer);
     process.off("SIGTERM", signalHandler);
     process.off("SIGINT", signalHandler);
     process.off("SIGHUP", signalHandler);
-    await sampleInFlight;
     await Promise.allSettled(writes);
   }
   const streamStates = child ? [child.stdout?.closed === true, child.stderr?.closed === true] : [];
@@ -367,6 +380,8 @@ export async function runStartupProfiler(
   if (!joined && failure === undefined)
     appendFailure(new Error("WORKER_STARTUP_PROFILER_OR_CLOSURE_FAILED"));
   const closure = {
+    command: input.command,
+    cwd: input.cwd,
     terminal: terminal ?? null,
     wranglerPid: child?.pid ?? null,
     wranglerWaited: childClosed,
@@ -380,6 +395,7 @@ export async function runStartupProfiler(
     failure: failure === undefined ? null : errorText(failure),
     failureExportError: failureExportError === undefined ? null : errorText(failureExportError),
     terminationErrors,
+    terminationDeadlineExceeded: timerExpired,
     limits: input.limits,
   };
   try {

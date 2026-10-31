@@ -6,15 +6,17 @@ import type { BundleOutput } from "alchemy/Bundle/Bundle";
 import { requireStartupBudget, WORKER_STARTUP_BUDGET_MS } from "./budget.ts";
 import { sha256, startupPayload, type StartupCompatibility } from "./payload.ts";
 import { profilerRuntime, StartupRuntime } from "./runtime.ts";
+import { requireStartupInvocation } from "./invocation.ts";
 
 const Hash = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 const Evidence = Schema.Struct({
-  schema: Schema.Literal("signalbox/worker-startup-profile/v1"),
+  schema: Schema.Literal("signalbox/worker-startup-profile/v2"),
   status: Schema.Literal("passed"),
   payloadSha256: Hash,
   budgetMs: Schema.Literal(WORKER_STARTUP_BUDGET_MS),
   profileFile: Schema.String,
   profileSha256: Hash,
+  invocationSha256: Hash,
   runtime: StartupRuntime,
   invocation: Schema.Struct({
     wranglerExitCode: Schema.Literal(0),
@@ -70,5 +72,19 @@ export async function readStartupEvidence(
     NodePath.join(NodePath.dirname(path), evidence.profileFile),
   );
   const runtime = await profilerRuntime();
-  return requireStartupEvidence(bundle, compatibility, evidence, profile, runtime.identity);
+  const matched = requireStartupEvidence(
+    bundle,
+    compatibility,
+    evidence,
+    profile,
+    runtime.identity,
+  );
+  await requireStartupInvocation(
+    main,
+    evidence.payloadSha256,
+    profile,
+    evidence.invocationSha256,
+    runtime,
+  );
+  return matched;
 }

@@ -197,24 +197,61 @@ describe("startup profiler process ownership", () => {
     await NodeFSP.rm(root, { recursive: true, force: true });
   });
 
-  it("keeps an uncertain terminal distinct from an observed close", async () => {
+  it("keeps ownership after the kill deadline until the child actually closes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
     const { root, input } = await setup();
     const child = makeChild();
-    const shortLimits = { ...limits, terminateMs: 0, killWaitMs: 0 };
-    const run = runStartupProfiler(
-      { ...input, limits: shortLimits },
-      adapter(child, {
-        spawn: () => setImmediate(() => child.emit("error", new Error("spawn failed"))),
-        onSignal: () => {},
-      }),
-    );
-    await expect(run).rejects.toThrow("spawn failed");
-    const closure = JSON.parse(
-      await NodeFSP.readFile(NodePath.join(input.output, "closure.json"), "utf8"),
-    );
-    expect(closure.terminal).toBeNull();
-    expect(closure.wranglerWaited).toBe(false);
-    expect(closure.joined).toBe(false);
-    await NodeFSP.rm(root, { recursive: true, force: true });
+    const spawned = Promise.withResolvers<void>();
+    const signals: NodeJS.Signals[] = [];
+    let settled = false;
+    try {
+      const run = runStartupProfiler(
+        { ...input, limits: { ...limits, terminateMs: 10, killWaitMs: 10 } },
+        adapter(child, {
+          spawn: () => spawned.resolve(),
+          onSignal: (signal) => signals.push(signal),
+        }),
+      );
+      const outcome = run.then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (cause: unknown) => {
+          settled = true;
+          return cause;
+        },
+      );
+      await spawned.promise;
+      child.emit("error", new Error("spawn failed"));
+      await vi.advanceTimersByTimeAsync(30);
+      const uncertain = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(input.output, "uncertain-closure.json"), "utf8"),
+      );
+      expect(uncertain).toMatchObject({
+        supervisionRetained: true,
+        wranglerWaited: false,
+        terminal: null,
+      });
+      expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(settled).toBe(false);
+      await expect(NodeFSP.stat(NodePath.join(input.output, "closure.json"))).rejects.toMatchObject(
+        { code: "ENOENT" },
+      );
+      closeChild(child, null, "SIGKILL");
+      expect(await outcome).toMatchObject({ message: "spawn failed" });
+      const closure = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(input.output, "closure.json"), "utf8"),
+      );
+      expect(closure).toMatchObject({
+        wranglerWaited: true,
+        terminationDeadlineExceeded: true,
+        terminal: { code: null, signal: "SIGKILL" },
+        remainingOwnedGroup: [],
+      });
+    } finally {
+      vi.useRealTimers();
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
   });
 });

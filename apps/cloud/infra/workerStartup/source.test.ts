@@ -13,11 +13,11 @@ import {
   type SourceServices,
   type SourceError,
 } from "alchemy/Cloudflare";
-import { readStartupBundle } from "./prebuilt.ts";
 import { describe, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
-import { WORKER_STARTUP_BUDGET_MS } from "./budget.ts";
+import { profileWorkerStartup } from "./profile.ts";
 import { sha256, startupPayload } from "./payload.ts";
+import { readStartupBundle } from "./prebuilt.ts";
 
 const runtimeMock = vi.hoisted(() => {
   const identity = {
@@ -46,6 +46,55 @@ const runtimeMock = vi.hoisted(() => {
 vi.mock("./runtime.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./runtime.ts")>()),
   profilerRuntime: runtimeMock.profilerRuntime,
+}));
+
+vi.mock("../harnessReleases/workerdLaunchAdmission.ts", () => ({
+  requireWorkerdLaunchAdmissionSync: vi.fn(),
+}));
+vi.mock("./processResources.ts", async (original) => ({
+  ...(await original<typeof import("./processResources.ts")>()),
+  freeBytes: async () => 64 * 1_024 ** 3,
+}));
+vi.mock("./process.ts", () => ({
+  runStartupProfiler: vi.fn(async (input: import("./process.ts").StartupProfilerInput) => {
+    const events = [
+      { event: "workerd-spawn", pid: 9002, guardPassed: true },
+      { event: "workerd-close", pid: 9002, streamsClosed: [true, true, true, true] },
+    ];
+    await NodeFSP.writeFile(
+      input.profileFile,
+      JSON.stringify({
+        startTime: 1,
+        endTime: 218_441,
+        nodes: [{ id: 1, callFrame: { functionName: "startup" } }],
+        samples: [1],
+        timeDeltas: [218_440],
+      }),
+    );
+    await NodeFSP.writeFile(
+      input.ledgerFile,
+      events.map((event) => JSON.stringify(event)).join("\n") + "\n",
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(input.output, "closure.json"),
+      JSON.stringify({
+        command: input.command,
+        cwd: input.cwd,
+        terminal: { code: 0, signal: null },
+        wranglerPid: 9001,
+        wranglerWaited: true,
+        streamsClosed: [true, true],
+        events,
+        remainingOwnedGroup: [],
+        joined: true,
+        failure: null,
+        failureExportError: null,
+        terminationErrors: [],
+        terminationDeadlineExceeded: false,
+      }),
+    );
+    return { terminal: { code: 0, signal: null }, wallMs: 200, peakRssBytes: 1_000 };
+  }),
 }));
 
 import sourceModule from "./source.ts";
@@ -101,37 +150,8 @@ async function fixture() {
 
   return {
     main,
-    async writeEvidence(currentCompatibility = compatibility) {
-      const bundle = await readStartupBundle({ main, rules }, currentCompatibility);
-      const profile = Buffer.from(
-        JSON.stringify({
-          startTime: 1,
-          endTime: 218_441,
-          nodes: [{ id: 1, callFrame: { functionName: "startup" } }],
-          samples: [1],
-          timeDeltas: [218_440],
-        }),
-      );
-      await NodeFSP.writeFile(NodePath.join(root, "startup.cpuprofile"), profile);
-      await NodeFSP.writeFile(
-        `${main}.startup-profile.json`,
-        JSON.stringify({
-          schema: "signalbox/worker-startup-profile/v1",
-          status: "passed",
-          payloadSha256: startupPayload(bundle, currentCompatibility).sha256,
-          budgetMs: WORKER_STARTUP_BUDGET_MS,
-          profileFile: "startup.cpuprofile",
-          profileSha256: sha256(profile),
-          runtime: runtimeMock.identity,
-          invocation: {
-            wranglerExitCode: 0,
-            workerdStarts: 1,
-            workerdClosed: true,
-            guardPassed: true,
-          },
-        }),
-      );
-    },
+    writeEvidence: (currentCompatibility = compatibility) =>
+      profileWorkerStartup({ main, rules, compatibility: currentCompatibility }),
     dispose: () => NodeFSP.rm(root, { recursive: true, force: true }),
   };
 }
@@ -232,6 +252,68 @@ describe("worker startup source provider", () => {
           source.hash(workerContext(changed), previous),
           "WORKER_STARTUP_PROFILE_STALE_PAYLOAD",
         );
+    }).pipe(Effect.scoped),
+  );
+  it.effect("rejects a standalone profile sidecar without its profiler invocation", () =>
+    Effect.gen(function* () {
+      const f = yield* Effect.acquireRelease(Effect.promise(fixture), (f) =>
+        Effect.promise(f.dispose),
+      );
+      yield* Effect.promise(async () => {
+        const bundle = await readStartupBundle({ main: f.main, rules }, compatibility);
+        const bytes = Buffer.from(
+          JSON.stringify({
+            startTime: 1,
+            endTime: 2,
+            nodes: [{ id: 1, callFrame: { functionName: "startup" } }],
+            samples: [1],
+            timeDeltas: [1],
+          }),
+        );
+        await NodeFSP.writeFile(
+          NodePath.join(NodePath.dirname(f.main), "fabricated.cpuprofile"),
+          bytes,
+        );
+        await NodeFSP.writeFile(
+          `${f.main}.startup-profile.json`,
+          JSON.stringify({
+            schema: "signalbox/worker-startup-profile/v2",
+            status: "passed",
+            payloadSha256: startupPayload(bundle, compatibility).sha256,
+            budgetMs: 500,
+            profileFile: "fabricated.cpuprofile",
+            profileSha256: sha256(bytes),
+            invocationSha256: "e".repeat(64),
+            runtime: runtimeMock.identity,
+            invocation: {
+              wranglerExitCode: 0,
+              workerdStarts: 1,
+              workerdClosed: true,
+              guardPassed: true,
+            },
+          }),
+        );
+      });
+      const source = yield* makeSource(f.main);
+      yield* expectStartupFailure(source.build(workerContext()));
+      yield* expectStartupFailure(source.hash(workerContext(), undefined));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rejects a changed child ledger after a completed producer receipt", () =>
+    Effect.gen(function* () {
+      const f = yield* Effect.acquireRelease(Effect.promise(fixture), (f) =>
+        Effect.promise(f.dispose),
+      );
+      yield* Effect.promise(() => f.writeEvidence());
+      yield* Effect.promise(() =>
+        NodeFSP.appendFile(`${f.main}.startup-profile/native-children.jsonl`, "{}\n"),
+      );
+      const source = yield* makeSource(f.main);
+      yield* expectStartupFailure(
+        source.hash(workerContext(), undefined),
+        "WORKER_STARTUP_INVOCATION_FILES_CHANGED",
+      );
     }).pipe(Effect.scoped),
   );
 });
