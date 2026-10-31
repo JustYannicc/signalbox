@@ -120,6 +120,9 @@ export async function writeClaudeReleaseVariantCatalog(
   input: Parameters<typeof validateClaudeReleaseVariantArtifacts>[0] & { readonly output: string },
 ) {
   const validated = await validateClaudeReleaseVariantArtifacts(input);
+  // Qualification can inspect full graphs; publication still requires omission provenance.
+  record(record(validated.baseline.manifests.cli).omission);
+  record(record(validated.hooks.manifests.cli).omission);
   // Opening both graphs awaits I/O; a newer failure may have arrived during those reads.
   for (const { fullArtifact } of [validated.catalog.baseline, validated.catalog.hooks])
     if (input.ledger.getEligibility("claude-code", fullArtifact.releaseId).status !== "green")

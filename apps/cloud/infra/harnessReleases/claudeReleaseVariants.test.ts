@@ -205,6 +205,25 @@ it("keeps a pending pair inspectable without publishing it to selectors", async 
   }
 });
 
+it("does not publish an omission-free pair even with green proofs", async () => {
+  const omit = (cli: Record<string, unknown>) => {
+    delete cli.omission;
+  };
+  const f = await fixture(false, omit, 0, omit);
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-full-catalog-"));
+  try {
+    recordProofs(f, "green");
+    const output = NodePath.join(root, "catalog.json");
+    await expect(writeClaudeReleaseVariantCatalog({ ...f.input, output })).rejects.toThrow(
+      "CLAUDE_VARIANTS_PROVENANCE_MISSING",
+    );
+    await expect(NodeFSP.stat(output)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    f.close();
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
+
 it.each(["green", "rejected"] as const)(
   "publishes only a fully bound green pair, proof=%s",
   async (status) => {
