@@ -6,6 +6,11 @@ import { loadHarnessRelease } from "../HarnessReleaseLoader.ts";
 import { productLoadedPreparedRelease } from "../ProductHarnessProcessRelease.ts";
 import { claudeFixture, codexFixture } from "../releaseLoader/tests/artifactFixtures.ts";
 import { durableRootContext } from "../tests/processIncarnation/durableRootFixture.ts";
+import {
+  deploy3QualifierEnvironment,
+  materializeDeploy3QualifierEnvironment,
+} from "../../../infra/deploy3/qualifierEnvironment.ts";
+import { assertQualifierRuntimeConfiguration } from "../../../infra/deploy3/qualification/environmentContract.ts";
 
 vi.mock("cloudflare:workers", () => ({
   DurableObject: class {
@@ -95,28 +100,41 @@ async function creation(provider: "codex" | "claude-code") {
       throw beforePlacement;
     },
   };
-  const namespace = { get: () => store, getByName: () => store };
+  const namespace = { get: () => store, getByName: () => store, idFromName: () => "creation-run" };
   const load = vi.fn(() => {
     throw new Error("The admission test must not open a facet.");
   });
+  const bindings = materializeDeploy3QualifierEnvironment(
+    deploy3QualifierEnvironment({
+      RUN_ID: "12345678-1234-4234-8234-123456789abc",
+      WORKER_NAME: "sb1070-d3-12345678-1793550614-workload",
+      CONFIG_SHA256: "a".repeat(64),
+      BUNDLE_SHA256: "b".repeat(64),
+    }),
+    { namespace: () => namespace, loader: () => ({ get: load, load }) },
+  );
+  const environment = {
+    ...bindings.env,
+    ...Object.fromEntries(
+      bindings.services.map(({ name }) => [
+        name,
+        { fetch: load, run: load, tail: load, captureOuter: load },
+      ]),
+    ),
+  };
+  assertQualifierRuntimeConfiguration(environment);
   const shard = new HarnessProcessExecutionShardObject(
     root.context as unknown as DurableObjectState,
-    {
-      HARNESS_RUN_STORE: namespace,
-      HARNESS_FILES_STORE: namespace,
-      HARNESS_THREAD_SUPERVISOR: namespace,
-      PLACEMENT_STORES: namespace,
-      LOADER: { get: load },
-      RESIDENT_BYTE_LIMIT: "128000000",
-    } as unknown as HarnessProcessExecutionEnvironment,
+    environment as unknown as HarnessProcessExecutionEnvironment,
   );
-  return { input, shard, initialized, beforePlacement, load };
+  return { input, shard, initialized, beforePlacement, load, environment };
 }
 
 it.each(["codex", "claude-code"] as const)(
-  "admits a matching %s release through public C to durable initialization",
+  "admits a matching %s release with the normal deploy3 environment through public C",
   async (provider) => {
     const fixture = await creation(provider);
+    expect(fixture.environment.RESIDENT_BYTE_LIMIT).toBe(String(104 * 1024 * 1024));
     await expect(fixture.shard.startFreshProcess(fixture.input)).rejects.toBe(
       fixture.beforePlacement,
     );
@@ -124,6 +142,16 @@ it.each(["codex", "claude-code"] as const)(
     expect(fixture.load).not.toHaveBeenCalled();
   },
 );
+
+it("rejects the deployed missing-budget regression before durable initialization", async () => {
+  const fixture = await creation("claude-code");
+  delete fixture.environment.RESIDENT_BYTE_LIMIT;
+  await expect(fixture.shard.startFreshProcess(fixture.input)).rejects.toThrow(
+    "Cold creation requires the public durable stores, loader, placement, and residency limit",
+  );
+  expect(fixture.initialized).toEqual([]);
+  expect(fixture.load).not.toHaveBeenCalled();
+});
 
 it.each(["codex", "claude-code"] as const)(
   "rejects another provider's release before initializing a %s run",
