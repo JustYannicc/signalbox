@@ -3,6 +3,7 @@ import type { HarnessProcessResumePreparedRelease } from "../../../src/harness/H
 import { prepareHarnessFilesCheckpoint } from "../../../src/harness/HarnessFilesStore.ts";
 import { CHILD_COREUTILS_COMMANDS } from "../../../src/computer/ChildProgramSet.ts";
 import { sha256, toBase64 } from "./fixture/common.ts";
+import { deploy3BootstrapIdentity } from "../expiry.ts";
 import type { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import { RunnerTurn as RunnerTurnSchema } from "@signalbox/runner-protocol/RunnerProtocol";
 import * as Schema from "effect/Schema";
@@ -26,7 +27,7 @@ export async function syntheticConfiguration(
   return {
     schema: "sb1070/qualifier-input/v1",
     runId: "00000000-0000-4000-8000-000000000001",
-    workerName: "synthetic-compile-only",
+    workerName: deploy3BootstrapIdentity("00000000", Date.parse("2026-10-30T00:00:00Z")).workerName,
     mainCommit: "1".repeat(40),
     mainTree: "2".repeat(40),
     expectedRelease: release,

@@ -9,7 +9,7 @@ import type {
   HarnessProcessResumeOperationInput,
   HarnessProcessContinuationInput,
 } from "../../../../src/harness/HarnessProcessResume.ts";
-import { preparedReleaseAsset } from "../../../../src/harness/HarnessProcessPlacement.ts";
+import { codexFacet } from "./codexFacetInputs.ts";
 import { createHarnessDurableState } from "../../../../src/harness/HarnessDurableState.ts";
 import {
   assert,
@@ -48,23 +48,7 @@ export class Lifecycle {
     return this.#checkpoint;
   }
   private facet(config: Configuration) {
-    const engine = Object.entries(config.expectedRelease.plan.preparedModules).find(
-      ([, value]) => value.type === "wasm" && value.path.endsWith("codex/engine.wasm"),
-    );
-    assert(engine, "The frozen official engine is absent from the selected prepared release");
-    return {
-      processId: PROCESS_ID,
-      codeId: config.expectedRelease.artifact.releaseId,
-      residentBytes: 104 * 1024 * 1024,
-      mainModule: "qualifier-facet.mjs",
-      entrypoint: "CodexFacet",
-      modules: {
-        "qualifier-facet.mjs": {
-          js: "export { CodexFacet } from './qualifier-implementation.mjs';\n",
-        },
-        "codex-engine.wasm": preparedReleaseAsset(config.expectedRelease, engine[0]),
-      },
-    } as const;
+    return codexFacet(config);
   }
   async cold() {
     const config = await this.owner.config();
@@ -98,9 +82,6 @@ export class Lifecycle {
       requestModeId: "request-mode",
       facet: {
         ...this.facet(config),
-        facetEnv: {
-          QUALIFIER_CONFIGURATION: { runId: config.runId, workerName: config.workerName },
-        },
         productBootstrap: this.bootstrap(config),
         targetPreparedRelease: config.expectedRelease,
       },

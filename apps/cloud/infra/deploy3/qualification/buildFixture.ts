@@ -19,6 +19,9 @@ import { decodeCombinedFixtureInput, type FixtureFilePin } from "./bundleInput.t
 import { inspectDeploy3AssetRoot } from "./inspectAssets.ts";
 import { decodePreparedRelease } from "./preparedRelease.schema.ts";
 import { prepareEnvironmentPackages } from "./environmentPackages.ts";
+import { deploy3QualifierEnvironmentInputs } from "../qualifierEnvironment.ts";
+import { validateQualifierFacetEnvironments } from "./validateFacetEnvironments.ts";
+import type { Configuration } from "./fixture/configuration.ts";
 
 const source = NodeURL.fileURLToPath(new URL("./fixture/", import.meta.url));
 const cloud = NodeURL.fileURLToPath(new URL("../../../", import.meta.url));
@@ -230,7 +233,7 @@ export async function buildCombinedFixture(raw: unknown) {
       ),
       expected: claudeExpected,
     },
-  };
+  } satisfies Configuration;
   const assets = NodePath.join(output, "assets");
   await NodeFSP.cp(input.assetsDirectory, assets, {
     recursive: true,
@@ -247,6 +250,14 @@ export async function buildCombinedFixture(raw: unknown) {
     );
   await environmentPackages.write(assets);
   const configBytes = Buffer.from(json(config));
+  validateQualifierFacetEnvironments(
+    deploy3QualifierEnvironmentInputs({
+      RUN_ID: configuration.runId,
+      WORKER_NAME: configuration.workerName,
+      CONFIG_SHA256: hash(configBytes),
+    }),
+    config,
+  );
   await NodeFSP.writeFile(NodePath.join(assets, "qualifier/config.json"), configBytes, {
     flag: "wx",
   });

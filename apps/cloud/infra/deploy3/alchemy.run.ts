@@ -22,6 +22,7 @@ import { deploy3Workload } from "./stack.ts";
 import { verifyDeploy3TokenExpiry } from "./tokenExpiry.ts";
 import { uploadEvidenceLayer } from "./uploadEvidence.ts";
 import { materializeDeploy3QualifierEnvironment } from "./qualifierEnvironment.ts";
+import { validateDeploy3PlanAssets } from "./validatePlanAssets.ts";
 
 const decodeDeploy3PlanJson = Schema.decodeEffect(Schema.fromJsonString(Deploy3Plan));
 
@@ -40,6 +41,7 @@ export default Alchemy.Stack(
       ).pipe(Effect.orDie),
       stage,
     );
+    yield* Effect.tryPromise(() => validateDeploy3PlanAssets(plan)).pipe(Effect.orDie);
     const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
     const operatorValue = yield* Config.Redacted("CLOUDFLARE_API_TOKEN");
     if (!plan.operatorTokenId)

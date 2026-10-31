@@ -12,9 +12,9 @@ import type { HarnessProcessFacetLocator } from "./contracts.ts";
 import type { HarnessProcessFacetModule } from "./moduleCode.ts";
 import type { ProcessStoreBindings } from "../processOwnership/contracts.ts";
 
-export interface HarnessCProductCapabilityEnvironment {
-  readonly HARNESS_C_PRODUCT_CAPABILITIES?: Readonly<Record<string, Fetcher>>;
-  readonly PROGRAM_ASSETS?: Fetcher;
+export interface HarnessCProductCapabilityEnvironment<Assets = Fetcher, Capability = Fetcher> {
+  readonly HARNESS_C_PRODUCT_CAPABILITIES?: Readonly<Record<string, Capability>>;
+  readonly PROGRAM_ASSETS?: Assets;
 }
 
 export type HarnessProcessExecutionProductBootstrapInput =
@@ -27,17 +27,17 @@ export type HarnessProcessExecutionProductBootstrapInput =
       readonly targetPreparedRelease?: never;
     };
 
-export interface HarnessProcessExecutionResumeFacetEnvironment {
+export interface HarnessProcessExecutionResumeFacetEnvironment<Store = Fetcher> {
   readonly HARNESS_RESUME_RUN_ID: string;
   readonly HARNESS_RESUME_CONTROL: HarnessThreadSupervisorControlClaim;
   readonly HARNESS_RESUME_PUBLISHER: HarnessThreadSupervisorPublisher;
-  readonly HARNESS_RESUME_RUN_STORE: Fetcher;
-  readonly HARNESS_RESUME_FILES_STORE: Fetcher;
-  readonly HARNESS_RESUME_SUPERVISOR: Fetcher;
+  readonly HARNESS_RESUME_RUN_STORE: Store;
+  readonly HARNESS_RESUME_FILES_STORE: Store;
+  readonly HARNESS_RESUME_SUPERVISOR: Store;
 }
 
-export type HarnessProcessCreationFacetEnvironment = Omit<
-  HarnessProcessExecutionResumeFacetEnvironment,
+export type HarnessProcessCreationFacetEnvironment<Store = Fetcher> = Omit<
+  HarnessProcessExecutionResumeFacetEnvironment<Store>,
   "HARNESS_RESUME_PUBLISHER"
 > & {
   readonly HARNESS_RESUME_CREATION: true;
@@ -66,10 +66,10 @@ export type HarnessProcessExecutionProcessInput = {
   readonly resumeFacetEnv?: HarnessProcessExecutionResumeFacetEnvironment;
 } & HarnessProcessExecutionProductBootstrapInput;
 
-export type HarnessProcessExecutionFacetCodeInput = {
+export type HarnessProcessExecutionFacetCodeInput<Store = Fetcher> = {
   readonly resumeFacetEnv?:
-    | HarnessProcessExecutionResumeFacetEnvironment
-    | HarnessProcessCreationFacetEnvironment;
+    | HarnessProcessExecutionResumeFacetEnvironment<Store>
+    | HarnessProcessCreationFacetEnvironment<Store>;
 } & Pick<
   HarnessProcessExecutionProcessInput,
   | "processId"
@@ -110,11 +110,24 @@ const reservedFacetEnvironmentKeys = [
   "PROGRAM_ASSETS",
 ] as const;
 
-export function createHarnessProcessFacetEnvironment(
-  process: HarnessProcessExecutionFacetCodeInput,
-  environment: HarnessCProductCapabilityEnvironment,
+export function createHarnessProcessFacetEnvironment<
+  Assets = Fetcher,
+  Capability = Fetcher,
+  Store = Fetcher,
+  SourceAssets = Assets,
+>(
+  process: HarnessProcessExecutionFacetCodeInput<Store>,
+  environment: HarnessCProductCapabilityEnvironment<SourceAssets, Capability>,
   identity: HarnessProcessFacetLocator,
-  context?: DurableObjectState,
+  context?:
+    | DurableObjectState
+    | {
+        readonly exports?: {
+          readonly HarnessProgramAssetsBinding?: (options: {
+            readonly props: Record<string, never>;
+          }) => Assets;
+        };
+      },
 ): Readonly<Record<string, unknown>> {
   const { productBootstrap, targetPreparedRelease } = process;
   if ((productBootstrap === undefined) !== (targetPreparedRelease === undefined))
@@ -131,7 +144,7 @@ export function createHarnessProcessFacetEnvironment(
   const facetEnv = { ...process.facetEnv };
   for (const key of reservedFacetEnvironmentKeys) delete facetEnv[key];
 
-  let programAssets: Fetcher | undefined;
+  let programAssets: Assets | undefined;
   if (productBootstrap !== undefined && environment.PROGRAM_ASSETS !== undefined) {
     if (context === undefined)
       throw new TypeError("The product PROGRAM_ASSETS binding requires a Worker context.");
@@ -140,7 +153,7 @@ export function createHarnessProcessFacetEnvironment(
         readonly exports?: {
           readonly HarnessProgramAssetsBinding?: (options: {
             readonly props: Record<string, never>;
-          }) => Fetcher;
+          }) => Assets;
         };
       }
     ).exports;

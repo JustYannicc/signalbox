@@ -6,12 +6,18 @@ import { claudePreparedWorkerModules } from "./fixture/claudePreparedModules.ts"
 import { readAsset, type Configuration } from "./fixture/configuration.ts";
 import { decodePreparedRelease } from "./preparedRelease.schema.ts";
 import { readClaudeQualificationAssets } from "./runtimeAssets.ts";
+import { createQualifierClaudeFacetEnvironment } from "./claudeFacetEnvironment.ts";
 
 /** Materializes verified modules inside the real loader's lazy code callback. */
 export async function prepareClaudeFacetCode(
   code: WorkerLoaderWorkerCode,
   configuration: Pick<Configuration, "claude">,
   assets: AssetFetcher,
+  inputs: {
+    readonly RUN_ID: string;
+    readonly CONFIG_SHA256: string;
+    readonly authorities: Parameters<typeof createQualifierClaudeFacetEnvironment>[3];
+  },
 ) {
   const selected = decodePreparedRelease(code.env?.HARNESS_C_TARGET_PREPARED_RELEASE);
   const matches = (["baseline", "hooks"] as const).filter((variant) =>
@@ -47,7 +53,12 @@ export async function prepareClaudeFacetCode(
     variant,
     code: {
       ...code,
-      env: { ...code.env, QUALIFIER_CLAUDE_VARIANT: variant },
+      env: createQualifierClaudeFacetEnvironment(
+        code.env ?? {},
+        inputs,
+        variant,
+        inputs.authorities,
+      ),
       modules: {
         ...code.modules,
         ...modules,

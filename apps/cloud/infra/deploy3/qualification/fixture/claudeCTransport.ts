@@ -22,6 +22,8 @@ import { assert } from "./common.ts";
 
 export type { ClaudeVariant, ClaudeStepPhase, ClaudeStep } from "./claudeScenario.ts";
 import type { ClaudeVariant, ClaudeStepPhase, ClaudeStep } from "./claudeScenario.ts";
+import { claudeLane } from "./claudeScenario.ts";
+export { claudeLane } from "./claudeScenario.ts";
 
 export type ClaudeCShard = Pick<
   HarnessProcessExecutionShardObject,
@@ -43,16 +45,6 @@ export interface ClaudeCTransportOptions {
   readonly endStep: (step: ClaudeStep) => Promise<unknown>;
 }
 
-export const claudeLane = (rootRunId: string, variant: ClaudeVariant) => {
-  const runId = `${rootRunId}/claude/${variant}`;
-  return {
-    runId,
-    shardOwner: `combined/${runId}`,
-    processId: `official-claude-${variant}`,
-    creationOperationId: `claude-${variant}-create`,
-    resumeOperationId: `claude-${variant}-replace`,
-  };
-};
 const MAIN = "qualifier-claude-facet.mjs";
 const MODULES = {
   [MAIN]: { js: "export { ClaudeFacet } from './qualifier-claude-implementation.mjs';\n" },

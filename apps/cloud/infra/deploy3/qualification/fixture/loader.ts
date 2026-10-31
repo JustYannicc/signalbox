@@ -1,5 +1,4 @@
 import { claudeStepRoute } from "./claudeScenario.ts";
-import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../../src/harness/HarnessCProductCapabilities.ts";
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
 import { observeCommandInvocation } from "./commandObservation.ts";
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -13,6 +12,10 @@ import { readAsset, readConfiguration } from "./configuration.ts";
 import { assert, sha256 } from "./common.ts";
 import { COMMAND_ASSETS } from "./programRegistry.ts";
 import { prepareClaudeFacetCode } from "../prepareClaudeFacet.ts";
+import {
+  assertQualifierClaudeFacetConfiguration,
+  assertQualifierCodexFacetConfiguration,
+} from "../facetEnvironmentContract.ts";
 
 function facetPin(
   loaderId: string,
@@ -74,24 +77,12 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
         const config = await readConfiguration(env.PROGRAM_ASSETS, env.CONFIG_SHA256);
         if (actual.mainModule === "qualifier-claude-facet.mjs") {
           const authorities = requireClaudeAuthorities(env);
-          const prepared = await prepareClaudeFacetCode(
-            {
-              ...actual,
-              env: {
-                ...actual.env,
-                CLAUDE_ACCESS: authorities.access,
-                CLAUDE_EXECUTOR: authorities.executor,
-                HARNESS_C_PRODUCT_CAPABILITIES: {
-                  ...actual.env?.HARNESS_C_PRODUCT_CAPABILITIES,
-                  [HARNESS_C_PRODUCT_CAPABILITY_KEYS.access]: authorities.access,
-                  [HARNESS_C_PRODUCT_CAPABILITY_KEYS.executor]: authorities.executor,
-                  claudeContinuationPublisher: authorities.continuations,
-                },
-              },
-            },
-            config,
-            env.PROGRAM_ASSETS,
-          );
+          const prepared = await prepareClaudeFacetCode(actual, config, env.PROGRAM_ASSETS, {
+            RUN_ID: env.RUN_ID,
+            CONFIG_SHA256: env.CONFIG_SHA256,
+            authorities,
+          });
+          assertQualifierClaudeFacetConfiguration(prepared.code.env);
           const route = (path: string) => ({ method: "POST", path });
           const calibration = route(`/claude/${prepared.variant}/calibration`);
           const restore = route(`/claude/${prepared.variant}/replace/dispatch`);
@@ -148,6 +139,7 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
         const phase = name.startsWith("observer-calibration-")
           ? undefined
           : await proof(env).modelConstructionPhase();
+        if (phase !== undefined) assertQualifierCodexFacetConfiguration(actual.env);
         const pin = facetPin(name, actual.env?.HARNESS_RESUME_CREATION === true, phase);
         const observed = observeWorkerCode(enriched, env.RUN_ID, pin, tail);
         await proof(env).append("actual-loader-materialized", {

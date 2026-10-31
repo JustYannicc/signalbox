@@ -5,7 +5,11 @@ import {
 
 /** These descriptors are consumed by the Alchemy stack, including its deferred service bindings. */
 export function deploy3QualifierEnvironment(vars: Readonly<Record<string, string>>) {
-  return decodeQualifierPlannedConfiguration({
+  return decodeQualifierPlannedConfiguration(deploy3QualifierEnvironmentInputs(vars));
+}
+
+export function deploy3QualifierEnvironmentInputs(vars: Readonly<Record<string, string>>) {
+  return {
     RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
     ...vars,
     QUALIFIER: {
@@ -47,7 +51,7 @@ export function deploy3QualifierEnvironment(vars: Readonly<Record<string, string
     PROGRAM_ASSETS: { type: "assets" },
     QUALIFIER_COMMANDS: { type: "service", entrypoint: "QualifierCommands" },
     QUALIFIER_TAIL: { type: "service", entrypoint: "QualifierTail" },
-  });
+  } as const;
 }
 
 export function materializeDeploy3QualifierEnvironment<Namespace, Loader>(

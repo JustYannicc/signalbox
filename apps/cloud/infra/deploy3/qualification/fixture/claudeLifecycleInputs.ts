@@ -15,26 +15,10 @@ import type { HarnessThreadSupervisorPublisher } from "../../../../src/harness/H
 import type { HarnessProcessCreationInput } from "../../../../src/harness/HarnessProcessCreation.ts";
 import type { HarnessProcessResumeOperationInput } from "../../../../src/harness/HarnessProcessResume.ts";
 import type { ClaudeCTransport } from "./claudeCTransport.ts";
+import { claudeBootstrap, claudeFacet } from "./claudeFacetInputs.ts";
+export { claudeBootstrap, claudeFacet } from "./claudeFacetInputs.ts";
 
 export type ClaudeCreated = Awaited<ReturnType<ClaudeCTransport["startFreshProcess"]>>;
-export const claudeBootstrap = (config: Configuration, variant: ClaudeVariant) => ({
-  provider: "claude-code" as const,
-  preparedReleaseId: config.claude.expected[variant].artifact.releaseId,
-  restoreMode: "same-variant-serialized-checkpoint" as const,
-});
-export const claudeFacet = (config: Configuration, variant: ClaudeVariant) => ({
-  processId: claudeLane(config.runId, variant).processId,
-  codeId: config.claude.expected[variant].artifact.releaseId,
-  residentBytes: 104 * 1024 * 1024,
-  mainModule: "qualifier-claude-facet.mjs",
-  entrypoint: "ClaudeFacet",
-  modules: {
-    "qualifier-claude-facet.mjs": {
-      js: "export { ClaudeFacet } from './qualifier-claude-implementation.mjs';\n",
-    },
-  },
-  facetEnv: { QUALIFIER_CLAUDE_VARIANT: variant },
-});
 export function claudeCreationInput(
   config: Configuration,
   variant: ClaudeVariant,
