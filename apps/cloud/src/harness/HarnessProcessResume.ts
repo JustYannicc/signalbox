@@ -7,6 +7,7 @@ export { assertHarnessProcessExecutionMode } from "./processResume/initialExecut
 export {
   HarnessProcessCheckpointInput,
   snapshotCheckpointInput,
+  sameData,
 } from "./processResume/checkpointContract.ts";
 export { HarnessProcessContinuationInput } from "./processResume/continuation.ts";
 export { HarnessProcessResumeRunStoreBindingSchema } from "./processResume/contracts.ts";
@@ -45,3 +46,6 @@ export type {
 export { HarnessProcessResumeDriverError } from "./processResume/errors.ts";
 export type { HarnessProcessResumeReason } from "./processResume/errors.ts";
 export { terminalKey } from "./processResume/terminalContract.ts";
+export type { ProcessBoundary } from "./processOwnership/boundary.ts";
+export type { ProcessFence } from "./processOwnership/fence.ts";
+export type { ProcessTerminalEvidence } from "./processResume/terminalContract.ts";

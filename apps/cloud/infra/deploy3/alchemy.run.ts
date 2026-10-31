@@ -126,6 +126,9 @@ export default Alchemy.Stack(
         env: {
           ...plan.vars,
           QUALIFIER: Cloudflare.DurableObject("Qualifier", { className: "QualifierProof" }),
+          CLAUDE_FIXTURES: Cloudflare.DurableObject("ClaudeFixtures", {
+            className: "QualifierClaudeFixtures",
+          }),
           HARNESS_RUN_STORE: Cloudflare.DurableObject("RunStore", {
             className: "QualifierRunStore",
           }),

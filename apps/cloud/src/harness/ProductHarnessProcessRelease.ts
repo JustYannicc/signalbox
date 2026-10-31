@@ -88,4 +88,4 @@ export function productLoadedPreparedRelease(
   return observed;
 }
 
-export { samePreparedRelease } from "./processResume/identity.ts";
+export { samePreparedRelease, snapshotPreparedRelease } from "./processResume/identity.ts";
