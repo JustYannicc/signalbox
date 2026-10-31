@@ -4,13 +4,9 @@ import {
   loadClaudeQualificationRelease,
   loadClaudeQualificationRuntime,
   type ClaudeQualificationInputs,
-} from "./claudeConfiguration.ts";
-import {
-  preparedAssetsFixture,
-  latinAsset,
-  latinText,
-} from "../../../../src/harness/node/tests/preparedAssetsFixture.ts";
-import { createHarnessPreparedAssets } from "../../../../src/harness/HarnessPreparedAssets.ts";
+} from "../../../../infra/deploy3/qualification/fixture/claudeConfiguration.ts";
+import { preparedAssetsFixture, latinAsset, latinText } from "./preparedAssetsFixture.ts";
+import { createHarnessPreparedAssets } from "../../HarnessPreparedAssets.ts";
 
 function configuration() {
   const artifactHash = "a".repeat(64);

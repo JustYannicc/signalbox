@@ -1,15 +1,18 @@
 import * as Schema from "effect/Schema";
 import { expect, it, vi } from "vite-plus/test";
-import { KernelFileSystem } from "../../../../src/kernel/KernelFileSystem.ts";
-import { KernelWakeRegistry } from "../../../../src/kernel/KernelWakeRegistry.ts";
-import { sqliteFixture } from "../../../../src/harness/node/tests/sqliteFixture.ts";
-import { preparedAssetsFixture } from "../../../../src/harness/node/tests/preparedAssetsFixture.ts";
-import { CHILD_COREUTILS_COMMANDS } from "../../../../src/computer/ChildProgramSet.ts";
-import { ProgramCatalog, MachineInventory } from "./computerConfiguration.ts";
-import { calibrateClaudePreparedRelease } from "./claudeCalibration.ts";
+import { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import { KernelWakeRegistry } from "../../../kernel/KernelWakeRegistry.ts";
+import { sqliteFixture } from "./sqliteFixture.ts";
+import { preparedAssetsFixture } from "./preparedAssetsFixture.ts";
+import { CHILD_COREUTILS_COMMANDS } from "../../../computer/ChildProgramSet.ts";
+import {
+  ProgramCatalog,
+  MachineInventory,
+} from "../../../../infra/deploy3/qualification/fixture/computerConfiguration.ts";
+import { calibrateClaudePreparedRelease } from "../../../../infra/deploy3/qualification/fixture/claudeCalibration.ts";
 
 vi.mock("cloudflare:workers", async () =>
-  (await import("../../../../src/cloudflareWorkersTesting.ts")).createCloudflareWorkersMock(),
+  (await import("../../../cloudflareWorkersTesting.ts")).createCloudflareWorkersMock(),
 );
 
 const decodeCatalog = Schema.decodeUnknownSync(ProgramCatalog);
