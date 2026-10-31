@@ -117,7 +117,7 @@ function shim(main: string, original: string, runId: string, pin: ObserverLoader
         : `export { Observed as ${pin.entrypoint} };`;
   return `${importLine}
 const pin = ${config};
-${pin.role === "facet" ? "const isolateNonce = crypto.randomUUID();" : ""}
+${pin.role === "facet" ? "let isolateNonce;\nfunction getIsolateNonce() { return isolateNonce ??= crypto.randomUUID(); }" : ""}
 let runtimeWorkerId;
 function workerIdentity() { return runtimeWorkerId ??= crypto.randomUUID(); }
 class Observed extends Actual {
@@ -125,7 +125,7 @@ class Observed extends Actual {
     ${
       pin.role === "facet"
         ? `if (result !== undefined && (result === null || typeof result !== "object" || Array.isArray(result))) throw new TypeError("Facet RPC returned an unsupported nonce response shape");
-    return method === "identity" || method === "isolateNonceProbe" || method === "observerCalibration" ? { ...result, isolateNonce } : result;`
+    return method === "identity" || method === "isolateNonceProbe" || method === "observerCalibration" ? { ...result, isolateNonce: getIsolateNonce() } : result;`
         : "return result;"
     }
   }
@@ -148,11 +148,11 @@ class Observed extends Actual {
     console.log(JSON.stringify({ producerEvent: { schema: "sb1070/producer/v1", runId: pin.runId,
       identity: pin.identity, producerClass: pin.producerClass, workerId: workerIdentity(),
       entrypoint: pin.entrypoint, tag: pin.tag, route: call.route, milestone,
-      invocationId: call.invocationId, ${pin.role === "facet" ? "isolateNonce," : ""} } }));
+      invocationId: call.invocationId, ${pin.role === "facet" ? "isolateNonce: getIsolateNonce()," : ""} } }));
     if (milestone === "entered") console.log(JSON.stringify({ observerIdentity: {
       loaderId: pin.loaderId, workerId: workerIdentity(), identity: pin.identity,
       facetNonce: typeof this.facetNonce === "string" ? this.facetNonce : null,
-      invocationId: call.invocationId, ${pin.role === "facet" ? "isolateNonce," : ""} } }));
+      invocationId: call.invocationId, ${pin.role === "facet" ? "isolateNonce: getIsolateNonce()," : ""} } }));
   }
   __observeSync(method, args, invoke) {
     const call = this.__call(method, args);

@@ -16,9 +16,9 @@ import {
 } from "./claudeHostOptions.ts";
 import {
   readClaudeQualificationInputs,
-  loadClaudeQualificationRelease,
+  loadClaudeQualificationRuntime,
 } from "./claudeConfiguration.ts";
-import { createClaudePreparedImports } from "./claudePreparedModules.ts";
+import { calibrateClaudePreparedRelease } from "./claudeCalibration.ts";
 import { decodePreparedRelease } from "../preparedRelease.schema.ts";
 
 export const CLAUDE_QUALIFICATION_ENTRYPOINT = "ClaudeFacet" as const;
@@ -129,11 +129,13 @@ export class ClaudeFacet extends Base {
       "Calibration has no selected Claude release",
     );
     const qualification = await readClaudeQualificationInputs(claude, this.env.PROGRAM_ASSETS!);
-    const loaded = await loadClaudeQualificationRelease(qualification, release.artifact);
-    const imported = await createClaudePreparedImports().inspect(
-      loaded.plan,
-      new AbortController().signal,
-    );
+    const loaded = await loadClaudeQualificationRuntime(qualification, release.artifact);
+    const imported = await calibrateClaudePreparedRelease({
+      ctx: this.ctx,
+      capability: claudeCapability(this.env),
+      release: loaded,
+      home: claude.seed.home,
+    });
     const result = {
       incarnation: this.facetNonce,
       invocationId: input.invocationId,
