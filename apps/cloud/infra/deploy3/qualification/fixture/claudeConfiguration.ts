@@ -101,6 +101,15 @@ export async function loadClaudeQualificationRelease(
   input: ClaudeQualificationInputs,
   artifact: HarnessReleaseArtifact,
 ): Promise<ClaudePreparedRelease> {
+  const loaded = await loadClaudeQualificationRuntime(input, artifact);
+  return { artifact: loaded.artifact, plan: loaded.plan };
+}
+
+/** Keeps verified assets available to the Node bootstrap without putting them on the wire. */
+export async function loadClaudeQualificationRuntime(
+  input: ClaudeQualificationInputs,
+  artifact: HarnessReleaseArtifact,
+) {
   const catalog = input.releaseVariants.catalog;
   const selected = [catalog.baseline.fullArtifact, catalog.hooks.fullArtifact].find((candidate) =>
     sameClaudeReleaseArtifact(candidate, artifact),
@@ -118,5 +127,5 @@ export async function loadClaudeQualificationRelease(
   });
   if (loaded.plan.harness !== "claude-code")
     throw new Error("DEPLOY3_CLAUDE_RELEASE_PROVIDER_MISMATCH");
-  return { artifact: selected, plan: loaded.plan };
+  return { artifact: selected, plan: loaded.plan, payloads: loaded.payloads };
 }

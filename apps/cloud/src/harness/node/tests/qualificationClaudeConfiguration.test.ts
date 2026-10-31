@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
-import { decodeClaudeFacetConfiguration } from "./claudeConfiguration.ts";
+import {
+  decodeClaudeFacetConfiguration,
+  loadClaudeQualificationRelease,
+  loadClaudeQualificationRuntime,
+  type ClaudeQualificationInputs,
+} from "../../../../infra/deploy3/qualification/fixture/claudeConfiguration.ts";
+import { preparedAssetsFixture, latinAsset, latinText } from "./preparedAssetsFixture.ts";
+import { createHarnessPreparedAssets } from "../../HarnessPreparedAssets.ts";
 
 function configuration() {
   const artifactHash = "a".repeat(64);
@@ -48,6 +55,37 @@ function configuration() {
 }
 
 describe("Claude qualification runtime configuration", () => {
+  it("retains verified assets for bootstrap while keeping them out of the wire release", async () => {
+    const { fixture } = await preparedAssetsFixture();
+    const artifact = {
+      ...fixture.options.identity,
+      provider: "claude-code" as const,
+      releaseId: "baseline",
+      fixtureIdentity: "prepared-assets",
+      createdAt: "2026-10-31T00:00:00Z",
+    };
+    const input: ClaudeQualificationInputs = {
+      purpose: "qualification",
+      releaseVariants: {
+        catalog: {
+          baseline: { variant: "baseline", fullArtifact: artifact },
+          hooks: { variant: "hooks", fullArtifact: { ...artifact, releaseId: "hooks" } },
+        },
+        ledger: { getArtifact: () => artifact },
+      },
+      source: fixture.options.source,
+      loaderConfig: fixture.options,
+    };
+    const runtime = await loadClaudeQualificationRuntime(input, artifact);
+    const assets = createHarnessPreparedAssets(runtime);
+    expect(assets.prepared(latinAsset, "/entry.js")).toBe(latinText);
+    const wire = await loadClaudeQualificationRelease(input, artifact);
+    expect(wire).toEqual({ artifact: runtime.artifact, plan: runtime.plan });
+    expect(Object.hasOwn(wire, "payloads")).toBe(false);
+    fixture.files.get("cli/assets/extra-0")!.fill(65);
+    await expect(loadClaudeQualificationRuntime(input, artifact)).rejects.toThrow();
+  });
+
   it("requires a qualification asset bundle and the exact API revision", () => {
     expect(decodeClaudeFacetConfiguration(configuration()).assets.assets.purpose).toBe(
       "qualification",
