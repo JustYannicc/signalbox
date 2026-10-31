@@ -272,10 +272,17 @@ describe("Codex native binding", () => {
       launch.mockResolvedValue(f.peer.process);
       yield* f.binding.factory.open(f.harness, reporter);
       const failure = yield* f.binding.factory.open(f.harness, reporter).pipe(Effect.flip);
+      expect(failure.stack).toEqual(
+        expect.stringContaining(
+          "Codex factory requires fresh owned streams for another native session.",
+        ),
+      );
       expect(encodeHarnessError(failure)).toEqual({
         _tag: "HarnessError",
+        name: "HarnessError",
         operation: "open",
         message: "Codex factory requires fresh owned streams for another native session.",
+        stack: failure.stack,
       });
       expect(f.peer.sent).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(layer)),

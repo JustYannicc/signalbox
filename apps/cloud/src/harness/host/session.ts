@@ -279,8 +279,12 @@ export const createHostSession = <G>(
               );
             const configuration = yield* Effect.tryPromise({
               try: () => mcp.activate(access),
-              catch: () =>
-                new HarnessError({ operation: "open", message: "Checkpoint MCP binding failed." }),
+              catch: (cause) =>
+                new HarnessError({
+                  operation: "open",
+                  message: "Checkpoint MCP binding failed.",
+                  cause,
+                }),
             });
             initial = { access, configuration };
             // Native setup belongs to the session and access, beyond this open operation's fiber.
@@ -396,28 +400,31 @@ export const createHostSession = <G>(
               const authorized = snapshotAccess(access);
               const encoded = yield* encodeTurn(suppliedTurn).pipe(
                 Effect.mapError(
-                  () =>
+                  (cause) =>
                     new HarnessError({
                       operation: "turn",
                       message: "Invalid turn input.",
+                      cause,
                     }),
                 ),
               );
               const turn = yield* decodeTurn(encoded).pipe(
                 Effect.mapError(
-                  () =>
+                  (cause) =>
                     new HarnessError({
                       operation: "turn",
                       message: "Invalid turn snapshot.",
+                      cause,
                     }),
                 ),
               );
               const hash = yield* Effect.tryPromise({
                 try: () => fingerprint(encoded),
-                catch: () =>
+                catch: (cause) =>
                   new HarnessError({
                     operation: "turn",
                     message: "Turn fingerprint failed.",
+                    cause,
                   }),
               });
               const result = yield* lock.withPermits(1)(
@@ -489,10 +496,11 @@ export const createHostSession = <G>(
                       prepared === undefined || mcp.hasTurnGrantSource
                         ? yield* Effect.tryPromise({
                             try: () => mcp.activate(authorized, turn.runId),
-                            catch: () =>
+                            catch: (cause) =>
                               new HarnessError({
                                 operation: "turn",
                                 message: "MCP turn binding failed.",
+                                cause,
                               }),
                           })
                         : prepared.configuration;

@@ -37,7 +37,10 @@ export function createSdkProcess(
       events.emit("exit", exitCode, signalCode);
     },
     (cause: unknown) =>
-      events.emit("error", cause instanceof Error ? cause : new Error(String(cause))),
+      events.emit(
+        "error",
+        cause instanceof Error ? cause : new Error("Claude process exit failed.", { cause }),
+      ),
   );
   return {
     stdin,
@@ -64,7 +67,10 @@ export function createSdkProcess(
           signal === "SIGKILL" ? 9 : 15,
         )
         .catch((cause: unknown) =>
-          events.emit("error", cause instanceof Error ? cause : new Error(String(cause))),
+          events.emit(
+            "error",
+            cause instanceof Error ? cause : new Error("Claude process abort failed.", { cause }),
+          ),
         );
       return true;
     },

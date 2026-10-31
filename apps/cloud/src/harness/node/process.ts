@@ -197,7 +197,11 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       try {
         child.kill(signal);
       } catch (error) {
-        childCleanupErrors.push(error instanceof Error ? error : new Error(String(error)));
+        childCleanupErrors.push(
+          error instanceof Error
+            ? error
+            : new Error("Harness child cleanup failed.", { cause: error }),
+        );
       }
     }
     lifetime.abort(stopped);

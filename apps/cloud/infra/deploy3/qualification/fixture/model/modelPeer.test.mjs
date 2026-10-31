@@ -160,6 +160,31 @@ test("socket disposal waits for the accepted request's persistence job", async (
   NodeAssert.equal(finished, true);
 });
 
+test("socket failure retains a non-Error persistence rejection", async () => {
+  const original = { code: "MODEL_RECORD_WRITE", cause: new Error("Storage unavailable") };
+  const failed = Promise.withResolvers();
+  const owner = createCombinedCodexModelSocket({
+    WebSocketPair: Pair,
+    onRawRequest: async () => {
+      throw original;
+    },
+    respond: () => {
+      throw new Error("A failed write cannot admit a model response");
+    },
+    onFailure: failed.resolve,
+  });
+  const socket = owner.route({
+    request: new Request("http://model.invalid/v1/responses", {
+      headers: { upgrade: "websocket" },
+    }),
+  }).webSocket;
+  socket.send(JSON.stringify({ type: "response.create", input: [] }));
+  const failure = await failed.promise;
+  NodeAssert.ok(failure instanceof Error);
+  NodeAssert.equal(failure.cause, original);
+  await owner.closeAndJoin();
+});
+
 test("startup before UUID bind and beginTurn records prepared owner, phase, bytes and full frames", async () => {
   const { peer, records } = setup({ bind: false });
   const socket = socketFor(peer);

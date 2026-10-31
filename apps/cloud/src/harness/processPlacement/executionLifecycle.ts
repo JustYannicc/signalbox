@@ -23,6 +23,7 @@ import { createHarnessProcessFacet as createFacet } from "./facetLoader.ts";
 import { createHarnessProcessPlacement, forgetHarnessProcessPlacement } from "./service.ts";
 import { type HarnessProcessPlacementWriter } from "./storeSchema.ts";
 import { sameClaim } from "./storeSchema.ts";
+import type * as Schema from "effect/Schema";
 import { confirmedProcessPublication } from "./publication.ts";
 import type { ProcessSlotLease } from "../../computer/ProcessSlots.ts";
 import {
@@ -50,6 +51,8 @@ export interface HarnessProcessExecutionProcessResult {
   readonly error?: {
     readonly kind: string;
     readonly message: string;
+    readonly cause?: Schema.Json;
+    readonly cleanupCause?: Schema.Json;
     readonly identityMismatch?: "facet-key" | "incarnation" | "native-session" | "checkpoint";
     readonly causeCode?: string;
     readonly facetFailureAt?: "identity" | "prepare" | "persist" | "park";

@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import { unwrapRequestExit } from "./requestFacet/failure.ts";
 import {
   createHarnessRequestFacet,
   HarnessRequestFacetError,
@@ -57,37 +58,63 @@ export function createHarnessRequestFacetClass<Env>(
       return { facetNonce: this.facetNonce };
     }
 
+    private async runRequest<A, E>(effect: Effect.Effect<A, E, Facet>, message: string) {
+      return unwrapRequestExit(await this.runtime.runPromiseExit(effect), message);
+    }
+
     async run(input: Parameters<HarnessRequestFacet["run"]>[0]) {
       if (this.closed) throw new HarnessRequestFacetError("Harness facet is disposed.");
-      return this.runtime.runPromise(Facet.use((facet) => facet.run(input)));
+      return this.runRequest(
+        Facet.use((facet) => facet.run(input)),
+        "Harness facet request failed.",
+      );
     }
 
     async prepareInert(input: Parameters<HarnessRequestFacet["prepareInert"]>[0]) {
       if (this.closed) throw new HarnessRequestFacetError("Harness facet is disposed.");
-      return this.runtime.runPromise(Facet.use((facet) => facet.prepareInert(input)));
+      return this.runRequest(
+        Facet.use((facet) => facet.prepareInert(input)),
+        "Harness inert preparation failed.",
+      );
     }
 
     async startFresh(input: Parameters<HarnessRequestFacet["startFresh"]>[0]) {
       if (this.closed) throw new HarnessRequestFacetError("Harness facet is disposed.");
-      return this.runtime.runPromise(Facet.use((facet) => facet.startFresh(input)));
+      return this.runRequest(
+        Facet.use((facet) => facet.startFresh(input)),
+        "Harness fresh process creation failed.",
+      );
     }
 
     async loadedPreparedRelease() {
       if (this.closed) throw new HarnessRequestFacetError("Harness facet is disposed.");
-      await this.runtime.runPromise(Facet.use(() => Effect.void));
+      await this.runRequest(
+        Facet.use(() => Effect.void),
+        "Harness prepared release query failed.",
+      );
       const read = this.loadedPreparedReleaseReader;
       if (read === undefined)
         throw new HarnessRequestFacetError(
           "This product facet cannot observe a verified prepared release.",
         );
-      return await read();
+      return this.runRequest(
+        Effect.tryPromise({
+          try: async () => read(),
+          catch: (cause) =>
+            new HarnessRequestFacetError("Harness prepared release query failed.", { cause }),
+        }),
+        "Harness prepared release query failed.",
+      );
     }
 
     async dispose(expectedFacetNonce: string) {
       if (expectedFacetNonce !== this.facetNonce)
         throw new HarnessRequestFacetError("Disposal targets another facet incarnation.");
       this.closed = true;
-      await this.runtime.dispose();
+      unwrapRequestExit(
+        await Effect.runPromiseExit(this.runtime.disposeEffect),
+        "Harness facet disposal failed.",
+      );
     }
   };
 }

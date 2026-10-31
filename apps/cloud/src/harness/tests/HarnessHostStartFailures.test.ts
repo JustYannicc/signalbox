@@ -20,8 +20,10 @@ describe("Harness host failed starts", () => {
     ({ stage, cleanupFails }) =>
       Effect.gen(function* () {
         const f = yield* hostFixture;
-        const root = new Error("native WASI trap");
-        const original = new Error("native setup failed", { cause: root });
+        const root = Object.assign(new Error("native WASI trap"), { code: "WASI_TRAP" });
+        const original = Object.assign(new Error("native setup failed", { cause: root }), {
+          code: "NATIVE_SETUP",
+        });
         const nativeFailure = new HarnessError({
           operation: "turn",
           message: "native failed",
@@ -99,6 +101,8 @@ describe("Harness host failed starts", () => {
         const json = JSON.stringify(encoded);
         expect(json).toContain("native WASI trap");
         expect(json).toContain("native setup failed");
+        expect(json).toContain("WASI_TRAP");
+        expect(json).toContain("NATIVE_SETUP");
         expect(json).not.toContain("private-access-grant");
         expect(json.includes("native cleanup failed")).toBe(cleanupFails);
         expect(nativeClosed).toBe(1);

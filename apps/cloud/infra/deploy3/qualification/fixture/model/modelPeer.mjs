@@ -218,7 +218,8 @@ export function createCombinedCodexModelPeer({
 
   function fail(cause) {
     if (failure === undefined) {
-      failure = cause instanceof Error ? cause : new Error(String(cause));
+      failure =
+        cause instanceof Error ? cause : new Error("Combined Codex model peer failed.", { cause });
       resolveFailure(failure);
     }
     return failure;
