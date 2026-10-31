@@ -9,9 +9,11 @@ export const HARNESS_TURN_STAGES = [
   "first-model-byte",
   "mcp-initializing",
   "mcp-registration-acknowledged",
+  "mcp-initialize-response",
   "mcp-initialized",
   "tool-permission-requested",
   "tool-permission-resolved",
+  "pre-tool-gate-entered",
   "tool-call-started",
   "tool-call-ended",
 ] as const;

@@ -26,7 +26,11 @@ import { launchNodeHarnessProcess, type NodeHarnessProcessInput } from "./NodeHa
 import { createSdkProcess } from "./node/SdkProcess.ts";
 import { abortableValue, applySdkLaunch } from "./claude/SdkRelease.ts";
 import { gateClaudeSdkResults } from "./claude/SdkCompatibility.ts";
-import { observeClaudeModelTransport, observeClaudeQueryOptions } from "./claude/TurnProgress.ts";
+import {
+  observeClaudeModelTransport,
+  observeClaudeQueryOptions,
+  observeClaudeSdkMessage,
+} from "./claude/TurnProgress.ts";
 
 import type { PreparedClaudeSdk, SdkSpawnOptions } from "./claude/SdkTypes.ts";
 export type { PreparedClaudeSdk, SdkSpawnOptions, SdkSpawnedProcess } from "./claude/SdkTypes.ts";
@@ -99,7 +103,13 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
               sdkReady.resolve({
                 ...sdk,
                 query: (request) =>
-                  gateClaudeSdkResults(sdk.query(request), () => process.assertCompatibility()),
+                  gateClaudeSdkResults(
+                    sdk.query(request),
+                    () => process.assertCompatibility(),
+                    reporter.turnMilestone === undefined
+                      ? undefined
+                      : (message) => observeClaudeSdkMessage(message, report),
+                  ),
               });
               const request = await launch.wait(signal);
               applySdkLaunch(installed, processInput, request);
@@ -152,36 +162,37 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
             Effect.tryPromise({
               try: async () => {
                 const sdk = await getSdk();
+                const observedOptions = {
+                  ...queryOptions,
+                  ...(options.toolObservation === undefined
+                    ? {}
+                    : { hooks: options.toolObservation.withHooks(queryOptions.hooks) }),
+                  spawnClaudeCodeProcess: (request: SdkSpawnOptions) => {
+                    if (spawned || bridge === undefined)
+                      throw new Error("This facet already owns a Claude CLI process");
+                    request.signal.throwIfAborted();
+                    spawned = true;
+                    const child = createSdkProcess(
+                      process,
+                      queryOptions.stderr ?? (() => undefined),
+                    );
+                    request.signal.addEventListener(
+                      "abort",
+                      () => {
+                        void process.abort(request.signal.reason).catch(() => undefined);
+                      },
+                      { once: true },
+                    );
+                    launch.resolve(request);
+                    return child;
+                  },
+                };
                 return sdk.query({
                   prompt,
-                  options: observeClaudeQueryOptions(
-                    {
-                      ...queryOptions,
-                      ...(options.toolObservation === undefined
-                        ? {}
-                        : { hooks: options.toolObservation.withHooks(queryOptions.hooks) }),
-                      spawnClaudeCodeProcess: (request) => {
-                        if (spawned || bridge === undefined)
-                          throw new Error("This facet already owns a Claude CLI process");
-                        request.signal.throwIfAborted();
-                        spawned = true;
-                        const child = createSdkProcess(
-                          process,
-                          queryOptions.stderr ?? (() => undefined),
-                        );
-                        request.signal.addEventListener(
-                          "abort",
-                          () => {
-                            void process.abort(request.signal.reason).catch(() => undefined);
-                          },
-                          { once: true },
-                        );
-                        launch.resolve(request);
-                        return child;
-                      },
-                    },
-                    report,
-                  ),
+                  options:
+                    reporter.turnMilestone === undefined
+                      ? observedOptions
+                      : observeClaudeQueryOptions(observedOptions, report),
                 });
               },
               catch: (cause) => queryRunnerError(cause, "query"),

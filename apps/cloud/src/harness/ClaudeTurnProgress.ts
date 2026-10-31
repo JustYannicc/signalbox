@@ -1,2 +1,6 @@
-export { observeClaudeModelTransport, observeClaudeQueryOptions } from "./claude/TurnProgress.ts";
-export { observeClaudeMcpResponse } from "./claude/McpProgress.ts";
+export {
+  observeClaudeModelTransport,
+  observeClaudeQueryOptions,
+  observeClaudeSdkMessage,
+} from "./claude/TurnProgress.ts";
+export { observeClaudeMcpResponse, createClaudeMcpTransport } from "./claude/McpProgress.ts";

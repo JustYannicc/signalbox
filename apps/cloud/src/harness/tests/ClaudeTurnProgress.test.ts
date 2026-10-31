@@ -4,12 +4,13 @@ import {
   observeClaudeModelTransport,
   observeClaudeQueryOptions,
   observeClaudeMcpResponse,
+  createClaudeMcpTransport,
 } from "../ClaudeTurnProgress.ts";
 import type { HarnessTurnStage } from "../HarnessTurnProgress.ts";
 
 describe("Claude turn progress", () => {
   it.each(["application/json", "text/event-stream"])(
-    "reports MCP initialization only after its real protocol reply is consumed via %s",
+    "reports an MCP initialize response only after its protocol reply is consumed via %s",
     async (contentType) => {
       const stages: HarnessTurnStage[] = [];
       const reply = JSON.stringify({
@@ -29,7 +30,7 @@ describe("Claude turn progress", () => {
       );
       expect(stages).toEqual([]);
       expect(await response.text()).toBe(body);
-      expect(stages).toEqual(["mcp-initialized"]);
+      expect(stages).toEqual(["mcp-initialize-response"]);
     },
   );
 
@@ -46,6 +47,48 @@ describe("Claude turn progress", () => {
       expect(await response.text()).toBe(body);
     }
     expect(stages).toEqual([]);
+  });
+
+  it("requires a matching initialize request and reply before the final notification", async () => {
+    const stages: HarnessTurnStage[] = [];
+    let responseId = 99;
+    const transport = createClaudeMcpTransport(
+      async (request) => {
+        const message = await request.json();
+        return typeof message === "object" &&
+          message !== null &&
+          Reflect.get(message, "method") === "notifications/initialized"
+          ? new Response(null, { status: 202 })
+          : Response.json({
+              jsonrpc: "2.0",
+              id: responseId,
+              result: {
+                protocolVersion: "2025-06-18",
+                capabilities: {},
+                serverInfo: { name: "fixture", version: "1" },
+              },
+            });
+      },
+      (stage) => stages.push(stage),
+    );
+    const send = (method: string, id?: number) =>
+      transport(
+        new Request("https://harness-mcp.invalid/executor", {
+          method: "POST",
+          body: JSON.stringify({ jsonrpc: "2.0", method, ...(id === undefined ? {} : { id }) }),
+        }),
+      );
+    await (await send("tools/list", 1)).text();
+    await send("notifications/initialized");
+    expect(stages).toEqual([]);
+    await (await send("initialize", 1)).text();
+    await send("notifications/initialized");
+    expect(stages).toEqual([]);
+    responseId = 1;
+    await (await send("initialize", 1)).text();
+    expect(stages).toEqual(["mcp-initialize-response"]);
+    await send("notifications/initialized");
+    expect(stages).toEqual(["mcp-initialize-response", "mcp-initialized"]);
   });
 
   it("recognizes a split MCP SSE result while its stream stays open", async () => {
@@ -81,7 +124,7 @@ describe("Claude turn progress", () => {
     await reader.read();
     expect(stages).toEqual([]);
     await reader.read();
-    expect(stages).toEqual(["mcp-initialized"]);
+    expect(stages).toEqual(["mcp-initialize-response"]);
     await reader.cancel();
     expect(cancelled).toBe(true);
   });
@@ -200,7 +243,14 @@ describe("Claude turn progress", () => {
       hook_event_name: "PostToolUseFailure",
       error: "failed",
       is_interrupt: false,
+      duration_ms: 1,
     });
-    expect(stages).toEqual(["tool-call-started", "tool-call-ended", "tool-call-ended"]);
+    expect(stages).toEqual([
+      "pre-tool-gate-entered",
+      "tool-call-started",
+      "tool-call-ended",
+      "tool-call-started",
+      "tool-call-ended",
+    ]);
   });
 });

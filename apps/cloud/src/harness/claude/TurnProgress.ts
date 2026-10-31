@@ -1,4 +1,5 @@
 import type { ClaudeAgentSdkQueryOptions } from "@signalbox/provider-claude/ClaudeQueryRunner";
+import type { ClaudeSdkQuery } from "@signalbox/provider-claude/ClaudeSdkQueryRunner";
 import type { HarnessRuntimeReporter } from "../HarnessProcessLifetime.ts";
 
 type Report = NonNullable<HarnessRuntimeReporter["turnMilestone"]>;
@@ -58,15 +59,22 @@ export function observeClaudeQueryOptions<
   >[number] = {
     hooks: [
       async () => {
-        report("tool-call-started");
+        report("pre-tool-gate-entered");
         return {};
       },
     ],
   };
   const after: typeof before = {
     hooks: [
-      async () => {
-        report("tool-call-ended");
+      async (input) => {
+        // A short call may finish before the SDK's execution heartbeat.
+        if (
+          input.hook_event_name === "PostToolUse" ||
+          (input.hook_event_name === "PostToolUseFailure" && input.duration_ms !== undefined)
+        ) {
+          report("tool-call-started");
+          report("tool-call-ended");
+        }
         return {};
       },
     ],
@@ -91,4 +99,12 @@ export function observeClaudeQueryOptions<
           },
         }),
   };
+}
+
+/** SDK execution progress is emitted after dispatch; pre-tool and permission hooks are earlier. */
+export function observeClaudeSdkMessage(
+  message: Exclude<Awaited<ReturnType<ClaudeSdkQuery["next"]>>["value"], void>,
+  report: Report,
+) {
+  if (message.type === "tool_progress") report("tool-call-started");
 }
