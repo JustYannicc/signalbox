@@ -55,7 +55,7 @@ describe("exact upload startup evidence", () => {
       requireStartupEvidence(bundle, compatibility, evidence(bytes), bytes, runtime).summary
         .activeMs,
     ).toBe(218.44);
-    const overBudget = profile(500_001);
+    const overBudget = profile(300_001);
     expect(() =>
       requireStartupEvidence(bundle, compatibility, evidence(overBudget), overBudget, runtime),
     ).toThrow("BUDGET_EXCEEDED");
@@ -72,6 +72,18 @@ describe("exact upload startup evidence", () => {
     expect(() =>
       requireStartupEvidence(bundle, compatibility, undefined, bytes, runtime),
     ).toThrow();
+  });
+
+  it("rechecks historical profiles against the current budget", () => {
+    const bytes = profile(178_898);
+    expect(
+      requireStartupEvidence(bundle, compatibility, evidence(bytes), bytes, runtime).summary
+        .activeMs,
+    ).toBe(178.898);
+    const stalePass = profile(448_000);
+    expect(() =>
+      requireStartupEvidence(bundle, compatibility, evidence(stalePass), stalePass, runtime),
+    ).toThrow("BUDGET_EXCEEDED");
   });
 
   it("refuses changed code, module names, module inventory and compatibility settings", () => {

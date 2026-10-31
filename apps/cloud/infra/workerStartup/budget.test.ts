@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { requireStartupBudget, startupProfileSummary } from "./budget.ts";
 
-const profile = (samples = [1], timeDeltas = [500_000]) => ({
+const profile = (samples = [1], timeDeltas = [300_000]) => ({
   startTime: 1,
   endTime: 1_000_001,
   nodes: [
@@ -27,9 +27,9 @@ describe("Worker startup CPU budget", () => {
     });
   });
 
-  it("accepts 500 ms and refuses the first microsecond above it", () => {
-    expect(requireStartupBudget(profile()).activeMs).toBe(500);
-    expect(() => requireStartupBudget(profile([1], [500_001]))).toThrow("BUDGET_EXCEEDED");
+  it("accepts 300 ms and refuses the first microsecond above it", () => {
+    expect(requireStartupBudget(profile()).activeMs).toBe(300);
+    expect(() => requireStartupBudget(profile([1], [300_001]))).toThrow("BUDGET_EXCEEDED");
   });
 
   it.each([
