@@ -9,16 +9,16 @@ import type {
   QualifierClaudeFixturesPort,
 } from "./namespacePorts.ts";
 import type { HarnessProcessExecutionEnvironment } from "../../../../src/harness/HarnessProcessPlacement.ts";
-import type { CapabilityEnvironment } from "./capabilities.ts";
+import type { QualifierRuntimeConfiguration } from "../environmentContract.ts";
 
 export interface QualifierEnvironment
   extends
     Deploy3RuntimeEnvironment,
+    QualifierRuntimeConfiguration,
     Omit<
       HarnessProcessExecutionEnvironment,
       "PLACEMENT_STORES" | "HARNESS_THREAD_SUPERVISOR" | "PROGRAM_ASSETS"
-    >,
-    Omit<CapabilityEnvironment, "HARNESS_FILES_STORE"> {
+    > {
   CLAUDE_FIXTURES: DurableObjectNamespace<QualifierClaudeFixturesPort>;
   QUALIFIER: DurableObjectNamespace<QualifierProofPort>;
   HARNESS_RUN_STORE: DurableObjectNamespace<QualifierRunStorePort>;
@@ -26,12 +26,6 @@ export interface QualifierEnvironment
   HARNESS_THREAD_SUPERVISOR: DurableObjectNamespace<HarnessThreadSupervisorObject>;
   PLACEMENT_STORES: DurableObjectNamespace<QualifierPlacementStorePort>;
   PROCESS_EXECUTION_SHARDS: DurableObjectNamespace<QualifierShardPort>;
-  QUALIFIER_COMMANDS: Fetcher;
-  QUALIFIER_TAIL: Fetcher;
-  BUNDLE_SHA256: string;
-  RUN_ID: string;
-  WORKER_NAME: string;
-  OBSERVER_GUARD_ONLY?: string;
 }
 export const proof = (env: Pick<QualifierEnvironment, "QUALIFIER" | "RUN_ID">) =>
   env.QUALIFIER.getByName(env.RUN_ID);

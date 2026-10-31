@@ -22,6 +22,7 @@ export {
 export { QualifierCommands, QualifierTail } from "./loader.ts";
 
 import { ROUTES } from "./routes.ts";
+import { assertQualifierRuntimeConfiguration } from "../environmentContract.ts";
 
 function emitProducerEvent(event: {
   runId: string;
@@ -53,6 +54,7 @@ export default class QualifierWorker extends WorkerEntrypoint<QualifierEnvironme
   override async fetch(request: Request) {
     let deployment;
     try {
+      assertQualifierRuntimeConfiguration(this.env);
       deployment = requireDeploy3Armed(this.env);
     } catch {
       return new Response("Deployment is not armed", { status: 503 });

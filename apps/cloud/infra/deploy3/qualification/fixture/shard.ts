@@ -13,10 +13,12 @@ import {
 } from "../../../../src/harness/HarnessProcessPlacement.ts";
 import { assert } from "./common.ts";
 import { readShardRecoveryEvidence, readShardExecutionEvidence } from "./shardEvidence.ts";
+import { assertQualifierRuntimeConfiguration } from "../environmentContract.ts";
 
 export class QualifierShard extends HarnessProcessExecutionShardObject {
   private readonly qualifierEnvironment: QualifierEnvironment;
   constructor(ctx: DurableObjectState, env: QualifierEnvironment) {
+    assertQualifierRuntimeConfiguration(env);
     const cap = proof(env) as unknown as Fetcher;
     const exports = {
       QualifierCommands: env.QUALIFIER_COMMANDS,

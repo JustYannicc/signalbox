@@ -21,6 +21,7 @@ import {
 import { deploy3Workload } from "./stack.ts";
 import { verifyDeploy3TokenExpiry } from "./tokenExpiry.ts";
 import { uploadEvidenceLayer } from "./uploadEvidence.ts";
+import { materializeDeploy3QualifierEnvironment } from "./qualifierEnvironment.ts";
 
 const decodeDeploy3PlanJson = Schema.decodeEffect(Schema.fromJsonString(Deploy3Plan));
 
@@ -110,6 +111,10 @@ export default Alchemy.Stack(
       if (verified.status !== "expiry-configured")
         throw new Error("Deploy3 cleanup credential expiry was not verified");
     }
+    const bindings = materializeDeploy3QualifierEnvironment(plan.environment, {
+      namespace: (resourceId, className) => Cloudflare.DurableObject(resourceId, { className }),
+      loader: () => Cloudflare.WorkerLoader(),
+    });
     const deployed = yield* deploy3Workload({
       runId: plan.runId,
       startedAtMs: plan.startedAtMs,
@@ -130,47 +135,13 @@ export default Alchemy.Stack(
         assets: { directory: plan.assetsDirectory, runWorkerFirst: true },
         compatibility: { date: plan.compatibilityDate, flags: [...plan.compatibilityFlags] },
         workersDev: { enabled: true, previewsEnabled: false },
-        env: {
-          ...plan.vars,
-          QUALIFIER: Cloudflare.DurableObject("Qualifier", { className: "QualifierProof" }),
-          CLAUDE_FIXTURES: Cloudflare.DurableObject("ClaudeFixtures", {
-            className: "QualifierClaudeFixtures",
-          }),
-          HARNESS_RUN_STORE: Cloudflare.DurableObject("RunStore", {
-            className: "QualifierRunStore",
-          }),
-          HARNESS_FILES_STORE: Cloudflare.DurableObject("FilesStore", {
-            className: "QualifierFilesStore",
-          }),
-          HARNESS_THREAD_SUPERVISOR: Cloudflare.DurableObject("Supervisor", {
-            className: "QualifierSupervisor",
-          }),
-          PLACEMENT_STORES: Cloudflare.DurableObject("Placement", {
-            className: "QualifierPlacementStore",
-          }),
-          PROCESS_EXECUTION_SHARDS: Cloudflare.DurableObject("Shards", {
-            className: "QualifierShard",
-          }),
-          LOADER: Cloudflare.WorkerLoader(),
-        },
+        env: bindings.env,
       },
     });
     yield* deployed.worker.bind("QualifierServices", {
-      bindings: [
-        { type: "assets", name: "PROGRAM_ASSETS" },
-        {
-          type: "service",
-          name: "QUALIFIER_COMMANDS",
-          service: plan.identity.workerName,
-          entrypoint: "QualifierCommands",
-        },
-        {
-          type: "service",
-          name: "QUALIFIER_TAIL",
-          service: plan.identity.workerName,
-          entrypoint: "QualifierTail",
-        },
-      ],
+      bindings: bindings.services.map((binding) =>
+        binding.type === "service" ? { ...binding, service: plan.identity.workerName } : binding,
+      ),
     });
     return {
       worker: deployed.worker.workerName,

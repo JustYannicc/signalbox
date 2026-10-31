@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { deploy3BootstrapIdentity, Deploy3UploadReceiptSchema } from "./expiry.ts";
 import { isoAt } from "./platform.ts";
+import { deploy3QualifierEnvironment } from "./qualifierEnvironment.ts";
 
 export const Deploy3Plan = Schema.Struct({
   runId: Schema.String,
@@ -38,5 +39,6 @@ export function validateDeploy3Plan(plan: typeof Deploy3Plan.Type, stage: string
   const identity = deploy3BootstrapIdentity(plan.runId, startedAtMs);
   if (plan.vars.WORKER_NAME !== identity.workerName)
     throw new Error("Deploy3 vars refer to another Worker");
-  return { ...plan, startedAtMs, identity };
+  const environment = deploy3QualifierEnvironment(plan.vars);
+  return { ...plan, startedAtMs, identity, environment };
 }
