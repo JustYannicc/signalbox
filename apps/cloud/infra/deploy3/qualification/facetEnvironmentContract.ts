@@ -9,6 +9,31 @@ import {
 } from "./environmentContract.ts";
 
 const NonEmpty = Schema.String.check(Schema.isPattern(/\S/u));
+const releaseMethods = [
+  "getArtifact",
+  "loaderConfig",
+  "readArtifact",
+  "readArtifactChunk",
+  "hostConfiguration",
+  "append",
+  "read",
+  "artifact",
+  "recordRunnerEvent",
+  "setCheckpointParent",
+  "stageCheckpoint",
+  "activeCheckpointId",
+  "verifyFiles",
+  "verifyArtifact",
+  "recordRaw",
+] as const;
+const resumePhase = Schema.makeFilter(
+  (environment: {
+    readonly HARNESS_RESUME_CREATION?: true;
+    readonly HARNESS_RESUME_PUBLISHER?: unknown;
+  }) =>
+    environment.HARNESS_RESUME_CREATION === true ||
+    environment.HARNESS_RESUME_PUBLISHER !== undefined,
+);
 export const QualifierClaudeInputs = Schema.Struct({
   RUN_ID: QualifierRunId,
   CONFIG_SHA256: QualifierHash,
@@ -27,16 +52,13 @@ export function qualifierFacetConfigurationSchemas<
   Assets extends Schema.Top,
 >(ports: { service: (methods: readonly string[]) => Service; assets: Assets }) {
   const capabilities = {
-    [Keys.release]: ports.service([
-      "getArtifact",
-      "loaderConfig",
-      "readArtifact",
-      "readArtifactChunk",
-      "hostConfiguration",
-      "append",
-    ]),
+    [Keys.release]: ports.service([...releaseMethods, "prepareModelIncarnation", "seedCheckpoint"]),
     [Keys.nativeCheckpoint]: ports.service(["read"]),
-    [Keys.access]: ports.service(["resolveInitialAccess", "resolveTurnAccess"]),
+    [Keys.access]: ports.service([
+      "resolveFreshAccess",
+      "resolveInitialAccess",
+      "resolveTurnAccess",
+    ]),
     [Keys.programs]: ports.service(["catalog", "read"]),
     [Keys.machine]: ports.service(["inventory"]),
     [Keys.model]: ports.service(["fetch"]),
@@ -87,22 +109,20 @@ export function qualifierFacetConfigurationSchemas<
       HARNESS_C_PRODUCT_CAPABILITIES: Schema.Struct({
         ...capabilities,
         [Keys.release]: ports.service([
-          "getArtifact",
-          "loaderConfig",
-          "readArtifact",
-          "readArtifactChunk",
-          "hostConfiguration",
-          "append",
+          ...releaseMethods,
           "prepareClaudeIncarnation",
+          "recordClaudeLoadedRelease",
+          "catalog",
+          "inventory",
         ]),
         claudeContinuationPublisher: ports.service(["publishContinuation"]),
       }),
-    }),
+    }).check(resumePhase),
     codex: Schema.Struct({
       ...shared,
       ...QualifierCodexInputs.fields,
       HARNESS_C_PRODUCT_CAPABILITIES: Schema.Struct(capabilities),
-    }),
+    }).check(resumePhase),
   };
 }
 

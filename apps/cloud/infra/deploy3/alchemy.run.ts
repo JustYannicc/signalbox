@@ -41,7 +41,7 @@ export default Alchemy.Stack(
       ).pipe(Effect.orDie),
       stage,
     );
-    yield* Effect.promise(() => validateDeploy3PlanAssets(plan));
+    yield* Effect.tryPromise(() => validateDeploy3PlanAssets(plan)).pipe(Effect.orDie);
     const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
     const operatorValue = yield* Config.Redacted("CLOUDFLARE_API_TOKEN");
     if (!plan.operatorTokenId)

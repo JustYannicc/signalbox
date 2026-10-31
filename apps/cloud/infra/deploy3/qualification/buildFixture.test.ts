@@ -3,6 +3,7 @@ import * as NodePath from "node:path";
 import { expect } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { dataForDriver } from "./runnerTurn.fixture.ts";
 import { buildCombinedFixture } from "./buildFixture.ts";
@@ -14,6 +15,33 @@ import { deploy3QualifierEnvironmentInputs } from "../qualifierEnvironment.ts";
 import { decodeConfiguration } from "./fixture/configuration.schema.ts";
 import { validateDeploy3Plan } from "../deploymentPlan.ts";
 import { validateDeploy3PlanAssets } from "../validatePlanAssets.ts";
+import {
+  assertQualifierClaudeFacetConfiguration,
+  assertQualifierCodexFacetConfiguration,
+} from "./facetEnvironmentContract.ts";
+import { HARNESS_C_PRODUCT_CAPABILITY_KEYS as Keys } from "../../../src/harness/HarnessCProductCapabilities.ts";
+
+const capabilityMap = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
+const runtimePort = (missing?: string) =>
+  new Proxy(
+    {},
+    {
+      get: (_target, method) =>
+        method === missing
+          ? undefined
+          : () => {
+              throw new Error("Environment validation must not invoke an RPC");
+            },
+    },
+  );
+const rejectsEnvironment = (validate: () => unknown) => {
+  try {
+    validate();
+    return false;
+  } catch {
+    return true;
+  }
+};
 
 it.effect(
   "combined bundle contains both product facets and pins their compiled source",
@@ -112,6 +140,7 @@ it.effect(
             "codex/fresh",
             "codex/restored",
           ]);
+          const acceptedInvalidEnvironments = [];
           for (const boundary of boundaries) {
             if (boundary.provider === "codex") {
               expect(boundary.environment).toMatchObject({
@@ -124,7 +153,75 @@ it.effect(
                 QUALIFIER_CLAUDE_VARIANT: boundary.provider,
               });
             }
+            const capabilities = capabilityMap(boundary.environment.HARNESS_C_PRODUCT_CAPABILITIES);
+            const runtime = {
+              ...boundary.environment,
+              PROGRAM_ASSETS: runtimePort(),
+              HARNESS_RESUME_RUN_STORE: runtimePort(),
+              HARNESS_RESUME_FILES_STORE: runtimePort(),
+              HARNESS_RESUME_SUPERVISOR: runtimePort(),
+              CLAUDE_ACCESS: runtimePort(),
+              CLAUDE_EXECUTOR: runtimePort(),
+              HARNESS_C_PRODUCT_CAPABILITIES: Object.fromEntries(
+                Object.keys(capabilities).map((key) => [key, runtimePort()]),
+              ),
+            };
+            const validate =
+              boundary.provider === "codex"
+                ? assertQualifierCodexFacetConfiguration
+                : assertQualifierClaudeFacetConfiguration;
+            expect(() => validate(runtime)).not.toThrow();
+            const requiredPhaseInput =
+              boundary.phase === "restored"
+                ? "HARNESS_RESUME_PUBLISHER"
+                : "HARNESS_RESUME_CREATION";
+            const missingPhaseInput = Object.fromEntries(
+              Object.entries(runtime).filter(([key]) => key !== requiredPhaseInput),
+            );
+            if (!rejectsEnvironment(() => validate(missingPhaseInput)))
+              acceptedInvalidEnvironments.push(
+                `${boundary.provider}/${boundary.phase}/${requiredPhaseInput}`,
+              );
+            const releaseMethods = [
+              "setCheckpointParent",
+              "stageCheckpoint",
+              "activeCheckpointId",
+              "read",
+              "artifact",
+              "recordRunnerEvent",
+              "verifyFiles",
+              "verifyArtifact",
+              "recordRaw",
+              ...(boundary.provider === "codex"
+                ? ["prepareModelIncarnation", "seedCheckpoint"]
+                : [
+                    "prepareClaudeIncarnation",
+                    "recordClaudeLoadedRelease",
+                    "catalog",
+                    "inventory",
+                  ]),
+            ];
+            for (const [key, method] of [
+              [Keys.access, "resolveFreshAccess"],
+              ...releaseMethods.map((method) => [Keys.release, method]),
+            ]) {
+              if (
+                !rejectsEnvironment(() =>
+                  validate({
+                    ...runtime,
+                    HARNESS_C_PRODUCT_CAPABILITIES: {
+                      ...runtime.HARNESS_C_PRODUCT_CAPABILITIES,
+                      [key!]: runtimePort(method),
+                    },
+                  }),
+                )
+              )
+                acceptedInvalidEnvironments.push(
+                  `${boundary.provider}/${boundary.phase}/${method}`,
+                );
+            }
           }
+          expect(acceptedInvalidEnvironments).toEqual([]);
           for (const key of [
             "RUN_ID",
             "CONFIG_SHA256",
