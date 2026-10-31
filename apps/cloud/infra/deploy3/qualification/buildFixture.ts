@@ -104,12 +104,11 @@ export async function buildCombinedFixture(raw: unknown) {
       },
     );
 
-  const registry = [
-    ...input.codex.commands.map(
-      (pin, index) => `import m${index} from ${JSON.stringify(`./programs/${pin.sha256}.wasm`)};`,
-    ),
-    `export const COMMAND_REGISTRY = new Map([${input.codex.commands.map((pin, index) => `[${JSON.stringify(pin.sha256)},m${index}]`).join(",")}]);`,
-  ].join("\n");
+  const commandAssets = input.codex.commands.map((pin) => [
+    pin.sha256,
+    { path: `qualifier/commands/${pin.sha256}.wasm`, bytes: pin.bytes },
+  ]);
+  const registry = `export const COMMAND_ASSETS = new Map(${JSON.stringify(commandAssets)});`;
   const sources = new Map<string, { bytes: number; sha256: string }>();
   const registryPlugin: Plugin = {
     name: "pinned-command-registry",
@@ -160,6 +159,7 @@ export async function buildCombinedFixture(raw: unknown) {
     nodePaths: [NodePath.join(cloud, "node_modules")],
     tsconfig: NodePath.join(cloud, "tsconfig.json"),
     metafile: true,
+    sourcemap: "external",
     plugins: [registryPlugin],
   };
   const metafiles: Record<string, Metafile> = {};
@@ -238,6 +238,13 @@ export async function buildCombinedFixture(raw: unknown) {
     force: false,
   });
   await NodeFSP.mkdir(NodePath.join(assets, "qualifier"), { recursive: true });
+  await NodeFSP.mkdir(NodePath.join(assets, "qualifier/commands"));
+  for (const [index, pin] of input.codex.commands.entries())
+    await NodeFSP.writeFile(
+      NodePath.join(assets, "qualifier/commands", `${pin.sha256}.wasm`),
+      commands[index]!,
+      { flag: "wx" },
+    );
   await environmentPackages.write(assets);
   const configBytes = Buffer.from(json(config));
   await NodeFSP.writeFile(NodePath.join(assets, "qualifier/config.json"), configBytes, {

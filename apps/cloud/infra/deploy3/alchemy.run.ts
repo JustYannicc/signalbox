@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as NodeURL from "node:url";
 import { controlBody, controlDigest } from "./controlRegistry.ts";
 import { Deploy3Plan, validateDeploy3Plan } from "./deploymentPlan.ts";
 import { clockMillis } from "./platform.ts";
@@ -119,7 +120,11 @@ export default Alchemy.Stack(
           }
         : {}),
       props: {
-        main: plan.main,
+        source: {
+          provider: NodeURL.fileURLToPath(new URL("../workerStartup/source.ts", import.meta.url)),
+          devMode: "bundle",
+          options: { main: plan.main, rules: [] },
+        },
         assets: { directory: plan.assetsDirectory, runWorkerFirst: true },
         compatibility: { date: plan.compatibilityDate, flags: [...plan.compatibilityFlags] },
         workersDev: { enabled: true, previewsEnabled: false },

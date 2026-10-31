@@ -6,7 +6,7 @@ import { TASK_DONE } from "./taskDone.ts";
 import { PAYMENT } from "./payment.ts";
 import { WAIT_FOR } from "./waitFor.ts";
 import { WATCH_PULL_REQUEST } from "./watchPullRequest.ts";
-import { HARNESS_RELEASE_WATCH } from "./harnessRelease.ts";
+import { getHarnessReleaseWatchSource } from "./harnessRelease.ts";
 
 /**
  * Built-in automations: defaults Signalbox ships in code, so behaviour that
@@ -82,7 +82,9 @@ export const BUILT_IN_AUTOMATIONS: ReadonlyArray<BuiltInAutomation> = [
     name: "Watch harness releases",
     description:
       "Checks current Claude Code, Claude Agent SDK and Codex releases, then works through a bounded historical set. Run builtin:harness-release-watch once with the Signalbox project's ID to install its hourly trigger in that project.",
-    source: HARNESS_RELEASE_WATCH,
+    get source() {
+      return getHarnessReleaseWatchSource();
+    },
   },
 ];
 

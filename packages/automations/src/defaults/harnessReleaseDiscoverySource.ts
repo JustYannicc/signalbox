@@ -42,25 +42,26 @@ function responseJson(value: unknown): unknown {
   return value;
 }
 
-const SOURCE = [
-  `const NPM_PACKAGES = ${JSON.stringify(NPM_PACKAGES)};`,
-  `const CODEX_RELEASE_LIMIT = ${JSON.stringify(CODEX_RELEASE_LIMIT)};`,
-  `const CODEX_MAX_PAGES = ${JSON.stringify(CODEX_MAX_PAGES)};`,
-  `const RELEASE_VERSION = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/u;`,
-  workflowFunctionSource(isRecord),
-  workflowFunctionSource(responseJson),
-  workflowFunctionSource(compareText),
-  workflowFunctionSource(compareVersions),
-  workflowFunctionSource(compareCandidates),
-  workflowFunctionSource(stableVersion),
-  workflowFunctionSource(makeCandidate),
-  workflowFunctionSource(parseNpm),
-  workflowFunctionSource(parseCodexPage),
-  workflowFunctionSource(selectCodex),
-  workflowFunctionSource(nextLink),
-  workflowFunctionSource(codexNextUrl),
-  workflowFunctionSource(discoverCodex),
-].join("\n");
+const buildSource = () =>
+  [
+    `const NPM_PACKAGES = ${JSON.stringify(NPM_PACKAGES)};`,
+    `const CODEX_RELEASE_LIMIT = ${JSON.stringify(CODEX_RELEASE_LIMIT)};`,
+    `const CODEX_MAX_PAGES = ${JSON.stringify(CODEX_MAX_PAGES)};`,
+    `const RELEASE_VERSION = /^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/u;`,
+    workflowFunctionSource(isRecord),
+    workflowFunctionSource(responseJson),
+    workflowFunctionSource(compareText),
+    workflowFunctionSource(compareVersions),
+    workflowFunctionSource(compareCandidates),
+    workflowFunctionSource(stableVersion),
+    workflowFunctionSource(makeCandidate),
+    workflowFunctionSource(parseNpm),
+    workflowFunctionSource(parseCodexPage),
+    workflowFunctionSource(selectCodex),
+    workflowFunctionSource(nextLink),
+    workflowFunctionSource(codexNextUrl),
+    workflowFunctionSource(discoverCodex),
+  ].join("\n");
 
 function compareText(left: string, right: string) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -257,4 +258,9 @@ async function discoverCodex(w: {
   return selectCodex(releases);
 }
 
-export const HARNESS_RELEASE_DISCOVERY_SOURCE = SOURCE;
+let source: string | undefined;
+
+export const getHarnessReleaseDiscoverySource = () => {
+  if (source === undefined) source = buildSource();
+  return source;
+};

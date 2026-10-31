@@ -1,4 +1,5 @@
 import * as NodeFSP from "node:fs/promises";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as Schema from "effect/Schema";
@@ -34,7 +35,7 @@ async function readActiveReservation(path: string) {
   }
 }
 
-export async function requireWorkerdLaunchAdmission() {
+function launchEnvironment() {
   const path = NodeProcess.env.SIGNALBOX_WORKERD_ACTIVE;
   const owner = NodeProcess.env.SIGNALBOX_WORKERD_OWNER;
   const batch = NodeProcess.env.SIGNALBOX_WORKERD_BATCH;
@@ -46,11 +47,38 @@ export async function requireWorkerdLaunchAdmission() {
   if (!NodePath.isAbsolute(path) || NodePath.basename(path) !== "ACTIVE.json") {
     refuse("SIGNALBOX_WORKERD_ACTIVE must name the absolute live ACTIVE.json, not a saved ACK");
   }
-  const active = await readActiveReservation(path);
+  return { path, owner, batch };
+}
+
+function matchReservation(
+  active: ReturnType<typeof decodeActiveReservation>,
+  owner: string,
+  batch: string,
+) {
   if (active.currentOwnerThreadId !== owner) {
     refuse(`ACTIVE owner ${active.currentOwnerThreadId} does not match caller ${owner}`);
   }
   if (active.reservationId !== batch) {
     refuse(`ACTIVE batch ${active.reservationId} does not match caller ${batch}`);
   }
+}
+
+export async function requireWorkerdLaunchAdmission() {
+  const { path, owner, batch } = launchEnvironment();
+  matchReservation(await readActiveReservation(path), owner, batch);
+}
+
+/** ChildProcess.spawn is synchronous; its guard must finish before it can create the native process. */
+export function requireWorkerdLaunchAdmissionSync() {
+  const { path, owner, batch } = launchEnvironment();
+  let active: ReturnType<typeof decodeActiveReservation>;
+  try {
+    active = decodeActiveReservation(JSON.parse(NodeFS.readFileSync(path, "utf8")));
+  } catch (cause) {
+    return refuse(
+      "ACTIVE is unreadable, invalid, or not exclusively RESERVED without expiry",
+      cause,
+    );
+  }
+  matchReservation(active, owner, batch);
 }

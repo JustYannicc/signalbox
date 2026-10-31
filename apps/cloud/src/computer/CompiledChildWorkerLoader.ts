@@ -9,6 +9,12 @@ import {
   workerLoaderQuotaFailure,
   type ChildWorkerLoaderPort,
 } from "./WorkerLoaderDispatch.ts";
+import {
+  ChildWorkerAssetMaterializationError,
+  resolveChildWorkerAssetModules,
+  validateChildWorkerModuleNames,
+  type ChildWorkerWasmAssetResolver,
+} from "./ChildWorkerAssetModules.ts";
 
 export type CompiledChildWorkerRegistry = ReadonlyMap<string, WebAssembly.Module>;
 
@@ -29,9 +35,9 @@ export function resolveCompiledChildWorkerModules(
   modules: ChildWorkerModules,
   registry: CompiledChildWorkerRegistry,
 ) {
+  validateChildWorkerModuleNames(modules);
   const resolved: CompiledModules = {};
   for (const [name, module] of Object.entries(modules)) {
-    if (!name || name.split("/").includes("..")) throw new TypeError("Invalid child module name");
     if (typeof module === "string") {
       Object.defineProperty(resolved, name, { value: module, enumerable: true });
     } else if ("wasmReference" in module) {
@@ -60,10 +66,12 @@ export function resolveCompiledChildWorkerModules(
   return Object.freeze(resolved);
 }
 
-/** The host chooses the budget and static modules; invocation payloads cannot raise that budget. */
-export function createCompiledChildWorkerLoader(
+type ResolvedModules = ReturnType<typeof resolveCompiledChildWorkerModules>;
+
+function createChildWorkerLoader(
   loader: WorkerLoader,
-  registry: CompiledChildWorkerRegistry,
+  resolveModules: (modules: ChildWorkerModules) => ResolvedModules | Promise<ResolvedModules>,
+  materializeOnLoaderMiss: boolean,
   configuredLimits?: ChildWorkerLimits,
 ): ChildWorkerLoaderPort {
   const limits = resolveChildWorkerLimits(configuredLimits);
@@ -73,42 +81,41 @@ export function createCompiledChildWorkerLoader(
     globalOutbound: null,
     limits,
   } as const;
-  const modulesByHash = new Map(registry);
-  for (const [hash, module] of modulesByHash) {
-    if (!/^[a-f0-9]{64}$/.test(hash) || !(module instanceof WebAssembly.Module)) {
-      throw new TypeError("Expected pinned compiled child WASM modules");
-    }
-  }
   return {
     async run(input, target) {
       const mainModule = input.mainModule;
       const entrypoint = input.entrypoint;
-      let code: {
-        readonly compatibilityDate: string;
-        readonly compatibilityFlags: readonly string[];
-        readonly mainModule: string;
-        readonly modules: ReturnType<typeof resolveCompiledChildWorkerModules>;
-        readonly globalOutbound: null;
-        readonly limits: ReturnType<typeof resolveChildWorkerLimits>;
-      };
       let loaderId: string;
+      let code:
+        | {
+            readonly compatibilityDate: string;
+            readonly compatibilityFlags: readonly string[];
+            readonly mainModule: string;
+            readonly modules: ReturnType<typeof resolveCompiledChildWorkerModules>;
+            readonly globalOutbound: null;
+            readonly limits: ReturnType<typeof resolveChildWorkerLimits>;
+          }
+        | undefined;
       try {
         loaderId = requireChildWorkerLoaderId(input);
+        validateChildWorkerModuleNames(input.modules);
+        const main = input.modules[mainModule];
         if (
           !input.mainModule ||
-          !Object.hasOwn(input.modules, input.mainModule) ||
+          !Object.hasOwn(input.modules, mainModule) ||
+          main === undefined ||
+          (typeof main !== "string" &&
+            !(main !== null && typeof main === "object" && "js" in main)) ||
           (input.entrypoint !== undefined && !/^[a-zA-Z_$][\w$]*$/.test(input.entrypoint))
         )
           throw new TypeError("Invalid child entrypoint");
         if (resolveChildWorkerLimits(input.limits).cpuMs !== limits.cpuMs) {
           throw new RangeError("Child CPU budget differs from the host binding");
         }
-        const modules = resolveCompiledChildWorkerModules(input.modules, modulesByHash);
-        const main = modules[input.mainModule];
-        if (typeof main !== "string" && (main === undefined || !("js" in main))) {
-          throw new TypeError("Child main module must contain JavaScript");
+        if (!materializeOnLoaderMiss) {
+          const modules = await resolveModules(input.modules);
+          code = { ...policy, mainModule, modules };
         }
-        code = { ...policy, mainModule, modules };
       } catch (error) {
         // No loader call happened, so this invocation cannot own a running child.
         const completion = target as typeof target & { stopped(): void | Promise<void> };
@@ -130,31 +137,73 @@ export function createCompiledChildWorkerLoader(
         worker = undefined;
         disposeWorkerLoaderStubs(entrypoint, workerStub);
       };
+      let materializationFailure: ChildWorkerAssetMaterializationError | undefined;
+      let materializedCode: Promise<WorkerLoaderWorkerCode> | undefined;
+      const getCode = () => {
+        if (!materializeOnLoaderMiss) return code as unknown as WorkerLoaderWorkerCode;
+        if (materializedCode === undefined) {
+          const resolvingCode = Promise.resolve()
+            .then(() => resolveModules(input.modules))
+            .then(
+              (modules) =>
+                ({ ...policy, mainModule, modules }) as unknown as WorkerLoaderWorkerCode,
+            )
+            .catch((cause: unknown) => {
+              materializationFailure = new ChildWorkerAssetMaterializationError(cause);
+              throw materializationFailure;
+            });
+          void resolvingCode.catch(() => undefined);
+          materializedCode = resolvingCode;
+        }
+        return materializedCode;
+      };
       try {
         try {
-          worker = loader.get(loaderId, () => code as WorkerLoaderWorkerCode);
+          worker = loader.get(loaderId, getCode);
           child = worker.getEntrypoint<Entrypoint>(entrypoint, { limits }) as unknown as Entrypoint;
+          // A cache miss can still be materializing after `get` and entrypoint acquisition return.
+          // Wait for that callback before asking the child to run.
+          if (materializedCode !== undefined) await materializedCode;
         } catch (cause) {
-          const quotaFailure = workerLoaderQuotaFailure(cause);
-          if (quotaFailure === undefined) throw cause;
-          // A rejected Worker Loader acquisition has no child to wait for or retire.
-          releaseLoaderStubs();
-          const completion = target as typeof target & { stopped(): void | Promise<void> };
-          await completion.stopped();
-          throw quotaFailure;
+          if (materializationFailure === undefined) {
+            const quotaFailure = workerLoaderQuotaFailure(cause);
+            if (quotaFailure !== undefined) {
+              // A rejected Worker Loader acquisition has no child to wait for or retire.
+              releaseLoaderStubs();
+              const completion = target as typeof target & { stopped(): void | Promise<void> };
+              await completion.stopped();
+              throw quotaFailure;
+            }
+            // Worker Loader can surface acquisition failure before the async code callback settles.
+            if (materializedCode !== undefined) {
+              try {
+                await materializedCode;
+              } catch {
+                // The callback records its failure so the no-child path can acknowledge it below.
+              }
+            }
+          }
+          if (materializationFailure === undefined) throw cause;
         }
-        if (child === undefined)
+        if (child === undefined && materializationFailure === undefined)
           throw new Error("Child Worker Loader did not create an entrypoint");
-        try {
-          outcome = {
-            kind: "exit",
-            value: copyKernelRpcRecord(await child.run(input.command, target)),
-          };
-        } catch (cause) {
-          outcome = { kind: "error", cause };
+        if (materializationFailure === undefined) {
+          try {
+            outcome = {
+              kind: "exit",
+              value: copyKernelRpcRecord(await child!.run(input.command, target)),
+            };
+          } catch (cause) {
+            if (materializationFailure === undefined) outcome = { kind: "error", cause };
+          }
         }
       } finally {
         releaseLoaderStubs();
+      }
+      if (materializationFailure !== undefined) {
+        const completion = target as typeof target & { stopped(): void | Promise<void> };
+        await completion.stopped();
+        throw materializationFailure.originalCause;
       }
       if (outcome === undefined) throw new Error("Child Worker Loader returned without an outcome");
       if (outcome.kind === "exit") return outcome.value;
@@ -162,4 +211,38 @@ export function createCompiledChildWorkerLoader(
       throw outcome.cause;
     },
   };
+}
+
+/** The host chooses the budget and static modules; invocation payloads cannot raise that budget. */
+export function createCompiledChildWorkerLoader(
+  loader: WorkerLoader,
+  registry: CompiledChildWorkerRegistry,
+  configuredLimits?: ChildWorkerLimits,
+): ChildWorkerLoaderPort {
+  const modulesByHash = new Map(registry);
+  for (const [hash, module] of modulesByHash) {
+    if (!/^[a-f0-9]{64}$/.test(hash) || !(module instanceof WebAssembly.Module)) {
+      throw new TypeError("Expected pinned compiled child WASM modules");
+    }
+  }
+  return createChildWorkerLoader(
+    loader,
+    (modules) => resolveCompiledChildWorkerModules(modules, modulesByHash),
+    false,
+    configuredLimits,
+  );
+}
+
+/** Resolve verified Wasm bytes only when Worker Loader first asks for this slot's code. */
+export function createAssetChildWorkerLoader(
+  loader: WorkerLoader,
+  resolveAsset: ChildWorkerWasmAssetResolver,
+  configuredLimits?: ChildWorkerLimits,
+): ChildWorkerLoaderPort {
+  return createChildWorkerLoader(
+    loader,
+    (modules) => resolveChildWorkerAssetModules(modules, resolveAsset),
+    true,
+    configuredLimits,
+  );
 }
