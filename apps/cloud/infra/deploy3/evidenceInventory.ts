@@ -3,6 +3,8 @@ import {
   CLAUDE_REQUEST_ATTEMPTS_KEY,
   CLAUDE_REQUEST_ATTEMPTS_PREFIX,
   claudeRequestAttemptKey,
+} from "./qualification/fixture/claudeAttemptKeys.ts";
+import {
   decodeClaudeRequestAttemptCounters,
   decodeClaudeRequestAttemptMarker,
   type ClaudeRequestAttemptCounters,

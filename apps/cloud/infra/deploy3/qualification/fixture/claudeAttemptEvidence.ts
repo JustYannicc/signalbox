@@ -1,10 +1,7 @@
 import * as Schema from "effect/Schema";
+import type * as Types from "effect/Types";
+import type { rpcResourceSnapshot } from "../../../../src/rpc/Resources.ts";
 import { CLAUDE_INCOMING_REQUEST_BODY_LIFECYCLES } from "./claudeBodyOwnership.ts";
-export {
-  CLAUDE_REQUEST_ATTEMPTS_KEY,
-  CLAUDE_REQUEST_ATTEMPTS_PREFIX,
-  claudeRequestAttemptKey,
-} from "./claudeAttemptKeys.ts";
 
 const NonNegativeInteger = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
@@ -122,7 +119,13 @@ export const ClaudeRequestAttemptMarkerSchema = Schema.Struct({
 });
 
 export type ClaudeRequestAttemptOutcome = typeof RequestAttemptOutcome.Type;
-export type ClaudeRpcSnapshot = typeof RpcSnapshot.Type;
+// New producer fields must fail compilation instead of being silently dropped by decoding.
+type ExactRpcSnapshot<Matches extends true> = Matches extends true
+  ? typeof RpcSnapshot.Type
+  : never;
+export type ClaudeRpcSnapshot = ExactRpcSnapshot<
+  Types.Equals<Readonly<ReturnType<typeof rpcResourceSnapshot>>, typeof RpcSnapshot.Type>
+>;
 export type ClaudeRequestAttemptStage = typeof RequestAttemptStage.Type;
 export type ClaudeAttemptResources = typeof AttemptResources.Type;
 export type ClaudeRequestAttemptMarker = typeof ClaudeRequestAttemptMarkerSchema.Type;

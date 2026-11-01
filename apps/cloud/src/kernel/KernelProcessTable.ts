@@ -470,7 +470,7 @@ export class KernelProcessTable {
         this.#waiters.matchesSelector(process, parent.value.processGroupId, selector),
       )
       .filter((process) => !process.completionObserved && process.outcome === undefined);
-    if (targets.length === 0) return kernelError("NOT_FOUND", "No matching live child process");
+    if (targets.length === 0) return kernelError("NOT_FOUND", "No matching live process");
     if (signal === 0) return kernelOk(undefined);
 
     let accepted = false;
@@ -491,7 +491,7 @@ export class KernelProcessTable {
       for (const result of rest) this.#wakes.release(result.wakeToken);
       return first!;
     }
-    return firstFailure ?? kernelError("NOT_FOUND", "No matching live child process");
+    return firstFailure ?? kernelError("NOT_FOUND", "No matching live process");
   }
 
   dispose(): Promise<KernelResult<void>> {
