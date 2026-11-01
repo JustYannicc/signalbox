@@ -22,7 +22,7 @@ export async function cleanupDeploy3Bootstrap(input: {
     input.nowMs < parsed.deadlineMs ||
     input.registry.receiptIsFinal(await input.registry.comments(), sha256)
   )
-    return { status: "not-due" };
+    return { status: "not-due", runId: row.runId };
   const cleanup = await cleanupDeploy3Worker({
     accountId: input.accountId,
     token: input.cloudflareToken,
@@ -40,7 +40,8 @@ export async function cleanupDeploy3Bootstrap(input: {
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
   });
   // Preserve the durable bootstrap and revisit it until both facts are authoritative.
-  if (!cleanup.cleanClaim || expiry.status !== "expired-verified") return { status: "unverified" };
+  if (!cleanup.cleanClaim || expiry.status !== "expired-verified")
+    return { status: "unverified", runId: row.runId };
   await input.registry.postReceipt(
     sha256,
     deploy3PublicReceipt({
@@ -51,5 +52,5 @@ export async function cleanupDeploy3Bootstrap(input: {
       registeredResources: { namespaceIds: [], tailIds: [] },
     }),
   );
-  return { status: "verified" };
+  return { status: "verified", runId: row.runId };
 }

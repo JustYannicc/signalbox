@@ -4,6 +4,8 @@ These tools protect the temporary #1070 qualifier deployment when its operator o
 
 The durable control record is a non-sensitive issue comment. It keeps the exact Worker ID, namespace and Tail IDs, deployment UTC, deadline, cleanup token ID/expiry and participating owners after the Worker deletes itself. Independent append-only release records avoid losing concurrent owner updates. Only the configured GitHub writer IDs count. A future configured expiry is reported as `expiry-configured`; only a matching authoritative expired token record permits `expired-verified`. API denial never proves expiry.
 
+Normal owner teardown records a separate resource closeout after independently verifying absence. Only a proof from the registration controller, matching the exact registration and resources, stops later sweeps. This prevents an owner's revoked token from leaving an already-clean run permanently failing. The closeout makes no credential-expiry claim; credential revocation remains a separate teardown step. See the operating procedure for recovering older owner-deleted runs.
+
 The single-Worker token cannot be assumed to list every account resource. The primary therefore uses Worker-scoped deletion calls. The CI token verifies account-wide namespace absence afterward. The primary has no durable GitHub secret. Its public control read can fail without preventing deletion at the deadline bound into its environment; the next hourly job publishes the receipt after self-deletion. Final receipts contain only the approved teardown fields and `evidence not exported`.
 
 The provisioning, arming, normal export/release and written extension procedure is in [Operate the Deploy #3 qualifier](../../../../../docs/operations/deploy3.md).

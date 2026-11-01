@@ -186,6 +186,14 @@ async function main(): Promise<void> {
       );
     },
   });
+  for (const result of registered.results) {
+    if (result.status !== "verified" && result.status !== "not-due")
+      process.stderr.write(
+        `Deploy3 registered run ${result.runId}: ${result.status}; evidence not exported\n`,
+      );
+  }
+  for (const failure of sweep.failures)
+    process.stderr.write(`Deploy3 sweep failure ${failure}; evidence not exported\n`);
   process.stdout.write(
     `Deploy3 sweep ${sweep.status}; ${registered.results.length} registered run(s) checked; evidence not exported\n`,
   );

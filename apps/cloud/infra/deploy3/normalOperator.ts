@@ -1,5 +1,6 @@
 import { readLocalEvidenceText } from "./localEvidenceFiles.ts";
 import * as Schema from "effect/Schema";
+import { finalizeDeploy3OwnerTeardown } from "./ownerTeardownLifecycle.ts";
 import { cleanupDeploy3Worker } from "./cloudflare.ts";
 import { releaseDeploy3Owner, requireAllDeploy3OwnersReleased } from "./controlLifecycle.ts";
 import { controlDigest } from "./controlRegistry.ts";
@@ -67,7 +68,7 @@ export async function cleanupReleasedDeploy3(input: {
   );
   if (!state) throw new Error("Normal teardown has no registered deployment");
   requireAllDeploy3OwnersReleased(state);
-  return cleanupDeploy3Worker({
+  const cleanup = await cleanupDeploy3Worker({
     accountId: input.accountId,
     token: input.cloudflareToken,
     nowMs: input.nowMs,
@@ -78,4 +79,8 @@ export async function cleanupReleasedDeploy3(input: {
     releasedRegistrationSha256: state.registrationSha256,
     ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
   });
+  const finalization = cleanup.cleanClaim
+    ? await finalizeDeploy3OwnerTeardown(input)
+    : { status: "unconfirmed" as const };
+  return { ...cleanup, registryFinalization: finalization.status };
 }
