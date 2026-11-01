@@ -1,0 +1,248 @@
+// The landing view: Signalbox's layers (#1504), then one drill-down per layer. Layer boxes are
+// model/layers.c4; everything inside a layer view is the same element as everywhere else.
+views {
+
+  view index {
+    title 'Overview/Layers'
+    description '''
+      What is Signalbox made of? Seven layers, all built on the tools service and derived from a few primitives
+      (`Domain / Primitives`). Click a layer for what is in it.
+      - **Track A**, what the model uses: Connectors and Apps, usable right away from local Claude Code and
+        Codex through `/mcp`.
+      - **Track B**, the model side: the Harness. Its Runtime is left out of the post-v1 map (faded), not deleted.
+      - The tracks meet at `/v1`, `/mcp` and a versioned session profile.
+
+      Who uses Signalbox and what it reaches: `Overview / Landscape`. Which repo owns which layer:
+      `Overview / Decisions / Components`.
+    '''
+
+    include personA with { title 'People'; description 'person A · B · C'; navigateTo landscape }
+    include layers.identity with { navigateTo layer-identity }
+    include layers.inference with { navigateTo layer-inference }
+    include layers.environment with { navigateTo layer-environment }
+    include layers.clients with { navigateTo layer-clients }
+    group 'Track A' {
+      color green
+      opacity 6%
+      include layers.connectors with { navigateTo layer-connectors }
+      include layers.apps with { navigateTo layer-apps }
+    }
+    group 'Track B' {
+      color amber
+      opacity 6%
+      include layers.harness with { navigateTo layer-harness }
+      include layers.harness.context with { navigateTo layer-harness }
+      include layers.harness.runtime with { navigateTo layer-harness }
+    }
+
+    exclude layers
+    exclude personA -> *
+    include personA -> layers.clients, personA -> layers.harness.context
+
+    rank source { personA }
+    global style depth
+    autoLayout TopBottom
+  }
+
+  view layer-identity {
+    title 'Overview/Layers/Identity'
+    description '''
+      Who is acting, for whom, and what may they reach?
+      - An identity is a person or an agent. Every agent has its own identity and acts for anything (a person,
+        a project, an organization, a workflow) as long as a person is accountable for it.
+      - Accountability chains: an agent can answer to another agent, but the chain never loops and always ends
+        at a person. A chain that doesn't stops its agents until someone takes over.
+      - An agent's access is the overlap of its own grants and the rights of whatever it acts for, checked on
+        every call. Sub-agents only narrow. Steering someone else's agent lends it no authority.
+      - On the wire, what it acts for is `sub` and the agent `act.sub`. The agent is always the author.
+    '''
+
+    group 'Module' {
+      color muted
+      opacity 6%
+      include signalbox.identity with { title 'Sign-in'; navigateTo m-identity }
+    }
+    group 'Primitives' {
+      color muted
+      opacity 6%
+      include domain.identity with { navigateTo domain-primitives }
+      include domain.person, domain.agent, domain.grant, domain.agentGrant
+    }
+    exclude domain
+
+    style signalbox.identity { color indigo }
+    style domain.identity { color primary }
+    autoLayout TopBottom
+  }
+
+  view layer-inference {
+    title 'Overview/Layers/Inference'
+    description '''
+      Who answers a model request? The model gateway (`/v1`) takes every model request and a pool answers behind it.
+      A pool is an app: one per pool, shared explicitly like any app. Requests stick per conversation, spread
+      when new and fail over at limits.
+    '''
+
+    include laptopCli with { title 'Local Claude Code · Codex' }
+    include signalbox.gateway.modelGateway with { title 'Model gateway'; navigateTo funnel_model }
+    include signalbox.models with { title 'Pools'; navigateTo m-models }
+    include modelProviders with { title 'Subscriptions'; navigateTo ext-providers }
+
+    exclude signalbox, signalbox.gateway
+    exclude * -> *
+    include laptopCli -> signalbox.gateway.modelGateway with { title '/v1' }
+    include signalbox.gateway.modelGateway -> signalbox.models with { title 'pin an account' }
+    include signalbox.models -> modelProviders
+
+    style signalbox.gateway.modelGateway, signalbox.models { color indigo }
+    style laptopCli { color green }
+    autoLayout TopBottom
+  }
+
+  view layer-connectors {
+    title 'Overview/Layers/Connectors'
+    description '''
+      How does Signalbox reach an outside service? A connector is one outside service and how to sign in to it.
+      An account is a sign-in to a connector, owned by a person or the organization. A link gives an app an
+      account; one connector serves many apps, and one app can take many connectors. Secret values stay in the vault.
+    '''
+
+    include signalbox.connections with { title 'Connectors'; navigateTo m-connections }
+    include signalbox.connections.vault with { title 'Vault' }
+    include services with { title 'Outside services'; navigateTo ext-services }
+    group 'Primitives' {
+      color muted
+      opacity 6%
+      include domain.connector with { navigateTo domain-primitives }
+      include domain.connection, domain.accountLink, domain.app, domain.owner
+    }
+
+    exclude signalbox, domain
+    exclude * -> *
+    include signalbox.connections -> services with { title 'as the account' }
+    include domain.connection -> domain.connector, domain.accountLink -> domain.connection, domain.accountLink -> domain.app
+    include domain.app -> domain.connector, domain.owner -> domain.connection
+
+    style signalbox.connections { color indigo }
+    style domain.connector, domain.connection, domain.accountLink { color primary }
+    autoLayout TopBottom
+  }
+
+  view layer-apps {
+    title 'Overview/Layers/Apps'
+    description '''
+      What do people and agents use? Apps: tools, screens, storage and background work, built from connectors.
+      Apps are per person and shared explicitly. An app offers other apps calls, data only through those calls,
+      events, and a written sync pattern. Faded: decided, not built yet. Click an app for its inside.
+      - **Pool**: one pool app per pool (`Overview / Layers / Inference`).
+      - **Goals**: goals, branches, reports and the base.
+      - **Personal routine**: the first captured workflow.
+      - **Browser**: one app over the vendor connectors it needs; ours is the default, a person can link their own.
+      - **Hierarchy**: folders, placements and grants, arranged by its own rules.
+    '''
+
+    include laptopCli with { title 'Local Claude Code · Codex' }
+    include signalbox.gateway.toolGateway with { title 'Tools gateway'; description '/mcp'; navigateTo funnel_connections }
+    include signalbox.models with { title 'Pool'; description 'one pool app per pool'; navigateTo layer-inference }
+    include signalbox.goals with { navigateTo app-goals }
+    include signalbox.routine with { navigateTo app-routine }
+    include signalbox.browser with { navigateTo m-browser }
+    include signalbox.tree with { title 'Hierarchy'; navigateTo app-hierarchy }
+    include platform.kernel with { title 'Browser vendor' }
+
+    exclude signalbox, signalbox.gateway, platform
+    exclude * -> *
+    include laptopCli -> signalbox.gateway.toolGateway with { title '/mcp' }
+    include signalbox.gateway.toolGateway -> signalbox.goals with { title 'report' }
+    include signalbox.routine -> signalbox.goals with { title 'report · fills base' }
+    include signalbox.browser -> platform.kernel with { title 'default vendor' }
+
+    style laptopCli { color green }
+    style signalbox.gateway.toolGateway, signalbox.models, signalbox.browser { color indigo }
+    style signalbox.tree { color indigo; border dashed }
+    style signalbox.goals, signalbox.routine { shape rectangle; border dashed }
+    style platform.kernel { color muted }
+    global style depth
+    autoLayout TopBottom
+  }
+
+  view layer-harness {
+    title 'Overview/Layers/Harness'
+    description '''
+      What runs the model? Context & orchestration is the official Claude Code and Codex, unmodified, given
+      instructions, skills and hooks through a versioned session profile; changes apply at turn boundaries.
+      The Runtime (faded) is the loop, state, transport, triggers and observability. It is left out of the
+      post-v1 map, including where it runs. More detail: `Overview / Decisions / Harness map`.
+    '''
+
+    group 'Context & orchestration' {
+      color amber
+      opacity 6%
+      include signalbox.harness with { title 'Harness'; navigateTo harness_map }
+      include signalbox.harness.agents.claudeCode, signalbox.harness.agents.codex
+    }
+    group 'Runtime' {
+      color muted
+      opacity 6%
+      include signalbox.thread with { navigateTo m-thread }
+      include signalbox.automations with { navigateTo m-automations }
+      include signalbox.observability with { navigateTo m-observability }
+    }
+    include signalbox.gateway.modelGateway with { title 'Model gateway'; description '/v1'; navigateTo layer-inference }
+    include signalbox.gateway.toolGateway with { title 'Tools gateway'; description '/mcp'; navigateTo layer-apps }
+    include signalbox.computer with { navigateTo layer-environment }
+
+    exclude signalbox, signalbox.gateway, signalbox.harness.agents
+    exclude * -> *
+    include signalbox.thread -> signalbox.harness with { title 'session profile' }
+    include signalbox.harness -> signalbox.gateway.modelGateway with { title '/v1' }
+    include signalbox.harness -> signalbox.gateway.toolGateway with { title '/mcp' }
+    include signalbox.harness -> signalbox.computer with { title 'Bash · Read · Edit' }
+
+    style signalbox.harness, signalbox.harness.agents.claudeCode, signalbox.harness.agents.codex { color amber }
+    style signalbox.thread, signalbox.automations, signalbox.observability { color muted; opacity 30%; border dashed }
+    style signalbox.gateway.modelGateway, signalbox.gateway.toolGateway { color indigo }
+    autoLayout TopBottom
+  }
+
+  view layer-environment {
+    title 'Overview/Layers/Environment'
+    description '''
+      Where does an agent's work happen? On one computer per thread: commands, files and ports, each through its
+      gateway. A heavy command runs on a machine forked from a snapshot; files live in a drive. Where it runs is
+      hidden from the person and the model.
+    '''
+
+    include signalbox.computer with { navigateTo funnel_command }
+    include signalbox.bases with { navigateTo m-bases }
+    include signalbox.drive with { navigateTo m-drive }
+
+    exclude * -> *
+    include signalbox.computer -> signalbox.bases, signalbox.computer -> signalbox.drive
+
+    style signalbox.computer, signalbox.bases, signalbox.drive { color amber }
+    autoLayout TopBottom
+  }
+
+  view layer-clients {
+    title 'Overview/Layers/Clients'
+    description '''
+      How do people get in? Through a client: web, desktop, mobile, the CLI or the browser extension. Clients are
+      gateways and hold no work; every one goes through the one client gateway.
+    '''
+
+    include personA with { title 'People'; description 'person A · B · C' }
+    include signalbox.web, signalbox.desktop, signalbox.mobile, signalbox.cli, signalbox.browserExtension
+    include signalbox.funnel with { navigateTo funnel_clients }
+
+    exclude signalbox
+    exclude * -> *
+    include personA -> signalbox.web, personA -> signalbox.desktop
+    include signalbox.web -> signalbox.funnel, signalbox.desktop -> signalbox.funnel, signalbox.mobile -> signalbox.funnel
+    include signalbox.cli -> signalbox.funnel, signalbox.browserExtension -> signalbox.funnel
+
+    style personA { color green }
+    rank source { personA }
+    autoLayout TopBottom
+  }
+}

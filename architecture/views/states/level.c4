@@ -16,7 +16,7 @@ model {
 }
 views {
   view state-level of smLevel {
-    title 'States/Level/State machine'
+    title 'Apps/Hierarchy/States/Level/State machine'
     description 'How is one level (top level or folder) archived, trashed, restored and purged? Start: green. End: gray. Click the frame for the walk with people and modules (state_level).'
     include *
     include smLevel with { navigateTo state_level }

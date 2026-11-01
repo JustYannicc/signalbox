@@ -1,6 +1,6 @@
 // The talk's split of an agent system (harness = context & orchestration + runtime; around it inference,
 // environments, connectors, apps), applied to Signalbox: we split the harness, every outside thing is one
-// of our gateways, and Tree resolves the place before each turn.
+// of our gateways, and the hierarchy app (Tree) resolves the place before each turn.
 views {
 
   view harness_map {
@@ -11,13 +11,13 @@ views {
       - **Context & orchestration** is the vendor's harness (Claude Code, Codex), unmodified. We only feed it
         instructions (AGENTS.md, skills) and hooks.
       - **Runtime** is ours: Thread (loop, state, turns, asks), the session facet that hosts the harness and
-        holds the grant (auth), Automations (triggers), Observability.
-      - **Inference** is the model gateway, **environments** the computer, **connectors** the tools gateway,
-        **apps** the client gateway.
-      - No box in the talk: Tree resolves the thread's place for each turn, which picks the pool, the
-        connections, the instructions and skills, and the drive.
+        holds the grant (auth), Automations (triggers), Observability. It is out of the post-v1 map.
+      - **Inference** is the model gateway, **environment** the computer, **connectors** the tools gateway,
+        **clients** the client gateway. Our **apps** sit behind the tools gateway (`Overview / Layers / Apps`).
+      - No box in the talk: the hierarchy app resolves the thread's place for each turn, which picks the pool,
+        the accounts, the instructions and skills, and the drive.
 
-      Which component owns each part (Basalt, Pumice or the Signalbox OS) is `Overview / Decisions / Components`.
+      The layers are `Overview / Layers`; which component owns each part is `Overview / Decisions / Components`.
     '''
 
     include personA with { title 'People'; description 'Person A · B · C' }
@@ -39,19 +39,19 @@ views {
       include signalbox.harness.agents.codex with { description 'Harness (vendor, unmodified): context & orchestration' }
     }
 
-    include signalbox.tree with { description 'resolves the place' }
+    include signalbox.tree with { title 'Hierarchy app'; description 'resolves the place'; navigateTo app-hierarchy }
 
     include signalbox.gateway.modelGateway with { title 'Model gateway'; description 'inference'; navigateTo funnel_model }
     include signalbox.gateway.toolGateway with { title 'Tools gateway'; description 'connectors'; navigateTo funnel_connections }
     include signalbox.computer with { description 'command · files · port gateways'; navigateTo funnel_command }
     include signalbox.models with { title 'Pools'; description 'an account answers' }
-    include signalbox.connections with { title 'Connections · vault'; description 'credentials filled at egress' }
+    include signalbox.connections with { title 'Connectors · vault'; description 'credentials filled at egress' }
     include signalbox.computer.backend.kernelFs with { title 'Isolate or machine'; description 'placement hidden' }
 
     // Only the boxes above: the system, Gateway and the example tree would otherwise wrap them.
     exclude signalbox, signalbox.gateway, hier
 
-    include signalbox.thread -> signalbox.tree with { title 'resolve place → pool · connections · instructions · drive' }
+    include signalbox.thread -> signalbox.tree with { title 'resolve place → pool · accounts · instructions · drive' }
     include signalbox.funnel -> signalbox.computer with { title 'terminal · files · ports' }
     // Asks reach people through Attention; its edge back up to the client gateway tangles the layout, so its card says it.
     exclude signalbox.attention -> signalbox.funnel

@@ -24,7 +24,7 @@ views {
       Where do the harness loop and its commands run? In the Thread DO: Claude Code and Codex run as isolates in the
       session facet next to the kernel filesystem, programs in child isolates. Model bytes go out through the one
       Model gateway to the pool host (the pool backend is the only container). Only a command that needs a real machine
-      escalates to a machine forked from a warm Base; its egress goes through EgressProxy.
+      escalates to a machine forked from a warm snapshot; its egress goes through EgressProxy.
     '''
     include prod.cloudflare
     include prod.cloudflare.threadHost, prod.cloudflare.threadHost.threadDO, prod.cloudflare.threadHost.threadDO.*

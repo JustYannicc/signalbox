@@ -13,7 +13,7 @@ views {
 
   dynamic view folders_usage_cost_view {
     variant sequence
-    title 'Workflows/Folders/Usage/See costs by level and pool'
+    title 'Apps/Hierarchy/Workflows/Usage/See costs by level and pool'
     description 'R-USG-04, R-USG-07, T-USG-10 (aliases T-OBS-12, T-USG-01). Rail Usage for members vs the pool admin view for C. Private chats only ever show as totals.'
 
     include personA, personB, personC, signalbox, signalbox.web, signalbox.funnel, signalbox.tree, signalbox.models
@@ -77,7 +77,7 @@ views {
   }
 
   dynamic view folders_usage_ledger_exports {
-    title 'Workflows/Folders/Usage/Feed billing and analytics from the ledger'
+    title 'Apps/Hierarchy/Workflows/Usage/Feed billing and analytics from the ledger'
     description 'R-USG-11, R-USG-14. The pool ledger in Models is read, never steered: billing and analytics are exports, and neither enforces caps.'
     autoLayout TopBottom
 
@@ -113,7 +113,7 @@ views {
   }
 
   dynamic view folders_usage_payer {
-    title 'Workflows/Folders/Usage/Resolve who pays for a turn or run'
+    title 'Apps/Hierarchy/Workflows/Usage/Resolve who pays for a turn or run'
     description 'R-USG-09. The payer is the pool the turn or run Scope resolved from where the thread sits in the tree. Compute follows tokens; there is no separate compute payer.'
     autoLayout TopBottom
 
@@ -174,7 +174,7 @@ views {
   dynamic view folders_usage_record {
     #v1
     variant sequence
-    title 'Workflows/Folders/Usage/Record usage in the pool ledger'
+    title 'Apps/Hierarchy/Workflows/Usage/Record usage in the pool ledger'
     description 'v1 partial (local-key rows; thread and compute rows come later) · R-USG-01, R-USG-02, R-USG-08 (aliases T-USG-02, T-USG-03, T-OBS-06). Three sources, one ledger in Models, one writer.'
 
     include personA, laptopCli, signalbox, signalbox.thread, signalbox.computer, signalbox.gateway, signalbox.gateway.modelGateway, signalbox.models, signalbox.tree
@@ -236,7 +236,7 @@ views {
 
   dynamic view folders_usage_rollup {
     variant sequence
-    title 'Workflows/Folders/Usage/Roll usage up the tree'
+    title 'Apps/Hierarchy/Workflows/Usage/Roll usage up the tree'
     description 'R-USG-03, R-USG-05, R-USG-06, R-USG-10. Shared-thread costs land on Team, then Company, never on A or B. Private chats count without a row. A moved thread keeps its past where it happened.'
 
     include personA, personB, hier, hier.company, hier.company.team, hier.company.team.sharedThread, hier.company.team.teamPrivateB, hier.company.team.costsTeam, hier.company.costsCo, signalbox, signalbox.models, personC
@@ -287,7 +287,7 @@ views {
 
   dynamic view folders_usage_vendor_costs {
     variant sequence
-    title 'Workflows/Folders/Usage/Watch cross-vendor costs'
+    title 'Apps/Hierarchy/Workflows/Usage/Watch cross-vendor costs'
     description 'R-USG-12. The operator sees month to date, forecast and caps across vendors (model providers, edge platform, machines), plus a "forecast over X" automation.'
 
     include operator
@@ -327,7 +327,7 @@ views {
   dynamic view folders_usage_vendor_limit {
     #v1
     variant sequence
-    title 'Workflows/Folders/Usage/Surface a vendor limit error'
+    title 'Apps/Hierarchy/Workflows/Usage/Surface a vendor limit error'
     description 'v1 yes · R-USG-13. A vendor limit shows as a plain error with no workaround; internal guardrails alert the operator, never a user-visible cap.'
 
     include personA

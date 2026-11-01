@@ -1,4 +1,4 @@
-// Folders, tree and access. Journeys/Sharing, States/Level, States/Mount, Workflows/Folders/{Access,Tree}, Workflows/Person/People.
+// Folders, tree and access. Journeys/Sharing, Apps/Hierarchy/States/Level, Apps/Hierarchy/States/Mount, Apps/Hierarchy/Workflows/{Access,Tree}, Workflows/Person/People.
 // Generic folders only: folder "Company" (owner: organization), folder "Team" inside it.
 // A and B are members, C is admin of Company, D is the outside collaborator on Team only.
 // Modules are black boxes here: Level, Person and Thread actors live in Tree and Thread, so steps
@@ -338,11 +338,11 @@ views {
     }
 }
 
-  // ───────────────────────────── States/Level ─────────────────────────────
+  // ───────────────────────────── Apps/Hierarchy/States/Level ─────────────────────────────
 
   dynamic view state_level {
     variant sequence
-    title 'States/Level/Walk through'
+    title 'Apps/Hierarchy/States/Level/Walk through'
     description '''
       R-TRE-07, R-TRE-09. A folder's lifecycle: active ↔ archived, active → trashed → active (restore) or purged.
     '''
@@ -404,11 +404,11 @@ views {
     }
 }
 
-  // ───────────────────────────── States/Mount ─────────────────────────────
+  // ───────────────────────────── Apps/Hierarchy/States/Mount ─────────────────────────────
 
   dynamic view state_mount {
     variant sequence
-    title 'States/Mount/Walk through'
+    title 'Apps/Hierarchy/States/Mount/Walk through'
     description '''
       R-TRE-11, R-TRE-12. A mount puts folder Company into one member's tree. States: active, inactive.
       The MountRef is stable per (person, Company): a remount gets the same id back.
@@ -470,11 +470,11 @@ views {
 
 views {
 
-  // ───────────────────────────── Workflows/Folders/Access ─────────────────────────────
+  // ───────────────────────────── Apps/Hierarchy/Workflows/Access ─────────────────────────────
 
   dynamic view folders_access_admin_visible_chats {
     variant sequence
-    title 'Workflows/Folders/Access/Turn on admin-visible chats'
+    title 'Apps/Hierarchy/Workflows/Access/Turn on admin-visible chats'
     description '''
       P-OUT-14. C opts folder Company into admin-visible chats; A and B get an up-front notice before it applies.
     '''
@@ -531,7 +531,7 @@ views {
 
   dynamic view folders_access_invite_by_email {
     variant sequence
-    title 'Workflows/Folders/Access/Invite someone by email'
+    title 'Apps/Hierarchy/Workflows/Access/Invite someone by email'
     description '''
       P-ONB-13, P-ONB-16. A invites D (no account yet) by email: into folder Team with a role, or as a guest of A's own top level.
     '''
@@ -590,7 +590,7 @@ views {
 
   dynamic view folders_access_newcomer_preset {
     variant sequence
-    title 'Workflows/Folders/Access/Give newcomers a preset'
+    title 'Apps/Hierarchy/Workflows/Access/Give newcomers a preset'
     description '''
       P-ONB-20, R-ACC-22. What a newcomer to folder Company gets: a shared organization account, or a slot each member fills.
     '''
@@ -649,7 +649,7 @@ views {
 
   dynamic view folders_access_outside_collaborator {
     variant sequence
-    title 'Workflows/Folders/Access/Give an outside collaborator one folder'
+    title 'Apps/Hierarchy/Workflows/Access/Give an outside collaborator one folder'
     description '''
       P-ONB-15. Person D, outside the organization, gets a role on folder Team only, filed as a reference in D's own tree.
     '''
@@ -690,7 +690,7 @@ views {
 
   dynamic view folders_access_owner_handover {
     variant sequence
-    title 'Workflows/Folders/Access/Hand over the Owner role'
+    title 'Apps/Hierarchy/Workflows/Access/Hand over the Owner role'
     description '''
       P-OUT-10, P-OUT-11. An Owner can't leave until someone else holds Owner (or the folder becomes an organization).
     '''
@@ -735,7 +735,7 @@ views {
 
   dynamic view folders_access_enterprise_flag {
     variant sequence
-    title 'Workflows/Folders/Access/Policy/Set the Enterprise flag'
+    title 'Apps/Hierarchy/Workflows/Access/Policy/Set the Enterprise flag'
     description '''
       R-ACC-26. Enterprise is set on folder Company through billing, never by admins; several features read it.
     '''
@@ -789,7 +789,7 @@ views {
 
   dynamic view folders_access_folder_policy {
     variant sequence
-    title 'Workflows/Folders/Access/Policy/Set folder defaults and admin-only areas'
+    title 'Apps/Hierarchy/Workflows/Access/Policy/Set folder defaults and admin-only areas'
     description '''
       R-ACC-13, R-ACC-21. Default visibility for new chats, and areas only admins manage, set on folder Company and inherited down.
     '''
@@ -840,7 +840,7 @@ views {
   dynamic view folders_access_authorize {
     #v1
     variant sequence
-    title 'Workflows/Folders/Access/Roles/Authorize every operation'
+    title 'Apps/Hierarchy/Workflows/Access/Roles/Authorize every operation'
     description '''
       v1 partial (the same check gates placing a pool or a connection) · R-ACC-03 (aliases T-HND-18, T-MCP-06, T-REM-16). One Tree.can for every command and query, from people and agents alike; fails closed.
     '''
@@ -897,7 +897,7 @@ views {
 
   dynamic view folders_access_folder_invite {
     variant sequence
-    title 'Workflows/Folders/Access/Roles/Invite someone to a folder'
+    title 'Apps/Hierarchy/Workflows/Access/Roles/Invite someone to a folder'
     description '''
       R-ACC-07, R-ACC-09. A invites to folder Team: B (already in Company) or D (outside, role on Team only).
     '''
@@ -948,7 +948,7 @@ views {
 
   dynamic view folders_access_owner_transfer {
     variant sequence
-    title "Workflows/Folders/Access/Roles/Hand over the organization's Owner role"
+    title "Apps/Hierarchy/Workflows/Access/Roles/Hand over the organization's Owner role"
     description '''
       R-ACC-19. C hands folder Company's Owner role to B; the identity provider mirrors it.
     '''
@@ -991,7 +991,7 @@ views {
 
   dynamic view folders_access_roles {
     variant sequence
-    title 'Workflows/Folders/Access/Roles/Change roles and general access on a folder'
+    title 'Apps/Hierarchy/Workflows/Access/Roles/Change roles and general access on a folder'
     description '''
       R-ACC-01 (aliases T-REM-11, T-REM-18), R-ACC-04. Roles on a folder inherit down and only add; general access can be narrowed per folder.
     '''
@@ -1048,7 +1048,7 @@ views {
 
   dynamic view folders_access_ui_availability {
     variant sequence
-    title 'Workflows/Folders/Access/Roles/Show what I can do, and update when roles change'
+    title 'Apps/Hierarchy/Workflows/Access/Roles/Show what I can do, and update when roles change'
     description '''
       T-REM-17, T-REM-39. Clients render actions from Tree.can and re-read when a role changes.
     '''
@@ -1097,7 +1097,7 @@ views {
 
   dynamic view folders_access_admin_visible {
     variant sequence
-    title 'Workflows/Folders/Access/Threads/Opt in to Admin-visible chats'
+    title 'Apps/Hierarchy/Workflows/Access/Threads/Opt in to Admin-visible chats'
     description '''
       R-ACC-18. Enterprise folder Company opts in; members are told first; afterwards C can open new private chats under Company.
     '''
@@ -1147,7 +1147,7 @@ views {
 
   dynamic view folders_access_ask_folder {
     variant sequence
-    title 'Workflows/Folders/Access/Threads/Ask a folder for work'
+    title 'Apps/Hierarchy/Workflows/Access/Threads/Ask a folder for work'
     description '''
       R-ACC-25. Any Company member asks a folder for work; a thread starts there for the asker, on the folder's resources.
     '''
@@ -1189,7 +1189,7 @@ views {
 
   dynamic view folders_access_move_chat_out {
     variant sequence
-    title 'Workflows/Folders/Access/Threads/Move a private chat out of a Company folder'
+    title 'Apps/Hierarchy/Workflows/Access/Threads/Move a private chat out of a Company folder'
     description '''
       R-ACC-20. A moves a private chat from folder Team to A's Personal; the confirm lists Company sources it used.
     '''
@@ -1229,7 +1229,7 @@ views {
 
   dynamic view folders_access_thread_share {
     variant sequence
-    title 'Workflows/Folders/Access/Threads/Share a thread with people or the folder'
+    title 'Apps/Hierarchy/Workflows/Access/Threads/Share a thread with people or the folder'
     description '''
       R-ACC-10, R-ACC-12. Widen visibility (with a confirm of what becomes visible) or add/remove participants.
     '''
@@ -1277,7 +1277,7 @@ views {
 
   dynamic view folders_access_thread_unshare {
     variant sequence
-    title 'Workflows/Folders/Access/Threads/Unshare or fork a shared thread'
+    title 'Apps/Hierarchy/Workflows/Access/Threads/Unshare or fork a shared thread'
     description '''
       R-ACC-11. Admins can always unshare; the author only while nobody else wrote; anyone else forks privately as "(copy)".
     '''
@@ -1324,11 +1324,11 @@ views {
 
 views {
 
-  // ───────────────────────────── Workflows/Folders/Tree/Folders ─────────────────────────────
+  // ───────────────────────────── Apps/Hierarchy/Workflows/Tree/Folders ─────────────────────────────
 
   dynamic view folders_tree_create_rename {
     variant sequence
-    title 'Workflows/Folders/Tree/Folders/Create or rename a folder'
+    title 'Apps/Hierarchy/Workflows/Tree/Folders/Create or rename a folder'
     description '''
       R-TRE-03 (alias T-PRJ-03), R-TRE-04. One operation from Home, the folder menu, the palette or an agent.
     '''
@@ -1376,7 +1376,7 @@ views {
 
   dynamic view folders_tree_folder_icon {
     variant sequence
-    title 'Workflows/Folders/Tree/Folders/Set or reset a folder icon'
+    title 'Apps/Hierarchy/Workflows/Tree/Folders/Set or reset a folder icon'
     description '''
       T-PRJ-08. Automatic favicon from the folder's drive, a picked icon, or reset (reset is unconfirmed).
     '''
@@ -1414,7 +1414,7 @@ views {
 
   dynamic view folders_tree_level_agent {
     variant sequence
-    title 'Workflows/Folders/Tree/Folders/Give each level its agent thread'
+    title 'Apps/Hierarchy/Workflows/Tree/Folders/Give each level its agent thread'
     description '''
       R-TRE-16. Every level has exactly one persistent agent thread; it represents the level and settles when done.
     '''
@@ -1461,7 +1461,7 @@ views {
 
   dynamic view folders_tree_make_org {
     variant sequence
-    title 'Workflows/Folders/Tree/Folders/Make a folder an organization'
+    title 'Apps/Hierarchy/Workflows/Tree/Folders/Make a folder an organization'
     description '''
       R-TRE-14. A's Friends folder becomes an organization-owned folder; A becomes Admin, B keeps the role, the inherited pool is lent in.
     '''
@@ -1512,7 +1512,7 @@ views {
 
   dynamic view folders_tree_move {
     variant sequence
-    title 'Workflows/Folders/Tree/Folders/Move a folder within one owner'
+    title 'Apps/Hierarchy/Workflows/Tree/Folders/Move a folder within one owner'
     description '''
       R-TRE-05. Drag or "Move to…" inside one owner; threads run on the new chain from the next turn; access never widens silently.
     '''
@@ -1558,7 +1558,7 @@ views {
 
   dynamic view folders_tree_move_across {
     variant sequence
-    title 'Workflows/Folders/Tree/Folders/Move a folder into or out of folder Company'
+    title 'Apps/Hierarchy/Workflows/Tree/Folders/Move a folder into or out of folder Company'
     description '''
       R-TRE-06. Owner/Admin at the source, Member+ at the destination; leaving Company needs its Admin; Enterprise can lock it.
     '''
@@ -1613,7 +1613,7 @@ views {
 
   dynamic view folders_tree_purge {
     variant sequence
-    title 'Workflows/Folders/Tree/Folders/Purge a folder after 30 days'
+    title 'Apps/Hierarchy/Workflows/Tree/Folders/Purge a folder after 30 days'
     description '''
       R-TRE-10. Nobody restored Team for 30 days: the Level's alarm fans out to one idempotent purge worker per store, then the folder is gone for A, B, C and D.
     '''
@@ -1651,7 +1651,7 @@ views {
 
   dynamic view folders_tree_trash {
     variant sequence
-    title 'Workflows/Folders/Tree/Folders/Trash a folder'
+    title 'Apps/Hierarchy/Workflows/Tree/Folders/Trash a folder'
     description '''
       R-TRE-08 (alias T-PRJ-06). Tombstone, 30-day trash, per-store workers; agents go through the decision gate.
     '''
@@ -1699,11 +1699,11 @@ views {
     }
 }
 
-  // ───────────────────────────── Workflows/Folders/Tree/Home ─────────────────────────────
+  // ───────────────────────────── Apps/Hierarchy/Workflows/Tree/Home ─────────────────────────────
 
   dynamic view folders_tree_breadcrumb {
     variant sequence
-    title 'Workflows/Folders/Tree/Home/Breadcrumb for any item'
+    title 'Apps/Hierarchy/Workflows/Tree/Home/Breadcrumb for any item'
     description '''
       R-TRE-18. One shared thread in Team, three breadcrumbs: its home chain (the same for everyone) plus where each viewer filed it.
     '''
@@ -1752,7 +1752,7 @@ views {
 
   dynamic view folders_tree_catalog {
     variant sequence
-    title 'Workflows/Folders/Tree/Home/Catalog rows and who sees them'
+    title 'Apps/Hierarchy/Workflows/Tree/Home/Catalog rows and who sees them'
     description '''
       R-TRE-17 (alias T-SYS-11), R-ACC-14. A thread posts its status row to its folder; the folder filters it per viewer before it leaves; others' private threads stay invisible, even to the admin.
     '''
@@ -1805,7 +1805,7 @@ views {
 
   dynamic view folders_tree_home {
     variant sequence
-    title 'Workflows/Folders/Tree/Home/Open Home and see the tree live'
+    title 'Apps/Hierarchy/Workflows/Tree/Home/Open Home and see the tree live'
     description '''
       R-TRE-01 (alias T-PRJ-18), R-TRE-02. Three trees, one shared Company folder; changes reach every member live.
     '''
@@ -1849,7 +1849,7 @@ views {
 
   dynamic view folders_tree_reference {
     variant sequence
-    title 'Workflows/Folders/Tree/Home/Add or remove a reference'
+    title 'Apps/Hierarchy/Workflows/Tree/Home/Add or remove a reference'
     description '''
       R-TRE-13. Show a level, thread or source somewhere in my tree; a reference grants nothing.
     '''

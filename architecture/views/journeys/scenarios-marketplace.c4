@@ -312,7 +312,7 @@ views {
     description """
       What does an outside collaborator see in the marketplace, and what happens when D installs something?
       Assumption: browsing follows reach (D sees public + Team, never Company); installing needs the role to place at Team (MARKETPLACE §4 13, §7 40).
-      Decided: resolution is by position only (corr. 6).
+      Decided: the hierarchy app resolves by position only (corr. 6).
       SCN-M-14 · MKT-02, MKT-09
     """
     include

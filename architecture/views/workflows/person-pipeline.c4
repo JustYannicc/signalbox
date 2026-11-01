@@ -689,7 +689,7 @@ views {
     title 'Workflows/Person/Pipeline/Blocker/Blocked tool call becomes a Place or Lend request'
     description """
       P-BLK-04, P-BLK-05, P-BLK-06 · v1 partial: v1 stops at `AccessRequired` (MCP returns it, no ask).
-      Resolution is by position only: B's turn can't use what isn't placed above Team, whoever sends it.
+      The hierarchy app resolves by position only: B's turn can't use what isn't placed above Team, whoever sends it.
     """
     include personB, personC, personA, signalbox.thread, signalbox.attention, signalbox.harness, signalbox.tree, signalbox.connections, signalbox
 
@@ -1547,7 +1547,7 @@ views {
       hier.company.team.sharedThread -> signalbox.thread 'variant 3'
     }
     signalbox.thread -> signalbox.computer 'open computer'
-    signalbox.computer -> signalbox.bases 'fork active Base' {
+    signalbox.computer -> signalbox.bases 'fork active snapshot' {
       notes '- A VM only while commands run'
     }
     signalbox.thread -> signalbox.models 'model calls' {

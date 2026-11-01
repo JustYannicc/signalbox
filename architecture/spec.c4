@@ -1,5 +1,10 @@
 // Vocabulary for the Signalbox target architecture.
 specification {
+  // One of the layers in CONTEXT.md: Identity, Inference, Connectors, Apps, Harness, Environment, Clients.
+  element layer {
+    notation "Layer"
+    style { color primary; size lg }
+  }
   element system {
     notation "System boundary"
     style { color slate; opacity 8% }
@@ -57,7 +62,7 @@ specification {
     style { icon bootstrap:chat-dots; shape component; color amber }
   }
   element app {
-    notation "Folder app: server + UI placed in a folder"
+    notation "App: tools, screens, storage and background work, built from connectors"
     style { icon bootstrap:window-stack; shape component; color secondary }
   }
   element state {
@@ -67,6 +72,10 @@ specification {
   element entity {
     notation "Domain entity"
     style { color indigo; size sm }
+  }
+  element record {
+    notation "Record: one item of an app's data, owned by that app"
+    style { shape document; color indigo; size sm }
   }
 
   deploymentNode stage {
@@ -130,16 +139,17 @@ specification {
     notation "Tool / MCP wire"
     color indigo; line solid
   }
+  // reach, lend and mount draw the hierarchy app's rules, not rules of the primitives.
   relationship reach {
-    notation "Placement reaches (nearest wins)"
+    notation "Hierarchy app: placement reaches down (nearest wins)"
     color green; line dotted
   }
   relationship lend {
-    notation "Loan (explicit, revocable)"
+    notation "Hierarchy app: loan (explicit, revocable)"
     color secondary; line dashed
   }
   relationship mount {
-    notation "Mount (only edge across owners)"
+    notation "Hierarchy app: mount (only edge across owners)"
     color primary; line solid; head diamond
   }
   relationship transition {
@@ -172,12 +182,15 @@ specification {
   tag basalt { color indigo }
   tag pumice { color amber }
   tag os { color primary }
+  // Left out of the post-v1 map (#1505): kept in the model, not planned. Today only the Runtime.
+  tag out-of-map { color muted }
 }
 
 global {
   styleGroup depth {
     style element.tag = #planned { opacity 40%; border dashed }
     style element.tag = #hypothetical-seam { color red; border dashed }
+    style element.tag = #out-of-map { color muted; opacity 30%; border dashed }
   }
   styleGroup smells {
     style element.tag = #shallow { color amber }

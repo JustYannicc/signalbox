@@ -37,7 +37,7 @@ views {
     }
     signalbox.thread -> signalbox.computer 'Free VM' {
       navigateTo lifecycle_boxd_data
-      notes 'Deleted by name with its Base lease; it only ever held regenerable cache'
+      notes 'Deleted by name with its snapshot lease; it only ever held regenerable cache'
     }
     personA -> signalbox.web 'Trash › Restore' {
       notes 'Within 30 days, from the trash list of folder Company'
@@ -470,7 +470,7 @@ views {
     #decided
     variant sequence
     title 'Scenarios/Data/Archive/Reopen Old Thread'
-    description 'Person A opens or messages a thread archived years ago: does it carry on? Decided: #119 (2026-10-15) it opens and carries on where it left off; #119 (2026-10-18) only delete removes anything; #439 a new message brings it back exactly; #492 (2026-10-16) it resumes on the current Base with its changes on top. SCN-210 · W-LIF-10, W-LIF-20, W-DRV-13, W-DRV-05, P-SRCH-06 · v1: no.'
+    description 'Person A opens or messages a thread archived years ago: does it carry on? Decided: #119 (2026-10-15) it opens and carries on where it left off; #119 (2026-10-18) only delete removes anything; #439 a new message brings it back exactly; #492 (2026-10-16) it resumes on the current snapshot with its changes on top. SCN-210 · W-LIF-10, W-LIF-20, W-DRV-13, W-DRV-05, P-SRCH-06 · v1: no.'
 
     include personA, signalbox.web, signalbox.search, signalbox.thread, signalbox.drive, signalbox.tree, signalbox.computer, signalbox.harness
 
@@ -497,7 +497,7 @@ views {
       navigateTo lifecycle_wake_after_day
       notes '''
         - Live FS holds a manifest; files hydrate on read from the fork
-        - A VM forks from the current Base only when a heavy command needs one
+        - A VM forks from the current snapshot only when a heavy command needs one
       '''
     }
     signalbox.thread -> signalbox.harness 'Resume session' {
@@ -633,8 +633,8 @@ views {
         - **Decided** #119 · #489/#490
       '''
     }
-    signalbox.computer -> signalbox.bases 'Current Base' {
-      notes 'Only when a heavy command needs a VM: today’s Base, not the old image; the files are pushed to it'
+    signalbox.computer -> signalbox.bases 'Current snapshot' {
+      notes 'Only when a heavy command needs a VM: today’s snapshot, not the old image; the files are pushed to it'
     }
 
     include signalbox
