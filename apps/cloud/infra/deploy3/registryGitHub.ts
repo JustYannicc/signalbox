@@ -11,6 +11,12 @@ import {
   type Deploy3ControlComment,
 } from "./controlRegistry.ts";
 import { readBoundedApiResponse } from "./httpResponse.ts";
+import {
+  ownerTeardownBody,
+  ownerTeardownIsFinal,
+  type Deploy3OwnerTeardown,
+} from "./ownerTeardown.ts";
+import type { Deploy3RegisteredControl } from "./controlRegistry.ts";
 import { boundedOperation } from "./platform.ts";
 import {
   formatDeploy3PublicReceipt,
@@ -108,6 +114,20 @@ export function deploy3RegistryApi(input: {
         throw new Error("Durable control registration readback differed");
       }
       return readback;
+    },
+    async postOwnerTeardown(proof: Deploy3OwnerTeardown) {
+      const created = await post(ownerTeardownBody(proof));
+      const readback = decodeComment(await request(`/issues/comments/${created.id}`));
+      if (readback.body !== created.body || readback.user.id !== created.user.id)
+        throw new Error("Owner teardown readback differed");
+      return readback;
+    },
+    ownerTeardownIsFinal(
+      rows: readonly Deploy3ControlComment[],
+      state: Deploy3RegisteredControl,
+      nowMs: number,
+    ) {
+      return ownerTeardownIsFinal(rows, input.trustedWriterIds, state, nowMs);
     },
     async postReceipt(registrationSha256: string, receipt: Deploy3PublicTeardownReceipt) {
       if (!/^[a-f0-9]{64}$/.test(registrationSha256))

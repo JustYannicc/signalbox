@@ -25,7 +25,8 @@ export async function cleanupRegisteredDeploy3(input: {
   readonly fetchImpl?: typeof fetch;
 }) {
   const { state } = input;
-  if (input.nowMs < Date.parse(state.deadlineUtc)) return { status: "not-due" };
+  if (input.nowMs < Date.parse(state.deadlineUtc))
+    return { status: "not-due", runId: state.registration.runId };
   const cleanup =
     input.tokenVerificationMode === "self"
       ? await cleanupDeploy3WithScopedToken({
@@ -83,12 +84,14 @@ export async function cleanupRegisteredDeploy3(input: {
     await input.registry.postReceipt(state.registrationSha256, receipt);
   } catch {
     return {
+      runId: state.registration.runId,
       status: "receipt-unconfirmed",
       absenceVerified: cleanup.cleanClaim,
       tokenExpiry: token.status,
     };
   }
   return {
+    runId: state.registration.runId,
     status: cleanup.cleanClaim && tokenExpiry !== "unverified" ? "verified" : "unverified",
     receipt,
   };
@@ -107,7 +110,8 @@ export async function runRegisteredDeploy3Backstop(input: {
   for (const state of snapshot.controls) {
     if (
       input.nowMs < Date.parse(state.deadlineUtc) ||
-      input.registry.receiptIsFinal(snapshot.comments, state.registrationSha256)
+      input.registry.receiptIsFinal(snapshot.comments, state.registrationSha256) ||
+      input.registry.ownerTeardownIsFinal(snapshot.comments, state, input.nowMs)
     )
       continue;
     const bootstrap = snapshot.bootstraps.find(

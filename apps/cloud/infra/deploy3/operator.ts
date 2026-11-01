@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { extendDeploy3Control, registerDeploy3Control } from "./controlLifecycle.ts";
 import { readLocalEvidenceText } from "./localEvidenceFiles.ts";
 import { exportDeploy3Locally } from "./normalEvidence.ts";
+import { finalizeDeploy3OwnerTeardown } from "./ownerTeardownLifecycle.ts";
 import { cleanupReleasedDeploy3, releaseDeploy3FromLocalEvidence } from "./normalOperator.ts";
 import { clockMillis } from "./platform.ts";
 import { deploy3RegistryApi } from "./registryGitHub.ts";
@@ -116,6 +117,18 @@ async function main() {
     process.stdout.write(`Deploy3 ${result.status}; nativeStarted=false\n`);
     return;
   }
+  if (command === "finalize") {
+    const result = await finalizeDeploy3OwnerTeardown({
+      api,
+      runId,
+      accountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+      cloudflareToken: process.env.CLOUDFLARE_API_TOKEN ?? "",
+      nowMs: clockMillis(),
+    });
+    process.stdout.write(`Owner teardown ${result.status}; run ${runId}\n`);
+    if (result.status !== "verified") process.exitCode = 1;
+    return;
+  }
   if (command === "cleanup") {
     const cleanup = await cleanupReleasedDeploy3({
       api,
@@ -124,12 +137,14 @@ async function main() {
       cloudflareToken: process.env.CLOUDFLARE_API_TOKEN ?? "",
       nowMs: clockMillis(),
     });
-    process.stdout.write(`Normal cleanup ${cleanup.status}\n`);
-    if (!cleanup.cleanClaim) process.exitCode = 1;
+    process.stdout.write(
+      `Normal cleanup ${cleanup.status}; registry ${cleanup.registryFinalization}; run ${runId}\n`,
+    );
+    if (!cleanup.cleanClaim || cleanup.registryFinalization !== "verified") process.exitCode = 1;
     return;
   }
   throw new Error(
-    "Use bootstrap RUN FILE, register RUN FILE, export RUN SOURCE_FILE, release RUN RELEASE_FILE EXPORT_DIR, extend RUN RECEIPT_FILE, arm-check RUN ORIGIN, or cleanup RUN",
+    "Use bootstrap RUN FILE, register RUN FILE, export RUN SOURCE_FILE, release RUN RELEASE_FILE EXPORT_DIR, extend RUN RECEIPT_FILE, arm-check RUN ORIGIN, cleanup RUN, or finalize RUN",
   );
 }
 
