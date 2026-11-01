@@ -84,16 +84,17 @@ export function captureClaudeSpawnContext(bridge: NodeBridge): ClaudeSpawnContex
   let truncated = false;
   const bounded = (value: string) => {
     const size = (text: string) => encoder.encode(JSON.stringify(text)).length;
-    if (size(value) <= MAX_VALUE_BYTES) return value;
+    const head = value.slice(0, MAX_VALUE_BYTES);
+    if (head.length === value.length && size(head) <= MAX_VALUE_BYTES) return value;
     truncated = true;
     let low = 0;
-    let high = value.length;
+    let high = head.length;
     while (low < high) {
       const middle = Math.ceil((low + high) / 2);
-      if (size(value.slice(0, middle)) <= MAX_VALUE_BYTES) low = middle;
+      if (size(head.slice(0, middle)) <= MAX_VALUE_BYTES) low = middle;
       else high = middle - 1;
     }
-    return value.slice(0, low);
+    return head.slice(0, low);
   };
   let redactNext = false;
   const args = argv.slice(0, 256).map((value: unknown) => {
@@ -162,6 +163,7 @@ export function captureClaudeSpawnContext(bridge: NodeBridge): ClaudeSpawnContex
       truncated: truncated || argv.length > 256 || environment.length > 128,
     },
   };
+  // Eighteen required env fields plus cwd/model, each capped to 1 KiB, fit below 32 KiB.
   while (encoder.encode(JSON.stringify(result)).length > MAX_BYTES) {
     result.limits.truncated = true;
     const key = Object.keys(values).findLast((entry) => !requiredEnv.has(entry));
