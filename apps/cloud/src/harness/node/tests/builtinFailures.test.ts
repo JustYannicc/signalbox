@@ -79,6 +79,31 @@ describe("unimplemented public Node calls", () => {
     }
   });
 
+  it("exposes the policy Agent through named and default public module exports", () => {
+    const namespaces = Object.fromEntries(
+      Object.entries(DEFAULT_NODE_NATIVE_MODULES).map(([name, module]) => [
+        name,
+        { ...module, default: module },
+      ]),
+    );
+    const modules = createWorkerdNodeBuiltinFailures(namespaces);
+    for (const protocol of ["http", "https"] as const) {
+      const module = modules[protocol]!;
+      const Agent = Reflect.get(module, "Agent");
+      expect(Reflect.get(module, "default")).toBe(module);
+      expect(() => Reflect.construct(Agent, [{ cert: "client certificate" }])).toThrowError(
+        expect.objectContaining({
+          code: "ERR_SIGNALBOX_NODE_BUILTIN_UNSUPPORTED",
+          builtin: `${protocol}.Agent option cert`,
+        }),
+      );
+      const agent = Reflect.construct(Agent, []);
+      if (typeof agent !== "object" || agent === null) throw new Error("Agent did not construct");
+      expect(Reflect.get(agent, "protocol")).toBe(`${protocol}:`);
+      expect(Reflect.get(agent, "defaultPort")).toBe(protocol === "https" ? 443 : 80);
+    }
+  });
+
   it("preserves other native functions and selected host implementations", async () => {
     const f = fixture();
     const getHeapStatistics = () => ({ used_heap_size: 123 });

@@ -80,10 +80,8 @@ export default {
       });
     }
     const paths = [
-      ["http", "Agent"],
       ["http", "Server"],
       ["http", "createServer"],
-      ["https", "Agent"],
       ["https", "Server"],
       ["https", "createServer"],
       ["net", "Server"],

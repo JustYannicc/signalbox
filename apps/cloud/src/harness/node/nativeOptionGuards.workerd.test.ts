@@ -38,7 +38,7 @@ it("rejects ignored native options while preserving fetch clients, context propa
     });
     const client = await harness.fetch("http://proof/client");
     expect(await client.json()).toEqual({
-      observed: [{ url: "http://model.test/messages", method: "POST", body: "request body" }],
+      observed: [{ url: "https://model.test:8443/messages", method: "POST", body: "request body" }],
       body: "fetch-backed response",
     });
     const resource = await harness.fetch("http://proof/async-resource");

@@ -1,4 +1,5 @@
 import { createUnsupportedNodeBuiltin } from "../../isolate/NodeBuiltinFailure.ts";
+import { createNodeHttpAgentModules } from "../../isolate/NodeHttpAgent.ts";
 import { createNodeDebuglog } from "../../isolate/NodeDebuglog.ts";
 import { guardWorkerdNativeOptions } from "./nativeOptionGuards.ts";
 import { createWorkerdAsyncResource } from "../../isolate/NodeAsyncResource.ts";
@@ -8,8 +9,8 @@ import { overrideNativeModule } from "./nativeModuleOverrides.ts";
 // These Workerd exports throw, return placeholders, or are absent. Never report success
 // until a real implementation replaces the corresponding adapter.
 const unsupported = {
-  http: ["Agent", "Server", "createServer"],
-  https: ["Agent", "Server", "createServer"],
+  http: ["Server", "createServer"],
+  https: ["Server", "createServer"],
   net: ["Server", "createServer"],
   http2: ["connect"],
   perf_hooks: ["monitorEventLoopDelay"],
@@ -61,5 +62,8 @@ export function createWorkerdNodeBuiltinFailures(modules: Readonly<Record<string
     AsyncResource: createWorkerdAsyncResource(AsyncResource),
   });
   guardWorkerdNativeOptions(result);
+  const clients = createNodeHttpAgentModules({ http: modules.http!, https: modules.https! });
+  for (const protocol of ["http", "https"] as const)
+    result[protocol] = overrideNativeModule(result[protocol]!, clients[protocol]);
   return result;
 }

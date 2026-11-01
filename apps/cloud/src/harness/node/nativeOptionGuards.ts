@@ -51,15 +51,11 @@ export function guardWorkerdNativeOptions(modules: Record<string, object>) {
     modules[specifier] = overrideNativeModule(native, { [member]: value });
   };
 
-  for (const specifier of ["http", "https", "tls", "net"] as const) {
+  for (const specifier of ["tls", "net"] as const) {
     const module = modules[specifier];
     if (!module) throw new TypeError(`Missing Workerd module: ${specifier}`);
     const members =
-      specifier === "http" || specifier === "https"
-        ? ["request", "get"]
-        : specifier === "tls"
-          ? ["connect", "TLSSocket"]
-          : ["connect", "createConnection", "Socket"];
+      specifier === "tls" ? ["connect", "TLSSocket"] : ["connect", "createConnection", "Socket"];
     const aliases = new Map<object, object>();
     for (const member of members) {
       const native: unknown = Reflect.get(module, member);
@@ -69,23 +65,6 @@ export function guardWorkerdNativeOptions(modules: Record<string, object>) {
         if (specifier === "tls") {
           rejectOptions(`${specifier}.${member}`, options, ignoredTlsOptions);
           guardWorkerdTlsOptions(`${specifier}.${member}`, options);
-        }
-        if (specifier === "https")
-          rejectOptions(`${specifier}.${member}`, options, [
-            ...ignoredTlsOptions,
-            "rejectUnauthorized",
-            "checkServerIdentity",
-            "ALPNProtocols",
-            "secureContext",
-          ]);
-        if (specifier === "http" || specifier === "https") {
-          rejectOptions(`${specifier}.${member}`, options, ["insecureHTTPParser"]);
-          for (const option of options) {
-            const agent: unknown = Reflect.get(option, "agent");
-            if (agent !== undefined && agent !== false && agent !== null) {
-              throw new NodeBuiltinUnsupportedError(`${specifier}.${member} custom Agent`);
-            }
-          }
         }
         if (specifier === "net")
           rejectOptions(`${specifier}.${member}`, options, [
