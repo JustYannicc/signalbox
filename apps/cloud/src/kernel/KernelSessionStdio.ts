@@ -18,12 +18,15 @@ export interface KernelSessionStdio {
   readonly stdin: WritableStream<Uint8Array>;
   readonly stdout: ReadableStream<Uint8Array>;
   readonly stderr: ReadableStream<Uint8Array>;
+  /** Observe pipe acceptance on fd 0 and accepted CLI writes on fds 1 and 2. */
+  readonly observeAcceptedWrites: (observer: KernelSessionAcceptedWriteObserver) => () => void;
   readonly assertBound: (filesystem: KernelFileSystem) => void;
   readonly dispose: () => Promise<void>;
 }
 
 export type KernelSessionInputObserver = (bytes: Uint8Array) => void | Promise<void>;
 export type KernelSessionOutputObserver = (fd: 1 | 2, bytes: Uint8Array) => void | Promise<void>;
+export type KernelSessionAcceptedWriteObserver = (fd: 0 | 1 | 2, bytes: Uint8Array) => void;
 
 /** Construct the filesystem with this tuple before giving that filesystem to Computer. */
 export function createKernelSessionStdio(
@@ -41,6 +44,20 @@ export function createKernelSessionStdio(
   const output = new KernelPipe(wakes);
   const error = new KernelPipe(wakes);
   const pending = new Set<Promise<unknown>>();
+  const acceptedWriteObservers = new Set<{
+    readonly observer: KernelSessionAcceptedWriteObserver;
+  }>();
+  const notifyAcceptedWrite = (fd: 0 | 1 | 2, bytes: Uint8Array) => {
+    if (acceptedWriteObservers.size === 0) return;
+    for (const { observer } of Array.from(acceptedWriteObservers)) {
+      try {
+        const observed: unknown = observer(fd, new Uint8Array(bytes));
+        if (observed instanceof Promise) void observed.catch(() => undefined);
+      } catch {
+        /* Observation cannot change pipe ownership or write results. */
+      }
+    }
+  };
   const trackEndpoint = (endpoint: WasiStdio, fd: 0 | 1 | 2): WasiStdio => {
     const track = <T>(value: T | Promise<T>): T | Promise<T> =>
       value instanceof Promise ? trackPipeIo(value, pending) : value;
@@ -70,15 +87,22 @@ export function createKernelSessionStdio(
         ? {}
         : {
             write: (source, flags) => {
-              const snapshot = observe === undefined || fd === 0 ? undefined : source.slice();
+              const snapshot =
+                fd === 0 || (observe === undefined && acceptedWriteObservers.size === 0)
+                  ? undefined
+                  : new Uint8Array(source);
               const accepted = (count: number) => {
-                if (snapshot !== undefined && count > 0 && fd !== 0) {
-                  // Observers cannot consume SDK streams or turn an accepted write into a retry.
+                if (snapshot !== undefined && count > 0) {
+                  // Capture accepted bytes before guest memory can be reused.
+                  const captured = snapshot.slice(0, count);
+                  notifyAcceptedWrite(fd, captured);
                   try {
-                    const observed = observe!(fd, snapshot.slice(0, count));
-                    if (observed instanceof Promise) void observed.catch(() => undefined);
+                    if (fd !== 0 && observe !== undefined) {
+                      const observed = observe(fd, captured);
+                      if (observed instanceof Promise) void observed.catch(() => undefined);
+                    }
                   } catch {
-                    /* Output ownership stays with the writer. */
+                    /* Observation cannot change accepted pipe bytes. */
                   }
                 }
                 return count;
@@ -119,9 +143,20 @@ export function createKernelSessionStdio(
     stopInput,
     signal: inputSignal,
     stdio,
-    stdin: writable(input, inputSignal, pending),
+    stdin: writable(input, inputSignal, pending, (bytes) => notifyAcceptedWrite(0, bytes)),
     stdout: readable(output, signal, pending),
     stderr: readable(error, signal, pending),
+    observeAcceptedWrites(observer) {
+      if (disposed !== undefined) throw new Error("Kernel session stdio is disposed");
+      const subscription = { observer };
+      acceptedWriteObservers.add(subscription);
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        acceptedWriteObservers.delete(subscription);
+      };
+    },
     assertBound(filesystem) {
       if (disposed !== undefined) throw new Error("Kernel session stdio is disposed");
       if (owner !== undefined && owner !== filesystem) {
@@ -140,6 +175,7 @@ export function createKernelSessionStdio(
         stopInput();
         finish();
         while (pending.size > 0) await Promise.allSettled(pending);
+        acceptedWriteObservers.clear();
       })();
       return disposed;
     },

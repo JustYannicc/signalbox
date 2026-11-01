@@ -3,6 +3,13 @@ export const HARNESS_TURN_MILESTONE_TYPE = "harness.turn-milestone" as const;
 export const HARNESS_TURN_STAGES = [
   "native-setup",
   "sdk-initializing",
+  "cli-spawned",
+  "cli-first-stdout-byte",
+  "cli-stderr-bytes",
+  "control-initialize-sent",
+  "control-response-received",
+  "runtime-compatibility-checking",
+  "runtime-compatibility-confirmed",
   "sdk-initialized",
   "prompt-offered",
   "model-request-sent",

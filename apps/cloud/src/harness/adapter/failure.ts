@@ -29,6 +29,7 @@ export const makeAdapterFailure = (
   let omissionFailure: HarnessError | undefined;
   let milestoneTurn: TurnState["active"];
   const milestones = new Set<HarnessTurnStage>();
+  let contextTurn: TurnState["active"];
   const record = (error: HarnessError) => {
     const recorded = (failure ??= error);
     controller.abort(recorded);
@@ -39,6 +40,17 @@ export const makeAdapterFailure = (
     Queue.failCauseUnsafe(output, Cause.fail(recorded));
   };
   const reporter: HarnessRuntimeReporter = {
+    cliSpawnContext: (context) => {
+      const current = state.active;
+      if (current === undefined || failure !== undefined || contextTurn === current) return;
+      contextTurn = current;
+      Queue.offerUnsafe(output, {
+        kind: "log",
+        runId: current.input.runId,
+        level: "info",
+        message: JSON.stringify(context),
+      });
+    },
     turnMilestone: (stage) => {
       const current = state.active;
       if (current === undefined || failure !== undefined) return;

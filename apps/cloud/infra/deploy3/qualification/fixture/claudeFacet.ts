@@ -20,6 +20,7 @@ import {
 } from "./claudeConfiguration.ts";
 import { calibrateClaudePreparedRelease } from "./claudeCalibration.ts";
 import { decodePreparedRelease } from "../preparedRelease.schema.ts";
+import { retainedFacetState } from "./facetState.ts";
 
 export const CLAUDE_QUALIFICATION_ENTRYPOINT = "ClaudeFacet" as const;
 
@@ -89,6 +90,17 @@ const Base = createHarnessCProductClaudeFacetClass<Env, unknown>({
     Effect.succeed({
       ...turnBindings(ctx, claudeCapability(env), facetCheckpointLineage(ctx)),
       deadline: { stageIdleMs: 45_000, totalMs: 180_000 },
+      flushDiagnostics: Effect.tryPromise({
+        try: () => retainedFacetState(ctx).flush("request-settled"),
+        catch: (cause) =>
+          new HarnessRequestFacetError("Native diagnostic publication failed.", { cause }),
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: 5_000,
+          orElse: () =>
+            Effect.fail(new HarnessRequestFacetError("Native diagnostic publication timed out.")),
+        }),
+      ),
     }),
 });
 

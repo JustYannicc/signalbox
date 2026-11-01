@@ -254,9 +254,10 @@ export function writable(
   pipe: KernelPipe,
   signal?: AbortSignal,
   pending?: Set<Promise<unknown>>,
+  observeAcceptedWrite?: (bytes: Uint8Array) => void,
 ): WritableStream<Uint8Array> {
   return new WritableStream<Uint8Array>({
-    write: (chunk) => trackPipeIo(writeAll(pipe, chunk, signal), pending),
+    write: (chunk) => trackPipeIo(writeAll(pipe, chunk, signal, observeAcceptedWrite), pending),
     close: () => pipe.closeWriter(),
     abort: () => pipe.closeWriter(),
   });
@@ -289,12 +290,27 @@ export function readable(
   });
 }
 
-async function writeAll(pipe: KernelPipe, chunk: Uint8Array, signal?: AbortSignal): Promise<void> {
+async function writeAll(
+  pipe: KernelPipe,
+  chunk: Uint8Array,
+  signal?: AbortSignal,
+  observeAcceptedWrite?: (bytes: Uint8Array) => void,
+): Promise<void> {
+  // Keep guest memory stable across pipe writes and accepted-write observation.
   const owned = new Uint8Array(chunk);
   let offset = 0;
   while (offset < owned.byteLength) {
     const written = await pipe.write(owned.subarray(offset), { signal });
-    offset += written;
+    const nextOffset = offset + written;
+    if (written > 0 && observeAcceptedWrite !== undefined) {
+      try {
+        // This view is backed by `owned`, not the pipe buffer or guest memory.
+        observeAcceptedWrite(owned.subarray(offset, nextOffset));
+      } catch {
+        /* The pipe owns accepted bytes; observers cannot turn a write into a retry. */
+      }
+    }
+    offset = nextOffset;
   }
 }
 

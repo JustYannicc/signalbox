@@ -85,3 +85,27 @@ it("keeps denied tool gates and unfinished MCP handshakes distinct through the p
       }
     });
   }));
+
+it("observes actual CLI pipe writes before the SDK attaches a stdout consumer", () =>
+  new Promise<void>((resolve, reject) => {
+    const worker = new NodeWorkerThreads.Worker(
+      new URL("./node/tests/claudeInitializationProgressWorker.ts", import.meta.url),
+    );
+    onTestFinished(async () => {
+      await worker.terminate();
+    });
+    let result: unknown;
+    worker.on("message", (message: unknown) => {
+      result = message;
+    });
+    worker.on("error", reject);
+    worker.on("exit", (code) => {
+      try {
+        expect(code).toBe(0);
+        expect(result).toEqual({ ok: true });
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }));
