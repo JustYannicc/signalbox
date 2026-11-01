@@ -59,6 +59,13 @@ const staged = async () => {
 };
 
 describe("qualification build and inventory handoff", () => {
+  it("rejects an explicitly empty inventory path instead of capturing another runtime", async () => {
+    const { built } = await staged();
+    await expect(inspectQualificationArtifact({ ...built, inventory: "" })).rejects.toThrow(
+      "NODE_BUILTIN_INVENTORY_PATH_REQUIRED",
+    );
+  });
+
   it("reuses the built artifact and retains unsupported builtins from a supplied snapshot", async () => {
     const { built, inventory, snapshot } = await staged();
     await NodeFSP.writeFile(inventory, JSON.stringify(snapshot));

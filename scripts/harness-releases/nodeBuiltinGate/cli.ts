@@ -24,10 +24,13 @@ const directory = positionals[0];
 if (
   !directory ||
   positionals.length !== 1 ||
-  !["qualification", "release"].includes(values.purpose) ||
-  (values.request && values.inventory !== undefined)
+  !["qualification", "release"].includes(values.purpose)
 )
   throw new Error("Supply one prepared artifact directory and purpose qualification|release");
+if (values.request && values.inventory !== undefined)
+  throw new Error("--request and --inventory cannot be used together");
+if (values.inventory !== undefined && values.inventory.length === 0)
+  throw new Error("NODE_BUILTIN_INVENTORY_PATH_REQUIRED");
 const root = await NodeFSP.realpath(directory);
 const sources: BuiltinSource[] = [];
 async function walk(relative: string) {
@@ -50,9 +53,10 @@ if (values.request) {
   if (values.result) await NodeFSP.writeFile(values.result, bytes, { flag: "wx" });
   else process.stdout.write(bytes);
 } else {
-  const inventory = values.inventory
-    ? parseRuntimeBuiltinInventory(JSON.parse(await NodeFSP.readFile(values.inventory, "utf8")))
-    : undefined;
+  const inventory =
+    values.inventory !== undefined
+      ? parseRuntimeBuiltinInventory(JSON.parse(await NodeFSP.readFile(values.inventory, "utf8")))
+      : undefined;
   if (inventory !== undefined && inventory.capture?.inventoryRequestSha256 === undefined)
     throw new Error("NODE_BUILTIN_INVENTORY_REQUEST_REQUIRED");
   const inspected = await (

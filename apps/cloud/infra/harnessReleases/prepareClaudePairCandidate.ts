@@ -95,7 +95,6 @@ export async function buildClaudePairCandidate(input: PrepareClaudePairCandidate
   return { ...build, outputDirectory, build: candidateFilePin("pair-build.json", bytes) };
 }
 
-/** Finalize the same built artifacts using separately captured runtime inventories. */
 export async function completeClaudePairCandidate(
   directory: string,
   buildSha256: string,
