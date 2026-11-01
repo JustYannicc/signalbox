@@ -303,6 +303,13 @@ export const fixtureForDriver = (selectedDriver: ProviderDriverKind) =>
           throw new Error("Harness runtime reporter is unavailable");
         runtimeReporter.releaseModuleOmitted(event);
       },
+      reportCliSpawnContext(
+        context: Parameters<NonNullable<HarnessRuntimeReporter["cliSpawnContext"]>>[0],
+      ) {
+        if (runtimeReporter?.cliSpawnContext === undefined)
+          throw new Error("Harness CLI context reporter is unavailable");
+        runtimeReporter.cliSpawnContext(context);
+      },
       reportTurnMilestone(stage: HarnessTurnStage) {
         if (runtimeReporter?.turnMilestone === undefined)
           throw new Error("Harness turn milestone reporter is unavailable");

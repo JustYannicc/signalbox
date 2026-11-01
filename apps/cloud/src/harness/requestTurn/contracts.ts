@@ -25,6 +25,8 @@ export type HarnessRequestTurnTerminal = Extract<RunnerItem, { readonly kind: "p
 export interface HarnessRequestTurnOptions<G> {
   /** Bound synchronous callers without imposing a duration limit on ordinary agent turns. */
   readonly deadline?: { readonly stageIdleMs: number; readonly totalMs: number };
+  /** Drain bounded diagnostic publication on failed requests as well as successful checkpoints. */
+  readonly flushDiagnostics?: Effect.Effect<void, HarnessRequestFacetError>;
   /** Restore committed native and filesystem bytes before returning host construction options. */
   readonly restore: (
     checkpoint: HarnessRequestCheckpoint,

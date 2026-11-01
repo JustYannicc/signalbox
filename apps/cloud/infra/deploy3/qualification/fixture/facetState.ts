@@ -6,17 +6,18 @@ import type { QualifierCapabilities } from "./capabilities.ts";
 import type { HostFiles } from "./snapshot.ts";
 import { observeChunkReads } from "./chunkReadObserver.ts";
 import { assert } from "./common.ts";
+import { createNativeStdioPrefix, type NativeStdioChannel } from "./nativeOutputPrefix.ts";
+
+type FlushReason = "checkpoint" | "request-settled";
 
 export interface FacetState {
   readonly files: HostFiles;
   readonly reads: ReturnType<typeof observeChunkReads>;
   readonly rawOrdinals: Map<string, number>;
-  readonly raw: (
-    channel: "native-stdin" | "native-stdout" | "native-stderr",
-    bytes: Uint8Array,
-  ) => void;
+  readonly outputPrefixEnabled: boolean;
+  readonly raw: (channel: NativeStdioChannel, bytes: Uint8Array) => void;
   readonly queue: (operation: () => Promise<unknown>) => void;
-  readonly flush: () => Promise<void>;
+  readonly flush: (reason?: FlushReason) => Promise<void>;
   boundFiles?: KernelFileSystem;
   threadId?: string;
   facetNonce?: string;
@@ -26,10 +27,15 @@ export function facetState(
   ctx: DurableObjectState,
   capability: QualifierCapabilities,
   incarnation: string,
+  options: { readonly outputPrefix?: true } = {},
 ) {
   const existing = states.get(ctx);
   if (existing) {
     assert(existing.facetNonce === incarnation, "Facet state changed incarnation");
+    assert(
+      existing.outputPrefixEnabled === (options.outputPrefix === true),
+      "Facet output capture mode changed incarnation",
+    );
     return existing;
   }
   const database: FacetStorage = {
@@ -45,6 +51,7 @@ export function facetState(
   let pending = Promise.resolve();
   let failure: unknown;
   const rawOrdinals = new Map<string, number>();
+  const stdioPrefix = options.outputPrefix === true ? createNativeStdioPrefix() : undefined;
   const queue = (operation: () => Promise<unknown>) => {
     pending = pending
       .then(async () => {
@@ -54,6 +61,11 @@ export function facetState(
         failure ??= cause;
       });
     ctx.waitUntil(pending);
+  };
+  const recordRaw = (channel: NativeStdioChannel, bytes: Uint8Array) => {
+    const ordinal = (rawOrdinals.get(channel) ?? 0) + 1;
+    rawOrdinals.set(channel, ordinal);
+    queue(() => capability.recordRaw({ channel, incarnation, ordinal, bytes }));
   };
   const files: HostFiles = {
     identity: "combined-qualifier-files",
@@ -69,15 +81,27 @@ export function facetState(
     files,
     reads,
     rawOrdinals,
+    outputPrefixEnabled: options.outputPrefix === true,
     facetNonce: incarnation,
     queue,
     raw(channel, bytes) {
-      const ordinal = (rawOrdinals.get(channel) ?? 0) + 1;
-      rawOrdinals.set(channel, ordinal);
-      const captured = new Uint8Array(bytes);
-      queue(() => capability.recordRaw({ channel, incarnation, ordinal, bytes: captured }));
+      if (stdioPrefix === undefined) {
+        recordRaw(channel, new Uint8Array(bytes));
+        return;
+      }
+      stdioPrefix.write(channel, bytes);
     },
-    async flush() {
+    async flush(reason = "checkpoint") {
+      if (stdioPrefix !== undefined) {
+        const retained = stdioPrefix.drain(recordRaw);
+        queue(() =>
+          capability.append("native-stdio-prefix", {
+            incarnation,
+            reason,
+            ...retained,
+          }),
+        );
+      }
       await pending;
       if (failure !== undefined) throw new Error("Native byte capture failed", { cause: failure });
     },

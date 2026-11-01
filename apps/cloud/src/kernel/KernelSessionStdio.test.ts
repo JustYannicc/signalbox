@@ -108,6 +108,158 @@ describe("Kernel session stdio", () => {
     }
   });
 
+  it("reports accepted stdin writes before native reads consume them", async () => {
+    const consumed: number[] = [];
+    const accepted: Array<{ fd: 0 | 1 | 2; bytes: number[] }> = [];
+    const f = fixture(undefined, (bytes) => {
+      consumed.push(...bytes);
+    });
+    const unsubscribe = f.session.observeAcceptedWrites((fd, bytes) => {
+      accepted.push({ fd, bytes: [...bytes] });
+      bytes.fill(99);
+    });
+    try {
+      const payload = new Uint8Array([0, 255, 128, 7, 42]);
+      const writer = f.session.stdin.getWriter();
+      await writer.write(payload);
+
+      expect(accepted).toEqual([{ fd: 0, bytes: [...payload] }]);
+      expect(consumed).toEqual([]);
+      const target = new Uint8Array(8).fill(11);
+      expect(await f.session.stdio[0].readInto!(target, 0)).toBe(payload.length);
+      expect(target.slice(0, payload.length)).toEqual(payload);
+      expect(consumed).toEqual([...payload]);
+      await writer.close();
+    } finally {
+      unsubscribe();
+      await f.close();
+    }
+  });
+
+  it("reports accepted fd 1 and 2 writes without consuming their pipes", async () => {
+    const accepted: Array<{ fd: 0 | 1 | 2; bytes: Uint8Array }> = [];
+    const f = fixture();
+    const unsubscribe = f.session.observeAcceptedWrites((fd, bytes) => {
+      accepted.push({ fd, bytes: bytes.slice() });
+      bytes.fill(99);
+    });
+    try {
+      const stdout = Uint8Array.from({ length: 100_000 }, (_, i) => i % 251);
+      const stderr = Uint8Array.from({ length: 100_000 }, (_, i) => (i + 17) % 251);
+      const stdoutCount = f.session.stdio[1].write!(stdout, 4);
+      const stderrCount = f.session.stdio[2].write!(stderr, 4);
+      expect(typeof stdoutCount).toBe("number");
+      expect(typeof stderrCount).toBe("number");
+      if (typeof stdoutCount !== "number" || typeof stderrCount !== "number")
+        throw new Error("Expected synchronous nonblocking writes");
+
+      expect(accepted).toEqual([
+        { fd: 1, bytes: stdout.slice(0, stdoutCount) },
+        { fd: 2, bytes: stderr.slice(0, stderrCount) },
+      ]);
+      f.session.finish();
+      expect(new Uint8Array(await new Response(f.session.stdout).arrayBuffer())).toEqual(
+        stdout.slice(0, stdoutCount),
+      );
+      expect(new Uint8Array(await new Response(f.session.stderr).arrayBuffer())).toEqual(
+        stderr.slice(0, stderrCount),
+      );
+    } finally {
+      unsubscribe();
+      await f.close();
+    }
+  });
+
+  it("reports each split stdin write once while the native reader drains backpressure", async () => {
+    const accepted: Uint8Array[] = [];
+    const f = fixture();
+    const unsubscribe = f.session.observeAcceptedWrites((fd, bytes) => {
+      expect(fd).toBe(0);
+      accepted.push(bytes);
+    });
+    try {
+      const payload = Uint8Array.from({ length: 196_613 }, (_, i) => i % 256);
+      const guest = createKernelProcessStreams(f.files);
+      const received = new Response(guest.stdin).arrayBuffer();
+      const writer = f.session.stdin.getWriter();
+      await writer.write(payload);
+      await writer.close();
+
+      const delivered = new Uint8Array(await received);
+      const joined = new Uint8Array(accepted.reduce((length, bytes) => length + bytes.length, 0));
+      let offset = 0;
+      for (const bytes of accepted) {
+        joined.set(bytes, offset);
+        offset += bytes.length;
+      }
+      expect(accepted.length).toBeGreaterThan(1);
+      expect(joined).toEqual(payload);
+      expect(delivered).toEqual(payload);
+    } finally {
+      unsubscribe();
+      await f.close();
+    }
+  });
+
+  it("retains Buffer-backed output independently of source reuse before write completion", async () => {
+    const f = fixture();
+    const observed: Uint8Array[] = [];
+    const unsubscribe = f.session.observeAcceptedWrites((_fd, bytes) => observed.push(bytes));
+    try {
+      const payload = NodeBuffer.Buffer.alloc(100_000, 17);
+      const writing = f.session.stdio[1].write!(payload, 0);
+      payload.fill(99);
+      const reading = new Response(f.session.stdout).arrayBuffer();
+      const written = await writing;
+      expect(written).toBeGreaterThan(0);
+      f.session.finish();
+      const delivered = new Uint8Array(await reading);
+      expect(delivered).toEqual(new Uint8Array(written).fill(17));
+      expect(observed).toEqual([delivered]);
+    } finally {
+      unsubscribe();
+      await f.close();
+    }
+  });
+
+  it("isolates throwing observers, idempotent unsubscribe, and disposed subscriptions", async () => {
+    const observed: number[] = [];
+    const f = fixture();
+    const unsubscribeThrowing = f.session.observeAcceptedWrites(() => {
+      throw new Error("Observer failure must not fail the accepted write");
+    });
+    const unsubscribeMutating = f.session.observeAcceptedWrites((_fd, bytes) => bytes.fill(99));
+    const unsubscribeRecording = f.session.observeAcceptedWrites((fd, bytes) => {
+      expect(fd).toBe(0);
+      observed.push(...bytes);
+    });
+    try {
+      const guest = createKernelProcessStreams(f.files);
+      const received = new Response(guest.stdin).arrayBuffer();
+      const writer = f.session.stdin.getWriter();
+      const first = new Uint8Array([1, 2, 3]);
+      const second = new Uint8Array([4, 5]);
+      await writer.write(first);
+      expect(observed).toEqual([...first]);
+      unsubscribeRecording();
+      unsubscribeRecording();
+      await writer.write(second);
+      await writer.close();
+
+      expect(observed).toEqual([...first]);
+      expect(new Uint8Array(await received)).toEqual(new Uint8Array([...first, ...second]));
+      unsubscribeThrowing();
+      unsubscribeThrowing();
+      await f.session.dispose();
+      expect(() => f.session.observeAcceptedWrites(() => {})).toThrow("disposed");
+    } finally {
+      unsubscribeRecording();
+      unsubscribeThrowing();
+      unsubscribeMutating();
+      await f.close();
+    }
+  });
+
   it("isolates observer mutation from Buffer-backed native reads", async () => {
     const f = fixture(undefined, (bytes) => {
       bytes.fill(99);

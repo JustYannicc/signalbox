@@ -20,6 +20,26 @@ describe("Harness turn milestones", () => {
         yield* opened.session.turn(turn);
         expect((yield* opened.next).kind).toBe("turn.started");
         if (ordinal === 1) expect((yield* opened.next).kind).toBe("provider");
+        const context = {
+          type: "harness.cli-spawn-context" as const,
+          cwd: "/work",
+          argv: ["/cli"],
+          env: { HOME: "/home/agent" },
+          limits: {
+            maxBytes: 32_768,
+            valueBytes: 1_024,
+            argvCount: 1,
+            envCount: 1,
+            truncated: false,
+          },
+        };
+        for (let count = 0; count < 1_000; count++) f.reportCliSpawnContext(context);
+        expect(yield* opened.next).toEqual({
+          kind: "log",
+          runId: turn.runId,
+          level: "info",
+          message: JSON.stringify(context),
+        });
         for (let count = 0; count < 1_000; count++) f.reportTurnMilestone("model-request-sent");
         expect(yield* opened.next).toEqual({
           kind: "log",
@@ -33,7 +53,7 @@ describe("Harness turn milestones", () => {
         expect(terminal.kind === "provider" && terminal.event.type).toBe("turn.terminal");
         f.reportTurnMilestone("first-model-byte");
       }
-      expect(opened.events.filter((item) => item.kind === "log")).toHaveLength(2);
+      expect(opened.events.filter((item) => item.kind === "log")).toHaveLength(4);
     }).pipe(Effect.scoped),
   );
 });

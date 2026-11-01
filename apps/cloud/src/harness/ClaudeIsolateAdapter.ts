@@ -26,6 +26,8 @@ import { launchNodeHarnessProcess, type NodeHarnessProcessInput } from "./NodeHa
 import { createSdkProcess } from "./node/SdkProcess.ts";
 import { abortableValue, applySdkLaunch } from "./claude/SdkRelease.ts";
 import { gateClaudeSdkResults } from "./claude/SdkCompatibility.ts";
+import { captureClaudeSpawnContext } from "./claude/SpawnContext.ts";
+import { createClaudeInitializationProgress } from "./claude/InitializationProgress.ts";
 import {
   observeClaudeModelTransport,
   observeClaudeQueryOptions,
@@ -90,8 +92,32 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
         let bridge: NodeBridge | undefined;
         let spawned = false;
         const report = reporter.turnMilestone ?? (() => undefined);
+        const initialization =
+          reporter.turnMilestone === undefined
+            ? undefined
+            : createClaudeInitializationProgress(report);
+        if (initialization !== undefined)
+          yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              options.process.stdio.observeAcceptedWrites(initialization.acceptedWrite),
+            ),
+            (unsubscribe) => Effect.sync(unsubscribe),
+          );
         const processInput: NodeHarnessProcessInput = {
           ...options.process,
+          ...(initialization === undefined && reporter.cliSpawnContext === undefined
+            ? {}
+            : {
+                onLaunch: () => {
+                  try {
+                    options.process.onLaunch?.();
+                  } finally {
+                    initialization?.cliSpawned();
+                    if (bridge !== undefined && reporter.cliSpawnContext !== undefined)
+                      reporter.cliSpawnContext(captureClaudeSpawnContext(bridge));
+                  }
+                },
+              }),
           ...(loadedRelease === undefined ? {} : { loadedRelease }),
           modelTransport: observeClaudeModelTransport(input.modelTransport, report),
           reportReleaseModuleOmitted: reporter.releaseModuleOmitted,
@@ -105,7 +131,11 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
                 query: (request) =>
                   gateClaudeSdkResults(
                     sdk.query(request),
-                    () => process.assertCompatibility(),
+                    async () => {
+                      initialization?.compatibilityChecking();
+                      await process.assertCompatibility();
+                      initialization?.compatibilityConfirmed();
+                    },
                     reporter.turnMilestone === undefined
                       ? undefined
                       : (message) => observeClaudeSdkMessage(message, report),

@@ -179,6 +179,11 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       throw new Error("NODE_RUNTIME_COMPATIBILITY_UNOBSERVED");
     }
     releaseReady.resolve();
+    try {
+      input.onLaunch?.();
+    } catch {
+      // A passive diagnostic must not prevent the CLI from starting.
+    }
     await Reflect.apply(launch, release, []);
   };
   const startup = Promise.resolve()

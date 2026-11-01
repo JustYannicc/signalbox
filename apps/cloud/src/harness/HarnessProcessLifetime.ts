@@ -4,6 +4,7 @@ import {
   type ReleaseModuleOmittedFailure,
 } from "@t3tools/contracts/harnessReleaseOmission";
 import type { KernelExitStatus } from "../kernel/KernelProgramHost.ts";
+import type { ClaudeSpawnContext } from "./ClaudeSpawnContext.ts";
 import type { HarnessTurnStage } from "./HarnessTurnProgress.ts";
 
 export type {
@@ -47,6 +48,7 @@ export const makeReleaseModuleOmittedFailure = (
 };
 
 export interface HarnessRuntimeReporter {
+  readonly cliSpawnContext?: (context: ClaudeSpawnContext) => void;
   readonly turnMilestone?: (stage: HarnessTurnStage) => void;
   readonly releaseModuleOmitted: (
     event: ReleaseModuleOmittedEvent,

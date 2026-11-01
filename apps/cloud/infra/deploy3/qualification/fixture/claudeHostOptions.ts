@@ -214,7 +214,7 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
     );
     const plan = selectedRelease.plan;
 
-    const state = facetState(input.ctx, cap, input.facetNonce);
+    const state = facetState(input.ctx, cap, input.facetNonce, { outputPrefix: true });
     const paths = claudeSeedPaths(claude.seed);
     const imports = createClaudePreparedImports();
     const mcpSessions = yield* Effect.gen(function* () {

@@ -176,6 +176,7 @@ const createPreparedHarnessRequestRuntime = <G>(
                 gate.leave();
               }),
             ),
+            Effect.onExit(() => options.flushDiagnostics ?? Effect.void),
           );
         }),
     };
