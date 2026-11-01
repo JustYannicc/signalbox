@@ -47,11 +47,15 @@ export async function finalizeDeploy3OwnerTeardown(input: {
     if (
       workers.some((row) => row.id === workerName) ||
       tails.length ||
-      namespaces.some(
-        (row) =>
-          namespaceOwner(row) === workerName ||
-          state?.registration.namespaceIds.includes(String(row.id)),
-      )
+      namespaces.some((row) => {
+        const owner = namespaceOwner(row);
+        // A bootstrap has no registered namespace IDs, so every row needs an owner.
+        return (
+          (!state && (typeof owner !== "string" || owner.length === 0)) ||
+          owner === workerName ||
+          state?.registration.namespaceIds.includes(String(row.id))
+        );
+      })
     )
       return { ...result, status: "unconfirmed" as const };
     if (!state && bootstrap) {

@@ -169,6 +169,29 @@ it("recovers an uncertain bootstrap proof readback without duplicate publication
   expect(f.cf.calls).toEqual([]);
 });
 
+it.each([undefined, "", null])(
+  "keeps namespace ownership %s from producing a clean bootstrap closeout",
+  async (owner) => {
+    const f = await absentFixture();
+    f.comments.splice(0);
+    const fetchImpl: typeof fetch = async (request, init) => {
+      if (new URL(String(request)).pathname.endsWith("/namespaces"))
+        return Response.json({
+          success: true,
+          result: [{ id: "leftover-namespace", script: owner }],
+        });
+      if (String(request).includes("/tokens/")) return Response.json({}, { status: 403 });
+      return f.fetchImpl(request, init);
+    };
+    const input = finalizationInput(f, fetchImpl);
+    expect((await finalizeDeploy3OwnerTeardown(input)).status).toBe("unconfirmed");
+    expect(f.comments).toEqual([]);
+    const sweep = await runRegisteredDeploy3Backstop({ ...input, registry: input.api });
+    expect(sweep.cleanClaim).toBe(false);
+    expect(sweep.results).toEqual([{ status: "unverified", runId: bootstrapRegistration.runId }]);
+  },
+);
+
 it("does not use a bootstrap closeout to skip a later full registration", async () => {
   const f = await absentFixture();
   const registration = f.comments[0]!;
