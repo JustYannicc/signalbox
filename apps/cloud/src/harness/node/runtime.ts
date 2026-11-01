@@ -5,6 +5,7 @@ import { createNodeConsole } from "../../isolate/NodeConsole.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Node compatibility requires the native stream and process interfaces.
 import type * as NodeStreamWeb from "node:stream/web";
 import { createKernelProcessStreams } from "../../kernel/KernelProcessStreams.ts";
+import { configureNodeHttpAgents, drainNodeHttpAgents } from "../../isolate/NodeHttpAgent.ts";
 import { createNodeDns } from "../../isolate/NodeDns.ts";
 import { createNodeFs } from "../../isolate/NodeFs.ts";
 import { createNodeProcess } from "../../isolate/NodeProcess.ts";
@@ -132,6 +133,9 @@ export function createHarnessRuntime(
     });
     if (native.names.includes("constants"))
       modules.constants = createNodeConstants(native.require("constants"), fs.fs);
+    configureNodeHttpAgents([modules.http!, modules.https!], () =>
+      environment.resolvePackage("undici"),
+    );
     const compatibility = createNodeRuntimeCompatibility(modules.worker_threads!);
     modules.worker_threads = compatibility.module;
     return {
@@ -144,6 +148,7 @@ export function createHarnessRuntime(
       cpu,
       missingBunMembers,
       drainDns: dns.drain,
+      drainHttp: () => drainNodeHttpAgents([modules.http!, modules.https!]),
       compatibility,
     };
   } catch (error) {

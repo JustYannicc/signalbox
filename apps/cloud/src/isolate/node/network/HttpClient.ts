@@ -59,9 +59,10 @@ function requestParts(args: readonly unknown[], protocol: "http" | "https") {
   return { options, callback, requestProtocol, host, port, path, method };
 }
 
-function parsedRequest(
+export function parseHttpRequest(
   args: readonly unknown[],
   protocol: "http" | "https",
+  localOnly = false,
 ): ParsedRequest | undefined {
   let parts: ReturnType<typeof requestParts>;
   try {
@@ -69,7 +70,7 @@ function parsedRequest(
   } catch {
     return undefined;
   }
-  if (!isLocalHost(parts.host)) return undefined;
+  if (localOnly && !isLocalHost(parts.host)) return undefined;
   if (parts.requestProtocol !== `${protocol}:`) {
     throw networkError(
       "ERR_INVALID_PROTOCOL",
@@ -94,7 +95,7 @@ function makeLocalRequest(
   ctx: unknown,
   fallbackAgent: unknown,
 ): LocalClientRequest | undefined {
-  const parsed = parsedRequest(args, protocol);
+  const parsed = parseHttpRequest(args, protocol, true);
   if (!parsed) return undefined;
   if (protocol === "https" && hasTlsHandshakeOptions(parsed.options)) {
     throw networkError(

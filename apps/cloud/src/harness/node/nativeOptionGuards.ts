@@ -1,5 +1,6 @@
 import { markNodeBuiltinCapability } from "../../isolate/NodeBuiltinCapabilities.ts";
 import { NodeBuiltinUnsupportedError } from "../../isolate/NodeBuiltinFailure.ts";
+import { observeNodeSocket } from "../../isolate/NodeSocketLifetime.ts";
 import { overrideNativeModule } from "./nativeModuleOverrides.ts";
 import { guardWorkerdCrypto } from "./nativeCryptoGuards.ts";
 import { guardWorkerdTlsOptions, guardWorkerdTlsSocket } from "./nativeTlsGuards.ts";
@@ -81,12 +82,16 @@ export function guardWorkerdNativeOptions(modules: Record<string, object>) {
             apply(target, receiver, args) {
               guard(args);
               const result: unknown = Reflect.apply(target, receiver, args);
-              return specifier === "tls" ? guardWorkerdTlsSocket(result) : result;
+              return observeNodeSocket(
+                specifier === "tls" ? guardWorkerdTlsSocket(result) : result,
+              );
             },
             construct(target, args, newTarget) {
               guard(args);
               const result: object = Reflect.construct(target, args, newTarget);
-              return specifier === "tls" ? guardWorkerdTlsSocket(result) : result;
+              return observeNodeSocket(
+                specifier === "tls" ? guardWorkerdTlsSocket(result) : result,
+              );
             },
           }),
           {

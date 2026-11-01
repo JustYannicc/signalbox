@@ -4,6 +4,20 @@ import type * as NodeHttp from "node:http";
 import * as NodeURL from "node:url";
 import { markNodeBuiltinCapability } from "./NodeBuiltinCapabilities.ts";
 import { NodeBuiltinUnsupportedError } from "./NodeBuiltinFailure.ts";
+import { networkError } from "./node/network/errors.ts";
+import { FetchClientRequest } from "./node/network/FetchClientRequest.ts";
+import { parseHttpRequest } from "./node/network/HttpClient.ts";
+import {
+  createProxyHttpTransport,
+  loadPreparedProxyClient,
+  proxyAgentOptions,
+  validateProxyClient,
+} from "./node/network/ProxyHttpTransport.ts";
+import type { ProxyClientModule } from "./node/network/ProxyHttpTransport.ts";
+
+type AgentRequest = NodeHttp.ClientRequest | FetchClientRequest;
+import { registerHttpAgentRuntime } from "./node/network/HttpAgentRuntime.ts";
+export { configureNodeHttpAgents, drainNodeHttpAgents } from "./node/network/HttpAgentRuntime.ts";
 
 const unsupportedOptions = [
   "cert",
@@ -68,6 +82,7 @@ function requestArguments(args: readonly unknown[]) {
 export function createNodeHttpAgentModules(
   native: Readonly<Record<"http" | "https", object>>,
   diagnostic: (message: string) => void = (message) => globalThis.console.warn(message),
+  loadProxyClient: () => ProxyClientModule = loadPreparedProxyClient,
 ) {
   let reportedCa = false;
   let reportedConnections = false;
@@ -76,12 +91,16 @@ export function createNodeHttpAgentModules(
     {
       readonly protocol: string;
       readonly options: Record<string, unknown>;
-      readonly requests: Set<NodeHttp.ClientRequest>;
+      readonly requests: Set<AgentRequest>;
     }
   >();
-  const validate = (builtin: string, options: Record<string, unknown>) => {
+  const active = new Set<AgentRequest>();
+  const closed = new Set<Promise<void>>();
+  const cleanupErrors: unknown[] = [];
+  const instrumentedProxies = new WeakSet<object>();
+  const validate = (builtin: string, options: Record<string, unknown>, allowLookup = false) => {
     for (const name of unsupportedOptions) {
-      if (options[name] !== undefined)
+      if (options[name] !== undefined && !(name === "lookup" && allowLookup))
         throw new NodeBuiltinUnsupportedError(`${builtin} option ${name}`);
     }
     if (options.rejectUnauthorized !== undefined && options.rejectUnauthorized !== true)
@@ -96,6 +115,18 @@ export function createNodeHttpAgentModules(
         "HTTP Agent connection options are metadata; platform fetch controls pooling and connection limits",
       );
     }
+  };
+  const runtime = {
+    configure(resolveClient: () => unknown) {
+      loadProxyClient = () => validateProxyClient(resolveClient());
+    },
+    async drain() {
+      for (const request of active)
+        request.destroy(networkError("ECONNRESET", "Harness stopped the request"));
+      await Promise.all(closed);
+      if (cleanupErrors.length)
+        throw new AggregateError(cleanupErrors, "HTTP Agent cleanup failed");
+    },
   };
   const create = (protocol: "http" | "https") => {
     const module = native[protocol];
@@ -114,7 +145,7 @@ export function createNodeHttpAgentModules(
 
       constructor(options: Record<string, unknown> = {}) {
         super();
-        validate(`${protocol}.Agent`, options);
+        validate(`${protocol}.Agent`, options, true);
         // Isolate TLS uses platform trust. Supplied CA roots are metadata, and fetch owns pooling.
         this.options = { ...options };
         this.keepAlive = Boolean(options.keepAlive);
@@ -128,7 +159,8 @@ export function createNodeHttpAgentModules(
 
       destroy(): void {
         const state = agents.get(this)!;
-        for (const request of state.requests) request.destroy();
+        for (const request of state.requests)
+          request.destroy(networkError("ECONNRESET", "Agent destroyed the request"));
       }
 
       addRequest(): never {
@@ -142,40 +174,108 @@ export function createNodeHttpAgentModules(
     const capability = {
       status: "conditional" as const,
       evidence:
-        "Agents apply TLS policy, dispatch through the platform HTTP/fetch client, and cancel active requests on destroy. CA and connection options are recorded metadata; platform trust and pooling apply. Custom sockets, proxies, client certificates and verification overrides throw named errors.",
+        "Agents apply TLS policy, dispatch through the platform HTTP/fetch client, and cancel active requests on destroy. CA and connection options are recorded metadata; platform trust and pooling apply. Proxy Agents retain their CONNECT routing, authorization and DNS behavior through the prepared Undici client. Client certificates and verification overrides throw named errors.",
     };
     markNodeBuiltinCapability(Agent, capability);
     const globalAgent = new Agent();
-    const request = markNodeBuiltinCapability((...args: unknown[]): NodeHttp.ClientRequest => {
+    const request = markNodeBuiltinCapability((...args: unknown[]): AgentRequest => {
       const { options, callback } = requestArguments(args);
       const agent = options.agent === false ? new Agent() : (options.agent ?? globalAgent);
-      const state = typeof agent === "object" && agent !== null ? agents.get(agent) : undefined;
-      if (!state || agent.constructor !== Agent)
+      if (typeof agent !== "object" || agent === null)
+        throw new NodeBuiltinUnsupportedError(`${protocol}.request custom Agent`);
+      const proxy = proxyAgentOptions(agent);
+      let state = agents.get(agent);
+      if (!proxy && (!state || agent.constructor !== Agent))
         throw new NodeBuiltinUnsupportedError(`${protocol}.request custom Agent`);
       if (
-        state.protocol !== `${protocol}:` ||
-        (options.protocol !== undefined && options.protocol !== state.protocol)
+        !proxy &&
+        (state!.protocol !== `${protocol}:` ||
+          (options.protocol !== undefined && options.protocol !== state!.protocol))
       )
         throw new TypeError(`HTTP Agent requires protocol ${protocol}:`);
+      const agentOptions: unknown = Reflect.get(agent, "options");
+      if (typeof agentOptions !== "object" || agentOptions === null)
+        throw new TypeError("HTTP Agent options must be an object");
+      if (!state) {
+        state = {
+          protocol: `${protocol}:`,
+          options: agentOptions as Record<string, unknown>,
+          requests: new Set(),
+        };
+        agents.set(agent, state);
+      }
+      if (proxy && !instrumentedProxies.has(agent)) {
+        const destroy: unknown = Reflect.get(agent, "destroy");
+        if (typeof destroy !== "function")
+          throw new NodeBuiltinUnsupportedError(`${protocol}.Agent proxy destroy`);
+        const requests = state.requests;
+        Object.defineProperty(agent, "destroy", {
+          configurable: true,
+          writable: true,
+          value: (...destroyArgs: unknown[]) => {
+            for (const request of requests)
+              request.destroy(networkError("ECONNRESET", "Agent destroyed the request"));
+            return Reflect.apply(destroy, agent, destroyArgs);
+          },
+        });
+        instrumentedProxies.add(agent);
+      }
       const transportOptions: Record<string, unknown> = {
-        ...state.options,
+        ...agentOptions,
         ...options,
-        protocol: state.protocol,
+        protocol: options.protocol ?? `${protocol}:`,
         agent: false,
       };
-      validate(`${protocol}.request`, transportOptions);
-      // The native client sends the request; never pass our policy agent to Workerd's inert addRequest.
+      validate(`${protocol}.request`, transportOptions, proxy !== undefined);
       delete transportOptions.ca;
       delete transportOptions.rejectUnauthorized;
       for (const name of connectionOptions) delete transportOptions[name];
-      const result = Reflect.apply(nativeRequest, module, [
-        transportOptions,
-        callback,
-      ]) as NodeHttp.ClientRequest;
+      let result: AgentRequest;
+      if (proxy) {
+        const parsed = parseHttpRequest([transportOptions, callback], protocol);
+        if (!parsed) throw new TypeError("Invalid proxy HTTP request options");
+        const transport = createProxyHttpTransport(
+          agent,
+          proxy,
+          transportOptions,
+          (value) => validate(`${protocol}.Agent proxy`, value, true),
+          loadProxyClient,
+        );
+        result = new FetchClientRequest({
+          parsed: { ...parsed, options: { ...parsed.options, agent } },
+          fallbackAgent: agent,
+          dispatch: transport.dispatch,
+          dispose: async () => {
+            try {
+              await transport.dispose();
+            } catch (error) {
+              cleanupErrors.push(error);
+              throw error;
+            }
+          },
+        });
+      } else {
+        // Workerd's native client sends through fetch; its inert addRequest is never used.
+        result = Reflect.apply(nativeRequest, module, [
+          transportOptions,
+          callback,
+        ]) as NodeHttp.ClientRequest;
+      }
       state.requests.add(result);
-      result.once("close", () => state.requests.delete(result));
+      active.add(result);
+      const requests = state.requests;
+      const closure = new Promise<void>((resolve) =>
+        result.once("close", () => {
+          requests.delete(result);
+          active.delete(result);
+          resolve();
+        }),
+      );
+      closed.add(closure);
+      void closure.then(() => closed.delete(closure));
       return result;
     }, capability);
+    registerHttpAgentRuntime(request, runtime);
     const get = markNodeBuiltinCapability((...args: unknown[]) => {
       const result = request(...args);
       result.end();

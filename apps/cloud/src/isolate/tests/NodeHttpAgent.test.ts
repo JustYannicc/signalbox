@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Exercise the Agent against a real Node HTTP fixture.
 import * as NodeHttp from "node:http";
+import type * as NodeEvents from "node:events";
 import * as NodeHttps from "node:https";
 import { describe, expect, it } from "vite-plus/test";
 import { createNodeHttpAgentModules } from "../NodeHttpAgent.ts";
@@ -13,7 +14,7 @@ function fixture() {
   return { ...modules, diagnostics };
 }
 
-async function readResponse(request: NodeHttp.ClientRequest) {
+async function readResponse(request: NodeEvents.EventEmitter) {
   const response = await new Promise<NodeHttp.IncomingMessage>((resolve, reject) => {
     request.once("response", resolve);
     request.once("error", reject);
