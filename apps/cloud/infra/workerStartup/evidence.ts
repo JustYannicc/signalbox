@@ -15,6 +15,7 @@ const Evidence = Schema.Struct({
   payloadSha256: Hash,
   // The producer's budget is metadata; raw samples must pass the current budget below.
   budgetMs: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0)),
+  negativeDeltaCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   profileFile: Schema.String,
   profileSha256: Hash,
   invocationSha256: Hash,
@@ -55,6 +56,11 @@ export function requireStartupEvidence(
     if (evidence.runtime[key] !== expectedRuntime[key])
       throw new Error("WORKER_STARTUP_PROFILE_STALE_RUNTIME");
   const summary = requireStartupBudget(JSON.parse(Buffer.from(profileBytes).toString("utf8")));
+  if (
+    evidence.negativeDeltaCount !== undefined &&
+    evidence.negativeDeltaCount !== summary.negativeDeltaCount
+  )
+    throw new Error("WORKER_STARTUP_PROFILE_DELTA_COUNT_DIFFERS");
   return { evidence, summary };
 }
 

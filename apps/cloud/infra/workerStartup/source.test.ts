@@ -15,7 +15,8 @@ import {
 } from "alchemy/Cloudflare";
 import { describe, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
-import { profileWorkerStartup } from "./profile.ts";
+import { profileWorkerStartup, qualifyWorkerStartupProfile } from "./profile.ts";
+import { runStartupProfiler } from "./process.ts";
 import { sha256, startupPayload } from "./payload.ts";
 import { readStartupBundle } from "./prebuilt.ts";
 
@@ -214,6 +215,39 @@ describe("worker startup source provider", () => {
         };
         expect(yield* runWithServices(source.hash(workerContext(), previous))).toEqual({
           bundle: built.bundle.hash,
+        });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "qualifies a closed signed-delta profile offline and admits it through build and hash",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* Effect.acquireRelease(Effect.promise(fixture), (f) =>
+          Effect.promise(f.dispose),
+        );
+        yield* Effect.promise(() => f.writeEvidence());
+        const profilerCalls = vi.mocked(runStartupProfiler).mock.calls.length;
+        const qualified = yield* Effect.promise(async () => {
+          const rawProfile = await NodeFSP.readFile(
+            new URL("./fixtures/out-of-order.cpuprofile.json", import.meta.url),
+          );
+          await NodeFSP.writeFile(`${f.main}.startup-profile/startup.cpuprofile`, rawProfile);
+          await Promise.all([
+            NodeFSP.rm(`${f.main}.startup-profile.json`),
+            NodeFSP.rm(`${f.main}.startup-profile/invocation.json`),
+            NodeFSP.rm(`${f.main}.startup.cpuprofile`),
+          ]);
+          return qualifyWorkerStartupProfile({ main: f.main, rules, compatibility });
+        });
+        expect(qualified.evidence.negativeDeltaCount).toBe(1);
+        expect(qualified.summary.activeMs).toBe(180.9036625);
+        expect(vi.mocked(runStartupProfiler).mock.calls.length).toBe(profilerCalls);
+        const source = yield* makeSource(f.main);
+        const built = yield* runWithServices(source.build(workerContext()));
+        expect(built.bundle?.hash).toBeTruthy();
+        expect(yield* runWithServices(source.hash(workerContext(), undefined))).toEqual({
+          bundle: built.bundle?.hash,
         });
       }).pipe(Effect.scoped),
   );

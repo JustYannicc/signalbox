@@ -89,11 +89,22 @@ export async function profileWorkerStartup(raw: unknown) {
   });
   if (terminal.code !== 0 || terminal.signal !== null)
     throw new Error("WORKER_STARTUP_PROFILER_FAILED");
-  const profile = await NodeFSP.readFile(profileFile);
-  const summary = requireStartupBudget(JSON.parse(profile.toString("utf8")));
   const current = await readStartupBundle(input, input.compatibility);
   if (startupPayload(current, input.compatibility).sha256 !== serialized.payload.sha256)
     throw new Error("WORKER_STARTUP_PAYLOAD_CHANGED_DURING_PROFILE");
+  const qualified = await qualifyWorkerStartupProfile(input);
+  return { ...qualified, wallMs, peakRssBytes };
+}
+
+/** Qualify a closed profiler attempt offline; this never starts Wrangler or Workerd. */
+export async function qualifyWorkerStartupProfile(raw: unknown) {
+  const input = decodeInput(raw);
+  const bundle = await readStartupBundle(input, input.compatibility);
+  const payload = startupPayload(bundle, input.compatibility);
+  const runtime = await profilerRuntime();
+  const { profileFile } = startupProfilePaths(input.main);
+  const profile = await NodeFSP.readFile(profileFile);
+  const summary = requireStartupBudget(JSON.parse(profile.toString("utf8")));
   const destination = `${NodePath.basename(input.main)}.startup.cpuprofile`;
   await NodeFSP.copyFile(
     profileFile,
@@ -102,21 +113,22 @@ export async function profileWorkerStartup(raw: unknown) {
   );
   const invocationSha256 = await writeStartupInvocation(
     input.main,
-    serialized.payload.sha256,
+    payload.sha256,
     runtime,
     profile,
   );
   const evidence = decodeStartupEvidence({
     schema: "signalbox/worker-startup-profile/v2",
     status: "passed",
-    payloadSha256: serialized.payload.sha256,
+    payloadSha256: payload.sha256,
     invocationSha256,
     budgetMs: WORKER_STARTUP_BUDGET_MS,
+    negativeDeltaCount: summary.negativeDeltaCount,
     profileFile: destination,
     profileSha256: sha256(profile),
     runtime: runtime.identity,
     invocation: { wranglerExitCode: 0, workerdStarts: 1, workerdClosed: true, guardPassed: true },
   });
   await NodeFSP.writeFile(startupEvidencePath(input.main), json(evidence), { flag: "wx" });
-  return { evidence, summary, wallMs, peakRssBytes };
+  return { evidence, summary };
 }
