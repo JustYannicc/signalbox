@@ -39,7 +39,9 @@ it("the real facet state retains full stdout and shutdown stderr beyond 16 KiB",
     }
     expect(actual).toEqual(bytes);
   }
-  expect(fixture.records.at(-1)?.value).toMatchObject({
+  expect(
+    fixture.records.findLast((record) => record.kind === "native-stdio-streams")?.value,
+  ).toMatchObject({
     reason: "disposed",
     streams: {
       "native-stdout": { observedBytes: stdout.byteLength, complete: true },
@@ -54,7 +56,9 @@ it("a saturated capture queue fails loudly and preserves its incomplete byte cou
   fixture.state.raw("native-stdout", new Uint8Array(1024 * 1024 + 1));
   released.resolve();
   await expect(fixture.state.flush()).rejects.toThrow("Native byte capture failed");
-  expect(fixture.records.at(-1)?.value).toMatchObject({
+  expect(
+    fixture.records.findLast((record) => record.kind === "native-stdio-streams")?.value,
+  ).toMatchObject({
     streams: {
       "native-stdout": {
         observedBytes: 1024 * 1024 + 1,
@@ -64,4 +68,36 @@ it("a saturated capture queue fails loudly and preserves its incomplete byte cou
       },
     },
   });
+});
+
+it("releases every raw and journal RPC result across flushes and a rejected write", async () => {
+  let pins = 0;
+  let released = 0;
+  const rpcResult = () => {
+    pins++;
+    return {
+      sequence: released,
+      [Symbol.dispose]() {
+        pins--;
+        released++;
+      },
+    };
+  };
+  let writes = 0;
+  const capability = {
+    recordRaw: async () => {
+      if (++writes === 2) throw new Error("storage failed");
+      return rpcResult();
+    },
+    append: async () => rpcResult(),
+  } as unknown as QualifierCapabilities;
+  const ctx = { storage: { sql: {} }, waitUntil() {} } as unknown as DurableObjectState;
+  const state = facetState(ctx, capability, "rpc-incarnation");
+  state.raw("native-stdout", new Uint8Array(32_769));
+  await expect(state.flush("request-settled")).rejects.toThrow("Native byte capture failed");
+  expect(pins).toBe(0);
+  state.raw("native-stderr", new Uint8Array(1));
+  await expect(state.flush("disposed")).rejects.toThrow("Native byte capture failed");
+  expect(pins).toBe(0);
+  expect(released).toBe(6);
 });

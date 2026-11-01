@@ -1,3 +1,4 @@
+import { readRpcData, rpcStubOwner } from "../../rpc/Resources.ts";
 import { createProcessSlots } from "../../computer/ProcessSlots.ts";
 import {
   createHarnessProcessPlacementStoreClient,
@@ -22,16 +23,18 @@ export async function releaseCreationPlacement(
   const store = environment.PLACEMENT_STORES.getByName(
     placement.owner,
   ) as unknown as HarnessProcessPlacementStoreClient;
-  const currentWriter = await store.readWriter(placement.owner);
+  using _storeOwner = rpcStubOwner(store);
+  const currentWriter = await readRpcData(store.readWriter(placement.owner));
   if (currentWriter === undefined) {
     if (
       !placement.releaseWriter ||
-      !(await store.writerReleased(placement.owner, placement.releaseWriter))
+      !(await readRpcData(store.writerReleased(placement.owner, placement.releaseWriter)))
     )
       throw new Error("Initial lease release has no matching durable writer receipt.");
   } else {
     const writer = { ...placement.writer, shardIncarnationNonce: incarnationNonce };
-    if (!sameWriter(currentWriter, writer)) await store.claimWriter(placement.owner, writer);
+    if (!sameWriter(currentWriter, writer))
+      await readRpcData(store.claimWriter(placement.owner, writer));
     placement = { ...placement, releaseWriter: writer };
     await context.storage.put(key, placement);
     const stores = createHarnessProcessPlacementStoreClient(store, placement.owner, writer);
@@ -59,7 +62,7 @@ export async function releaseCreationPlacement(
         return { acknowledged: true };
       },
     });
-    await store.releaseWriter(placement.owner, writer);
+    await readRpcData(store.releaseWriter(placement.owner, writer));
   }
   placement = { ...placement, released: true };
   await context.storage.put(key, placement);

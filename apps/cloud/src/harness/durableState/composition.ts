@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub } from "../../rpc/Resources.ts";
 import type {
   HarnessDurableState,
   HarnessDurableStateBindings,
@@ -31,25 +32,39 @@ export function createHarnessDurableState(
   fence?: ProcessFence,
 ): HarnessDurableState {
   if (!runId) throw new HarnessDurableStateError({ code: "INVALID" });
-  const rawRunStore = bindings.HARNESS_RUN_STORE.getByName(runId);
-  const rawFilesStore = bindings.HARNESS_FILES_STORE.getByName(runId);
-  const rawSupervisor = bindings.HARNESS_THREAD_SUPERVISOR.getByName(runId);
-  const scoped =
-    bindings.HARNESS_C_PROCESS_STORES?.forRun(runId) ??
-    (fence === undefined
-      ? undefined
-      : {
-          runStore: { execute: (command: unknown) => rawRunStore.execute(command, fence) },
-          filesStore: { execute: (command: unknown) => rawFilesStore.execute(command, fence) },
-          threadSupervisor: {
-            execute: (command: unknown) => rawSupervisor.execute(command, fence),
-            reserveReconciliation: (input: unknown) =>
-              rawSupervisor.reserveReconciliation(input, fence),
-          },
-        });
-  const runStore = scoped?.runStore ?? rawRunStore;
-  const filesStore = scoped?.filesStore ?? rawFilesStore;
-  const threadSupervisor = scoped?.threadSupervisor ?? rawSupervisor;
+  const scoped = bindings.HARNESS_C_PROCESS_STORES?.forRun(runId);
+  const runStore = {
+    execute: (command: unknown) =>
+      scoped
+        ? readRpcData(scoped.runStore.execute(command))
+        : withRpcStub(bindings.HARNESS_RUN_STORE.getByName(runId), (stub) =>
+            readRpcData(stub.execute(command, fence)),
+          ),
+  };
+  const filesStore = {
+    execute: (command: unknown) =>
+      scoped
+        ? readRpcData(scoped.filesStore.execute(command))
+        : withRpcStub(bindings.HARNESS_FILES_STORE.getByName(runId), (stub) =>
+            readRpcData(stub.execute(command, fence)),
+          ),
+  };
+  const threadSupervisor = {
+    execute: (command: unknown) =>
+      scoped
+        ? readRpcData(scoped.threadSupervisor.execute(command))
+        : withRpcStub(bindings.HARNESS_THREAD_SUPERVISOR.getByName(runId), (stub) =>
+            readRpcData(stub.execute(command, fence)),
+          ),
+    reserveReconciliation: (
+      input: Parameters<NonNullable<typeof scoped>["threadSupervisor"]["reserveReconciliation"]>[0],
+    ) =>
+      scoped
+        ? readRpcData(scoped.threadSupervisor.reserveReconciliation(input))
+        : withRpcStub(bindings.HARNESS_THREAD_SUPERVISOR.getByName(runId), (stub) =>
+            readRpcData(stub.reserveReconciliation(input, fence)),
+          ),
+  };
   const stores = { runId, runStore, filesStore, threadSupervisor };
 
   return {

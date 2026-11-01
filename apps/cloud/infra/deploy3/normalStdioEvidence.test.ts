@@ -17,6 +17,8 @@ async function stdioExportFixture(
   input: {
     readonly omitOrdinal?: { readonly channel: NativeStdioChannel; readonly ordinal: number };
     readonly legacyPrefix?: true;
+    readonly checkpointBeforeCrash?: true;
+    readonly corruptCheckpoint?: true;
   } = {},
 ) {
   const blobs = new Map<string, Uint8Array>();
@@ -80,6 +82,11 @@ async function stdioExportFixture(
       chunks.push({ channel, bytes });
       return true;
     };
+    if (input.checkpointBeforeCrash) {
+      const checkpoint = capture.drain();
+      if (input.corruptCheckpoint) checkpoint.streams["native-stdout"].acceptedBytes = 1;
+      await append("native-stdio-streams", { ...checkpoint, incarnation, reason: "checkpoint" });
+    }
     capture.write("native-stdout", stdout, enqueue);
     capture.write("native-stderr", stderr, enqueue);
     capture.write("native-stdin", stdin, enqueue);
@@ -101,7 +108,7 @@ async function stdioExportFixture(
     const payload = await addBlob(`${chunk.channel}-${incarnation}-${ordinal}`, chunk.bytes);
     await append(chunk.channel, { incarnation, ordinal, payload });
   }
-  await append(summaryKind, summary);
+  if (!input.checkpointBeforeCrash) await append(summaryKind, summary);
   const sortedEntries = entries.sort(([left], [right]) =>
     left < right ? -1 : left > right ? 1 : 0,
   );
@@ -253,6 +260,72 @@ TestCase.test("v1 local exports remain verifiable without claiming assembled std
     });
     NodeAssert.deepEqual(verified.nativeStdio, []);
     NodeAssert.equal(verified.stdioStatus, "legacy-v1-prefix-incomplete-unassembled");
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
+
+TestCase.test(
+  "normal export retains all raw bytes after a checkpoint followed by a killed turn",
+  async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "deploy3-stdio-crash-"));
+    try {
+      const state = (await controlFixture().api().read()).controls[0]!;
+      const source = await stdioExportFixture({ checkpointBeforeCrash: true });
+      const directory = NodePath.join(root, "export");
+      const exported = await exportDeploy3Locally({
+        origin: "https://qualifier.example",
+        qualifierRunId: "source-run",
+        registration: state.registration,
+        directory,
+        fetchImpl: source.fetchImpl,
+      });
+      for (const [channel, bytes] of [
+        ["native-stdin", source.stdin],
+        ["native-stdout", source.stdout],
+        ["native-stderr", source.stderr],
+      ] as const) {
+        const stream = exported.nativeStdio.find((item) => item.channel === channel)!;
+        NodeAssert.equal(stream.complete, false);
+        NodeAssert.equal(stream.observedBytes, null);
+        NodeAssert.equal(stream.incompleteReason, "final-summary-unavailable");
+        NodeAssert.equal(stream.evidenceRef.bytes, bytes.byteLength);
+        NodeAssert.deepEqual(
+          new Uint8Array(await NodeFSP.readFile(NodePath.join(directory, stream.evidenceRef.path))),
+          bytes,
+        );
+      }
+      NodeAssert.ok(await NodeFSP.stat(NodePath.join(directory, "manifest.json")));
+      await NodeAssert.rejects(
+        verifyDeploy3LocalExport({ directory, registration: state.registration }),
+        /explicitly incomplete/,
+      );
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+TestCase.test("a later raw chunk does not excuse an invalid checkpoint summary", async () => {
+  const root = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "deploy3-stdio-corrupt-checkpoint-"),
+  );
+  try {
+    const state = (await controlFixture().api().read()).controls[0]!;
+    const source = await stdioExportFixture({
+      checkpointBeforeCrash: true,
+      corruptCheckpoint: true,
+    });
+    await NodeAssert.rejects(
+      exportDeploy3Locally({
+        origin: "https://qualifier.example",
+        qualifierRunId: "source-run",
+        registration: state.registration,
+        directory: NodePath.join(root, "export"),
+        fetchImpl: source.fetchImpl,
+      }),
+      /summary differs from its chunks/,
+    );
   } finally {
     await NodeFSP.rm(root, { recursive: true, force: true });
   }

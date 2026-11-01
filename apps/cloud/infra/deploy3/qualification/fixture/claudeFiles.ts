@@ -1,3 +1,4 @@
+import { readRpcData } from "../../../../src/rpc/Resources.ts";
 import type { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { HarnessFilesStoreResult } from "../../../../src/harness/HarnessFilesStore.ts";
 import type { KernelFileSystem } from "../../../../src/kernel/KernelFileSystem.ts";
@@ -40,11 +41,13 @@ export const hydrateClaudeFiles =
       fs.mkdirSync(paths.home, { recursive: true });
       fs.mkdirSync(paths.projectState, { recursive: true });
     }
-    await cap.append("claude-files-before-readiness", {
-      incarnation: input.incarnation,
-      restored: restored !== undefined,
-      proof,
-      preparedModuleCount: input.preparedModuleCount,
-      artifactHash: input.artifactHash,
-    });
+    await readRpcData(
+      cap.append("claude-files-before-readiness", {
+        incarnation: input.incarnation,
+        restored: restored !== undefined,
+        proof,
+        preparedModuleCount: input.preparedModuleCount,
+        artifactHash: input.artifactHash,
+      }),
+    );
   };

@@ -1,3 +1,4 @@
+import { readRpcData } from "../rpc/Resources.ts";
 import type { HarnessRequestPublisher } from "./HarnessRunStore.ts";
 import type {
   HarnessRequestFacetPreparationRequest,
@@ -51,7 +52,7 @@ export function createHarnessProcessFacetAdapter(
   const active = new Set<Promise<unknown>>();
 
   const identity = async (): Promise<HarnessProcessPlacementIdentity> => {
-    const actual = await facet.identity();
+    const actual = await readRpcData(facet.identity());
     if (constructorNonce !== undefined && actual.facetNonce !== constructorNonce)
       throw new Error(
         "The Harness facet constructor identity changed during its retained lifetime.",
@@ -66,9 +67,11 @@ export function createHarnessProcessFacetAdapter(
   const dispose = async () => {
     if (disposed) return;
     const expectedNonce = constructorNonce ?? (await identity()).incarnationNonce;
-    disposePromise ??= facet.dispose(expectedNonce).then(() => {
-      disposed = true;
-    });
+    disposePromise ??= readRpcData(
+      facet.dispose(expectedNonce).then(() => {
+        disposed = true;
+      }),
+    );
     await disposePromise;
   };
 
@@ -96,7 +99,7 @@ export function createHarnessProcessFacetAdapter(
       const next = { ...input };
       if (prepared !== undefined && !samePrepared(prepared, next))
         throw new Error("A process facet cannot be prepared for another operation.");
-      const observed = await facet.prepareInert(next);
+      const observed = await readRpcData(facet.prepareInert(next));
       validatePreparationObservation(next, actual.incarnationNonce, observed);
       prepared = next;
       return {
@@ -138,7 +141,9 @@ export function createHarnessProcessFacetAdapter(
       )
         throw new Error("Process facet invocation does not match its published request.");
 
-      const running = facet.run({ publisher: input.publisher, requestId: input.requestId });
+      const running = readRpcData(
+        facet.run({ publisher: input.publisher, requestId: input.requestId }),
+      );
       active.add(running);
       try {
         return {

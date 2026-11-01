@@ -4,6 +4,7 @@ import {
   HarnessCProductCapabilityError,
   narrowHarnessCProductCapabilities,
   productReleaseBindings,
+  productModelTransport,
 } from "../HarnessCProductCapabilities.ts";
 
 const completeCapabilities = () =>
@@ -70,4 +71,99 @@ describe("product bootstrap capabilities", () => {
       HarnessCProductCapabilityError,
     );
   });
+});
+
+it("releases release metadata RPC results before returning detached loader data", async () => {
+  let pins = 0;
+  const service = {
+    async getArtifact() {
+      return null;
+    },
+    async loaderConfig() {
+      pins++;
+      return {
+        trustedComputer: { sourceIdentity: "source", manifestSha256: "0".repeat(64) },
+        maxPreparedModuleBytes: 128_000_000,
+        [Symbol.dispose]() {
+          pins--;
+        },
+      };
+    },
+    async readArtifact() {
+      return new Uint8Array();
+    },
+    async readArtifactChunk() {
+      return new Uint8Array();
+    },
+  };
+  const bindings = await productReleaseBindings("claude-code", service);
+  const options = await bindings.loadOptions();
+  expect(pins).toBe(0);
+  expect(options.trustedComputer.sourceIdentity).toBe("source");
+});
+
+it("retains streamed model RPC results until EOF or cancellation and closes failed reads", async () => {
+  let pins = 0;
+  let releases = 0;
+  const source = (failure = false) => {
+    pins++;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (failure) controller.error(new Error("stream failed"));
+          else {
+            controller.enqueue(new TextEncoder().encode("model"));
+            controller.close();
+          }
+        },
+      }),
+    );
+    Object.defineProperty(response, Symbol.dispose, {
+      value() {
+        pins--;
+        releases++;
+      },
+    });
+    return response;
+  };
+  const request = () => new Request("https://model.invalid/v1/messages");
+  const transport = productModelTransport({ fetch: async () => source() });
+  const consumed = await transport(request());
+  expect(pins).toBe(1);
+  expect(await consumed.text()).toBe("model");
+  expect(pins).toBe(0);
+  const cancelled = await transport(request());
+  expect(pins).toBe(1);
+  await cancelled.body!.cancel();
+  expect(pins).toBe(0);
+  const failed = await productModelTransport({ fetch: async () => source(true) })(request());
+  await expect(failed.text()).rejects.toThrow("stream failed");
+  expect(pins).toBe(0);
+  expect(releases).toBe(3);
+});
+
+it("releases an unread model RPC body when its caller aborts", async () => {
+  let released = false;
+  const closed = Promise.withResolvers<void>();
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      cancel() {
+        closed.resolve();
+      },
+    }),
+  );
+  Object.defineProperty(response, Symbol.dispose, {
+    value() {
+      released = true;
+    },
+  });
+  const controller = new AbortController();
+  const forwarded = await productModelTransport({ fetch: async () => response })(
+    new Request("https://model.invalid/v1/messages", { signal: controller.signal }),
+  );
+  expect(released).toBe(false);
+  controller.abort();
+  await closed.promise;
+  await forwarded.body!.cancel();
+  expect(released).toBe(true);
 });

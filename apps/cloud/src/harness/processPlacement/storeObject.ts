@@ -1,3 +1,4 @@
+import { withRpcStub } from "../../rpc/Resources.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
   assertProcessFenceNonce,
@@ -60,8 +61,10 @@ export class HarnessProcessPlacementStoreObject
 
   async claimWriter(owner: string, writer: HarnessProcessPlacementWriter): Promise<void> {
     assertWriter(writer);
-    const actualIncarnation =
-      await this.env.PROCESS_EXECUTION_SHARDS.getByName(owner).executionIncarnationNonce();
+    const actualIncarnation = await withRpcStub(
+      this.env.PROCESS_EXECUTION_SHARDS.getByName(owner),
+      (stub) => stub.executionIncarnationNonce(),
+    );
     if (!actualIncarnation || actualIncarnation !== writer.shardIncarnationNonce)
       throw new Error("Process-placement writer did not match its live execution incarnation.");
     const active = this.#activeWriter.get(owner);

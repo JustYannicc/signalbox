@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import type { ExecutorMcpPort } from "../HarnessSessionHost.ts";
 import type { HarnessCProductExecutorService } from "./contracts.ts";
 
@@ -22,20 +23,22 @@ export function productExecutor<G>(service: HarnessCProductExecutorService<G>): 
         cancel: () => removeAbortListener(),
       });
       try {
-        const response = await service.forward({
-          target: input.target,
-          grant: input.grant,
-          ...(input.gatewayEndpoint === undefined
-            ? {}
-            : { gatewayEndpoint: input.gatewayEndpoint }),
-          request: {
-            url: request.url,
-            method: request.method,
-            headers: [...request.headers.entries()].map(([name, value]) => ({ name, value })),
-            body,
-          },
-          cancellation,
-        });
+        const response = await readRpcData(
+          service.forward({
+            target: input.target,
+            grant: input.grant,
+            ...(input.gatewayEndpoint === undefined
+              ? {}
+              : { gatewayEndpoint: input.gatewayEndpoint }),
+            request: {
+              url: request.url,
+              method: request.method,
+              headers: [...request.headers.entries()].map(([name, value]) => ({ name, value })),
+              body,
+            },
+            cancellation,
+          }),
+        );
         input.signal.throwIfAborted();
         const headers: [string, string][] = response.headers.map(({ name, value }) => [
           name,

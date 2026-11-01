@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import type { HarnessMcpTurnGrantSource } from "../HarnessSessionHost.ts";
 import type { HarnessCProductTurnGrantSource } from "./contracts.ts";
 
@@ -21,7 +22,7 @@ export function productTurnGrantSource<G>(
         cancel: () => removeAbortListener(),
       });
       try {
-        const result = await service.issue({ ...claims, cancellation });
+        const result = await readRpcData(service.issue({ ...claims, cancellation }));
         signal.throwIfAborted();
         return result;
       } catch (cause) {

@@ -9,6 +9,7 @@ export function observeChunkReads(database: FacetStorage) {
   const rows: { phase: string; path: string | null; inode: string; part: number; bytes: number }[] =
     [];
   let phase = "unmeasured";
+  let returnedBytes = 0;
   const storage: FacetStorage = {
     sql: {
       get databaseSize() {
@@ -26,6 +27,7 @@ export function observeChunkReads(database: FacetStorage) {
           const bytes = row.bin;
           if (!(bytes instanceof ArrayBuffer) && !(bytes instanceof Uint8Array))
             throw new Error("Pinned chunk-read result changed.");
+          returnedBytes += bytes.byteLength;
           rows.push({
             phase,
             path: paths.get(inode) ?? null,
@@ -49,6 +51,13 @@ export function observeChunkReads(database: FacetStorage) {
     },
     phase(value: string) {
       phase = value;
+    },
+    counters() {
+      return {
+        retainedReadRows: rows.length,
+        returnedChunkBytes: returnedBytes,
+        trackedInodes: paths.size,
+      };
     },
     snapshot() {
       return rows.map((row) => ({ ...row }));

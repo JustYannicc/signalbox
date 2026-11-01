@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import { activateCreationJournal } from "./journalActivation.ts";
 import { readCreationInput } from "./placementSchema.ts";
 import { createHarnessDurableState } from "../HarnessDurableState.ts";
@@ -144,13 +145,17 @@ export class HarnessProcessCreationOwner {
       input,
     );
     this.#placement = placement;
-    const observed = await placement.stub.startFresh({
-      operationId: input.operationId,
-      targetFacetNonce: placement.identity.incarnationNonce,
-      publisherKey: input.requestPublisherKey,
-    });
+    const observed = await readRpcData(
+      placement.stub.startFresh({
+        operationId: input.operationId,
+        targetFacetNonce: placement.identity.incarnationNonce,
+        publisherKey: input.requestPublisherKey,
+      }),
+    );
     const loaded = snapshotPreparedRelease(
-      (await placement.stub.loadedPreparedRelease()) as HarnessProcessCreationInput["facet"]["targetPreparedRelease"],
+      (await readRpcData(
+        placement.stub.loadedPreparedRelease(),
+      )) as HarnessProcessCreationInput["facet"]["targetPreparedRelease"],
     );
     const expectedRelease = snapshotPreparedRelease(input.facet.targetPreparedRelease);
     if (

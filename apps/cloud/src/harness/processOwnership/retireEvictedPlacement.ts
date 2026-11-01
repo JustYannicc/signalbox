@@ -1,3 +1,4 @@
+import { readRpcData, rpcStubOwner } from "../../rpc/Resources.ts";
 import { createProcessSlots } from "../../computer/ProcessSlots.ts";
 import type { ProcessSlotLease } from "../../computer/ProcessSlots.ts";
 import {
@@ -55,10 +56,9 @@ export async function retireEvictedPlacement(input: {
   const store = environment.PLACEMENT_STORES.getByName(
     source.placement.owner,
   ) as unknown as HarnessProcessPlacementStoreClient;
-  const storedReceipt = await store.readEvictedRecovery(
-    source.placement.owner,
-    source.fence,
-    source.identity,
+  using _storeOwner = rpcStubOwner(store);
+  const storedReceipt = await readRpcData(
+    store.readEvictedRecovery(source.placement.owner, source.fence, source.identity),
   );
   const localReceipt = await context.storage.get<HarnessProcessEvictedRecoveryReceipt>(
     evictedRecoveryKey(source.placement.owner, source.fence, source.identity),
@@ -73,7 +73,7 @@ export async function retireEvictedPlacement(input: {
     return;
   }
 
-  const writer = await store.readWriter(source.placement.owner);
+  const writer = await readRpcData(store.readWriter(source.placement.owner));
   if (storedReceipt?.state === "completed") {
     assertReceiptMatchesSource(storedReceipt, source);
     await releaseCompletedWriter(
@@ -95,14 +95,16 @@ export async function retireEvictedPlacement(input: {
   )
     throw new Error("Evicted placement has no exact source or authorized recovery writer.");
 
-  const receipt = await store.authorizeEvictedRecovery(source.placement.owner, {
-    sourceFence: source.fence,
-    currentFence,
-    sourceWriter: expectedSourceWriter,
-    currentWriter,
-    processId: source.processId,
-    identity: source.identity,
-  });
+  const receipt = await readRpcData(
+    store.authorizeEvictedRecovery(source.placement.owner, {
+      sourceFence: source.fence,
+      currentFence,
+      sourceWriter: expectedSourceWriter,
+      currentWriter,
+      processId: source.processId,
+      identity: source.identity,
+    }),
+  );
   assertReceiptMatchesSource(receipt, source);
   if (receipt.state === "completed") {
     await releaseCompletedWriter(
@@ -118,8 +120,8 @@ export async function retireEvictedPlacement(input: {
   }
 
   if (!sameWriter(writer, currentWriter))
-    await store.claimWriter(source.placement.owner, currentWriter);
-  const activeWriter = await store.readWriter(source.placement.owner);
+    await readRpcData(store.claimWriter(source.placement.owner, currentWriter));
+  const activeWriter = await readRpcData(store.readWriter(source.placement.owner));
   if (activeWriter === undefined || !sameWriter(activeWriter, currentWriter))
     throw new Error("Evicted placement could not claim the current shard writer.");
 
@@ -163,14 +165,12 @@ export async function retireEvictedPlacement(input: {
     },
   });
 
-  await store.completeEvictedRecovery(source.placement.owner, receipt);
-  await store.releaseWriter(source.placement.owner, currentWriter);
-  if (!(await store.writerReleased(source.placement.owner, currentWriter)))
+  await readRpcData(store.completeEvictedRecovery(source.placement.owner, receipt));
+  await readRpcData(store.releaseWriter(source.placement.owner, currentWriter));
+  if (!(await readRpcData(store.writerReleased(source.placement.owner, currentWriter))))
     throw new Error("Evicted placement writer release has no durable receipt.");
-  const completed = await store.readEvictedRecovery(
-    source.placement.owner,
-    source.fence,
-    source.identity,
+  const completed = await readRpcData(
+    store.readEvictedRecovery(source.placement.owner, source.fence, source.identity),
   );
   if (completed?.state !== "completed")
     throw new Error("Evicted placement retirement did not persist its exact receipt.");
@@ -288,10 +288,8 @@ async function releaseCompletedWriter(
   storedWriter: HarnessProcessPlacementWriter | undefined,
 ): Promise<void> {
   if (storedWriter === undefined) return;
-  const receipt = await store.readEvictedRecovery(
-    source.placement.owner,
-    source.fence,
-    source.identity,
+  const receipt = await readRpcData(
+    store.readEvictedRecovery(source.placement.owner, source.fence, source.identity),
   );
   if (receipt?.state !== "completed")
     throw new Error("Evicted placement writer has no completed retirement receipt.");
@@ -302,9 +300,9 @@ async function releaseCompletedWriter(
   )
     throw new Error("Evicted placement writer changed after retirement.");
   if (!sameWriter(storedWriter, currentWriter))
-    await store.claimWriter(source.placement.owner, currentWriter);
-  await store.releaseWriter(source.placement.owner, currentWriter);
-  if (!(await store.writerReleased(source.placement.owner, currentWriter)))
+    await readRpcData(store.claimWriter(source.placement.owner, currentWriter));
+  await readRpcData(store.releaseWriter(source.placement.owner, currentWriter));
+  if (!(await readRpcData(store.writerReleased(source.placement.owner, currentWriter))))
     throw new Error("Evicted placement writer release has no durable receipt.");
   if (currentFence.owner !== source.placement.owner)
     throw new Error("Evicted placement writer release changed owners.");

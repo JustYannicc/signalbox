@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
 import { HarnessRunStoreObject } from "../../../../src/harness/HarnessRunStoreObject.ts";
 import { HarnessFilesStoreObject } from "../../../../src/harness/HarnessFilesStoreObject.ts";
 import { HarnessThreadSupervisorObject } from "../../../../src/harness/HarnessThreadSupervisorObject.ts";
@@ -49,11 +50,15 @@ export class QualifierRunStore extends HarnessRunStoreObject {
     const [command] = args;
     const result = await super.execute(...args);
     if (commandType(command) !== "read")
-      await proof(this.env as QualifierEnvironment).append("run-store-committed", {
-        object: this.ctx.id.name,
-        command,
-        result,
-      });
+      await withRpcStub(proof(this.env as QualifierEnvironment), async (stub) =>
+        readRpcData(
+          stub.append("run-store-committed", {
+            object: this.ctx.id.name,
+            command,
+            result,
+          }),
+        ),
+      );
     const finished = finishRequest(command);
     if (finished) this.#finished.get(finished)?.resolve();
     return result;
@@ -66,12 +71,16 @@ export class QualifierFilesStore extends HarnessFilesStoreObject {
     const result = await super.execute(...args);
     const type = commandType(command);
     if (type !== "readCheckpoint" && type !== "read")
-      await proof(this.env as QualifierEnvironment).append("files-store-committed", {
-        object: this.ctx.id.name,
-        commandType: type,
-        checkpoint: result.checkpoint,
-        publication: result.publication,
-      });
+      await withRpcStub(proof(this.env as QualifierEnvironment), async (stub) =>
+        readRpcData(
+          stub.append("files-store-committed", {
+            object: this.ctx.id.name,
+            commandType: type,
+            checkpoint: result.checkpoint,
+            publication: result.publication,
+          }),
+        ),
+      );
     return result;
   }
 }
@@ -81,11 +90,15 @@ export class QualifierSupervisor extends HarnessThreadSupervisorObject {
     const [command] = args;
     const result = await super.execute(...args);
     if (commandType(command) !== "read")
-      await proof(this.env as QualifierEnvironment).append("supervisor-committed", {
-        object: this.ctx.id.name,
-        command,
-        result,
-      });
+      await withRpcStub(proof(this.env as QualifierEnvironment), async (stub) =>
+        readRpcData(
+          stub.append("supervisor-committed", {
+            object: this.ctx.id.name,
+            command,
+            result,
+          }),
+        ),
+      );
     return result;
   }
 }
@@ -96,10 +109,14 @@ export class QualifierPlacementStore extends ObservedPlacementStore {
   ) {
     const [owner, writer] = args;
     await super.claimWriter(...args);
-    await proof(this.env as QualifierEnvironment).append("placement-writer-claimed", {
-      owner,
-      writer,
-    });
+    await withRpcStub(proof(this.env as QualifierEnvironment), async (stub) =>
+      readRpcData(
+        stub.append("placement-writer-claimed", {
+          owner,
+          writer,
+        }),
+      ),
+    );
   }
   protected override async beforePlacementRelease({
     owner,
@@ -112,13 +129,18 @@ export class QualifierPlacementStore extends ObservedPlacementStore {
       QualifierShardPort,
       "evidence"
     >;
-    const before = await proof(env).append("placement-before-release", {
-      owner,
-      writer,
-      evidence: await shard.evidence(),
-      releaseEvidence: evidence,
-      releaseProof,
-    });
+    using _shardOwner = rpcStubOwner(shard);
+    const before = await withRpcStub(proof(env), async (stub) =>
+      readRpcData(
+        stub.append("placement-before-release", {
+          owner,
+          writer,
+          evidence: await readRpcData(shard.evidence()),
+          releaseEvidence: evidence,
+          releaseProof,
+        }),
+      ),
+    );
     return before.sequence;
   }
   protected override async afterPlacementRelease(
@@ -126,13 +148,17 @@ export class QualifierPlacementStore extends ObservedPlacementStore {
     beforeSequence: number | undefined,
   ) {
     assert(beforeSequence !== undefined, "Placement release observer lost its before sequence");
-    await proof(this.env as QualifierEnvironment).recordWriterRelease({
-      owner,
-      writer,
-      beforeSequence,
-      terminals: releaseProof.terminals,
-      releaseProof,
-    });
+    await withRpcStub(proof(this.env as QualifierEnvironment), async (stub) =>
+      readRpcData(
+        stub.recordWriterRelease({
+          owner,
+          writer,
+          beforeSequence,
+          terminals: releaseProof.terminals,
+          releaseProof,
+        }),
+      ),
+    );
   }
   async ownership(owner: string) {
     const writer = await this.readWriter(owner);

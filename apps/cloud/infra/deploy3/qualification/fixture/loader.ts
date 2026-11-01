@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
 import { claudeStepRoute } from "./claudeScenario.ts";
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
 import { observeCommandInvocation } from "./commandObservation.ts";
@@ -86,7 +87,9 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
           const route = (path: string) => ({ method: "POST", path });
           const calibration = route(`/claude/${prepared.variant}/calibration`);
           const restore = route(`/claude/${prepared.variant}/replace/dispatch`);
-          const step = await proof(env).claudeStepForLoader();
+          const step = await withRpcStub(proof(env), async (stub) =>
+            readRpcData(stub.claudeStepForLoader()),
+          );
           const run = route(step ? claudeStepRoute(step) : `/claude/${prepared.variant}/restore`);
           const pin: ObserverLoaderPin = {
             loaderId: name,
@@ -120,12 +123,16 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
             },
           };
           const observed = observeWorkerCode(prepared.code, env.RUN_ID, pin, tail);
-          await proof(env).append("actual-claude-loader-materialized", {
-            name,
-            pin,
-            mainModule: actual.mainModule,
-            modules: Object.keys(observed.code.modules),
-          });
+          await withRpcStub(proof(env), async (stub) =>
+            readRpcData(
+              stub.append("actual-claude-loader-materialized", {
+                name,
+                pin,
+                mainModule: actual.mainModule,
+                modules: Object.keys(observed.code.modules),
+              }),
+            ),
+          );
           return observed.code;
         }
         assert(actual.mainModule === "qualifier-facet.mjs", "C selected an undeclared facet main");
@@ -138,16 +145,22 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
         };
         const phase = name.startsWith("observer-calibration-")
           ? undefined
-          : await proof(env).modelConstructionPhase();
+          : await withRpcStub(proof(env), async (stub) =>
+              readRpcData(stub.modelConstructionPhase()),
+            );
         if (phase !== undefined) assertQualifierCodexFacetConfiguration(actual.env);
         const pin = facetPin(name, actual.env?.HARNESS_RESUME_CREATION === true, phase);
         const observed = observeWorkerCode(enriched, env.RUN_ID, pin, tail);
-        await proof(env).append("actual-loader-materialized", {
-          name,
-          pin,
-          mainModule: actual.mainModule,
-          modules: Object.keys(observed.code.modules),
-        });
+        await withRpcStub(proof(env), async (stub) =>
+          readRpcData(
+            stub.append("actual-loader-materialized", {
+              name,
+              pin,
+              mainModule: actual.mainModule,
+              modules: Object.keys(observed.code.modules),
+            }),
+          ),
+        );
         return observed.code;
       });
     },
@@ -158,7 +171,8 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
 export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
   async run(input: ChildWorkerInvocation, target: Parameters<ChildWorkerLoaderPort["run"]>[1]) {
     const owner = proof(this.env);
-    const phase = await owner.commandPhase();
+    using _ownerStub = rpcStubOwner(owner);
+    const phase = await readRpcData(owner.commandPhase());
     const tail = this.env.QUALIFIER_TAIL;
     const original = this.env.LOADER;
     const loader: WorkerLoader = {
@@ -181,12 +195,14 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
             },
           };
           const observed = observeWorkerCode(actual, this.env.RUN_ID, pin, tail);
-          await owner.append("actual-command-loader-materialized", {
-            name,
-            pin,
-            mainModule: actual.mainModule,
-            modules: Object.keys(observed.code.modules),
-          });
+          await readRpcData(
+            owner.append("actual-command-loader-materialized", {
+              name,
+              pin,
+              mainModule: actual.mainModule,
+              modules: Object.keys(observed.code.modules),
+            }),
+          );
           return observed.code;
         });
       },
@@ -207,12 +223,14 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
 
 export class QualifierTail extends WorkerEntrypoint<QualifierEnvironment> {
   async captureOuter(items: TraceItem[]) {
-    return await proof(this.env).tailRecords(items, "outer-platform");
+    return await withRpcStub(proof(this.env), async (stub) =>
+      readRpcData(stub.tailRecords(items, "outer-platform")),
+    );
   }
   override async tail(items: TraceItem[]) {
     assert(Array.isArray(items) && items.length > 0, "The platform delivered an empty tail batch");
     const plainItems: TraceItem[] = JSON.parse(JSON.stringify(items));
-    await proof(this.env).tailRecords(plainItems);
+    await withRpcStub(proof(this.env), async (stub) => readRpcData(stub.tailRecords(plainItems)));
     for (const item of plainItems) {
       const raw = JSON.stringify(item);
       const bytes = new TextEncoder().encode(raw);

@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub } from "../../../../src/rpc/Resources.ts";
 import { HarnessProcessPlacementStoreObject } from "../../../../src/harness/HarnessProcessPlacementStoreObject.ts";
 import type {
   HarnessProcessPlacementWriter,
@@ -74,7 +75,10 @@ export class ObservedPlacementStore extends HarnessProcessPlacementStoreObject {
         };
       };
     };
-    const evidence = await env.PROCESS_EXECUTION_SHARDS.getByName(owner).placementReleaseEvidence();
+    const evidence = await withRpcStub(
+      env.PROCESS_EXECUTION_SHARDS.getByName(owner),
+      async (stub) => readRpcData(stub.placementReleaseEvidence()),
+    );
     const creations = (evidence.creations ?? []).filter(
       (row) =>
         row.record.claim.ownerId === owner &&

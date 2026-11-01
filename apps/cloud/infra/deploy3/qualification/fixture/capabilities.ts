@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub } from "../../../../src/rpc/Resources.ts";
 import type { HarnessProcessResumePreparedRelease } from "../../../../src/harness/HarnessProcessResume.ts";
 import { decodePreparedRelease } from "../preparedRelease.schema.ts";
 import { publishSeedCheckpoint } from "./seedPublication.ts";
@@ -131,6 +132,23 @@ export class QualifierCapabilities<
     channel: "native-stdin" | "native-stdout" | "native-stderr";
     ordinal: number;
     bytes: Uint8Array;
+    resources?: {
+      readonly scope: "facet-capture-and-cloud-rpc-module";
+      readonly pendingRawBytes: number;
+      readonly pendingRawChunks: number;
+      readonly peakPendingRawBytes: number;
+      readonly peakPendingRawChunks: number;
+      readonly databaseBytes: number | null;
+      readonly fileSystemResidentBytes: null;
+      readonly reads: {
+        readonly retainedReadRows: number;
+        readonly returnedChunkBytes: number;
+        readonly trackedInodes: number;
+      };
+      readonly rpc: ReturnType<
+        typeof import("../../../../src/rpc/Resources.ts").rpcResourceSnapshot
+      >;
+    };
   }) {
     const payload = await this.journal.put(
       `${input.channel}-${input.incarnation}-${input.ordinal}`,
@@ -140,6 +158,7 @@ export class QualifierCapabilities<
       incarnation: input.incarnation,
       ordinal: input.ordinal,
       payload,
+      ...(input.resources === undefined ? {} : { resources: input.resources }),
     });
   }
   async verifyArtifact(ref: HarnessRunArtifact) {
@@ -255,13 +274,19 @@ export class QualifierCapabilities<
   ) {
     const config = await this.configuration();
     const stageRunId = `${config.runId}/stage/${requestId}`;
-    const staged = await this.env.HARNESS_FILES_STORE.getByName(stageRunId).execute({
-      type: "initialize",
-      runId: stageRunId,
-      control: control(1),
-      publisher,
-      checkpoint: { ...files, parentCheckpointId: null },
-    });
+    const staged = await withRpcStub(
+      this.env.HARNESS_FILES_STORE.getByName(stageRunId),
+      async (stub) =>
+        readRpcData(
+          stub.execute({
+            type: "initialize",
+            runId: stageRunId,
+            control: control(1),
+            publisher,
+            checkpoint: { ...files, parentCheckpointId: null },
+          }),
+        ),
+    );
     const native = await this.journal.put(files.checkpointId, encoder.encode(nativeJson));
     const filesystem = {
       id: files.checkpointId,
@@ -285,12 +310,18 @@ export class QualifierCapabilities<
       filesystem: HarnessRunArtifact;
     }>(`stage/${requestId}`);
     assert(stage, "The checkpoint has not been staged");
-    const result = await this.env.HARNESS_FILES_STORE.getByName(stage.stageRunId).execute({
-      type: "readCheckpoint",
-      runId: stage.stageRunId,
-      publisher: stage.publisher,
-      checkpointId: stage.filesystem.id,
-    });
+    const result = await withRpcStub(
+      this.env.HARNESS_FILES_STORE.getByName(stage.stageRunId),
+      async (stub) =>
+        readRpcData(
+          stub.execute({
+            type: "readCheckpoint",
+            runId: stage.stageRunId,
+            publisher: stage.publisher,
+            checkpointId: stage.filesystem.id,
+          }),
+        ),
+    );
     const parent = await this.ctx.storage.get<string | null>(`checkpoint-parent/${requestId}`);
     assert(parent !== undefined, "Checkpoint parent is missing");
     return {
@@ -320,12 +351,18 @@ export class QualifierCapabilities<
     }>({ prefix: "stage/" });
     const stage = [...stages.values()].find((entry) => sameArtifact(entry.filesystem, ref));
     assert(stage, "Unknown filesystem artifact");
-    const result = await this.env.HARNESS_FILES_STORE.getByName(stage.stageRunId).execute({
-      type: "readCheckpoint",
-      runId: stage.stageRunId,
-      publisher: stage.publisher,
-      checkpointId: ref.id,
-    });
+    const result = await withRpcStub(
+      this.env.HARNESS_FILES_STORE.getByName(stage.stageRunId),
+      async (stub) =>
+        readRpcData(
+          stub.execute({
+            type: "readCheckpoint",
+            runId: stage.stageRunId,
+            publisher: stage.publisher,
+            checkpointId: ref.id,
+          }),
+        ),
+    );
     assert(result.checkpoint.manifestSha256 === ref.sha256, "Staged filesystem artifact changed");
   }
   async exportPage(prefix: string, startAfter?: string) {

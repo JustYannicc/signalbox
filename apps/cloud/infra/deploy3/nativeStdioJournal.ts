@@ -205,16 +205,21 @@ export async function inspectNativeStdio(input: {
       let legacy: LegacyKind = "raw-without-summary";
       let incompleteReason: string | null = "legacy-stream-total-unavailable";
       if (summary?.kind === "current") {
-        const lastRaw = streamChunks.at(-1)?.sequence ?? 0;
-        if (lastRaw > summary.sequence) fail("Native stdio summary precedes its raw chunks");
+        const covered = streamChunks.filter((chunk) => chunk.sequence < summary.sequence);
+        const coveredBytes = covered.reduce((sum, chunk) => sum + chunk.ref.bytes, 0);
+        const hasLaterRaw = NATIVE_STDIO_CHANNELS.some(
+          (candidate) =>
+            (chunks.get(groupKey(incarnation, candidate))?.at(-1)?.sequence ?? 0) >
+            summary.sequence,
+        );
         const stats = summary.value.streams[channel];
         assertByteCount(stats.observedBytes, "Native stdio observed byte count is invalid");
         assertByteCount(stats.acceptedBytes, "Native stdio accepted byte count is invalid");
         assertByteCount(stats.chunkCount, "Native stdio chunk count is invalid");
         if (
           stats.observation !== observationFor(channel) ||
-          stats.chunkCount !== streamChunks.length ||
-          stats.acceptedBytes !== capturedBytes ||
+          stats.chunkCount !== covered.length ||
+          stats.acceptedBytes !== coveredBytes ||
           stats.observedBytes < stats.acceptedBytes ||
           (stats.complete && stats.observedBytes !== stats.acceptedBytes) ||
           (stats.complete && stats.incompleteReason !== null) ||
@@ -222,10 +227,11 @@ export async function inspectNativeStdio(input: {
         ) {
           fail("Native stdio summary differs from its chunks");
         }
-        complete = stats.complete;
-        observedBytes = stats.observedBytes;
+        // A checkpoint is a valid prefix. A killed turn may never publish its final totals.
+        complete = !hasLaterRaw && stats.complete;
+        observedBytes = hasLaterRaw ? null : stats.observedBytes;
         legacy = "none";
-        incompleteReason = stats.incompleteReason;
+        incompleteReason = hasLaterRaw ? "final-summary-unavailable" : stats.incompleteReason;
       } else if (summary?.kind === "legacy") {
         const lastRaw = streamChunks.at(-1)?.sequence ?? 0;
         if (lastRaw > summary.sequence) fail("Legacy stdio summary precedes its raw chunks");

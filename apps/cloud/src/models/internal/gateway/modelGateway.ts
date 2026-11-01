@@ -3,7 +3,9 @@ import {
   type ModelGatewayProvider,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 
+import { readRpcData } from "../../../rpc/Resources.ts";
 import type { ModelServeReply } from "../../ModelProtocol.ts";
+import { relayRpcResponse } from "../rpcResponse.ts";
 import {
   LOCAL_KEY_HEADER,
   bearerOrKey,
@@ -11,8 +13,8 @@ import {
   errorResponse,
   withoutCaller,
 } from "./http.ts";
-import { threadOfModelToken } from "../../../thread/ModelTokens.ts";
 import type { ModelGatewayRecord } from "../../ModelRecords.ts";
+import { threadOfModelToken } from "../../../thread/ModelTokens.ts";
 import { makeUsageScanner } from "./usageScanner.ts";
 
 /**
@@ -107,9 +109,9 @@ export async function handleModelRequest(
     // The request body streams through rather than being buffered (Node requires saying so).
     duplex: "half",
   };
-  let served: ModelServeReply;
+  let rpcReply: ModelServeReply;
   try {
-    served = await deps.serve(
+    rpcReply = await deps.serve(
       token,
       provider,
       `${path}${url.search}`,
@@ -119,95 +121,138 @@ export async function handleModelRequest(
     record({ status: 503, authMs: deps.now() - startedAt });
     return errorResponse(provider, 503, "Could not check the model token or key. Try again.");
   }
-  const { authMs } = served;
-  if (served._tag === "denied") {
+  if (rpcReply._tag === "denied") {
+    const served = await readRpcData(Promise.resolve(rpcReply));
     // A key in its own header rides next to the harness's own sign-in, which is
     // fine: a 401 would make Codex refresh its ChatGPT token for nothing.
     const status = request.headers.has(LOCAL_KEY_HEADER) ? 403 : 401;
-    record({ status, authMs, denied: served.reason });
+    record({ status, authMs: served.authMs, denied: served.reason });
     return errorResponse(provider, status, served.reason);
   }
+  const { authMs } = rpcReply;
   // Who the request was for: a turn, or a local key's owner.
   const grant =
-    served._tag === "granted"
-      ? { runId: served.runId, traceId: served.traceId }
-      : { local: { userId: served.userId, keyId: served.keyId } };
-  const { reply } = served;
+    rpcReply._tag === "granted"
+      ? { runId: rpcReply.runId, traceId: rpcReply.traceId }
+      : { local: { userId: rpcReply.userId, keyId: rpcReply.keyId } };
+  const { reply } = rpcReply;
   if (reply._tag === "denied") {
-    record({ status: 403, ...grant, authMs, denied: reply.reason });
-    return errorResponse(provider, 403, reply.reason);
+    const reason = reply.reason;
+    await readRpcData(Promise.resolve(rpcReply));
+    record({ status: 403, ...grant, authMs, denied: reason });
+    return errorResponse(provider, 403, reason);
   }
   if (reply._tag === "failed") {
+    const reason = reply.reason;
+    await readRpcData(Promise.resolve(rpcReply));
     record({ status: 502, ...grant, authMs, outcome: "failed" });
-    return errorResponse(provider, 502, `The pool is unavailable: ${reply.reason}`);
+    return errorResponse(provider, 502, `The pool is unavailable: ${reason}`);
   }
-  const { response } = reply;
-  const moved = reply.accountMoved === undefined ? {} : { accountMoved: reply.accountMoved };
-  const headersMs = deps.now() - startedAt;
-  const upstreamHeadersMs = headersMs - authMs;
-  // Everything before the pool's CLIProxyAPI answered that it did not spend itself:
-  // the token check, the hops to the pool, its access check and a cold container's start.
-  const addedMs = Math.max(0, headersMs - reply.upstreamMs);
-  const headers = new Headers(response.headers);
-  for (const name of DROPPED_RESPONSE_HEADERS) headers.delete(name);
-  const init = { status: response.status, statusText: response.statusText, headers };
-  if (response.body === null) {
-    record({ status: response.status, ...grant, ...moved, authMs, upstreamHeadersMs, addedMs });
-    return new Response(null, init);
-  }
+  const response = relayRpcResponse(reply.response, rpcReply);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let finish: ((outcome: NonNullable<ModelGatewayRecord["outcome"]>) => void) | undefined;
+  try {
+    const moved = reply.accountMoved === undefined ? {} : { accountMoved: reply.accountMoved };
+    const headersMs = deps.now() - startedAt;
+    const upstreamHeadersMs = headersMs - authMs;
+    // Everything before the pool's CLIProxyAPI answered that it did not spend itself:
+    // the token check, the hops to the pool, its access check and a cold container's start.
+    const addedMs = Math.max(0, headersMs - reply.upstreamMs);
+    const headers = new Headers(response.headers);
+    for (const name of DROPPED_RESPONSE_HEADERS) headers.delete(name);
+    const init = { status: response.status, statusText: response.statusText, headers };
+    if (response.body === null) {
+      record({ status: response.status, ...grant, ...moved, authMs, upstreamHeadersMs, addedMs });
+      return new Response(null, init);
+    }
 
-  // Pulled chunk by chunk as the caller reads, so nothing is buffered, and logged
-  // however the body ends: a harness drops the stream when its turn is interrupted.
-  const reader = response.body.getReader();
-  // `/v1/models` reports no usage.
-  const scanner = makeUsageScanner(
-    provider,
-    path.startsWith("/v1/models") ? null : response.headers.get("content-type"),
-  );
-  let firstChunkMs: number | null = null;
-  let logged = false;
-  const finish = (outcome: NonNullable<ModelGatewayRecord["outcome"]>) => {
-    if (logged) return;
-    logged = true;
-    const { model, usage } = scanner.finish();
-    record({
-      status: response.status,
-      ...grant,
-      ...moved,
-      authMs,
-      upstreamHeadersMs,
-      firstChunkMs,
-      addedMs,
-      outcome,
-      model,
-      usage,
-    });
-  };
-  const body = new ReadableStream<Uint8Array>(
-    {
-      async pull(controller) {
-        try {
-          const { done, value } = await reader.read();
-          if (done) {
-            finish("complete");
-            controller.close();
-            return;
+    // Pulled chunk by chunk as the caller reads, so nothing is buffered, and logged
+    // however the body ends: a harness drops the stream when its turn is interrupted.
+    const bodyReader = response.body.getReader();
+    reader = bodyReader;
+    // `/v1/models` reports no usage.
+    const scanner = makeUsageScanner(
+      provider,
+      path.startsWith("/v1/models") ? null : response.headers.get("content-type"),
+    );
+    let firstChunkMs: number | null = null;
+    let logged = false;
+    const finishStream = (outcome: NonNullable<ModelGatewayRecord["outcome"]>) => {
+      if (logged) return;
+      logged = true;
+      const { model, usage } = scanner.finish();
+      record({
+        status: response.status,
+        ...grant,
+        ...moved,
+        authMs,
+        upstreamHeadersMs,
+        firstChunkMs,
+        addedMs,
+        outcome,
+        model,
+        usage,
+      });
+    };
+    finish = finishStream;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          try {
+            const { done, value } = await bodyReader.read();
+            if (done) {
+              finishStream("complete");
+              controller.close();
+              return;
+            }
+            firstChunkMs ??= deps.now() - startedAt - authMs;
+            controller.enqueue(value);
+            // After the chunk is on its way, so reading usage never delays it.
+            scanner.push(value);
+          } catch (error) {
+            try {
+              await bodyReader.cancel(error);
+            } catch {
+              // Preserve the original response-stream error.
+            }
+            try {
+              finishStream("failed");
+            } catch {
+              // Preserve the original response-stream error.
+            }
+            controller.error(error);
           }
-          firstChunkMs ??= deps.now() - startedAt - authMs;
-          controller.enqueue(value);
-          // After the chunk is on its way, so reading usage never delays it.
-          scanner.push(value);
-        } catch (error) {
-          finish("failed");
-          controller.error(error);
-        }
+        },
+        async cancel(reason) {
+          let failure: unknown;
+          try {
+            await bodyReader.cancel(reason);
+          } catch (cause) {
+            failure = cause;
+          }
+          try {
+            finishStream("cancelled");
+          } catch (cause) {
+            failure ??= cause;
+          }
+          if (failure !== undefined) throw failure;
+        },
       },
-      cancel(reason) {
-        finish("cancelled");
-        return reader.cancel(reason);
-      },
-    },
-    { highWaterMark: 0 },
-  );
-  return new Response(body, init);
+      { highWaterMark: 0 },
+    );
+    return new Response(body, init);
+  } catch (cause) {
+    try {
+      if (reader !== undefined) await reader.cancel(cause);
+      else await response.body?.cancel(cause);
+    } catch {
+      // Preserve the original response or stream setup error.
+    }
+    try {
+      finish?.("failed");
+    } catch {
+      // Preserve the response-construction error.
+    }
+    throw cause;
+  }
 }

@@ -1,3 +1,4 @@
+import { readRpcData } from "../../../../src/rpc/Resources.ts";
 // @effect-diagnostics cryptoRandomUUID:off - Snapshot IDs are local qualification evidence.
 import { claudeQualificationToolObservation } from "./claudeToolObservation.ts";
 import * as Effect from "effect/Effect";
@@ -134,7 +135,7 @@ export async function claudeConfiguration(env: ClaudeFacetEnvironment) {
   const { QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: processEnvironment } =
     assertQualifierClaudeFacetConfiguration(env);
   const cap = claudeCapability(env);
-  const host = await cap.hostConfiguration();
+  const host = await readRpcData(cap.hostConfiguration());
   const assets = env.PROGRAM_ASSETS;
   assert(assets, "Claude qualification has no public program asset binding");
   const raw = await readConfiguration(assets, env.CONFIG_SHA256);
@@ -202,22 +203,24 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
         : undefined;
     assert(variant, "Claude host selected a release outside the frozen pair");
     yield* attempt(() =>
-      cap.prepareClaudeIncarnation({
-        incarnation: input.facetNonce,
-        loaderId: input.env.HARNESS_PROCESS_LOADER_ID,
-        ...(nativeSessionId && input.filesCheckpoint
-          ? {
-              kind: "restored" as const,
-              nativeSessionId,
-              checkpointId: input.filesCheckpoint.checkpoint.checkpointId,
-              manifestSha256: input.filesCheckpoint.checkpoint.manifestSha256,
-            }
-          : { kind: "fresh" as const }),
-        variant,
-      }),
+      readRpcData(
+        cap.prepareClaudeIncarnation({
+          incarnation: input.facetNonce,
+          loaderId: input.env.HARNESS_PROCESS_LOADER_ID,
+          ...(nativeSessionId && input.filesCheckpoint
+            ? {
+                kind: "restored" as const,
+                nativeSessionId,
+                checkpointId: input.filesCheckpoint.checkpoint.checkpointId,
+                manifestSha256: input.filesCheckpoint.checkpoint.manifestSha256,
+              }
+            : { kind: "fresh" as const }),
+          variant,
+        }),
+      ),
     );
     const gatewayAccess = yield* attempt(() =>
-      cap.claudeGatewayAccess({ incarnation: input.facetNonce, variant }),
+      readRpcData(cap.claudeGatewayAccess({ incarnation: input.facetNonce, variant })),
     );
     const gatewayEnvironment = yield* Effect.try({
       try: () => claudeGatewayEnvironment(gatewayAccess),
@@ -288,10 +291,12 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
         // The event stream can close on rejection, so this uses the request's awaited diagnostic queue.
         reportCliStartupFailure: (cause) =>
           state.queue(() =>
-            cap.append("claude-cli-startup-failure", {
-              incarnation: input.facetNonce,
-              failure: serializeHarnessFailure(cause),
-            }),
+            readRpcData(
+              cap.append("claude-cli-startup-failure", {
+                incarnation: input.facetNonce,
+                failure: serializeHarnessFailure(cause),
+              }),
+            ),
           ),
         nativeModules: DEFAULT_NODE_NATIVE_MODULES,
         loadPackages: async (_bridge, signal) => await imports.loadPackages(plan, signal),

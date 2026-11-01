@@ -16,6 +16,15 @@ import { createClaudeWorkloadTransport } from "./claudeModelTransport.ts";
 import { NATIVE_SESSION_UUID } from "../../../../src/harness/HarnessProcessCreation.ts";
 import { assert, errorRecord } from "./common.ts";
 import type { ClaudePersistedModelRecord } from "./claudeModelEvidence.ts";
+import {
+  type ClaudeRequestAttemptMarker,
+  type ClaudeRequestAttemptOutcome,
+  type ClaudeRequestAttemptStage,
+} from "./claudeAttemptCounters.ts";
+import { cancelClaudeIncomingRequestBody } from "./claudeBodyOwnership.ts";
+import { ClaudeAttemptJournal } from "./claudeAttemptJournal.ts";
+import type { ClaudeWorkloadResourceObserver } from "./claudeModelTransport.ts";
+import { rpcResourceSnapshot } from "../../../../src/rpc/Resources.ts";
 
 import type { ClaudeIncarnation as Incarnation } from "./claudeScenario.ts";
 import {
@@ -29,10 +38,12 @@ export type { ClaudeIncarnation as Incarnation } from "./claudeScenario.ts";
 export class ClaudeController {
   readonly #owner: QualifierExecutionContext;
   readonly #storage: DurableObjectStorage;
+  readonly #attemptJournal: ClaudeAttemptJournal;
   readonly #models = new Map<ClaudeVariant, ReturnType<ClaudeController["openModel"]>>();
   constructor(owner: QualifierExecutionContext, storage: DurableObjectStorage) {
     this.#owner = owner;
     this.#storage = storage;
+    this.#attemptJournal = new ClaudeAttemptJournal(storage);
   }
   async prepare(input: Incarnation) {
     assert(
@@ -160,32 +171,126 @@ export class ClaudeController {
     return { peer, transport };
   }
   async request(request: Request) {
-    const step = await this.active();
-    assert(step, "Claude model request has no active public C step");
-    const access = await this.#storage.get<ClaudeGatewayAccess>(`claude/gateway/${step.variant}`);
-    const credential = bearerOrKey(request.headers);
-    assert(
-      access &&
-        new URL(request.url).origin === new URL(access.baseUrl).origin &&
-        credential === access.credentialRef,
-      "Claude model request has no matching run-scoped gateway credential",
-    );
-    const failure = `claude/model/${step.variant}/failure`;
-    assert(
-      !(await this.#storage.get(failure)),
-      "Claude model's first failure forbids another request",
-    );
-    let model = this.#models.get(step.variant);
-    if (!model) {
-      model = this.openModel(step.variant);
-      this.#models.set(step.variant, model);
-    }
+    let attempt: ClaudeRequestAttemptMarker;
     try {
-      return await (await model).transport(request);
+      attempt = await this.#attemptJournal.start(
+        request.body === null ? "not-owned" : "owned",
+        rpcResourceSnapshot(),
+      );
     } catch (cause) {
-      await this.#storage.put(failure, errorRecord(cause));
+      const lifecycle = await cancelClaudeIncomingRequestBody(request);
+      if (lifecycle === "cancel-failed")
+        throw new AggregateError(
+          [cause, new Error("Claude request body cancellation failed before its attempt marker")],
+          "Claude attempt marker and request cleanup failed",
+          { cause },
+        );
       throw cause;
     }
+    let stage: ClaudeRequestAttemptStage = "active-step";
+    let outcome: ClaudeRequestAttemptOutcome = "failure";
+    let resources = attempt.resources;
+    let response: Response | undefined;
+    let failed = false;
+    let requestError: unknown;
+    let variant: ClaudeVariant | undefined;
+    try {
+      const step = await this.active();
+      assert(step, "Claude model request has no active public C step");
+      variant = step.variant;
+      stage = "credential";
+      const access = await this.#storage.get<ClaudeGatewayAccess>(`claude/gateway/${step.variant}`);
+      const credential = bearerOrKey(request.headers);
+      assert(
+        access &&
+          new URL(request.url).origin === new URL(access.baseUrl).origin &&
+          credential === access.credentialRef,
+        "Claude model request has no matching run-scoped gateway credential",
+      );
+      stage = "first-failure";
+      const failure = `claude/model/${step.variant}/failure`;
+      assert(
+        !(await this.#storage.get(failure)),
+        "Claude model's first failure forbids another request",
+      );
+      stage = "model-owner";
+      let model = this.#models.get(step.variant);
+      if (!model) {
+        model = this.openModel(step.variant);
+        this.#models.set(step.variant, model);
+      }
+      const opened = await model;
+      stage = "transport";
+      const observeResources: ClaudeWorkloadResourceObserver = (snapshot) => {
+        resources = snapshot;
+      };
+      response = await opened.transport(request, observeResources);
+      outcome = "success";
+    } catch (cause) {
+      failed = true;
+      requestError = cause;
+      if (stage !== "transport") {
+        const lifecycle = await cancelClaudeIncomingRequestBody(request);
+        resources = {
+          ...resources,
+          incomingRequestBodyLifecycle: lifecycle,
+        };
+        if (lifecycle === "cancel-failed")
+          requestError = new AggregateError(
+            [cause, new Error("Claude incoming request body cancellation failed")],
+            "Claude model request guard and input cleanup failed",
+            { cause },
+          );
+      }
+      if (stage === "transport" && variant) {
+        try {
+          await this.#storage.put(`claude/model/${variant}/failure`, errorRecord(cause));
+        } catch (markerError) {
+          requestError = new AggregateError(
+            [cause, markerError],
+            "Claude model request failed and its failure marker could not be stored",
+            { cause },
+          );
+        }
+      }
+    }
+
+    try {
+      await this.#attemptJournal.finish(
+        attempt,
+        outcome,
+        resources,
+        rpcResourceSnapshot(),
+        failed ? stage : undefined,
+      );
+    } catch (cause) {
+      if (failed) {
+        requestError = new AggregateError(
+          [requestError, cause],
+          "Claude model request failed and its terminal marker could not be stored",
+          { cause: requestError },
+        );
+      } else {
+        failed = true;
+        requestError = cause;
+        if (response?.body && !response.bodyUsed) {
+          try {
+            await response.body.cancel();
+            resources = { ...resources, returnedResponseBodyLifecycle: "cancelled" };
+          } catch (cancelError) {
+            resources = { ...resources, returnedResponseBodyLifecycle: "cancel-failed" };
+            requestError = new AggregateError(
+              [cause, cancelError],
+              "Claude model request marker and response cleanup failed",
+              { cause },
+            );
+          }
+        }
+      }
+    }
+    if (failed) throw requestError;
+    if (!response) throw new Error("Claude model request completed without a response.");
+    return response;
   }
   async c(variant: ClaudeVariant, phase: ClaudeStepPhase) {
     const config = await this.#owner.config();
@@ -244,5 +349,13 @@ export class ClaudeController {
         })
       ).values(),
     ];
+  }
+
+  async requestAttemptCounters() {
+    return await this.#attemptJournal.counters();
+  }
+
+  async requestAttempts() {
+    return await this.#attemptJournal.attempts();
   }
 }

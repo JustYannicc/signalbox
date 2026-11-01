@@ -1,3 +1,4 @@
+import { readRpcData, rpcStubOwner } from "../../rpc/Resources.ts";
 // @effect-diagnostics cryptoRandomUUID:off - execution IDs and facet names are opaque platform identifiers.
 import {
   createHarnessProcessPlacementStoreClient,
@@ -176,89 +177,111 @@ export async function openPlacementSession(
     (environment.HARNESS_THREAD_SUPERVISOR.getByName(
       input.runId,
     ) as unknown as HarnessProcessExecutionSupervisorClient);
-  const control = await authority.execute({
-    type: "read",
-    runId: input.runId,
-    control: input.controllerClaim,
-  });
-  if (
-    control.snapshot.ownerId !== input.controllerClaim.ownerId ||
-    control.snapshot.controlIncarnationId !== input.controllerClaim.incarnationId ||
-    control.snapshot.controlEpoch !== input.controllerClaim.epoch
-  )
-    throw new HarnessProcessPlacementError(
-      "stale-publication",
-      "Process execution is not owned by the current controller claim.",
-      true,
-    );
-
-  const writer: HarnessProcessPlacementWriter = {
-    executionOperationId: input.executionOperationId,
-    shardIndex: input.shardIndex,
-    shardIncarnationNonce,
-    controllerClaim: input.controllerClaim,
-  };
-  const byteLimit = Number(environment.RESIDENT_BYTE_LIMIT);
-  if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0)
-    throw new RangeError("Process execution shard resident-byte limit is invalid.");
-  await storesStub.claimWriter(owner, writer);
-  const stores = createHarnessProcessPlacementStoreClient(storesStub, owner, writer);
-  let placementPromise: ReturnType<typeof createHarnessProcessPlacement> | undefined;
-  // A read/create failure after the durable writer claim keeps it reserved for explicit repair.
-  const priorRecords = await stores.recovery.list();
-  const processById = new Map(input.processes.map((process) => [process.processId, process]));
-  placementPromise = createHarnessProcessPlacement({
-    owner,
-    contextKey: context,
-    context: "durable-object",
-    shardIncarnationNonce,
-    controllerClaim: input.controllerClaim,
-    store: stores.processSlots,
-    recovery: stores.recovery,
-    residentByteLimit: byteLimit,
-    scheduleQuantum(callback) {
-      let cancelled = false;
-      queueMicrotask(() => {
-        if (!cancelled) callback();
-      });
-      return () => {
-        cancelled = true;
-      };
-    },
-    invalidate(loaderId) {
-      context.facets.abort(loaderId, "The process-slot lease was retired.");
-      context.facets.delete(loaderId);
-    },
-    reconcile: (lease) =>
-      reconcileFacet({
-        lease,
-        records: priorRecords,
-        processById,
-        reconciler: authority,
-        context,
-        environment,
-        recovery: stores.recovery,
+  const storesOwner = rpcStubOwner(storesStub);
+  const authorityOwner = suppliedAuthority === undefined ? rpcStubOwner(authority) : undefined;
+  let retained = false;
+  try {
+    const control = await readRpcData(
+      authority.execute({
+        type: "read",
+        runId: input.runId,
+        control: input.controllerClaim,
       }),
-  });
-  const placement = await placementPromise.catch((cause: unknown) => {
-    throw new PlacementCreationFailure(cause, priorRecords);
-  });
-  let closed = false;
-  return {
-    owner,
-    storesStub,
-    authority,
-    writer,
-    stores,
-    priorRecords,
-    placement,
-    async close() {
-      if (closed) return;
-      await storesStub.releaseWriter(owner, writer);
-      if (placementPromise !== undefined) forgetHarnessProcessPlacement(context, placementPromise);
-      closed = true;
-    },
-  };
+    );
+    if (
+      control.snapshot.ownerId !== input.controllerClaim.ownerId ||
+      control.snapshot.controlIncarnationId !== input.controllerClaim.incarnationId ||
+      control.snapshot.controlEpoch !== input.controllerClaim.epoch
+    )
+      throw new HarnessProcessPlacementError(
+        "stale-publication",
+        "Process execution is not owned by the current controller claim.",
+        true,
+      );
+
+    const writer: HarnessProcessPlacementWriter = {
+      executionOperationId: input.executionOperationId,
+      shardIndex: input.shardIndex,
+      shardIncarnationNonce,
+      controllerClaim: input.controllerClaim,
+    };
+    const byteLimit = Number(environment.RESIDENT_BYTE_LIMIT);
+    if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0)
+      throw new RangeError("Process execution shard resident-byte limit is invalid.");
+    await storesStub.claimWriter(owner, writer);
+    const stores = createHarnessProcessPlacementStoreClient(storesStub, owner, writer);
+    let placementPromise: ReturnType<typeof createHarnessProcessPlacement> | undefined;
+    // A read/create failure after the durable writer claim keeps it reserved for explicit repair.
+    const priorRecords = await stores.recovery.list();
+    const processById = new Map(input.processes.map((process) => [process.processId, process]));
+    placementPromise = createHarnessProcessPlacement({
+      owner,
+      contextKey: context,
+      context: "durable-object",
+      shardIncarnationNonce,
+      controllerClaim: input.controllerClaim,
+      store: stores.processSlots,
+      recovery: stores.recovery,
+      residentByteLimit: byteLimit,
+      scheduleQuantum(callback) {
+        let cancelled = false;
+        queueMicrotask(() => {
+          if (!cancelled) callback();
+        });
+        return () => {
+          cancelled = true;
+        };
+      },
+      invalidate(loaderId) {
+        context.facets.abort(loaderId, "The process-slot lease was retired.");
+        context.facets.delete(loaderId);
+      },
+      reconcile: (lease) =>
+        reconcileFacet({
+          lease,
+          records: priorRecords,
+          processById,
+          reconciler: authority,
+          context,
+          environment,
+          recovery: stores.recovery,
+        }),
+    });
+    const placement = await placementPromise.catch((cause: unknown) => {
+      throw new PlacementCreationFailure(cause, priorRecords);
+    });
+    let closed = false;
+    retained = true;
+    return {
+      owner,
+      storesStub,
+      authority,
+      writer,
+      stores,
+      priorRecords,
+      placement,
+      async close() {
+        if (closed) return;
+        await storesStub.releaseWriter(owner, writer);
+        if (placementPromise !== undefined)
+          forgetHarnessProcessPlacement(context, placementPromise);
+        closed = true;
+        try {
+          storesOwner[Symbol.dispose]();
+        } finally {
+          authorityOwner?.[Symbol.dispose]();
+        }
+      },
+    };
+  } finally {
+    if (!retained) {
+      try {
+        storesOwner[Symbol.dispose]();
+      } finally {
+        authorityOwner?.[Symbol.dispose]();
+      }
+    }
+  }
 }
 
 /** Opens one fresh facet through the same actual keyed placement and writer path as runShard. */
@@ -435,7 +458,9 @@ async function reconcileFacet(input: {
       priorFacetNonce: record.priorFacetNonce,
       expectedFacetGeneration,
     };
-    const disposition = await input.reconciler.reconcileProcessFacetPublication(request);
+    const disposition = await readRpcData(
+      input.reconciler.reconcileProcessFacetPublication(request),
+    );
     if (disposition.status === "published") {
       const receipt = confirmedProcessPublication(disposition.publication, {
         controllerClaim: record.controllerClaim,

@@ -1,3 +1,4 @@
+import { readRpcData } from "../../../../src/rpc/Resources.ts";
 import { createFacetSqliteStorage } from "../../../../src/kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem } from "../../../../src/kernel/KernelFileSystem.ts";
 import { KernelWakeRegistry } from "../../../../src/kernel/KernelWakeRegistry.ts";
@@ -14,9 +15,9 @@ export async function calibrateComputer(
   cap: QualifierCapabilities,
   loader: ChildWorkerLoaderPort,
 ) {
-  await cap.append("observer-computer-entered", {});
-  const catalog = await cap.catalog("codex");
-  const inventory = await cap.inventory("codex");
+  await readRpcData(cap.append("observer-computer-entered", {}));
+  const catalog = await readRpcData(cap.catalog("codex"));
+  const inventory = await readRpcData(cap.inventory("codex"));
   const credentials = { uid: 1000, gid: 1000, euid: 1000, egid: 1000 };
   const storage = createFacetSqliteStorage(ctx.storage, () => 1n);
   storage.posix.initialize(storage.root, { uid: 1000, gid: 1000, mode: 0o755 });
@@ -29,15 +30,17 @@ export async function calibrateComputer(
   const abort = new AbortController();
   for (const [path, file] of Object.entries(catalog.files)) {
     fs.mkdirSync(path.slice(0, path.lastIndexOf("/")) || "/", { recursive: true });
-    fs.writeFileSync(path, await cap.read(path), { mode: file.mode });
+    fs.writeFileSync(path, await readRpcData(cap.read(path)), { mode: file.mode });
     fs.chmodSync(path, file.mode);
   }
   fs.mkdirSync("/workspace", { recursive: true });
   fs.writeFileSync("/workspace/calibration.txt", "observer-command-calibration\n");
   filesystem.chdir("/workspace");
-  await cap.append("observer-computer-files-seeded", {
-    fileCount: Object.keys(catalog.files).length,
-  });
+  await readRpcData(
+    cap.append("observer-computer-files-seeded", {
+      fileCount: Object.keys(catalog.files).length,
+    }),
+  );
   const computer = createProductComputer({
     threadId: "observer-calibration-only",
     filesystem,
@@ -86,7 +89,7 @@ export async function calibrateComputer(
   const results = [];
   try {
     for (const { expected, ...command } of commands) {
-      await cap.append("observer-computer-command-entered", command);
+      await readRpcData(cap.append("observer-computer-command-entered", command));
       const child = await computer.exec(
         {
           ...command,
@@ -117,7 +120,9 @@ export async function calibrateComputer(
           `Actual calibration stdout changed: ${command.executable}`,
         );
         results.push({ command, stdout, stderr, exit });
-        await cap.append("observer-computer-command-finished", { command, stdout, stderr, exit });
+        await readRpcData(
+          cap.append("observer-computer-command-finished", { command, stdout, stderr, exit }),
+        );
       } finally {
         await child.dispose();
       }
@@ -127,7 +132,9 @@ export async function calibrateComputer(
     wakes.dispose();
     filesystem.dispose();
   }
-  await cap.append("observer-computer-closed", { processCount: computer.processes.size });
+  await readRpcData(
+    cap.append("observer-computer-closed", { processCount: computer.processes.size }),
+  );
   assert(computer.processes.size === 0, "Calibration left an admitted process running");
   return { results, processCount: computer.processes.size, officialNativeStarted: false };
 }

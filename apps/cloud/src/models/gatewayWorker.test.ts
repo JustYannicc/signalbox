@@ -135,6 +135,71 @@ describe("public model gateway worker", () => {
     expect(released).toBe(true);
   });
 
+  it("holds the service-binding result and nested response until the stream ends", async () => {
+    let sendChunk: ((chunk: string) => void) | undefined;
+    let closeStream: (() => void) | undefined;
+    let responseDisposals = 0;
+    let resultDisposals = 0;
+    const upstream = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          sendChunk = (chunk) => controller.enqueue(new TextEncoder().encode(chunk));
+          closeStream = () => controller.close();
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+    Object.defineProperty(upstream, Symbol.dispose, {
+      value: () => {
+        responseDisposals++;
+      },
+    });
+    const served: ModelServeReply = {
+      _tag: "granted",
+      runId,
+      traceId,
+      authMs: 1,
+      reply: { _tag: "forwarded", response: upstream, upstreamMs: 1 },
+    };
+    Object.defineProperty(served, Symbol.dispose, {
+      value: () => {
+        resultDisposals++;
+      },
+    });
+    const env: ModelGatewayEnv = {
+      GRANTS: {
+        serve: async () => served,
+        report: async () => {},
+      },
+    };
+
+    const response = await GatewayWorker.fetch(
+      new Request("https://gateway.test/anthropic/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": LIVE },
+        body: "{}",
+      }),
+      env,
+      makeContext().context,
+    );
+    expect(response.status).toBe(200);
+    expect(responseDisposals).toBe(0);
+    expect(resultDisposals).toBe(0);
+
+    const reader = response.body!.getReader();
+    const firstRead = reader.read();
+    sendChunk?.("event: message_start\n\n");
+    expect(new TextDecoder().decode((await firstRead).value)).toBe("event: message_start\n\n");
+    expect(responseDisposals).toBe(0);
+    expect(resultDisposals).toBe(0);
+
+    const finalRead = reader.read();
+    closeStream?.();
+    expect((await finalRead).done).toBe(true);
+    expect(responseDisposals).toBe(1);
+    expect(resultDisposals).toBe(1);
+  });
+
   it("reports usage from a completed local-key response to the key owner", async () => {
     const reports: Array<ModelGatewayRecord> = [];
     const env: ModelGatewayEnv = {

@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub } from "../../rpc/Resources.ts";
 import {
   createHarnessDurableState,
   type HarnessDurableStateBindings,
@@ -905,11 +906,15 @@ export class HarnessProcessResumeOwner {
           );
         const exports = (this.context as unknown as { readonly exports: ExecutionShardExports })
           .exports;
-        return exports.HarnessProcessExecutionEntrypoint({ props: {} }).runShard({
-          ...shard,
-          shardOwner: `${shard.shardOwner}/do-overflow-${shardIndex}`,
-          shardIndex: 0,
-        });
+        return withRpcStub(exports.HarnessProcessExecutionEntrypoint({ props: {} }), (entrypoint) =>
+          readRpcData(
+            entrypoint.runShard({
+              ...shard,
+              shardOwner: `${shard.shardOwner}/do-overflow-${shardIndex}`,
+              shardIndex: 0,
+            }),
+          ),
+        );
       }),
     );
     return {

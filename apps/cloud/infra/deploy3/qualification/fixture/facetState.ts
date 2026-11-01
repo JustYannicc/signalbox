@@ -1,3 +1,4 @@
+import { readRpcData, rpcResourceSnapshot } from "../../../../src/rpc/Resources.ts";
 // @effect-diagnostics globalDate:off - The injected filesystem clock is synchronous and runs outside Effect.
 import { createMemoryFilePersistencePorts } from "../../../../src/kernel/MemoryFilePersistencePorts.ts";
 import type { FacetStorage } from "../../../../src/kernel/FacetSqliteStorage.ts";
@@ -49,12 +50,26 @@ export function facetState(
   let failure: unknown;
   let pendingRawBytes = 0;
   let pendingRawChunks = 0;
+  let peakPendingRawBytes = 0;
+  let peakPendingRawChunks = 0;
+  const resources = () => ({
+    scope: "facet-capture-and-cloud-rpc-module" as const,
+    pendingRawBytes,
+    pendingRawChunks,
+    peakPendingRawBytes,
+    peakPendingRawChunks,
+    databaseBytes:
+      typeof ctx.storage.sql.databaseSize === "number" ? ctx.storage.sql.databaseSize : null,
+    fileSystemResidentBytes: null,
+    reads: reads.counters(),
+    rpc: rpcResourceSnapshot(),
+  });
   const rawOrdinals = new Map<string, number>();
   const stdioCapture = createNativeStdioCapture();
   const queue = (operation: () => Promise<unknown>) => {
     pending = pending
       .then(async () => {
-        await operation();
+        await readRpcData(operation());
       })
       .catch((cause) => {
         failure ??= cause;
@@ -77,9 +92,18 @@ export function facetState(
     rawOrdinals.set(channel, ordinal);
     pendingRawBytes += bytes.byteLength;
     pendingRawChunks += 1;
+    peakPendingRawBytes = Math.max(peakPendingRawBytes, pendingRawBytes);
+    peakPendingRawChunks = Math.max(peakPendingRawChunks, pendingRawChunks);
+    const counters = resources();
     queue(async () => {
       try {
-        await capability.recordRaw({ channel, incarnation, ordinal, bytes });
+        return await capability.recordRaw({
+          channel,
+          incarnation,
+          ordinal,
+          bytes,
+          resources: counters,
+        });
       } finally {
         pendingRawBytes -= bytes.byteLength;
         pendingRawChunks -= 1;
@@ -109,6 +133,13 @@ export function facetState(
     async flush(reason = "checkpoint") {
       const streams = stdioCapture.drain();
       queue(() => capability.append("native-stdio-streams", { incarnation, reason, ...streams }));
+      queue(() =>
+        capability.append("native-resource-counters", {
+          incarnation,
+          reason,
+          ...resources(),
+        }),
+      );
       await pending;
       if (failure !== undefined) throw new Error("Native byte capture failed", { cause: failure });
     },

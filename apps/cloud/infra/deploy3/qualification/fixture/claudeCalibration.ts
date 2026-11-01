@@ -1,3 +1,4 @@
+import { readRpcData } from "../../../../src/rpc/Resources.ts";
 import type { Computer } from "../../../../src/computer/Computer.ts";
 import { createProductComputer } from "../../../../src/computer/ProductComputer.ts";
 import { ChildWorkerCapacity } from "../../../../src/computer/ChildWorkerCapacity.ts";
@@ -24,8 +25,8 @@ export async function calibrateClaudePreparedRelease(input: {
   readonly release: Awaited<ReturnType<typeof loadClaudeQualificationRuntime>>;
   readonly home: string;
 }) {
-  const catalog = await input.capability.catalog("claude-code");
-  const inventory = await input.capability.inventory("claude-code");
+  const catalog = await readRpcData(input.capability.catalog("claude-code"));
+  const inventory = await readRpcData(input.capability.inventory("claude-code"));
   const wakes = new KernelWakeRegistry();
   const stdio = createKernelSessionStdio(wakes);
   const storage = createFacetSqliteStorage(input.ctx.storage, () => 1n);
@@ -44,7 +45,9 @@ export async function calibrateClaudePreparedRelease(input: {
     const fs = createNodeFs(files).fs;
     for (const [path, file] of Object.entries(catalog.files)) {
       fs.mkdirSync(path.slice(0, path.lastIndexOf("/")) || "/", { recursive: true });
-      fs.writeFileSync(path, await input.capability.read(path), { mode: file.mode });
+      fs.writeFileSync(path, await readRpcData(input.capability.read(path)), {
+        mode: file.mode,
+      });
       fs.chmodSync(path, file.mode);
     }
     for (const directory of [input.home, "/workspace", "/tmp"])

@@ -1,3 +1,4 @@
+import { readRpcData } from "../../../../src/rpc/Resources.ts";
 import { calibrateComputer } from "./calibrationComputer.ts";
 import ENGINE from "./codex-engine.wasm";
 import * as Effect from "effect/Effect";
@@ -68,13 +69,15 @@ const buildOptions = (
     const { env, ctx, facetNonce } = input;
     assertQualifierCodexFacetConfiguration(env);
     const cap = capability(env);
-    const config = yield* Effect.promise(() => cap.hostConfiguration());
+    const config = yield* Effect.promise(() => readRpcData(cap.hostConfiguration()));
     yield* Effect.promise(() =>
-      cap.prepareModelIncarnation({
-        incarnation: facetNonce,
-        loaderId: env.HARNESS_PROCESS_LOADER_ID,
-        restored: restored !== undefined,
-      }),
+      readRpcData(
+        cap.prepareModelIncarnation({
+          incarnation: facetNonce,
+          loaderId: env.HARNESS_PROCESS_LOADER_ID,
+          restored: restored !== undefined,
+        }),
+      ),
     );
     const state = facetState(ctx, cap, facetNonce);
     const initial = decodeTurn(config.turnJson[0]!);
@@ -88,32 +91,38 @@ const buildOptions = (
         const phase = `command-${ordinal}:${invocation.command.executable}:${invocation.command.argv.slice(1).join(" ")}`;
         const before = state.reads.snapshot().length;
         state.reads.phase(phase);
-        await cap.append("command-entered", {
-          incarnation: facetNonce,
-          ordinal,
-          command: invocation.command,
-          loaderId: invocation.loaderId,
-          phase,
-        });
-        const result = await commandLoader(env).run(invocation, target);
-        await cap.append("command-terminal", {
-          incarnation: facetNonce,
-          ordinal,
-          command: invocation.command,
-          loaderId: invocation.loaderId,
-          result,
-          reads: state.reads.snapshot().slice(before),
-        });
+        await readRpcData(
+          cap.append("command-entered", {
+            incarnation: facetNonce,
+            ordinal,
+            command: invocation.command,
+            loaderId: invocation.loaderId,
+            phase,
+          }),
+        );
+        const result = await readRpcData(commandLoader(env).run(invocation, target));
+        await readRpcData(
+          cap.append("command-terminal", {
+            incarnation: facetNonce,
+            ordinal,
+            command: invocation.command,
+            loaderId: invocation.loaderId,
+            result,
+            reads: state.reads.snapshot().slice(before),
+          }),
+        );
         state.reads.phase("outside-command");
         return result;
       },
     };
     yield* Effect.promise(() =>
-      cap.append("product-options-prepared", {
-        incarnation: facetNonce,
-        restored: restored !== undefined,
-        seedKind: restored ? "committed-files" : "fresh-real-git",
-      }),
+      readRpcData(
+        cap.append("product-options-prepared", {
+          incarnation: facetNonce,
+          restored: restored !== undefined,
+          seedKind: restored ? "committed-files" : "fresh-real-git",
+        }),
+      ),
     );
     const options: Omit<
       ProductCodexHarnessHostOptions<unknown>,
@@ -157,7 +166,7 @@ const buildOptions = (
       hydrate: async ({ files }) => {
         state.boundFiles = files;
         state.threadId = initial.threadId;
-        const seed = restored === undefined ? await cap.seedCheckpoint() : undefined;
+        const seed = restored === undefined ? await readRpcData(cap.seedCheckpoint()) : undefined;
         const expected = restored ?? seed!.files;
         if (seed)
           materializeHarnessCProductFiles({
@@ -170,11 +179,13 @@ const buildOptions = (
           if (entry.kind !== "symlink")
             state.reads.register(entry.path, files.resolve(`/workspace/${entry.path}`).inode);
         state.reads.phase("repository-readiness");
-        await cap.append("files-before-readiness", {
-          incarnation: facetNonce,
-          restored: restored !== undefined,
-          proof,
-        });
+        await readRpcData(
+          cap.append("files-before-readiness", {
+            incarnation: facetNonce,
+            restored: restored !== undefined,
+            proof,
+          }),
+        );
       },
       save: async () => {
         await state.flush();
@@ -195,23 +206,27 @@ const buildOptions = (
           .map((file) => file.path);
         // @effect-diagnostics-next-line cryptoRandomUUID:off - The product save callback assigns an immutable capture ID outside the request Effect.
         const captureId = crypto.randomUUID();
-        const artifact = await cap.artifact(
-          `before-export-${facetNonce}-${captureId}`,
-          jsonBytes({
-            schema: "sb1070/pre-export-computer-files/v1",
+        const artifact = await readRpcData(
+          cap.artifact(
+            `before-export-${facetNonce}-${captureId}`,
+            jsonBytes({
+              schema: "sb1070/pre-export-computer-files/v1",
+              incarnation: facetNonce,
+              threadId: state.threadId,
+              restored: restored !== undefined,
+              files,
+              transcriptPaths,
+            }),
+          ),
+        );
+        await readRpcData(
+          cap.append("before-export-computer-files-captured", {
             incarnation: facetNonce,
-            threadId: state.threadId,
-            restored: restored !== undefined,
-            files,
+            artifact,
+            fileCount: files.length,
             transcriptPaths,
           }),
         );
-        await cap.append("before-export-computer-files-captured", {
-          incarnation: facetNonce,
-          artifact,
-          fileCount: files.length,
-          transcriptPaths,
-        });
         return { commit: `qualifier-snapshot-${facetNonce}` };
       },
       port: async () => {
@@ -239,18 +254,22 @@ const buildOptions = (
         processObserver: {
           started(process) {
             state.queue(() =>
-              cap.append("native-process-started", {
-                incarnation: facetNonce,
-                startup: process.startup?.() ?? null,
-              }),
+              readRpcData(
+                cap.append("native-process-started", {
+                  incarnation: facetNonce,
+                  startup: process.startup?.() ?? null,
+                }),
+              ),
             );
           },
           abandoned(cause) {
             state.queue(() =>
-              cap.append("native-process-abandoned", {
-                incarnation: facetNonce,
-                cause: errorRecord(cause),
-              }),
+              readRpcData(
+                cap.append("native-process-abandoned", {
+                  incarnation: facetNonce,
+                  cause: errorRecord(cause),
+                }),
+              ),
             );
           },
         },
@@ -319,7 +338,7 @@ const Base = createHarnessCProductCodexFacetClass<Env, unknown>({
   buildHostOptions: (input) => buildOptions(input, input.filesCheckpoint.files),
   buildOpenInput: ({ env, nativeSessionId }) =>
     Effect.gen(function* () {
-      const config = yield* Effect.promise(() => capability(env).hostConfiguration());
+      const config = yield* Effect.promise(() => readRpcData(capability(env).hostConfiguration()));
       const turn = decodeTurn(config.turnJson[0]!);
       return {
         session: {
@@ -340,7 +359,9 @@ const Base = createHarnessCProductCodexFacetClass<Env, unknown>({
     buildHostOptions: (input) => buildOptions(input),
     buildOpenInput: ({ env }) =>
       Effect.gen(function* () {
-        const config = yield* Effect.promise(() => capability(env).hostConfiguration());
+        const config = yield* Effect.promise(() =>
+          readRpcData(capability(env).hostConfiguration()),
+        );
         const turn = decodeTurn(config.turnJson[0]!);
         assert(
           turn.providerThread.nativeThreadRef === null,
@@ -367,11 +388,13 @@ const Base = createHarnessCProductCodexFacetClass<Env, unknown>({
 export class CodexFacet extends Base {
   override async loadedPreparedRelease() {
     const observed = await super.loadedPreparedRelease();
-    await capability(this.env).append("loaded-prepared-release-observed", {
-      incarnation: this.facetNonce,
-      loadedPreparedRelease: observed,
-      sha256: await sha256(jsonBytes(observed)),
-    });
+    await readRpcData(
+      capability(this.env).append("loaded-prepared-release-observed", {
+        incarnation: this.facetNonce,
+        loadedPreparedRelease: observed,
+        sha256: await sha256(jsonBytes(observed)),
+      }),
+    );
     return observed;
   }
   async observerCalibration(input: { invocationId: string }) {

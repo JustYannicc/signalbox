@@ -1,3 +1,4 @@
+import { readRpcData, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
 import type { Configuration } from "./configuration.ts";
 import type { HarnessFilesStoreObject } from "../../../../src/harness/HarnessFilesStoreObject.ts";
 import { verifySeedConfiguration } from "./seedConfiguration.ts";
@@ -17,19 +18,24 @@ export async function publishSeedCheckpoint(
   const { checkpoint: seed } = await verifySeedConfiguration(config.seed);
   const files = seed.files;
   const store = env.HARNESS_FILES_STORE.getByName(runId);
-  const initialized = await store.execute({
-    type: "initialize",
-    runId,
-    control: control(1),
-    publisher: seedPublisher,
-    checkpoint: { checkpointId: config.seed.checkpointId, parentCheckpointId: null, files },
-  });
-  const checkpoint = await store.execute({
-    type: "readCheckpoint",
-    runId,
-    publisher: seedPublisher,
-    checkpointId: config.seed.checkpointId,
-  });
+  using _storeOwner = rpcStubOwner(store);
+  const initialized = await readRpcData(
+    store.execute({
+      type: "initialize",
+      runId,
+      control: control(1),
+      publisher: seedPublisher,
+      checkpoint: { checkpointId: config.seed.checkpointId, parentCheckpointId: null, files },
+    }),
+  );
+  const checkpoint = await readRpcData(
+    store.execute({
+      type: "readCheckpoint",
+      runId,
+      publisher: seedPublisher,
+      checkpointId: config.seed.checkpointId,
+    }),
+  );
   assert(
     checkpoint.checkpoint.manifestSha256 === initialized.checkpoint.manifestSha256 &&
       checkpoint.checkpoint.manifestSha256 === config.seed.manifestSha256 &&
