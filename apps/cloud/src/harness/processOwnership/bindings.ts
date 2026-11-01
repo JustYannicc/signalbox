@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub, rpcStubOwner } from "../../rpc/Resources.ts";
 import type { HarnessProcessStoreBindingProps } from "../HarnessProcessStoreBinding.ts";
 import type { HarnessDurableStateBindings } from "../HarnessDurableState.ts";
 import type { HarnessThreadSupervisorObject } from "../HarnessThreadSupervisorObject.ts";
@@ -24,7 +25,7 @@ class ProcessStoreBinding<Result> {
   async execute(command: unknown) {
     await this.#incarnation.activateRun(this.#runId);
     const fence = await this.#incarnation.assertCurrent();
-    return this.#store().execute(command, fence);
+    return withRpcStub(this.#store(), (stub) => readRpcData(stub.execute(command, fence)));
   }
 }
 
@@ -49,7 +50,10 @@ export function createProcessStoreBindings(
     > {
       async reserveReconciliation(input: unknown) {
         await incarnation.activateRun(runId);
-        return supervisor().reserveReconciliation(input, await incarnation.assertCurrent());
+        const fence = await incarnation.assertCurrent();
+        return withRpcStub(supervisor(), (stub) =>
+          readRpcData(stub.reserveReconciliation(input, fence)),
+        );
       }
     }
     const stores = {
@@ -73,15 +77,21 @@ export function createProcessStoreBindings(
     const placement = environment.PLACEMENT_STORES.getByName(fence.owner) as unknown as {
       claimProcessFence(fence: ProcessFence): Promise<void>;
     };
-    await placement.claimProcessFence(fence);
+    using _placementOwner = rpcStubOwner(placement);
+    await readRpcData(placement.claimProcessFence(fence));
     if (HARNESS_RUN_STORE !== undefined && HARNESS_FILES_STORE !== undefined) {
       const supervisor = HARNESS_THREAD_SUPERVISOR.getByName(
         runId,
       ) as unknown as DurableObjectStub<HarnessThreadSupervisorObject>;
+      using _supervisorOwner = rpcStubOwner(supervisor);
       await Promise.all([
-        HARNESS_RUN_STORE.getByName(runId).claimProcessFence(fence),
-        HARNESS_FILES_STORE.getByName(runId).claimProcessFence(fence),
-        supervisor.claimProcessFence(fence),
+        withRpcStub(HARNESS_RUN_STORE.getByName(runId), (stub) =>
+          readRpcData(stub.claimProcessFence(fence)),
+        ),
+        withRpcStub(HARNESS_FILES_STORE.getByName(runId), (stub) =>
+          readRpcData(stub.claimProcessFence(fence)),
+        ),
+        readRpcData(supervisor.claimProcessFence(fence)),
       ]);
     }
   };

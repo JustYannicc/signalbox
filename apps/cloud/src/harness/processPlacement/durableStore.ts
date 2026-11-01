@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import type { ProcessSlotState, ProcessSlotStore } from "../../computer/ProcessSlots.ts";
 import type {
   HarnessProcessEvictedRecoveryReceipt,
@@ -60,7 +61,7 @@ export function createHarnessProcessPlacementStoreClient(
   return {
     processSlots: {
       load: async () => {
-        const state = await client.load(owner, writer);
+        const state = await readRpcData(client.load(owner, writer));
         if (state !== undefined && state.owner !== owner)
           throw new Error("Process-slot durable owner does not match this shard.");
         return state;
@@ -68,20 +69,20 @@ export function createHarnessProcessPlacementStoreClient(
       save: async (state) => {
         if (state.owner !== owner)
           throw new Error("Process-slot durable owner does not match this shard.");
-        await client.save(owner, writer, state);
+        await readRpcData(client.save(owner, writer, state));
       },
     },
     recovery: {
       list: async () => {
-        const entries = await client.listRecovery(owner, writer);
+        const entries = await readRpcData(client.listRecovery(owner, writer));
         return entries.map((entry) => parseRecoveryRecord(entry, owner));
       },
       save: async (record) => {
         if (record.shardOwner !== owner || record.lease.token === undefined)
           throw new Error("Process-placement recovery owner or lease is invalid.");
-        await client.saveRecovery(owner, writer, record);
+        await readRpcData(client.saveRecovery(owner, writer, record));
       },
-      remove: async (loaderId) => await client.removeRecovery(owner, writer, loaderId),
+      remove: async (loaderId) => await readRpcData(client.removeRecovery(owner, writer, loaderId)),
     },
   };
 }

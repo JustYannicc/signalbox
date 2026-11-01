@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub } from "../../../../src/rpc/Resources.ts";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -45,11 +46,13 @@ export default class QualifierWorker extends WorkerEntrypoint<QualifierEnvironme
 
   async guardDiagnostic() {
     assert(this.env.OBSERVER_GUARD_ONLY === "1", "Guard diagnostics are local-only");
-    return await proof(this.env).guardDiagnostic();
+    return await withRpcStub(proof(this.env), async (stub) => readRpcData(stub.guardDiagnostic()));
   }
   async guardDrain(invocationIds: string[]) {
     assert(this.env.OBSERVER_GUARD_ONLY === "1", "Guard collection is local-only");
-    return await proof(this.env).guardDrain(invocationIds);
+    return await withRpcStub(proof(this.env), async (stub) =>
+      readRpcData(stub.guardDrain(invocationIds)),
+    );
   }
   override async fetch(request: Request) {
     assertQualifierRuntimeConfiguration(this.env);

@@ -1,3 +1,4 @@
+import { readRpcData, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
 import { placementReleaseEvidence } from "./placementReleaseObserver.fixture.ts";
 import { disposeWorkerLoaderStubs } from "../../../../src/computer/WorkerLoaderDispatch.ts";
 import { HarnessProcessExecutionShardObject } from "../../../../src/harness/HarnessProcessExecutionShardObject.ts";
@@ -40,7 +41,10 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
     );
     assert(engine, "The actual engine module is missing from calibration build");
     const cap = proof(env);
-    await cap.append("observer-calibration-materialize-entered", { officialNativeStarted: false });
+    using _capOwner = rpcStubOwner(cap);
+    await readRpcData(
+      cap.append("observer-calibration-materialize-entered", { officialNativeStarted: false }),
+    );
     const key = `observer-calibration-${env.RUN_ID}`;
     const facetCode = {
       processId: "observer-calibration",
@@ -86,14 +90,18 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
       configSha256: env.CONFIG_SHA256,
       nativeStarted: false,
     };
-    await cap.append("observer-execution-environment-constructed", executionEnvironment);
+    await readRpcData(
+      cap.append("observer-execution-environment-constructed", executionEnvironment),
+    );
     const modules = await materializeHarnessProcessModules(
       facetCode.modules,
       release,
       (artifactRef, path, offset, length) =>
-        cap.readArtifactChunk(artifactRef, path, offset, length),
+        readRpcData(cap.readArtifactChunk(artifactRef, path, offset, length)),
     );
-    await cap.append("observer-calibration-materialized", { modules: Object.keys(modules) });
+    await readRpcData(
+      cap.append("observer-calibration-materialized", { modules: Object.keys(modules) }),
+    );
     const exports = { QualifierTail: env.QUALIFIER_TAIL };
     const loader = qualifierFacetLoader(env, exports.QualifierTail);
     const worker = loader.get(key, () => ({
@@ -113,13 +121,15 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
     const type = worker.getDurableObjectClass<CalibrationFacet>("CodexFacet");
     const facet = this.ctx.facets.get<CalibrationFacet>(key, () => ({ class: type }));
     try {
-      await cap.append("observer-calibration-facet-created", { key });
-      const identity = await facet.identity();
-      await cap.append("observer-calibration-facet-identity", identity);
-      const observed = await facet.observerCalibration({
-        invocationId: "actual-facet-calibration",
-      });
-      await cap.append("observer-calibration-facet-returned", observed);
+      await readRpcData(cap.append("observer-calibration-facet-created", { key }));
+      const identity = await readRpcData(facet.identity());
+      await readRpcData(cap.append("observer-calibration-facet-identity", identity));
+      const observed = await readRpcData(
+        facet.observerCalibration({
+          invocationId: "actual-facet-calibration",
+        }),
+      );
+      await readRpcData(cap.append("observer-calibration-facet-returned", observed));
       assert(
         observed.incarnation === identity.facetNonce && observed.nativeStarted === false,
         "Actual inert facet calibration started native execution or changed its identity",

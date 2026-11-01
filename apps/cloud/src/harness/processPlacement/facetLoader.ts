@@ -1,3 +1,5 @@
+import { disposeWorkerLoaderStubs } from "../../computer/WorkerLoaderResources.ts";
+import { readRpcData } from "../../rpc/Resources.ts";
 import {
   createHarnessProcessFacetAdapter,
   type HarnessProcessFacetInvokeInput as FacetInvokeInput,
@@ -39,12 +41,21 @@ export function createHarnessProcessFacet(
 ): HarnessProcessPreparedFacet<FacetInvokeInput> & {
   readonly readLoadedPreparedRelease: () => Promise<unknown>;
 } {
-  const facet = createHarnessProcessFacetStub(context, environment, process, identity);
+  const owner = createHarnessProcessFacetStub(context, environment, process, identity);
+  const facet = owner.stub;
+  const adapter = createHarnessProcessFacetAdapter(identity, facet);
   return {
-    ...createHarnessProcessFacetAdapter(identity, facet),
+    ...adapter,
+    async dispose() {
+      try {
+        await adapter.dispose();
+      } finally {
+        owner[Symbol.dispose]();
+      }
+    },
     async readLoadedPreparedRelease() {
       try {
-        return await facet.loadedPreparedRelease();
+        return await readRpcData(facet.loadedPreparedRelease());
       } catch {
         return undefined;
       }
@@ -57,7 +68,7 @@ export function createHarnessProcessFacetStub(
   environment: HarnessProcessExecutionEnvironment,
   process: HarnessProcessExecutionFacetCodeInput,
   identity: HarnessProcessFacetLocator,
-): HarnessProcessFacetStub {
+): { readonly stub: HarnessProcessFacetStub } & Disposable {
   if (
     !process.mainModule ||
     !Object.hasOwn(process.modules, process.mainModule) ||
@@ -96,7 +107,7 @@ export function createHarnessProcessFacetStub(
     releaseService === undefined
       ? undefined
       : (artifactRef: string, path: string, offset: number, length: number) =>
-          releaseService.readArtifactChunk(artifactRef, path, offset, length);
+          readRpcData(releaseService.readArtifactChunk(artifactRef, path, offset, length));
   const worker = environment.LOADER.get(identity.loaderId, async () => {
     const workerModules = await materializeHarnessProcessModules(
       modules,
@@ -113,15 +124,40 @@ export function createHarnessProcessFacetStub(
     };
     return workerCode;
   });
-  const facetClass = worker.getDurableObjectClass<HarnessProcessFacetStub>(process.entrypoint, {
-    props: {
-      facetKey: identity.facetKey,
-      loaderId: identity.loaderId,
-      shardOwner: identity.shardOwner,
-    },
-  });
-  const facet = context.facets.get<HarnessProcessFacetStub>(identity.facetKey, () => ({
-    class: facetClass,
-  }));
-  return facet;
+  let facetClass: unknown;
+  let facet: HarnessProcessFacetStub | undefined;
+  try {
+    const selectedClass = worker.getDurableObjectClass<HarnessProcessFacetStub>(
+      process.entrypoint,
+      {
+        props: {
+          facetKey: identity.facetKey,
+          loaderId: identity.loaderId,
+          shardOwner: identity.shardOwner,
+        },
+      },
+    );
+    facetClass = selectedClass;
+    facet = context.facets.get<HarnessProcessFacetStub>(identity.facetKey, () => ({
+      class: selectedClass,
+    }));
+    let closed = false;
+    return {
+      stub: facet,
+      [Symbol.dispose]() {
+        if (closed) return;
+        closed = true;
+        disposeWorkerLoaderStubs(facet, facetClass, worker);
+      },
+    };
+  } catch (cause) {
+    try {
+      disposeWorkerLoaderStubs(facet, facetClass, worker);
+    } catch (cleanup) {
+      throw new AggregateError([cause, cleanup], "Facet construction and RPC cleanup failed", {
+        cause,
+      });
+    }
+    throw cause;
+  }
 }

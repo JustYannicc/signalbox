@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import * as Effect from "effect/Effect";
 import type {
   HarnessCProductBootstrapDescriptor,
@@ -71,7 +72,9 @@ export function composeHarnessCProductFacetOptions<
     const readNativeSessionId = (control = env.HARNESS_RESUME_CONTROL) =>
       Effect.tryPromise({
         try: async () => {
-          const current = await resume.supervisor.execute({ type: "read", runId, control });
+          const current = await readRpcData(
+            resume.supervisor.execute({ type: "read", runId, control }),
+          );
           if (!current.snapshot.nativeSessionId)
             throw new Error("The supervisor has no native session ID.");
           return current.snapshot.nativeSessionId;
@@ -127,7 +130,7 @@ export function composeHarnessCProductFacetOptions<
         if (publisher === undefined)
           return yield* Effect.fail(failed("Prior publisher is required for inert restoration."));
         const saved = yield* Effect.tryPromise({
-          try: () => resume.runStore.execute({ type: "read", runId }),
+          try: () => readRpcData(resume.runStore.execute({ type: "read", runId })),
           catch: (cause) => failed("The committed RunStore checkpoint could not be read.", cause),
         });
         const checkpoint = saved.snapshot.requests?.checkpoint;

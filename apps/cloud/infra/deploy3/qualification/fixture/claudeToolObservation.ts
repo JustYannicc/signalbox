@@ -1,3 +1,4 @@
+import { readRpcData } from "../../../../src/rpc/Resources.ts";
 import { createClaudeToolObservation } from "../../../../src/harness/ClaudeToolObservation.ts";
 import type { QualifierCapabilities } from "./capabilities.ts";
 import type { FacetState } from "./facetState.ts";
@@ -14,17 +15,21 @@ export function claudeQualificationToolObservation(input: {
   if (input.variant === "baseline") return undefined;
   return createClaudeToolObservation(({ input: event, toolUseId }) => {
     const captured = (async () => {
-      const artifact = await input.capability.artifact(
-        `claude-hook-${input.incarnation}-${event.hook_event_name}-${toolUseId ?? "unknown"}`,
-        jsonBytes(event),
+      const artifact = await readRpcData(
+        input.capability.artifact(
+          `claude-hook-${input.incarnation}-${event.hook_event_name}-${toolUseId ?? "unknown"}`,
+          jsonBytes(event),
+        ),
       );
-      await input.capability.append("claude-sdk-tool-observed", {
-        variant: input.variant,
-        incarnation: input.incarnation,
-        event: event.hook_event_name,
-        toolUseId,
-        artifact,
-      });
+      await readRpcData(
+        input.capability.append("claude-sdk-tool-observed", {
+          variant: input.variant,
+          incarnation: input.incarnation,
+          event: event.hook_event_name,
+          toolUseId,
+          artifact,
+        }),
+      );
     })();
     // The SDK keeps tool decisions unchanged; a failed capture still fails checkpoint export.
     input.state.queue(() => captured);

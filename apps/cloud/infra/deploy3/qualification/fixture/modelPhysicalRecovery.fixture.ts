@@ -1,3 +1,4 @@
+import { readRpcData } from "../../../../src/rpc/Resources.ts";
 import { equals as sameData } from "effect/Equal";
 import {
   verifyCreationRetirement,
@@ -94,20 +95,18 @@ export async function collectModelPhysicalRecovery(
   },
 ): Promise<ModelRecoveryEvidence | undefined> {
   if (!source || source.boundary.phase !== "restoring") return undefined;
-  const writer = await placement.readWriter(owner);
+  const writer = await readRpcData(placement.readWriter(owner));
   if (!writer || writer.shardIncarnationNonce !== source.currentFence.nonce)
     throw new Error("Physical recovery has no current placement writer.");
-  const records = await placement.listRecovery(owner, writer);
+  const records = await readRpcData(placement.listRecovery(owner, writer));
   const matches = records.filter(
     (row) => row.loaderId === target.loaderId && row.incarnationNonce === target.incarnation,
   );
   if (matches.length !== 1) throw new Error("Physical recovery candidate is missing or ambiguous.");
   const candidate = matches[0]!;
   assertLiveModelRecoveryCandidate(candidate);
-  const published = await placement.readEvictedRecovery(
-    owner,
-    source.boundary.fence,
-    source.boundary.identity,
+  const published = await readRpcData(
+    placement.readEvictedRecovery(owner, source.boundary.fence, source.boundary.identity),
   );
   const releaseWriter = source.creation?.placement.releaseWriter;
   if (!published && source.creation && !releaseWriter)
@@ -123,7 +122,7 @@ export async function collectModelPhysicalRecovery(
         history: source.history,
         creation: source.creation,
         completed: true,
-        writerReleased: await placement.writerReleased(owner, releaseWriter),
+        writerReleased: await readRpcData(placement.writerReleased(owner, releaseWriter)),
       }));
   if (retirement?.state !== "completed")
     throw new Error("Physical recovery lacks a completed durable retirement.");

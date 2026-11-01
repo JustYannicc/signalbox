@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub } from "../rpc/Resources.ts";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 import type { HarnessDurableStateBindings } from "./HarnessDurableState.ts";
@@ -24,6 +25,8 @@ export class HarnessProcessStoreBinding extends WorkerEntrypoint<
         : store === "filesStore"
           ? this.env.HARNESS_FILES_STORE
           : this.env.HARNESS_THREAD_SUPERVISOR;
-    return namespace.getByName(runId).execute(command, fence);
+    return withRpcStub(namespace.getByName(runId), (stub) =>
+      readRpcData(stub.execute(command, fence)),
+    );
   }
 }

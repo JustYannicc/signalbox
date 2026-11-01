@@ -1,3 +1,4 @@
+import { readRpcData } from "../../../../src/rpc/Resources.ts";
 // @effect-diagnostics cryptoRandomUUID:off - Snapshot IDs are local qualification evidence.
 import { restoreFacetCheckpoint, facetCheckpointLineage } from "./checkpointLineage.ts";
 import * as Effect from "effect/Effect";
@@ -133,27 +134,28 @@ export class ClaudeFacet extends Base {
       expected && samePreparedRelease(loaded, expected),
       "Loaded Claude artifact identity differs from C's selected prepared release",
     );
-    const loadedArtifact = await claudeCapability(this.env).recordClaudeLoadedRelease(
-      this.facetNonce,
-      loaded,
+    const loadedArtifact = await readRpcData(
+      claudeCapability(this.env).recordClaudeLoadedRelease(this.facetNonce, loaded),
     );
     const encoded = new TextEncoder().encode(JSON.stringify(loaded));
     const digest = await crypto.subtle.digest("SHA-256", encoded.slice().buffer);
     const preparedIdentitySha256 = Array.from(new Uint8Array(digest), (byte) =>
       byte.toString(16).padStart(2, "0"),
     ).join("");
-    await claudeCapability(this.env).append("claude-loaded-prepared-release", {
-      incarnation: this.facetNonce,
-      loadedArtifact,
-      artifact: loaded.artifact,
-      plan: {
-        release: loaded.plan.release,
-        sourceIdentity: loaded.plan.sourceIdentity,
-        computer: loaded.plan.computer,
-        preparedModuleCount: Object.keys(loaded.plan.preparedModules).length,
-        preparedIdentitySha256,
-      },
-    });
+    await readRpcData(
+      claudeCapability(this.env).append("claude-loaded-prepared-release", {
+        incarnation: this.facetNonce,
+        loadedArtifact,
+        artifact: loaded.artifact,
+        plan: {
+          release: loaded.plan.release,
+          sourceIdentity: loaded.plan.sourceIdentity,
+          computer: loaded.plan.computer,
+          preparedModuleCount: Object.keys(loaded.plan.preparedModules).length,
+          preparedIdentitySha256,
+        },
+      }),
+    );
     return loaded;
   }
 
@@ -180,7 +182,9 @@ export class ClaudeFacet extends Base {
       imported,
       nativeStarted: false as const,
     };
-    await claudeCapability(this.env).append("claude-prepared-import-calibration", result);
+    await readRpcData(
+      claudeCapability(this.env).append("claude-prepared-import-calibration", result),
+    );
     return result;
   }
 }

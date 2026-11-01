@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
@@ -133,7 +134,7 @@ export const createHarnessRequestFacet = (
       });
     const execute = (command: unknown) =>
       Effect.tryPromise({
-        try: () => options.store.execute(command),
+        try: () => readRpcData(options.store.execute(command)),
         catch: (cause) => failure("Harness request store rejected the operation.", cause),
       });
     const fresh = createFreshRequestPreparation(options, scope, {

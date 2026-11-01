@@ -62,3 +62,36 @@ it("cancels an in-flight executor action when its request aborts", async () => {
   await rejected;
   expect(stopped).toBe(true);
 });
+
+it("disposes every MCP RPC result before retry or an abort check throws", async () => {
+  let pins = 0;
+  let calls = 0;
+  const controller = new AbortController();
+  const reason = new Error("stopped after RPC returned");
+  const executor = productExecutor({
+    async forward() {
+      pins++;
+      if (++calls === 3) controller.abort(reason);
+      return {
+        status: 200,
+        statusText: "OK",
+        headers: [],
+        body: new TextEncoder().encode("tool"),
+        [Symbol.dispose]() {
+          pins--;
+        },
+      };
+    },
+  });
+  for (let index = 0; index < 3; index++) {
+    const pending = executor.forward({
+      target: { type: "executor" },
+      grant: "grant",
+      request: new Request("https://executor.invalid/mcp", { method: "POST", body: "call" }),
+      signal: controller.signal,
+    });
+    if (index === 2) await expect(pending).rejects.toBe(reason);
+    else expect(await (await pending).text()).toBe("tool");
+    expect(pins).toBe(0);
+  }
+});

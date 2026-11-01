@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import { releaseCreationPlacement } from "./releasePlacement.ts";
 import { readUndispatchedCreation, retireUndispatchedCreation } from "./undispatched.ts";
 import * as Schema from "effect/Schema";
@@ -102,14 +103,15 @@ export async function recoverBoundCreation(
         termination: { kind: "parent-destroyed", observedByIncarnationNonce: incarnationNonce },
       };
     } else {
-      const stub = await readCreationFacet(context, environment, {
+      using resource = await readCreationFacet(context, environment, {
         ...placement,
         identity: placement.identity,
       });
-      const actual = await stub.identity();
+      const stub = resource.stub;
+      const actual = await readRpcData(stub.identity());
       if (actual.facetNonce !== placement.identity.incarnationNonce)
         throw new Error("Initial recovery cannot prove the retained native incarnation stopped.");
-      await stub.dispose(actual.facetNonce);
+      await readRpcData(stub.dispose(actual.facetNonce));
       placement = {
         ...placement,
         disposed: true,

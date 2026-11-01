@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import { createSeededProductHost } from "./seededHost.ts";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
@@ -78,7 +79,7 @@ export function prepareHarnessCProductHost<
       catch: (cause) => failed("The selected product release could not be prepared.", cause),
     });
     const nativeBytes = yield* Effect.tryPromise({
-      try: () => input.capabilities.nativeCheckpoint.read(checkpointRefs.native),
+      try: () => readRpcData(input.capabilities.nativeCheckpoint.read(checkpointRefs.native)),
       catch: (cause) => failed("A's native checkpoint bytes could not be read.", cause),
     });
     const native = yield* Effect.tryPromise({
@@ -148,11 +149,13 @@ export function prepareHarnessCProductHost<
         return yield* Effect.fail(failed("Serialized checkpoint belongs to another provider."));
       const access = yield* Effect.tryPromise({
         try: () =>
-          input.capabilities.access.resolveInitialAccess({
-            threadId,
-            providerSessionId: native.checkpoint.providerSession.id,
-            nativeSessionId,
-          }),
+          readRpcData(
+            input.capabilities.access.resolveInitialAccess({
+              threadId,
+              providerSessionId: native.checkpoint.providerSession.id,
+              nativeSessionId,
+            }),
+          ),
         catch: (cause) => failed("Initial product access could not be resolved.", cause),
       });
       openInput = {

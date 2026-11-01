@@ -1,3 +1,4 @@
+import { readRpcData, rpcStubOwner, withRpcStub } from "../../../../src/rpc/Resources.ts";
 import * as Schema from "effect/Schema";
 import { RunnerTurn, RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import type { QualifierExecutionContext } from "./proofContext.ts";
@@ -47,6 +48,7 @@ export class ClaudeLifecycle {
   private async cold() {
     assert(!this.#created, "Claude fresh creation cannot repeat");
     const { config, lane, durable, shard } = await this.context();
+    using _shardOwner = rpcStubOwner(shard);
     const c = await this.owner.claude.c(this.variant, "work");
     const seed = await this.owner.artifact(`${this.variant}-run-seed`, encoder.encode(lane.runId));
     const input = claudeCreationInput(config, this.variant, seed);
@@ -55,12 +57,16 @@ export class ClaudeLifecycle {
     assert(created.status === "created", "Claude fresh creation did not bind its original session");
     this.#created = created;
     const observed = await c.processCreationStatus({ runId: lane.runId, control: control(1) });
-    const a = await durable.threadSupervisor.execute({
-      type: "read",
-      runId: lane.runId,
-      control: control(1),
-    });
-    const journal = await durable.runStore.execute({ type: "read", runId: lane.runId });
+    const a = await readRpcData(
+      durable.threadSupervisor.execute({
+        type: "read",
+        runId: lane.runId,
+        control: control(1),
+      }),
+    );
+    const journal = await readRpcData(
+      durable.runStore.execute({ type: "read", runId: lane.runId }),
+    );
     assert(
       observed.status === "bound" &&
         observed.nativeSessionId === created.nativeSessionId &&
@@ -70,7 +76,13 @@ export class ClaudeLifecycle {
       "Claude initial public stores did not bind the fresh native identity",
     );
     this.#checkpoint = created.checkpoint;
-    const receipt = { created, observed, supervisor: a, journal, evidence: await shard.evidence() };
+    const receipt = {
+      created,
+      observed,
+      supervisor: a,
+      journal,
+      evidence: await readRpcData(shard.evidence()),
+    };
     await this.owner.saveState(`claude-${this.variant}-created`, receipt);
     return receipt;
   }
@@ -83,6 +95,7 @@ export class ClaudeLifecycle {
     assert(this.#created && this.#checkpoint, "Claude has no public fresh session");
     assert(turn === 1 || this.#resumed, "Claude requires its single replacement after turn 1");
     const { config, lane, durable, shard } = await this.context();
+    using _shardOwner = rpcStubOwner(shard);
     const phase = CLAUDE_PHASES[turn - 1]!;
     const c = await this.owner.claude.c(this.variant, phase);
     const initial = decodeTurn(config.claude.runtime.turnJson[this.variant][turn - 1]!);
@@ -118,7 +131,7 @@ export class ClaudeLifecycle {
         request.requestId,
       );
     } else {
-      const boundary = await shard.modelRecoveryEvidence(lane.runId);
+      const boundary = await readRpcData(shard.modelRecoveryEvidence(lane.runId));
       assert(
         boundary?.boundary.nativeSessionId === this.#created.nativeSessionId,
         "Claude continuation lost its durable native owner",
@@ -141,11 +154,10 @@ export class ClaudeLifecycle {
       this.#lastContinuation = continuation;
       running = c.continueProcess(continuation, request.requestId);
     }
+    const finishStore = this.owner.environment().HARNESS_RUN_STORE.getByName(lane.runId);
+    using _finishStoreOwner = rpcStubOwner(finishStore);
     const finished = await Promise.race([
-      this.owner
-        .environment()
-        .HARNESS_RUN_STORE.getByName(lane.runId)
-        .waitForFinish(request.requestId),
+      readRpcData(finishStore.waitForFinish(request.requestId)),
       running.then((result) => {
         throw new Error(
           `Claude C returned before its persisted checkpoint barrier: ${JSON.stringify(result)}`,
@@ -160,11 +172,13 @@ export class ClaudeLifecycle {
       "Claude public native request did not complete",
     );
     const files = await this.owner.material(request.requestId);
-    const current = await durable.threadSupervisor.execute({
-      type: "read",
-      runId: lane.runId,
-      control: control(epoch),
-    });
+    const current = await readRpcData(
+      durable.threadSupervisor.execute({
+        type: "read",
+        runId: lane.runId,
+        control: control(epoch),
+      }),
+    );
     const committed = await c.commitProcessCheckpoint({
       runId: lane.runId,
       processId: lane.processId,
@@ -233,16 +247,19 @@ export class ClaudeLifecycle {
       "Claude replacement requires exactly one completed turn",
     );
     const { config, lane, durable, shard } = await this.context();
+    using _shardOwner = rpcStubOwner(shard);
     const c = await this.owner.claude.c(this.variant, "resume");
     const first = await this.owner.state<Awaited<ReturnType<ClaudeLifecycle["turn"]>>>(
       `claude-${this.variant}-turn-1`,
     );
-    const before = await durable.threadSupervisor.execute({
-      type: "read",
-      runId: lane.runId,
-      control: control(1),
-    });
-    const source = await shard.modelRecoveryEvidence(lane.runId);
+    const before = await readRpcData(
+      durable.threadSupervisor.execute({
+        type: "read",
+        runId: lane.runId,
+        control: control(1),
+      }),
+    );
+    const source = await readRpcData(shard.modelRecoveryEvidence(lane.runId));
     assert(
       source?.boundary.nativeSessionId === this.#created.nativeSessionId,
       "Claude replacement lost its completed checkpoint",
@@ -263,11 +280,13 @@ export class ClaudeLifecycle {
         resumed.identity.incarnationNonce !== previousIdentity.incarnationNonce,
       "Claude replacement did not create a new public facet",
     );
-    const after = await durable.threadSupervisor.execute({
-      type: "read",
-      runId: lane.runId,
-      control: control(2),
-    });
+    const after = await readRpcData(
+      durable.threadSupervisor.execute({
+        type: "read",
+        runId: lane.runId,
+        control: control(2),
+      }),
+    );
     assert(
       after.snapshot.nativeSessionId === this.#created.nativeSessionId &&
         after.currentPublisher.facetNonce === resumed.identity.incarnationNonce,
@@ -284,12 +303,12 @@ export class ClaudeLifecycle {
       oldRelease.sequence < publication.sequence,
       "Claude replacement preceded old-writer join and release",
     );
-    const oldControllerDenied = await durable.threadSupervisor
-      .execute({ type: "read", runId: lane.runId, control: control(1) })
-      .then(
-        () => false,
-        () => true,
-      );
+    const oldControllerDenied = await readRpcData(
+      durable.threadSupervisor.execute({ type: "read", runId: lane.runId, control: control(1) }),
+    ).then(
+      () => false,
+      () => true,
+    );
     assert(oldControllerDenied, "Claude replaced controller still has authority");
     this.#resumed = true;
     const receipt = {
@@ -314,7 +333,8 @@ export class ClaudeLifecycle {
       "Claude final stop requires three completed turns and one replacement",
     );
     const { lane, shard } = await this.context();
-    const boundary = await shard.modelRecoveryEvidence(lane.runId);
+    using _shardOwner = rpcStubOwner(shard);
+    const boundary = await readRpcData(shard.modelRecoveryEvidence(lane.runId));
     assert(
       boundary?.boundary.nativeSessionId === this.#created.nativeSessionId,
       "Claude final stop lost its native owner",
@@ -328,15 +348,15 @@ export class ClaudeLifecycle {
         checkpoint: this.#checkpoint,
       },
     });
-    const ownership = await this.owner
-      .environment()
-      .PLACEMENT_STORES.getByName(lane.shardOwner)
-      .ownership(lane.shardOwner);
+    const ownership = await withRpcStub(
+      this.owner.environment().PLACEMENT_STORES.getByName(lane.shardOwner),
+      (stub) => readRpcData(stub.ownership(lane.shardOwner)),
+    );
     assert(
       ownership.writer === null && ownership.leases === 0,
       "Claude still owns placement resources after final stop",
     );
-    const evidence = await shard.evidence();
+    const evidence = await readRpcData(shard.evidence());
     assert(
       evidence.terminal.length > 0 &&
         evidence.terminal.every(

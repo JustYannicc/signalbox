@@ -1,3 +1,4 @@
+import { readRpcData } from "../../../../src/rpc/Resources.ts";
 import { restoreFacetCheckpoint } from "./checkpointLineage.ts";
 import type { CheckpointLineage } from "./checkpointLineage.ts";
 import * as Effect from "effect/Effect";
@@ -39,50 +40,59 @@ export function turnBindings(
     const nativeSessionId = checkpoint.snapshot.providerThread.nativeThreadRef?.nativeId;
     assert(nativeSessionId, "Native export is missing the actual UUID");
     const filesCheckpoint = { checkpointId: id, parentCheckpointId: parent, files };
-    await capability.setCheckpointParent(id, parent);
-    const refs = await capability.stageCheckpoint(
-      id,
-      filesCheckpoint,
-      encodeHarnessCProductNativeCheckpoint({ schemaVersion: 1, nativeSessionId, checkpoint }),
-      publisher,
+    await readRpcData(capability.setCheckpointParent(id, parent));
+    const refs = await readRpcData(
+      capability.stageCheckpoint(
+        id,
+        filesCheckpoint,
+        encodeHarnessCProductNativeCheckpoint({ schemaVersion: 1, nativeSessionId, checkpoint }),
+        publisher,
+      ),
     );
-    await capability.append("facet-checkpoint-export", {
-      checkpointId: id,
-      nativeSessionId,
-      providerThread: encodeProviderThread(checkpoint.snapshot.providerThread),
-      rawCounts: [...state.rawOrdinals],
-    });
+    await readRpcData(
+      capability.append("facet-checkpoint-export", {
+        checkpointId: id,
+        nativeSessionId,
+        providerThread: encodeProviderThread(checkpoint.snapshot.providerThread),
+        rawCounts: [...state.rawOrdinals],
+      }),
+    );
     return { checkpoint: refs, filesCheckpoint };
   }
   return {
     readTurn: (reference) =>
       attempt("Frozen turn input could not be read", async () =>
-        decodeTurn(decoder.decode(await capability.read(reference))),
+        decodeTurn(decoder.decode(await readRpcData(capability.read(reference)))),
       ),
     onEvent: (event, context) =>
       attempt("Public event capture failed", async () => {
         const bytes = encoder.encode(encodeEvent(event));
-        const ref = await capability.artifact(
-          `event-${context.requestId}-${++eventOrdinal}`,
-          bytes,
+        const ref = await readRpcData(
+          capability.artifact(`event-${context.requestId}-${++eventOrdinal}`, bytes),
         );
-        await capability.recordRunnerEvent({
-          requestId: context.requestId,
-          eventJson: decoder.decode(bytes),
-          artifact: ref,
-        });
+        await readRpcData(
+          capability.recordRunnerEvent({
+            requestId: context.requestId,
+            eventJson: decoder.decode(bytes),
+            artifact: ref,
+          }),
+        );
         return ref;
       }),
     writeResult: (result, context) =>
       attempt("Public result capture failed", async () => {
-        const ref = await capability.artifact(
-          `result-${context.requestId}`,
-          jsonBytes({
-            turn: encodeTurn(result.turn),
-            terminal: encodeRunnerItem(result.terminal),
-          }),
+        const ref = await readRpcData(
+          capability.artifact(
+            `result-${context.requestId}`,
+            jsonBytes({
+              turn: encodeTurn(result.turn),
+              terminal: encodeRunnerItem(result.terminal),
+            }),
+          ),
         );
-        await capability.append("runner-result", { requestId: context.requestId, result: ref });
+        await readRpcData(
+          capability.append("runner-result", { requestId: context.requestId, result: ref }),
+        );
         return ref;
       }),
     writeInitialCheckpoint: (exported, context) =>
@@ -94,14 +104,16 @@ export function turnBindings(
       }),
     writeCheckpoint: (exported, context) =>
       attempt("Completed checkpoint capture failed", async () => {
-        const parent = lineage?.current() ?? (await capability.activeCheckpointId());
+        const parent = lineage?.current() ?? (await readRpcData(capability.activeCheckpointId()));
         const written = await checkpoint(exported, context.requestId, parent, context.publisher);
         lineage?.advance(parent, context.requestId);
         return written.checkpoint;
       }),
     verify: (ref, purpose) =>
       attempt("Artifact verification failed", () =>
-        purpose === "filesystem" ? capability.verifyFiles(ref) : capability.verifyArtifact(ref),
+        purpose === "filesystem"
+          ? readRpcData(capability.verifyFiles(ref))
+          : readRpcData(capability.verifyArtifact(ref)),
       ),
   };
 }

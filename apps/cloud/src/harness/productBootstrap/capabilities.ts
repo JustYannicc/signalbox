@@ -1,3 +1,4 @@
+import { readRpcData, readRpcResponse } from "../../rpc/Resources.ts";
 import type { ProgramSeed } from "../HarnessSessionHost.ts";
 import type { HarnessCProductProvider } from "../HarnessProcessResume.ts";
 import type {
@@ -100,14 +101,15 @@ export async function productReleaseBindings(
 ) {
   return {
     getArtifact: (selectedProvider: HarnessCProductProvider, releaseId: string) =>
-      service.getArtifact(selectedProvider, releaseId),
+      readRpcData(service.getArtifact(selectedProvider, releaseId)),
     loadOptions: async () => {
-      const config = await service.loaderConfig(provider);
+      const config = await readRpcData(service.loaderConfig(provider));
       return {
         source: {
-          read: (artifactRef: string, path: string) => service.readArtifact(artifactRef, path),
+          read: (artifactRef: string, path: string) =>
+            readRpcData(service.readArtifact(artifactRef, path)),
           readRange: (artifactRef: string, path: string, offset: number, length: number) =>
-            service.readArtifactChunk(artifactRef, path, offset, length),
+            readRpcData(service.readArtifactChunk(artifactRef, path, offset, length)),
         },
         trustedComputer: config.trustedComputer,
         maxPreparedModuleBytes: config.maxPreparedModuleBytes,
@@ -123,7 +125,7 @@ export async function productProgramBindings(
   readonly codes: Awaited<ReturnType<typeof service.catalog>>["codes"];
   readonly seed: ProgramSeed;
 }> {
-  const catalog = await service.catalog(provider);
+  const catalog = await readRpcData(service.catalog(provider));
   return {
     codes: catalog.codes,
     seed: {
@@ -131,7 +133,7 @@ export async function productProgramBindings(
       files: catalog.files,
       read: async (path, signal) => {
         signal.throwIfAborted();
-        const bytes = await service.read(path);
+        const bytes = await readRpcData(service.read(path));
         signal.throwIfAborted();
         return bytes;
       },
@@ -142,7 +144,7 @@ export async function productProgramBindings(
 export const productMachineInventory = (
   provider: HarnessCProductProvider,
   service: HarnessCProductMachineService,
-): Promise<MachineProgramInventory> => service.inventory(provider);
+): Promise<MachineProgramInventory> => readRpcData(service.inventory(provider));
 
 export const productModelTransport = (service: HarnessCProductModelService) => (request: Request) =>
-  service.fetch(request);
+  readRpcResponse(service.fetch(request), request.signal);

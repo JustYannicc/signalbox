@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
 import type { HarnessFilesStoreObject } from "../HarnessFilesStoreObject.ts";
 import type {
@@ -28,7 +29,7 @@ export async function readHarnessCProductFilesCheckpoint(input: {
   };
   let result: HarnessFilesStoreResult;
   try {
-    result = await input.store.execute(command);
+    result = await readRpcData(input.store.execute(command));
   } catch (cause) {
     throw new HarnessCProductFilesError("A's committed files checkpoint could not be read.", {
       cause,

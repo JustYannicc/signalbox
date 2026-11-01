@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -29,11 +30,13 @@ export function createHarnessCProductRequestRuntime<G>(input: {
         const turn = yield* input.turnBindings.readTurn(reference, context);
         const access = yield* Effect.tryPromise({
           try: () =>
-            input.capabilities.access.resolveTurnAccess({
-              threadId: input.threadId,
-              runId: input.runId,
-              requestId: context.requestId,
-            }),
+            readRpcData(
+              input.capabilities.access.resolveTurnAccess({
+                threadId: input.threadId,
+                runId: input.runId,
+                requestId: context.requestId,
+              }),
+            ),
           catch: (cause) => failed("Turn access could not be resolved.", cause),
         });
         return {

@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
 import { QualifierSequenceLifetime } from "./sequenceLifetime.ts";
 import {
   collectModelPhysicalRecovery,
@@ -118,10 +119,14 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
     }>(`turn-${turn}`);
   }
   async runStoreSnapshot() {
-    return await this.env.HARNESS_RUN_STORE.getByName(this.env.RUN_ID).execute({
-      type: "read",
-      runId: this.env.RUN_ID,
-    });
+    return await withRpcStub(this.env.HARNESS_RUN_STORE.getByName(this.env.RUN_ID), async (stub) =>
+      readRpcData(
+        stub.execute({
+          type: "read",
+          runId: this.env.RUN_ID,
+        }),
+      ),
+    );
   }
   override async prepareModelIncarnation(input: Incarnation) {
     return await this.model.prepare(input);
@@ -155,11 +160,15 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
   }
   async physicalRecoveryFor(input: Incarnation): Promise<ModelRecoveryEvidence | undefined> {
     const owner = this.shardOwner();
+    const shard = this.shard();
+    using _shardResource = rpcStubOwner(shard);
+    const placement = this.env.PLACEMENT_STORES.getByName(owner);
+    using _placementResource = rpcStubOwner(placement);
     return collectModelPhysicalRecovery(
       owner,
       input,
-      await this.shard().modelRecoveryEvidence(this.env.RUN_ID),
-      this.env.PLACEMENT_STORES.getByName(owner),
+      await readRpcData(shard.modelRecoveryEvidence(this.env.RUN_ID)),
+      placement,
     );
   }
 
@@ -218,9 +227,9 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
         terminal.joined.ports,
       "Old process stop/join proof is incomplete",
     );
-    const released = await this.env.PLACEMENT_STORES.getByName(release.owner).writerReleased(
-      release.owner,
-      release.writer,
+    const released = await withRpcStub(
+      this.env.PLACEMENT_STORES.getByName(release.owner),
+      async (stub) => readRpcData(stub.writerReleased(release.owner, release.writer)),
     );
     assert(released, "The public placement release receipt is absent");
     return release;
@@ -310,7 +319,9 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       "Calibration already has a durable claim",
     );
     await this.ctx.storage.put("observer/calibration-claimed", true);
-    const result = await this.shard().observerCalibration();
+    const result = await withRpcStub(this.shard(), (stub) =>
+      readRpcData(stub.observerCalibration()),
+    );
     const config = await this.config();
     const calibration = {
       workerId: config.workerName,

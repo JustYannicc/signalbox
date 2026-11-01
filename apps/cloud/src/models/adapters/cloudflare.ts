@@ -1,5 +1,6 @@
 import * as Layer from "effect/Layer";
 
+import { readRpcData, withRpcStub, detachRpcData, retainRpcResponse } from "../../rpc/Resources.ts";
 import { poolObjectStub, type PoolObjectNamespace } from "../../pool/PoolDirectory.ts";
 import { threadObjectStub, type ThreadObjectNamespace } from "../../thread/ThreadDirectory.ts";
 import { userObjectStub, type UserObjectNamespace } from "../../user/UserDirectory.ts";
@@ -22,28 +23,43 @@ export const layerModelAccess = (
         ModelAuthority.ModelAuthority,
         ModelAuthority.ModelAuthority.of({
           authorizeThread: (threadId, token, provider) =>
-            threadObjectStub(bindings.threads, threadId, options).authorizeModel(token, provider),
+            withRpcStub(threadObjectStub(bindings.threads, threadId, options), (stub) =>
+              readRpcData(stub.authorizeModel(token, provider)),
+            ),
           authorizeLocal: async (token) => {
             const key = await bindings.verifyLocalKey(token);
             return key === null
               ? { _tag: "denied", reason: "Not a Signalbox key." }
-              : userObjectStub(bindings.users, key.userId, options).authorizeLocalModel(key.secret);
+              : withRpcStub(userObjectStub(bindings.users, key.userId, options), (stub) =>
+                  readRpcData(stub.authorizeLocalModel(key.secret)),
+                );
           },
           forward: (pool, path, request, thread, trace) =>
-            poolObjectStub(bindings.pools, pool.objectName, options).forwardModel(
-              { userId: pool.userId },
-              path,
-              request,
-              thread,
-              trace,
-            ),
-          recordThread: (threadId, record) =>
-            threadObjectStub(bindings.threads, threadId, options).recordModelRequest(record),
-          recordLocal: (local, usage) =>
-            userObjectStub(bindings.users, local.userId, options).recordLocalModelRequest({
-              keyId: local.keyId,
-              usage,
+            withRpcStub(poolObjectStub(bindings.pools, pool.objectName, options), async (stub) => {
+              const reply = await stub.forwardModel(
+                { userId: pool.userId },
+                path,
+                request,
+                thread,
+                trace,
+              );
+              if (reply._tag !== "forwarded") return detachRpcData(reply);
+              return {
+                ...reply,
+                response: await retainRpcResponse(reply.response, { result: reply }),
+              };
             }),
+          recordThread: (threadId, record) =>
+            withRpcStub(threadObjectStub(bindings.threads, threadId, options), (stub) =>
+              stub.recordModelRequest(record),
+            ),
+          recordLocal: (local, usage) =>
+            withRpcStub(userObjectStub(bindings.users, local.userId, options), (stub) =>
+              stub.recordLocalModelRequest({
+                keyId: local.keyId,
+                usage,
+              }),
+            ),
         }),
       ),
     ),

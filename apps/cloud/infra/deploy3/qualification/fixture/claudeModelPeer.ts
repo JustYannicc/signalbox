@@ -1,3 +1,4 @@
+import { matchesClaudeActionInput } from "./claudeActionInput.ts";
 import { decodeClaudeMcpProbe, type ClaudeMcpProbe } from "./claudeMcpProbe.ts";
 export const CLAUDE_QUALIFICATION_PROMPTS = {
   work: "SB1070-CLAUDE-WORK-01",
@@ -342,7 +343,7 @@ export class ClaudeQualificationModelPeer {
       if (
         use?.id !== id ||
         use.name !== action.name ||
-        JSON.stringify(use.input) !== JSON.stringify(action.input) ||
+        !matchesClaudeActionInput(action.name, use.input, action.input) ||
         matching[0]!.tool_use_id !== use.id
       )
         throw new Error("Claude workload tool call differs from its frozen action.");

@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub } from "../rpc/Resources.ts";
 // @effect-diagnostics cryptoRandomUUID:off - request context IDs are opaque platform identifiers.
 import { WorkerEntrypoint } from "cloudflare:workers";
 import {
@@ -69,12 +70,14 @@ export class HarnessProcessExecutionEntrypoint extends WorkerEntrypoint<HarnessP
     const shard = this.env.PROCESS_EXECUTION_SHARDS.getByName(
       owner,
     ) as unknown as HarnessProcessExecutionShardClient;
-    return await shard.runShard(input, crypto.randomUUID());
+    return withRpcStub(shard, (owned) => readRpcData(owned.runShard(input, crypto.randomUUID())));
   }
 
   #overflow(input: HarnessProcessExecutionShardInput): Promise<HarnessProcessExecutionShardResult> {
     const exports = (this.ctx as unknown as { readonly exports: HarnessProcessExecutionExports })
       .exports;
-    return exports.HarnessProcessExecutionEntrypoint({ props: {} }).runShard(input);
+    return withRpcStub(exports.HarnessProcessExecutionEntrypoint({ props: {} }), (entrypoint) =>
+      readRpcData(entrypoint.runShard(input)),
+    );
   }
 }

@@ -30,6 +30,11 @@ const record = {
   usage: { input: 2, output: 3, cacheRead: 0, cacheWrite: 0 },
 } satisfies ModelGatewayRecord;
 
+const disposable = <A extends object>(value: A, onDispose: () => void): A => {
+  Object.defineProperty(value, Symbol.dispose, { value: onDispose });
+  return value;
+};
+
 const fixture = (localWorkerd = false, verifyLocalKey: LocalKeyVerifier = async () => null) => {
   const lookups: Array<string> = [];
   const jurisdictions: Array<string> = [];
@@ -42,7 +47,12 @@ const fixture = (localWorkerd = false, verifyLocalKey: LocalKeyVerifier = async 
   const threadRecords: Array<{ name: string; record: ModelGatewayRecord }> = [];
   const localRecords: Array<{ name: string; keyId: string; usage: ModelGatewayRecord["usage"] }> =
     [];
+  const disposedStubs: Array<string> = [];
+  const disposedResults: Array<string> = [];
+  let forwardDisposals = 0;
+  let responseDisposals = 0;
   const response = new Response("streamed");
+  disposable(response, () => responseDisposals++);
   const authorization: ModelAuthorization = {
     _tag: "granted",
     runId,
@@ -52,7 +62,7 @@ const fixture = (localWorkerd = false, verifyLocalKey: LocalKeyVerifier = async 
   };
 
   // Workerd owns these opaque IDs and full RPC stubs; doubles supply only the methods used here.
-  const byName = <A>(kind: string, get: (name: string) => A) => {
+  const byName = <A extends object>(kind: string, get: (name: string) => A) => {
     const idFromName = (name: string) => {
       lookups.push(`${kind}:${name}`);
       return name as unknown as DurableObjectId;
@@ -63,13 +73,16 @@ const fixture = (localWorkerd = false, verifyLocalKey: LocalKeyVerifier = async 
         jurisdictions.push(`${kind}:${name}`);
         return { idFromName };
       },
-      get: (id: DurableObjectId) => get(id as unknown as string),
+      get: (id: DurableObjectId) => {
+        const name = id as unknown as string;
+        return disposable(get(name), () => disposedStubs.push(`${kind}:${name}`));
+      },
     };
   };
   const threads = byName("threads", (name) => ({
     authorizeModel: async (token: string, provider: string) => {
       authorizations.push({ name, token, provider });
-      return authorization;
+      return disposable({ ...authorization }, () => disposedResults.push("thread authorization"));
     },
     recordModelRequest: async (record: ModelGatewayRecord) => {
       threadRecords.push({ name, record });
@@ -78,7 +91,9 @@ const fixture = (localWorkerd = false, verifyLocalKey: LocalKeyVerifier = async 
   const users = byName("users", (name) => ({
     authorizeLocalModel: async (secret: string) => {
       localAuthorizations.push({ name, secret });
-      return { _tag: "granted", keyId: "key-1", pool };
+      return disposable({ _tag: "granted", keyId: "key-1", pool }, () =>
+        disposedResults.push("local authorization"),
+      );
     },
     recordLocalModelRequest: async (input: {
       keyId: string;
@@ -92,7 +107,10 @@ const fixture = (localWorkerd = false, verifyLocalKey: LocalKeyVerifier = async 
       ...args: Parameters<ReturnType<PoolObjectNamespace["get"]>["forwardModel"]>
     ) => {
       forwards.push({ name, args });
-      return { _tag: "forwarded", response, upstreamMs: 1 } satisfies ModelForwardReply;
+      return disposable(
+        { _tag: "forwarded", response, upstreamMs: 1 } satisfies ModelForwardReply,
+        () => forwardDisposals++,
+      );
     },
   })) as unknown as PoolObjectNamespace;
 
@@ -109,6 +127,14 @@ const fixture = (localWorkerd = false, verifyLocalKey: LocalKeyVerifier = async 
       forwards,
       threadRecords,
       localRecords,
+      disposedStubs,
+      disposedResults,
+      get forwardDisposals() {
+        return forwardDisposals;
+      },
+      get responseDisposals() {
+        return responseDisposals;
+      },
       response,
     }),
   );
@@ -169,6 +195,17 @@ describe("Cloudflare ModelAccess", () => {
         ]);
         expect(f.lookups).toEqual(["users:requester", "pools:pool-owner:work"]);
         expect(f.jurisdictions).toEqual(["users:eu", "pools:eu"]);
+        expect(f.disposedResults).toEqual(["local authorization"]);
+        expect(f.disposedStubs).toEqual(["users:requester", "pools:pool-owner:work"]);
+        expect(f.forwardDisposals).toBe(0);
+        expect(f.responseDisposals).toBe(0);
+        if (reply._tag === "granted-local" && reply.reply._tag === "forwarded") {
+          const response = reply.reply.response;
+          const text = yield* Effect.promise(() => response.text());
+          expect(text).toBe("streamed");
+        }
+        expect(f.forwardDisposals).toBe(1);
+        expect(f.responseDisposals).toBe(1);
       }),
   );
 
@@ -198,9 +235,16 @@ describe("Cloudflare ModelAccess", () => {
             ],
           },
         ]);
-        expect(
-          reply._tag === "granted" && reply.reply._tag === "forwarded" && reply.reply.response,
-        ).toBe(f.response);
+        expect(reply).toMatchObject({ _tag: "granted", reply: { _tag: "forwarded" } });
+        expect(f.disposedResults).toEqual(["thread authorization"]);
+        expect(f.disposedStubs).toEqual(["threads:thread-a", "pools:pool-owner:work"]);
+        if (reply._tag === "granted" && reply.reply._tag === "forwarded") {
+          const response = reply.reply.response;
+          const text = yield* Effect.promise(() => response.text());
+          expect(text).toBe("streamed");
+        }
+        expect(f.forwardDisposals).toBe(1);
+        expect(f.responseDisposals).toBe(1);
         expect(f.jurisdictions).toEqual([]);
       }),
   );
@@ -220,6 +264,7 @@ describe("Cloudflare ModelAccess", () => {
       expect(f.localRecords).toEqual([{ name: "key-owner", keyId: "key-2", usage: record.usage }]);
       expect(f.lookups).toEqual(["threads:thread-a", "users:key-owner"]);
       expect(f.jurisdictions).toEqual(["threads:eu", "users:eu"]);
+      expect(f.disposedStubs).toEqual(["threads:thread-a", "users:key-owner"]);
     }),
   );
 });

@@ -1,3 +1,4 @@
+import { readRpcData } from "../../rpc/Resources.ts";
 import { validateInitialCheckpoint } from "./initialCheckpoint.ts";
 import { createSeededProductHost } from "./seededHost.ts";
 import * as Effect from "effect/Effect";
@@ -137,11 +138,13 @@ export function prepareFreshHarnessCProductHost<
     // Resolve authority using the provider session identity before native open creates its UUID.
     const access = yield* Effect.tryPromise({
       try: () =>
-        resolveFreshAccess({
-          threadId,
-          providerSessionId: open.session.providerSessionId,
-          operationId: input.operationId,
-        }),
+        readRpcData(
+          resolveFreshAccess({
+            threadId,
+            providerSessionId: open.session.providerSessionId,
+            operationId: input.operationId,
+          }),
+        ),
       catch: (cause) =>
         new HarnessRequestFacetError("Fresh product access could not be resolved.", { cause }),
     });

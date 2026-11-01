@@ -1,3 +1,4 @@
+import { readRpcData, withRpcStub } from "../../../../src/rpc/Resources.ts";
 import { DurableObject } from "cloudflare:workers";
 import * as Schema from "effect/Schema";
 import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
@@ -14,18 +15,19 @@ const decodeTurn = Schema.decodeSync(Schema.fromJsonString(Schema.toCodecJson(Ru
 export class QualifierClaudeFixtures extends DurableObject<QualifierEnvironment> {
   #services: Promise<ReturnType<typeof createClaudeFixtureServices>> | undefined;
   private services() {
-    return (this.#services ??= proof(this.env)
-      .config()
-      .then((config) =>
-        createClaudeFixtureServices({
-          runId: config.runId,
-          threadIds: (["baseline", "hooks"] as const).map(
-            (variant) => decodeTurn(config.claude.runtime.turnJson[variant][0]!).threadId,
-          ),
-          probe: config.claude.runtime.workload.mcpProbe,
-          record: (kind, value) => proof(this.env).append(kind, value),
-        }),
-      ));
+    return (this.#services ??= withRpcStub(proof(this.env), async (stub) =>
+      readRpcData(stub.config()),
+    ).then((config) =>
+      createClaudeFixtureServices({
+        runId: config.runId,
+        threadIds: (["baseline", "hooks"] as const).map(
+          (variant) => decodeTurn(config.claude.runtime.turnJson[variant][0]!).threadId,
+        ),
+        probe: config.claude.runtime.workload.mcpProbe,
+        record: (kind, value) =>
+          withRpcStub(proof(this.env), async (stub) => readRpcData(stub.append(kind, value))),
+      }),
+    ));
   }
   async resolveFreshAccess(
     input: Parameters<NonNullable<HarnessCProductAccessService<unknown>["resolveFreshAccess"]>>[0],
