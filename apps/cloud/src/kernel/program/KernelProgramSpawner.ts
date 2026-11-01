@@ -104,7 +104,7 @@ export class KernelProgramSpawner {
     preselected?: KernelPreparedFileByteSelection,
   ): KernelBackend {
     return {
-      "process.spawn": ({ program, args, env }) => {
+      "process.spawn": ({ program, args, env, processGroupId }) => {
         if (!prepared.canTransfer)
           return kernelError("ALREADY_WAITING", "Prepared program was already consumed");
         const binding = this.#bindingFor(program);
@@ -119,7 +119,15 @@ export class KernelProgramSpawner {
             "Secret environment values are not supported by local WASI",
           );
         }
-        return this.#spawnPrepared(prepared, executable, binding, args, env, preselected);
+        return this.#spawnPrepared(
+          prepared,
+          executable,
+          binding,
+          args,
+          env,
+          preselected,
+          processGroupId,
+        );
       },
       "process.wait": ({ handle }) => this.#processes.wait(handle),
       "process.signal": ({ handle, signal }) =>
@@ -176,6 +184,7 @@ export class KernelProgramSpawner {
     args: readonly string[],
     env: Readonly<Record<string, string>>,
     preselected?: KernelPreparedFileByteSelection,
+    processGroupId?: number,
   ): KernelResult<KernelHandle<"process">> {
     let fileBytes: KernelFileByteSelection;
     try {
@@ -205,7 +214,7 @@ export class KernelProgramSpawner {
       binding.implementation,
       args,
       withHome(prepared.home, env),
-      undefined,
+      processGroupId,
       false,
       undefined,
     );

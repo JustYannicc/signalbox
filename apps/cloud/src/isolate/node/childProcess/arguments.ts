@@ -45,6 +45,7 @@ export interface NormalizedSpawn {
   readonly signal?: AbortSignal;
   readonly timeout: number;
   readonly killSignal: number;
+  readonly detached: boolean;
 }
 
 export function isArgumentList(value: unknown): value is readonly string[] {
@@ -64,7 +65,9 @@ export function normalizeSpawn(
       throw new TypeError('The "args" argument must contain only strings');
   }
   if (options.agentosPty) unsupportedNodeOperation("child_process.pty");
-  if (options.detached) unsupportedNodeOperation("child_process.detached");
+  if (options.detached != null && typeof options.detached !== "boolean") {
+    throw new TypeError('The "detached" option must be a boolean');
+  }
   for (const field of ["uid", "gid"] as const) {
     if (options[field] !== undefined) unsupportedNodeOperation(`child_process.${field}`);
   }
@@ -84,6 +87,7 @@ export function normalizeSpawn(
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     timeout: normalizeTimeout(options.timeout),
     killSignal: normalizeSignal(options.killSignal),
+    detached: options.detached === true,
   };
 }
 

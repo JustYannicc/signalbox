@@ -1,11 +1,15 @@
+export const CLAUDE_INCOMING_REQUEST_BODY_LIFECYCLES = [
+  "not-owned",
+  "owned",
+  "consumed",
+  "delegated-unverified",
+  "cancelled",
+  "cancel-requested",
+  "cancel-failed",
+] as const;
+
 export type ClaudeIncomingRequestBodyLifecycle =
-  | "not-owned"
-  | "owned"
-  | "consumed"
-  | "delegated-unverified"
-  | "cancelled"
-  | "cancel-requested"
-  | "cancel-failed";
+  (typeof CLAUDE_INCOMING_REQUEST_BODY_LIFECYCLES)[number];
 
 type CancellationResult =
   | { readonly lifecycle: "not-owned" | "consumed" | "cancelled" | "cancel-requested" }

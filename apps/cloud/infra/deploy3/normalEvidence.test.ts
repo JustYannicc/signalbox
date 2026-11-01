@@ -9,6 +9,11 @@ import { releaseDeploy3FromLocalEvidence, cleanupReleasedDeploy3 } from "./norma
 import { controlFixture } from "./control.fixture.ts";
 import { inspectEvidenceInventory } from "./evidenceInventory.ts";
 import { releaseDeploy3Owner } from "./controlLifecycle.ts";
+import {
+  CLAUDE_REQUEST_ATTEMPTS_KEY,
+  claudeRequestAttemptKey,
+} from "./qualification/fixture/claudeAttemptCounters.ts";
+import { producerBackedExportFixture } from "./normalEvidence.fixture.ts";
 
 async function exportFixture() {
   const bytes = new TextEncoder().encode("full local evidence");
@@ -178,5 +183,69 @@ TestCase.test(
         inspectEvidenceInventory(fixture.entries.filter(([key]) => key !== "blob/journal-1/ref")),
       /journal is empty/,
     );
+  },
+);
+
+TestCase.test(
+  "normal export accepts every inventory entry emitted by qualification evidence producers",
+  async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "deploy3-producer-parity-"));
+    try {
+      const fixture = controlFixture();
+      const registration = (await fixture.api().read()).controls[0]!.registration;
+      const source = await producerBackedExportFixture();
+      const rows = await source.storage.list({ prefix: "export/" });
+      const producedEntries = [...rows.entries()].map(
+        ([key, value]) => [key.slice("export/".length), value] as const,
+      );
+      const directory = NodePath.join(root, "export");
+
+      await exportDeploy3Locally({
+        origin: "https://qualifier.example",
+        qualifierRunId: "source-run",
+        registration,
+        directory,
+        fetchImpl: source.fetchImpl,
+      });
+
+      NodeAssert.deepEqual(
+        JSON.parse(await NodeFSP.readFile(NodePath.join(directory, "inventory.json"), "utf8")),
+        producedEntries,
+      );
+      const blobRequests = source.blobRequestCount();
+
+      const malformedCounters = structuredClone(producedEntries);
+      const counters = malformedCounters.find(([key]) => key === CLAUDE_REQUEST_ATTEMPTS_KEY);
+      NodeAssert.ok(counters);
+      (counters[1] as { started: number }).started++;
+      NodeAssert.throws(
+        () => inspectEvidenceInventory(malformedCounters),
+        /Claude request attempt counters are inconsistent/,
+      );
+
+      const malformedMarker = structuredClone(producedEntries);
+      const marker = malformedMarker.find(([key]) => key === claudeRequestAttemptKey(1));
+      NodeAssert.ok(marker);
+      (marker[1] as { ordinal: number }).ordinal++;
+      NodeAssert.throws(
+        () => inspectEvidenceInventory(malformedMarker),
+        /Claude request attempt identity differs/,
+      );
+
+      await source.storage.put("export/unrecognized/evidence", { retained: true });
+      await NodeAssert.rejects(
+        exportDeploy3Locally({
+          origin: "https://qualifier.example",
+          qualifierRunId: "source-run",
+          registration,
+          directory: NodePath.join(root, "unknown-kind"),
+          fetchImpl: source.fetchImpl,
+        }),
+        /Unknown evidence inventory entry/,
+      );
+      NodeAssert.equal(source.blobRequestCount(), blobRequests);
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
   },
 );

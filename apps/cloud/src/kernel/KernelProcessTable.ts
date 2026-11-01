@@ -446,7 +446,7 @@ export class KernelProcessTable {
     return kernelOk(previous);
   }
 
-  /** Signals matching live direct children, using waitpid selector semantics. */
+  /** Group signals cover the request's process namespace, including grandchildren and reparented members. */
   signalPid(
     parentHandle: KernelHandle<"process"> | undefined,
     selector: number,
@@ -463,7 +463,9 @@ export class KernelProcessTable {
     if (this.#closed) return kernelError("CANCELLED", "Process table is closed");
 
     const targets = [...this.#processes.values()]
-      .filter((process) => process.parentPid === parent.value.pid)
+      .filter(
+        (process) => selector === 0 || selector < -1 || process.parentPid === parent.value.pid,
+      )
       .filter((process) =>
         this.#waiters.matchesSelector(process, parent.value.processGroupId, selector),
       )

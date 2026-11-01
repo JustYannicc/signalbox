@@ -215,6 +215,7 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
               program: program!,
               args: this.#spawn.argv,
               env: this.#spawn.env,
+              ...(this.#spawn.detached ? { processGroupId: 0 } : {}),
             })
           : this.#transport.spawn(prepared.prepared, this.#spawn);
       const handle = unwrapHostResult(spawned, "spawn") as KernelHandle<"process">;

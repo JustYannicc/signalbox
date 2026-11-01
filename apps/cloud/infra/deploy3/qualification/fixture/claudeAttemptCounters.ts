@@ -1,95 +1,25 @@
-import type { rpcResourceSnapshot } from "../../../../src/rpc/Resources.ts";
 import type { ClaudeIncomingRequestBodyLifecycle } from "./claudeBodyOwnership.ts";
-
-export const CLAUDE_REQUEST_ATTEMPTS_KEY = "claude/request-attempt-counters";
-export const CLAUDE_REQUEST_ATTEMPTS_PREFIX = "claude/request-attempt/";
-
-export type ClaudeRequestAttemptOutcome = "success" | "failure";
-export type ClaudeRpcSnapshot = ReturnType<typeof rpcResourceSnapshot>;
-export type ClaudeRequestAttemptStage =
-  | "active-step"
-  | "credential"
-  | "first-failure"
-  | "model-owner"
-  | "transport";
-
-export interface ClaudeAttemptResources {
-  readonly transportEntered: boolean;
-  readonly incomingRequestBodyLifecycle: ClaudeIncomingRequestBodyLifecycle;
-  /** Explicit capture arrays only. This is not a heap or RSS measurement. */
-  readonly requestCaptureBytes: number;
-  readonly responseCaptureBytes: number;
-  readonly activeBufferedBytes: number;
-  readonly peakBufferedBytes: number;
-  readonly cumulativeBufferedBytes: number;
-  readonly requestCaptureBodyLifecycle:
-    | "not-read"
-    | "consumed"
-    | "cancelled"
-    | "cancel-requested"
-    | "cancel-failed"
-    | "errored";
-  readonly responseCaptureBodyLifecycle:
-    | "not-read"
-    | "consumed"
-    | "cancelled"
-    | "cancel-requested"
-    | "cancel-failed"
-    | "errored";
-  readonly returnedResponseBodyLifecycle:
-    | "none"
-    | "caller-owned"
-    | "cancelled"
-    | "cancel-requested"
-    | "cancel-failed";
-}
-
-export interface ClaudeRequestAttemptMarker {
-  readonly ordinal: number;
-  readonly state: "started" | "finished";
-  readonly outcome?: ClaudeRequestAttemptOutcome;
-  readonly failedAt?: ClaudeRequestAttemptStage;
-  readonly finalized?: true;
-  readonly rpc: {
-    readonly scope: "cloud-rpc-module-global";
-    readonly start: ClaudeRpcSnapshot;
-    readonly end?: ClaudeRpcSnapshot;
-  };
-  readonly resources: ClaudeAttemptResources;
-}
-
-export interface ClaudeRequestAttemptCounters {
-  readonly schema: "signalbox/claude-request-attempt-counters/v1";
-  readonly nextOrdinal: number;
-  readonly started: number;
-  readonly activeRequests: number;
-  readonly succeeded: number;
-  readonly failed: number;
-  readonly finalized: number;
-  readonly transportEntered: number;
-  readonly requestCaptureBytes: number;
-  readonly responseCaptureBytes: number;
-  readonly cumulativeBufferedBytes: number;
-  readonly peakAttemptBufferedBytes: number;
-  readonly requestCaptureBodiesConsumed: number;
-  readonly requestCaptureBodiesCancelled: number;
-  readonly requestCaptureBodiesErrored: number;
-  readonly incomingRequestBodiesConsumed: number;
-  readonly incomingRequestBodiesDelegatedUnverified: number;
-  readonly incomingRequestBodiesCancelled: number;
-  readonly incomingRequestBodiesCancelRequested: number;
-  readonly incomingRequestBodiesCancelFailed: number;
-  readonly requestCaptureBodiesCancelRequested: number;
-  readonly requestCaptureBodiesCancelFailed: number;
-  readonly responseCaptureBodiesConsumed: number;
-  readonly responseCaptureBodiesCancelled: number;
-  readonly responseCaptureBodiesCancelRequested: number;
-  readonly responseCaptureBodiesCancelFailed: number;
-  readonly responseCaptureBodiesErrored: number;
-  readonly returnedResponseBodiesCancelled: number;
-  readonly returnedResponseBodiesCancelRequested: number;
-  readonly returnedResponseBodiesCancelFailed: number;
-}
+import type {
+  ClaudeAttemptResources,
+  ClaudeRequestAttemptCounters,
+  ClaudeRequestAttemptMarker,
+  ClaudeRequestAttemptOutcome,
+  ClaudeRequestAttemptStage,
+  ClaudeRpcSnapshot,
+} from "./claudeAttemptEvidence.ts";
+export {
+  CLAUDE_REQUEST_ATTEMPTS_KEY,
+  CLAUDE_REQUEST_ATTEMPTS_PREFIX,
+  claudeRequestAttemptKey,
+} from "./claudeAttemptKeys.ts";
+export type {
+  ClaudeAttemptResources,
+  ClaudeRequestAttemptCounters,
+  ClaudeRequestAttemptMarker,
+  ClaudeRequestAttemptOutcome,
+  ClaudeRequestAttemptStage,
+  ClaudeRpcSnapshot,
+} from "./claudeAttemptEvidence.ts";
 
 export function emptyClaudeAttemptResources(): ClaudeAttemptResources {
   return {
@@ -139,12 +69,6 @@ export function emptyClaudeRequestAttemptCounters(): ClaudeRequestAttemptCounter
     returnedResponseBodiesCancelRequested: 0,
     returnedResponseBodiesCancelFailed: 0,
   };
-}
-
-export function claudeRequestAttemptKey(ordinal: number): string {
-  if (!Number.isSafeInteger(ordinal) || ordinal < 1)
-    throw new RangeError("Claude request attempt ordinal is invalid.");
-  return `${CLAUDE_REQUEST_ATTEMPTS_PREFIX}${String(ordinal).padStart(10, "0")}`;
 }
 
 export function startClaudeRequestAttempt(

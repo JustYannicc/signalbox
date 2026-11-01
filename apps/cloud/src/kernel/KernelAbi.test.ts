@@ -298,10 +298,12 @@ describe("kernel host extension ABI", () => {
       },
       args,
       env,
+      processGroupId: 0,
     };
     const spawn = vi.fn((snapshot: Parameters<NonNullable<KernelBackend["process.spawn"]>>[0]) => {
       expect(snapshot.program).toBe(resolved);
       expect(snapshot.args).toEqual(["original"]);
+      expect(snapshot.processGroupId).toBe(0);
       expect(snapshot.env.KEY).toBe("original");
       expect(snapshot.env.SECRET).toEqual({ id: "secret", kind: "secret" });
       expect(snapshot.env.SECRET).not.toBe(secret);

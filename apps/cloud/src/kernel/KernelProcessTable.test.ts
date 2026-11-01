@@ -359,6 +359,68 @@ describe("KernelProcessTable", () => {
     await table.dispose();
   });
 
+  it("signals all surviving group members after the leader is reaped", async () => {
+    const { table, wakes } = makeTable();
+    const leaderExit = deferred<KernelExitStatus>();
+    const childExit = deferred<KernelExitStatus>();
+    const grandchildExit = deferred<KernelExitStatus>();
+    const otherExit = deferred<KernelExitStatus>();
+    const leader = table.spawn(
+      undefined,
+      () => launch(leaderExit.promise).child,
+      () => {},
+      { processGroupId: 0 },
+    );
+    if (leader.status !== "ok") throw new Error("Leader did not start");
+    const childLaunch = launch(childExit.promise);
+    const child = table.spawn(
+      leader.value.handle,
+      () => childLaunch.child,
+      () => {},
+    );
+    if (child.status !== "ok") throw new Error("Child did not start");
+    const grandchildLaunch = launch(grandchildExit.promise);
+    const grandchild = table.spawn(
+      child.value.handle,
+      () => grandchildLaunch.child,
+      () => {},
+    );
+    if (grandchild.status !== "ok") throw new Error("Grandchild did not start");
+    const otherLaunch = launch(otherExit.promise);
+    const other = table.spawn(
+      child.value.handle,
+      () => otherLaunch.child,
+      () => {},
+      { processGroupId: 0 },
+    );
+    if (other.status !== "ok") throw new Error("Other group did not start");
+    try {
+      const ready = table.exitStatus(leader.value.handle);
+      if (ready.status !== "would_block") throw new Error("Leader exited early");
+      const terminal = wakes.wait(ready.wakeToken);
+      leaderExit.resolve(status(0));
+      await terminal;
+      expect(table.reap(leader.value.handle).status).toBe("ok");
+      expect(table.signalPid(undefined, -leader.value.pid, 0).status).toBe("ok");
+      expect(childLaunch.signal).not.toHaveBeenCalled();
+      expect(table.signalPid(undefined, -leader.value.pid, 15).status).toBe("ok");
+      expect(childLaunch.signal).toHaveBeenCalledWith(15);
+      expect(grandchildLaunch.signal).toHaveBeenCalledWith(15);
+      expect(otherLaunch.signal).not.toHaveBeenCalled();
+      expect(table.waitpid(undefined, grandchild.value.pid, KERNEL_WNOHANG)).toMatchObject({
+        status: "error",
+        error: { code: "NOT_FOUND" },
+      });
+    } finally {
+      leaderExit.resolve(status(0));
+      childExit.resolve(status(0));
+      grandchildExit.resolve(status(0));
+      otherExit.resolve(status(0));
+      await table.dispose();
+      wakes.dispose();
+    }
+  });
+
   it("implements any-child, process-group, and WNOHANG selection", async () => {
     const { table, wakes } = makeTable();
     const sameGroupExit = deferred<KernelExitStatus>();

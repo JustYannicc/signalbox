@@ -108,6 +108,8 @@ export interface KernelOperations {
       program: ResolvedProgram;
       args: readonly string[];
       env: Readonly<Record<string, string | KernelHandle<"secret">>>;
+      /** Zero creates a group led by the admitted child; omission inherits the parent group. */
+      processGroupId?: number;
     },
     KernelHandle<"process">
   >;
@@ -142,6 +144,7 @@ export function callKernel<K extends KernelCapability>(
     let dispatchInput = input;
     if (operation === "process.spawn") {
       const spawn = input as KernelOperations["process.spawn"]["input"];
+      const processGroupId = spawn.processGroupId;
       const snapshot = Object.freeze({
         program: spawn.program,
         args: Object.freeze([...spawn.args]),
@@ -153,6 +156,7 @@ export function callKernel<K extends KernelCapability>(
             ]),
           ),
         ),
+        ...(processGroupId === undefined ? {} : { processGroupId }),
       });
       if (!resolvedPrograms.has(snapshot.program))
         return kernelError("INVALID_ARGUMENT", "Spawn requires a registry-resolved program");
