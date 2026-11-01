@@ -1,7 +1,9 @@
 import {
   createLocalEvidenceDirectory,
+  hashLocalEvidenceFile,
   readLocalEvidenceBytes,
-  writeLocalEvidenceBytes,
+  saveLocalEvidenceBytes,
+  writeLocalEvidenceChunks,
   syncLocalEvidenceDirectory,
 } from "./localEvidenceFiles.ts";
 import * as Schema from "effect/Schema";
@@ -12,36 +14,50 @@ import {
 } from "./controlRegistry.ts";
 import { boundedOperation } from "./platform.ts";
 import { EvidenceEntries, inspectEvidenceInventory } from "./evidenceInventory.ts";
+import {
+  NativeStdioEvidence,
+  exportNativeStdioEvidence,
+  inspectLegacyLocalStdio,
+  verifyNativeStdioEvidence,
+} from "./nativeStdioEvidence.ts";
 
 const Page = Schema.Struct({
   entries: Schema.Array(Schema.Tuple([Schema.String, Schema.Unknown])),
   next: Schema.NullOr(Schema.String),
 });
 const File = Schema.Struct({ name: Schema.String, bytes: Schema.Number, sha256: Schema.String });
-const Manifest = Schema.Struct({
+const ManifestV1 = Schema.Struct({
   schema: Schema.Literal("sb1070/deploy3-local-export/v1"),
   runId: Schema.String,
   registrationSha256: Schema.String,
   inventorySha256: Schema.String,
   files: Schema.Array(File),
 });
-const bytesDigest = async (bytes: Uint8Array) =>
-  [...new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)))]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-
+const ManifestV2 = Schema.Struct({
+  schema: Schema.Literal("sb1070/deploy3-local-export/v2"),
+  runId: Schema.String,
+  registrationSha256: Schema.String,
+  inventorySha256: Schema.String,
+  files: Schema.Array(File),
+  nativeStdio: Schema.Array(NativeStdioEvidence),
+});
 const decodePageJson = Schema.decodeSync(Schema.fromJsonString(Page));
-const decodeManifestJson = Schema.decodeSync(Schema.fromJsonString(Manifest));
+const decodeManifestJson = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Union([ManifestV1, ManifestV2])),
+);
 const decodeEvidenceEntriesJson = Schema.decodeSync(Schema.fromJsonString(EvidenceEntries));
 
-async function save(directory: string, name: string, bytes: Uint8Array) {
-  await writeLocalEvidenceBytes(directory, name, bytes);
-  const readback = await readLocalEvidenceBytes(directory, name);
-  const sha256 = await bytesDigest(bytes);
-  if (readback.length !== bytes.length || (await bytesDigest(readback)) !== sha256) {
-    throw new Error("Local export readback differs");
+async function* responseChunks(body: ReadableStream<Uint8Array>) {
+  const reader = body.getReader();
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) return;
+      yield result.value;
+    }
+  } finally {
+    reader.releaseLock();
   }
-  return { name, bytes: bytes.length, sha256 };
 }
 
 /** Normal completion only. It never skips blobs or publishes their contents. */
@@ -106,42 +122,91 @@ export async function exportDeploy3Locally(input: {
     }
     throw new Error("Normal export inventory exceeded its bound");
   }
+  async function downloadBlob(
+    artifact: { readonly id: string; readonly bytes: number; readonly sha256: string },
+    name: string,
+  ) {
+    return boundedOperation(async (signal) => {
+      const response = await fetchImpl(origin + "/export/blob", {
+        method: "POST",
+        signal,
+        redirect: "error",
+        cache: "no-store",
+        headers: { "x-qualifier-run": input.qualifierRunId, "content-type": "application/json" },
+        body: JSON.stringify(artifact),
+      });
+      if (response.status !== 200) throw new Error("Normal evidence export request failed");
+      const chunks = response.body ? responseChunks(response.body) : emptyChunks();
+      const file = await writeLocalEvidenceChunks(input.directory, name, chunks);
+      if (file.bytes !== artifact.bytes || file.sha256 !== artifact.sha256) {
+        throw new Error("Exported blob differs from its source reference");
+      }
+      return { name, bytes: file.bytes, sha256: file.sha256 };
+    }, 60_000);
+  }
   await createLocalEvidenceDirectory(input.directory);
   const before = await inventory();
   if (before.length === 0) throw new Error("Empty evidence cannot release this deployment");
   const files = [];
   const artifacts = inspectEvidenceInventory(before);
-  for (const artifact of artifacts) {
-    const bytes = await request("/export/blob", artifact);
-    if (bytes.length !== artifact.bytes || (await bytesDigest(bytes)) !== artifact.sha256) {
-      throw new Error("Exported blob differs from its source reference");
-    }
-    files.push(await save(input.directory, `blob-${files.length}.bin`, bytes));
+  const blobFiles = new Map<string, string>();
+  for (const [index, artifact] of artifacts.entries()) {
+    const name = `blob-${index}.bin`;
+    files.push(await downloadBlob(artifact, name));
+    blobFiles.set(artifact.id, name);
   }
-  // A stable complete inventory plus every blob proves the export has no omitted or changing source rows.
   const serialized = JSON.stringify(before);
-  if (serialized !== JSON.stringify(await inventory()) || artifacts.length === 0) {
-    throw new Error("Evidence changed while exporting or has no blobs");
-  }
+  if (artifacts.length === 0) throw new Error("Normal export found no evidence blobs");
   const inventoryBytes = new TextEncoder().encode(serialized);
-  const inventoryFile = await save(input.directory, "inventory.json", inventoryBytes);
+  const inventoryFile = await saveLocalEvidenceBytes(
+    input.directory,
+    "inventory.json",
+    inventoryBytes,
+  );
   files.push(inventoryFile);
+  const nativeStdio = await exportNativeStdioEvidence({
+    directory: input.directory,
+    entries: before,
+    blobFiles,
+    readBlob: async (id) => {
+      const name = blobFiles.get(id);
+      if (!name) throw new Error("Native stdio journal payload has no local blob file");
+      return await readLocalEvidenceBytes(input.directory, name);
+    },
+  });
+  // A stable complete inventory plus every blob proves the export has no omitted or changing source rows.
+  if (serialized !== JSON.stringify(await inventory())) {
+    throw new Error("Evidence changed while exporting");
+  }
   const manifest = {
-    schema: "sb1070/deploy3-local-export/v1",
+    schema: "sb1070/deploy3-local-export/v2",
     runId,
     registrationSha256,
     inventorySha256: inventoryFile.sha256,
     files,
+    nativeStdio,
   };
-  await save(input.directory, "manifest.json", new TextEncoder().encode(JSON.stringify(manifest)));
+  await saveLocalEvidenceBytes(
+    input.directory,
+    "manifest.json",
+    new TextEncoder().encode(JSON.stringify(manifest)),
+  );
   await syncLocalEvidenceDirectory(input.directory);
-  return verifyDeploy3LocalExport(input);
+  return verifyDeploy3LocalExport(
+    { directory: input.directory, registration: input.registration },
+    { allowIncompleteStdio: true },
+  );
 }
 
-export async function verifyDeploy3LocalExport(input: {
-  readonly directory: string;
-  readonly registration: Deploy3ControlRegistration;
-}) {
+async function* emptyChunks() {}
+
+export async function verifyDeploy3LocalExport(
+  input: {
+    readonly directory: string;
+    readonly registration: Deploy3ControlRegistration;
+  },
+  options: { readonly allowIncompleteStdio?: boolean } = {},
+) {
   if (!input.registration) {
     throw new Error("Local export verification requires the canonical deployment registration");
   }
@@ -168,6 +233,14 @@ export async function verifyDeploy3LocalExport(input: {
   const artifacts = inspectEvidenceInventory(inventory);
   if (manifest.files.length !== artifacts.length + 1)
     throw new Error("Local export omitted source blobs");
+  const blobFiles = new Map<string, string>();
+  for (const [index, artifact] of artifacts.entries())
+    blobFiles.set(artifact.id, `blob-${index}.bin`);
+  const readBlob = async (id: string) => {
+    const name = blobFiles.get(id);
+    if (!name) throw new Error("Native stdio journal payload has no local blob file");
+    return await readLocalEvidenceBytes(input.directory, name);
+  };
   for (const [index, file] of manifest.files.entries()) {
     const expected = artifacts[index];
     if (
@@ -182,13 +255,37 @@ export async function verifyDeploy3LocalExport(input: {
     if (
       !/^(blob-\d+\.bin|inventory\.json)$/.test(file.name) ||
       !Number.isSafeInteger(file.bytes) ||
-      file.bytes < 0
+      file.bytes < 0 ||
+      !/^[a-f0-9]{64}$/.test(file.sha256)
     ) {
       throw new Error("Local export manifest path is invalid");
     }
-    const bytes = await readLocalEvidenceBytes(input.directory, file.name);
-    if (bytes.length !== file.bytes || (await bytesDigest(bytes)) !== file.sha256)
+    const actual = await hashLocalEvidenceFile(input.directory, file.name);
+    if (actual.bytes !== file.bytes || actual.sha256 !== file.sha256)
       throw new Error("Local exported file differs");
   }
-  return { verifiedLocalExportSha256: await controlDigest(raw) };
+  const nativeStdio =
+    manifest.schema === "sb1070/deploy3-local-export/v2"
+      ? await verifyNativeStdioEvidence({
+          directory: input.directory,
+          entries: inventory,
+          blobFiles,
+          readBlob,
+          evidence: manifest.nativeStdio,
+          allowIncomplete: options.allowIncompleteStdio === true,
+        })
+      : [];
+  const stdioStatus =
+    manifest.schema === "sb1070/deploy3-local-export/v1"
+      ? await inspectLegacyLocalStdio({ entries: inventory, readBlob })
+      : nativeStdio.length === 0
+        ? ("no-native-stdio-records" as const)
+        : nativeStdio.every((stream) => stream.complete)
+          ? ("complete-native-stdio" as const)
+          : ("incomplete-native-stdio" as const);
+  return {
+    verifiedLocalExportSha256: await controlDigest(raw),
+    nativeStdio,
+    stdioStatus,
+  };
 }

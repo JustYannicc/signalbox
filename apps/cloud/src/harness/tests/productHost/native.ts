@@ -115,6 +115,15 @@ export function nativeFixture(
         0o644,
       );
       const logicalProcess = bridge.require("node:process") as ReturnType<typeof createNodeProcess>;
+      const modelBaseUrl = logicalProcess.env.ANTHROPIC_BASE_URL ?? "https://recorded.invalid";
+      const modelHeaders = {
+        "content-type": "application/json",
+        ...(logicalProcess.env.ANTHROPIC_AUTH_TOKEN === undefined
+          ? {}
+          : {
+              authorization: `Bearer ${logicalProcess.env.ANTHROPIC_AUTH_TOKEN}`,
+            }),
+      };
       if (onExit !== undefined) logicalProcess.once("exit", onExit);
       const os = bridge.require("node:os") as ReturnType<typeof createNodeOs>;
       NodeAssert.equal(logicalProcess.arch, systemIdentity.arch);
@@ -140,14 +149,14 @@ export function nativeFixture(
           // @effect-diagnostics-next-line globalFetch:off - Exercise the installed model transport.
           const rootResponse = await globalThis.fetch(
             model === undefined
-              ? "https://recorded.invalid/root"
-              : "https://recorded.invalid/v1/messages?fixture=root",
+              ? `${modelBaseUrl}/root`
+              : `${modelBaseUrl}/v1/messages?fixture=root`,
             model === undefined
-              ? undefined
+              ? { headers: modelHeaders }
               : {
                   method: "POST",
                   signal: active.signal,
-                  headers: { "content-type": "application/json" },
+                  headers: modelHeaders,
                   body: JSON.stringify({
                     model,
                     max_tokens: 32,
@@ -166,14 +175,14 @@ export function nativeFixture(
           // @effect-diagnostics-next-line globalFetch:off - A child response uses the same recorded route.
           const childResponse = await globalThis.fetch(
             model === undefined
-              ? "https://recorded.invalid/child"
-              : "https://recorded.invalid/v1/messages?fixture=child",
+              ? `${modelBaseUrl}/child`
+              : `${modelBaseUrl}/v1/messages?fixture=child`,
             model === undefined
-              ? undefined
+              ? { headers: modelHeaders }
               : {
                   method: "POST",
                   signal: active.signal,
-                  headers: { "content-type": "application/json" },
+                  headers: modelHeaders,
                   body: JSON.stringify({
                     model,
                     max_tokens: 32,

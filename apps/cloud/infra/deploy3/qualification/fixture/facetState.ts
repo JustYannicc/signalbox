@@ -6,15 +6,17 @@ import type { QualifierCapabilities } from "./capabilities.ts";
 import type { HostFiles } from "./snapshot.ts";
 import { observeChunkReads } from "./chunkReadObserver.ts";
 import { assert } from "./common.ts";
-import { createNativeStdioPrefix, type NativeStdioChannel } from "./nativeOutputPrefix.ts";
+import { createNativeStdioCapture, type NativeStdioChannel } from "../../nativeStdio.ts";
 
-type FlushReason = "checkpoint" | "request-settled";
+type FlushReason = "checkpoint" | "request-settled" | "disposed";
+// Raw observers cannot await storage, so bound both queued bytes and queue nodes.
+const MAX_PENDING_RAW_BYTES = 1024 * 1024;
+const MAX_PENDING_RAW_CHUNKS = 256;
 
 export interface FacetState {
   readonly files: HostFiles;
   readonly reads: ReturnType<typeof observeChunkReads>;
   readonly rawOrdinals: Map<string, number>;
-  readonly outputPrefixEnabled: boolean;
   readonly raw: (channel: NativeStdioChannel, bytes: Uint8Array) => void;
   readonly queue: (operation: () => Promise<unknown>) => void;
   readonly flush: (reason?: FlushReason) => Promise<void>;
@@ -27,15 +29,10 @@ export function facetState(
   ctx: DurableObjectState,
   capability: QualifierCapabilities,
   incarnation: string,
-  options: { readonly outputPrefix?: true } = {},
 ) {
   const existing = states.get(ctx);
   if (existing) {
     assert(existing.facetNonce === incarnation, "Facet state changed incarnation");
-    assert(
-      existing.outputPrefixEnabled === (options.outputPrefix === true),
-      "Facet output capture mode changed incarnation",
-    );
     return existing;
   }
   const database: FacetStorage = {
@@ -50,8 +47,10 @@ export function facetState(
   const reads = observeChunkReads(database);
   let pending = Promise.resolve();
   let failure: unknown;
+  let pendingRawBytes = 0;
+  let pendingRawChunks = 0;
   const rawOrdinals = new Map<string, number>();
-  const stdioPrefix = options.outputPrefix === true ? createNativeStdioPrefix() : undefined;
+  const stdioCapture = createNativeStdioCapture();
   const queue = (operation: () => Promise<unknown>) => {
     pending = pending
       .then(async () => {
@@ -60,12 +59,33 @@ export function facetState(
       .catch((cause) => {
         failure ??= cause;
       });
-    ctx.waitUntil(pending);
+    try {
+      ctx.waitUntil(pending);
+    } catch (cause) {
+      failure ??= cause;
+    }
   };
   const recordRaw = (channel: NativeStdioChannel, bytes: Uint8Array) => {
+    if (
+      pendingRawBytes + bytes.byteLength > MAX_PENDING_RAW_BYTES ||
+      pendingRawChunks >= MAX_PENDING_RAW_CHUNKS
+    ) {
+      failure ??= new Error("Native byte capture exceeded its pending-memory bound");
+      return false;
+    }
     const ordinal = (rawOrdinals.get(channel) ?? 0) + 1;
     rawOrdinals.set(channel, ordinal);
-    queue(() => capability.recordRaw({ channel, incarnation, ordinal, bytes }));
+    pendingRawBytes += bytes.byteLength;
+    pendingRawChunks += 1;
+    queue(async () => {
+      try {
+        await capability.recordRaw({ channel, incarnation, ordinal, bytes });
+      } finally {
+        pendingRawBytes -= bytes.byteLength;
+        pendingRawChunks -= 1;
+      }
+    });
+    return true;
   };
   const files: HostFiles = {
     identity: "combined-qualifier-files",
@@ -81,27 +101,14 @@ export function facetState(
     files,
     reads,
     rawOrdinals,
-    outputPrefixEnabled: options.outputPrefix === true,
     facetNonce: incarnation,
     queue,
     raw(channel, bytes) {
-      if (stdioPrefix === undefined) {
-        recordRaw(channel, new Uint8Array(bytes));
-        return;
-      }
-      stdioPrefix.write(channel, bytes);
+      stdioCapture.write(channel, bytes, recordRaw);
     },
     async flush(reason = "checkpoint") {
-      if (stdioPrefix !== undefined) {
-        const retained = stdioPrefix.drain(recordRaw);
-        queue(() =>
-          capability.append("native-stdio-prefix", {
-            incarnation,
-            reason,
-            ...retained,
-          }),
-        );
-      }
+      const streams = stdioCapture.drain();
+      queue(() => capability.append("native-stdio-streams", { incarnation, reason, ...streams }));
       await pending;
       if (failure !== undefined) throw new Error("Native byte capture failed", { cause: failure });
     },
@@ -113,4 +120,8 @@ export function retainedFacetState(ctx: DurableObjectState) {
   const state = states.get(ctx);
   assert(state?.boundFiles && state.threadId, "The product filesystem has not been bound");
   return { ...state, boundFiles: state.boundFiles, threadId: state.threadId };
+}
+
+export async function flushFacetDiagnostics(ctx: DurableObjectState, reason: FlushReason) {
+  await states.get(ctx)?.flush(reason);
 }

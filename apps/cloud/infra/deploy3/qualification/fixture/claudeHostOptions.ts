@@ -19,7 +19,7 @@ import type { HarnessFilesStoreResult } from "../../../../src/harness/HarnessFil
 import { createMemoryFilePersistencePorts } from "../../../../src/kernel/MemoryFilePersistencePorts.ts";
 import type { HarnessReleaseArtifact } from "../../../../src/harnessReleases/HarnessReleaseLedger.ts";
 import type { LoadHarnessReleaseOptions } from "../../../../src/harness/HarnessReleaseLoader.ts";
-import { QualifierCapabilities } from "./capabilities.ts";
+import type { QualifierCapabilities } from "./capabilities.ts";
 import { facetState } from "./facetState.ts";
 import { assert } from "./common.ts";
 import {
@@ -42,6 +42,7 @@ import {
 } from "./claudeContinuations.ts";
 import { hydrateClaudeFiles } from "./claudeFiles.ts";
 import { sameClaudeReleaseArtifact } from "../../../../src/harnessReleases/ClaudeReleaseVariants.ts";
+import { claudeGatewayEnvironment } from "../../../../src/harness/ClaudeGatewayAccess.ts";
 
 import type { ClaudeAuthorityBindings } from "./claudeAuthorities.ts";
 
@@ -215,12 +216,20 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
         variant,
       }),
     );
+    const gatewayAccess = yield* attempt(() =>
+      cap.claudeGatewayAccess({ incarnation: input.facetNonce, variant }),
+    );
+    const gatewayEnvironment = yield* Effect.try({
+      try: () => claudeGatewayEnvironment(gatewayAccess),
+      catch: (cause) =>
+        new HarnessRequestFacetError("Claude model gateway access is invalid", { cause }),
+    });
     const selectedRelease = yield* attempt(() =>
       loadClaudeQualificationRelease(inputs, input.selectedRelease.artifact),
     );
     const plan = selectedRelease.plan;
 
-    const state = facetState(input.ctx, cap, input.facetNonce, { outputPrefix: true });
+    const state = facetState(input.ctx, cap, input.facetNonce);
     const paths = claudeSeedPaths(claude.seed);
     const imports = createClaudePreparedImports();
     const mcpSessions = yield* Effect.gen(function* () {
@@ -274,6 +283,7 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
           LANG: "C",
           LC_ALL: "C",
           ...processEnvironment,
+          ...gatewayEnvironment,
         },
         // The event stream can close on rejection, so this uses the request's awaited diagnostic queue.
         reportCliStartupFailure: (cause) =>

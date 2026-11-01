@@ -129,6 +129,9 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
   override async prepareClaudeIncarnation(input: Parameters<ClaudeController["prepare"]>[0]) {
     return await this.claude.prepare(input);
   }
+  override async claudeGatewayAccess(input: Parameters<ClaudeController["gatewayAccess"]>[0]) {
+    return await this.claude.gatewayAccess(input);
+  }
   async beginClaudeStep(step: ClaudeStep) {
     return await this.claude.begin(step);
   }

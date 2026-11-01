@@ -11,6 +11,7 @@ import { readConfiguration, readAsset } from "./configuration.ts";
 import { assert, control, encoder, jsonBytes, sameArtifact } from "./common.ts";
 import { describeFiles } from "./snapshot.ts";
 import { readClaudeQualificationAssets } from "../runtimeAssets.ts";
+import type { ClaudeGatewayAccess } from "../../../../src/harness/ClaudeGatewayAccess.ts";
 
 export interface CapabilityEnvironment {
   PROGRAM_ASSETS: Fetcher;
@@ -70,6 +71,12 @@ export class QualifierCapabilities<
     _input: import("./claudeScenario.ts").ClaudeIncarnation,
   ): Promise<unknown> {
     throw new Error("The Claude qualification owner must provide its incarnation boundary");
+  }
+  async claudeGatewayAccess(_input: {
+    incarnation: string;
+    variant: "baseline" | "hooks";
+  }): Promise<ClaudeGatewayAccess> {
+    throw new Error("The Claude model gateway must issue scoped access");
   }
   async hostConfiguration() {
     const config = await this.configuration();

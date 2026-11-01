@@ -116,6 +116,7 @@ export function qualifierFacetConfigurationSchemas<
         [Keys.release]: ports.service([
           ...releaseMethods,
           "prepareClaudeIncarnation",
+          "claudeGatewayAccess",
           "recordClaudeLoadedRelease",
           "catalog",
           "inventory",
