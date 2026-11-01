@@ -109,6 +109,7 @@ export function installHarnessPersonality(
       const results = await Promise.allSettled([
         Promise.resolve().then(transport.drain),
         Promise.resolve().then(runtime.drainDns),
+        Promise.resolve().then(runtime.drainHttp),
       ]);
       const failures = results.flatMap((result) =>
         result.status === "rejected" ? [result.reason] : [],

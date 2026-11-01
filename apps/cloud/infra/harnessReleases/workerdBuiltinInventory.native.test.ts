@@ -40,12 +40,7 @@ describe("native builtin inventory", () => {
       "zlib.gzipSync",
       "zlib.inflateRawSync",
     ];
-    const unavailable = new Set([
-      "http.Agent",
-      "http.createServer",
-      "https.Agent",
-      "net.createServer",
-    ]);
+    const unavailable = new Set(["http.createServer", "net.createServer"]);
     const rows = paths.map((path) => {
       const [specifier, ...memberPath] = path.split(".");
       return { specifier: specifier!, memberPath };

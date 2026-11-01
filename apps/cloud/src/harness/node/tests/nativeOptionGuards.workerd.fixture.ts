@@ -172,11 +172,14 @@ export default {
         return new Response("fetch-backed response");
       };
       try {
-        const http = DEFAULT_NODE_NATIVE_MODULES.http!;
+        const http = DEFAULT_NODE_NATIVE_MODULES.https!;
+        const Agent = Reflect.get(http, "Agent");
+        const ca = Reflect.get(DEFAULT_NODE_NATIVE_MODULES.tls!, "rootCertificates");
+        const agent = new Agent({ ca, keepAlive: true });
         const body = await new Promise<string>((resolve, reject) => {
           const child = Reflect.get(http, "request")(
-            "http://model.test/messages",
-            { method: "POST" },
+            "https://model.test:8443/messages",
+            { method: "POST", agent },
             (response: Parameters<typeof NodeStreamConsumers.text>[0]) => {
               void NodeStreamConsumers.text(response).then(resolve, reject);
             },
@@ -244,7 +247,7 @@ export default {
       ["tls", "connect", [{ host: "example.test", port: 443, ca: "custom" }]],
       ["tls", "connect", [443, "example.test", { key: "custom" }]],
       ["tls", "TLSSocket", [undefined, { cert: "custom" }]],
-      ["https", "request", ["https://example.test", { ca: "custom" }]],
+      ["https", "request", ["https://example.test", { cert: "custom" }]],
       ["https", "request", [{ host: "example.test", rejectUnauthorized: false }]],
       ["https", "get", ["https://example.test", { checkServerIdentity() {} }]],
       ["http", "request", [{ host: "example.test", agent: { addRequest() {} } }]],

@@ -1,5 +1,6 @@
 import { createHarnessPreparedAssets } from "../HarnessPreparedAssets.ts";
 import * as BunJsc from "../../isolate/NodeBunJsc.ts";
+import type { NodeEnvironmentPackage } from "../../isolate/NodeEnvironment.ts";
 import { createNodeEnvironmentResolver } from "../../isolate/NodeEnvironment.ts";
 import { createNodeModule } from "../../isolate/NodeModule.ts";
 import type { NodeBridge } from "../../isolate/NodeBridge.ts";
@@ -23,6 +24,7 @@ export function createHarnessEnvironment(input: NodeHarnessProcessInput, bridge:
   );
   return {
     module,
+    resolvePackage: (name: NodeEnvironmentPackage) => resolver(name, input.bun.main),
     async load(signal: AbortSignal) {
       const packages = await input.loadPackages(bridge(), signal);
       signal.throwIfAborted();

@@ -390,6 +390,9 @@ importers:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
+      https-proxy-agent:
+        specifier: 7.0.6
+        version: 7.0.6(supports-color@10.2.2)
       node-fetch:
         specifier: 2.7.0
         version: 2.7.0(encoding@0.1.13)
