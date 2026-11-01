@@ -5,6 +5,11 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 
 import { HarnessError } from "../../harness/Harness.ts";
+import {
+  CLAUDE_MODEL_GATEWAY_BASE_URL,
+  claudeGatewayEnvironment,
+  claudeGatewayTransport,
+} from "../../harness/ClaudeGatewayAccess.ts";
 import type { HostOpenInput, TurnAccess } from "../../harness/HarnessSessionHost.ts";
 import {
   createProductClaudeHarnessSessionHost,
@@ -81,6 +86,7 @@ export const createClaudeFacetHost = <G>(
               try: () => selectProductClaudeHostRelease(options.host),
               catch: (cause) => failed("Could not select the facet's Claude release.", cause),
             });
+            let modelCredential: string | null = null;
             const binding = yield* createThreadHarnessHost({
               threadId: options.threadId,
               hello: {
@@ -91,7 +97,14 @@ export const createClaudeFacetHost = <G>(
                 imageVersion: selected.release.identity.artifactHash,
               },
               actor: options.actor,
-              access: options.access,
+              access: (work) =>
+                Effect.gen(function* () {
+                  if (work.modelToken === null)
+                    return yield* failed("The facet's next turn has no model gateway credential.");
+                  const access = yield* options.access(work);
+                  modelCredential = work.modelToken;
+                  return access;
+                }),
               persistCheckpoint: (checkpoint) =>
                 Effect.gen(function* () {
                   const current = live;
@@ -114,8 +127,42 @@ export const createClaudeFacetHost = <G>(
               try: () => options.open(work),
               catch: (cause) => failed("Could not resolve the facet's open input.", cause),
             });
+            const gatewayAccess = {
+              baseUrl: CLAUDE_MODEL_GATEWAY_BASE_URL,
+              credentialRef: work.modelToken ?? "",
+            };
+            const gatewayEnvironment = yield* Effect.try({
+              try: () => claudeGatewayEnvironment(gatewayAccess),
+              catch: (cause) => failed("The facet has no scoped model gateway access.", cause),
+            });
+            modelCredential = work.modelToken;
             const host = yield* createProductClaudeHarnessSessionHost({
               ...options.host,
+              native: {
+                ...options.host.native,
+                process: {
+                  ...options.host.native.process,
+                  env: { ...options.host.native.process.env, ...gatewayEnvironment },
+                },
+              },
+              // The native session survives turns; only the runner can resolve its current token.
+              modelTransport: claudeGatewayTransport(
+                gatewayAccess,
+                () =>
+                  Effect.runPromise(
+                    Effect.gen(function* () {
+                      yield* binding.authorize;
+                      const token = modelCredential;
+                      if (token === null)
+                        return yield* failed("The facet has no live model grant.");
+                      const authorization = yield* runner.authorizeModel(token, "anthropic");
+                      if (authorization._tag !== "granted")
+                        return yield* failed(authorization.reason);
+                      return { baseUrl: gatewayAccess.baseUrl, credentialRef: token };
+                    }),
+                  ),
+                options.host.modelTransport,
+              ),
               release: selected.release,
               processResumeArtifact: selected.artifact,
               continuations: binding.continuations,

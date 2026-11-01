@@ -9,7 +9,7 @@ import { nativeTurnThreadLoad } from "../../HarnessThreadLoad.ts";
 import { readinessFixture } from "./claudeReadinessFixture.ts";
 import { preparedAssetsFixture } from "./preparedAssetsFixture.ts";
 import { sdkQuery } from "./claudeSdkQueryFixture.ts";
-import { qualifierClaudeFacetInputs } from "../../../../infra/deploy3/qualification/facetEnvironmentContract.ts";
+import { claudeHostOptionsFixture } from "../../../../infra/deploy3/qualification/claudeHostOptions.fixture.ts";
 
 const program = Effect.scoped(
   Effect.gen(function* () {
@@ -17,19 +17,10 @@ const program = Effect.scoped(
     yield* Effect.addFinalizer(() => Effect.promise(() => f.close()));
     const services = yield* f.services;
     const { loaded } = yield* Effect.promise(preparedAssetsFixture);
-    const facetInputs = qualifierClaudeFacetInputs(
-      { RUN_ID: "6d8d793b-0cbb-45cd-87a4-22d557e5025e", CONFIG_SHA256: "a".repeat(64) },
-      "baseline",
-    );
-    const processEnvironment = {
-      ...facetInputs.QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT,
-      HOME: "/home/test",
-      PATH: "/bin",
-      LANG: "C.UTF-8",
-      API_TOKEN: "binding-private-key",
-      ANTHROPIC_API_KEY: "fixture-auth-key",
-      ANTHROPIC_BASE_URL: "https://fixture-model.invalid",
-    };
+    const qualifier = yield* Effect.promise(claudeHostOptionsFixture);
+    yield* Effect.addFinalizer(() => Effect.promise(qualifier.dispose));
+    const hostOptions = yield* Effect.promise(() => qualifier.build());
+    const processEnvironment = hostOptions.native.process.env;
     const stages: string[] = [];
     const contexts: ClaudeSpawnContext[] = [];
     const offered = Promise.withResolvers<void>();
@@ -46,7 +37,12 @@ const program = Effect.scoped(
           command: "/runtime/claude",
           args: ["--model", "claude-sonnet-4-6", "--api-key", "binding-private-key"],
           cwd: "/work",
-          env: options.env,
+          env: {
+            ...options.env,
+            ANTHROPIC_BASE_URL: "https://foreign.invalid",
+            ANTHROPIC_AUTH_TOKEN: "foreign-grant",
+            ANTHROPIC_API_KEY: "foreign-provider-key",
+          },
           signal: new AbortController().signal,
         });
         // The SDK consumer is deliberately attached only after the write-side observations.
@@ -111,12 +107,16 @@ const program = Effect.scoped(
             NodeAssert.equal(Reflect.get(environment, key), "");
           for (const key of ["NO_PROXY", "no_proxy"])
             NodeAssert.equal(Reflect.get(environment, key), "*");
-          NodeAssert.equal(Reflect.get(environment, "HOME"), "/home/test");
+          NodeAssert.equal(Reflect.get(environment, "HOME"), "/workspace/.home/claude");
           NodeAssert.equal(Reflect.get(environment, "CLAUDE_CONFIG_DIR"), undefined);
-          NodeAssert.equal(Reflect.get(environment, "ANTHROPIC_API_KEY"), "fixture-auth-key");
+          NodeAssert.equal(Reflect.get(environment, "ANTHROPIC_API_KEY"), "");
+          NodeAssert.equal(
+            Reflect.get(environment, "ANTHROPIC_AUTH_TOKEN"),
+            qualifier.issued.credentialRef,
+          );
           NodeAssert.equal(
             Reflect.get(environment, "ANTHROPIC_BASE_URL"),
-            "https://fixture-model.invalid",
+            qualifier.issued.baseUrl,
           );
           NodeAssert.deepEqual(Reflect.get(process, "argv"), [
             "/runtime/claude",
@@ -251,10 +251,10 @@ const program = Effect.scoped(
     ]);
     NodeAssert.deepEqual(contexts[0]?.env, {
       ...processEnvironment,
-      API_TOKEN: "[REDACTED]",
       ANTHROPIC_API_KEY: "[REDACTED]",
+      ANTHROPIC_AUTH_TOKEN: "[REDACTED]",
+      CLAUDE_CODE_OAUTH_TOKEN: "[REDACTED]",
     });
-    NodeAssert.equal(contexts[0]?.env.API_TOKEN, "[REDACTED]");
     drainOutput();
   }),
 );

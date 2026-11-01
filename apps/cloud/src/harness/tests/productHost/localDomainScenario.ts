@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 
 import { createLocalClaudeThreadHost } from "../../../LocalClaudeThreadHost.ts";
 import { localDomainHostInputs } from "./continuationHost.ts";
+import { CLAUDE_MODEL_GATEWAY_BASE_URL } from "../../ClaudeGatewayAccess.ts";
 
 const modelRequest = Schema.fromJsonString(
   Schema.Struct({ model: Schema.String, messages: Schema.Array(Schema.Unknown) }),
@@ -22,6 +23,9 @@ export const run = () =>
         const binding = yield* createLocalClaudeThreadHost({
           modelSelection: input.sessionInput.modelSelection,
           modelTransport: async (request) => {
+            NodeAssert.equal(new URL(request.url).origin, CLAUDE_MODEL_GATEWAY_BASE_URL);
+            NodeAssert.match(request.headers.get("authorization") ?? "", /^Bearer sbm1\./u);
+            NodeAssert.equal(request.headers.get("x-api-key"), null);
             const body = Schema.decodeUnknownSync(modelRequest)(await request.clone().text());
             NodeAssert.equal(body.model, input.sessionInput.modelSelection.model);
             NodeAssert.ok(body.messages.length > 0);

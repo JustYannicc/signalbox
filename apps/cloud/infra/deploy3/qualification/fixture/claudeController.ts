@@ -1,3 +1,6 @@
+import * as Effect from "effect/Effect";
+import * as Crypto from "effect/Crypto";
+import { layerCrypto } from "../../../../src/platform.ts";
 import type { QualifierExecutionContext } from "./proofContext.ts";
 import {
   createClaudeCTransport,
@@ -14,6 +17,11 @@ import { assert, errorRecord } from "./common.ts";
 import type { ClaudePersistedModelRecord } from "./claudeModelEvidence.ts";
 
 import type { ClaudeIncarnation as Incarnation } from "./claudeScenario.ts";
+import {
+  CLAUDE_MODEL_GATEWAY_BASE_URL,
+  claudeGatewayEnvironment,
+  type ClaudeGatewayAccess,
+} from "../../../../src/harness/ClaudeGatewayAccess.ts";
 export type { ClaudeIncarnation as Incarnation } from "./claudeScenario.ts";
 
 /** Each selected variant has one non-replayable model owner and its own wire journal. */
@@ -46,6 +54,32 @@ export class ClaudeController {
   }
   async active() {
     return await this.#storage.get<ClaudeStep>("claude/active-step");
+  }
+  async gatewayAccess(input: {
+    incarnation: string;
+    variant: ClaudeVariant;
+  }): Promise<ClaudeGatewayAccess> {
+    const step = await this.active();
+    const prepared = await this.#storage.get<Incarnation>(
+      `claude/incarnation/${input.incarnation}`,
+    );
+    assert(
+      step?.variant === input.variant && prepared?.variant === input.variant,
+      "Claude gateway access has no prepared active run",
+    );
+    const key = `claude/gateway/${input.variant}`;
+    const access = await this.#storage.transaction(async (tx) => {
+      const previous = await tx.get<ClaudeGatewayAccess>(key);
+      if (previous) return previous;
+      const issued = {
+        baseUrl: CLAUDE_MODEL_GATEWAY_BASE_URL,
+        credentialRef: `sbq1.${await Effect.runPromise(Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(Effect.provide(layerCrypto)))}`,
+      };
+      claudeGatewayEnvironment(issued);
+      await tx.put(key, issued);
+      return issued;
+    });
+    return access;
   }
   async begin(step: ClaudeStep) {
     assert(
@@ -127,6 +161,16 @@ export class ClaudeController {
   async request(request: Request) {
     const step = await this.active();
     assert(step, "Claude model request has no active public C step");
+    const access = await this.#storage.get<ClaudeGatewayAccess>(`claude/gateway/${step.variant}`);
+    const credential =
+      request.headers.get("authorization")?.replace(/^Bearer /iu, "") ??
+      request.headers.get("x-api-key");
+    assert(
+      access &&
+        new URL(request.url).origin === new URL(access.baseUrl).origin &&
+        credential === access.credentialRef,
+      "Claude model request has no matching run-scoped gateway credential",
+    );
     const failure = `claude/model/${step.variant}/failure`;
     assert(
       !(await this.#storage.get(failure)),

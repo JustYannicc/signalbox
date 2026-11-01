@@ -92,7 +92,7 @@ TestCase.test(
       await NodeFSP.writeFile(
         releaseFile,
         JSON.stringify({
-          ...verified,
+          verifiedLocalExportSha256: verified.verifiedLocalExportSha256,
           owner: "1070",
           release: true,
           runId: "deadbeef",

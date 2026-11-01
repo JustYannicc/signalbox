@@ -245,6 +245,7 @@ it.effect(
                 ? ["prepareModelIncarnation", "seedCheckpoint"]
                 : [
                     "prepareClaudeIncarnation",
+                    "claudeGatewayAccess",
                     "recordClaudeLoadedRelease",
                     "catalog",
                     "inventory",

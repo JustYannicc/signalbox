@@ -20,7 +20,7 @@ import {
 } from "./claudeConfiguration.ts";
 import { calibrateClaudePreparedRelease } from "./claudeCalibration.ts";
 import { decodePreparedRelease } from "../preparedRelease.schema.ts";
-import { retainedFacetState } from "./facetState.ts";
+import { retainedFacetState, flushFacetDiagnostics } from "./facetState.ts";
 
 export const CLAUDE_QUALIFICATION_ENTRYPOINT = "ClaudeFacet" as const;
 
@@ -105,6 +105,27 @@ const Base = createHarnessCProductClaudeFacetClass<Env, unknown>({
 });
 
 export class ClaudeFacet extends Base {
+  override async dispose(expectedFacetNonce: string) {
+    assert(expectedFacetNonce === this.facetNonce, "Disposal targets another Claude incarnation");
+    let failure: unknown;
+    try {
+      await super.dispose(expectedFacetNonce);
+    } catch (cause) {
+      failure = cause;
+    }
+    // Process shutdown can accept a final stderr write after the request's diagnostic flush.
+    try {
+      await flushFacetDiagnostics(this.ctx, "disposed");
+    } catch (cause) {
+      if (failure !== undefined)
+        throw new AggregateError([failure, cause], "Claude disposal and stdio publication failed", {
+          cause: failure,
+        });
+      throw cause;
+    }
+    if (failure !== undefined) throw failure;
+  }
+
   override async loadedPreparedRelease() {
     const loaded = decodePreparedRelease(await super.loadedPreparedRelease());
     const expected = this.env.HARNESS_C_TARGET_PREPARED_RELEASE;

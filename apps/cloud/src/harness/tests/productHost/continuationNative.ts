@@ -147,7 +147,9 @@ export function continuationNativeFixture(
               first.value.type !== "result" ||
               first.value.subtype !== "success"
             ) {
-              throw new Error("Controlled Claude query expected its initial result frame");
+              throw new Error("Controlled Claude query expected its initial result frame", {
+                cause: native.failure,
+              });
             }
             initialResult = first.value;
             phase = 1;
