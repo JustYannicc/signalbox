@@ -74,6 +74,28 @@ describe("exact upload startup evidence", () => {
     ).toThrow();
   });
 
+  it("verifies a reported negative-delta count against the raw profile", () => {
+    const bytes = profile(218_440);
+    expect(
+      requireStartupEvidence(
+        bundle,
+        compatibility,
+        { ...evidence(bytes), negativeDeltaCount: 0 },
+        bytes,
+        runtime,
+      ).summary.negativeDeltaCount,
+    ).toBe(0);
+    expect(() =>
+      requireStartupEvidence(
+        bundle,
+        compatibility,
+        { ...evidence(bytes), negativeDeltaCount: 1 },
+        bytes,
+        runtime,
+      ),
+    ).toThrow("DELTA_COUNT_DIFFERS");
+  });
+
   it("rechecks historical profiles against the current budget", () => {
     const bytes = profile(178_898);
     expect(
