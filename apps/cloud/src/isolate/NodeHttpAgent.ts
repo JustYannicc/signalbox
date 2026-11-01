@@ -94,6 +94,7 @@ export function createNodeHttpAgentModules(
       readonly requests: Set<AgentRequest>;
     }
   >();
+  let draining = false;
   const active = new Set<AgentRequest>();
   const closed = new Set<Promise<void>>();
   const cleanupErrors: unknown[] = [];
@@ -121,6 +122,8 @@ export function createNodeHttpAgentModules(
       loadProxyClient = () => validateProxyClient(resolveClient());
     },
     async drain() {
+      // Cancellation callbacks can retry before close. Close admission before taking the join set.
+      draining = true;
       for (const request of active)
         request.destroy(networkError("ECONNRESET", "Harness stopped the request"));
       await Promise.all(closed);
@@ -179,6 +182,7 @@ export function createNodeHttpAgentModules(
     markNodeBuiltinCapability(Agent, capability);
     const globalAgent = new Agent();
     const request = markNodeBuiltinCapability((...args: unknown[]): AgentRequest => {
+      if (draining) throw networkError("ECONNRESET", "Harness is draining HTTP requests");
       const { options, callback } = requestArguments(args);
       const agent = options.agent === false ? new Agent() : (options.agent ?? globalAgent);
       if (typeof agent !== "object" || agent === null)

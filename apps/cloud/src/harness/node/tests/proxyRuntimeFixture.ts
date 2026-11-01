@@ -4,19 +4,16 @@ import * as NodeHttps from "node:https";
 import * as NodeNet from "node:net";
 import * as NodeTls from "node:tls";
 import * as NodeModule from "node:module";
-import * as Undici from "undici";
 import {
   createWorkerdNodeBuiltinFailures,
   DEFAULT_NODE_NATIVE_MODULES,
 } from "../../NodeNativeModules.ts";
-import { configureNodeHttpAgents } from "../../../isolate/NodeHttpAgent.ts";
 
 export function installProxyRuntime() {
   // Capture the native functions before replacing the CJS imports used by HttpsProxyAgent.
   const guarded = createWorkerdNodeBuiltinFailures(DEFAULT_NODE_NATIVE_MODULES);
   const http = guarded.http as typeof NodeHttp;
   const https = guarded.https as typeof NodeHttps;
-  configureNodeHttpAgents([http, https], () => Undici);
   const sockets: NodeNet.Socket[] = [];
   const restore: Array<() => void> = [];
   const require = NodeModule.createRequire(import.meta.url);

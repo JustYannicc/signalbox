@@ -4,15 +4,17 @@ import * as NodeHttps from "node:https";
 import * as NodeNet from "node:net";
 import * as NodeFS from "node:fs";
 import * as NodeTls from "node:tls";
+import * as Undici from "undici";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { afterEach, beforeEach, expect, it } from "vite-plus/test";
-import { drainNodeHttpAgents } from "../../../isolate/NodeHttpAgent.ts";
+import { configureNodeHttpAgents, drainNodeHttpAgents } from "../../../isolate/NodeHttpAgent.ts";
 import { installProxyRuntime } from "./proxyRuntimeFixture.ts";
 import { nodeRootCertificates } from "../../../isolate/NodeTls.ts";
 
 let runtime: ReturnType<typeof installProxyRuntime>;
 beforeEach(() => {
   runtime = installProxyRuntime();
+  configureNodeHttpAgents([runtime.http, runtime.https], () => Undici);
 });
 afterEach(async () => {
   try {
