@@ -70,3 +70,35 @@ it("refuses a foreign credential or destination before resolving or forwarding",
     ),
   ).rejects.toThrow("another Claude gateway grant");
 });
+
+it("uses the shared credential precedence and removes the persistent credential before forwarding", async () => {
+  const access = { baseUrl: "https://gateway.test", credentialRef: "scoped" };
+  const forwarded: Request[] = [];
+  const transport = claudeGatewayTransport(
+    access,
+    async () => ({ ...access, credentialRef: "live-turn" }),
+    async (request) => {
+      forwarded.push(request);
+      return new Response("ok");
+    },
+  );
+  const request = (headers: HeadersInit) =>
+    new Request(`${access.baseUrl}/v1/messages`, { headers });
+  await expect(transport(request({ authorization: "scoped" }))).rejects.toThrow(
+    "another Claude gateway grant",
+  );
+  await transport(request({ "x-api-key": "scoped", authorization: "Bearer foreign" }));
+  await transport(
+    request({
+      "x-signalbox-key": "scoped",
+      "x-api-key": "foreign",
+      authorization: "Bearer foreign",
+    }),
+  );
+  expect(forwarded).toHaveLength(2);
+  for (const value of forwarded) {
+    expect(value.headers.get("authorization")).toBe("Bearer live-turn");
+    expect(value.headers.has("x-api-key")).toBe(false);
+    expect(value.headers.has("x-signalbox-key")).toBe(false);
+  }
+});

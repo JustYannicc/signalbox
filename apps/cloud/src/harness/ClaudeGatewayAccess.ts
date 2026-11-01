@@ -1,3 +1,5 @@
+import { bearerOrKey, LOCAL_KEY_HEADER } from "../models/ModelHttp.ts";
+
 // The facet's model transport owns this origin; the CLI never contacts it over the network.
 export const CLAUDE_MODEL_GATEWAY_BASE_URL = "https://model.invalid";
 
@@ -48,9 +50,7 @@ export function claudeGatewayTransport(
   return async (request: Request) => {
     const url = new URL(request.url);
     const base = new URL(environment.ANTHROPIC_BASE_URL);
-    const supplied =
-      request.headers.get("authorization")?.replace(/^Bearer /iu, "") ??
-      request.headers.get("x-api-key");
+    const supplied = bearerOrKey(request.headers);
     if (
       url.origin !== base.origin ||
       !url.pathname.startsWith(`${base.pathname.replace(/\/$/u, "")}/`) ||
@@ -62,6 +62,7 @@ export function claudeGatewayTransport(
       throw new Error("The live Claude model gateway route changed");
     const headers = new Headers(request.headers);
     headers.delete("x-api-key");
+    headers.delete(LOCAL_KEY_HEADER);
     headers.set("authorization", `Bearer ${resolved.ANTHROPIC_AUTH_TOKEN}`);
     return forward(new Request(request, { headers }));
   };

@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
+import { bearerOrKey } from "../../../../src/models/ModelHttp.ts";
 import { layerCrypto } from "../../../../src/platform.ts";
 import type { QualifierExecutionContext } from "./proofContext.ts";
 import {
@@ -162,9 +163,7 @@ export class ClaudeController {
     const step = await this.active();
     assert(step, "Claude model request has no active public C step");
     const access = await this.#storage.get<ClaudeGatewayAccess>(`claude/gateway/${step.variant}`);
-    const credential =
-      request.headers.get("authorization")?.replace(/^Bearer /iu, "") ??
-      request.headers.get("x-api-key");
+    const credential = bearerOrKey(request.headers);
     assert(
       access &&
         new URL(request.url).origin === new URL(access.baseUrl).origin &&

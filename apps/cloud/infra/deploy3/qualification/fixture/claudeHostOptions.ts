@@ -222,10 +222,7 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
     const gatewayEnvironment = yield* Effect.try({
       try: () => claudeGatewayEnvironment(gatewayAccess),
       catch: (cause) =>
-        new HarnessRequestFacetError(
-          cause instanceof Error ? cause.message : "Claude model gateway access is invalid",
-          { cause },
-        ),
+        new HarnessRequestFacetError("Claude model gateway access is invalid", { cause }),
     });
     const selectedRelease = yield* attempt(() =>
       loadClaudeQualificationRelease(inputs, input.selectedRelease.artifact),

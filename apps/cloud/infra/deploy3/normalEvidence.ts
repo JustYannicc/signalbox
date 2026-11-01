@@ -42,8 +42,9 @@ const ManifestV2 = Schema.Struct({
   nativeStdio: Schema.Array(NativeStdioEvidence),
 });
 const decodePageJson = Schema.decodeSync(Schema.fromJsonString(Page));
-const decodeManifestV1 = Schema.decodeUnknownSync(ManifestV1);
-const decodeManifestV2 = Schema.decodeUnknownSync(ManifestV2);
+const decodeManifestJson = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Union([ManifestV1, ManifestV2])),
+);
 const decodeEvidenceEntriesJson = Schema.decodeSync(Schema.fromJsonString(EvidenceEntries));
 
 async function* responseChunks(body: ReadableStream<Uint8Array>) {
@@ -214,13 +215,7 @@ export async function verifyDeploy3LocalExport(
   const raw = new TextDecoder().decode(
     await readLocalEvidenceBytes(input.directory, "manifest.json"),
   );
-  const rawManifest: unknown = JSON.parse(raw);
-  const manifest =
-    typeof rawManifest === "object" &&
-    rawManifest !== null &&
-    Reflect.get(rawManifest, "schema") === "sb1070/deploy3-local-export/v1"
-      ? decodeManifestV1(rawManifest)
-      : decodeManifestV2(rawManifest);
+  const manifest = decodeManifestJson(raw);
   if (
     manifest.runId !== runId ||
     manifest.registrationSha256 !== registrationSha256 ||

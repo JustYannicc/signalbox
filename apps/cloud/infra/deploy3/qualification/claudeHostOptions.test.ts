@@ -28,10 +28,14 @@ it("the real Claude host builder injects gateway access and refuses either missi
         }),
       ),
     ).rejects.toThrow("matching run-scoped gateway credential");
-    await expect(fixture.build({ ...fixture.issued, baseUrl: "" })).rejects.toThrow("base URL");
-    await expect(fixture.build({ ...fixture.issued, credentialRef: "" })).rejects.toThrow(
-      "credential reference",
-    );
+    await expect(fixture.build({ ...fixture.issued, baseUrl: "" })).rejects.toMatchObject({
+      message: "Claude model gateway access is invalid",
+      cause: { message: expect.stringContaining("base URL") },
+    });
+    await expect(fixture.build({ ...fixture.issued, credentialRef: "" })).rejects.toMatchObject({
+      message: "Claude model gateway access is invalid",
+      cause: { message: expect.stringContaining("credential reference") },
+    });
   } finally {
     await fixture.dispose();
   }
