@@ -18,9 +18,11 @@ export async function cleanupDeploy3Bootstrap(input: {
   const parsed = parseDeploy3Name(row.workerName);
   if (!parsed) throw new Error("Bootstrap deadline identity is invalid");
   const sha256 = await controlDigest(bootstrapBody(row));
+  if (input.nowMs < parsed.deadlineMs) return { status: "not-due", runId: row.runId };
+  const comments = await input.registry.comments();
   if (
-    input.nowMs < parsed.deadlineMs ||
-    input.registry.receiptIsFinal(await input.registry.comments(), sha256)
+    input.registry.receiptIsFinal(comments, sha256) ||
+    (await input.registry.bootstrapTeardownIsFinal(comments, row, input.nowMs))
   )
     return { status: "not-due", runId: row.runId };
   const cleanup = await cleanupDeploy3Worker({

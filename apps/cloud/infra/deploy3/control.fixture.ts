@@ -60,7 +60,7 @@ export function controlFixture() {
         if (!auth) return Response.json({}, { status: 401 });
         const { body } = decodeCommentBody(String(init.body));
         const row = {
-          id: comments.length + 1,
+          id: Math.max(bootstrapComment.id, ...comments.map((row) => row.id)) + 1,
           user: { id: auth.endsWith("owner1255") ? 102 : 101 },
           body,
         };
