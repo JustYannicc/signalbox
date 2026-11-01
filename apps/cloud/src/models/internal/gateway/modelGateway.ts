@@ -3,9 +3,8 @@ import {
   type ModelGatewayProvider,
 } from "@signalbox/runner-protocol/RunnerProtocol";
 
-import { readRpcData } from "../../../rpc/Resources.ts";
+import { detachRpcData, releaseRpcResult, retainRpcResponse } from "../../../rpc/Resources.ts";
 import type { ModelServeReply } from "../../ModelProtocol.ts";
-import { relayRpcResponse } from "../rpcResponse.ts";
 import {
   LOCAL_KEY_HEADER,
   bearerOrKey,
@@ -122,7 +121,7 @@ export async function handleModelRequest(
     return errorResponse(provider, 503, "Could not check the model token or key. Try again.");
   }
   if (rpcReply._tag === "denied") {
-    const served = await readRpcData(Promise.resolve(rpcReply));
+    const served = detachRpcData(rpcReply);
     // A key in its own header rides next to the harness's own sign-in, which is
     // fine: a 401 would make Codex refresh its ChatGPT token for nothing.
     const status = request.headers.has(LOCAL_KEY_HEADER) ? 403 : 401;
@@ -138,17 +137,17 @@ export async function handleModelRequest(
   const { reply } = rpcReply;
   if (reply._tag === "denied") {
     const reason = reply.reason;
-    await readRpcData(Promise.resolve(rpcReply));
+    releaseRpcResult(rpcReply);
     record({ status: 403, ...grant, authMs, denied: reason });
     return errorResponse(provider, 403, reason);
   }
   if (reply._tag === "failed") {
     const reason = reply.reason;
-    await readRpcData(Promise.resolve(rpcReply));
+    releaseRpcResult(rpcReply);
     record({ status: 502, ...grant, authMs, outcome: "failed" });
     return errorResponse(provider, 502, `The pool is unavailable: ${reason}`);
   }
-  const response = relayRpcResponse(reply.response, rpcReply);
+  const response = await retainRpcResponse(reply.response, { result: rpcReply });
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   let finish: ((outcome: NonNullable<ModelGatewayRecord["outcome"]>) => void) | undefined;
   try {
@@ -210,17 +209,24 @@ export async function handleModelRequest(
             // After the chunk is on its way, so reading usage never delays it.
             scanner.push(value);
           } catch (error) {
+            const failures: unknown[] = [error];
             try {
               await bodyReader.cancel(error);
-            } catch {
-              // Preserve the original response-stream error.
+            } catch (cleanup) {
+              failures.push(cleanup);
             }
             try {
               finishStream("failed");
-            } catch {
-              // Preserve the original response-stream error.
+            } catch (cleanup) {
+              failures.push(cleanup);
             }
-            controller.error(error);
+            controller.error(
+              failures.length === 1
+                ? error
+                : new AggregateError(failures, "Model response read and cleanup failed", {
+                    cause: error,
+                  }),
+            );
           }
         },
         async cancel(reason) {
@@ -242,17 +248,20 @@ export async function handleModelRequest(
     );
     return new Response(body, init);
   } catch (cause) {
+    const failures: unknown[] = [cause];
     try {
       if (reader !== undefined) await reader.cancel(cause);
       else await response.body?.cancel(cause);
-    } catch {
-      // Preserve the original response or stream setup error.
+    } catch (cleanup) {
+      failures.push(cleanup);
     }
     try {
       finish?.("failed");
-    } catch {
-      // Preserve the response-construction error.
+    } catch (cleanup) {
+      failures.push(cleanup);
     }
+    if (failures.length > 1)
+      throw new AggregateError(failures, "Model response setup and cleanup failed", { cause });
     throw cause;
   }
 }

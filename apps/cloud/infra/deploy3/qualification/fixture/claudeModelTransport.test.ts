@@ -169,7 +169,7 @@ describe("Claude qualification workload transport", () => {
     expect(observed).toHaveLength(1);
     expect(observed[0]).toMatchObject({
       responseCaptureBodyLifecycle: "consumed",
-      returnedResponseBodyLifecycle: "cancel-requested",
+      returnedResponseBodyLifecycle: "cancelled",
       activeBufferedBytes: 0,
       cumulativeBufferedBytes: observed[0]!.requestCaptureBytes + observed[0]!.responseCaptureBytes,
     });

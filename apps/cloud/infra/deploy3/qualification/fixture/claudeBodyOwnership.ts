@@ -7,46 +7,42 @@ export type ClaudeIncomingRequestBodyLifecycle =
   | "cancel-requested"
   | "cancel-failed";
 
-type BodyCancellationLifecycle = "cancelled" | "cancel-requested" | "cancel-failed";
+type CancellationResult =
+  | { readonly lifecycle: "not-owned" | "consumed" | "cancelled" | "cancel-requested" }
+  | { readonly lifecycle: "cancel-failed"; readonly cause: unknown };
 
 /** Requests cancellation without waiting for a tee's other branch to settle. */
-export function cancelClaudeBodyQuick(body: null): Promise<"not-owned">;
-export function cancelClaudeBodyQuick(
-  body: ReadableStream<Uint8Array>,
-): Promise<BodyCancellationLifecycle>;
-export function cancelClaudeBodyQuick(
-  body: ReadableStream<Uint8Array> | null,
-): Promise<BodyCancellationLifecycle | "not-owned">;
 export async function cancelClaudeBodyQuick(
   body: ReadableStream<Uint8Array> | null,
-): Promise<BodyCancellationLifecycle | "not-owned"> {
-  if (!body) return "not-owned";
+): Promise<CancellationResult> {
+  if (!body) return { lifecycle: "not-owned" };
   try {
-    let lifecycle: BodyCancellationLifecycle = "cancel-requested";
+    let result: CancellationResult = { lifecycle: "cancel-requested" };
     const reader = body.getReader();
     const cancelled = reader.cancel();
     void cancelled.then(
       () => {
-        lifecycle = "cancelled";
+        result = { lifecycle: "cancelled" };
       },
-      () => {
-        lifecycle = "cancel-failed";
+      (cause: unknown) => {
+        result = { lifecycle: "cancel-failed", cause };
       },
     );
     reader.releaseLock();
     await Promise.resolve();
-    return lifecycle;
-  } catch {
-    return "cancel-failed";
+    await Promise.resolve();
+    return result;
+  } catch (cause) {
+    return { lifecycle: "cancel-failed", cause };
   }
 }
 
 /** Cancels the incoming branch without waiting for a tee's other branch to settle. */
 export async function cancelClaudeIncomingRequestBody(
   request: Request,
-): Promise<ClaudeIncomingRequestBodyLifecycle> {
+): Promise<CancellationResult> {
   const body = request.body;
-  if (!body) return "not-owned";
-  if (request.bodyUsed) return "consumed";
+  if (!body) return { lifecycle: "not-owned" };
+  if (request.bodyUsed) return { lifecycle: "consumed" };
   return await cancelClaudeBodyQuick(body);
 }

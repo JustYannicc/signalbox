@@ -19,6 +19,7 @@ async function stdioExportFixture(
     readonly legacyPrefix?: true;
     readonly checkpointBeforeCrash?: true;
     readonly corruptCheckpoint?: true;
+    readonly finalAfterCorruptCheckpoint?: true;
   } = {},
 ) {
   const blobs = new Map<string, Uint8Array>();
@@ -82,9 +83,10 @@ async function stdioExportFixture(
       chunks.push({ channel, bytes });
       return true;
     };
-    if (input.checkpointBeforeCrash) {
+    if (input.checkpointBeforeCrash || input.finalAfterCorruptCheckpoint) {
       const checkpoint = capture.drain();
       if (input.corruptCheckpoint) checkpoint.streams["native-stdout"].acceptedBytes = 1;
+      if (input.finalAfterCorruptCheckpoint) checkpoint.streams["native-stdout"].observedBytes = -1;
       await append("native-stdio-streams", { ...checkpoint, incarnation, reason: "checkpoint" });
     }
     capture.write("native-stdout", stdout, enqueue);
@@ -305,6 +307,26 @@ TestCase.test(
     }
   },
 );
+
+TestCase.test("a valid final summary does not excuse an invalid earlier checkpoint", async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "deploy3-stdio-earlier-"));
+  try {
+    const state = (await controlFixture().api().read()).controls[0]!;
+    const source = await stdioExportFixture({ finalAfterCorruptCheckpoint: true });
+    await NodeAssert.rejects(
+      exportDeploy3Locally({
+        origin: "https://qualifier.example",
+        qualifierRunId: "source-run",
+        registration: state.registration,
+        directory: NodePath.join(root, "export"),
+        fetchImpl: source.fetchImpl,
+      }),
+      /observed byte count is invalid/,
+    );
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
 
 TestCase.test("a later raw chunk does not excuse an invalid checkpoint summary", async () => {
   const root = await NodeFSP.mkdtemp(

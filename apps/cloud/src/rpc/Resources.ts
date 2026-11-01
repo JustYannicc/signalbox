@@ -1,3 +1,5 @@
+import { ownRpcResponse } from "./response.ts";
+
 let activeCalls = 0;
 let peakCalls = 0;
 let calls = 0;
@@ -6,6 +8,7 @@ let disposedResults = 0;
 let activeResults = 0;
 let activeStubs = 0;
 let activeResponseBodies = 0;
+let activeResponseWebSockets = 0;
 let responseBodyBytes = 0;
 let failedResultDisposals = 0;
 let failedStubDisposals = 0;
@@ -38,20 +41,35 @@ function ownResult(value: unknown) {
   };
 }
 
+/** Detaches plain data from an already-awaited RPC result without counting another call. */
+export function detachRpcData<A>(value: A): A {
+  if (disposer(value) === undefined) return value;
+  const release = ownResult(value);
+  try {
+    const copy = structuredClone(value);
+    release();
+    return copy;
+  } catch (cause) {
+    try {
+      release();
+    } catch (cleanup) {
+      throw new AggregateError([cause, cleanup], "RPC data copy and cleanup failed", { cause });
+    }
+    throw cause;
+  }
+}
+
+export function releaseRpcResult(value: unknown): void {
+  ownResult(value)();
+}
+
 /** Data RPCs never transfer live capabilities. Detach their data before releasing the result. */
 export async function readRpcData<A>(pending: A): Promise<Awaited<A>> {
   calls++;
   activeCalls++;
   peakCalls = Math.max(peakCalls, activeCalls);
   try {
-    const value = await pending;
-    if (disposer(value) === undefined) return value;
-    const release = ownResult(value);
-    try {
-      return structuredClone(value);
-    } finally {
-      release();
-    }
+    return detachRpcData(await pending);
   } finally {
     activeCalls--;
   }
@@ -63,7 +81,48 @@ export async function withRpcStub<S, A>(stub: S, run: (stub: S) => Promise<A>): 
   return await run(stub);
 }
 
-/** A streamed response owns its RPC result until EOF, cancellation, or a failed read. */
+/** Retains a response and any enclosing RPC result through body or WebSocket completion. */
+export async function retainRpcResponse(
+  response: Response,
+  options: { readonly result?: unknown; readonly signal?: AbortSignal | undefined } = {},
+) {
+  const releases = [...new Set([response, options.result])].map(ownResult);
+  let released = false;
+  return ownRpcResponse(response, {
+    signal: options.signal,
+    release() {
+      if (released) return;
+      released = true;
+      const failures: unknown[] = [];
+      for (const release of releases) {
+        try {
+          release();
+        } catch (cause) {
+          failures.push(cause);
+        }
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1)
+        throw new AggregateError(failures, "RPC result cleanup failed", { cause: failures[0] });
+    },
+    bodyOpened() {
+      activeResponseBodies++;
+    },
+    bodyClosed() {
+      activeResponseBodies--;
+    },
+    bodyBytes(bytes) {
+      responseBodyBytes += bytes;
+    },
+    socketOpened() {
+      activeResponseWebSockets++;
+    },
+    socketClosed() {
+      activeResponseWebSockets--;
+    },
+  });
+}
+
 export async function readRpcResponse(pending: PromiseLike<Response>, signal?: AbortSignal) {
   calls++;
   activeCalls++;
@@ -74,98 +133,7 @@ export async function readRpcResponse(pending: PromiseLike<Response>, signal?: A
   } finally {
     activeCalls--;
   }
-  const releaseResult = ownResult(response);
-  let release = releaseResult;
-  let bodyReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  try {
-    const init = {
-      status: response.status,
-      statusText: response.statusText,
-      headers: new Headers(response.headers),
-    };
-    if (response.body === null) {
-      const copy = new Response(null, init);
-      release();
-      return copy;
-    }
-    const reader = response.body.getReader();
-    bodyReader = reader;
-    activeResponseBodies++;
-    let closed = false;
-    const finish = () => {
-      if (closed) return;
-      closed = true;
-      activeResponseBodies--;
-      signal?.removeEventListener("abort", abort);
-      try {
-        reader.releaseLock();
-      } finally {
-        releaseResult();
-      }
-    };
-    release = finish;
-    const abort = () => {
-      void reader
-        .cancel(signal?.reason)
-        .finally(finish)
-        .catch(() => {});
-    };
-    const body = new ReadableStream<Uint8Array>(
-      {
-        async pull(controller) {
-          try {
-            const item = await reader.read();
-            if (item.done) {
-              finish();
-              controller.close();
-            } else {
-              responseBodyBytes += item.value.byteLength;
-              controller.enqueue(item.value);
-            }
-          } catch (cause) {
-            let failure = cause;
-            try {
-              finish();
-            } catch (cleanup) {
-              failure = new AggregateError(
-                [cause, cleanup],
-                "RPC response read and cleanup failed",
-                { cause },
-              );
-            }
-            controller.error(failure);
-          }
-        },
-        async cancel(reason) {
-          try {
-            await reader.cancel(reason);
-          } finally {
-            finish();
-          }
-        },
-      },
-      { highWaterMark: 0 },
-    );
-    signal?.addEventListener("abort", abort, { once: true });
-    if (signal?.aborted) abort();
-    return new Response(body, init);
-  } catch (cause) {
-    const failures: unknown[] = [cause];
-    try {
-      if (bodyReader) await bodyReader.cancel(cause);
-      else await response.body?.cancel(cause);
-    } catch (cleanup) {
-      failures.push(cleanup);
-    }
-    try {
-      release();
-    } catch (cleanup) {
-      failures.push(cleanup);
-    }
-    if (failures.length > 1)
-      throw new AggregateError(failures, "RPC response construction and cleanup failed", { cause });
-    throw cause;
-  }
+  return retainRpcResponse(response, { signal });
 }
 
 export function rpcResourceSnapshot() {
@@ -181,6 +149,7 @@ export function rpcResourceSnapshot() {
     failedResultDisposals,
     failedStubDisposals,
     activeResponseBodies,
+    activeResponseWebSockets,
     responseBodyBytes,
     heapBytes: null,
     rssBytes: null,

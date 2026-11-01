@@ -125,8 +125,15 @@ export function createClaudeWorkloadTransport(input: ClaudeWorkloadTransportInpu
         captureBuffer("request", requestBytes);
       } catch (cause) {
         resources.requestCaptureBodyLifecycle = "errored";
-        const lifecycle = await cancelClaudeBodyQuick(requestClone.body);
-        if (lifecycle !== "not-owned") resources.requestCaptureBodyLifecycle = lifecycle;
+        const cancellation = await cancelClaudeBodyQuick(requestClone.body);
+        if (cancellation.lifecycle !== "not-owned" && cancellation.lifecycle !== "consumed")
+          resources.requestCaptureBodyLifecycle = cancellation.lifecycle;
+        if (cancellation.lifecycle === "cancel-failed")
+          throw new AggregateError(
+            [cause, cancellation.cause],
+            "Claude request capture and cleanup failed",
+            { cause },
+          );
         throw cause;
       }
 
@@ -179,8 +186,17 @@ export function createClaudeWorkloadTransport(input: ClaudeWorkloadTransportInpu
         captureBuffer("response", responseBytes);
       } catch (cause) {
         resources.responseCaptureBodyLifecycle = "errored";
-        if (responseClone?.body)
-          resources.responseCaptureBodyLifecycle = await cancelClaudeBodyQuick(responseClone.body);
+        if (responseClone?.body) {
+          const cancellation = await cancelClaudeBodyQuick(responseClone.body);
+          if (cancellation.lifecycle !== "not-owned" && cancellation.lifecycle !== "consumed")
+            resources.responseCaptureBodyLifecycle = cancellation.lifecycle;
+          if (cancellation.lifecycle === "cancel-failed")
+            throw new AggregateError(
+              [cause, cancellation.cause],
+              "Claude response capture and cleanup failed",
+              { cause },
+            );
+        }
         throw cause;
       }
       await input.record(
@@ -241,9 +257,10 @@ export function createClaudeWorkloadTransport(input: ClaudeWorkloadTransportInpu
         resources.activeBufferedBytes = 0;
       }
       if (!responseReturned && resources.incomingRequestBodyLifecycle !== "not-owned") {
-        resources.incomingRequestBodyLifecycle = await cancelClaudeIncomingRequestBody(request);
-        if (resources.incomingRequestBodyLifecycle === "cancel-failed") {
-          const cleanupError = new Error("Claude incoming request body cancellation failed");
+        const cancellation = await cancelClaudeIncomingRequestBody(request);
+        resources.incomingRequestBodyLifecycle = cancellation.lifecycle;
+        if (cancellation.lifecycle === "cancel-failed") {
+          const cleanupError = cancellation.cause;
           error = failed
             ? new AggregateError([error, cleanupError], "Claude request and input cleanup failed", {
                 cause: error,
@@ -253,11 +270,11 @@ export function createClaudeWorkloadTransport(input: ClaudeWorkloadTransportInpu
         }
       }
       if (response && !responseReturned && response.body !== null) {
-        resources.returnedResponseBodyLifecycle = await cancelClaudeBodyQuick(response.body);
-        if (resources.returnedResponseBodyLifecycle === "cancel-failed") {
-          const cleanupError = new Error(
-            "Claude response body cancellation failed after capture error",
-          );
+        const cancellation = await cancelClaudeBodyQuick(response.body);
+        if (cancellation.lifecycle !== "not-owned" && cancellation.lifecycle !== "consumed")
+          resources.returnedResponseBodyLifecycle = cancellation.lifecycle;
+        if (cancellation.lifecycle === "cancel-failed") {
+          const cleanupError = cancellation.cause;
           error = failed
             ? new AggregateError(
                 [error, cleanupError],

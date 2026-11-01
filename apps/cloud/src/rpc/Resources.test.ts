@@ -1,5 +1,30 @@
 import { expect, it } from "vite-plus/test";
-import { readRpcData, withRpcStub, rpcResourceSnapshot } from "./Resources.ts";
+import {
+  readRpcData,
+  withRpcStub,
+  rpcResourceSnapshot,
+  detachRpcData,
+  releaseRpcResult,
+} from "./Resources.ts";
+
+it("does not count releasing an already-awaited result as another RPC call", () => {
+  let pins = 2;
+  const calls = rpcResourceSnapshot().calls;
+  const value = detachRpcData({
+    value: 1,
+    [Symbol.dispose]() {
+      pins--;
+    },
+  });
+  releaseRpcResult({
+    [Symbol.dispose]() {
+      pins--;
+    },
+  });
+  expect(value).toEqual({ value: 1 });
+  expect(pins).toBe(0);
+  expect(rpcResourceSnapshot().calls).toBe(calls);
+});
 
 it("releases a result even when its capability cannot cross the data-only boundary", async () => {
   let pins = 1;

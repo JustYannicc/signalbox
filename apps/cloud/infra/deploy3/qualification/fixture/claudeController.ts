@@ -178,10 +178,10 @@ export class ClaudeController {
         rpcResourceSnapshot(),
       );
     } catch (cause) {
-      const lifecycle = await cancelClaudeIncomingRequestBody(request);
-      if (lifecycle === "cancel-failed")
+      const cancellation = await cancelClaudeIncomingRequestBody(request);
+      if (cancellation.lifecycle === "cancel-failed")
         throw new AggregateError(
-          [cause, new Error("Claude request body cancellation failed before its attempt marker")],
+          [cause, cancellation.cause],
           "Claude attempt marker and request cleanup failed",
           { cause },
         );
@@ -230,14 +230,14 @@ export class ClaudeController {
       failed = true;
       requestError = cause;
       if (stage !== "transport") {
-        const lifecycle = await cancelClaudeIncomingRequestBody(request);
+        const cancellation = await cancelClaudeIncomingRequestBody(request);
         resources = {
           ...resources,
-          incomingRequestBodyLifecycle: lifecycle,
+          incomingRequestBodyLifecycle: cancellation.lifecycle,
         };
-        if (lifecycle === "cancel-failed")
+        if (cancellation.lifecycle === "cancel-failed")
           requestError = new AggregateError(
-            [cause, new Error("Claude incoming request body cancellation failed")],
+            [cause, cancellation.cause],
             "Claude model request guard and input cleanup failed",
             { cause },
           );

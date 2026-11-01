@@ -96,17 +96,66 @@ function groupKey(incarnation: string, channel: NativeStdioChannel) {
   return JSON.stringify([incarnation, channel]);
 }
 
-function validateOrdinalSequence(chunks: readonly Chunk[]) {
-  let previous = 0;
-  for (const chunk of chunks) {
-    if (chunk.ordinal !== previous + 1)
-      fail("Native stdio journal has a missing or reordered ordinal");
-    previous = chunk.ordinal;
+function observationFor(channel: NativeStdioChannel) {
+  return channel === "native-stdin" ? "consumed" : "accepted";
+}
+
+function validateCurrentCheckpoint(
+  value: typeof CurrentSummary.Type,
+  sequence: number,
+  chunks: ReadonlyMap<string, readonly Chunk[]>,
+) {
+  for (const channel of NATIVE_STDIO_CHANNELS) {
+    const covered = (chunks.get(groupKey(value.incarnation, channel)) ?? []).filter(
+      (chunk) => chunk.sequence < sequence,
+    );
+    const coveredBytes = covered.reduce((sum, chunk) => sum + chunk.ref.bytes, 0);
+    const stats = value.streams[channel];
+    assertByteCount(stats.observedBytes, "Native stdio observed byte count is invalid");
+    assertByteCount(stats.acceptedBytes, "Native stdio accepted byte count is invalid");
+    assertByteCount(stats.chunkCount, "Native stdio chunk count is invalid");
+    if (
+      stats.observation !== observationFor(channel) ||
+      stats.chunkCount !== covered.length ||
+      stats.acceptedBytes !== coveredBytes ||
+      stats.observedBytes < stats.acceptedBytes ||
+      (stats.complete && stats.observedBytes !== stats.acceptedBytes) ||
+      (stats.complete && stats.incompleteReason !== null) ||
+      (!stats.complete && !stats.incompleteReason)
+    ) {
+      fail("Native stdio summary differs from its chunks");
+    }
   }
 }
 
-function observationFor(channel: NativeStdioChannel) {
-  return channel === "native-stdin" ? "consumed" : "accepted";
+function validateLegacyCheckpoint(
+  value: typeof LegacySummary.Type,
+  sequence: number,
+  chunks: ReadonlyMap<string, readonly Chunk[]>,
+) {
+  for (const channel of NATIVE_STDIO_CHANNELS) {
+    const capturedBytes = (chunks.get(groupKey(value.incarnation, channel)) ?? [])
+      .filter((chunk) => chunk.sequence < sequence)
+      .reduce((sum, chunk) => sum + chunk.ref.bytes, 0);
+    const stats = value.streams[channel];
+    if (
+      stats.observation !== observationFor(channel) ||
+      value.prefixLimitBytes !== 16_384 ||
+      !Number.isSafeInteger(stats.observedBytes) ||
+      stats.observedBytes < 0 ||
+      !Number.isSafeInteger(stats.retainedBytes) ||
+      stats.retainedBytes < 0 ||
+      !Number.isSafeInteger(stats.publishedBytes) ||
+      stats.publishedBytes < 0 ||
+      stats.publishedBytes !== stats.retainedBytes ||
+      stats.publishedBytes !== capturedBytes ||
+      stats.publishedBytes > value.prefixLimitBytes ||
+      stats.observedBytes < stats.publishedBytes ||
+      stats.truncated !== stats.observedBytes > value.prefixLimitBytes
+    ) {
+      fail("Legacy native stdio prefix differs from its chunks");
+    }
+  }
 }
 
 async function digest(bytes: Uint8Array) {
@@ -172,20 +221,23 @@ export async function inspectNativeStdio(input: {
       if (!blob || !sameArtifact(blob, ref)) fail("Native stdio chunk blob is missing");
       const key = groupKey(raw.incarnation, record.kind as NativeStdioChannel);
       const group = chunks.get(key) ?? [];
+      if (raw.ordinal !== group.length + 1)
+        fail("Native stdio journal has a missing or reordered ordinal");
       group.push({ sequence: record.sequence, ordinal: raw.ordinal, ref });
       chunks.set(key, group);
     } else if (record.kind === "native-stdio-streams") {
       const value = decodeCurrentSummary(await readJsonBlob(checkedArtifact(record.payload)));
       if (!value.incarnation) fail("Native stdio capture incarnation is empty");
+      validateCurrentCheckpoint(value, record.sequence, chunks);
       summaries.set(value.incarnation, { kind: "current", sequence: record.sequence, value });
     } else if (record.kind === "native-stdio-prefix") {
       const value = decodeLegacySummary(await readJsonBlob(checkedArtifact(record.payload)));
       if (!value.incarnation) fail("Legacy native stdio incarnation is empty");
+      validateLegacyCheckpoint(value, record.sequence, chunks);
       summaries.set(value.incarnation, { kind: "legacy", sequence: record.sequence, value });
     }
   }
 
-  for (const group of chunks.values()) validateOrdinalSequence(group);
   const incarnations = new Set<string>([
     ...summaries.keys(),
     ...[...chunks.keys()].map((key) => JSON.parse(key)[0] as string),
@@ -205,28 +257,12 @@ export async function inspectNativeStdio(input: {
       let legacy: LegacyKind = "raw-without-summary";
       let incompleteReason: string | null = "legacy-stream-total-unavailable";
       if (summary?.kind === "current") {
-        const covered = streamChunks.filter((chunk) => chunk.sequence < summary.sequence);
-        const coveredBytes = covered.reduce((sum, chunk) => sum + chunk.ref.bytes, 0);
         const hasLaterRaw = NATIVE_STDIO_CHANNELS.some(
           (candidate) =>
             (chunks.get(groupKey(incarnation, candidate))?.at(-1)?.sequence ?? 0) >
             summary.sequence,
         );
         const stats = summary.value.streams[channel];
-        assertByteCount(stats.observedBytes, "Native stdio observed byte count is invalid");
-        assertByteCount(stats.acceptedBytes, "Native stdio accepted byte count is invalid");
-        assertByteCount(stats.chunkCount, "Native stdio chunk count is invalid");
-        if (
-          stats.observation !== observationFor(channel) ||
-          stats.chunkCount !== covered.length ||
-          stats.acceptedBytes !== coveredBytes ||
-          stats.observedBytes < stats.acceptedBytes ||
-          (stats.complete && stats.observedBytes !== stats.acceptedBytes) ||
-          (stats.complete && stats.incompleteReason !== null) ||
-          (!stats.complete && !stats.incompleteReason)
-        ) {
-          fail("Native stdio summary differs from its chunks");
-        }
         // A checkpoint is a valid prefix. A killed turn may never publish its final totals.
         complete = !hasLaterRaw && stats.complete;
         observedBytes = hasLaterRaw ? null : stats.observedBytes;
@@ -236,23 +272,6 @@ export async function inspectNativeStdio(input: {
         const lastRaw = streamChunks.at(-1)?.sequence ?? 0;
         if (lastRaw > summary.sequence) fail("Legacy stdio summary precedes its raw chunks");
         const stats = summary.value.streams[channel];
-        if (
-          stats.observation !== observationFor(channel) ||
-          summary.value.prefixLimitBytes !== 16_384 ||
-          !Number.isSafeInteger(stats.observedBytes) ||
-          stats.observedBytes < 0 ||
-          !Number.isSafeInteger(stats.retainedBytes) ||
-          stats.retainedBytes < 0 ||
-          !Number.isSafeInteger(stats.publishedBytes) ||
-          stats.publishedBytes < 0 ||
-          stats.publishedBytes !== stats.retainedBytes ||
-          stats.publishedBytes !== capturedBytes ||
-          stats.publishedBytes > summary.value.prefixLimitBytes ||
-          stats.observedBytes < stats.publishedBytes ||
-          stats.truncated !== stats.observedBytes > summary.value.prefixLimitBytes
-        ) {
-          fail("Legacy native stdio prefix differs from its chunks");
-        }
         complete = !stats.truncated && stats.observedBytes === stats.publishedBytes;
         observedBytes = stats.observedBytes;
         legacy = "prefix";

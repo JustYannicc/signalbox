@@ -167,3 +167,36 @@ it("releases an unread model RPC body when its caller aborts", async () => {
   await forwarded.body!.cancel();
   expect(released).toBe(true);
 });
+
+it("preserves model WebSocket upgrades and owns their RPC result through close or abort", async () => {
+  for (const abort of [false, true]) {
+    let pins = 1;
+    let closes = 0;
+    class Socket extends EventTarget {
+      close() {
+        closes++;
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+    const socket = new Socket();
+    const response = new Response(null);
+    Object.defineProperties(response, {
+      status: { value: 101 },
+      webSocket: { value: socket },
+      [Symbol.dispose]: { value: () => pins-- },
+    });
+    const controller = new AbortController();
+    const forwarded = await productModelTransport({ fetch: async () => response })(
+      new Request("https://model.invalid/v1/responses", { signal: controller.signal }),
+    );
+    expect(forwarded.status).toBe(101);
+    expect(forwarded.webSocket).toBe(socket);
+    expect(pins).toBe(1);
+    if (abort) controller.abort();
+    else socket.close();
+    expect(closes).toBe(1);
+    expect(pins).toBe(0);
+    socket.dispatchEvent(new Event("error"));
+    expect(pins).toBe(0);
+  }
+});

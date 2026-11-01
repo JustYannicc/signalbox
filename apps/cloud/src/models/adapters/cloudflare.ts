@@ -1,11 +1,10 @@
 import * as Layer from "effect/Layer";
 
-import { readRpcData, withRpcStub } from "../../rpc/Resources.ts";
+import { readRpcData, withRpcStub, detachRpcData, retainRpcResponse } from "../../rpc/Resources.ts";
 import { poolObjectStub, type PoolObjectNamespace } from "../../pool/PoolDirectory.ts";
 import { threadObjectStub, type ThreadObjectNamespace } from "../../thread/ThreadDirectory.ts";
 import { userObjectStub, type UserObjectNamespace } from "../../user/UserDirectory.ts";
 import * as ModelAuthority from "../internal/ModelAuthority.ts";
-import { relayRpcResponse } from "../internal/rpcResponse.ts";
 import * as ModelAccess from "../ModelAccess.ts";
 import type { LocalKeyVerifier } from "../ModelProtocol.ts";
 
@@ -44,10 +43,10 @@ export const layerModelAccess = (
                 thread,
                 trace,
               );
-              if (reply._tag !== "forwarded") return readRpcData(Promise.resolve(reply));
+              if (reply._tag !== "forwarded") return detachRpcData(reply);
               return {
                 ...reply,
-                response: relayRpcResponse(reply.response, reply),
+                response: await retainRpcResponse(reply.response, { result: reply }),
               };
             }),
           recordThread: (threadId, record) =>

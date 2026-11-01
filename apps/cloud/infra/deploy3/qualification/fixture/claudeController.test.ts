@@ -5,6 +5,27 @@ import type { QualifierExecutionContext } from "./proofContext.ts";
 import { ClaudeController } from "./claudeController.ts";
 import { CLAUDE_QUALIFICATION_API_REVISION } from "./claudeConfiguration.ts";
 
+it("retains the actual body cleanup error when an attempt marker fails", async () => {
+  const markerFailure = new Error("attempt marker failed");
+  const storage = {
+    transaction: async () => {
+      throw markerFailure;
+    },
+  } as unknown as DurableObjectStorage;
+  const controller = new ClaudeController({} as QualifierExecutionContext, storage);
+  const request = new Request("https://model.invalid/v1/messages", { method: "POST", body: "{}" });
+  const reader = request.body!.getReader();
+  try {
+    await expect(controller.request(request)).rejects.toMatchObject({
+      cause: markerFailure,
+      errors: [markerFailure, expect.any(TypeError)],
+    });
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
+});
+
 it("finalizes controller attempts and records retries rejected before wire transport", async () => {
   const values = new Map<string, unknown>([
     ["claude/active-step", { variant: "baseline", requestId: "request-1", phase: "work" }],

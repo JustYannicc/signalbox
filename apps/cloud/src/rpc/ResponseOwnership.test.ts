@@ -1,13 +1,39 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { relayRpcResponse } from "./rpcResponse.ts";
+import { retainRpcResponse } from "./Resources.ts";
 
 const disposable = <A extends object>(value: A, onDispose: () => void): A => {
   Object.defineProperty(value, Symbol.dispose, { value: onDispose });
   return value;
 };
 
-describe("relayRpcResponse", () => {
+describe("retainRpcResponse", () => {
+  it("retains stream and both disposal failures", async () => {
+    const primary = new Error("read failed");
+    const responseFailure = new Error("response disposal failed");
+    const resultFailure = new Error("container disposal failed");
+    const response = disposable(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull() {
+            throw primary;
+          },
+        }),
+      ),
+      () => {
+        throw responseFailure;
+      },
+    );
+    const result = disposable({}, () => {
+      throw resultFailure;
+    });
+    const copy = await retainRpcResponse(response, { result });
+    await expect(copy.text()).rejects.toMatchObject({
+      cause: primary,
+      errors: [primary, expect.objectContaining({ errors: [responseFailure, resultFailure] })],
+    });
+  });
+
   it("keeps the response and enclosing result through EOF", async () => {
     let send: ((chunk: string) => void) | undefined;
     let close: (() => void) | undefined;
@@ -25,7 +51,7 @@ describe("relayRpcResponse", () => {
       () => responseDisposals++,
     );
     const result = disposable({}, () => resultDisposals++);
-    const copy = relayRpcResponse(response, result);
+    const copy = await retainRpcResponse(response, { result });
     const reader = copy.body!.getReader();
 
     const first = reader.read();
@@ -59,7 +85,7 @@ describe("relayRpcResponse", () => {
       () => responseDisposals++,
     );
     const result = disposable({}, () => resultDisposals++);
-    const copy = relayRpcResponse(response, result);
+    const copy = await retainRpcResponse(response, { result });
     const reader = copy.body!.getReader();
     await reader.read();
     await reader.cancel("turn stopped");
@@ -81,18 +107,20 @@ describe("relayRpcResponse", () => {
       () => failedResponseDisposals++,
     );
     const failedResult = disposable({}, () => failedResultDisposals++);
-    await expect(relayRpcResponse(failedResponse, failedResult).text()).rejects.toBe(sourceError);
+    await expect(
+      (await retainRpcResponse(failedResponse, { result: failedResult })).text(),
+    ).rejects.toBe(sourceError);
     expect(failedResponseDisposals).toBe(1);
     expect(failedResultDisposals).toBe(1);
   });
 
-  it("copies empty responses before releasing their RPC results", () => {
+  it("copies empty responses before releasing their RPC results", async () => {
     let responseDisposals = 0;
     let resultDisposals = 0;
     const response = disposable(new Response(null, { status: 204 }), () => responseDisposals++);
     const result = disposable({}, () => resultDisposals++);
 
-    const copy = relayRpcResponse(response, result);
+    const copy = await retainRpcResponse(response, { result });
 
     expect(copy).not.toBe(response);
     expect(copy.status).toBe(204);
@@ -134,13 +162,14 @@ describe("relayRpcResponse", () => {
       onResultDisposed?.();
     });
 
-    expect(() => relayRpcResponse(response, result)).toThrow();
+    const rejected = expect(retainRpcResponse(response, { result })).rejects.toThrow();
     await cancelStarted;
     expect(responseDisposals).toBe(0);
     expect(resultDisposals).toBe(0);
 
     finishCancel?.();
     await resultDisposed;
+    await rejected;
     expect(responseDisposals).toBe(1);
     expect(resultDisposals).toBe(1);
   });

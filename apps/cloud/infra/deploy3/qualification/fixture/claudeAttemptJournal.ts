@@ -2,6 +2,7 @@ import type { ClaudeIncomingRequestBodyLifecycle } from "./claudeBodyOwnership.t
 import { assert } from "./common.ts";
 import {
   CLAUDE_REQUEST_ATTEMPTS_KEY,
+  CLAUDE_REQUEST_ATTEMPTS_PREFIX,
   claudeRequestAttemptKey,
   emptyClaudeRequestAttemptCounters,
   finishClaudeRequestAttempt,
@@ -80,7 +81,7 @@ export class ClaudeAttemptJournal {
     return [
       ...(
         await this.#storage.list<ClaudeRequestAttemptMarker>({
-          prefix: "claude/request-attempt/",
+          prefix: CLAUDE_REQUEST_ATTEMPTS_PREFIX,
         })
       ).values(),
     ];
