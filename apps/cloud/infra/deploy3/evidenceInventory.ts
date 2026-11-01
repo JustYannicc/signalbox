@@ -1,4 +1,15 @@
 import * as Schema from "effect/Schema";
+import {
+  CLAUDE_REQUEST_ATTEMPTS_KEY,
+  CLAUDE_REQUEST_ATTEMPTS_PREFIX,
+  claudeRequestAttemptKey,
+} from "./qualification/fixture/claudeAttemptKeys.ts";
+import {
+  decodeClaudeRequestAttemptCounters,
+  decodeClaudeRequestAttemptMarker,
+  type ClaudeRequestAttemptCounters,
+  type ClaudeRequestAttemptMarker,
+} from "./qualification/fixture/claudeAttemptEvidence.ts";
 
 export const EvidenceArtifact = Schema.Struct({
   id: Schema.String,
@@ -41,6 +52,8 @@ export function inspectEvidenceInventory(input: unknown) {
   const blobs = new Map<string, typeof EvidenceArtifact.Type>();
   const reservations = new Map<number, typeof Reservation.Type>();
   const records = new Map<number, typeof Record.Type>();
+  const claudeAttempts = new Map<number, ClaudeRequestAttemptMarker>();
+  let claudeAttemptCounters: ClaudeRequestAttemptCounters | undefined;
   let previous = "";
   for (const [key, value] of entries) {
     if (key <= previous) throw new Error("Evidence keys repeated or changed order");
@@ -63,7 +76,48 @@ export function inspectEvidenceInventory(input: unknown) {
       }
       if (reservation) reservations.set(row.sequence, decodeReservation(value));
       else records.set(row.sequence, decodeRecord(value));
+    } else if (key === CLAUDE_REQUEST_ATTEMPTS_KEY) {
+      claudeAttemptCounters = decodeClaudeRequestAttemptCounters(value);
+    } else if (key.startsWith(CLAUDE_REQUEST_ATTEMPTS_PREFIX)) {
+      const ordinal = Number(key.slice(CLAUDE_REQUEST_ATTEMPTS_PREFIX.length));
+      if (
+        !Number.isSafeInteger(ordinal) ||
+        ordinal < 1 ||
+        claudeRequestAttemptKey(ordinal) !== key
+      ) {
+        throw new Error("Claude request attempt key differs");
+      }
+      const attempt = decodeClaudeRequestAttemptMarker(value);
+      if (attempt.ordinal !== ordinal) throw new Error("Claude request attempt identity differs");
+      claudeAttempts.set(ordinal, attempt);
     } else throw new Error("Unknown evidence inventory entry");
+  }
+  if (claudeAttempts.size > 0 !== (claudeAttemptCounters !== undefined)) {
+    throw new Error("Claude request-attempt counters do not match their markers");
+  }
+  if (claudeAttemptCounters) {
+    let activeRequests = 0;
+    let succeeded = 0;
+    let failed = 0;
+    const ordinals = [...claudeAttempts.keys()].sort((left, right) => left - right);
+    if (ordinals.length !== claudeAttemptCounters.nextOrdinal) {
+      throw new Error("Claude request-attempt inventory is incomplete");
+    }
+    for (const [index, ordinal] of ordinals.entries()) {
+      if (ordinal !== index + 1) throw new Error("Claude request-attempt inventory is incomplete");
+      const attempt = claudeAttempts.get(ordinal);
+      if (!attempt) throw new Error("Claude request-attempt inventory is incomplete");
+      if (attempt.state === "started") activeRequests++;
+      else if (attempt.outcome === "success") succeeded++;
+      else failed++;
+    }
+    if (
+      activeRequests !== claudeAttemptCounters.activeRequests ||
+      succeeded !== claudeAttemptCounters.succeeded ||
+      failed !== claudeAttemptCounters.failed
+    ) {
+      throw new Error("Claude request-attempt counters do not match their markers");
+    }
   }
   if (blobs.size === 0 || reservations.size === 0 || reservations.size !== records.size) {
     throw new Error("Evidence journal is empty or has unfinished reservations");

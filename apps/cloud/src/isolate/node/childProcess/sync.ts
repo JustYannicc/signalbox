@@ -10,6 +10,7 @@ import type { ResolvedProgram } from "../../../kernel/KernelAbi.ts";
 import { abortError, asChildProcessError, childProcessError, unwrapHostResult } from "./errors.ts";
 import { ByteCollector, normalizeOutputOptions } from "./output.ts";
 import { resolveGuestExecutable } from "./resolveExecutable.ts";
+import { unsupportedNodeOperation } from "../process/NodeError.ts";
 import {
   isArgumentList,
   normalizeShellCommand,
@@ -133,6 +134,8 @@ function runInline(
   options: NodeSyncOptions,
   command?: string,
 ): NodeSpawnSyncResult {
+  // Inline execution has no process identity on which to create a group.
+  if (spawn.detached) unsupportedNodeOperation("child_process synchronous detached execution");
   const outputOptions = normalizeOutputOptions(options, null);
   const stdout = new ByteCollector(outputOptions.maxBuffer);
   const stderr = new ByteCollector(outputOptions.maxBuffer);

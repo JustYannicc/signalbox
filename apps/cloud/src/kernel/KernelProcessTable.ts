@@ -446,7 +446,7 @@ export class KernelProcessTable {
     return kernelOk(previous);
   }
 
-  /** Signals matching live direct children, using waitpid selector semantics. */
+  /** Group signals cover the request's process namespace, including grandchildren and reparented members. */
   signalPid(
     parentHandle: KernelHandle<"process"> | undefined,
     selector: number,
@@ -463,12 +463,14 @@ export class KernelProcessTable {
     if (this.#closed) return kernelError("CANCELLED", "Process table is closed");
 
     const targets = [...this.#processes.values()]
-      .filter((process) => process.parentPid === parent.value.pid)
+      .filter(
+        (process) => selector === 0 || selector < -1 || process.parentPid === parent.value.pid,
+      )
       .filter((process) =>
         this.#waiters.matchesSelector(process, parent.value.processGroupId, selector),
       )
       .filter((process) => !process.completionObserved && process.outcome === undefined);
-    if (targets.length === 0) return kernelError("NOT_FOUND", "No matching live child process");
+    if (targets.length === 0) return kernelError("NOT_FOUND", "No matching live process");
     if (signal === 0) return kernelOk(undefined);
 
     let accepted = false;
@@ -489,7 +491,7 @@ export class KernelProcessTable {
       for (const result of rest) this.#wakes.release(result.wakeToken);
       return first!;
     }
-    return firstFailure ?? kernelError("NOT_FOUND", "No matching live child process");
+    return firstFailure ?? kernelError("NOT_FOUND", "No matching live process");
   }
 
   dispose(): Promise<KernelResult<void>> {

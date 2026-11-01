@@ -98,6 +98,7 @@ export function createComputerProcessTransport(
             }
           }
         },
+        spawn.detached ? { processGroupId: 0 } : {},
       );
       return result.status === "ok" ? kernelOk(result.value.handle) : result;
     },

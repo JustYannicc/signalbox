@@ -159,11 +159,11 @@ function controlledChild(disposeGate = Promise.resolve()) {
 }
 
 describe("Node child_process through Computer", () => {
-  it("rejects unsupported process ownership and detached execution before admission", async () => {
+  it("rejects unsupported process ownership before admission", async () => {
     const exec = vi.fn<ComputerExecPort["exec"]>(async () => echoChild());
     const h = harness({ exec });
     try {
-      for (const options of [{ uid: 0 }, { gid: 0 }, { detached: true }]) {
+      for (const options of [{ uid: 0 }, { gid: 0 }]) {
         for (const launch of [
           () => h.childProcess.spawn("tool", options),
           () => h.childProcess.exec("tool", options),
