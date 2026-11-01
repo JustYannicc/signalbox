@@ -116,7 +116,7 @@ function parseRuntimeBuiltinTargetProfile(value: unknown): RuntimeBuiltinTargetP
   };
 }
 
-function parseRuntimeBuiltinInventory(value: unknown): RuntimeBuiltinInventory {
+export function parseRuntimeBuiltinInventory(value: unknown): RuntimeBuiltinInventory {
   if (!value || typeof value !== "object")
     throw new Error("NODE_BUILTIN_RUNTIME_INVENTORY_INVALID");
   const modules = Reflect.get(value, "modules");
@@ -160,7 +160,7 @@ function parseRuntimeBuiltinInventory(value: unknown): RuntimeBuiltinInventory {
 
 /** The cloud CLI inspects the public personality inside Workerd, then closes the runtime. */
 export async function captureRuntimeBuiltinInventory(
-  requiredFunctions: readonly NodeBuiltinFunctionCall[] = [],
+  requiredFunctions: readonly Pick<NodeBuiltinFunctionCall, "specifier" | "memberPath">[] = [],
 ): Promise<RuntimeBuiltinInventory> {
   const requests = new Map<string, { specifier: string; memberPath: readonly string[] }>();
   for (const { specifier, memberPath } of requiredFunctions) {

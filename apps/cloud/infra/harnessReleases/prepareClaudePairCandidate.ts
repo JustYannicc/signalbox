@@ -3,7 +3,10 @@ import * as NodePath from "node:path";
 import { runTrustedComputerManifestCli } from "./computerManifestCli.ts";
 import { canonicalComputerJson, computerSha256 } from "./computerManifest/identity.ts";
 import { captureCurrentSourceFreeze } from "./computerManifest/sourceFreeze.ts";
-import { prepareHarnessArtifact, prepareHarnessQualificationArtifact } from "./prepareArtifact.ts";
+import { buildHarnessQualificationArtifact } from "./prepareArtifact.ts";
+import { inspectQualificationArtifact } from "./inspectQualificationArtifact.ts";
+import { candidateFilePin } from "./candidateOutput.ts";
+import { readClaudePairBuild } from "./claudePairBuild.ts";
 import type { HarnessReleaseBuiltinFindings } from "../../src/harnessReleases/HarnessReleaseBuiltinFindings.ts";
 import { resolveCandidateOutputDirectory, writeCandidateFile } from "./candidateOutput.ts";
 import { writeClaudeReleaseLedgerCandidate } from "./writeClaudeReleaseLedgerCandidate.ts";
@@ -23,7 +26,7 @@ export interface PrepareClaudePairCandidateInput {
 }
 
 /** Assemble normal producer outputs while every runtime qualification gate remains pending. */
-export async function prepareClaudePairCandidate(input: PrepareClaudePairCandidateInput) {
+export async function buildClaudePairCandidate(input: PrepareClaudePairCandidateInput) {
   const repository = NodePath.resolve(import.meta.dirname, "../../../..");
   const { outputDirectory } = await resolveCandidateOutputDirectory(input.output);
   const relative = NodePath.relative(await NodeFSP.realpath(repository), outputDirectory);
@@ -49,9 +52,8 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
   const sdkManifest = await NodeFSP.readFile(NodePath.join(input.sdk, "manifest.json"));
   const variants = {} as Record<
     "baseline" | "hooks",
-    Awaited<ReturnType<typeof prepareHarnessArtifact>>
+    Awaited<ReturnType<typeof buildHarnessQualificationArtifact>>["identity"]
   >;
-  const openFindings = {} as Record<"baseline" | "hooks", HarnessReleaseBuiltinFindings>;
   for (const variant of ["baseline", "hooks"] as const) {
     const cli = variant === "baseline" ? input.baselineCli : input.hooksCli;
     const cliManifest = await NodeFSP.readFile(NodePath.join(cli, "manifest.json"));
@@ -65,7 +67,7 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
         sdkManifestSha256: computerSha256(sdkManifest),
       }),
     );
-    const prepared = await prepareHarnessQualificationArtifact({
+    const prepared = await buildHarnessQualificationArtifact({
       harness: "claude-code",
       sourceIdentity,
       computer: computer.trustedComputer,
@@ -73,21 +75,62 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
       output: NodePath.join(outputDirectory, variant),
     });
     variants[variant] = prepared.identity;
-    openFindings[variant] = prepared.openFindings;
   }
-  const written = await writeClaudeReleaseLedgerCandidate({
+  const build = {
+    schema: "signalbox/claude-pair-build/v1" as const,
+    status: "builtin-inventory-pending" as const,
     createdAt: input.createdAt,
+    sourceCommit: source.commit,
+    sourceSha256: source.sha256,
+    trustedComputer: computer.trustedComputer,
+    maxPreparedModuleBytes: input.maxPreparedModuleBytes,
+    ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+    variants,
+  };
+  const after = await captureCurrentSourceFreeze(repository);
+  if (after.commit !== source.commit || after.sha256 !== source.sha256)
+    throw new Error("CLAUDE_PAIR_SOURCE_CHANGED");
+  const bytes = Buffer.from(`${JSON.stringify(build, null, 2)}\n`);
+  await writeCandidateFile(NodePath.join(outputDirectory, "pair-build.json"), bytes);
+  return { ...build, outputDirectory, build: candidateFilePin("pair-build.json", bytes) };
+}
+
+/** Finalize the same built artifacts using separately captured runtime inventories. */
+export async function completeClaudePairCandidate(
+  directory: string,
+  buildSha256: string,
+  inventories?: { readonly baseline: string; readonly hooks: string },
+) {
+  const outputDirectory = await NodeFSP.realpath(directory);
+  const build = await readClaudePairBuild(outputDirectory, buildSha256);
+  const repository = NodePath.resolve(import.meta.dirname, "../../../..");
+  const source = await captureCurrentSourceFreeze(repository);
+  if (source.commit !== build.sourceCommit || source.sha256 !== build.sourceSha256)
+    throw new Error("CLAUDE_PAIR_SOURCE_CHANGED");
+  const { variants } = build;
+  const openFindings = {} as Record<"baseline" | "hooks", HarnessReleaseBuiltinFindings>;
+  for (const variant of ["baseline", "hooks"] as const) {
+    const inspected = await inspectQualificationArtifact({
+      directory: NodePath.join(outputDirectory, variant),
+      identity: variants[variant],
+      ...(inventories === undefined ? {} : { inventory: inventories[variant] }),
+    });
+    openFindings[variant] = inspected.openFindings;
+  }
+  await readClaudePairBuild(outputDirectory, buildSha256);
+  const written = await writeClaudeReleaseLedgerCandidate({
+    createdAt: build.createdAt,
     baseline: {
       directory: NodePath.join(outputDirectory, "baseline"),
       identity: variants.baseline,
     },
     hooks: { directory: NodePath.join(outputDirectory, "hooks"), identity: variants.hooks },
-    trustedComputer: computer.trustedComputer,
-    maxPreparedModuleBytes: input.maxPreparedModuleBytes,
+    trustedComputer: build.trustedComputer,
+    maxPreparedModuleBytes: build.maxPreparedModuleBytes,
     outputDirectory: NodePath.join(outputDirectory, "ledger"),
-    ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+    ...(build.projectId === undefined ? {} : { projectId: build.projectId }),
   });
-  const projectId = input.projectId ?? "signalbox";
+  const projectId = build.projectId ?? "signalbox";
   const assetsDirectory = NodePath.join(outputDirectory, "deployment-assets");
   const store = directoryHarnessArtifactStore(assetsDirectory);
   const assets = [];
@@ -129,8 +172,8 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
     qualification: "pending",
     releasable: false,
     source,
-    trustedComputer: computer.trustedComputer,
-    maxPreparedModuleBytes: input.maxPreparedModuleBytes,
+    trustedComputer: build.trustedComputer,
+    maxPreparedModuleBytes: build.maxPreparedModuleBytes,
     variants,
     ledger: written.ledgerFile,
     descriptor: written.candidateFile,
@@ -142,4 +185,9 @@ export async function prepareClaudePairCandidate(input: PrepareClaudePairCandida
     Buffer.from(`${JSON.stringify(result, null, 2)}\n`),
   );
   return result;
+}
+
+export async function prepareClaudePairCandidate(input: PrepareClaudePairCandidateInput) {
+  const built = await buildClaudePairCandidate(input);
+  return completeClaudePairCandidate(built.outputDirectory, built.build.sha256);
 }

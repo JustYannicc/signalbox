@@ -12,6 +12,10 @@ import { scanBuiltinSource, type BuiltinSource } from "./nodeBuiltinGate/source.
 import { linkPublishedSources } from "./nodeBuiltinGate/publishedGraph.ts";
 import { readPublishedBuiltinSources } from "./nodeBuiltinGate/published.ts";
 import {
+  builtinInventoryRequestSha256,
+  createBuiltinInventoryRequest,
+} from "./nodeBuiltinGate/inventoryRequest.ts";
+import {
   assessNodeBuiltinReachability,
   createNodeBuiltinReachabilityInventory,
   type BuiltinReachabilityCorpus,
@@ -37,6 +41,12 @@ export async function inspectPackagedBuiltinCoverage(
   const inventory = sources.map(scanBuiltinSource);
   const requiredFunctions = inventory.flatMap((entry) => entry.requiredFunctions);
   const installed = runtimeInventory ?? (await captureRuntimeBuiltinInventory(requiredFunctions));
+  if (
+    installed.capture?.inventoryRequestSha256 !== undefined &&
+    installed.capture.inventoryRequestSha256 !==
+      builtinInventoryRequestSha256(createBuiltinInventoryRequest(inventory))
+  )
+    throw new Error("NODE_BUILTIN_INVENTORY_SOURCE_CHANGED");
   const report = inspectNodeBuiltinCoverage({
     builtinModules: NodeModule.builtinModules,
     requiredSpecifiers: inventory.flatMap((entry) => entry.requiredSpecifiers),
@@ -63,6 +73,12 @@ export async function inspectPackagedBuiltinCoverage(
     ...(installed.capture === undefined ? {} : { runtimeCapture: installed.capture }),
     sources: inventory,
   };
+}
+
+export async function preparePublishedBuiltinInventoryRequest(directory: string) {
+  const { sources, partitioned } = await readPublishedBuiltinSources(directory);
+  const analysis = partitioned ? [...sources, await linkPublishedSources(sources)] : sources;
+  return createBuiltinInventoryRequest(analysis.map(scanBuiltinSource));
 }
 
 export async function assertPackagedBuiltinCoverage(

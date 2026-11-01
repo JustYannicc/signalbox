@@ -3,6 +3,7 @@ import type { PrepareHarnessArtifactInput } from "./prepareArtifact.internal.ts"
 
 export { artifactDirectorySource } from "./prepareArtifact.internal.ts";
 export { prepareHarnessQualificationArtifact } from "./prepareArtifact.internal.ts";
+export { buildHarnessQualificationArtifact } from "./prepareArtifact.internal.ts";
 export type { PrepareHarnessArtifactInput } from "./prepareArtifact.internal.ts";
 
 export const prepareHarnessArtifact = (input: PrepareHarnessArtifactInput) =>
