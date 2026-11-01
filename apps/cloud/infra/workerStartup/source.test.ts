@@ -238,7 +238,10 @@ describe("worker startup source provider", () => {
             NodeFSP.rm(`${f.main}.startup-profile/invocation.json`),
             NodeFSP.rm(`${f.main}.startup.cpuprofile`),
           ]);
-          return qualifyWorkerStartupProfile({ main: f.main, rules, compatibility });
+          return qualifyWorkerStartupProfile(
+            { main: f.main, rules, compatibility },
+            runtimeMock.identity,
+          );
         });
         expect(qualified.evidence.negativeDeltaCount).toBe(1);
         expect(qualified.summary.activeMs).toBe(180.9036625);
@@ -250,6 +253,44 @@ describe("worker startup source provider", () => {
           bundle: built.bundle?.hash,
         });
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses runtime drift between measurement and fresh or offline qualification", () =>
+    Effect.gen(function* () {
+      const f = yield* Effect.acquireRelease(Effect.promise(fixture), (f) =>
+        Effect.promise(f.dispose),
+      );
+      yield* Effect.promise(() => f.writeEvidence());
+      yield* Effect.promise(async () => {
+        await Promise.all([
+          NodeFSP.rm(`${f.main}.startup-profile.json`),
+          NodeFSP.rm(`${f.main}.startup-profile/invocation.json`),
+          NodeFSP.rm(`${f.main}.startup.cpuprofile`),
+        ]);
+        const runtime = await runtimeMock.profilerRuntime();
+        const changed = {
+          ...runtime,
+          identity: { ...runtime.identity, workerdSha256: "f".repeat(64) },
+        };
+        runtimeMock.profilerRuntime.mockResolvedValueOnce(changed);
+        await expect(
+          qualifyWorkerStartupProfile({ main: f.main, rules, compatibility }, runtime.identity),
+        ).rejects.toThrow("MEASURED_RUNTIME_DIFFERS");
+        await expect(NodeFSP.stat(`${f.main}.startup-profile.json`)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        const fresh = await fixture();
+        try {
+          runtimeMock.profilerRuntime.mockResolvedValueOnce(runtime).mockResolvedValueOnce(changed);
+          await expect(fresh.writeEvidence()).rejects.toThrow("MEASURED_RUNTIME_DIFFERS");
+          await expect(NodeFSP.stat(`${fresh.main}.startup-profile.json`)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        } finally {
+          await fresh.dispose();
+        }
+      });
+    }).pipe(Effect.scoped),
   );
 
   it.effect("rechecks changed payload and compatibility on the no-change hash path", () =>

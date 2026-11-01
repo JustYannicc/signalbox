@@ -72,12 +72,17 @@ describe("Worker startup CPU budget", () => {
     expect(() => requireStartupBudget(profile([1], [300_001]))).toThrow("BUDGET_EXCEEDED");
   });
 
-  it.each([
-    profile([1, 1], [-10, 20]),
-    { ...profile([1, 1], [100, 100]), endTime: 101 },
-    profile([1, 4], [100, -10]),
-  ])("refuses invalid timestamps and unknown sample IDs after sorting", (raw) => {
-    expect(() => startupProfileSummary(raw)).toThrow();
+  it("keeps signed timestamps outside the reported profile window without clamping", () => {
+    expect(
+      startupProfileSummary({ ...profile([1, 1], [-10, 50]), startTime: 100, endTime: 300 }),
+    ).toMatchObject({ negativeDeltaCount: 1, sampledMs: 0.1, activeMs: 0.1 });
+    expect(
+      startupProfileSummary({ ...profile([1, 1], [150, 100]), startTime: 100, endTime: 300 }),
+    ).toMatchObject({ negativeDeltaCount: 0, sampledMs: 0.2, activeMs: 0.2 });
+  });
+
+  it("refuses an unknown sample ID even when its timestamp precedes the prior sample", () => {
+    expect(() => startupProfileSummary(profile([1, 4], [100, -10]))).toThrow("UNKNOWN_SAMPLE");
   });
 
   it.each([

@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import { requireWorkerdLaunchAdmissionSync } from "../harnessReleases/workerdLaunchAdmission.ts";
 import { requireStartupBudget, WORKER_STARTUP_BUDGET_MS } from "./budget.ts";
 import { decodeStartupEvidence, startupEvidencePath } from "./evidence.ts";
-import { profilerRuntime } from "./runtime.ts";
+import { profilerRuntime, StartupRuntime } from "./runtime.ts";
 import { serializeStartupPayload, sha256, startupPayload } from "./payload.ts";
 import { readStartupBundle } from "./prebuilt.ts";
 import { runStartupProfiler } from "./process.ts";
@@ -24,6 +24,7 @@ export const StartupProfileInput = Schema.Struct({
   compatibility: Schema.Struct({ date: Schema.String, flags: Schema.Array(Schema.String) }),
 });
 const decodeInput = Schema.decodeUnknownSync(StartupProfileInput);
+const decodeRuntime = Schema.decodeUnknownSync(StartupRuntime);
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 /** One cold profile, no retry. Its final receipt is usable only for the exact prebuilt upload. */
 export async function profileWorkerStartup(raw: unknown) {
@@ -92,16 +93,19 @@ export async function profileWorkerStartup(raw: unknown) {
   const current = await readStartupBundle(input, input.compatibility);
   if (startupPayload(current, input.compatibility).sha256 !== serialized.payload.sha256)
     throw new Error("WORKER_STARTUP_PAYLOAD_CHANGED_DURING_PROFILE");
-  const qualified = await qualifyWorkerStartupProfile(input);
+  const qualified = await qualifyWorkerStartupProfile(input, runtime.identity);
   return { ...qualified, wallMs, peakRssBytes };
 }
 
 /** Qualify a closed profiler attempt offline; this never starts Wrangler or Workerd. */
-export async function qualifyWorkerStartupProfile(raw: unknown) {
+export async function qualifyWorkerStartupProfile(raw: unknown, rawMeasuredRuntime: unknown) {
   const input = decodeInput(raw);
   const bundle = await readStartupBundle(input, input.compatibility);
   const payload = startupPayload(bundle, input.compatibility);
+  const expectedRuntime = decodeRuntime(rawMeasuredRuntime);
   const runtime = await profilerRuntime();
+  if (JSON.stringify(runtime.identity) !== JSON.stringify(expectedRuntime))
+    throw new Error("WORKER_STARTUP_MEASURED_RUNTIME_DIFFERS");
   const { profileFile } = startupProfilePaths(input.main);
   const profile = await NodeFSP.readFile(profileFile);
   const summary = requireStartupBudget(JSON.parse(profile.toString("utf8")));
@@ -126,7 +130,7 @@ export async function qualifyWorkerStartupProfile(raw: unknown) {
     negativeDeltaCount: summary.negativeDeltaCount,
     profileFile: destination,
     profileSha256: sha256(profile),
-    runtime: runtime.identity,
+    runtime: expectedRuntime,
     invocation: { wranglerExitCode: 0, workerdStarts: 1, workerdClosed: true, guardPassed: true },
   });
   await NodeFSP.writeFile(startupEvidencePath(input.main), json(evidence), { flag: "wx" });

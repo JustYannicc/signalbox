@@ -41,12 +41,7 @@ export function startupProfileSummary(raw: unknown) {
       const delta = profile.timeDeltas[index]!;
       if (delta < 0) negativeDeltaCount++;
       timestamp += delta;
-      if (
-        !Number.isFinite(timestamp) ||
-        timestamp < profile.startTime ||
-        timestamp > profile.endTime
-      )
-        throw new Error("WORKER_STARTUP_PROFILE_INVALID_TIMESTAMP");
+      if (!Number.isFinite(timestamp)) throw new Error("WORKER_STARTUP_PROFILE_INVALID_TIMESTAMP");
       const name = nodes.get(id);
       if (name === undefined) throw new Error("WORKER_STARTUP_PROFILE_UNKNOWN_SAMPLE");
       return { timestamp, name };
