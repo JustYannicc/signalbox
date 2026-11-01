@@ -7,7 +7,12 @@ import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import type { OfficialReleaseIdentity } from "./releaseIdentity.ts";
 import { claudeReleaseBase } from "./releaseIdentity.ts";
-import { buildClaudeRelease, parseBuiltinCapabilityManifest } from "./buildClaude.ts";
+import {
+  buildClaudeQualificationBundle,
+  buildClaudeRelease,
+  parseBuiltinCapabilityManifest,
+} from "./buildClaude.ts";
+import { freezeArtifact } from "./releaseIdentity.ts";
 
 const digest = (value: Uint8Array | string) =>
   NodeCrypto.createHash("sha256").update(value).digest("hex");
@@ -115,6 +120,25 @@ async function makeExtraction(
 }
 
 describe("Claude release build integration", () => {
+  it("build-only keeps builtin inventory pending without starting the runtime", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-build-only-"));
+    try {
+      const input = await makeExtraction(root, "2.1.303", "export const marker='staged';");
+      const output = NodePath.join(root, "bundle");
+      const built = await buildClaudeQualificationBundle({ ...input, output, variant: "baseline" });
+      expect((await freezeArtifact(output)).sha256).toBe(built.artifact.sha256);
+      expect(built.provenance.builtinCoverage).toEqual({
+        status: "pending",
+        stage: "builtin-inventory",
+      });
+      expect(built.provenance).not.toHaveProperty("openFindings");
+      expect(built.report.checks.builtinGaps.status).toBe("pending");
+      expect(built.provenance.releasable).toBe(false);
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("validates capability snapshots before scanning a release", () => {
     expect(
       parseBuiltinCapabilityManifest({

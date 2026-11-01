@@ -130,6 +130,7 @@ const prepareArtifact = async (
   input: PrepareHarnessArtifactInput,
   filesystem: ArtifactFileSystem,
   purpose: "qualification" | "release",
+  inventory: "required" | "deferred" = "required",
 ) => {
   const componentNames =
     input.harness === "codex" ? (["codex"] as const) : (["cli", "sdk"] as const);
@@ -249,7 +250,10 @@ const prepareArtifact = async (
       components[component] = { manifest: `${component}/manifest.json` };
     }
 
-    const openFindings = await verifyArtifactNodeBuiltins(artifactOutput.path, purpose);
+    const openFindings =
+      inventory === "deferred"
+        ? undefined
+        : await verifyArtifactNodeBuiltins(artifactOutput.path, purpose);
 
     const manifestBytes = serializeHarnessReleaseArtifactManifest({
       schemaVersion: 1,
@@ -285,5 +289,17 @@ export const prepareHarnessArtifactWithFileSystem = async (
 ): Promise<HarnessReleaseArtifactIdentity> =>
   (await prepareArtifact(input, filesystem, "release")).identity;
 
-export const prepareHarnessQualificationArtifact = (input: PrepareHarnessArtifactInput) =>
-  prepareArtifact(input, NodeFSP, "qualification");
+export const prepareHarnessQualificationArtifact = async (input: PrepareHarnessArtifactInput) => {
+  const prepared = await prepareArtifact(input, NodeFSP, "qualification");
+  if (prepared.openFindings === undefined) throw new Error("HARNESS_BUILTIN_INVENTORY_REQUIRED");
+  return { identity: prepared.identity, openFindings: prepared.openFindings };
+};
+
+export const buildHarnessQualificationArtifact = async (input: PrepareHarnessArtifactInput) => {
+  const prepared = await prepareArtifact(input, NodeFSP, "qualification", "deferred");
+  return {
+    directory: NodePath.resolve(input.output),
+    identity: prepared.identity,
+    builtinInventory: "pending" as const,
+  };
+};

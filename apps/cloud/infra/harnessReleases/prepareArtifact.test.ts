@@ -7,7 +7,9 @@ import {
   artifactDirectorySource,
   prepareHarnessArtifact,
   prepareHarnessQualificationArtifact,
+  buildHarnessQualificationArtifact,
 } from "./prepareArtifact.ts";
+import { inspectQualificationArtifact } from "./inspectQualificationArtifact.ts";
 import {
   prepareHarnessArtifactWithFileSystem,
   type ArtifactFileSystem,
@@ -62,6 +64,24 @@ const withFileSystem = (
   }) as ArtifactFileSystem;
 
 describe("Harness artifact preparation", () => {
+  it("build-only preserves bytes and refuses changed artifacts before inventory", async () => {
+    const { sdk, input } = await setup();
+    await NodeFSP.writeFile(NodePath.join(sdk, "sdk.js"), "import 'node:cluster';");
+    const built = await buildHarnessQualificationArtifact(input);
+    expect(built.builtinInventory).toBe("pending");
+    const artifact = await openHarnessReleaseArtifact(
+      built.identity,
+      artifactDirectorySource(built.directory),
+    );
+    expect(new TextDecoder().decode(await artifact.read("sdk/sdk.js"))).toBe(
+      "import 'node:cluster';",
+    );
+    await NodeFSP.writeFile(NodePath.join(built.directory, "sdk/sdk.js"), "changed");
+    await expect(inspectQualificationArtifact(built)).rejects.toMatchObject({
+      code: "FILE_SIZE_MISMATCH",
+    });
+  });
+
   it("excludes bundler diagnostics from the hashed runtime artifact", async () => {
     const { cli, input } = await setup();
     await NodeFSP.writeFile(NodePath.join(cli, "metafile.json"), '{"diagnostic":true}');

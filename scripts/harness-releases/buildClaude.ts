@@ -141,8 +141,9 @@ async function loadReleaseScanner(repository: string) {
   };
 }
 
-export async function buildClaudeRelease(
+async function buildClaudeReleaseWithInventory(
   options: BuildClaudeReleaseOptions,
+  inventory: "required" | "deferred",
 ): Promise<BuildClaudeReleaseResult> {
   const variant = options.variant ?? "hooks";
   const purpose = options.purpose ?? "release";
@@ -227,9 +228,14 @@ export async function buildClaudeRelease(
       bunVersion: null,
       capabilities: options.capabilities ?? emptyCapabilities(inputs),
     });
-    const builtinCoverage = await (
-      purpose === "qualification" ? inspectPublishedBuiltinCoverage : assertPublishedBuiltinCoverage
-    )(bundlePath);
+    const builtinCoverage =
+      inventory === "deferred"
+        ? undefined
+        : await (
+            purpose === "qualification"
+              ? inspectPublishedBuiltinCoverage
+              : assertPublishedBuiltinCoverage
+          )(bundlePath);
     const sourceAfter = await freezeSources(repository);
     assertSourcesUnchanged(sourceBefore, sourceAfter);
     const provenance = {
@@ -257,9 +263,14 @@ export async function buildClaudeRelease(
         execution: "native-node",
       },
       buildInputs: inputs.provenance,
-      builtinCoverage,
+      builtinCoverage: builtinCoverage ?? { status: "pending", stage: "builtin-inventory" },
       ...(purpose === "qualification"
-        ? { releasable: false, openFindings: qualificationBuiltinFindings(builtinCoverage) }
+        ? {
+            releasable: false,
+            ...(builtinCoverage === undefined
+              ? {}
+              : { openFindings: qualificationBuiltinFindings(builtinCoverage) }),
+          }
         : {}),
       capabilities: options.capabilities
         ? { status: "supplied", sha256: sha256(JSON.stringify(options.capabilities)) }
@@ -296,6 +307,14 @@ export async function buildClaudeRelease(
     throw error;
   }
 }
+
+export const buildClaudeRelease = (options: BuildClaudeReleaseOptions) =>
+  buildClaudeReleaseWithInventory(options, "required");
+
+/** Build a qualification candidate without starting its selected runtime. */
+export const buildClaudeQualificationBundle = (
+  options: Omit<BuildClaudeReleaseOptions, "purpose">,
+) => buildClaudeReleaseWithInventory({ ...options, purpose: "qualification" }, "deferred");
 
 async function main() {
   const { values } = NodeUtil.parseArgs({

@@ -12,6 +12,7 @@ const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 export async function verifyArtifactNodeBuiltins(
   directory: string,
   purpose: "qualification" | "release" = "release",
+  inventory?: string,
 ) {
   const entry = NodeURL.fileURLToPath(
     new URL("../../../../scripts/harness-releases/nodeBuiltinGate/cli.ts", import.meta.url),
@@ -19,10 +20,19 @@ export async function verifyArtifactNodeBuiltins(
   const temporary = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "builtin-findings-"));
   const result = NodePath.join(temporary, "findings.json");
   try {
-    await execFile(process.execPath, [entry, directory, "--purpose", purpose, "--result", result], {
-      encoding: "utf8",
-      maxBuffer: 8 * 1024 * 1024,
-    });
+    await execFile(
+      process.execPath,
+      [
+        entry,
+        directory,
+        "--purpose",
+        purpose,
+        "--result",
+        result,
+        ...(inventory === undefined ? [] : ["--inventory", inventory]),
+      ],
+      { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+    );
     return decodeHarnessReleaseBuiltinFindings(JSON.parse(await NodeFSP.readFile(result, "utf8")));
   } finally {
     await NodeFSP.rm(temporary, { recursive: true, force: true });
