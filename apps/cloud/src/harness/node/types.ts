@@ -38,6 +38,8 @@ export interface NodeHarnessProcessInput {
   readonly loadRelease: (bridge: NodeBridge, signal: AbortSignal) => Promise<unknown>;
   /** Observes entry into the loaded CLI's launch function, after SDK launch mapping. */
   readonly onLaunch?: () => void;
+  /** Receives a detached CLI startup rejection before the host tears its process down. */
+  readonly reportCliStartupFailure?: (cause: unknown) => void;
   readonly prepared?: NodePreparedModuleResolver;
   readonly resolvePrepared?: NodePreparedModuleResolve;
   readonly addons?: NodeEnvironmentOptions["addons"];

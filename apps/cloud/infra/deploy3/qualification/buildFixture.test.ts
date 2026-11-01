@@ -146,11 +146,30 @@ it.effect(
               expect(boundary.environment).toMatchObject({
                 QUALIFIER_CONFIGURATION: { runId: config.runId, workerName: config.workerName },
               });
+              expect(boundary.environment).not.toHaveProperty(
+                "QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT",
+              );
             } else {
               expect(boundary.environment).toMatchObject({
                 RUN_ID: config.runId,
                 CONFIG_SHA256: configurationHash,
                 QUALIFIER_CLAUDE_VARIANT: boundary.provider,
+                QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: {
+                  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+                  DISABLE_TELEMETRY: "1",
+                  DISABLE_AUTOUPDATER: "1",
+                  DISABLE_ERROR_REPORTING: "1",
+                  API_TIMEOUT_MS: "5460000",
+                  CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS: "5460000",
+                  HTTP_PROXY: "",
+                  HTTPS_PROXY: "",
+                  ALL_PROXY: "",
+                  http_proxy: "",
+                  https_proxy: "",
+                  all_proxy: "",
+                  NO_PROXY: "*",
+                  no_proxy: "*",
+                },
               });
             }
             const capabilities = capabilityMap(boundary.environment.HARNESS_C_PRODUCT_CAPABILITIES);
@@ -171,6 +190,36 @@ it.effect(
                 ? assertQualifierCodexFacetConfiguration
                 : assertQualifierClaudeFacetConfiguration;
             expect(() => validate(runtime)).not.toThrow();
+            if (boundary.provider !== "codex") {
+              const processEnvironment =
+                assertQualifierClaudeFacetConfiguration(
+                  runtime,
+                ).QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT;
+              for (const key of Object.keys(processEnvironment)) {
+                const missing = Object.fromEntries(
+                  Object.entries(processEnvironment).filter(([name]) => name !== key),
+                );
+                expect(() =>
+                  validate({ ...runtime, QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: missing }),
+                ).toThrow(key);
+              }
+              for (const key of [
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_BASE_URL",
+                "HOME",
+                "CLAUDE_CONFIG_DIR",
+              ]) {
+                expect(() =>
+                  validate({
+                    ...runtime,
+                    QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: {
+                      ...processEnvironment,
+                      [key]: "unexpected-override",
+                    },
+                  }),
+                ).toThrow(key);
+              }
+            }
             const requiredPhaseInput =
               boundary.phase === "restored"
                 ? "HARNESS_RESUME_PUBLISHER"

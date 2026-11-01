@@ -23,12 +23,15 @@ import {
   parsePinnedEnvironmentSourceId,
   pinnedEnvironmentSourceId,
 } from "./pinned-environment-origin.ts";
+import { observeDetachedCliStartupRejection } from "./detached-cli-startup.ts";
 
 export interface RebundleOptions extends BunGraphOptions {
   readonly omission?: ReleaseOmissionOptions;
   readonly partitionHooksWorker?: boolean;
   /** Requires the host's sticky failure capability for every embedded worker graph. */
   readonly observeWorkerCompatibility?: boolean;
+  /** Requires the selected CLI entry to expose one direct detached async startup call. */
+  readonly observeDetachedStartupRejection?: boolean;
   readonly extracted: string;
   readonly output: string;
   readonly version: string;
@@ -69,6 +72,17 @@ export async function rebundle(options: RebundleOptions) {
     new Set(javascript.map((module) => module.name)),
   );
   const sourceByName = new Map(decoded.map((module) => [module.name, module.source]));
+  if (options.observeDetachedStartupRejection) {
+    if (!options.deferInitialization)
+      throw new Error("BUNDLE_CLAUDE_STARTUP_REJECTION_REQUIRES_DEFERRED");
+    const source = sourceByName.get(input.entry.name);
+    if (source === undefined)
+      throw new Error(`BUNDLE_CLAUDE_ENTRY_SOURCE_MISSING: ${input.entry.name}`);
+    sourceByName.set(
+      input.entry.name,
+      observeDetachedCliStartupRejection(source, input.entry.name),
+    );
+  }
   let workerInputs = new Set<string>();
   const retainWorker = (metafile: Esbuild.Metafile) => {
     workerInputs = workerInputClosure(metafile, HOOKS_WORKER_ENTRY);
@@ -322,6 +336,15 @@ if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]
   if (!extracted || !output || !version || !platform)
     throw new Error("Usage: rebundle.ts <extracted> <new-output> <version> <platform>");
   console.log(
-    JSON.stringify(await rebundleClaudeRelease({ extracted, output, version, platform })),
+    JSON.stringify(
+      await rebundleClaudeRelease({
+        extracted,
+        output,
+        version,
+        platform,
+        deferInitialization: true,
+        observeDetachedStartupRejection: true,
+      }),
+    ),
   );
 }

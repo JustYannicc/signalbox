@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - build and inspect temporary release fixtures.
 import { describe, expect, it } from "@effect/vitest";
+import { CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY } from "@t3tools/contracts/harnessReleaseOmission";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import * as NodeCrypto from "node:crypto";
@@ -282,6 +283,63 @@ describe("worker release partitions", () => {
 });
 
 describe("integrated Claude rebundling", () => {
+  it("reports the original rejection through the rebuilt release's public launch", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-startup-hook-"));
+    try {
+      const entry = `async function startCli() { await 0; throw Object.assign(new Error("fixture startup failed"), {code:"FIXTURE_STARTUP"}); }\nstartCli();\nexport const ready = true;`;
+      const { extracted } = await makeExtraction(root, entry);
+      const output = NodePath.join(root, "bundle");
+      const artifact = await rebundle({
+        extracted,
+        output,
+        version: "fixture-1",
+        platform: "linux-x64",
+        deferInitialization: true,
+        observeDetachedStartupRejection: true,
+      });
+      const script = `
+        const reported = Promise.withResolvers();
+        process[Symbol.for(${JSON.stringify(CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY)})] = reported.resolve;
+        const release = await import(${JSON.stringify(NodeURL.pathToFileURL(NodePath.join(output, artifact.manifest.mainModule)).href)});
+        release.launch();
+        const cause = await reported.promise;
+        if (cause.code !== "FIXTURE_STARTUP" || cause.message !== "fixture startup failed") throw new Error("Lost original startup failure");
+        process.stdout.write("startup-failure-caught");
+      `;
+      const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)(process.execPath, [
+        "--input-type=module",
+        "--eval",
+        script,
+      ]);
+      expect(stdout).toBe("startup-failure-caught");
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails the requested startup contract before publishing an entry without it", async () => {
+    const root = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "claude-startup-hook-missing-"),
+    );
+    try {
+      const { extracted } = await makeExtraction(root, "export const ready = true;");
+      const output = NodePath.join(root, "bundle");
+      await expect(
+        rebundle({
+          extracted,
+          output,
+          version: "fixture-1",
+          platform: "linux-x64",
+          deferInitialization: true,
+          observeDetachedStartupRejection: true,
+        }),
+      ).rejects.toThrow("BUNDLE_CLAUDE_STARTUP_ASYNC_CALL_MISSING");
+      await expectPathMissing(output);
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("bundles declared environment packages and rejects the complete unsupplied package closure", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "claude-packages-"));
     try {

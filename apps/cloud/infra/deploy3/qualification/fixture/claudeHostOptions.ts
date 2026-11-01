@@ -8,7 +8,10 @@ import { ChildWorkerCapacity } from "../../../../src/computer/ChildWorkerCapacit
 import type { ChildWorkerLoaderPort } from "../../../../src/computer/WorkerLoaderDispatch.ts";
 import { HarnessRequestFacetError } from "../../../../src/harness/HarnessRequestFacet.ts";
 import type { ProductClaudeHarnessHostOptions } from "../../../../src/harness/ProductClaudeHarnessSessionHost.ts";
-import type { HarnessCheckpoint } from "../../../../src/harness/Harness.ts";
+import {
+  serializeHarnessFailure,
+  type HarnessCheckpoint,
+} from "../../../../src/harness/Harness.ts";
 import type { HarnessCProductFacetEnvironment } from "../../../../src/harness/HarnessCProductFacet.ts";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../../src/harness/HarnessCProductCapabilities.ts";
 import { DEFAULT_NODE_NATIVE_MODULES } from "../../../../src/harness/NodeNativeModules.ts";
@@ -127,7 +130,8 @@ function commandLoader(env: ClaudeFacetEnvironment): ChildWorkerLoaderPort {
 }
 
 export async function claudeConfiguration(env: ClaudeFacetEnvironment) {
-  assertQualifierClaudeFacetConfiguration(env);
+  const { QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: processEnvironment } =
+    assertQualifierClaudeFacetConfiguration(env);
   const cap = claudeCapability(env);
   const host = await cap.hostConfiguration();
   const assets = env.PROGRAM_ASSETS;
@@ -142,12 +146,14 @@ export async function claudeConfiguration(env: ClaudeFacetEnvironment) {
     seed: runtime.seed,
   });
   assert(host.runId === env.RUN_ID, "Claude qualifier run identity changed");
-  return { host, claude };
+  return { host, claude, processEnvironment };
 }
 
 export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
   Effect.gen(function* () {
-    const { host, claude } = yield* attempt(() => claudeConfiguration(input.env));
+    const { host, claude, processEnvironment } = yield* attempt(() =>
+      claudeConfiguration(input.env),
+    );
     const restored = input.filesCheckpoint?.files;
     assert(
       (input.checkpoint === undefined) === (restored === undefined),
@@ -261,7 +267,22 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
       loadSdk: async (_bridge, signal) => await imports.loadSdk(plan, signal),
       process: {
         identity: claudeNodeRuntimeIdentity(paths.home),
-        env: { HOME: paths.home, PATH: "/bin:/usr/bin", TMPDIR: "/tmp", LANG: "C", LC_ALL: "C" },
+        env: {
+          HOME: paths.home,
+          PATH: "/bin:/usr/bin",
+          TMPDIR: "/tmp",
+          LANG: "C",
+          LC_ALL: "C",
+          ...processEnvironment,
+        },
+        // The event stream can close on rejection, so this uses the request's awaited diagnostic queue.
+        reportCliStartupFailure: (cause) =>
+          state.queue(() =>
+            cap.append("claude-cli-startup-failure", {
+              incarnation: input.facetNonce,
+              failure: serializeHarnessFailure(cause),
+            }),
+          ),
         nativeModules: DEFAULT_NODE_NATIVE_MODULES,
         loadPackages: async (_bridge, signal) => await imports.loadPackages(plan, signal),
         loadRelease: async (_bridge, signal) => await imports.loadRelease(plan, signal),

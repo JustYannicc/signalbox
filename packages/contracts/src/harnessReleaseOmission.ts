@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 export const RELEASE_MODULE_OMITTED_CODE = "RELEASE_MODULE_OMITTED";
 export const RELEASE_MODULE_OMITTED_REPORTER_KEY = "signalbox.releaseModuleOmitted";
+export const CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY = "signalbox.claudeCliStartupFailure";
 
 export const ReleaseOmissionConfiguration = Schema.Struct({
   name: Schema.Literals(["product", "qualification"]),

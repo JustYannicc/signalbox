@@ -189,6 +189,7 @@ export async function buildClaudeRelease(
       environmentPackageModules: inputs.environmentPackageModules,
       requireBootstrap: inputs.requireBootstrap,
       deferInitialization: true,
+      observeDetachedStartupRejection: true,
       partitionHooksWorker: variant === "hooks",
       observeWorkerCompatibility: true,
       ...(options.omission ? { omission: options.omission } : {}),
@@ -266,6 +267,7 @@ export async function buildClaudeRelease(
       build: {
         purpose,
         variant,
+        detachedStartupRejection: true,
         node: process.versions.node,
         esbuild: inputs.provenance.packageMapRebinding.bundlerVersion,
         ajv: built.ajv,

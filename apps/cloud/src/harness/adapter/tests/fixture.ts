@@ -314,6 +314,11 @@ export const fixtureForDriver = (selectedDriver: ProviderDriverKind) =>
           throw new Error("Harness turn milestone reporter is unavailable");
         runtimeReporter.turnMilestone(stage);
       },
+      reportCliStartupFailure(cause: unknown) {
+        if (runtimeReporter?.cliStartupFailure === undefined)
+          throw new Error("Harness CLI startup failure reporter is unavailable");
+        runtimeReporter.cliStartupFailure(cause);
+      },
     };
   });
 

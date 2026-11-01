@@ -21,7 +21,9 @@ async function makeExtraction(
 ) {
   const extracted = NodePath.join(root, `extracted-${version}`);
   const workerName = "/$bunfs/root/src/plugins/functionHooks/hooks-worker/hooks-worker.js";
-  const payload = Buffer.from(`${source}\nexport const workerUrl=${JSON.stringify(workerName)};`);
+  const payload = Buffer.from(
+    `${source}\nasync function fixtureStartup() {}\nfixtureStartup();\nexport const workerUrl=${JSON.stringify(workerName)};`,
+  );
   const worker = Buffer.from(workerSource);
   const binary = Buffer.from(`synthetic-official-binary-${version}`);
   const binarySha256 = digest(binary);
@@ -202,7 +204,10 @@ describe("Claude release build integration", () => {
         expect(Object.keys(secondManifest.workerEntries ?? {})).toEqual(
           variant === "hooks" ? ["hooks-worker"] : [],
         );
-        expect(secondResult.provenance.build).toMatchObject({ variant });
+        expect(secondResult.provenance.build).toMatchObject({
+          variant,
+          detachedStartupRejection: true,
+        });
         expect(secondManifest.hostEntrypoints["signalbox/runtime-compatibility"]).toBe(
           "signalbox/runtime-compatibility.js",
         );

@@ -9,6 +9,7 @@ import { nativeTurnThreadLoad } from "../../HarnessThreadLoad.ts";
 import { readinessFixture } from "./claudeReadinessFixture.ts";
 import { preparedAssetsFixture } from "./preparedAssetsFixture.ts";
 import { sdkQuery } from "./claudeSdkQueryFixture.ts";
+import { qualifierClaudeFacetInputs } from "../../../../infra/deploy3/qualification/facetEnvironmentContract.ts";
 
 const program = Effect.scoped(
   Effect.gen(function* () {
@@ -16,6 +17,19 @@ const program = Effect.scoped(
     yield* Effect.addFinalizer(() => Effect.promise(() => f.close()));
     const services = yield* f.services;
     const { loaded } = yield* Effect.promise(preparedAssetsFixture);
+    const facetInputs = qualifierClaudeFacetInputs(
+      { RUN_ID: "6d8d793b-0cbb-45cd-87a4-22d557e5025e", CONFIG_SHA256: "a".repeat(64) },
+      "baseline",
+    );
+    const processEnvironment = {
+      ...facetInputs.QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT,
+      HOME: "/home/test",
+      PATH: "/bin",
+      LANG: "C.UTF-8",
+      API_TOKEN: "binding-private-key",
+      ANTHROPIC_API_KEY: "fixture-auth-key",
+      ANTHROPIC_BASE_URL: "https://fixture-model.invalid",
+    };
     const stages: string[] = [];
     const contexts: ClaudeSpawnContext[] = [];
     const offered = Promise.withResolvers<void>();
@@ -26,16 +40,13 @@ const program = Effect.scoped(
       query: ({ prompt, options }) => {
         const spawn = options.spawnClaudeCodeProcess;
         NodeAssert.ok(spawn);
+        NodeAssert.ok(options.env);
+        NodeAssert.deepEqual(options.env, processEnvironment);
         const child = spawn({
           command: "/runtime/claude",
           args: ["--model", "claude-sonnet-4-6", "--api-key", "binding-private-key"],
           cwd: "/work",
-          env: {
-            HOME: "/home/test",
-            PATH: "/bin",
-            LANG: "C.UTF-8",
-            API_TOKEN: "binding-private-key",
-          },
+          env: options.env,
           signal: new AbortController().signal,
         });
         // The SDK consumer is deliberately attached only after the write-side observations.
@@ -74,9 +85,39 @@ const program = Effect.scoped(
       process: {
         ...f.input,
         computer: services.computer,
+        env: processEnvironment,
         loadRelease: async (bridge) => {
           const process = bridge.require("process");
           NodeAssert.ok(typeof process === "object" && process !== null);
+          const environment: unknown = Reflect.get(process, "env");
+          NodeAssert.ok(typeof environment === "object" && environment !== null);
+          for (const key of [
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+            "DISABLE_TELEMETRY",
+            "DISABLE_AUTOUPDATER",
+            "DISABLE_ERROR_REPORTING",
+          ])
+            NodeAssert.equal(Reflect.get(environment, key), "1");
+          for (const key of ["API_TIMEOUT_MS", "CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS"])
+            NodeAssert.equal(Reflect.get(environment, key), "5460000");
+          for (const key of [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+          ])
+            NodeAssert.equal(Reflect.get(environment, key), "");
+          for (const key of ["NO_PROXY", "no_proxy"])
+            NodeAssert.equal(Reflect.get(environment, key), "*");
+          NodeAssert.equal(Reflect.get(environment, "HOME"), "/home/test");
+          NodeAssert.equal(Reflect.get(environment, "CLAUDE_CONFIG_DIR"), undefined);
+          NodeAssert.equal(Reflect.get(environment, "ANTHROPIC_API_KEY"), "fixture-auth-key");
+          NodeAssert.equal(
+            Reflect.get(environment, "ANTHROPIC_BASE_URL"),
+            "https://fixture-model.invalid",
+          );
           NodeAssert.deepEqual(Reflect.get(process, "argv"), [
             "/runtime/claude",
             f.input.bun.main,
@@ -209,10 +250,9 @@ const program = Effect.scoped(
       "[REDACTED]",
     ]);
     NodeAssert.deepEqual(contexts[0]?.env, {
-      HOME: "/home/test",
-      PATH: "/bin",
-      LANG: "C.UTF-8",
+      ...processEnvironment,
       API_TOKEN: "[REDACTED]",
+      ANTHROPIC_API_KEY: "[REDACTED]",
     });
     NodeAssert.equal(contexts[0]?.env.API_TOKEN, "[REDACTED]");
     drainOutput();
