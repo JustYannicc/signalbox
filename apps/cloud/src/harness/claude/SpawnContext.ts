@@ -8,10 +8,31 @@ const sensitive =
 const safeEnv =
   /^(?:HOME|PATH|PWD|TMPDIR|TMP|TEMP|LANG|LANGUAGE|LC_[A-Z_]+|TERM|SHELL|USER|LOGNAME|NODE_ENV|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|MCP_[A-Z0-9_]+|API_TIMEOUT_MS|HTTP_PROXY|HTTPS_PROXY|NO_PROXY)$/;
 const encoder = new TextEncoder();
+const requiredEnv = new Set([
+  "HOME",
+  "PATH",
+  "LANG",
+  "LANGUAGE",
+  "ANTHROPIC_MODEL",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LC_NUMERIC",
+  "LC_TIME",
+  "LC_COLLATE",
+  "LC_MONETARY",
+  "LC_MESSAGES",
+  "LC_PAPER",
+  "LC_NAME",
+  "LC_ADDRESS",
+  "LC_TELEPHONE",
+  "LC_MEASUREMENT",
+  "LC_IDENTIFICATION",
+]);
 
 export interface ClaudeSpawnContext {
   readonly type: "harness.cli-spawn-context";
   readonly cwd: string;
+  readonly model?: string;
   readonly argv: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly limits: {
@@ -46,7 +67,7 @@ export function captureClaudeSpawnContext(bridge: NodeBridge): ClaudeSpawnContex
     return result
       .replace(/(Bearer\s+)[^\s"']+/gi, `$1${REDACTED}`)
       .replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+:[^/@\s]+@/gi, `$1${REDACTED}@`)
-      .replace(/([?&](?:token|key|secret|password|api_key)=)[^&#\s]+/gi, `$1${REDACTED}`);
+      .replace(/([?&#][^=&#\s]+=)[^&#\s]+/g, `$1${REDACTED}`);
   };
   const structured = (value: unknown, depth = 0): unknown => {
     if (depth > 12) return REDACTED;
@@ -62,10 +83,17 @@ export function captureClaudeSpawnContext(bridge: NodeBridge): ClaudeSpawnContex
   };
   let truncated = false;
   const bounded = (value: string) => {
-    const bytes = encoder.encode(value);
-    if (bytes.length <= MAX_VALUE_BYTES) return value;
+    const size = (text: string) => encoder.encode(JSON.stringify(text)).length;
+    if (size(value) <= MAX_VALUE_BYTES) return value;
     truncated = true;
-    return new TextDecoder().decode(bytes.subarray(0, MAX_VALUE_BYTES));
+    let low = 0;
+    let high = value.length;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (size(value.slice(0, middle)) <= MAX_VALUE_BYTES) low = middle;
+      else high = middle - 1;
+    }
+    return value.slice(0, low);
   };
   let redactNext = false;
   const args = argv.slice(0, 256).map((value: unknown) => {
@@ -98,8 +126,13 @@ export function captureClaudeSpawnContext(bridge: NodeBridge): ClaudeSpawnContex
     }
     return bounded(scrub(value));
   });
+  // Comparison fields survive both entry-count and serialized-payload limits.
+  const selectedEnv = [
+    ...environment.filter(([key]) => requiredEnv.has(key)),
+    ...environment.filter(([key]) => !requiredEnv.has(key)),
+  ];
   const values = Object.fromEntries(
-    environment
+    selectedEnv
       .slice(0, 128)
       .map(([key, value]) => [
         bounded(key),
@@ -108,10 +141,17 @@ export function captureClaudeSpawnContext(bridge: NodeBridge): ClaudeSpawnContex
           : REDACTED,
       ]),
   );
+  let model: string | undefined;
+  for (let index = 0; index < argv.length; index++) {
+    const value: unknown = argv[index];
+    if (value === "--model" && typeof argv[index + 1] === "string") model = argv[index + 1];
+    else if (typeof value === "string" && value.startsWith("--model=")) model = value.slice(8);
+  }
   const directory: unknown = Reflect.apply(cwd, process, []);
   const result = {
     type: "harness.cli-spawn-context" as const,
     cwd: bounded(scrub(typeof directory === "string" ? directory : REDACTED)),
+    ...(model === undefined ? {} : { model: bounded(scrub(model)) }),
     argv: args,
     env: values,
     limits: {
@@ -124,9 +164,25 @@ export function captureClaudeSpawnContext(bridge: NodeBridge): ClaudeSpawnContex
   };
   while (encoder.encode(JSON.stringify(result)).length > MAX_BYTES) {
     result.limits.truncated = true;
-    const key = Object.keys(values).at(-1);
+    const key = Object.keys(values).findLast((entry) => !requiredEnv.has(entry));
     if (key !== undefined) delete values[key];
     else args.pop();
   }
   return result;
+}
+
+export type ClaudeSpawnDiagnostic =
+  | ClaudeSpawnContext
+  | {
+      readonly type: "harness.cli-spawn-context";
+      readonly unavailable: true;
+    };
+
+/** Capture failure stays visible without letting diagnostics prevent CLI startup. */
+export function captureClaudeSpawnDiagnostic(bridge: NodeBridge): ClaudeSpawnDiagnostic {
+  try {
+    return captureClaudeSpawnContext(bridge);
+  } catch {
+    return { type: "harness.cli-spawn-context", unavailable: true };
+  }
 }

@@ -1,1 +1,6 @@
-export { captureClaudeSpawnContext, type ClaudeSpawnContext } from "./claude/SpawnContext.ts";
+export {
+  captureClaudeSpawnContext,
+  captureClaudeSpawnDiagnostic,
+  type ClaudeSpawnContext,
+  type ClaudeSpawnDiagnostic,
+} from "./claude/SpawnContext.ts";

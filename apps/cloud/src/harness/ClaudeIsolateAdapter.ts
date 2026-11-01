@@ -26,7 +26,7 @@ import { launchNodeHarnessProcess, type NodeHarnessProcessInput } from "./NodeHa
 import { createSdkProcess } from "./node/SdkProcess.ts";
 import { abortableValue, applySdkLaunch } from "./claude/SdkRelease.ts";
 import { gateClaudeSdkResults } from "./claude/SdkCompatibility.ts";
-import { captureClaudeSpawnContext } from "./claude/SpawnContext.ts";
+import { captureClaudeSpawnDiagnostic } from "./claude/SpawnContext.ts";
 import { createClaudeInitializationProgress } from "./claude/InitializationProgress.ts";
 import {
   observeClaudeModelTransport,
@@ -114,7 +114,7 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
                   } finally {
                     initialization?.cliSpawned();
                     if (bridge !== undefined && reporter.cliSpawnContext !== undefined)
-                      reporter.cliSpawnContext(captureClaudeSpawnContext(bridge));
+                      reporter.cliSpawnContext(captureClaudeSpawnDiagnostic(bridge));
                   }
                 },
               }),

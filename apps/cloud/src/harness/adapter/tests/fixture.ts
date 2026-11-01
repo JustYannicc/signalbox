@@ -1,3 +1,4 @@
+import type { ClaudeSpawnDiagnostic } from "../../ClaudeSpawnContext.ts";
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   ProviderDriverKind,
@@ -303,9 +304,7 @@ export const fixtureForDriver = (selectedDriver: ProviderDriverKind) =>
           throw new Error("Harness runtime reporter is unavailable");
         runtimeReporter.releaseModuleOmitted(event);
       },
-      reportCliSpawnContext(
-        context: Parameters<NonNullable<HarnessRuntimeReporter["cliSpawnContext"]>>[0],
-      ) {
+      reportCliSpawnContext(context: ClaudeSpawnDiagnostic) {
         if (runtimeReporter?.cliSpawnContext === undefined)
           throw new Error("Harness CLI context reporter is unavailable");
         runtimeReporter.cliSpawnContext(context);

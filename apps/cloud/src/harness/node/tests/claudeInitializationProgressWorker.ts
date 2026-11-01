@@ -148,7 +148,10 @@ const program = Effect.scoped(
       {
         releaseModuleOmitted: () => undefined,
         turnMilestone: (stage) => stages.push(stage),
-        cliSpawnContext: (context) => contexts.push(context),
+        cliSpawnContext: (context) => {
+          NodeAssert.ok("argv" in context);
+          contexts.push(context);
+        },
       },
     );
     const load = nativeTurnThreadLoad(
@@ -195,6 +198,7 @@ const program = Effect.scoped(
       stages.indexOf("runtime-compatibility-confirmed") < stages.indexOf("sdk-initialized"),
     );
     NodeAssert.equal(contexts.length, 1);
+    NodeAssert.equal(contexts[0]?.model, "claude-sonnet-4-6");
     NodeAssert.equal(contexts[0]?.cwd, "/work");
     NodeAssert.deepEqual(contexts[0]?.argv, [
       "/runtime/claude",
