@@ -121,6 +121,18 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
           ...(loadedRelease === undefined ? {} : { loadedRelease }),
           modelTransport: observeClaudeModelTransport(input.modelTransport, report),
           reportReleaseModuleOmitted: reporter.releaseModuleOmitted,
+          ...(reporter.cliStartupFailure === undefined &&
+          options.process.reportCliStartupFailure === undefined
+            ? {}
+            : {
+                reportCliStartupFailure: (cause) => {
+                  try {
+                    options.process.reportCliStartupFailure?.(cause);
+                  } finally {
+                    reporter.cliStartupFailure?.(cause);
+                  }
+                },
+              }),
           signal: lifetime.signal,
           loadRelease: async (installed, signal) => {
             bridge = installed;

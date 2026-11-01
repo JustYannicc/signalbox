@@ -1,4 +1,5 @@
 import {
+  CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY,
   RELEASE_MODULE_OMITTED_REPORTER_KEY,
   type ReleaseModuleOmittedEvent,
   type ReleaseModuleOmittedFailure,
@@ -11,6 +12,8 @@ export type {
   ReleaseModuleOmittedEvent,
   ReleaseModuleOmittedFailure,
 } from "@t3tools/contracts/harnessReleaseOmission";
+
+export { CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY };
 
 export interface HarnessOwnedProcess {
   readonly exited: Promise<KernelExitStatus>;
@@ -51,6 +54,8 @@ export interface HarnessRuntimeReporter {
   /** Claude's SDK remaps process context after bootstrap; Codex uses its RPC launch as-is. */
   readonly cliSpawnContext?: (context: ClaudeSpawnDiagnostic) => void;
   readonly turnMilestone?: (stage: HarnessTurnStage) => void;
+  /** Reports the caught rejection from the CLI's detached startup task. */
+  readonly cliStartupFailure?: (cause: unknown) => void;
   readonly releaseModuleOmitted: (
     event: ReleaseModuleOmittedEvent,
     failure?: ReleaseModuleOmittedFailure,

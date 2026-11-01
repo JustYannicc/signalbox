@@ -6,7 +6,7 @@ const MAX_VALUE_BYTES = 1_024;
 const sensitive =
   /(?:token|secret|password|passwd|credential|authorization|bearer|api[-_]?key|cookie|private[-_]?key|header)/i;
 const safeEnv =
-  /^(?:HOME|PATH|PWD|TMPDIR|TMP|TEMP|LANG|LANGUAGE|LC_[A-Z_]+|TERM|SHELL|USER|LOGNAME|NODE_ENV|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|MCP_[A-Z0-9_]+|API_TIMEOUT_MS|HTTP_PROXY|HTTPS_PROXY|NO_PROXY)$/;
+  /^(?:HOME|PATH|PWD|TMPDIR|TMP|TEMP|LANG|LANGUAGE|LC_[A-Z_]+|TERM|SHELL|USER|LOGNAME|NODE_ENV|ANTHROPIC_[A-Z0-9_]+|CLAUDE_[A-Z0-9_]+|MCP_[A-Z0-9_]+|API_TIMEOUT_MS|DISABLE_TELEMETRY|DISABLE_AUTOUPDATER|DISABLE_ERROR_REPORTING|HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|NO_PROXY|http_proxy|https_proxy|all_proxy|no_proxy)$/;
 const encoder = new TextEncoder();
 const requiredEnv = new Set([
   "HOME",

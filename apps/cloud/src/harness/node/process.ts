@@ -7,6 +7,7 @@ import type { NodeBridge } from "../../isolate/NodeBridge.ts";
 import type { NodeChildProcess, NodeChildProcessObserver } from "../../isolate/NodeChildProcess.ts";
 import type { KernelExitStatus } from "../../kernel/KernelProcessTable.ts";
 import {
+  CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY,
   makeReleaseModuleOmittedFailure,
   type ReleaseModuleOmittedFailure,
 } from "../HarnessProcessLifetime.ts";
@@ -158,6 +159,28 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
   runtime.process.once("exit", onExit);
   // Guests may replace process methods, so teardown keeps the remover from before guest code ran.
   const removeProcessListener = runtime.process.removeListener;
+  let cliStartupFailureReported = false;
+  const onCliStartupFailure = (cause: unknown) => {
+    // The CLI captures this callback, so late settlement must not touch a closed owner.
+    if (cliStartupFailureReported || lifetime.signal.aborted) return;
+    if (cause instanceof NodeProcessExitError) {
+      failed(cause);
+      return;
+    }
+    cliStartupFailureReported = true;
+    failed(cause);
+    try {
+      input.reportCliStartupFailure?.(cause);
+    } catch (error) {
+      childCleanupErrors.push(new Error("CLI startup failure observer failed", { cause: error }));
+    }
+    force(cause);
+  };
+  const startupFailureSymbol = Symbol.for(CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY);
+  Object.defineProperty(runtime.process, startupFailureSymbol, {
+    value: onCliStartupFailure,
+    configurable: true,
+  });
   let leaveCpu: (() => void) | undefined;
   const start = async () => {
     lifetime.signal.throwIfAborted();
@@ -270,6 +293,9 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
       // Those listeners can defer work (a warning's emit, for one); a host turn lets it run first.
       await attempt(() => {
         removeProcessListener("exit", onExit);
+      });
+      await attempt(() => {
+        Reflect.deleteProperty(runtime.process, startupFailureSymbol);
       });
       for (const stream of Object.values(runtime.streams))
         await attempt(() => {

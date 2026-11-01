@@ -2,6 +2,10 @@ import * as Schema from "effect/Schema";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS as Keys } from "../../../src/harness/HarnessCProductCapabilities.ts";
 import { PreparedRelease } from "./preparedRelease.schema.ts";
 import {
+  QualifierClaudeProcessEnvironment,
+  qualifierClaudeProcessEnvironment,
+} from "./claudeProcessEnvironment.ts";
+import {
   hasQualifierMethods,
   QualifierHash,
   QualifierRunId,
@@ -38,6 +42,7 @@ export const QualifierClaudeInputs = Schema.Struct({
   RUN_ID: QualifierRunId,
   CONFIG_SHA256: QualifierHash,
   QUALIFIER_CLAUDE_VARIANT: Schema.Literals(["baseline", "hooks"]),
+  QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: QualifierClaudeProcessEnvironment,
 });
 export const QualifierCodexInputs = Schema.Struct({
   QUALIFIER_CONFIGURATION: Schema.Struct({
@@ -149,6 +154,7 @@ export function qualifierClaudeFacetInputs(
     RUN_ID: environment.RUN_ID,
     CONFIG_SHA256: environment.CONFIG_SHA256,
     QUALIFIER_CLAUDE_VARIANT: variant,
+    QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: qualifierClaudeProcessEnvironment(),
   });
 }
 

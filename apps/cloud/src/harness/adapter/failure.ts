@@ -67,6 +67,69 @@ export const makeAdapterFailure = (
         message: encodeHarnessTurnMilestone(stage),
       });
     },
+    cliStartupFailure: (cause) => {
+      if (failure !== undefined) return;
+      const current = state.active;
+      const code = "CLAUDE_CLI_STARTUP_REJECTED";
+      const error = new HarnessError({
+        operation: "events",
+        code,
+        message: "Claude CLI startup rejected.",
+        cause,
+      });
+      Queue.offerUnsafe(output, {
+        kind: "log",
+        runId: current?.input.runId ?? null,
+        level: "error",
+        message: JSON.stringify({ type: "harness.cli-startup-failure", code }),
+      });
+      if (current !== undefined) {
+        const driver = current.providerThread.driver;
+        const providerTurn = {
+          ...(current.nativeTurn ?? {
+            id: ProviderTurnId.make(`harness-cli-startup:${current.input.runId}`),
+            providerThreadId: current.providerThread.id,
+            nodeId: current.input.rootNodeId,
+            runAttemptId: current.input.attemptId,
+            nativeTurnRef: null,
+            ordinal: current.input.providerTurnOrdinal,
+            startedAt: null,
+          }),
+          status: "failed" as const,
+          completedAt: DateTime.makeUnsafe(now()),
+        };
+        const events: ProviderAdapterV2Event[] = [
+          { type: "provider_turn.updated", driver, providerTurn },
+          {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: current.providerThread.id,
+            providerTurnId: providerTurn.id,
+            runOrdinal: current.input.runOrdinal,
+            failureItemOrdinal: current.nextItemOrdinal,
+            status: "failed",
+            failure: {
+              class: "provider_error",
+              code,
+              message: error.message,
+              retryable: false,
+            },
+            threadDisposition: "broken",
+          },
+        ];
+        for (const value of events)
+          Queue.offerUnsafe(output, {
+            kind: "provider",
+            runId: current.input.runId,
+            event: eventRecord(encodeEvent(value)),
+          });
+        Deferred.doneUnsafe(current.began, Effect.fail(error));
+        Deferred.doneUnsafe(current.started, Effect.fail(error));
+        state.last = current;
+        state.active = undefined;
+      }
+      record(error);
+    },
     releaseModuleOmitted: (event, omission = makeReleaseModuleOmittedFailure(event)) => {
       const current = state.active;
       Queue.offerUnsafe(output, {
