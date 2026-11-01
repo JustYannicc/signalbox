@@ -17,6 +17,11 @@ import {
   type Deploy3OwnerTeardown,
 } from "./ownerTeardown.ts";
 import type { Deploy3RegisteredControl } from "./controlRegistry.ts";
+import {
+  bootstrapTeardownBody,
+  bootstrapTeardownIsFinal,
+  type Deploy3BootstrapTeardown,
+} from "./bootstrapOwnerTeardown.ts";
 import { boundedOperation } from "./platform.ts";
 import {
   formatDeploy3PublicReceipt,
@@ -121,6 +126,20 @@ export function deploy3RegistryApi(input: {
       if (readback.body !== created.body || readback.user.id !== created.user.id)
         throw new Error("Owner teardown readback differed");
       return readback;
+    },
+    async postBootstrapTeardown(proof: Deploy3BootstrapTeardown) {
+      const created = await post(bootstrapTeardownBody(proof));
+      const readback = decodeComment(await request(`/issues/comments/${created.id}`));
+      if (readback.body !== created.body || readback.user.id !== created.user.id)
+        throw new Error("Bootstrap teardown readback differed");
+      return readback;
+    },
+    bootstrapTeardownIsFinal(
+      rows: readonly Deploy3ControlComment[],
+      bootstrap: Deploy3Bootstrap,
+      nowMs: number,
+    ) {
+      return bootstrapTeardownIsFinal(rows, input.trustedWriterIds, bootstrap, nowMs);
     },
     ownerTeardownIsFinal(
       rows: readonly Deploy3ControlComment[],
