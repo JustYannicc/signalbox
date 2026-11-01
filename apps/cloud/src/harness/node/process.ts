@@ -157,6 +157,7 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     settle({ status: { exitCode, signal: 0, coreDumped: false } });
   };
   runtime.process.once("exit", onExit);
+  // Guests may replace process methods, so teardown keeps the remover from before guest code ran.
   const removeProcessListener = runtime.process.removeListener;
   let cliStartupFailureReported = false;
   const onCliStartupFailure = (cause: unknown) => {
@@ -180,7 +181,6 @@ export function launchNodeHarnessProcess(input: NodeHarnessProcessInput): NodeHa
     value: onCliStartupFailure,
     configurable: true,
   });
-  // Guests may replace process methods, so teardown keeps the remover from before guest code ran.
   let leaveCpu: (() => void) | undefined;
   const start = async () => {
     lifetime.signal.throwIfAborted();
