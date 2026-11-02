@@ -24,7 +24,7 @@ import type { QualifierCapabilities } from "./capabilities.ts";
 import { facetState } from "./facetState.ts";
 import { assert } from "./common.ts";
 import {
-  assertQualifierClaudeNativeFacetConfiguration,
+  assertQualifierClaudeFacetConfiguration as assertQualifierClaudeNativeFacetConfiguration,
   type QualifierClaudeFacetConfiguration,
 } from "../facetEnvironmentContract.ts";
 import { readClaudeFacetConfiguration } from "./claudeFacetConfiguration.ts";

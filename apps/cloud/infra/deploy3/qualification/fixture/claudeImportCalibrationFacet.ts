@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   assertQualifierClaudeCalibrationFacetConfiguration,
   type QualifierClaudeCalibrationFacetConfiguration,
-} from "../facetEnvironmentContract.ts";
+} from "../claudeCalibrationFacetContract.ts";
 import { claudeCapability } from "./claudeHostOptions.ts";
 import { readClaudeFacetConfiguration } from "./claudeFacetConfiguration.ts";
 import { observeClaudePreparedImport } from "./claudeCalibrationObservation.ts";

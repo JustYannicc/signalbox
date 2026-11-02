@@ -13,10 +13,8 @@ import { readAsset, readConfiguration } from "./configuration.ts";
 import { assert, sha256 } from "./common.ts";
 import { COMMAND_ASSETS } from "./programRegistry.ts";
 import { prepareClaudeFacetCode } from "../prepareClaudeFacet.ts";
-import {
-  assertQualifierClaudeFacetConfiguration,
-  assertQualifierCodexFacetConfiguration,
-} from "../facetEnvironmentContract.ts";
+import { assertQualifierCodexFacetConfiguration } from "../facetEnvironmentContract.ts";
+import { assertQualifierClaudeFacetConfiguration } from "../claudeCalibrationFacetContract.ts";
 
 function facetPin(
   loaderId: string,

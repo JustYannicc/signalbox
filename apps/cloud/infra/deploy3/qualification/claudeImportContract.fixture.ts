@@ -1,8 +1,6 @@
 import { expect } from "vite-plus/test";
-import {
-  assertQualifierClaudeFacetConfiguration,
-  assertQualifierClaudeNativeFacetConfiguration,
-} from "./facetEnvironmentContract.ts";
+import { assertQualifierClaudeFacetConfiguration } from "./claudeCalibrationFacetContract.ts";
+import { assertQualifierClaudeFacetConfiguration as assertQualifierClaudeNativeFacetConfiguration } from "./facetEnvironmentContract.ts";
 
 export function assertInertClaudeFacetIsolation(runtime: Readonly<Record<string, unknown>>) {
   const inert = {

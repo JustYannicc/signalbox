@@ -1,7 +1,7 @@
 import { createHarnessProcessFacetEnvironment } from "../../../src/harness/HarnessProcessFacetEnvironment.ts";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS as Keys } from "../../../src/harness/HarnessCProductCapabilities.ts";
 import { createQualifierClaudeFacetEnvironment } from "./claudeFacetEnvironment.ts";
-import { assertQualifierClaudeFacetConfiguration } from "./facetEnvironmentContract.ts";
+import { assertQualifierClaudeFacetConfiguration } from "./claudeCalibrationFacetContract.ts";
 import { claudeImportFacet } from "./fixture/claudeFacetInputs.ts";
 import type { Configuration } from "./fixture/configuration.ts";
 
