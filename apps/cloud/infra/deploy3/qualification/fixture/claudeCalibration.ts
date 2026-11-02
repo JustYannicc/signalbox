@@ -16,6 +16,7 @@ import type { ChildWorkerLoaderPort } from "../../../../src/computer/WorkerLoade
 import type { QualifierCapabilities } from "./capabilities.ts";
 import { claudeNodeRuntimeIdentity } from "./claudeSeed.ts";
 import { createClaudePreparedImports } from "./claudePreparedModules.ts";
+import { inspectClaudeRegistryCompatibility } from "./claudeRegistryCompatibility.ts";
 import type { loadClaudeQualificationRuntime } from "./claudeConfiguration.ts";
 
 /** Calibration owns a separate personality and never launches the inspected CLI or a child. */
@@ -132,7 +133,13 @@ export async function calibrateClaudePreparedRelease(input: {
           throw new Error("Claude import calibration cannot call a model");
         },
       },
-      async (cli) => ({
+      async (cli, bridge, signal) => ({
+        registryCompatibility: await inspectClaudeRegistryCompatibility({
+          cli,
+          bridge,
+          plan: input.release.plan,
+          signal,
+        }),
         sdk: { version: input.release.plan.sdk.version, exports: Object.keys(sdk ?? {}).sort() },
         cli: {
           version: input.release.plan.cli.version,
