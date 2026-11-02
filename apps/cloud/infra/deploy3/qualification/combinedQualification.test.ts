@@ -99,3 +99,31 @@ it("rejects missing final joins and an unchanged replacement identity", async ()
     }),
   ).rejects.toThrow("WORKFLOW_IDENTITY_INVALID");
 });
+
+it("requires the Grep result's own kernel invocation in combined qualification", async () => {
+  const input = await combinedEvidenceFixture();
+  expect((await collectCombinedQualification(input)).claude.baseline.model.kernelGrep).toEqual({
+    toolUseId: "toolu_sb1070_claude_5",
+    resultText: "/workspace/claude-qualification.txt:1:after",
+    kernelInvocationId: "baseline-action-grep",
+  });
+  await expect(
+    collectCombinedQualification({
+      ...input,
+      claude: { ...input.claude, baseline: { ...input.claude.baseline, kernelInvocations: [] } },
+    }),
+  ).rejects.toThrow("CLAUDE_GREP_PRODUCT_KERNEL_SEARCH_MISSING");
+  const unrelated = input.claude.baseline.kernelInvocations.map((value) => ({
+    ...(value as object),
+    toolUseId: "unrelated-tool",
+  }));
+  await expect(
+    collectCombinedQualification({
+      ...input,
+      claude: {
+        ...input.claude,
+        baseline: { ...input.claude.baseline, kernelInvocations: unrelated },
+      },
+    }),
+  ).rejects.toThrow("CLAUDE_GREP_PRODUCT_KERNEL_SEARCH_MISSING");
+});

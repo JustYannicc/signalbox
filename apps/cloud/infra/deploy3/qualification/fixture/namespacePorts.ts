@@ -23,6 +23,12 @@ export type QualifierProofPort = Rpc.DurableObjectBranded &
     claudeStepForLoader(): Promise<ClaudeStep>;
     modelConstructionPhase(): Promise<{ route: string; logicalIncarnation: number }>;
     commandPhase(): Promise<string>;
+    commandToolUse(): Promise<{
+      id: string;
+      name: string;
+      publicRequestId: string;
+      variant: ClaudeVariant;
+    } | null>;
     recordWriterRelease(input: Omit<WriterRelease, "sequence">): Promise<WriterRelease>;
     tailRecords(
       raw: unknown,

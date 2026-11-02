@@ -19,6 +19,8 @@ interface ClaudeInputs {
   readonly workload: CollectClaudeQualificationWorkloadInput;
   readonly workflow: ClaudeWorkflowObservation;
   readonly modelRecords: readonly ClaudePersistedModelRecord[];
+  /** Payloads of kernel-rg-completed from the same run's exported journal. */
+  readonly kernelInvocations: readonly unknown[];
 }
 
 /** Joins three completed public requests, their one replacement, retained model bytes and final joins. */
@@ -142,6 +144,12 @@ export async function collectCombinedQualification(input: {
       collectorNonce: input.collectorNonce,
       model: input.model,
       mcpProbe: input.mcpProbe,
+      kernelSearch: {
+        runId: input.runId,
+        workRoute: `/claude/${variant}/turn/1/dispatch`,
+        producerEvents: supplied.workload.observerTrace.producerEvents,
+        kernelInvocations: supplied.kernelInvocations,
+      },
       publicBinding: {
         runId: lane.runId,
         variant,
@@ -161,7 +169,9 @@ export async function collectCombinedQualification(input: {
         name: criterion.name,
         status: "observed" as const,
         detail:
-          "Public C creation, three completed requests, one replacement, final joins, retained model wire results and the nonce observer belong to this workload.",
+          criterion.name === "grep"
+            ? "The captured Grep tool result is joined to its kernel ripgrep invocation and producer pair."
+            : "Public C creation, three completed requests, one replacement, final joins, retained model wire results and the nonce observer belong to this workload.",
       })),
     };
   };

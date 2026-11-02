@@ -25,6 +25,7 @@ import { HarnessError, type HarnessOpenInput } from "./Harness.ts";
 import { launchNodeHarnessProcess, type NodeHarnessProcessInput } from "./NodeHarnessProcess.ts";
 import { createSdkProcess } from "./node/SdkProcess.ts";
 import { abortableValue, applySdkLaunch } from "./claude/SdkRelease.ts";
+import { claudeKernelSearchTools } from "./ClaudeKernelSearch.ts";
 import { gateClaudeSdkResults } from "./claude/SdkCompatibility.ts";
 import { captureClaudeSpawnDiagnostic } from "./claude/SpawnContext.ts";
 import { createClaudeInitializationProgress } from "./claude/InitializationProgress.ts";
@@ -206,6 +207,7 @@ export function makeClaudeIsolateAdapter(options: ClaudeIsolateAdapterOptions): 
                 const sdk = await getSdk();
                 const observedOptions = {
                   ...queryOptions,
+                  tools: claudeKernelSearchTools(queryOptions.tools),
                   ...(options.toolObservation === undefined
                     ? {}
                     : { hooks: options.toolObservation.withHooks(queryOptions.hooks) }),

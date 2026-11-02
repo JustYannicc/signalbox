@@ -336,6 +336,13 @@ export class ClaudeController {
   ) {
     return (await this.c(variant, "work")).stopIdleProcess(input);
   }
+  async activeToolUse() {
+    const step = await this.active();
+    const model = step && this.#models.get(step.variant);
+    if (!step || !model) return null;
+    const tool = (await model).peer.snapshot().pendingToolUse;
+    return tool && { ...tool, publicRequestId: step.requestId, variant: step.variant };
+  }
   async snapshot(variant: ClaudeVariant) {
     const model = this.#models.get(variant);
     assert(model, "No retained Claude model owner exists for this variant");

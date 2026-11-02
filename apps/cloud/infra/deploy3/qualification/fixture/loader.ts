@@ -177,6 +177,8 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
     const owner = proof(this.env);
     using _ownerStub = rpcStubOwner(owner);
     const phase = await readRpcData(owner.commandPhase());
+    const tool =
+      input.command.executable === "/bin/rg" ? await readRpcData(owner.commandToolUse()) : null;
     const tail = this.env.QUALIFIER_TAIL;
     const original = this.env.LOADER;
     const loader: WorkerLoader = {
@@ -214,7 +216,7 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
     };
     // @effect-diagnostics-next-line cryptoRandomUUID:off - The platform command boundary assigns the raw trace identity before entering the child.
     const invocationId = crypto.randomUUID();
-    return await createAssetChildWorkerLoader(loader, async (hash) => {
+    const exit = await createAssetChildWorkerLoader(loader, async (hash) => {
       const asset = COMMAND_ASSETS.get(hash);
       if (asset === undefined) return undefined;
       return (await readAsset(this.env.PROGRAM_ASSETS, { ...asset, sha256: hash })).buffer;
@@ -222,6 +224,27 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
       { ...input, command: observeCommandInvocation(input.command, phase, invocationId) },
       target,
     );
+    if (input.command.executable === "/bin/rg")
+      await readRpcData(
+        owner.append("kernel-rg-completed", {
+          runId: this.env.RUN_ID,
+          invocationId,
+          toolUseId: tool?.id,
+          toolName: tool?.name,
+          publicRequestId: tool?.publicRequestId,
+          variant: tool?.variant,
+          loaderId: input.loaderId,
+          route: { method: "POST", path: phase },
+          executable: input.command.executable,
+          argv: input.command.argv,
+          cwd: input.command.cwd,
+          wasmReferences: Object.values(input.modules).flatMap((module) =>
+            typeof module === "object" && "wasmReference" in module ? [module.wasmReference] : [],
+          ),
+          exit,
+        }),
+      );
+    return exit;
   }
 }
 

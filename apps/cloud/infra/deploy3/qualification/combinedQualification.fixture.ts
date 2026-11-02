@@ -1,3 +1,4 @@
+import { KERNEL_RIPGREP_ARTIFACT } from "../../../src/kernel/KernelRipgrepProgram.ts";
 import type { collectCombinedQualification } from "./combinedQualification.ts";
 import {
   ClaudeQualificationModelPeer,
@@ -89,7 +90,10 @@ export async function combinedEvidenceFixture() {
           model,
           max_tokens: 128,
           messages,
-          tools: [{ name: mcpProbe.toolName, input_schema: { type: "object" } }],
+          tools: [
+            { name: "Grep", input_schema: { type: "object" } },
+            { name: mcpProbe.toolName, input_schema: { type: "object" } },
+          ],
         }),
         ...(signal ? { signal } : {}),
       });
@@ -177,15 +181,18 @@ export async function combinedEvidenceFixture() {
       identity: `${name}-facet`,
       entrypoint: "ClaudeFacet",
       tag: "public-run",
-      route: { method: "POST", path: `/claude/${name}/work/dispatch` },
+      route: { method: "POST", path: `/claude/${name}/turn/1/dispatch` },
       invocationId: `${name}-work`,
     };
     const actionPins = CLAUDE_WORKLOAD_ACTIONS.map((action) => ({
       action,
-      identity: `${name}-${action}`,
+      identity: action === "grep" ? "command:default" : `${name}-${action}`,
       entrypoint: "default",
-      tag: action,
-      route: { method: "POST", path: `/${action}` },
+      tag: action === "grep" ? "actual-command-run" : action,
+      route: {
+        method: "POST",
+        path: action === "grep" ? `/claude/${name}/turn/1/dispatch` : `/${action}`,
+      },
       invocationId: `${name}-action-${action}`,
     }));
     const event = (pin: typeof publicRunPin, milestone: "entered" | "terminal") => ({
@@ -257,6 +264,19 @@ export async function combinedEvidenceFixture() {
         },
       },
       modelRecords,
+      kernelInvocations: [
+        {
+          runId,
+          invocationId: `${name}-action-grep`,
+          toolUseId: "toolu_sb1070_claude_5",
+          toolName: "Grep",
+          executable: "/bin/rg",
+          argv: ["rg", "after", "/workspace/claude-qualification.txt"],
+          wasmReferences: [KERNEL_RIPGREP_ARTIFACT.sha256],
+          route: { method: "POST", path: `/claude/${name}/turn/1/dispatch` },
+          exit: { exitCode: 0, signal: 0, coreDumped: false },
+        },
+      ],
     };
   };
   const input = {

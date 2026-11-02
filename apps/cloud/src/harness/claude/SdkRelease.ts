@@ -3,6 +3,7 @@ import type { NodeBridge } from "../../isolate/NodeBridge.ts";
 import type { NodeHarnessProcessInput } from "../NodeHarnessProcess.ts";
 import { CLAUDE_HOST_CONFIG } from "../releasePlan/hostConfiguration.ts";
 import { claudeGatewayEnvironmentFrom } from "../ClaudeGatewayAccess.ts";
+import { configureClaudeKernelSearch } from "../ClaudeKernelSearch.ts";
 
 type SdkLaunchInput = Pick<NodeHarnessProcessInput, "identity" | "bun"> & {
   readonly env?: NodeHarnessProcessInput["env"];
@@ -37,6 +38,7 @@ export function applySdkLaunch(
     if (value === null) Reflect.deleteProperty(env, key);
     else Reflect.set(env, key, value);
   }
+  configureClaudeKernelSearch(env);
   if (request.cwd !== undefined) input.computer.files.chdir(request.cwd);
 }
 

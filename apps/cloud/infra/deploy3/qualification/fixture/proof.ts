@@ -53,6 +53,9 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
   readonly #tailTerminals = new Set<string>();
   readonly claude = new ClaudeController(this, this.ctx.storage);
   readonly claudeDispatch = new ClaudeDispatch(this, this.ctx.storage, crypto.randomUUID());
+  async commandToolUse() {
+    return await this.claude.activeToolUse();
+  }
   async commandPhase() {
     if (
       !(await this.ctx.storage.get("execution-owner")) &&
