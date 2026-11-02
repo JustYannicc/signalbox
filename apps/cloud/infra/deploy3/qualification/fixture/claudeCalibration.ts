@@ -40,7 +40,11 @@ export async function calibrateClaudePreparedRelease(input: {
   let commands: ReturnType<typeof createProductComputer> | undefined;
   const failures: unknown[] = [];
   let result:
-    | Awaited<ReturnType<ReturnType<typeof createClaudePreparedImports>["inspect"]>>
+    | (Awaited<ReturnType<ReturnType<typeof createClaudePreparedImports>["inspect"]>> & {
+        readonly registryCompatibility: Awaited<
+          ReturnType<typeof inspectClaudeRegistryCompatibility>
+        >;
+      })
     | undefined;
   try {
     const fs = createNodeFs(files).fs;

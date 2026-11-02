@@ -4,7 +4,7 @@ import type { HarnessProcessPlacementStoreObject } from "../../../../src/harness
 import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore.ts";
 import type { QualifierCapabilities } from "./capabilities.ts";
 import type { Configuration } from "./configuration.ts";
-import type { ClaudeStep } from "./claudeScenario.ts";
+import type { ClaudeStep, ClaudeVariant } from "./claudeScenario.ts";
 import type { createClaudeFixtureServices } from "./claudeFixtureServices.ts";
 import type {
   placementReleaseEvidence,
@@ -12,6 +12,7 @@ import type {
 } from "./placementReleaseObserver.fixture.ts";
 import type { readShardRecoveryEvidence, readShardExecutionEvidence } from "./shardEvidence.ts";
 import type { WriterRelease } from "./proofRecords.ts";
+import type { calibrateClaudeImport } from "./claudeImportCalibration.ts";
 
 type JournalReceipt = Awaited<ReturnType<QualifierCapabilities["append"]>>;
 
@@ -60,6 +61,7 @@ export type QualifierShardPort = Rpc.DurableObjectBranded &
     modelRecoveryEvidence(runId: string): ReturnType<typeof readShardRecoveryEvidence>;
     placementReleaseEvidence(): ReturnType<typeof placementReleaseEvidence>;
     evidence(): ReturnType<typeof readShardExecutionEvidence>;
+    claudeImportCalibration(variant: ClaudeVariant): ReturnType<typeof calibrateClaudeImport>;
     observerCalibration(): Promise<{
       identity: { facetNonce: string };
       observed: { incarnation: string; nativeStarted: false };

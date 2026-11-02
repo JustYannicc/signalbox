@@ -18,7 +18,7 @@ function call(target: object, name: string, args: readonly unknown[] = []): unkn
   return Reflect.apply(method, target, args);
 }
 
-function check(condition: boolean, description: string): void {
+function check(condition: boolean, description: string): asserts condition {
   if (!condition) throw new Error(`CLAUDE_REGISTRY_COMPATIBILITY: ${description}`);
 }
 

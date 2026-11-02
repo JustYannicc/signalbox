@@ -4,6 +4,10 @@ export const ROUTES = [
   { method: "POST", path: "/sequence/release" },
   { method: "GET", path: "/ready" },
   { method: "POST", path: "/observer-calibration" },
+  ...(["baseline", "hooks"] as const).map((variant) => ({
+    method: "POST",
+    path: `/claude/${variant}/calibration`,
+  })),
   ...(["baseline", "hooks"] as const).flatMap((variant) =>
     ["turn/1", "replace", "turn/2", "turn/3", "finish"].flatMap((step) => [
       { method: "POST", path: `/claude/${variant}/${step}/dispatch` },
