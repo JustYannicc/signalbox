@@ -15,7 +15,12 @@ function evidence(rgHash: string = KERNEL_RIPGREP_ARTIFACT.sha256) {
       {
         role: "assistant",
         content: [
-          { type: "tool_use", id: "grep-5", name: "Grep", input: { pattern: "after", path: file } },
+          {
+            type: "tool_use",
+            id: "grep-5",
+            name: "Grep",
+            input: { pattern: "after", path: file, output_mode: "content" },
+          },
         ],
       },
       { role: "user", content: [result] },

@@ -69,6 +69,13 @@ it("requires and records each real Messages tool result in the frozen order", as
     };
     const call = message.content.find((part) => part.type === "tool_use");
     expect(call?.name).toBe(expected[index]);
+    if (call?.name === "Grep") {
+      expect(call.input).toMatchObject({
+        pattern: "after",
+        path: "/workspace/claude-qualification.txt",
+        output_mode: "content",
+      });
+    }
     if (call?.input !== undefined) {
       const reorder = (value: unknown): unknown => {
         if (Array.isArray(value)) return value.map(reorder);

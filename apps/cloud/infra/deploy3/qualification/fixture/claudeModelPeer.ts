@@ -143,7 +143,7 @@ function workActions(body: MessagesBody, probe: ClaudeMcpProbe | undefined): Act
     },
     {
       name: "Grep",
-      input: { pattern: "after", path: WORKSPACE_FILE },
+      input: { pattern: "after", path: WORKSPACE_FILE, output_mode: "content" },
       verify(result) {
         const text = textContent(result.content);
         if (result.is_error === true || !text.includes("after") || !text.includes(WORKSPACE_FILE))
