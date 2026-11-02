@@ -116,7 +116,7 @@ export function createHarnessProcessFacetStub(
     );
     const workerCode: WorkerLoaderWorkerCode = {
       compatibilityDate: "2026-10-19",
-      compatibilityFlags: ["nodejs_compat"],
+      compatibilityFlags: ["nodejs_compat", "new_module_registry"],
       mainModule: process.mainModule,
       modules: workerModules,
       env: facetEnvironment,

@@ -13,10 +13,8 @@ import { readAsset, readConfiguration } from "./configuration.ts";
 import { assert, sha256 } from "./common.ts";
 import { COMMAND_ASSETS } from "./programRegistry.ts";
 import { prepareClaudeFacetCode } from "../prepareClaudeFacet.ts";
-import {
-  assertQualifierClaudeFacetConfiguration,
-  assertQualifierCodexFacetConfiguration,
-} from "../facetEnvironmentContract.ts";
+import { assertQualifierCodexFacetConfiguration } from "../facetEnvironmentContract.ts";
+import { assertQualifierClaudeFacetConfiguration } from "../claudeCalibrationFacetContract.ts";
 
 function facetPin(
   loaderId: string,
@@ -76,7 +74,10 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
       return env.LOADER.get(name, async () => {
         const actual = await getCode();
         const config = await readConfiguration(env.PROGRAM_ASSETS, env.CONFIG_SHA256);
-        if (actual.mainModule === "qualifier-claude-facet.mjs") {
+        if (
+          actual.mainModule === "qualifier-claude-facet.mjs" ||
+          actual.mainModule === "qualifier-claude-calibration-facet.mjs"
+        ) {
           const authorities = requireClaudeAuthorities(env);
           const prepared = await prepareClaudeFacetCode(actual, config, env.PROGRAM_ASSETS, {
             RUN_ID: env.RUN_ID,
@@ -94,7 +95,10 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
           const pin: ObserverLoaderPin = {
             loaderId: name,
             role: "facet",
-            entrypoint: "ClaudeFacet",
+            entrypoint:
+              actual.mainModule === "qualifier-claude-calibration-facet.mjs"
+                ? "ClaudeImportCalibrationFacet"
+                : "ClaudeFacet",
             identity: `facet:claude:${prepared.variant}:${name}`,
             tag: "actual-claude-facet",
             calls: {

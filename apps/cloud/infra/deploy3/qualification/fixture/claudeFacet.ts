@@ -15,11 +15,7 @@ import {
   claudeConfiguration,
   type ClaudeFacetEnvironment,
 } from "./claudeHostOptions.ts";
-import {
-  readClaudeQualificationInputs,
-  loadClaudeQualificationRuntime,
-} from "./claudeConfiguration.ts";
-import { calibrateClaudePreparedRelease } from "./claudeCalibration.ts";
+import { observeClaudePreparedImport } from "./claudeCalibrationObservation.ts";
 import { decodePreparedRelease } from "../preparedRelease.schema.ts";
 import { retainedFacetState, flushFacetDiagnostics } from "./facetState.ts";
 
@@ -160,31 +156,15 @@ export class ClaudeFacet extends Base {
   }
 
   async observerCalibration(input: { readonly invocationId: string }) {
-    const { claude } = await claudeConfiguration(this.env);
-    const release = this.env.HARNESS_C_TARGET_PREPARED_RELEASE;
-    assert(
-      release?.artifact.provider === "claude-code",
-      "Calibration has no selected Claude release",
-    );
-    const qualification = await readClaudeQualificationInputs(claude, this.env.PROGRAM_ASSETS!);
-    const loaded = await loadClaudeQualificationRuntime(qualification, release.artifact);
-    const imported = await calibrateClaudePreparedRelease({
+    return observeClaudePreparedImport({
       ctx: this.ctx,
       capability: claudeCapability(this.env),
-      release: loaded,
-      home: claude.seed.home,
-    });
-    const result = {
-      incarnation: this.facetNonce,
+      configuration: await claudeConfiguration(this.env),
+      assets: this.env.PROGRAM_ASSETS!,
+      release: this.env.HARNESS_C_TARGET_PREPARED_RELEASE,
+      facetNonce: this.facetNonce,
       invocationId: input.invocationId,
-      selectedReleaseId: release.artifact.releaseId,
-      selectedReleaseHash: release.artifact.artifactHash,
-      imported,
-      nativeStarted: false as const,
-    };
-    await readRpcData(
-      claudeCapability(this.env).append("claude-prepared-import-calibration", result),
-    );
-    return result;
+    });
   }
 }
+export { ClaudeImportCalibrationFacet } from "./claudeImportCalibrationFacet.ts";

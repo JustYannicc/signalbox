@@ -21,6 +21,8 @@ import {
 } from "./facetEnvironmentContract.ts";
 import { HARNESS_C_PRODUCT_CAPABILITY_KEYS as Keys } from "../../../src/harness/HarnessCProductCapabilities.ts";
 
+import { assertInertClaudeFacetIsolation } from "./claudeImportContract.fixture.ts";
+
 const capabilityMap = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
 const runtimePort = (missing?: string) =>
   new Proxy(
@@ -77,6 +79,15 @@ it.effect(
           const result = await buildCombinedFixture(input);
           expect(result.classification).toBe("synthetic");
           expect(result.nativeStarted).toBe(false);
+          expect(result.inertConstructorReplay).toEqual({
+            schema: "signalbox/deploy3-inert-constructor-replay/v1",
+            checked: [
+              { variant: "baseline", status: "passed" },
+              { variant: "hooks", status: "passed" },
+            ],
+            rpcCalls: 0,
+            nativeStarted: false,
+          });
           expect(result.qualification).toBe("not-run");
           expect(result.deploymentReady).toBe(false);
           expect(result.fixtureBindings.namespace).toMatchObject({
@@ -191,6 +202,7 @@ it.effect(
                 : assertQualifierClaudeFacetConfiguration;
             expect(() => validate(runtime)).not.toThrow();
             if (boundary.provider !== "codex") {
+              assertInertClaudeFacetIsolation(runtime);
               const processEnvironment =
                 assertQualifierClaudeFacetConfiguration(
                   runtime,

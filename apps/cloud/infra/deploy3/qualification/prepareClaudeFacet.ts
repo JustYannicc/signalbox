@@ -19,6 +19,9 @@ export async function prepareClaudeFacetCode(
     readonly authorities: Parameters<typeof createQualifierClaudeFacetEnvironment>[3];
   },
 ) {
+  const calibration = code.mainModule === "qualifier-claude-calibration-facet.mjs";
+  if (calibration !== (code.env?.QUALIFIER_CLAUDE_FACET_MODE === "inert-import-calibration"))
+    throw new Error("DEPLOY3_CLAUDE_FACET_MODE_MISMATCH");
   const selected = decodePreparedRelease(code.env?.HARNESS_C_TARGET_PREPARED_RELEASE);
   const matches = (["baseline", "hooks"] as const).filter((variant) =>
     samePreparedRelease(selected, configuration.claude.expected[variant]),

@@ -338,6 +338,24 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
     await this.ctx.storage.put("observer/calibration", calibration);
     return calibration;
   }
+  async claudeImportCalibration(variant: ClaudeVariant) {
+    assert(await this.ctx.storage.get("ready"), "Readiness must precede Claude import calibration");
+    assert(
+      !(await this.ctx.storage.get("execution-owner")),
+      "Claude import calibration cannot overlap native execution",
+    );
+    const key = `claude/import-calibration/${variant}`;
+    await this.ctx.storage.transaction(async (tx) => {
+      assert(!(await tx.get(`${key}/claimed`)), "Claude import calibration was already claimed");
+      await tx.put(`${key}/claimed`, true);
+    });
+    const result = await withRpcStub(this.shard(), (stub) =>
+      readRpcData(stub.claudeImportCalibration(variant)),
+    );
+    await this.waitTailTerminal(result.loaderId);
+    await this.ctx.storage.put(key, result);
+    return result;
+  }
   async ready() {
     const config = await this.config();
     requireClaudeAuthorities(this.env);
@@ -521,6 +539,11 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       return Response.json(await this.ready());
     if (request.method === "POST" && url.pathname === "/observer-calibration")
       return Response.json(await this.observerCalibration());
+    const importCalibration = url.pathname.match(/^\/claude\/(baseline|hooks)\/calibration$/u);
+    if (request.method === "POST" && importCalibration)
+      return Response.json(
+        await this.claudeImportCalibration(importCalibration[1] as ClaudeVariant),
+      );
     const claude = url.pathname.match(
       /^\/claude\/(baseline|hooks)\/(turn\/[123]|replace|finish)\/(dispatch|receipt)$/u,
     );

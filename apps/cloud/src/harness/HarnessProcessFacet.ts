@@ -4,4 +4,7 @@ export {
   type HarnessProcessFacetPrepareInput,
   type HarnessProcessFacetRequestStub,
 } from "./HarnessProcessFacetObject.ts";
-export { createHarnessProcessFacet } from "./processPlacement/facetLoader.ts";
+export {
+  createHarnessProcessFacet,
+  createHarnessProcessFacetStub,
+} from "./processPlacement/facetLoader.ts";

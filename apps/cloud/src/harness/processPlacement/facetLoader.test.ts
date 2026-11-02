@@ -7,6 +7,7 @@ import type {
 
 function fixture(failConstruction = false) {
   const disposed: string[] = [];
+  const loadedCode: Array<Promise<WorkerLoaderWorkerCode>> = [];
   const owned = (name: string) => ({
     [Symbol.dispose]() {
       disposed.push(name);
@@ -27,7 +28,14 @@ function fixture(failConstruction = false) {
       },
     },
   } as unknown as DurableObjectState;
-  const env = { LOADER: { get: () => worker } } as unknown as HarnessProcessExecutionEnvironment;
+  const env = {
+    LOADER: {
+      get(_id: string, load: () => Promise<WorkerLoaderWorkerCode>) {
+        loadedCode.push(load());
+        return worker;
+      },
+    },
+  } as unknown as HarnessProcessExecutionEnvironment;
   const process = {
     processId: "p",
     codeId: "code",
@@ -38,6 +46,7 @@ function fixture(failConstruction = false) {
   } as unknown as HarnessProcessExecutionProcessInput;
   return {
     disposed,
+    loadedCode,
     open: () =>
       createHarnessProcessFacet(ctx, env, process, {
         facetKey: "loader",
@@ -61,4 +70,17 @@ it("releases constructed Loader resources when facet lookup throws", () => {
   const f = fixture(true);
   expect(f.open).toThrow("facet construction failed");
   expect(f.disposed).toEqual(["class", "worker"]);
+});
+
+it("loads the facet module source with the new module registry", async () => {
+  const f = fixture();
+  const facet = f.open();
+  expect(f.loadedCode).toHaveLength(1);
+  const code = await f.loadedCode[0];
+  expect(code).toMatchObject({
+    compatibilityFlags: ["nodejs_compat", "new_module_registry"],
+    mainModule: "main.mjs",
+    modules: { "main.mjs": { js: "export class Facet {}" } },
+  });
+  await facet.dispose();
 });

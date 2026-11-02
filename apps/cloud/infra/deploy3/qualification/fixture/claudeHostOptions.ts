@@ -24,12 +24,11 @@ import type { QualifierCapabilities } from "./capabilities.ts";
 import { facetState } from "./facetState.ts";
 import { assert } from "./common.ts";
 import {
-  assertQualifierClaudeFacetConfiguration,
+  assertQualifierClaudeFacetConfiguration as assertQualifierClaudeNativeFacetConfiguration,
   type QualifierClaudeFacetConfiguration,
 } from "../facetEnvironmentContract.ts";
-import { readConfiguration } from "./configuration.ts";
+import { readClaudeFacetConfiguration } from "./claudeFacetConfiguration.ts";
 import {
-  decodeClaudeFacetConfiguration,
   loadClaudeQualificationRelease,
   readClaudeQualificationInputs,
   type ClaudeQualificationInputs,
@@ -87,7 +86,9 @@ const attempt = <A>(run: () => Promise<A>) =>
       new HarnessRequestFacetError("Claude product host options could not be built.", { cause }),
   });
 
-export function claudeCapability(env: ClaudeFacetEnvironment): Capability {
+export function claudeCapability(
+  env: Pick<ClaudeFacetEnvironment, "HARNESS_C_PRODUCT_CAPABILITIES">,
+): Capability {
   const supplied = env.HARNESS_C_PRODUCT_CAPABILITIES?.[HARNESS_C_PRODUCT_CAPABILITY_KEYS.release];
   assert(
     supplied &&
@@ -132,23 +133,8 @@ function commandLoader(env: ClaudeFacetEnvironment): ChildWorkerLoaderPort {
 }
 
 export async function claudeConfiguration(env: ClaudeFacetEnvironment) {
-  const { QUALIFIER_CLAUDE_PROCESS_ENVIRONMENT: processEnvironment } =
-    assertQualifierClaudeFacetConfiguration(env);
-  const cap = claudeCapability(env);
-  const host = await readRpcData(cap.hostConfiguration());
-  const assets = env.PROGRAM_ASSETS;
-  assert(assets, "Claude qualification has no public program asset binding");
-  const raw = await readConfiguration(assets, env.CONFIG_SHA256);
-  const variant: unknown = env.QUALIFIER_CLAUDE_VARIANT;
-  assert(variant === "baseline" || variant === "hooks", "Claude runtime variant is missing");
-  const runtime = raw.claude.runtime;
-  const claude = decodeClaudeFacetConfiguration({
-    ...runtime,
-    turnJson: runtime.turnJson[variant],
-    seed: runtime.seed,
-  });
-  assert(host.runId === env.RUN_ID, "Claude qualifier run identity changed");
-  return { host, claude, processEnvironment };
+  const checked = assertQualifierClaudeNativeFacetConfiguration(env);
+  return readClaudeFacetConfiguration(checked, claudeCapability(env));
 }
 
 export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>

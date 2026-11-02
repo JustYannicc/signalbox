@@ -20,3 +20,20 @@ export const claudeFacet = (config: ClaudeConfiguration, variant: ClaudeVariant)
   },
   facetEnv: { QUALIFIER_CLAUDE_VARIANT: variant },
 });
+
+export const claudeImportFacet = (config: ClaudeConfiguration, variant: ClaudeVariant) => ({
+  ...claudeFacet(config, variant),
+  mainModule: "qualifier-claude-calibration-facet.mjs",
+  entrypoint: "ClaudeImportCalibrationFacet",
+  modules: {
+    "qualifier-claude-calibration-facet.mjs": {
+      js: "export { ClaudeImportCalibrationFacet } from './qualifier-claude-implementation.mjs';\n",
+    },
+  },
+  facetEnv: {
+    QUALIFIER_CLAUDE_VARIANT: variant,
+    QUALIFIER_CLAUDE_FACET_MODE: "inert-import-calibration",
+  },
+  productBootstrap: claudeBootstrap(config, variant),
+  targetPreparedRelease: config.claude.expected[variant],
+});
