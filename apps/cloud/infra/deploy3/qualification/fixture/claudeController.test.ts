@@ -71,7 +71,7 @@ function controllerFixture() {
         },
       },
     },
-  } as Awaited<ReturnType<QualifierExecutionContext["config"]>>;
+  };
   const owner = {
     config: async () => configuration,
     append: async (type: string, value: unknown) => {
