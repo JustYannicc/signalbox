@@ -3,6 +3,67 @@ import * as NodeVM from "node:vm";
 import { expect, it } from "vite-plus/test";
 import { observeWorkerCode } from "./loaderObservation.ts";
 
+it("observes the import-only Claude calibration entrypoint without native dispatch", async () => {
+  const invocationId = "claude-import-calibration-baseline-test";
+  const route = { method: "POST", path: "/claude/baseline/calibration" };
+  const logs: Array<{ producerEvent?: { route: typeof route; invocationId: string } }> = [];
+  const observed = { incarnation: "inert-facet", invocationId, nativeStarted: false };
+  class Actual {
+    async observerCalibration(input: { invocationId: string }) {
+      expect(input.invocationId).toBe(invocationId);
+      return observed;
+    }
+    startFresh() {
+      throw new Error("CLAUDE_INERT_FACET_NATIVE_DISPATCH_FORBIDDEN");
+    }
+  }
+  const { code, originalSourceModule } = observeWorkerCode(
+    {
+      compatibilityDate: "2026-10-19",
+      mainModule: "qualifier-claude-calibration-facet.mjs",
+      modules: {
+        "qualifier-claude-calibration-facet.mjs": {
+          js: "export { ClaudeImportCalibrationFacet } from './qualifier-claude-implementation.mjs';",
+        },
+      },
+    },
+    "test-run",
+    {
+      loaderId: invocationId,
+      role: "facet",
+      entrypoint: "ClaudeImportCalibrationFacet",
+      identity: "facet:claude:baseline:test",
+      tag: "actual-claude-facet",
+      calls: { observerCalibration: [{ callId: "*", route }] },
+    },
+    {} as Fetcher,
+  );
+  const main = code.modules[code.mainModule];
+  if (typeof main !== "object" || !("js" in main)) throw new Error("Missing observation module");
+  expect(code.modules[originalSourceModule]).toEqual({
+    js: "export { ClaudeImportCalibrationFacet } from './qualifier-claude-implementation.mjs';",
+  });
+  const context = NodeVM.createContext({
+    Actual,
+    crypto,
+    console: { log: (text: string) => logs.push(JSON.parse(text)) },
+  });
+  NodeVM.runInContext(
+    main.js
+      .replace(/^import .*;\n/u, "")
+      .replace(/export \{ Observed as \w+ \};/u, "globalThis.Observed = Observed;"),
+    context,
+  );
+  const Constructor = context.Observed as new () => {
+    observerCalibration(input: { invocationId: string }): Promise<typeof observed>;
+  };
+  expect(await new Constructor().observerCalibration({ invocationId })).toMatchObject(observed);
+  expect(logs.flatMap((row) => (row.producerEvent ? [row.producerEvent] : []))).toEqual([
+    expect.objectContaining({ route, invocationId, milestone: "entered" }),
+    expect.objectContaining({ route, invocationId, milestone: "terminal" }),
+  ]);
+});
+
 it.each(["ClaudeFacet", "CodexFacet"] as const)(
   "keeps exact %s results and creates one isolate nonce only during an RPC",
   async (entrypoint) => {

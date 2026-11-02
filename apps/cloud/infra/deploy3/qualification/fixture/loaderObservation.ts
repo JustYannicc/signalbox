@@ -33,7 +33,10 @@ export interface ObserverLoaderOptions {
 function checkPin(pin: ObserverLoaderPin): void {
   if (!pin.loaderId || !pin.identity || !pin.tag || !pin.entrypoint)
     throw new TypeError("Observer loader pin is incomplete");
-  if (pin.role === "facet" && !["CodexFacet", "ClaudeFacet"].includes(pin.entrypoint))
+  if (
+    pin.role === "facet" &&
+    !["CodexFacet", "ClaudeFacet", "ClaudeImportCalibrationFacet"].includes(pin.entrypoint)
+  )
     throw new TypeError("Facet observer must wrap an actual product facet");
   if (pin.role === "command" && !/^(?:default|[A-Za-z_$][\w$]*)$/.test(pin.entrypoint))
     throw new TypeError("Command observer must wrap default entrypoint");
