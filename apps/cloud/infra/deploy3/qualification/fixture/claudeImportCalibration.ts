@@ -1,8 +1,8 @@
 import { readRpcData, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
 import { createHarnessProcessFacetStub } from "../../../../src/harness/processPlacement/facetLoader.ts";
 import { createQualifierShardEnvironment } from "../shardEnvironment.ts";
-import { claudeBootstrap, claudeFacet } from "./claudeFacetInputs.ts";
-import type { ClaudeFacet } from "./claudeFacet.ts";
+import { claudeImportFacet } from "./claudeFacetInputs.ts";
+import type { ClaudeImportCalibrationFacet } from "./claudeImportCalibrationFacet.ts";
 import type { calibrateClaudePreparedRelease } from "./claudeCalibration.ts";
 import type { ClaudeVariant } from "./claudeScenario.ts";
 import { readConfiguration } from "./configuration.ts";
@@ -42,14 +42,11 @@ export async function calibrateClaudeImport(
   const owner = createHarnessProcessFacetStub(
     ctx,
     environment,
-    {
-      ...claudeFacet(config, variant),
-      productBootstrap: claudeBootstrap(config, variant),
-      targetPreparedRelease: config.claude.expected[variant],
-    },
+    claudeImportFacet(config, variant),
     { shardOwner: "qualifier/claude-import-calibration", loaderId: key, facetKey: key },
   );
-  const facet = owner.stub as typeof owner.stub & Pick<ClaudeFacet, "observerCalibration">;
+  const facet = owner.stub as typeof owner.stub &
+    Pick<ClaudeImportCalibrationFacet, "observerCalibration">;
   try {
     const identity = await readRpcData(facet.identity());
     const observed = await readRpcData(facet.observerCalibration({ invocationId: key }));

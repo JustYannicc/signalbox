@@ -22,6 +22,7 @@ import { prepareEnvironmentPackages } from "./environmentPackages.ts";
 import { deploy3QualifierEnvironmentInputs } from "../qualifierEnvironment.ts";
 import { validateQualifierFacetEnvironments } from "./validateFacetEnvironments.ts";
 import type { Configuration } from "./fixture/configuration.ts";
+import { validateClaudeImportFacetEnvironments } from "./validateClaudeImportFacets.ts";
 
 const source = NodeURL.fileURLToPath(new URL("./fixture/", import.meta.url));
 const cloud = NodeURL.fileURLToPath(new URL("../../../", import.meta.url));
@@ -258,6 +259,7 @@ export async function buildCombinedFixture(raw: unknown) {
     }),
     config,
   );
+  const inertConstructorReplay = validateClaudeImportFacetEnvironments(config, hash(configBytes));
   await NodeFSP.writeFile(NodePath.join(assets, "qualifier/config.json"), configBytes, {
     flag: "wx",
   });
@@ -305,6 +307,7 @@ export async function buildCombinedFixture(raw: unknown) {
     deploymentReady: false,
     input: buildInputEvidence(input),
     fixtureBindings: CLAUDE_FIXTURE_BINDINGS,
+    inertConstructorReplay,
     configSha256: hash(configBytes),
     inventory: final.inventory,
     sources: evidence.sources,
