@@ -107,6 +107,10 @@ const program = Effect.scoped(
             NodeAssert.equal(Reflect.get(environment, key), "");
           for (const key of ["NO_PROXY", "no_proxy"])
             NodeAssert.equal(Reflect.get(environment, key), "*");
+          NodeAssert.equal(Reflect.get(environment, "USE_BUILTIN_RIPGREP"), "0");
+          const path: unknown = Reflect.get(environment, "PATH");
+          NodeAssert.ok(typeof path === "string");
+          NodeAssert.equal(path.split(":")[0], "/bin");
           NodeAssert.equal(Reflect.get(environment, "HOME"), "/workspace/.home/claude");
           NodeAssert.equal(Reflect.get(environment, "CLAUDE_CONFIG_DIR"), undefined);
           NodeAssert.equal(Reflect.get(environment, "ANTHROPIC_API_KEY"), "");
@@ -254,6 +258,7 @@ const program = Effect.scoped(
       ANTHROPIC_API_KEY: "[REDACTED]",
       ANTHROPIC_AUTH_TOKEN: "[REDACTED]",
       CLAUDE_CODE_OAUTH_TOKEN: "[REDACTED]",
+      USE_BUILTIN_RIPGREP: "[REDACTED]",
     });
     drainOutput();
   }),
