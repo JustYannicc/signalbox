@@ -256,6 +256,7 @@ export class ClaudeQualificationModelPeer {
   readonly #model: string;
   readonly #nonce: string;
   #ordinal = 0;
+  #pendingToolUse: Pick<ToolUse, "id" | "name"> | undefined;
   #requests = 0;
   #finishCompleted = false;
   #toolEvidence = new Map<
@@ -309,6 +310,7 @@ export class ClaudeQualificationModelPeer {
     const ordinal = ++this.#ordinal;
     this.#requests++;
     if (prompt.includes(CLAUDE_QUALIFICATION_PROMPTS.finish)) {
+      this.#pendingToolUse = undefined;
       this.#finishCompleted = true;
       const content = [{ type: "text", text: "sb1070-claude-three-turns-complete" }] as const;
       const response = makeMessage(body, ordinal, content, "end_turn");
@@ -317,6 +319,7 @@ export class ClaudeQualificationModelPeer {
         : jsonResponse(response, `req_sb1070_claude_${ordinal}`);
     }
     if (prompt.includes(CLAUDE_QUALIFICATION_PROMPTS.resume)) {
+      this.#pendingToolUse = undefined;
       this.#resumeCompleted = true;
       const content = [{ type: "text", text: RESUME_TEXT }] as const;
       const response = makeMessage(body, ordinal, content, "end_turn");
@@ -360,6 +363,9 @@ export class ClaudeQualificationModelPeer {
     const content: ContentBlock[] = [];
     if (nextIndex === 0)
       content.push({ type: "text", text: "I will create, edit, inspect, and verify the file." });
+    this.#pendingToolUse = action
+      ? { id: `toolu_sb1070_claude_${nextIndex + 1}`, name: action.name }
+      : undefined;
     if (action) {
       content.push({
         type: "tool_use",
@@ -391,6 +397,7 @@ export class ClaudeQualificationModelPeer {
       finishCompleted: this.#finishCompleted,
       workCompleted: this.#workCompleted,
       resumeCompleted: this.#resumeCompleted,
+      pendingToolUse: this.#pendingToolUse ? { ...this.#pendingToolUse } : null,
       toolEvidence: [...this.#toolEvidence.values()].map((entry) => ({ ...entry })),
       nativeQualification: false as const,
     };

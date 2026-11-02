@@ -12,6 +12,8 @@ const path = "/workspace/claude-qualification.txt";
 
 /** Consume captured public Messages requests and the actual command worker's producer pair. */
 export function assertClaudeKernelGrep(input: GrepRegressionInput) {
+  if (!Array.isArray(input.kernelInvocations))
+    throw new Error("CLAUDE_GREP_PRODUCT_EVIDENCE_MISSING");
   const requests = input.requests.map((bytes) =>
     record(JSON.parse(new TextDecoder().decode(bytes))),
   );
@@ -29,7 +31,12 @@ export function assertClaudeKernelGrep(input: GrepRegressionInput) {
   );
   const call = blocks.find((block) => block?.type === "tool_use" && block.name === "Grep");
   const args = record(call?.input);
-  if (typeof call?.id !== "string" || args?.pattern !== "after" || args.path !== path)
+  if (
+    typeof call?.id !== "string" ||
+    args?.pattern !== "after" ||
+    args.path !== path ||
+    args.output_mode !== "content"
+  )
     throw new Error("CLAUDE_GREP_PRODUCT_CALL_MISSING");
   const result = blocks.find(
     (block) => block?.type === "tool_result" && block.tool_use_id === call.id,
@@ -44,13 +51,17 @@ export function assertClaudeKernelGrep(input: GrepRegressionInput) {
             .map((part) => (part?.type === "text" ? part.text : ""))
             .join("")
         : "";
-  if (!text.includes(path) || !text.includes("after"))
-    throw new Error("CLAUDE_GREP_PRODUCT_MATCH_TEXT_MISSING");
+  const lines = text.trim().split(/\r?\n/u);
+  const matchingLine =
+    lines.includes(`${path}:1:after`) || (lines.includes(path) && lines.includes("1:after"));
+  if (!matchingLine) throw new Error("CLAUDE_GREP_PRODUCT_MATCH_TEXT_MISSING");
 
-  const invocation = input.kernelInvocations.map(record).find((command) => {
+  const invocations = input.kernelInvocations.map(record).filter((command) => {
     const exit = record(command?.exit);
     return (
       command?.executable === "/bin/rg" &&
+      command.toolUseId === call.id &&
+      command.toolName === "Grep" &&
       command.runId === input.runId &&
       Array.isArray(command.argv) &&
       command.argv.includes("after") &&
@@ -68,7 +79,9 @@ export function assertClaudeKernelGrep(input: GrepRegressionInput) {
       exit.signal === 0
     );
   });
-  if (!invocation) throw new Error("CLAUDE_GREP_PRODUCT_KERNEL_SEARCH_MISSING");
+  const invocation = invocations[0];
+  if (!invocation || invocations.length !== 1)
+    throw new Error("CLAUDE_GREP_PRODUCT_KERNEL_SEARCH_MISSING");
   const events = input.producerEvents
     .map(record)
     .filter(

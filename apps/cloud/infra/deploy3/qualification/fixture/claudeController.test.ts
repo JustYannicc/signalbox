@@ -3,6 +3,7 @@ import { expect, it } from "vite-plus/test";
 import { CLAUDE_MODEL_GATEWAY_BASE_URL } from "../../../../src/harness/ClaudeGatewayAccess.ts";
 import type { QualifierExecutionContext } from "./proofContext.ts";
 import { ClaudeController } from "./claudeController.ts";
+import { CLAUDE_QUALIFICATION_PROMPTS } from "./claudeModelPeer.ts";
 import { CLAUDE_QUALIFICATION_API_REVISION } from "./claudeConfiguration.ts";
 
 it("retains the actual body cleanup error when an attempt marker fails", async () => {
@@ -26,7 +27,7 @@ it("retains the actual body cleanup error when an attempt marker fails", async (
   }
 });
 
-it("finalizes controller attempts and records retries rejected before wire transport", async () => {
+function controllerFixture() {
   const values = new Map<string, unknown>([
     ["claude/active-step", { variant: "baseline", requestId: "request-1", phase: "work" }],
     [
@@ -62,6 +63,11 @@ it("finalizes controller attempts and records retries rejected before wire trans
           collectorNonce: "collector-nonce-controller-test",
           apiRevision: CLAUDE_QUALIFICATION_API_REVISION,
           model: "claude-sonnet-4-6",
+          mcpProbe: {
+            toolName: "mcp__executor__qualification_echo",
+            input: { text: "echo" },
+            expectedText: "echo",
+          },
         },
       },
     },
@@ -77,6 +83,11 @@ it("finalizes controller attempts and records retries rejected before wire trans
     },
   } as unknown as QualifierExecutionContext;
   const controller = new ClaudeController(owner, storage);
+  return { controller, storage, values, wirePhases };
+}
+
+it("finalizes controller attempts and records retries rejected before wire transport", async () => {
+  const { controller, storage, wirePhases } = controllerFixture();
   const request = (model: string) =>
     new Request(`${CLAUDE_MODEL_GATEWAY_BASE_URL}/v1/messages/count_tokens`, {
       method: "POST",
@@ -183,4 +194,52 @@ it("finalizes controller attempts and records retries rejected before wire trans
     exported.entries.find(([key]) => key === "claude/request-attempt-counters")?.[1],
   ).toMatchObject({ started: 4, finalized: 4, activeRequests: 0 });
   expect(wirePhases).toEqual(["request", "response", "request", "failure"]);
+});
+
+it("binds commands to the active tool actually issued by the public Messages peer", async () => {
+  const { controller } = controllerFixture();
+  expect(await controller.activeToolUse()).toBeNull();
+  const messages: unknown[] = [{ role: "user", content: CLAUDE_QUALIFICATION_PROMPTS.work }];
+  const outputs = ["Success", "before\n", "Updated", "sb1070-claude-bash-marker"];
+  for (let index = 0; index < 5; index++) {
+    const response = await controller.request(
+      new Request(`${CLAUDE_MODEL_GATEWAY_BASE_URL}/v1/messages`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer sbq1.synthetic-credential",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 128,
+          messages,
+          tools: [
+            { name: "Grep", input_schema: { type: "object" } },
+            { name: "mcp__executor__qualification_echo", input_schema: { type: "object" } },
+          ],
+        }),
+      }),
+    );
+    const body = (await response.json()) as {
+      content: Array<{ type: string; id?: string; name?: string }>;
+    };
+    const call = body.content.find((block) => block.type === "tool_use");
+    expect(await controller.activeToolUse()).toEqual({
+      id: call?.id,
+      name: call?.name,
+      publicRequestId: "request-1",
+      variant: "baseline",
+    });
+    if (index === 4) expect(call?.name).toBe("Grep");
+    else
+      messages.push(
+        { role: "assistant", content: body.content },
+        {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: call?.id, content: outputs[index] }],
+        },
+      );
+  }
+  await controller.end({ variant: "baseline", requestId: "request-1", phase: "work" });
+  expect(await controller.activeToolUse()).toBeNull();
 });

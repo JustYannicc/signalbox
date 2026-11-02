@@ -4,7 +4,7 @@ import type { HarnessProcessPlacementStoreObject } from "../../../../src/harness
 import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore.ts";
 import type { QualifierCapabilities } from "./capabilities.ts";
 import type { Configuration } from "./configuration.ts";
-import type { ClaudeStep } from "./claudeScenario.ts";
+import type { ClaudeStep, ClaudeVariant } from "./claudeScenario.ts";
 import type { createClaudeFixtureServices } from "./claudeFixtureServices.ts";
 import type {
   placementReleaseEvidence,
@@ -22,6 +22,12 @@ export type QualifierProofPort = Rpc.DurableObjectBranded &
     claudeStepForLoader(): Promise<ClaudeStep>;
     modelConstructionPhase(): Promise<{ route: string; logicalIncarnation: number }>;
     commandPhase(): Promise<string>;
+    commandToolUse(): Promise<{
+      id: string;
+      name: string;
+      publicRequestId: string;
+      variant: ClaudeVariant;
+    } | null>;
     recordWriterRelease(input: Omit<WriterRelease, "sequence">): Promise<WriterRelease>;
     tailRecords(
       raw: unknown,

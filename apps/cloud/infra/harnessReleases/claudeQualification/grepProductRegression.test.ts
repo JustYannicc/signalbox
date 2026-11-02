@@ -42,6 +42,8 @@ function evidence(rgHash: string = KERNEL_RIPGREP_ARTIFACT.sha256) {
     {
       runId,
       invocationId: "kernel-rg-1",
+      toolUseId: "grep-5",
+      toolName: "Grep",
       executable: "/bin/rg",
       argv: ["rg", "--hidden", "--json", "after", file],
       wasmReferences: [rgHash],
@@ -122,6 +124,28 @@ it("rejects a version check as proof of a real search", () => {
 
 it("rejects a different executable artifact even when the result looks right", () => {
   const f = evidence("0".repeat(64));
+  expect(() => assertClaudeKernelGrep(f.input())).toThrow(
+    "CLAUDE_GREP_PRODUCT_KERNEL_SEARCH_MISSING",
+  );
+});
+
+it("rejects a matching search performed by another tool call", () => {
+  const f = evidence();
+  f.kernelInvocations[0]!.toolUseId = "another-tool";
+  expect(() => assertClaudeKernelGrep(f.input())).toThrow(
+    "CLAUDE_GREP_PRODUCT_KERNEL_SEARCH_MISSING",
+  );
+});
+
+it("rejects result prose that merely mentions the file and pattern", () => {
+  const f = evidence();
+  f.result.content = `No matches for after in ${file}`;
+  expect(() => assertClaudeKernelGrep(f.input())).toThrow("CLAUDE_GREP_PRODUCT_MATCH_TEXT_MISSING");
+});
+
+it("rejects ambiguous command ownership for one Grep result", () => {
+  const f = evidence();
+  f.kernelInvocations.push({ ...f.kernelInvocations[0]!, invocationId: "another-rg" });
   expect(() => assertClaudeKernelGrep(f.input())).toThrow(
     "CLAUDE_GREP_PRODUCT_KERNEL_SEARCH_MISSING",
   );

@@ -1,3 +1,4 @@
+import { assertClaudeKernelGrep } from "../../../harnessReleases/claudeQualification/grepProductRegression.ts";
 import type { ClaudeMcpProbe } from "./claudeMcpProbe.ts";
 import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore.ts";
 import { CLAUDE_QUALIFICATION_PROMPTS } from "./claudeModelPeer.ts";
@@ -29,6 +30,7 @@ export interface ClaudeModelWorkloadEvidence {
     readonly toolUseId: string;
     readonly resultText: string;
   }[];
+  readonly kernelGrep?: ReturnType<typeof assertClaudeKernelGrep>;
   readonly criteria: readonly {
     readonly name: "text" | "readEdit" | "bash" | "grep" | "mcp" | "resume";
     readonly status: "observed";
@@ -42,6 +44,12 @@ export async function collectClaudeModelWorkloadEvidence(input: {
   readonly collectorNonce: string;
   readonly model: string;
   readonly mcpProbe: ClaudeMcpProbe;
+  readonly kernelSearch?: {
+    readonly runId: string;
+    readonly workRoute: string;
+    readonly producerEvents: readonly unknown[];
+    readonly kernelInvocations: readonly unknown[];
+  };
   readonly publicBinding?: {
     readonly runId: string;
     readonly variant: "baseline" | "hooks";
@@ -50,6 +58,9 @@ export async function collectClaudeModelWorkloadEvidence(input: {
 }): Promise<ClaudeModelWorkloadEvidence> {
   if (!input.collectorNonce.trim() || !input.model.trim())
     throw new Error("CLAUDE_QUALIFICATION_MODEL_IDENTITY_MISSING");
+  if (input.publicBinding && !input.kernelSearch)
+    throw new Error("CLAUDE_GREP_PRODUCT_EVIDENCE_MISSING");
+  const requestBytes = new Map<number, Uint8Array>();
   const requests = new Map<number, ClaudePersistedModelRecord>();
   const terminals = new Map<number, ClaudePersistedModelRecord>();
   const responseTexts: string[] = [];
@@ -107,6 +118,7 @@ export async function collectClaudeModelWorkloadEvidence(input: {
       if (lastUserText.includes(CLAUDE_QUALIFICATION_PROMPTS.work)) requestKinds.add("work");
       if (lastUserText.includes(CLAUDE_QUALIFICATION_PROMPTS.resume)) requestKinds.add("resume");
       if (lastUserText.includes(CLAUDE_QUALIFICATION_PROMPTS.finish)) requestKinds.add("finish");
+      requestBytes.set(record.ordinal, bytes);
       requests.set(record.ordinal, record);
     } else if (record.phase === "response" || record.phase === "failure") {
       if (terminals.has(record.ordinal))
@@ -180,6 +192,16 @@ export async function collectClaudeModelWorkloadEvidence(input: {
   )
     throw new Error("CLAUDE_QUALIFICATION_MODEL_TEXT_RESULT_MISSING");
 
+  const kernelGrep =
+    input.kernelSearch &&
+    assertClaudeKernelGrep({
+      ...input.kernelSearch,
+      requests: [...requests]
+        .sort(([a], [b]) => a - b)
+        .filter(([, record]) => record.path === "/v1/messages" && record.workflowPhase === "work")
+        .map(([ordinal]) => requestBytes.get(ordinal)!),
+    });
+
   return {
     schema: "signalbox/claude-qualification-model-workload/v1",
     purpose: "qualification",
@@ -200,6 +222,7 @@ export async function collectClaudeModelWorkloadEvidence(input: {
       };
     }),
     toolResults: snapshot.toolEvidence,
+    ...(kernelGrep ? { kernelGrep } : {}),
     criteria: ["text", "readEdit", "bash", "grep", "mcp", "resume"].map((name) => ({
       name: name as ClaudeModelWorkloadEvidence["criteria"][number]["name"],
       status: "observed" as const,

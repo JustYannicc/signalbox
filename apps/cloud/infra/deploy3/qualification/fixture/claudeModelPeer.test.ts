@@ -69,6 +69,7 @@ it("requires and records each real Messages tool result in the frozen order", as
     };
     const call = message.content.find((part) => part.type === "tool_use");
     expect(call?.name).toBe(expected[index]);
+    expect(peer.snapshot().pendingToolUse).toEqual({ id: call?.id, name: call?.name });
     if (call?.name === "Grep") {
       expect(call.input).toMatchObject({
         pattern: "after",
@@ -110,6 +111,7 @@ it("requires and records each real Messages tool result in the frozen order", as
   expect(peer.snapshot()).toMatchObject({
     collectorNonce,
     workCompleted: true,
+    pendingToolUse: null,
     toolEvidence: expected.map((name) => ({ name })),
   });
 });

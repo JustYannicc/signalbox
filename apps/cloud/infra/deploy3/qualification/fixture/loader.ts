@@ -173,6 +173,8 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
     const owner = proof(this.env);
     using _ownerStub = rpcStubOwner(owner);
     const phase = await readRpcData(owner.commandPhase());
+    const tool =
+      input.command.executable === "/bin/rg" ? await readRpcData(owner.commandToolUse()) : null;
     const tail = this.env.QUALIFIER_TAIL;
     const original = this.env.LOADER;
     const loader: WorkerLoader = {
@@ -223,6 +225,10 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
         owner.append("kernel-rg-completed", {
           runId: this.env.RUN_ID,
           invocationId,
+          toolUseId: tool?.id,
+          toolName: tool?.name,
+          publicRequestId: tool?.publicRequestId,
+          variant: tool?.variant,
           loaderId: input.loaderId,
           route: { method: "POST", path: phase },
           executable: input.command.executable,
