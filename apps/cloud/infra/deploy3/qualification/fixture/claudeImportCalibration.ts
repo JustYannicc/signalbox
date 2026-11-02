@@ -1,35 +1,20 @@
 import { readRpcData, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
-import { createHarnessProcessFacetStub } from "../../../../src/harness/processPlacement/facetLoader.ts";
+import { createHarnessProcessFacetStub } from "../../../../src/harness/HarnessProcessFacet.ts";
 import { createQualifierShardEnvironment } from "../shardEnvironment.ts";
 import { claudeImportFacet } from "./claudeFacetInputs.ts";
 import type { ClaudeImportCalibrationFacet } from "./claudeImportCalibrationFacet.ts";
-import type { calibrateClaudePreparedRelease } from "./claudeCalibration.ts";
 import type { ClaudeVariant } from "./claudeScenario.ts";
 import { readConfiguration } from "./configuration.ts";
 import { assert } from "./common.ts";
 import { proof, type QualifierEnvironment } from "./environment.ts";
 import { qualifierFacetLoader } from "./loader.ts";
 
-export interface ClaudeImportCalibrationResult {
-  readonly identity: { readonly facetNonce: string };
-  readonly observed: {
-    readonly incarnation: string;
-    readonly invocationId: string;
-    readonly selectedReleaseId: string;
-    readonly selectedReleaseHash: string;
-    readonly imported: Awaited<ReturnType<typeof calibrateClaudePreparedRelease>>;
-    readonly nativeStarted: false;
-  };
-  readonly loaderId: string;
-  readonly nativeStarted: false;
-}
-
 /** Uses the product's lazy facet loader, then discards the import-only personality. */
 export async function calibrateClaudeImport(
   ctx: DurableObjectState,
   env: QualifierEnvironment,
   variant: ClaudeVariant,
-): Promise<ClaudeImportCalibrationResult> {
+) {
   const config = await readConfiguration(env.PROGRAM_ASSETS, env.CONFIG_SHA256);
   const cap = proof(env);
   using _capOwner = rpcStubOwner(cap);

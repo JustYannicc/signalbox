@@ -12,7 +12,7 @@ import type {
 } from "./placementReleaseObserver.fixture.ts";
 import type { readShardRecoveryEvidence, readShardExecutionEvidence } from "./shardEvidence.ts";
 import type { WriterRelease } from "./proofRecords.ts";
-import type { calibrateClaudeImport } from "./claudeImportCalibration.ts";
+import type { observeClaudePreparedImport } from "./claudeCalibrationObservation.ts";
 
 type JournalReceipt = Awaited<ReturnType<QualifierCapabilities["append"]>>;
 
@@ -61,7 +61,12 @@ export type QualifierShardPort = Rpc.DurableObjectBranded &
     modelRecoveryEvidence(runId: string): ReturnType<typeof readShardRecoveryEvidence>;
     placementReleaseEvidence(): ReturnType<typeof placementReleaseEvidence>;
     evidence(): ReturnType<typeof readShardExecutionEvidence>;
-    claudeImportCalibration(variant: ClaudeVariant): ReturnType<typeof calibrateClaudeImport>;
+    claudeImportCalibration(variant: ClaudeVariant): Promise<{
+      readonly identity: { readonly facetNonce: string };
+      readonly observed: Awaited<ReturnType<typeof observeClaudePreparedImport>>;
+      readonly loaderId: string;
+      readonly nativeStarted: false;
+    }>;
     observerCalibration(): Promise<{
       identity: { facetNonce: string };
       observed: { incarnation: string; nativeStarted: false };
