@@ -49,7 +49,13 @@ it("forwards isolate inherited files through Computer and the exec protocol", as
         stream: "stdout",
         dataBase64: "c2luZ2xlLWZpbGUgZ3JlcAo=",
       });
-      report({ type: "exit", generation: 1, processId: command.processId, sequence: 2, exitCode: 0 });
+      report({
+        type: "exit",
+        generation: 1,
+        processId: command.processId,
+        sequence: 2,
+        exitCode: 0,
+      });
       report({ type: "closed", generation: 1, processId: command.processId, sequence: 3 });
     },
   });

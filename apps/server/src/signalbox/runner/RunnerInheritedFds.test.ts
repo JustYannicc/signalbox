@@ -71,7 +71,9 @@ it.each(["missing", "directory"])("fails clearly when an inherited path is %s", 
         root,
       ),
     ).toThrow(
-      kind === "directory" ? "Inherited file is not a regular file" : "Cannot reopen inherited fd 3",
+      kind === "directory"
+        ? "Inherited file is not a regular file"
+        : "Cannot reopen inherited fd 3",
     );
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
