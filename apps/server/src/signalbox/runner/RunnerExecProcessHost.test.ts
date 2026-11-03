@@ -79,3 +79,27 @@ describe("RunnerExecProcessHost", () => {
     expect(host.resolveWorkingDirectory("/workspace/src")).toEqual({ _tag: "workspace_not_ready" });
   });
 });
+
+it("kills a spawned child before rejecting missing standard pipes", () => {
+  const kill = vi.fn();
+  const spawn = vi.fn(() => ({ stdin: null, stdout: null, stderr: null, kill }));
+  const host = makeRunnerExecProcessHost({
+    spawn: spawn as unknown as typeof NodeChildProcess.spawn,
+  });
+  expect(() =>
+    host.spawn(
+      {
+        type: "start",
+        generation: 1,
+        requestId: "start",
+        processId: "child",
+        executable: "test",
+        argv: ["test"],
+        cwd: "/workspace",
+        env: {},
+      },
+      "/workspace",
+    ),
+  ).toThrow("three piped");
+  expect(kill).toHaveBeenCalledOnce();
+});

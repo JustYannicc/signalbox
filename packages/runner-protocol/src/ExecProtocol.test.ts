@@ -20,7 +20,7 @@ describe("Runner exec protocol", () => {
     };
     const inherited = {
       ...start,
-      inheritedFds: [{ childFd: 3, path: "/workspace/file", flags: 0, offset: 7 }],
+      inheritedFds: [{ childFd: 3, path: "/workspace/file", flags: 0, offset: 0 }],
     };
     const encode = Schema.encodeSync(ExecCommand);
     expect(decodeCommand(JSON.parse(JSON.stringify(encode(decodeCommand(inherited)))))).toEqual(
@@ -109,6 +109,9 @@ describe("Runner exec protocol", () => {
     { childFd: 3, path: "relative/file", flags: 0, offset: 0 },
     { childFd: 3, path: "/workspace/file", flags: 1, offset: 0 },
     { childFd: 3, path: "/workspace/file", flags: 0, offset: -1 },
+    { childFd: 3, path: "/workspace/../escape", flags: 0, offset: 0 },
+    { childFd: 3, path: "/tmp/host-file", flags: 0, offset: 0 },
+    { childFd: 3, path: "/workspace/file", flags: 0, offset: 1 },
     { childFd: 3, path: "/workspace/file", flags: 0, offset: Number.MAX_SAFE_INTEGER + 1 },
   ])("rejects an invalid inherited file mapping %j", (mapping) => {
     expect(() =>

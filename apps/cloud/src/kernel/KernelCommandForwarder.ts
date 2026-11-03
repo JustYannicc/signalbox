@@ -1,5 +1,5 @@
 import type { KernelResult } from "./KernelAbi.ts";
-import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
+import type { InheritedFd } from "./KernelInheritedFds.ts";
 
 export interface KernelCommand {
   /** Executable identity is separate from argv[0], which may be overridden by the caller. */

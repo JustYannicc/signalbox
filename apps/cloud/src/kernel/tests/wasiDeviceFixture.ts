@@ -16,6 +16,7 @@ export const DATA = 384;
 export const IOV = 512;
 
 const params = {
+  fd_renumber: ["i32", "i32"],
   fd_prestat_get: ["i32", "i32"],
   path_open: ["i32", "i32", "i32", "i32", "i32", "i64", "i64", "i32", "i32"],
   path_filestat_get: ["i32", "i32", "i32", "i32", "i32"],

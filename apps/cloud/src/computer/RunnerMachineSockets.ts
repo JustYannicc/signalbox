@@ -282,6 +282,7 @@ export class RunnerMachineSockets implements MachineRunnerTransport {
           generation: registration.owner.generation,
           connection: 1,
           protocolVersion: message.protocolVersion,
+          inheritedFds: message.inheritedFds === true,
           exec: true,
           machineFileLookup: message.machineFileLookup === true,
           send: (frame) => {

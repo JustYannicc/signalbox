@@ -32,6 +32,7 @@ function setup(
     workspace: { canonicalCwd: async () => "/workspace" },
     policy: { authorize: async () => undefined },
   },
+  inheritedFds = false,
 ) {
   const socket = {} as WebSocket;
   const frames: ExecCommand[] = [];
@@ -44,6 +45,7 @@ function setup(
     connection: 2,
     protocolVersion: 8,
     exec: true,
+    inheritedFds,
     send: (message) => {
       if (message.type !== "exec.command") return;
       const sent = message.command;
@@ -547,4 +549,52 @@ describe("ThreadExecForwarder", () => {
     await leaseReleased.promise;
     expect(disposed).toBe(true);
   });
+});
+
+it.each(["/workspace/../host", "/tmp/host", "/workspace/link"])(
+  "refuses inherited path %s before forwarding",
+  async (path) => {
+    const fixture = setup(
+      {
+        lease: { acquire: async () => ({ generation: 4, connection: 2, release: async () => {} }) },
+        workspace: {
+          canonicalCwd: async (candidate) =>
+            candidate.cwd === "/workspace/link" ? "/tmp/host" : candidate.cwd,
+        },
+        policy: { authorize: async () => {} },
+      },
+      true,
+    );
+    await expect(
+      fixture.forwarder.spawn(
+        { ...command, inheritedFds: [{ childFd: 3, path, flags: 0, offset: 0 }] },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ name: "KernelForwardingUnavailable", code: "WORKSPACE_NOT_READY" });
+    expect(fixture.frames).toEqual([]);
+    await fixture.forwarder.dispose();
+  },
+);
+
+it("forwards inherited files to a version 8 Runner advertising the capability", async () => {
+  const fixture = setup(
+    {
+      lease: { acquire: async () => ({ generation: 4, connection: 2, release: async () => {} }) },
+      workspace: { canonicalCwd: async (candidate) => candidate.cwd },
+      policy: { authorize: async () => {} },
+    },
+    true,
+  );
+  const inheritedFds = [{ childFd: 3, path: "/workspace/target", flags: 0, offset: 0 }] as const;
+  const spawning = fixture.forwarder.spawn(
+    { ...command, inheritedFds },
+    new AbortController().signal,
+  );
+  const start = await fixture.startSent.promise;
+  fixture.acknowledge(start);
+  const child = await spawning;
+  expect(start.inheritedFds).toEqual(inheritedFds);
+  fixture.forwarder.socketHost.generationEnded(4);
+  await expect(child.exited).rejects.toThrow();
+  await fixture.forwarder.dispose();
 });

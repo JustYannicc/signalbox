@@ -382,3 +382,17 @@ describe("createComputerCommands", () => {
     expect(machine.spawn).not.toHaveBeenCalled();
   });
 });
+
+it("rejects unsupported inherited mappings as ENOTSUP before executing", async () => {
+  const h = computerHarness(() => 0);
+  await expect(
+    Promise.resolve().then(() =>
+      Reflect.apply(h.commands.exec, h.commands, [
+        { ...probeCommand(), inheritedFds: [{ childFd: 3, path: "/target", flags: 0, offset: 1 }] },
+        new AbortController().signal,
+        undefined,
+      ]),
+    ),
+  ).rejects.toMatchObject({ code: "ENOTSUP" });
+  expect(h.machine.spawn).not.toHaveBeenCalled();
+});

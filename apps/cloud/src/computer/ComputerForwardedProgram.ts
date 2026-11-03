@@ -13,7 +13,7 @@ import type { KernelProgramAdmissionRequest } from "../kernel/KernelProgramAdmis
 import { KernelOpenFlags } from "../kernel/KernelFileSystem.ts";
 import { inheritsKernelCommandDescriptor } from "../kernel/KernelCommandDescriptors.ts";
 import { describeInheritedFd } from "../kernel/KernelInheritedFds.ts";
-import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
+import type { InheritedFd } from "../kernel/KernelInheritedFds.ts";
 
 const FORWARDING_UNAVAILABLE_EXIT_CODE = 126;
 const encoder = new TextEncoder();

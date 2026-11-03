@@ -7,7 +7,10 @@ import type {
   KernelLowerFileSystemSource,
 } from "./KernelLowerFileSystem.ts";
 import { hasChangeGeneration } from "./ChangeGenerationStorage.ts";
-import { descriptorPathAlias, descriptorPathSuffix } from "./filesystem/KernelPathAliases.ts";
+import {
+  posixPathAlias as descriptorPathAlias,
+  descriptorPathSuffix,
+} from "./filesystem/KernelPathAliases.ts";
 import { WasiFileSystem } from "./wasi/internal_wasi_fs.ts";
 import { WasiMemory } from "./wasi/internal_wasi_memory.ts";
 import { runSync } from "./wasi/internal_wasi_calls.ts";

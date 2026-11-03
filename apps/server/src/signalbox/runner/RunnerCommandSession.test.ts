@@ -77,7 +77,7 @@ it.effect("opens a command session and preserves process receipts until end", ()
 
       expect(yield* Queue.take(thread.sent)).toEqual({
         type: "hello",
-        protocolVersion: 9,
+        protocolVersion: 8,
         imageVersion: "runner-test",
         machineId: "machine-1",
         threadId,
@@ -87,6 +87,7 @@ it.effect("opens a command session and preserves process receipts until end", ()
         build,
         exec: true,
         machineFileLookup: true,
+        inheritedFds: true,
       });
 
       yield* Queue.offer(thread.incoming, welcome);

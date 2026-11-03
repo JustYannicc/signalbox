@@ -1,23 +1,37 @@
-// @effect-diagnostics nodeBuiltinImport:off - native descriptors must be positioned before spawn duplicates them.
+// @effect-diagnostics nodeBuiltinImport:off - native file handles are opened only within the Runner's Drive mount.
 import * as NodeFS from "node:fs";
-import * as NodeChildProcess from "node:child_process";
+import * as NodePathPosix from "node:path/posix";
 import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
 
-const SEEK_FILES =
-  "import json,os,sys\nfor fd,offset in json.loads(sys.argv[1]): os.lseek(fd,offset,os.SEEK_SET)";
+export interface RunnerInheritedFileSystem {
+  readonly realpath: (path: string) => string;
+  readonly stat: (path: string) => NodeFS.Stats;
+  readonly open: (path: string, flags: number) => number;
+  readonly fstat: (fd: number) => NodeFS.Stats;
+  readonly close: (fd: number) => void;
+}
+
+const nativeFiles: RunnerInheritedFileSystem = {
+  realpath: NodeFS.realpathSync.native,
+  stat: NodeFS.statSync,
+  open: NodeFS.openSync,
+  fstat: NodeFS.fstatSync,
+  close: NodeFS.closeSync,
+};
 
 export class RunnerInheritedFdError extends Error {
   override readonly name = "RunnerInheritedFdError";
+  readonly code = "ENOTSUP";
 }
 
-/** The caller closes these handles after native spawn has duplicated them. */
+/** Closes temporary parent handles once spawn has duplicated them into the child. */
 export function withRunnerInheritedFds<T>(
   inheritedFds: readonly InheritedFd[],
   spawn: (stdio: ["pipe", "pipe", "pipe", ...(number | "ignore")[]]) => T,
+  files: RunnerInheritedFileSystem = nativeFiles,
 ): T {
   const opened: number[] = [];
   const targets = new Set<number>();
-  const offsets: [number, number][] = [];
   const stdio: ["pipe", "pipe", "pipe", ...(number | "ignore")[]] = ["pipe", "pipe", "pipe"];
   try {
     for (const inherited of inheritedFds) {
@@ -26,20 +40,28 @@ export function withRunnerInheritedFds<T>(
         inherited.childFd < 3 ||
         targets.has(inherited.childFd) ||
         inherited.flags !== 0 ||
-        !Number.isSafeInteger(inherited.offset) ||
-        inherited.offset < 0
-      )
-        throw new RunnerInheritedFdError("Invalid inherited read-only file mapping");
+        inherited.offset !== 0
+      ) {
+        throw new RunnerInheritedFdError(
+          "Only inherited read-only files at offset zero are supported",
+        );
+      }
       targets.add(inherited.childFd);
       try {
-        // NONBLOCK lets us reject a FIFO without blocking the Runner while opening it.
-        const fd = NodeFS.openSync(
-          inherited.path,
-          NodeFS.constants.O_RDONLY | NodeFS.constants.O_NONBLOCK,
+        if (!workspaceFile(inherited.path)) throw new Error("File is outside the Drive workspace");
+        const path = files.realpath(inherited.path);
+        if (!workspaceFile(path)) throw new Error("File resolves outside the Drive workspace");
+        const expected = files.stat(path);
+        // NONBLOCK avoids hanging on a FIFO swapped in between stat and open.
+        const fd = files.open(
+          path,
+          NodeFS.constants.O_RDONLY | NodeFS.constants.O_NONBLOCK | NodeFS.constants.O_NOFOLLOW,
         );
         opened.push(fd);
-        if (!NodeFS.fstatSync(fd).isFile()) throw new Error("Not a regular file");
-        if (inherited.offset !== 0) offsets.push([opened.length + 2, inherited.offset]);
+        const actual = files.fstat(fd);
+        if (!actual.isFile() || actual.dev !== expected.dev || actual.ino !== expected.ino) {
+          throw new Error("Inherited file changed while opening it");
+        }
         while (stdio.length <= inherited.childFd) stdio.push("ignore");
         stdio[inherited.childFd] = fd;
       } catch (cause) {
@@ -49,26 +71,18 @@ export function withRunnerInheritedFds<T>(
         );
       }
     }
-    if (offsets.length > 0) {
-      // Node has no lseek. Python is installed on Runner images, and dup'd fds share
-      // their OS open-file description, so seeking in this helper positions our handles.
-      const result = NodeChildProcess.spawnSync(
-        "/usr/bin/python3",
-        ["-c", SEEK_FILES, JSON.stringify(offsets)],
-        {
-          stdio: ["ignore", "ignore", "pipe", ...opened],
-          timeout: 5_000,
-        },
-      );
-      if (result.error || result.status !== 0) {
-        throw new RunnerInheritedFdError(
-          `Cannot seek inherited files: ${result.error?.message ?? result.stderr?.toString().trim()}`,
-          { cause: result.error },
-        );
-      }
-    }
     return spawn(stdio);
   } finally {
-    for (const fd of opened) NodeFS.closeSync(fd);
+    for (const fd of opened) files.close(fd);
   }
+}
+
+function workspaceFile(path: string) {
+  return (
+    path.startsWith("/workspace/") &&
+    NodePathPosix.normalize(path) === path &&
+    !path.includes("\\") &&
+    !path.includes("\0") &&
+    !path.split("/").includes("..")
+  );
 }

@@ -2,7 +2,7 @@ import * as NodeOS from "node:os";
 
 import { unsupportedNodeOperation } from "../process/NodeError.ts";
 import type { NodeProcessHostContext } from "../process/context.ts";
-import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
+import type { InheritedFd } from "../../../kernel/KernelInheritedFds.ts";
 
 export interface NodeChildProcessOptions {
   readonly argv0?: string;

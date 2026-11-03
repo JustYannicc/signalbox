@@ -1,4 +1,4 @@
-export function descriptorPathAlias(path: string): number | undefined {
+export function posixPathAlias(path: string): number | undefined {
   const named = new Map([
     ["/dev/stdin", 0],
     ["/dev/stdout", 1],
@@ -6,6 +6,10 @@ export function descriptorPathAlias(path: string): number | undefined {
   ]).get(path);
   if (named !== undefined) return named;
 
+  return descriptorPathAlias(path);
+}
+
+export function descriptorPathAlias(path: string): number | undefined {
   const match = /^\/(?:proc\/self\/fd|dev\/fd)\/(0|[1-9][0-9]*)$/.exec(path);
   if (match === null) return undefined;
   const fd = Number(match[1]);

@@ -1,5 +1,5 @@
 import type { KernelHandle } from "../KernelAbi.ts";
-import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
+import type { InheritedFd } from "../KernelInheritedFds.ts";
 import { reopenInheritedFds } from "../KernelInheritedFds.ts";
 import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 import { KernelFileSystem } from "../KernelFileSystem.ts";

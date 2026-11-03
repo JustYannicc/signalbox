@@ -2,15 +2,14 @@ import * as Schema from "effect/Schema";
 
 /** First Runner protocol version with non-PTY exec commands and reports. */
 export const EXEC_PROTOCOL_VERSION = 8;
-export const EXEC_INHERITED_FDS_PROTOCOL_VERSION = 9;
 
 export const InheritedFd = Schema.Struct({
   childFd: Schema.Int.check(Schema.isGreaterThanOrEqualTo(3)),
-  path: Schema.String.check(Schema.isPattern(/^\/[^\0]*$/)).check(Schema.isMaxLength(16_384)),
+  path: Schema.String.check(
+    Schema.isPattern(/^(?!.*(?:\/\.{1,2}(?:\/|$)|\/\/))\/workspace\/[^\0\\]+$/),
+  ).check(Schema.isMaxLength(16_384)),
   flags: Schema.Literal(0),
-  offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).check(
-    Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
-  ),
+  offset: Schema.Literal(0),
 });
 export type InheritedFd = typeof InheritedFd.Type;
 

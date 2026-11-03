@@ -1,6 +1,5 @@
 import {
   EXEC_PROTOCOL_VERSION,
-  EXEC_INHERITED_FDS_PROTOCOL_VERSION,
   type ExecReport,
   type ExecCommandMessage,
 } from "@signalbox/runner-protocol/ExecProtocol";
@@ -45,6 +44,7 @@ export interface RunnerExecConnection {
   readonly connection: number;
   readonly protocolVersion: number;
   readonly exec: boolean;
+  readonly inheritedFds?: boolean;
   readonly machineFileLookup?: boolean;
   readonly send: (message: ExecCommandMessage | MachineFilesRequest) => void;
 }
@@ -216,13 +216,10 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
       }
       if (signal.aborted)
         throw signal.reason instanceof Error ? signal.reason : new Error("Spawn cancelled");
-      if (
-        command.inheritedFds?.length &&
-        connection.value.protocolVersion < EXEC_INHERITED_FDS_PROTOCOL_VERSION
-      ) {
+      if (command.inheritedFds?.length && connection.value.inheritedFds !== true) {
         throw unavailable(
           "RUNNER_NOT_READY",
-          "This Runner cannot reopen inherited file descriptors. Upgrade the Runner.",
+          "This Runner does not advertise inherited file descriptor support.",
         );
       }
       if (this.#options.workspace === undefined) {
@@ -241,6 +238,27 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
           "WORKSPACE_NOT_READY",
           "The thread workspace is not ready for a forwarded process.",
         );
+      }
+      for (const file of command.inheritedFds ?? []) {
+        let canonical: string;
+        try {
+          canonical = await this.#options.workspace.canonicalCwd(
+            { ...command, cwd: file.path },
+            lease.generation,
+            signal,
+          );
+        } catch {
+          throw unavailable(
+            "WORKSPACE_NOT_READY",
+            "Inherited file is unavailable in the Drive workspace.",
+          );
+        }
+        if (canonical !== file.path || !isWorkspacePath(canonical)) {
+          throw unavailable(
+            "WORKSPACE_NOT_READY",
+            "Inherited file must be canonical and inside /workspace.",
+          );
+        }
       }
       if (signal.aborted)
         throw signal.reason instanceof Error ? signal.reason : new Error("Spawn cancelled");
@@ -371,6 +389,8 @@ function isWorkspacePath(path: string) {
   return (
     (path === "/workspace" || path.startsWith("/workspace/")) &&
     !path.includes("\\") &&
-    !path.split("/").includes("..")
+    !path.split("/").some((part) => part === ".." || part === ".") &&
+    !path.includes("//") &&
+    !path.includes("\0")
   );
 }

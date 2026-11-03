@@ -18,7 +18,7 @@ import type {
   WasiResolvedPath,
   WasiPathSearchCheck,
 } from "../wasi/internal_wasi_paths.ts";
-import { descriptorPathAlias } from "./KernelPathAliases.ts";
+import { posixPathAlias as descriptorPathAlias } from "./KernelPathAliases.ts";
 import {
   kernelError,
   runKernelSync,

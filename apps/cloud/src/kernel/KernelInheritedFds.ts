@@ -1,9 +1,16 @@
-import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
+import * as Schema from "effect/Schema";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
-import { KernelOpenFlags } from "./KernelFileSystem.ts";
 import { RIGHTS } from "./wasi/internal_wasi_descriptors.ts";
 import { applyFileActions } from "./program/KernelProgramFileActions.ts";
 import { kernelError } from "./filesystem/KernelFileSystemErrors.ts";
+
+export const InheritedFd = Schema.Struct({
+  childFd: Schema.Int.check(Schema.isGreaterThanOrEqualTo(3)),
+  path: Schema.String.check(Schema.isPattern(/^\/[^\0]*$/)).check(Schema.isMaxLength(16_384)),
+  flags: Schema.Literal(0),
+  offset: Schema.Literal(0),
+});
+export type InheritedFd = typeof InheritedFd.Type;
 
 /** Reopening is the same contract for local children and native Runner children. */
 export function describeInheritedFd(
@@ -27,10 +34,10 @@ export function describeInheritedFd(
     throw kernelError("ENOTSUP", "An inherited file must still have a linked path");
   }
   const offset = Number(descriptor.offset);
-  if (!Number.isSafeInteger(offset) || offset < 0) {
-    throw kernelError("ENOTSUP", "Inherited file offset is outside the supported range");
+  if (offset !== 0) {
+    throw kernelError("ENOTSUP", "Only inherited files at offset zero are supported");
   }
-  return { childFd, path, flags: KernelOpenFlags.O_RDONLY, offset };
+  return { childFd, path, flags: 0, offset: 0 };
 }
 
 export function reopenInheritedFds(

@@ -144,7 +144,16 @@ export class RunnerExecChild implements KernelCommandChild {
         argv: [...command.argv],
         cwd,
         env: { ...command.env },
-        ...(command.inheritedFds === undefined ? {} : { inheritedFds: command.inheritedFds }),
+        ...(command.inheritedFds === undefined
+          ? {}
+          : {
+              inheritedFds: command.inheritedFds.map(({ childFd, path, flags, offset }) => ({
+                childFd,
+                path,
+                flags,
+                offset,
+              })),
+            }),
       });
       this.#started = true;
     } catch (error) {

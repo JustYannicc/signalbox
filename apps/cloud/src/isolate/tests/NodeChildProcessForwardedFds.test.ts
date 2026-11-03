@@ -13,6 +13,7 @@ import { ExecCommandMessage, ExecReport } from "@signalbox/runner-protocol/ExecP
 import { makeRunnerExecHost } from "../../../../server/src/signalbox/runner/RunnerExecHost.ts";
 import { makeRunnerExecProcessHost } from "../../../../server/src/signalbox/runner/RunnerExecProcessHost.ts";
 import { makeThreadExecForwarder } from "../../thread/exec/ThreadExecForwarder.ts";
+import { driveFileSystem } from "../../../../server/src/signalbox/runner/RunnerInheritedFds.fixture.ts";
 import { inheritedFdsFixture } from "./NodeChildProcessInheritedFds.fixture.ts";
 
 const decodeCommand = Schema.decodeUnknownSync(ExecCommandMessage);
@@ -21,7 +22,7 @@ const decodeReport = Schema.decodeUnknownSync(ExecReport);
 it.effect("reads an isolate file at fd 3 through Computer, the exec wire and native Runner", () =>
   Effect.gen(function* () {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "forwarded-fd-"));
-    const native = makeRunnerExecProcessHost();
+    const native = makeRunnerExecProcessHost({ inheritedFiles: driveFileSystem(root) });
     const runner = yield* makeRunnerExecHost({
       threadId: ThreadId.make("inherited-fd-test"),
       generation: 1,
@@ -45,7 +46,8 @@ it.effect("reads an isolate file at fd 3 through Computer, the exec wire and nat
     forwarder.connected(socket, {
       generation: 1,
       connection: 1,
-      protocolVersion: 9,
+      protocolVersion: 8,
+      inheritedFds: true,
       exec: true,
       send(message) {
         if (message.type !== "exec.command") return;
@@ -57,15 +59,13 @@ it.effect("reads an isolate file at fd 3 through Computer, the exec wire and nat
         forwarder.report(socket, 1, 1, decodeReport(JSON.parse(JSON.stringify(report)))),
       ),
     ).pipe(Effect.forkScoped);
-    const h = inheritedFdsFixture("computer", forwarder, root);
+    const h = inheritedFdsFixture("computer", forwarder, "/workspace");
     try {
-      h.fs.mkdirSync("/workspace");
-      const path = NodePath.join(root, "target.txt");
-      h.fs.writeFileSync(path, "skip:single-file grep\n");
-      // Materialize this test's Drive view at the same absolute path for native reopening.
-      NodeFS.writeFileSync(path, h.fs.readFileSync(path));
+      const path = "/workspace/target.txt";
+      h.fs.writeFileSync(path, "single-file grep\n");
+      // The Runner's Drive view has a different native path from the isolate.
+      NodeFS.writeFileSync(NodePath.join(root, "target.txt"), h.fs.readFileSync(path));
       const fd = h.fs.openSync(path, "r");
-      h.fs.readSync(fd, new Uint8Array(5), 0, 5, null);
       const child = h.childProcess.spawn(
         process.execPath,
         ["-e", "process.stdout.write(require('node:fs').readFileSync(3))"],

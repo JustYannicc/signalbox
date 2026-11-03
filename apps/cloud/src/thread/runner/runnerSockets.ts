@@ -410,6 +410,7 @@ export async function onRunnerMessage(
         generation: result.generation,
         connection: result.connection,
         protocolVersion: message.protocolVersion,
+        inheritedFds: message.inheritedFds === true,
         exec: message.protocolVersion >= EXEC_PROTOCOL_VERSION && message.exec === true,
         send: (frame) => {
           if (socket.readyState !== WebSocket.OPEN) throw new Error("Runner socket is closed");

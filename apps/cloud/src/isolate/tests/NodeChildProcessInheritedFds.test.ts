@@ -45,14 +45,13 @@ it.each(["kernel", "computer"] as const)(
     try {
       h.fs.writeFileSync("/work/target.txt", "skip:remaining bytes");
       const fd = h.fs.openSync("/work/target.txt", "r");
-      h.fs.readSync(fd, new Uint8Array(5), 0, 5, null);
       const child = h.childProcess.spawn("/bin/read-fd", ["fd", "6"], {
         stdio: ["pipe", "pipe", "pipe", "ignore", null, undefined, fd],
       });
       expect(child.stdio.slice(3)).toEqual([null, null, null, null]);
-      expect(await collect(child)).toBe("remaining bytes");
-      // Reopening gives the child its own offset in either placement.
-      expect(h.fs.readFileSync(fd).toString()).toBe("remaining bytes");
+      expect(await collect(child)).toBe("skip:remaining bytes");
+      // Reading the child does not consume the parent's open file.
+      expect(h.fs.readFileSync(fd).toString()).toBe("skip:remaining bytes");
       h.fs.closeSync(fd);
     } finally {
       await h.close();
@@ -132,3 +131,21 @@ it("continues to refuse IPC, stream objects and extra pipes", async () => {
     await h.close();
   }
 });
+
+it.each(["kernel", "computer"] as const)(
+  "refuses a nonzero inherited offset through %s",
+  async (route) => {
+    const h = harness(route);
+    try {
+      h.fs.writeFileSync("/work/target.txt", "offset contents");
+      const fd = h.fs.openSync("/work/target.txt", "r");
+      h.fs.readSync(fd, new Uint8Array(1), 0, 1, null);
+      expect(() =>
+        h.childProcess.spawn("/bin/read-fd", { stdio: ["pipe", "pipe", "pipe", fd] }),
+      ).toThrow(expect.objectContaining({ code: "ENOTSUP" }));
+      h.fs.closeSync(fd);
+    } finally {
+      await h.close();
+    }
+  },
+);
