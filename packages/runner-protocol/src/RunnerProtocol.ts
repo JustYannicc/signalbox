@@ -77,8 +77,8 @@ import { MachineFilesRequest, MachineFilesResult } from "./MachineFilesProtocol.
  * text-bearing frames.
  */
 
-export const RUNNER_PROTOCOL_VERSION = 8;
-/** Versions 5 through 7 remain readable while existing machines finish their image rollout. */
+export const RUNNER_PROTOCOL_VERSION = 9;
+/** Older versions remain readable while existing machines finish their image rollout. */
 export const MIN_RUNNER_PROTOCOL_VERSION = 5;
 
 export const RUNNER_HEARTBEAT_PING = "ping";

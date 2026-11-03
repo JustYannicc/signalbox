@@ -2,6 +2,17 @@ import * as Schema from "effect/Schema";
 
 /** First Runner protocol version with non-PTY exec commands and reports. */
 export const EXEC_PROTOCOL_VERSION = 8;
+export const EXEC_INHERITED_FDS_PROTOCOL_VERSION = 9;
+
+export const InheritedFd = Schema.Struct({
+  childFd: Schema.Int.check(Schema.isGreaterThanOrEqualTo(3)),
+  path: Schema.String.check(Schema.isPattern(/^\/[^\0]*$/)).check(Schema.isMaxLength(16_384)),
+  flags: Schema.Literal(0),
+  offset: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).check(
+    Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+  ),
+});
+export type InheritedFd = typeof InheritedFd.Type;
 
 const Id = Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(128));
 const Text = Schema.String.check(Schema.isMaxLength(16_384));
@@ -31,6 +42,7 @@ export const ExecCommand = Schema.Union([
     argv: Schema.Array(Text).check(Schema.isMinLength(1)).check(Schema.isMaxLength(4_096)),
     cwd: Text.check(Schema.isNonEmpty()),
     env: Environment,
+    inheritedFds: Schema.optional(Schema.Array(InheritedFd)),
   }),
   Schema.Struct({
     type: Schema.Literal("stdin.write"),

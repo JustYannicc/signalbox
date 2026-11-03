@@ -105,6 +105,8 @@ export interface WasiDescriptorSpec {
 
 export interface WasiDescriptor {
   fd: number;
+  /** Child POSIX number when WASI reserves this handle's original slot for a preopen. */
+  posixFd?: number;
   readonly kind: WasiDescriptorSpec["kind"];
   readonly mount?: WasiMountedStorage | undefined;
   readonly inode?: Inode | undefined;
@@ -149,6 +151,7 @@ export interface WasiForkOptions {
 /** A descriptor handle whose offset and status flags proxy a shared open file. */
 class WasiDescriptorHandle implements WasiDescriptor {
   #fd: number;
+  posixFd?: number;
   readonly #description: WasiOpenDescription;
   readonly #capabilityRoot: Inode | undefined;
   readonly #ancestors: Inode[] | undefined;
@@ -385,6 +388,13 @@ export class WasiDescriptorTable {
     const descriptor = this.#descriptors.get(normalized);
     if (descriptor === undefined) throw new WasiError(EBADF);
     return descriptor;
+  }
+
+  getPosix(fd: number): WasiDescriptor {
+    for (const descriptor of this.#descriptors.values()) {
+      if (descriptor.posixFd === fd) return descriptor;
+    }
+    return this.get(fd);
   }
 
   *withRetained<T>(

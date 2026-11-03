@@ -7,6 +7,8 @@ import {
   type DeviceInfo,
 } from "./filesystem/KernelVirtualDevices.ts";
 import { joinGuestPath } from "./filesystem/KernelPathResolver.ts";
+import { descriptorPathAlias } from "./filesystem/KernelPathAliases.ts";
+import { currentKernelIoMode } from "./process/KernelExecution.ts";
 import { complete, type WasiCall } from "./wasi/internal_wasi_calls.ts";
 import { FDFLAGS, RIGHTS } from "./wasi/internal_wasi_descriptors.ts";
 import { writeFilestat } from "./wasi/internal_wasi_fd_calls.ts";
@@ -29,6 +31,17 @@ class DevicePath extends Error {
   }
 }
 
+class DescriptorPath extends Error {
+  readonly path: string;
+  readonly mount: WasiMountedStorage;
+
+  constructor(path: string, mount: WasiMountedStorage) {
+    super("Child descriptor path");
+    this.path = path;
+    this.mount = mount;
+  }
+}
+
 /** Reuses preview1 validation and traversal, then opens devices on the owner's table. */
 export function createKernelWasiDeviceAdapter(
   filesystem: KernelFileSystem,
@@ -43,6 +56,12 @@ export function createKernelWasiDeviceAdapter(
         // Only an absent /dev directory may supply the virtual namespace itself.
         // Existing directories, symlinks and shadowing files have already won the lookup.
         const tail = remaining.filter((component) => component !== "");
+        const alias = joinGuestPath(missing, tail);
+        if (descriptorPathAlias(alias) !== undefined) {
+          filesystem.assertWasiPathVisible(parent.mount, [...parent.pathComponents, name, ...tail]);
+          if (requireDirectory) throw new WasiError(54);
+          throw new DescriptorPath(alias, parent.mount);
+        }
         const namespace = missing === "/dev";
         const path = namespace && tail.length > 0 ? `${missing}/${tail[0]}` : missing;
         const info = virtualDevice(path);
@@ -74,7 +93,7 @@ export function createKernelWasiDeviceAdapter(
         try {
           return yield* calls.imports.path_open(...args);
         } catch (error) {
-          if (!(error instanceof DevicePath)) throw error;
+          if (!(error instanceof DevicePath || error instanceof DescriptorPath)) throw error;
           const [, , , , oflags, rightsBase, , fdflags, output] = args;
           if ((oflags & 8) !== 0 && error.mount.readOnly) throw new WasiError(69);
           const fd = filesystem.open(error.path, kernelOpenFlags(oflags, rightsBase, fdflags));
@@ -95,8 +114,42 @@ export function createKernelWasiDeviceAdapter(
         try {
           return yield* calls.imports.path_filestat_get(...args);
         } catch (error) {
+          if (error instanceof DescriptorPath) {
+            const stat = yield* complete(
+              currentKernelIoMode() === "sync"
+                ? (args[1] & 1) !== 0
+                  ? filesystem.stat(error.path)
+                  : filesystem.lstat(error.path)
+                : (args[1] & 1) !== 0
+                  ? filesystem.statAsync(error.path)
+                  : filesystem.lstatAsync(error.path),
+            );
+            writeFilestat(
+              memory,
+              args[4],
+              stat.dev,
+              stat.ino,
+              { ...stat, type: stat.type === "character" ? "file" : stat.type },
+              stat.type,
+            );
+            return 0;
+          }
           if (!(error instanceof DevicePath)) throw error;
           writeDeviceStat(memory, args[4], error.info);
+          return 0;
+        }
+      },
+      path_readlink: function* (...args): WasiCall<number> {
+        try {
+          return yield* calls.imports.path_readlink(...args);
+        } catch (error) {
+          if (!(error instanceof DescriptorPath)) throw error;
+          const target = new TextEncoder().encode(filesystem.readlink(error.path));
+          const used = Math.min(args[4], Math.max(0, target.length - memory.transferOffset));
+          memory
+            .writeRange(args[3], used)
+            .set(target.subarray(memory.transferOffset, memory.transferOffset + used));
+          memory.u32(args[5], used);
           return 0;
         }
       },

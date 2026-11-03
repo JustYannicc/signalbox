@@ -5,8 +5,11 @@ import * as NodePath from "node:path";
 import * as NodePathPosix from "node:path/posix";
 
 import type { ExecCommand } from "@signalbox/runner-protocol/ExecProtocol";
+import { withRunnerInheritedFds } from "./RunnerInheritedFds.ts";
 
 export type RunnerExecStartCommand = Extract<ExecCommand, { readonly type: "start" }>;
+export type RunnerExecProcess = NodeChildProcess.ChildProcess &
+  Pick<NodeChildProcess.ChildProcessWithoutNullStreams, "stdin" | "stdout" | "stderr">;
 
 export type WorkingDirectoryResult =
   | { readonly _tag: "ready"; readonly cwd: string }
@@ -15,10 +18,7 @@ export type WorkingDirectoryResult =
 
 export interface RunnerExecProcessHost {
   readonly resolveWorkingDirectory: (cwd: string) => WorkingDirectoryResult;
-  readonly spawn: (
-    command: RunnerExecStartCommand,
-    cwd: string,
-  ) => NodeChildProcess.ChildProcessWithoutNullStreams;
+  readonly spawn: (command: RunnerExecStartCommand, cwd: string) => RunnerExecProcess;
 }
 
 interface RunnerExecProcessHostOptions {
@@ -76,14 +76,26 @@ export const makeRunnerExecProcessHost = (
       return { _tag: "ready", cwd };
     },
     spawn(command, cwd) {
-      return spawn(command.executable, command.argv.slice(1), {
-        argv0: command.argv[0],
-        cwd,
-        env: { ...command.env },
-        shell: false,
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
+      return withRunnerInheritedFds(command.inheritedFds ?? [], (stdio) => {
+        const child = spawn(command.executable, command.argv.slice(1), {
+          argv0: command.argv[0],
+          cwd,
+          env: { ...command.env },
+          shell: false,
+          stdio,
+          windowsHide: true,
+        });
+        assertPipedChild(child);
+        return child;
       });
     },
   };
 };
+
+function assertPipedChild(
+  child: NodeChildProcess.ChildProcess,
+): asserts child is RunnerExecProcess {
+  if (!child.stdin || !child.stdout || !child.stderr) {
+    throw new Error("Runner exec requires three piped standard descriptors");
+  }
+}

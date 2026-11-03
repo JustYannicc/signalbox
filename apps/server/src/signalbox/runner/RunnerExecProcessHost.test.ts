@@ -9,7 +9,13 @@ import { makeRunnerExecProcessHost } from "./RunnerExecProcessHost.ts";
 
 describe("RunnerExecProcessHost", () => {
   it("keeps the canonical cwd and passes exact command fields to native spawn", () => {
-    const spawn = vi.fn();
+    const spawn = vi.fn(
+      (_executable: string, _argv: readonly string[], _options: NodeChildProcess.SpawnOptions) => ({
+        stdin: {},
+        stdout: {},
+        stderr: {},
+      }),
+    );
     const host = makeRunnerExecProcessHost({
       realpath: (path) => {
         if (path === "/workspace" || path === "/workspace/src") return path;

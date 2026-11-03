@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 
 import { unsupportedNodeOperation } from "../process/NodeError.ts";
 import type { NodeProcessHostContext } from "../process/context.ts";
+import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
 
 export interface NodeChildProcessOptions {
   readonly argv0?: string;
@@ -41,7 +42,13 @@ export interface NormalizedSpawn {
   readonly argv: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly cwd: string;
-  readonly stdio: readonly [NodeChildProcessStdio, NodeChildProcessStdio, NodeChildProcessStdio];
+  readonly stdio: readonly [
+    NodeChildProcessStdio,
+    NodeChildProcessStdio,
+    NodeChildProcessStdio,
+    ...("ignore" | number)[],
+  ];
+  readonly inheritedFds?: readonly InheritedFd[];
   readonly signal?: AbortSignal;
   readonly timeout: number;
   readonly killSignal: number;
@@ -120,9 +127,7 @@ export function normalizeEnvironment(
   return environment;
 }
 
-function normalizeStdio(
-  stdio: unknown,
-): readonly [NodeChildProcessStdio, NodeChildProcessStdio, NodeChildProcessStdio] {
+function normalizeStdio(stdio: unknown): NormalizedSpawn["stdio"] {
   if (stdio === undefined || stdio === null) return ["pipe", "pipe", "pipe"];
   if (typeof stdio === "string") {
     return [
@@ -132,11 +137,16 @@ function normalizeStdio(
     ];
   }
   if (!Array.isArray(stdio)) unsupportedNodeOperation("child_process.stdio mode");
-  if (stdio.length > 3) unsupportedNodeOperation("child_process.stdio mode");
   return [
     normalizeStdioEntry(stdio[0], 0),
     normalizeStdioEntry(stdio[1], 1),
     normalizeStdioEntry(stdio[2], 2),
+    ...Array.from({ length: Math.max(0, stdio.length - 3) }, (_, index) => {
+      const value: unknown = stdio[index + 3];
+      if (value === undefined || value === null || value === "ignore") return "ignore";
+      if (typeof value !== "number") unsupportedNodeOperation("child_process.stdio mode");
+      return normalizeStdioFd(value);
+    }),
   ];
 }
 
@@ -145,12 +155,16 @@ function normalizeStdioEntry(value: unknown, index: 0 | 1 | 2): NodeChildProcess
   if (value === undefined || value === null || value === "pipe") return "pipe";
   if (value === "ignore") return value;
   if (typeof value === "number") {
-    if (!Number.isSafeInteger(value) || value < 0) {
-      throw new TypeError('The "stdio" option must contain non-negative integer file descriptors');
-    }
-    return value;
+    return normalizeStdioFd(value);
   }
   unsupportedNodeOperation("child_process.stdio mode");
+}
+
+function normalizeStdioFd(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError('The "stdio" option must contain non-negative integer file descriptors');
+  }
+  return value;
 }
 
 function normalizeShell(shell: boolean | string | undefined): string | undefined {

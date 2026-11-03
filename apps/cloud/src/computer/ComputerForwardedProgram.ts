@@ -12,6 +12,8 @@ import { KernelProcessSignal } from "../kernel/KernelProcessSignal.ts";
 import type { KernelProgramAdmissionRequest } from "../kernel/KernelProgramAdmission.ts";
 import { KernelOpenFlags } from "../kernel/KernelFileSystem.ts";
 import { inheritsKernelCommandDescriptor } from "../kernel/KernelCommandDescriptors.ts";
+import { describeInheritedFd } from "../kernel/KernelInheritedFds.ts";
+import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
 
 const FORWARDING_UNAVAILABLE_EXIT_CODE = 126;
 const encoder = new TextEncoder();
@@ -124,6 +126,7 @@ export function createComputerForwardedProgram(
     executable: command.executable,
     argv: Object.freeze([...command.argv]),
     env: Object.freeze({ ...command.env }),
+    inheritedFds: command.inheritedFds,
   });
   return Object.freeze({
     kind: "async" as const,
@@ -135,7 +138,7 @@ export function createComputerForwardedProgram(
       if (!sameEnvironment(captured.env, context.env)) {
         throw new Error("Forwarded program environment changed after admission");
       }
-      assertForwardableDescriptors(context);
+      assertForwardableDescriptors(context, captured.inheritedFds ?? []);
       let child: KernelCommandChild;
       try {
         child = await machine.spawn(
@@ -144,6 +147,7 @@ export function createComputerForwardedProgram(
             argv: captured.argv,
             cwd: context.filesystem.cwd,
             env: captured.env,
+            ...(captured.inheritedFds === undefined ? {} : { inheritedFds: captured.inheritedFds }),
           }),
           context.signal,
         );
@@ -179,10 +183,30 @@ function sameEnvironment(
   return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
 }
 
-function assertForwardableDescriptors(context: KernelAsyncProgramContext) {
+function assertForwardableDescriptors(
+  context: KernelAsyncProgramContext,
+  inheritedFds: readonly InheritedFd[],
+) {
   for (const [fd, descriptor] of context.filesystem.descriptors.entries()) {
     if (fd > 2 && !descriptor.preopen) {
+      const mapping = inheritedFds.find((file) => file.childFd === fd);
+      if (mapping !== undefined) {
+        const actual = describeInheritedFd(context.filesystem, fd, fd);
+        if (
+          actual.path === mapping.path &&
+          actual.flags === mapping.flags &&
+          actual.offset === mapping.offset
+        )
+          continue;
+      }
       throw Object.assign(new Error("Machine forwarding cannot carry extra process descriptors"), {
+        code: "ENOTSUP",
+      });
+    }
+  }
+  for (const mapping of inheritedFds) {
+    if (!context.filesystem.descriptors.has(mapping.childFd)) {
+      throw Object.assign(new Error("Inherited file descriptor is missing after preparation"), {
         code: "ENOTSUP",
       });
     }

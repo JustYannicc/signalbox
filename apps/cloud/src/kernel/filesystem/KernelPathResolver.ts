@@ -95,7 +95,7 @@ export class KernelPathResolver {
   }
 
   setCwdFromDescriptor(fd: number): void {
-    const descriptor = withKernelErrors(() => this.#descriptors.get(fd));
+    const descriptor = withKernelErrors(() => this.#descriptors.getPosix(fd));
     if (
       descriptor.kind !== "directory" ||
       descriptor.mount === undefined ||
@@ -388,7 +388,7 @@ export class KernelPathResolver {
 
   #descriptorForSuffix(fd: number): WasiDescriptor {
     try {
-      return withKernelErrors(() => this.#descriptors.get(fd));
+      return withKernelErrors(() => this.#descriptors.getPosix(fd));
     } catch (error) {
       if (isKernelError(error, "EBADF")) throw kernelError("ENOENT");
       throw error;

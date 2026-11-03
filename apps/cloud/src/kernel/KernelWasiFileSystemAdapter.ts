@@ -5,6 +5,7 @@ import type { WasiCreationPolicy } from "./wasi/internal_wasi_path_calls.ts";
 import { KernelBrokenPipeError } from "./KernelPipe.ts";
 import { KernelProcessSignal, type KernelSigpipeDisposition } from "./KernelProcessSignal.ts";
 import { createKernelWasiDeviceAdapter } from "./KernelWasiDevices.ts";
+import { prepareWasiInheritedFds } from "./KernelWasiInheritedFds.ts";
 import { complete, type WasiCall } from "./wasi/internal_wasi_calls.ts";
 import type { WasiFileSystemImportAdapter } from "./wasi/internal_wasi_lifecycle.ts";
 import { nimbusWasiMetadata } from "./KernelNimbusWasiMetadata.ts";
@@ -31,6 +32,7 @@ export function createKernelWasiFileSystemAdapter(
   options: KernelWasiSignalOptions = {},
   fileSystemOptions: KernelWasiFileSystemOptions = {},
 ): WasiFileSystemImportAdapter {
+  prepareWasiInheritedFds(filesystem);
   const devices = createKernelWasiDeviceAdapter(filesystem, fileSystemOptions.createInode);
   const prepared: WasiFileSystemImportAdapter = (memory, imports) => {
     const base = devices(memory, imports);

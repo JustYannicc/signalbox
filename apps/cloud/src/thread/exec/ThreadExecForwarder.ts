@@ -1,5 +1,6 @@
 import {
   EXEC_PROTOCOL_VERSION,
+  EXEC_INHERITED_FDS_PROTOCOL_VERSION,
   type ExecReport,
   type ExecCommandMessage,
 } from "@signalbox/runner-protocol/ExecProtocol";
@@ -215,6 +216,15 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
       }
       if (signal.aborted)
         throw signal.reason instanceof Error ? signal.reason : new Error("Spawn cancelled");
+      if (
+        command.inheritedFds?.length &&
+        connection.value.protocolVersion < EXEC_INHERITED_FDS_PROTOCOL_VERSION
+      ) {
+        throw unavailable(
+          "RUNNER_NOT_READY",
+          "This Runner cannot reopen inherited file descriptors. Upgrade the Runner.",
+        );
+      }
       if (this.#options.workspace === undefined) {
         throw unavailable(
           "WORKSPACE_NOT_READY",

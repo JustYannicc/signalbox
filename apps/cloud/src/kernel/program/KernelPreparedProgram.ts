@@ -1,4 +1,6 @@
 import type { KernelHandle } from "../KernelAbi.ts";
+import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
+import { reopenInheritedFds } from "../KernelInheritedFds.ts";
 import type { KernelFileByteSelection } from "../KernelFileBytes.ts";
 import { KernelFileSystem } from "../KernelFileSystem.ts";
 import { inheritsKernelCommandDescriptor } from "../KernelCommandDescriptors.ts";
@@ -27,6 +29,7 @@ export interface KernelProgramPrepareInput {
 }
 
 export interface KernelProgramPrepareOptions {
+  readonly inheritedFds?: readonly InheritedFd[];
   /** Optional target lets the host select the process view before file actions. */
   readonly executable?: string;
   readonly cwd?: string;
@@ -213,6 +216,8 @@ export function prepareKernelProgram(
       }
       if (options.cwd !== undefined) childFilesystem.chdir(options.cwd);
       applyFileActions(childFilesystem, [...preparedActions, ...(options.actions ?? [])]);
+      if (options.inheritedFds !== undefined)
+        reopenInheritedFds(childFilesystem, options.inheritedFds);
       assertKernelFileByteSelectionCompatible(childTable.entries(), childFilesystem.fileBytes, {
         survivingOnly: true,
       });

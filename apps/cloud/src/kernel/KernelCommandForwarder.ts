@@ -1,4 +1,5 @@
 import type { KernelResult } from "./KernelAbi.ts";
+import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
 
 export interface KernelCommand {
   /** Executable identity is separate from argv[0], which may be overridden by the caller. */
@@ -8,6 +9,7 @@ export interface KernelCommand {
   readonly cwd: string;
   /** Complete process environment after applying the caller's environment policy. */
   readonly env: Readonly<Record<string, string>>;
+  readonly inheritedFds?: readonly InheritedFd[];
 }
 
 export interface KernelCommandExit {

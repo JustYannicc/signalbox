@@ -326,7 +326,7 @@ export class KernelFileSystemOpen {
 
   #getAlias(fd: number): WasiDescriptor {
     try {
-      return withKernelErrors(() => this.#descriptors.get(fd));
+      return withKernelErrors(() => this.#descriptors.getPosix(fd));
     } catch (error) {
       if (isCode(error, "EBADF")) throw kernelError("ENOENT");
       throw error;

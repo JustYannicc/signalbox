@@ -2,11 +2,15 @@ import {
   KernelCommandExecutor,
   type KernelCommandExecutorOptions,
 } from "../kernel/KernelCommandExecutor.ts";
+import * as Schema from "effect/Schema";
+import { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
 import type { KernelCommand, KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
 import { KernelForwardingUnavailable } from "../kernel/KernelCommandForwarder.ts";
 import type { ChildWorkerRequester } from "./ChildWorkerCapacity.ts";
 import type { ComputerExecPort } from "./Computer.ts";
 import type { ComputerEscalationEvidence, ComputerEscalationTable } from "./EscalationTable.ts";
+
+const decodeInheritedFds = Schema.decodeUnknownSync(Schema.Array(InheritedFd));
 
 export interface ComputerCommandOptions {
   readonly mode?: "legacy";
@@ -141,6 +145,13 @@ function snapshotCommand(command: KernelCommand): KernelCommand {
     argv: Object.freeze([...command.argv]),
     cwd: command.cwd,
     env: Object.freeze(env),
+    ...(command.inheritedFds === undefined
+      ? {}
+      : {
+          inheritedFds: Object.freeze(
+            decodeInheritedFds(command.inheritedFds).map((fd) => Object.freeze(fd)),
+          ),
+        }),
   });
 }
 

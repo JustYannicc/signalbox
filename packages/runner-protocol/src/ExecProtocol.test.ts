@@ -7,6 +7,29 @@ const decodeCommand = Schema.decodeUnknownSync(ExecCommand);
 const decodeReport = Schema.decodeUnknownSync(ExecReport);
 
 describe("Runner exec protocol", () => {
+  it("round trips inherited read-only files and accepts legacy starts without them", () => {
+    const start = {
+      type: "start",
+      generation: 1,
+      processId: "child",
+      requestId: "start",
+      executable: "/bin/cat",
+      argv: ["cat", "/dev/fd/3"],
+      cwd: "/workspace",
+      env: {},
+    };
+    const inherited = {
+      ...start,
+      inheritedFds: [{ childFd: 3, path: "/workspace/file", flags: 0, offset: 7 }],
+    };
+    const encode = Schema.encodeSync(ExecCommand);
+    expect(decodeCommand(JSON.parse(JSON.stringify(encode(decodeCommand(inherited)))))).toEqual(
+      inherited,
+    );
+    expect(decodeCommand(start)).toEqual(start);
+    expect(decodeCommand(start)).not.toHaveProperty("inheritedFds");
+  });
+
   it("accepts byte payloads and numeric signals without rewriting their values", () => {
     const command = {
       type: "signal",
@@ -77,6 +100,28 @@ describe("Runner exec protocol", () => {
         operation: "unknown",
         requestId: "req-1",
         applied: false,
+      }),
+    ).toThrow();
+  });
+
+  it.each([
+    { childFd: 2, path: "/workspace/file", flags: 0, offset: 0 },
+    { childFd: 3, path: "relative/file", flags: 0, offset: 0 },
+    { childFd: 3, path: "/workspace/file", flags: 1, offset: 0 },
+    { childFd: 3, path: "/workspace/file", flags: 0, offset: -1 },
+    { childFd: 3, path: "/workspace/file", flags: 0, offset: Number.MAX_SAFE_INTEGER + 1 },
+  ])("rejects an invalid inherited file mapping %j", (mapping) => {
+    expect(() =>
+      decodeCommand({
+        type: "start",
+        generation: 1,
+        processId: "child",
+        requestId: "start",
+        executable: "/bin/cat",
+        argv: ["cat"],
+        cwd: "/workspace",
+        env: {},
+        inheritedFds: [mapping],
       }),
     ).toThrow();
   });

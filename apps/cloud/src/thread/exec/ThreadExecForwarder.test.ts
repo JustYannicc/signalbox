@@ -76,6 +76,20 @@ function setup(
 }
 
 describe("ThreadExecForwarder", () => {
+  it("does not send inherited fds to a Runner that would silently discard them", async () => {
+    const old = setup();
+    await expect(
+      old.forwarder.spawn(
+        {
+          ...command,
+          inheritedFds: [{ childFd: 3, path: "/workspace/file", flags: 0, offset: 0 }],
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "RUNNER_NOT_READY" });
+    expect(old.frames).toEqual([]);
+    await old.forwarder.dispose();
+  });
   it("requires a negotiated Runner and never emits a command for an older Runner", async () => {
     const withoutLease = setup({});
     await expect(

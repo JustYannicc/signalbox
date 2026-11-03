@@ -241,7 +241,7 @@ export class WasiFdCalls {
 
   *fdPrestatGet(fd: number, output: number): WasiCall<number> {
     const descriptor = this.#descriptors.get(fd);
-    if (!descriptor.preopen || descriptor.preopenPath === undefined) throw new WasiError(ENOTSUP);
+    if (!descriptor.preopen || descriptor.preopenPath === undefined) throw new WasiError(EBADF);
     const pathLength = new TextEncoder().encode(descriptor.preopenPath).byteLength;
     this.#memory.range(output, 8);
     const view = this.#memory.writeView(output, 8);
@@ -253,7 +253,7 @@ export class WasiFdCalls {
 
   *fdPrestatDirName(fd: number, path: number, pathLen: number): WasiCall<number> {
     const descriptor = this.#descriptors.get(fd);
-    if (!descriptor.preopen || descriptor.preopenPath === undefined) throw new WasiError(ENOTSUP);
+    if (!descriptor.preopen || descriptor.preopenPath === undefined) throw new WasiError(EBADF);
     const encoded = new TextEncoder().encode(descriptor.preopenPath);
     const capacity = pathLen >>> 0;
     if (capacity < encoded.byteLength) throw new WasiError(ENAMETOOLONG);
