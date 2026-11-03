@@ -291,7 +291,7 @@ export function createMachineFixture(options: MachineFixtureOptions = {}): Machi
       hydratedBytes.push(await fetchBytes(hydration, at, machineInputPath, signal));
       events.push("hydrate");
       const mount: MachineWorkspaceMount = {
-        async canonicalCwd(command) {
+        async canonicalPath(command) {
           return command.cwd;
         },
         async changes(signal) {

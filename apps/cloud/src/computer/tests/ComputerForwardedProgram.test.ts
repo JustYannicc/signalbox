@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { KernelForwardingUnavailable } from "../../kernel/KernelCommandForwarder.ts";
 import type { KernelCommandChild } from "../../kernel/KernelCommandForwarder.ts";
 import type { KernelProgramAdmissionRequest } from "../../kernel/KernelProgramAdmission.ts";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
@@ -211,4 +212,33 @@ describe("Computer forwarded programs", () => {
       await fixture.close();
     }
   });
+});
+
+it("reports why inherited fd forwarding is unavailable", async () => {
+  const fixture = childBusyboxFixture();
+  const command = {
+    executable: "/bin/probe",
+    argv: fixture.context.args,
+    cwd: fixture.filesystem.cwd,
+    env: fixture.context.env,
+  };
+  try {
+    const program = createComputerForwardedProgram(
+      {
+        spawn: async () => {
+          throw new KernelForwardingUnavailable(
+            "WORKSPACE_NOT_READY",
+            "Inherited fd path outside workspace",
+          );
+        },
+      },
+      command,
+    );
+    await expect(program.run(fixture.context)).resolves.toEqual(exited(126));
+    expect(fixture.stderr()).toBe(
+      "signalbox: Inherited fd path outside workspace (WORKSPACE_NOT_READY)\n",
+    );
+  } finally {
+    await fixture.close();
+  }
 });

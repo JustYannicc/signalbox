@@ -134,7 +134,7 @@ function createMachineWorkspaceMount(
   tracked: BoxdProofTrackedFile,
   nativeWorkspace: Awaited<ReturnType<typeof prepareBoxdProofNativeWorkspace>>,
 ): MachineWorkspaceMount {
-  const canonicalCwd = async (
+  const canonicalPath = async (
     command: KernelCommand,
     generation: number,
     cwdSignal: AbortSignal,
@@ -142,7 +142,7 @@ function createMachineWorkspaceMount(
     if (generation !== machineGeneration) {
       throw new BoxdProofWorkspaceError("Runner generation does not match the prepared machine");
     }
-    await nativeWorkspace.validateCwd(command.cwd, cwdSignal);
+    await nativeWorkspace.validatePath(command.cwd, cwdSignal);
     return command.cwd;
   };
 
@@ -186,7 +186,7 @@ function createMachineWorkspaceMount(
     return Object.freeze([change]);
   };
 
-  return Object.freeze({ canonicalCwd, changes });
+  return Object.freeze({ canonicalPath, changes });
 }
 
 function snapshotWorkspaceOwnership(

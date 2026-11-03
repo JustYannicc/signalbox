@@ -12,8 +12,8 @@ import { KernelForwardingUnavailable } from "../../kernel/KernelCommandForwarder
 import { RunnerExecChild } from "./RunnerExecChild.ts";
 
 export interface ThreadExecWorkspace {
-  /** Confirms Drive is mounted and returns a canonical guest path; preserves real path errors. */
-  readonly canonicalCwd: (
+  /** Confirms Drive is mounted and canonicalizes command.cwd as a file or directory; preserves path errors. */
+  readonly canonicalPath: (
     command: KernelCommand,
     generation: number,
     signal: AbortSignal,
@@ -228,12 +228,12 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
           "The thread workspace is not ready for a forwarded process.",
         );
       }
-      const canonicalCwd = await this.#options.workspace.canonicalCwd(
+      const canonicalPath = await this.#options.workspace.canonicalPath(
         command,
         lease.generation,
         signal,
       );
-      if (canonicalCwd !== command.cwd || !isWorkspacePath(canonicalCwd)) {
+      if (canonicalPath !== command.cwd || !isWorkspacePath(canonicalPath)) {
         throw unavailable(
           "WORKSPACE_NOT_READY",
           "The thread workspace is not ready for a forwarded process.",
@@ -242,7 +242,7 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
       for (const file of command.inheritedFds ?? []) {
         let canonical: string;
         try {
-          canonical = await this.#options.workspace.canonicalCwd(
+          canonical = await this.#options.workspace.canonicalPath(
             { ...command, cwd: file.path },
             lease.generation,
             signal,
@@ -256,7 +256,7 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
         if (canonical !== file.path || !isWorkspacePath(canonical)) {
           throw unavailable(
             "WORKSPACE_NOT_READY",
-            "Inherited file must be canonical and inside /workspace.",
+            "Inherited fd path outside workspace or not canonical.",
           );
         }
       }
@@ -301,7 +301,7 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
       await this.#options.beforeStart?.(lease.generation, command, signal);
       leaseOwned = false;
       this.#children.set(child.processId, child);
-      await child.start(command, canonicalCwd, signal);
+      await child.start(command, canonicalPath, signal);
       return child;
     } finally {
       if (leaseOwned) await this.#releaseLease(leaseRelease);

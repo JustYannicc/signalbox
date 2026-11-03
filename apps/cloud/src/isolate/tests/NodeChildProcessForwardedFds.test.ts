@@ -40,7 +40,7 @@ it.effect("reads an isolate file at fd 3 through Computer, the exec wire and nat
     );
     const forwarder = makeThreadExecForwarder({
       lease: { acquire: async () => ({ generation: 1, connection: 1, release: async () => {} }) },
-      workspace: { canonicalCwd: async (command) => command.cwd },
+      workspace: { canonicalPath: async (command) => command.cwd },
       policy: { authorize: async () => {} },
     });
     forwarder.connected(socket, {

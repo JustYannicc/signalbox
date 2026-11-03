@@ -158,7 +158,7 @@ export function createComputerForwardedProgram(
           signal: context.signal,
         }).stderr.getWriter();
         try {
-          await stderr.write(encoder.encode(`signalbox: machine unavailable (${error.code})\n`));
+          await stderr.write(encoder.encode(`signalbox: ${error.message} (${error.code})\n`));
         } catch (writeError) {
           if (context.signal.aborted) throw writeError;
         } finally {

@@ -6,6 +6,7 @@ import type { RunnerInheritedFileSystem } from "./RunnerInheritedFds.ts";
 export function driveFileSystem(root: string): RunnerInheritedFileSystem {
   const canonicalRoot = NodeFS.realpathSync(root);
   const native = (path: string) => NodePath.join(root, NodePath.posix.relative("/workspace", path));
+  const openedPaths = new Map<number, string>();
   return {
     realpath(path) {
       const resolved = NodeFS.realpathSync(native(path));
@@ -15,8 +16,21 @@ export function driveFileSystem(root: string): RunnerInheritedFileSystem {
         : NodePath.posix.join("/workspace", relative);
     },
     stat: (path) => NodeFS.statSync(native(path)),
-    open: (path, flags) => NodeFS.openSync(native(path), flags),
+    open(path, flags) {
+      const fd = NodeFS.openSync(native(path), flags);
+      openedPaths.set(fd, path);
+      return fd;
+    },
+    readlink(path) {
+      const fd = Number(path.slice("/proc/self/fd/".length));
+      const openedPath = openedPaths.get(fd);
+      if (openedPath === undefined) throw new Error("Unknown test file descriptor");
+      return openedPath;
+    },
     fstat: NodeFS.fstatSync,
-    close: NodeFS.closeSync,
+    close(fd) {
+      openedPaths.delete(fd);
+      NodeFS.closeSync(fd);
+    },
   };
 }

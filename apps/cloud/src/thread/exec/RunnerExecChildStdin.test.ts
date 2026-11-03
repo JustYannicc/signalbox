@@ -25,7 +25,7 @@ async function fixture() {
         },
       }),
     },
-    workspace: { canonicalCwd: async () => "/workspace" },
+    workspace: { canonicalPath: async () => "/workspace" },
     policy: { authorize: async () => undefined },
   });
   const report = (value: ExecReport) => forwarder.socketHost.report(socket, 1, 1, value);

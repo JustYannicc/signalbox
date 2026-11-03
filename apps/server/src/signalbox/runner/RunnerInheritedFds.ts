@@ -5,6 +5,7 @@ import type { InheritedFd } from "@signalbox/runner-protocol/ExecProtocol";
 
 export interface RunnerInheritedFileSystem {
   readonly realpath: (path: string) => string;
+  readonly readlink: (path: string) => string;
   readonly stat: (path: string) => NodeFS.Stats;
   readonly open: (path: string, flags: number) => number;
   readonly fstat: (fd: number) => NodeFS.Stats;
@@ -13,6 +14,7 @@ export interface RunnerInheritedFileSystem {
 
 const nativeFiles: RunnerInheritedFileSystem = {
   realpath: NodeFS.realpathSync.native,
+  readlink: NodeFS.readlinkSync,
   stat: NodeFS.statSync,
   open: NodeFS.openSync,
   fstat: NodeFS.fstatSync,
@@ -58,15 +60,20 @@ export function withRunnerInheritedFds<T>(
           NodeFS.constants.O_RDONLY | NodeFS.constants.O_NONBLOCK | NodeFS.constants.O_NOFOLLOW,
         );
         opened.push(fd);
+        if (!workspaceFile(files.readlink(`/proc/self/fd/${fd}`))) {
+          throw new Error("Inherited fd path outside workspace after open");
+        }
         const actual = files.fstat(fd);
-        if (!actual.isFile() || actual.dev !== expected.dev || actual.ino !== expected.ino) {
+        if (!actual.isFile()) throw new Error("Inherited file is not a regular file");
+        if (actual.dev !== expected.dev || actual.ino !== expected.ino) {
           throw new Error("Inherited file changed while opening it");
         }
         while (stdio.length <= inherited.childFd) stdio.push("ignore");
         stdio[inherited.childFd] = fd;
       } catch (cause) {
+        const reason = cause instanceof Error ? cause.message : "file unavailable";
         throw new RunnerInheritedFdError(
-          `Cannot reopen inherited fd ${inherited.childFd} (${inherited.path})`,
+          `Cannot reopen inherited fd ${inherited.childFd} (${inherited.path}): ${reason}`,
           { cause },
         );
       }

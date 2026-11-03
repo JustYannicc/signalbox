@@ -146,7 +146,7 @@ export function firstCommandFixture(
     binding ??= await runtime.attach({
       operationId: owner.operationId,
       machine,
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: { authorize: async () => undefined },
       signal,
     });

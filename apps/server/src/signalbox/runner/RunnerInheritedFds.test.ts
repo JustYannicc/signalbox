@@ -46,6 +46,7 @@ it.each([0])("reopens a regular file at fd 3 and offset %s in a native child", a
 
 it.each(["missing", "directory"])("fails clearly when an inherited path is %s", (kind) => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-fd-error-"));
+  NodeFS.mkdirSync(NodePath.join(root, "sub"));
   try {
     expect(() =>
       makeRunnerExecProcessHost({ inheritedFiles: driveFileSystem(root) }).spawn(
@@ -61,7 +62,7 @@ it.each(["missing", "directory"])("fails clearly when an inherited path is %s", 
           inheritedFds: [
             {
               childFd: 3,
-              path: kind === "missing" ? "/workspace/missing" : "/workspace/",
+              path: kind === "missing" ? "/workspace/missing" : "/workspace/sub",
               flags: 0,
               offset: 0,
             },
@@ -69,13 +70,15 @@ it.each(["missing", "directory"])("fails clearly when an inherited path is %s", 
         },
         root,
       ),
-    ).toThrow("Cannot reopen inherited fd 3");
+    ).toThrow(
+      kind === "directory" ? "Inherited file is not a regular file" : "Cannot reopen inherited fd 3",
+    );
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
 });
 
-it.each(["parent", "host", "symlink", "replaced", "offset"])(
+it.each(["parent", "host", "symlink", "replaced", "opened-escape", "offset"])(
   "refuses an inherited %s escape or unsupported file",
   (kind) => {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "runner-drive-"));
@@ -88,7 +91,9 @@ it.each(["parent", "host", "symlink", "replaced", "offset"])(
       const checked =
         kind === "replaced"
           ? { ...files, stat: () => NodeFS.statSync(NodePath.join(outside, "target")) }
-          : files;
+          : kind === "opened-escape"
+            ? { ...files, readlink: () => NodePath.join(outside, "target") }
+            : files;
       const path =
         kind === "parent"
           ? "/workspace/../escape"

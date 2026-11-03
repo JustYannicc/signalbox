@@ -282,7 +282,7 @@ describe("boxd proof workspace", () => {
 
     const command = commandAt("/workspace");
     expect(
-      await mount.canonicalCwd(command, machine.generation, new AbortController().signal),
+      await mount.canonicalPath(command, machine.generation, new AbortController().signal),
     ).toBe(command.cwd);
   });
 
@@ -324,7 +324,7 @@ describe("boxd proof workspace", () => {
 
     const command = commandAt("/workspace/.");
     expect(
-      await mount.canonicalCwd(command, machine.generation, new AbortController().signal),
+      await mount.canonicalPath(command, machine.generation, new AbortController().signal),
     ).toBe(command.cwd);
   });
 
@@ -389,14 +389,14 @@ describe("boxd proof workspace", () => {
     vm.addSymlink("escape");
     await expect(remount.changes(new AbortController().signal)).rejects.toThrow(/Symlink/);
     await expect(
-      mount.canonicalCwd(
+      mount.canonicalPath(
         commandAt("/workspace/../outside"),
         machine.generation,
         new AbortController().signal,
       ),
     ).rejects.toThrow(/escapes/);
     await expect(
-      mount.canonicalCwd(
+      mount.canonicalPath(
         commandAt("/workspace/link"),
         machine.generation,
         new AbortController().signal,

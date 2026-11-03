@@ -116,7 +116,7 @@ describe("machine file lookup during exec", () => {
       operationId: owner.operationId,
       machine,
       signal,
-      workspace: { canonicalCwd: async () => command.cwd },
+      workspace: { canonicalPath: async () => command.cwd },
       policy: { authorize: async () => undefined },
     });
     const spawning = binding.spawn(command, signal);
@@ -253,7 +253,7 @@ describe("machine file lookup during exec", () => {
       operationId: owner.operationId,
       machine,
       signal,
-      workspace: { canonicalCwd: async () => command.cwd },
+      workspace: { canonicalPath: async () => command.cwd },
       policy: { authorize: async () => undefined },
     });
     try {

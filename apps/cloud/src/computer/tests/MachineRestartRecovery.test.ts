@@ -404,7 +404,7 @@ describe("MachineCommands durable restart recovery", () => {
 
       const source = createMachineFixture({ journal, machine });
       const resumedMount: MachineWorkspaceMount = {
-        canonicalCwd: async (command) => command.cwd,
+        canonicalPath: async (command) => command.cwd,
         changes: async () => [legacyOutputInode],
       };
       const recovery = createRecoveryFixture({

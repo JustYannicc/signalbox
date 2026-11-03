@@ -241,7 +241,7 @@ function machineWorkspace(
   const freshMount = (): MachineWorkspaceMount => {
     external.mountIds.push(external.mountIds.length + 1);
     return {
-      async canonicalCwd(command) {
+      async canonicalPath(command) {
         return command.cwd;
       },
       async changes(signal) {

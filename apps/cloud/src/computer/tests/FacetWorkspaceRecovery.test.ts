@@ -86,7 +86,7 @@ describe("facet workspace recovery", () => {
 
   it("resumes only the exact machine operation and before revision supplied by its owner", async () => {
     const mount: MachineWorkspaceMount = {
-      canonicalCwd: async () => "/",
+      canonicalPath: async () => "/",
       changes: async () => [],
     };
     const machine = { id: "machine-1", generation: 4, release: async () => {} };

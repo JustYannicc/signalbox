@@ -95,7 +95,7 @@ export interface BoxdProofNativeResumeBaseline {
 }
 
 export interface BoxdProofNativeWorkspace {
-  readonly validateCwd: (requested: string, signal: AbortSignal) => Promise<void>;
+  readonly validatePath: (requested: string, signal: AbortSignal) => Promise<void>;
   readonly readChanges: (
     signal: AbortSignal,
   ) => Promise<BoxdProofNativeWorkspaceChange | undefined>;

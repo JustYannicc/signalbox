@@ -370,7 +370,7 @@ describe("RunnerMachineSockets", () => {
     const runtime = createRunnerMachineRuntime(f.adapter);
     const bindingPromise = runtime.attach({
       ...f.input,
-      workspace: { canonicalCwd: async () => command.cwd },
+      workspace: { canonicalPath: async () => command.cwd },
       policy: { authorize: async () => undefined },
     });
     const config = await f.launched.promise;

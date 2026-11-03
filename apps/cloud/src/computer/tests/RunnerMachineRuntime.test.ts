@@ -72,7 +72,7 @@ function fixture() {
     operationId: owner.operationId,
     machine,
     signal: new AbortController().signal,
-    workspace: { canonicalCwd: async () => command.cwd },
+    workspace: { canonicalPath: async () => command.cwd },
     policy: { authorize: async () => undefined },
   };
   return { runtime, input, connect, quiesce, sent, release, disconnect };
