@@ -106,6 +106,13 @@ it.effect(
             const bytes = await NodeFSP.readFile(NodePath.join(input.outputDirectory, pin.path));
             expect(fixtureHash(bytes)).toBe(pin.sha256);
           }
+          const claudeFacetSource = await NodeFSP.readFile(
+            NodePath.join(input.outputDirectory, "qualifier-claude-implementation.mjs"),
+            "utf8",
+          );
+          expect(
+            [...claudeFacetSource].filter((character) => character.charCodeAt(0) > 0x7f),
+          ).toEqual([]);
           const workerOutputs = Object.values(result.metafiles["qualifier-worker"]!.outputs);
           expect(
             workerOutputs
