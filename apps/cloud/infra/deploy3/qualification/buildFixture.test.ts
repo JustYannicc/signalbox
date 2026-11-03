@@ -110,8 +110,9 @@ it.effect(
             NodePath.join(input.outputDirectory, "qualifier-claude-implementation.mjs"),
             "utf8",
           );
+          // V8 stores Latin-1 sources one-byte; anything above U+00FF doubles the source string.
           expect(
-            [...claudeFacetSource].filter((character) => character.charCodeAt(0) > 0x7f),
+            [...claudeFacetSource].filter((character) => character.charCodeAt(0) > 0xff),
           ).toEqual([]);
           const workerOutputs = Object.values(result.metafiles["qualifier-worker"]!.outputs);
           expect(

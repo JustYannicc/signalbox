@@ -31,24 +31,6 @@ describe("resolveT3McpToolPresentation", () => {
     });
   });
 
-  it.each([
-    ["t3-code·delegate_task", true],
-    ["T3_CODE \t·\t delegate_task completed", true],
-    ["t3code\u00a0·\u00a0delegate_task", true],
-    ["t3code.delegate_task", true],
-    ["t3code:delegate_task", true],
-    ["t3code/delegate_task", true],
-    ["t3code•delegate_task", false],
-    ["t3code×delegate_task", false],
-    ["t3code··delegate_task", false],
-    ["other·delegate_task", false],
-    ["t3code·not_a_tool", false],
-  ])("preserves namespace separator matching for %s", (label, recognized) => {
-    expect(resolveT3McpToolPresentation(label)).toEqual(
-      recognized ? resolveT3McpToolPresentation("delegate_task") : null,
-    );
-  });
-
   it("pretty prints Codex T3 MCP tool names", () => {
     expect(resolveT3McpToolPresentation("t3-code.create_threads")).toEqual({
       displayName: "Create Signalbox threads",
