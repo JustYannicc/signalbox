@@ -72,6 +72,29 @@ describe("Worker startup CPU budget", () => {
     expect(() => requireStartupBudget(profile([1], [300_001]))).toThrow("BUDGET_EXCEEDED");
   });
 
+  it("accepts a valid all-idle profile as zero active startup time", () => {
+    expect(requireStartupBudget({ ...profile([2], [5_000]), endTime: 13_001 }).activeMs).toBe(0);
+    expect(requireStartupBudget({ ...profile([2, 2], [5_000, 5_000]), endTime: 13_001 })).toEqual({
+      sampleCount: 2,
+      negativeDeltaCount: 0,
+      profileWindowMs: 13,
+      sampledMs: 10,
+      idleMs: 10,
+      activeMs: 0,
+      garbageCollectionMs: 0,
+    });
+  });
+
+  it.each([0, 1])("refuses a nonpositive profile window ending at %s", (endTime) => {
+    expect(() => requireStartupBudget({ ...profile([2], [5_000]), endTime })).toThrow(
+      "WORKER_STARTUP_PROFILE_INVALID",
+    );
+  });
+
+  it.each(["samples", "timeDeltas"])("refuses a profile missing %s", (field) => {
+    expect(() => requireStartupBudget({ ...profile(), [field]: undefined })).toThrow();
+  });
+
   it("keeps signed timestamps outside the reported profile window without clamping", () => {
     expect(
       startupProfileSummary({ ...profile([1, 1], [-10, 50]), startTime: 100, endTime: 300 }),
@@ -91,8 +114,8 @@ describe("Worker startup CPU budget", () => {
     [[4], [1_000]],
     [[1], [-1]],
     [[1], [Number.NaN]],
-    [[2], [1_000]],
-  ])("refuses missing, invalid or entirely idle measurements: %j / %j", (samples, intervals) => {
+    [[2], [-1]],
+  ])("refuses missing or invalid measurements: %j / %j", (samples, intervals) => {
     expect(() => requireStartupBudget(profile(samples, intervals))).toThrow();
   });
 });
