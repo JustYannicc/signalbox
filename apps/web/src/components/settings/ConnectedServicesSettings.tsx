@@ -9,7 +9,7 @@ import type { AutomationConnectionStatus, EnvironmentId } from "@t3tools/contrac
 import { useAtomValue } from "@effect/atom-react";
 import {
   groupConnectedServices,
-  type ConnectedServiceGroup,
+  type ConnectedAccountGroup,
 } from "@t3tools/client-runtime/automations/connectedServices";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
@@ -180,7 +180,7 @@ function ExecutorConnection(props: {
       ) : null}
       {status.configured && !status.error ? (
         groups.length > 0 ? (
-          groups.map((group) => <ServiceRow key={group.integration} group={group} />)
+          groups.map((group) => <AccountRow key={group.key} group={group} />)
         ) : (
           <SettingsRow
             title="Nothing connected yet"
@@ -306,25 +306,23 @@ function ConnectForm(props: {
   );
 }
 
-function ServiceRow({ group }: { readonly group: ConnectedServiceGroup }) {
+function AccountRow({ group }: { readonly group: ConnectedAccountGroup }) {
+  const connections = [...new Set(group.apps.map((app) => app.connection))];
   return (
     <SettingsRow
       title={
-        <span className="inline-flex items-center gap-2">
-          <ServiceFavicon domain={group.domain} />
-          {group.label}
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <ServiceFavicon domain={group.apps[0]?.domain ?? ""} />
+          <span className="truncate">{group.label}</span>
         </span>
       }
-      description={
-        <>
-          <code className="font-mono">{group.integration}</code>
-          {group.accounts.length > 1
-            ? ` · pass { connection: "${group.accounts[0]}" } to pick an account`
-            : null}
-        </>
-      }
+      description={group.apps.map((app) => app.label).join(" · ")}
       control={
-        <span className="truncate text-xs text-muted-foreground">{group.accounts.join(", ")}</span>
+        group.verified ? (
+          <span className="truncate font-mono text-xs text-muted-foreground">
+            {connections.join(", ")}
+          </span>
+        ) : null
       }
     />
   );

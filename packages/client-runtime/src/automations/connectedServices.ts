@@ -2,15 +2,24 @@ import type { AutomationConnectedService } from "@t3tools/contracts";
 
 import { serviceIdentity } from "./services.ts";
 
-/** One service in Settings → Connected services, with every account the user connected for it. */
-export interface ConnectedServiceGroup {
+/** One app a connected account reaches, such as Gmail on a Google account. */
+export interface ConnectedApp {
   /** What `w.call` operations start with, e.g. `gmail` in `gmail.users.messages.list`. */
   readonly integration: string;
   readonly label: string;
-  /** Whose favicon stands for the service. */
+  /** Whose favicon stands for the app. */
   readonly domain: string;
-  /** Account names to pass as `{ connection }` when there's more than one. */
-  readonly accounts: ReadonlyArray<string>;
+  /** The connection name to pass as `{ connection }` when there's more than one. */
+  readonly connection: string;
+}
+
+/** One row in Settings → Connected services: an account and the apps it's connected to. */
+export interface ConnectedAccountGroup {
+  readonly key: string;
+  /** The verified identity's label, such as an email, or the connection name when unverified. */
+  readonly label: string;
+  readonly verified: boolean;
+  readonly apps: ReadonlyArray<ConnectedApp>;
 }
 
 const TLD = /^(.+)_(com|io|app|ai|dev|so|co|org|net|sh)$/;
@@ -26,22 +35,44 @@ function describeIntegration(integration: string) {
   return { label, domain: identity?.kind === "domain" ? identity.domain : `${key}.com` };
 }
 
-/** Groups Executor's connections by integration, in the order the server sorted them. */
+/**
+ * Groups connections by the verified identity they signed in as, the way the
+ * tools service's Accounts page does, so one Google account lists Gmail, Drive
+ * and Photos under it. An unverified connection is its own account: a matching
+ * label or email is never proof two connections are the same person. Keeps the
+ * order the server sorted them in.
+ */
 export function groupConnectedServices(
   services: ReadonlyArray<AutomationConnectedService>,
-): ReadonlyArray<ConnectedServiceGroup> {
-  const groups = new Map<string, { readonly integration: string; accounts: string[] }>();
+): ReadonlyArray<ConnectedAccountGroup> {
+  const groups = new Map<
+    string,
+    {
+      readonly key: string;
+      readonly label: string;
+      readonly verified: boolean;
+      apps: ConnectedApp[];
+    }
+  >();
   for (const service of services) {
-    const group = groups.get(service.integration);
-    if (group) group.accounts.push(service.name);
+    const app = {
+      ...describeIntegration(service.integration),
+      integration: service.integration,
+      connection: service.name,
+    };
+    // The prefixes keep a verified id from colliding with a connection's own key.
+    const key = service.account
+      ? `account:${service.account.id}`
+      : `connection:${service.integration}/${service.name}`;
+    const group = groups.get(key);
+    if (group) group.apps.push(app);
     else
-      groups.set(service.integration, {
-        integration: service.integration,
-        accounts: [service.name],
+      groups.set(key, {
+        key,
+        label: service.account?.label ?? service.name,
+        verified: service.account !== undefined,
+        apps: [app],
       });
   }
-  return [...groups.values()].map((group) => ({
-    ...group,
-    ...describeIntegration(group.integration),
-  }));
+  return [...groups.values()];
 }

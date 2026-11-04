@@ -112,14 +112,14 @@ function EnvironmentServices(props: {
         <StatusLine status={status} />
         {status.configured && !status.error
           ? groups.map((group) => (
-              <View key={group.integration} className="flex-row items-center gap-3 px-4 py-3">
-                <ServiceLogo verb="call" service={group.domain} size={30} />
+              <View key={group.key} className="flex-row items-center gap-3 px-4 py-3">
+                <ServiceLogo verb="call" service={group.apps[0]?.domain} size={30} />
                 <View className="min-w-0 flex-1">
                   <Text className="text-base text-foreground" numberOfLines={1}>
                     {group.label}
                   </Text>
-                  <Text className="text-sm text-foreground-muted" numberOfLines={1}>
-                    {group.accounts.join(", ")}
+                  <Text className="text-sm text-foreground-muted" numberOfLines={2}>
+                    {group.apps.map((app) => app.label).join(" · ")}
                   </Text>
                 </View>
               </View>
