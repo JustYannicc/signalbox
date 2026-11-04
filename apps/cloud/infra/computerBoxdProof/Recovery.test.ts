@@ -252,7 +252,7 @@ describe("computer Boxd proof recovery wiring", () => {
         options.runtime.attach({
           operationId: "new-command",
           machine: handle,
-          workspace: { canonicalCwd: async (command) => command.cwd },
+          workspace: { canonicalPath: async (command) => command.cwd },
           policy: { authorize: async () => {} },
           signal,
         }),

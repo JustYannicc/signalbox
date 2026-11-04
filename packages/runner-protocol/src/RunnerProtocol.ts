@@ -78,7 +78,7 @@ import { MachineFilesRequest, MachineFilesResult } from "./MachineFilesProtocol.
  */
 
 export const RUNNER_PROTOCOL_VERSION = 8;
-/** Versions 5 through 7 remain readable while existing machines finish their image rollout. */
+/** Older versions remain readable while existing machines finish their image rollout. */
 export const MIN_RUNNER_PROTOCOL_VERSION = 5;
 
 export const RUNNER_HEARTBEAT_PING = "ping";
@@ -395,6 +395,7 @@ export const RunnerHello = Schema.Struct({
   exec: Schema.optional(Schema.Boolean),
   /** Answers generic machine file lookups and ranged reads. */
   machineFileLookup: Schema.optional(Schema.Boolean),
+  inheritedFds: Schema.optional(Schema.Boolean),
 });
 export type RunnerHello = typeof RunnerHello.Type;
 

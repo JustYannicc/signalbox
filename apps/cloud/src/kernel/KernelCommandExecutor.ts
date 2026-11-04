@@ -91,6 +91,7 @@ export class KernelCommandExecutor implements KernelCommandForwarder {
       },
       {
         cwd: command.cwd,
+        ...(command.inheritedFds === undefined ? {} : { inheritedFds: command.inheritedFds }),
         ...(this.#fileBytes === undefined ? {} : { fileBytes: this.#fileBytes }),
       },
     );

@@ -150,7 +150,7 @@ function installSessionMock() {
     const binding = runtime.attach({
       operationId,
       machine,
-      workspace: { canonicalCwd: async (candidate) => candidate.cwd },
+      workspace: { canonicalPath: async (candidate) => candidate.cwd },
       policy: { authorize: async () => undefined },
       signal,
     });

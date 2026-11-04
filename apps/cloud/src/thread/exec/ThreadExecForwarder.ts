@@ -12,8 +12,8 @@ import { KernelForwardingUnavailable } from "../../kernel/KernelCommandForwarder
 import { RunnerExecChild } from "./RunnerExecChild.ts";
 
 export interface ThreadExecWorkspace {
-  /** Confirms Drive is mounted and returns a canonical guest path; preserves real path errors. */
-  readonly canonicalCwd: (
+  /** Confirms Drive is mounted and canonicalizes command.cwd as a file or directory; preserves path errors. */
+  readonly canonicalPath: (
     command: KernelCommand,
     generation: number,
     signal: AbortSignal,
@@ -44,6 +44,7 @@ export interface RunnerExecConnection {
   readonly connection: number;
   readonly protocolVersion: number;
   readonly exec: boolean;
+  readonly inheritedFds?: boolean;
   readonly machineFileLookup?: boolean;
   readonly send: (message: ExecCommandMessage | MachineFilesRequest) => void;
 }
@@ -215,22 +216,49 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
       }
       if (signal.aborted)
         throw signal.reason instanceof Error ? signal.reason : new Error("Spawn cancelled");
+      if (command.inheritedFds?.length && connection.value.inheritedFds !== true) {
+        throw unavailable(
+          "RUNNER_NOT_READY",
+          "This Runner does not advertise inherited file descriptor support.",
+        );
+      }
       if (this.#options.workspace === undefined) {
         throw unavailable(
           "WORKSPACE_NOT_READY",
           "The thread workspace is not ready for a forwarded process.",
         );
       }
-      const canonicalCwd = await this.#options.workspace.canonicalCwd(
+      const canonicalPath = await this.#options.workspace.canonicalPath(
         command,
         lease.generation,
         signal,
       );
-      if (canonicalCwd !== command.cwd || !isWorkspacePath(canonicalCwd)) {
+      if (canonicalPath !== command.cwd || !isWorkspacePath(canonicalPath)) {
         throw unavailable(
           "WORKSPACE_NOT_READY",
           "The thread workspace is not ready for a forwarded process.",
         );
+      }
+      for (const file of command.inheritedFds ?? []) {
+        let canonical: string;
+        try {
+          canonical = await this.#options.workspace.canonicalPath(
+            { ...command, cwd: file.path },
+            lease.generation,
+            signal,
+          );
+        } catch {
+          throw unavailable(
+            "WORKSPACE_NOT_READY",
+            "Inherited file is unavailable in the Drive workspace.",
+          );
+        }
+        if (canonical !== file.path || !isWorkspacePath(canonical)) {
+          throw unavailable(
+            "WORKSPACE_NOT_READY",
+            "Inherited fd path outside workspace or not canonical.",
+          );
+        }
       }
       if (signal.aborted)
         throw signal.reason instanceof Error ? signal.reason : new Error("Spawn cancelled");
@@ -273,7 +301,7 @@ export class ThreadExecForwarder implements KernelCommandForwarder {
       await this.#options.beforeStart?.(lease.generation, command, signal);
       leaseOwned = false;
       this.#children.set(child.processId, child);
-      await child.start(command, canonicalCwd, signal);
+      await child.start(command, canonicalPath, signal);
       return child;
     } finally {
       if (leaseOwned) await this.#releaseLease(leaseRelease);
@@ -361,6 +389,8 @@ function isWorkspacePath(path: string) {
   return (
     (path === "/workspace" || path.startsWith("/workspace/")) &&
     !path.includes("\\") &&
-    !path.split("/").includes("..")
+    !path.split("/").some((part) => part === ".." || part === ".") &&
+    !path.includes("//") &&
+    !path.includes("\0")
   );
 }

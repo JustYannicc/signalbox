@@ -84,8 +84,8 @@ if not os.path.isabs(requested):
 normalized = os.path.normpath(requested)
 if normalized != root and not normalized.startswith(root + "/"):
     raise RuntimeError("command cwd escapes proof workspace")
-if os.path.realpath(normalized) != normalized or not os.path.isdir(normalized):
-    raise RuntimeError("command cwd must be an existing real directory")
+if os.path.realpath(normalized) != normalized or not (os.path.isfile(normalized) or os.path.isdir(normalized)):
+    raise RuntimeError("command path must be an existing real file or directory")
 print(json.dumps({"cwd": requested}, separators=(",", ":")))
 `;
 
@@ -158,7 +158,7 @@ function createNativeWorkspace<
   sameMetadata: (left: BoxdProofNativeFileMetadata, right: TBaseline) => boolean,
 ): BoxdProofNativeWorkspace {
   return Object.freeze({
-    async validateCwd(requested: string, cwdSignal: AbortSignal) {
+    async validatePath(requested: string, cwdSignal: AbortSignal) {
       await runPython(
         vm,
         machineId,
@@ -166,7 +166,7 @@ function createNativeWorkspace<
         requested,
         BOXD_PROOF_WORKSPACE_ROOT,
         cwdSignal,
-        "validate command cwd",
+        "validate command path",
       );
     },
     async readChanges(changesSignal: AbortSignal) {

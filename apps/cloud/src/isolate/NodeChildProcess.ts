@@ -1,4 +1,5 @@
 import type { KernelProgramHost } from "../kernel/KernelProgramHost.ts";
+import { withInheritedFds } from "./node/childProcess/inheritedFds.ts";
 
 import { unsupportedNodeOperation } from "./node/process/NodeError.ts";
 import {
@@ -111,6 +112,7 @@ export function createNodeChildProcess(
   }
 
   function startChild(normalized: ReturnType<typeof normalizeSpawn>): NodeChildProcess {
+    normalized = withInheritedFds(normalized, process.filesystem);
     const child = new NodeChildProcess(host, process, normalized, transport);
     onChild?.(child, normalized);
     child.start();

@@ -345,6 +345,7 @@ export const makeRunnerSession = Effect.fn("makeRunnerSession")(function* (
         pulls: true,
         exec: exec !== null,
         machineFileLookup: true,
+        inheritedFds: true,
         // A started run missing here went with an earlier process on this machine.
         takenRunIds: yield* turns.taken,
         takenPreparations: yield* turns.preparationsTaken,

@@ -32,6 +32,7 @@ export type KernelNodeChildStdio = readonly [
   KernelNodeChildStdioMode,
   KernelNodeChildStdioMode,
   KernelNodeChildStdioMode,
+  ...("ignore" | number)[],
 ];
 
 export interface KernelNodeChildStdioProgram {
@@ -100,7 +101,7 @@ export function preparePipedKernelProgram(
 export function prepareNodeChildStdioKernelProgram(
   wakes: KernelWakeRegistry,
   input: KernelProgramPrepareInput,
-  options: Pick<KernelProgramPrepareOptions, "cwd">,
+  options: Pick<KernelProgramPrepareOptions, "cwd" | "inheritedFds">,
   stdio: KernelNodeChildStdio,
   borrowedStdio?: NonNullable<KernelProgramPrepareOptions["stdio"]>,
 ): KernelNodeChildStdioProgram {
@@ -155,6 +156,13 @@ export function prepareNodeChildStdioKernelProgram(
       }
 
       return stdio.flatMap((mode, fd): AgentOsSpawnFileAction[] => {
+        if (fd > 2) {
+          return mode === "ignore" &&
+            filesystem.descriptors.has(fd) &&
+            !filesystem.descriptors.get(fd).preopen
+            ? [{ kind: "close", fd, sourceFd: 0, flags: 0, mode: 0 }]
+            : [];
+        }
         if (mode === "ignore") {
           return [
             {

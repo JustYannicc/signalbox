@@ -52,6 +52,7 @@ export const runRunnerCommandSession = Effect.fn("runRunnerCommandSession")(func
         build: input.build,
         exec: true,
         machineFileLookup: true,
+        inheritedFds: true,
       });
 
       const firstMessage = yield* connection.receive;

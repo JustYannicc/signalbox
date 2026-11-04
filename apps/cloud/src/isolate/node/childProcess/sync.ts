@@ -10,6 +10,7 @@ import type { ResolvedProgram } from "../../../kernel/KernelAbi.ts";
 import { abortError, asChildProcessError, childProcessError, unwrapHostResult } from "./errors.ts";
 import { ByteCollector, normalizeOutputOptions } from "./output.ts";
 import { resolveGuestExecutable } from "./resolveExecutable.ts";
+import { withInheritedFds } from "./inheritedFds.ts";
 import { unsupportedNodeOperation } from "../process/NodeError.ts";
 import {
   isArgumentList,
@@ -29,6 +30,7 @@ export interface NodeSpawnSyncResult {
     null,
     NodeBuffer.Buffer | string | null,
     NodeBuffer.Buffer | string | null,
+    ...null[],
   ];
   readonly stdout: NodeBuffer.Buffer | string | null;
   readonly stderr: NodeBuffer.Buffer | string | null;
@@ -134,6 +136,7 @@ function runInline(
   options: NodeSyncOptions,
   command?: string,
 ): NodeSpawnSyncResult {
+  spawn = withInheritedFds(spawn, context.filesystem);
   // Inline execution has no process identity on which to create a group.
   if (spawn.detached) unsupportedNodeOperation("child_process synchronous detached execution");
   const outputOptions = normalizeOutputOptions(options, null);
@@ -150,7 +153,7 @@ function runInline(
     const err = spawn.stdio[2] === "pipe" ? stderr.output(outputOptions.encoding) : null;
     return {
       pid: undefined,
-      output: [null, out, err],
+      output: [null, out, err, ...spawn.stdio.slice(3).map(() => null)],
       stdout: out,
       stderr: err,
       status,
@@ -182,7 +185,10 @@ function runInline(
       prepared = prepareNodeChildStdioKernelProgram(
         host.wakes,
         context,
-        { cwd: spawn.cwd },
+        {
+          cwd: spawn.cwd,
+          ...(spawn.inheritedFds === undefined ? {} : { inheritedFds: spawn.inheritedFds }),
+        },
         spawn.stdio,
         stdio,
       ).prepared;

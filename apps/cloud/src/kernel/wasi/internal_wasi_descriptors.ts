@@ -105,6 +105,8 @@ export interface WasiDescriptorSpec {
 
 export interface WasiDescriptor {
   fd: number;
+  /** Child POSIX number when WASI reserves this handle's original slot for a preopen. */
+  posixFd?: number;
   readonly kind: WasiDescriptorSpec["kind"];
   readonly mount?: WasiMountedStorage | undefined;
   readonly inode?: Inode | undefined;
@@ -149,6 +151,7 @@ export interface WasiForkOptions {
 /** A descriptor handle whose offset and status flags proxy a shared open file. */
 class WasiDescriptorHandle implements WasiDescriptor {
   #fd: number;
+  posixFd?: number;
   readonly #description: WasiOpenDescription;
   readonly #capabilityRoot: Inode | undefined;
   readonly #ancestors: Inode[] | undefined;
@@ -387,6 +390,13 @@ export class WasiDescriptorTable {
     return descriptor;
   }
 
+  getPosix(fd: number): WasiDescriptor {
+    for (const descriptor of this.#descriptors.values()) {
+      if (descriptor.posixFd === fd) return descriptor;
+    }
+    return this.get(fd);
+  }
+
   *withRetained<T>(
     fd: number,
     operation: (descriptor: WasiDescriptor) => WasiCall<T>,
@@ -432,6 +442,7 @@ export class WasiDescriptorTable {
     const fd = this.#findAvailableFd();
     const description = new WasiOpenDescription(spec);
     const descriptor = new WasiDescriptorHandle(fd, spec, description, true);
+    this.#clearPosixAlias(fd);
     this.#descriptors.set(fd, descriptor);
     this.#advanceNextFd(fd);
     return fd;
@@ -455,6 +466,7 @@ export class WasiDescriptorTable {
     if (this.#descriptors.has(normalized)) throw new WasiError(EEXIST);
     if (this.#descriptors.size >= MAX_DESCRIPTORS) throw new WasiError(EMFILE);
     if (!(descriptor instanceof WasiDescriptorHandle)) throw new WasiError(EBADF);
+    this.#clearPosixAlias(normalized);
     descriptor.attach(normalized);
     this.#descriptors.set(normalized, descriptor);
   }
@@ -551,6 +563,7 @@ export class WasiDescriptorTable {
         target.detach();
         yield* target.description.release();
       }
+      this.#clearPosixAlias(targetNumber);
       alias.attach(targetNumber);
       this.#descriptors.set(targetNumber, alias);
       return targetNumber;
@@ -588,6 +601,7 @@ export class WasiDescriptorTable {
       }
       this.#descriptors.delete(sourceNumber);
       source.detach();
+      this.#clearPosixAlias(targetNumber);
       source.attach(targetNumber);
       this.#descriptors.set(targetNumber, source);
     } finally {
@@ -644,6 +658,12 @@ export class WasiDescriptorTable {
         alias.description.rollbackRetain();
       }
       throw error;
+    }
+  }
+
+  #clearPosixAlias(fd: number): void {
+    for (const descriptor of this.#descriptors.values()) {
+      if (descriptor.posixFd === fd) delete descriptor.posixFd;
     }
   }
 

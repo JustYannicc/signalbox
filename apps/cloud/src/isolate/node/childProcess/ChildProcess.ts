@@ -54,6 +54,7 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
     NodeStream.PassThrough | null,
     NodeStream.PassThrough | null,
     NodeStream.PassThrough | null,
+    ...null[],
   ];
   readonly spawnfile: string;
   readonly spawnargs: string[];
@@ -104,7 +105,7 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
     this.stdin = spawn.stdio[0] === "pipe" ? new NodeStream.PassThrough() : null;
     this.stdout = spawn.stdio[1] === "pipe" ? new NodeStream.PassThrough() : null;
     this.stderr = spawn.stdio[2] === "pipe" ? new NodeStream.PassThrough() : null;
-    this.stdio = [this.stdin, this.stdout, this.stderr];
+    this.stdio = [this.stdin, this.stdout, this.stderr, ...spawn.stdio.slice(3).map(() => null)];
     this.#stdoutClosed = this.stdout === null;
     this.#stderrClosed = this.stderr === null;
 
@@ -202,7 +203,12 @@ export class NodeChildProcess extends NodeEvents.EventEmitter {
         prepared = prepareNodeChildStdioKernelProgram(
           this.#host.wakes,
           input,
-          { cwd: this.#spawn.cwd },
+          {
+            cwd: this.#spawn.cwd,
+            ...(this.#spawn.inheritedFds === undefined
+              ? {}
+              : { inheritedFds: this.#spawn.inheritedFds }),
+          },
           this.#spawn.stdio,
         );
       }

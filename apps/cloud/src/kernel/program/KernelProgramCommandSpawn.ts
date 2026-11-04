@@ -56,6 +56,7 @@ export async function spawnKernelCommandPiped(
     argv: Object.freeze([...command.argv]),
     env: Object.freeze({ ...command.env }),
     cwd: command.cwd,
+    ...(command.inheritedFds === undefined ? {} : { inheritedFds: command.inheritedFds }),
   });
   const capturedInput = Object.freeze({
     filesystem: input.filesystem,
@@ -139,7 +140,12 @@ export async function spawnKernelCommandPiped(
       piped = preparePipedKernelProgram(
         options.wakes,
         { ...capturedInput, ...(admission === undefined ? {} : { admission }) },
-        { cwd: captured.cwd, fileBytes, descriptorInheritance: "stdio" },
+        {
+          cwd: captured.cwd,
+          fileBytes,
+          descriptorInheritance: "stdio",
+          ...(captured.inheritedFds === undefined ? {} : { inheritedFds: captured.inheritedFds }),
+        },
       );
     } catch (error) {
       return preparationError(error);

@@ -125,6 +125,7 @@ async function runComputerCommand(
         argv: spawn.argv,
         cwd: prepared.filesystem.cwd,
         env: spawn.env,
+        ...(spawn.inheritedFds === undefined ? {} : { inheritedFds: spawn.inheritedFds }),
       },
       lifecycle.signal,
       lifecycle.requester,

@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off - native process bytes, exit signals and stdio live at this Runner boundary.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeBuffer from "node:buffer";
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
@@ -20,6 +19,7 @@ import * as Stream from "effect/Stream";
 
 import { RunnerExecMailbox } from "./RunnerExecMailbox.ts";
 import { makeRunnerExecProcessHost, type RunnerExecProcessHost } from "./RunnerExecProcessHost.ts";
+import { RunnerInheritedFdError } from "./RunnerInheritedFds.ts";
 
 const MAX_OUTPUT_CHUNK_BYTES = 16 * 1024;
 const MAX_CONTROL_RECEIPTS = 65_536;
@@ -30,7 +30,7 @@ const MAX_ACTIVE_PROCESSES = 32;
 type SequencedReport = Extract<ExecReport, { readonly type: "output" | "exit" | "closed" }>;
 type RunnerGeneration = Extract<ExecCommand, { readonly type: "start" }>["generation"];
 type Pipe = NodeStream.Readable & { pause(): NodeStream.Readable; resume(): NodeStream.Readable };
-type ProcessHandle = NodeChildProcess.ChildProcessWithoutNullStreams;
+type ProcessHandle = ReturnType<RunnerExecProcessHost["spawn"]>;
 
 /** Per-thread proof that this generation's drive owns the requested canonical cwd. */
 export interface RunnerExecWorkspaceAttestation {
@@ -111,6 +111,7 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
     command: ExecCommand,
     applied: boolean,
     code?: keyof typeof ERROR_MESSAGES,
+    message?: string,
   ): ExecReport => ({
     type: "ack",
     generation: command.generation,
@@ -120,7 +121,7 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
       ? { writeId: command.writeId }
       : { requestId: command.requestId }),
     applied,
-    ...(code === undefined ? {} : { error: { code, message: ERROR_MESSAGES[code] } }),
+    ...(code === undefined ? {} : { error: { code, message: message ?? ERROR_MESSAGES[code] } }),
   });
   const failed = (command: ExecCommand, code: keyof typeof ERROR_MESSAGES) =>
     ack(command, false, code);
@@ -208,8 +209,13 @@ export const makeRunnerExecHost = Effect.fn("makeRunnerExecHost")(function* (inp
       let child: ProcessHandle;
       try {
         child = processHost.spawn(command, workingDirectory.cwd);
-      } catch {
-        return failed(command, "process_error");
+      } catch (error) {
+        return ack(
+          command,
+          false,
+          "process_error",
+          error instanceof RunnerInheritedFdError ? error.message.slice(0, 256) : undefined,
+        );
       }
       const process: ProcessState = {
         processId: command.processId,

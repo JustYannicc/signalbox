@@ -260,7 +260,8 @@ function sameCommand(left: KernelCommand, right: KernelCommand) {
     left.executable === right.executable &&
     left.cwd === right.cwd &&
     JSON.stringify(left.argv) === JSON.stringify(right.argv) &&
-    JSON.stringify(entries(left.env)) === JSON.stringify(entries(right.env))
+    JSON.stringify(entries(left.env)) === JSON.stringify(entries(right.env)) &&
+    JSON.stringify(left.inheritedFds ?? []) === JSON.stringify(right.inheritedFds ?? [])
   );
 }
 
@@ -270,6 +271,13 @@ function captureCommand(command: KernelCommand): KernelCommand {
     argv: Object.freeze(command.argv.slice()),
     cwd: command.cwd,
     env: Object.freeze({ ...command.env }),
+    ...(command.inheritedFds === undefined
+      ? {}
+      : {
+          inheritedFds: Object.freeze(
+            command.inheritedFds.map((file) => Object.freeze({ ...file })),
+          ),
+        }),
   });
 }
 

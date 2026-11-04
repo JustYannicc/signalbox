@@ -261,6 +261,9 @@ describe("MachineCommands", () => {
       argv: [...machineCommand.argv],
       cwd: machineCommand.cwd,
       env: { ...machineCommand.env },
+      inheritedFds: [
+        { childFd: 3, path: "/workspace/target", flags: 0 as const, offset: 0 as const },
+      ],
     };
     const callerSignal = new AbortController().signal;
     const spawning = fixture.commands.spawn(callerCommand, callerSignal);
@@ -270,12 +273,30 @@ describe("MachineCommands", () => {
     callerCommand.argv[2] = "rewritten args";
     callerCommand.cwd = "/elsewhere";
     callerCommand.env.TOKEN = "changed";
+    callerCommand.inheritedFds[0]!.path = "/workspace/changed";
     resumeCheckpoint!(machineBefore);
 
     const child = await spawning;
     expect(fixture.spawnCalls).toHaveLength(1);
-    expect(fixture.spawnCalls[0]).toEqual(machineCommand);
+    expect(fixture.spawnCalls[0]).toEqual({
+      ...machineCommand,
+      inheritedFds: [{ childFd: 3, path: "/workspace/target", flags: 0, offset: 0 }],
+    });
     expect(fixture.spawnCalls[0]).not.toBe(callerCommand);
+    const admitted = fixture.spawnCalls[0]!;
+    await expect(
+      fixture.policy[0]!.authorize(
+        {
+          ...admitted,
+          inheritedFds: [{ childFd: 3, path: "/workspace/tampered", flags: 0, offset: 0 }],
+        },
+        1,
+        callerSignal,
+      ),
+    ).rejects.toThrow("Command changed");
+    await expect(fixture.policy[0]!.authorize(machineCommand, 1, callerSignal)).rejects.toThrow(
+      "Command changed",
+    );
     expect(Object.isFrozen(fixture.spawnCalls[0])).toBe(true);
     expect(Object.isFrozen(fixture.spawnCalls[0]!.argv)).toBe(true);
     expect(Object.isFrozen(fixture.spawnCalls[0]!.env)).toBe(true);

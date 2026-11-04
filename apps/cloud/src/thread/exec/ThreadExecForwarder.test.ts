@@ -29,9 +29,10 @@ function setup(
     lease: {
       acquire: async () => ({ generation: 4, connection: 2, release: async () => undefined }),
     },
-    workspace: { canonicalCwd: async () => "/workspace" },
+    workspace: { canonicalPath: async () => "/workspace" },
     policy: { authorize: async () => undefined },
   },
+  inheritedFds = false,
 ) {
   const socket = {} as WebSocket;
   const frames: ExecCommand[] = [];
@@ -44,6 +45,7 @@ function setup(
     connection: 2,
     protocolVersion: 8,
     exec: true,
+    inheritedFds,
     send: (message) => {
       if (message.type !== "exec.command") return;
       const sent = message.command;
@@ -76,6 +78,20 @@ function setup(
 }
 
 describe("ThreadExecForwarder", () => {
+  it("does not send inherited fds to a Runner that would silently discard them", async () => {
+    const old = setup();
+    await expect(
+      old.forwarder.spawn(
+        {
+          ...command,
+          inheritedFds: [{ childFd: 3, path: "/workspace/file", flags: 0, offset: 0 }],
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "RUNNER_NOT_READY" });
+    expect(old.frames).toEqual([]);
+    await old.forwarder.dispose();
+  });
   it("requires a negotiated Runner and never emits a command for an older Runner", async () => {
     const withoutLease = setup({});
     await expect(
@@ -89,7 +105,7 @@ describe("ThreadExecForwarder", () => {
       lease: {
         acquire: async () => ({ generation: 4, connection: 2, release: async () => undefined }),
       },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: { authorize: async () => undefined },
     });
     old.forwarder.socketHost.connected(old.socket, {
@@ -124,7 +140,7 @@ describe("ThreadExecForwarder", () => {
       lease: {
         acquire: async () => ({ generation: 4, connection: 2, release: async () => undefined }),
       },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
     });
     await expect(
       policyMissing.forwarder.spawn(command, new AbortController().signal),
@@ -140,7 +156,7 @@ describe("ThreadExecForwarder", () => {
       lease: {
         acquire: async () => ({ generation: 4, connection: 2, release: async () => undefined }),
       },
-      workspace: { canonicalCwd: async () => "/workspace/project" },
+      workspace: { canonicalPath: async () => "/workspace/project" },
       policy: { authorize },
     });
     await expect(
@@ -159,7 +175,7 @@ describe("ThreadExecForwarder", () => {
         acquire: async () => ({ generation: 4, connection: 2, release: async () => undefined }),
       },
       workspace: {
-        canonicalCwd: async () => {
+        canonicalPath: async () => {
           throw new Error("file does not exist");
         },
       },
@@ -174,7 +190,7 @@ describe("ThreadExecForwarder", () => {
       lease: {
         acquire: async () => ({ generation: 4, connection: 2, release: async () => undefined }),
       },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: {
         authorize: async () => {
           throw new Error("command is denied");
@@ -192,7 +208,7 @@ describe("ThreadExecForwarder", () => {
     const released = vi.fn(async () => leaseReleased.resolve());
     const fixture = setup({
       lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: { authorize: async () => undefined },
     });
     const spawnPromise = fixture.forwarder.spawn(command, new AbortController().signal);
@@ -290,7 +306,7 @@ describe("ThreadExecForwarder", () => {
     const released = vi.fn(async () => leaseReleased.resolve());
     const fixture = setup({
       lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: { authorize: async () => undefined },
     });
     const spawnPromise = fixture.forwarder.spawn(command, new AbortController().signal);
@@ -328,7 +344,7 @@ describe("ThreadExecForwarder", () => {
       const released = vi.fn(async () => leaseReleased.resolve());
       const fixture = setup({
         lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
-        workspace: { canonicalCwd: async () => "/workspace" },
+        workspace: { canonicalPath: async () => "/workspace" },
         policy: { authorize: async () => undefined },
       });
       const spawning = fixture.forwarder.spawn(command, new AbortController().signal);
@@ -358,7 +374,7 @@ describe("ThreadExecForwarder", () => {
     const released = vi.fn(async () => leaseReleased.resolve());
     const fixture = setup({
       lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: { authorize: async () => undefined },
     });
     const spawning = fixture.forwarder.spawn(command, new AbortController().signal);
@@ -385,7 +401,7 @@ describe("ThreadExecForwarder", () => {
     const released = vi.fn(async () => leaseReleased.resolve());
     const fixture = setup({
       lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: { authorize: async () => undefined },
     });
     const spawning = fixture.forwarder.spawn(command, new AbortController().signal);
@@ -412,7 +428,7 @@ describe("ThreadExecForwarder", () => {
     const released = vi.fn(async () => undefined);
     const fixture = setup({
       lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: { authorize: async () => undefined },
     });
     const spawning = fixture.forwarder.spawn(command, new AbortController().signal);
@@ -456,7 +472,7 @@ describe("ThreadExecForwarder", () => {
     });
     const fixture = setup({
       lease: { acquire: async () => ({ generation: 4, connection: 2, release: released }) },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: { authorize: async () => undefined },
     });
     const spawnPromise = fixture.forwarder.spawn(command, new AbortController().signal);
@@ -494,7 +510,7 @@ describe("ThreadExecForwarder", () => {
           release: async () => leaseReleased.resolve(),
         }),
       },
-      workspace: { canonicalCwd: async () => "/workspace" },
+      workspace: { canonicalPath: async () => "/workspace" },
       policy: { authorize: async () => undefined },
     });
     const spawnPromise = fixture.forwarder.spawn(command, new AbortController().signal);
@@ -533,4 +549,52 @@ describe("ThreadExecForwarder", () => {
     await leaseReleased.promise;
     expect(disposed).toBe(true);
   });
+});
+
+it.each(["/workspace/../host", "/tmp/host", "/workspace/link"])(
+  "refuses inherited path %s before forwarding",
+  async (path) => {
+    const fixture = setup(
+      {
+        lease: { acquire: async () => ({ generation: 4, connection: 2, release: async () => {} }) },
+        workspace: {
+          canonicalPath: async (candidate) =>
+            candidate.cwd === "/workspace/link" ? "/tmp/host" : candidate.cwd,
+        },
+        policy: { authorize: async () => {} },
+      },
+      true,
+    );
+    await expect(
+      fixture.forwarder.spawn(
+        { ...command, inheritedFds: [{ childFd: 3, path, flags: 0, offset: 0 }] },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ name: "KernelForwardingUnavailable", code: "WORKSPACE_NOT_READY" });
+    expect(fixture.frames).toEqual([]);
+    await fixture.forwarder.dispose();
+  },
+);
+
+it("forwards inherited files to a version 8 Runner advertising the capability", async () => {
+  const fixture = setup(
+    {
+      lease: { acquire: async () => ({ generation: 4, connection: 2, release: async () => {} }) },
+      workspace: { canonicalPath: async (candidate) => candidate.cwd },
+      policy: { authorize: async () => {} },
+    },
+    true,
+  );
+  const inheritedFds = [{ childFd: 3, path: "/workspace/target", flags: 0, offset: 0 }] as const;
+  const spawning = fixture.forwarder.spawn(
+    { ...command, inheritedFds },
+    new AbortController().signal,
+  );
+  const start = await fixture.startSent.promise;
+  fixture.acknowledge(start);
+  const child = await spawning;
+  expect(start.inheritedFds).toEqual(inheritedFds);
+  fixture.forwarder.socketHost.generationEnded(4);
+  await expect(child.exited).rejects.toThrow();
+  await fixture.forwarder.dispose();
 });

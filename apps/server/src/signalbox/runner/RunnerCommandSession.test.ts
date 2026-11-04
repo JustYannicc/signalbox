@@ -87,6 +87,7 @@ it.effect("opens a command session and preserves process receipts until end", ()
         build,
         exec: true,
         machineFileLookup: true,
+        inheritedFds: true,
       });
 
       yield* Queue.offer(thread.incoming, welcome);
