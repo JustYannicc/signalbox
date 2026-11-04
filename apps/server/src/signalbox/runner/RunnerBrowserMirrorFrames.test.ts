@@ -82,6 +82,7 @@ interface RrwebEvent {
     readonly source?: number;
     readonly text?: string;
     readonly isAttachIframe?: boolean;
+    readonly adds?: ReadonlyArray<{ readonly node: { readonly id: number } }>;
   };
 }
 const FULL_SNAPSHOT = 2;
@@ -108,18 +109,18 @@ const showsCardFrame = (events: ReadonlyArray<RrwebEvent>) =>
       JSON.stringify(event).includes("cc-number"),
   );
 
-/** How often each snapshot the viewer got had the card frame attached; once is right. */
-const attachesPerSnapshot = (events: ReadonlyArray<RrwebEvent>) => {
-  const counts: Array<number> = [];
+/** Each child document is forwarded once, even when snapshot responses arrive together. */
+const attachedDocumentsPerSnapshot = (events: ReadonlyArray<RrwebEvent>) => {
+  const documents: Array<Array<number>> = [];
   for (const event of events)
-    if (event.type === FULL_SNAPSHOT) counts.push(0);
+    if (event.type === FULL_SNAPSHOT) documents.push([]);
     else if (
-      counts.length > 0 &&
+      documents.length > 0 &&
       event.data?.isAttachIframe === true &&
       JSON.stringify(event).includes("cc-number")
     )
-      counts[counts.length - 1]! += 1;
-  return counts;
+      documents[documents.length - 1]!.push(...(event.data.adds ?? []).map((add) => add.node.id));
+  return documents;
 };
 
 describe("cross-origin frames in the agent's browser", () => {
@@ -133,7 +134,7 @@ describe("cross-origin frames in the agent's browser", () => {
       // The frame recorded its document before anyone watched.
       await (await cardFrame()).waitForSelector("#card");
 
-      const viewer = browser.mirror!.watch({
+      let viewer = browser.mirror!.watch({
         viewerId: "viewer-1",
         tabId: null,
         send: (line) => updates.push(JSON.parse(decoder.decode(line)) as AgentBrowserUpdate),
@@ -151,6 +152,47 @@ describe("cross-origin frames in the agent's browser", () => {
       });
       const click = steps.find((each) => each.step.action === "click")!;
       expect(showsCardFrame(JSON.parse(click.events) as ReadonlyArray<RrwebEvent>)).toBe(true);
+
+      // Hold two real snapshot requests until both canvas restarts finish. Their
+      // replies then belong to the same parent snapshot, regardless of process timing.
+      const held = await (
+        await cardFrame()
+      ).evaluateHandle<{ release: () => Promise<void> }>(`(() => {
+        const requests = [];
+        const { promise: queued, resolve: ready } = Promise.withResolvers();
+        const hold = (event) => {
+          if (event.source !== parent || !event.data || !Object.values(event.data).includes("snapshot")) return;
+          event.stopImmediatePropagation();
+          requests.push(event);
+          if (requests.length === 2) ready();
+        };
+        addEventListener("message", hold, true);
+        return {
+          release: async () => {
+            await queued;
+            removeEventListener("message", hold, true);
+            for (const event of requests)
+              dispatchEvent(new MessageEvent("message", { data: event.data, origin: event.origin, source: event.source }));
+          },
+        };
+      })()`);
+      viewer.close();
+      viewer = browser.mirror!.watch({
+        viewerId: "viewer-2",
+        tabId: null,
+        send: (line) => updates.push(JSON.parse(decoder.decode(line)) as AgentBrowserUpdate),
+        end: () => {},
+      });
+      await held.evaluate((gate) => gate.release());
+      await held.dispose();
+      await updates.until(
+        () => (attachedDocumentsPerSnapshot(eventsOf(updates.seen)).at(-1)?.length ?? 0) >= 2,
+      );
+
+      // Distinct child snapshots may land after the same parent snapshot. Stale
+      // recorder listeners must not forward the same child document twice.
+      for (const documents of attachedDocumentsPerSnapshot(eventsOf(updates.seen)))
+        expect(documents).toEqual([...new Set(documents)]);
 
       // The person types a card number into the frame; the mirror shows it masked.
       viewer.input({ _tag: "take" });
@@ -182,8 +224,6 @@ describe("cross-origin frames in the agent's browser", () => {
       viewer.input({ _tag: "release" });
 
       expect(await (await cardFrame()).inputValue("#card")).toBe("4242");
-      // A recording restarted for canvases replays each frame once, not once per restart.
-      expect(attachesPerSnapshot(eventsOf(updates.seen)).every((count) => count <= 1)).toBe(true);
       // The digits themselves never reach a viewer.
       expect(
         updates.seen.some((update) => update._tag === "events" && update.events.includes("4242")),
