@@ -24,6 +24,7 @@ const MAX_SYMLINKS = 40;
 const MAX_PATH_BYTES = 4096;
 
 const encoder = new TextEncoder();
+const pathLengthScratch = new Uint8Array(MAX_PATH_BYTES);
 
 export type WasiStorage = MaybeAsyncStorage;
 
@@ -272,16 +273,15 @@ export class WasiPathResolver {
           current = root;
         }
         if (isLast) requireDirectory ||= pathRequiresDirectory(target);
-        const targetSegments = [
-          ...(parentPath === undefined ? [] : parseSymlinkTarget(parentPath)),
-          ...parseSymlinkTarget(target),
-        ];
+        const targetSegments =
+          parentPath === undefined
+            ? parseSymlinkTarget(target)
+            : [...parseSymlinkTarget(parentPath), ...parseSymlinkTarget(target)];
         pending.splice(index - 1, 1, ...targetSegments);
         index--;
         continue;
       }
 
-      const nextPathComponents = [...pathComponents, name];
       if (isLast) {
         if (requireDirectory && stat.type !== "directory") {
           throw new WasiError(ENOTDIR);
@@ -294,7 +294,7 @@ export class WasiPathResolver {
             stat,
             parent: current,
             name,
-            pathComponents: nextPathComponents,
+            pathComponents: [...pathComponents, name],
             ancestors: stat.type === "directory" ? [...ancestors, inode] : ancestors,
           },
         };
@@ -334,14 +334,16 @@ export class WasiPathResolver {
   }
 
   *resolveParent(base: WasiPathAnchor, path: string): WasiCall<WasiResolvedParent> {
-    const segments = parseRelativePath(path);
-    while (segments.length > 0 && segments[segments.length - 1] === "") segments.pop();
-    const name = segments.pop();
-    if (name === undefined || name === "" || name === "." || name === "..") {
+    validateRelativePath(path);
+    let end = path.length;
+    while (end > 0 && path.charCodeAt(end - 1) === 47) end--;
+    const separator = path.lastIndexOf("/", end - 1);
+    const name = path.slice(separator + 1, end);
+    if (name === "" || name === "." || name === "..") {
       throw new WasiError(EINVAL);
     }
 
-    const parentPath = segments.join("/");
+    const parentPath = separator < 0 ? "." : path.slice(0, separator);
     const resolved = yield* this.resolve(base, parentPath || ".", true);
     if (resolved.stat.type !== "directory") throw new WasiError(ENOTDIR);
     this.#checkPath?.(base.mount, [...resolved.pathComponents, name]);
@@ -366,12 +368,15 @@ function normalizeMountPath(path: string): string {
 }
 
 function parseRelativePath(path: string): string[] {
+  validateRelativePath(path);
+  return path.split("/");
+}
+
+function validateRelativePath(path: string): void {
   if (path.startsWith("/")) throw new WasiError(ENOTCAPABLE);
   if (path.includes("\0")) throw new WasiError(EINVAL);
   if (path.length === 0) throw new WasiError(ENOENT);
-  const segments = path.split("/");
   validatePathLength(path);
-  return segments;
 }
 
 function parseSymlinkTarget(target: string): string[] {
@@ -386,7 +391,13 @@ function pathRequiresDirectory(path: string): boolean {
 }
 
 function validatePathLength(path: string): void {
-  if (encoder.encode(path).byteLength > MAX_PATH_BYTES) {
+  // A UTF-16 code unit needs at most three UTF-8 bytes, including lone surrogates.
+  if (path.length <= MAX_PATH_BYTES / 3) return;
+  // Validation cannot suspend, so concurrent resolutions can share this bounded scratch.
+  if (
+    path.length > MAX_PATH_BYTES ||
+    encoder.encodeInto(path, pathLengthScratch).read !== path.length
+  ) {
     throw new WasiError(ENAMETOOLONG);
   }
 }
