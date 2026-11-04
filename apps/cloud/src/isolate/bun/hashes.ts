@@ -3,7 +3,6 @@
 // XXH64 is adapted from Bun's scalar xxhash3.cpp and xxHash v0.8.2.
 // Copyright (c) 2012-2021 Yann Collet. BSD-2-Clause; see LICENSE.xxhash.
 
-import { hashSeed } from "./hash64.ts";
 import { wyhash } from "./wyhash.ts";
 import { xxHash64 } from "./xxHash64.ts";
 
@@ -53,12 +52,10 @@ export interface BunHashFunction {
   readonly xxHash64: (input: BunHashInput, seed?: BunHashSeed) => bigint;
 }
 
-const wyhashMethod = (input: BunHashInput, seed?: BunHashSeed) =>
-  wyhash(toBytes(input), hashSeed(seed));
+const wyhashMethod = (input: BunHashInput, seed?: BunHashSeed) => wyhash(toBytes(input), seed);
 const crc32Method = (input: BunHashInput, seed?: BunHashSeed) =>
   crc32(toBytes(input), seedToU64(seed));
-const xxHash64Method = (input: BunHashInput, seed?: BunHashSeed) =>
-  xxHash64(toBytes(input), hashSeed(seed));
+const xxHash64Method = (input: BunHashInput, seed?: BunHashSeed) => xxHash64(toBytes(input), seed);
 
 export const bunHash: BunHashFunction = Object.assign(wyhashMethod, {
   wyhash: wyhashMethod,
