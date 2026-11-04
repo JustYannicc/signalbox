@@ -64,8 +64,9 @@ export function startupProfileSummary(raw: unknown) {
     if (sample.name === "(garbage collector)") garbageCollectionUs += interval;
   }
   const activeUs = sampledUs - idleUs;
-  if (!Number.isFinite(sampledUs) || activeUs <= 0)
-    throw new Error("WORKER_STARTUP_PROFILE_NO_ACTIVE_SAMPLES");
+  // A short startup can finish between samples, leaving a valid all-idle profile.
+  if (!Number.isFinite(sampledUs) || sampledUs < 0 || activeUs < 0)
+    throw new Error("WORKER_STARTUP_PROFILE_INVALID_TIMING");
   return {
     sampleCount: profile.samples.length,
     negativeDeltaCount,
