@@ -12,6 +12,9 @@ import { KernelFileSystemUnavailable } from "../KernelLowerFileSystem.ts";
 
 export type WasiCall<T> = Generator<unknown, T, unknown>;
 
+const ignoreRejection = () => undefined;
+const runStepImmediately = <V>(step: () => V) => step();
+
 export function* complete<T>(value: T | Promise<T>): WasiCall<T> {
   return (yield value) as T;
 }
@@ -27,12 +30,12 @@ function runSyncCall<T>(call: WasiCall<T>): T {
   while (!result.done) {
     if (isPromiseLike(result.value)) {
       const error = new TypeError("WASI call requires asynchronous execution");
-      void Promise.resolve(result.value).catch(() => undefined);
+      void Promise.resolve(result.value).catch(ignoreRejection);
       try {
         result = call.return(undefined as T);
         while (!result.done) {
           if (isPromiseLike(result.value)) {
-            void Promise.resolve(result.value).catch(() => undefined);
+            void Promise.resolve(result.value).catch(ignoreRejection);
             result = call.return(undefined as T);
           } else {
             result = call.next(result.value);
@@ -50,7 +53,7 @@ function runSyncCall<T>(call: WasiCall<T>): T {
 
 export async function runAsync<T>(
   call: WasiCall<T>,
-  runStep: <V>(step: () => V) => V = (step) => step(),
+  runStep: <V>(step: () => V) => V = runStepImmediately,
 ): Promise<T> {
   let result: { value: Promise<unknown> } | undefined;
   const advance = (step: () => IteratorResult<unknown, T>) =>
@@ -61,7 +64,7 @@ export async function runAsync<T>(
         ? { done: true as const, value: Promise.resolve(next.value) }
         : { done: false as const, value: Promise.resolve(next.value) };
       result = owned;
-      void owned.value.catch(() => undefined);
+      void owned.value.catch(ignoreRejection);
       return owned;
     });
   try {

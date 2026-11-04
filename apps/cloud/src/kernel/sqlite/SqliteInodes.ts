@@ -79,7 +79,13 @@ export class SqliteInodes {
   }
 
   stat(inode: Inode): Stat {
-    const row = this.inode(inode);
+    const row = firstRow(
+      this.storage.sql.exec(
+        "SELECT type, size, nlink, atime_ns, mtime_ns, ctime_ns FROM kernel_fs_inode WHERE ino = ?",
+        inode.toString(),
+      ),
+    );
+    if (!row) throw new StorageError("ENOENT");
     const type = row.type;
     const nlink = Number(row.nlink);
     if (

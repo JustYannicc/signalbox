@@ -65,6 +65,19 @@ const fixture = () => {
 const error = (code: string) => expect.objectContaining({ code });
 
 describe("facet SQLite inode behavior", () => {
+  it("reads fresh metadata and preserves missing and corrupt inode errors", () => {
+    const { fs, file, tick, nowNs, db } = fixture();
+    const inode = file();
+    const before = fs.stat(inode);
+    tick();
+    fs.setTimes(inode, { mtimeNs: 7n });
+    expect(fs.stat(inode)).toEqual({ ...before, mtimeNs: 7n, ctimeNs: nowNs() });
+    expect(before.mtimeNs).not.toBe(7n);
+    db.prepare("UPDATE kernel_fs_inode SET nlink = -1 WHERE ino = ?").run(inode.toString());
+    expect(() => fs.stat(inode)).toThrowError(error("EIO"));
+    expect(() => fs.stat(999n)).toThrowError(error("ENOENT"));
+  });
+
   it("roundtrips exact bigint metadata and stores symbolic types", () => {
     const { fs, nowNs, file, tick, db } = fixture();
     expect(fs.root).toBe(1n);

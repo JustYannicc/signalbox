@@ -77,6 +77,33 @@ function fixture() {
 }
 
 describe("Bash PATH metadata lookup", () => {
+  it("keeps repeated WASI stats fresh across path mutations and symlink traversal", async () => {
+    const test = fixture();
+    try {
+      await test.lower.prepare(["/work", "/work/nested", "/link", "/work/file", "/work/renamed"]);
+      test.filesystem.mkdir("/work");
+      test.filesystem.mkdir("/work/nested");
+      test.filesystem.symlink("work/nested", "/link");
+      const fd = test.filesystem.open(
+        "/work/file",
+        KernelOpenFlags.O_CREAT | KernelOpenFlags.O_RDWR,
+      );
+      test.filesystem.close(fd);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        expect((await test.stat("link/../file")).value).toBe(0);
+        expect((await test.stat("work//file")).value).toBe(0);
+        expect((await test.stat("work/file/")).value).toBe(54);
+      }
+      test.filesystem.rename("/work//file", "/work/./renamed");
+      expect((await test.stat("work/file")).value).toBe(44);
+      expect((await test.stat("work/renamed")).value).toBe(0);
+      test.filesystem.unlink("/link/../renamed");
+      expect((await test.stat("work/renamed")).value).toBe(44);
+    } finally {
+      test.close();
+    }
+  });
+
   it("prepares only the candidate the guest requests without reading file bytes", async () => {
     const test = fixture();
     try {
