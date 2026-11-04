@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { createBunShim } from "../BunShim.ts";
+import { bunHash as referenceHash } from "./fixtures/bunHashesReference.ts";
 
 // Captured from the Bun 1.4.3 oracle. Input byte i is (i * 191 + 17) & 0xff.
 const VECTORS = [
@@ -48,6 +49,78 @@ const bun = () =>
   }).bun;
 
 describe("Bun hash compatibility", () => {
+  it("preserves both 64-bit hashes across byte lengths, input windows, and seed coercions", () => {
+    const hash = bun().hash;
+    const seeds = [
+      undefined,
+      0,
+      1,
+      123,
+      2 ** 53,
+      2 ** 53 + 2,
+      0xffff_ffff_ffff_ffffn,
+      0x1234_5678_9abc_def0n,
+      -1,
+      -123.75,
+      -(2 ** 64),
+      -(1n << 100n),
+      NaN,
+      Infinity,
+      -Infinity,
+      2 ** 64,
+      Number.MAX_VALUE,
+      -Number.MAX_VALUE,
+    ];
+    const lengths = [
+      ...Array.from({ length: 1025 }, (_, index) => index),
+      1025,
+      4095,
+      4096,
+      4097,
+      65535,
+      65536,
+      65537,
+      1024 * 1024,
+    ];
+    let random = 0x6d2b79f5;
+    for (const length of lengths) {
+      const bytes = Uint8Array.from({ length }, () => {
+        random ^= random << 13;
+        random ^= random >>> 17;
+        random ^= random << 5;
+        return random & 0xff;
+      });
+      const padded = new Uint8Array(length + 11).fill(0xa5);
+      padded.set(bytes, 3);
+      const inputs = [
+        bytes.buffer,
+        new Uint8Array(padded.buffer, 3, length),
+        new DataView(padded.buffer, 3, length),
+        new TextDecoder().decode(bytes),
+      ];
+      for (const seed of seeds) {
+        for (const input of inputs) {
+          const context = `length=${length}, seed=${String(seed)}, input=${typeof input === "string" ? "string" : input.constructor.name}`;
+          expect(hash(input, seed), context).toBe(referenceHash(input, seed));
+          expect(hash.xxHash64(input, seed), context).toBe(referenceHash.xxHash64(input, seed));
+        }
+      }
+    }
+  });
+
+  it("preserves carry-heavy and zero lanes around every block boundary", () => {
+    const hash = bun().hash;
+    for (const length of [3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 47, 48, 49, 95, 96, 97]) {
+      for (const byte of [0, 0x7f, 0x80, 0xff]) {
+        const input = new Uint8Array(length).fill(byte);
+        for (const seed of [0n, 0xffff_ffffn, 0xffff_ffff_0000_0000n, 0xffff_ffff_ffff_ffffn]) {
+          expect(hash(input, seed)).toBe(referenceHash(input, seed));
+          expect(hash.xxHash64(input, seed)).toBe(referenceHash.xxHash64(input, seed));
+        }
+      }
+    }
+  });
+
   it("matches Bun's wyhash, crc32, and xxHash64 vectors across length and seed boundaries", () => {
     const hash = bun().hash;
 
