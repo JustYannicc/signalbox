@@ -109,8 +109,11 @@ export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}
     machineSpawn,
     machineChild,
     async close() {
-      await gateway.close();
-      await kernel.close();
+      try {
+        await gateway.close();
+      } finally {
+        await kernel.close();
+      }
     },
   };
 }
