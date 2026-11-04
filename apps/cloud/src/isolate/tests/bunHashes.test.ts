@@ -49,6 +49,40 @@ const bun = () =>
   }).bun;
 
 describe("Bun hash compatibility", () => {
+  it("resets scratch lanes between long, short, empty, and alternating hash calls", () => {
+    const hash = bun().hash;
+    for (const length of [4097, 0, 49, 1, 32, 3, 48, 4, 17, 16, 0, 97]) {
+      const input = makeInput(length);
+      for (const seed of [0xffff_ffff_ffff_ffffn, undefined, -123.75, 0n]) {
+        expect(hash.xxHash64(input, seed)).toBe(referenceHash.xxHash64(input, seed));
+        expect(hash.wyhash(input, seed)).toBe(referenceHash(input, seed));
+        expect(hash(input, seed)).toBe(referenceHash(input, seed));
+      }
+    }
+  });
+
+  it("finishes nested hashes during input normalization before using scratch lanes", () => {
+    const hash = bun().hash;
+    const input = makeInput(257);
+    const nested = makeInput(4097);
+    const seed = 0x1234_5678_9abc_def0n;
+    const expectedWyhash = referenceHash(nested, seed);
+    const expectedXxHash64 = referenceHash.xxHash64(nested, seed);
+    let nestedCalls = 0;
+    Object.defineProperty(input, "buffer", {
+      get: () => {
+        expect(hash(nested, seed)).toBe(expectedWyhash);
+        expect(hash.xxHash64(nested, seed)).toBe(expectedXxHash64);
+        nestedCalls++;
+        return nested.buffer;
+      },
+    });
+    const expected = nested.subarray(0, input.length);
+    expect(hash(input, seed)).toBe(referenceHash(expected, seed));
+    expect(hash.xxHash64(input, seed)).toBe(referenceHash.xxHash64(expected, seed));
+    expect(nestedCalls).toBe(2);
+  });
+
   it("preserves both 64-bit hashes across byte lengths, input windows, and seed coercions", () => {
     const hash = bun().hash;
     const seeds = [
