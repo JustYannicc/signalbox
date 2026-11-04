@@ -159,6 +159,28 @@ it("keeps a shared first import usable when one concurrent command is cancelled"
   }
 });
 
+it("releases the admitted slot when a direct caller immediately disposes Bash", async () => {
+  const f = await fixture();
+  let child: KernelCommandChild | undefined;
+  try {
+    const pending = f.gateway.exec(
+      { executable: "/bin/bash", argv: ["/bin/bash"], cwd: "/workspace", env: {} },
+      f.controller.signal,
+      undefined,
+    );
+    await f.importing;
+    f.releaseImport();
+    child = await pending;
+    await child.dispose();
+    await f.gateway.drain();
+    expect(f.capacity.active).toBe(0);
+    expect(f.capacity.waiting).toBe(0);
+  } finally {
+    await child?.dispose();
+    await f.close();
+  }
+});
+
 it("joins a failed first import in drain and preserves it for repeated commands", async () => {
   const failure = new Error("Bash module could not load");
   const f = await fixture(failure);
