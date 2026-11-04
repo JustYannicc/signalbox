@@ -20,6 +20,7 @@ const DOMAINS: Record<string, string> = {
   google_drive: "drive.google.com",
   google_sheets: "sheets.google.com",
   google_docs: "docs.google.com",
+  google_photos: "photos.google.com",
   gmail: "mail.google.com",
   todoist: "todoist.com",
 };

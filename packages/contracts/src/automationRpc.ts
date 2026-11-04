@@ -224,10 +224,23 @@ const SubscribeNoticesRpc = Rpc.make(AUTOMATION_WS_METHODS.automationsSubscribeN
   stream: true,
 });
 
+/**
+ * The upstream identity a connection signed in as, such as one Google user, once
+ * the tools service verified its subject. `id` is that verified identity, never
+ * an email or label, so connections sharing it are one account.
+ */
+export const AutomationConnectedAccount = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+});
+export type AutomationConnectedAccount = typeof AutomationConnectedAccount.Type;
+
 /** One account the user connected in Executor, e.g. `gmail` / `work`. `w.call` picks it by these names. */
 export const AutomationConnectedService = Schema.Struct({
   integration: Schema.String,
   name: Schema.String,
+  /** Absent when unverified; such a connection stands as its own account. */
+  account: Schema.optionalKey(AutomationConnectedAccount),
 });
 export type AutomationConnectedService = typeof AutomationConnectedService.Type;
 
