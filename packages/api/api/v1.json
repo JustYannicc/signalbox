@@ -158,14 +158,14 @@
       "rpc": "automations.connect",
       "access": "write",
       "input": "80624ddf",
-      "output": "3043bd11"
+      "output": "e51b2b9f"
     },
     {
       "name": "automations.connectionStatus",
       "rpc": "automations.connectionStatus",
       "access": "read",
       "input": "03c2b661",
-      "output": "3043bd11"
+      "output": "e51b2b9f"
     },
     {
       "name": "automations.customize",
@@ -194,7 +194,7 @@
       "rpc": "automations.disconnect",
       "access": "write",
       "input": "03c2b661",
-      "output": "3043bd11"
+      "output": "e51b2b9f"
     },
     {
       "name": "automations.get",
