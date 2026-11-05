@@ -36,12 +36,8 @@ Reflect.set(
         return [pair.slice(0, separator), pair.slice(separator + 1)] as const;
       }),
     );
-    for (const key of [
-      "SIGNALBOX_WORKERD_ACTIVE",
-      "SIGNALBOX_WORKERD_OWNER",
-      "SIGNALBOX_WORKERD_BATCH",
-    ])
-      if (!process.env[key] || env.get(key) !== process.env[key])
+    for (const key of ["HOME", "HEAVY_SLOT_ACTIVE"])
+      if (env.get(key) !== process.env[key])
         throw new Error("WORKER_STARTUP_CHILD_GUARD_ENV_DIFFERS");
     // No await or other executable work separates the public guard from the actual spawn.
     requireWorkerdLaunchAdmissionSync();

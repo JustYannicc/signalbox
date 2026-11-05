@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import { expect, it } from "vite-plus/test";
+import { useWorkerdAdmissionFixture } from "../../../../scripts/harness-releases/testing/workerdAdmission.ts";
 import { openHarnessReleaseArtifact } from "../../src/harnessReleases/HarnessReleaseArtifact.ts";
 import { readHarnessReleaseDeployment } from "../../src/harnessReleases/HarnessReleaseDeployment.ts";
 import { createHarnessReleaseLedger } from "../../src/harnessReleases/HarnessReleaseLedger.ts";
@@ -10,6 +11,8 @@ import { createHarnessProjectReleaseSqliteStore } from "../../src/harnessRelease
 import { makeHarnessReleaseLedgerTestDatabase } from "../../src/harnessReleases/testing.ts";
 import { prepareHarnessArtifact } from "./prepareArtifact.ts";
 import { publishCodexRelease } from "./publishCodexRelease.ts";
+
+useWorkerdAdmissionFixture();
 
 it.each(["green", "pending", "rejected"] as const)(
   "packages only a qualified Codex release, status=%s",

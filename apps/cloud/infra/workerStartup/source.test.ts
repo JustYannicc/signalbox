@@ -13,7 +13,7 @@ import {
   type SourceServices,
   type SourceError,
 } from "alchemy/Cloudflare";
-import { describe, expect, vi } from "vite-plus/test";
+import { afterEach, describe, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import { profileWorkerStartup, qualifyWorkerStartupProfile } from "./profile.ts";
 import { runStartupProfiler } from "./process.ts";
@@ -157,6 +157,8 @@ async function fixture() {
   };
 }
 
+afterEach(() => vi.unstubAllEnvs());
+
 const makeSource = (main: string) => runWithServices(sourceModule.make({ main, rules }));
 
 function expectStartupFailure(
@@ -194,7 +196,19 @@ describe("worker startup source provider", () => {
         const f = yield* Effect.acquireRelease(Effect.promise(fixture), (f) =>
           Effect.promise(f.dispose),
         );
+        vi.stubEnv("HEAVY_SLOT_ACTIVE", "1");
+        vi.stubEnv("SIGNALBOX_WORKERD_ACTIVE", "/retired/ACTIVE.json");
+        vi.stubEnv("SIGNALBOX_WORKERD_OWNER", "retired-owner");
+        vi.stubEnv("SIGNALBOX_WORKERD_BATCH", "retired-batch");
         yield* Effect.promise(() => f.writeEvidence());
+        const environment = vi.mocked(runStartupProfiler).mock.lastCall?.[0].env;
+        expect(environment).toHaveProperty("HEAVY_SLOT_ACTIVE", "1");
+        for (const key of [
+          "SIGNALBOX_WORKERD_ACTIVE",
+          "SIGNALBOX_WORKERD_OWNER",
+          "SIGNALBOX_WORKERD_BATCH",
+        ])
+          expect(environment).not.toHaveProperty(key);
         const source = yield* makeSource(f.main);
         const built = yield* runWithServices(source.build(workerContext()));
         expect(built.bundle?.files.map((file) => file.path)).toEqual([

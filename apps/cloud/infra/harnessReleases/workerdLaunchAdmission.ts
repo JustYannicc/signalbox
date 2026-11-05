@@ -5,6 +5,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 
+// The profiler preload disables general synchronous child APIs after importing this guard.
+const ancestryExecFileSync = NodeChildProcess.execFileSync;
 const probeOptions = { encoding: "utf8", timeout: 1_000, maxBuffer: 1_024 } as const;
 
 function refuse(reason: string, cause?: unknown): never {
@@ -132,11 +134,7 @@ export function requireWorkerdLaunchAdmissionSync() {
     let probe = probes.next();
     while (!probe.done) {
       probe = probes.next(
-        NodeChildProcess.execFileSync(
-          "/bin/ps",
-          ["-o", "ppid=", "-p", String(probe.value)],
-          probeOptions,
-        ),
+        ancestryExecFileSync("/bin/ps", ["-o", "ppid=", "-p", String(probe.value)], probeOptions),
       );
     }
     const currentOwners = slotOwners(paths.map((path) => NodeFS.readFileSync(path, "utf8")));

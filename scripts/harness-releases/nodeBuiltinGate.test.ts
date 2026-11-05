@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
+import { useWorkerdAdmissionFixture } from "./testing/workerdAdmission.ts";
 import * as NodeModule from "node:module";
 import { inspectNodeBuiltinCoverage } from "./nodeBuiltinGate/coverage.ts";
 import { captureRuntimeBuiltinSpecifiers } from "./runtimeBuiltinInventory.ts";
 import { assertPackagedBuiltinCoverage, scanBuiltinSource } from "./nodeBuiltinGate.ts";
+
+useWorkerdAdmissionFixture();
 
 const source = (text: string) => ({ name: "release.mjs", source: text });
 describe("release builtin gate", () => {

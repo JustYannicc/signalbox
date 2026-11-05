@@ -25,9 +25,11 @@ afterEach(() => {
 });
 
 it("passes native admission to the inventory child while stripping unrelated runtime configuration", async () => {
-  vi.stubEnv("SIGNALBOX_WORKERD_ACTIVE", "/guard-fixture/ACTIVE.json");
-  vi.stubEnv("SIGNALBOX_WORKERD_OWNER", "test-owner");
-  vi.stubEnv("SIGNALBOX_WORKERD_BATCH", "test-batch");
+  vi.stubEnv("HOME", "/native-slot-fixture");
+  vi.stubEnv("HEAVY_SLOT_ACTIVE", "1");
+  vi.stubEnv("SIGNALBOX_WORKERD_ACTIVE", "/retired/ACTIVE.json");
+  vi.stubEnv("SIGNALBOX_WORKERD_OWNER", "retired-owner");
+  vi.stubEnv("SIGNALBOX_WORKERD_BATCH", "retired-batch");
   vi.stubEnv("NODE_OPTIONS", "--require=unrelated-preload.cjs");
   execFile.mockResolvedValue({
     stdout: JSON.stringify({
@@ -48,11 +50,13 @@ it("passes native admission to the inventory child while stripping unrelated run
   expect(execFile).toHaveBeenCalledOnce();
   const options = execFile.mock.calls[0]![2];
   expect(options.env).toMatchObject({
-    SIGNALBOX_WORKERD_ACTIVE: "/guard-fixture/ACTIVE.json",
-    SIGNALBOX_WORKERD_OWNER: "test-owner",
-    SIGNALBOX_WORKERD_BATCH: "test-batch",
+    HOME: "/native-slot-fixture",
+    HEAVY_SLOT_ACTIVE: "1",
     WRANGLER_SEND_METRICS: "false",
     CI: "1",
   });
   expect(options.env).not.toHaveProperty("NODE_OPTIONS");
+  expect(options.env).not.toHaveProperty("SIGNALBOX_WORKERD_ACTIVE");
+  expect(options.env).not.toHaveProperty("SIGNALBOX_WORKERD_OWNER");
+  expect(options.env).not.toHaveProperty("SIGNALBOX_WORKERD_BATCH");
 });

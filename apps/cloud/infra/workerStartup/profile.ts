@@ -56,16 +56,7 @@ export async function profileWorkerStartup(raw: unknown) {
   const command = startupProfilerCommand(runtime, input.main);
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(([key]) =>
-      [
-        "PATH",
-        "HOME",
-        "USER",
-        "LANG",
-        "LC_ALL",
-        "SIGNALBOX_WORKERD_ACTIVE",
-        "SIGNALBOX_WORKERD_OWNER",
-        "SIGNALBOX_WORKERD_BATCH",
-      ].includes(key),
+      ["PATH", "HOME", "USER", "LANG", "LC_ALL", "HEAVY_SLOT_ACTIVE"].includes(key),
     ),
   );
   Object.assign(environment, {

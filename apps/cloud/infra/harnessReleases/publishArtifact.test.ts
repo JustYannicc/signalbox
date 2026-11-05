@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
+import { useWorkerdAdmissionFixture } from "../../../../scripts/harness-releases/testing/workerdAdmission.ts";
 import { openHarnessReleaseArtifact } from "../../src/harnessReleases/HarnessReleaseArtifact.ts";
 import {
   createHarnessArtifactAssetSource,
@@ -10,6 +11,8 @@ import {
 } from "../../src/harnessReleases/HarnessReleaseAssetSource.ts";
 import { prepareHarnessArtifact } from "./prepareArtifact.ts";
 import { directoryHarnessArtifactStore, publishHarnessArtifact } from "./publishArtifact.ts";
+
+useWorkerdAdmissionFixture();
 
 const roots: string[] = [];
 afterEach(async () => {
