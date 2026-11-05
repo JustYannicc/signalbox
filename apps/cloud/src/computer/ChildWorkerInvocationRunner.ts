@@ -23,7 +23,7 @@ export interface ChildWorkerDispatch<Host extends object> {
 
 export interface ChildWorkerInvocationInput<Host extends object> {
   readonly signal: AbortSignal;
-  readonly command: KernelCommand;
+  readonly command: () => KernelCommand;
   readonly requester: ChildWorkerCapacityRequester;
   readonly reservation?: (() => ChildWorkerReservation) | undefined;
   readonly lifetime?: (pending: Promise<unknown>) => void;
@@ -84,7 +84,10 @@ export function createChildWorkerInvocationRunner<Host extends object>(options: 
         const modules = preparation.claim(request);
         const work = async (execution: ChildWorkerExecution) => {
           input.signal.throwIfAborted();
-          const env = Object.freeze({ ...input.command.env });
+          const command = input.command();
+          const env = Object.isFrozen(command.env)
+            ? command.env
+            : Object.freeze({ ...command.env });
           const lease = new ChildHostLease((bytes) => execution.observe(bytes));
           const owner = await input.open(lease, execution);
           if (owner.exited !== undefined) void owner.exited.then(settle.resolve, settle.reject);
@@ -101,8 +104,8 @@ export function createChildWorkerInvocationRunner<Host extends object>(options: 
                   modules,
                   command: {
                     executable,
-                    argv: [...input.command.argv],
-                    cwd: input.command.cwd,
+                    argv: [...command.argv],
+                    cwd: command.cwd,
                     env,
                   },
                 }),

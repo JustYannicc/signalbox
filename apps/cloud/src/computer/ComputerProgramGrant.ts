@@ -131,7 +131,7 @@ export class ComputerProgramGrant
     this.#controller.signal.throwIfAborted();
     return await this.#program.runner.run({
       signal: this.#controller.signal,
-      command: description.command,
+      command: () => description.command,
       requester: { owner: description.requester },
       reservation: () => this.#reservation,
       lifetime: (pending) => this.#track(pending),
@@ -157,7 +157,7 @@ export class ComputerProgramGrant
       const exit = await this.#program.runner.run(
         {
           signal: this.#controller.signal,
-          command: description.command,
+          command: () => description.command,
           requester: { owner: description.requester },
           ...(initial ? { reservation: () => this.#reservation } : {}),
           lifetime: (pending) => this.#track(pending),

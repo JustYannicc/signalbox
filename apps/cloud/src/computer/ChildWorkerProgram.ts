@@ -93,6 +93,7 @@ export function createChildWorkerRunner<Host extends object>(
       createHost: ChildWorkerProgramOptions<Host>["createHost"],
       initialResidentBytes = 0,
     ) {
+      let childContext = context;
       const owner = createKernelProcessAdmissionPort({
         processes: context.processes,
         process: context.identity.handle,
@@ -101,11 +102,15 @@ export function createChildWorkerRunner<Host extends object>(
       return runner.run(
         {
           signal: context.signal,
-          command: {
-            executable: options.executable,
-            argv: context.args,
-            cwd: context.filesystem.cwd,
-            env: options.childEnv?.(context) ?? context.env,
+          command: () => {
+            if (options.childEnv !== undefined)
+              childContext = { ...context, env: Object.freeze({ ...options.childEnv(context) }) };
+            return {
+              executable: options.executable,
+              argv: context.args,
+              cwd: context.filesystem.cwd,
+              env: childContext.env,
+            };
           },
           requester: { owner },
           lifetime: (pending) => {
@@ -118,14 +123,7 @@ export function createChildWorkerRunner<Host extends object>(
             options.reservationFor === undefined
               ? undefined
               : () => claimReservation(options.reservationFor!, context),
-          open: async (lease, execution) =>
-            createHost(
-              options.childEnv === undefined
-                ? context
-                : { ...context, env: options.childEnv(context) },
-              lease,
-              execution,
-            ),
+          open: async (lease, execution) => createHost(childContext, lease, execution),
         },
         initialResidentBytes,
       );

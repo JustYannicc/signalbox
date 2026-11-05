@@ -1,12 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import type { Computer, ComputerOpenPort } from "../computer/Computer.ts";
 import { createComputerFactory, type ComputerBindings } from "../computer/OpenComputer.ts";
-import * as AdapterHarness from "./AdapterHarness.ts";
+import type { AdapterRuntimePorts } from "./AdapterHarness.ts";
+import { openAdapterSession } from "./adapter/session.ts";
 import {
   HarnessError,
   type HarnessOpenInput,
@@ -17,24 +17,24 @@ import { validateOpen } from "./adapter/checkpoint.ts";
 import { makeFacetLifetime } from "./facet/lifetime.ts";
 import { makeFacetOpenings } from "./facet/opening.ts";
 
-export type HarnessFacetComputer =
+export type HarnessFacetComputer<Files = Computer["files"]> =
   | {
       readonly bind: (
         threadId: string,
         ownerSignal: AbortSignal,
-      ) => Promise<ComputerBindings<unknown>>;
+      ) => Promise<ComputerBindings<Files>>;
     }
-  | { readonly open: (ownerSignal: AbortSignal) => ComputerOpenPort<unknown> };
+  | { readonly open: (ownerSignal: AbortSignal) => ComputerOpenPort<Files> };
 
-export interface HarnessSessionFacetOptions {
+export interface HarnessSessionFacetOptions<Files = Computer["files"]> {
   readonly threadId: string;
   readonly release: HarnessRelease;
-  readonly computer?: HarnessFacetComputer;
+  readonly computer?: HarnessFacetComputer<Files>;
   /** The host supplies its verified native module builder and registers cleanup in this Scope. */
   readonly buildRuntime?: (
-    input: HarnessOpenInput,
+    input: HarnessOpenInput<Files>,
     signal: AbortSignal,
-  ) => Effect.Effect<AdapterHarness.AdapterRuntimeFactory["Service"], HarnessError, Scope.Scope>;
+  ) => Effect.Effect<AdapterRuntimePorts<Files>, HarnessError, Scope.Scope>;
   readonly modelTransport: HarnessOpenInput["modelTransport"];
   readonly hooks?: HarnessOpenInput["hooks"];
 }
@@ -49,8 +49,8 @@ export interface HarnessSessionFacet {
 }
 
 /** Retain one facet in the thread's session host, under that host's lifetime Scope. */
-export const createHarnessSessionFacet = (
-  options: HarnessSessionFacetOptions,
+export const createHarnessSessionFacet = <Files>(
+  options: HarnessSessionFacetOptions<Files>,
 ): Effect.Effect<HarnessSessionFacet, HarnessError, Scope.Scope> =>
   Effect.gen(function* () {
     const { computer: binding, buildRuntime } = options;
@@ -103,8 +103,8 @@ export const createHarnessSessionFacet = (
           }),
       });
       const lock = yield* Semaphore.make(1);
-      let computer: Computer<unknown> | undefined;
-      let files: unknown;
+      let computer: Computer<Files> | undefined;
+      let files: Files | undefined;
       let occupied = false;
       let cleanupFailure: HarnessError | undefined;
       const closeOwner = yield* Effect.cached(
@@ -206,14 +206,7 @@ export const createHarnessSessionFacet = (
                         message: "Harness runtime open capability is unavailable.",
                       }),
                     );
-                  const harness = yield* AdapterHarness.AdapterHarness.pipe(
-                    Effect.provide(
-                      AdapterHarness.layer.pipe(
-                        Layer.provide(Layer.succeed(AdapterHarness.AdapterRuntimeFactory, factory)),
-                      ),
-                    ),
-                  );
-                  const session = yield* harness.open(input);
+                  const session = yield* openAdapterSession(input, factory.open);
                   const dispose = yield* Effect.cached(
                     lifetime.close.pipe(
                       Effect.catchCause((cause) =>

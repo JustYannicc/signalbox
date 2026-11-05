@@ -15,7 +15,7 @@ import type { LoadedHarnessRelease } from "../HarnessReleaseLoader.ts";
 import { makeFacetLifetime } from "../facet/lifetime.ts";
 import { snapshotOpen } from "./boot.ts";
 import type {
-  HarnessHostOptions,
+  HarnessLifecycleOptions,
   HarnessHostSession,
   HarnessSessionHost,
   NativeHostBinding,
@@ -27,10 +27,10 @@ import { createHostSession, sameAccess, snapshotAccess } from "./session.ts";
 import { closeFailedHostStart } from "./failure.ts";
 import type { HarnessHostResources } from "../HarnessHostResources.ts";
 
-export const createHostLifecycle = <G>(
-  options: Omit<HarnessHostOptions<G>, "release" | "programs" | "files" | "bindComputer">,
+export const createHostLifecycle = <G, Files>(
+  options: HarnessLifecycleOptions<G, Files>,
   loaded: LoadedHarnessRelease,
-  resources: Effect.Effect<HarnessHostResources, HarnessError, Scope.Scope>,
+  resources: Effect.Effect<HarnessHostResources<Files>, HarnessError, Scope.Scope>,
   closeOwner: Effect.Effect<void>,
 ): Effect.Effect<HarnessSessionHost<G>, HarnessError, Scope.Scope> =>
   Effect.gen(function* () {
@@ -70,8 +70,8 @@ export const createHostLifecycle = <G>(
         () => clock.currentTimeMillisUnsafe(),
         options.turnGrantSource,
       );
-      let ports: Omit<ComputerBindings<unknown>, "files"> | undefined;
-      const computer = Object.freeze<Computer<unknown>>({
+      let ports: Omit<ComputerBindings<Files>, "files"> | undefined;
+      const computer = Object.freeze<Computer<Files>>({
         threadId: options.threadId,
         files: storage.fileIdentity,
         async exec(command, signal, requester) {
@@ -110,7 +110,7 @@ export const createHostLifecycle = <G>(
       const attempts = new Map<string, Attempt>();
       let native:
         | {
-            binding: NativeHostBinding;
+            binding: NativeHostBinding<Files>;
             session: Effect.Success<ReturnType<typeof createHostSession<G>>>;
             signal: AbortSignal;
           }
@@ -207,7 +207,7 @@ export const createHostLifecycle = <G>(
               );
             native = { binding, session, signal };
             return {
-              open: (harness: HarnessOpenInput, reporter) =>
+              open: (harness: HarnessOpenInput<Files>, reporter) =>
                 Effect.gen(function* () {
                   // Native cleanup shares the adapter's Scope so shutdown reports reach its live sink.
                   const runtime = yield* binding.factory.open(

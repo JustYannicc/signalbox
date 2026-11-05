@@ -14,6 +14,7 @@ import { rpcStubOwner, readRpcData } from "../rpc/Resources.ts";
 import { HarnessError, type HarnessOpenInput } from "./Harness.ts";
 import type { HarnessRuntimeReporter } from "./HarnessProcessLifetime.ts";
 import type { NativeHostBinding } from "./HarnessSessionHost.ts";
+import type { Computer } from "../computer/Computer.ts";
 import {
   claudeSdkMethods,
   claudeSdkOpenCodec,
@@ -35,17 +36,19 @@ const protocolError = (cause: unknown) =>
     cause,
   });
 
-export interface ClaudeSdkNativeOptions {
+export interface ClaudeSdkNativeOptions<Files = Computer["files"]> {
   readonly sdkHost: ClaudeSdkHostService;
   readonly context: ClaudeSdkProcessContext;
   readonly openCli: (
-    input: HarnessOpenInput,
+    input: HarnessOpenInput<Files>,
     reporter: HarnessRuntimeReporter,
   ) => Effect.Effect<ClaudeCliProcessPort, HarnessError, Scope.Scope>;
 }
 
 /** Provider orchestration owns only async process and SDK capabilities. */
-export function makeClaudeSdkNativeBinding(options: ClaudeSdkNativeOptions): NativeHostBinding {
+export function makeClaudeSdkNativeBinding<Files = Computer["files"]>(
+  options: ClaudeSdkNativeOptions<Files>,
+): NativeHostBinding<Files> {
   let session: ClaudeSdkSessionPort | undefined;
   let opened = false;
   let sequence = 0;

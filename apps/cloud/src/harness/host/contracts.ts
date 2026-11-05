@@ -21,7 +21,7 @@ import type * as Scope from "effect/Scope";
 import type { Computer } from "../../computer/Computer.ts";
 import type { ComputerBindings } from "../../computer/OpenComputer.ts";
 import type { createFacetFilePersistence } from "../../kernel/FacetFilePersistence.ts";
-import type { AdapterRuntimeFactory } from "../AdapterHarness.ts";
+import type { AdapterRuntimePorts } from "../AdapterHarness.ts";
 import type { HarnessError, HarnessOpenInput, HarnessRelease, HarnessSession } from "../Harness.ts";
 import type { LoadedHarnessRelease, LoadHarnessReleaseOptions } from "../HarnessReleaseLoader.ts";
 
@@ -99,9 +99,9 @@ export interface NativeMcpConfiguration {
   readonly epoch: number;
   readonly servers: Readonly<Record<string, { readonly url: string }>>;
 }
-export interface NativeHostBinding {
+export interface NativeHostBinding<Files = Computer["files"]> {
   readonly startup?: () => HarnessProcessStartup | undefined;
-  readonly factory: AdapterRuntimeFactory["Service"];
+  readonly factory: AdapterRuntimePorts<Files>;
   /** Await native installation before the next prompt; lazy first queries must enforce this too. */
   readonly configureMcp: (
     config: NativeMcpConfiguration,
@@ -139,6 +139,16 @@ export interface HarnessHostOptions<G> {
     readonly signal: AbortSignal;
   }) => Effect.Effect<NativeHostBinding, HarnessError, Scope.Scope>;
 }
+export type HarnessLifecycleOptions<G, Files> = Omit<
+  HarnessHostOptions<G>,
+  "release" | "programs" | "files" | "bindComputer" | "buildRuntime"
+> & {
+  readonly buildRuntime: (
+    input: Omit<Parameters<HarnessHostOptions<G>["buildRuntime"]>[0], "harness"> & {
+      readonly harness: HarnessOpenInput<Files>;
+    },
+  ) => Effect.Effect<NativeHostBinding<Files>, HarnessError, Scope.Scope>;
+};
 export interface HarnessHostSession<G> extends Omit<HarnessSession, "turn"> {
   /** Retires access installed by inert checkpoint restore before independently authorized work. */
   readonly retireCheckpointAccess: Effect.Effect<void, HarnessError>;

@@ -16,7 +16,10 @@ import { mergeRequests, requestBelongsToSession, sameRequestIdentity } from "./r
 
 const sameSession = Schema.toEquivalence(OrchestrationV2ProviderSession);
 const sameRef = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderRef));
-const sameRelease = (a: HarnessOpenInput["release"], b: HarnessOpenInput["release"]) =>
+const sameRelease = (
+  a: HarnessOpenInput<unknown>["release"],
+  b: HarnessOpenInput<unknown>["release"],
+) =>
   a.harness === b.harness &&
   a.version === b.version &&
   a.manifestSha256 === b.manifestSha256 &&
@@ -26,7 +29,7 @@ const sameRelease = (a: HarnessOpenInput["release"], b: HarnessOpenInput["releas
       module.bytes === b.modules[key]?.bytes && module.sha256 === b.modules[key]?.sha256,
   );
 
-export const validateOpen = (input: HarnessOpenInput) =>
+export const validateOpen = <Files>(input: HarnessOpenInput<Files>) =>
   Effect.gen(function* () {
     if (input.computer.threadId !== input.session.threadId) {
       return yield* Effect.fail(
@@ -90,7 +93,10 @@ export const validateOpen = (input: HarnessOpenInput) =>
     };
   });
 
-export const threadMatches = (thread: OrchestrationV2ProviderThread, input: HarnessOpenInput) =>
+export const threadMatches = (
+  thread: OrchestrationV2ProviderThread,
+  input: HarnessOpenInput<unknown>,
+) =>
   thread.appThreadId === input.session.threadId &&
   thread.providerSessionId === input.session.providerSessionId &&
   thread.providerInstanceId === input.session.modelSelection.instanceId;
@@ -113,7 +119,7 @@ const stableSnapshot = (snapshot: ProviderAdapterV2ThreadSnapshot) =>
   );
 
 export const saveComputer = (
-  input: HarnessOpenInput,
+  input: HarnessOpenInput<unknown>,
   operation: "events" | "export",
   failureSignal: AbortSignal,
 ) =>
@@ -132,7 +138,7 @@ export const saveComputer = (
   });
 
 export const saveCheckpoint = (
-  input: HarnessOpenInput,
+  input: HarnessOpenInput<unknown>,
   runtime: ProviderAdapterV2SessionRuntime,
   providerThread: OrchestrationV2ProviderThread,
   operation: "events" | "export",

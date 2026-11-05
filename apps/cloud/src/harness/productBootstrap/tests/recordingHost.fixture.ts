@@ -1,4 +1,7 @@
-import { captureHarnessCProductFiles } from "../../HarnessCProductCheckpoint.ts";
+import {
+  captureHarnessCProductFiles,
+  materializeHarnessCProductFiles,
+} from "../../HarnessCProductCheckpoint.ts";
 import { expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -42,6 +45,12 @@ export function createRecordingHost(input: {
   const { options, source, checkpoint, files, observedTurnGrants, seeded, openInputs, faults } =
     input;
   return Effect.sync(() => {
+    if (options.filesCheckpoint !== undefined)
+      materializeHarnessCProductFiles({
+        files: options.files,
+        threadId: options.threadId,
+        checkpoint: options.filesCheckpoint,
+      });
     expect(options.processResumeArtifact).toBe(source.artifact);
     expect(options.machineInventory).toEqual(machineInventoryFixture());
     const session: HarnessHostSession<Grant> = {

@@ -39,7 +39,7 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
 
   constructor(
     options: ClaudeCliProcessOptions,
-    input: HarnessOpenInput,
+    input: HarnessOpenInput<unknown>,
     reporter: HarnessRuntimeReporter,
     observation?: (
       input: ClaudeToolHookInput,

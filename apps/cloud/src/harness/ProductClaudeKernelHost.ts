@@ -152,7 +152,7 @@ export const createProductClaudeKernelHost = <G>(
       const resources = Effect.acquireRelease(
         attempt(
           "Claude kernel could not bind its owners.",
-          async (): Promise<HarnessHostResources> => {
+          async (): Promise<HarnessHostResources<string>> => {
             const initialized = await options.kernel.initialize({
               threadId: options.threadId,
               sessionKey: options.sessionKey,
@@ -256,7 +256,7 @@ export const createProductClaudeKernelHost = <G>(
               computer = input.harness.computer;
               const context = yield* Effect.context<never>();
               const requests = input.continuationRequests;
-              return makeClaudeSdkNativeBinding({
+              return makeClaudeSdkNativeBinding<string>({
                 sdkHost: options.native.sdkHost,
                 context: {
                   identity: options.native.process.identity,

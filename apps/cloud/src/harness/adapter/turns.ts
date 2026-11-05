@@ -26,7 +26,7 @@ export const makeTurn = ({
   check,
   poison,
 }: {
-  readonly input: HarnessOpenInput;
+  readonly input: HarnessOpenInput<unknown>;
   readonly runtime: ProviderAdapterV2SessionRuntime;
   readonly state: TurnState;
   readonly output: Queue.Queue<RunnerItem, HarnessError | Cause.Done>;

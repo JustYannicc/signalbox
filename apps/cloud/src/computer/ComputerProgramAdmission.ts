@@ -7,7 +7,6 @@ import type {
   KernelProgramAdmissionRequest,
 } from "../kernel/KernelProgramAdmission.ts";
 import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
-import { createKernelProcessAdmissionPort } from "../kernel/KernelProcessAdmissionPort.ts";
 import type { KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import {
@@ -82,7 +81,6 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
       let ticket: ChildWorkerAdmissionTicket | undefined;
       let reservation: ChildWorkerReservation | undefined;
       let transferred = false;
-      let processOwner: ReturnType<typeof createKernelProcessAdmissionPort> | undefined;
       try {
         controller.signal.throwIfAborted();
         const resolutionPromise = options.resolve?.({ ...request, signal: controller.signal });
@@ -155,13 +153,11 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
               ? parent.value.parentPid
               : parent.value.pid
             : undefined;
-        processOwner = createKernelProcessAdmissionPort({
+        ticket = options.capacity.enqueue(controller.signal, {
           processes: request.processes,
           process,
           ...(parentPid === undefined ? {} : { parentPid }),
-          signal: controller.signal,
         });
-        ticket = options.capacity.enqueue(controller.signal, { owner: processOwner });
         const prepared = await awaitWithAbort(prepare.call(implementation), controller.signal);
         controller.signal.throwIfAborted();
         reservation = await ticket.reserve(prepared);
@@ -226,7 +222,6 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
           },
         });
       } finally {
-        processOwner?.close();
         request.signal.removeEventListener("abort", onAbort);
         reserves.delete(controller);
         if (!transferred) {

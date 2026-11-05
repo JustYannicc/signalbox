@@ -171,11 +171,11 @@ const encodeHarnessFailure = Schema.encodeSync(Schema.toCodecJson(harnessCauseSc
 const failureJson = Schema.decodeUnknownSync(Schema.Json);
 export const serializeHarnessFailure = (cause: unknown) => failureJson(encodeHarnessFailure(cause));
 
-export interface HarnessOpenInput {
+export interface HarnessOpenInput<Files = Computer["files"]> {
   readonly loadedRelease?: LoadedHarnessRelease;
   readonly release: HarnessRelease;
   readonly session: ProviderAdapterV2OpenSessionInput;
-  readonly computer: Computer<unknown>;
+  readonly computer: Computer<Files>;
   readonly modelTransport: (request: Request) => Promise<Response>;
   readonly hooks?: HarnessHookCallback;
   readonly checkpoint?: HarnessCheckpoint;
@@ -194,8 +194,8 @@ export interface HarnessSession {
 }
 
 /** Hosts differ only at construction. A running session has no placement or fallback setting. */
-export interface Harness {
+export interface Harness<Files = Computer["files"]> {
   readonly open: (
-    input: HarnessOpenInput,
+    input: HarnessOpenInput<Files>,
   ) => Effect.Effect<HarnessSession, HarnessError, Scope.Scope>;
 }

@@ -240,8 +240,8 @@ export const createHostSession = <G>(
       decorate,
       stop,
       prepareInitial(
-        native: NativeHostBinding,
-        input: HarnessOpenInput,
+        native: Omit<NativeHostBinding<unknown>, "factory">,
+        input: HarnessOpenInput<unknown>,
         access: TurnAccess<G>,
         signal: AbortSignal,
       ) {
@@ -310,8 +310,8 @@ export const createHostSession = <G>(
       },
       wrap(
         raw: HarnessSession,
-        native: NativeHostBinding,
-        input: HarnessOpenInput,
+        native: Omit<NativeHostBinding<unknown>, "factory">,
+        input: HarnessOpenInput<unknown>,
         signal: AbortSignal,
         onClosed: (ok: boolean) => void,
         onStartFailure: (
