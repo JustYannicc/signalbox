@@ -4,6 +4,7 @@ import type { Computer } from "../computer/Computer.ts";
 import type { ClaudeKernelSessionPort } from "./ClaudeKernelSessionPort.ts";
 import { rpcStubOwner, releaseRpcResult } from "../rpc/Resources.ts";
 import { ownRpcResponse } from "../rpc/response.ts";
+import { rpcRequest } from "../rpc/Request.ts";
 
 /** A host has no local files or process table. Nested process requesters stay in the kernel. */
 export function claudeKernelComputer(
@@ -77,7 +78,7 @@ export function claudeKernelComputer(
             fetching.addEventListener("abort", cancel, { once: true });
             if (fetching.aborted) cancel();
             try {
-              return await ownRpcResponse(await remote.fetch(requestId, request), {
+              return await ownRpcResponse(await remote.fetch(requestId, rpcRequest(request)), {
                 signal: fetching,
                 release: () => fetching.removeEventListener("abort", cancel),
                 bodyOpened() {},

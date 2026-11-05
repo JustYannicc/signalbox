@@ -12,9 +12,14 @@ import {
 } from "../../harness/ClaudeGatewayAccess.ts";
 import type { HostOpenInput, TurnAccess } from "../../harness/HarnessSessionHost.ts";
 import {
-  createProductClaudeHarnessSessionHost,
-  type ProductClaudeHarnessHostOptions,
-} from "../../harness/ProductClaudeHarnessSessionHost.ts";
+  createProductClaudeKernelHost,
+  type ProductClaudeKernelHostOptions,
+} from "../../harness/ProductClaudeKernelHost.ts";
+import {
+  createClaudeProductOwners,
+  type ClaudeProductOwnerRuntime,
+} from "../../harness/ClaudeProductOwners.ts";
+import { claudeKernelOperation } from "../../harness/ClaudeKernelOperation.ts";
 import { selectProductClaudeHostRelease } from "../../harness/ProductClaudeReleaseSelection.ts";
 import type { Actor } from "../ThreadAccess.ts";
 import { createThreadClaudeSessions } from "../ThreadClaudeSessions.ts";
@@ -26,12 +31,20 @@ import type { Threads } from "../Threads.ts";
 import type { SessionRows } from "../session/SessionRows.ts";
 import type { FacetHostPort } from "./FacetMachineBackend.ts";
 
-type ClaudeHost<G> = Effect.Success<ReturnType<typeof createProductClaudeHarnessSessionHost<G>>>;
+type ClaudeHost<G> = Effect.Success<ReturnType<typeof createProductClaudeKernelHost<G>>>;
+
+export type ClaudeThreadHostOptions<G> = Omit<
+  ProductClaudeKernelHostOptions<G>,
+  "continuations" | "sessionKey" | "kernel" | "commands" | "native"
+> & {
+  readonly runtime: ClaudeProductOwnerRuntime;
+  readonly native: Omit<ProductClaudeKernelHostOptions<G>["native"], "sdkHost">;
+};
 
 export interface ClaudeFacetHostOptions<G> {
   readonly threadId: ThreadId;
   readonly actor: Effect.Effect<Actor, HarnessError>;
-  readonly host: Omit<ProductClaudeHarnessHostOptions<G>, "continuations">;
+  readonly host: ClaudeThreadHostOptions<G>;
   readonly open: (work: RunnerWork) => HostOpenInput<G>;
   readonly access: (work: RunnerWork) => Effect.Effect<TurnAccess<G>, HarnessError>;
 }
@@ -56,6 +69,7 @@ export const createClaudeFacetHost = <G>(
           readonly generation: number;
           readonly scope: Scope.Closeable;
           readonly host: ClaudeHost<G>;
+          readonly kernel: ReturnType<typeof createClaudeProductOwners>["kernel"];
           attached: boolean;
         }
       | undefined;
@@ -111,10 +125,15 @@ export const createClaudeFacetHost = <G>(
                   if (current === undefined || current.generation !== request.generation)
                     return yield* failed("This facet no longer owns its checkpoint.");
                   const sessions = yield* createThreadClaudeSessions({
-                    files: current.host.computer.files,
-                    configurationDirectory:
-                      options.host.native.process.env.CLAUDE_CONFIG_DIR ??
-                      `${options.host.native.process.identity.homedir}/.claude`,
+                    capture: (nativeId, signal) =>
+                      claudeKernelOperation(current.kernel, signal, (id) =>
+                        current.kernel.captureTranscripts(
+                          nativeId,
+                          options.host.native.process.env.CLAUDE_CONFIG_DIR ??
+                            `${options.host.native.process.identity.homedir}/.claude`,
+                          id,
+                        ),
+                      ),
                   });
                   yield* sessions.persist(checkpoint.snapshot.providerThread);
                 }).pipe(Effect.provide(services)),
@@ -136,10 +155,21 @@ export const createClaudeFacetHost = <G>(
               catch: (cause) => failed("The facet has no scoped model gateway access.", cause),
             });
             modelCredential = work.modelToken;
-            const host = yield* createProductClaudeHarnessSessionHost({
+            const owners = yield* Effect.acquireRelease(
+              Effect.try({
+                try: () => createClaudeProductOwners(options.host.runtime, machineId),
+                catch: (cause) => failed("Could not provision the Claude product owners.", cause),
+              }),
+              (owners) => Effect.sync(owners.dispose),
+            );
+            const host = yield* createProductClaudeKernelHost({
               ...options.host,
+              kernel: owners.kernel,
+              commands: owners.commands,
+              sessionKey: machineId,
               native: {
                 ...options.host.native,
+                sdkHost: owners.sdkHost,
                 process: {
                   ...options.host.native.process,
                   env: { ...options.host.native.process.env, ...gatewayEnvironment },
@@ -176,15 +206,21 @@ export const createClaudeFacetHost = <G>(
               generation: request.generation,
               scope,
               host,
+              kernel: owners.kernel,
               attached: false,
             };
             live = opened;
             if (input.checkpoint !== undefined) {
               const sessions = yield* createThreadClaudeSessions({
-                files: host.computer.files,
-                configurationDirectory:
-                  options.host.native.process.env.CLAUDE_CONFIG_DIR ??
-                  `${options.host.native.process.identity.homedir}/.claude`,
+                capture: (nativeId, signal) =>
+                  claudeKernelOperation(owners.kernel, signal, (id) =>
+                    owners.kernel.captureTranscripts(
+                      nativeId,
+                      options.host.native.process.env.CLAUDE_CONFIG_DIR ??
+                        `${options.host.native.process.identity.homedir}/.claude`,
+                      id,
+                    ),
+                  ),
               });
               yield* sessions.persist(input.checkpoint.snapshot.providerThread);
             }

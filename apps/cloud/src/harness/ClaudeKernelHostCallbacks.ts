@@ -3,6 +3,7 @@ import type { ClaudeKernelCallbacks } from "./ClaudeKernelSessionPort.ts";
 import type { HarnessRuntimeReporter } from "./HarnessProcessLifetime.ts";
 import type { ClaudeToolObservation } from "./ClaudeToolObservation.ts";
 import { ownRpcResponse } from "../rpc/response.ts";
+import { requestFromRpc, type RpcRequest } from "../rpc/Request.ts";
 
 interface ClaudeKernelHostRuntime {
   readonly model: (request: Request) => Promise<Response>;
@@ -37,7 +38,7 @@ export class ClaudeKernelHostCallbacks extends RpcTarget implements ClaudeKernel
     if (this.#runtime === undefined) throw new Error("CLI host callbacks are unavailable");
     return this.#runtime;
   }
-  async model(id: string, request: Request) {
+  async model(id: string, request: RpcRequest) {
     this.#lifetime.throwIfAborted();
     const runtime = this.#current();
     if (!id || this.#requests.has(id)) throw new Error("Duplicate CLI model request");
@@ -50,7 +51,7 @@ export class ClaudeKernelHostCallbacks extends RpcTarget implements ClaudeKernel
     const signal = AbortSignal.any([this.#lifetime, controller.signal]);
     try {
       signal.throwIfAborted();
-      const response = await runtime.model(new Request(request, { signal }));
+      const response = await runtime.model(requestFromRpc(request, signal));
       return await ownRpcResponse(response, {
         signal,
         release: () => {

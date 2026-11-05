@@ -50,14 +50,17 @@ export function kernelFileTransferManifest(
 export async function readKernelFileTransfer(
   manifest: KernelFileTransferManifest,
   source: KernelFileTransferPort,
+  signal?: AbortSignal,
 ): Promise<HarnessFilesStoreResult["files"]> {
   try {
     const result = [];
     for (const file of manifest) {
+      signal?.throwIfAborted();
       if (!Number.isSafeInteger(file.bytes) || file.bytes < 0)
         throw new RangeError("Invalid checkpoint byte count");
       const bytes = new Uint8Array(file.bytes);
       for (let offset = 0; offset < bytes.length; offset += KERNEL_FILE_TRANSFER_BYTES) {
+        signal?.throwIfAborted();
         const length = Math.min(KERNEL_FILE_TRANSFER_BYTES, bytes.length - offset);
         const chunk = await source.read(file.path, offset, length);
         if (chunk.length !== length) throw new Error("Checkpoint transfer ended early");
@@ -65,6 +68,7 @@ export async function readKernelFileTransfer(
       }
       result.push({ ...file, bytes });
     }
+    signal?.throwIfAborted();
     return result;
   } finally {
     await source.close();

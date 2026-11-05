@@ -1,4 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
+import { retainRpcCapability } from "../rpc/Capability.ts";
 import type {
   KernelChildDispatchPort,
   KernelChildHostPort,
@@ -56,6 +57,7 @@ export class ComputerProgramGrant
   #process: (KernelChildDispatchPort & Partial<KernelBashProcessDispatch>) | undefined;
   readonly #lifetimes = new Set<Promise<unknown>>();
   readonly #failures: unknown[] = [];
+  readonly #capabilities: Disposable[] = [];
   #used = false;
   #cancelled: Promise<void> | undefined;
   #operation: Promise<KernelCommandExit> | undefined;
@@ -99,7 +101,9 @@ export class ComputerProgramGrant
       return await this.#runBashPhase(process as KernelBashPhasePort, initial, residentBytes);
     if (this.#used) throw new Error("Computer grant was already dispatched");
     this.#used = true;
-    const kernel = process as KernelChildDispatchPort & Partial<KernelBashProcessDispatch>;
+    const capability = retainRpcCapability(process);
+    this.#capabilities.push(capability);
+    const kernel = capability.value as KernelChildDispatchPort & Partial<KernelBashProcessDispatch>;
     this.#process = kernel;
     this.#operation = this.#execute(kernel);
     try {
@@ -144,6 +148,9 @@ export class ComputerProgramGrant
   async #runBashPhase(phase: KernelBashPhasePort, initial: boolean, residentBytes: number) {
     try {
       this.#controller.signal.throwIfAborted();
+      const capability = retainRpcCapability(phase);
+      this.#capabilities.push(capability);
+      phase = capability.value;
       if (initial && this.#initialClaimed)
         throw new Error("Initial Bash reservation was already claimed");
       if (initial) this.#initialClaimed = true;
@@ -180,26 +187,46 @@ export class ComputerProgramGrant
   }
   cancel(reason?: unknown) {
     return (this.#cancelled ??= (async () => {
-      this.#controller.abort(reason ?? new Error("Computer grant cancelled"));
-      this.#reservation.cancel();
-      await this.#capture?.revoke();
-      await this.#process?.cancel?.(reason);
+      const undelivered = !this.#used;
+      if (undelivered) this.#used = true;
+      try {
+        this.#controller.abort(reason ?? new Error("Computer grant cancelled"));
+        this.#reservation.cancel();
+        await this.#capture?.revoke();
+        await this.#process?.cancel?.(reason);
+      } finally {
+        // Dispatched work owns its physical stop acknowledgement and calls finished separately.
+        if (undelivered) await this.finished();
+      }
     })());
   }
   finished() {
     return (this.#finished ??= (async () => {
+      const failures: unknown[] = [];
       try {
         await this.#operation?.catch(() => undefined);
         while (this.#lifetimes.size > 0) await Promise.allSettled(this.#lifetimes);
-        if (this.#failures.length === 1) throw this.#failures[0];
-        if (this.#failures.length > 1)
-          throw new AggregateError(this.#failures, "Computer dispatch cleanup failed");
+        failures.push(...this.#failures);
       } finally {
         this.#capture = undefined;
         this.#process = undefined;
         this.#operation = undefined;
-        this.#onFinished();
+        for (const capability of this.#capabilities.splice(0).toReversed()) {
+          try {
+            capability[Symbol.dispose]();
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+        try {
+          this.#onFinished();
+        } catch (error) {
+          failures.push(error);
+        }
       }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1)
+        throw new AggregateError(failures, "Computer dispatch cleanup failed");
     })());
   }
 }

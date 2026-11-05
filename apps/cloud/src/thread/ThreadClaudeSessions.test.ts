@@ -12,8 +12,12 @@ import {
 import { createFacetSqliteStorage } from "../kernel/FacetSqliteStorage.ts";
 import { createNodeFs } from "../isolate/NodeFs.ts";
 import { createThreadClaudeSessions } from "./ThreadClaudeSessions.ts";
+import { captureClaudeTranscriptFiles } from "../harness/ClaudeTranscriptFiles.ts";
 import * as SessionRows from "./ThreadSessionRows.ts";
 import { facetSqlite } from "./tests/facetSqlite.ts";
+import { vi } from "vite-plus/test";
+
+vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 const driver = ProviderDriverKind.make("claudeAgent");
 const thread = {
@@ -39,8 +43,8 @@ const fixture = Effect.gen(function* () {
   fs.mkdirSync("/home/.claude/projects/-workspace/native-session/subagents", { recursive: true });
   fs.writeFileSync(main, `${first}\n`);
   const persistence = yield* createThreadClaudeSessions({
-    files,
-    configurationDirectory: "/home/.claude",
+    capture: (nativeId, signal) =>
+      captureClaudeTranscriptFiles(files, "/home/.claude", nativeId, signal),
   });
   return { files, fs, persistence, sessions: yield* SessionRows.SessionRows };
 });

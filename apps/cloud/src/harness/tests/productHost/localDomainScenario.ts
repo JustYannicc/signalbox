@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import { createLocalClaudeThreadHost } from "../../../LocalClaudeThreadHost.ts";
 import { localDomainHostInputs } from "./continuationHost.ts";
 import { CLAUDE_MODEL_GATEWAY_BASE_URL } from "../../ClaudeGatewayAccess.ts";
+import { threadOwnerRuntimeFixture } from "./threadOwnerRuntime.fixture.ts";
 
 const modelRequest = Schema.fromJsonString(
   Schema.Struct({ model: Schema.String, messages: Schema.Array(Schema.Unknown) }),
@@ -19,6 +20,7 @@ export const run = () =>
     Effect.scoped(
       Effect.gen(function* () {
         const input = yield* localDomainHostInputs;
+        const owners = threadOwnerRuntimeFixture(input.hostOptions);
         const modelRequests: string[] = [];
         const binding = yield* createLocalClaudeThreadHost({
           modelSelection: input.sessionInput.modelSelection,
@@ -39,7 +41,7 @@ export const run = () =>
               pool: NodeSqliteClient.layer({ filename: ":memory:" }),
               thread: NodeSqliteClient.layer({ filename: ":memory:" }),
             },
-            host: input.hostOptions,
+            host: owners.host,
             open: (work) => {
               NodeAssert.ok(work.turn);
               return {

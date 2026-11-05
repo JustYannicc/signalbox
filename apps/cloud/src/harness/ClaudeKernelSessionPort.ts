@@ -8,13 +8,15 @@ import type { ComputerProgramOwnerPort } from "../kernel/KernelComputerAdmission
 import type { Computer } from "../computer/Computer.ts";
 import type { KernelCommand, KernelCommandChild } from "../kernel/KernelCommandForwarder.ts";
 import type { SeedCatalog } from "../kernel/KernelSeedCatalog.ts";
+import type { ClaudeTranscriptCapture } from "./ClaudeTranscriptPort.ts";
+import type { RpcRequest } from "../rpc/Request.ts";
 import type {
   KernelFileTransferManifest,
   KernelFileTransferPort,
 } from "../kernel/KernelFileTransfer.ts";
 
 export interface ClaudeKernelCallbacks {
-  model(id: string, request: Request): Promise<Response>;
+  model(id: string, request: RpcRequest): Promise<Response>;
   cancel(id: string, reason?: unknown): Promise<void>;
   report(report: ClaudeSdkReport): Promise<void>;
   startup(cause: unknown): Promise<void>;
@@ -86,6 +88,11 @@ export interface ClaudeKernelSessionPort {
     readonly manifest: KernelFileTransferManifest;
     readonly source: KernelFileTransferPort;
   }>;
+  captureTranscripts(
+    nativeId: string,
+    configurationDirectory: string,
+    operationId?: string,
+  ): Promise<ClaudeTranscriptCapture>;
   open(
     input: Omit<HarnessOpenInput, "computer" | "modelTransport" | "hooks" | "loadedRelease">,
   ): Promise<ClaudeCliProcessPort>;

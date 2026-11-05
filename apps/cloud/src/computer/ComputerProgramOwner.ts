@@ -1,4 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
+import { retainRpcCapability } from "../rpc/Capability.ts";
 import { KernelProgramExecAdmissionError } from "../kernel/KernelAsyncProgram.ts";
 import type { KernelChildRegistration } from "../kernel/KernelChildDispatchPort.ts";
 import type {
@@ -13,8 +14,7 @@ import { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
 import { ComputerEscalationTable } from "./EscalationTable.ts";
 import type { ComputerEscalationEvidence } from "./EscalationTable.ts";
 import { createComputerIsolatePolicy } from "./EscalationPolicy.ts";
-import { qualifyUgrepCommand } from "./UgrepCommand.ts";
-import { qualifyGnuCommandWithFiles } from "./GnuCommandCompatibility.ts";
+import { qualifyComputerProgram } from "./ComputerProgramQualification.ts";
 import type {
   ChildWorkerCapacity,
   ChildWorkerAdmissionTicket,
@@ -51,7 +51,12 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
   readonly #local = new ComputerEscalationTable();
   readonly #pending = new Map<
     string,
-    { readonly controller: AbortController; readonly kernel: KernelComputerAdmissionCapture }
+    {
+      readonly controller: AbortController;
+      readonly kernel: KernelComputerAdmissionCapture;
+      readonly release: () => void;
+      active: boolean;
+    }
   >();
   readonly #grants = new Map<string, ComputerProgramGrant>();
   readonly #earlyCancel = new Map<string, unknown>();
@@ -96,9 +101,13 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
     this.#assertOpen();
     if (!id || this.#pending.has(id) || this.#grants.has(id))
       throw new Error("Duplicate Computer admission");
+    const capability = retainRpcCapability(kernel);
+    kernel = capability.value;
+    const release = () => capability[Symbol.dispose]();
     const controller = new AbortController();
     const signal = controller.signal;
-    this.#pending.set(id, { controller, kernel });
+    const pending = { controller, kernel, release, active: true };
+    this.#pending.set(id, pending);
     if (this.#earlyCancel.has(id)) {
       controller.abort(this.#earlyCancel.get(id));
       this.#earlyCancel.delete(id);
@@ -106,7 +115,7 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
     void kernel.aborted().then(
       (result) => {
         if (result.aborted) controller.abort(result.reason);
-        else this.#pending.delete(id);
+        if (!pending.active && this.#pending.delete(id)) release();
       },
       (error: unknown) => controller.abort(error),
     );
@@ -140,7 +149,11 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
       const evidence = await this.#options.evidence?.(resolved.command, signal);
       const qualified = input.localOnly
         ? undefined
-        : await qualify(kernel, resolved.catalog?.command ?? resolved.command, signal);
+        : await qualifyComputerProgram(
+            kernel,
+            resolved.catalog?.command ?? resolved.command,
+            signal,
+          );
       signal.throwIfAborted();
       this.#assertOpen();
       const decision = (input.localOnly ? this.#local : this.#normal).decide(
@@ -183,7 +196,10 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
         reservation,
         controller,
         kernel,
-        () => this.#grants.delete(id),
+        () => {
+          this.#grants.delete(id);
+          release();
+        },
       );
       this.#grants.set(id, grant);
       transferred = true;
@@ -193,10 +209,12 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
       if (descriptor === undefined) throw new TypeError("Computer program descriptor is missing");
       return { route: "child" as const, registration: registration(descriptor), grant };
     } finally {
+      pending.active = false;
       if (!transferred || this.#grants.has(id)) this.#pending.delete(id);
       if (!transferred) {
         reservation?.cancel();
         ticket?.cancel();
+        release();
       }
     }
   }
@@ -204,7 +222,14 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
     const pending = this.#pending.get(id);
     if (pending !== undefined) {
       pending.controller.abort(reason);
-      await pending.kernel.revoke();
+      try {
+        await pending.kernel.revoke();
+      } finally {
+        if (!pending.active) {
+          this.#pending.delete(id);
+          pending.release();
+        }
+      }
       return;
     }
     const grant = this.#grants.get(id);
@@ -230,10 +255,13 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
       const runners = await Promise.allSettled(
         [...this.#programs.values()].map((program) => program.runner.drain()),
       );
+      const releases = await Promise.allSettled(
+        [...this.#pending.values()].map(async (request) => request.release()),
+      );
       this.#pending.clear();
       this.#grants.clear();
       this.#earlyCancel.clear();
-      const failures = [...results, ...runners].flatMap((result) =>
+      const failures = [...results, ...runners, ...releases].flatMap((result) =>
         result.status === "rejected" ? [result.reason] : [],
       );
       if (failures.length > 0) throw new AggregateError(failures, "Computer owner cleanup failed");
@@ -254,33 +282,4 @@ function registration(
       ? {}
       : { artifact: descriptor.code.executableArtifact }),
   };
-}
-
-async function qualify(
-  kernel: KernelComputerAdmissionCapture,
-  command: KernelComputerAdmissionInput["command"],
-  signal: AbortSignal,
-) {
-  const ugrep = qualifyUgrepCommand(command);
-  if (ugrep !== undefined) return ugrep;
-  const paths = new Set<string>();
-  const initial = qualifyGnuCommandWithFiles(command, (path) => {
-    paths.add(path);
-    return true;
-  });
-  if (initial.kind === "machine" || paths.size === 0) return initial;
-  const observations = new Map(
-    await Promise.all(
-      [...paths].map(
-        async (path) =>
-          [
-            path,
-            (await kernel.canReplace?.(path.startsWith("/") ? path : `${command.cwd}/${path}`)) ??
-              false,
-          ] as const,
-      ),
-    ),
-  );
-  signal.throwIfAborted();
-  return qualifyGnuCommandWithFiles(command, (path) => observations.get(path) === true);
 }

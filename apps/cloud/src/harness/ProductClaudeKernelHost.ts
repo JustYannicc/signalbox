@@ -3,6 +3,7 @@ import * as Scope from "effect/Scope";
 import { HarnessError } from "./Harness.ts";
 import type { Computer } from "../computer/Computer.ts";
 import type { ComputerExecutionConfiguration } from "../computer/ComputerExecutionObject.ts";
+import { ComputerExecutionPort } from "../computer/ComputerExecutionPort.ts";
 import type { ComputerProgramOwnerPort } from "../kernel/KernelComputerAdmissionPort.ts";
 import type { HarnessHostResources } from "./HarnessHostResources.ts";
 import type { HarnessHostOptions, HarnessSessionHost, ProgramSeed } from "./host/contracts.ts";
@@ -190,7 +191,7 @@ export const createProductClaudeKernelHost = <G>(
               process: options.native.process,
               loaded: { plan: loaded.plan },
               catalog: { id: catalog.id, stages: catalog.stages },
-              owner: options.commands,
+              owner: new ComputerExecutionPort(options.commands),
               source,
               callbacks,
             });

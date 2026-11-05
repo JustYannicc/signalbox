@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { ClaudeKernelNetworkTarget } from "../ClaudeKernelNetworkPort.ts";
 import { claudeKernelComputer } from "../ClaudeKernelComputer.ts";
 import type { ClaudeKernelSessionPort } from "../ClaudeKernelSessionPort.ts";
+import { rpcRequest } from "../../rpc/Request.ts";
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 it("forwards host request cancellation after remote response headers", async () => {
@@ -50,7 +51,9 @@ it("delivers cancellation that arrives before its network request", async () => 
   const target = new ClaudeKernelNetworkTarget({ fetch }, new AbortController().signal, () => {});
   const reason = new Error("cancelled before arrival");
   await target.cancel("early", reason);
-  await expect(target.fetch("early", new Request("https://port.invalid"))).rejects.toBe(reason);
+  await expect(target.fetch("early", rpcRequest(new Request("https://port.invalid")))).rejects.toBe(
+    reason,
+  );
   expect(fetch).not.toHaveBeenCalled();
   await target.dispose();
 });
@@ -75,7 +78,7 @@ it("keeps cancellation alive after headers until the response body closes", asyn
     new AbortController().signal,
     removed,
   );
-  const response = await target.fetch("stream", new Request("https://port.invalid"));
+  const response = await target.fetch("stream", rpcRequest(new Request("https://port.invalid")));
   const reader = response.body!.getReader();
   expect((await reader.read()).value).toEqual(new Uint8Array([42]));
   await target.cancel("stream", new Error("caller left"));
@@ -101,11 +104,13 @@ it("joins a pending fetch on owner disposal and rejects later requests", async (
     new AbortController().signal,
     removed,
   );
-  const pending = target.fetch("pending", new Request("https://port.invalid"));
+  const pending = target.fetch("pending", rpcRequest(new Request("https://port.invalid")));
   const failed = expect(pending).rejects.toThrow("Kernel network port closed");
   await entered.promise;
   await target.dispose();
   await failed;
-  await expect(target.fetch("late", new Request("https://port.invalid"))).rejects.toThrow("closed");
+  await expect(
+    target.fetch("late", rpcRequest(new Request("https://port.invalid"))),
+  ).rejects.toThrow("closed");
   expect(removed).toHaveBeenCalledTimes(1);
 });

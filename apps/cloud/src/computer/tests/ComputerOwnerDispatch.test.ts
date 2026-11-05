@@ -4,6 +4,7 @@ import type { ComputerProgramOwnerOptions } from "../ComputerProgramOwner.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { createKernelComputerHost } from "../../kernel/KernelComputerHost.ts";
 import { createKernelExecutableNamespace } from "../../kernel/KernelExecutableNamespace.ts";
+import { createKernelProcessAdmissionPort } from "../../kernel/KernelProcessAdmissionPort.ts";
 import type { KernelChildHostPort } from "../../kernel/KernelChildDispatchPort.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { ChildWorkerInvocation } from "../ChildWorkerCode.ts";
@@ -78,6 +79,82 @@ async function fixture(
 }
 
 describe("Computer owner dispatch", () => {
+  it("releases undelivered grants after repeated admission and cancellation", async () => {
+    let dispatches = 0;
+    const f = await fixture(async () => {
+      dispatches++;
+      return exited();
+    });
+    const grants: { finished(): Promise<void> }[] = [];
+    const requester = createKernelProcessAdmissionPort({
+      processes: f.context.processes,
+      process: f.context.identity.handle,
+      signal: f.controller.signal,
+    });
+    try {
+      const registration = (await f.owner.registrations()).find(
+        (entry) => entry.executable === "/bin/cat",
+      );
+      if (registration === undefined) throw new Error("The cat registration is missing");
+      for (let attempt = 0; attempt < 32; attempt++) {
+        const aborted = Promise.withResolvers<{ readonly aborted: boolean }>();
+        let revoked = 0;
+        const namespace = createKernelExecutableNamespace({
+          filesystem: f.filesystem,
+          signal: f.controller.signal,
+        });
+        const result = await f.owner.admit(
+          "reusable-admission",
+          {
+            kind: "command",
+            command: { executable: "/bin/cat", argv: ["cat"], cwd: "/workspace", env: {} },
+            target: { kind: "resolved", manifest: registration.manifest },
+            localOnly: true,
+          },
+          {
+            ...namespace,
+            requester: async () => requester,
+            aborted: () => aborted.promise,
+            assertForwarding: async () => {
+              throw new Error("This admission must remain in the isolate");
+            },
+            revoke: async () => {
+              revoked++;
+              aborted.resolve({ aborted: true });
+              await namespace.close();
+            },
+          },
+        );
+        if (result.route !== "child") throw new Error("Expected an admitted child grant");
+        expect(f.capacity.active).toBe(1);
+        await Promise.all([
+          f.owner.cancel("reusable-admission"),
+          f.owner.cancel("reusable-admission"),
+        ]);
+        await result.grant.cancel();
+        grants.push(result.grant);
+        expect(revoked).toBe(1);
+        expect(f.capacity.active).toBe(0);
+        expect(f.capacity.waiting).toBe(0);
+      }
+      expect(dispatches).toBe(0);
+      const child = await f.commands.exec(
+        { executable: "/bin/cat", argv: ["cat"], cwd: "/workspace", env: {} },
+        f.controller.signal,
+        undefined,
+      );
+      await expect(child.exited).resolves.toEqual(exited());
+      await child.dispose();
+      await f.commands.drain();
+      await Promise.all(grants.flatMap((grant) => [grant.finished(), grant.finished()]));
+      expect(dispatches).toBe(1);
+      expect(f.capacity.active).toBe(0);
+    } finally {
+      requester.close();
+      await f.close();
+    }
+  });
+
   it("joins an interrupted admission before releasing its owner", async () => {
     const entered = Promise.withResolvers<void>();
     const aborted = Promise.withResolvers<void>();

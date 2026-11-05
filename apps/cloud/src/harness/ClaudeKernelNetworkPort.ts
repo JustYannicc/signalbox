@@ -1,9 +1,10 @@
 import { RpcTarget } from "cloudflare:workers";
 import type { ComputerPort } from "../computer/Computer.ts";
 import { ownRpcResponse } from "../rpc/response.ts";
+import { requestFromRpc, type RpcRequest } from "../rpc/Request.ts";
 
 export interface ClaudeKernelNetworkPort {
-  fetch(id: string, request: Request): Promise<Response>;
+  fetch(id: string, request: RpcRequest): Promise<Response>;
   cancel(id: string, reason?: unknown): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -33,7 +34,7 @@ export class ClaudeKernelNetworkTarget extends RpcTarget implements ClaudeKernel
       { once: true },
     );
   }
-  async fetch(id: string, request: Request) {
+  async fetch(id: string, request: RpcRequest) {
     this.#signal.throwIfAborted();
     const port = this.#port;
     if (!id || port === undefined || this.#requests.has(id))
@@ -52,7 +53,7 @@ export class ClaudeKernelNetworkTarget extends RpcTarget implements ClaudeKernel
     };
     try {
       signal.throwIfAborted();
-      return await ownRpcResponse(await port.fetch(new Request(request, { signal })), {
+      return await ownRpcResponse(await port.fetch(requestFromRpc(request, signal)), {
         signal,
         release,
         bodyOpened() {},

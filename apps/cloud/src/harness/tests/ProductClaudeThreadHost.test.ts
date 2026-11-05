@@ -10,7 +10,8 @@ const scenario = async (
     | "batch"
     | "boundary-batch"
     | "native-bound-batch"
-    | "unjoined-batch",
+    | "unjoined-batch"
+    | "owners",
 ) => {
   const worker = new NodeWorkerThreads.Worker(
     new URL("./productHost/threadWorker.ts", import.meta.url),
@@ -31,6 +32,9 @@ const scenario = async (
 
 it("delivers committed background continuations through the canonical Runner into the same Claude host", () =>
   scenario("continue"));
+
+it("provisions SDK and Computer workers through ordinary Claude startup and retains one CLI session across turns", () =>
+  scenario("owners"));
 
 it("rejects a post-terminal continuation when the facet's current owner changes", () =>
   scenario("revoke"));

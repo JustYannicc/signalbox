@@ -1,4 +1,5 @@
-import { KernelOpenFlags, type KernelFileSystem } from "./KernelFileSystem.ts";
+import type { KernelFileSystem } from "./KernelFileSystem.ts";
+import { KernelOpenFlags } from "./filesystem/KernelOpenFlags.ts";
 import type { LoadedHarnessRelease } from "../harness/HarnessReleaseLoader.ts";
 import type {
   HarnessHostFilesOptions,

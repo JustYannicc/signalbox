@@ -1,9 +1,35 @@
 // @effect-diagnostics nodeBuiltinImport:off - Wrangler needs a filesystem entry point.
 import * as NodeURL from "node:url";
-import { afterEach, beforeEach, expect, it } from "vite-plus/test";
+import { afterEach, beforeAll, beforeEach, expect, it } from "vite-plus/test";
 import { createTestHarness } from "wrangler";
+import { build } from "esbuild";
 
-const makeHarness = () =>
+let ownerSources: Record<string, string> = {};
+beforeAll(async () => {
+  for (const [role, entry] of [
+    ["Kernel", new URL("./productHost/ordinaryKernel.workerd.fixture.ts", import.meta.url)],
+    ["Computer", new URL("./productHost/ordinaryComputer.workerd.fixture.ts", import.meta.url)],
+    ["Sdk", new URL("./productHost/ordinarySdk.workerd.fixture.ts", import.meta.url)],
+  ] as const) {
+    const bundled = await build({
+      entryPoints: [NodeURL.fileURLToPath(entry)],
+      bundle: true,
+      minify: true,
+      format: "esm",
+      platform: "neutral",
+      mainFields: ["module", "main"],
+      conditions: ["workerd", "worker", "browser"],
+      target: "esnext",
+      external: ["cloudflare:workers", "node:*"],
+      write: false,
+    });
+    const source = bundled.outputFiles[0]?.text;
+    if (source === undefined) throw new Error(`No ${role} owner bundle`);
+    ownerSources[`${role.toUpperCase()}_SOURCE`] = source;
+  }
+}, 60_000);
+
+const makeHarness = (realOwners = false) =>
   createTestHarness({
     workers: [
       {
@@ -14,15 +40,21 @@ const makeHarness = () =>
           ),
           compatibility_date: "2026-10-01",
           compatibility_flags: ["nodejs_compat"],
+          worker_loaders: [{ binding: "LOADER" }],
+          vars: { ...ownerSources, REAL_OWNERS: realOwners },
           durable_objects: {
             bindings: [
               { name: "USERS", class_name: "LocalUser" },
               { name: "POOLS", class_name: "LocalPool" },
               { name: "THREADS", class_name: "LocalThread" },
+              { name: "OBSERVATIONS", class_name: "OrdinaryObservations" },
             ],
           },
           migrations: [
-            { tag: "v1", new_sqlite_classes: ["LocalUser", "LocalPool", "LocalThread"] },
+            {
+              tag: "v1",
+              new_sqlite_classes: ["LocalUser", "LocalPool", "LocalThread", "OrdinaryObservations"],
+            },
           ],
         },
       },
@@ -57,4 +89,28 @@ it("interrupts a model stream across both RPC hops and stops the pool and upstre
   const text = await response.text();
   expect(response.status, text).toBe(200);
   expect(JSON.parse(text)).toEqual({ ok: true, poolStopped: true, upstreamStopped: true });
+});
+
+it("provisions distinct SDK, CLI and Computer isolates from ordinary thread startup and dispatches commands over their real RPC ports", async () => {
+  await harness.close();
+  harness = makeHarness(true);
+  await harness.listen();
+  const response = await harness.fetch("http://proof/");
+  const text = await response.text();
+  expect(response.status, text).toBe(200);
+  const result = JSON.parse(text);
+  expect(result).toMatchObject({ ok: true, runs: 1, status: "completed" });
+  const events: { readonly kind: string; readonly realm: string }[] = result.owners;
+  const realm = (kind: string) => events.find((event) => event.kind === kind)?.realm;
+  const cli = realm("cli-launch");
+  const sdk = realm("sdk-query");
+  const computer = realm("/bin/sed");
+  expect(cli).toBeTypeOf("string");
+  expect(sdk).toBeTypeOf("string");
+  expect(computer).toBeTypeOf("string");
+  expect(new Set([cli, sdk, computer]).size).toBe(3);
+  expect(realm("kernel")).toBe(cli);
+  expect(realm("/usr/bin/git")).toBe(computer);
+  expect(events.filter((event) => event.kind === "cli-launch")).toHaveLength(1);
+  expect(events.filter((event) => event.kind === "sdk-query")).toHaveLength(1);
 });

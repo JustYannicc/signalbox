@@ -7,6 +7,7 @@ import {
   type ClaudeKernelLocalOptions,
 } from "./ClaudeKernelResources.ts";
 import { ClaudeCliProcess } from "./ClaudeCliProcess.ts";
+import { captureClaudeTranscriptFiles } from "./ClaudeTranscriptFiles.ts";
 import type {
   ClaudeKernelInitialize,
   ClaudeKernelSessionPort,
@@ -25,6 +26,8 @@ import {
 } from "../kernel/KernelFileTransfer.ts";
 import { ClaudeKernelNetworkTarget } from "./ClaudeKernelNetworkPort.ts";
 import { ownRpcResponse } from "../rpc/response.ts";
+import { retainRpcCapability } from "../rpc/Capability.ts";
+import { rpcRequest } from "../rpc/Request.ts";
 
 class CommandControl extends RpcTarget {
   #child: KernelCommandChild | undefined;
@@ -84,6 +87,7 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
   readonly #active = new Set<Promise<unknown>>();
   readonly #diagnostics = new Set<Promise<unknown>>();
   readonly #diagnosticFailures: unknown[] = [];
+  readonly #capabilities: Disposable[] = [];
   constructor(
     build: (
       input: ClaudeKernelInitialize,
@@ -133,6 +137,17 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
   configure(config: Parameters<ClaudeKernelSessionPort["configure"]>[0]) {
     this.#lifetime.signal.throwIfAborted();
     if (this.#configured !== undefined) throw new Error("CLI kernel is already configured");
+    const retain = <T extends object>(value: T) => {
+      const owner = retainRpcCapability(value);
+      this.#capabilities.push(owner);
+      return owner.value;
+    };
+    config = {
+      ...config,
+      owner: retain(config.owner),
+      source: retain(config.source),
+      callbacks: retain(config.callbacks),
+    };
     this.#configured = (async () => {
       const resources = await this.#current();
       if (
@@ -242,6 +257,20 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
     const files = captureKernelCheckpointFiles(resources.storage.files, paths);
     return { manifest: kernelFileTransferManifest(files), source: new KernelFileTransfer(files) };
   }
+  captureTranscripts(
+    nativeId: string,
+    configurationDirectory: string,
+    id: string = crypto.randomUUID(),
+  ) {
+    return this.#controlled(id, async (signal) =>
+      captureClaudeTranscriptFiles(
+        (await this.#ready()).storage.files,
+        configurationDirectory,
+        nativeId,
+        signal,
+      ),
+    );
+  }
   open(input: Parameters<ClaudeKernelSessionPort["open"]>[0]) {
     return this.#operation(this.#open(input));
   }
@@ -303,7 +332,7 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
     request.signal.addEventListener("abort", abort, { once: true });
     if (request.signal.aborted) abort();
     try {
-      const response = await callbacks.model(id, request);
+      const response = await callbacks.model(id, rpcRequest(request));
       return await ownRpcResponse(response, {
         signal: request.signal,
         release: () => request.signal.removeEventListener("abort", abort),
@@ -425,6 +454,13 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
           result.status === "rejected" ? [result.reason] : [],
         ),
       ];
+      for (const capability of this.#capabilities.splice(0).toReversed()) {
+        try {
+          capability[Symbol.dispose]();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
       if (failures.length > 0) throw new AggregateError(failures, "CLI kernel cleanup failed");
     })());
   }
@@ -461,6 +497,9 @@ export function createClaudeKernelFacetClass<Env>(
     }
     capture(paths: readonly string[]) {
       return this.#session.capture(paths);
+    }
+    captureTranscripts(nativeId: string, configurationDirectory: string, id?: string) {
+      return this.#session.captureTranscripts(nativeId, configurationDirectory, id);
     }
     open(input: Parameters<ClaudeKernelSessionPort["open"]>[0]) {
       return this.#session.open(input);

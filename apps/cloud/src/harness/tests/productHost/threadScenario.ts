@@ -21,6 +21,7 @@ import {
   continuationHostInputs,
 } from "./continuationHost.ts";
 import { threadActor, threadPlatform } from "./threadPlatform.ts";
+import { threadOwnerRuntimeFixture } from "./threadOwnerRuntime.fixture.ts";
 
 const continuationRows = Schema.decodeUnknownEffect(
   Schema.Array(Schema.Struct({ message_id: Schema.String, published: Schema.Number })),
@@ -46,7 +47,8 @@ export const run = (
     | "batch"
     | "boundary-batch"
     | "native-bound-batch"
-    | "unjoined-batch" = "continue",
+    | "unjoined-batch"
+    | "owners" = "continue",
 ) =>
   Effect.runPromise(
     Effect.scoped(
@@ -71,26 +73,29 @@ export const run = (
         let startupAttempts = 0;
         const handed: RunId[] = [];
         const handedCompletions: unknown[] = [];
+        const owners = threadOwnerRuntimeFixture(
+          mode === "startup-failure"
+            ? {
+                ...input.hostOptions,
+                native: {
+                  ...input.hostOptions.native,
+                  sdkHost: {
+                    open: async () => {
+                      startupAttempts++;
+                      throw new Error("Controlled SDK startup failed");
+                    },
+                  },
+                },
+              }
+            : input.hostOptions,
+          () => input.native.failure,
+        );
         const binding = yield* createProductClaudeThreadHost({
           threadId: input.threadId,
           sql: NodeSqliteClient.layer({ filename: ":memory:" }),
           platform,
           actor: Effect.sync(() => actor),
-          host:
-            mode === "startup-failure"
-              ? {
-                  ...input.hostOptions,
-                  native: {
-                    ...input.hostOptions.native,
-                    sdkHost: {
-                      open: async () => {
-                        startupAttempts++;
-                        throw new Error("Controlled SDK startup failed");
-                      },
-                    },
-                  },
-                }
-              : input.hostOptions,
+          host: owners.host,
           open: (work) => {
             NodeAssert.ok(work.turn);
             return {
@@ -321,7 +326,29 @@ export const run = (
         NodeAssert.deepEqual(yield* continuationRows(input.readContinuationRows()), [
           { message_id: continuation.id, published: 1 },
         ]);
+        if (mode === "owners") {
+          yield* Effect.promise(owners.ready);
+          NodeAssert.deepEqual(owners.loaded.map((entry) => entry.mainModule).sort(), [
+            "computer-owner.mjs",
+            "kernel-owner.mjs",
+            "sdk-owner.mjs",
+          ]);
+          NodeAssert.equal(new Set(owners.loaded.map((entry) => entry.name)).size, 3);
+          NodeAssert.equal(owners.sdkProcesses.length, 1);
+          NodeAssert.ok(owners.dispatched.includes("/bin/sed"));
+          NodeAssert.ok(owners.dispatched.includes("/usr/bin/git"));
+          const host = yield* binding.host;
+          NodeAssert.equal(typeof host.computer.files, "string");
+          NodeAssert.equal(owners.liveOwners(), 2);
+          const identity = yield* Effect.promise(() => owners.kernel().kernelIdentity());
+          NodeAssert.equal(identity.fileIdentity, owners.host.files.identity);
+        }
         yield* binding.dispose;
+        if (mode === "owners") {
+          NodeAssert.equal(owners.liveOwners(), 0);
+          NodeAssert.equal(owners.retired.length, 3);
+          NodeAssert.throws(() => owners.files().stat("/workspace/file.txt"), /disposed/);
+        }
       }),
     ),
   );
