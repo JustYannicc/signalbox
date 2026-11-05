@@ -3,6 +3,7 @@
 export function simpleSedScript(script: string, extended: boolean): boolean {
   if (script.length === 0) return false;
   if (isDigit(script[0])) return simpleSedPrintAddress(script);
+  if (script.startsWith("/")) return simpleSedRegexAddressRange(script);
 
   if (!script.startsWith("s/")) return false;
   const patternEnd = script.indexOf("/", 2);
@@ -35,6 +36,30 @@ function simpleSedPrintAddress(script: string): boolean {
   }
 
   return script.slice(cursor) === "p";
+}
+
+function simpleSedRegexAddressRange(script: string): boolean {
+  const firstEnd = script.indexOf("/", 1);
+  if (firstEnd < 0 || script[firstEnd + 1] !== ",") return false;
+
+  const secondStart = firstEnd + 2;
+  if (script[secondStart] !== "/") return false;
+  const secondEnd = script.indexOf("/", secondStart + 1);
+  if (secondEnd !== script.length - 2 || script.at(-1) !== "p") return false;
+
+  return (
+    simpleSedAddressPattern(script.slice(1, firstEnd)) &&
+    simpleSedAddressPattern(script.slice(secondStart + 1, secondEnd))
+  );
+}
+
+function simpleSedAddressPattern(pattern: string): boolean {
+  if (!pattern.startsWith("^")) return false;
+  const literal = pattern.slice(1);
+  return (
+    literal.length > 0 &&
+    [...literal].every((character) => character === "#" || simplePatternCharacter(character))
+  );
 }
 
 function qualifiedAddress(value: string): number | undefined {
