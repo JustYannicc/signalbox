@@ -1,19 +1,25 @@
 // @effect-diagnostics nodeBuiltinImport:off - Builds a local Worker around pinned Bash and BusyBox WASM.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { build } from "esbuild";
 import { createTestHarness } from "wrangler";
 import { KERNEL_BASH_ARTIFACT } from "../../kernel/KernelBashProgram.ts";
 import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
 import { CHILD_COREUTILS_COMMANDS } from "../ChildProgramSet.ts";
 import { machineInventoryFixture } from "../machineInventoryTesting.ts";
+import coreutilsProvenance from "../../../infra/kernelPrograms/coreutils/provenance.json" with { type: "json" };
 import {
   packageGraph,
   type ChildProgramSourceCode,
   type ChildProgramSourceRecord,
 } from "../../../infra/childPrograms/packageGraph.ts";
 import { readPinnedProgram } from "../../../infra/childPrograms/measured.ts";
-import { bashMain, busyboxMain } from "../../../infra/childPrograms/workerEntrypoints.ts";
+import {
+  bashMain,
+  busyboxMain,
+  measuredProgramMain,
+} from "../../../infra/childPrograms/workerEntrypoints.ts";
 
 export async function startFindFixture(programDir: string, testRoot: string) {
   const repositoryRoot = NodePath.resolve(import.meta.dirname, "../../../../..");
@@ -25,6 +31,7 @@ export async function startFindFixture(programDir: string, testRoot: string) {
     const artifacts = [
       { path: "bash.wasm", pin: KERNEL_BASH_ARTIFACT },
       { path: "busybox.wasm", pin: KERNEL_BUSYBOX_ARTIFACT },
+      { path: "coreutils/head.wasm", pin: coreutilsProvenance.commands.head },
     ];
     const artifactInventory = new Map<string, ChildProgramSourceRecord>();
     const verified = await Promise.all(
@@ -34,24 +41,36 @@ export async function startFindFixture(programDir: string, testRoot: string) {
       }),
     );
     const workerProgramsDir = NodePath.join(workerDir, "programs");
-    await NodeFSP.mkdir(workerProgramsDir);
+    await NodeFSP.mkdir(workerProgramsDir, { recursive: true });
     await Promise.all(
-      artifacts.map(({ path }) =>
-        NodeFSP.copyFile(NodePath.join(programDir, path), NodePath.join(workerProgramsDir, path)),
-      ),
+      artifacts.map(async ({ path }) => {
+        const destination = NodePath.join(workerProgramsDir, path);
+        await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+        await NodeFSP.copyFile(NodePath.join(programDir, path), destination);
+      }),
     );
 
     const sources = new Map<string, ChildProgramSourceRecord>();
-    const [bashGraph, busyboxGraph] = await Promise.all([
+    const [bashGraph, busyboxGraph, coreutilsGraph] = await Promise.all([
       packageGraph(cloudRoot, "src/computer/ChildBashWorker.ts", "ChildBash", bashMain, sources),
       packageGraph(cloudRoot, "src/computer/ChildBusybox.ts", "ChildBusybox", busyboxMain, sources),
+      packageGraph(
+        cloudRoot,
+        "src/computer/ChildCoreutils.ts",
+        "ChildCoreutils",
+        measuredProgramMain("Coreutils"),
+        sources,
+      ),
     ]);
     const unusedCode: ChildProgramSourceCode = {
       mainModule: "unused.js",
       modules: { "unused.js": "export default {};" },
     };
     const coreutils = Object.fromEntries(
-      CHILD_COREUTILS_COMMANDS.map((command) => [command, unusedCode]),
+      CHILD_COREUTILS_COMMANDS.map((command) => [
+        command,
+        command === "head" ? coreutilsGraph.code : unusedCode,
+      ]),
     );
     const programs = {
       bash: bashGraph.code,
@@ -68,6 +87,7 @@ export async function startFindFixture(programDir: string, testRoot: string) {
     const inventory = machineInventoryFixture([
       { path: "/bin/bash", mode: 0o755, uid: 0, gid: 0 },
       { path: "/bin/find", mode: 0o755, uid: 0, gid: 0 },
+      { path: "/bin/head", mode: 0o755, uid: 0, gid: 0 },
     ]);
     await Promise.all([
       NodeFSP.writeFile(NodePath.join(workerDir, "programs.json"), `${JSON.stringify(programs)}\n`),
@@ -154,11 +174,13 @@ function findWorkerSource(input: {
       .join("/");
     return relative.startsWith(".") ? relative : `./${relative}`;
   };
-  const headFunction = String.raw`head() { local line; local count=0; while [ "$count" -lt 50 ] && IFS= read -r line; do printf '%s\n' "$line"; count=$((count + 1)); done; }
-`;
-
+  // The generated Worker lives in a temp directory, so resolve this source from the fixture.
+  const fixtureWorkerExports = NodeURL.fileURLToPath(
+    new URL("../../FixtureWorkerExports.ts", import.meta.url),
+  );
   return `${imports}
 import { DurableObject } from "cloudflare:workers";
+export * from ${JSON.stringify(fixtureWorkerExports)};
 import { KernelForwardingUnavailable } from ${JSON.stringify(source("src/kernel/KernelCommandForwarder.ts"))};
 import { createFacetSqliteStorage } from ${JSON.stringify(source("src/kernel/FacetSqliteStorage.ts"))};
 import { KernelFileSystemUnavailable } from ${JSON.stringify(source("src/kernel/KernelLowerFileSystem.ts"))};
@@ -188,7 +210,6 @@ export class FindProbe extends DurableObject {
     fs.writeFileSync("/workspace/nested/entry.txt", "root\\n");
     fs.writeFileSync("/workspace/nested/sub/entry.txt", "sub\\n");
     fs.writeFileSync("/workspace/nested/sub/deeper/entry.txt", "deep\\n");
-    fs.writeFileSync("/workspace/head-functions", ${JSON.stringify(headFunction)});
 
     const machineCalls = [];
     let machineLookups = 0;
@@ -209,7 +230,7 @@ export class FindProbe extends DurableObject {
       threadId: "find-isolate-fixture",
       filesystem,
       wakes,
-      capacity: new ChildWorkerCapacity(2, { owner: "test/find-isolate-fixture", RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024) }),
+      capacity: new ChildWorkerCapacity(4, { owner: "test/find-isolate-fixture", RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024) }),
       programs: createSeededCommandProgramCodes(childPrograms),
       loader: { workerLoader: this.env.LOADER, compiledModules },
       machineInventory: inventory,
@@ -224,7 +245,7 @@ export class FindProbe extends DurableObject {
         executable: "/bin/bash",
         argv: ["/bin/bash", "--noprofile", "--norc", "-c", "find nested -type f | head -50"],
         cwd: "/workspace",
-        env: { PATH: "/bin", PWD: "/workspace", HOME: "/workspace", BASH_ENV: "/workspace/head-functions", LANG: "C", LC_ALL: "C" },
+        env: { PATH: "/bin", PWD: "/workspace", HOME: "/workspace", LANG: "C", LC_ALL: "C" },
       }, new AbortController().signal, undefined);
       const [stdout, stderr, status] = await Promise.all([
         new Response(child.stdout).text(),
