@@ -23,6 +23,7 @@ import { createChildWorkerInvocationRunner } from "./ChildWorkerInvocationRunner
 import { createWorkerLoaderDispatch, type ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
 import { ComputerObservedChild, ComputerObservedBash } from "./ComputerObservedChild.ts";
 import type { ComputerCatalogProgram } from "./ComputerProgramCatalog.ts";
+import { ComputerProgramPhase } from "./ComputerProgramPhase.ts";
 
 export interface ComputerOwnerProgram {
   readonly descriptor: ComputerCatalogProgram;
@@ -147,40 +148,40 @@ export class ComputerProgramGrant
   }
   async #runBashPhase(phase: KernelBashPhasePort, initial: boolean, residentBytes: number) {
     try {
-      this.#controller.signal.throwIfAborted();
-      const capability = retainRpcCapability(phase);
-      this.#capabilities.push(capability);
-      phase = capability.value;
-      if (initial && this.#initialClaimed)
-        throw new Error("Initial Bash reservation was already claimed");
-      if (initial) this.#initialClaimed = true;
-      const description = await phase.describe();
-      void phase.aborted().then(
-        (result) => {
-          if (result.aborted) this.#controller.abort(result.reason);
-        },
-        (error: unknown) => this.#controller.abort(error),
-      );
-      const exit = await this.#program.runner.run(
-        {
-          signal: this.#controller.signal,
-          command: () => description.command,
-          requester: { owner: description.requester },
-          ...(initial ? { reservation: () => this.#reservation } : {}),
-          lifetime: (pending) => this.#track(pending),
-          open: async (lease, execution) => ({
-            host: new ComputerObservedBash(
-              await phase.open(execution.residentByteLimit, new PhaseExecution(execution)),
-              lease,
-            ),
-            onDispatchFailure: (error) => phase.failure(this.#failure(error)),
-            close: () => phase.revoke(),
-            onStopped: () => phase.stopped(),
-          }),
-        },
-        residentBytes,
-      );
-      return { ok: true as const, exit };
+      const owner = new ComputerProgramPhase(phase, (reason) => this.#controller.abort(reason));
+      let tracked = false;
+      try {
+        this.#controller.signal.throwIfAborted();
+        if (initial && this.#initialClaimed)
+          throw new Error("Initial Bash reservation was already claimed");
+        if (initial) this.#initialClaimed = true;
+        const description = await owner.port.describe();
+        const exit = await this.#program.runner.run(
+          {
+            signal: this.#controller.signal,
+            command: () => description.command,
+            requester: { owner: description.requester },
+            ...(initial ? { reservation: () => this.#reservation } : {}),
+            lifetime: (pending) => {
+              tracked = true;
+              this.#track(owner.after(pending));
+            },
+            open: async (lease, execution) => ({
+              host: new ComputerObservedBash(
+                await owner.port.open(execution.residentByteLimit, new PhaseExecution(execution)),
+                lease,
+              ),
+              onDispatchFailure: (error) => owner.port.failure(this.#failure(error)),
+              close: () => owner.revoke(),
+              onStopped: () => owner.stopped(),
+            }),
+          },
+          residentBytes,
+        );
+        return { ok: true as const, exit };
+      } finally {
+        if (!tracked) await owner.close();
+      }
     } catch (error) {
       return { ok: false as const, failure: this.#failure(error) };
     }

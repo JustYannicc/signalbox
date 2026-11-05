@@ -1,12 +1,13 @@
-import { isStreamName } from "@signalbox/runner-protocol/SessionProtocol";
+import { MAX_APPEND_BYTES, isStreamName } from "@signalbox/runner-protocol/SessionProtocol";
 import type { ClaudeTranscriptCapture } from "../harness/ClaudeTranscriptPort.ts";
-import { readKernelFileTransfer } from "../kernel/KernelFileTransfer.ts";
+import { rpcStubOwner } from "../rpc/Resources.ts";
 import { HarnessError } from "../harness/Harness.ts";
 import type { OrchestrationV2ProviderThread } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { SessionRows } from "./session/SessionRows.ts";
+import { readClaudeTranscriptRows } from "./session/claudeTranscriptRows.ts";
 
 const Entry = Schema.StructWithRest(Schema.Struct({ type: Schema.String }), [
   Schema.Record(Schema.String, Schema.Unknown),
@@ -28,58 +29,97 @@ export const createThreadClaudeSessions = (options: {
           const nativeId = thread.nativeThreadRef?.nativeId;
           if (thread.driver !== "claudeAgent" || nativeId == null)
             return yield* failure("The checkpoint does not name a Claude native session.");
-          const captured = yield* Effect.tryPromise({
-            try: async (signal) => {
-              const capture = await options.capture(nativeId, signal);
-              const files = await readKernelFileTransfer(capture.manifest, capture.source, signal);
-              const byPath = new Map(files.map((file) => [file.path, file.bytes]));
-              return capture.streams.map(({ stream, path }) => {
-                const bytes = byPath.get(path);
-                if (bytes === undefined) throw failure("Claude transcript capture is incomplete.");
-                return { stream, bytes };
-              });
-            },
-            catch: (cause) => failure("Could not locate the facet's Claude transcripts.", cause),
-          });
-          for (const file of captured) {
-            const rows = yield* Effect.try({
-              try: () => {
-                if (!isStreamName(file.stream)) throw failure("Claude transcript name is invalid.");
-                const text = new TextDecoder().decode(file.bytes);
-                const lines = text.split("\n");
-                if (lines.at(-1) === "") lines.pop();
-                if (lines.length === 0) throw failure("Claude transcript is empty.");
-                for (const line of lines) decodeEntry(line);
-                return lines;
-              },
-              catch: (cause) => failure("Claude transcript is incomplete or invalid.", cause),
-            });
-            let offset = 0;
-            for (;;) {
-              const stored = yield* sessions
-                .rows(file.stream, offset)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    failure("Could not read saved Claude transcript.", cause),
-                  ),
-                );
-              if (stored.rows.some((row, index) => row !== rows[offset + index]))
-                return yield* failure("Claude transcript changed its already saved prefix.");
-              offset += stored.rows.length;
-              if (!stored.more) break;
-            }
-            const result = yield* sessions
-              .append({
-                stream: file.stream,
-                offset,
-                rows: rows.slice(offset),
-              })
-              .pipe(
-                Effect.mapError((cause) => failure("Could not save Claude transcript.", cause)),
-              );
-            if (result._tag !== "stored" || result.count !== rows.length)
-              return yield* failure("Claude transcript did not commit at its expected position.");
-          }
+          yield* Effect.acquireUseRelease(
+            Effect.tryPromise({
+              try: (signal) => options.capture(nativeId, signal),
+              catch: (cause) => failure("Could not locate the facet's Claude transcripts.", cause),
+            }).pipe(Effect.interruptible),
+            (capture) =>
+              Effect.gen(function* () {
+                const byPath = new Map(capture.manifest.map((file) => [file.path, file]));
+                for (const file of capture.streams) {
+                  if (!isStreamName(file.stream))
+                    return yield* failure("Claude transcript name is invalid.");
+                  const entry = byPath.get(file.path);
+                  if (entry === undefined)
+                    return yield* failure("Claude transcript capture is incomplete.");
+                  const readSaved = (offset: number) =>
+                    sessions
+                      .rows(file.stream, offset)
+                      .pipe(
+                        Effect.mapError((cause) =>
+                          failure("Could not read saved Claude transcript.", cause),
+                        ),
+                      );
+                  let saved = yield* readSaved(0);
+                  let savedIndex = 0;
+                  let offset = 0;
+                  let batch: string[] = [];
+                  let batchBytes = 0;
+                  const flush = Effect.gen(function* () {
+                    if (batch.length === 0) return;
+                    const expected = offset + batch.length;
+                    const result = yield* sessions
+                      .append({ stream: file.stream, offset, rows: batch })
+                      .pipe(
+                        Effect.mapError((cause) =>
+                          failure("Could not save Claude transcript.", cause),
+                        ),
+                      );
+                    if (result._tag !== "stored" || result.count !== expected)
+                      return yield* failure(
+                        "Claude transcript did not commit at its expected position.",
+                      );
+                    offset = expected;
+                    batch = [];
+                    batchBytes = 0;
+                  });
+                  const rows = readClaudeTranscriptRows(entry, capture.source);
+                  let count = 0;
+                  for (;;) {
+                    const next = yield* Effect.tryPromise({
+                      try: () => rows.next(),
+                      catch: (cause) =>
+                        failure("Claude transcript is incomplete or invalid.", cause),
+                    });
+                    if (next.done) break;
+                    const row = next.value;
+                    yield* Effect.try({
+                      try: () => decodeEntry(row),
+                      catch: (cause) =>
+                        failure("Claude transcript is incomplete or invalid.", cause),
+                    });
+                    count++;
+                    if (savedIndex === saved.rows.length && saved.more) {
+                      saved = yield* readSaved(offset);
+                      savedIndex = 0;
+                    }
+                    if (savedIndex < saved.rows.length) {
+                      if (saved.rows[savedIndex++] !== row)
+                        return yield* failure(
+                          "Claude transcript changed its already saved prefix.",
+                        );
+                      offset++;
+                      continue;
+                    }
+                    const bytes = new TextEncoder().encode(row).length;
+                    if (batch.length > 0 && batchBytes + bytes > MAX_APPEND_BYTES) yield* flush;
+                    batch.push(row);
+                    batchBytes += bytes;
+                    if (batchBytes >= MAX_APPEND_BYTES) yield* flush;
+                  }
+                  if (count === 0) return yield* failure("Claude transcript is empty.");
+                  if (savedIndex !== saved.rows.length || saved.more)
+                    return yield* failure("Claude transcript changed its already saved prefix.");
+                  yield* flush;
+                }
+              }),
+            (capture) =>
+              Effect.promise(async () => {
+                using _source = rpcStubOwner(capture.source);
+                await capture.source.close();
+              }),
+          );
         }),
       );
     return { persist };
