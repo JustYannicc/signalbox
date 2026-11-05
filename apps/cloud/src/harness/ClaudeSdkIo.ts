@@ -49,11 +49,3 @@ export function claudeSdkModelTransport(port: Pick<ClaudeCliProcessPort, "model"
     }
   };
 }
-
-export interface ClaudeSdkRequest {
-  readonly url: string;
-  readonly method: string;
-  readonly headers: readonly (readonly [string, string])[];
-  readonly redirect: RequestRedirect;
-  readonly body: ReadableStream<Uint8Array> | null;
-}

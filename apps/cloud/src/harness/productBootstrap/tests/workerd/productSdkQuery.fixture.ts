@@ -1,4 +1,4 @@
-import type { PreparedClaudeSdk } from "../../../claude/SdkTypes.ts";
+import type { PreparedClaudeSdk } from "../../../ClaudeSdkHost.ts";
 import type { NodeBridge } from "../../../../isolate/NodeBridge.ts";
 import type { createNodeFs } from "../../../../isolate/NodeFs.ts";
 import type { nativeFixture } from "../../../tests/productHost/native.ts";

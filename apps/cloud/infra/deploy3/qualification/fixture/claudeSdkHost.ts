@@ -1,8 +1,10 @@
-import { claudeSdkFileSystem } from "../../../../src/harness/sdkHost/fileSystem.ts";
 import * as Effect from "effect/Effect";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { createClaudeSdkHostEntrypoint } from "../../../../src/harness/ClaudeSdkHost.ts";
-import { installClaudeSdkHostEnvironment } from "../../../../src/harness/ClaudeSdkHostEnvironment.ts";
+import {
+  claudeSdkFileSystem,
+  createClaudeSdkHostEntrypoint,
+  installClaudeSdkHostEnvironment,
+} from "../../../../src/harness/ClaudeSdkHost.ts";
 import { HarnessError } from "../../../../src/harness/Harness.ts";
 import { buildClaudeSdkAdapter } from "./claudeSdkAdapter.ts";
 import { createClaudePreparedImports } from "./claudePreparedModules.ts";

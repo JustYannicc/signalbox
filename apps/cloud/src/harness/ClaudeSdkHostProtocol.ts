@@ -1,4 +1,4 @@
-import type { ClaudeSdkRequest } from "./ClaudeSdkIo.ts";
+import type { ClaudeSdkRequest } from "./ClaudeSdkHostTypes.ts";
 import {
   CheckpointId,
   ModelSelection,

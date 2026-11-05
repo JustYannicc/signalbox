@@ -1,6 +1,6 @@
 import { createNodeReadline } from "../../isolate/NodeReadline.ts";
 import { createNodeTty } from "../../isolate/NodeTty.ts";
-import { createProcessWarnings } from "../../isolate/node/process/warnings.ts";
+import { createProcessWarnings } from "../../isolate/NodeProcess.ts";
 import { claudeSdkModelTransport } from "../ClaudeSdkIo.ts";
 // @effect-diagnostics nodeBuiltinImport:off - The SDK host installs its own Node identity over Workers' native modules.
 import * as NodeProcess from "node:process";

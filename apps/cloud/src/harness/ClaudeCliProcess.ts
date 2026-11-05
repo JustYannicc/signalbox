@@ -1,4 +1,4 @@
-import type { ClaudeSdkRequest } from "./ClaudeSdkIo.ts";
+import type { ClaudeSdkRequest } from "./ClaudeSdkHostTypes.ts";
 import { RpcTarget } from "cloudflare:workers";
 import type { HarnessOpenInput } from "./Harness.ts";
 import type { HarnessProcessObserver, HarnessRuntimeReporter } from "./HarnessProcessLifetime.ts";

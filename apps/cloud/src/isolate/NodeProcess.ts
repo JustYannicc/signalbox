@@ -47,6 +47,7 @@ export class NodeProcessExitError extends Error {
   }
 }
 
+export { createProcessWarnings };
 export type { NodeProcessWarningOptions } from "./node/process/warnings.ts";
 
 export type NodeProcessState = "running" | "exiting" | "exited";

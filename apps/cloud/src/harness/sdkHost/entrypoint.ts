@@ -9,17 +9,11 @@ import {
   type ClaudeSdkProcessContext,
   type ClaudeSdkOpenInput,
 } from "../ClaudeSdkHostProtocol.ts";
-import type { ClaudeSdkAdapterOptions } from "../ClaudeSdkAdapter.ts";
+import type { ClaudeSdkHostPreparation } from "../ClaudeSdkHostTypes.ts";
 import type { HarnessError } from "../Harness.ts";
 import { createClaudeSdkSession } from "./session.ts";
 import { createClaudeSdkFiles } from "./files.ts";
 
-export interface ClaudeSdkHostPreparation extends Pick<
-  ClaudeSdkAdapterOptions,
-  "adapter" | "mcpSessions" | "loadSdk" | "onQueryPreCleanupDiagnostic"
-> {
-  readonly assertCompatibility: () => Promise<void>;
-}
 export interface ClaudeSdkHostDependencies<Env> {
   readonly prepare: (input: {
     readonly env: Env;

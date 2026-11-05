@@ -10,9 +10,8 @@ import { createProductClaudeHarnessSessionHost } from "../../../ProductClaudeHar
 import { makeContinuationHostInputs } from "../../../tests/productHost/continuationHostInputs.ts";
 import { loadClaudeSdkHost } from "../../../ClaudeSdkHostLoader.ts";
 import { storageFor } from "./productFacet.common.fixture.ts";
-import type { ProductWorkerEnv } from "./productBindings.workerd.fixture.ts";
 
-export class ProductLifetime extends DurableObject<ProductWorkerEnv> {
+export class ProductLifetime extends DurableObject<{ readonly PRODUCT_SDK_SOURCE: string }> {
   override async fetch(request: Request) {
     const scenario = new URL(request.url).pathname.slice(1);
     return Response.json(

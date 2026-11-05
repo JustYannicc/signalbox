@@ -4,10 +4,12 @@ import * as Scope from "effect/Scope";
 import type { NodeBridge } from "../../../isolate/NodeBridge.ts";
 import type { ClaudeNativeHostBindingOptions } from "../../ClaudeNativeHostBinding.ts";
 import { claudeSdkOpenCodec, type ClaudeSdkHostService } from "../../ClaudeSdkHostProtocol.ts";
-import { createClaudeSdkSession } from "../../sdkHost/session.ts";
-import { createClaudeSdkFiles } from "../../sdkHost/files.ts";
-import { claudeSdkFileSystem } from "../../sdkHost/fileSystem.ts";
-import type { ClaudeSdkHostPreparation } from "../../sdkHost/entrypoint.ts";
+import {
+  claudeSdkFileSystem,
+  createClaudeSdkFiles,
+  createClaudeSdkSession,
+  type ClaudeSdkHostPreparation,
+} from "../../ClaudeSdkHost.ts";
 import type * as FileSystem from "effect/FileSystem";
 import type { HarnessError } from "../../Harness.ts";
 

@@ -1,9 +1,11 @@
 import { HarnessError } from "../../../Harness.ts";
 import * as Effect from "effect/Effect";
 import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
-import { createClaudeSdkHostEntrypoint } from "../../../ClaudeSdkHost.ts";
-import { installClaudeSdkHostEnvironment } from "../../../ClaudeSdkHostEnvironment.ts";
-import { claudeSdkFileSystem } from "../../../sdkHost/fileSystem.ts";
+import {
+  claudeSdkFileSystem,
+  createClaudeSdkHostEntrypoint,
+  installClaudeSdkHostEnvironment,
+} from "../../../ClaudeSdkHost.ts";
 import { adapterWithFileSystem, services } from "../../../tests/productHost/adapter.ts";
 import { nativeFixture } from "../../../tests/productHost/native.ts";
 import { fixtureSdkQuery } from "./productSdkQuery.fixture.ts";

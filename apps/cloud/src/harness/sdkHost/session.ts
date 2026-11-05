@@ -17,7 +17,7 @@ import {
   type ClaudeSdkOpenInput,
   type ClaudeSdkProcessContext,
 } from "../ClaudeSdkHostProtocol.ts";
-import type { ClaudeSdkHostPreparation } from "./entrypoint.ts";
+import type { ClaudeSdkHostPreparation } from "../ClaudeSdkHostTypes.ts";
 import { claudeSdkDispatch } from "./dispatch.ts";
 
 const encodeEvent = Schema.encodeSync(
