@@ -278,6 +278,7 @@ export async function buildCombinedFixture(raw: unknown) {
   for (const name of [
     "qualifier-implementation",
     "qualifier-claude-implementation",
+    "qualifier-claude-sdk-host",
     "qualifier-worker",
     "qualifier-claude-workflow",
   ]) {
