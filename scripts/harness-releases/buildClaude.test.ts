@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { useWorkerdAdmissionFixture } from "@signalbox/cloud/testing/workerdAdmission";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -13,6 +14,8 @@ import {
   parseBuiltinCapabilityManifest,
 } from "./buildClaude.ts";
 import { freezeArtifact } from "./releaseIdentity.ts";
+
+useWorkerdAdmissionFixture();
 
 const digest = (value: Uint8Array | string) =>
   NodeCrypto.createHash("sha256").update(value).digest("hex");

@@ -72,7 +72,11 @@ NodeTest.test(
       const workspaces = [
         { name: "@test/a", directory: "packages/a", exports: { "./public": "./src/index.ts" } },
         { name: "@test/b", directory: "packages/b" },
-        { name: "@test/cloud", directory: "apps/cloud" },
+        {
+          name: "@test/cloud",
+          directory: "apps/cloud",
+          exports: { "./testing": "./src/alpha/tests/fixture.ts" },
+        },
       ];
       const { output } = await cruise(
         Object.keys(sources),

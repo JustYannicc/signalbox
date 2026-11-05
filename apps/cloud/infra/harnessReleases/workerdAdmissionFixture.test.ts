@@ -5,18 +5,15 @@ import { expect, it } from "vite-plus/test";
 import {
   requireWorkerdLaunchAdmission,
   requireWorkerdLaunchAdmissionSync,
-} from "../../../apps/cloud/infra/harnessReleases/workerdLaunchAdmission.ts";
-import { useWorkerdAdmissionFixture } from "./workerdAdmission.ts";
+} from "./workerdLaunchAdmission.ts";
+import { useWorkerdAdmissionFixture } from "./testing/workerdAdmission.ts";
 
 useWorkerdAdmissionFixture();
 
 it("admits the test and its inventory child through the fixture slot", async () => {
   await expect(requireWorkerdLaunchAdmission()).resolves.toBeUndefined();
   expect(requireWorkerdLaunchAdmissionSync()).toBeUndefined();
-  const admission = new URL(
-    "../../../apps/cloud/infra/harnessReleases/workerdLaunchAdmission.ts",
-    import.meta.url,
-  ).href;
+  const admission = new URL("./workerdLaunchAdmission.ts", import.meta.url).href;
   const child = await NodeUtil.promisify(NodeChildProcess.execFile)(
     NodeProcess.execPath,
     [
@@ -31,10 +28,7 @@ it("admits the test and its inventory child through the fixture slot", async () 
 });
 
 it("keeps the ancestry probe available after profiler sync-spawn lockdown", async () => {
-  const admission = new URL(
-    "../../../apps/cloud/infra/harnessReleases/workerdLaunchAdmission.ts",
-    import.meta.url,
-  ).href;
+  const admission = new URL("./workerdLaunchAdmission.ts", import.meta.url).href;
   const child = await NodeUtil.promisify(NodeChildProcess.execFile)(
     NodeProcess.execPath,
     [

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { useWorkerdAdmissionFixture } from "./testing/workerdAdmission.ts";
+import { useWorkerdAdmissionFixture } from "@signalbox/cloud/testing/workerdAdmission";
 import * as NodeModule from "node:module";
 import { inspectNodeBuiltinCoverage } from "./nodeBuiltinGate/coverage.ts";
 import { captureRuntimeBuiltinSpecifiers } from "./runtimeBuiltinInventory.ts";

@@ -2,6 +2,9 @@
   "name": "@signalbox/cloud",
   "private": true,
   "type": "module",
+  "exports": {
+    "./testing/workerdAdmission": "./infra/harnessReleases/testing/workerdAdmission.ts"
+  },
   "scripts": {
     "probe:isolate": "node --experimental-strip-types infra/isolateProbe/run.ts",
     "dev": "mkdir -p ../web/dist && node ../../packages/shared/src/agentProcesses/cli.ts run -- wrangler dev --env dev --port 8787 --var LOCAL_WORKERD:1 --var ENVIRONMENT_ID:cloud-dev --var 'ENVIRONMENT_LABEL:Signalbox Cloud (dev)'",

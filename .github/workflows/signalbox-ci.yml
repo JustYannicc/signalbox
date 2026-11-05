@@ -276,10 +276,6 @@ jobs:
           node .github/scripts/runner-machine-inventory.cjs download \
             --output "$RUNNER_TEMP/runner-machine-inventory/runner.json"
 
-      - name: Reserve this runner for Workerd tests
-        id: workerd_admission
-        run: node .github/scripts/workerd-admission.cjs reserve
-
       - name: Test
         env:
           TEST_PACKAGES: ${{ needs.cloud_migrations.outputs.test_packages }}
@@ -304,7 +300,7 @@ jobs:
           export VITEST_MAX_WORKERS=$((test_workers > 0 ? test_workers : 1))
           echo "Test budget: $runner_cpus CPUs, $TEST_PACKAGE_RUNNERS packages, $VITEST_MAX_WORKERS Vitest workers per package"
           if [[ "$TEST_PARTITION" == cloud-* ]]; then
-            vp run --filter @signalbox/cloud test --shard "${TEST_PARTITION#cloud-}/3"
+            node .github/scripts/workerd-admission.cjs run vp run --filter @signalbox/cloud test --shard "${TEST_PARTITION#cloud-}/3"
             exit
           fi
           filters=(--filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' --filter '!@signalbox/cloud')
@@ -315,11 +311,7 @@ jobs:
             done
             if (( ${#filters[@]} == 0 )); then exit; fi
           fi
-          vp run --parallel --concurrency-limit "$TEST_PACKAGE_RUNNERS" "${filters[@]}" test
-
-      - name: Release this runner's Workerd reservation
-        if: ${{ always() && steps.workerd_admission.outcome == 'success' }}
-        run: node .github/scripts/workerd-admission.cjs release
+          node .github/scripts/workerd-admission.cjs run vp run --parallel --concurrency-limit "$TEST_PACKAGE_RUNNERS" "${filters[@]}" test
 
   test_web:
     name: Test Web

@@ -21,6 +21,7 @@
   "devDependencies": {
     "@cfworker/json-schema": "4.1.1",
     "@effect/vitest": "catalog:",
+    "@signalbox/cloud": "workspace:*",
     "@types/plist": "catalog:",
     "@types/pngjs": "6.0.5",
     "ajv": "8.20.0",

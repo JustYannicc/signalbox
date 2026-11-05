@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { useWorkerdAdmissionFixture } from "../../../../scripts/harness-releases/testing/workerdAdmission.ts";
+import { useWorkerdAdmissionFixture } from "./testing/workerdAdmission.ts";
 import { captureWorkerdBuiltinInventory } from "./workerdBuiltinInventory.ts";
 
 useWorkerdAdmissionFixture();
