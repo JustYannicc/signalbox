@@ -1,13 +1,11 @@
 import type { HarnessContinuationPublisher } from "./HarnessContinuations.ts";
 import * as Effect from "effect/Effect";
-import type * as Scope from "effect/Scope";
 import {
-  makeClaudeNativeHostBinding,
-  type ClaudeNativeHostBindingOptions,
-} from "./ClaudeNativeHostBinding.ts";
+  makeClaudeRemoteNativeBinding,
+  type ClaudeRemoteNativeOptions,
+} from "./ClaudeRemoteNativeBinding.ts";
 import { HarnessError } from "./Harness.ts";
 import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
-import type { HarnessHostOptions } from "./HarnessSessionHost.ts";
 import type { HarnessProcessResumePreparedRelease } from "./processResume/contracts.ts";
 import type { HarnessReleaseArtifact } from "../harnessReleases/HarnessReleaseLedger.ts";
 import type { ConfiguredHarnessHook } from "../hooks/HarnessHookSettings.ts";
@@ -26,11 +24,10 @@ import {
   type ProductNativeBinding,
 } from "./host/product.ts";
 
-type RuntimeInput<G> = Parameters<HarnessHostOptions<G>["buildRuntime"]>[0];
-type NativeProcess = ClaudeNativeHostBindingOptions["process"];
-type ProductClaudeNativeOptions<G> = Omit<
-  ClaudeNativeHostBindingOptions,
-  "process" | "adapter" | "mcp"
+type NativeProcess = ClaudeRemoteNativeOptions["process"];
+export type ProductClaudeNativeOptions = Omit<
+  ClaudeRemoteNativeOptions,
+  "process" | "continuations" | "mcp"
 > & {
   readonly harness?: "claude-code";
   readonly process: Omit<
@@ -43,17 +40,10 @@ type ProductClaudeNativeOptions<G> = Omit<
     | "processHandle"
     | "systemIdentity"
   >;
-  readonly adapter: (
-    input: RuntimeInput<G>,
-  ) => Effect.Effect<
-    Omit<ClaudeNativeHostBindingOptions["adapter"], "continuationRequests">,
-    HarnessError,
-    Scope.Scope
-  >;
 };
 export type ProductClaudeHarnessHostOptions<G> = ProductHostOptions<
   G,
-  ProductClaudeNativeOptions<G>
+  ProductClaudeNativeOptions
 > & {
   readonly continuations: HarnessContinuationPublisher;
   readonly releaseVariants: ProductClaudeReleaseVariants;
@@ -68,22 +58,21 @@ export interface ProductClaudeHarnessSessionHost<G> extends ProductHarnessSessio
 
 function claudeBinding<G>(
   onLoaded: (loaded: LoadedHarnessRelease) => void,
-): ProductNativeBinding<G, ProductClaudeNativeOptions<G>> {
+): ProductNativeBinding<G, ProductClaudeNativeOptions> {
   return {
     harness: "claude-code",
     home: (native) => native.process.identity.homedir,
     build: (native, input, ports) =>
       Effect.gen(function* () {
         onLoaded(input.loaded);
-        const adapter = yield* native.adapter(input);
         if (input.continuationRequests === undefined)
           return yield* new HarnessError({
             operation: "open",
             message: "Claude product host requires a continuation publisher.",
           });
-        return makeClaudeNativeHostBinding({
+        return makeClaudeRemoteNativeBinding({
           ...native,
-          adapter: { ...adapter, continuationRequests: input.continuationRequests },
+          continuations: input.continuationRequests,
           mcp: input.mcp,
           process: {
             ...native.process,

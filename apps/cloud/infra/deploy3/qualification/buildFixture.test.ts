@@ -99,6 +99,7 @@ it.effect(
           expect(result.outputs.map((pin) => pin.path)).toEqual([
             "qualifier-implementation.mjs",
             "qualifier-claude-implementation.mjs",
+            "qualifier-claude-sdk-host.mjs",
             "qualifier-worker.mjs",
             "qualifier-claude-workflow.mjs",
           ]);
@@ -110,6 +111,21 @@ it.effect(
             NodePath.join(input.outputDirectory, "qualifier-claude-implementation.mjs"),
             "utf8",
           );
+          const sdkHost = result.metafiles["qualifier-claude-sdk-host"]!;
+          expect(Object.keys(sdkHost.inputs)).toEqual(
+            expect.arrayContaining([
+              "repo/apps/cloud/infra/deploy3/qualification/fixture/claudeSdkHost.ts",
+              "repo/apps/cloud/infra/deploy3/qualification/fixture/claudeSdkAdapter.ts",
+            ]),
+          );
+          expect(Object.values(sdkHost.outputs).flatMap((output) => output.exports)).toContain(
+            "ClaudeSdkHost",
+          );
+          expect(
+            Object.keys(result.metafiles["qualifier-claude-implementation"]!.inputs).filter(
+              (path) => /\/(?:ClaudeSdkAdapter\.ts|sdkHost\/)/u.test(path),
+            ),
+          ).toEqual([]);
           // V8 stores Latin-1 sources one-byte; anything above U+00FF doubles the source string.
           expect(
             [...claudeFacetSource].filter((character) => character.charCodeAt(0) > 0xff),
@@ -134,6 +150,12 @@ it.effect(
           const config = JSON.parse(
             await NodeFSP.readFile(
               NodePath.join(input.outputDirectory, "assets/qualifier/config.json"),
+              "utf8",
+            ),
+          );
+          expect(config.claude.sdkHostSource).toBe(
+            await NodeFSP.readFile(
+              NodePath.join(input.outputDirectory, "qualifier-claude-sdk-host.mjs"),
               "utf8",
             ),
           );

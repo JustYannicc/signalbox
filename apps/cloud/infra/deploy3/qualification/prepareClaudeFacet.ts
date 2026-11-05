@@ -7,6 +7,7 @@ import { readAsset, type Configuration } from "./fixture/configuration.ts";
 import { decodePreparedRelease } from "./preparedRelease.schema.ts";
 import { readClaudeQualificationAssets } from "./runtimeAssets.ts";
 import { createQualifierClaudeFacetEnvironment } from "./claudeFacetEnvironment.ts";
+import type { ClaudeSdkHostService } from "../../../src/harness/ClaudeSdkHostProtocol.ts";
 
 /** Materializes verified modules inside the real loader's lazy code callback. */
 export async function prepareClaudeFacetCode(
@@ -17,6 +18,7 @@ export async function prepareClaudeFacetCode(
     readonly RUN_ID: string;
     readonly CONFIG_SHA256: string;
     readonly authorities: Parameters<typeof createQualifierClaudeFacetEnvironment>[3];
+    readonly sdkHost?: (code: WorkerLoaderWorkerCode) => ClaudeSdkHostService;
   },
 ) {
   const calibration = code.mainModule === "qualifier-claude-calibration-facet.mjs";
@@ -48,20 +50,53 @@ export async function prepareClaudeFacetCode(
   const prepared = await claudePreparedWorkerModules(
     { artifact: selected.artifact, plan: loaded.plan },
     packages,
+    calibration ? undefined : "cli",
   );
   const readRange = opened.source.readRange;
   if (!readRange) throw new Error("DEPLOY3_CLAUDE_RANGE_READER_MISSING");
   const modules = await materializeHarnessProcessModules(prepared, selected, readRange);
+  const environment = createQualifierClaudeFacetEnvironment(
+    code.env ?? {},
+    inputs,
+    variant,
+    inputs.authorities,
+  );
+  const sdkModules = calibration
+    ? {}
+    : await materializeHarnessProcessModules(
+        await claudePreparedWorkerModules(
+          { artifact: selected.artifact, plan: loaded.plan },
+          packages,
+          "sdk",
+        ),
+        selected,
+        readRange,
+      );
+  if (!calibration && inputs.sdkHost === undefined)
+    throw new Error("CLAUDE_SDK_HOST_LOADER_MISSING");
+  const sdkHost = calibration
+    ? undefined
+    : inputs.sdkHost!({
+        compatibilityDate: code.compatibilityDate,
+        ...(code.compatibilityFlags === undefined
+          ? {}
+          : { compatibilityFlags: code.compatibilityFlags }),
+        mainModule: "claude-sdk-host-entry.mjs",
+        modules: {
+          ...sdkModules,
+          "claude-sdk-host-entry.mjs": {
+            js: 'export { ClaudeSdkHost as default } from "./qualifier-claude-sdk-host.mjs";',
+          },
+          "qualifier-claude-sdk-host.mjs": { js: configuration.claude.sdkHostSource },
+        },
+        env: { CLAUDE_SDK_PLAN: loaded.plan, CLAUDE_SDK_RELEASE: loaded.plan.release },
+        globalOutbound: null,
+      });
   return {
     variant,
     code: {
       ...code,
-      env: createQualifierClaudeFacetEnvironment(
-        code.env ?? {},
-        inputs,
-        variant,
-        inputs.authorities,
-      ),
+      env: { ...environment, ...(sdkHost === undefined ? {} : { CLAUDE_SDK_HOST: sdkHost }) },
       modules: {
         ...code.modules,
         ...modules,

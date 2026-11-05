@@ -41,14 +41,8 @@ export function adapter(
           cause,
         }),
     });
-  return {
-    instanceId,
-    settings: deps.settings,
-    modelCatalog: { models: [] },
-    attachmentsDir: "/workspace/attachments",
-    path: deps.path,
-    idAllocator: deps.idAllocator,
-    fileSystem: FileSystem.makeNoop({
+  return adapterWithFileSystem(
+    FileSystem.makeNoop({
       exists: (path) => access("exists", path, () => fs.existsSync(path)),
       readDirectory: (path) =>
         access("readDirectory", path, () => fs.readdirSync(path).map(String)),
@@ -62,6 +56,24 @@ export function adapter(
           );
         }),
     }),
+    deps,
+    instanceId,
+  );
+}
+
+export function adapterWithFileSystem(
+  fileSystem: FileSystem.FileSystem,
+  deps: Effect.Success<typeof services>,
+  instanceId: ClaudeNativeHostBindingOptions["adapter"]["instanceId"],
+): ClaudeNativeHostBindingOptions["adapter"] {
+  return {
+    instanceId,
+    settings: deps.settings,
+    modelCatalog: { models: [] },
+    attachmentsDir: "/workspace/attachments",
+    path: deps.path,
+    idAllocator: deps.idAllocator,
+    fileSystem,
     crypto: Crypto.make({
       randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
       digest: (algorithm, bytes) =>

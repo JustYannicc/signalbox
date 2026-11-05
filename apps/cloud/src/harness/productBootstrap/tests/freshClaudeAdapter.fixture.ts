@@ -8,8 +8,6 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import { createNodeFs } from "../../../isolate/NodeFs.ts";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
 import type { ClaudeNativeHostBindingOptions } from "../../ClaudeNativeHostBinding.ts";
 
 const decodeSettings = Schema.decodeEffect(ClaudeSettings);
@@ -26,24 +24,11 @@ export const freshClaudeAdapterServices = Effect.gen(function* () {
 type Services = Effect.Success<typeof freshClaudeAdapterServices>;
 type AdapterOptions = Omit<ClaudeNativeHostBindingOptions["adapter"], "continuationRequests">;
 
-export function freshClaudeAdapterOptions(
-  files: KernelFileSystem,
+export function freshClaudeAdapterWithFileSystem(
+  fileSystem: FileSystem.FileSystem,
   services: Services,
   instanceId: ProviderInstanceId,
 ): AdapterOptions {
-  const fs = createNodeFs(files).fs;
-  const access = <A>(method: string, path: string, run: () => A) =>
-    Effect.try({
-      try: run,
-      catch: (cause) =>
-        PlatformError.systemError({
-          _tag: "Unknown",
-          module: "FileSystem",
-          method,
-          pathOrDescriptor: path,
-          cause,
-        }),
-    });
   return {
     instanceId,
     settings: services.settings,
@@ -51,20 +36,7 @@ export function freshClaudeAdapterOptions(
     attachmentsDir: "/workspace/attachments",
     path: services.path,
     idAllocator: services.idAllocator,
-    fileSystem: FileSystem.makeNoop({
-      exists: (path) => access("exists", path, () => fs.existsSync(path)),
-      readDirectory: (path) =>
-        access("readDirectory", path, () => fs.readdirSync(path).map(String)),
-      readFileString: (path) =>
-        access("readFileString", path, () => String(fs.readFileSync(path, "utf8"))),
-      makeDirectory: (path, options) =>
-        access("makeDirectory", path, () => {
-          fs.mkdirSync(
-            path,
-            options?.recursive === undefined ? undefined : { recursive: options.recursive },
-          );
-        }),
-    }),
+    fileSystem,
     crypto: Crypto.make({
       randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
       digest: (algorithm, bytes) =>

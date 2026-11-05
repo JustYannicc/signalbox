@@ -82,9 +82,11 @@ export const run = (
                   ...input.hostOptions,
                   native: {
                     ...input.hostOptions.native,
-                    loadSdk: async () => {
-                      startupAttempts++;
-                      throw new Error("Controlled SDK startup failed");
+                    sdkHost: {
+                      open: async () => {
+                        startupAttempts++;
+                        throw new Error("Controlled SDK startup failed");
+                      },
                     },
                   },
                 }

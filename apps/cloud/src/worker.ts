@@ -57,6 +57,7 @@ export { HarnessThreadSupervisorObject } from "./harness/HarnessThreadSupervisor
 export { HarnessProcessExecutionEntrypoint } from "./harness/HarnessProcessExecutionEntrypoint.ts";
 export { HarnessProcessExecutionShardObject } from "./harness/HarnessProcessExecutionShardObject.ts";
 export { HarnessProcessPlacementStoreObject } from "./harness/HarnessProcessPlacementStoreObject.ts";
+export { ClaudeSdkHostLoader } from "./harness/ClaudeSdkHostLoader.ts";
 export { HarnessProgramAssetsBinding } from "./harness/HarnessProgramAssetsBinding.ts";
 export { HarnessProcessStoreBinding } from "./harness/HarnessProcessStoreBinding.ts";
 

@@ -1,3 +1,4 @@
+import { sdkHostFixture } from "./sdkHost.ts";
 // @effect-diagnostics nodeBuiltinImport:off - Controlled native modules run in an isolated test realm.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeUtil from "node:util";
@@ -42,7 +43,7 @@ import {
 import { runRepositoryScenario, type RepositoryScenario } from "./repositoryScenario.ts";
 import { nativeFixture } from "./native.ts";
 import { claudeReleaseVariantsForArtifact } from "./releaseVariants.fixture.ts";
-import { adapter, services } from "./adapter.ts";
+import { adapterWithFileSystem, services } from "./adapter.ts";
 
 type ProductScenario = Scenario | "hydrate" | "start-failure" | RepositoryScenario;
 
@@ -269,32 +270,37 @@ export function run(scenario: ProductScenario = "turn", omitOnExit = false) {
             if (fd === 1) observed.push(bytes);
           },
           native: {
-            adapter: ({ harness }) =>
-              Effect.gen(function* () {
-                NodeAssert.equal(hydrated, true);
-                if (scenario === "repository-readiness" || scenario === "repository-machine-rule") {
-                  NodeAssert.deepEqual(productGit?.commands[0]?.command.argv, [
-                    "/usr/bin/git",
-                    "update-index",
-                    "--refresh",
-                  ]);
-                  nativeAdapterBuilt = true;
-                }
-                if (scenario === "start-failure") {
-                  yield* Effect.addFinalizer(() =>
-                    Effect.sync(() => {
-                      nativeBindingClosed = true;
-                    }),
-                  );
-                  return yield* new HarnessError({
-                    operation: "open",
-                    message: "Controlled native acquisition failure",
-                  });
-                }
-                return adapter(harness.computer.files, deps, instanceId);
-              }),
-            mcpSessions: deps.mcpSessions,
-            loadSdk: native.loadSdk,
+            sdkHost: sdkHostFixture({
+              adapter: (files) =>
+                Effect.gen(function* () {
+                  NodeAssert.equal(hydrated, true);
+                  if (
+                    scenario === "repository-readiness" ||
+                    scenario === "repository-machine-rule"
+                  ) {
+                    NodeAssert.deepEqual(productGit?.commands[0]?.command.argv, [
+                      "/usr/bin/git",
+                      "update-index",
+                      "--refresh",
+                    ]);
+                    nativeAdapterBuilt = true;
+                  }
+                  if (scenario === "start-failure") {
+                    yield* Effect.addFinalizer(() =>
+                      Effect.sync(() => {
+                        nativeBindingClosed = true;
+                      }),
+                    );
+                    return yield* new HarnessError({
+                      operation: "open",
+                      message: "Controlled native acquisition failure",
+                    });
+                  }
+                  return adapterWithFileSystem(files, deps, instanceId);
+                }),
+              mcpSessions: deps.mcpSessions,
+              loadSdk: native.loadSdk,
+            }),
             processObserver: {
               started(process) {
                 nativeProcess = process;

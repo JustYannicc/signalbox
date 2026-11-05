@@ -71,9 +71,12 @@ async function sha256(text: string): Promise<string> {
 export async function claudePreparedWorkerModules(
   release: ClaudePreparedRelease,
   environmentSources: ClaudeEnvironmentPackageSources,
+  component?: "cli" | "sdk",
 ): Promise<Readonly<Record<string, HarnessProcessFacetModule>>> {
   const modules: Record<string, HarnessProcessFacetModule> = Object.create(null);
-  for (const moduleKey of Object.keys(release.plan.preparedModules))
+  for (const moduleKey of Object.keys(release.plan.preparedModules).filter(
+    (key) => component === undefined || release.plan.preparedModules[key]?.component === component,
+  ))
     modules[claudePreparedModuleName(moduleKey)] = preparedReleaseAsset(release, moduleKey);
 
   const packageNames = Object.keys(release.plan.environmentPackageModules).sort();

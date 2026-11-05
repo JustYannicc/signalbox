@@ -63,6 +63,7 @@ export const ConfigurationSchema = Schema.Struct({
       seed: ClaudeSeedConfiguration,
     }),
     facetSource: Text,
+    sdkHostSource: Text,
     environmentPackages: Schema.Record(Schema.String, AssetPinSchema),
     expected: Schema.Struct({ baseline: PreparedRelease, hooks: PreparedRelease }),
   }),

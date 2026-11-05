@@ -53,6 +53,7 @@ async function setup() {
         seed: runtime.seed,
       },
       facetSource: "synthetic",
+      sdkHostSource: "synthetic-sdk-host",
       environmentPackages: {},
       expected: { baseline: prepared("baseline"), hooks: prepared("hooks") },
     },
@@ -157,7 +158,16 @@ test.each(["baseline", "hooks"] as const)(
           HARNESS_C_PRODUCT_CAPABILITIES: {},
         },
       };
+      let sdkCode: WorkerLoaderWorkerCode | undefined;
       const inputs = {
+        sdkHost: (code: WorkerLoaderWorkerCode) => {
+          sdkCode = code;
+          return {
+            open: async () => {
+              throw new Error("This loader test does not execute SDK queries");
+            },
+          };
+        },
         RUN_ID: rootRunId,
         CONFIG_SHA256: "a".repeat(64),
         authorities: {
@@ -179,6 +189,10 @@ test.each(["baseline", "hooks"] as const)(
         QUALIFIER_CLAUDE_VARIANT: variant,
       });
       expect(prepared.code.modules).toHaveProperty("qualifier-claude-implementation.mjs");
+      expect(Object.keys(prepared.code.modules).some((key) => key.includes("/sdk/"))).toBe(false);
+      expect(sdkCode).toBeDefined();
+      expect(sdkCode?.modules).toHaveProperty("qualifier-claude-sdk-host.mjs");
+      expect(Object.keys(sdkCode?.modules ?? {}).some((key) => key.includes("/cli/"))).toBe(false);
       await expect(
         prepareClaudeFacetCode(
           {

@@ -20,7 +20,7 @@ import type { HarnessContinuation } from "../../HarnessContinuations.ts";
 import { type ProductClaudeHarnessHostOptions } from "../../ProductClaudeHarnessSessionHost.ts";
 import { claudeFixture } from "../../releaseLoader/tests/artifactFixtures.ts";
 import { data } from "../../adapter/tests/data.ts";
-import { adapter, services } from "./adapter.ts";
+import { adapterWithFileSystem, services } from "./adapter.ts";
 import { commandLoader, programFixture } from "./commands.ts";
 import { machineFixture } from "./machine.ts";
 import { continuationNativeFixture } from "./continuationNative.ts";
@@ -29,6 +29,7 @@ import {
   claudeReleaseVariantsForArtifact,
 } from "./releaseVariants.fixture.ts";
 
+import { sdkHostFixture } from "./sdkHost.ts";
 import type { FacetStorage } from "../../../kernel/FacetSqliteStorage.ts";
 
 export const makeContinuationHostInputs = (
@@ -134,6 +135,33 @@ export const makeContinuationHostInputs = (
     const programs = yield* Effect.promise(programFixture);
 
     let currentRunId = turn.runId;
+    const sdkHostOptions: Parameters<typeof sdkHostFixture>[0] = {
+      adapter: (files) =>
+        Effect.succeed({
+          ...adapterWithFileSystem(files, deps, instanceId),
+          ...(batch && binding === "explicit"
+            ? {
+                continuationOwnership: {
+                  resolve: (observations) =>
+                    Effect.sync(() => {
+                      NodeAssert.deepEqual(
+                        observations,
+                        native.batchBlocks.map((block, index) => ({
+                          sdkMessageId: native.batchUuid,
+                          blockIndex: index,
+                          observedCallId: native.batchCalls[index],
+                          block,
+                        })),
+                      );
+                      return batchBindings;
+                    }),
+                },
+              }
+            : {}),
+        }),
+      mcpSessions: deps.mcpSessions,
+      loadSdk: native.loadSdk,
+    };
     const hostOptions: ProductClaudeHarnessHostOptions<string> = {
       threadId: d.threadId,
       release: release.options,
@@ -227,31 +255,7 @@ export const makeContinuationHostInputs = (
           }),
       },
       native: {
-        adapter: ({ harness }) =>
-          Effect.succeed({
-            ...adapter(harness.computer.files, deps, instanceId),
-            ...(batch && binding === "explicit"
-              ? {
-                  continuationOwnership: {
-                    resolve: (observations) =>
-                      Effect.sync(() => {
-                        NodeAssert.deepEqual(
-                          observations,
-                          native.batchBlocks.map((block, index) => ({
-                            sdkMessageId: native.batchUuid,
-                            blockIndex: index,
-                            observedCallId: native.batchCalls[index],
-                            block,
-                          })),
-                        );
-                        return batchBindings;
-                      }),
-                  },
-                }
-              : {}),
-          }),
-        mcpSessions: deps.mcpSessions,
-        loadSdk: native.loadSdk,
+        sdkHost: sdkHostFixture(sdkHostOptions),
         process: {
           identity: {
             version: "v24.21.0",
@@ -286,6 +290,7 @@ export const makeContinuationHostInputs = (
 
     return {
       hostOptions,
+      sdkHostOptions,
       batchBindings,
       sessionInput,
       setRunId: (runId: typeof currentRunId) => {

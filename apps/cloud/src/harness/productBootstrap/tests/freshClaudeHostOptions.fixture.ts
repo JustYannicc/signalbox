@@ -1,10 +1,11 @@
+import { sdkHostFixture } from "../../tests/productHost/sdkHost.ts";
 import * as Effect from "effect/Effect";
 import { ChildWorkerCapacity } from "../../../computer/ChildWorkerCapacity.ts";
 import { createMemoryFilePersistencePorts } from "../../../kernel/MemoryFilePersistencePorts.ts";
 import { createNodeFs } from "../../../isolate/NodeFs.ts";
 import type { ProductClaudeHarnessHostOptions } from "../../ProductClaudeHarnessSessionHost.ts";
 import {
-  freshClaudeAdapterOptions,
+  freshClaudeAdapterWithFileSystem,
   freshClaudeAdapterServices,
 } from "./freshClaudeAdapter.fixture.ts";
 import { freshClaudeTurnData } from "./freshClaudeTurn.fixture.ts";
@@ -127,13 +128,12 @@ export const freshClaudeHostOptions = () =>
       native: {
         harness: "claude-code",
         process: peer.process,
-        loadSdk: peer.loadSdk,
-        mcpSessions: deps.mcpSessions,
-        adapter: (input) => {
-          return Effect.succeed(
-            freshClaudeAdapterOptions(input.harness.computer.files, deps, data.instanceId),
-          );
-        },
+        sdkHost: sdkHostFixture({
+          loadSdk: peer.loadSdk,
+          mcpSessions: deps.mcpSessions,
+          adapter: (files) =>
+            Effect.succeed(freshClaudeAdapterWithFileSystem(files, deps, data.instanceId)),
+        }),
       },
     };
     return {

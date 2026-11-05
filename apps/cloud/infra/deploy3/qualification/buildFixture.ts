@@ -170,6 +170,7 @@ export async function buildCombinedFixture(raw: unknown) {
   for (const [entry, name] of [
     ["facet", "qualifier-implementation"],
     ["claudeFacet", "qualifier-claude-implementation"],
+    ["claudeSdkHost", "qualifier-claude-sdk-host"],
     ["worker", "qualifier-worker"],
   ] as const) {
     const built = await build({
@@ -232,6 +233,10 @@ export async function buildCombinedFixture(raw: unknown) {
         NodePath.join(output, "qualifier-claude-implementation.mjs"),
         "utf8",
       ),
+      sdkHostSource: await NodeFSP.readFile(
+        NodePath.join(output, "qualifier-claude-sdk-host.mjs"),
+        "utf8",
+      ),
       expected: claudeExpected,
     },
   } satisfies Configuration;
@@ -273,6 +278,7 @@ export async function buildCombinedFixture(raw: unknown) {
   for (const name of [
     "qualifier-implementation",
     "qualifier-claude-implementation",
+    "qualifier-claude-sdk-host",
     "qualifier-worker",
     "qualifier-claude-workflow",
   ]) {
