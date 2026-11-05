@@ -2,6 +2,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
+import { useWorkerdAdmissionFixture } from "./testing/workerdAdmission.ts";
 import { openHarnessReleaseArtifact } from "../../src/harnessReleases/HarnessReleaseArtifact.ts";
 import {
   artifactDirectorySource,
@@ -14,6 +15,8 @@ import {
   prepareHarnessArtifactWithFileSystem,
   type ArtifactFileSystem,
 } from "./prepareArtifact.internal.ts";
+
+useWorkerdAdmissionFixture();
 
 const roots: string[] = [];
 afterEach(async () => {

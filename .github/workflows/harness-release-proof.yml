@@ -121,10 +121,6 @@ jobs:
           node .github/scripts/runner-machine-inventory.cjs download \
             --output "$RUNNER_TEMP/runner-machine-inventory/runner.json"
 
-      - name: Reserve this runner for Workerd inventory
-        id: workerd_admission
-        run: node .github/scripts/workerd-admission.cjs reserve
-
       - name: Run the frozen release pipeline
         id: run
         shell: bash
@@ -140,7 +136,7 @@ jobs:
               --machine-inventory "$RUNNER_TEMP/runner-machine-inventory/runner.json"
               --max-prepared-module-bytes 128000000)
           fi
-          node scripts/harness-releases/run.ts \
+          node .github/scripts/workerd-admission.cjs run node scripts/harness-releases/run.ts \
             --provider "$PROVIDER" --version "$VERSION" --run-key "$RUN_KEY" \
             --selection "$SELECTION" --output "$RUNNER_TEMP/harness-release" \
             --bash "$RUNNER_TEMP/harness-release-programs/bash.wasm" \
@@ -155,10 +151,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           HARNESS_RELEASE_DEPLOY: "1"
         run: node scripts/harness-releases/run.ts --cleanup --output "$RUNNER_TEMP/harness-release"
-
-      - name: Release this runner's Workerd reservation
-        if: ${{ always() && steps.workerd_admission.outcome == 'success' }}
-        run: node .github/scripts/workerd-admission.cjs release
 
       - name: Upload immutable release evidence
         if: always()

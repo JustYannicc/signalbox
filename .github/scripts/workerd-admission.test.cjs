@@ -1,68 +1,90 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { test } = require("node:test");
-const { reserve, release } = require("./workerd-admission.cjs");
+const { runInNativeSlot } = require("./workerd-admission.cjs");
 
 function fixture(t) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ci-workerd-admission-"));
-  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "ci-workerd-admission-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   return {
+    ...process.env,
+    HOME: home,
     GITHUB_ACTIONS: "true",
     RUNNER_ENVIRONMENT: "github-hosted",
-    RUNNER_TEMP: directory,
-    GITHUB_ENV: path.join(directory, "environment"),
-    GITHUB_REPOSITORY: "test/repository",
-    GITHUB_RUN_ID: "1",
-    GITHUB_RUN_ATTEMPT: "2",
-    GITHUB_JOB: "test",
   };
 }
+const slot = (env) => path.join(env.HOME, ".t3", "heavy-slots-native", "slot-1");
 
-test("exports a job-owned live reservation and explicitly releases it", (t) => {
+test("holds a live ancestor slot for its command and inventory grandchildren", (t) => {
   const env = fixture(t);
-  reserve(env);
-  const variables = Object.fromEntries(
-    fs
-      .readFileSync(env.GITHUB_ENV, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => {
-        const index = line.indexOf("=");
-        return [line.slice(0, index), line.slice(index + 1)];
-      }),
+  const admission = pathToFileURL(
+    path.resolve(__dirname, "../../apps/cloud/infra/harnessReleases/workerdLaunchAdmission.ts"),
+  ).href;
+  const inspect = `
+    const { requireWorkerdLaunchAdmission, requireWorkerdLaunchAdmissionSync } = await import(${JSON.stringify(admission)});
+    await requireWorkerdLaunchAdmission();
+    requireWorkerdLaunchAdmissionSync();
+  `;
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [
+      path.join(__dirname, "workerd-admission.cjs"),
+      "run",
+      process.execPath,
+      "--input-type=module",
+      "-e",
+      `import { execFileSync } from "node:child_process";
+       ${inspect}
+       execFileSync(process.execPath, ["--input-type=module", "-e", ${JSON.stringify(inspect)}], { env: process.env });`,
+    ],
+    { env, encoding: "utf8" },
   );
-  const active = JSON.parse(fs.readFileSync(variables.SIGNALBOX_WORKERD_ACTIVE, "utf8"));
-  assert.equal(active.currentOwnerThreadId, variables.SIGNALBOX_WORKERD_OWNER);
-  assert.equal(active.reservationId, variables.SIGNALBOX_WORKERD_BATCH);
-  assert.equal(active.reservationState, "RESERVED");
-  release(env);
-  const released = JSON.parse(fs.readFileSync(variables.SIGNALBOX_WORKERD_ACTIVE, "utf8"));
-  assert.equal(released.reservationState, "RELEASED");
-  assert.equal(released.currentOwnerThreadId, null);
-  assert.equal(released.exclusiveHoldActive, false);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(slot(env)), false);
 });
 
-test("refuses to self-admit a shared or unidentified runner", (t) => {
+test("releases its slot and returns the command failure", (t) => {
   const env = fixture(t);
+  assert.equal(runInNativeSlot(env, process.execPath, ["-e", "process.exitCode=7"]), 7);
+  assert.equal(fs.existsSync(slot(env)), false);
+  assert.throws(() => runInNativeSlot(env, path.join(env.HOME, "missing"), []), /ENOENT/u);
+  assert.equal(fs.existsSync(slot(env)), false);
+});
+
+test("refuses shared runners, paused execution, and an occupied slot", (t) => {
+  const env = fixture(t);
+  const command = [process.execPath, ["-e", "process.exitCode=0"]];
   assert.throws(
-    () => reserve({ ...env, RUNNER_ENVIRONMENT: "self-hosted" }),
+    () => runInNativeSlot({ ...env, RUNNER_ENVIRONMENT: "self-hosted" }, ...command),
     /isolated GitHub-hosted/u,
   );
-  assert.throws(() => reserve({ ...env, GITHUB_JOB: "" }), /job identity/u);
-  assert.equal(fs.existsSync(env.GITHUB_ENV), false);
+  fs.mkdirSync(path.join(env.HOME, ".t3"));
+  const pause = path.join(env.HOME, ".t3", "heavy-slots-paused");
+  fs.writeFileSync(pause, "paused");
+  assert.throws(() => runInNativeSlot(env, ...command), /paused/u);
+  fs.unlinkSync(pause);
+  fs.mkdirSync(slot(env), { recursive: true });
+  fs.writeFileSync(path.join(slot(env), "pid"), "1\n");
+  assert.throws(() => runInNativeSlot(env, ...command), /EEXIST/u);
+  assert.equal(fs.readFileSync(path.join(slot(env), "pid"), "utf8"), "1\n");
 });
 
-test("never overwrites an existing reservation or releases another job", (t) => {
+test("preserves a slot whose owner changed during execution", (t) => {
   const env = fixture(t);
-  reserve(env);
-  assert.throws(() => reserve(env), /EEXIST/u);
-  assert.throws(() => release({ ...env, GITHUB_JOB: "other" }), /another Workerd reservation/u);
-  const active = JSON.parse(
-    fs.readFileSync(path.join(env.RUNNER_TEMP, "signalbox-workerd", "ACTIVE.json"), "utf8"),
+  const pidfile = path.join(slot(env), "pid");
+  assert.throws(
+    () =>
+      runInNativeSlot(env, process.execPath, [
+        "-e",
+        `require("node:fs").writeFileSync(${JSON.stringify(pidfile)}, "2\\n")`,
+      ]),
+    /another native slot owner/u,
   );
-  assert.equal(active.reservationState, "RESERVED");
+  assert.equal(fs.readFileSync(pidfile, "utf8"), "2\n");
 });

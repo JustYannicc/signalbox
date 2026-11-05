@@ -8,7 +8,7 @@ Relative imports across workspace directories bypass that interface and fail
 Tests in packages with exports exercise those exports, even when the test sits
 next to the implementation. Expose several
 small entry points when needed; avoid a barrel that re-exports the whole subtree.
-Apps without exports keep their internal test conventions.
+Apps keep their internal test conventions, including when they export test helpers.
 
 Cloud modules use [root-file entry points](../apps/cloud/src/README.md).
 Cycles, including type-only cycles, are checked across the workspace graph.

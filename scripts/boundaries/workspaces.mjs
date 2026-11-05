@@ -128,8 +128,9 @@ export function workspaceViolations(modules, workspaces) {
             .join(".*");
           return new RegExp(`^${pattern}$`).test(relative);
         });
-        // Apps without exports have their own internal test conventions; cloud has depth rules.
-        if (fromWorkspace.exports && !publicFile) rule = "workspace-tests-through-exports";
+        // Apps keep internal tests when exporting helpers; cloud also has module depth rules.
+        if (!fromWorkspace.directory.startsWith("apps/") && fromWorkspace.exports && !publicFile)
+          rule = "workspace-tests-through-exports";
       }
       if (rule)
         violations.push({ from: source.source, to: dependency.resolved, rule: { name: rule } });

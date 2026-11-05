@@ -178,18 +178,7 @@ export async function captureRuntimeBuiltinInventory(
       maxBuffer: 1024 * 1024,
       timeout: 60_000,
       env: Object.fromEntries(
-        [
-          "HOME",
-          "PATH",
-          "TMPDIR",
-          "TMP",
-          "TEMP",
-          "LANG",
-          "LC_ALL",
-          "SIGNALBOX_WORKERD_ACTIVE",
-          "SIGNALBOX_WORKERD_OWNER",
-          "SIGNALBOX_WORKERD_BATCH",
-        ]
+        ["HOME", "PATH", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "HEAVY_SLOT_ACTIVE"]
           .flatMap((name) => (process.env[name] === undefined ? [] : [[name, process.env[name]]]))
           .concat([
             ["WRANGLER_SEND_METRICS", "false"],

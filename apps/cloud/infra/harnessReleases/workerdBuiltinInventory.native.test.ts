@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
+import { useWorkerdAdmissionFixture } from "./testing/workerdAdmission.ts";
 import { captureWorkerdBuiltinInventory } from "./workerdBuiltinInventory.ts";
+
+useWorkerdAdmissionFixture();
 
 describe("native builtin inventory", () => {
   it("keeps the 35 retained conditional paths explicit after runtime corrections", async () => {

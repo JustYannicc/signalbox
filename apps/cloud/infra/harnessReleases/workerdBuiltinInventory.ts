@@ -84,7 +84,7 @@ export default {async fetch(){
         compatibility_flags: flags,
       }),
     );
-    // Bundling can outlast the reservation, so recheck before Wrangler starts Workerd.
+    // Slot ownership or pause can change while bundling, before Workerd starts.
     await requireWorkerdLaunchAdmission();
     await harness.update({ workers: [{ configPath }] });
     await harness.listen();

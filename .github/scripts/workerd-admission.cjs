@@ -1,79 +1,49 @@
 "use strict";
 
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-function context(env) {
+function releaseSlot(slot, pidfile, owner) {
+  if (fs.existsSync(pidfile)) {
+    if (fs.readFileSync(pidfile, "utf8") !== owner)
+      throw new Error("Refusing to release another native slot owner");
+    fs.unlinkSync(pidfile);
+  }
+  fs.rmdirSync(slot);
+}
+
+function runInNativeSlot(env, command, args) {
   if (env.GITHUB_ACTIONS !== "true" || env.RUNNER_ENVIRONMENT !== "github-hosted")
     throw new Error("Only an isolated GitHub-hosted job can reserve its own Workerd slot");
-  const values = [
-    env.RUNNER_TEMP,
-    env.GITHUB_REPOSITORY,
-    env.GITHUB_RUN_ID,
-    env.GITHUB_RUN_ATTEMPT,
-    env.GITHUB_JOB,
-  ];
-  if (values.some((value) => typeof value !== "string" || !value || /[\r\n]/u.test(value)))
-    throw new Error("Missing or invalid GitHub job identity");
-  const owner = `github:${env.GITHUB_REPOSITORY}:${env.GITHUB_RUN_ID}:${env.GITHUB_RUN_ATTEMPT}:${env.GITHUB_JOB}`;
-  return {
-    activePath: path.join(env.RUNNER_TEMP, "signalbox-workerd", "ACTIVE.json"),
-    owner,
-    batch: `${owner}:workerd`,
-  };
-}
-
-function reserve(env) {
-  const { activePath, owner, batch } = context(env);
-  if (!env.GITHUB_ENV) throw new Error("GITHUB_ENV is required");
-  fs.mkdirSync(path.dirname(activePath), { recursive: true });
-  fs.writeFileSync(
-    activePath,
-    JSON.stringify({
-      reservationState: "RESERVED",
-      reservationId: batch,
-      currentOwnerThreadId: owner,
-      exclusiveHoldActive: true,
-      reservedUntilRelease: true,
-      expiresAt: null,
-    }),
-    { flag: "wx" },
-  );
-  fs.appendFileSync(
-    env.GITHUB_ENV,
-    `SIGNALBOX_WORKERD_ACTIVE=${activePath}\nSIGNALBOX_WORKERD_OWNER=${owner}\nSIGNALBOX_WORKERD_BATCH=${batch}\n`,
-  );
-}
-
-function release(env) {
-  const { activePath, owner, batch } = context(env);
-  const active = JSON.parse(fs.readFileSync(activePath, "utf8"));
-  if (
-    active.reservationState !== "RESERVED" ||
-    active.currentOwnerThreadId !== owner ||
-    active.reservationId !== batch
-  )
-    throw new Error("Refusing to release another Workerd reservation");
-  const temporaryPath = `${activePath}.released`;
-  fs.writeFileSync(
-    temporaryPath,
-    JSON.stringify({
-      ...active,
-      reservationState: "RELEASED",
-      currentOwnerThreadId: null,
-      exclusiveHoldActive: false,
-      reservedUntilRelease: false,
-    }),
-    { flag: "wx" },
-  );
-  fs.renameSync(temporaryPath, activePath);
+  if (!env.HOME || !path.isAbsolute(env.HOME)) throw new Error("An absolute HOME is required");
+  if (!command) throw new Error("A command is required");
+  const root = path.join(env.HOME, ".t3");
+  if (fs.existsSync(path.join(root, "heavy-slots-paused")))
+    throw new Error("Heavy slots are paused");
+  const pool = path.join(root, "heavy-slots-native");
+  const slot = path.join(pool, "slot-1");
+  fs.mkdirSync(pool, { recursive: true });
+  fs.mkdirSync(slot);
+  const pidfile = path.join(slot, "pid");
+  const owner = `${process.pid}\n`;
+  try {
+    fs.writeFileSync(pidfile, owner, { flag: "wx" });
+    const result = childProcess.spawnSync(command, args, {
+      env: { ...env, HEAVY_SLOT_ACTIVE: "1" },
+      stdio: "inherit",
+    });
+    if (result.error) throw result.error;
+    return result.status ?? 1;
+  } finally {
+    releaseSlot(slot, pidfile, owner);
+  }
 }
 
 if (require.main === module) {
-  const command = process.argv[2];
-  if (command === "reserve") reserve(process.env);
-  else if (command === "release") release(process.env);
-  else throw new Error("Usage: workerd-admission.cjs reserve|release");
+  if (process.argv[2] !== "run")
+    throw new Error("Usage: workerd-admission.cjs run <command> [args...]");
+  process.exitCode = runInNativeSlot(process.env, process.argv[3], process.argv.slice(4));
 }
 
-module.exports = { reserve, release };
+module.exports = { runInNativeSlot };
