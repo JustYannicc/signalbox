@@ -7,13 +7,16 @@ import {
   KERNEL_BASH_ARTIFACT,
   type KernelBashCredentials,
 } from "../../kernel/KernelBashProgram.ts";
+import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
 import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { KernelBashForkSource } from "../../kernel/KernelBashFork.ts";
 import type { KernelCommand, KernelCommandForwarder } from "../../kernel/KernelCommandForwarder.ts";
+import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import { createFacetSqliteStorage } from "../../kernel/FacetSqliteStorage.ts";
 import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
 import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
 import { createChildBash } from "../ChildBash.ts";
+import { createChildBusybox } from "../ChildBusybox.ts";
 import { createChildCoreutils } from "../ChildCoreutils.ts";
 import { ChildWorkerCapacity } from "../ChildWorkerCapacity.ts";
 import { CHILD_COREUTILS_COMMANDS } from "../ChildProgramSet.ts";
@@ -35,6 +38,10 @@ const available = NodeFS.existsSync(NodePath.join(directory, "bash.wasm"));
 if (!available && NodeProcess.env.SIGNALBOX_REQUIRE_BASH_ARTIFACT === "1")
   throw new Error(`Required GNU Bash test artifact is missing: ${directory}/bash.wasm`);
 export const bashModule = available ? loadBash(directory) : undefined;
+const busyboxAvailable = NodeFS.existsSync(NodePath.join(directory, "busybox.wasm"));
+if (!busyboxAvailable && NodeProcess.env.SIGNALBOX_REQUIRE_BUSYBOX_ARTIFACT === "1")
+  throw new Error(`Required pinned BusyBox test artifact is missing: ${directory}/busybox.wasm`);
+export const busyboxModule = busyboxAvailable ? loadBusybox(directory) : undefined;
 
 type RunningBashHost = KernelBashPort & {
   readonly metadata: () => {
@@ -55,9 +62,20 @@ function loadBash(root: string) {
   return new WebAssembly.Module(bytes);
 }
 
+function loadBusybox(root: string) {
+  const bytes = NodeFS.readFileSync(NodePath.join(root, "busybox.wasm"));
+  if (
+    bytes.length !== KERNEL_BUSYBOX_ARTIFACT.bytes ||
+    NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== KERNEL_BUSYBOX_ARTIFACT.sha256
+  )
+    throw new Error("Machine PATH regression requires the pinned BusyBox");
+  return new WebAssembly.Module(bytes);
+}
+
 const machineCommands = [
   "awk",
   "bash",
+  "busybox",
   "cat",
   "cp",
   "env",
@@ -106,6 +124,7 @@ export interface MachinePathFixtureOptions {
   readonly inventory?: MachineProgramInventory;
   readonly files?: MachineFilesPort;
   readonly coreutilsModules?: Partial<Record<ChildCoreutilsCommand, WebAssembly.Module>>;
+  readonly busyboxModule?: WebAssembly.Module;
   readonly spawn?: KernelCommandForwarder["spawn"];
   readonly before?: (filesystem: KernelFileSystem) => void;
 }
@@ -163,6 +182,17 @@ export function machinePathFixture(
         const basename = input.command.executable.slice(
           input.command.executable.lastIndexOf("/") + 1,
         );
+        if (basename === "find") {
+          if (options.busyboxModule === undefined)
+            throw new Error("Pinned BusyBox artifact is required for isolate find");
+          localCalls.push(input.command.executable);
+          return await createChildBusybox({
+            module: options.busyboxModule,
+            port: port.host<KernelBusyboxPort>(),
+            args: input.command.argv,
+            env: input.command.env,
+          }).run();
+        }
         const coreutilsModule = options.coreutilsModules?.[basename as ChildCoreutilsCommand];
         if (coreutilsModule !== undefined) {
           localCalls.push(input.command.executable);

@@ -2,23 +2,60 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { KernelOpenFlags } from "../../kernel/KernelFileSystem.ts";
 import { emptyMachineFilesFixture } from "../machineInventoryTesting.ts";
 import { controlledMachineFiles } from "./MachinePathControlledFiles.ts";
-import { bashModule, machinePathFixture, machinePathInventory } from "./MachinePathFixture.ts";
+import {
+  bashModule,
+  busyboxModule,
+  machinePathFixture,
+  machinePathInventory,
+} from "./MachinePathFixture.ts";
 import { writeUpperFile } from "./MachinePathFixtureSupport.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 describe.skipIf(bashModule === undefined)("ProductComputer machine PATH discovery", () => {
-  it.each(["awk", "xargs", "find"])(
-    "admits bare %s to the machine with exact argv",
-    async (command) => {
-      const fixture = machinePathFixture(bashModule!);
+  it.each(["awk", "xargs"])("admits bare %s to the machine with exact argv", async (command) => {
+    const fixture = machinePathFixture(bashModule!);
+    try {
+      const result = await fixture.run(command);
+      expect(result.status.exitCode).toBe(23);
+      expect(result.stderr).toBe("");
+      expect(
+        fixture.machineCalls.map((call) => ({ executable: call.executable, argv: call.argv })),
+      ).toEqual([{ executable: `/bin/${command.split(" ")[0]}`, argv: command.split(" ") }]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it.skipIf(busyboxModule === undefined)(
+    "keeps bare find isolated and forwards the unsupported busybox find form unchanged",
+    async () => {
+      const fixture = machinePathFixture(bashModule!, {
+        busyboxModule: busyboxModule!,
+        before(filesystem) {
+          writeUpperFile(filesystem, "/workspace/nested/entry.txt", "entry\n", 0o644);
+        },
+      });
       try {
-        const result = await fixture.run(command);
-        expect(result.status.exitCode).toBe(23);
-        expect(result.stderr).toBe("");
+        const local = await fixture.run("find nested -type f");
+        expect(local.status.exitCode).toBe(0);
+        expect(local.stdout).toBe("nested/entry.txt\n");
+        expect(local.stderr).toBe("");
+        expect(fixture.localCalls).toContain("/bin/find");
+        expect(fixture.fileLookups).toEqual([]);
+        expect(fixture.machineCalls).toEqual([]);
+
+        const unsupported = await fixture.run("busybox find nested -type f");
+        expect(unsupported.status.exitCode).toBe(23);
+        expect(unsupported.stderr).toBe("");
         expect(
           fixture.machineCalls.map((call) => ({ executable: call.executable, argv: call.argv })),
-        ).toEqual([{ executable: `/bin/${command.split(" ")[0]}`, argv: command.split(" ") }]);
+        ).toEqual([
+          {
+            executable: "/bin/busybox",
+            argv: ["busybox", "find", "nested", "-type", "f"],
+          },
+        ]);
       } finally {
         await fixture.close();
       }
