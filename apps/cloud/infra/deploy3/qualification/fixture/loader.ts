@@ -1,3 +1,4 @@
+import { loadClaudeSdkHost } from "../../../../src/harness/ClaudeSdkHostLoader.ts";
 import { readRpcData, withRpcStub, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
 import { claudeStepRoute } from "./claudeScenario.ts";
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
@@ -83,6 +84,7 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
             RUN_ID: env.RUN_ID,
             CONFIG_SHA256: env.CONFIG_SHA256,
             authorities,
+            sdkHost: (code) => loadClaudeSdkHost(`${name}:sdk-host`, code),
           });
           assertQualifierClaudeFacetConfiguration(prepared.code.env);
           const route = (path: string) => ({ method: "POST", path });

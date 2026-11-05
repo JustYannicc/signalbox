@@ -3,7 +3,6 @@ import { readRpcData } from "../../../../src/rpc/Resources.ts";
 import { claudeQualificationToolObservation } from "./claudeToolObservation.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import { ChildWorkerCapacity } from "../../../../src/computer/ChildWorkerCapacity.ts";
 import type { ChildWorkerLoaderPort } from "../../../../src/computer/WorkerLoaderDispatch.ts";
@@ -33,7 +32,6 @@ import {
   readClaudeQualificationInputs,
   type ClaudeQualificationInputs,
 } from "./claudeConfiguration.ts";
-import { buildClaudeAdapter } from "./claudeAdapter.ts";
 import { createClaudePreparedImports } from "./claudePreparedModules.ts";
 import { claudeNodeRuntimeIdentity, claudeSeedPaths, claudeSystemIdentity } from "./claudeSeed.ts";
 import {
@@ -51,6 +49,7 @@ export type ClaudeFacetEnvironment = typeof QualifierClaudeFacetConfiguration.Ty
   HarnessCProductFacetEnvironment & {
     readonly HARNESS_PROCESS_LOADER_ID: string;
     readonly QUALIFIER_CLAUDE_VARIANT?: unknown;
+    readonly CLAUDE_SDK_HOST: import("../../../../src/harness/ClaudeSdkHostProtocol.ts").ClaudeSdkHostService;
   };
 
 type Capability = QualifierCapabilities;
@@ -78,7 +77,6 @@ export interface ClaudeFacetBuildInput {
 }
 
 const decodeTurn = Schema.decodeSync(Schema.fromJsonString(Schema.toCodecJson(RunnerTurn)));
-const mcpLayer = McpProviderSessions.layer;
 const attempt = <A>(run: () => Promise<A>) =>
   Effect.tryPromise({
     try: run,
@@ -221,9 +219,6 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
     const state = facetState(input.ctx, cap, input.facetNonce);
     const paths = claudeSeedPaths(claude.seed);
     const imports = createClaudePreparedImports();
-    const mcpSessions = yield* Effect.gen(function* () {
-      return yield* McpProviderSessions.McpProviderSessions;
-    }).pipe(Effect.provide(mcpLayer));
     const systemIdentity = claudeSystemIdentity(turn.threadId);
     const machine = () => ({
       files: {
@@ -255,14 +250,7 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
     const native: ProductClaudeHarnessHostOptions<unknown>["native"] = {
       harness: "claude-code",
       ...(observation === undefined ? {} : { toolObservation: observation }),
-      adapter: ({ harness }) =>
-        buildClaudeAdapter({
-          files: harness.computer.files,
-          instanceId: harness.session.modelSelection.instanceId,
-          attachmentsDir: `${paths.home}/.attachments`,
-        }),
-      mcpSessions,
-      loadSdk: async (_bridge, signal) => await imports.loadSdk(plan, signal),
+      sdkHost: input.env.CLAUDE_SDK_HOST,
       process: {
         identity: claudeNodeRuntimeIdentity(paths.home),
         env: {

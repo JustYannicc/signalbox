@@ -7,6 +7,7 @@ import { createTestHarness } from "wrangler";
 
 let harness: ReturnType<typeof createTestHarness>;
 let productFacetSource: string;
+let productSdkSource: string;
 
 beforeAll(async () => {
   const bundled = await build({
@@ -27,6 +28,24 @@ beforeAll(async () => {
     write: false,
   });
   productFacetSource = bundled.outputFiles[0]?.text ?? "";
+  const sdk = await build({
+    entryPoints: [
+      NodeURL.fileURLToPath(
+        new URL("./tests/workerd/productSdkHost.workerd.fixture.ts", import.meta.url),
+      ),
+    ],
+    bundle: true,
+    minify: true,
+    format: "esm",
+    platform: "neutral",
+    mainFields: ["module", "main"],
+    conditions: ["workerd", "worker", "browser"],
+    target: "esnext",
+    external: ["cloudflare:workers", "node:*"],
+    write: false,
+  });
+  productSdkSource = sdk.outputFiles[0]?.text ?? "";
+  if (productSdkSource.length === 0) throw new Error("The SDK fixture bundle is empty.");
   if (productFacetSource.length === 0) throw new Error("The product fixture bundle is empty.");
 }, 60_000);
 
@@ -44,6 +63,7 @@ const makeHarness = () =>
           worker_loaders: [{ binding: "LOADER" }],
           vars: {
             PRODUCT_FACET_SOURCE: productFacetSource,
+            PRODUCT_SDK_SOURCE: productSdkSource,
             RESIDENT_BYTE_LIMIT: "128000000",
           },
           durable_objects: {
@@ -54,6 +74,7 @@ const makeHarness = () =>
               { name: "PROCESS_EXECUTION_SHARDS", class_name: "ProductFixtureShard" },
               { name: "PLACEMENT_STORES", class_name: "ProductFixturePlacementStore" },
               { name: "PRODUCT_FIXTURE", class_name: "ProductFixtureCapability" },
+              { name: "PRODUCT_LIFETIME", class_name: "ProductLifetime" },
               { name: "PRODUCT_EXECUTOR", class_name: "ProductFixtureExecutor" },
             ],
           },
@@ -67,6 +88,7 @@ const makeHarness = () =>
                 "ProductFixtureShard",
                 "ProductFixturePlacementStore",
                 "ProductFixtureCapability",
+                "ProductLifetime",
                 "ProductFixtureExecutor",
               ],
             },
@@ -282,4 +304,38 @@ it("returns the structured per-process checkpoint failure through fixture readin
       ],
     },
   });
+});
+
+it.each([
+  { scenario: "two-turns", statuses: ["completed", "completed"], saves: 2 },
+  { scenario: "error", statuses: ["failed"], saves: 1 },
+  { scenario: "dispose", statuses: [], saves: 0 },
+  { scenario: "dispose-body", statuses: [], saves: 0 },
+])(
+  "retains the real split SDK/CLI process through $scenario",
+  async ({ scenario, statuses, saves }) => {
+    const response = await harness.fetch(`http://proof/sdk-lifetime/${scenario}`);
+    const body = await response.text();
+    expect(response.status, body).toBe(200);
+    const result = JSON.parse(body);
+    expect(result.failure, body).toBeUndefined();
+    expect(result.launches).toBe(1);
+    expect(result.statuses).toEqual(statuses);
+    expect(result.saves).toBe(saves);
+    expect(result.disposed).toBe(true);
+    expect(result.processes).toBe(0);
+    if (scenario === "error")
+      expect(JSON.stringify(result.cleanupFailure)).toContain("controlled model stream failure");
+    else expect(result.cleanupFailure).toBeUndefined();
+  },
+);
+
+it("rejects a turn when the separate SDK host reports an omitted release module", async () => {
+  const response = await harness.fetch("http://proof/sdk-lifetime/sdk-omission");
+  const body = await response.text();
+  expect(response.status, body).toBe(200);
+  const result = JSON.parse(body);
+  expect(result.failure).toBeDefined();
+  expect(JSON.stringify(result.failure)).toContain("RELEASE_MODULE_OMITTED");
+  expect(JSON.stringify(result.failure)).toContain("sdk/omitted-fixture");
 });

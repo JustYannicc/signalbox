@@ -14,8 +14,8 @@ const harnesses = [
   {
     harness: "Claude",
     entry: "ProductClaudeHarnessSessionHost.ts",
-    composition: "tests/productHost/scenario.ts",
-    binding: "ClaudeNativeHostBinding.ts",
+    composition: "ProductClaudeHarnessRequestFacet.ts",
+    binding: "ClaudeRemoteNativeBinding.ts",
     excluded:
       /(?:^|\/)packages\/provider-codex\/|(?:^|\/)packages\/effect-codex-app-server\/|\/harness\/(?:Codex[^/]*\.ts|codex\/)/,
   },
@@ -62,6 +62,15 @@ it.each(
     expect(inputs).toContain(harnessRoot + "host/lifecycle.ts");
     expect(inputs).toContain("apps/cloud/src/kernel/KernelFileSystem.ts");
     expect(inputs.filter((path) => excluded.test(path))).toEqual([]);
+    if (harness === "Claude") {
+      expect(
+        inputs.filter((path) =>
+          /(?:ClaudeIsolateAdapter|ClaudeNativeHostBinding|ClaudeSdkAdapter|sdkHost\/|provider-claude\/src\/ClaudeAdapter\.|claude-agent-sdk)/u.test(
+            path,
+          ),
+        ),
+      ).toEqual([]);
+    }
     const descriptors = result.outputFiles
       .filter((file) => file.path.endsWith(".js"))
       .map((file) => ({

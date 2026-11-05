@@ -17,7 +17,6 @@ import {
 } from "./releaseVariants.fixture.ts";
 import { hostSqlite } from "../hostSqlite.ts";
 import { commandLoader, programFixture } from "./commands.ts";
-import { services } from "./adapter.ts";
 import {
   emptyMachineFilesFixture,
   machineInventoryFixture,
@@ -31,7 +30,6 @@ async function runtimePorts(): Promise<
     "commands" | "save" | "port" | "native" | "machineInventory"
   >
 > {
-  const deps = await Effect.runPromise(services);
   return {
     machineInventory: machineInventoryFixture(),
     commands: {
@@ -54,10 +52,10 @@ async function runtimePorts(): Promise<
       throw new Error("Unused port");
     },
     native: {
-      mcpSessions: deps.mcpSessions,
-      adapter: () => Effect.die("Unused adapter"),
-      loadSdk: async () => {
-        throw new Error("Unused SDK");
+      sdkHost: {
+        open: async () => {
+          throw new Error("Unused SDK host");
+        },
       },
       process: {
         identity: {

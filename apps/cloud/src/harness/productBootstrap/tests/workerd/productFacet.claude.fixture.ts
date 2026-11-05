@@ -13,8 +13,8 @@ import { createNodeFs } from "../../../../isolate/NodeFs.ts";
 import { ChildWorkerCapacity } from "../../../../computer/ChildWorkerCapacity.ts";
 import { createMemoryFilePersistencePorts } from "../../../../kernel/MemoryFilePersistencePorts.ts";
 import type { ProductClaudeHarnessHostOptions } from "../../../ProductClaudeHarnessSessionHost.ts";
+import type { ClaudeSdkHostService } from "../../../ClaudeSdkHostProtocol.ts";
 import { dataForDriver } from "../../../adapter/tests/data.ts";
-import { adapter, services } from "../../../tests/productHost/adapter.ts";
 import { commandLoader } from "../../../tests/productHost/commands.ts";
 import { machineFixture } from "../../../tests/productHost/machine.ts";
 import { nativeFixture } from "../../../tests/productHost/native.ts";
@@ -36,7 +36,6 @@ export class ClaudeFacet extends createHarnessCProductClaudeFacetClass<
 >({
   buildHostOptions: ({ env, ctx, selectedRelease }) =>
     Effect.gen(function* () {
-      const deps = yield* services;
       const data = yield* dataForDriver(ProviderDriverKind.make("claudeAgent"));
       const commands = commandLoader();
       const machine = machineFixture("turn", () => {});
@@ -54,54 +53,8 @@ export class ClaudeFacet extends createHarnessCProductClaudeFacetClass<
       );
       const nativeOptions: ProductClaudeHarnessHostOptions<ProductFixtureGrant>["native"] = {
         harness: "claude-code",
-        adapter: ({ harness }) =>
-          Effect.succeed(adapter(harness.computer.files, deps, data.instanceId)),
-        mcpSessions: deps.mcpSessions,
-        loadSdk: async (bridge) => {
-          const sdk = await native.loadSdk(bridge);
-          return {
-            ...sdk,
-            query(input) {
-              const query = sdk.query(input);
-              const next = query.next.bind(query);
-              let checkedExecutor = false;
-              let executorUrl: string | undefined;
-              const setMcpServers = query.setMcpServers.bind(query);
-              query.setMcpServers = async (servers) => {
-                const executor = servers.executor;
-                if (executor !== undefined && "url" in executor) executorUrl = executor.url;
-                return await setMcpServers(servers);
-              };
-              query.next = async (...args) => {
-                if (!checkedExecutor) {
-                  checkedExecutor = true;
-                  if (executorUrl === undefined)
-                    throw new Error("Native Executor MCP route is missing.");
-                  // @effect-diagnostics-next-line globalFetch:off - This uses the native SDK's installed MCP URL through the Node personality.
-                  const response = await globalThis.fetch(executorUrl, {
-                    method: "POST",
-                    body: "native-executor-request",
-                  });
-                  if (
-                    response.status !== 200 ||
-                    (await response.text()) !== "fixture executor response"
-                  )
-                    throw new Error("Native Executor MCP response changed.");
-                }
-                const result = await next(...args);
-                if (!result.done && result.value.type === "result") {
-                  const fs = bridge.require("node:fs") as ReturnType<typeof createNodeFs>["fs"];
-                  await fs.promises.writeFile(
-                    "/workspace/.claude/projects/-workspace/product-native-session.jsonl",
-                    `${JSON.stringify(result.value)}\n`,
-                  );
-                }
-                return result;
-              };
-              return query;
-            },
-          };
-        },
+        sdkHost: (env as ProductFixtureEnv & { CLAUDE_SDK_HOST: ClaudeSdkHostService })
+          .CLAUDE_SDK_HOST,
         process: {
           identity: {
             version: "v24.21.0",

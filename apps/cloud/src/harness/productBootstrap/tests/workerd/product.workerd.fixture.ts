@@ -1,3 +1,6 @@
+export { ClaudeSdkHostLoader } from "../../../ClaudeSdkHostLoader.ts";
+import { loadClaudeSdkHost } from "../../../ClaudeSdkHostLoader.ts";
+export { ProductLifetime } from "./productLifetime.workerd.fixture.ts";
 import { ProductFixtureFilesStore as HarnessFilesStoreObject } from "./productStores.workerd.fixture.ts";
 import { ProductFixtureRunStore } from "./productStores.workerd.fixture.ts";
 import { HarnessProcessExecutionShardObject } from "../../../HarnessProcessExecutionShardObject.ts";
@@ -45,6 +48,23 @@ export class ProductFixtureShard extends HarnessProcessExecutionShardObject {
     const executor = env.PRODUCT_EXECUTOR.getByName(name) as unknown as Fetcher;
     super(ctx, {
       ...env,
+      LOADER: {
+        load: (code) => env.LOADER.load(code),
+        get(name, getCode) {
+          return env.LOADER.get(name, async () => {
+            const code = await getCode();
+            if (code.mainModule !== "productFacet.mjs") return code;
+            const sdk = loadClaudeSdkHost(`${name}/sdk`, {
+              mainModule: "sdk.mjs",
+              modules: { "sdk.mjs": { js: env.PRODUCT_SDK_SOURCE } },
+              compatibilityDate: "2026-10-19",
+              compatibilityFlags: ["nodejs_compat", "new_module_registry"],
+              globalOutbound: null,
+            });
+            return { ...code, env: { ...code.env, CLAUDE_SDK_HOST: sdk } };
+          });
+        },
+      },
       HARNESS_C_PRODUCT_CAPABILITIES: {
         [HARNESS_C_PRODUCT_CAPABILITY_KEYS.release]: capabilities,
         [HARNESS_C_PRODUCT_CAPABILITY_KEYS.nativeCheckpoint]: capabilities,
@@ -432,6 +452,10 @@ export default {
           observations,
         });
       }
+      if (path.startsWith("/sdk-lifetime/"))
+        return env.PRODUCT_LIFETIME.getByName(path).fetch(
+          `http://lifetime/${path.slice("/sdk-lifetime/".length)}`,
+        );
       if (
         path !== "/positive" &&
         path !== "/codex-same" &&

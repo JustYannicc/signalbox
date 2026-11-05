@@ -1,3 +1,4 @@
+import { sdkHostFixture } from "./sdkHost.ts";
 // @effect-diagnostics nodeBuiltinImport:off - Controlled native modules run in an isolated test realm.
 import * as NodeAssert from "node:assert/strict";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,7 @@ export function run() {
         const exited = Promise.withResolvers<unknown>();
         const stderr: Uint8Array[] = [];
         const kills: boolean[] = [];
+        const sdkExitCleanup = Promise.withResolvers<void>();
         const host = yield* createProductClaudeHarnessSessionHost({
           ...input.hostOptions,
           observeOutput: (fd, bytes) => {
@@ -32,45 +34,49 @@ export function run() {
               },
               abandoned: exited.reject,
             },
-            loadSdk: async (bridge): Promise<PreparedClaudeSdk> => {
-              const guest = bridge.require("process") as ReturnType<typeof createNodeProcess>;
-              return {
-                query({ options }) {
-                  const spawn = options.spawnClaudeCodeProcess;
-                  if (spawn === undefined) throw new Error("Missing native spawn");
-                  const child = spawn({
-                    command: "/runtime/claude",
-                    args: ["--input-format", "stream-json"],
-                    cwd: "/workspace",
-                    env: { HOME: "/home/recorded", PATH: "/bin" },
-                    signal: new AbortController().signal,
-                  });
-                  const closed = Promise.withResolvers<void>();
-                  child.on("error", closed.reject);
-                  child.once("exit", () => closed.resolve());
-                  // The real SDK registers its cleanup against this shared guest process.
-                  guest.once("exit", () => kills.push(child.kill("SIGTERM")));
-                  async function* messages(): AsyncGenerator<never> {
-                    await closed.promise;
-                    yield* [];
-                  }
-                  return Object.assign(messages(), {
-                    initializationResult: async () =>
-                      ({}) as Awaited<ReturnType<ClaudeSdkQuery["initializationResult"]>>,
-                    close: () => child.kill("SIGTERM"),
-                    setMcpServers: async () => ({ added: [], removed: [], errors: {} }),
-                    setModel: async () => {},
-                    applyFlagSettings: async () => {},
-                    setPermissionMode: async () => {},
-                    stopTask: async () => {},
-                    backgroundTasks: async () => true,
-                    interrupt: async () => undefined,
-                  }) satisfies ClaudeSdkQuery;
-                },
-                forkSession: async (sessionId) => ({ sessionId }),
-                getSubagentMessages: async () => [],
-              };
-            },
+            sdkHost: sdkHostFixture({
+              ...input.sdkHostOptions,
+              loadSdk: async (): Promise<PreparedClaudeSdk> => {
+                return {
+                  query({ options }) {
+                    const spawn = options.spawnClaudeCodeProcess;
+                    if (spawn === undefined) throw new Error("Missing native spawn");
+                    const child = spawn({
+                      command: "/runtime/claude",
+                      args: ["--input-format", "stream-json"],
+                      cwd: "/workspace",
+                      env: { HOME: "/home/recorded", PATH: "/bin" },
+                      signal: new AbortController().signal,
+                    });
+                    const closed = Promise.withResolvers<void>();
+                    child.on("error", closed.reject);
+                    child.once("exit", () => closed.resolve());
+                    child.once("exit", () => {
+                      kills.push(child.kill("SIGTERM"));
+                      sdkExitCleanup.resolve();
+                    });
+                    async function* messages(): AsyncGenerator<never> {
+                      await closed.promise;
+                      yield* [];
+                    }
+                    return Object.assign(messages(), {
+                      initializationResult: async () =>
+                        ({}) as Awaited<ReturnType<ClaudeSdkQuery["initializationResult"]>>,
+                      close: () => child.kill("SIGTERM"),
+                      setMcpServers: async () => ({ added: [], removed: [], errors: {} }),
+                      setModel: async () => {},
+                      applyFlagSettings: async () => {},
+                      setPermissionMode: async () => {},
+                      stopTask: async () => {},
+                      backgroundTasks: async () => true,
+                      interrupt: async () => undefined,
+                    }) satisfies ClaudeSdkQuery;
+                  },
+                  forkSession: async (sessionId) => ({ sessionId }),
+                  getSubagentMessages: async () => [],
+                };
+              },
+            }),
             process: {
               ...input.hostOptions.native.process,
               loadRelease: async (bridge) => ({
@@ -102,6 +108,7 @@ export function run() {
         });
         yield* Fiber.interrupt(turn);
         NodeAssert.equal(Buffer.concat(stderr).toString(), `${message}\n`);
+        yield* Effect.promise(() => sdkExitCleanup.promise);
         NodeAssert.deepEqual(kills, [false]);
       }),
     ),
