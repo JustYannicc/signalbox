@@ -1,3 +1,5 @@
+import { materializeHarnessCProductFiles } from "../productBootstrap/materializeFiles.ts";
+import { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import type { Computer } from "../../computer/Computer.ts";
@@ -56,6 +58,7 @@ export interface ProductHostOptions<G, Native> extends Omit<
   readonly save: (input: BindingInput<G>) => ReturnType<Computer["save"]>;
   readonly port: Computer["port"];
   readonly native: Native;
+  readonly filesCheckpoint?: import("../HarnessFilesStore.ts").HarnessFilesStoreResult;
 }
 
 export interface ProductHarnessSessionHost<G> extends HarnessSessionHost<G> {
@@ -189,6 +192,11 @@ function createProductBindings<G, Native>(
             operation: "open",
             message: "Product host native binding does not match the verified release.",
           });
+        if (!hasLocalFiles(input.harness.computer))
+          return yield* new HarnessError({
+            operation: "open",
+            message: "Local product binding requires its kernel filesystem.",
+          });
         computer = input.harness.computer;
         return yield* binding.build(options.native, input, { commands: bound, computer, stdio });
       }),
@@ -241,6 +249,21 @@ export const createProductHost = <G, Native>(
           cause,
         }),
     });
+    if (options.filesCheckpoint !== undefined)
+      yield* Effect.try({
+        try: () =>
+          materializeHarnessCProductFiles({
+            files: options.files,
+            threadId: options.threadId,
+            checkpoint: options.filesCheckpoint!,
+          }),
+        catch: (cause) =>
+          new HarnessError({
+            operation: "open",
+            message: "Committed product files could not be restored.",
+            cause,
+          }),
+      });
     const owner = yield* makeFacetLifetime(yield* Scope.Scope);
     return yield* Effect.gen(function* () {
       const wakes = yield* acquireWakes;
@@ -275,3 +298,7 @@ export const createProductHost = <G, Native>(
       Effect.onError(() => owner.close),
     );
   });
+
+function hasLocalFiles(computer: Computer<unknown>): computer is Computer {
+  return computer.files instanceof KernelFileSystem;
+}

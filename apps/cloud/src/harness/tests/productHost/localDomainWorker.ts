@@ -6,7 +6,7 @@ NodeModule.registerHooks({
   resolve(specifier, context, next) {
     if (specifier === "cloudflare:workers")
       return {
-        url: "data:text/javascript,export class RpcTarget {};export class WorkerEntrypoint {}",
+        url: "data:text/javascript,export class RpcTarget {};export class WorkerEntrypoint {};export class DurableObject { constructor(ctx,env){this.ctx=ctx;this.env=env;} }",
         shortCircuit: true,
       };
     return next(specifier, context);

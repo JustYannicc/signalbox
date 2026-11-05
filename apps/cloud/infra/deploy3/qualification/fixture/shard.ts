@@ -30,7 +30,11 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
     };
     super(
       ctx,
-      createQualifierShardEnvironment(env, qualifierFacetLoader(env, exports.QualifierTail), cap),
+      createQualifierShardEnvironment(
+        env,
+        qualifierFacetLoader(env, exports.QualifierTail, ctx),
+        cap,
+      ),
     );
     this.qualifierEnvironment = env;
   }
@@ -108,7 +112,7 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
       cap.append("observer-calibration-materialized", { modules: Object.keys(modules) }),
     );
     const exports = { QualifierTail: env.QUALIFIER_TAIL };
-    const loader = qualifierFacetLoader(env, exports.QualifierTail);
+    const loader = qualifierFacetLoader(env, exports.QualifierTail, this.ctx);
     const worker = loader.get(key, () => ({
       compatibilityDate: "2026-10-19",
       compatibilityFlags: ["nodejs_compat"],

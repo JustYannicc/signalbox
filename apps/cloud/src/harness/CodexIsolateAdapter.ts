@@ -170,7 +170,7 @@ export function makeCodexIsolateAdapter(options: CodexIsolateAdapterOptions): {
                   client: nativeClient.raw,
                   providerThread: thread,
                   threadId: input.session.threadId,
-                  files: input.computer.files,
+                  files: options.process.computer.files,
                   codexHome: options.process.bootstrap.codex_home,
                 });
                 prepared = true;

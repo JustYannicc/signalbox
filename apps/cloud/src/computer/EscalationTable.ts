@@ -140,6 +140,7 @@ export class ComputerEscalationTable {
     command: KernelCommand,
     evidence?: ComputerEscalationEvidence,
     catalogCommand: KernelCommand = command,
+    qualified?: GnuCommandQualification,
   ): ComputerEscalationDecision {
     const workspaceBytes = readWorkspaceBytes(evidence);
     const args = command.argv.slice(1);
@@ -163,7 +164,7 @@ export class ComputerEscalationTable {
     if (!this.#policy.isolateExecutables.includes(catalogCommand.executable)) {
       return { kind: "machine", reason: "unsupported-executable" };
     }
-    const qualification = this.#qualify?.(catalogCommand);
+    const qualification = qualified ?? this.#qualify?.(catalogCommand);
     return qualification?.kind === "machine" ? qualification : { kind: "isolate" };
   }
 }

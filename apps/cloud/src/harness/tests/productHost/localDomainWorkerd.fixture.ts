@@ -1,5 +1,6 @@
 import * as NodeAssert from "node:assert/strict";
 import * as NodeUtil from "node:util";
+import { DurableObject } from "cloudflare:workers";
 import {
   CommandId,
   MessageId,
@@ -19,6 +20,8 @@ import { LocalUserObject } from "../../../user/LocalUserObject.ts";
 import { createLocalClaudeThreadObject } from "../../../thread/LocalClaudeThreadObject.ts";
 import type { ProductClaudeThreadMachine } from "../../../thread/ProductClaudeThreadHost.ts";
 import { makeContinuationHostInputs } from "./continuationHostInputs.ts";
+import { threadOwnerRuntimeFixture } from "./threadOwnerRuntime.fixture.ts";
+import type { OrdinaryOwnerEvent } from "./ordinaryOwnerObservation.fixture.ts";
 
 const selection: ModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -35,6 +38,22 @@ interface Env {
   readonly USERS: DurableObjectNamespace<LocalUser>;
   readonly POOLS: DurableObjectNamespace<LocalPool>;
   readonly THREADS: DurableObjectNamespace<LocalThread>;
+  readonly OBSERVATIONS: DurableObjectNamespace<OrdinaryObservations>;
+  readonly LOADER: WorkerLoader;
+  readonly REAL_OWNERS?: boolean;
+  readonly KERNEL_SOURCE: string;
+  readonly COMPUTER_SOURCE: string;
+  readonly SDK_SOURCE: string;
+}
+
+export class OrdinaryObservations extends DurableObject {
+  readonly #events: OrdinaryOwnerEvent[] = [];
+  async record(event: OrdinaryOwnerEvent) {
+    this.#events.push(event);
+  }
+  async snapshot() {
+    return [...this.#events];
+  }
 }
 
 export class LocalUser extends LocalUserObject {
@@ -84,7 +103,7 @@ export class LocalPool extends LocalPoolObject {
   }
 }
 
-const ThreadBase = createLocalClaudeThreadObject<Env, string>((ctx, _env, configuration) =>
+const ThreadBase = createLocalClaudeThreadObject<Env, string>((ctx, env, configuration) =>
   Effect.gen(function* () {
     const input = yield* makeContinuationHostInputs(
       {
@@ -99,8 +118,32 @@ const ThreadBase = createLocalClaudeThreadObject<Env, string>((ctx, _env, config
     );
     NodeAssert.equal(configuration.threadId, input.threadId);
     inputs.set(ctx.id.toString(), input);
+    let host = threadOwnerRuntimeFixture(input.hostOptions, () => input.native.failure, ctx).host;
+    if (env.REAL_OWNERS) {
+      const observer = env.OBSERVATIONS.getByName(configuration.threadId);
+      const code = (role: string, source: string): WorkerLoaderWorkerCode => ({
+        compatibilityDate: "2026-10-01",
+        compatibilityFlags: ["nodejs_compat"],
+        mainModule: `${role}.mjs`,
+        modules: { [`${role}.mjs`]: { js: source } },
+        env: { OBSERVE: observer },
+        globalOutbound: null,
+      });
+      host = {
+        ...host,
+        runtime: {
+          loader: env.LOADER,
+          facets: ctx.facets,
+          code: {
+            kernel: code("kernel", env.KERNEL_SOURCE),
+            computer: code("computer", env.COMPUTER_SOURCE),
+            sdk: code("sdk", env.SDK_SOURCE),
+          },
+        },
+      };
+    }
     return {
-      host: input.hostOptions,
+      host,
       open: (work) => {
         NodeAssert.ok(work.turn);
         return {
@@ -130,11 +173,24 @@ export class LocalThread extends ThreadBase {
     NodeAssert.equal(await Effect.runPromise(binding.engine.pendingSummary), null);
     const input = inputs.get(this.ctx.id.toString());
     if (input === undefined) throw new Error("No controlled machine has opened.");
+    if (this.env.REAL_OWNERS) {
+      const events = await this.env.OBSERVATIONS.getByName("thread").snapshot();
+      return {
+        object: this.ctx.id.toString(),
+        querySelections: events
+          .filter((event) => event.kind === "sdk-query")
+          .map(({ model, effort }) => ({ model, effort })),
+        prompts: events.filter((event) => event.kind === "sdk-prompt").length,
+        queries: events.filter((event) => event.kind === "sdk-query").length,
+        owners: events,
+      };
+    }
     return {
       object: this.ctx.id.toString(),
       querySelections: input.native.querySelections,
       prompts: input.native.userPromptCount,
       queries: input.native.queryIdentities.length,
+      owners: new Array<OrdinaryOwnerEvent>(),
     };
   }
 }
@@ -297,13 +353,20 @@ export default {
               userGrants: userShape.grants,
               poolGrants: poolShape.grants,
               indexedCompletedRuns: userShape.threads.length,
+              owners: native.owners,
             });
           }),
         ),
       );
     } catch (error) {
       return Response.json(
-        { ok: false, error: NodeUtil.inspect(error, { depth: 15 }) },
+        {
+          ok: false,
+          error: NodeUtil.inspect(error, { depth: 30 }),
+          observations: env.REAL_OWNERS
+            ? await env.OBSERVATIONS.getByName("thread").snapshot()
+            : [],
+        },
         { status: 500 },
       );
     }

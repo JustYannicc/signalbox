@@ -5,7 +5,6 @@ import {
   type SystemIdentityConfig,
 } from "@t3tools/contracts/systemIdentity";
 import type { KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
-import { KernelFileSystemUnavailable } from "../kernel/KernelLowerFileSystem.ts";
 import { createCommandGateway, type CommandGatewayOptions } from "./CommandGateway.ts";
 import { CHILD_COREUTILS_COMMANDS } from "./ChildProgramSet.ts";
 import {
@@ -17,11 +16,12 @@ import type { ChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
 import type { MachineProgramInventory } from "./MachineProgramInventory.ts";
 import type { MachineFilesPort } from "./MachineFilesPort.ts";
-import { createComputerMachineFileSystem } from "./ComputerMachineFileSystem.ts";
+import { createComputerMachineProfile } from "./ComputerMachineProfile.ts";
+import { createKernelExecutableNamespace } from "../kernel/KernelExecutableNamespace.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
-  "processes" | "loader" | "systemIdentity" | "hostname" | "machine" | "resolver"
+  "processes" | "loader" | "systemIdentity" | "hostname" | "machine" | "resolver" | "namespace"
 > {
   readonly threadId: string;
   readonly systemIdentity?: SystemIdentityConfig;
@@ -61,85 +61,12 @@ export function createProductComputer(options: ProductComputerOptions) {
     throw new TypeError("Product Computer requires the full command catalog");
   const owner = new AbortController();
   const signal = AbortSignal.any([owner.signal, options.signal]);
-  const transport = options.machine(systemIdentity);
-  const overlay = options.filesystem.installLowerFileSystem(
-    createComputerMachineFileSystem({
-      inventory: options.machineInventory,
-      threadId: options.threadId,
-      files: transport.files,
-      signal,
-    }),
-  );
-  const metadataRefreshPaths = [
-    ...options.machineInventory.entries
-      .filter(({ type }) => type === "directory" || type === "symlink")
-      .map(({ path }) => path),
-    // Excluded roots are live machine state, not represented by the image inventory.
-    ...options.machineInventory.excludedRoots,
-  ];
-  let metadataEpoch = 0;
-  const invalidateMetadata = (epoch: number) => {
-    if (epoch === metadataEpoch) overlay.invalidate();
-  };
-  const refreshMetadata = async (
-    generation: number,
-    callerSignal: AbortSignal,
-    commandEpoch: number,
-  ) => {
-    const refreshSignal = AbortSignal.any([signal, callerSignal]);
-    try {
-      refreshSignal.throwIfAborted();
-      if (commandEpoch !== metadataEpoch)
-        throw new KernelFileSystemUnavailable("Machine metadata refresh was superseded");
-      const current = transport.files.current();
-      if (current.generation !== generation || current.pristine)
-        throw new KernelFileSystemUnavailable("Machine generation changed before metadata refresh");
-      await overlay.refresh(metadataRefreshPaths, refreshSignal);
-      refreshSignal.throwIfAborted();
-      if (commandEpoch !== metadataEpoch)
-        throw new KernelFileSystemUnavailable("Machine metadata refresh was superseded");
-      const refreshed = transport.files.current();
-      if (refreshed.generation !== generation || refreshed.pristine)
-        throw new KernelFileSystemUnavailable("Machine generation changed during metadata refresh");
-    } catch (error) {
-      invalidateMetadata(commandEpoch);
-      throw error;
-    }
-  };
-  const machine: KernelCommandForwarder = {
-    async spawn(command, callerSignal) {
-      const commandEpoch = ++metadataEpoch;
-      overlay.invalidate();
-      try {
-        const previousGeneration = transport.files.current().generation;
-        if (previousGeneration !== null) await transport.files.markExecuted(previousGeneration);
-        const child = await transport.spawn(command, callerSignal);
-        const generation = child.generation ?? previousGeneration;
-        const exited = child.exited.then(
-          async (result) => {
-            if (generation === null) {
-              invalidateMetadata(commandEpoch);
-              throw new KernelFileSystemUnavailable(
-                "Machine execution has no attested generation for metadata refresh",
-              );
-            }
-            await refreshMetadata(generation, callerSignal, commandEpoch);
-            return result;
-          },
-          (error: unknown) => {
-            invalidateMetadata(commandEpoch);
-            throw error;
-          },
-        );
-        void exited.catch(() => undefined);
-        return { ...child, exited };
-      } catch (error) {
-        invalidateMetadata(commandEpoch);
-        throw error;
-      }
-    },
-  };
-  const resolver = new ComputerProgramResolver({ path: options.machineInventory.path, overlay });
+  const { overlay, machine } = createComputerMachineProfile({
+    ...options,
+    transport: options.machine(systemIdentity),
+    signal,
+  });
+  const resolver = new ComputerProgramResolver({ path: options.machineInventory.path });
   const processes = new KernelProcessTable({ wakes: options.wakes });
   const loader =
     "run" in options.loader
@@ -159,6 +86,12 @@ export function createProductComputer(options: ProductComputerOptions) {
       loader,
       processes,
       resolver,
+      namespace: (request) =>
+        createKernelExecutableNamespace({
+          filesystem: request.filesystem,
+          signal: request.signal,
+          overlay,
+        }),
     });
   } catch (error) {
     overlay.dispose();

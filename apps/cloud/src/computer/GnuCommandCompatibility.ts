@@ -1,3 +1,4 @@
+import { canReplaceKernelFile } from "../kernel/KernelFileReplacement.ts";
 import type { KernelFileSystem } from "../kernel/KernelFileSystem.ts";
 import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
 import {
@@ -24,46 +25,24 @@ export function qualifyGnuCommand(
   command: KernelCommand,
   filesystem?: Pick<KernelFileSystem, "stat" | "lstat" | "access" | "posixCredentials">,
 ): GnuCommandQualification {
+  return qualifyGnuCommandWithFiles(
+    command,
+    filesystem === undefined
+      ? undefined
+      : (file) =>
+          canReplaceKernelFile(filesystem, file.startsWith("/") ? file : `${command.cwd}/${file}`),
+  );
+}
+
+export function qualifyGnuCommandWithFiles(
+  command: KernelCommand,
+  canReplace?: (file: string) => boolean,
+): GnuCommandQualification {
   const program = standardChildProgramName(command.executable);
   if (program !== "sed" && program !== "grep") return QUALIFIED;
-
   const environmentIssue = unqualifiedEnvironment(command.env, program);
   if (environmentIssue !== undefined) return machine("unqualified-option", environmentIssue);
-
-  return program === "sed"
-    ? qualifySed(
-        command.argv,
-        filesystem === undefined
-          ? undefined
-          : (file) => {
-              try {
-                const path = file.startsWith("/") ? file : `${command.cwd}/${file}`;
-                const target = filesystem.stat(path);
-                if (target.type !== "file") return false;
-                // Same-owner chown does not yet clear set-ID bits in the kernel.
-                if (((target.posix?.mode ?? 0) & 0o6000) !== 0) return false;
-                filesystem.access(path, 4, true);
-                const directory = path.slice(0, path.lastIndexOf("/")) || "/";
-                // Both temp creation and final rename need directory write/search permission.
-                filesystem.access(directory, 3, true);
-                const parent = filesystem.stat(directory).posix;
-                const uid = filesystem.posixCredentials?.euid;
-                // The kernel does not yet enforce sticky-directory rename ownership.
-                if (
-                  parent !== undefined &&
-                  (parent.mode & 0o1000) !== 0 &&
-                  uid !== 0 &&
-                  (uid === undefined ||
-                    (uid !== parent.uid && uid !== filesystem.lstat(path).posix?.uid))
-                )
-                  return false;
-                return true;
-              } catch {
-                return false;
-              }
-            },
-      )
-    : qualifyGrep(command.argv);
+  return program === "sed" ? qualifySed(command.argv, canReplace) : qualifyGrep(command.argv);
 }
 
 function qualifyGrep(argv: readonly string[]): GnuCommandQualification {

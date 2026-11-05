@@ -1,17 +1,19 @@
 import type { Computer, ComputerExecPort, ComputerOpenPort } from "./Computer.ts";
 
-export interface ComputerBindings extends ComputerExecPort {
-  readonly files: Computer["files"];
+export interface ComputerBindings<Files = Computer["files"]> extends ComputerExecPort {
+  readonly files: Files;
   readonly port: Computer["port"];
   readonly save: Computer["save"];
 }
 
 /** One factory belongs to the owning thread object; repeated opens share the same Computer. */
-export function createComputerFactory(
-  bind: (threadId: string, signal: AbortSignal) => Promise<ComputerBindings>,
+export function createComputerFactory<Files = Computer["files"]>(
+  bind: (threadId: string, signal: AbortSignal) => Promise<ComputerBindings<Files>>,
   ownerSignal: AbortSignal = new AbortController().signal,
-): ComputerOpenPort {
-  let opening: { readonly threadId: string; readonly computer: Promise<Computer> } | undefined;
+): ComputerOpenPort<Files> {
+  let opening:
+    | { readonly threadId: string; readonly computer: Promise<Computer<Files>> }
+    | undefined;
   return Object.freeze({
     async open(threadId: string, signal: AbortSignal) {
       signal.throwIfAborted();
@@ -43,7 +45,10 @@ export function createComputerFactory(
   });
 }
 
-function waitForComputer(computer: Promise<Computer>, signal: AbortSignal): Promise<Computer> {
+function waitForComputer<Files>(
+  computer: Promise<Computer<Files>>,
+  signal: AbortSignal,
+): Promise<Computer<Files>> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
     const clear = () => signal.removeEventListener("abort", abort);

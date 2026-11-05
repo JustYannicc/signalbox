@@ -1,8 +1,12 @@
 import type { ProcessSlotLease, ProcessSlotPermit, ProcessSlots } from "../ProcessSlots.ts";
-import type { ChildWorkerExecution, ChildWorkerPermit, ChildWorkerRequester } from "./types.ts";
+import type {
+  ChildWorkerExecution,
+  ChildWorkerPermit,
+  ChildWorkerCapacityRequester,
+} from "./types.ts";
 
 export interface ChildWorkerPermitHooks {
-  readonly bind: (requester: ChildWorkerRequester) => void;
+  readonly bind: (requester: ChildWorkerCapacityRequester) => Promise<void>;
   readonly ending: () => void;
   readonly ended: () => void;
   readonly failed: () => void;
@@ -29,8 +33,8 @@ export class ProcessSlotChildWorkerPermit implements ChildWorkerPermit {
     );
   }
 
-  bind(requester: ChildWorkerRequester): void {
-    this.#bind(requester);
+  bind(requester: ChildWorkerCapacityRequester): Promise<void> {
+    return this.#bind(requester);
   }
 
   release(): Promise<void> {

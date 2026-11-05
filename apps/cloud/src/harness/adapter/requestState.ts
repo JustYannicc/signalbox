@@ -12,7 +12,7 @@ import type { HarnessOpenInput } from "../Harness.ts";
 
 export const requestBelongsToSession = (
   request: OrchestrationV2RuntimeRequest,
-  input: HarnessOpenInput,
+  input: HarnessOpenInput<unknown>,
   driver: string,
 ) =>
   (request.nativeRequestRef === null || request.nativeRequestRef.driver === driver) &&

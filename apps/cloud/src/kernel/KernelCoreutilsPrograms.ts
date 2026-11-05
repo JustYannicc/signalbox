@@ -1,10 +1,10 @@
+import { KERNEL_COREUTILS_VERSION } from "./KernelProgramArtifacts.ts";
+export { KERNEL_COREUTILS_VERSION } from "./KernelProgramArtifacts.ts";
 import { ABI_VERSION, KernelProgramRegistry } from "./KernelAbi.ts";
 import type { KernelAsyncProgramContext } from "./KernelAsyncProgram.ts";
 import { createKernelAsyncWasi } from "./KernelWasi.ts";
 import { createKernelCoreutilsImports } from "./KernelCoreutilsImports.ts";
 import type { KernelProgramBinding, KernelProgramImplementation } from "./KernelProgramHost.ts";
-
-export const KERNEL_COREUTILS_VERSION = "0.3.5";
 
 export const KERNEL_COREUTILS_COMMANDS = Object.freeze([
   "cat",

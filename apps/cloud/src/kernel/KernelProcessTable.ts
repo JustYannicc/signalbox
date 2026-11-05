@@ -1,3 +1,4 @@
+// @effect-diagnostics cryptoRandomUUID:off - kernel identities must stay independent of the host Effect runtime.
 import type { KernelProcessSignalNumber, KernelSigpipeDisposition } from "./KernelProcessSignal.ts";
 import {
   KernelResourceTable,
@@ -77,6 +78,7 @@ type ProcessResources = Record<KernelHandleKind, unknown> & { process: ProcessRe
 
 /** Request-owned process identity and completion state. PIDs 0 and 1 stay reserved. */
 export class KernelProcessTable {
+  readonly admissionScope = crypto.randomUUID();
   readonly #wakes: KernelWakeRegistry;
   readonly #maxProcesses: number;
   readonly #resources: KernelResourceTable<ProcessResources>;

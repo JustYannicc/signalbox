@@ -48,15 +48,15 @@ export interface ComputerPort {
 }
 
 /** One instance belongs to one thread. The session facet retains ownership of files. */
-export interface Computer extends ComputerExecPort {
+export interface Computer<Files = KernelFileSystem> extends ComputerExecPort {
   readonly threadId: string;
-  readonly files: KernelFileSystem;
+  readonly files: Files;
   readonly port: (port: number, signal: AbortSignal) => Promise<ComputerPort>;
   readonly save: (signal: AbortSignal) => Promise<FileCommitReceipt>;
 }
 
-export interface ComputerOpenPort {
-  readonly open: (threadId: string, signal: AbortSignal) => Promise<Computer>;
+export interface ComputerOpenPort<Files = KernelFileSystem> {
+  readonly open: (threadId: string, signal: AbortSignal) => Promise<Computer<Files>>;
 }
 
 /** Adapt the Computer command entry point without another execution or policy path. */

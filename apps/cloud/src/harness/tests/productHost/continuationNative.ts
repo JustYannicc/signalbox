@@ -265,6 +265,9 @@ export function continuationNativeFixture(
 
   return {
     ...native,
+    get failure() {
+      return native.failure;
+    },
     get sdkIdentity() {
       return native.sdkIdentity;
     },

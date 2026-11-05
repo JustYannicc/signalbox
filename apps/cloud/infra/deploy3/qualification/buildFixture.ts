@@ -25,6 +25,9 @@ import type { Configuration } from "./fixture/configuration.ts";
 import { validateClaudeImportFacetEnvironments } from "./validateClaudeImportFacets.ts";
 
 const source = NodeURL.fileURLToPath(new URL("./fixture/", import.meta.url));
+const computerEntry = NodeURL.fileURLToPath(
+  new URL("./fixture/computerExecution.ts", import.meta.url),
+);
 const cloud = NodeURL.fileURLToPath(new URL("../../../", import.meta.url));
 const hash = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -171,11 +174,15 @@ export async function buildCombinedFixture(raw: unknown) {
     ["facet", "qualifier-implementation"],
     ["claudeFacet", "qualifier-claude-implementation"],
     ["claudeSdkHost", "qualifier-claude-sdk-host"],
+    ["claudeKernelFacet", "qualifier-claude-kernel"],
+    ["computerExecution", "qualifier-computer-execution"],
     ["worker", "qualifier-worker"],
   ] as const) {
     const built = await build({
       ...common,
-      entryPoints: [NodePath.join(source, `${entry}.ts`)],
+      entryPoints: [
+        entry === "computerExecution" ? computerEntry : NodePath.join(source, `${entry}.ts`),
+      ],
       outfile: NodePath.join(output, `${name}.mjs`),
     });
     if (!built.metafile) throw new Error("DEPLOY3_BUILD_METADATA_MISSING");
@@ -237,6 +244,14 @@ export async function buildCombinedFixture(raw: unknown) {
         NodePath.join(output, "qualifier-claude-sdk-host.mjs"),
         "utf8",
       ),
+      kernelSource: await NodeFSP.readFile(
+        NodePath.join(output, "qualifier-claude-kernel.mjs"),
+        "utf8",
+      ),
+      computerSource: await NodeFSP.readFile(
+        NodePath.join(output, "qualifier-computer-execution.mjs"),
+        "utf8",
+      ),
       expected: claudeExpected,
     },
   } satisfies Configuration;
@@ -279,6 +294,8 @@ export async function buildCombinedFixture(raw: unknown) {
     "qualifier-implementation",
     "qualifier-claude-implementation",
     "qualifier-claude-sdk-host",
+    "qualifier-claude-kernel",
+    "qualifier-computer-execution",
     "qualifier-worker",
     "qualifier-claude-workflow",
   ]) {

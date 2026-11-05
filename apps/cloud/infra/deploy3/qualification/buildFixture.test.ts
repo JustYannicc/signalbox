@@ -100,6 +100,8 @@ it.effect(
             "qualifier-implementation.mjs",
             "qualifier-claude-implementation.mjs",
             "qualifier-claude-sdk-host.mjs",
+            "qualifier-claude-kernel.mjs",
+            "qualifier-computer-execution.mjs",
             "qualifier-worker.mjs",
             "qualifier-claude-workflow.mjs",
           ]);
@@ -367,9 +369,7 @@ it.effect(
           expect(config.claude.expected.baseline.artifact.releaseId).toBe("baseline");
           expect(config.claude.expected.hooks.artifact.releaseId).toBe("hooks");
           expect(
-            Object.keys(result.sources).some((path) =>
-              path.endsWith("ProductClaudeHarnessSessionHost.ts"),
-            ),
+            Object.keys(result.sources).some((path) => path.endsWith("ProductClaudeKernelHost.ts")),
           ).toBe(true);
           expect(
             Object.keys(result.sources).some((path) =>

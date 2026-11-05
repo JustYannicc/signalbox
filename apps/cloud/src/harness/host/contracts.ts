@@ -1,4 +1,15 @@
 import type {
+  HarnessHostFilesOptions,
+  ProgramSeed,
+  SeedStage,
+} from "../../kernel/KernelHarnessFiles.ts";
+export type {
+  HarnessHostFilesOptions,
+  ProgramSeed,
+  SeedStage,
+  SeedMetadata,
+} from "../../kernel/KernelHarnessFiles.ts";
+import type {
   HarnessContinuationPublisher,
   HarnessContinuationRequests,
 } from "../HarnessContinuations.ts";
@@ -10,17 +21,12 @@ import type * as Scope from "effect/Scope";
 import type { Computer } from "../../computer/Computer.ts";
 import type { ComputerBindings } from "../../computer/OpenComputer.ts";
 import type { createFacetFilePersistence } from "../../kernel/FacetFilePersistence.ts";
-import type { FacetStorage } from "../../kernel/FacetSqliteStorage.ts";
-import type { FilePersistencePorts } from "../../kernel/FilePersistencePorts.ts";
-import type { KernelPosixOptions, WasiStdio } from "../../kernel/KernelFileSystem.ts";
-import type { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
-import type { AdapterRuntimeFactory } from "../AdapterHarness.ts";
+import type { AdapterRuntimePorts } from "../AdapterHarness.ts";
 import type { HarnessError, HarnessOpenInput, HarnessRelease, HarnessSession } from "../Harness.ts";
 import type { LoadedHarnessRelease, LoadHarnessReleaseOptions } from "../HarnessReleaseLoader.ts";
 
 export type { NativeThreadLoad };
 
-export type SeedStage = "assets" | "programs";
 export type HostOpenInput<G> = Pick<HarnessOpenInput, "session"> & {
   readonly bootAttemptId: string;
 } & (
@@ -40,18 +46,6 @@ export type HostOpenInput<G> = Pick<HarnessOpenInput, "session"> & {
         readonly initialAccess: TurnAccess<G>;
       }
   );
-export interface SeedMetadata {
-  readonly mode: number;
-  readonly uid: number;
-  readonly gid: number;
-}
-export interface ProgramSeed {
-  readonly sourceIdentity: string;
-  readonly files: Readonly<
-    Record<string, SeedMetadata & { readonly bytes: number; readonly sha256: string }>
-  >;
-  readonly read: (path: string, signal: AbortSignal) => Promise<Uint8Array>;
-}
 export interface ResolvedConnections {
   readonly servers: ReadonlyArray<{
     readonly id: string;
@@ -105,9 +99,9 @@ export interface NativeMcpConfiguration {
   readonly epoch: number;
   readonly servers: Readonly<Record<string, { readonly url: string }>>;
 }
-export interface NativeHostBinding {
+export interface NativeHostBinding<Files = Computer["files"]> {
   readonly startup?: () => HarnessProcessStartup | undefined;
-  readonly factory: AdapterRuntimeFactory["Service"];
+  readonly factory: AdapterRuntimePorts<Files>;
   /** Await native installation before the next prompt; lazy first queries must enforce this too. */
   readonly configureMcp: (
     config: NativeMcpConfiguration,
@@ -118,18 +112,6 @@ export interface NativeHostBinding {
   readonly retireCheckpointMcp?: (epoch: number) => Effect.Effect<void, HarnessError>;
   /** Complete the matching native turn without retiring its process endpoint. */
   readonly completeMcpTurn?: (epoch: number) => void;
-}
-export interface HarnessHostFilesOptions {
-  readonly identity: string;
-  readonly database: FacetStorage;
-  readonly nowNs: () => bigint;
-  readonly wakes: KernelWakeRegistry;
-  readonly persistencePorts: FilePersistencePorts;
-  readonly rootMetadata: SeedMetadata;
-  readonly posix: KernelPosixOptions;
-  readonly assetMode: number;
-  readonly cwd: string;
-  readonly stdio?: readonly [WasiStdio, WasiStdio, WasiStdio];
 }
 export interface HarnessHostOptions<G> {
   readonly threadId: string;
@@ -157,6 +139,16 @@ export interface HarnessHostOptions<G> {
     readonly signal: AbortSignal;
   }) => Effect.Effect<NativeHostBinding, HarnessError, Scope.Scope>;
 }
+export type HarnessLifecycleOptions<G, Files> = Omit<
+  HarnessHostOptions<G>,
+  "release" | "programs" | "files" | "bindComputer" | "buildRuntime"
+> & {
+  readonly buildRuntime: (
+    input: Omit<Parameters<HarnessHostOptions<G>["buildRuntime"]>[0], "harness"> & {
+      readonly harness: HarnessOpenInput<Files>;
+    },
+  ) => Effect.Effect<NativeHostBinding<Files>, HarnessError, Scope.Scope>;
+};
 export interface HarnessHostSession<G> extends Omit<HarnessSession, "turn"> {
   /** Retires access installed by inert checkpoint restore before independently authorized work. */
   readonly retireCheckpointAccess: Effect.Effect<void, HarnessError>;

@@ -58,9 +58,15 @@ it.each(
     );
     expect(registered.length).toBeGreaterThan(0);
     const inputs = [...new Set(registered.flatMap(([, output]) => Object.keys(output.inputs)))];
-    expect(inputs).toContain(harnessRoot + binding);
+    expect(inputs).toContain(
+      harnessRoot +
+        (harness === "Claude" && source === "ProductClaudeHarnessRequestFacet.ts"
+          ? "ClaudeSdkNativeBinding.ts"
+          : binding),
+    );
     expect(inputs).toContain(harnessRoot + "host/lifecycle.ts");
-    expect(inputs).toContain("apps/cloud/src/kernel/KernelFileSystem.ts");
+    if (source !== "ProductClaudeHarnessRequestFacet.ts")
+      expect(inputs).toContain("apps/cloud/src/kernel/KernelFileSystem.ts");
     expect(inputs.filter((path) => excluded.test(path))).toEqual([]);
     if (harness === "Claude") {
       expect(

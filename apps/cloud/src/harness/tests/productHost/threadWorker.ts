@@ -6,7 +6,7 @@ NodeModule.registerHooks({
   resolve(specifier, context, next) {
     if (specifier === "cloudflare:workers")
       return {
-        url: "data:text/javascript,export class RpcTarget {};export class WorkerEntrypoint {}",
+        url: "data:text/javascript,export class RpcTarget {};export class WorkerEntrypoint {};export class DurableObject { constructor(ctx,env){this.ctx=ctx;this.env=env;} }",
         shortCircuit: true,
       };
     return next(specifier, context);
@@ -17,19 +17,21 @@ if (port === null) throw new Error("Thread fixture needs its isolated Node realm
 try {
   const { run } = await import("./threadScenario.ts");
   await run(
-    NodeWorkerThreads.workerData === "startup-failure"
-      ? "startup-failure"
-      : NodeWorkerThreads.workerData === "native-bound-batch"
-        ? "native-bound-batch"
-        : NodeWorkerThreads.workerData === "unjoined-batch"
-          ? "unjoined-batch"
-          : NodeWorkerThreads.workerData === "boundary-batch"
-            ? "boundary-batch"
-            : NodeWorkerThreads.workerData === "batch"
-              ? "batch"
-              : NodeWorkerThreads.workerData === "revoke"
-                ? "revoke"
-                : "continue",
+    NodeWorkerThreads.workerData === "owners"
+      ? "owners"
+      : NodeWorkerThreads.workerData === "startup-failure"
+        ? "startup-failure"
+        : NodeWorkerThreads.workerData === "native-bound-batch"
+          ? "native-bound-batch"
+          : NodeWorkerThreads.workerData === "unjoined-batch"
+            ? "unjoined-batch"
+            : NodeWorkerThreads.workerData === "boundary-batch"
+              ? "boundary-batch"
+              : NodeWorkerThreads.workerData === "batch"
+                ? "batch"
+                : NodeWorkerThreads.workerData === "revoke"
+                  ? "revoke"
+                  : "continue",
   );
   port.postMessage({ ok: true });
 } catch (error) {

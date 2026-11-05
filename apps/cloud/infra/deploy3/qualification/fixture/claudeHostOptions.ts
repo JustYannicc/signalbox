@@ -1,64 +1,49 @@
+import {
+  claudeCapability,
+  claudeConfiguration,
+  type ClaudeFacetEnvironment,
+} from "./claudeRuntimeEnvironment.ts";
+export {
+  claudeCapability,
+  claudeConfiguration,
+  type ClaudeFacetEnvironment,
+} from "./claudeRuntimeEnvironment.ts";
 import { readRpcData } from "../../../../src/rpc/Resources.ts";
 // @effect-diagnostics cryptoRandomUUID:off - Snapshot IDs are local qualification evidence.
 import { claudeQualificationToolObservation } from "./claudeToolObservation.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
-import { ChildWorkerCapacity } from "../../../../src/computer/ChildWorkerCapacity.ts";
-import type { ChildWorkerLoaderPort } from "../../../../src/computer/WorkerLoaderDispatch.ts";
 import { HarnessRequestFacetError } from "../../../../src/harness/HarnessRequestFacet.ts";
-import type { ProductClaudeHarnessHostOptions } from "../../../../src/harness/ProductClaudeHarnessSessionHost.ts";
+import type { ProductClaudeKernelHostOptions } from "../../../../src/harness/ProductClaudeKernelHost.ts";
 import {
   serializeHarnessFailure,
   type HarnessCheckpoint,
 } from "../../../../src/harness/Harness.ts";
-import type { HarnessCProductFacetEnvironment } from "../../../../src/harness/HarnessCProductFacet.ts";
-import { HARNESS_C_PRODUCT_CAPABILITY_KEYS } from "../../../../src/harness/HarnessCProductCapabilities.ts";
-import { DEFAULT_NODE_NATIVE_MODULES } from "../../../../src/harness/NodeNativeModules.ts";
 import type { HarnessFilesStoreResult } from "../../../../src/harness/HarnessFilesStore.ts";
-import { createMemoryFilePersistencePorts } from "../../../../src/kernel/MemoryFilePersistencePorts.ts";
 import type { HarnessReleaseArtifact } from "../../../../src/harnessReleases/HarnessReleaseLedger.ts";
 import type { LoadHarnessReleaseOptions } from "../../../../src/harness/HarnessReleaseLoader.ts";
-import type { QualifierCapabilities } from "./capabilities.ts";
 import { facetState } from "./facetState.ts";
 import { assert } from "./common.ts";
-import {
-  assertQualifierClaudeFacetConfiguration as assertQualifierClaudeNativeFacetConfiguration,
-  type QualifierClaudeFacetConfiguration,
-} from "../facetEnvironmentContract.ts";
-import { readClaudeFacetConfiguration } from "./claudeFacetConfiguration.ts";
 import {
   loadClaudeQualificationRelease,
   readClaudeQualificationInputs,
   type ClaudeQualificationInputs,
 } from "./claudeConfiguration.ts";
-import { createClaudePreparedImports } from "./claudePreparedModules.ts";
 import { claudeNodeRuntimeIdentity, claudeSeedPaths, claudeSystemIdentity } from "./claudeSeed.ts";
 import {
   createClaudeContinuationPublisher,
   type ClaudeContinuationCapability,
 } from "./claudeContinuations.ts";
-import { hydrateClaudeFiles } from "./claudeFiles.ts";
 import { sameClaudeReleaseArtifact } from "../../../../src/harnessReleases/ClaudeReleaseVariants.ts";
 import { claudeGatewayEnvironment } from "../../../../src/harness/ClaudeGatewayAccess.ts";
 
-import type { ClaudeAuthorityBindings } from "./claudeAuthorities.ts";
-
-export type ClaudeFacetEnvironment = typeof QualifierClaudeFacetConfiguration.Type &
-  ClaudeAuthorityBindings &
-  HarnessCProductFacetEnvironment & {
-    readonly HARNESS_PROCESS_LOADER_ID: string;
-    readonly QUALIFIER_CLAUDE_VARIANT?: unknown;
-    readonly CLAUDE_SDK_HOST: import("../../../../src/harness/ClaudeSdkHostProtocol.ts").ClaudeSdkHostService;
-  };
-
-type Capability = QualifierCapabilities;
 type SelectedRelease = {
   readonly artifact: HarnessReleaseArtifact;
   readonly release: LoadHarnessReleaseOptions;
 };
 type ClaudeProviderOptions = Omit<
-  ProductClaudeHarnessHostOptions<unknown>,
+  ProductClaudeKernelHostOptions<unknown>,
   | "release"
   | "processResumeArtifact"
   | "programs"
@@ -84,20 +69,6 @@ const attempt = <A>(run: () => Promise<A>) =>
       new HarnessRequestFacetError("Claude product host options could not be built.", { cause }),
   });
 
-export function claudeCapability(
-  env: Pick<ClaudeFacetEnvironment, "HARNESS_C_PRODUCT_CAPABILITIES">,
-): Capability {
-  const supplied = env.HARNESS_C_PRODUCT_CAPABILITIES?.[HARNESS_C_PRODUCT_CAPABILITY_KEYS.release];
-  assert(
-    supplied &&
-      typeof Reflect.get(supplied, "hostConfiguration") === "function" &&
-      typeof Reflect.get(supplied, "append") === "function" &&
-      typeof Reflect.get(supplied, "prepareClaudeIncarnation") === "function",
-    "Claude qualification capability methods are missing",
-  );
-  return supplied as unknown as Capability;
-}
-
 function claudeContinuationCapability(env: ClaudeFacetEnvironment): ClaudeContinuationCapability {
   const supplied = env.HARNESS_C_PRODUCT_CAPABILITIES?.["claudeContinuationPublisher"];
   const candidate = supplied as unknown as
@@ -121,25 +92,9 @@ function assertClaudeMcpAuthorities(env: ClaudeFacetEnvironment) {
   assert(typeof executor?.forward === "function", "The local Claude MCP fixture is required");
 }
 
-function commandLoader(env: ClaudeFacetEnvironment): ChildWorkerLoaderPort {
-  const supplied = env.HARNESS_C_PRODUCT_CAPABILITIES?.["qualifierCommands"];
-  assert(
-    supplied && typeof Reflect.get(supplied, "run") === "function",
-    "Actual command loader is missing",
-  );
-  return supplied as unknown as ChildWorkerLoaderPort;
-}
-
-export async function claudeConfiguration(env: ClaudeFacetEnvironment) {
-  const checked = assertQualifierClaudeNativeFacetConfiguration(env);
-  return readClaudeFacetConfiguration(checked, claudeCapability(env));
-}
-
 export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
   Effect.gen(function* () {
-    const { host, claude, processEnvironment } = yield* attempt(() =>
-      claudeConfiguration(input.env),
-    );
+    const { claude, processEnvironment } = yield* attempt(() => claudeConfiguration(input.env));
     const restored = input.filesCheckpoint?.files;
     assert(
       (input.checkpoint === undefined) === (restored === undefined),
@@ -218,28 +173,7 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
 
     const state = facetState(input.ctx, cap, input.facetNonce);
     const paths = claudeSeedPaths(claude.seed);
-    const imports = createClaudePreparedImports();
     const systemIdentity = claudeSystemIdentity(turn.threadId);
-    const machine = () => ({
-      files: {
-        current: () => ({
-          generation: null,
-          generationAbsent: true as const,
-          pristine: true,
-          imageDigest: host.imageDigest,
-        }),
-        markExecuted: async () => {
-          throw new Error("Claude qualifier has no machine generation");
-        },
-        lookup: async () => {
-          throw new Error("Claude qualifier excludes live machine file access");
-        },
-      },
-      spawn: async () => {
-        throw new Error("Claude qualifier excludes machine command forwarding");
-      },
-    });
-    const preparedModuleCount = Object.keys(plan.preparedModules).length;
 
     const observation = claudeQualificationToolObservation({
       variant,
@@ -247,11 +181,20 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
       capability: cap,
       state,
     });
-    const native: ProductClaudeHarnessHostOptions<unknown>["native"] = {
-      harness: "claude-code",
+    const native: ProductClaudeKernelHostOptions<unknown>["native"] = {
       ...(observation === undefined ? {} : { toolObservation: observation }),
       sdkHost: input.env.CLAUDE_SDK_HOST,
+      reportCliStartupFailure: (cause) =>
+        state.queue(() =>
+          readRpcData(
+            cap.append("claude-cli-startup-failure", {
+              incarnation: input.facetNonce,
+              failure: serializeHarnessFailure(cause),
+            }),
+          ),
+        ),
       process: {
+        systemIdentity,
         identity: claudeNodeRuntimeIdentity(paths.home),
         env: {
           HOME: paths.home,
@@ -262,19 +205,6 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
           ...processEnvironment,
           ...gatewayEnvironment,
         },
-        // The event stream can close on rejection, so this uses the request's awaited diagnostic queue.
-        reportCliStartupFailure: (cause) =>
-          state.queue(() =>
-            readRpcData(
-              cap.append("claude-cli-startup-failure", {
-                incarnation: input.facetNonce,
-                failure: serializeHarnessFailure(cause),
-              }),
-            ),
-          ),
-        nativeModules: DEFAULT_NODE_NATIVE_MODULES,
-        loadPackages: async (_bridge, signal) => await imports.loadPackages(plan, signal),
-        loadRelease: async (_bridge, signal) => await imports.loadRelease(plan, signal),
         bun: {
           main: `/release/${plan.main.module}`,
           version: plan.cli.version,
@@ -291,39 +221,15 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
       files: {
         identity: state.files.identity,
         database: state.files.database,
-        nowNs: state.files.nowNs,
-        persistencePorts: createMemoryFilePersistencePorts(),
         rootMetadata: state.files.rootMetadata,
         posix: state.files.posix,
         cwd: paths.cwd,
         assetMode: state.files.assetMode,
       },
-      commands: {
-        loader: commandLoader(input.env),
-        capacity: new ChildWorkerCapacity(2, {
-          owner: `qualifier/claude/${host.runId}/${input.facetNonce}`,
-          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
-        }),
-        systemIdentity,
-        machine,
-      },
-      observeInput: (bytes: Uint8Array) => state.raw("native-stdin", bytes),
-      observeOutput: (fd: number, bytes: Uint8Array) =>
-        state.raw(fd === 1 ? "native-stdout" : "native-stderr", bytes),
-      hydrate: hydrateClaudeFiles({
-        state,
-        cap,
-        paths,
-        turn,
-        restored,
-        nativeSessionId,
-        incarnation: input.facetNonce,
-        preparedModuleCount,
-        artifactHash: input.selectedRelease.artifact.artifactHash,
-      }),
-      save: async () => ({ commit: `claude-snapshot-${input.facetNonce}` }),
-      port: async () => {
-        throw new Error("Claude qualifier excludes network ports");
-      },
+      sessionKey: input.facetNonce,
+      ...(nativeSessionId === undefined || nativeSessionId === null ? {} : { nativeSessionId }),
+      kernel: input.env.CLAUDE_KERNEL,
+      commands: input.env.COMPUTER_EXECUTION,
+      admission: { limit: 2, path: ["/bin", "/usr/bin"] },
     } satisfies ClaudeProviderOptions;
   });

@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { ResolvedProgram } from "../../kernel/KernelAbi.ts";
-import type { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
-import type { KernelProgramAdmissionRequest } from "../../kernel/KernelProgramAdmission.ts";
-import type { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
 import type { KernelProgramBinding } from "../../kernel/KernelProgramHost.ts";
 import { CHILD_PROGRAM_PATHS } from "../ChildProgramSet.ts";
 import {
@@ -22,31 +19,29 @@ const command = (
     readonly cwd?: string;
     readonly path?: string;
     readonly signal?: AbortSignal;
-    readonly filesystem?: KernelFileSystem;
+    readonly namespace?: ComputerProgramResolverRequest["namespace"];
   } = {},
 ) => {
   const cwd = options.cwd ?? "/workspace";
   return {
-    kind: "command" as const,
-    stdio: "piped" as const,
     command: {
       executable,
       argv: [executable],
       cwd,
       env: { PATH: options.path ?? "/workspace/bin:/usr/bin", HOME: "/workspace" },
     },
-    baseCwd: cwd,
-    actions: [],
-    attributes: undefined,
-    filesystem: options.filesystem ?? ({} as KernelFileSystem),
-    processes: {} as KernelProcessTable,
+    namespace: options.namespace ?? {
+      inspect: async () => {
+        throw new Error("Unexpected namespace read");
+      },
+    },
     signal: options.signal ?? new AbortController().signal,
     target: {
       kind: "unsupported" as const,
       code: "NOT_FOUND" as const,
       message: "Command not found",
     },
-  } satisfies KernelProgramAdmissionRequest;
+  };
 };
 
 function resolverFor(files: Readonly<Record<string, FileRecord>>) {
@@ -56,44 +51,53 @@ function resolverFor(files: Readonly<Record<string, FileRecord>>) {
       .filter(([, file]) => file.lower)
       .map(([path]) => path),
   );
-  const filesystem = {
-    async checkExecutable(path: string) {
-      const file = files[path];
-      if (file === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
-      if (!file.executable) throw Object.assign(new Error("denied"), { code: "EACCES" });
-      return { type: file.type };
-    },
-  } as unknown as KernelFileSystem;
-  const prepare = vi.fn(async (paths: readonly string[]) => {
-    requested.push([...paths]);
+  const inspect = vi.fn(async (path: string) => {
+    requested.push([path]);
+    const file = files[path];
+    if (file === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    if (!file.executable) throw Object.assign(new Error("denied"), { code: "EACCES" });
+    return { type: file.type, lower: lower.has(path), matchesArtifact: false };
   });
-  const isLower = vi.fn(async (path: string) => lower.has(path));
   return {
-    resolver: new ComputerProgramResolver({
-      path: ["/workspace/bin", "/usr/bin"],
-      overlay: { prepare, isLower },
-    }),
-    filesystem,
+    resolver: new ComputerProgramResolver({ path: ["/workspace/bin", "/usr/bin"] }),
+    namespace: { inspect },
     requested,
-    prepare,
-    isLower,
+    inspect,
   };
 }
 
 const catalogBinding = {} as KernelProgramBinding;
 const bindings = new Map([[CHILD_PROGRAM_PATHS.bash, catalogBinding]]);
 const withCatalog = (
-  request: KernelProgramAdmissionRequest,
+  request: Omit<ComputerProgramResolverRequest, "catalog">,
   catalog: ReadonlyMap<string, KernelProgramBinding> = new Map(),
 ): ComputerProgramResolverRequest => ({ ...request, catalog });
 
 describe("ComputerProgramResolver", () => {
+  it("rejects a namespace reply that arrives after admission cancellation", async () => {
+    const controller = new AbortController();
+    const inspected = Promise.withResolvers<{
+      type: string;
+      lower: boolean;
+      matchesArtifact: boolean;
+    }>();
+    const result = new ComputerProgramResolver({ path: ["/usr/bin"] }).resolve({
+      ...command("bash", { path: "/usr/bin", signal: controller.signal }),
+      namespace: { inspect: () => inspected.promise },
+      catalog: bindings,
+    });
+    const reason = new Error("Admission ended");
+    controller.abort(reason);
+    inspected.resolve({ type: "file", lower: true, matchesArtifact: false });
+    await expect(result).rejects.toBe(reason);
+  });
+
   it("resolves a newly registered catalog program without a separate name list", async () => {
     const binding = {} as KernelProgramBinding;
     const fixture = resolverFor({
       "/usr/bin/new-tool": { type: "file", executable: true, lower: true },
     });
-    const request = command("new-tool", { path: "/usr/bin", filesystem: fixture.filesystem });
+    const request = command("new-tool", { path: "/usr/bin", namespace: fixture.namespace });
     const result = await fixture.resolver.resolve(
       withCatalog(request, new Map([["/bin/new-tool", binding]])),
     );
@@ -111,7 +115,7 @@ describe("ComputerProgramResolver", () => {
     });
     const request = command("bash", {
       path: "/workspace/bin:/usr/bin",
-      filesystem: fixture.filesystem,
+      namespace: fixture.namespace,
     });
 
     const input = withCatalog(request, bindings);
@@ -135,7 +139,7 @@ describe("ComputerProgramResolver", () => {
     });
     const request = command("jq", {
       path: "/workspace/bin:/usr/bin",
-      filesystem: fixture.filesystem,
+      namespace: fixture.namespace,
     });
 
     const result = await fixture.resolver.resolve(
@@ -156,7 +160,7 @@ describe("ComputerProgramResolver", () => {
       "/workspace/bin/review_late": { type: "file", executable: true, lower: true },
     });
     const request = command("/home/node/.local/bin/review_late", {
-      filesystem: fixture.filesystem,
+      namespace: fixture.namespace,
     });
 
     const result = await fixture.resolver.resolve(withCatalog(request));
@@ -174,14 +178,13 @@ describe("ComputerProgramResolver", () => {
 
     await expect(
       fixture.resolver.resolve(
-        withCatalog(command("bash", { filesystem: fixture.filesystem }), bindings),
+        withCatalog(command("bash", { namespace: fixture.namespace }), bindings),
       ),
     ).rejects.toMatchObject({
       name: "KernelProgramExecAdmissionError",
       code: "ENOEXEC",
     });
-    expect(fixture.isLower).toHaveBeenCalledTimes(1);
-    expect(fixture.isLower).toHaveBeenCalledWith("/workspace/bin/bash", expect.any(AbortSignal));
+    expect(fixture.inspect).toHaveBeenCalledTimes(1);
   });
 
   it("distinguishes a permission-denied PATH match from a fresh miss", async () => {
@@ -192,12 +195,12 @@ describe("ComputerProgramResolver", () => {
 
     await expect(
       denied.resolver.resolve(
-        withCatalog(command("tool", { path: "/workspace/bin", filesystem: denied.filesystem })),
+        withCatalog(command("tool", { path: "/workspace/bin", namespace: denied.namespace })),
       ),
     ).rejects.toMatchObject({ code: "EACCES" });
     await expect(
       missing.resolver.resolve(
-        withCatalog(command("typo", { path: "/workspace/bin", filesystem: missing.filesystem })),
+        withCatalog(command("typo", { path: "/workspace/bin", namespace: missing.namespace })),
       ),
     ).rejects.toMatchObject({ code: "ENOENT" });
     expect(missing.requested).toEqual([["/workspace/bin/typo"]]);
@@ -208,9 +211,9 @@ describe("ComputerProgramResolver", () => {
       "/workspace/bin/tool": { type: "file", executable: false, lower: true },
       "/usr/bin/tool": { type: "file", executable: true, lower: true },
     });
-    fixture.prepare.mockRejectedValueOnce(Object.assign(new Error("denied"), { code: "EACCES" }));
+    fixture.inspect.mockRejectedValueOnce(Object.assign(new Error("denied"), { code: "EACCES" }));
     const result = await fixture.resolver.resolve(
-      withCatalog(command("tool", { filesystem: fixture.filesystem })),
+      withCatalog(command("tool", { namespace: fixture.namespace })),
     );
     expect(result.command.executable).toBe("/usr/bin/tool");
   });
@@ -224,11 +227,11 @@ describe("ComputerProgramResolver", () => {
         program: {} as unknown as ResolvedProgram,
         binding: catalogBinding,
       },
-    } as KernelProgramAdmissionRequest;
+    };
 
     const result = await fixture.resolver.resolve(withCatalog(request, bindings));
 
     expect(result.command).toBe(request.command);
-    expect(fixture.prepare).not.toHaveBeenCalled();
+    expect(fixture.inspect).not.toHaveBeenCalled();
   });
 });

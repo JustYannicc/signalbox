@@ -55,10 +55,10 @@ interface ConsumerEventTrace {
   interruptAppliedAtApplyStart?: boolean;
 }
 
-export const openAdapterSession = (
-  original: HarnessOpenInput,
+export const openAdapterSession = <Files>(
+  original: HarnessOpenInput<Files>,
   createRuntime: (
-    input: HarnessOpenInput,
+    input: HarnessOpenInput<Files>,
     reporter: HarnessRuntimeReporter,
   ) => Effect.Effect<
     ProviderAdapterV2SessionRuntime,
