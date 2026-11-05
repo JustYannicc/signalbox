@@ -10,7 +10,11 @@ import type {
 } from "../kernel/KernelCommandForwarder.ts";
 import type { KernelSyscallRequest, KernelSyscallResponse } from "../kernel/KernelSyscallPort.ts";
 import { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
-import { createCommandGateway, type CommandProgramCodes } from "./CommandGateway.ts";
+import {
+  createCommandGateway,
+  type CommandProgramCodes,
+  type CommandGatewayOptions,
+} from "./CommandGateway.ts";
 import { CHILD_COREUTILS_COMMANDS } from "./ChildProgramSet.ts";
 import type { ChildWorkerInvocation } from "./ChildWorkerProgram.ts";
 import type { ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
@@ -29,6 +33,7 @@ export type FakeChildRun = (
 
 export interface CommandGatewayFixtureOptions {
   readonly resolver?: ComputerProgramResolver;
+  readonly namespace?: CommandGatewayOptions["namespace"];
   readonly programs?: CommandProgramCodes;
   readonly before?: (filesystem: ReturnType<typeof childBusyboxFixture>["filesystem"]) => void;
   readonly run?: FakeChildRun;
@@ -86,6 +91,7 @@ export function commandGatewayFixture(options: CommandGatewayFixtureOptions = {}
   const machineSpawn = vi.fn(async (_command: KernelCommand, _signal: AbortSignal) => machineChild);
   const machine: KernelCommandForwarder = { spawn: machineSpawn };
   const gateway = createCommandGateway({
+    ...(options.namespace === undefined ? {} : { namespace: options.namespace }),
     filesystem: kernel.filesystem,
     processes: kernel.context.processes,
     wakes: kernel.context.wakes,

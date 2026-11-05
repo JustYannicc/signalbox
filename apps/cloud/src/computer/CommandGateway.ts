@@ -22,7 +22,14 @@ import {
   type ComputerProgramAdmissionOptions,
 } from "./ComputerProgramAdmission.ts";
 import { createComputerIsolatePolicy } from "./EscalationPolicy.ts";
-import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
+import type {
+  KernelProgramAdmissionRequest,
+  KernelProgramBinding,
+} from "../kernel/KernelProgramHost.ts";
+import {
+  createKernelExecutableNamespace,
+  type KernelExecutableNamespaceOwner,
+} from "../kernel/KernelExecutableNamespace.ts";
 import { ComputerEscalationTable } from "./EscalationTable.ts";
 import { qualifyGnuCommand } from "./GnuCommandCompatibility.ts";
 import { qualifyUgrepCommand } from "./UgrepCommand.ts";
@@ -54,6 +61,7 @@ export interface CommandGatewayOptions {
   readonly systemIdentity?: SystemIdentity;
   readonly machine: KernelCommandForwarder;
   readonly resolver?: ComputerProgramResolver;
+  readonly namespace?: (request: KernelProgramAdmissionRequest) => KernelExecutableNamespaceOwner;
   readonly evidence?: ComputerProgramAdmissionOptions["evidence"];
   readonly orderedMachineRules?: ConstructorParameters<typeof ComputerEscalationTable>[0];
   readonly parent?: KernelCommandExecutorOptions["parent"];
@@ -103,8 +111,26 @@ export function createCommandGateway(options: CommandGatewayOptions) {
       ...(resolver === undefined
         ? {}
         : {
-            resolve: (request) =>
-              resolver.resolve({ ...request, catalog: catalog.bindings, aliases: catalog.aliases }),
+            resolve: async (request) => {
+              const namespace =
+                options.namespace?.(request) ??
+                createKernelExecutableNamespace({
+                  filesystem: request.filesystem,
+                  signal: request.signal,
+                });
+              try {
+                return await resolver.resolve({
+                  command: request.command,
+                  target: request.target,
+                  signal: request.signal,
+                  catalog: catalog.bindings,
+                  aliases: catalog.aliases,
+                  namespace,
+                });
+              } finally {
+                await namespace.close();
+              }
+            },
           }),
       ...(evidence === undefined ? {} : { evidence }),
     });

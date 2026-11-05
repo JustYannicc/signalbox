@@ -1,8 +1,12 @@
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
+import { createKernelProcessAdmissionPort } from "../kernel/KernelProcessAdmissionPort.ts";
 import type { KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
-import { copyKernelRpcRecord } from "../kernel/KernelRpcReply.ts";
 import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
-import { ChildHostLease } from "./ChildHostLease.ts";
+import type { ChildHostLease } from "./ChildHostLease.ts";
+import {
+  createChildWorkerInvocationRunner,
+  type ChildWorkerDispatch,
+} from "./ChildWorkerInvocationRunner.ts";
 import {
   isChildWorkerReservation,
   type ChildWorkerCapacity,
@@ -10,12 +14,9 @@ import {
   type ChildWorkerExecution,
   type ChildWorkerSlotRequest,
 } from "./ChildWorkerCapacity.ts";
-import { ChildWorkerDispatchError } from "./ChildWorkerDispatchError.ts";
-import { resolveChildWorkerLimits } from "./ChildWorkerLimits.ts";
 import { ChildWorkerLifetimes } from "./ChildWorkerLifetimes.ts";
-import { createChildWorkerPreparation } from "./ChildWorkerPreparation.ts";
 
-import type { ChildWorkerCode, ChildWorkerInvocation } from "./ChildWorkerCode.ts";
+import type { ChildWorkerCode } from "./ChildWorkerCode.ts";
 export type {
   ChildWorkerModule,
   ChildWorkerModules,
@@ -24,15 +25,7 @@ export type {
   ChildWorkerInvocation,
 } from "./ChildWorkerCode.ts";
 
-export interface ChildWorkerDispatch<Host extends object> {
-  /** The permit follows this promise, including any descendant continuations in the worker. */
-  readonly run: (
-    input: ChildWorkerInvocation,
-    host: Host,
-    onMemoryLost?: () => Promise<void>,
-  ) => Promise<KernelCommandExit>;
-}
-
+export type { ChildWorkerDispatch } from "./ChildWorkerInvocationRunner.ts";
 export interface ChildWorkerProgramOptions<Host extends object> {
   readonly sigpipe?: KernelProgramImplementation["sigpipe"];
   readonly executable: string;
@@ -92,145 +85,52 @@ export function createChildWorkerProgram<Host extends object>(
 export function createChildWorkerRunner<Host extends object>(
   options: Omit<ChildWorkerProgramOptions<Host>, "createHost">,
 ) {
-  const {
-    executable,
-    capacity,
-    reservationFor,
-    childEnv,
-    dispatch,
-    code: { mainModule, modules: moduleSource, entrypoint, limits },
-  } = options;
-  const code = Object.freeze({
-    mainModule,
-    ...(entrypoint === undefined ? {} : { entrypoint }),
-    limits: resolveChildWorkerLimits(limits),
-  });
-  const preparation = createChildWorkerPreparation({ ...code, modules: moduleSource });
-  const lifetimes = options.lifetimes ?? new ChildWorkerLifetimes();
+  const runner = createChildWorkerInvocationRunner(options);
   return Object.freeze({
-    prepare: preparation.prepare,
-    async run(
+    prepare: runner.prepare,
+    run(
       context: KernelAsyncProgramContext,
       createHost: ChildWorkerProgramOptions<Host>["createHost"],
       initialResidentBytes = 0,
     ) {
-      const result = Promise.withResolvers<KernelCommandExit>();
-      let settled = false;
-      // Boxed so an unseen rejection with undefined never matches "nothing delivered".
-      let delivered: { readonly error: unknown } | undefined;
-      const settle = {
-        resolve(exit: KernelCommandExit) {
-          settled = true;
-          result.resolve(exit);
-        },
-        reject(error: unknown) {
-          if (!settled) delivered = { error };
-          settled = true;
-          result.reject(error);
-        },
-      };
-      const lifetime = (async () => {
-        const reservation =
-          reservationFor === undefined ? undefined : claimReservation(reservationFor, context);
-        const request = reservation?.request ?? (await preparation.prepare(initialResidentBytes));
-        const modules = preparation.claim(request);
-        const work = async (execution: ChildWorkerExecution) => {
-          context.signal.throwIfAborted();
-          const env = Object.freeze({
-            ...(childEnv === undefined ? context.env : childEnv(context)),
-          });
-          const lease = new ChildHostLease((bytes) => execution.observe(bytes));
-          const owner = createHost(
-            childEnv === undefined ? context : { ...context, env },
-            lease,
-            execution,
-          );
-          if (owner.exited !== undefined) void owner.exited.then(settle.resolve, settle.reject);
-          let failure: ChildWorkerDispatchError | undefined;
-          let dispatched = false;
-          try {
-            context.signal.throwIfAborted();
-            dispatched = true;
-            return copyKernelRpcRecord(
-              await dispatch.run(
-                Object.freeze({
-                  ...code,
-                  loaderId: execution.lease.loaderId,
-                  modules,
-                  command: {
-                    executable,
-                    argv: [...context.args],
-                    cwd: context.filesystem.cwd,
-                    env,
-                  },
-                }),
-                owner.host,
-                () => execution.lose("memory"),
-              ),
+      const owner = createKernelProcessAdmissionPort({
+        processes: context.processes,
+        process: context.identity.handle,
+        signal: context.signal,
+      });
+      return runner.run(
+        {
+          signal: context.signal,
+          command: {
+            executable: options.executable,
+            argv: context.args,
+            cwd: context.filesystem.cwd,
+            env: options.childEnv?.(context) ?? context.env,
+          },
+          requester: { owner },
+          lifetime: (pending) => {
+            void pending.then(
+              () => owner.close(),
+              () => owner.close(),
             );
-          } catch (error) {
-            failure =
-              error instanceof ChildWorkerDispatchError
-                ? error
-                : new ChildWorkerDispatchError(
-                    error,
-                    dispatched
-                      ? { kind: "unconfirmed", stopped: new Promise<void>(() => {}) }
-                      : { kind: "stopped" },
-                  );
-            settle.reject(failure);
-            await owner.onDispatchFailure?.(failure);
-          } finally {
-            // Late child calls then fail with EBADF instead of reaching a process that is closing.
-            try {
-              lease.release();
-            } finally {
-              try {
-                await owner.close();
-              } finally {
-                if (failure?.termination.kind === "unconfirmed") {
-                  // Capability cleanup cannot acknowledge a worker whose transport disappeared.
-                  await failure.termination.stopped;
-                }
-                await owner.onStopped?.();
-              }
-            }
-          }
-          throw failure;
-        };
-        return reservation === undefined
-          ? capacity.run(
-              context.signal,
-              work,
-              {
-                processes: context.processes,
-                process: context.identity.handle,
-              },
-              request,
-            )
-          : reservation.run(
-              context.signal,
-              work,
-              {
-                processes: context.processes,
-                process: context.identity.handle,
-              },
-              request,
-            );
-      })();
-      // Logical exit can precede dispatch completion and physical teardown on either admission path.
-      // Drain gets only failures the caller never received; the rest would pin the command's frames.
-      lifetimes.track(
-        lifetime.then(settle.resolve, (error: unknown) => {
-          settle.reject(error);
-          const received = delivered !== undefined && delivered.error === error;
-          delivered = undefined;
-          if (!received) throw error;
-        }),
+          },
+          reservation:
+            options.reservationFor === undefined
+              ? undefined
+              : () => claimReservation(options.reservationFor!, context),
+          open: async (lease, execution) =>
+            createHost(
+              options.childEnv === undefined
+                ? context
+                : { ...context, env: options.childEnv(context) },
+              lease,
+              execution,
+            ),
+        },
+        initialResidentBytes,
       );
-      return result.promise;
     },
-    drain: () => lifetimes.drain(),
+    drain: runner.drain,
   });
 }
 

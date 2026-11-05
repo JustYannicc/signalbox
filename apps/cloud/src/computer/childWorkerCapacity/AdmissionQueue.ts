@@ -10,7 +10,8 @@ import type { ChildWorkerPermitHooks } from "./Execution.ts";
 import type {
   InternalChildWorkerPermit,
   ChildWorkerSiblingFamily,
-  ChildWorkerRequester,
+  ChildWorkerCapacityRequester,
+  ChildWorkerAdmissionTopology,
   ChildWorkerSlotRequest,
 } from "./types.ts";
 
@@ -18,7 +19,8 @@ interface Waiter {
   readonly signal: AbortSignal;
   readonly controller: AbortController;
   readonly order: number;
-  readonly siblingFamily: ChildWorkerSiblingFamily | undefined;
+  siblingFamily: ChildWorkerSiblingFamily | undefined;
+  classified: boolean;
   resolve?: (permit: InternalChildWorkerPermit) => void;
   reject?: (error: unknown) => void;
   result?: Promise<InternalChildWorkerPermit>;
@@ -44,10 +46,9 @@ export interface ChildWorkerAdmissionQueueOptions {
   readonly slots: Promise<ProcessSlots>;
   readonly scheduleQuantum: ProcessSlotsOptions["scheduleQuantum"];
   readonly onCapacityPressure: (adapterWaiters: number) => void;
-  readonly isNested: (requester: ChildWorkerRequester | undefined) => boolean;
-  readonly siblingFamily: (
-    requester: ChildWorkerRequester | undefined,
-  ) => ChildWorkerSiblingFamily | undefined;
+  readonly classify: (
+    requester: ChildWorkerCapacityRequester | undefined,
+  ) => ChildWorkerAdmissionTopology | Promise<ChildWorkerAdmissionTopology>;
   readonly makePermit: (
     slots: ProcessSlots,
     lease: ProcessSlotLease,
@@ -63,7 +64,7 @@ export class ChildWorkerAdmissionQueue {
   readonly #nested = new Set<Waiter>();
   readonly #roots = new Set<Waiter>();
   readonly #pending = new Set<Waiter>();
-  readonly #siblingSlots = new WeakMap<object, Map<number, number>>();
+  readonly #siblingSlots = new Map<object | string, Map<number, number>>();
   #used = 0;
   #terminating = 0;
   #nextOrder = 0;
@@ -85,7 +86,7 @@ export class ChildWorkerAdmissionQueue {
 
   enqueue(
     signal: AbortSignal,
-    requester: ChildWorkerRequester | undefined,
+    requester: ChildWorkerCapacityRequester | undefined,
   ): QueuedChildWorkerAdmission {
     const controller = new AbortController();
     const ownedSignal = AbortSignal.any([signal, controller.signal]);
@@ -104,14 +105,14 @@ export class ChildWorkerAdmissionQueue {
       signal: ownedSignal,
       controller,
       order: this.#nextOrder++,
-      siblingFamily: this.#options.siblingFamily(requester),
+      siblingFamily: undefined,
+      classified: false,
       onAbort,
       state: "queued",
       occupiesSlot: false,
       occupiesSiblingFamily: false,
       unplaceable: false,
     };
-    const queue = this.#queueFor(requester);
     if (ownedSignal.aborted) {
       waiter.state = "done";
       waiter.failure = ownedSignal.reason;
@@ -119,10 +120,22 @@ export class ChildWorkerAdmissionQueue {
       waiter.state = "done";
       waiter.failure = this.#failure.error;
     } else {
-      queue.add(waiter);
+      this.#roots.add(waiter);
       ownedSignal.addEventListener("abort", onAbort, { once: true });
       if (ownedSignal.aborted) onAbort();
-      this.#drain();
+      try {
+        const topology = this.#options.classify(requester);
+        if (topology instanceof Promise) {
+          void topology.then(
+            (value) => this.#classified(waiter, value),
+            (error: unknown) => controller.abort(error),
+          );
+        } else {
+          this.#classified(waiter, topology);
+        }
+      } catch (error) {
+        controller.abort(error);
+      }
     }
 
     return {
@@ -167,11 +180,15 @@ export class ChildWorkerAdmissionQueue {
     }
   }
 
-  #queueFor(requester: ChildWorkerRequester | undefined): Set<Waiter> {
-    if (this.#used < this.#options.limit && this.#nested.size === 0 && this.#roots.size === 0) {
-      return this.#roots;
+  #classified(waiter: Waiter, topology: ChildWorkerAdmissionTopology): void {
+    if (waiter.state !== "queued") return;
+    waiter.classified = true;
+    waiter.siblingFamily = topology.family;
+    if (topology.nested) {
+      this.#roots.delete(waiter);
+      this.#nested.add(waiter);
     }
-    return this.#options.isNested(requester) ? this.#nested : this.#roots;
+    this.#drain();
   }
 
   #acquire(waiter: Waiter, code: ChildWorkerSlotRequest): Promise<InternalChildWorkerPermit> {
@@ -206,6 +223,7 @@ export class ChildWorkerAdmissionQueue {
       for (const queue of [this.#nested, this.#roots]) {
         for (const waiter of queue) {
           if (
+            !waiter.classified ||
             waiter.code === undefined ||
             waiter.code.residentBytes <= this.#options.residentByteLimit
           )
@@ -299,6 +317,7 @@ export class ChildWorkerAdmissionQueue {
       | undefined;
     for (const queue of [this.#nested, this.#roots]) {
       for (const waiter of queue) {
+        if (!waiter.classified) continue;
         const candidate = {
           queue,
           waiter,
@@ -317,6 +336,11 @@ export class ChildWorkerAdmissionQueue {
           selected = candidate;
         }
       }
+    }
+    if (selected === undefined) return undefined;
+    // A slower topology reply cannot move an earlier arrival behind a later request.
+    for (const waiter of this.#roots) {
+      if (!waiter.classified && waiter.order < selected.waiter.order) return undefined;
     }
     return selected;
   }
@@ -347,6 +371,7 @@ export class ChildWorkerAdmissionQueue {
     if (families === undefined || count === undefined) return;
     if (count <= 1) families.delete(family.parentPid);
     else families.set(family.parentPid, count - 1);
+    if (families.size === 0) this.#siblingSlots.delete(family.processes);
   }
 
   #cancelPressure(): void {

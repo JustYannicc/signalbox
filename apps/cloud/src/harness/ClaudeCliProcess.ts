@@ -13,10 +13,7 @@ import type {
   ClaudeCliProcessPort,
   ClaudeSdkReport,
 } from "./ClaudeSdkHostProtocol.ts";
-import type { ClaudeToolObservation, ClaudeToolHookInput } from "./ClaudeToolObservation.ts";
-import type { HarnessContinuationRequests } from "./HarnessContinuations.ts";
-import { claudeSdkContinuationCodec } from "./ClaudeSdkHostProtocol.ts";
-import * as Effect from "effect/Effect";
+import type { ClaudeToolHookInput } from "./ClaudeToolObservation.ts";
 import { ownRpcResponse } from "../rpc/response.ts";
 
 export type ClaudeCliProcessOptions = Omit<NodeHarnessProcessInput, "signal">;
@@ -33,7 +30,7 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
   readonly #observation;
   readonly #lifetime = new AbortController();
   readonly #unsubscribe;
-  readonly #continuations;
+  readonly #continuation;
   readonly #io = new Map<string, AbortController>();
   readonly #cancelledIo = new Map<string, unknown>();
   #streamsTaken = false;
@@ -44,8 +41,12 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
     options: ClaudeCliProcessOptions,
     input: HarnessOpenInput,
     reporter: HarnessRuntimeReporter,
-    observation?: ClaudeToolObservation,
-    continuations?: HarnessContinuationRequests,
+    observation?: (
+      input: ClaudeToolHookInput,
+      toolUseId: string | undefined,
+      signal: AbortSignal,
+    ) => Promise<void>,
+    continuation?: (request: unknown, signal: AbortSignal) => Promise<void>,
   ) {
     super();
     const loaded = input.loadedRelease ?? options.loadedRelease;
@@ -60,8 +61,8 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
     this.#reporter = reporter;
     this.#transport = input.modelTransport;
     this.#observation = observation;
-    this.#continuations = continuations;
-    this.#files = createClaudeCliFiles(input.computer.files);
+    this.#continuation = continuation;
+    this.#files = createClaudeCliFiles(options.computer.files);
     const initialization =
       reporter.turnMilestone === undefined
         ? undefined
@@ -223,18 +224,15 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
     }
   }
   async observeTool(input: ClaudeToolHookInput, toolUseId: string | undefined) {
-    const hook = this.#observation?.hooks[input.hook_event_name]?.[0]?.hooks[0];
-    await hook?.(input, toolUseId, { signal: this.#lifetime.signal });
+    await this.#observation?.(input, toolUseId, this.#lifetime.signal);
   }
   async fs(id: string, operation: string, args: ReadonlyArray<unknown>) {
     return await this.#operation(id, (signal) => this.#files.call(operation, args, signal));
   }
   async continuation(request: unknown) {
-    if (this.#continuations === undefined)
+    if (this.#continuation === undefined)
       throw new Error("Claude continuation publisher is unavailable");
-    await Effect.runPromise(this.#continuations.offer(claudeSdkContinuationCodec.decode(request)), {
-      signal: this.#lifetime.signal,
-    });
+    await this.#continuation(request, this.#lifetime.signal);
   }
   dispose() {
     return (this.#disposed ??= (async () => {

@@ -1,3 +1,5 @@
+import { readKernelFileTransfer } from "../../../../src/kernel/KernelFileTransfer.ts";
+import { drainFacetDiagnostics } from "./facetState.ts";
 import { readRpcData } from "../../../../src/rpc/Resources.ts";
 // @effect-diagnostics cryptoRandomUUID:off - Snapshot IDs are local qualification evidence.
 import { restoreFacetCheckpoint, facetCheckpointLineage } from "./checkpointLineage.ts";
@@ -17,7 +19,6 @@ import {
 } from "./claudeHostOptions.ts";
 import { observeClaudePreparedImport } from "./claudeCalibrationObservation.ts";
 import { decodePreparedRelease } from "../preparedRelease.schema.ts";
-import { retainedFacetState, flushFacetDiagnostics } from "./facetState.ts";
 
 export const CLAUDE_QUALIFICATION_ENTRYPOINT = "ClaudeFacet" as const;
 
@@ -85,10 +86,20 @@ const Base = createHarnessCProductClaudeFacetClass<Env, unknown>({
   },
   buildTurnBindings: ({ env, ctx }) =>
     Effect.succeed({
-      ...turnBindings(ctx, claudeCapability(env), facetCheckpointLineage(ctx)),
+      ...turnBindings(ctx, claudeCapability(env), facetCheckpointLineage(ctx), async () => {
+        await drainFacetDiagnostics(ctx);
+        const captured = await env.CLAUDE_KERNEL.checkpointFiles();
+        return {
+          files: await readKernelFileTransfer(captured.manifest, captured.source),
+          rawCounts: captured.rawCounts,
+        };
+      }),
       deadline: { stageIdleMs: 45_000, totalMs: 180_000 },
       flushDiagnostics: Effect.tryPromise({
-        try: () => retainedFacetState(ctx).flush("request-settled"),
+        try: async () => {
+          await drainFacetDiagnostics(ctx);
+          await env.CLAUDE_KERNEL.flushDiagnostics("request-settled");
+        },
         catch: (cause) =>
           new HarnessRequestFacetError("Native diagnostic publication failed.", { cause }),
       }).pipe(
@@ -102,6 +113,12 @@ const Base = createHarnessCProductClaudeFacetClass<Env, unknown>({
 });
 
 export class ClaudeFacet extends Base {
+  async kernelIdentity() {
+    return await this.env.CLAUDE_KERNEL.kernelIdentity();
+  }
+  async kernelIsolateNonceProbe() {
+    return await this.env.CLAUDE_KERNEL.isolateNonceProbe();
+  }
   override async dispose(expectedFacetNonce: string) {
     assert(expectedFacetNonce === this.facetNonce, "Disposal targets another Claude incarnation");
     let failure: unknown;
@@ -112,11 +129,12 @@ export class ClaudeFacet extends Base {
     }
     // Process shutdown can accept a final stderr write after the request's diagnostic flush.
     try {
-      await flushFacetDiagnostics(this.ctx, "disposed");
+      await drainFacetDiagnostics(this.ctx);
+      await this.env.CLAUDE_KERNEL.flushDiagnostics("disposed");
     } catch (cause) {
       if (failure !== undefined)
         throw new AggregateError([failure, cause], "Claude disposal and stdio publication failed", {
-          cause: failure,
+          cause,
         });
       throw cause;
     }

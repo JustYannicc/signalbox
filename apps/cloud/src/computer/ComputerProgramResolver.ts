@@ -1,20 +1,29 @@
 import { KernelProgramExecAdmissionError } from "../kernel/KernelAsyncProgram.ts";
 import type { KernelProgramAdmissionRequest } from "../kernel/KernelProgramAdmission.ts";
 import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
+import type {
+  KernelExecutableArtifact,
+  KernelExecutableNamespace,
+} from "../kernel/KernelExecutableNamespace.ts";
 import { childProgramName } from "./ChildProgramPaths.ts";
-import type { ComputerProgramResolution } from "./ComputerProgramAdmission.ts";
-import { isCatalogProgramFile } from "./catalog/ProgramFile.ts";
+import type { ComputerProgramResolution } from "./ComputerProgramResolution.ts";
 
 export interface ComputerProgramResolverOptions {
   readonly path: readonly string[];
-  readonly overlay: {
-    readonly prepare: (paths: readonly string[], signal?: AbortSignal) => Promise<void>;
-    readonly isLower: (path: string, signal?: AbortSignal) => Promise<boolean>;
-  };
 }
 
-export type ComputerProgramResolverRequest = KernelProgramAdmissionRequest & {
-  readonly catalog: ReadonlyMap<string, KernelProgramBinding>;
+export type ComputerProgramResolverRequest<
+  Binding extends { readonly implementation: object } = KernelProgramBinding,
+> = Pick<KernelProgramAdmissionRequest, "command" | "signal"> & {
+  readonly target:
+    | {
+        readonly kind: "resolved";
+        readonly binding: Binding;
+        readonly program?: import("../kernel/KernelAbi.ts").ResolvedProgram;
+      }
+    | Extract<KernelProgramAdmissionRequest["target"], { readonly kind: "unsupported" }>;
+  readonly namespace: KernelExecutableNamespace;
+  readonly catalog: ReadonlyMap<string, Binding>;
   readonly aliases?: ReadonlySet<string>;
 };
 
@@ -26,28 +35,20 @@ export class ComputerProgramResolver {
     this.#options = options;
   }
 
-  readonly resolve = async (
-    request: ComputerProgramResolverRequest,
-  ): Promise<ComputerProgramResolution> => {
+  readonly resolve = async <Binding extends { readonly implementation: object }>(
+    request: ComputerProgramResolverRequest<Binding>,
+  ): Promise<ComputerProgramResolution<Binding>> => {
     const command = request.command;
     if (request.target.kind === "resolved") {
       if (!command.executable.startsWith("/") || !request.aliases?.has(command.executable))
         return { command };
       try {
-        await this.#options.overlay.prepare([command.executable], request.signal);
-        const lower = await this.#options.overlay.isLower(command.executable, request.signal);
-        const stat = await request.filesystem.checkExecutable(command.executable, request.signal);
-        if (
-          stat.type === "file" &&
-          (lower ||
-            (await isCatalogProgramFile(
-              request.filesystem,
-              command.executable,
-              request.target.binding,
-              request.signal,
-            )))
-        )
-          return { command };
+        const stat = await request.namespace.inspect(
+          command.executable,
+          executableArtifact(request.target.binding),
+        );
+        request.signal.throwIfAborted();
+        if (stat.type === "file" && (stat.lower || stat.matchesArtifact)) return { command };
         return {
           command,
           unavailable: {
@@ -80,10 +81,10 @@ export class ComputerProgramResolver {
     for (const path of paths) {
       let lower: boolean;
       try {
-        await this.#options.overlay.prepare([path], request.signal);
-        lower = await this.#options.overlay.isLower(path, request.signal);
-        if ((await request.filesystem.checkExecutable(path, request.signal)).type !== "file")
-          continue;
+        const inspected = await request.namespace.inspect(path);
+        request.signal.throwIfAborted();
+        lower = inspected.lower;
+        if (inspected.type !== "file") continue;
       } catch (error) {
         const code = errorCode(error);
         if (code === "ENOENT" || code === "ENOTDIR") continue;
@@ -118,6 +119,24 @@ export class ComputerProgramResolver {
       `Command ${denied ? "is not executable" : "not found"}: ${command.executable}`,
     );
   };
+}
+
+function executableArtifact(binding: {
+  readonly implementation: object;
+}): KernelExecutableArtifact | undefined {
+  const implementation = binding.implementation;
+  if (!("executableArtifact" in implementation)) return undefined;
+  const artifact = implementation.executableArtifact;
+  if (
+    typeof artifact !== "object" ||
+    artifact === null ||
+    !("bytes" in artifact) ||
+    typeof artifact.bytes !== "number" ||
+    !("sha256" in artifact) ||
+    typeof artifact.sha256 !== "string"
+  )
+    return undefined;
+  return { bytes: artifact.bytes, sha256: artifact.sha256 };
 }
 
 function absolutePath(path: string, cwd: string): string {

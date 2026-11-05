@@ -13,7 +13,7 @@ import { validateOpen } from "../adapter/checkpoint.ts";
 import { createHarnessSessionFacet } from "../HarnessSessionFacet.ts";
 import type { LoadedHarnessRelease } from "../HarnessReleaseLoader.ts";
 import { makeFacetLifetime } from "../facet/lifetime.ts";
-import { createBootState, snapshotOpen } from "./boot.ts";
+import { snapshotOpen } from "./boot.ts";
 import type {
   HarnessHostOptions,
   HarnessHostSession,
@@ -22,43 +22,21 @@ import type {
   TurnAccess,
 } from "./contracts.ts";
 import { createMcpRoutes, validateConnections } from "./mcp.ts";
-import { fingerprint, type SeedCatalog } from "./seed.ts";
+import { fingerprint } from "./seed.ts";
 import { createHostSession, sameAccess, snapshotAccess } from "./session.ts";
 import { closeFailedHostStart } from "./failure.ts";
-import { createHostStorage } from "./storage.ts";
+import type { HarnessHostResources } from "../HarnessHostResources.ts";
 
 export const createHostLifecycle = <G>(
-  options: Omit<HarnessHostOptions<G>, "release" | "programs">,
+  options: Omit<HarnessHostOptions<G>, "release" | "programs" | "files" | "bindComputer">,
   loaded: LoadedHarnessRelease,
-  catalog: SeedCatalog,
+  resources: Effect.Effect<HarnessHostResources, HarnessError, Scope.Scope>,
   closeOwner: Effect.Effect<void>,
 ): Effect.Effect<HarnessSessionHost<G>, HarnessError, Scope.Scope> =>
   Effect.gen(function* () {
     const owner = yield* makeFacetLifetime(yield* Scope.Scope);
     return yield* Effect.gen(function* () {
-      const storage = yield* Effect.acquireRelease(
-        Effect.try({
-          try: () => createHostStorage(options.files, options.threadId),
-          catch: (cause) =>
-            new HarnessError({
-              operation: "open",
-              message: "Canonical Harness storage could not be opened.",
-              cause,
-            }),
-        }),
-        (value) =>
-          Effect.sync(() => value.dispose()).pipe(
-            Effect.catchCause((cause) =>
-              Effect.die(
-                new HarnessError({
-                  operation: "dispose",
-                  message: "Harness files cleanup failed.",
-                  cause,
-                }),
-              ),
-            ),
-          ),
-      );
+      const storage = yield* resources;
       const continuations =
         options.continuations === undefined
           ? undefined
@@ -84,7 +62,7 @@ export const createHostLifecycle = <G>(
         ),
       );
       const lock = yield* Semaphore.make(1);
-      const boot = createBootState(storage, catalog, options.threadId);
+      const boot = storage.boot;
       const clock = yield* Clock.Clock;
       const routes = createMcpRoutes(
         options.executor,
@@ -92,10 +70,10 @@ export const createHostLifecycle = <G>(
         () => clock.currentTimeMillisUnsafe(),
         options.turnGrantSource,
       );
-      let ports: Omit<ComputerBindings, "files"> | undefined;
-      const computer = Object.freeze<Computer>({
+      let ports: Omit<ComputerBindings<unknown>, "files"> | undefined;
+      const computer = Object.freeze<Computer<unknown>>({
         threadId: options.threadId,
-        files: storage.files,
+        files: storage.fileIdentity,
         async exec(command, signal, requester) {
           if (ports === undefined)
             throw new HarnessError({
@@ -462,12 +440,7 @@ export const createHostLifecycle = <G>(
                         // Keep cleanup failures observable at owner shutdown after caller cleanup.
                         yield* Scope.addFinalizer(computerScope, binding.close);
                         const acquisition = yield* Effect.suspend(() =>
-                          options.bindComputer({
-                            threadId: options.threadId,
-                            files: storage.files,
-                            persistence: storage.persistence,
-                            signal: AbortSignal.any([owner.signal, binding.signal]),
-                          }),
+                          storage.bindComputer(AbortSignal.any([owner.signal, binding.signal])),
                         ).pipe(
                           Scope.provide(binding.scope),
                           Effect.forkIn(acquisitionScope, { uninterruptible: false }),

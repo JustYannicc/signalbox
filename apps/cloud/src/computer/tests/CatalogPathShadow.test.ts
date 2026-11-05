@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import { expect, it, vi } from "vite-plus/test";
 import { attachProgramReference } from "../../../infra/childPrograms/runtime.ts";
 import { KernelOpenFlags, type KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
+import { createKernelExecutableNamespace } from "../../kernel/KernelExecutableNamespace.ts";
 import { ComputerProgramResolver } from "../ComputerProgramResolver.ts";
 import {
   commandGatewayFixture,
@@ -48,8 +49,13 @@ function fixtureFor(
     programs,
     resolver: new ComputerProgramResolver({
       path: ["/usr/bin", "/bin"],
-      overlay: { prepare: async () => {}, isLower: async () => options.lower ?? false },
     }),
+    namespace: (request) =>
+      createKernelExecutableNamespace({
+        filesystem: request.filesystem,
+        signal: request.signal,
+        overlay: { prepare: async () => {}, isLower: async () => options.lower ?? false },
+      }),
     before(filesystem) {
       filesystem.mkdir("/usr");
       filesystem.mkdir("/usr/bin");

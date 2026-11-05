@@ -26,6 +26,10 @@ export function turnBindings(
   ctx: DurableObjectState,
   capability: QualifierCapabilities,
   lineage?: CheckpointLineage,
+  remoteCapture?: () => Promise<{
+    readonly files: import("../../../../src/harness/HarnessFilesStore.ts").HarnessFilesStoreResult["files"];
+    readonly rawCounts: readonly (readonly [string, number])[];
+  }>,
 ): HarnessCProductTurnBindings<unknown> {
   let eventOrdinal = 0;
   async function checkpoint(
@@ -34,9 +38,18 @@ export function turnBindings(
     parent: string | null,
     publisher: Parameters<QualifierCapabilities["stageCheckpoint"]>[3],
   ) {
-    const state = retainedFacetState(ctx);
-    await state.flush();
-    const files = capture(state.files, state.threadId, state.boundFiles);
+    const captured =
+      remoteCapture === undefined
+        ? await (async () => {
+            const state = retainedFacetState(ctx);
+            await state.flush();
+            return {
+              files: capture(state.files, state.threadId, state.boundFiles),
+              rawCounts: [...state.rawOrdinals],
+            };
+          })()
+        : await remoteCapture();
+    const { files, rawCounts } = captured;
     const nativeSessionId = checkpoint.snapshot.providerThread.nativeThreadRef?.nativeId;
     assert(nativeSessionId, "Native export is missing the actual UUID");
     const filesCheckpoint = { checkpointId: id, parentCheckpointId: parent, files };
@@ -54,7 +67,7 @@ export function turnBindings(
         checkpointId: id,
         nativeSessionId,
         providerThread: encodeProviderThread(checkpoint.snapshot.providerThread),
-        rawCounts: [...state.rawOrdinals],
+        rawCounts,
       }),
     );
     return { checkpoint: refs, filesCheckpoint };

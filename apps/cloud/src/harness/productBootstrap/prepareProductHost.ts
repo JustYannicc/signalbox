@@ -9,10 +9,9 @@ import type { HarnessProcessResumePreparedRelease } from "../HarnessProcessResum
 import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
 import type { HarnessError } from "../Harness.ts";
 import type { HostOpenInput } from "../HarnessSessionHost.ts";
-import type { ProductHostOptions, ProductHarnessSessionHost } from "../host/product.ts";
+import type { ProductHostConfiguration, ProductBootstrapHost } from "./hostShape.ts";
 import { HarnessRequestFacetError } from "../HarnessRequestFacet.ts";
 import { readHarnessCProductFilesCheckpoint } from "./filesCheckpoint.ts";
-import { materializeHarnessCProductFiles } from "./materializeFiles.ts";
 import { decodeHarnessCProductNativeCheckpoint } from "./nativeCheckpoint.ts";
 import { productReleaseBindings } from "./capabilities.ts";
 import { selectHarnessCProductRelease } from "./selectedArtifact.ts";
@@ -27,10 +26,10 @@ type OpenInput<
   Env extends HarnessCProductFacetEnvironment,
   G,
   Native,
-  Options extends ProductHostOptions<G, Native> & {
+  Options extends ProductHostConfiguration<G, Native> & {
     readonly processResumeArtifact?: HarnessReleaseArtifact;
   },
-  Host extends ProductHarnessSessionHost<G> & {
+  Host extends ProductBootstrapHost<G> & {
     readonly loadedPreparedRelease: () => HarnessProcessResumePreparedRelease;
   },
 > = HarnessCProductHostPreparationInput<Env, G, Native, Options, Host> & {
@@ -46,10 +45,10 @@ export function prepareHarnessCProductHost<
   Env extends HarnessCProductFacetEnvironment,
   G,
   Native,
-  Options extends ProductHostOptions<G, Native> & {
+  Options extends ProductHostConfiguration<G, Native> & {
     readonly processResumeArtifact?: HarnessReleaseArtifact;
   },
-  Host extends ProductHarnessSessionHost<G> & {
+  Host extends ProductBootstrapHost<G> & {
     readonly loadedPreparedRelease: () => HarnessProcessResumePreparedRelease;
   },
 >(
@@ -114,21 +113,8 @@ export function prepareHarnessCProductHost<
     const { host, threadId } = yield* createSeededProductHost<G, Native, Options, Host>({
       input,
       selected,
-      providerOptions,
+      providerOptions: { ...providerOptions, filesCheckpoint: files },
       createHost: input.factory.createHost,
-      beforeCreate: (built) =>
-        Effect.try({
-          try: () =>
-            materializeHarnessCProductFiles({
-              files: built.files,
-              threadId: built.threadId,
-              checkpoint: files,
-            }),
-          catch: (cause) =>
-            new HarnessRequestFacetError("A's filesystem checkpoint could not be materialized.", {
-              cause,
-            }),
-        }),
     });
     const open = yield* input.factory.buildOpenInput({
       env: input.env,

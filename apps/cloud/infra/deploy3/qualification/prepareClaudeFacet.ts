@@ -19,6 +19,16 @@ export async function prepareClaudeFacetCode(
     readonly CONFIG_SHA256: string;
     readonly authorities: Parameters<typeof createQualifierClaudeFacetEnvironment>[3];
     readonly sdkHost?: (code: WorkerLoaderWorkerCode) => ClaudeSdkHostService;
+    readonly kernel?: (
+      code: WorkerLoaderWorkerCode,
+    ) => import("./fixture/claudeKernelProtocol.ts").QualifierClaudeKernelPort;
+    readonly computer?: (
+      code: WorkerLoaderWorkerCode,
+    ) => import("../../../src/kernel/KernelComputerAdmissionPort.ts").ComputerProgramOwnerPort & {
+      configure(
+        input: import("../../../src/computer/ComputerExecutionObject.ts").ComputerExecutionConfiguration,
+      ): Promise<void>;
+    };
   },
 ) {
   const calibration = code.mainModule === "qualifier-claude-calibration-facet.mjs";
@@ -92,14 +102,59 @@ export async function prepareClaudeFacetCode(
         env: { CLAUDE_SDK_PLAN: loaded.plan, CLAUDE_SDK_RELEASE: loaded.plan.release },
         globalOutbound: null,
       });
+  if (!calibration && (inputs.kernel === undefined || inputs.computer === undefined))
+    throw new Error("CLAUDE_PRODUCT_OWNER_LOADER_MISSING");
+  const kernel = calibration
+    ? undefined
+    : inputs.kernel!({
+        compatibilityDate: code.compatibilityDate,
+        ...(code.compatibilityFlags === undefined
+          ? {}
+          : { compatibilityFlags: code.compatibilityFlags }),
+        mainModule: "claude-kernel-entry.mjs",
+        modules: {
+          ...modules,
+          "claude-kernel-entry.mjs": {
+            js: 'export { ClaudeKernelFacet } from "./qualifier-claude-kernel.mjs";',
+          },
+          "qualifier-claude-kernel.mjs": { js: configuration.claude.kernelSource },
+        },
+        env: environment,
+        globalOutbound: null,
+      });
+  const computer = calibration
+    ? undefined
+    : inputs.computer!({
+        compatibilityDate: code.compatibilityDate,
+        ...(code.compatibilityFlags === undefined
+          ? {}
+          : { compatibilityFlags: code.compatibilityFlags }),
+        mainModule: "computer-execution-entry.mjs",
+        modules: {
+          "computer-execution-entry.mjs": {
+            js: 'export { ComputerExecutionObject } from "./computer-execution.mjs";',
+          },
+          "computer-execution.mjs": { js: configuration.claude.computerSource },
+        },
+        env: {
+          CHILD_WORKERS: environment.HARNESS_C_PRODUCT_CAPABILITIES?.qualifierCommands,
+          RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
+        },
+        globalOutbound: null,
+      });
   return {
     variant,
     code: {
       ...code,
-      env: { ...environment, ...(sdkHost === undefined ? {} : { CLAUDE_SDK_HOST: sdkHost }) },
+      env: {
+        ...environment,
+        ...(sdkHost === undefined ? {} : { CLAUDE_SDK_HOST: sdkHost }),
+        ...(kernel === undefined ? {} : { CLAUDE_KERNEL: kernel }),
+        ...(computer === undefined ? {} : { COMPUTER_EXECUTION: computer }),
+      },
       modules: {
         ...code.modules,
-        ...modules,
+        ...(calibration ? modules : {}),
         "qualifier-claude-implementation.mjs": { js: configuration.claude.facetSource },
       },
     },

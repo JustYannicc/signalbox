@@ -18,6 +18,7 @@ import {
   type DurableProcessSlotStorage,
 } from "./childWorkerCapacity/DurableProcessSlotStore.ts";
 import { ChildWorkerAdmissionQueue } from "./childWorkerCapacity/AdmissionQueue.ts";
+import { ChildWorkerProcessOwners } from "./childWorkerCapacity/ProcessOwners.ts";
 import {
   ProcessSlotChildWorkerPermit,
   type ChildWorkerPermitHooks,
@@ -29,17 +30,17 @@ import type {
   InternalChildWorkerPermit,
   ChildWorkerPermit,
   ChildWorkerPressureListener,
-  ChildWorkerRequester,
+  ChildWorkerCapacityRequester,
   ChildWorkerReservation,
-  ChildWorkerSiblingFamily,
   ChildWorkerSlotRequest,
 } from "./childWorkerCapacity/types.ts";
 
 export type {
+  ChildWorkerRequester,
   ChildWorkerAdmissionTicket,
   ChildWorkerExecution,
   ChildWorkerPermit,
-  ChildWorkerRequester,
+  ChildWorkerCapacityRequester,
   ChildWorkerReservation,
   ChildWorkerSlotRequest,
 } from "./childWorkerCapacity/types.ts";
@@ -76,7 +77,7 @@ export class ChildWorkerCapacity {
   #slotSignals: ProcessSlots["signals"] | undefined;
   readonly #scheduleQuantum: ProcessSlotsOptions["scheduleQuantum"];
   readonly #admissions: ChildWorkerAdmissionQueue;
-  readonly #owners = new WeakSet<object>();
+  readonly #owners = new ChildWorkerProcessOwners();
   readonly #pressureListeners = new Set<ChildWorkerPressureListener>();
   #failure: { readonly error: unknown } | undefined;
 
@@ -127,8 +128,7 @@ export class ChildWorkerCapacity {
       slots: this.#slots,
       scheduleQuantum: this.#scheduleQuantum,
       onCapacityPressure: (adapterWaiters) => this.#notifyCapacityPressure(adapterWaiters),
-      isNested: (requester) => this.#isNested(requester),
-      siblingFamily: (requester) => this.#siblingFamily(requester),
+      classify: (requester) => this.#owners.classify(requester),
       makePermit: (slots, lease, permit, hooks, byteLimit) =>
         this.#makePermit(slots, lease, permit, hooks, byteLimit),
     });
@@ -183,7 +183,7 @@ export class ChildWorkerCapacity {
 
   enqueue(
     signal: AbortSignal,
-    requester: ChildWorkerRequester | undefined,
+    requester: ChildWorkerCapacityRequester | undefined,
   ): ChildWorkerAdmissionTicket {
     const queued = this.#admissions.enqueue(signal, requester);
     let reserved = false;
@@ -212,7 +212,7 @@ export class ChildWorkerCapacity {
 
   async acquire(
     signal: AbortSignal,
-    requester: ChildWorkerRequester | undefined,
+    requester: ChildWorkerCapacityRequester | undefined,
     code: ChildWorkerSlotRequest = DEFAULT_REQUEST,
   ): Promise<ChildWorkerPermit> {
     return await this.#acquire(signal, requester, code);
@@ -220,7 +220,7 @@ export class ChildWorkerCapacity {
 
   async reserve(
     signal: AbortSignal,
-    requester: ChildWorkerRequester,
+    requester: ChildWorkerCapacityRequester,
     code: ChildWorkerSlotRequest,
   ): Promise<ChildWorkerReservation> {
     return await this.enqueue(signal, requester).reserve(code);
@@ -229,13 +229,14 @@ export class ChildWorkerCapacity {
   async run<T>(
     signal: AbortSignal,
     work: (execution: ChildWorkerExecution) => Promise<T>,
-    requester: ChildWorkerRequester,
+    requester: ChildWorkerCapacityRequester,
     code: ChildWorkerSlotRequest,
   ): Promise<T> {
     const permit = await this.#acquire(signal, requester, code);
     try {
       signal.throwIfAborted();
-      permit.bind(requester);
+      await permit.bind(requester);
+      signal.throwIfAborted();
       return await work(permit.execution);
     } finally {
       await permit.release();
@@ -244,7 +245,7 @@ export class ChildWorkerCapacity {
 
   #acquire(
     signal: AbortSignal,
-    requester: ChildWorkerRequester | undefined,
+    requester: ChildWorkerCapacityRequester | undefined,
     code: ChildWorkerSlotRequest,
   ): Promise<InternalChildWorkerPermit> {
     if (signal.aborted) return Promise.reject(signal.reason);
@@ -267,25 +268,6 @@ export class ChildWorkerCapacity {
     return undefined;
   }
 
-  #isNested(requester: ChildWorkerRequester | undefined): boolean {
-    const owner = requester?.processes.admissionOwner(requester.process);
-    return owner?.status === "ok" && owner.value !== undefined && this.#owners.has(owner.value);
-  }
-
-  #siblingFamily(
-    requester: ChildWorkerRequester | undefined,
-  ): ChildWorkerSiblingFamily | undefined {
-    if (requester === undefined) return undefined;
-    const info =
-      requester.process === undefined ? undefined : requester.processes.info?.(requester.process);
-    let parentPid = requester.parentPid;
-    if (parentPid === undefined && info?.status === "ok") parentPid = info.value.parentPid;
-    if (parentPid === undefined || !Number.isSafeInteger(parentPid) || parentPid < 0) {
-      return undefined;
-    }
-    return { processes: requester.processes, parentPid };
-  }
-
   #makePermit(
     slots: ProcessSlots,
     lease: ProcessSlotLease,
@@ -293,30 +275,21 @@ export class ChildWorkerCapacity {
     hooks: Omit<ChildWorkerPermitHooks, "bind">,
     residentByteLimit: number,
   ): InternalChildWorkerPermit {
-    let owner: object | undefined;
+    let releaseOwner: (() => void) | undefined;
     let bound = false;
     return new ProcessSlotChildWorkerPermit(
       slots,
       lease,
       permit,
       {
-        bind: (requester) => {
+        bind: async (requester) => {
           if (bound) throw new Error("Child worker permit was already bound");
-          if (requester.process === undefined) {
-            throw new Error("Child worker requester process is unavailable");
-          }
-          const token = Object.freeze({});
-          const assigned = requester.processes.setAdmissionOwner(requester.process, token);
-          if (assigned.status !== "ok") {
-            throw new Error("Child worker requester process is unavailable");
-          }
           bound = true;
-          owner = token;
-          this.#owners.add(token);
+          releaseOwner = await this.#owners.bind(requester);
         },
         ending: () => {
-          if (owner !== undefined) this.#owners.delete(owner);
-          owner = undefined;
+          releaseOwner?.();
+          releaseOwner = undefined;
           hooks.ending();
         },
         ended: hooks.ended,

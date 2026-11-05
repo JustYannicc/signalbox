@@ -21,6 +21,7 @@ export interface FacetState {
   readonly raw: (channel: NativeStdioChannel, bytes: Uint8Array) => void;
   readonly queue: (operation: () => Promise<unknown>) => void;
   readonly flush: (reason?: FlushReason) => Promise<void>;
+  readonly drain: () => Promise<void>;
   boundFiles?: KernelFileSystem;
   threadId?: string;
   facetNonce?: string;
@@ -130,6 +131,11 @@ export function facetState(
     raw(channel, bytes) {
       stdioCapture.write(channel, bytes, recordRaw);
     },
+    async drain() {
+      await pending;
+      if (failure !== undefined)
+        throw new Error("Facet diagnostic publication failed", { cause: failure });
+    },
     async flush(reason = "checkpoint") {
       const streams = stdioCapture.drain();
       queue(() => capability.append("native-stdio-streams", { incarnation, reason, ...streams }));
@@ -155,4 +161,8 @@ export function retainedFacetState(ctx: DurableObjectState) {
 
 export async function flushFacetDiagnostics(ctx: DurableObjectState, reason: FlushReason) {
   await states.get(ctx)?.flush(reason);
+}
+
+export async function drainFacetDiagnostics(ctx: DurableObjectState) {
+  await states.get(ctx)?.drain();
 }

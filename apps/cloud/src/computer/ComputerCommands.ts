@@ -2,24 +2,15 @@ import {
   KernelCommandExecutor,
   type KernelCommandExecutorOptions,
 } from "../kernel/KernelCommandExecutor.ts";
-import * as Schema from "effect/Schema";
-import { KernelProgramExecAdmissionError } from "../kernel/KernelAsyncProgram.ts";
-import { InheritedFd } from "../kernel/KernelInheritedFds.ts";
+import {
+  snapshotKernelCommand as snapshotCommand,
+  createKernelCommandIngress,
+} from "../kernel/KernelCommandIngress.ts";
 import type { KernelCommand, KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
 import { KernelForwardingUnavailable } from "../kernel/KernelCommandForwarder.ts";
 import type { ChildWorkerRequester } from "./ChildWorkerCapacity.ts";
 import type { ComputerExecPort } from "./Computer.ts";
 import type { ComputerEscalationEvidence, ComputerEscalationTable } from "./EscalationTable.ts";
-
-const decodeInheritedFds = Schema.decodeUnknownSync(Schema.Array(InheritedFd));
-
-function validateInheritedFds(input: unknown) {
-  try {
-    return decodeInheritedFds(input);
-  } catch {
-    throw new KernelProgramExecAdmissionError("ENOTSUP", "Unsupported inherited file descriptors");
-  }
-}
 
 export interface ComputerCommandOptions {
   readonly mode?: "legacy";
@@ -98,69 +89,9 @@ export function createComputerCommands(
 }
 
 function admittedCommands(options: AdmittedComputerCommandOptions) {
-  const forwarder: KernelCommandForwarder = {
-    async spawn() {
-      throw new KernelForwardingUnavailable("POLICY_NOT_READY", "Command admission is required");
-    },
-  };
-  const port = (kernel: AdmittedComputerCommandOptions["kernel"]): ComputerExecPort => {
-    const executor = new KernelCommandExecutor({ ...kernel, admitted: true, forwarder });
-    return Object.freeze({
-      exec(
-        command: KernelCommand,
-        signal: AbortSignal,
-        requester: ChildWorkerRequester | undefined,
-      ) {
-        signal.throwIfAborted();
-        const captured = snapshotCommand(command);
-        if (kernel.filesystem.realpath(captured.cwd) !== captured.cwd) {
-          throw new KernelForwardingUnavailable(
-            "WORKSPACE_NOT_READY",
-            "Command cwd must be canonical",
-          );
-        }
-        return executor.spawn(captured, signal, requesterParent(kernel, requester));
-      },
-    });
-  };
-  return Object.freeze({ ...port(options.kernel), isolate: port(options.isolateKernel) });
-}
-
-function snapshotCommand(command: KernelCommand): KernelCommand {
-  const text = (value: string) => typeof value === "string" && !value.includes("\0");
-  if (
-    !text(command.executable) ||
-    !command.executable ||
-    !text(command.cwd) ||
-    !command.cwd.startsWith("/") ||
-    !Array.isArray(command.argv) ||
-    command.argv.length === 0 ||
-    !command.argv.every(text) ||
-    !command.env ||
-    typeof command.env !== "object" ||
-    Array.isArray(command.env)
-  ) {
-    throw new TypeError("Invalid Computer command");
-  }
-  const env = Object.fromEntries(
-    Object.entries(command.env).map(([key, value]) => {
-      if (!key || !text(key) || key.includes("=") || !text(value))
-        throw new TypeError("Invalid command environment");
-      return [key, value];
-    }),
-  );
   return Object.freeze({
-    executable: command.executable,
-    argv: Object.freeze([...command.argv]),
-    cwd: command.cwd,
-    env: Object.freeze(env),
-    ...(command.inheritedFds === undefined
-      ? {}
-      : {
-          inheritedFds: Object.freeze(
-            validateInheritedFds(command.inheritedFds).map((fd) => Object.freeze(fd)),
-          ),
-        }),
+    ...createKernelCommandIngress(options.kernel),
+    isolate: createKernelCommandIngress(options.isolateKernel),
   });
 }
 

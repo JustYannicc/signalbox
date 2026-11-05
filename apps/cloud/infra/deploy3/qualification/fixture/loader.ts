@@ -1,3 +1,4 @@
+import { ownedClaudeFacetWorker } from "./ownedClaudeFacets.ts";
 import { loadClaudeSdkHost } from "../../../../src/harness/ClaudeSdkHostLoader.ts";
 import { readRpcData, withRpcStub, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
 import { claudeStepRoute } from "./claudeScenario.ts";
@@ -68,11 +69,15 @@ function facetPin(
 }
 
 /** Adds observation at the platform code boundary; C still owns its original loader and facet. */
-export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): WorkerLoader {
+export function qualifierFacetLoader(
+  env: QualifierEnvironment,
+  tail: Fetcher,
+  ctx: DurableObjectState,
+): WorkerLoader {
   return {
     get(name, getCode) {
       assert(typeof name === "string" && name.length > 0, "Facet loader identity is missing");
-      return env.LOADER.get(name, async () => {
+      return ownedClaudeFacetWorker(ctx, env.LOADER, name, async (owners) => {
         const actual = await getCode();
         const config = await readConfiguration(env.PROGRAM_ASSETS, env.CONFIG_SHA256);
         if (
@@ -85,6 +90,30 @@ export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): 
             CONFIG_SHA256: env.CONFIG_SHA256,
             authorities,
             sdkHost: (code) => loadClaudeSdkHost(`${name}:sdk-host`, code),
+            kernel: (code) =>
+              owners.kernel(
+                observeWorkerCode(
+                  code,
+                  env.RUN_ID,
+                  {
+                    loaderId: `${name}:kernel`,
+                    role: "facet",
+                    entrypoint: "ClaudeKernelFacet",
+                    identity: `kernel:claude:${name}`,
+                    tag: "actual-claude-kernel",
+                    calls: {
+                      identity: [
+                        { callId: "*", route: { method: "POST", path: "/claude/kernel/inspect" } },
+                      ],
+                      isolateNonceProbe: [
+                        { callId: "*", route: { method: "POST", path: "/claude/kernel/inspect" } },
+                      ],
+                    },
+                  },
+                  tail,
+                ).code,
+              ),
+            computer: (code) => owners.computer(code),
           });
           assertQualifierClaudeFacetConfiguration(prepared.code.env);
           const route = (path: string) => ({ method: "POST", path });

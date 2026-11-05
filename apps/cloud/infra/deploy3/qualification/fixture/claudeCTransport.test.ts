@@ -53,6 +53,8 @@ async function setup() {
         seed: runtime.seed,
       },
       facetSource: "synthetic",
+      kernelSource: "export class ClaudeKernelFacet {}",
+      computerSource: "export class ComputerExecutionObject {}",
       sdkHostSource: "synthetic-sdk-host",
       environmentPackages: {},
       expected: { baseline: prepared("baseline"), hooks: prepared("hooks") },
@@ -159,7 +161,27 @@ test.each(["baseline", "hooks"] as const)(
         },
       };
       let sdkCode: WorkerLoaderWorkerCode | undefined;
+      let kernelCode: WorkerLoaderWorkerCode | undefined;
+      let computerCode: WorkerLoaderWorkerCode | undefined;
       const inputs = {
+        kernel: (code: WorkerLoaderWorkerCode) => {
+          kernelCode = code;
+          return new Proxy(
+            {},
+            { get: () => unavailable },
+          ) as import("./claudeKernelProtocol.ts").QualifierClaudeKernelPort;
+        },
+        computer: (code: WorkerLoaderWorkerCode) => {
+          computerCode = code;
+          return new Proxy(
+            {},
+            { get: () => unavailable },
+          ) as import("../../../../src/kernel/KernelComputerAdmissionPort.ts").ComputerProgramOwnerPort & {
+            configure(
+              input: import("../../../../src/computer/ComputerExecutionObject.ts").ComputerExecutionConfiguration,
+            ): Promise<void>;
+          };
+        },
         sdkHost: (code: WorkerLoaderWorkerCode) => {
           sdkCode = code;
           return {
@@ -190,6 +212,19 @@ test.each(["baseline", "hooks"] as const)(
       });
       expect(prepared.code.modules).toHaveProperty("qualifier-claude-implementation.mjs");
       expect(Object.keys(prepared.code.modules).some((key) => key.includes("/sdk/"))).toBe(false);
+      expect(kernelCode?.modules).toHaveProperty("qualifier-claude-kernel.mjs");
+      expect(computerCode?.modules).toHaveProperty("computer-execution.mjs");
+      expect(Object.keys(kernelCode?.modules ?? {}).some((key) => key.includes("/cli/"))).toBe(
+        true,
+      );
+      expect(Object.keys(kernelCode?.modules ?? {}).some((key) => key.includes("/sdk/"))).toBe(
+        false,
+      );
+      expect(Object.keys(prepared.code.modules).some((key) => key.includes("/cli/"))).toBe(false);
+      expect(Object.keys(computerCode?.modules ?? {})).toEqual([
+        "computer-execution-entry.mjs",
+        "computer-execution.mjs",
+      ]);
       expect(sdkCode).toBeDefined();
       expect(sdkCode?.modules).toHaveProperty("qualifier-claude-sdk-host.mjs");
       expect(Object.keys(sdkCode?.modules ?? {}).some((key) => key.includes("/cli/"))).toBe(false);

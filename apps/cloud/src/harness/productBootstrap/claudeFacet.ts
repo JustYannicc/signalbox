@@ -1,9 +1,9 @@
 import { createHarnessRequestFacetClass } from "../HarnessRequestFacetObject.ts";
 import {
-  createProductClaudeHarnessSessionHost,
-  type ProductClaudeHarnessHostOptions,
-  type ProductClaudeHarnessSessionHost,
-} from "../ProductClaudeHarnessSessionHost.ts";
+  createProductClaudeKernelHost,
+  type ProductClaudeKernelHostOptions,
+  type ProductClaudeKernelHost,
+} from "../ProductClaudeKernelHost.ts";
 import { composeHarnessCProductFacetOptions } from "./facet.ts";
 import type {
   HarnessCProductFacetEnvironment,
@@ -19,9 +19,9 @@ export function createHarnessCProductClaudeFacetClass<
     HarnessCProductFacetFactory<
       Env,
       G,
-      ProductClaudeHarnessHostOptions<G>["native"],
-      ProductClaudeHarnessHostOptions<G>,
-      ProductClaudeHarnessSessionHost<G>
+      ProductClaudeKernelHostOptions<G>["native"],
+      ProductClaudeKernelHostOptions<G>,
+      ProductClaudeKernelHost<G>
     >,
     "provider" | "createHost"
   >,
@@ -30,7 +30,7 @@ export function createHarnessCProductClaudeFacetClass<
     composeHarnessCProductFacetOptions(input, {
       ...dependencies,
       provider: "claude-code",
-      createHost: createProductClaudeHarnessSessionHost,
+      createHost: createProductClaudeKernelHost,
     }),
   );
 }

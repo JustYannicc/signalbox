@@ -18,8 +18,13 @@ import { makeFacetLifetime } from "./facet/lifetime.ts";
 import { makeFacetOpenings } from "./facet/opening.ts";
 
 export type HarnessFacetComputer =
-  | { readonly bind: (threadId: string, ownerSignal: AbortSignal) => Promise<ComputerBindings> }
-  | { readonly open: (ownerSignal: AbortSignal) => ComputerOpenPort };
+  | {
+      readonly bind: (
+        threadId: string,
+        ownerSignal: AbortSignal,
+      ) => Promise<ComputerBindings<unknown>>;
+    }
+  | { readonly open: (ownerSignal: AbortSignal) => ComputerOpenPort<unknown> };
 
 export interface HarnessSessionFacetOptions {
   readonly threadId: string;
@@ -98,8 +103,8 @@ export const createHarnessSessionFacet = (
           }),
       });
       const lock = yield* Semaphore.make(1);
-      let computer: Computer | undefined;
-      let files: Computer["files"] | undefined;
+      let computer: Computer<unknown> | undefined;
+      let files: unknown;
       let occupied = false;
       let cleanupFailure: HarnessError | undefined;
       const closeOwner = yield* Effect.cached(

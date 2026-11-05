@@ -1,3 +1,4 @@
+import { createKernelExecutableNamespace } from "../../kernel/KernelExecutableNamespace.ts";
 import { afterAll, expect, it, vi } from "vite-plus/test";
 import { KernelProgramRegistry } from "../../kernel/KernelAbi.ts";
 import { createChildProgramCatalog } from "../ChildProgramCatalog.ts";
@@ -90,19 +91,16 @@ it.each(paths)(
     fixture.write(`/usr/bin/${name}`, "catalog executable", 0o755);
     const resolver = new ComputerProgramResolver({
       path: ["/usr/bin", "/bin"],
-      overlay: { prepare: async () => {}, isLower: async () => true },
     });
     try {
       const command = { executable, argv: [name], cwd: "/", env: { PATH: "/usr/bin:/bin" } };
       const resolved = await resolver.resolve({
-        kind: "command",
-        stdio: "piped",
         command,
-        baseCwd: "/",
-        actions: [],
-        attributes: undefined,
-        filesystem: fixture.filesystem,
-        processes: fixture.context.processes,
+        namespace: createKernelExecutableNamespace({
+          filesystem: fixture.filesystem,
+          signal: fixture.controller.signal,
+          overlay: { prepare: async () => {}, isLower: async () => true },
+        }),
         signal: fixture.controller.signal,
         target: { kind: "unsupported", code: "NOT_FOUND", message: "Command not found" },
         catalog: catalog.bindings,

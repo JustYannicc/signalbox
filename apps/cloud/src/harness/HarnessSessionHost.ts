@@ -1,3 +1,4 @@
+import { localHarnessHostResources } from "./HarnessHostResources.ts";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import { HarnessError } from "./Harness.ts";
@@ -90,5 +91,10 @@ export const createHarnessSessionHost = <G>(
     });
     const { release: _release, programs: _programs, ...hostOptions } = options;
     // Release sources and program catalogs can hold whole bundles; the live host reads only through loaded and catalog.
-    return yield* createHostLifecycle(hostOptions, loaded, catalog, closeOwner);
+    return yield* createHostLifecycle(
+      hostOptions,
+      loaded,
+      localHarnessHostResources(hostOptions, catalog),
+      closeOwner,
+    );
   });

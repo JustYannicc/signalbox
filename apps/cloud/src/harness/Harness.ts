@@ -175,7 +175,7 @@ export interface HarnessOpenInput {
   readonly loadedRelease?: LoadedHarnessRelease;
   readonly release: HarnessRelease;
   readonly session: ProviderAdapterV2OpenSessionInput;
-  readonly computer: Computer;
+  readonly computer: Computer<unknown>;
   readonly modelTransport: (request: Request) => Promise<Response>;
   readonly hooks?: HarnessHookCallback;
   readonly checkpoint?: HarnessCheckpoint;

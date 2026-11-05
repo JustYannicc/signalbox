@@ -9,7 +9,7 @@ import type { HarnessProcessResumePreparedRelease } from "../HarnessProcessResum
 import type { HarnessThreadSupervisorPublisher } from "../HarnessThreadSupervisor.ts";
 import type { HarnessError } from "../Harness.ts";
 import type { HostOpenInput } from "../HarnessSessionHost.ts";
-import type { ProductHostOptions, ProductHarnessSessionHost } from "../host/product.ts";
+import type { ProductHostConfiguration, ProductBootstrapHost } from "./hostShape.ts";
 import { prepareCheckpoint } from "../durableState/files/content.ts";
 import { HarnessRequestFacetError } from "../HarnessRequestFacet.ts";
 import { createHarnessCProductRequestRuntime } from "./requestRuntime.ts";
@@ -22,10 +22,10 @@ import type {
   PreparedFreshHarnessCProductHost,
 } from "./facetContracts.ts";
 
-type ProductOptions<G, Native> = ProductHostOptions<G, Native> & {
+type ProductOptions<G, Native> = ProductHostConfiguration<G, Native> & {
   readonly processResumeArtifact?: HarnessReleaseArtifact;
 };
-type ProductHost<G> = ProductHarnessSessionHost<G> & {
+type ProductHost<G> = ProductBootstrapHost<G> & {
   readonly loadedPreparedRelease: () => HarnessProcessResumePreparedRelease;
 };
 

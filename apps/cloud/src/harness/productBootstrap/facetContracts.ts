@@ -33,7 +33,7 @@ import type { HarnessThreadSupervisorObject } from "../HarnessThreadSupervisorOb
 import type { HarnessCheckpoint, HarnessError, HarnessOpenInput } from "../Harness.ts";
 import type { HarnessCProductCapabilities } from "./capabilities.ts";
 import type { HarnessCSelectedProductRelease } from "./selectedArtifact.ts";
-import type { ProductHostOptions, ProductHarnessSessionHost } from "../host/product.ts";
+import type { ProductHostConfiguration, ProductBootstrapHost } from "./hostShape.ts";
 import type { HarnessRequestFacetError } from "../HarnessRequestFacet.ts";
 
 export type HarnessCProductFacetEnvironment = HarnessCProductBootstrapEnvironment &
@@ -81,10 +81,10 @@ export interface HarnessCProductFacetFactory<
   Env extends HarnessCProductFacetEnvironment,
   G,
   Native,
-  Options extends ProductHostOptions<G, Native> & {
+  Options extends ProductHostConfiguration<G, Native> & {
     readonly processResumeArtifact?: HarnessReleaseArtifact;
   },
-  Host extends ProductHarnessSessionHost<G> & {
+  Host extends ProductBootstrapHost<G> & {
     readonly loadedPreparedRelease: () => HarnessProcessResumePreparedRelease;
   },
 > {
@@ -174,10 +174,10 @@ export interface HarnessCProductHostPreparationInput<
   Env extends HarnessCProductFacetEnvironment,
   G,
   Native,
-  Options extends ProductHostOptions<G, Native> & {
+  Options extends ProductHostConfiguration<G, Native> & {
     readonly processResumeArtifact?: HarnessReleaseArtifact;
   },
-  Host extends ProductHarnessSessionHost<G> & {
+  Host extends ProductBootstrapHost<G> & {
     readonly loadedPreparedRelease: () => HarnessProcessResumePreparedRelease;
   },
 > {
@@ -197,10 +197,10 @@ export interface HarnessCProductFreshHostPreparationInput<
   Env extends HarnessCProductFacetEnvironment,
   G,
   Native,
-  Options extends ProductHostOptions<G, Native> & {
+  Options extends ProductHostConfiguration<G, Native> & {
     readonly processResumeArtifact?: HarnessReleaseArtifact;
   },
-  Host extends ProductHarnessSessionHost<G> & {
+  Host extends ProductBootstrapHost<G> & {
     readonly loadedPreparedRelease: () => HarnessProcessResumePreparedRelease;
   },
 > {

@@ -1,7 +1,7 @@
 import type {
   ChildWorkerExecution,
   InternalChildWorkerPermit,
-  ChildWorkerRequester,
+  ChildWorkerCapacityRequester,
   ChildWorkerReservation,
   ChildWorkerSlotRequest,
 } from "./types.ts";
@@ -49,7 +49,7 @@ class ChildWorkerReservationImpl implements ChildWorkerReservation {
   readonly run = async <T>(
     signal: AbortSignal,
     work: (execution: ChildWorkerExecution) => Promise<T>,
-    requester: ChildWorkerRequester,
+    requester: ChildWorkerCapacityRequester,
     code?: ChildWorkerSlotRequest,
   ): Promise<T> => {
     if (this.#state !== "unconsumed") {
@@ -61,7 +61,8 @@ class ChildWorkerReservationImpl implements ChildWorkerReservation {
         throw new TypeError("Child worker reservation code does not match its ProcessSlot lease");
       }
       signal.throwIfAborted();
-      this.#permit.bind(requester);
+      await this.#permit.bind(requester);
+      signal.throwIfAborted();
     } catch (error) {
       this.#state = "settled";
       await this.#releaseUnused();

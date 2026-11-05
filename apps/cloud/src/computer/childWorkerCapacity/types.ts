@@ -1,23 +1,26 @@
 import type { ProcessSlotLease, ProcessSlotPermit, ProcessSlotPressure } from "../ProcessSlots.ts";
-import type { KernelHandle } from "../../kernel/KernelAbi.ts";
-import type { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
+import type { KernelProcessAdmissionPort } from "../../kernel/KernelProcessAdmissionPort.ts";
 
 export interface ChildWorkerSlotRequest {
   readonly codeId: string;
   readonly residentBytes: number;
 }
 
-export interface ChildWorkerRequester {
-  readonly processes: Pick<KernelProcessTable, "admissionOwner" | "setAdmissionOwner"> &
-    Partial<Pick<KernelProcessTable, "info">>;
-  readonly process: KernelHandle<"process"> | undefined;
-  /** Kernel parent PID for a child that has not been allocated yet. */
-  readonly parentPid?: number;
-}
+export type ChildWorkerRequester =
+  import("../../kernel/KernelCommandIngress.ts").KernelCommandRequester;
 
 export interface ChildWorkerSiblingFamily {
-  readonly processes: object;
+  readonly processes: object | string;
   readonly parentPid: number;
+}
+
+export type ChildWorkerCapacityRequester =
+  | ChildWorkerRequester
+  | { readonly owner: KernelProcessAdmissionPort };
+
+export interface ChildWorkerAdmissionTopology {
+  readonly nested: boolean;
+  readonly family: ChildWorkerSiblingFamily | undefined;
 }
 
 export interface ChildWorkerExecution {
@@ -36,7 +39,7 @@ export interface ChildWorkerPermit {
 }
 
 export interface InternalChildWorkerPermit extends ChildWorkerPermit {
-  bind(requester: ChildWorkerRequester): void;
+  bind(requester: ChildWorkerCapacityRequester): Promise<void>;
 }
 
 export interface ChildWorkerReservation {
@@ -46,7 +49,7 @@ export interface ChildWorkerReservation {
   run<T>(
     signal: AbortSignal,
     work: (execution: ChildWorkerExecution) => Promise<T>,
-    requester: ChildWorkerRequester,
+    requester: ChildWorkerCapacityRequester,
     code?: ChildWorkerSlotRequest,
   ): Promise<T>;
   cancel(): void;

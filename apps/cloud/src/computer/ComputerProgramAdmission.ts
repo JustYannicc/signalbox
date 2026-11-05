@@ -1,3 +1,5 @@
+import { validateKernelProgramAdmissionContext } from "../kernel/KernelProgramAdmissionContext.ts";
+import type { ComputerProgramResolution } from "./ComputerProgramResolution.ts";
 import { KernelProgramExecAdmissionError } from "../kernel/KernelAsyncProgram.ts";
 import type { KernelAsyncProgramContext } from "../kernel/KernelAsyncProgram.ts";
 import type {
@@ -5,11 +7,9 @@ import type {
   KernelProgramAdmissionRequest,
 } from "../kernel/KernelProgramAdmission.ts";
 import type { KernelCommand } from "../kernel/KernelCommandForwarder.ts";
+import { createKernelProcessAdmissionPort } from "../kernel/KernelProcessAdmissionPort.ts";
 import type { KernelCommandForwarder } from "../kernel/KernelCommandForwarder.ts";
-import type {
-  KernelProgramBinding,
-  KernelProgramImplementation,
-} from "../kernel/KernelProgramHost.ts";
+import type { KernelProgramImplementation } from "../kernel/KernelProgramHost.ts";
 import {
   type ChildWorkerAdmissionTicket,
   isChildWorkerReservation,
@@ -34,14 +34,7 @@ export interface ComputerProgramAdmissionOptions {
   ) => Promise<ComputerEscalationEvidence>;
 }
 
-export interface ComputerProgramResolution {
-  readonly command: KernelCommand;
-  readonly unavailable?: { readonly code: "ENOEXEC" | "EACCES"; readonly message: string };
-  readonly catalog?: {
-    readonly command: KernelCommand;
-    readonly binding: KernelProgramBinding;
-  };
-}
+export type { ComputerProgramResolution } from "./ComputerProgramResolution.ts";
 
 interface AdmissionRecord {
   readonly owner: object;
@@ -89,6 +82,7 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
       let ticket: ChildWorkerAdmissionTicket | undefined;
       let reservation: ChildWorkerReservation | undefined;
       let transferred = false;
+      let processOwner: ReturnType<typeof createKernelProcessAdmissionPort> | undefined;
       try {
         controller.signal.throwIfAborted();
         const resolutionPromise = options.resolve?.({ ...request, signal: controller.signal });
@@ -161,11 +155,13 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
               ? parent.value.parentPid
               : parent.value.pid
             : undefined;
-        ticket = options.capacity.enqueue(controller.signal, {
+        processOwner = createKernelProcessAdmissionPort({
           processes: request.processes,
           process,
           ...(parentPid === undefined ? {} : { parentPid }),
+          signal: controller.signal,
         });
+        ticket = options.capacity.enqueue(controller.signal, { owner: processOwner });
         const prepared = await awaitWithAbort(prepare.call(implementation), controller.signal);
         controller.signal.throwIfAborted();
         reservation = await ticket.reserve(prepared);
@@ -217,7 +213,7 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
               throw new TypeError("Computer grant was already bound");
             }
             try {
-              validateContext(request, context);
+              validateKernelProgramAdmissionContext(request, context);
               record.bound = {
                 context,
                 cwd: context.filesystem.cwd,
@@ -230,6 +226,7 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
           },
         });
       } finally {
+        processOwner?.close();
         request.signal.removeEventListener("abort", onAbort);
         reserves.delete(controller);
         if (!transferred) {
@@ -259,7 +256,7 @@ export function createComputerProgramAdmission(options: ComputerProgramAdmission
         throw new TypeError("Computer grant does not belong to this program dispatch");
       }
       try {
-        validateContext(record.request, context);
+        validateKernelProgramAdmissionContext(record.request, context);
         context.signal.throwIfAborted();
       } catch (error) {
         cancel(record);
@@ -311,43 +308,4 @@ function awaitWithAbort<T>(pending: Promise<T>, signal: AbortSignal): Promise<T>
     );
     if (signal.aborted) onAbort();
   });
-}
-
-function validateContext(
-  request: KernelProgramAdmissionRequest,
-  context: KernelAsyncProgramContext,
-) {
-  const command = request.command;
-  const envKeys = Object.keys(command.env);
-  if (
-    context.processes !== request.processes ||
-    !context.filesystem.sharesBackingWith(request.filesystem) ||
-    (request.kind === "command" && context.filesystem.cwd !== command.cwd) ||
-    context.home !== request.home ||
-    context.args.length !== command.argv.length ||
-    !context.args.every((value, index) => value === command.argv[index]) ||
-    envKeys.length !== Object.keys(context.env).length ||
-    !envKeys.every((key) => context.env[key] === command.env[key])
-  ) {
-    throw new TypeError("Computer process context changed after admission");
-  }
-  if (request.kind === "exec") {
-    if (
-      request.identity?.handle !== context.identity.handle ||
-      request.identity.pid !== context.identity.pid ||
-      request.filesystem !== context.filesystem
-    ) {
-      throw new TypeError("Computer replacement process identity changed");
-    }
-  } else {
-    const parent = request.processes.info(request.parent);
-    const process = context.processes.info(context.identity.handle);
-    if (
-      parent.status !== "ok" ||
-      process.status !== "ok" ||
-      process.value.parentPid !== parent.value.pid
-    ) {
-      throw new TypeError("Computer child process owner changed");
-    }
-  }
 }

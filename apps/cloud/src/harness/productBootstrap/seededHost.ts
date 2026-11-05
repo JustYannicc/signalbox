@@ -2,7 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Scope from "effect/Scope";
 import type { HarnessReleaseArtifact } from "../../harnessReleases/HarnessReleaseLedger.ts";
-import type { ProductHostOptions, ProductHarnessSessionHost } from "../host/product.ts";
+import type { ProductHostConfiguration, ProductBootstrapHost } from "./hostShape.ts";
 import { HarnessRequestFacetError } from "../HarnessRequestFacet.ts";
 import type { HarnessError } from "../Harness.ts";
 import {
@@ -29,10 +29,10 @@ type ProviderOptions<Options> = Omit<
 export function createSeededProductHost<
   G,
   Native,
-  Options extends ProductHostOptions<G, Native> & {
+  Options extends ProductHostConfiguration<G, Native> & {
     readonly processResumeArtifact?: HarnessReleaseArtifact;
   },
-  Host extends ProductHarnessSessionHost<G>,
+  Host extends ProductBootstrapHost<G>,
 >({
   input,
   selected,

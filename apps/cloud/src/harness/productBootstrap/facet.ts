@@ -25,10 +25,10 @@ export function composeHarnessCProductFacetOptions<
   Env extends HarnessCProductFacetEnvironment,
   G,
   Native,
-  Options extends import("../host/product.ts").ProductHostOptions<G, Native> & {
+  Options extends import("./hostShape.ts").ProductHostConfiguration<G, Native> & {
     readonly processResumeArtifact?: import("../../harnessReleases/HarnessReleaseLedger.ts").HarnessReleaseArtifact;
   },
-  Host extends import("../host/product.ts").ProductHarnessSessionHost<G> & {
+  Host extends import("./hostShape.ts").ProductBootstrapHost<G> & {
     readonly loadedPreparedRelease: () => HarnessProcessResumePreparedRelease;
   },
 >(

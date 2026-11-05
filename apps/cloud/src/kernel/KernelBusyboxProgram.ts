@@ -1,29 +1,12 @@
+export {
+  KERNEL_BUSYBOX_ARTIFACT,
+  PRODUCT_COMPUTER_BUSYBOX_ARTIFACT,
+} from "./KernelProgramArtifacts.ts";
 import type { KernelAsyncProgramContext } from "./KernelAsyncProgram.ts";
 import { createKernelBusyboxImports } from "./coreutils/KernelBusyboxImports.ts";
 import { createKernelAsyncWasi } from "./KernelWasi.ts";
 
-export const KERNEL_BUSYBOX_ARTIFACT = Object.freeze({
-  repository: "https://github.com/AshishKumar4/Nimbus",
-  revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
-  path: "bin/busybox.wasm",
-  version: "1.37.0+nimbus.e9f019ab.io-buffer.1",
-  buildRecipe: "infra/kernelPrograms/coreutils/build-busybox-buffered.sh",
-  sha256: "6aefd645a67065f611b6cbdf78a5899def4404e01917375164a02426750d47ba",
-  bytes: 295_812,
-});
-
 /** ProductComputer's rebuilt BusyBox adds id while the kernel cat pin stays stable. */
-export const PRODUCT_COMPUTER_BUSYBOX_ARTIFACT = Object.freeze({
-  repository: "https://github.com/AshishKumar4/Nimbus",
-  revision: "e9f019ab4e40cb6037aff7e1a0eaf20842578ed3",
-  path: "product-busybox.wasm",
-  version: "1.37.0+nimbus.e9f019ab.io-buffer.1.id.1",
-  buildRecipe: "infra/kernelPrograms/coreutils/build-busybox-buffered.sh",
-  sourceBuildRecipe: "packages/worker/wasm/bash/coreutils/build-busybox.sh",
-  sourceBuildRecipeSha256: "277f73c60d488d4441417cee01519f3d4c0cbd6cf324beb47d1f90f59dce0d3b",
-  sha256: "fa08b36470ad99eb7d968a0cbffcfcabc383ffb075edba51c4f441b15dedf191",
-  bytes: 297_870,
-});
 
 export interface KernelBusyboxProgramOptions {
   readonly module: WebAssembly.Module;
