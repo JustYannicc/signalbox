@@ -1,19 +1,9 @@
-import type {
-  NodeFsOperations,
-  NodeFsOperation,
-  NodeFsArguments,
-  NodeFsResult,
-} from "../../NodeFsBackend.ts";
+import type { NodeFsOperation, NodeFsArguments, NodeFsResult } from "../../NodeFsBackend.ts";
+import { nodeFsError } from "../fs/errors.ts";
 import { NodeFsSyscalls, type NodeFsSyscallTransport } from "./Calls.ts";
 import { createRemoteFileMetadata } from "./Metadata.ts";
 import { createRemoteFileIo } from "./Io.ts";
 import { createRemoteDirectories } from "./Directories.ts";
-
-export type NodeFsRemoteOperations = {
-  [K in keyof NodeFsOperations]: (
-    ...args: Parameters<NodeFsOperations[K]>
-  ) => Promise<ReturnType<NodeFsOperations[K]>>;
-};
 
 // Optional Node operands precede the cancellation signal, even when the caller omits them.
 const operands = {
@@ -45,6 +35,57 @@ const operands = {
   write: 3,
 } satisfies Record<NodeFsOperation, number>;
 
+const syscalls = {
+  access: "access",
+  chmod: "chmod",
+  fchmod: "fchmod",
+  chown: "chown",
+  fchown: "fchown",
+  close: "close",
+  fstat: "fstat",
+  fsetTimes: "futimes",
+  ftruncate: "ftruncate",
+  link: "link",
+  lstat: "lstat",
+  mkdir: "mkdir",
+  open: "open",
+  read: "read",
+  readdir: "scandir",
+  readlink: "readlink",
+  realpath: "realpath",
+  rename: "rename",
+  rmdir: "rmdir",
+  setTimes: "utimes",
+  stat: "stat",
+  symlink: "symlink",
+  sync: "fsync",
+  truncate: "truncate",
+  unlink: "unlink",
+  write: "write",
+  move: "dup2",
+  seek: "lseek",
+  position: "lseek",
+} satisfies Record<NodeFsOperation | "move" | "seek" | "position", string>;
+
+function errorContext(name: keyof typeof syscalls, args: readonly unknown[]) {
+  const path = typeof args[0] === "string" ? args[0] : undefined;
+  const dest =
+    name === "link" || name === "rename" || name === "symlink"
+      ? typeof args[1] === "string"
+        ? args[1]
+        : undefined
+      : undefined;
+  const syscall =
+    name === "chown" && typeof args[0] === "number"
+      ? "fchown"
+      : name === "setTimes" && typeof args[0] === "number"
+        ? "futimes"
+        : name === "sync" && args[1] === true
+          ? "fdatasync"
+          : syscalls[name];
+  return { syscall, path, dest };
+}
+
 /** Node's async file APIs use the existing bounded syscall capability, not a local filesystem. */
 export function createNodeFsSyscallClient(options: {
   readonly syscalls: NodeFsSyscallTransport;
@@ -66,8 +107,21 @@ export function createNodeFsSyscallClient(options: {
   );
   const directories = createRemoteDirectories(calls, io);
   const operations = { ...metadata, ...io, ...directories };
+  const contextualOperations = Object.fromEntries(
+    (Object.keys(operations) as (keyof typeof operations)[]).map((name) => [
+      name,
+      async (...args: unknown[]) => {
+        try {
+          return await Reflect.apply(operations[name], operations, args);
+        } catch (cause) {
+          const context = errorContext(name, args);
+          throw nodeFsError(cause, context.syscall, context.path, context.dest);
+        }
+      },
+    ]),
+  ) as typeof operations;
   return {
-    ...operations,
+    ...contextualOperations,
     async call<K extends NodeFsOperation>(
       name: K,
       args: NodeFsArguments<K>,
@@ -76,7 +130,13 @@ export function createNodeFsSyscallClient(options: {
       const values: unknown[] = [...args];
       while (values.length < operands[name]) values.push(undefined);
       values.push(withLifetime(signal));
-      return await Reflect.apply(operations[name], operations, values);
+      return (await Reflect.apply(
+        contextualOperations[name],
+        contextualOperations,
+        values,
+      )) as NodeFsResult<K>;
     },
   };
 }
+
+export type NodeFsRemoteOperations = Omit<ReturnType<typeof createNodeFsSyscallClient>, "call">;

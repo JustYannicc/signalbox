@@ -46,13 +46,50 @@ const errnoByCode: Readonly<Record<string, number>> = {
   EPIPE: 32,
   EDOM: 33,
   ERANGE: 34,
+  EDEADLK: 35,
   ENAMETOOLONG: 36,
+  ENOLCK: 37,
   ENOSYS: 38,
   ENOTEMPTY: 39,
   ELOOP: 40,
+  EIDRM: 43,
+  EBADMSG: 74,
+  ENOLINK: 67,
+  EPROTO: 71,
+  EMULTIHOP: 72,
+  ENOTSOCK: 88,
+  ENOMSG: 42,
+  EILSEQ: 84,
+  EDESTADDRREQ: 89,
+  EMSGSIZE: 90,
+  EPROTOTYPE: 91,
+  ENOPROTOOPT: 92,
+  EPROTONOSUPPORT: 93,
+  EAFNOSUPPORT: 97,
+  EADDRINUSE: 98,
+  EADDRNOTAVAIL: 99,
+  ENETDOWN: 100,
+  ENETUNREACH: 101,
+  ENETRESET: 102,
+  ECONNABORTED: 103,
+  ECONNRESET: 104,
+  ENOBUFS: 105,
+  EISCONN: 106,
+  ENOTCONN: 107,
+  ETIMEDOUT: 110,
+  ECONNREFUSED: 111,
+  EHOSTUNREACH: 113,
+  EALREADY: 114,
+  EINPROGRESS: 115,
+  ESTALE: 116,
+  EDQUOT: 122,
+  ECANCELED: 125,
+  EOWNERDEAD: 130,
+  ENOTRECOVERABLE: 131,
   EOVERFLOW: 75,
   ENOTSUP: 95,
   EOPNOTSUPP: 95,
+  ENOTCAPABLE: 76,
 };
 
 const descriptionByCode: Readonly<Record<string, string>> = {
@@ -102,6 +139,17 @@ export function nodeFsError(
   const source = typeof cause === "object" && cause !== null ? cause : undefined;
   const sourceCode = source && "code" in source ? source.code : undefined;
   if (typeof sourceCode !== "string") return cause;
+  const expectedErrno = errnoByCode[sourceCode];
+  if (
+    cause instanceof Error &&
+    source &&
+    ("syscall" in source ? source.syscall : undefined) === syscall &&
+    ("path" in source ? source.path : undefined) === path &&
+    ("dest" in source ? source.dest : undefined) === dest &&
+    ("errno" in source ? source.errno : undefined) ===
+      (expectedErrno === undefined ? undefined : -expectedErrno)
+  )
+    return cause;
   const description = descriptionByCode[sourceCode] ?? sourceCode;
   const pathPart = path === undefined ? "" : ` '${path}'`;
   const destPart = dest === undefined ? "" : ` -> '${dest}'`;
@@ -109,7 +157,9 @@ export function nodeFsError(
     cause,
   }) as NodeFsError;
   error.code = sourceCode;
-  if (errnoByCode[sourceCode] !== undefined) error.errno = -errnoByCode[sourceCode];
+  const sourceErrno = source && "errno" in source ? source.errno : undefined;
+  if (typeof sourceErrno === "number") error.errno = sourceErrno;
+  else if (expectedErrno !== undefined) error.errno = -expectedErrno;
   error.syscall = syscall;
   if (path !== undefined) error.path = path;
   if (dest !== undefined) error.dest = dest;

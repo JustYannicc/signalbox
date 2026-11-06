@@ -14,6 +14,9 @@ import { createNodeComputerChildProcess } from "../isolate/NodeComputerProcess.t
 import { NodeChildControl, createCliProcessLeases } from "./cliKernel/Children.ts";
 import { kernelError } from "../kernel/KernelErrno.ts";
 import { nodeProcessSignalError } from "../isolate/NodeProcessSignals.ts";
+import { readCliMetadata } from "./cliKernel/Metadata.ts";
+import { hasPrivateDescriptorAlias } from "./cliKernel/DescriptorAliases.ts";
+import { nodeFsError } from "../isolate/NodeFsError.ts";
 
 type OwnerResources = ReturnType<typeof createClaudeKernelResources>;
 type Resources = Pick<
@@ -54,10 +57,14 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
     this.#metadataLimit = metadataLimit;
     this.#sdkFiles = createClaudeCliFiles(resources.storage.files);
     this.#leases = createCliProcessLeases(resources.processes);
-    this.rootDescriptor = resources.storage.files.open(
-      "/",
-      KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_DIRECTORY,
-    );
+    try {
+      this.rootDescriptor = resources.storage.files.open(
+        "/",
+        KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_DIRECTORY,
+      );
+    } catch (cause) {
+      throw nodeFsError(cause, "open", "/");
+    }
     this.#fds.add(this.rootDescriptor);
   }
   #run<T>(id: string, run: (signal: AbortSignal) => Promise<T>) {
@@ -96,7 +103,10 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
       const allowed = (fd: number) => fd >= 0 && (fd <= 2 || this.#publicFds.has(fd));
       if (
         (descriptorCall && !allowed(Number(request.args[0]))) ||
-        (request.name === "fd_renumber" && !this.#publicFds.has(Number(request.args[1])))
+        (request.name === "fd_renumber" &&
+          (!this.#fds.has(Number(request.args[1])) ||
+            Number(request.args[1]) === this.rootDescriptor)) ||
+        hasPrivateDescriptorAlias(request, allowed)
       )
         return { kind: "return" as const, value: 8, regions: [] };
       const host = createKernelSyscallHost({
@@ -163,22 +173,11 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
       const current = this.#revision();
       if (revision !== undefined && revision !== current) throw kernelError("ESTALE");
       if (cursor === 0) {
-        const entries: CliFileMetadata[] = [];
-        const filesystem = this.#resources.storage.files;
-        const visit = async (path: string) => {
-          signal.throwIfAborted();
-          const stat = await filesystem.lstatAsync(path, signal);
-          if (entries.length >= this.#metadataLimit) throw kernelError("E2BIG");
-          entries.push({
-            path,
-            stat,
-            ...(stat.type === "symlink" ? { target: filesystem.readlink(path) } : {}),
-          });
-          if (stat.type === "directory")
-            for (const name of await filesystem.readdirAsync(path, signal))
-              await visit(`${path === "/" ? "" : path}/${name}`);
-        };
-        await visit("/");
+        const entries = await readCliMetadata(
+          this.#resources.storage.files,
+          this.#metadataLimit,
+          signal,
+        );
         if (this.#revision() !== current) throw kernelError("ESTALE");
         this.#snapshot = { revision: current, entries };
       }
@@ -209,14 +208,26 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
       )
         throw new RangeError("Invalid CLI prefetch range");
       const filesystem = this.#resources.storage.files;
-      const fd = await filesystem.openAsync(path, KernelOpenFlags.O_RDONLY, undefined, signal);
+      const fd = await filesystem
+        .openAsync(path, KernelOpenFlags.O_RDONLY, undefined, signal)
+        .catch((cause) => {
+          throw nodeFsError(cause, "open", path);
+        });
       try {
         const target = new Uint8Array(length);
-        const count = await filesystem.readAsync(fd, target, BigInt(offset), signal);
+        const count = await filesystem
+          .readAsync(fd, target, BigInt(offset), signal)
+          .catch((cause) => {
+            throw nodeFsError(cause, "read", path);
+          });
         if (revision !== this.#revision()) throw kernelError("ESTALE");
         return target.subarray(0, count);
       } finally {
-        filesystem.close(fd);
+        try {
+          filesystem.close(fd);
+        } catch (cause) {
+          throw nodeFsError(cause, "close", path);
+        }
       }
     });
   }
@@ -225,15 +236,23 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
       throw kernelError("EMFILE");
     const ids: number[] = [];
     for (let index = 0; index < count; index++) {
-      const fd = this.#resources.storage.files.open(
-        "/",
-        KernelOpenFlags.O_PATH | KernelOpenFlags.O_DIRECTORY,
-      );
+      let fd: number;
+      try {
+        fd = this.#resources.storage.files.open(
+          "/",
+          KernelOpenFlags.O_PATH | KernelOpenFlags.O_DIRECTORY,
+        );
+      } catch (cause) {
+        throw nodeFsError(cause, "open", "/");
+      }
       this.#fds.add(fd);
-      this.#publicFds.add(fd);
       ids.push(fd);
     }
     return ids;
+  }
+  async reserveDescriptor(fd: number) {
+    this.#lifetime.throwIfAborted();
+    if (!this.#fds.has(fd) || !this.#publicFds.delete(fd)) throw kernelError("EBADF");
   }
   async leaseProcesses(count: number) {
     return this.#leases.reserve(count);

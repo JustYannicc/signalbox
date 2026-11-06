@@ -40,6 +40,7 @@ export interface ClaudeCliKernelPort extends KernelSyscallPort {
     count: number,
   ): Promise<readonly { readonly pid: number; readonly handle: KernelHandle<"process"> }[]>;
   leaseDescriptors(count: number): Promise<readonly number[]>;
+  reserveDescriptor(fd: number): Promise<void>;
   signalProcess(selector: number, signal: number): Promise<void>;
   processState(cwd: string, umask: number | undefined): Promise<void>;
   sdkFiles(id: string, operation: string, args: readonly unknown[]): Promise<ClaudeSdkFsReply>;

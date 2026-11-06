@@ -177,7 +177,12 @@ export function* symlinkOperation(
 ): FsOperation<void> {
   const targetName = pathString(target);
   const name = pathString(path);
-  yield* fsOperation("symlink", name, fileLeaf(kernelFs, "symlink", [targetName, name]));
+  yield* fsOperation(
+    "symlink",
+    targetName,
+    fileLeaf(kernelFs, "symlink", [targetName, name]),
+    name,
+  );
 }
 
 export function* rmOperation(

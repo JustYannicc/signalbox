@@ -24,8 +24,12 @@ export async function cliFileBackendFixture(
     ) => void;
   } = {},
 ) {
+  const wakes = new KernelWakeRegistry();
+  const processes = new KernelProcessTable({ wakes });
+  const lifetime = new AbortController();
+  const stdio = createKernelSessionStdio(wakes, lifetime.signal);
   const owned = createTestFilesystem(
-    undefined,
+    stdio.stdio,
     posix
       ? {
           credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 },
@@ -37,10 +41,6 @@ export async function cliFileBackendFixture(
   canonical.writeFileSync("/sync", "before");
   canonical.writeFileSync("/async", "remote");
   options.seed?.(canonical, owned.filesystem);
-  const wakes = new KernelWakeRegistry();
-  const processes = new KernelProcessTable({ wakes });
-  const lifetime = new AbortController();
-  const stdio = createKernelSessionStdio(wakes, lifetime.signal);
   const owner = new ClaudeCliKernelOwner(
     {
       storage: { files: owned.filesystem },

@@ -8,6 +8,8 @@ export interface CliFileMetadata {
   readonly path: string;
   readonly stat: KernelStat;
   readonly target?: string;
+  readonly directoryDenial?: { readonly read?: "EACCES"; readonly search?: "EACCES" };
+  readonly children?: readonly string[];
   /** Computer assigns inode identity when the queued creation commits. */
   readonly pending?: true;
 }
@@ -104,8 +106,12 @@ export class CliFileWorkingSet {
   }
 
   children(path: string) {
-    if (this.metadata(path).stat.type !== "directory")
+    const entry = this.metadata(path);
+    if (entry.directoryDenial?.read !== undefined)
+      throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    if (entry.stat.type !== "directory")
       throw Object.assign(new Error(`Not a directory: ${path}`), { code: "ENOTDIR" });
+    if (entry.children !== undefined) return [...entry.children];
     const prefix = path === "/" ? "/" : `${path}/`;
     return [...this.#metadata.keys()].flatMap((name) => {
       if (!name.startsWith(prefix)) return [];

@@ -94,7 +94,8 @@ export function launchPreparedNodeHarnessProcess(
   let allocated: NodeHarnessRuntime | undefined;
   let runtimeCompatibilityRequired = false;
   let releaseCompatibility: (() => unknown) | undefined;
-  let assertInstalledCompatibility: NodeHarnessProcess["assertCompatibility"] = async () => {};
+  let releaseLoaded = false;
+  let assertInstalledCompatibility: (requireRelease?: boolean) => Promise<void> = async () => {};
   try {
     runtime = createRuntime(
       processInput,
@@ -111,10 +112,11 @@ export function launchPreparedNodeHarnessProcess(
     runtimeCompatibilityRequired =
       input.loadedRelease?.plan.harness === "claude-code" &&
       Object.hasOwn(input.loadedRelease.plan.hostEntrypoints, "signalbox/runtime-compatibility");
-    assertInstalledCompatibility = async () => {
+    assertInstalledCompatibility = async (requireRelease = true) => {
       await runtime.compatibility.assert();
       if (releaseCompatibility === undefined) {
-        if (runtimeCompatibilityRequired) throw new Error("NODE_RUNTIME_COMPATIBILITY_UNOBSERVED");
+        if (runtimeCompatibilityRequired && (requireRelease || releaseLoaded))
+          throw new Error("NODE_RUNTIME_COMPATIBILITY_UNOBSERVED");
         return;
       }
       await Reflect.apply(releaseCompatibility, undefined, []);
@@ -192,6 +194,7 @@ export function launchPreparedNodeHarnessProcess(
     await runtime.environment.load(lifetime.signal);
     lifetime.signal.throwIfAborted();
     const release = await input.loadRelease(bridge, lifetime.signal);
+    releaseLoaded = true;
     lifetime.signal.throwIfAborted();
     if (release === null || (typeof release !== "object" && typeof release !== "function")) {
       throw new TypeError("Prepared Node release must export launch()");
@@ -287,7 +290,8 @@ export function launchPreparedNodeHarnessProcess(
         ),
       );
     } finally {
-      await attempt(() => assertInstalledCompatibility());
+      // A session can close while waiting for its first SDK launch, before any release evaluated.
+      await attempt(() => assertInstalledCompatibility(false));
       externalSignal.removeEventListener("abort", externalAbort);
       output.abort();
       await attempt(() => input.stdio.finish());
@@ -328,7 +332,7 @@ export function launchPreparedNodeHarnessProcess(
     force(reason, signal);
     await exited;
     await personality.drainReports();
-    await assertInstalledCompatibility();
+    await assertInstalledCompatibility(false);
     // A reused process can finish turns before shutdown. Late imports still belong to this
     // realm, so disposal checks their latch without rewriting an already published exit.
     if (releaseOmissionFailure !== undefined) throw releaseOmissionFailure;

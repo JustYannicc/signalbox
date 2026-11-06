@@ -49,7 +49,7 @@ export async function createCliFileBackend(
   });
   let policy = input.posix;
   const paths = new CliFilePaths(files, input.cwd, () => policy);
-  const views = new CliDescriptorViews(files, paths, remote);
+  const views = new CliDescriptorViews(files, paths, remote, (fd) => kernel.reserveDescriptor(fd));
   const disposals = new Set<() => void>();
   const operations = new Set<Promise<unknown>>();
   let remoteMutations = 0;
@@ -200,14 +200,23 @@ export async function createCliFileBackend(
       if (mutation) await beforeRemote();
       try {
         const result = await remote.call(name, values as NodeFsArguments<K>, userSignal);
-        if (name === "open")
-          views.observeOpen(
-            Number(result),
-            String(values[0]),
-            Number(values[1]),
-            await remote.fstat(Number(result), userSignal),
-          );
-        else if (name === "close") views.observeClose(Number(values[0]));
+        if (name === "open") {
+          const fd = Number(result);
+          try {
+            const stat = await remote.fstat(fd, userSignal);
+            userSignal?.throwIfAborted();
+            views.observeOpen(fd, String(values[0]), Number(values[1]), stat);
+          } catch (cause) {
+            try {
+              await remote.close(fd);
+            } catch (cleanup) {
+              throw new AggregateError([cause, cleanup], "CLI open and descriptor cleanup failed", {
+                cause,
+              });
+            }
+            throw cause;
+          }
+        } else if (name === "close") views.observeClose(Number(values[0]));
         else if ((name === "read" || name === "write") && values[2] === null)
           views.observeOffset(
             Number(values[0]),

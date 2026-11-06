@@ -25,14 +25,17 @@ export class CliDescriptorViews {
   readonly #files;
   readonly #paths;
   readonly #remote;
+  readonly #reserve;
   constructor(
     files: CliFileWorkingSet,
     paths: CliFilePaths,
     remote: ReturnType<typeof createNodeFsSyscallClient>,
+    reserve: (fd: number) => Promise<void>,
   ) {
     this.#files = files;
     this.#paths = paths;
     this.#remote = remote;
+    this.#reserve = reserve;
   }
   lease(ids: readonly number[]) {
     for (const id of ids) {
@@ -207,6 +210,7 @@ export class CliDescriptorViews {
         );
         try {
           await this.#remote.move(placeholder, fd);
+          await this.#reserve(fd);
         } catch (cause) {
           await this.#remote.close(placeholder);
           throw cause;
@@ -245,8 +249,6 @@ export class CliDescriptorViews {
     for (const view of this.#views.values()) {
       if (view.path === from || view.path.startsWith(`${from}/`))
         view.path = to + view.path.slice(from.length);
-      else if (view.path === to)
-        view.stat = { ...view.stat, nlink: view.stat.nlink > 0n ? view.stat.nlink - 1n : 0n };
     }
   }
   read(fd: number, target: Uint8Array, position: bigint | null) {
@@ -295,11 +297,7 @@ export class CliDescriptorViews {
       false,
       () => {
         bytes = source.slice();
-        if (view.content === undefined)
-          throw Object.assign(new Error("Descriptor content was not prefetched"), {
-            code: "CLI_FS_NOT_PREFETCHED",
-          });
-        view.content.replace(size, (next) => {
+        view.content?.replace(size, (next) => {
           view.content!.copyInto(next, 0);
           next.set(bytes, Number(offset));
         });
@@ -320,11 +318,7 @@ export class CliDescriptorViews {
       },
       false,
       () => {
-        if (view.content === undefined)
-          throw Object.assign(new Error("Descriptor content was not prefetched"), {
-            code: "CLI_FS_NOT_PREFETCHED",
-          });
-        view.content.replace(Number(size), (next) => {
+        view.content?.replace(Number(size), (next) => {
           if (next.byteLength > 0) view.content!.copyInto(next, 0);
         });
       },

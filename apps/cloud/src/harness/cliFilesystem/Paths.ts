@@ -49,6 +49,7 @@ export class CliFilePaths {
       for (let index = 0; index < components.length; index++) {
         const entry = this.#files.metadata(current);
         if (entry.stat.type !== "directory") throw kernelError("ENOTDIR");
+        if (entry.directoryDenial?.search !== undefined) throw kernelError("EACCES");
         this.assertAccess(entry.stat, 1);
         const component = components[index]!;
         if (component === ".") continue;

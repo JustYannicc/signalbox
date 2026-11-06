@@ -179,6 +179,41 @@ export function createCliMetadataMutations(options: {
       const current = entry(source, false);
       const target = paths.destination(destination);
       if (current.path === target) return;
+      const replaced = (() => {
+        try {
+          return files.metadata(target);
+        } catch (cause) {
+          if (
+            !(
+              typeof cause === "object" &&
+              cause !== null &&
+              "code" in cause &&
+              cause.code === "ENOENT"
+            )
+          )
+            throw cause;
+          return undefined;
+        }
+      })();
+      if (
+        replaced !== undefined &&
+        !current.pending &&
+        !replaced.pending &&
+        current.stat.ino !== 0n &&
+        current.stat.ino === replaced.stat.ino &&
+        current.stat.dev === replaced.stat.dev
+      )
+        return;
+      const aliases =
+        replaced === undefined || replaced.pending || replaced.stat.ino === 0n
+          ? []
+          : files.entries.filter(
+              (item) =>
+                !item.pending &&
+                item.path !== target &&
+                item.stat.ino === replaced.stat.ino &&
+                item.stat.dev === replaced.stat.dev,
+            );
       if (target.startsWith(`${current.path}/`)) throw kernelError("EINVAL");
       const changed = files.entries.filter(
         (item) => item.path === current.path || item.path.startsWith(`${current.path}/`),
@@ -189,6 +224,10 @@ export function createCliMetadataMutations(options: {
       }));
       const project = files.project(
         [
+          ...aliases.map((item) => ({
+            ...item,
+            stat: { ...item.stat, nlink: item.stat.nlink - 1n },
+          })),
           ...changed.map((item) => ({ path: item.path, removed: true as const })),
           ...changed.map((item) => ({
             ...item,
@@ -202,6 +241,7 @@ export function createCliMetadataMutations(options: {
         () => remote.rename(current.path, target),
         false,
         () => {
+          if (replaced !== undefined) options.unlinkViews(target);
           options.renameViews(current.path, target);
           project();
         },
