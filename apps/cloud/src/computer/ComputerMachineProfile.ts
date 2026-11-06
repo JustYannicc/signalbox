@@ -43,18 +43,26 @@ export function createComputerMachineProfile(options: {
   // that also moves once a command's exit refresh lands, and to know when one is still running.
   let changes = 0;
   let running = 0;
+  // Diagnostics never change machine state: a throwing trace must not leave `running` stuck.
+  const trace = (event: Parameters<NonNullable<typeof options.trace>>[0]) => {
+    try {
+      options.trace?.(event);
+    } catch {
+      /* A lost trace is only a missing diagnostic. */
+    }
+  };
   const begin = () => {
     running++;
     changes++;
     const started = performance.now();
-    options.trace?.({ kind: "machine-command", phase: "start", running, changes });
+    trace({ kind: "machine-command", phase: "start", running, changes });
     let settled = false;
     return () => {
       if (settled) return;
       settled = true;
       running--;
       changes++;
-      options.trace?.({
+      trace({
         kind: "machine-command",
         phase: "exit",
         running,

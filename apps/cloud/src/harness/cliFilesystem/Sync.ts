@@ -113,6 +113,9 @@ export function createCliFileSync(input: {
           continue;
         }
         if (digest === null || digest === undefined) continue;
+        // The digest and turns await, so the CLI may have projected or unlinked the path, or the
+        // budget evicted it, in the meantime. Its bytes then need no proof.
+        if (files.projections.projected(path) || !files.hasContent(path)) continue;
         // One cached file at a time: each read copies its bytes.
         const local = files.content(path);
         if ((await sha256Hex(local)) === digest) verified.add(path);

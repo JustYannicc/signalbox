@@ -32,6 +32,7 @@ export const makeAdapterFailure = (
   const milestones = new Set<HarnessTurnStage>();
   let contextTurn: TurnState["active"];
   const earlyTraces: CliViewTrace[] = [];
+  let droppedTraces = 0;
   const record = (error: HarnessError) => {
     const recorded = (failure ??= error);
     controller.abort(recorded);
@@ -75,10 +76,14 @@ export const makeAdapterFailure = (
       const current = state.active;
       if (current === undefined) {
         if (earlyTraces.length < 32) earlyTraces.push(event);
+        else droppedTraces++;
         return;
       }
       if (failure !== undefined) return;
-      for (const trace of [...earlyTraces.splice(0), event])
+      const dropped: CliViewTrace[] =
+        droppedTraces === 0 ? [] : [{ kind: "dropped", count: droppedTraces }];
+      droppedTraces = 0;
+      for (const trace of [...earlyTraces.splice(0), ...dropped, event])
         Queue.offerUnsafe(output, {
           kind: "log",
           runId: current.input.runId,

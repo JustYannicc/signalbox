@@ -159,7 +159,7 @@ export function createClaudeCliFacetClass<Env>(
         const backend = await createCliFileBackend(
           {
             ...configuration,
-            // Diagnostics only: a lost trace must never fail the session.
+            // The view also writes Computer's own log, which needs no turn.
             trace: (event) => void reports.report({ type: "trace", event }).catch(() => undefined),
           },
           this.#lifetime.signal,

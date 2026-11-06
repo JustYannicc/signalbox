@@ -1,6 +1,7 @@
 // @effect-diagnostics globalTimers:off - The test lets the view's event-loop timer fire.
 import { describe, expect, it, vi } from "vite-plus/test";
 import { cliFileBackendFixture as fixture } from "./helpers/cliFileBackend.ts";
+import { lowerLayer } from "./helpers/lowerLayer.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
@@ -44,13 +45,13 @@ describe("CLI filesystem view traces", () => {
   });
 
   it("verifies Computer's own files from its change feed instead of hashing them", async () => {
+    const lower = lowerLayer({ "/etc/tool.conf": "machine bytes" });
     let machine = { machine: 0, machineRunning: false };
-    const f = await fixture(256, ["/sync", "/big", "/lower"], false, {
+    const f = await fixture(256, ["/sync", "/big", "/etc/tool.conf"], true, {
       machine: () => machine,
-      lowerPaths: (path) => path === "/lower",
-      seed(fs) {
+      seed(fs, files) {
         fs.writeFileSync("/big", "b".repeat(100));
-        fs.writeFileSync("/lower", "machine bytes");
+        lower.install(files);
       },
     });
     try {
@@ -64,8 +65,144 @@ describe("CLI filesystem view traces", () => {
       expect(digests).toEqual([expect.objectContaining({ files: 3, unchanged: 2 })]);
       expect(f.prefetchedBytes - bytes).toBe(0);
       expect(f.fs.readFileSync("/big", "utf8")).toBe("b".repeat(100));
-      expect(f.fs.readFileSync("/lower", "utf8")).toBe("machine bytes");
+      expect(f.fs.readFileSync("/etc/tool.conf", "utf8")).toBe("machine bytes");
     } finally {
+      await f.close();
+    }
+  });
+
+  it("re-reads Computer's file rewritten at the same size and inode during an index", async () => {
+    let machine = { machine: 0, machineRunning: false };
+    let rewrite = () => {};
+    const f = await fixture(256, ["/sync", "/big"], false, {
+      machine: () => machine,
+      duringRefresh: () => rewrite(),
+      seed(fs) {
+        fs.writeFileSync("/big", "b".repeat(100));
+      },
+    });
+    try {
+      machine = { machine: 1, machineRunning: true };
+      // Same inode and size, and this fixture's clock gives the same mtime too.
+      rewrite = () => {
+        rewrite = () => {};
+        f.canonical.writeFileSync("/big", "c".repeat(100));
+      };
+      await f.fs.promises.stat("/sync");
+      expect(f.refreshes).toBeGreaterThan(1);
+      expect(f.fs.readFileSync("/big", "utf8")).toBe("c".repeat(100));
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("never vouches for a machine file rewritten at the same size", async () => {
+    const lower = lowerLayer({ "/etc/tool.conf": "v1" });
+    let machine = { machine: 0, machineRunning: false };
+    const f = await fixture(256, ["/sync", "/etc/tool.conf"], true, {
+      machine: () => machine,
+      seed: (_fs, files) => lower.install(files),
+    });
+    try {
+      expect(f.fs.readFileSync("/etc/tool.conf", "utf8")).toBe("v1");
+      machine = { machine: 1, machineRunning: true };
+      lower.write("/etc/tool.conf", "v2");
+      lower.refreshAfterCommand();
+      f.traces.length = 0;
+      await f.fs.promises.stat("/sync");
+      // Only Computer's own /sync is vouched for; the machine file is hashed and re-read.
+      expect(f.traces.filter((event) => event.kind === "digest" && event.phase === "end")).toEqual([
+        expect.objectContaining({ files: 2, unchanged: 1 }),
+      ]);
+      expect(f.fs.readFileSync("/etc/tool.conf", "utf8")).toBe("v2");
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("keeps traces in Computer's own log when the session never reaches a turn", async () => {
+    const f = await fixture(256, ["/sync", "/big"], false, {
+      changeFeed: false,
+      seed(fs) {
+        fs.writeFileSync("/big", "b".repeat(100));
+      },
+    });
+    try {
+      // There is no turn here: the view opens, indexes again, and the CLI goes quiet.
+      await f.files.beforeRemote();
+      f.canonical.writeFileSync("/sync", "child wrote");
+      await f.files.afterRemote();
+      await f.files.barrier();
+      const rows = f.traceRows();
+      expect(rows.map(({ source }) => source)).toEqual(rows.map(() => "cli"));
+      expect(rows.map(({ event }) => `${event.kind}:${event.phase}:${event.mode ?? ""}`)).toEqual([
+        "round:start:index",
+        "round:end:index",
+        "round:start:index",
+        "digest:start:",
+        "digest:end:",
+        "round:end:index",
+      ]);
+      expect(JSON.stringify(rows)).not.toMatch(/\/sync|\/big/);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("indexes past a file removed between its directory listing and its lstat", async () => {
+    let remove: (() => void) | undefined;
+    const f = await fixture(256, ["/sync"], false, {
+      changeFeed: false,
+      seed(fs, files) {
+        fs.writeFileSync("/victim", "gone soon");
+        const readdir = files.readdirAsync.bind(files);
+        files.readdirAsync = async (...args) => {
+          const names = await readdir(...args);
+          // The CLI's rename onto it, or another writer, lands while the walk yields.
+          if (args[0] === "/" && remove !== undefined) remove();
+          return names;
+        };
+      },
+    });
+    try {
+      remove = () => {
+        remove = undefined;
+        f.canonical.unlinkSync("/victim");
+      };
+      await f.files.beforeRemote();
+      f.canonical.writeFileSync("/sync", "child wrote");
+      await f.files.afterRemote();
+      expect(f.fs.readdirSync("/")).not.toContain("victim");
+      expect(f.fs.readFileSync("/sync", "utf8")).toBe("child wrote");
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("finishes an index when the CLI unlinks a file while Computer digests it", async () => {
+    const f = await fixture(256, ["/sync", "/big"], false, {
+      changeFeed: false,
+      seed(fs) {
+        fs.writeFileSync("/big", "b".repeat(100));
+      },
+    });
+    const gate = f.holdNext("digest");
+    let after: Promise<void> | undefined;
+    try {
+      await f.files.beforeRemote();
+      f.canonical.writeFileSync("/sync", "child wrote");
+      after = f.files.afterRemote();
+      void after.catch(() => {});
+      await gate.entered;
+      f.fs.unlinkSync("/big");
+      gate.release();
+      await expect(after).resolves.toBeUndefined();
+      expect(f.fs.existsSync("/big")).toBe(false);
+      await f.files.barrier();
+      expect(f.canonical.existsSync("/big")).toBe(false);
+    } finally {
+      gate.release();
+      await Promise.allSettled([after]);
       await f.close();
     }
   });

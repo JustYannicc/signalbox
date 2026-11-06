@@ -43,6 +43,20 @@ export async function createCliFileBackend(
   signal: AbortSignal,
 ) {
   const kernel = input.kernel;
+  // Diagnostics never fail the view. Computer's own log keeps every trace, turn or not; the
+  // caller's sink (the host's turn log) gets it too.
+  const trace = (event: CliViewTrace) => {
+    try {
+      input.trace?.(event);
+    } catch {
+      /* A lost trace is only a missing diagnostic. */
+    }
+    try {
+      void kernel.trace(event).catch(() => undefined);
+    } catch {
+      /* As above. */
+    }
+  };
   const files = new CliFileWorkingSet(input.workingSet);
   const remote = createNodeFsSyscallClient({
     syscalls: kernel,
@@ -112,7 +126,7 @@ export async function createCliFileBackend(
     metadataLimit: input.workingSet.metadataLimit,
     requested: input.workingSet.paths,
     prefetch,
-    ...(input.trace === undefined ? {} : { trace: input.trace }),
+    trace,
     canonical(path) {
       try {
         return paths.resolve(path);
@@ -442,14 +456,10 @@ export async function createCliFileBackend(
       },
     });
   }
-  const stopWatching =
-    input.trace === undefined
-      ? () => {}
-      : watchEventLoop({
-          trace: input.trace,
-          activity: () =>
-            [fileSync.activity() ?? "no round", lastOperation ?? "no call"].join(", "),
-        });
+  const stopWatching = watchEventLoop({
+    trace,
+    activity: () => [fileSync.activity() ?? "no round", lastOperation ?? "no call"].join(", "),
+  });
   disposals.add(stopWatching);
   return {
     backend,

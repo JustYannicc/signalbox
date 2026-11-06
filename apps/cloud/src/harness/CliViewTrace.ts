@@ -27,4 +27,6 @@ export type CliViewTrace =
       readonly changes: number;
       readonly durationMs?: number;
     }
-  | { readonly kind: "loop-lag"; readonly lagMs: number; readonly activity: string };
+  | { readonly kind: "loop-lag"; readonly lagMs: number; readonly activity: string }
+  /** Traces a bounded buffer could not keep, so a gap is visible as a gap. */
+  | { readonly kind: "dropped"; readonly count: number };

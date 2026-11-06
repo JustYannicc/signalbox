@@ -11,6 +11,7 @@ import type { NodeChildProcessSpawn } from "../isolate/NodeChildProcess.ts";
 import type { KernelHandle } from "../kernel/KernelAbi.ts";
 import type { KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import type { CliFileWorkingSetOptions, CliFileMetadata } from "./CliFileWorkingSet.ts";
+import type { CliViewTrace } from "./CliViewTrace.ts";
 
 export interface ClaudeCliMetadataPage {
   readonly revision: number;
@@ -55,6 +56,8 @@ export interface ClaudeCliKernelPort extends KernelSyscallPort {
   changes(since: number): Promise<ClaudeCliChanges>;
   lookup(paths: readonly string[]): Promise<readonly ClaudeCliLookup[]>;
   prefetch(path: string, offset: number, length: number): Promise<Uint8Array>;
+  /** Records a view trace in Computer's own log, with or without a running turn. */
+  trace(event: CliViewTrace): Promise<void>;
   /**
    * SHA-256 hex of each regular file's current bytes, or null when it is not one or its size is
    * no longer the one the CLI's index read.

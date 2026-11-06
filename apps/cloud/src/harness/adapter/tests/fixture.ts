@@ -1,4 +1,5 @@
 import type { ClaudeSpawnDiagnostic } from "../../ClaudeSpawnContext.ts";
+import type { CliViewTrace } from "../../CliViewTrace.ts";
 import type { RunnerItem } from "@signalbox/runner-protocol/RunnerProtocol";
 import {
   ProviderDriverKind,
@@ -313,6 +314,11 @@ export const fixtureForDriver = (selectedDriver: ProviderDriverKind) =>
         if (runtimeReporter?.turnMilestone === undefined)
           throw new Error("Harness turn milestone reporter is unavailable");
         runtimeReporter.turnMilestone(stage);
+      },
+      reportCliViewTrace(event: CliViewTrace) {
+        if (runtimeReporter?.cliViewTrace === undefined)
+          throw new Error("Harness CLI view trace reporter is unavailable");
+        runtimeReporter.cliViewTrace(event);
       },
       reportCliStartupFailure(cause: unknown) {
         if (runtimeReporter?.cliStartupFailure === undefined)

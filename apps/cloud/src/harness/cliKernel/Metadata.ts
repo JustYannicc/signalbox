@@ -16,18 +16,27 @@ export async function readCliMetadata(
 ) {
   const entries: CliFileMetadata[] = [];
   const turn = turnBudget();
+  // The walk yields between a listing and its entries, so the CLI or another writer can remove a
+  // child meanwhile. A gone child is left out; the change feed brings it to the next round.
+  const vanished = (path: string, cause: unknown) =>
+    path !== "/" && ["ENOENT", "ENOTDIR"].includes(code(cause));
   const visit = async (path: string) => {
     signal.throwIfAborted();
     await turn();
-    const stat = await filesystem.lstatAsync(path, signal).catch((cause) => {
+    let stat;
+    try {
+      stat = await filesystem.lstatAsync(path, signal);
+    } catch (cause) {
+      if (vanished(path, cause)) return;
       throw nodeFsError(cause, "lstat", path);
-    });
+    }
     if (entries.length >= metadataLimit) throw kernelError("E2BIG");
     let target: string | undefined;
     if (stat.type === "symlink") {
       try {
         target = filesystem.readlink(path);
       } catch (cause) {
+        if (vanished(path, cause)) return;
         throw nodeFsError(cause, "readlink", path);
       }
     }
@@ -45,6 +54,10 @@ export async function readCliMetadata(
       try {
         children = await filesystem.readdirAsync(path, signal);
       } catch (cause) {
+        if (vanished(path, cause)) {
+          entries.length = index;
+          return;
+        }
         if (!denied(cause)) throw nodeFsError(cause, "scandir", path);
         // Indexing is unsolicited. Retain the directory and its denial for actual CLI access.
         entries[index] = { ...entry, directoryDenial: { read: "EACCES" } };

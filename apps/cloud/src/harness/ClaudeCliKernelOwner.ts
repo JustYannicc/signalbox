@@ -8,6 +8,7 @@ import type {
 } from "./ClaudeCliKernelPort.ts";
 import type { ClaudeKernelInitialize } from "./ClaudeKernelSessionPort.ts";
 import type { CliFileMetadata } from "./CliFileWorkingSet.ts";
+import type { CliViewTrace } from "./CliViewTrace.ts";
 import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
 import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../kernel/KernelSyscallPort.ts";
 import { createKernelSyscallHost } from "../kernel/KernelSyscallHost.ts";
@@ -25,7 +26,7 @@ import { nodeFsError } from "../isolate/NodeFsError.ts";
 type OwnerResources = ReturnType<typeof createClaudeKernelResources>;
 type Resources = Pick<
   OwnerResources,
-  "processes" | "stdio" | "commands" | "fileRevision" | "fileChanges" | "isLowerPath"
+  "processes" | "stdio" | "commands" | "fileRevision" | "fileChanges" | "isLowerPath" | "trace"
 > & {
   readonly storage: Pick<OwnerResources["storage"], "files">;
 };
@@ -250,6 +251,11 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
               !changed.has(ino) && !(await this.#resources.isLowerPath(path, signal));
       return digestCliFiles(this.#resources.storage.files, files, signal, unchanged);
     });
+  }
+  /** The CLI's view traces into Computer's own log, which needs no turn to be running. */
+  async trace(event: CliViewTrace) {
+    this.#lifetime.throwIfAborted();
+    this.#resources.trace("cli", event);
   }
   prefetch(path: string, offset: number, length: number) {
     return this.#run(crypto.randomUUID(), async (signal) => {
