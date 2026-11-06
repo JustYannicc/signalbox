@@ -155,3 +155,85 @@ it.each(["ClaudeFacet", "CodexFacet"] as const)(
     expect(guestLogs).toEqual([]);
   },
 );
+
+it("observes the real CLI kernel facet without replacing its process RPCs", async () => {
+  const route = { method: "POST", path: "/claude/kernel/inspect" };
+  const logs: Array<{ producerEvent?: { route: typeof route; milestone: string } }> = [];
+  const session = { sessionId: "retained-native-process" };
+  const configuration = { threadId: "owner" };
+  let closed = false;
+  class Actual {
+    readonly facetNonce = "actual-kernel-facet";
+    configure(input: typeof configuration) {
+      expect(input).toBe(configuration);
+      return session;
+    }
+    open() {
+      return session;
+    }
+    close() {
+      closed = true;
+    }
+    identity() {
+      return { facetNonce: this.facetNonce };
+    }
+  }
+  const { code, originalSourceModule } = observeWorkerCode(
+    {
+      compatibilityDate: "2026-10-19",
+      mainModule: "claude-kernel-entry.mjs",
+      modules: {
+        "claude-kernel-entry.mjs": {
+          js: 'export { ClaudeKernelFacet } from "./qualifier-claude-kernel.mjs";',
+        },
+      },
+    },
+    "kernel-observation",
+    {
+      loaderId: "current-route:kernel",
+      role: "facet",
+      entrypoint: "ClaudeKernelFacet",
+      identity: "kernel:claude:current-route",
+      tag: "actual-claude-kernel",
+      calls: {
+        identity: [{ callId: "*", route }],
+        isolateNonceProbe: [{ callId: "*", route }],
+      },
+    },
+    {} as Fetcher,
+  );
+  const main = code.modules[code.mainModule];
+  if (typeof main !== "object" || !("js" in main)) throw new Error("Missing observation module");
+  expect(code.modules[originalSourceModule]).toEqual({
+    js: 'export { ClaudeKernelFacet } from "./qualifier-claude-kernel.mjs";',
+  });
+  const context = NodeVM.createContext({
+    Actual,
+    crypto,
+    console: { log: (text: string) => logs.push(JSON.parse(text)) },
+  });
+  NodeVM.runInContext(
+    main.js
+      .replace(/^import .*;\n/u, "")
+      .replace(/export \{ Observed as \w+ \};/u, "globalThis.Observed = Observed;"),
+    context,
+  );
+  const Constructor = context.Observed as new () => Actual & {
+    identity(): { facetNonce: string; isolateNonce: string };
+    isolateNonceProbe(): { facetNonce: string; isolateNonce: string };
+  };
+  const observed = new Constructor();
+  expect(observed.configure(configuration)).toBe(session);
+  expect(observed.open()).toBe(session);
+  const identity = observed.identity();
+  expect(identity.facetNonce).toBe("actual-kernel-facet");
+  expect(observed.isolateNonceProbe()).toMatchObject(identity);
+  observed.close();
+  expect(closed).toBe(true);
+  expect(logs.flatMap((row) => (row.producerEvent ? [row.producerEvent] : []))).toEqual([
+    expect.objectContaining({ route, milestone: "entered" }),
+    expect.objectContaining({ route, milestone: "terminal" }),
+    expect.objectContaining({ route, milestone: "entered" }),
+    expect.objectContaining({ route, milestone: "terminal" }),
+  ]);
+});
