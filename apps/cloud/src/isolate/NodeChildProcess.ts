@@ -49,7 +49,7 @@ export function createNodeChildProcess(
   host: KernelProgramHost,
   process: NodeChildProcessContext,
   transport?: NodeChildProcessTransport,
-  onChild?: NodeChildProcessObserver,
+  onChild?: (child: NodeChildProcess, spawn: NodeChildProcessSpawn) => void,
 ) {
   if (
     !host ||

@@ -300,6 +300,7 @@ export async function buildCombinedFixture(raw: unknown) {
     "qualifier-claude-implementation",
     "qualifier-claude-sdk-host",
     "qualifier-claude-kernel",
+    "qualifier-claude-cli",
     "qualifier-computer-execution",
     "qualifier-worker",
     "qualifier-claude-workflow",
