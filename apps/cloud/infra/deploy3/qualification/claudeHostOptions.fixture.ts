@@ -28,7 +28,13 @@ export async function claudeHostOptionsFixture() {
   try {
     const data = await Effect.runPromise(dataForDriver(ProviderDriverKind.make("claudeAgent")));
     const input = await syntheticBundleInput(assets, data);
-    const built = await buildCombinedFixture(input);
+    const built = await buildCombinedFixture({
+      ...input,
+      claudeRuntime: {
+        ...input.claudeRuntime,
+        workingSet: { byteLimit: 1024, metadataLimit: 128, pathByteLimit: 1024, paths: [] },
+      },
+    });
     const directory = NodePath.join(input.outputDirectory, "assets");
     const configuration = decodeConfiguration(
       JSON.parse(await NodeFSP.readFile(NodePath.join(directory, "qualifier/config.json"), "utf8")),

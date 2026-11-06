@@ -329,24 +329,25 @@ export const run = (
         if (mode === "owners") {
           yield* Effect.promise(owners.ready);
           NodeAssert.deepEqual(owners.loaded.map((entry) => entry.mainModule).sort(), [
+            "cli-owner.mjs",
             "computer-owner.mjs",
             "kernel-owner.mjs",
             "sdk-owner.mjs",
           ]);
-          NodeAssert.equal(new Set(owners.loaded.map((entry) => entry.name)).size, 3);
+          NodeAssert.equal(new Set(owners.loaded.map((entry) => entry.name)).size, 4);
           NodeAssert.equal(owners.sdkProcesses.length, 1);
           NodeAssert.ok(owners.dispatched.includes("/bin/sed"));
           NodeAssert.ok(owners.dispatched.includes("/usr/bin/git"));
           const host = yield* binding.host;
           NodeAssert.equal(typeof host.computer.files, "string");
-          NodeAssert.equal(owners.liveOwners(), 2);
+          NodeAssert.equal(owners.liveOwners(), 3);
           const identity = yield* Effect.promise(() => owners.kernel().kernelIdentity());
           NodeAssert.equal(identity.fileIdentity, owners.host.files.identity);
         }
         yield* binding.dispose;
         if (mode === "owners") {
           NodeAssert.equal(owners.liveOwners(), 0);
-          NodeAssert.equal(owners.retired.length, 3);
+          NodeAssert.equal(owners.retired.length, 4);
           NodeAssert.throws(() => owners.files().stat("/workspace/file.txt"), /disposed/);
         }
       }),
