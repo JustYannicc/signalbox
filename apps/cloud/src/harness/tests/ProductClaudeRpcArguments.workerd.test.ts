@@ -95,8 +95,10 @@ describe.skipIf(programDir === undefined)("Product Claude retained RPC arguments
       ],
     });
     const results: unknown[] = [];
+    let listening = false;
     try {
       await harness.listen();
+      listening = true;
       const setup = await harness.fetch("http://proof/configure");
       const setupText = await setup.text();
       results.push({ setupStatus: setup.status, setupText });
@@ -144,7 +146,14 @@ describe.skipIf(programDir === undefined)("Product Claude retained RPC arguments
       expect(state.computer.disposedStubs).toBeGreaterThan(0);
       expect(state.kernel.disposedStubs).toBeGreaterThanOrEqual(3);
     } finally {
-      await harness.close();
+      try {
+        if (listening) {
+          const cleanup = await harness.fetch("http://proof/dispose");
+          expect(cleanup.status, await cleanup.text()).toBe(200);
+        }
+      } finally {
+        await harness.close();
+      }
       NodeProcess.stdout.write("[product-rpc-arguments] " + JSON.stringify(results) + "\n");
       if (NodeProcess.env.SIGNALBOX_RPC_ARGUMENT_EVIDENCE !== undefined)
         await NodeFSP.writeFile(

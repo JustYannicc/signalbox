@@ -193,41 +193,60 @@ export class Host extends DurableObject<Env> {
       releaseRpcResult(child);
     }
   }
+  async #disposeHost() {
+    const host = this.#host;
+    const scope = this.#scope;
+    this.#host = undefined;
+    this.#scope = undefined;
+    try {
+      await host?.dispose.pipe(Effect.runPromise);
+    } finally {
+      if (scope !== undefined) await Effect.runPromise(Scope.close(scope, Exit.void));
+    }
+  }
+  async dispose() {
+    try {
+      await this.#disposeHost();
+    } finally {
+      const owners = this.#owners;
+      this.#owners = undefined;
+      owners?.dispose();
+    }
+  }
   async close() {
     const owners = this.#owners;
     if (owners === undefined || this.#scope === undefined)
       throw new Error("Owners were never configured");
-    const before = await readRpcData(
-      (owners.commands as typeof owners.commands & { resources(): Promise<unknown> }).resources(),
-    );
-    await this.#host?.dispose.pipe(Effect.runPromise);
-    await Effect.runPromise(Scope.close(this.#scope, Exit.void));
-    const kernel = await readRpcData(
-      (owners.kernel as typeof owners.kernel & { resources(): Promise<unknown> }).resources(),
-    );
-    const computer = await readRpcData(
-      (owners.commands as typeof owners.commands & { resources(): Promise<unknown> }).resources(),
-    );
-    const late = await owners.kernel
-      .exec(
-        "late",
-        {
-          executable: "/bin/bash",
-          argv: ["/bin/bash", "-c", "echo late"],
-          cwd: "/work",
-          env: process.env,
-        },
-        true,
-      )
-      .then(
-        () => false,
-        () => true,
+    try {
+      const before = await readRpcData(
+        (owners.commands as typeof owners.commands & { resources(): Promise<unknown> }).resources(),
       );
-    owners.dispose();
-    this.#owners = undefined;
-    this.#host = undefined;
-    this.#scope = undefined;
-    return { before, kernel, computer, lateRejected: late };
+      await this.#disposeHost();
+      const kernel = await readRpcData(
+        (owners.kernel as typeof owners.kernel & { resources(): Promise<unknown> }).resources(),
+      );
+      const computer = await readRpcData(
+        (owners.commands as typeof owners.commands & { resources(): Promise<unknown> }).resources(),
+      );
+      const late = await owners.kernel
+        .exec(
+          "late",
+          {
+            executable: "/bin/bash",
+            argv: ["/bin/bash", "-c", "echo late"],
+            cwd: "/work",
+            env: process.env,
+          },
+          true,
+        )
+        .then(
+          () => false,
+          () => true,
+        );
+      return { before, kernel, computer, lateRejected: late };
+    } finally {
+      await this.dispose();
+    }
   }
 }
 export default {
@@ -237,6 +256,10 @@ export default {
     try {
       if (url.pathname === "/configure") return Response.json(await owner.configure());
       if (url.pathname === "/close") return Response.json(await owner.close());
+      if (url.pathname === "/dispose") {
+        await owner.dispose();
+        return Response.json({ disposed: true });
+      }
       return Response.json(await owner.run(url.searchParams.get("command") ?? "echo hi"));
     } catch (error) {
       return Response.json(
@@ -246,3 +269,5 @@ export default {
     }
   },
 };
+
+export * from "../../../FixtureWorkerExports.ts";
