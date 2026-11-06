@@ -19,6 +19,7 @@ import type { KernelExecutableNamespaceOwner } from "./KernelExecutableNamespace
 import type { KernelChildRegistration } from "./KernelChildDispatchPort.ts";
 import type {
   ComputerProgramOwnerPort,
+  ComputerAdmissionResult,
   KernelComputerAdmissionCapture,
 } from "./KernelComputerAdmissionPort.ts";
 import { KernelChildDispatch } from "./KernelChildDispatch.ts";
@@ -65,7 +66,7 @@ class AdmissionCapture extends RpcTarget implements KernelComputerAdmissionCaptu
   readonly #onAbort;
   #requester: ReturnType<typeof createKernelProcessAdmissionPort> | undefined;
   #claimed = false;
-  #reply: Disposable | undefined;
+  #reply: (() => Promise<void>) | undefined;
   constructor(request: KernelProgramAdmissionRequest, namespace: KernelExecutableNamespaceOwner) {
     super();
     this.#request = request;
@@ -167,8 +168,17 @@ class AdmissionCapture extends RpcTarget implements KernelComputerAdmissionCaptu
     this.#requester?.close();
     await this.#namespace.close();
   }
-  [ownReplyCapture](reply: object) {
-    this.#reply = rpcStubOwner(reply);
+  [ownReplyCapture](reply: ComputerAdmissionResult) {
+    const owner = rpcStubOwner(reply);
+    let released: Promise<void> | undefined;
+    this.#reply = () =>
+      (released ??= (async () => {
+        try {
+          if (reply.route === "child") await reply.grant.finished();
+        } finally {
+          owner[Symbol.dispose]();
+        }
+      })());
   }
   async [closeCapture]() {
     const request = this.#request;
@@ -179,8 +189,11 @@ class AdmissionCapture extends RpcTarget implements KernelComputerAdmissionCaptu
     try {
       await this[finishNamespaceCapture]();
     } finally {
-      this.#reply?.[Symbol.dispose]();
-      this.#reply = undefined;
+      try {
+        await this.#reply?.();
+      } finally {
+        this.#reply = undefined;
+      }
     }
   }
   [signalCapture](signal: AbortSignal) {
