@@ -95,9 +95,15 @@ export function createClaudeKernelResources(
   }
   const processes = new KernelProcessTable({ wakes });
   const systemIdentity = systemIdentityForThread(input.threadId, input.process.systemIdentity);
-  const writeTrace = createCliTraceLog(storage.database, () =>
-    Number(options.files.nowNs() / 1_000_000n),
-  );
+  // A diagnostics table must never fail a session, even when Computer's storage is full.
+  let writeTrace: ReturnType<typeof createCliTraceLog> = () => {};
+  try {
+    writeTrace = createCliTraceLog(storage.database, () =>
+      Number(options.files.nowNs() / 1_000_000n),
+    );
+  } catch {
+    /* Traces are lost for this session; the session itself is unaffected. */
+  }
   // Diagnostics never change product state. Computer's own log keeps the trace even when no
   // turn is running. The CLI reports its own traces to the host; machine traces go from here.
   const trace = (source: "cli" | "machine", event: CliViewTrace) => {

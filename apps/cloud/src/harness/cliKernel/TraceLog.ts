@@ -3,6 +3,7 @@ import type { CliViewTrace } from "../CliViewTrace.ts";
 
 const KEPT_ROWS = 1_000;
 const MAX_EVENT_CHARS = 1_024;
+const PRUNE_EVERY = 100;
 
 /**
  * Computer's own record of what the CLI's view and the machine layer did. The thread's log only
@@ -13,21 +14,22 @@ export function createCliTraceLog(database: FacetStorage, now: () => number) {
   database.sql.exec(
     "CREATE TABLE IF NOT EXISTS harness_cli_trace (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, source TEXT NOT NULL, event TEXT NOT NULL)",
   );
-  let writes = 0;
+  // The bound must hold across sessions, and most sessions write only a handful of rows.
+  const prune = () =>
+    database.sql.exec(
+      "DELETE FROM harness_cli_trace WHERE id <= (SELECT MAX(id) FROM harness_cli_trace) - ?",
+      KEPT_ROWS,
+    );
+  prune();
   return (source: "cli" | "machine", event: CliViewTrace) => {
     const encoded = JSON.stringify(event);
     if (typeof event?.kind !== "string" || encoded.length > MAX_EVENT_CHARS) return;
-    database.sql.exec(
-      "INSERT INTO harness_cli_trace (at, source, event) VALUES (?, ?, ?)",
+    const [row] = database.sql.exec(
+      "INSERT INTO harness_cli_trace (at, source, event) VALUES (?, ?, ?) RETURNING id",
       now(),
       source,
       encoded,
     );
-    // Keep the newest rows, so a long session can't grow the table without bound.
-    if (++writes % 100 === 0)
-      database.sql.exec(
-        "DELETE FROM harness_cli_trace WHERE id <= (SELECT MAX(id) FROM harness_cli_trace) - ?",
-        KEPT_ROWS,
-      );
+    if (Number(row?.id) % PRUNE_EVERY === 0) prune();
   };
 }
