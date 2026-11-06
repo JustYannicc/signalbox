@@ -110,6 +110,12 @@ export async function lookupCliPaths(
   return results;
 }
 
+/**
+ * A digest buffers the whole file in the owner, and no single request may exhaust its isolate.
+ * The CLI facet's own budget is far smaller, so it never caches a file this large anyway.
+ */
+const MAX_DIGEST_FILE_BYTES = 64 * 1024 * 1024;
+
 /** Hashes current bytes in Computer so the CLI can keep a cached copy without re-reading it. */
 export async function digestCliFiles(
   filesystem: KernelFileSystem,
@@ -125,7 +131,7 @@ export async function digestCliFiles(
     let size: number;
     try {
       const stat = await filesystem.lstatAsync(path, signal);
-      if (stat.type !== "file" || stat.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+      if (stat.type !== "file" || stat.size > BigInt(MAX_DIGEST_FILE_BYTES)) {
         digests.push(null);
         continue;
       }

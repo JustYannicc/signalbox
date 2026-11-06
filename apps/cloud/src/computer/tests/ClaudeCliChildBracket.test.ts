@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { createRemoteChildren } from "../../harness/cliProcess/Children.ts";
+import { createRemoteChildren } from "../../harness/ClaudeCliChildren.ts";
 import type { ClaudeCliKernelPort } from "../../harness/ClaudeCliKernelPort.ts";
 import { cliFileBackendFixture as fixture } from "./helpers/cliFileBackend.ts";
 
