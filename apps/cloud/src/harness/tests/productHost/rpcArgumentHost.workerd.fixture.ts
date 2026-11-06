@@ -75,7 +75,11 @@ export class Host extends DurableObject<Env> {
         Uint8Array.from(atob(value), (c) => c.charCodeAt(0)),
       ]),
     );
-    const entrypoints = this.ctx.exports as { ChildLoader: LoopbackServiceStub<ChildLoader> };
+    const entrypoints = (
+      this.ctx as DurableObjectState & {
+        readonly exports: { readonly ChildLoader: LoopbackServiceStub<ChildLoader> };
+      }
+    ).exports;
     const loader = entrypoints.ChildLoader({});
     const code = (
       source: string,

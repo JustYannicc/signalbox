@@ -43,11 +43,17 @@ describe.skipIf(programDir === undefined)("Product Claude retained RPC arguments
     }
     const sources: Record<string, string> = {};
     for (const [name, file] of [
-      ["KERNEL_SOURCE", "rpcArgumentKernel.workerd.fixture.ts"],
-      ["COMPUTER_SOURCE", "rpcArgumentComputer.workerd.fixture.ts"],
-    ]) {
+      [
+        "KERNEL_SOURCE",
+        new URL("./productHost/rpcArgumentKernel.workerd.fixture.ts", import.meta.url),
+      ],
+      [
+        "COMPUTER_SOURCE",
+        new URL("./productHost/rpcArgumentComputer.workerd.fixture.ts", import.meta.url),
+      ],
+    ] as const) {
       const built = await build({
-        entryPoints: [NodeURL.fileURLToPath(new URL("./productHost/" + file, import.meta.url))],
+        entryPoints: [NodeURL.fileURLToPath(file)],
         bundle: true,
         minify: false,
         format: "esm",
@@ -58,7 +64,7 @@ describe.skipIf(programDir === undefined)("Product Claude retained RPC arguments
         external: ["cloudflare:workers", "node:*"],
         write: false,
       });
-      sources[name!] = built.outputFiles[0]!.text;
+      sources[name] = built.outputFiles[0]!.text;
     }
     const harness = createTestHarness({
       workers: [
