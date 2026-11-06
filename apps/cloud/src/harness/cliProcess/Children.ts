@@ -35,9 +35,13 @@ export async function createRemoteChildren(input: {
         spawn,
         signal,
         barrier: input.beforeRemote,
-        refresh: async () => {
-          await input.afterRemote();
-          leases.push(...(await input.kernel.leaseProcesses(1)));
+        refresh: async (remoteStarted, submitted) => {
+          try {
+            if (remoteStarted) await input.afterRemote();
+          } finally {
+            if (!submitted) leases.push(lease);
+            else leases.push(...(await input.kernel.leaseProcesses(1)));
+          }
         },
       });
       onChild(child, spawn);

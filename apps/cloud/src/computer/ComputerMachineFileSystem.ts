@@ -50,6 +50,10 @@ export function createComputerMachineFileSystem(
       state.generation === null && state.generationAbsent === true && inventory.isExcluded(path)
     );
   };
+  const runtimeRootsAbsent = () => {
+    const state = options.files.current();
+    return state.generation === null && state.generationAbsent === true;
+  };
   const liveParents = (request: ReturnType<typeof machineFileRequest>) =>
     liveSymlinkParents({
       unavailable: request.unavailable,
@@ -90,7 +94,9 @@ export function createComputerMachineFileSystem(
     readdirKnown(path) {
       options.signal.throwIfAborted();
       if (!imageIsAuthoritative(path)) return undefined;
-      return inventory.readdir(path)?.map((entry) => machineFileDirectoryEntry(entry.path, entry));
+      return inventory
+        .readdir(path, runtimeRootsAbsent())
+        ?.map((entry) => machineFileDirectoryEntry(entry.path, entry));
     },
     readlinkKnown(path) {
       options.signal.throwIfAborted();
@@ -143,8 +149,13 @@ export function createComputerMachineFileSystem(
     },
     async readdir(path, signal) {
       if (runtimePathIsAbsent(path, signal)) return undefined;
-      if (imageIsAuthoritative(path) && !inventory.needsLiveDirectory(path))
-        return inventory.readdir(path)?.map((entry) => machineFileMetadata(entry.path, entry));
+      if (
+        imageIsAuthoritative(path) &&
+        (!inventory.needsLiveDirectory(path) || runtimeRootsAbsent())
+      )
+        return inventory
+          .readdir(path, runtimeRootsAbsent())
+          ?.map((entry) => machineFileMetadata(entry.path, entry));
       const entries: KernelLowerFileSystemDirectoryEntry[] = [];
       const request = machineFileRequest(options.files, options.signal, signal);
       const parent = liveParents(request);
@@ -186,8 +197,11 @@ export function createComputerMachineFileSystem(
       const parent = liveParents(request);
       const routes = paths.map((path) => {
         if (runtimePathIsAbsent(path, signal)) return { kind: "absent" as const };
-        if (imageIsAuthoritative(path) && !inventory.needsLiveDirectory(path)) {
-          return { kind: "image" as const, entries: inventory.readdir(path) };
+        if (
+          imageIsAuthoritative(path) &&
+          (!inventory.needsLiveDirectory(path) || runtimeRootsAbsent())
+        ) {
+          return { kind: "image" as const, entries: inventory.readdir(path, runtimeRootsAbsent()) };
         }
         return { kind: "live" as const };
       });

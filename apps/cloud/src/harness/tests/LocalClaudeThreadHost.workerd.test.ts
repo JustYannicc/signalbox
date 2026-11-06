@@ -31,7 +31,7 @@ beforeAll(async () => {
   }
 }, 60_000);
 
-const makeHarness = (realOwners = false) =>
+const makeHarness = (realOwners = false, failedMetadata = false) =>
   createTestHarness({
     workers: [
       {
@@ -43,7 +43,7 @@ const makeHarness = (realOwners = false) =>
           compatibility_date: "2026-10-01",
           compatibility_flags: ["nodejs_compat"],
           worker_loaders: [{ binding: "LOADER" }],
-          vars: { ...ownerSources, REAL_OWNERS: realOwners },
+          vars: { ...ownerSources, REAL_OWNERS: realOwners, FAILED_METADATA: failedMetadata },
           durable_objects: {
             bindings: [
               { name: "USERS", class_name: "LocalUser" },
@@ -130,4 +130,20 @@ it("cancels a model request and joins separate CLI and Computer owners", async (
   const text = await response.text();
   expect(response.status, text).toBe(200);
   expect(JSON.parse(text)).toEqual({ ok: true, poolStopped: true, upstreamStopped: true });
+});
+
+it("joins real product owners cleanly when CLI metadata acquisition fails", async () => {
+  await harness.close();
+  harness = makeHarness(true, true);
+  await harness.listen();
+  const response = await harness.fetch("http://proof/");
+  const result = JSON.parse(await response.text()) as {
+    error: string;
+    observations: { kind: string; detail?: string }[];
+  };
+  expect(response.status).toBe(500);
+  expect(result.error).toMatch(/metadata|E2BIG|limit/i);
+  expect(result.error).not.toMatch(/failed-start cleanup failed|owners could not close/);
+  expect(result.observations.filter((event) => event.kind === "kernel-closed")).toHaveLength(1);
+  expect(result.observations.filter((event) => event.kind === "kernel-close-error")).toEqual([]);
 });

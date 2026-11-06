@@ -99,15 +99,25 @@ export function createPromisesApi(kernelFs: NodeFsBackend, runLeaf?: AsyncLeafRu
         path,
         names as string[],
         (name) => callFs("scandir", absolute, () => entry(name)),
-        (name) =>
-          runAsync(
-            fsOperation(
-              "scandir",
-              absolute,
-              leaf(() => entry(name)),
-            ),
-            runLeaf,
-          ),
+        async (name) => {
+          const stat = await operations.lstat(
+            `${absolute.endsWith("/") ? absolute : `${absolute}/`}${name}`,
+          );
+          return nodeDirent(
+            {
+              name,
+              type: stat.isDirectory()
+                ? "directory"
+                : stat.isSymbolicLink()
+                  ? "symlink"
+                  : stat.isCharacterDevice()
+                    ? "character"
+                    : "file",
+            },
+            pathString(path),
+            options.encoding ?? "utf8",
+          );
+        },
         bufferSize,
       );
     },

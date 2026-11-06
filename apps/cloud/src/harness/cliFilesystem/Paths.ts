@@ -18,7 +18,7 @@ export class CliFilePaths {
     return this.#cwd;
   }
   absolute(path: string) {
-    return NodePath.posix.resolve(this.#cwd, path);
+    return path.startsWith("/") ? path : `${this.#cwd}/${path}`;
   }
   get policy() {
     return this.#policy();
@@ -50,16 +50,18 @@ export class CliFilePaths {
         const entry = this.#files.metadata(current);
         if (entry.stat.type !== "directory") throw kernelError("ENOTDIR");
         this.assertAccess(entry.stat, 1);
-        current = NodePath.posix.join(current, components[index]!);
+        const component = components[index]!;
+        if (component === ".") continue;
+        if (component === "..") {
+          current = NodePath.posix.dirname(current);
+          continue;
+        }
+        current = NodePath.posix.join(current, component);
         const child = this.#files.metadata(current);
         if (child.stat.type === "symlink" && (follow || index !== components.length - 1)) {
           if (child.target === undefined) throw kernelError("EIO");
           return resolve(
-            NodePath.posix.resolve(
-              NodePath.posix.dirname(current),
-              child.target,
-              ...components.slice(index + 1),
-            ),
+            `${child.target.startsWith("/") ? child.target : `${NodePath.posix.dirname(current)}/${child.target}`}/${components.slice(index + 1).join("/")}`,
             depth + 1,
           );
         }
@@ -73,7 +75,10 @@ export class CliFilePaths {
     const absolute = this.absolute(path);
     const parent = this.resolve(NodePath.posix.dirname(absolute));
     if (this.#files.metadata(parent).stat.type !== "directory") throw kernelError("ENOTDIR");
-    return NodePath.posix.join(parent, NodePath.posix.basename(absolute));
+    const name = NodePath.posix.basename(absolute);
+    return name === "." || name === ".."
+      ? this.resolve(absolute)
+      : NodePath.posix.join(parent, name);
   }
   chdir(path: string) {
     const directory = this.resolve(path);

@@ -32,6 +32,7 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
   readonly #pending = new Set<Promise<unknown>>();
   readonly #cancelled = new Map<string, unknown>();
   readonly #fds = new Set<number>();
+  readonly #publicFds = new Set<number>();
   readonly #children = new Map<string, NodeChildControl>();
   readonly #sdkFiles;
   readonly #leases;
@@ -87,6 +88,17 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
   }
   call(request: KernelSyscallRequest) {
     return this.#run(request.operationId ?? crypto.randomUUID(), async (signal) => {
+      const descriptorCall =
+        request.name.startsWith("fd_") ||
+        request.name === "fchmod" ||
+        ((request.name === "stat_metadata" || request.name === "chown") &&
+          Number(request.args[1]) === 0);
+      const allowed = (fd: number) => fd >= 0 && (fd <= 2 || this.#publicFds.has(fd));
+      if (
+        (descriptorCall && !allowed(Number(request.args[0]))) ||
+        (request.name === "fd_renumber" && !this.#publicFds.has(Number(request.args[1])))
+      )
+        return { kind: "return" as const, value: 8, regions: [] };
       const host = createKernelSyscallHost({
         filesystem: this.#resources.storage.files,
         args: this.#configuration.process.identity.argv,
@@ -101,8 +113,10 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
       });
       try {
         const result = await host.call(request);
-        if (result.kind === "return" && result.value === 0 && request.name === "fd_close")
+        if (result.kind === "return" && result.value === 0 && request.name === "fd_close") {
           this.#fds.delete(Number(request.args[0]));
+          this.#publicFds.delete(Number(request.args[0]));
+        }
         if (result.kind === "return" && result.value === 0 && request.name === "path_open") {
           const pointer = Number(request.args[8]);
           const region = result.regions.find(
@@ -116,10 +130,13 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
             4,
           ).getUint32(0, true);
           this.#fds.add(fd);
+          this.#publicFds.add(fd);
         }
         if (result.kind === "return" && result.value === 0 && request.name === "fd_renumber") {
           this.#fds.delete(Number(request.args[0]));
+          this.#publicFds.delete(Number(request.args[0]));
           this.#fds.add(Number(request.args[1]));
+          this.#publicFds.add(Number(request.args[1]));
         }
         return result;
       } finally {
@@ -213,6 +230,7 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
         KernelOpenFlags.O_PATH | KernelOpenFlags.O_DIRECTORY,
       );
       this.#fds.add(fd);
+      this.#publicFds.add(fd);
       ids.push(fd);
     }
     return ids;
@@ -302,6 +320,7 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
         if (this.#resources.storage.files.descriptors.has(fd))
           this.#resources.storage.files.close(fd);
       this.#fds.clear();
+      this.#publicFds.clear();
       this.#snapshot = undefined;
       const failures = results.flatMap((result) =>
         result.status === "rejected" ? [result.reason] : [],

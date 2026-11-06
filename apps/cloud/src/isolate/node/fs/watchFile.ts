@@ -139,6 +139,13 @@ export function createWatchFile(kernelFs: NodeFsBackend) {
         try {
           current = sample(kernelFs, filename);
         } catch (error) {
+          if (
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "ESTALE"
+          )
+            return;
           watcher.stop();
           watcher.emit("error", error);
           return;

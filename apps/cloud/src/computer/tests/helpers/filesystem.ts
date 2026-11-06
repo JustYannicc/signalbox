@@ -60,6 +60,7 @@ export function createTestFilesystem(
   return {
     filesystem,
     storage,
+    persistenceRevision: () => inodes.changeGeneration(),
     close() {
       filesystem.dispose();
       database.close();

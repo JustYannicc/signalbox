@@ -1,117 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { createCliFileBackend } from "../../harness/ClaudeCliFileSystem.ts";
-import { ClaudeCliKernelOwner } from "../../harness/ClaudeCliKernelOwner.ts";
-import { createNodeFs } from "../../isolate/NodeFs.ts";
-import { KernelProcessTable } from "../../kernel/KernelProcessTable.ts";
-import { KernelWakeRegistry } from "../../kernel/KernelWakeRegistry.ts";
-import { createKernelSessionStdio } from "../../kernel/KernelSessionStdio.ts";
-import { createTestFilesystem } from "./helpers/filesystem.ts";
-import type { KernelSyscallRequest } from "../../kernel/KernelSyscallPort.ts";
+import { cliFileBackendFixture as fixture } from "./helpers/cliFileBackend.ts";
 
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
-
-async function fixture(byteLimit = 128, paths = ["/sync"], posix = false) {
-  const owned = createTestFilesystem(
-    undefined,
-    posix
-      ? {
-          credentials: { uid: 1000, gid: 1000, euid: 1000, egid: 1000 },
-          umask: 0o022,
-        }
-      : undefined,
-  );
-  const canonical = createNodeFs(owned.filesystem).fs;
-  canonical.writeFileSync("/sync", "before");
-  canonical.writeFileSync("/async", "remote");
-  const wakes = new KernelWakeRegistry();
-  const processes = new KernelProcessTable({ wakes });
-  const lifetime = new AbortController();
-  const stdio = createKernelSessionStdio(wakes, lifetime.signal);
-  const owner = new ClaudeCliKernelOwner(
-    {
-      storage: { files: owned.filesystem },
-      processes,
-      stdio,
-      commands: () => {
-        throw new Error("Filesystem test cannot execute a process");
-      },
-      compatibilityRevision: () => owned.filesystem.changeGeneration()!,
-    },
-    {
-      process: {
-        identity: {
-          version: "v24.21.0",
-          versions: { node: "24.21.0" },
-          platform: "linux",
-          arch: "x64",
-          homedir: "/",
-          tmpdir: "/",
-          pid: 1,
-          ppid: 0,
-          execPath: "/cli",
-          argv0: "cli",
-          argv: ["cli"],
-        },
-        env: {},
-        bun: { main: "/cli", version: "1.3.11", revision: "test" },
-      },
-    },
-    lifetime.signal,
-    128,
-  );
-  const requests: KernelSyscallRequest[] = [];
-  let failWrites = false;
-  const kernel = new Proxy(owner, {
-    get(target, property) {
-      if (property === "call")
-        return (request: KernelSyscallRequest) => {
-          requests.push(request);
-          if (failWrites && request.name === "fd_write")
-            return Promise.resolve({ kind: "return" as const, value: 29, regions: [] });
-          return target.call(request);
-        };
-      const value: unknown = Reflect.get(target, property);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-  const files = await createCliFileBackend(
-    {
-      kernel,
-      cwd: "/",
-      rootDescriptor: owner.rootDescriptor,
-      posix: owned.filesystem.posixPolicy,
-      workingSet: { byteLimit, metadataLimit: 128, pathByteLimit: 256, paths },
-    },
-    lifetime.signal,
-  ).catch(async (cause) => {
-    await owner.dispose();
-    await processes.dispose();
-    await stdio.dispose();
-    wakes.dispose();
-    owned.close();
-    throw cause;
-  });
-  return {
-    files,
-    fs: createNodeFs(files.backend).fs,
-    canonical,
-    requests,
-    failWrites() {
-      failWrites = true;
-    },
-    async close() {
-      try {
-        await files.close();
-      } finally {
-        await owner.dispose();
-        await processes.dispose();
-        await stdio.dispose();
-        wakes.dispose();
-        owned.close();
-      }
-    },
-  };
-}
 
 describe("CLI filesystem public adapter", () => {
   it("serves sync bytes from explicit prefetch while async reads use the authoritative syscall port", async () => {
@@ -151,9 +41,8 @@ describe("CLI filesystem public adapter", () => {
     try {
       f.fs.writeFileSync("/new", "new bytes");
       expect(f.fs.readFileSync("/new", "utf8")).toBe("new bytes");
-      expect(() => f.fs.statSync("/new")).toThrow(
-        expect.objectContaining({ code: "CLI_FS_NOT_PREFETCHED" }),
-      );
+      expect(f.fs.statSync("/new").isFile()).toBe(true);
+      expect(f.fs.statSync("/new").ino).toBe(0);
       await f.files.barrier();
       expect(f.fs.statSync("/new", { bigint: true }).ino).toBe(
         f.canonical.statSync("/new", { bigint: true }).ino,

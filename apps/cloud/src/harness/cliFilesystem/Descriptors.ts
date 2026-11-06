@@ -4,6 +4,7 @@ import type { KernelStat } from "../../kernel/KernelFileSystem.ts";
 import type { createNodeFsSyscallClient } from "../../isolate/NodeFsSyscallClient.ts";
 import type { CliFileWorkingSet } from "./WorkingSet.ts";
 import type { CliFilePaths } from "./Paths.ts";
+import type { CliContentView } from "./Content.ts";
 
 interface ReadView {
   path: string;
@@ -13,6 +14,7 @@ interface ReadView {
   offset: bigint;
   release: () => void;
   stat: KernelStat;
+  content?: CliContentView | undefined;
 }
 
 /** IDs are issued by Computer. These read views never allocate or authorize a descriptor. */
@@ -45,14 +47,37 @@ export class CliDescriptorViews {
   }
   observeOpen(fd: number, path: string, flags: number, stat: KernelStat) {
     const parsed = parseOpenFlags(flags);
+    let canonical = path;
+    let content: CliContentView | undefined;
+    try {
+      canonical = this.#paths.resolve(path);
+      const metadata = this.#files.metadata(canonical).stat;
+      if (
+        metadata.ino === stat.ino &&
+        metadata.dev === stat.dev &&
+        this.#files.hasContent(canonical)
+      )
+        content = this.#files.view(canonical);
+    } catch (cause) {
+      if (
+        !(
+          typeof cause === "object" &&
+          cause !== null &&
+          "code" in cause &&
+          ["ENOENT", "ESTALE", "CLI_FS_NOT_PREFETCHED"].includes(String(cause.code))
+        )
+      )
+        throw cause;
+    }
     this.#views.set(fd, {
-      path,
+      path: canonical,
       flags,
       readable: !parsed.pathOnly && parsed.accessMode !== 1,
       writable: !parsed.pathOnly && parsed.accessMode !== 0,
       offset: 0n,
       stat,
-      release: () => {},
+      ...(content === undefined ? {} : { content }),
+      release: content?.release ?? (() => {}),
     });
   }
   observeClose(fd: number) {
@@ -62,6 +87,9 @@ export class CliDescriptorViews {
   observeOffset(fd: number, offset: bigint) {
     const view = this.#views.get(fd);
     if (view !== undefined) view.offset = offset;
+  }
+  isPublic(fd: number) {
+    return this.#views.has(fd);
   }
   get(fd: number) {
     this.#files.assertCurrent();
@@ -127,7 +155,13 @@ export class CliDescriptorViews {
       this.#files.updateMetadata({ path: canonical, pending: true, stat });
       this.#files.replaceContent(canonical, new Uint8Array(0));
     }
-    const release = readable && stat.type === "file" ? this.#files.pin(canonical) : () => {};
+    if (parsed.truncate && !this.#files.hasContent(canonical))
+      this.#files.replaceContent(canonical, new Uint8Array(0));
+    const content =
+      stat.type === "file" && (readable || this.#files.hasContent(canonical))
+        ? this.#files.view(canonical)
+        : undefined;
+    const release = content?.release ?? (() => {});
     try {
       this.#files.writes.enqueue(0, async () => {
         const opened = await this.#remote.call("open", [canonical, flags, mode]);
@@ -146,6 +180,7 @@ export class CliDescriptorViews {
         writable,
         offset: 0n,
         stat,
+        ...(content === undefined ? {} : { content }),
         release,
       });
       if (parsed.truncate) this.truncate(fd, 0n);
@@ -183,28 +218,47 @@ export class CliDescriptorViews {
   }
   stat(fd: number): KernelStat {
     const view = this.get(fd);
-    const metadata = this.#files.metadata(view.path);
-    if (
-      metadata.pending ||
-      metadata.stat.ino !== view.stat.ino ||
-      metadata.stat.dev !== view.stat.dev
-    )
-      throw Object.assign(new Error("Descriptor metadata needs asynchronous refresh"), {
-        code: "CLI_FS_NOT_PREFETCHED",
-      });
-    return metadata.stat;
+    const metadata = this.#files.entries.find((item) =>
+      item.pending
+        ? item.path === view.path
+        : view.stat.ino !== 0n &&
+          item.stat.ino === view.stat.ino &&
+          item.stat.dev === view.stat.dev,
+    );
+    return (
+      metadata?.stat ?? {
+        ...view.stat,
+        ...(view.content === undefined ? {} : { size: BigInt(view.content.size) }),
+      }
+    );
+  }
+  unlink(path: string) {
+    const entry = this.#files.metadata(path);
+    for (const view of this.#views.values())
+      if (
+        view.path === path ||
+        (!entry.pending && view.stat.ino === entry.stat.ino && view.stat.dev === entry.stat.dev)
+      )
+        view.stat = { ...view.stat, nlink: view.stat.nlink > 0n ? view.stat.nlink - 1n : 0n };
+  }
+  rename(from: string, to: string) {
+    for (const view of this.#views.values()) {
+      if (view.path === from || view.path.startsWith(`${from}/`))
+        view.path = to + view.path.slice(from.length);
+      else if (view.path === to)
+        view.stat = { ...view.stat, nlink: view.stat.nlink > 0n ? view.stat.nlink - 1n : 0n };
+    }
   }
   read(fd: number, target: Uint8Array, position: bigint | null) {
     const view = this.get(fd);
     if (!view.readable) throw kernelError("EBADF");
-    const entry = this.#files.metadata(view.path);
-    if (entry.stat.ino !== view.stat.ino || entry.stat.dev !== view.stat.dev)
-      throw Object.assign(new Error("Descriptor content needs refresh"), {
+    if (view.content === undefined)
+      throw Object.assign(new Error("Descriptor content was not prefetched"), {
         code: "CLI_FS_NOT_PREFETCHED",
       });
     const offset = position ?? view.offset;
     if (offset < 0n || offset > BigInt(Number.MAX_SAFE_INTEGER)) throw kernelError("EINVAL");
-    const count = this.#files.copyInto(view.path, target, Number(offset));
+    const count = view.content.copyInto(target, Number(offset));
     if (position === null) {
       const next = offset + BigInt(count);
       this.#files.writes.enqueue(0, async () => {
@@ -217,7 +271,7 @@ export class CliDescriptorViews {
   write(fd: number, source: Uint8Array, position: bigint | null) {
     const view = this.get(fd);
     if (!view.writable) throw kernelError("EBADF");
-    const previous = this.#files.metadata(view.path).stat.size;
+    const previous = this.stat(fd).size;
     const append = (view.flags & KernelOpenFlags.O_APPEND) !== 0;
     const offset = append ? previous : (position ?? view.offset);
     if (offset < 0n || offset > BigInt(Number.MAX_SAFE_INTEGER - source.byteLength))
@@ -241,14 +295,17 @@ export class CliDescriptorViews {
       false,
       () => {
         bytes = source.slice();
-        this.#files.replaceWith(view.path, size, (next) => {
-          this.#files.copyInto(view.path, next, 0);
+        if (view.content === undefined)
+          throw Object.assign(new Error("Descriptor content was not prefetched"), {
+            code: "CLI_FS_NOT_PREFETCHED",
+          });
+        view.content.replace(size, (next) => {
+          view.content!.copyInto(next, 0);
           next.set(bytes, Number(offset));
         });
       },
     );
-    const metadata = this.#files.metadata(view.path);
-    this.#files.updateMetadata({ ...metadata, stat: { ...metadata.stat, size: BigInt(size) } });
+    this.#projectSize(view, BigInt(size));
     if (position === null) view.offset = offset + BigInt(source.byteLength);
     return source.byteLength;
   }
@@ -263,35 +320,86 @@ export class CliDescriptorViews {
       },
       false,
       () => {
-        this.#files.replaceWith(view.path, Number(size), (next) => {
-          if (next.byteLength > 0) this.#files.copyInto(view.path, next, 0);
+        if (view.content === undefined)
+          throw Object.assign(new Error("Descriptor content was not prefetched"), {
+            code: "CLI_FS_NOT_PREFETCHED",
+          });
+        view.content.replace(Number(size), (next) => {
+          if (next.byteLength > 0) view.content!.copyInto(next, 0);
         });
       },
     );
-    const metadata = this.#files.metadata(view.path);
-    this.#files.updateMetadata({ ...metadata, stat: { ...metadata.stat, size } });
+    this.#projectSize(view, size);
+  }
+  #projectSize(view: ReadView, size: bigint) {
+    for (const current of this.#views.values())
+      if (
+        current === view ||
+        (view.stat.ino !== 0n &&
+          current.stat.ino === view.stat.ino &&
+          current.stat.dev === view.stat.dev)
+      )
+        current.stat = { ...current.stat, size };
+    for (const entry of this.#files.entries)
+      if (
+        entry.pending
+          ? entry.path === view.path
+          : view.stat.ino !== 0n &&
+            entry.stat.ino === view.stat.ino &&
+            entry.stat.dev === view.stat.dev
+      )
+        this.#files.updateMetadata({ ...entry, stat: { ...entry.stat, size } });
+  }
+  releaseNamedContent() {
+    for (const view of this.#views.values()) {
+      const named = this.#files.entries.some(
+        (entry) =>
+          !entry.pending && entry.stat.ino === view.stat.ino && entry.stat.dev === view.stat.dev,
+      );
+      if (!named) continue;
+      view.release();
+      view.release = () => {};
+      view.content = undefined;
+    }
   }
   async refresh() {
     for (const [fd, view] of this.#views) {
+      const previous = view.stat;
       view.stat = await this.#remote.fstat(fd);
-      view.release();
-      view.release = () => {};
-      try {
-        const canonical = this.#paths.resolve(view.path);
-        const entry = this.#files.metadata(canonical);
-        if (entry.stat.ino !== view.stat.ino || entry.stat.dev !== view.stat.dev) continue;
-        view.path = canonical;
-        if (view.readable && view.stat.type === "file") view.release = this.#files.pin(canonical);
-      } catch (cause) {
-        if (
-          !(
-            typeof cause === "object" &&
-            cause !== null &&
-            "code" in cause &&
-            ["ENOENT", "CLI_FS_NOT_PREFETCHED"].includes(String(cause.code))
-          )
-        )
-          throw cause;
+      const entry = this.#files.entries.find(
+        (item) =>
+          !item.pending && item.stat.ino === view.stat.ino && item.stat.dev === view.stat.dev,
+      );
+      if (entry !== undefined) {
+        view.path = entry.path;
+        view.release();
+        view.release = () => {};
+        view.content = undefined;
+        if (this.#files.hasContent(entry.path)) {
+          view.content = this.#files.view(entry.path);
+          view.release = view.content.release;
+        }
+      } else if (
+        view.content !== undefined &&
+        (previous.size !== view.stat.size ||
+          previous.mtimeNs !== view.stat.mtimeNs ||
+          previous.ctimeNs !== view.stat.ctimeNs)
+      ) {
+        const content = view.content;
+        const size = Number(view.stat.size);
+        if (!Number.isSafeInteger(size)) throw kernelError("EFBIG");
+        await content.refill(size, async (bytes) => {
+          let offset = 0;
+          while (offset < size) {
+            const count = await this.#remote.read(
+              fd,
+              bytes.subarray(offset, Math.min(size, offset + 1024 * 1024)),
+              BigInt(offset),
+            );
+            if (count === 0) throw kernelError("EIO");
+            offset += count;
+          }
+        });
       }
     }
   }

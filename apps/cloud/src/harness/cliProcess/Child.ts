@@ -48,7 +48,7 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
     readonly spawn: NodeChildProcessSpawn;
     readonly signal: AbortSignal;
     readonly barrier: () => Promise<void>;
-    readonly refresh: () => Promise<void>;
+    readonly refresh: (remoteStarted: boolean, submitted: boolean) => Promise<void>;
   }) {
     super();
     this.#kernel = options.kernel;
@@ -118,12 +118,14 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
   }
   async #run() {
     let remoteStarted = false;
+    let submitted = false;
     try {
       this.#signal.throwIfAborted();
       await this.#barrier();
       remoteStarted = true;
       this.#signal.throwIfAborted();
       const { signal: _signal, ...spawn } = this.#spawn;
+      submitted = true;
       this.#remote = await this.#kernel.spawn(this.#id, this.#lease.handle, spawn);
       this.pid = this.#remote.pid;
       if (this.#signal.aborted) this.kill(this.#spawn.killSignal);
@@ -175,9 +177,9 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
               }),
           );
         await Promise.all(closed);
-        if (remoteStarted) {
+        {
           try {
-            await this.#refresh();
+            await this.#refresh(remoteStarted, submitted);
           } catch (cause) {
             this.#report(cause);
           }

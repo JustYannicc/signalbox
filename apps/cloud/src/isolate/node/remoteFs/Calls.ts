@@ -43,6 +43,10 @@ export class NodeFsSyscalls {
         ...(kernelOpenFlags === undefined ? {} : { kernelOpenFlags }),
       });
       frame.accept(response);
+      if (name === "path_open" && signal?.aborted) {
+        const fd = frame.u32(Number(args[8]));
+        await this.call(new SyscallFrame(), "fd_close", [fd]);
+      }
       signal?.throwIfAborted();
       return frame;
     } finally {

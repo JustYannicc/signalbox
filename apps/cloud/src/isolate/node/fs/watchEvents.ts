@@ -128,6 +128,8 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
         ),
       };
     } catch (cause) {
+      if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ESTALE")
+        return;
       const error = nodeFsError(cause, "watch", this.#displayPath) as Error;
       this.close();
       this.emit("error", error);

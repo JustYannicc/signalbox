@@ -8,6 +8,8 @@ import * as NodeEvents from "node:events";
 import * as Yaml from "yaml";
 import type { createNodeProcess } from "../../../isolate/NodeProcess.ts";
 import { createClaudeCliFacetClass } from "../../ClaudeCliSession.ts";
+import { createNodeFsSyscallClient } from "../../../isolate/NodeFsSyscallClient.ts";
+import { KernelOpenFlags } from "../../../kernel/KernelOpenFlags.ts";
 import { nativeFixture } from "./native.ts";
 import type { OrdinaryOwnerEnvironment } from "./ordinaryOwnerObservation.fixture.ts";
 let nonce: string | undefined;
@@ -23,15 +25,25 @@ export const ClaudeCliFacet = createClaudeCliFacetClass<OrdinaryOwnerEnvironment
       () => sessionId,
       "claude-opus-5-5",
     );
+    const calibration = createNodeFsSyscallClient({
+      syscalls: configuration.kernel,
+      rootDescriptor: configuration.rootDescriptor,
+      posix: configuration.posix !== undefined,
+      signal: new AbortController().signal,
+    });
+    const descriptor = await calibration.open(
+      "/",
+      KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_DIRECTORY,
+    );
     const beforeCall = performance.now();
     const position = await configuration.kernel.call({
       name: "fd_tell",
-      args: [configuration.rootDescriptor, 0],
+      args: [descriptor, 0],
       memorySize: 8,
       regions: [{ pointer: 0, direction: "out", length: 8, bytes: new Uint8Array(0) }],
     });
     if (position.kind !== "return" || position.value !== 0)
-      throw new Error("CLI-to-kernel RPC calibration could not read the root descriptor offset");
+      throw new Error("CLI-to-kernel RPC calibration could not read the opened descriptor offset");
     await env.OBSERVE.record({
       kind: "kernel-rpc-latency",
       realm: realm(),
@@ -42,6 +54,7 @@ export const ClaudeCliFacet = createClaudeCliFacetClass<OrdinaryOwnerEnvironment
         outputBytes: position.regions.reduce((count, region) => count + region.bytes.byteLength, 0),
       }),
     });
+    await calibration.close(descriptor);
     const reports = new Set<Promise<void>>();
     const record = (kind: string, cause: unknown) => {
       const pending = env.OBSERVE.record({

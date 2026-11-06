@@ -114,12 +114,19 @@ export async function createCliFileBackend(
   };
   const reconcile = () =>
     (reconciling ??= (async () => {
-      if (remoteMutations > 0) return;
-      await refresh();
-      await prefetch(input.workingSet.paths);
-      await views.refresh();
-      views.lease(await kernel.leaseDescriptors(views.missingLeases));
-      refreshedVersion = files.writes.version;
+      while (remoteMutations === 0) {
+        await files.writes.flush();
+        const committedVersion = files.writes.version;
+        const requested = [...new Set([...input.workingSet.paths, ...files.paths])];
+        await refresh();
+        views.releaseNamedContent();
+        await prefetch(requested);
+        await views.refresh();
+        views.lease(await kernel.leaseDescriptors(views.missingLeases));
+        if (committedVersion !== files.writes.version) continue;
+        refreshedVersion = committedVersion;
+        return;
+      }
     })().finally(() => {
       reconciling = undefined;
     }));
@@ -129,6 +136,7 @@ export async function createCliFileBackend(
     if (refreshedVersion !== files.writes.version) await reconcile();
   };
   const beforeRemote = async () => {
+    while (reconciling !== undefined) await reconciling;
     await barrier();
     remoteMutations++;
     files.invalidate();
@@ -147,6 +155,21 @@ export async function createCliFileBackend(
       (name === "open" &&
         (Number(args[1]) & (KernelOpenFlags.O_CREAT | KernelOpenFlags.O_TRUNC)) !== 0);
     const operation = (async () => {
+      if (
+        [
+          "close",
+          "read",
+          "write",
+          "fstat",
+          "fchmod",
+          "fchown",
+          "fsetTimes",
+          "ftruncate",
+          "sync",
+        ].includes(name) &&
+        !(Number(args[0]) >= 0 && (Number(args[0]) <= 2 || views.isPublic(Number(args[0]))))
+      )
+        throw kernelError("EBADF");
       await barrier();
       const values: unknown[] = [...args];
       const pathIndices =
@@ -207,13 +230,16 @@ export async function createCliFileBackend(
   views.lease(await kernel.leaseDescriptors(views.missingLeases));
   const metadata = (path: string, follow = true) => {
     const entry = files.metadata(paths.resolve(path, follow));
-    if (entry.pending)
-      throw Object.assign(new Error("Synchronous metadata needs its creation barrier"), {
-        code: "CLI_FS_NOT_PREFETCHED",
-      });
     return entry.stat;
   };
-  const mutations = createCliMetadataMutations({ files, paths, remote, policy: () => policy });
+  const mutations = createCliMetadataMutations({
+    files,
+    paths,
+    remote,
+    policy: () => policy,
+    unlinkViews: (path) => views.unlink(path),
+    renameViews: (from, to) => views.rename(from, to),
+  });
   const descriptorMetadata = (
     fd: number,
     commit: () => Promise<void>,

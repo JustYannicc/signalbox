@@ -43,6 +43,19 @@ const Base = createClaudeKernelFacetClass<OrdinaryOwnerEnvironment>(
 );
 
 export class ClaudeKernelFacet extends Base {
+  override async close() {
+    try {
+      await super.close();
+      await this.env.OBSERVE.record({ kind: "kernel-closed", realm: realm() });
+    } catch (cause) {
+      await this.env.OBSERVE.record({
+        kind: "kernel-close-error",
+        realm: realm(),
+        detail: String(cause),
+      });
+      throw cause;
+    }
+  }
   override async captureTranscripts(
     ...args: Parameters<InstanceType<typeof Base>["captureTranscripts"]>
   ) {

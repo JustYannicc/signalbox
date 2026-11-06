@@ -2,6 +2,7 @@ import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
 import type { KernelStat } from "../../kernel/KernelFileSystem.ts";
 import { CliWorkingSetBudget, CliWorkingSetLimit } from "./Budget.ts";
 import { CliWriteBarrier } from "./WriteBarrier.ts";
+import { CliContentStore } from "./Content.ts";
 
 export interface CliFileMetadata {
   readonly path: string;
@@ -17,25 +18,12 @@ export interface CliFileWorkingSetOptions {
   readonly pathByteLimit: number;
 }
 
-interface Content {
-  bytes: Uint8Array;
-  release: () => void;
-  pinned: number;
-}
-
-function miss(path: string) {
-  return Object.assign(new Error(`Synchronous CLI file was not prefetched: ${path}`), {
-    code: "CLI_FS_NOT_PREFETCHED",
-    path,
-  });
-}
-
 /** A revision-bound read view. It owns no filesystem, descriptor allocator or storage engine. */
 export class CliFileWorkingSet {
   readonly #budget;
   readonly writes;
   readonly #metadata = new Map<string, CliFileMetadata>();
-  readonly #content = new Map<string, Content>();
+  readonly #content;
   readonly #prefetching = new Set<string>();
   readonly #options;
   #revision: number | undefined;
@@ -48,6 +36,7 @@ export class CliFileWorkingSet {
     this.#options = options;
     this.#budget = new CliWorkingSetBudget(options.byteLimit);
     this.writes = new CliWriteBarrier(this.#budget);
+    this.#content = new CliContentStore(this.#budget, options.byteLimit);
   }
 
   get bytes() {
@@ -62,7 +51,7 @@ export class CliFileWorkingSet {
     return [...this.#metadata.values()];
   }
   get paths() {
-    return [...this.#content.keys()];
+    return this.#content.paths;
   }
   assertCurrent() {
     this.writes.assertHealthy();
@@ -93,7 +82,7 @@ export class CliFileWorkingSet {
         },
       });
     }
-    if (this.#revision !== revision) this.evictAll();
+    if (this.#revision !== revision) this.#content.invalidate();
     this.#metadata.clear();
     for (const [path, entry] of metadata) this.#metadata.set(path, entry);
     this.#revision = revision;
@@ -127,22 +116,19 @@ export class CliFileWorkingSet {
 
   content(path: string) {
     this.assertCurrent();
-    const entry = this.#content.get(path);
-    if (entry === undefined) throw miss(path);
-    this.#content.delete(path);
-    this.#content.set(path, entry);
-    return entry.bytes.slice();
+    return this.#content.content(path);
   }
-
   copyInto(path: string, target: Uint8Array, offset: number) {
     this.assertCurrent();
-    if (!Number.isSafeInteger(offset) || offset < 0)
-      throw new RangeError("Invalid CLI file offset");
-    const content = this.#content.get(path);
-    if (content === undefined) throw miss(path);
-    const count = Math.min(target.byteLength, Math.max(0, content.bytes.byteLength - offset));
-    target.set(content.bytes.subarray(offset, offset + count));
-    return count;
+    return this.#content.copyInto(path, target, offset);
+  }
+  view(path: string) {
+    this.assertCurrent();
+    return this.#content.view(path);
+  }
+  hasContent(path: string) {
+    this.assertCurrent();
+    return this.#content.has(path);
   }
 
   async prefetch(
@@ -160,8 +146,7 @@ export class CliFileWorkingSet {
     if (this.#content.has(path)) return;
     if (this.#prefetching.has(path))
       throw Object.assign(new Error(`CLI prefetch is already active: ${path}`), { code: "EBUSY" });
-    this.#makeRoom(size);
-    const release = this.#budget.reserve(size);
+    const release = this.#content.reserve(size);
     this.#prefetching.add(path);
     try {
       const bytes = new Uint8Array(size);
@@ -183,7 +168,7 @@ export class CliFileWorkingSet {
         throw Object.assign(new Error("Computer revision changed during prefetch"), {
           code: "ESTALE",
         });
-      this.#content.set(path, { bytes, release, pinned: 0 });
+      this.#content.put(path, bytes, release);
     } catch (cause) {
       release();
       throw cause;
@@ -193,103 +178,66 @@ export class CliFileWorkingSet {
   }
 
   pin(path: string) {
-    this.assertCurrent();
-    const content = this.#content.get(path);
-    if (content === undefined) throw miss(path);
-    content.pinned++;
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      content.pinned--;
-    };
+    return this.view(path).release;
   }
-
   replaceContent(path: string, bytes: Uint8Array) {
     this.replaceWith(path, bytes.byteLength, (target) => target.set(bytes));
   }
-
   replaceWith(path: string, length: number, fill: (target: Uint8Array) => void) {
     this.assertCurrent();
-    const previous = this.#content.get(path);
-    const pinned = previous?.pinned ?? 0;
-    // The old and replacement buffers coexist while a write is prepared.
-    if (previous !== undefined) previous.pinned++;
-    let release: (() => void) | undefined;
-    try {
-      this.#makeRoom(length);
-      release = this.#budget.reserve(length);
-      const owned = new Uint8Array(length);
-      fill(owned);
-      if (previous !== undefined) previous.release();
-      if (previous === undefined) this.#content.set(path, { bytes: owned, release, pinned });
-      else {
-        previous.bytes = owned;
-        previous.release = release;
-      }
-    } catch (cause) {
-      release?.();
-      throw cause;
-    } finally {
-      if (previous !== undefined) previous.pinned--;
-    }
+    this.#content.replace(path, length, fill);
   }
-
-  updateMetadata(entry: CliFileMetadata | { readonly path: string; readonly removed: true }) {
+  project(
+    updates: readonly (CliFileMetadata | { readonly path: string; readonly removed: true })[],
+    moves: readonly { from: string; to: string; copy?: true }[] = [],
+  ) {
     this.assertCurrent();
-    if ("removed" in entry) {
-      this.#metadata.delete(entry.path);
-      this.evict(entry.path);
-      return;
+    const next = new Map(this.#metadata);
+    const removed: string[] = [];
+    for (const entry of updates) {
+      if ("removed" in entry) {
+        next.delete(entry.path);
+        removed.push(entry.path);
+      } else
+        next.set(entry.path, {
+          ...entry,
+          stat: {
+            ...entry.stat,
+            ...(entry.stat.posix === undefined ? {} : { posix: { ...entry.stat.posix } }),
+          },
+        });
     }
-    if (!this.#metadata.has(entry.path) && this.#metadata.size >= this.#options.metadataLimit)
-      throw new CliWorkingSetLimit(1, 0);
-    if (
-      !entry.path.startsWith("/") ||
-      new TextEncoder().encode(entry.path).byteLength > this.#options.pathByteLimit
-    )
-      throw new TypeError("Invalid CLI metadata path");
-    this.#metadata.set(entry.path, {
-      ...entry,
-      stat: {
-        ...entry.stat,
-        ...(entry.stat.posix === undefined ? {} : { posix: { ...entry.stat.posix } }),
-      },
-    });
+    if (next.size > this.#options.metadataLimit)
+      throw new CliWorkingSetLimit(next.size, this.#options.metadataLimit);
+    for (const path of next.keys())
+      if (
+        !path.startsWith("/") ||
+        new TextEncoder().encode(path).byteLength > this.#options.pathByteLimit
+      )
+        throw new TypeError("Invalid CLI metadata path");
+    return () => {
+      this.#content.project(removed, moves);
+      this.#metadata.clear();
+      for (const [path, entry] of next) this.#metadata.set(path, entry);
+    };
   }
-
+  updateMetadata(entry: CliFileMetadata | { readonly path: string; readonly removed: true }) {
+    this.project([entry])();
+  }
   invalidate() {
     this.#invalid = true;
-    this.evictAll();
   }
   evict(path: string) {
-    const content = this.#content.get(path);
-    if (content === undefined) return;
-    if (content.pinned > 0)
-      throw Object.assign(new Error(`CLI file is in use: ${path}`), { code: "EBUSY" });
-    this.#content.delete(path);
-    content.release();
+    this.#content.evict(path);
   }
   evictAll() {
-    for (const content of this.#content.values()) {
-      content.release();
-      content.bytes = new Uint8Array(0);
-    }
-    this.#content.clear();
-  }
-  #makeRoom(size: number) {
-    for (const [path, content] of this.#content) {
-      if (size <= this.#options.byteLimit - this.bytes) return;
-      if (content.pinned === 0) this.evict(path);
-    }
-    if (size > this.#options.byteLimit - this.bytes)
-      throw new CliWorkingSetLimit(size, this.#options.byteLimit - this.bytes);
+    this.#content.invalidate();
   }
   async close() {
     try {
       await this.writes.close();
     } finally {
-      this.evictAll();
+      this.#content.close();
       this.#metadata.clear();
       this.#invalid = true;
     }

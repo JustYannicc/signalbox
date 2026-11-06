@@ -12,6 +12,8 @@ export function createCliMetadataMutations(options: {
   readonly paths: CliFilePaths;
   readonly remote: ReturnType<typeof createNodeFsSyscallClient>;
   readonly policy: () => KernelPosixOptions | undefined;
+  readonly unlinkViews: (path: string) => void;
+  readonly renameViews: (from: string, to: string) => void;
 }) {
   const { files, paths, remote } = options;
   const entry = (path: string, follow = true) => files.metadata(paths.resolve(path, follow));
@@ -105,67 +107,105 @@ export function createCliMetadataMutations(options: {
     mkdir(path: string, mode = 0o777) {
       const created = createMetadata(path, "directory", mode);
       absent(created.path);
-      files.writes.enqueue(0, async () => {
-        await remote.mkdir(created.path, mode);
-      });
-      files.updateMetadata(created);
+      const project = files.project([created]);
+      files.writes.enqueue(0, () => remote.mkdir(created.path, mode), false, project);
     },
     rmdir(path: string) {
       const current = entry(path, false);
       if (current.stat.type !== "directory") throw kernelError("ENOTDIR");
       if (files.children(current.path).length > 0) throw kernelError("ENOTEMPTY");
-      files.writes.enqueue(0, async () => {
-        await remote.rmdir(current.path);
-      });
-      files.updateMetadata({ path: current.path, removed: true });
+      const project = files.project([{ path: current.path, removed: true }]);
+      files.writes.enqueue(0, () => remote.rmdir(current.path), false, project);
     },
     unlink(path: string) {
       const current = entry(path, false);
       if (current.stat.type === "directory") throw kernelError("EISDIR");
-      files.writes.enqueue(0, async () => {
-        await remote.unlink(current.path);
-      });
-      files.updateMetadata({ path: current.path, removed: true });
+      const aliases = files.entries.filter(
+        (item) =>
+          !item.pending &&
+          !current.pending &&
+          item.path !== current.path &&
+          item.stat.ino === current.stat.ino &&
+          item.stat.dev === current.stat.dev,
+      );
+      const project = files.project([
+        { path: current.path, removed: true },
+        ...aliases.map((item) => ({
+          ...item,
+          stat: { ...item.stat, nlink: item.stat.nlink - 1n },
+        })),
+      ]);
+      files.writes.enqueue(
+        0,
+        () => remote.unlink(current.path),
+        false,
+        () => {
+          options.unlinkViews(current.path);
+          project();
+        },
+      );
     },
     symlink(target: string, path: string) {
       const created = createMetadata(path, "symlink", 0o777, target);
       absent(created.path);
-      files.writes.enqueue(0, async () => {
-        await remote.symlink(target, created.path);
-      });
-      files.updateMetadata(created);
+      const project = files.project([created]);
+      files.writes.enqueue(0, () => remote.symlink(target, created.path), false, project);
     },
     link(source: string, destination: string) {
-      const current = entry(source);
+      const current = entry(source, false);
       const target = paths.destination(destination);
       absent(target);
-      files.writes.enqueue(0, async () => {
-        await remote.link(current.path, target);
-      });
-      for (const item of files.entries)
-        if (item.stat.ino === current.stat.ino && item.stat.dev === current.stat.dev)
-          files.updateMetadata({ ...item, stat: { ...item.stat, nlink: item.stat.nlink + 1n } });
-      files.updateMetadata({
-        ...current,
-        path: target,
-        stat: { ...current.stat, nlink: current.stat.nlink + 1n },
-      });
+      const changed = files.entries.filter(
+        (item) =>
+          item.path === current.path ||
+          (!item.pending &&
+            !current.pending &&
+            item.stat.ino === current.stat.ino &&
+            item.stat.dev === current.stat.dev),
+      );
+      const project = files.project(
+        [
+          ...changed.map((item) => ({
+            ...item,
+            stat: { ...item.stat, nlink: item.stat.nlink + 1n },
+          })),
+          { ...current, path: target, stat: { ...current.stat, nlink: current.stat.nlink + 1n } },
+        ],
+        [{ from: current.path, to: target, copy: true }],
+      );
+      files.writes.enqueue(0, () => remote.link(current.path, target), false, project);
     },
     rename(source: string, destination: string) {
       const current = entry(source, false);
       const target = paths.destination(destination);
       if (current.path === target) return;
-      files.writes.enqueue(0, async () => {
-        await remote.rename(current.path, target);
-      });
-      // All descendants are metadata only; the owner performs the actual atomic rename.
+      if (target.startsWith(`${current.path}/`)) throw kernelError("EINVAL");
       const changed = files.entries.filter(
         (item) => item.path === current.path || item.path.startsWith(`${current.path}/`),
       );
-      for (const item of changed) {
-        files.updateMetadata({ ...item, path: target + item.path.slice(current.path.length) });
-        files.updateMetadata({ path: item.path, removed: true });
-      }
+      const moves = changed.map((item) => ({
+        from: item.path,
+        to: target + item.path.slice(current.path.length),
+      }));
+      const project = files.project(
+        [
+          ...changed.map((item) => ({ path: item.path, removed: true as const })),
+          ...changed.map((item) => ({
+            ...item,
+            path: target + item.path.slice(current.path.length),
+          })),
+        ],
+        moves,
+      );
+      files.writes.enqueue(
+        0,
+        () => remote.rename(current.path, target),
+        false,
+        () => {
+          options.renameViews(current.path, target);
+          project();
+        },
+      );
     },
     createMetadata,
   };

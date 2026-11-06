@@ -94,11 +94,22 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
             : name === "access" || name === "realpath" || name === "chmod"
               ? 0
               : undefined;
-        if (pathIndex !== undefined && args[pathIndex] !== 0)
-          yield options.filesystem.prepareLowerPaths(
-            [memory.string(args[pathIndex]!, args[pathIndex + 1]!)],
-            options.signal,
-          );
+        if (pathIndex !== undefined && args[pathIndex] !== 0) {
+          const path = memory.string(args[pathIndex]!, args[pathIndex + 1]!);
+          const anchored =
+            name === "chown" && !path.startsWith("/")
+              ? options.filesystem.fork(options.filesystem.descriptors)
+              : undefined;
+          try {
+            anchored?.fchdir(args[0]!);
+            yield options.filesystem.prepareLowerPaths(
+              [anchored === undefined ? path : `${anchored.cwd}/${path}`],
+              options.signal,
+            );
+          } finally {
+            anchored?.dispose();
+          }
+        }
         return Reflect.apply(handler, metadata, args);
       });
     }

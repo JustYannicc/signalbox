@@ -23,7 +23,15 @@ import {
   readKernelFileTransfer,
 } from "../../../kernel/KernelFileTransfer.ts";
 
-export const run = (mode: "turns" | "cancel-prepare" | "dispose-child" = "turns") =>
+export const run = (
+  mode:
+    | "turns"
+    | "cancel-prepare"
+    | "dispose-child"
+    | "no-machine"
+    | "failed-metadata"
+    | "cancel-child-leases" = "turns",
+) =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -98,8 +106,11 @@ export const run = (mode: "turns" | "cancel-prepare" | "dispose-child" = "turns"
         const read = Promise.withResolvers<string>();
         const grep = Promise.withResolvers<string>();
         let launches = 0;
+        const startupFailure = Promise.withResolvers<never>();
+        void startupFailure.promise.catch(() => {});
         const Cli = createClaudeCliFacetClass(() => ({
           ...original.native.process,
+          reportCliStartupFailure: (cause) => startupFailure.reject(cause),
           loadRelease: async (bridge, signal) => {
             const release = await original.native.process.loadRelease(bridge, signal);
             if (typeof release !== "object" || release === null)
@@ -110,10 +121,25 @@ export const run = (mode: "turns" | "cancel-prepare" | "dispose-child" = "turns"
                 launches++;
                 const fs = bridge.require("node:fs") as ReturnType<typeof createNodeFs>["fs"];
                 const text = String(fs.readFileSync("/workspace/file.txt", "utf8"));
+                if (mode === "no-machine") {
+                  NodeAssert.ok(fs.readdirSync("/").includes("workspace"));
+                  NodeAssert.ok((await fs.promises.readdir("/")).includes("workspace"));
+                }
                 read.resolve(text);
                 const children = bridge.require("node:child_process") as ReturnType<
                   typeof createNodeChildProcess
                 >;
+                if (mode === "cancel-child-leases") {
+                  for (let index = 0; index < 40; index++) {
+                    const cancelled = new AbortController();
+                    cancelled.abort(new Error("pre-start cancellation"));
+                    const child = children.spawn("/bin/rg", [], { signal: cancelled.signal });
+                    await new Promise<void>((resolve) => {
+                      child.on("error", () => {});
+                      child.once("close", () => resolve());
+                    });
+                  }
+                }
                 const child = children.spawn("/bin/rg", ["--line-number", "before", "file.txt"], {
                   cwd: "/workspace",
                 });
@@ -141,7 +167,22 @@ export const run = (mode: "turns" | "cancel-prepare" | "dispose-child" = "turns"
             nowNs: original.files.nowNs,
             persistencePorts: original.files.persistencePorts,
           },
-          machine: original.commands.machine,
+          machine: (identity) => {
+            const machine = original.commands.machine(identity);
+            if (mode !== "no-machine") return machine;
+            return {
+              ...machine,
+              files: {
+                current: () => ({ generation: null, generationAbsent: true, pristine: false }),
+                markExecuted: async () => {
+                  throw new Error("No machine may execute");
+                },
+                lookup: async () => {
+                  throw new Error("Drive startup must not query a machine");
+                },
+              },
+            };
+          },
           hydrate: async (binding) => {
             canonical = binding.files;
             if (mode === "cancel-prepare") {
@@ -162,7 +203,10 @@ export const run = (mode: "turns" | "cancel-prepare" | "dispose-child" = "turns"
           release: original.release,
           releaseVariants: original.releaseVariants,
           programs: original.programs,
-          machineInventory: original.machineInventory,
+          machineInventory:
+            mode === "no-machine"
+              ? { ...original.machineInventory, excludedRoots: ["/dev", "/proc", "/tmp"] }
+              : original.machineInventory,
           files: {
             identity: original.files.identity,
             database: original.files.database,
@@ -180,7 +224,10 @@ export const run = (mode: "turns" | "cancel-prepare" | "dispose-child" = "turns"
           native: {
             sdkHost: original.native.sdkHost,
             cliHost: cli,
-            workingSet: workingSetPolicy,
+            workingSet:
+              mode === "failed-metadata"
+                ? { ...workingSetPolicy, metadataLimit: 1 }
+                : workingSetPolicy,
             process: {
               identity: original.native.process.identity,
               env: original.native.process.env,
@@ -214,6 +261,19 @@ export const run = (mode: "turns" | "cancel-prepare" | "dispose-child" = "turns"
           NodeAssert.throws(() => canonical!.stat("/bin/bash"), /disposed/);
           return;
         }
+        if (mode === "failed-metadata") {
+          const failed = yield* Effect.exit(
+            host.open({
+              session: input.sessionInput,
+              bootAttemptId: "failed-metadata",
+            }),
+          );
+          NodeAssert.equal(failed._tag, "Failure");
+          yield* host.dispose;
+          NodeAssert.equal(launches, 0);
+          NodeAssert.throws(() => canonical!.stat("/workspace/file.txt"), /disposed/);
+          return;
+        }
         const prior = yield* dataForDriver(ProviderDriverKind.make("claudeAgent"));
         const session = yield* host.open({
           session: input.sessionInput,
@@ -244,8 +304,19 @@ export const run = (mode: "turns" | "cancel-prepare" | "dispose-child" = "turns"
           NodeAssert.throws(() => canonical!.stat("/workspace/file.txt"), /disposed/);
           return;
         }
+        if (mode === "no-machine") {
+          yield* session.turn({ turn: input.turn, access: input.access });
+          NodeAssert.equal(yield* Effect.promise(() => read.promise), "before\n");
+          NodeAssert.equal(yield* Effect.promise(() => grep.promise), "file.txt:1:before\n");
+          NodeAssert.equal(launches, 1);
+          yield* host.dispose;
+          NodeAssert.throws(() => canonical!.stat("/workspace/file.txt"), /disposed/);
+          return;
+        }
         yield* session.retireCheckpointAccess;
-        yield* exerciseContinuation({ ...input, session });
+        yield* exerciseContinuation({ ...input, session }).pipe(
+          Effect.race(Effect.promise(() => startupFailure.promise)),
+        );
         NodeAssert.equal(yield* Effect.promise(() => read.promise), "before\n");
         NodeAssert.equal(yield* Effect.promise(() => grep.promise), "file.txt:1:before\n");
         NodeAssert.equal(launches, 1);

@@ -42,7 +42,7 @@ export function createRemoteDirectories(
       await calls.call(
         frame,
         "path_link",
-        [calls.root, 1, from.pointer, from.length, calls.root, to.pointer, to.length],
+        [calls.root, 0, from.pointer, from.length, calls.root, to.pointer, to.length],
         signal,
       );
     },

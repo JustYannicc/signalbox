@@ -76,7 +76,7 @@ export async function runAsync<T>(
     try {
       const step = next.value;
       if (!step.cleanup) signal?.throwIfAborted();
-      const call = () => (step.asynchronous ?? step.call)(signal);
+      const call = () => (step.asynchronous ?? step.call)(step.cleanup ? undefined : signal);
       value = runLeaf && !step.cleanup ? await runLeaf(call, signal) : await call();
     } catch (error) {
       next = operation.throw(error);

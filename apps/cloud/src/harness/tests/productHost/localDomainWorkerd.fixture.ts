@@ -41,6 +41,7 @@ interface Env {
   readonly OBSERVATIONS: DurableObjectNamespace<OrdinaryObservations>;
   readonly LOADER: WorkerLoader;
   readonly REAL_OWNERS?: boolean;
+  readonly FAILED_METADATA?: boolean;
   readonly KERNEL_SOURCE: string;
   readonly CLI_SOURCE: string;
   readonly COMPUTER_SOURCE: string;
@@ -132,6 +133,12 @@ const ThreadBase = createLocalClaudeThreadObject<Env, string>((ctx, env, configu
       });
       host = {
         ...host,
+        native: {
+          ...host.native,
+          workingSet: env.FAILED_METADATA
+            ? { ...host.native.workingSet, metadataLimit: 1 }
+            : host.native.workingSet,
+        },
         runtime: {
           loader: env.LOADER,
           facets: ctx.facets,
