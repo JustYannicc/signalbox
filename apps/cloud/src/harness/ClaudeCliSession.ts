@@ -47,7 +47,7 @@ function cliStdio(
   configuration: ClaudeCliInitialization,
   files: NodeFsBackend,
   signal: AbortSignal,
-  barrier: () => Promise<void>,
+  commit: () => Promise<void>,
 ) {
   const observers = new Set<(fd: 0 | 1 | 2, bytes: Uint8Array) => void>();
   const notify = (fd: 0 | 1 | 2, bytes: Uint8Array) => {
@@ -61,7 +61,7 @@ function cliStdio(
   };
   const io = {
     ...configuration.io,
-    stdout: observedWritable(configuration.io.stdout, (bytes) => notify(1, bytes), barrier),
+    stdout: observedWritable(configuration.io.stdout, (bytes) => notify(1, bytes), commit),
     stderr: observedWritable(configuration.io.stderr, (bytes) => notify(2, bytes)),
   };
   const stdio: NodeHarnessStdio = {
@@ -79,7 +79,7 @@ function cliStdio(
       };
     },
     finish: async () => {
-      await barrier();
+      await commit();
       await configuration.kernel.finish();
     },
     dispose: async () => {
@@ -161,11 +161,11 @@ export function createClaudeCliFacetClass<Env>(
           configuration,
           backend.backend,
           this.#lifetime.signal,
-          backend.barrier,
+          backend.commit,
         );
         const callbacks = configuration.callbacks;
         const modelTransport = async (request: Request) => {
-          await backend.barrier();
+          await backend.commit();
           const id = crypto.randomUUID();
           const abort = () => {
             void callbacks.cancel(id, request.signal.reason).catch(() => undefined);
@@ -255,11 +255,11 @@ export function createClaudeCliFacetClass<Env>(
             },
           },
           async (event, toolUseId) => {
-            await backend.barrier();
+            await backend.commit();
             await callbacks.observeTool(event, toolUseId);
           },
           async (request) => {
-            await backend.barrier();
+            await backend.commit();
             await callbacks.continuation(request);
           },
         );

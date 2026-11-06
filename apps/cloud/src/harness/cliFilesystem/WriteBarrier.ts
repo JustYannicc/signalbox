@@ -20,6 +20,16 @@ export class CliWriteBarrier {
   }
 
   enqueue(bytes: number, commit: () => Promise<void>, cleanup = false, prepare?: () => void) {
+    this.#append(bytes, commit, cleanup, prepare);
+    this.#version++;
+  }
+
+  /** Orders descriptor bookkeeping that changes no path, metadata or bytes, so the view stays current. */
+  order(commit: () => Promise<void>, cleanup = false) {
+    this.#append(0, commit, cleanup);
+  }
+
+  #append(bytes: number, commit: () => Promise<void>, cleanup: boolean, prepare?: () => void) {
     this.assertHealthy();
     const release = this.budget.reserve(bytes);
     try {
@@ -28,7 +38,6 @@ export class CliWriteBarrier {
       release();
       throw cause;
     }
-    this.#version++;
     this.#tail = this.#tail.then(async () => {
       try {
         if (this.#failure === undefined || cleanup) await commit();

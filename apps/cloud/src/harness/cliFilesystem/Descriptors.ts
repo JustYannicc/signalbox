@@ -166,7 +166,7 @@ export class CliDescriptorViews {
         : undefined;
     const release = content?.release ?? (() => {});
     try {
-      this.#files.writes.enqueue(0, async () => {
+      const openRemote = async () => {
         const opened = await this.#remote.call("open", [canonical, flags, mode]);
         try {
           await this.#remote.move(opened, fd);
@@ -174,7 +174,10 @@ export class CliDescriptorViews {
           await this.#remote.close(opened);
           throw cause;
         }
-      });
+      };
+      // Only a creation changes the view: its inode identity arrives at the next refresh.
+      if (created) this.#files.writes.enqueue(0, openRemote);
+      else this.#files.writes.order(openRemote);
       this.#leased.shift();
       this.#views.set(fd, {
         path: canonical,
@@ -197,27 +200,23 @@ export class CliDescriptorViews {
     const view = this.get(fd);
     this.#views.delete(fd);
     view.release();
-    this.#files.writes.enqueue(
-      0,
-      async () => {
-        if (!this.#slots.has(fd)) {
-          await this.#remote.close(fd);
-          return;
-        }
-        const placeholder = await this.#remote.open(
-          "/",
-          KernelOpenFlags.O_PATH | KernelOpenFlags.O_DIRECTORY,
-        );
-        try {
-          await this.#remote.move(placeholder, fd);
-          await this.#reserve(fd);
-        } catch (cause) {
-          await this.#remote.close(placeholder);
-          throw cause;
-        }
-      },
-      true,
-    );
+    this.#files.writes.order(async () => {
+      if (!this.#slots.has(fd)) {
+        await this.#remote.close(fd);
+        return;
+      }
+      const placeholder = await this.#remote.open(
+        "/",
+        KernelOpenFlags.O_PATH | KernelOpenFlags.O_DIRECTORY,
+      );
+      try {
+        await this.#remote.move(placeholder, fd);
+        await this.#reserve(fd);
+      } catch (cause) {
+        await this.#remote.close(placeholder);
+        throw cause;
+      }
+    }, true);
     if (this.#slots.has(fd)) this.#leased.push(fd);
   }
   stat(fd: number): KernelStat {
@@ -263,7 +262,7 @@ export class CliDescriptorViews {
     const count = view.content.copyInto(target, Number(offset));
     if (position === null) {
       const next = offset + BigInt(count);
-      this.#files.writes.enqueue(0, async () => {
+      this.#files.writes.order(async () => {
         await this.#remote.seek(fd, next);
       });
       view.offset = next;

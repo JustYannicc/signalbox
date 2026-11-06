@@ -96,6 +96,50 @@ describe("CLI filesystem public adapter", () => {
     }
   });
 
+  it("finishes a view refresh while the CLI keeps reading synchronously", async () => {
+    // Each RPC hop lets the CLI run, so a refresh that restarted on reads would never finish.
+    let reads = 0;
+    let duringRefresh = () => {};
+    const f = await fixture(128, ["/sync"], false, { duringRefresh: () => duringRefresh() });
+    try {
+      duringRefresh = () => {
+        if (reads++ < 5) expect(f.fs.readFileSync("/sync", "utf8")).toBe("written");
+      };
+      f.fs.writeFileSync("/sync", "written");
+      const before = f.refreshes;
+      await f.files.barrier();
+      expect(f.refreshes - before).toBe(1);
+      expect(f.canonical.readFileSync("/sync", "utf8")).toBe("written");
+
+      const settled = f.refreshes;
+      expect(f.fs.readFileSync("/sync", "utf8")).toBe("written");
+      await f.files.barrier();
+      await f.fs.promises.stat("/sync");
+      expect(f.refreshes).toBe(settled);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("commits CLI output ordering without waiting for a view refresh", async () => {
+    const f = await fixture(128, ["/sync", "/async"]);
+    const held = f.holdNextPrefetch();
+    try {
+      f.fs.writeFileSync("/sync", "changed");
+      const refreshing = f.files.barrier();
+      await held.entered;
+      f.fs.writeFileSync("/async", "before output");
+      await f.files.commit();
+      expect(f.canonical.readFileSync("/async", "utf8")).toBe("before output");
+      held.release();
+      await refreshing;
+      expect(f.fs.readFileSync("/async", "utf8")).toBe("before output");
+    } finally {
+      held.release();
+      await f.close();
+    }
+  });
+
   it("keeps one descriptor offset across async and sync reads", async () => {
     const f = await fixture();
     try {

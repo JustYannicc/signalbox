@@ -22,6 +22,8 @@ export async function cliFileBackendFixture(
       fs: ReturnType<typeof createNodeFs>["fs"],
       files: import("../../../kernel/KernelFileSystem.ts").KernelFileSystem,
     ) => void;
+    /** Runs inside each view refresh, after it starts reading Computer metadata. */
+    readonly duringRefresh?: () => void;
   } = {},
 ) {
   const wakes = new KernelWakeRegistry();
@@ -82,8 +84,18 @@ export async function cliFileBackendFixture(
       }
     | undefined;
   let privateLease: number | undefined;
+  let refreshes = 0;
   const kernel = new Proxy(owner, {
     get(target, property) {
+      if (property === "metadata")
+        return async (...args: Parameters<ClaudeCliKernelOwner["metadata"]>) => {
+          const page = await target.metadata(...args);
+          if (args[0] === 0) {
+            refreshes++;
+            options.duringRefresh?.();
+          }
+          return page;
+        };
       if (property === "leaseDescriptors")
         return async (count: number) => {
           const ids = await target.leaseDescriptors(count);
@@ -143,6 +155,9 @@ export async function cliFileBackendFixture(
     rootDescriptor: owner.rootDescriptor,
     get privateLease() {
       return privateLease!;
+    },
+    get refreshes() {
+      return refreshes;
     },
     requests,
     holdNextPrefetch() {

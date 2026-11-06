@@ -112,6 +112,13 @@ export async function createCliFileBackend(
       for (const unpin of release) unpin();
     }
   };
+  let leasing: Promise<void> | undefined;
+  const refillLeases = () =>
+    (leasing ??= (async () => {
+      if (views.missingLeases > 0) views.lease(await kernel.leaseDescriptors(views.missingLeases));
+    })().finally(() => {
+      leasing = undefined;
+    }));
   const reconcile = () =>
     (reconciling ??= (async () => {
       while (remoteMutations === 0) {
@@ -122,7 +129,7 @@ export async function createCliFileBackend(
         views.releaseNamedContent();
         await prefetch(requested);
         await views.refresh();
-        views.lease(await kernel.leaseDescriptors(views.missingLeases));
+        await refillLeases();
         if (committedVersion !== files.writes.version) continue;
         refreshedVersion = committedVersion;
         return;
@@ -130,10 +137,16 @@ export async function createCliFileBackend(
     })().finally(() => {
       reconciling = undefined;
     }));
-  const barrier = async () => {
+  // Output needs only the CLI's own writes in Computer. A refresh re-reads the whole view across
+  // RPC and restarts after any change, so output that waited for it could wait indefinitely.
+  const commit = async () => {
     await files.writes.flush();
     await kernel.processState(paths.cwd, policy?.umask);
+  };
+  const barrier = async () => {
+    await commit();
     if (refreshedVersion !== files.writes.version) await reconcile();
+    else await refillLeases();
   };
   const beforeRemote = async () => {
     while (reconciling !== undefined) await reconciling;
@@ -236,7 +249,7 @@ export async function createCliFileBackend(
   };
   await refresh();
   await prefetch(input.workingSet.paths);
-  views.lease(await kernel.leaseDescriptors(views.missingLeases));
+  await refillLeases();
   const metadata = (path: string, follow = true) => {
     const entry = files.metadata(paths.resolve(path, follow));
     return entry.stat;
@@ -324,7 +337,7 @@ export async function createCliFileBackend(
     },
     sync: (fd, dataOnly = false) => {
       views.get(fd);
-      files.writes.enqueue(0, async () => {
+      files.writes.order(async () => {
         await remote.sync(fd, dataOnly);
       });
     },
@@ -378,6 +391,7 @@ export async function createCliFileBackend(
   };
   return {
     backend,
+    commit,
     barrier,
     beforeRemote,
     afterRemote,
