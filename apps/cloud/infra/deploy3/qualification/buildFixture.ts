@@ -235,9 +235,7 @@ export async function buildCombinedFixture(raw: unknown) {
         },
         turnJson: input.claudeRuntime.turnJson,
         seed: input.claudeRuntime.seed,
-        ...(input.claudeRuntime.workingSet === undefined
-          ? {}
-          : { workingSet: input.claudeRuntime.workingSet }),
+        workingSet: input.claudeRuntime.workingSet,
       },
       environmentPackages: environmentPackages.assets,
       facetSource: await NodeFSP.readFile(

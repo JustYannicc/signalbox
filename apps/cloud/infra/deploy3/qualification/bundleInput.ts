@@ -29,7 +29,7 @@ export const CombinedFixtureInput = Schema.Struct({
     model: NonEmpty,
     turnJson: Schema.Struct({ baseline: Schema.Array(NonEmpty), hooks: Schema.Array(NonEmpty) }),
     seed: ClaudeSeedConfiguration,
-    workingSet: Schema.optional(CliWorkingSetPolicy),
+    workingSet: CliWorkingSetPolicy,
   }),
 });
 

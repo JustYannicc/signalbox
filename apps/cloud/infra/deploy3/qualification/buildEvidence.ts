@@ -104,6 +104,7 @@ export function buildInputEvidence(input: typeof CombinedFixtureInput.Type) {
         hooks: input.claudeRuntime.turnJson.hooks.length,
       },
       seed: input.claudeRuntime.seed,
+      workingSet: input.claudeRuntime.workingSet,
     },
   };
 }

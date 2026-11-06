@@ -4,6 +4,7 @@ export const ROUTES = [
   { method: "POST", path: "/sequence/release" },
   { method: "GET", path: "/ready" },
   { method: "POST", path: "/observer-calibration" },
+  { method: "POST", path: "/claude/observer-calibration" },
   ...(["baseline", "hooks"] as const).map((variant) => ({
     method: "POST",
     path: `/claude/${variant}/calibration`,

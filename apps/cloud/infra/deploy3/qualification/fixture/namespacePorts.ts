@@ -67,6 +67,16 @@ export type QualifierShardPort = Rpc.DurableObjectBranded &
     modelRecoveryEvidence(runId: string): ReturnType<typeof readShardRecoveryEvidence>;
     placementReleaseEvidence(): ReturnType<typeof placementReleaseEvidence>;
     evidence(): ReturnType<typeof readShardExecutionEvidence>;
+    claudeObserverCalibration(): Promise<{
+      readonly identity: { readonly facetNonce: string };
+      readonly observed: {
+        readonly incarnation: string;
+        readonly invocationId: string;
+        readonly nativeStarted: false;
+      };
+      readonly loaderId: string;
+      readonly nativeStarted: false;
+    }>;
     claudeImportCalibration(variant: ClaudeVariant): Promise<{
       readonly identity: { readonly facetNonce: string };
       readonly observed: Awaited<ReturnType<typeof observeClaudePreparedImport>>;

@@ -51,6 +51,7 @@ function configuration() {
       home: "/workspace/.home/claude",
       cwd: "/workspace",
     },
+    workingSet: { byteLimit: 1024 * 1024, metadataLimit: 10_000, pathByteLimit: 4096 },
   };
 }
 

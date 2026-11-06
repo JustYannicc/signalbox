@@ -73,6 +73,8 @@ export async function syntheticBundleInput(
         hooks: turns("hooks"),
       },
       seed,
+      // The product's split-scenario CLI view policy; harness test fixtures are private to src.
+      workingSet: { byteLimit: 1024 * 1024, metadataLimit: 10_000, pathByteLimit: 4096 },
     },
   };
 }

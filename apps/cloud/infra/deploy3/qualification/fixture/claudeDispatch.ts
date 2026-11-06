@@ -39,8 +39,8 @@ export class ClaudeDispatch {
     const key = `claude/dispatch/${variant}/${step}`;
     assert(await this.#storage.get("ready"), "Readiness must precede Claude native dispatch");
     assert(
-      await this.#storage.get("observer/calibration"),
-      "Exact-build calibration must precede Claude native dispatch",
+      await this.#storage.get("observer/claude-calibration"),
+      "The Claude observer calibration must precede Claude native dispatch",
     );
     const index = CLAUDE_STEPS.indexOf(step);
     assert(index >= 0, "Unknown Claude qualifier step");
