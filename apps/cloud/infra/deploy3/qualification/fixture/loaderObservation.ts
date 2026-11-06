@@ -35,7 +35,9 @@ function checkPin(pin: ObserverLoaderPin): void {
     throw new TypeError("Observer loader pin is incomplete");
   if (
     pin.role === "facet" &&
-    !["CodexFacet", "ClaudeFacet", "ClaudeImportCalibrationFacet"].includes(pin.entrypoint)
+    !["CodexFacet", "ClaudeFacet", "ClaudeKernelFacet", "ClaudeImportCalibrationFacet"].includes(
+      pin.entrypoint,
+    )
   )
     throw new TypeError("Facet observer must wrap an actual product facet");
   if (pin.role === "command" && !/^(?:default|[A-Za-z_$][\w$]*)$/.test(pin.entrypoint))
@@ -105,12 +107,16 @@ function shim(main: string, original: string, runId: string, pin: ObserverLoader
     pin.role === "facet"
       ? `identity(...args) { return this.__observeSync("identity", args, () => super.identity(...args)); }
   isolateNonceProbe(...args) { return this.__observeSync("isolateNonceProbe", args, () => ({ facetNonce: this.facetNonce, loaderId: pin.loaderId })); }
-  async startFresh(...args) { return this.__observe("startFresh", args, () => super.startFresh(...args)); }
+${
+  pin.entrypoint === "ClaudeKernelFacet"
+    ? ""
+    : `  async startFresh(...args) { return this.__observe("startFresh", args, () => super.startFresh(...args)); }
   async prepareInert(...args) { return this.__observe("prepareInert", args, () => super.prepareInert(...args)); }
   async run(...args) { return this.__observe("run", args, () => super.run(...args)); }
   async loadedPreparedRelease(...args) { return this.__observe("loadedPreparedRelease", args, () => super.loadedPreparedRelease(...args)); }
   async dispose(...args) { return this.__observe("dispose", args, () => super.dispose(...args)); }
   async observerCalibration(...args) { return this.__observe("observerCalibration", args, () => super.observerCalibration(...args)); }`
+}`
       : `async run(...args) { return this.__observe("run", args, () => super.run(...args)); }`;
   const exportLine =
     pin.role === "facet"
