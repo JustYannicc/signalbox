@@ -49,7 +49,6 @@ function qualifyGrepCommand(command: KernelCommand): GnuCommandQualification {
   let pattern = false;
   let recursive = false;
   let files = 0;
-  let dotRoot = false;
   for (let index = 1; index < command.argv.length; index++) {
     const argument = command.argv[index]!;
     if (options && argument === "--") {
@@ -72,7 +71,10 @@ function qualifyGrepCommand(command: KernelCommand): GnuCommandQualification {
       continue;
     }
     if (options && argument.startsWith("-") && argument !== "-") {
-      if (!/^-[GEinvr]+$/.test(argument)) {
+      if (
+        !/^-[GEilnvr]+$/.test(argument) &&
+        !(/^-A\d{1,3}$/.test(argument) && Number(argument.slice(2)) <= 100)
+      ) {
         return machine(
           "unqualified-option",
           "GNU grep option " + argument + " is outside the isolate subset",
@@ -85,18 +87,11 @@ function qualifyGrepCommand(command: KernelCommand): GnuCommandQualification {
       pattern = true;
     } else {
       files++;
-      dotRoot ||= argument === ".";
     }
   }
   if (!pattern) return machine("unqualified-script", "GNU grep needs one explicit pattern");
   if (recursive && files === 0) {
     return machine("unqualified-script", "Recursive GNU grep needs an explicit directory operand");
-  }
-  if (recursive && dotRoot && files > 1) {
-    return machine(
-      "unqualified-script",
-      "Recursive GNU grep from . with other operands cannot preserve isolate path output",
-    );
   }
   return QUALIFIED;
 }

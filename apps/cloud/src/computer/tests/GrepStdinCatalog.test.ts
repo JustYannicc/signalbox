@@ -1,10 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off - reads only the pinned BusyBox grep artifact.
+// @effect-diagnostics nodeBuiltinImport:off - reads only the pinned Ugrep WASM artifact.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeProcess from "node:process";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
-import { KERNEL_BUSYBOX_ARTIFACT } from "../../kernel/KernelBusyboxProgram.ts";
+import { KERNEL_UGREP_ARTIFACT } from "../../kernel/KernelUgrepProgram.ts";
 import { createChildBusybox } from "../ChildBusybox.ts";
 import { commandGatewayFixture, readAll } from "./CommandGatewayAdmissionFixture.ts";
 import { exited } from "./ChildBusyboxFixture.ts";
@@ -21,23 +21,23 @@ const command = (args: readonly string[]) => ({
 });
 
 const artifact =
-  NodeProcess.env.SIGNALBOX_BUSYBOX_ARTIFACT ??
-  new URL("../../../../../.t3/1071/programs/busybox.wasm", import.meta.url);
+  NodeProcess.env.SIGNALBOX_UGREP_ARTIFACT ??
+  new URL("../../../../../.t3/1071/programs/ugrep.wasm", import.meta.url);
 const available = NodeFS.existsSync(artifact);
-if (!available && NodeProcess.env.SIGNALBOX_REQUIRE_BUSYBOX_ARTIFACT === "1")
-  throw new Error("The grep catalog test requires the pinned WASI artifact");
+if (!available && NodeProcess.env.SIGNALBOX_REQUIRE_UGREP_ARTIFACT === "1")
+  throw new Error("The grep catalog test requires the pinned Ugrep WASI artifact");
 let module: WebAssembly.Module;
 if (available) {
   const bytes = NodeFS.readFileSync(artifact);
   if (
-    bytes.length !== KERNEL_BUSYBOX_ARTIFACT.bytes ||
-    NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== KERNEL_BUSYBOX_ARTIFACT.sha256
+    bytes.length !== KERNEL_UGREP_ARTIFACT.bytes ||
+    NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== KERNEL_UGREP_ARTIFACT.sha256
   )
-    throw new Error("The grep catalog artifact does not match its pin");
+    throw new Error("The Ugrep catalog artifact does not match its pin");
   module = new WebAssembly.Module(bytes);
 }
 
-describe.skipIf(!available)("pinned grep through the public command gateway", () => {
+describe.skipIf(!available)("pinned Ugrep grep through the public command gateway", () => {
   async function run(
     args: readonly string[],
     source: "stdin" | "file" = "stdin",
@@ -84,7 +84,12 @@ describe.skipIf(!available)("pinned grep through the public command gateway", ()
         ]);
         await fixture.gateway.drain();
         expect(fixture.machineSpawn).not.toHaveBeenCalled();
-        expect(dispatched).toEqual([{ executable: "/bin/grep", argv: captured.argv }]);
+        expect(dispatched).toEqual([
+          {
+            executable: "/bin/grep",
+            argv: ["grep", "--jobs=1", ...captured.argv.slice(1)],
+          },
+        ]);
         expect(fixture.capacity.active).toBe(0);
         return {
           status,

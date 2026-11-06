@@ -109,6 +109,7 @@ function persist() {
   if (reportPath) NodeFS.writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
 }
 async function runVector(vector: GrepSedVector) {
+  const expectedArgvs = expectedChildArgv(vector);
   const input = Object.freeze({
     executable: vector.executable,
     argv: Object.freeze([...vector.argv]),
@@ -130,7 +131,11 @@ async function runVector(vector: GrepSedVector) {
       if (artifact.bytes.byteLength !== expected.bytes || artifactHash !== expected.sha256) {
         throw new Error("Catalog selected a different child artifact for vector " + vector.id);
       }
-      const module = new WebAssembly.Module(artifact.bytes);
+      const moduleBytes = artifact.bytes.buffer.slice(
+        artifact.bytes.byteOffset,
+        artifact.bytes.byteOffset + artifact.bytes.byteLength,
+      ) as ArrayBuffer;
+      const module = new WebAssembly.Module(moduleBytes);
       localRuns.push({
         executable: childInput.command.executable,
         argv: [...childInput.command.argv],
@@ -216,13 +221,15 @@ async function runVector(vector: GrepSedVector) {
     if (stderrResult.status === "rejected")
       observed.stderrError = errorDetails(stderrResult.reason);
     if (stdinResult.status === "rejected") observed.stdinError = errorDetails(stdinResult.reason);
-    row.actualRoute = localRuns.length === 1 ? "isolate" : "machine";
+    row.actualRoute =
+      localRuns.length > 0 && fixture.machineSpawn.mock.calls.length === 0 ? "isolate" : "machine";
     row.machineSpawnCount = fixture.machineSpawn.mock.calls.length;
     row.observed = observed;
     const failures: string[] = [];
     if (qualification?.kind !== "qualified-isolate")
       failures.push("qualifier did not admit isolate execution");
-    if (localRuns.length !== 1) failures.push("pinned tool did not execute through child dispatch");
+    if (localRuns.length !== expectedArgvs.length)
+      failures.push("pinned tool dispatch count differs from the expected isolate roots");
     if (fixture.machineSpawn.mock.calls.length !== 0)
       failures.push("command spawned on the machine");
     if (row.filesystemCwd !== input.cwd)
@@ -231,11 +238,10 @@ async function runVector(vector: GrepSedVector) {
     if (stdoutResult.status === "rejected") failures.push("stdout stream rejected");
     if (stderrResult.status === "rejected") failures.push("stderr stream rejected");
     if (stdinResult.status === "rejected") failures.push("stdin write rejected");
-    if (localRuns.length === 1) {
-      const run = localRuns[0]!;
+    for (const [index, run] of localRuns.entries()) {
       if (run.executable !== input.executable)
         failures.push("catalog dispatched a different executable");
-      if (JSON.stringify(run.argv) !== JSON.stringify(expectedChildArgv(vector))) {
+      if (JSON.stringify(run.argv) !== JSON.stringify(expectedArgvs[index])) {
         failures.push("child argv differs from the exact form or its required BSD-to-GNU adapter");
       }
       if (run.cwd !== input.cwd) failures.push("child cwd changed");
@@ -306,4 +312,59 @@ it.each(vectors)(
 it("keeps the sed numeric range control in the local GNU sed isolate", async () => {
   const control = GREP_SED_VECTORS.find(({ id }) => id === 7)!;
   expect(await runVector(control)).toMatchObject({ failure: null, actualRoute: "isolate" });
+});
+
+it("keeps mixed recursive roots in the isolate with distinct path labels", async () => {
+  const vector: GrepSedVector = {
+    id: 10,
+    executable: "/bin/grep",
+    argv: [
+      "grep",
+      "-rn",
+      "needle",
+      ".",
+      "anon-search/nested",
+      "anon-search/nested/hit.txt",
+      "anon-search/nested/miss.txt",
+    ],
+    pathReplacements: {},
+    files: {
+      "anon-search/nested/hit.txt": "needle first\nquiet line\n",
+      "anon-search/nested/miss.txt": "nothing here\n",
+      "anon-search/root.txt": "needle root\nquiet line\n",
+    },
+    stdin: "",
+    expectedStdout:
+      "./anon-search/root.txt:1:needle root\n" +
+      "./anon-search/nested/hit.txt:1:needle first\n" +
+      "anon-search/nested/hit.txt:1:needle first\n" +
+      "anon-search/nested/hit.txt:1:needle first\n",
+    expectedExitCode: 0,
+  };
+  const row = await runVector(vector);
+  expect(row.failure).toBeNull();
+  expect(row.actualRoute).toBe("isolate");
+  expect(row.machineSpawnCount).toBe(0);
+});
+
+it("lists only matching include files for recursive grep in the isolate", async () => {
+  const vector: GrepSedVector = {
+    id: 11,
+    executable: "/bin/grep",
+    argv: ["grep", "-rl", "needle", "--include=*.md", "anon-search/tree"],
+    pathReplacements: {},
+    files: {
+      "anon-search/tree/hit.md": "needle matched\nquiet\n",
+      "anon-search/tree/nested/hit.md": "needle nested\n",
+      "anon-search/tree/miss.md": "quiet only\n",
+      "anon-search/tree/skip.txt": "needle excluded by include\n",
+    },
+    stdin: "",
+    expectedStdout: "anon-search/tree/hit.md\nanon-search/tree/nested/hit.md\n",
+    expectedExitCode: 0,
+  };
+  const row = await runVector(vector);
+  expect(row.failure).toBeNull();
+  expect(row.actualRoute).toBe("isolate");
+  expect(row.machineSpawnCount).toBe(0);
 });

@@ -155,17 +155,55 @@ export function expectedPin(vector: GrepSedVector) {
   return vector.executable === "/bin/sed" ? KERNEL_GNU_SED_ARTIFACT : KERNEL_UGREP_ARTIFACT;
 }
 
-export function expectedChildArgv(vector: GrepSedVector) {
+export function expectedChildArgv(vector: GrepSedVector): readonly (readonly string[])[] {
   if (vector.executable === "/bin/grep") {
     const args = [...vector.argv];
-    const recursive = args
-      .slice(1)
-      .some((argument) => /^-[GEinvr]+$/.test(argument) && argument.includes("r"));
-    const rootFormat = recursive && args.at(-1) === "." ? ["--format=./%F%N%O%~"] : [];
-    return [args[0]!, "--jobs=1", ...rootFormat, ...args.slice(1)];
+    let options = true;
+    let pattern = false;
+    let recursive = false;
+    const operandIndexes: number[] = [];
+    for (let index = 1; index < args.length; index++) {
+      const argument = args[index]!;
+      if (options && argument === "--") {
+        options = false;
+        continue;
+      }
+      if (options && (argument === "--include" || argument === "--exclude-dir")) {
+        index++;
+        continue;
+      }
+      if (options && (argument.startsWith("--include=") || argument.startsWith("--exclude-dir="))) {
+        continue;
+      }
+      if (options && /^-A\d{1,3}$/.test(argument) && Number(argument.slice(2)) <= 100) continue;
+      if (options && /^-[GEilnvr]+$/.test(argument)) {
+        recursive ||= argument.includes("r");
+        continue;
+      }
+      if (!pattern) {
+        pattern = true;
+        continue;
+      }
+      operandIndexes.push(index);
+    }
+    const dotRoots = operandIndexes.filter((index) => args[index] === ".");
+    if (recursive && dotRoots.length > 0 && operandIndexes.length > 1) {
+      const operands = new Set(operandIndexes);
+      return operandIndexes.map((operandIndex) => {
+        const operand = args[operandIndex]!;
+        const rootArgs = args.filter((_, index) => !operands.has(index) || index === operandIndex);
+        const rootFormat = operand === "." ? ["--format=./%F%N%O%~"] : [];
+        return [rootArgs[0]!, "--jobs=1", ...rootFormat, "-H", ...rootArgs.slice(1)];
+      });
+    }
+    const rootFormat =
+      recursive && operandIndexes.length === 1 && args[operandIndexes[0]!] === "."
+        ? ["--format=./%F%N%O%~"]
+        : [];
+    return [[args[0]!, "--jobs=1", ...rootFormat, ...args.slice(1)]];
   }
-  if (vector.id !== 9) return vector.argv;
-  return ["sed", "-i", vector.argv[3]!, vector.argv[4]!];
+  if (vector.id !== 9) return [vector.argv];
+  return [["sed", "-i", vector.argv[3]!, vector.argv[4]!]];
 }
 
 export function errorDetails(error: unknown) {
