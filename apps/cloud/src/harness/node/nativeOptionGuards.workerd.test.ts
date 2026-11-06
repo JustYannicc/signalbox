@@ -53,6 +53,27 @@ it("rejects ignored native options while preserving fetch clients, context propa
     expect(await timer.json()).toEqual({
       results: ["ERR_SIGNALBOX_NODE_BUILTIN_UNSUPPORTED", "ABORT_ERR"],
     });
+    const jwk = await harness.fetch("http://proof/rsa-jwk");
+    const jwkBody = await jwk.text();
+    expect(jwk.status, jwkBody).toBe(200);
+    const roots = JSON.parse(jwkBody);
+    expect(roots.rsa).toBeGreaterThan(0);
+    expect(roots).toEqual({ rsa: roots.rsa, matched: roots.rsa, failures: [] });
+    const rsa = NodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const rsaJwk = await harness.fetch("http://proof/rsa-jwk-keys", {
+      method: "POST",
+      body: JSON.stringify({
+        privateKey: rsa.privateKey.export({ type: "pkcs8", format: "pem" }),
+        publicKey: rsa.publicKey.export({ type: "spki", format: "pem" }),
+      }),
+    });
+    const rsaJwkBody = await rsaJwk.text();
+    expect(rsaJwk.status, rsaJwkBody).toBe(200);
+    // Node's own JWK export is the contract.
+    expect(JSON.parse(rsaJwkBody)).toEqual({
+      publicKey: rsa.publicKey.export({ format: "jwk" }),
+      privateKey: rsa.privateKey.export({ format: "jwk" }),
+    });
     const crypto = await harness.fetch("http://proof/crypto-zlib");
     const cryptoBody = await crypto.text();
     expect(crypto.status, cryptoBody).toBe(200);

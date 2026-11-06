@@ -1,6 +1,7 @@
 import { markNodeBuiltinCapability } from "../../isolate/NodeBuiltinCapabilities.ts";
 import { NodeBuiltinUnsupportedError } from "../../isolate/NodeBuiltinFailure.ts";
 import { overrideNativeModule } from "./nativeModuleOverrides.ts";
+import { exportRsaJwkFromDer } from "./nativeCryptoRsaJwk.ts";
 
 export function guardWorkerdCrypto(module: object) {
   const invoke = (member: string, args: readonly unknown[]) => {
@@ -58,5 +59,14 @@ export function guardWorkerdCrypto(module: object) {
       },
     );
   }
+  // Public and private KeyObjects each share one export. Fixed keys reach both without
+  // generating randomness while the module loads. The all-zero Ed25519 seed is not a secret.
+  const zeroSeed = { kty: "OKP", crv: "Ed25519", x: "O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik" };
+  exportRsaJwkFromDer([
+    invoke("createPublicKey", [{ key: zeroSeed, format: "jwk" }]) as object,
+    invoke("createPrivateKey", [
+      { key: { ...zeroSeed, d: "A".repeat(43) }, format: "jwk" },
+    ]) as object,
+  ]);
   return overrideNativeModule(module, replacements);
 }
