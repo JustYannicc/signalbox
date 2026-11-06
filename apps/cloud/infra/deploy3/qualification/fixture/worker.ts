@@ -96,7 +96,7 @@ export default class QualifierWorker extends WorkerEntrypoint<QualifierEnvironme
     if (
       this.env.OBSERVER_GUARD_ONLY === "1" &&
       request.method === "POST" &&
-      !["/observer-calibration", "/export/blob"].includes(path)
+      !["/observer-calibration", "/claude/observer-calibration", "/export/blob"].includes(path)
     ) {
       const body = await request.text();
       assert(body === "{}", "Qualifier mutations require an empty JSON object");
@@ -104,7 +104,13 @@ export default class QualifierWorker extends WorkerEntrypoint<QualifierEnvironme
     try {
       const response =
         this.env.OBSERVER_GUARD_ONLY === "1" &&
-        !["/ready", "/observer-calibration", "/export/page", "/export/blob"].includes(path)
+        ![
+          "/ready",
+          "/observer-calibration",
+          "/claude/observer-calibration",
+          "/export/page",
+          "/export/blob",
+        ].includes(path)
           ? Response.json({ guardOnly: true, method: request.method, path, nativeStarted: false })
           : await proof(this.env).fetch(request);
       const headers = new Headers(response.headers);

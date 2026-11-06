@@ -34,6 +34,7 @@ interface StepReceipt {
 }
 export type { WriterRelease } from "./proofRecords.ts";
 import type { WriterRelease } from "./proofRecords.ts";
+import { CLAUDE_OBSERVER_CALIBRATION_PATH } from "./observerCalibrationFacet.ts";
 const sequence: readonly Step[] = ["turn-1", "replace", "turn-2", "turn-3", "finish"];
 
 export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> {
@@ -311,6 +312,21 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
     );
     return { records, officialNativeStarted: false, source: (await this.config()).sourcePins };
   }
+  private async calibrationRecord<R>(schema: string, result: R) {
+    const config = await this.config();
+    return {
+      workerId: config.workerName,
+      routePinsSha256: config.observer.routePinsSha256,
+      producerListSha256: config.observer.producerListSha256,
+      schema,
+      runId: this.env.RUN_ID,
+      bundleSha256: this.env.BUNDLE_SHA256,
+      status: "passed",
+      nativeDispatchCount: 0,
+      tailBarrier: "awaited-before-native-claim",
+      result,
+    };
+  }
   async observerCalibration() {
     assert(await this.ctx.storage.get("ready"), "Readiness must precede observer calibration");
     assert(
@@ -325,20 +341,33 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
     const result = await withRpcStub(this.shard(), (stub) =>
       readRpcData(stub.observerCalibration()),
     );
-    const config = await this.config();
-    const calibration = {
-      workerId: config.workerName,
-      routePinsSha256: config.observer.routePinsSha256,
-      producerListSha256: config.observer.producerListSha256,
-      schema: "sb1070/observer-calibration/v1",
-      runId: this.env.RUN_ID,
-      bundleSha256: this.env.BUNDLE_SHA256,
-      status: "passed",
-      nativeDispatchCount: 0,
-      tailBarrier: "awaited-before-native-claim",
-      result,
-    };
+    const calibration = await this.calibrationRecord("sb1070/observer-calibration/v1", result);
     await this.ctx.storage.put("observer/calibration", calibration);
+    return calibration;
+  }
+  /** A Claude run calibrates without the Codex facet, so it never pays the Codex engine's memory. */
+  async claudeObserverCalibration() {
+    assert(await this.ctx.storage.get("ready"), "Readiness must precede observer calibration");
+    assert(
+      !(await this.ctx.storage.get("execution-owner")),
+      "Calibration cannot dispatch or replay the native session",
+    );
+    await this.ctx.storage.transaction(async (tx) => {
+      assert(
+        !(await tx.get("observer/claude-calibration-claimed")),
+        "Claude observer calibration already has a durable claim",
+      );
+      await tx.put("observer/claude-calibration-claimed", true);
+    });
+    const result = await withRpcStub(this.shard(), (stub) =>
+      readRpcData(stub.claudeObserverCalibration()),
+    );
+    await this.waitTailTerminal(result.loaderId);
+    const calibration = await this.calibrationRecord(
+      "sb1070/claude-observer-calibration/v1",
+      result,
+    );
+    await this.ctx.storage.put("observer/claude-calibration", calibration);
     return calibration;
   }
   async claudeImportCalibration(variant: ClaudeVariant) {
@@ -542,6 +571,8 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       return Response.json(await this.ready());
     if (request.method === "POST" && url.pathname === "/observer-calibration")
       return Response.json(await this.observerCalibration());
+    if (request.method === "POST" && url.pathname === CLAUDE_OBSERVER_CALIBRATION_PATH)
+      return Response.json(await this.claudeObserverCalibration());
     const importCalibration = url.pathname.match(/^\/claude\/(baseline|hooks)\/calibration$/u);
     if (request.method === "POST" && importCalibration)
       return Response.json(
@@ -555,7 +586,6 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       const step = claude[2]!.replace("turn/", "turn-") as ClaudeDispatchStep;
       if (claude[3] === "dispatch" && request.method === "POST") {
         await this.#sequenceLifetime.check();
-        if (step === "turn-1") await this.waitTailTerminal("actual-facet-calibration");
         const claimed = await this.claudeDispatch.dispatch(variant, step);
         this.ctx.waitUntil(this.claudeDispatch.pending(variant, step).then(() => undefined));
         return Response.json(claimed, { status: 202 });

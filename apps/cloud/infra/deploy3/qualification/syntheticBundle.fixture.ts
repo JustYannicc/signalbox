@@ -10,6 +10,7 @@ import { productLoadedPreparedRelease } from "../../../src/harness/ProductHarnes
 import { fixtureHash, syntheticAssets } from "./syntheticAssets.fixture.ts";
 import { syntheticConfiguration } from "./syntheticConfiguration.fixture.ts";
 import type { SyntheticProviderData } from "./runnerTurn.fixture.ts";
+import { workingSetPolicy } from "../../../src/harness/tests/productHost/workingSetPolicy.fixture.ts";
 const encodeTurn = Schema.encodeSync(Schema.fromJsonString(Schema.toCodecJson(RunnerTurn)));
 
 export async function syntheticBundleInput(
@@ -73,6 +74,7 @@ export async function syntheticBundleInput(
         hooks: turns("hooks"),
       },
       seed,
+      workingSet: workingSetPolicy,
     },
   };
 }

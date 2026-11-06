@@ -17,6 +17,7 @@ import { assert } from "./common.ts";
 import { readShardRecoveryEvidence, readShardExecutionEvidence } from "./shardEvidence.ts";
 import { assertQualifierRuntimeConfiguration } from "../environmentContract.ts";
 import { calibrateClaudeImport } from "./claudeImportCalibration.ts";
+import { calibrateClaudeObserver } from "./claudeObserverCalibration.ts";
 import type { ClaudeVariant } from "./claudeScenario.ts";
 
 export class QualifierShard extends HarnessProcessExecutionShardObject {
@@ -37,6 +38,9 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
       ),
     );
     this.qualifierEnvironment = env;
+  }
+  claudeObserverCalibration() {
+    return calibrateClaudeObserver(this.ctx, this.qualifierEnvironment);
   }
   claudeImportCalibration(variant: ClaudeVariant) {
     return calibrateClaudeImport(this.ctx, this.qualifierEnvironment, variant);

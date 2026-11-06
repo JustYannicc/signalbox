@@ -66,7 +66,7 @@ export const ConfigurationSchema = Schema.Struct({
       }),
       turnJson: Schema.Struct({ baseline: Schema.Array(Text), hooks: Schema.Array(Text) }),
       seed: ClaudeSeedConfiguration,
-      workingSet: Schema.optional(CliWorkingSetPolicy),
+      workingSet: CliWorkingSetPolicy,
     }),
     facetSource: Text,
     sdkHostSource: Text,
