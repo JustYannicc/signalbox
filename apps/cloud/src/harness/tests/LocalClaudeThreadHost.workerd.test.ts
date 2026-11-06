@@ -115,6 +115,9 @@ it("provisions distinct SDK, CLI and Computer isolates from ordinary thread star
   expect(realm("kernel")).toBeTypeOf("string");
   expect(new Set([cli, sdk, computer, realm("kernel")]).size).toBe(4);
   expect(realm("/usr/bin/git")).toBe(computer);
+  // A hook-like child reads its input through the real CLI-to-Computer stdin bridge.
+  expect(realm("/bin/cat")).toBe(computer);
+  expect(events.filter((event) => event.kind.startsWith("cli-child-error:"))).toEqual([]);
   expect(events.filter((event) => event.kind === "cli-launch")).toHaveLength(1);
   expect(events.filter((event) => event.kind === "sdk-query")).toHaveLength(1);
   const latency = events.find((event) => event.kind === "kernel-rpc-latency");

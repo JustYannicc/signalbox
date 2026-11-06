@@ -89,11 +89,15 @@ export class CliFileWorkingSet {
       throw Object.assign(new Error("CLI filesystem metadata needs refresh"), { code: "ESTALE" });
   }
 
-  /** A full re-index. Unconfirmed projections survive it, and so do bytes in `verified`. */
+  /**
+   * A full re-index. Bytes in `verified` survive it. Projections in `snapshot` that haven't moved
+   * were committed before the index read Computer, so its entries confirm them; later ones survive.
+   */
   replaceMetadata(
     revision: number,
     entries: readonly CliFileMetadata[],
     verified: ReadonlySet<string> = new Set(),
+    snapshot?: CliProjectionSnapshot,
   ) {
     this.writes.assertHealthy();
     if (!Number.isSafeInteger(revision) || revision < 0)
@@ -117,7 +121,10 @@ export class CliFileWorkingSet {
         },
       });
     }
+    const confirmed = (path: string) =>
+      snapshot?.has(path) === true && !this.projections.movedSince(snapshot, path);
     for (const path of this.projections.paths) {
+      if (confirmed(path)) continue;
       const current = this.#metadata.get(path);
       if (current === undefined) metadata.delete(path);
       else metadata.set(path, current);
@@ -127,15 +134,18 @@ export class CliFileWorkingSet {
     this.#content.project(
       this.#content.paths.filter(
         (path) =>
-          !this.projections.projected(path) &&
-          !(
-            verified.has(path) && sameFile(this.#metadata.get(path)?.stat, metadata.get(path)?.stat)
-          ),
+          metadata.get(path)?.stat.type !== "file" ||
+          (!this.projections.projected(path) &&
+            !(
+              verified.has(path) &&
+              sameFile(this.#metadata.get(path)?.stat, metadata.get(path)?.stat)
+            )),
       ),
       [],
     );
     this.#metadata.clear();
     for (const [path, entry] of metadata) this.#metadata.set(path, entry);
+    if (snapshot !== undefined) this.projections.settle(snapshot);
     this.#revision = revision;
     this.#invalid = false;
   }

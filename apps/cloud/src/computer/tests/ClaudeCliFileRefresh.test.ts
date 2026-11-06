@@ -10,7 +10,10 @@ vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 const encoder = new TextEncoder();
 
-/** A machine image layer below Computer's own files, editable to stand in for a machine. */
+/**
+ * A machine image layer below Computer's own files. Writes change the machine only: the kernel's
+ * lower index keeps serving what it cached until the machine profile's exit refresh drops it.
+ */
 function lowerLayer(files: Record<string, string>) {
   const bytes = new Map(Object.entries(files).map(([path, text]) => [path, encoder.encode(text)]));
   const entry = (path: string): KernelLowerFileSystemEntry | undefined => {
@@ -57,6 +60,8 @@ function lowerLayer(files: Record<string, string>) {
     },
     write(path: string, text: string) {
       bytes.set(path, encoder.encode(text));
+    },
+    refreshAfterCommand() {
       handle!.invalidate();
     },
   };
@@ -279,7 +284,7 @@ describe("CLI filesystem view refresh", () => {
     }
   });
 
-  it("re-indexes while a machine command runs, so its lower writes are seen", async () => {
+  it("indexes once per round while a machine command runs and confirms what it read", async () => {
     const lower = lowerLayer({ "/etc/tool.conf": "v1" });
     let machine = { machine: 0, machineRunning: false };
     const f = await fixture(256, ["/sync", "/etc/tool.conf"], true, {
@@ -287,17 +292,70 @@ describe("CLI filesystem view refresh", () => {
       machine: () => machine,
     });
     try {
-      // A machine command the CLI did not start is running and writes the lower layer.
+      // A long-lived machine process the CLI did not start, like a background server.
       machine = { machine: 1, machineRunning: true };
+      let refreshes = f.refreshes;
       await f.fs.promises.stat("/sync");
+      expect(f.refreshes - refreshes).toBe(1);
+      for (let index = 0; index < 3; index++) {
+        refreshes = f.refreshes;
+        f.fs.writeFileSync("/transcript", `line ${index}`);
+        await f.fs.promises.stat("/sync");
+        expect(f.refreshes - refreshes).toBe(1);
+        // The index confirmed the write, so an async call with nothing new costs no index.
+        refreshes = f.refreshes;
+        await f.fs.promises.stat("/sync");
+        expect(f.refreshes - refreshes).toBe(0);
+      }
+      expect(f.fs.readFileSync("/transcript", "utf8")).toBe("line 2");
+      expect(f.fs.statSync("/transcript", { bigint: true }).ino).toBe(
+        f.canonical.statSync("/transcript", { bigint: true }).ino,
+      );
+      // The machine's write reaches Computer at the command's exit refresh, and the CLI with it.
       lower.write("/etc/tool.conf", "version 2");
-      f.fs.writeFileSync("/sync", "own write");
+      machine = { machine: 2, machineRunning: false };
+      lower.refreshAfterCommand();
       await f.fs.promises.stat("/sync");
       expect(f.fs.readFileSync("/etc/tool.conf", "utf8")).toBe("version 2");
-      machine = { machine: 2, machineRunning: false };
-      lower.write("/etc/tool.conf", "version three");
-      await f.fs.promises.stat("/sync");
-      expect(f.fs.readFileSync("/etc/tool.conf", "utf8")).toBe("version three");
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("keeps an unchanged lower subtree when a copy-up replaces its parent directory", async () => {
+    const lower = lowerLayer({ "/etc/foo": "lower", "/etc/keep/deep": "deep bytes" });
+    const f = await fixture(256, ["/sync", "/etc/foo", "/etc/keep/deep"], true, {
+      seed: (_fs, files) => lower.install(files),
+    });
+    try {
+      expect(f.fs.readFileSync("/etc/keep/deep", "utf8")).toBe("deep bytes");
+      await f.files.beforeRemote();
+      f.canonical.writeFileSync("/etc/foo", "copied up");
+      await f.files.afterRemote();
+      expect(f.fs.readFileSync("/etc/foo", "utf8")).toBe("copied up");
+      expect(f.fs.readdirSync("/etc/keep")).toEqual(["deep"]);
+      expect(f.fs.readFileSync("/etc/keep/deep", "utf8")).toBe("deep bytes");
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("reports a digest unverified when the file's size is not the one the index read", async () => {
+    const f = await fixture(256, ["/sync"]);
+    try {
+      f.canonical.writeFileSync("/four", "four");
+      const expected = Array.from(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode("four"))),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      expect(
+        await f.kernel.digest([
+          { path: "/four", size: 4 },
+          { path: "/four", size: 2 },
+          { path: "/four", size: 9 },
+          { path: "/missing", size: 4 },
+        ]),
+      ).toEqual([expected, null, null, null]);
     } finally {
       await f.close();
     }

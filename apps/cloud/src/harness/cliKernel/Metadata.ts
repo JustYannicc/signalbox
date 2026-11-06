@@ -116,60 +116,66 @@ export async function lookupCliPaths(
  */
 const MAX_DIGEST_FILE_BYTES = 64 * 1024 * 1024;
 
-/** Hashes current bytes in Computer so the CLI can keep a cached copy without re-reading it. */
+/**
+ * Hashes current bytes in Computer so the CLI can keep a cached copy without re-reading it. The
+ * buffer is the size the CLI's index read; a file that differs from it now reports unverified.
+ */
 export async function digestCliFiles(
   filesystem: KernelFileSystem,
-  paths: readonly string[],
+  files: readonly { readonly path: string; readonly size: number }[],
   signal: AbortSignal,
 ): Promise<(string | null)[]> {
   const digests: (string | null)[] = [];
-  for (const path of paths) {
+  for (const { path, size } of files) {
     signal.throwIfAborted();
     if (typeof path !== "string" || !path.startsWith("/"))
       throw new TypeError("CLI digest paths must be absolute");
-    let fd: number;
-    let size: number;
-    try {
-      const stat = await filesystem.lstatAsync(path, signal);
-      if (stat.type !== "file" || stat.size > BigInt(MAX_DIGEST_FILE_BYTES)) {
-        digests.push(null);
-        continue;
-      }
-      size = Number(stat.size);
-      fd = await filesystem.openAsync(path, KernelOpenFlags.O_RDONLY, undefined, signal);
-    } catch (cause) {
-      if (["ENOENT", "ENOTDIR", "EACCES"].includes(code(cause))) {
-        digests.push(null);
-        continue;
-      }
-      throw nodeFsError(cause, "open", path);
-    }
-    try {
-      // A file that changed size since lstat hashes differently, which is the right answer.
-      const bytes = new Uint8Array(size);
-      let offset = 0;
-      while (offset < size) {
-        const count = await filesystem
-          .readAsync(
-            fd,
-            bytes.subarray(offset, Math.min(size, offset + KERNEL_SYSCALL_MAX_IO_BYTES)),
-            BigInt(offset),
-            signal,
-          )
-          .catch((cause) => {
-            throw nodeFsError(cause, "read", path);
-          });
-        if (count === 0) break;
-        offset += count;
-      }
-      digests.push(await sha256Hex(bytes.subarray(0, offset)));
-    } finally {
-      try {
-        filesystem.close(fd);
-      } catch (cause) {
-        throw nodeFsError(cause, "close", path);
-      }
-    }
+    if (!Number.isSafeInteger(size) || size < 0) throw new RangeError("Invalid CLI digest size");
+    digests.push(
+      size > MAX_DIGEST_FILE_BYTES ? null : await digestFile(filesystem, path, size, signal),
+    );
   }
   return digests;
+}
+
+async function digestFile(
+  filesystem: KernelFileSystem,
+  path: string,
+  size: number,
+  signal: AbortSignal,
+): Promise<string | null> {
+  let fd: number;
+  try {
+    const stat = await filesystem.lstatAsync(path, signal);
+    if (stat.type !== "file" || stat.size !== BigInt(size)) return null;
+    fd = await filesystem.openAsync(path, KernelOpenFlags.O_RDONLY, undefined, signal);
+  } catch (cause) {
+    if (["ENOENT", "ENOTDIR", "EACCES"].includes(code(cause))) return null;
+    throw nodeFsError(cause, "open", path);
+  }
+  try {
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    const read = (target: Uint8Array, at: number) =>
+      filesystem.readAsync(fd, target, BigInt(at), signal).catch((cause) => {
+        throw nodeFsError(cause, "read", path);
+      });
+    while (offset < size) {
+      const count = await read(
+        bytes.subarray(offset, Math.min(size, offset + KERNEL_SYSCALL_MAX_IO_BYTES)),
+        offset,
+      );
+      // Truncated, or grown past the size the CLI holds, since lstat.
+      if (count === 0) return null;
+      offset += count;
+    }
+    if ((await read(new Uint8Array(1), size)) !== 0) return null;
+    return await sha256Hex(bytes);
+  } finally {
+    try {
+      filesystem.close(fd);
+    } catch (cause) {
+      throw nodeFsError(cause, "close", path);
+    }
+  }
 }

@@ -24,6 +24,7 @@ export const ClaudeCliFacet = createClaudeCliFacetClass<OrdinaryOwnerEnvironment
       undefined,
       () => sessionId,
       "claude-opus-5-5",
+      true,
     );
     const calibration = createNodeFsSyscallClient({
       syscalls: configuration.kernel,

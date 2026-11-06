@@ -235,11 +235,11 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
       return lookupCliPaths(this.#resources.storage.files, paths, signal);
     });
   }
-  digest(paths: readonly string[]) {
+  digest(files: readonly { readonly path: string; readonly size: number }[]) {
     return this.#run(crypto.randomUUID(), async (signal) => {
-      if (!Array.isArray(paths) || paths.length > 256)
+      if (!Array.isArray(files) || files.length > 256)
         throw new RangeError("Invalid CLI digest batch");
-      return digestCliFiles(this.#resources.storage.files, paths, signal);
+      return digestCliFiles(this.#resources.storage.files, files, signal);
     });
   }
   prefetch(path: string, offset: number, length: number) {

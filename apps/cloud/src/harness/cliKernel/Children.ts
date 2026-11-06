@@ -167,7 +167,7 @@ export class NodeChildControl extends RpcTarget {
     return {
       pid: this.#pid,
       handle: this.#lease,
-      stdin: this.#child.stdin === null ? undefined : NodeStream.Writable.toWeb(this.#child.stdin),
+      stdin: this.#child.stdin === null ? undefined : byteSink(this.#child.stdin),
       stdout: this.#child.stdout === null ? undefined : byteStream(this.#child.stdout),
       stderr: this.#child.stderr === null ? undefined : byteStream(this.#child.stderr),
       control: this,
@@ -198,6 +198,19 @@ export class NodeChildControl extends RpcTarget {
       }
     })());
   }
+}
+
+/**
+ * Workers RPC hands a stream's receiving end ArrayBuffer chunks, which a byte-mode Node writable
+ * rejects. The transform only converts them; ending, errors and aborts pass straight through.
+ */
+function byteSink(stream: NodeStream.Writable): WritableStream<Uint8Array> {
+  const bytes = new TransformStream<Uint8Array | ArrayBuffer, Uint8Array>({
+    transform: (chunk, controller) =>
+      controller.enqueue(chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : chunk),
+  });
+  void bytes.readable.pipeTo(NodeStream.Writable.toWeb(stream)).catch(() => undefined);
+  return bytes.writable;
 }
 
 function byteStream(stream: NodeStream.Readable): ReadableStream<Uint8Array> {

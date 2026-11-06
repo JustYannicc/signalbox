@@ -203,6 +203,8 @@ export async function cliFileBackendFixture(
       return prefetchedBytes;
     },
     revision: () => owned.persistenceRevision(),
+    /** Computer's side of the CLI port, as the CLI reaches it. */
+    kernel,
     sql: owned.storage.sql,
     requests,
     /** Holds the next matching view read of Computer until released. */

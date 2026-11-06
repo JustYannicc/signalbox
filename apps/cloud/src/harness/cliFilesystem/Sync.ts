@@ -35,7 +35,7 @@ export function createCliFileSync(input: {
     return results;
   };
 
-  const index = async () => {
+  const index = async (snapshot?: CliProjectionSnapshot) => {
     const entries: CliFileMetadata[] = [];
     let cursor = 0;
     let revision: number | undefined;
@@ -49,7 +49,7 @@ export function createCliFileSync(input: {
       cursor = page.next ?? -1;
     } while (cursor >= 0);
     const requested = [...new Set([...input.requested, ...files.paths])];
-    files.replaceMetadata(revision!, entries, await verify(entries));
+    files.replaceMetadata(revision!, entries, await verify(entries), snapshot);
     views.releaseNamedContent();
     await input.prefetch(requested);
     await views.refresh();
@@ -69,7 +69,9 @@ export function createCliFileSync(input: {
       // One cached file at a time: each read copies its bytes.
       const local: string[] = [];
       for (const path of batch) local.push(await sha256Hex(files.content(path)));
-      const remote = await kernel.digest(batch);
+      const remote = await kernel.digest(
+        batch.map((path) => ({ path, size: Number(next.get(path)!.size) })),
+      );
       for (const [index, path] of batch.entries())
         if (remote[index] !== null && remote[index] === local[index]) verified.add(path);
     }
@@ -135,12 +137,15 @@ export function createCliFileSync(input: {
         before !== undefined &&
         (before.stat.type !== entry.stat.type ||
           (!before.pending && before.stat.ino !== entry.stat.ino));
-      if (replaced) for (const child of childrenOf(result.path)) remove(child);
       updates.set(result.path, entry);
-      if (result.names === undefined) return;
+      if (result.names === undefined) {
+        if (replaced) for (const child of childrenOf(result.path)) remove(child);
+        return;
+      }
       const listed = new Set(result.names.map((name) => childOf(result.path, name)));
-      if (!replaced)
-        for (const child of childrenOf(result.path)) if (!listed.has(child)) remove(child);
+      for (const child of childrenOf(result.path)) if (!listed.has(child)) remove(child);
+      // A replaced directory, such as one an overlay copy-up gave a new inode, keeps names whose
+      // entries may not have changed. Each is read again; one that kept its inode keeps its subtree.
       for (const child of listed) if (replaced || !known.has(child)) fresh.push(child);
     };
     // Parents first, so a child read in the same batch is not undone by its parent's listing.
@@ -177,21 +182,19 @@ export function createCliFileSync(input: {
   };
 
   const round = async () => {
-    for (let attempt = 0; ; attempt++) {
-      await files.writes.flush();
-      const snapshot = files.projections.snapshot();
-      const changes = await kernel.changes(files.revision);
+    await files.writes.flush();
+    const snapshot = files.projections.snapshot();
+    const changes = await kernel.changes(files.revision);
+    if (changes.inodes !== null)
       try {
-        if (changes.inodes === null) throw new IndexRequired();
         await incremental(changes.revision, changes.inodes, changes.names, snapshot);
         return;
       } catch (cause) {
         if (!(cause instanceof IndexRequired)) throw cause;
       }
-      await index();
-      // The index is current; projections it kept are confirmed by a later round.
-      if (attempt === 2) return;
-    }
+    // At most one index per round: while a machine command runs Computer can't list changes,
+    // and the next round would only index again. The index confirms the projections it read.
+    await index(snapshot);
   };
 
   return { index, round };

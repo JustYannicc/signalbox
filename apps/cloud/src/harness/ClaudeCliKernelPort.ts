@@ -55,8 +55,13 @@ export interface ClaudeCliKernelPort extends KernelSyscallPort {
   changes(since: number): Promise<ClaudeCliChanges>;
   lookup(paths: readonly string[]): Promise<readonly ClaudeCliLookup[]>;
   prefetch(path: string, offset: number, length: number): Promise<Uint8Array>;
-  /** SHA-256 hex of each regular file's current bytes, or null when it is not one. */
-  digest(paths: readonly string[]): Promise<readonly (string | null)[]>;
+  /**
+   * SHA-256 hex of each regular file's current bytes, or null when it is not one or its size is
+   * no longer the one the CLI's index read.
+   */
+  digest(
+    files: readonly { readonly path: string; readonly size: number }[],
+  ): Promise<readonly (string | null)[]>;
   leaseProcesses(
     count: number,
   ): Promise<readonly { readonly pid: number; readonly handle: KernelHandle<"process"> }[]>;

@@ -29,6 +29,8 @@ export function nativeFixture(
   onExit?: () => void,
   queryNativeId: () => string = () => nativeId,
   model?: string,
+  /** Also runs a SessionStart-like hook that reads its input from stdin. */
+  hookChild = false,
 ) {
   const outputs: string[] = [];
   let consumed = 0;
@@ -165,6 +167,10 @@ export function nativeFixture(
                 },
           );
           NodeAssert.equal(await rootResponse.text(), "root response");
+          if (hookChild) {
+            const input = `${JSON.stringify({ hook_event_name: "SessionStart", source: "startup" })}\n`;
+            NodeAssert.equal(await runChild(children, "/bin/cat", [], active.signal, input), input);
+          }
           for (const [executable, args] of [
             ["/usr/bin/git", ["status", "--short"]],
             ["/bin/sed", ["-i", "s/before/after/", "file.txt"]],
@@ -252,6 +258,7 @@ async function runChild(
   executable: string,
   args: readonly string[],
   signal: AbortSignal,
+  input?: string,
 ) {
   const child = children.spawn(executable, [...args], {
     cwd: "/workspace",
@@ -263,6 +270,8 @@ async function runChild(
     stdout += new TextDecoder().decode(bytes);
   });
   child.stderr?.on("data", () => {});
+  // Like the CLI's hook runner: write the input, then close stdin.
+  if (input !== undefined) child.stdin?.end(input);
   await new Promise<void>((resolve, reject) => {
     child.once("error", reject);
     child.once("close", (code) =>
