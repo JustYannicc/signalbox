@@ -31,14 +31,16 @@ class DevicePath extends Error {
   }
 }
 
+/**
+ * A path that reached /proc/self/fd/N. The kernel resolves it from that descriptor, on its own
+ * mount, and enforces a read-only mount there, so nothing here judges the mount the lookup left.
+ */
 class DescriptorPath extends Error {
   readonly path: string;
-  readonly mount: WasiMountedStorage;
 
-  constructor(path: string, mount: WasiMountedStorage) {
+  constructor(path: string) {
     super("Child descriptor path");
     this.path = path;
-    this.mount = mount;
   }
 }
 
@@ -46,6 +48,7 @@ class DescriptorPath extends Error {
 export function createKernelWasiDeviceAdapter(
   filesystem: KernelFileSystem,
   createInode: WasiCreationPolicy["createInode"] = filesystem.createInode.bind(filesystem),
+  descriptorAlias: (fd: number) => boolean = () => true,
 ): WasiFileSystemImportAdapter {
   return (memory, imports) => {
     // The path calls take a create's mode before resolving, so a descriptor path keeps it here.
@@ -60,6 +63,46 @@ export function createKernelWasiDeviceAdapter(
       if (leaf === undefined || leaf === "..") throw new WasiError(28);
       return joinGuestPath(parent, [leaf]);
     };
+    /**
+     * From the root, `proc/self/fd/N/name` is the absolute alias. It resolves from descriptor N,
+     * so the root's own rights and mount, which WASI checks first, don't apply, as on Linux.
+     */
+    const fromRoot = (dirfd: number, pointer: number, length: number) => {
+      const name = memory.string(pointer, length).replace(/^(?:\.\/)+/, "");
+      const suffix = name.startsWith("/") ? undefined : descriptorPathSuffix(`/${name}`);
+      if (suffix === undefined) return undefined;
+      try {
+        if (filesystem.realpath(`/proc/self/fd/${dirfd}`) !== "/") return undefined;
+      } catch {
+        return undefined;
+      }
+      if (!descriptorAlias(suffix.fd)) throw new WasiError(8);
+      return `/${name}`;
+    };
+    const openAt = (
+      path: string,
+      args: Parameters<Parameters<WasiFileSystemImportAdapter>[1]["path_open"]>,
+      follow: boolean,
+      creation: number | undefined,
+    ) => {
+      const [, , , , oflags, rightsBase, , fdflags, output] = args;
+      const fd = filesystem.open(
+        path,
+        kernelOpenFlags(oflags, rightsBase, fdflags) | (follow ? 0 : KernelOpenFlags.O_NOFOLLOW),
+        (oflags & 1) !== 0 ? creation : undefined,
+      );
+      try {
+        const descriptor = filesystem.descriptors.get(fd);
+        descriptor.rightsBase &= BigInt.asUintN(64, rightsBase);
+        descriptor.rightsInheriting = 0n;
+        descriptor.flags = fdflags;
+        memory.u32(output, fd);
+        return 0;
+      } catch (failure) {
+        filesystem.close(fd);
+        throw failure;
+      }
+    };
     const paths = new WasiPathResolver(
       complete,
       filesystem.assertWasiPathVisible.bind(filesystem),
@@ -71,11 +114,14 @@ export function createKernelWasiDeviceAdapter(
         const alias = joinGuestPath(missing, tail);
         // Linux resolves a name under /proc/self/fd/N from that descriptor's directory, as
         // openat does, which is how Claude Code creates and checks its task output directories.
-        const exact = descriptorPathAlias(alias) !== undefined;
-        if (exact || descriptorPathSuffix(alias) !== undefined) {
+        const exact = descriptorPathAlias(alias);
+        const fd = exact ?? descriptorPathSuffix(alias)?.fd;
+        if (fd !== undefined) {
           filesystem.assertWasiPathVisible(parent.mount, [...parent.pathComponents, name, ...tail]);
-          if (exact && requireDirectory) throw new WasiError(54);
-          throw new DescriptorPath(alias, parent.mount);
+          // Here, after any symlinks, is the descriptor the path really reaches.
+          if (!descriptorAlias(fd)) throw new WasiError(8);
+          if (exact !== undefined && requireDirectory) throw new WasiError(54);
+          throw new DescriptorPath(alias);
         }
         const namespace = missing === "/dev";
         const path = namespace && tail.length > 0 ? `${missing}/${tail[0]}` : missing;
@@ -105,28 +151,18 @@ export function createKernelWasiDeviceAdapter(
     return {
       ...imports,
       path_open: function* (...args): WasiCall<number> {
+        // Without LOOKUP_SYMLINK_FOLLOW the final name must not be followed, as for stat.
+        const follow = (args[1] & 1) !== 0;
+        const alias = fromRoot(args[0], args[2], args[3]);
+        if (alias !== undefined)
+          return openAt(alias, args, follow, filesystem.takeNextCreateMode());
         try {
           return yield* calls.imports.path_open(...args);
         } catch (error) {
-          if (!(error instanceof DevicePath || error instanceof DescriptorPath)) throw error;
-          const [, , , , oflags, rightsBase, , fdflags, output] = args;
-          if ((oflags & 8) !== 0 && error.mount.readOnly) throw new WasiError(69);
-          const fd = filesystem.open(
-            error.path,
-            kernelOpenFlags(oflags, rightsBase, fdflags),
-            (oflags & 1) !== 0 ? mode : undefined,
-          );
-          try {
-            const descriptor = filesystem.descriptors.get(fd);
-            descriptor.rightsBase &= BigInt.asUintN(64, rightsBase);
-            descriptor.rightsInheriting = 0n;
-            descriptor.flags = fdflags;
-            memory.u32(output, fd);
-            return 0;
-          } catch (failure) {
-            filesystem.close(fd);
-            throw failure;
-          }
+          if (error instanceof DescriptorPath) return openAt(error.path, args, follow, mode);
+          if (!(error instanceof DevicePath)) throw error;
+          if ((args[4] & 8) !== 0 && error.mount.readOnly) throw new WasiError(69);
+          return openAt(error.path, args, true, mode);
         }
       },
       path_filestat_get: function* (...args): WasiCall<number> {
@@ -173,31 +209,43 @@ export function createKernelWasiDeviceAdapter(
         }
       },
       path_create_directory: function* (...args): WasiCall<number> {
+        const alias = fromRoot(args[0], args[1], args[2]);
+        if (alias !== undefined) {
+          filesystem.mkdir(alias, filesystem.takeNextCreateMode());
+          return 0;
+        }
         try {
           return yield* calls.imports.path_create_directory(...args);
         } catch (error) {
           if (!(error instanceof DescriptorPath)) throw error;
-          if (error.mount.readOnly) throw new WasiError(69);
           filesystem.mkdir(withLeaf(error.path, args[1], args[2]), mode);
           return 0;
         }
       },
       path_unlink_file: function* (...args): WasiCall<number> {
+        const alias = fromRoot(args[0], args[1], args[2]);
+        if (alias !== undefined) {
+          filesystem.unlink(alias);
+          return 0;
+        }
         try {
           return yield* calls.imports.path_unlink_file(...args);
         } catch (error) {
           if (!(error instanceof DescriptorPath)) throw error;
-          if (error.mount.readOnly) throw new WasiError(69);
           filesystem.unlink(withLeaf(error.path, args[1], args[2]));
           return 0;
         }
       },
       path_remove_directory: function* (...args): WasiCall<number> {
+        const alias = fromRoot(args[0], args[1], args[2]);
+        if (alias !== undefined) {
+          filesystem.rmdir(alias);
+          return 0;
+        }
         try {
           return yield* calls.imports.path_remove_directory(...args);
         } catch (error) {
           if (!(error instanceof DescriptorPath)) throw error;
-          if (error.mount.readOnly) throw new WasiError(69);
           filesystem.rmdir(withLeaf(error.path, args[1], args[2]));
           return 0;
         }

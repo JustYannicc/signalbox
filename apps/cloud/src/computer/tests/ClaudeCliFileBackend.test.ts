@@ -94,6 +94,28 @@ describe("CLI filesystem public adapter", () => {
     }
   });
 
+  it("makes room by dropping the file read longest ago, counting reads through a descriptor", async () => {
+    const f = await fixture(12, ["/sync", "/async"], false, {
+      seed(fs) {
+        fs.writeFileSync("/third", "third!");
+      },
+    });
+    try {
+      const fd = f.fs.openSync("/sync", "r");
+      expect(f.fs.readFileSync("/async", "utf8")).toBe("remote");
+      expect(f.fs.readSync(fd, new Uint8Array(6))).toBe(6);
+      f.fs.closeSync(fd);
+      // A third file needs room for its bytes; /async was read before /sync was.
+      expect(() => f.fs.readFileSync("/third")).toThrow(expect.objectContaining({ code: "EIO" }));
+      await f.files.barrier();
+      expect(f.fs.readFileSync("/third", "utf8")).toBe("third!");
+      expect(f.fs.readFileSync("/sync", "utf8")).toBe("before");
+      expect(() => f.fs.readFileSync("/async")).toThrow(expect.objectContaining({ code: "EIO" }));
+    } finally {
+      await f.close();
+    }
+  });
+
   it("reuses owner-issued descriptors across more sync reads than the initial lease count", async () => {
     const f = await fixture();
     try {

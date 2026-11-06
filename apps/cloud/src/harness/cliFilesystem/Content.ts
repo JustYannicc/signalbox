@@ -4,6 +4,8 @@ interface Content {
   bytes: Uint8Array;
   release: () => void;
   pins: number;
+  /** When the CLI last read these bytes, by name or through an open descriptor. */
+  used: number;
 }
 
 export interface CliContentView {
@@ -42,6 +44,7 @@ export class CliContentStore {
   readonly #detached = new Set<Content>();
   readonly #budget;
   readonly #limit;
+  #clock = 0;
   constructor(budget: CliWorkingSetBudget, limit: number) {
     this.#budget = budget;
     this.#limit = limit;
@@ -53,22 +56,26 @@ export class CliContentStore {
     return this.#names.has(path);
   }
   reserve(size: number) {
-    for (const [path, content] of this.#names) {
-      if (size <= this.#limit - this.#budget.used) break;
-      if (content.pins === 0) this.evict(path);
+    if (size > this.#limit - this.#budget.used) {
+      // The least recently read go first, so a file the CLI keeps reading stays.
+      const unpinned = [...this.#names].filter(([, content]) => content.pins === 0);
+      unpinned.sort(([, a], [, b]) => a.used - b.used);
+      for (const [path] of unpinned) {
+        if (size <= this.#limit - this.#budget.used) break;
+        this.evict(path);
+      }
     }
     return this.#budget.reserve(size);
   }
   put(path: string, bytes: Uint8Array, release: () => void) {
     const old = this.#names.get(path);
-    this.#names.set(path, { bytes, release, pins: 0 });
+    this.#names.set(path, { bytes, release, pins: 0, used: ++this.#clock });
     if (old !== undefined) this.#retire(old);
   }
   #get(path: string) {
     const content = this.#names.get(path);
     if (content === undefined) throw contentMiss(path);
-    this.#names.delete(path);
-    this.#names.set(path, content);
+    content.used = ++this.#clock;
     return content;
   }
   content(path: string) {
@@ -77,6 +84,7 @@ export class CliContentStore {
   #copy(content: Content, target: Uint8Array, offset: number) {
     if (!Number.isSafeInteger(offset) || offset < 0)
       throw new RangeError("Invalid CLI file offset");
+    content.used = ++this.#clock;
     const count = Math.min(target.byteLength, Math.max(0, content.bytes.byteLength - offset));
     target.set(content.bytes.subarray(offset, offset + count));
     return count;
@@ -120,6 +128,7 @@ export class CliContentStore {
     };
   }
   #replace(content: Content, length: number, fill: (target: Uint8Array) => void) {
+    content.used = ++this.#clock;
     content.pins++;
     let release: (() => void) | undefined;
     try {

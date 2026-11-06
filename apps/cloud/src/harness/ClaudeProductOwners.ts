@@ -22,12 +22,39 @@ export interface ClaudeProductOwnerRuntime {
 }
 
 type KernelFacet = InstanceType<ReturnType<typeof createClaudeKernelFacetClass>>;
+
+const versions = new WeakMap<WorkerLoaderWorkerCode, Promise<string>>();
+/** The loader keeps a Worker under its key across deploys, so a key names its code too. */
+const codeVersion = (code: WorkerLoaderWorkerCode) => {
+  let version = versions.get(code);
+  if (version === undefined) {
+    version = crypto.subtle
+      .digest("SHA-256", new TextEncoder().encode(JSON.stringify(code)))
+      .then((digest) =>
+        Array.from(new Uint8Array(digest).subarray(0, 8), (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join(""),
+      );
+    versions.set(code, version);
+  }
+  return version;
+};
 type ComputerOwner = ComputerProgramOwnerPort & {
   configure(input: ComputerExecutionConfiguration): Promise<void>;
 };
 
-/** Normal thread startup provisions each owner from its own registered module map. */
-export function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, name: string) {
+/**
+ * Normal thread startup provisions each owner from its own registered module map. An owner's
+ * Worker is keyed by its code, so no release's CLI runs beside another's kernel; its facet keeps
+ * its name, and with it its storage, across releases.
+ */
+export async function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, name: string) {
+  const version = {
+    kernel: await codeVersion(runtime.code.kernel),
+    cli: await codeVersion(runtime.code.cli),
+    computer: await codeVersion(runtime.code.computer),
+    sdk: await codeVersion(runtime.code.sdk),
+  };
   const stubs: unknown[] = [];
   const facets: string[] = [];
   let disposed = false;
@@ -62,7 +89,7 @@ export function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, na
     entrypoint: string,
   ) => {
     const key = `${name}:${role}`;
-    const worker = runtime.loader.get(key, () => runtime.code[role]);
+    const worker = runtime.loader.get(`${key}:${version[role]}`, () => runtime.code[role]);
     stubs.push(worker);
     const facetClass = worker.getDurableObjectClass<T>(entrypoint);
     stubs.push(facetClass);
@@ -78,7 +105,7 @@ export function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, na
       "ClaudeCliFacet",
     );
     const computer = openFacet<ComputerExecutionObject>("computer", "ComputerExecutionObject");
-    const sdkWorker = runtime.loader.get(`${name}:sdk`, () => runtime.code.sdk);
+    const sdkWorker = runtime.loader.get(`${name}:sdk:${version.sdk}`, () => runtime.code.sdk);
     stubs.push(sdkWorker);
     const sdk = sdkWorker.getEntrypoint();
     stubs.push(sdk);

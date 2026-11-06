@@ -67,4 +67,15 @@ describe("CLI filesystem identity", () => {
       await f.close();
     }
   });
+
+  it("refuses a symlink into a descriptor the CLI doesn't own", async () => {
+    const f = await fixture(1024, [], false, {});
+    try {
+      f.canonical.symlinkSync(`/proc/self/fd/${f.rootDescriptor}`, "/sneak");
+      await expect(f.fs.promises.mkdir("/sneak/escaped")).rejects.toMatchObject({ code: "EBADF" });
+      expect(f.canonical.existsSync("/escaped")).toBe(false);
+    } finally {
+      await f.close();
+    }
+  });
 });

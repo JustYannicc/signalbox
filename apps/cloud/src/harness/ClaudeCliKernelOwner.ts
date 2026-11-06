@@ -132,6 +132,8 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
         signal,
         nimbusMetadata: true,
         sigpipe: "epipe",
+        // A symlink can lead into /proc/self/fd/N, which the request's own path doesn't show.
+        descriptorAlias: allowed,
       });
       try {
         const result = await host.call(request);

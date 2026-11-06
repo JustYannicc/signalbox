@@ -34,7 +34,11 @@ export type CliViewTrace =
       readonly operation: string;
       readonly reason: "content" | "unindexed" | "descriptors";
       readonly root: "home" | "workspace" | "other";
+      /** Misses of this path so far; traced at 1, 2, 4… so a poller's are counted, not lost. */
+      readonly count: number;
     }
+  /** A file the CLI reads synchronously too large to hold outside the budget. */
+  | { readonly kind: "too-large"; readonly bytes: number; readonly limit: number }
   /** A round failed; the view waits this long before the next one. */
   | { readonly kind: "backoff"; readonly failures: number; readonly retryMs: number }
   /** Traces a bounded buffer could not keep, so a gap is visible as a gap. */

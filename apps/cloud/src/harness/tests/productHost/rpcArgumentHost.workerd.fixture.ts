@@ -68,7 +68,7 @@ export class ChildLoader extends WorkerEntrypoint<Env> {
 export class Host extends DurableObject<Env> {
   #scope: Scope.Closeable | undefined;
   #host: Effect.Success<ReturnType<typeof createProductClaudeKernelHost>> | undefined;
-  #owners: ReturnType<typeof createClaudeProductOwners> | undefined;
+  #owners: Awaited<ReturnType<typeof createClaudeProductOwners>> | undefined;
   async configure() {
     const materials = this.env.MATERIALS;
     const bytes = new Map(
@@ -95,7 +95,7 @@ export class Host extends DurableObject<Env> {
       globalOutbound: null,
       ...(env === undefined ? {} : { env }),
     });
-    this.#owners = createClaudeProductOwners(
+    this.#owners = await createClaudeProductOwners(
       {
         loader: this.env.LOADER,
         facets: this.ctx.facets,

@@ -38,7 +38,8 @@ export function threadOwnerRuntimeFixture<G>(
           loaded.push({ name, mainModule: code.mainModule });
         }),
       );
-      const role = name.split(":").at(-1);
+      // `<machine>:<role>:<code version>`
+      const role = name.split(":").at(-2);
       return {
         getDurableObjectClass(entrypoint: string) {
           NodeAssert.equal(

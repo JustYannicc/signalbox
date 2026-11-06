@@ -312,7 +312,7 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
         cwd: resources.storage.files.cwd,
         rootDescriptor: kernel.rootDescriptor,
         posix: resources.storage.files.posixPolicy,
-        workingSet: { ...configured.workingSet, paths: [] },
+        workingSet: configured.workingSet,
         kernel,
         callbacks: this.#callbacks,
         io: kernel.io(),

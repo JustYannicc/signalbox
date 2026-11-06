@@ -12,6 +12,14 @@ const CHANGED_FILES = 64;
 /** Larger changed files are rarely read synchronously, and the next sync read fetches them. */
 const CHANGED_FILE_BYTES = 64 * 1024;
 const LEARNED = 256;
+/**
+ * The CLI's own sync-read files are held outside the budget, up to these limits. The replayed
+ * session's were 3,870 B in all; a long-lived ~/.claude.json and a large repository's packed-refs
+ * (about 70 B a ref) reach a few MiB. A repository can put anything in .mcp.json, so a larger file
+ * competes for the budget like any other, and a sync read gets EIO if it can't be held.
+ */
+const PINNED_FILE_BYTES = 4 * 1024 * 1024;
+const PINNED_BYTES = 16 * 1024 * 1024;
 
 const skipped = (cause: unknown, codes: readonly string[]) =>
   cause instanceof CliViewMiss ||
@@ -46,7 +54,9 @@ export function createCliPrefetch(input: {
     }
   };
   /** The CLI's own sync-read files stay pinned, so no other file's bytes ever evict them. */
-  const pinned = new Map<string, () => void>();
+  const pinned = new Map<string, { readonly unpin: () => void; readonly bytes: number }>();
+  const pinnedBytes = () => [...pinned.values()].reduce((total, pin) => total + pin.bytes, 0);
+  const tooLarge = new Set<string>();
   const fetch = async (requested: readonly string[], essential = false) => {
     const release: (() => void)[] = [];
     const turn = turnBudget();
@@ -56,15 +66,24 @@ export function createCliPrefetch(input: {
         const name = canonical(path);
         if (name === undefined) continue;
         const stat = files.metadata(name).stat;
+        if (stat.type !== "file") continue;
+        const size = Number(stat.size);
+        const held = pinned.get(name)?.bytes ?? 0;
+        const pin =
+          essential && size <= PINNED_FILE_BYTES && pinnedBytes() - held + size <= PINNED_BYTES;
+        if (essential && !pin && !tooLarge.has(name)) {
+          tooLarge.add(name);
+          input.trace({ kind: "too-large", bytes: size, limit: PINNED_FILE_BYTES });
+        }
         // One that can never fit would only evict everything else first.
-        if (stat.type !== "file" || (!essential && stat.size > BigInt(input.byteLimit))) continue;
+        if (!pin && stat.size > BigInt(input.byteLimit)) continue;
         try {
           paths.assertAccess(stat, 4);
           await files.prefetch(
             name,
             (offset, length) => kernel.prefetch(name, offset, length),
             signal,
-            essential,
+            pin,
           );
         } catch (cause) {
           // Unreadable, the CLI's other held files fill the budget, or Computer moved meanwhile:
@@ -74,14 +93,14 @@ export function createCliPrefetch(input: {
         }
         // A concurrent projection can make the read moot; a later round fetches it again.
         if (!files.hasContent(name)) continue;
-        if (!essential) {
+        if (!pin) {
           release.push(files.pin(name));
           continue;
         }
         // A new pin each time lets bytes a round replaced go.
         const previous = pinned.get(name);
-        pinned.set(name, files.pin(name));
-        previous?.();
+        pinned.set(name, { unpin: files.pin(name), bytes: size });
+        previous?.unpin();
       }
     } finally {
       for (const unpin of release) unpin();
@@ -146,7 +165,7 @@ export function createCliPrefetch(input: {
       await fetch(others);
     }
     // Policy files that stopped existing, or whose name now means another file, let go.
-    for (const [name, unpin] of pinned)
+    for (const [name, { unpin }] of pinned)
       if (!files.hasContent(name)) {
         unpin();
         pinned.delete(name);
@@ -165,8 +184,8 @@ export function createCliPrefetch(input: {
     if (under(roots.cwd)) return "workspace" as const;
     return under(roots.home) || under(roots.configDir) ? ("home" as const) : ("other" as const);
   };
-  /** A poller misses the same path every tick; one trace says so. */
-  const traced = new Set<string>();
+  /** A poller misses the same path every tick, so repeats are counted and traced at 1, 2, 4… */
+  const misses = new Map<string, number>();
   return {
     /** These files' bytes, then whatever else the CLI reads synchronously that the view lacks. */
     prefetch: (held: readonly string[], changed: readonly string[] = []) =>
@@ -178,11 +197,17 @@ export function createCliPrefetch(input: {
     /** The CLI's call fails now; its next sync read finds the bytes, fetched in the background. */
     missed(operation: string, miss: CliViewMiss) {
       const key = `${miss.reason}:${miss.path}`;
-      if (!traced.has(key)) {
-        if (traced.size >= 1024) traced.clear();
-        traced.add(key);
-        input.trace({ kind: "sync-miss", operation, reason: miss.reason, root: rootOf(miss.path) });
-      }
+      if (!misses.has(key) && misses.size >= 1024) misses.clear();
+      const count = (misses.get(key) ?? 0) + 1;
+      misses.set(key, count);
+      if ((count & (count - 1)) === 0)
+        input.trace({
+          kind: "sync-miss",
+          operation,
+          reason: miss.reason,
+          root: rootOf(miss.path),
+          count,
+        });
       if (miss.reason !== "content") return;
       if (learned.size < LEARNED) learned.add(miss.path);
       if (directories.size < LEARNED) directories.add(parentOf(miss.path));
@@ -193,7 +218,7 @@ export function createCliPrefetch(input: {
     /** Resolves once the fetches misses started are done, so the CLI's next call finds them. */
     settled: () => Promise.all(healing),
     close() {
-      for (const unpin of pinned.values()) unpin();
+      for (const { unpin } of pinned.values()) unpin();
       pinned.clear();
     },
   };

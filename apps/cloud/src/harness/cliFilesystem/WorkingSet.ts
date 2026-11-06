@@ -225,7 +225,7 @@ export class CliFileWorkingSet {
     return this.#content.has(path);
   }
 
-  /** `outsideBudget` holds a file the CLI must always be able to read, whatever its size. */
+  /** `outsideBudget` holds a file the CLI must always be able to read; the caller caps its size. */
   async prefetch(
     path: string,
     read: (offset: number, length: number) => Promise<Uint8Array>,

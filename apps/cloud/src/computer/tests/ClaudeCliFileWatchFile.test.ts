@@ -74,7 +74,7 @@ describe("CLI filesystem watchFile", () => {
     }
   });
 
-  it("traces a watched file under a directory the index couldn't read once, not every tick", async () => {
+  it("counts a watched file's misses under a directory the index couldn't read, without a trace each tick", async () => {
     const f = await fixture(1024, ["/sync"], true, {
       seed(fs) {
         fs.mkdirSync("/blocked");
@@ -88,9 +88,10 @@ describe("CLI filesystem watchFile", () => {
       const watcher = f.fs.watchFile("/blocked/hidden", () => {});
       await vi.advanceTimersByTimeAsync(30_000);
       watcher.stop();
-      expect(f.traces.filter((event) => event.kind === "sync-miss")).toEqual([
-        { kind: "sync-miss", operation: "stat", reason: "unindexed", root: "other" },
-      ]);
+      // The first stat and five ticks miss; traces say how many at 1, 2 and 4.
+      expect(
+        f.traces.flatMap((event) => (event.kind === "sync-miss" ? [event.count] : [])),
+      ).toEqual([1, 2, 4]);
     } finally {
       vi.useRealTimers();
       await f.close();

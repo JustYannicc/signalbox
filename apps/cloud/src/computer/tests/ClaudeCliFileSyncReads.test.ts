@@ -107,6 +107,7 @@ describe("CLI filesystem synchronous reads", () => {
         operation: "open",
         reason: "content",
         root: "workspace",
+        count: 1,
       });
       expect(JSON.stringify(f.traceRows())).not.toContain("app.ts");
       await f.files.barrier();
@@ -168,6 +169,65 @@ describe("CLI filesystem synchronous reads", () => {
       await f.files.barrier();
       expect(f.fs.readFileSync("/filler", "utf8")).toHaveLength(60 * 1024);
       expect(f.fs.readFileSync("/home/u/.claude.json", "utf8")).toBe(config);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("starts beside a repository's oversized sync-read files and answers them with EIO", async () => {
+    const huge = "h".repeat(5 * 1024 * 1024);
+    const f = await fixture(1024 * 1024, [], false, {
+      cwd: "/work",
+      home: "/home/u",
+      seed(fs) {
+        workspace(fs);
+        fs.writeFileSync("/work/.mcp.json", huge);
+        fs.writeFileSync("/work/.git/packed-refs", huge);
+      },
+    });
+    try {
+      expect(f.prefetchedBytes).toBeLessThan(1024 * 1024);
+      expect(() => f.fs.readFileSync("/work/.mcp.json")).toThrow(
+        expect.objectContaining({ code: "EIO" }),
+      );
+      expect(f.traces).toContainEqual({
+        kind: "too-large",
+        bytes: huge.length,
+        limit: 4 * 1024 * 1024,
+      });
+      expect(f.fs.readFileSync("/work/.git/HEAD", "utf8")).toBe(files["/work/.git/HEAD"]);
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("pins at most 16 MiB of the CLI's own sync-read files", async () => {
+    const config = "c".repeat(3.5 * 1024 * 1024);
+    const own = [
+      "/home/u/.claude/settings.json",
+      "/home/u/.claude.json",
+      "/work/.claude/settings.json",
+      "/work/.claude/settings.local.json",
+      "/work/.mcp.json",
+    ];
+    const f = await fixture(1024 * 1024, [], false, {
+      cwd: "/work",
+      home: "/home/u",
+      seed(fs) {
+        workspace(fs);
+        for (const path of own) fs.writeFileSync(path, config);
+      },
+    });
+    try {
+      expect(f.prefetchedBytes).toBeLessThanOrEqual(16 * 1024 * 1024);
+      const readable = own.filter((path) => {
+        try {
+          return f.fs.readFileSync(path, "utf8").length === config.length;
+        } catch {
+          return false;
+        }
+      });
+      expect(readable).toHaveLength(4);
     } finally {
       await f.close();
     }

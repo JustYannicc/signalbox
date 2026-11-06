@@ -24,6 +24,8 @@ export interface KernelWasiFileSystemOptions {
   /** Lets callers batch a PATH candidate across live search directories before stat or open. */
   readonly preparePathSearch?: KernelLowerFileSystemPathSearch;
   readonly signal?: AbortSignal;
+  /** Whether a /proc/self/fd/N path may reach descriptor N, decided where it resolves. */
+  readonly descriptorAlias?: (fd: number) => boolean;
 }
 
 /** Signal policy belongs to the writing program; Node uses these pipes with EPIPE alone. */
@@ -33,7 +35,11 @@ export function createKernelWasiFileSystemAdapter(
   fileSystemOptions: KernelWasiFileSystemOptions = {},
 ): WasiFileSystemImportAdapter {
   prepareWasiInheritedFds(filesystem);
-  const devices = createKernelWasiDeviceAdapter(filesystem, fileSystemOptions.createInode);
+  const devices = createKernelWasiDeviceAdapter(
+    filesystem,
+    fileSystemOptions.createInode,
+    fileSystemOptions.descriptorAlias,
+  );
   const prepared: WasiFileSystemImportAdapter = (memory, imports) => {
     const base = devices(memory, imports);
     if (fileSystemOptions.preparePathSearch === undefined) return base;

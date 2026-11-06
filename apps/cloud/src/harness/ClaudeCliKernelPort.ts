@@ -95,13 +95,7 @@ export interface ClaudeCliInitialization {
   readonly cwd: string;
   readonly rootDescriptor: number;
   readonly posix: KernelPosixOptions | undefined;
-  readonly workingSet: CliFileWorkingSetOptions & {
-    /**
-     * Always empty, and ignored. The loader can keep a CLI Worker from an earlier release beside a
-     * newer kernel, and those read this list. Remove once no such Worker can still load.
-     */
-    readonly paths?: readonly [];
-  };
+  readonly workingSet: CliFileWorkingSetOptions;
   readonly kernel: ClaudeCliKernelPort;
   readonly callbacks: ClaudeKernelCallbacks;
   readonly io: {
