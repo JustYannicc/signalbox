@@ -7,15 +7,22 @@ export function createChildUgrepBindings(options: {
   readonly code: ChildWorkerCode;
   readonly child: ChildProgramFactory;
 }) {
-  for (const executable of CHILD_UGREP_EXECUTABLES)
+  for (const executable of CHILD_UGREP_EXECUTABLES) {
+    const name =
+      executable === "/bin/ugrep"
+        ? "@ugrep/ugrep"
+        : executable === "/bin/grep"
+          ? "@ugrep/grep"
+          : "@ugrep/ugrep:claude-multicall";
     options.child(
       executable,
       options.code,
       "busybox",
       childProgramManifest(
-        executable === "/bin/ugrep" ? "@ugrep/ugrep" : "@ugrep/ugrep:claude-multicall",
+        name,
         KERNEL_UGREP_ARTIFACT.version,
-        `ugrep:${KERNEL_UGREP_ARTIFACT.sha256}`,
+        "ugrep:" + KERNEL_UGREP_ARTIFACT.sha256,
       ),
     );
+  }
 }

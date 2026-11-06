@@ -50,3 +50,32 @@ it("does not classify an unrelated executable", () => {
     qualifyUgrepCommand({ ...command(["ugrep", "-E", "pattern"]), executable: "/bin/other" }),
   ).toBeUndefined();
 });
+
+it("routes recursive grep from . with another operand to machine because isolate output would prefix both paths", async () => {
+  const input = {
+    executable: "/bin/grep",
+    argv: ["grep", "-rn", "needle", ".", "other.txt"],
+    cwd: "/workspace",
+    env: {},
+  } as const;
+  expect(qualifyUgrepCommand(input)).toMatchObject({
+    kind: "machine",
+    reason: "unqualified-script",
+  });
+
+  const fixture = commandGatewayFixture({
+    run: async () => {
+      throw new Error("Mixed recursive grep operands reached the isolate");
+    },
+  });
+  let child: Awaited<ReturnType<typeof fixture.gateway.exec>> | undefined;
+  try {
+    child = await fixture.gateway.exec(input, fixture.controller.signal, undefined);
+    await child.exited;
+    expect(fixture.machineSpawn).toHaveBeenCalledOnce();
+    expect(fixture.machineSpawn.mock.calls[0]![0]).toEqual(input);
+  } finally {
+    if (child !== undefined) await child.dispose();
+    await fixture.close();
+  }
+});

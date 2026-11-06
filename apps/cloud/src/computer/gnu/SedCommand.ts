@@ -44,12 +44,7 @@ export function qualifySed(
         if (suffix !== "" && !/^[A-Za-z0-9._-]+$/.test(suffix)) {
           return machine("unqualified-option", "Only literal sed backup suffixes are qualified");
         }
-        if (suffix === "" && argv[index + 1] === "") {
-          return machine(
-            "incompatible-option",
-            "GNU sed treats a separate empty operand after -i as the script",
-          );
-        }
+        if (suffix === "" && argv[index + 1] === "") index++;
         inPlace = true;
         break;
       }

@@ -21,7 +21,7 @@ const programs = [
   {
     name: "grep",
     args: ["needle", "/work/input.txt"],
-    module: "busybox-applets.js",
+    module: "ugrep.js",
     executable: "/bin/grep",
   },
   {

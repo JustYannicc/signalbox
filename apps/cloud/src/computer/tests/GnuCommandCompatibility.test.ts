@@ -141,8 +141,7 @@ const syntheticComparisonCases: readonly SyntheticComparisonCase[] = [
     id: "sed-empty-backup",
     executable: "sed",
     args: ["-i", "", "s/needle/thread/g", "nested/input"],
-    kind: "machine",
-    reason: "incompatible-option",
+    kind: "qualified-isolate",
   },
   { id: "touch-create", executable: "touch", args: ["nested/new"], kind: "qualified-isolate" },
 ];

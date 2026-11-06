@@ -15,7 +15,7 @@ export const CHILD_COREUTILS_COMMANDS = Object.freeze([
 
 export type ChildCoreutilsCommand = (typeof CHILD_COREUTILS_COMMANDS)[number];
 
-export const CHILD_BUSYBOX_APPLETS = Object.freeze(["cat", "find", "grep", "touch"] as const);
+export const CHILD_BUSYBOX_APPLETS = Object.freeze(["cat", "find", "touch"] as const);
 
 export const CHILD_PRODUCT_BUSYBOX_APPLETS = Object.freeze(["env", "id", "sort"] as const);
 
@@ -51,5 +51,6 @@ export const CHILD_PROGRAM_PATHS = Object.freeze({
 // The multicall binding uses ugrep bytes without replacing the CLI file in the namespace.
 export const CHILD_UGREP_EXECUTABLES = Object.freeze([
   "/bin/ugrep",
+  "/bin/grep",
   "/usr/local/bin/claude",
 ] as const);
