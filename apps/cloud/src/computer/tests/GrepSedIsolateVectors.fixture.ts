@@ -161,6 +161,7 @@ export function expectedChildArgv(vector: GrepSedVector): readonly (readonly str
     let options = true;
     let pattern = false;
     let recursive = false;
+    let listOnly = false;
     const operandIndexes: number[] = [];
     for (let index = 1; index < args.length; index++) {
       const argument = args[index]!;
@@ -178,6 +179,7 @@ export function expectedChildArgv(vector: GrepSedVector): readonly (readonly str
       if (options && /^-A\d{1,3}$/.test(argument) && Number(argument.slice(2)) <= 100) continue;
       if (options && /^-[GEilnvr]+$/.test(argument)) {
         recursive ||= argument.includes("r");
+        listOnly ||= argument.includes("l");
         continue;
       }
       if (!pattern) {
@@ -192,13 +194,14 @@ export function expectedChildArgv(vector: GrepSedVector): readonly (readonly str
       return operandIndexes.map((operandIndex) => {
         const operand = args[operandIndex]!;
         const rootArgs = args.filter((_, index) => !operands.has(index) || index === operandIndex);
-        const rootFormat = operand === "." ? ["--format=./%F%N%O%~"] : [];
+        const rootFormat =
+          operand === "." ? [listOnly ? "--format=./%f%~" : "--format=./%F%N%O%~"] : [];
         return [rootArgs[0]!, "--jobs=1", ...rootFormat, "-H", ...rootArgs.slice(1)];
       });
     }
     const rootFormat =
       recursive && operandIndexes.length === 1 && args[operandIndexes[0]!] === "."
-        ? ["--format=./%F%N%O%~"]
+        ? [listOnly ? "--format=./%f%~" : "--format=./%F%N%O%~"]
         : [];
     return [[args[0]!, "--jobs=1", ...rootFormat, ...args.slice(1)]];
   }

@@ -109,6 +109,7 @@ function grepArgumentInvocations(argv: readonly string[]) {
   let options = true;
   let pattern = false;
   let recursive = false;
+  let listOnly = false;
   const operandIndexes: number[] = [];
   for (let index = 1; index < argv.length; index++) {
     const argument = argv[index]!;
@@ -126,6 +127,7 @@ function grepArgumentInvocations(argv: readonly string[]) {
     if (options && /^-A\d{1,3}$/.test(argument) && Number(argument.slice(2)) <= 100) continue;
     if (options && /^-[GEilnrv]+$/.test(argument)) {
       recursive ||= argument.includes("r");
+      listOnly ||= argument.includes("l");
       continue;
     }
     if (!pattern) {
@@ -142,7 +144,7 @@ function grepArgumentInvocations(argv: readonly string[]) {
     return operandIndexes.map((operandIndex) => {
       const operand = argv[operandIndex]!;
       const rootArgs = argv.filter((_, index) => !operands.has(index) || index === operandIndex);
-      const rootFormat = operand === "." ? ["--format=./%F%N%O%~"] : [];
+      const rootFormat = operand === "." ? [dotRootFormat(listOnly)] : [];
       return [rootArgs[0]!, "--jobs=1", ...rootFormat, "-H", ...rootArgs.slice(1)];
     });
   }
@@ -150,9 +152,14 @@ function grepArgumentInvocations(argv: readonly string[]) {
   // Ugrep trims the trailing slash from ./, so format this recursive root's output explicitly.
   const rootFormat =
     recursive && operandIndexes.length === 1 && argv[operandIndexes[0]!] === "."
-      ? ["--format=./%F%N%O%~"]
+      ? [dotRootFormat(listOnly)]
       : [];
   return [[argv[0]!, "--jobs=1", ...rootFormat, ...argv.slice(1)]];
+}
+
+function dotRootFormat(listOnly: boolean) {
+  // %f is unconditional; %F only emits a path when -H is active.
+  return listOnly ? "--format=./%f%~" : "--format=./%F%N%O%~";
 }
 
 function combineGrepExits(exits: readonly KernelCommandExit[]): KernelCommandExit {
