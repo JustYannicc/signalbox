@@ -61,7 +61,7 @@ export function createTestFilesystem(
     filesystem,
     storage,
     persistenceRevision: () => inodes.changeGeneration(),
-    fileChanges: (since: number) => inodes.changedInodes?.(since),
+    fileChanges: (since: number) => inodes.changesSince?.(since),
     close() {
       filesystem.dispose();
       database.close();

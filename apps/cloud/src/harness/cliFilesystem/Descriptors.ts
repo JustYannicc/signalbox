@@ -302,6 +302,7 @@ export class CliDescriptorViews {
           view.content!.copyInto(next, 0);
           next.set(bytes, Number(offset));
         });
+        this.#files.projections.touchContent(view.path);
       },
     );
     this.#projectSize(view, BigInt(size));
@@ -322,6 +323,7 @@ export class CliDescriptorViews {
         view.content?.replace(Number(size), (next) => {
           if (next.byteLength > 0) view.content!.copyInto(next, 0);
         });
+        this.#files.projections.touchContent(view.path);
       },
     );
     this.#projectSize(view, size);
@@ -378,6 +380,10 @@ export class CliDescriptorViews {
         }
       } else if (
         view.content !== undefined &&
+        // The CLI's own unconfirmed bytes are newer than any read, and a projected stat (no inode
+        // yet) says nothing about Computer's version.
+        this.#files.projections.seq(view.path) === undefined &&
+        previous.ino !== 0n &&
         (previous.size !== view.stat.size ||
           previous.mtimeNs !== view.stat.mtimeNs ||
           previous.ctimeNs !== view.stat.ctimeNs)

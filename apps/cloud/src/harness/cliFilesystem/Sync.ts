@@ -1,8 +1,9 @@
 import { kernelError } from "../../kernel/KernelErrno.ts";
 import type { ClaudeCliKernelPort, ClaudeCliLookup } from "../ClaudeCliKernelPort.ts";
-import { parentOf, type CliFileMetadata, type CliFileWorkingSet } from "./WorkingSet.ts";
+import { parentOf, sameFile, type CliFileMetadata, type CliFileWorkingSet } from "./WorkingSet.ts";
 import type { CliDescriptorViews } from "./Descriptors.ts";
 import type { CliProjectionSnapshot } from "./Projections.ts";
+import { sha256Hex } from "./Digest.ts";
 
 /** Only a full index reproduces denial handling and the machine's unlisted changes. */
 class IndexRequired extends Error {}
@@ -19,7 +20,7 @@ const childOf = (parent: string, name: string) => `${parent === "/" ? "" : paren
 export function createCliFileSync(input: {
   readonly files: CliFileWorkingSet;
   readonly views: CliDescriptorViews;
-  readonly kernel: Pick<ClaudeCliKernelPort, "metadata" | "changes" | "lookup">;
+  readonly kernel: Pick<ClaudeCliKernelPort, "metadata" | "changes" | "lookup" | "digest">;
   readonly metadataLimit: number;
   readonly requested: readonly string[];
   readonly prefetch: (paths: readonly string[]) => Promise<void>;
@@ -48,15 +49,37 @@ export function createCliFileSync(input: {
       cursor = page.next ?? -1;
     } while (cursor >= 0);
     const requested = [...new Set([...input.requested, ...files.paths])];
-    files.replaceMetadata(revision!, entries);
+    files.replaceMetadata(revision!, entries, await verify(entries));
     views.releaseNamedContent();
     await input.prefetch(requested);
     await views.refresh();
   };
 
+  // Without a change feed, only a digest proves cached bytes still match: clocks are coarse, so
+  // inode, size and mtime can all repeat across a rewrite.
+  const verify = async (entries: readonly CliFileMetadata[]) => {
+    const verified = new Set<string>();
+    const cached = files.paths.filter((path) => !files.projections.projected(path));
+    if (cached.length === 0) return verified;
+    const before = new Map(files.entries.map((entry) => [entry.path, entry.stat]));
+    const next = new Map(entries.map((entry) => [entry.path, entry.stat]));
+    const candidates = cached.filter((path) => sameFile(before.get(path), next.get(path)));
+    for (let offset = 0; offset < candidates.length; offset += 256) {
+      const batch = candidates.slice(offset, offset + 256);
+      // One cached file at a time: each read copies its bytes.
+      const local: string[] = [];
+      for (const path of batch) local.push(await sha256Hex(files.content(path)));
+      const remote = await kernel.digest(batch);
+      for (const [index, path] of batch.entries())
+        if (remote[index] !== null && remote[index] === local[index]) verified.add(path);
+    }
+    return verified;
+  };
+
   const incremental = async (
     revision: number,
     inodes: readonly bigint[],
+    names: readonly { readonly parent: bigint; readonly name: string }[],
     snapshot: CliProjectionSnapshot,
   ) => {
     const changed = new Set(inodes);
@@ -64,6 +87,18 @@ export function createCliFileSync(input: {
     const reread = new Set(snapshot.keys());
     for (const entry of entries)
       if (entry.pending || changed.has(entry.stat.ino)) reread.add(entry.path);
+    if (names.length > 0) {
+      // A name re-pointed at a new inode, as by an overlay copy-up, is listed by its directory.
+      const directories = new Map<bigint, string[]>();
+      for (const entry of entries)
+        if (entry.stat.type === "directory" && !entry.pending) {
+          const list = directories.get(entry.stat.ino);
+          if (list === undefined) directories.set(entry.stat.ino, [entry.path]);
+          else list.push(entry.path);
+        }
+      for (const { parent, name } of names)
+        for (const directory of directories.get(parent) ?? []) reread.add(childOf(directory, name));
+    }
     const known = new Map(entries.map((entry) => [entry.path, entry]));
     let index: Map<string, string[]> | undefined;
     // Built only when a read needs it; most rounds touch a few files and no directories.
@@ -128,7 +163,7 @@ export function createCliFileSync(input: {
       evict.push(path);
       if (update.stat.type === "file") prefetch.push(path);
     }
-    files.sync(revision, [...updates.values()], evict, snapshot);
+    const applied = files.sync(revision, [...updates.values()], evict, snapshot);
     // Requested files that this round created or replaced are prefetched like at startup.
     for (const path of input.requested) {
       const canonical = input.canonical(path);
@@ -138,7 +173,7 @@ export function createCliFileSync(input: {
     const evicted = new Set(evict);
     views.releaseNamedContent((view) => evicted.has(view.path));
     await input.prefetch(prefetch);
-    await views.refresh((view) => changed.has(view.stat.ino) || updates.has(view.path));
+    await views.refresh((view) => changed.has(view.stat.ino) || applied.has(view.path));
   };
 
   const round = async () => {
@@ -148,7 +183,7 @@ export function createCliFileSync(input: {
       const changes = await kernel.changes(files.revision);
       try {
         if (changes.inodes === null) throw new IndexRequired();
-        await incremental(changes.revision, changes.inodes, snapshot);
+        await incremental(changes.revision, changes.inodes, changes.names, snapshot);
         return;
       } catch (cause) {
         if (!(cause instanceof IndexRequired)) throw cause;

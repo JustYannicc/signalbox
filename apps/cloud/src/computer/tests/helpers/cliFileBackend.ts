@@ -24,6 +24,10 @@ export async function cliFileBackendFixture(
     ) => void;
     /** Computer without a change feed, as when the machine layer changed. */
     readonly changeFeed?: false;
+    /** The machine layer's change counter and whether a machine command is running. */
+    readonly machine?: () => { readonly machine: number; readonly machineRunning: boolean };
+    /** Runs when the CLI refills descriptor leases, the last step of a view round. */
+    readonly onLeaseRefill?: () => void;
     /** Runs inside each view read of Computer: a full index or an incremental round. */
     readonly duringRefresh?: () => void;
   } = {},
@@ -53,7 +57,10 @@ export async function cliFileBackendFixture(
       commands: () => {
         throw new Error("Filesystem test cannot execute a process");
       },
-      fileRevision: () => ({ files: owned.persistenceRevision(), machine: 0 }),
+      fileRevision: () => ({
+        files: owned.persistenceRevision(),
+        ...(options.machine?.() ?? { machine: 0, machineRunning: false }),
+      }),
       fileChanges: (since: number) =>
         options.changeFeed === false ? undefined : owned.fileChanges(since),
     },
@@ -129,6 +136,7 @@ export async function cliFileBackendFixture(
         };
       if (property === "leaseDescriptors")
         return async (count: number) => {
+          options.onLeaseRefill?.();
           const ids = await target.leaseDescriptors(count);
           privateLease ??= ids[0];
           return ids;

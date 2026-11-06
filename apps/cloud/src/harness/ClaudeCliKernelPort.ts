@@ -18,10 +18,14 @@ export interface ClaudeCliMetadataPage {
   readonly next: number | null;
 }
 
-/** `inodes` is null when Computer can't list what changed after the base revision. */
+/**
+ * What changed after the base revision: inodes, and names in directories (by the directory's
+ * inode). `inodes` is null when Computer can't list it, as while a machine command runs.
+ */
 export interface ClaudeCliChanges {
   readonly revision: number;
   readonly inodes: readonly bigint[] | null;
+  readonly names: readonly { readonly parent: bigint; readonly name: string }[];
 }
 
 /** One path read at call time. `names` lists a readable directory. */
@@ -51,6 +55,8 @@ export interface ClaudeCliKernelPort extends KernelSyscallPort {
   changes(since: number): Promise<ClaudeCliChanges>;
   lookup(paths: readonly string[]): Promise<readonly ClaudeCliLookup[]>;
   prefetch(path: string, offset: number, length: number): Promise<Uint8Array>;
+  /** SHA-256 hex of each regular file's current bytes, or null when it is not one. */
+  digest(paths: readonly string[]): Promise<readonly (string | null)[]>;
   leaseProcesses(
     count: number,
   ): Promise<readonly { readonly pid: number; readonly handle: KernelHandle<"process"> }[]>;

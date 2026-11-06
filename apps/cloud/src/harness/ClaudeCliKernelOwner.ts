@@ -18,7 +18,7 @@ import { createNodeComputerChildProcess } from "../isolate/NodeComputerProcess.t
 import { NodeChildControl, createCliProcessLeases } from "./cliKernel/Children.ts";
 import { kernelError } from "../kernel/KernelErrno.ts";
 import { nodeProcessSignalError } from "../isolate/NodeProcessSignals.ts";
-import { lookupCliPaths, readCliMetadata } from "./cliKernel/Metadata.ts";
+import { digestCliFiles, lookupCliPaths, readCliMetadata } from "./cliKernel/Metadata.ts";
 import { hasPrivateDescriptorAlias } from "./cliKernel/DescriptorAliases.ts";
 import { nodeFsError } from "../isolate/NodeFsError.ts";
 
@@ -47,7 +47,10 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
   readonly rootDescriptor;
   #snapshot: { revision: number; entries: CliFileMetadata[] } | undefined;
   /** Revisions handed to the CLI, so a later change query knows which parts moved. */
-  readonly #issued = new Map<number, { readonly files: number; readonly machine: number }>();
+  readonly #issued = new Map<
+    number,
+    { readonly files: number; readonly machine: number; readonly machineRunning: boolean }
+  >();
   #closed: Promise<void> | undefined;
 
   constructor(
@@ -214,12 +217,15 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
       const base = this.#issued.get(since);
       const revision = this.#revision(true);
       const current = this.#issued.get(revision)!;
-      // Machine changes have no inode feed; the CLI re-indexes metadata instead.
-      const inodes =
-        base === undefined || base.machine !== current.machine
+      // Machine changes have no inode feed, and a running command may still be writing the
+      // lower layer; the CLI re-indexes metadata instead.
+      const changes =
+        base === undefined || base.machine !== current.machine || current.machineRunning
           ? undefined
           : this.#resources.fileChanges(base.files);
-      return { revision, inodes: inodes ?? null };
+      return changes === undefined
+        ? { revision, inodes: null, names: [] }
+        : { revision, inodes: changes.inodes, names: changes.names };
     });
   }
   lookup(paths: readonly string[]) {
@@ -227,6 +233,13 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
       if (!Array.isArray(paths) || paths.length > 1024)
         throw new RangeError("Invalid CLI lookup batch");
       return lookupCliPaths(this.#resources.storage.files, paths, signal);
+    });
+  }
+  digest(paths: readonly string[]) {
+    return this.#run(crypto.randomUUID(), async (signal) => {
+      if (!Array.isArray(paths) || paths.length > 256)
+        throw new RangeError("Invalid CLI digest batch");
+      return digestCliFiles(this.#resources.storage.files, paths, signal);
     });
   }
   prefetch(path: string, offset: number, length: number) {

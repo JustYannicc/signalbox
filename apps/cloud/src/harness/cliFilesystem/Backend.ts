@@ -89,7 +89,8 @@ export async function createCliFileBackend(
           (offset, length) => kernel.prefetch(canonical, offset, length),
           signal,
         );
-        release.push(files.pin(canonical));
+        // A concurrent projection can make the read moot; a later round fetches it again.
+        if (files.hasContent(canonical)) release.push(files.pin(canonical));
       }
     } finally {
       for (const unpin of release) unpin();

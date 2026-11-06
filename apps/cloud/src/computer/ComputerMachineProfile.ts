@@ -31,6 +31,21 @@ export function createComputerMachineProfile(options: {
     ...options.machineInventory.excludedRoots,
   ];
   let metadataEpoch = 0;
+  // `metadataEpoch` orders refreshes between commands. Readers of machine changes need a counter
+  // that also moves once a command's exit refresh lands, and to know when one is still running.
+  let changes = 0;
+  let running = 0;
+  const begin = () => {
+    running++;
+    changes++;
+    let settled = false;
+    return () => {
+      if (settled) return;
+      settled = true;
+      running--;
+      changes++;
+    };
+  };
   const invalidateMetadata = (epoch: number) => {
     if (epoch === metadataEpoch) overlay.invalidate();
   };
@@ -62,6 +77,7 @@ export function createComputerMachineProfile(options: {
   const machine: KernelCommandForwarder = {
     async spawn(command, callerSignal) {
       const commandEpoch = ++metadataEpoch;
+      const settle = begin();
       overlay.invalidate();
       try {
         const previousGeneration = transport.files.current().generation;
@@ -84,13 +100,20 @@ export function createComputerMachineProfile(options: {
             throw error;
           },
         );
-        void exited.catch(() => undefined);
-        return { ...child, exited };
+        const settled = exited.finally(settle);
+        void settled.catch(() => undefined);
+        return { ...child, exited: settled };
       } catch (error) {
         invalidateMetadata(commandEpoch);
+        settle();
         throw error;
       }
     },
   };
-  return { overlay, machine, metadataEpoch: () => metadataEpoch };
+  return {
+    overlay,
+    machine,
+    metadataEpoch: () => metadataEpoch,
+    machineChanges: () => ({ changes, running }),
+  };
 }

@@ -201,13 +201,21 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
       [remote.stderr, this.stderr],
     ] as const) {
       if (source === undefined || target === null) continue;
-      const stream = NodeStream.Readable.fromWeb(
-        source as NodeStreamWeb.ReadableStream<Uint8Array>,
+      // A byte-mode Node stream rejects ArrayBuffer chunks, which an RPC stream may deliver.
+      const bytes = source.pipeThrough(
+        new TransformStream<Uint8Array | ArrayBuffer, Uint8Array>({
+          transform: (chunk, controller) =>
+            controller.enqueue(chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : chunk),
+        }),
       );
+      const stream = NodeStream.Readable.fromWeb(bytes as NodeStreamWeb.ReadableStream<Uint8Array>);
       const complete = new Promise<void>((resolve, reject) => {
         stream.on("error", reject);
         target.on("error", reject);
         target.once("finish", resolve);
+        // A failed child destroys its outputs, which then close without finishing. Waiting for
+        // `finish` would hold the child's filesystem bracket, and the CLI's view, open forever.
+        target.once("close", resolve);
       });
       stream.pipe(target);
       this.#pumps.push(complete);

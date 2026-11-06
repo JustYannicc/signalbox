@@ -69,7 +69,7 @@ describe("CLI synchronous file working set", () => {
     await files.close();
   });
 
-  it("keeps bytes of an unchanged file across a metadata re-index", async () => {
+  it("keeps bytes across a metadata re-index only when they are verified unchanged", async () => {
     const files = workingSet(16);
     const grown = (size: number) => {
       const entry = metadata("/grown", size);
@@ -78,10 +78,14 @@ describe("CLI synchronous file working set", () => {
     files.replaceMetadata(1, [metadata("/same", 4), grown(4)]);
     await files.prefetch("/same", async () => new Uint8Array([1, 2, 3, 4]));
     await files.prefetch("/grown", async () => new Uint8Array(4));
-    files.replaceMetadata(7, [metadata("/same", 4), grown(5)]);
+    files.replaceMetadata(7, [metadata("/same", 4), grown(5)], new Set(["/same", "/grown"]));
     expect(files.content("/same")).toEqual(new Uint8Array([1, 2, 3, 4]));
     expect(() => files.content("/grown")).toThrow("not prefetched");
     expect(files.bytes).toBe(4);
+    // Same inode, size and mtime is not proof: a coarse clock repeats across a rewrite.
+    files.replaceMetadata(8, [metadata("/same", 4), grown(5)]);
+    expect(() => files.content("/same")).toThrow("not prefetched");
+    expect(files.bytes).toBe(0);
     await files.close();
   });
 

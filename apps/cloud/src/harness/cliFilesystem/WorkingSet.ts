@@ -32,15 +32,14 @@ type CliMetadataUpdate = CliFileMetadata | { readonly path: string; readonly rem
 
 export const parentOf = (path: string) => path.slice(0, path.lastIndexOf("/")) || "/";
 
-/** Bytes are only reused when Computer still reports the same file version. */
-const sameFile = (before: KernelStat | undefined, after: KernelStat | undefined) =>
+/** Same inode and size; a coarse mtime can't prove the bytes match, so callers verify those. */
+export const sameFile = (before: KernelStat | undefined, after: KernelStat | undefined) =>
   before !== undefined &&
   after?.type === "file" &&
   before.type === "file" &&
   before.ino === after.ino &&
   before.dev === after.dev &&
-  before.size === after.size &&
-  before.mtimeNs === after.mtimeNs;
+  before.size === after.size;
 
 export interface CliFileWorkingSetOptions {
   readonly byteLimit: number;
@@ -90,8 +89,12 @@ export class CliFileWorkingSet {
       throw Object.assign(new Error("CLI filesystem metadata needs refresh"), { code: "ESTALE" });
   }
 
-  /** A full re-index. Unconfirmed projections and unchanged file bytes survive it. */
-  replaceMetadata(revision: number, entries: readonly CliFileMetadata[]) {
+  /** A full re-index. Unconfirmed projections survive it, and so do bytes in `verified`. */
+  replaceMetadata(
+    revision: number,
+    entries: readonly CliFileMetadata[],
+    verified: ReadonlySet<string> = new Set(),
+  ) {
     this.writes.assertHealthy();
     if (!Number.isSafeInteger(revision) || revision < 0)
       throw new TypeError("Invalid Computer filesystem revision");
@@ -125,7 +128,9 @@ export class CliFileWorkingSet {
       this.#content.paths.filter(
         (path) =>
           !this.projections.projected(path) &&
-          !sameFile(this.#metadata.get(path)?.stat, metadata.get(path)?.stat),
+          !(
+            verified.has(path) && sameFile(this.#metadata.get(path)?.stat, metadata.get(path)?.stat)
+          ),
       ),
       [],
     );
@@ -146,11 +151,13 @@ export class CliFileWorkingSet {
     if (!Number.isSafeInteger(revision) || revision < 0)
       throw new TypeError("Invalid Computer filesystem revision");
     const current = (path: string) => !this.projections.movedSince(snapshot, path);
-    const apply = this.#prepare(updates.filter((update) => current(update.path)));
+    const applied = updates.filter((update) => current(update.path));
+    const apply = this.#prepare(applied);
     this.#content.project(evict.filter(current), []);
     apply();
     this.projections.settle(snapshot);
     this.#revision = revision;
+    return new Set(applied.map((update) => update.path));
   }
 
   metadata(path: string) {
@@ -220,7 +227,8 @@ export class CliFileWorkingSet {
       throw new CliWorkingSetLimit(Number.POSITIVE_INFINITY, this.#options.byteLimit);
     const size = Number(stat.size);
     if (this.#content.has(path)) return;
-    const projection = this.projections.seq(path);
+    const projection = this.projections.contentSeq(path);
+    const identity = this.#metadata.get(path)!;
     if (this.#prefetching.has(path))
       throw Object.assign(new Error(`CLI prefetch is already active: ${path}`), { code: "EBUSY" });
     const release = this.#content.reserve(size);
@@ -231,8 +239,13 @@ export class CliFileWorkingSet {
         signal?.throwIfAborted();
         const length = Math.min(size - offset, KERNEL_SYSCALL_MAX_IO_BYTES);
         const chunk = await read(offset, length);
-        if (chunk.byteLength === 0 || chunk.byteLength > length)
+        if (chunk.byteLength > length)
           throw new Error("Computer returned an invalid prefetched file range");
+        // The file shrank after the view read its size; the change feed brings the new size.
+        if (chunk.byteLength === 0) {
+          release();
+          return;
+        }
         if (this.revision !== revision)
           throw Object.assign(new Error("Computer revision changed during prefetch"), {
             code: "ESTALE",
@@ -245,8 +258,17 @@ export class CliFileWorkingSet {
         throw Object.assign(new Error("Computer revision changed during prefetch"), {
           code: "ESTALE",
         });
-      // A sync write projected these bytes meanwhile; they are newer than the read.
-      if (this.projections.seq(path) !== projection || this.#content.has(path)) {
+      // A sync write projected new bytes meanwhile, or the name now means another file. A
+      // metadata-only projection such as chmod leaves the bytes valid.
+      const now = this.#metadata.get(path);
+      if (
+        this.projections.contentSeq(path) !== projection ||
+        this.#content.has(path) ||
+        now === undefined ||
+        now.pending !== identity.pending ||
+        now.stat.ino !== identity.stat.ino ||
+        now.stat.dev !== identity.stat.dev
+      ) {
         release();
         return;
       }
@@ -268,6 +290,7 @@ export class CliFileWorkingSet {
   replaceWith(path: string, length: number, fill: (target: Uint8Array) => void) {
     this.assertCurrent();
     this.#content.replace(path, length, fill);
+    this.projections.touchContent(path);
   }
   /** Prepares a CLI projection; the returned commit records it until Computer confirms it. */
   project(

@@ -102,11 +102,15 @@ export function createClaudeKernelResources(
     storage,
     // The lower view has no global change clock. Its owner brackets machine changes with this
     // epoch; canonical filesystem changes still count even when KernelFileSystem cannot attest all mounts.
-    fileRevision: () => ({
-      files: storage.persistence.storage.changeGeneration(),
-      machine: profile?.metadataEpoch() ?? 0,
-    }),
-    fileChanges: (since: number) => storage.persistence.storage.changedInodes?.(since),
+    fileRevision: () => {
+      const machine = profile?.machineChanges() ?? { changes: 0, running: 0 };
+      return {
+        files: storage.persistence.storage.changeGeneration(),
+        machine: machine.changes,
+        machineRunning: machine.running > 0,
+      };
+    },
+    fileChanges: (since: number) => storage.persistence.storage.changesSince?.(since),
     stdio,
     processes,
     systemIdentity,

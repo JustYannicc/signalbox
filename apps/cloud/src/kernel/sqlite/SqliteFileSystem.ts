@@ -54,8 +54,29 @@ function installChangeFeed(storage: FacetStorage) {
           `CREATE TRIGGER IF NOT EXISTS ${table}_change_${event} AFTER ${event.toUpperCase()} ON ${table} BEGIN UPDATE kernel_fs_generation SET value = value + 1 WHERE singleton = 1; ${marks.join(" ")} END`,
         );
       }
+    // Overlay copy-up publishes a new inode under an existing name, so readers also need names.
+    storage.sql.exec(
+      "CREATE TABLE IF NOT EXISTS kernel_fs_change_name (parent TEXT NOT NULL, name TEXT NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY (parent, name))",
+    );
+    storage.sql.exec(
+      "CREATE INDEX IF NOT EXISTS kernel_fs_change_name_generation ON kernel_fs_change_name (generation)",
+    );
+    for (const [event, rows] of [
+      ["insert", ["NEW"]],
+      ["update", ["OLD", "NEW"]],
+      ["delete", ["OLD"]],
+    ] as const)
+      storage.sql.exec(
+        `CREATE TRIGGER IF NOT EXISTS kernel_fs_entry_name_${event} AFTER ${event.toUpperCase()} ON kernel_fs_entry BEGIN UPDATE kernel_fs_generation SET value = value + 1 WHERE singleton = 1; ${rows
+          .map(
+            (row) =>
+              `INSERT INTO kernel_fs_change_name (parent, name, generation) SELECT ${row}.parent, ${row}.name, value FROM kernel_fs_generation WHERE singleton = 1 ON CONFLICT(parent, name) DO UPDATE SET generation = excluded.generation;`,
+          )
+          .join(" ")} END`,
+      );
     // Feed readers live in one incarnation, so earlier rows can only answer bases nobody holds.
     storage.sql.exec("DELETE FROM kernel_fs_change");
+    storage.sql.exec("DELETE FROM kernel_fs_change_name");
     storage.sql.exec("UPDATE kernel_fs_generation SET floor = value WHERE singleton = 1");
   });
 }
@@ -126,14 +147,23 @@ export function createSqliteFileSystem(storage: FacetStorage, nowNs: () => bigin
       inodes.stat(inode);
     },
     changeGeneration: () => generation().value,
-    changedInodes(since) {
+    changesSince(since) {
       const current = generation();
       if (!Number.isSafeInteger(since) || since < current.floor || since > current.value)
         return undefined;
-      return Array.from(
-        storage.sql.exec("SELECT ino FROM kernel_fs_change WHERE generation > ?", since),
-        (row) => BigInt(String(row.ino)),
-      );
+      return {
+        inodes: Array.from(
+          storage.sql.exec("SELECT ino FROM kernel_fs_change WHERE generation > ?", since),
+          (row) => BigInt(String(row.ino)),
+        ),
+        names: Array.from(
+          storage.sql.exec(
+            "SELECT parent, name FROM kernel_fs_change_name WHERE generation > ?",
+            since,
+          ),
+          (row) => ({ parent: BigInt(String(row.parent)), name: String(row.name) }),
+        ),
+      };
     },
   };
   return { storage: fs, hydration };
