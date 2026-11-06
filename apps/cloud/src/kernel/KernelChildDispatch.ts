@@ -1,6 +1,7 @@
 import { startKernelBashDispatch } from "./KernelBashDispatch.ts";
 import type { KernelBashDispatcher } from "./KernelBashDispatchPort.ts";
 import { RpcTarget } from "cloudflare:workers";
+import { retainRpcCapability } from "../rpc/Capability.ts";
 import type { KernelAsyncProgramContext } from "./KernelAsyncProgram.ts";
 import { createKernelSyscallHost } from "./KernelSyscallHost.ts";
 import { createKernelBusyboxHost } from "./KernelBusyboxHost.ts";
@@ -172,11 +173,18 @@ export class KernelChildDispatch extends RpcTarget implements KernelChildDispatc
     this.#opened = true;
     const posix = context.filesystem.posixPolicy;
     if (posix === undefined) throw new Error("Bash requires the kernel POSIX policy");
-    this.#bash = startKernelBashDispatch(
-      context,
-      { ...posix.credentials, umask: posix.umask, hostname: this.#hostname },
-      dispatcher,
-    );
+    const capability = retainRpcCapability(dispatcher);
+    try {
+      const bash = startKernelBashDispatch(
+        context,
+        { ...posix.credentials, umask: posix.umask, hostname: this.#hostname },
+        capability.value,
+      );
+      this.#bash = { ...bash, finished: bash.finished.finally(() => capability[Symbol.dispose]()) };
+    } catch (cause) {
+      capability[Symbol.dispose]();
+      throw cause;
+    }
     void this.#bash.finished.catch(() => undefined);
     return await this.#bash.exited;
   }
