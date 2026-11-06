@@ -124,6 +124,46 @@ export default {
       }
       return Response.json({ codes });
     }
+    if (path === "/rsa-jwk") {
+      // The official CLI's CA pass: each root's public key round-trips through JWK, then SPKI.
+      const crypto = DEFAULT_NODE_NATIVE_MODULES.crypto as typeof NodeCrypto;
+      const roots: readonly string[] = Reflect.get(
+        DEFAULT_NODE_NATIVE_MODULES.tls!,
+        "rootCertificates",
+      );
+      const failures: string[] = [];
+      let rsa = 0;
+      let matched = 0;
+      for (const root of roots) {
+        const publicKey = new crypto.X509Certificate(root).publicKey;
+        if (publicKey.asymmetricKeyType !== "rsa") continue;
+        rsa++;
+        try {
+          const jwk = publicKey.export({ format: "jwk" });
+          const imported = crypto.createPublicKey({ key: jwk, format: "jwk" });
+          const spki = (key: NodeCrypto.KeyObject) =>
+            key.export({ type: "spki", format: "der" }).toString("base64");
+          if (jwk.kty === "RSA" && spki(imported) === spki(publicKey)) matched++;
+          else failures.push(`mismatch ${JSON.stringify(Object.keys(jwk))}`);
+        } catch (error) {
+          failures.push(String(error));
+        }
+      }
+      return Response.json({ rsa, matched, failures: [...new Set(failures)] });
+    }
+    if (path === "/rsa-jwk-keys") {
+      const keys: unknown = await request.json();
+      if (typeof keys !== "object" || keys === null) throw new TypeError("Missing test keys");
+      const crypto = DEFAULT_NODE_NATIVE_MODULES.crypto as typeof NodeCrypto;
+      return Response.json({
+        publicKey: crypto
+          .createPublicKey(String(Reflect.get(keys, "publicKey")))
+          .export({ format: "jwk" }),
+        privateKey: crypto
+          .createPrivateKey(String(Reflect.get(keys, "privateKey")))
+          .export({ format: "jwk" }),
+      });
+    }
     if (path === "/crypto-zlib") {
       const crypto = DEFAULT_NODE_NATIVE_MODULES.crypto as typeof NodeCrypto;
       const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
