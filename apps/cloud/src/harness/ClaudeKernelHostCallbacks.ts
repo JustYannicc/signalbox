@@ -77,6 +77,7 @@ export class ClaudeKernelHostCallbacks extends RpcTarget implements ClaudeKernel
     const { reporter } = this.#current();
     if (report.type === "spawn") reporter.cliSpawnContext?.(report.context);
     else if (report.type === "milestone") reporter.turnMilestone?.(report.stage);
+    else if (report.type === "trace") reporter.cliViewTrace?.(report.event);
     else await reporter.releaseModuleOmitted(report.event, report.failure);
   }
   async startup(cause: unknown) {

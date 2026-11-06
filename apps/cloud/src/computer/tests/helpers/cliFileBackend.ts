@@ -7,6 +7,8 @@ import { createKernelSessionStdio } from "../../../kernel/KernelSessionStdio.ts"
 import { createTestFilesystem } from "./filesystem.ts";
 import type { KernelSyscallResponse } from "../../../kernel/KernelSyscallPort.ts";
 import type { KernelSyscallRequest } from "../../../kernel/KernelSyscallPort.ts";
+import type { CliViewTrace } from "../../../harness/CliViewTrace.ts";
+import { createCliTraceLog } from "../../../harness/ClaudeCliTraceLog.ts";
 
 export async function cliFileBackendFixture(
   byteLimit = 128,
@@ -48,7 +50,12 @@ export async function cliFileBackendFixture(
   const canonical = createNodeFs(owned.filesystem).fs;
   canonical.writeFileSync("/sync", "before");
   canonical.writeFileSync("/async", "remote");
+  // A seeded lower layer answers isLowerPath the way Computer's machine overlay does.
+  let lower: ReturnType<typeof owned.filesystem.installLowerFileSystem> | undefined;
+  const install = owned.filesystem.installLowerFileSystem.bind(owned.filesystem);
+  owned.filesystem.installLowerFileSystem = (source) => (lower = install(source));
   options.seed?.(canonical, owned.filesystem);
+  const writeTrace = createCliTraceLog(owned.storage, () => 0);
   const owner = new ClaudeCliKernelOwner(
     {
       storage: { files: owned.filesystem },
@@ -63,6 +70,9 @@ export async function cliFileBackendFixture(
       }),
       fileChanges: (since: number) =>
         options.changeFeed === false ? undefined : owned.fileChanges(since),
+      isLowerPath: async (path: string, signal: AbortSignal) =>
+        (await lower?.isLower(path, signal)) ?? false,
+      trace: writeTrace,
     },
     {
       process: {
@@ -84,11 +94,11 @@ export async function cliFileBackendFixture(
       },
     },
     lifetime.signal,
-    128,
+    options.metadataLimit ?? 128,
   );
   const requests: KernelSyscallRequest[] = [];
   let failWrites = false;
-  type ViewRead = "metadata" | "changes" | "lookup" | "prefetch";
+  type ViewRead = "metadata" | "changes" | "lookup" | "prefetch" | "digest";
   let gate:
     | {
         methods: readonly ViewRead[];
@@ -141,6 +151,12 @@ export async function cliFileBackendFixture(
           privateLease ??= ids[0];
           return ids;
         };
+      if (property === "digest")
+        return async (...args: Parameters<ClaudeCliKernelOwner["digest"]>) => {
+          const digests = await target.digest(...args);
+          await held("digest");
+          return digests;
+        };
       if (property === "prefetch")
         return async (...args: Parameters<ClaudeCliKernelOwner["prefetch"]>) => {
           const bytes = await target.prefetch(...args);
@@ -161,8 +177,10 @@ export async function cliFileBackendFixture(
       return typeof value === "function" ? value.bind(target) : value;
     },
   });
+  const traces: CliViewTrace[] = [];
   const files = await createCliFileBackend(
     {
+      trace: (event) => traces.push(event),
       kernel,
       cwd: "/",
       rootDescriptor: owner.rootDescriptor,
@@ -203,6 +221,13 @@ export async function cliFileBackendFixture(
       return prefetchedBytes;
     },
     revision: () => owned.persistenceRevision(),
+    /** What the view reported to the host journal, in order. */
+    traces,
+    /** Computer's own trace log, which needs no turn. */
+    traceRows: () =>
+      [...owned.storage.sql.exec("SELECT source, event FROM harness_cli_trace ORDER BY id")].map(
+        (row) => ({ source: String(row.source), event: JSON.parse(String(row.event)) }),
+      ),
     /** Computer's side of the CLI port, as the CLI reaches it. */
     kernel,
     sql: owned.storage.sql,

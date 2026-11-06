@@ -155,7 +155,15 @@ export function createClaudeCliFacetClass<Env>(
           retainedSource.value,
           this.#lifetime.signal,
         );
-        const backend = await createCliFileBackend(configuration, this.#lifetime.signal);
+        const reports = configuration.callbacks;
+        const backend = await createCliFileBackend(
+          {
+            ...configuration,
+            // The view also writes Computer's own log, which needs no turn.
+            trace: (event) => void reports.report({ type: "trace", event }).catch(() => undefined),
+          },
+          this.#lifetime.signal,
+        );
         files = backend;
         const { stdio, io } = cliStdio(
           configuration,

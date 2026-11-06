@@ -14,6 +14,8 @@ import { CliFilePaths } from "./Paths.ts";
 import { CliDescriptorViews } from "./Descriptors.ts";
 import { createCliMetadataMutations } from "./Mutations.ts";
 import { createCliFileSync } from "./Sync.ts";
+import { watchEventLoop } from "./LoopMonitor.ts";
+import type { CliViewTrace } from "../CliViewTrace.ts";
 
 const mutating = new Set<NodeFsOperation>([
   "chmod",
@@ -37,10 +39,24 @@ export async function createCliFileBackend(
   input: Pick<
     ClaudeCliInitialization,
     "kernel" | "cwd" | "rootDescriptor" | "posix" | "workingSet"
-  >,
+  > & { readonly trace?: (event: CliViewTrace) => void },
   signal: AbortSignal,
 ) {
   const kernel = input.kernel;
+  // Diagnostics never fail the view. Computer's own log keeps every trace, turn or not; the
+  // caller's sink (the host's turn log) gets it too.
+  const trace = (event: CliViewTrace) => {
+    try {
+      input.trace?.(event);
+    } catch {
+      /* A lost trace is only a missing diagnostic. */
+    }
+    try {
+      void kernel.trace(event).catch(() => undefined);
+    } catch {
+      /* As above. */
+    }
+  };
   const files = new CliFileWorkingSet(input.workingSet);
   const remote = createNodeFsSyscallClient({
     syscalls: kernel,
@@ -110,6 +126,7 @@ export async function createCliFileBackend(
     metadataLimit: input.workingSet.metadataLimit,
     requested: input.workingSet.paths,
     prefetch,
+    trace,
     canonical(path) {
       try {
         return paths.resolve(path);
@@ -426,6 +443,24 @@ export async function createCliFileBackend(
     renameAsync: (source, destination, userSignal) =>
       run("rename", [source, destination], userSignal),
   };
+  // The last call into the view names what held the event loop when a timer comes back late.
+  let lastOperation: string | undefined;
+  for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(backend))) {
+    const method: unknown = descriptor.value;
+    if (typeof method !== "function") continue;
+    Object.defineProperty(backend, name, {
+      ...descriptor,
+      value(...args: unknown[]) {
+        lastOperation = name;
+        return Reflect.apply(method, backend, args);
+      },
+    });
+  }
+  const stopWatching = watchEventLoop({
+    trace,
+    activity: () => [fileSync.activity() ?? "no round", lastOperation ?? "no call"].join(", "),
+  });
+  disposals.add(stopWatching);
   return {
     backend,
     commit,

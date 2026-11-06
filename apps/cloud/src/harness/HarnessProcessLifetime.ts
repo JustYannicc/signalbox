@@ -9,6 +9,7 @@ import type {
 import type { KernelExitStatus } from "../kernel/KernelProgramHost.ts";
 import type { ClaudeSpawnDiagnostic } from "./ClaudeSpawnContext.ts";
 import type { HarnessTurnStage } from "./HarnessTurnProgress.ts";
+import type { CliViewTrace } from "./CliViewTrace.ts";
 
 export type {
   ReleaseModuleOmittedEvent,
@@ -56,6 +57,8 @@ export interface HarnessRuntimeReporter {
   /** Claude's SDK remaps process context after bootstrap; Codex uses its RPC launch as-is. */
   readonly cliSpawnContext?: (context: ClaudeSpawnDiagnostic) => void;
   readonly turnMilestone?: (stage: HarnessTurnStage) => void;
+  /** Cheap counters and durations from the CLI's filesystem view and Computer's machine layer. */
+  readonly cliViewTrace?: (event: CliViewTrace) => void;
   /** Reports the caught rejection from the CLI's detached startup task. */
   readonly cliStartupFailure?: (cause: unknown) => void;
   readonly releaseModuleOmitted: (

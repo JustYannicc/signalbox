@@ -17,6 +17,8 @@ import type { ClaudeKernelInitialize, ClaudeKernelSessionPort } from "./ClaudeKe
 import { remoteKernelSeedCatalog } from "./ClaudeKernelSeed.ts";
 import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
 import type { HarnessFilesStoreResult } from "./HarnessFilesStore.ts";
+import { createCliTraceLog } from "./cliKernel/TraceLog.ts";
+import type { CliViewTrace } from "./CliViewTrace.ts";
 
 export interface ClaudeKernelLocalOptions {
   readonly files: Omit<
@@ -93,6 +95,30 @@ export function createClaudeKernelResources(
   }
   const processes = new KernelProcessTable({ wakes });
   const systemIdentity = systemIdentityForThread(input.threadId, input.process.systemIdentity);
+  // A diagnostics table must never fail a session, even when Computer's storage is full.
+  let writeTrace: ReturnType<typeof createCliTraceLog> = () => {};
+  try {
+    writeTrace = createCliTraceLog(storage.database, () =>
+      Number(options.files.nowNs() / 1_000_000n),
+    );
+  } catch {
+    /* Traces are lost for this session; the session itself is unaffected. */
+  }
+  // Diagnostics never change product state. Computer's own log keeps the trace even when no
+  // turn is running. The CLI reports its own traces to the host; machine traces go from here.
+  const trace = (source: "cli" | "machine", event: CliViewTrace) => {
+    try {
+      writeTrace(source, event);
+    } catch {
+      /* A lost trace is only a missing diagnostic. */
+    }
+    if (source !== "machine") return;
+    try {
+      void callbacks.current?.report({ type: "trace", event }).catch(() => undefined);
+    } catch {
+      /* As above. */
+    }
+  };
   let profile: ReturnType<typeof createComputerMachineProfile> | undefined;
   let commands: Awaited<ReturnType<typeof createKernelComputerHost>> | undefined;
   let loaded: LoadedHarnessRelease | undefined;
@@ -111,6 +137,10 @@ export function createClaudeKernelResources(
       };
     },
     fileChanges: (since: number) => storage.persistence.storage.changesSince?.(since),
+    trace,
+    // Without a machine there is no lower layer, so every path is Computer's own.
+    isLowerPath: async (path: string, signal: AbortSignal) =>
+      (await profile?.overlay.isLower(path, signal)) ?? false,
     stdio,
     processes,
     systemIdentity,
@@ -124,6 +154,7 @@ export function createClaudeKernelResources(
         machineInventory: input.machineInventory,
         transport: options.machine(systemIdentity),
         signal,
+        trace: (event) => trace("machine", event),
       });
       profile = machine;
       callbacks.current = config.callbacks;

@@ -9,6 +9,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
 import { HarnessError } from "../Harness.ts";
+import type { CliViewTrace } from "../CliViewTrace.ts";
 import {
   makeReleaseModuleOmittedFailure,
   type HarnessRuntimeReporter,
@@ -30,6 +31,8 @@ export const makeAdapterFailure = (
   let milestoneTurn: TurnState["active"];
   const milestones = new Set<HarnessTurnStage>();
   let contextTurn: TurnState["active"];
+  const earlyTraces: CliViewTrace[] = [];
+  let droppedTraces = 0;
   const record = (error: HarnessError) => {
     const recorded = (failure ??= error);
     controller.abort(recorded);
@@ -66,6 +69,27 @@ export const makeAdapterFailure = (
         level: "info",
         message: encodeHarnessTurnMilestone(stage),
       });
+    },
+    cliViewTrace: (event) => {
+      // The host only accepts events of the run it handed over, and the CLI's view indexes
+      // before the first turn starts. Early traces wait, bounded, for the next one.
+      const current = state.active;
+      if (current === undefined) {
+        if (earlyTraces.length < 32) earlyTraces.push(event);
+        else droppedTraces++;
+        return;
+      }
+      if (failure !== undefined) return;
+      const dropped: CliViewTrace[] =
+        droppedTraces === 0 ? [] : [{ kind: "dropped", count: droppedTraces }];
+      droppedTraces = 0;
+      for (const trace of [...earlyTraces.splice(0), ...dropped, event])
+        Queue.offerUnsafe(output, {
+          kind: "log",
+          runId: current.input.runId,
+          level: "info",
+          message: JSON.stringify({ type: "harness.cli-view-trace", ...trace }),
+        });
     },
     cliStartupFailure: (cause) => {
       if (failure !== undefined) return;
