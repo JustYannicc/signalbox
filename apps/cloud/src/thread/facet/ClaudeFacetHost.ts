@@ -157,7 +157,12 @@ export const createClaudeFacetHost = <G>(
             modelCredential = work.modelToken;
             const owners = yield* Effect.acquireRelease(
               Effect.try({
-                try: () => createClaudeProductOwners(options.host.runtime, machineId),
+                try: () =>
+                  createClaudeProductOwners(
+                    options.host.runtime,
+                    machineId,
+                    selected.release.identity.artifactHash,
+                  ),
                 catch: (cause) => failed("Could not provision the Claude product owners.", cause),
               }),
               (owners) => Effect.sync(owners.dispose),

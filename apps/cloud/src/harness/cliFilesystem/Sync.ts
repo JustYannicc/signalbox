@@ -24,15 +24,17 @@ export function createCliFileSync(input: {
   readonly views: CliDescriptorViews;
   readonly kernel: Pick<ClaudeCliKernelPort, "metadata" | "changes" | "lookup" | "digest">;
   readonly metadataLimit: number;
-  readonly requested: readonly string[];
-  readonly prefetch: (paths: readonly string[]) => Promise<void>;
-  /** The view's canonical name for a path, or undefined when it has none. */
-  readonly canonical: (path: string) => string | undefined;
+  /**
+   * Fetches `held` again, then whatever the CLI reads synchronously that the view lacks. `changed`
+   * names the files this round found new or changed, which the CLI may read next.
+   */
+  readonly prefetch: (held: readonly string[], changed: readonly string[]) => Promise<void>;
   readonly trace?: (event: CliViewTrace) => void;
 }) {
   const { files, views, kernel } = input;
   const trace = input.trace ?? (() => {});
   let active: "incremental" | "index" | undefined;
+  let indexed = false;
   const lookup = async (paths: readonly string[]) => {
     const results: ClaudeCliLookup[] = [];
     for (let offset = 0; offset < paths.length; offset += 512)
@@ -76,10 +78,26 @@ export function createCliFileSync(input: {
       if (entries.length > input.metadataLimit) throw kernelError("E2BIG");
       cursor = page.next ?? -1;
     } while (cursor >= 0);
-    const requested = [...new Set([...input.requested, ...files.paths])];
+    // Files the CLI held before keep being held, unless the index finds them changed.
+    const held = files.paths;
+    const before = indexed
+      ? new Map(files.entries.map((entry) => [entry.path, entry.stat]))
+      : undefined;
+    const changed =
+      before === undefined
+        ? []
+        : entries.flatMap(({ path, stat }) => {
+            const previous = before.get(path);
+            return stat.type === "file" &&
+              snapshot?.has(path) !== true &&
+              (!sameFile(previous, stat) || previous!.mtimeNs !== stat.mtimeNs)
+              ? [path]
+              : [];
+          });
     files.replaceMetadata(revision!, entries, await verify(entries, since), snapshot);
+    indexed = true;
     views.releaseNamedContent();
-    await input.prefetch(requested);
+    await input.prefetch(held, changed);
     await views.refresh();
     return entries.length;
   };
@@ -224,28 +242,36 @@ export function createCliFileSync(input: {
       if (update.stat.type === "file") prefetch.push(path);
     }
     const applied = files.sync(revision, [...updates.values()], evict, snapshot);
-    // Requested files that this round created or replaced are prefetched like at startup.
-    for (const path of input.requested) {
-      const canonical = input.canonical(path);
-      const update = canonical === undefined ? undefined : updates.get(canonical);
-      if (update !== undefined && !("removed" in update)) prefetch.push(canonical!);
-    }
     const evicted = new Set(evict);
     views.releaseNamedContent((view) => evicted.has(view.path));
-    await input.prefetch(prefetch);
+    // Only another writer's files: the CLI's own writes are in its snapshot, bytes and all.
+    const changedFiles = [...updates.values()].flatMap((update) =>
+      "removed" in update || update.stat.type !== "file" || snapshot.has(update.path)
+        ? []
+        : [update.path],
+    );
+    await input.prefetch(prefetch, changedFiles);
     await views.refresh((view) => changed.has(view.stat.ino) || applied.has(view.path));
     return reread.size;
   };
 
-  const round = async () => {
+  /**
+   * Brings the view up to Computer, and reports whether it got there. While a child runs and
+   * Computer can't list changes, as during a machine command, only the CLI's own changes are
+   * re-read: the child's arrive when it exits, as a concurrent writer's would.
+   */
+  const round = async (childRunning = false) => {
     await files.writes.flush();
     const snapshot = files.projections.snapshot();
     const changes = await kernel.changes(files.revision);
-    if (changes.inodes !== null)
+    const own = changes.inodes === null && childRunning;
+    if (changes.inodes !== null || own)
       try {
         const started = performance.now();
         active = "incremental";
-        const reread = await incremental(changes.revision, changes.inodes, changes.names, snapshot);
+        const reread = own
+          ? await incremental(files.revision, [], [], snapshot)
+          : await incremental(changes.revision, changes.inodes!, changes.names, snapshot);
         const durationMs = Math.round(performance.now() - started);
         // Most rounds re-read a handful of paths; only slow or wide ones are worth a journal line.
         if (durationMs >= 100 || reread >= 256)
@@ -257,15 +283,19 @@ export function createCliFileSync(input: {
             reread,
             durationMs,
           });
-        return;
+        return { caughtUp: !own, revision: changes.revision };
       } catch (cause) {
-        if (!(cause instanceof IndexRequired)) throw cause;
+        if (!(cause instanceof IndexRequired)) {
+          trace({ kind: "round", phase: "end", mode: "incremental", entries: 0, failed: true });
+          throw cause;
+        }
       } finally {
         active = undefined;
       }
     // At most one index per round: while a machine command runs Computer can't list changes,
     // and the next round would only index again. The index confirms the projections it read.
     await index(snapshot);
+    return { caughtUp: true, revision: changes.revision };
   };
 
   return { index, round, activity: () => active };

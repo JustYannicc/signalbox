@@ -58,9 +58,7 @@ export interface ClaudeKernelSessionPort {
     readonly source: ClaudeKernelSeedSource;
     readonly callbacks: ClaudeKernelCallbacks;
     readonly cli: import("./ClaudeCliKernelPort.ts").ClaudeCliHost;
-    readonly workingSet: import("./CliFileWorkingSet.ts").CliFileWorkingSetOptions & {
-      readonly paths: readonly string[];
-    };
+    readonly workingSet: import("./CliFileWorkingSet.ts").CliFileWorkingSetOptions;
   }): Promise<{
     readonly fileIdentity: string;
     readonly registrations: readonly KernelChildRegistration[];

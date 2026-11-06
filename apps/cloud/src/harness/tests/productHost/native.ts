@@ -110,8 +110,9 @@ export function nativeFixture(
       launched = true;
       const fs = bridge.require("node:fs") as ReturnType<typeof createNodeFs>["fs"];
       NodeAssert.equal(fs.readFileSync("/workspace/.git", "utf8"), "gitdir: /recorded/git\n");
-      NodeAssert.equal(fs.readFileSync("/source-alias/file.txt", "utf8"), "before\n");
-      NodeAssert.equal(fs.readFileSync("/home/recorded/session", "utf8"), nativeId);
+      // The CLI reads its own git metadata synchronously and workspace files asynchronously.
+      NodeAssert.equal(await fs.promises.readFile("/source-alias/file.txt", "utf8"), "before\n");
+      NodeAssert.equal(await fs.promises.readFile("/home/recorded/session", "utf8"), nativeId);
       NodeAssert.equal(
         fs.statSync("/usr/share/git-core/templates/description").mode & 0o777,
         0o644,

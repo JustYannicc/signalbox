@@ -19,6 +19,17 @@ export interface ClaudeProductOwnerRuntime {
     readonly computer: WorkerLoaderWorkerCode;
     readonly sdk: WorkerLoaderWorkerCode;
   };
+  /**
+   * Each owner bundle's digest, from the build that produced it. The loader keeps a Worker under
+   * its key across deploys, so the key must name the code; hashing the bundles here would copy
+   * tens of MB inside a thread's memory limit.
+   */
+  readonly versions: {
+    readonly kernel: string;
+    readonly cli: string;
+    readonly computer: string;
+    readonly sdk: string;
+  };
 }
 
 type KernelFacet = InstanceType<ReturnType<typeof createClaudeKernelFacetClass>>;
@@ -26,8 +37,17 @@ type ComputerOwner = ComputerProgramOwnerPort & {
   configure(input: ComputerExecutionConfiguration): Promise<void>;
 };
 
-/** Normal thread startup provisions each owner from its own registered module map. */
-export function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, name: string) {
+/**
+ * Normal thread startup provisions each owner from its own registered module map. Each Worker is
+ * keyed by its bundle's build digest, and the CLI's also by the Claude release it runs, so the
+ * loader never pairs one release's CLI with another's kernel. The code itself is never read here.
+ */
+export function createClaudeProductOwners(
+  runtime: ClaudeProductOwnerRuntime,
+  name: string,
+  release: string,
+) {
+  const version = { ...runtime.versions, cli: `${runtime.versions.cli}:${release}` };
   const stubs: unknown[] = [];
   const facets: string[] = [];
   let disposed = false;
@@ -62,7 +82,7 @@ export function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, na
     entrypoint: string,
   ) => {
     const key = `${name}:${role}`;
-    const worker = runtime.loader.get(key, () => runtime.code[role]);
+    const worker = runtime.loader.get(`${key}:${version[role]}`, () => runtime.code[role]);
     stubs.push(worker);
     const facetClass = worker.getDurableObjectClass<T>(entrypoint);
     stubs.push(facetClass);
@@ -78,7 +98,7 @@ export function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, na
       "ClaudeCliFacet",
     );
     const computer = openFacet<ComputerExecutionObject>("computer", "ComputerExecutionObject");
-    const sdkWorker = runtime.loader.get(`${name}:sdk`, () => runtime.code.sdk);
+    const sdkWorker = runtime.loader.get(`${name}:sdk:${version.sdk}`, () => runtime.code.sdk);
     stubs.push(sdkWorker);
     const sdk = sdkWorker.getEntrypoint();
     stubs.push(sdk);

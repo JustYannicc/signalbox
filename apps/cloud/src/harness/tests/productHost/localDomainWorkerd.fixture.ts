@@ -19,6 +19,7 @@ import { LocalPoolObject } from "../../../pool/LocalPoolObject.ts";
 import { LocalUserObject } from "../../../user/LocalUserObject.ts";
 import { createLocalClaudeThreadObject } from "../../../thread/LocalClaudeThreadObject.ts";
 import type { ProductClaudeThreadMachine } from "../../../thread/ProductClaudeThreadHost.ts";
+import type { ClaudeProductOwnerRuntime } from "../../ClaudeProductOwners.ts";
 import { makeContinuationHostInputs } from "./continuationHostInputs.ts";
 import { threadOwnerRuntimeFixture } from "./threadOwnerRuntime.fixture.ts";
 import type { OrdinaryOwnerEvent } from "./ordinaryOwnerObservation.fixture.ts";
@@ -43,6 +44,7 @@ interface Env {
   readonly REAL_OWNERS?: boolean;
   readonly FAILED_METADATA?: boolean;
   readonly KERNEL_SOURCE: string;
+  readonly OWNER_VERSIONS: ClaudeProductOwnerRuntime["versions"];
   readonly CLI_SOURCE: string;
   readonly COMPUTER_SOURCE: string;
   readonly SDK_SOURCE: string;
@@ -148,6 +150,7 @@ const ThreadBase = createLocalClaudeThreadObject<Env, string>((ctx, env, configu
             computer: code("computer", env.COMPUTER_SOURCE),
             sdk: code("sdk", env.SDK_SOURCE),
           },
+          versions: env.OWNER_VERSIONS,
         },
       };
     }

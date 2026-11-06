@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Wrangler needs a filesystem entry point.
+import * as NodeCrypto from "node:crypto";
 import * as NodeURL from "node:url";
 import * as NodeProcess from "node:process";
 import { afterEach, beforeAll, beforeEach, expect, it } from "vite-plus/test";
@@ -6,6 +7,8 @@ import { createTestHarness } from "wrangler";
 import { build } from "esbuild";
 
 let ownerSources: Record<string, string> = {};
+// The build's digest of each owner bundle, which keys its Worker.
+const ownerVersions: Record<string, string> = {};
 beforeAll(async () => {
   for (const [role, entry] of [
     ["Cli", new URL("./productHost/ordinaryCli.workerd.fixture.ts", import.meta.url)],
@@ -28,6 +31,9 @@ beforeAll(async () => {
     const source = bundled.outputFiles[0]?.text;
     if (source === undefined) throw new Error(`No ${role} owner bundle`);
     ownerSources[`${role.toUpperCase()}_SOURCE`] = source;
+    ownerVersions[role.toLowerCase()] = NodeCrypto.createHash("sha256")
+      .update(source)
+      .digest("hex");
   }
 }, 60_000);
 
@@ -43,7 +49,12 @@ const makeHarness = (realOwners = false, failedMetadata = false) =>
           compatibility_date: "2026-10-01",
           compatibility_flags: ["nodejs_compat"],
           worker_loaders: [{ binding: "LOADER" }],
-          vars: { ...ownerSources, REAL_OWNERS: realOwners, FAILED_METADATA: failedMetadata },
+          vars: {
+            ...ownerSources,
+            OWNER_VERSIONS: ownerVersions,
+            REAL_OWNERS: realOwners,
+            FAILED_METADATA: failedMetadata,
+          },
           durable_objects: {
             bindings: [
               { name: "USERS", class_name: "LocalUser" },

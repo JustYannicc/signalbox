@@ -213,14 +213,14 @@ describe("CLI errno diagnostics through the real kernel port", () => {
     try {
       f.fs.chmodSync("/read-only", 0o500);
       expect(await failure(() => f.fs.statSync("/read-only/listed"))).toMatchObject({
-        code: "CLI_FS_NOT_PREFETCHED",
+        code: "EIO",
         path: "/read-only/listed",
       });
       expect((await f.fs.promises.stat("/read-only/listed")).isFile()).toBe(true);
 
       f.fs.chmodSync("/blocked", 0o700);
       expect(await failure(() => f.fs.readdirSync("/blocked"))).toMatchObject({
-        code: "CLI_FS_NOT_PREFETCHED",
+        code: "EIO",
         path: "/blocked",
       });
       expect(await f.fs.promises.readdir("/blocked")).toEqual(["hidden"]);

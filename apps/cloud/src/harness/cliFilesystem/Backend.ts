@@ -15,7 +15,21 @@ import { CliDescriptorViews } from "./Descriptors.ts";
 import { createCliMetadataMutations } from "./Mutations.ts";
 import { createCliFileSync } from "./Sync.ts";
 import { watchEventLoop } from "./LoopMonitor.ts";
+import { CliViewMiss } from "./Content.ts";
+import { createCliPrefetch } from "./Prefetch.ts";
 import type { CliViewTrace } from "../CliViewTrace.ts";
+
+/** Like an NFS attribute cache or FUSE's default attr_timeout: Computer's own changes show this soon. */
+const METADATA_FRESH_MS = 1_000;
+
+const viewedMetadata = new Set<NodeFsOperation>([
+  "access",
+  "lstat",
+  "readdir",
+  "readlink",
+  "realpath",
+  "stat",
+]);
 
 const mutating = new Set<NodeFsOperation>([
   "chmod",
@@ -38,8 +52,12 @@ const mutating = new Set<NodeFsOperation>([
 export async function createCliFileBackend(
   input: Pick<
     ClaudeCliInitialization,
-    "kernel" | "cwd" | "rootDescriptor" | "posix" | "workingSet"
-  > & { readonly trace?: (event: CliViewTrace) => void },
+    "kernel" | "cwd" | "rootDescriptor" | "posix" | "workingSet" | "process"
+  > & {
+    readonly trace?: (event: CliViewTrace) => void;
+    /** Files to hold besides the ones the CLI itself reads synchronously. */
+    readonly syncReads?: readonly string[];
+  },
   signal: AbortSignal,
 ) {
   const kernel = input.kernel;
@@ -69,49 +87,21 @@ export async function createCliFileBackend(
   const views = new CliDescriptorViews(files, paths, remote, (fd) => kernel.reserveDescriptor(fd));
   const disposals = new Set<() => void>();
   const operations = new Set<Promise<unknown>>();
-  const prefetch = async (requested: readonly string[]) => {
-    const release: (() => void)[] = [];
-    try {
-      for (const path of requested) {
-        let canonical;
-        try {
-          canonical = paths.resolve(path);
-        } catch (cause) {
-          if (
-            typeof cause === "object" &&
-            cause !== null &&
-            "code" in cause &&
-            (cause.code === "ENOENT" || cause.code === "EACCES")
-          )
-            continue;
-          throw cause;
-        }
-        const stat = files.metadata(canonical).stat;
-        if (stat.type !== "file") continue;
-        try {
-          paths.assertAccess(stat, 4);
-        } catch (cause) {
-          if (
-            typeof cause === "object" &&
-            cause !== null &&
-            "code" in cause &&
-            cause.code === "EACCES"
-          )
-            continue;
-          throw cause;
-        }
-        await files.prefetch(
-          canonical,
-          (offset, length) => kernel.prefetch(canonical, offset, length),
-          signal,
-        );
-        // A concurrent projection can make the read moot; a later round fetches it again.
-        if (files.hasContent(canonical)) release.push(files.pin(canonical));
-      }
-    } finally {
-      for (const unpin of release) unpin();
-    }
-  };
+  const home = input.process.identity.homedir;
+  const prefetcher = createCliPrefetch({
+    files,
+    paths,
+    kernel,
+    roots: {
+      cwd: input.cwd,
+      home,
+      configDir: input.process.env.CLAUDE_CONFIG_DIR ?? `${home}/.claude`,
+    },
+    byteLimit: input.workingSet.byteLimit,
+    extra: input.syncReads ?? [],
+    trace,
+    signal,
+  });
   let leasing: Promise<void> | undefined;
   const refillLeases = () =>
     (leasing ??= (async () => {
@@ -124,32 +114,52 @@ export async function createCliFileBackend(
     views,
     kernel,
     metadataLimit: input.workingSet.metadataLimit,
-    requested: input.workingSet.paths,
-    prefetch,
+    prefetch: prefetcher.prefetch,
     trace,
-    canonical(path) {
-      try {
-        return paths.resolve(path);
-      } catch {
-        return undefined;
-      }
-    },
   });
-  // Children and SDK file calls change Computer outside the CLI; the view is invalid until then.
+  // Children and SDK file calls change Computer outside the CLI. Meanwhile the view stays the last
+  // consistent picture, which is what a reader racing a writer gets on Linux, and rounds catch it up.
   let remoteMutations = 0;
+  /** When a barrier last asked Computer, or a round last caught the view up. */
+  let checkedAt = Number.NEGATIVE_INFINITY;
+  /** The view lags Computer: a round failed, or could re-read only the CLI's own changes. */
+  let behind = false;
+  /** Computer's revision when a round last re-read only the CLI's own changes. */
+  let ownRevision: number | undefined;
+  let failures = 0;
+  let retryAt = Number.NEGATIVE_INFINITY;
   let syncing: Promise<void> | undefined;
   let requestedRounds = 0;
   let completedRounds = 0;
-  /** Waits for a round that started after this call, so it covers everything committed before. */
+  /**
+   * Waits for a round that started after this call, so it covers everything committed before. A
+   * failed round leaves the view where it was, and the next one waits out a growing backoff. It is
+   * never the CLI call's error: that call read or wrote Computer, not the view.
+   */
   const sync = async () => {
     const wanted = ++requestedRounds;
-    while (completedRounds < wanted && remoteMutations === 0) {
+    while (completedRounds < wanted && performance.now() >= retryAt) {
       if (syncing === undefined) {
         const covers = requestedRounds;
         syncing = (async () => {
-          await fileSync.round();
-          await refillLeases();
-          completedRounds = Math.max(completedRounds, covers);
+          const started = performance.now();
+          try {
+            const round = await fileSync.round(remoteMutations > 0);
+            behind = !round.caughtUp;
+            ownRevision = round.caughtUp ? undefined : round.revision;
+            if (round.caughtUp) checkedAt = Math.max(checkedAt, started);
+            failures = 0;
+          } catch {
+            behind = true;
+            ownRevision = undefined;
+            const retryMs = Math.min(30_000, 250 * 2 ** failures++);
+            retryAt = performance.now() + retryMs;
+            trace({ kind: "backoff", failures, retryMs });
+          } finally {
+            completedRounds = Math.max(completedRounds, covers);
+          }
+          // Missing leases only make sync opens wait; the next barrier asks again.
+          await refillLeases().catch(() => undefined);
         })().finally(() => {
           syncing = undefined;
         });
@@ -166,24 +176,26 @@ export async function createCliFileBackend(
     await committed();
   };
   const barrier = async () => {
+    const started = performance.now();
+    // A miss's fetch finishes before the CLI's next call relies on it.
+    await prefetcher.settled();
     const revision = await committed();
-    if (remoteMutations === 0 && (revision !== files.revision || files.projections.size > 0))
-      await sync();
-    else await refillLeases();
+    // Only the CLI's own changes are readable while a machine command runs, and none came since.
+    const nothingNew = behind && ownRevision === revision && files.projections.size === 0;
+    if ((revision !== files.revision || files.projections.size > 0) && !nothingNew) await sync();
+    else await refillLeases().catch(() => undefined);
     // Writes queued while the round read Computer still commit before callers rely on them.
     await files.writes.flush();
+    checkedAt = Math.max(checkedAt, started);
   };
+  let confirming: Promise<void> | undefined;
   const beforeRemote = async () => {
     await barrier();
-    // Another caller's round failing is that caller's error; the bracket re-syncs afterwards.
-    while (syncing !== undefined) await syncing.catch(() => undefined);
     remoteMutations++;
-    files.invalidate();
   };
   const afterRemote = async () => {
     remoteMutations--;
     if (remoteMutations > 0 || signal.aborted) return;
-    files.validate();
     await sync();
   };
   /** Async calls bypass projection, so their targets' cached bytes are Computer's, not the CLI's. */
@@ -211,7 +223,7 @@ export async function createCliFileBackend(
     }
     for (const path of targets) files.projections.touch(path, true);
   };
-  const run = <K extends NodeFsOperation>(
+  const remoteRun = <K extends NodeFsOperation>(
     name: K,
     args: NodeFsArguments<K>,
     userSignal?: AbortSignal,
@@ -301,6 +313,44 @@ export async function createCliFileBackend(
       () => operations.delete(operation),
     );
     return operation;
+  };
+  // Filled with the backend's own methods below, before they are wrapped.
+  const direct = new Map<string, (...args: unknown[]) => unknown>();
+  /**
+   * Metadata the CLI asks for asynchronously comes from the view, which rounds keep current, as
+   * for its sync calls. Asking Computer costs an RPC per call, and the CLI walks trees with tens of
+   * thousands of them.
+   */
+  const run = <K extends NodeFsOperation>(
+    name: K,
+    args: NodeFsArguments<K>,
+    userSignal?: AbortSignal,
+  ): Promise<NodeFsResult<K>> => {
+    const path = typeof args[0] === "string" ? paths.absolute(args[0]) : undefined;
+    // Computer synthesizes /proc and /dev, so the view never indexed them.
+    if (!viewedMetadata.has(name) || path === undefined || /^\/(?:proc|dev)(?:\/|$)/.test(path))
+      return remoteRun(name, args, userSignal);
+    return (async () => {
+      // One barrier a second covers every call, so changes nobody bracketed still show. It
+      // waits for a round only when Computer moved; otherwise the view is already current.
+      if (performance.now() - checkedAt >= METADATA_FRESH_MS)
+        await (confirming ??= barrier().finally(() => {
+          confirming = undefined;
+        }));
+      userSignal?.throwIfAborted();
+      // A child is writing what Computer can't list yet, so only Computer knows until it ends.
+      if (!behind)
+        try {
+          return direct.get(name)!.apply(backend, args) as NodeFsResult<K>;
+        } catch (cause) {
+          // A listing the index never read is Computer's to answer, and its round may index it.
+          if (!(cause instanceof CliViewMiss)) throw cause;
+          return remoteRun(name, args, userSignal);
+        }
+      // One call: the barrier above already ran this second, and only the CLI's writes must land.
+      await files.writes.flush();
+      return remote.call(name, [path, ...args.slice(1)] as NodeFsArguments<K>, userSignal);
+    })();
   };
   await fileSync.index();
   await refillLeases();
@@ -448,11 +498,17 @@ export async function createCliFileBackend(
   for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(backend))) {
     const method: unknown = descriptor.value;
     if (typeof method !== "function") continue;
+    direct.set(name, method as (...args: unknown[]) => unknown);
     Object.defineProperty(backend, name, {
       ...descriptor,
       value(...args: unknown[]) {
         lastOperation = name;
-        return Reflect.apply(method, backend, args);
+        try {
+          return Reflect.apply(method, backend, args);
+        } catch (cause) {
+          if (cause instanceof CliViewMiss) prefetcher.missed(name, cause);
+          throw cause;
+        }
       },
     });
   }
@@ -483,6 +539,8 @@ export async function createCliFileBackend(
       disposals.clear();
       for (const close of [
         () => Promise.allSettled(operations),
+        () => prefetcher.settled(),
+        () => prefetcher.close(),
         () => files.writes.flush(),
         () => views.closeAll(),
         () => files.close(),

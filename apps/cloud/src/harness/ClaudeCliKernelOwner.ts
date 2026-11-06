@@ -31,6 +31,8 @@ type Resources = Pick<
   readonly storage: Pick<OwnerResources["storage"], "files">;
 };
 
+const METADATA_PAGE_ENTRIES = 2048;
+
 /** The canonical Computer filesystem and process table are never handed to the CLI Worker. */
 export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPort {
   readonly #resources;
@@ -130,6 +132,8 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
         signal,
         nimbusMetadata: true,
         sigpipe: "epipe",
+        // A symlink can lead into /proc/self/fd/N, which the request's own path doesn't show.
+        descriptorAlias: allowed,
       });
       try {
         const result = await host.call(request);
@@ -205,7 +209,8 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
         cursor > snapshot.entries.length
       )
         throw kernelError("ESTALE");
-      const end = Math.min(snapshot.entries.length, cursor + 64);
+      // Each page is one RPC; a page of entries is a few hundred KB, so few pages cover an index.
+      const end = Math.min(snapshot.entries.length, cursor + METADATA_PAGE_ENTRIES);
       return {
         revision: snapshot.revision,
         entries: snapshot.entries.slice(cursor, end),

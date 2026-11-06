@@ -4,19 +4,15 @@ import { cliFileBackendFixture as fixture } from "./helpers/cliFileBackend.ts";
 vi.mock("cloudflare:workers", () => ({ RpcTarget: Object }));
 
 describe("CLI filesystem public adapter", () => {
-  it("serves sync bytes from explicit prefetch while async reads use the authoritative syscall port", async () => {
+  it("serves held sync bytes, reads async bytes from Computer, and holds a sync miss for next time", async () => {
     const f = await fixture();
     try {
       expect(f.fs.readFileSync("/sync", "utf8")).toBe("before");
       expect(f.requests).toEqual([]);
-      expect(() => f.fs.readFileSync("/async")).toThrow(
-        expect.objectContaining({ code: "CLI_FS_NOT_PREFETCHED" }),
-      );
+      expect(() => f.fs.readFileSync("/async")).toThrow(expect.objectContaining({ code: "EIO" }));
       expect(await f.fs.promises.readFile("/async", "utf8")).toBe("remote");
       expect(f.requests.some((request) => request.name === "fd_read")).toBe(true);
-      expect(() => f.fs.readFileSync("/async")).toThrow(
-        expect.objectContaining({ code: "CLI_FS_NOT_PREFETCHED" }),
-      );
+      expect(f.fs.readFileSync("/async", "utf8")).toBe("remote");
     } finally {
       await f.close();
     }
@@ -64,11 +60,11 @@ describe("CLI filesystem public adapter", () => {
     await expect(f.close()).rejects.toMatchObject({ message: "CLI filesystem cleanup failed" });
   });
 
-  it("invalidates synchronous reads while remote work may mutate files and refreshes at completion", async () => {
+  it("keeps serving sync reads while remote work may mutate files and refreshes at completion", async () => {
     const f = await fixture();
     try {
       await f.files.beforeRemote();
-      expect(() => f.fs.readFileSync("/sync")).toThrow(expect.objectContaining({ code: "ESTALE" }));
+      expect(f.fs.readFileSync("/sync", "utf8")).toBe("before");
       f.canonical.writeFileSync("/sync", "changed outside CLI");
       await f.files.afterRemote();
       expect(f.fs.readFileSync("/sync", "utf8")).toBe("changed outside CLI");
@@ -77,11 +73,47 @@ describe("CLI filesystem public adapter", () => {
     }
   });
 
-  it("refuses a required prefetch that exceeds the configured byte budget", async () => {
-    await expect(fixture(5)).rejects.toMatchObject({ code: "CLI_FS_WORKING_SET_LIMIT" });
-    await expect(fixture(8, ["/sync", "/async"])).rejects.toMatchObject({
-      code: "CLI_FS_WORKING_SET_LIMIT",
+  it("starts without bytes the budget can't hold and answers their sync reads with EIO", async () => {
+    const small = await fixture(5);
+    try {
+      expect(() => small.fs.readFileSync("/sync")).toThrow(
+        expect.objectContaining({ code: "EIO" }),
+      );
+      expect(await small.fs.promises.readFile("/sync", "utf8")).toBe("before");
+    } finally {
+      await small.close();
+    }
+    const full = await fixture(8, ["/sync", "/async"]);
+    try {
+      expect(full.fs.readFileSync("/sync", "utf8")).toBe("before");
+      expect(() => full.fs.readFileSync("/async")).toThrow(
+        expect.objectContaining({ code: "EIO" }),
+      );
+    } finally {
+      await full.close();
+    }
+  });
+
+  it("makes room by dropping the file read longest ago, counting reads through a descriptor", async () => {
+    const f = await fixture(12, ["/sync", "/async"], false, {
+      seed(fs) {
+        fs.writeFileSync("/third", "third!");
+      },
     });
+    try {
+      const fd = f.fs.openSync("/sync", "r");
+      expect(f.fs.readFileSync("/async", "utf8")).toBe("remote");
+      expect(f.fs.readSync(fd, new Uint8Array(6))).toBe(6);
+      f.fs.closeSync(fd);
+      // A third file needs room for its bytes; /async was read before /sync was.
+      expect(() => f.fs.readFileSync("/third")).toThrow(expect.objectContaining({ code: "EIO" }));
+      await f.files.barrier();
+      expect(f.fs.readFileSync("/third", "utf8")).toBe("third!");
+      expect(f.fs.readFileSync("/sync", "utf8")).toBe("before");
+      expect(() => f.fs.readFileSync("/async")).toThrow(expect.objectContaining({ code: "EIO" }));
+    } finally {
+      await f.close();
+    }
   });
 
   it("reuses owner-issued descriptors across more sync reads than the initial lease count", async () => {
@@ -168,7 +200,7 @@ describe("CLI filesystem public adapter", () => {
     try {
       for (let index = 0; index < 32; index++) held.push(f.fs.openSync("/sync", "r"));
       expect(() => f.fs.openSync("/phantom", "w")).toThrow(
-        expect.objectContaining({ code: "CLI_FS_NOT_PREFETCHED" }),
+        expect.objectContaining({ code: "EMFILE" }),
       );
       expect(f.fs.readdirSync("/")).not.toContain("phantom");
       for (const fd of held.splice(0)) f.fs.closeSync(fd);

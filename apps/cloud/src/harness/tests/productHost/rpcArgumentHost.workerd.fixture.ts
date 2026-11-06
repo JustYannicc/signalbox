@@ -30,6 +30,7 @@ interface Env {
   readonly LOADER: WorkerLoader;
   readonly KERNEL_SOURCE: string;
   readonly CLI_SOURCE: string;
+  readonly OWNER_VERSIONS: import("../../ClaudeProductOwners.ts").ClaudeProductOwnerRuntime["versions"];
   readonly COMPUTER_SOURCE: string;
   readonly MATERIALS: Materials;
   readonly HOST: DurableObjectNamespace<Host>;
@@ -95,6 +96,7 @@ export class Host extends DurableObject<Env> {
       globalOutbound: null,
       ...(env === undefined ? {} : { env }),
     });
+    const release = await claudeFixture();
     this.#owners = createClaudeProductOwners(
       {
         loader: this.env.LOADER,
@@ -111,10 +113,11 @@ export class Host extends DurableObject<Env> {
             "sdk.js",
           ),
         },
+        versions: this.env.OWNER_VERSIONS,
       },
       "argument-test",
+      release.options.identity.artifactHash,
     );
-    const release = await claudeFixture();
     const artifact = claudeReleaseArtifact(release.options.identity, "command-test");
     this.#scope = await Effect.runPromise(Scope.make());
     this.#host = await Effect.runPromise(

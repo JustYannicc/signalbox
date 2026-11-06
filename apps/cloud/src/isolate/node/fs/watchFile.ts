@@ -2,7 +2,6 @@
 import * as NodeEvents from "node:events";
 import * as NodePath from "node:path";
 import type { NodeFsBackend } from "../../NodeFsBackend.ts";
-import { nodeFsError } from "./errors.ts";
 import {
   nodeStats,
   type KernelStat,
@@ -38,18 +37,22 @@ function changed(current: KernelStat, previous: KernelStat): boolean {
   );
 }
 
-function sample(kernelFs: NodeFsBackend, path: string): KernelStat | undefined {
+const UNAVAILABLE = Symbol("unavailable");
+
+/**
+ * Node's stat poller never throws: a failed stat reads as zeroed Stats, as for a missing file. The
+ * view's transient misses read as unavailable instead, so the tick keeps the last stat rather than
+ * reporting a deletion, and the next tick asks again at the same interval.
+ */
+function sample(
+  kernelFs: NodeFsBackend,
+  path: string,
+): KernelStat | undefined | typeof UNAVAILABLE {
   try {
     return kernelFs.stat(path);
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      (error.code === "ENOENT" || error.code === "ENOTDIR")
-    )
-      return undefined;
-    throw nodeFsError(error, "stat", path);
+    const code = typeof error === "object" && error !== null && "code" in error ? error.code : "";
+    return code === "ESTALE" || code === "EIO" ? UNAVAILABLE : undefined;
   }
 }
 
@@ -129,25 +132,21 @@ export function createWatchFile(kernelFs: NodeFsBackend) {
       existing.on("change", listener);
       return existing;
     }
-    let previous = sample(kernelFs, filename);
+    const initial = sample(kernelFs, filename);
+    // Without a first stat, the first one a tick gets is the baseline.
+    let known = initial !== UNAVAILABLE;
+    let previous = initial === UNAVAILABLE ? undefined : initial;
     let missing = previous === undefined;
     let initialMissing = missing;
     const watcher = new NodeStatWatcher(
       Math.max(1, Math.trunc(interval)),
       () => {
-        let current: KernelStat | undefined;
-        try {
-          current = sample(kernelFs, filename);
-        } catch (error) {
-          if (
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            error.code === "ESTALE"
-          )
-            return;
-          watcher.stop();
-          watcher.emit("error", error);
+        const current = sample(kernelFs, filename);
+        if (current === UNAVAILABLE) return;
+        if (!known) {
+          known = true;
+          previous = current;
+          missing = initialMissing = current === undefined;
           return;
         }
         const notify =

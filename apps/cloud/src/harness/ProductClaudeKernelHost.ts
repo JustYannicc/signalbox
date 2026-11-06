@@ -62,9 +62,7 @@ export interface ProductClaudeKernelHostOptions<G> extends Pick<
   readonly native: {
     readonly sdkHost: ClaudeSdkHostService;
     readonly cliHost: import("./ClaudeCliKernelPort.ts").ClaudeCliHost;
-    readonly workingSet: import("./CliFileWorkingSet.ts").CliFileWorkingSetOptions & {
-      readonly paths: readonly string[];
-    };
+    readonly workingSet: import("./CliFileWorkingSet.ts").CliFileWorkingSetOptions;
     readonly process: ClaudeKernelInitialize["process"];
     readonly toolObservation?: ClaudeToolObservation;
     readonly reportCliStartupFailure?: (cause: unknown) => void;
