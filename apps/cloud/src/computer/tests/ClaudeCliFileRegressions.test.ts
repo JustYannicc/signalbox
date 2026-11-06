@@ -73,7 +73,7 @@ describe("CLI filesystem accepted regressions", () => {
       expect(f.fs.writeSync(fd, "Z")).toBe(1);
       expect(f.fs.fstatSync(fd).size).toBe(6);
       expect(() => f.fs.readFileSync("/async", "utf8")).toThrow(
-        expect.objectContaining({ code: "CLI_FS_NOT_PREFETCHED" }),
+        expect.objectContaining({ code: "EIO" }),
       );
       f.fs.closeSync(fd);
       await f.files.barrier();

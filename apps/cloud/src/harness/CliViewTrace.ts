@@ -28,5 +28,12 @@ export type CliViewTrace =
       readonly durationMs?: number;
     }
   | { readonly kind: "loop-lag"; readonly lagMs: number; readonly activity: string }
+  /** A synchronous call the view could not answer from what it holds; the CLI got EIO or EMFILE. */
+  | {
+      readonly kind: "sync-miss";
+      readonly operation: string;
+      readonly reason: "content" | "unindexed" | "descriptors";
+      readonly root: "home" | "workspace" | "other";
+    }
   /** Traces a bounded buffer could not keep, so a gap is visible as a gap. */
   | { readonly kind: "dropped"; readonly count: number };

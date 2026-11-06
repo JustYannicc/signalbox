@@ -179,7 +179,7 @@ describe("CLI filesystem view refresh", () => {
       const fd = f.fs.openSync("/w/new", "w+");
       f.fs.writeSync(fd, "A");
       const gate = f.holdNext("lookup");
-      stat = f.fs.promises.stat("/sync");
+      stat = f.files.refresh();
       void stat.catch(() => {});
       await gate.entered;
       holdWrite = true;
@@ -234,16 +234,16 @@ describe("CLI filesystem view refresh", () => {
       // A long-lived machine process the CLI did not start, like a background server.
       machine = { machine: 1, machineRunning: true };
       let refreshes = f.refreshes;
-      await f.fs.promises.stat("/sync");
+      await f.files.barrier();
       expect(f.refreshes - refreshes).toBe(1);
       for (let index = 0; index < 3; index++) {
         refreshes = f.refreshes;
         f.fs.writeFileSync("/transcript", `line ${index}`);
-        await f.fs.promises.stat("/sync");
+        await f.files.barrier();
         expect(f.refreshes - refreshes).toBe(1);
-        // The index confirmed the write, so an async call with nothing new costs no index.
+        // The index confirmed the write, so a barrier with nothing new costs no index.
         refreshes = f.refreshes;
-        await f.fs.promises.stat("/sync");
+        await f.files.barrier();
         expect(f.refreshes - refreshes).toBe(0);
       }
       expect(f.fs.readFileSync("/transcript", "utf8")).toBe("line 2");
@@ -254,7 +254,7 @@ describe("CLI filesystem view refresh", () => {
       lower.write("/etc/tool.conf", "version 2");
       machine = { machine: 2, machineRunning: false };
       lower.refreshAfterCommand();
-      await f.fs.promises.stat("/sync");
+      await f.files.barrier();
       expect(f.fs.readFileSync("/etc/tool.conf", "utf8")).toBe("version 2");
     } finally {
       await f.close();

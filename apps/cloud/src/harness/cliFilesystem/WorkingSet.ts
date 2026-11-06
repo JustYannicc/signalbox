@@ -2,7 +2,7 @@ import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
 import type { KernelStat } from "../../kernel/KernelFileSystem.ts";
 import { CliWorkingSetBudget, CliWorkingSetLimit } from "./Budget.ts";
 import { CliWriteBarrier } from "./WriteBarrier.ts";
-import { CliContentStore, contentMiss } from "./Content.ts";
+import { CliContentStore, CliViewMiss } from "./Content.ts";
 import { CliProjections, type CliProjectionSnapshot } from "./Projections.ts";
 
 export interface CliFileMetadata {
@@ -85,8 +85,9 @@ export class CliFileWorkingSet {
   }
   assertCurrent() {
     this.writes.assertHealthy();
+    // Only before the first index or after close; Linux has no stale handle for a local file.
     if (this.#invalid || this.#revision === undefined)
-      throw Object.assign(new Error("CLI filesystem metadata needs refresh"), { code: "ESTALE" });
+      throw Object.assign(new Error("The CLI's filesystem view is closed"), { code: "EIO" });
   }
 
   /**
@@ -178,7 +179,7 @@ export class CliFileWorkingSet {
       const parent = this.#metadata.get(path.slice(0, slash) || "/");
       // A name the denied index never saw may exist; only a listed directory can prove absence.
       if (parent?.unindexed && parent.children?.includes(path.slice(slash + 1)) !== false)
-        throw contentMiss(path);
+        throw new CliViewMiss(path, "unindexed");
       throw Object.assign(new Error(`No such file: ${path}`), { code: "ENOENT" });
     }
     return {
@@ -194,7 +195,7 @@ export class CliFileWorkingSet {
     const entry = this.metadata(path);
     if (entry.directoryDenial?.read !== undefined)
       throw Object.assign(new Error("EACCES"), { code: "EACCES" });
-    if (entry.unindexed && entry.children === undefined) throw contentMiss(path);
+    if (entry.unindexed && entry.children === undefined) throw new CliViewMiss(path, "unindexed");
     if (entry.stat.type !== "directory")
       throw Object.assign(new Error(`Not a directory: ${path}`), { code: "ENOTDIR" });
     const prefix = path === "/" ? "/" : `${path}/`;
@@ -357,12 +358,6 @@ export class CliFileWorkingSet {
   }
   updateMetadata(entry: CliMetadataUpdate) {
     this.project([entry])();
-  }
-  invalidate() {
-    this.#invalid = true;
-  }
-  validate() {
-    if (this.#revision !== undefined) this.#invalid = false;
   }
   evict(path: string) {
     this.#content.evict(path);

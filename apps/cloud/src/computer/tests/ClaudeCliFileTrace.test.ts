@@ -59,7 +59,7 @@ describe("CLI filesystem view traces", () => {
       // A machine command runs, so Computer can't list changes and the view re-indexes.
       machine = { machine: 1, machineRunning: true };
       f.traces.length = 0;
-      await f.fs.promises.stat("/sync");
+      await f.files.refresh();
       const digests = f.traces.filter((event) => event.kind === "digest" && event.phase === "end");
       // The machine's file is still hashed; Computer's two are proven unchanged without a read.
       expect(digests).toEqual([expect.objectContaining({ files: 3, unchanged: 2 })]);
@@ -88,7 +88,7 @@ describe("CLI filesystem view traces", () => {
         rewrite = () => {};
         f.canonical.writeFileSync("/big", "c".repeat(100));
       };
-      await f.fs.promises.stat("/sync");
+      await f.files.refresh();
       expect(f.refreshes).toBeGreaterThan(1);
       expect(f.fs.readFileSync("/big", "utf8")).toBe("c".repeat(100));
     } finally {
@@ -109,7 +109,7 @@ describe("CLI filesystem view traces", () => {
       lower.write("/etc/tool.conf", "v2");
       lower.refreshAfterCommand();
       f.traces.length = 0;
-      await f.fs.promises.stat("/sync");
+      await f.files.refresh();
       // Only Computer's own /sync is vouched for; the machine file is hashed and re-read.
       expect(f.traces.filter((event) => event.kind === "digest" && event.phase === "end")).toEqual([
         expect.objectContaining({ files: 2, unchanged: 1 }),

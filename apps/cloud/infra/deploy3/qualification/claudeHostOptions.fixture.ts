@@ -32,7 +32,7 @@ export async function claudeHostOptionsFixture() {
       ...input,
       claudeRuntime: {
         ...input.claudeRuntime,
-        workingSet: { byteLimit: 1024, metadataLimit: 128, pathByteLimit: 1024, paths: [] },
+        workingSet: { byteLimit: 1024, metadataLimit: 128, pathByteLimit: 1024 },
       },
     });
     const directory = NodePath.join(input.outputDirectory, "assets");

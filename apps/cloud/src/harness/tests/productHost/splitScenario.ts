@@ -120,7 +120,8 @@ export const run = (
               async launch() {
                 launches++;
                 const fs = bridge.require("node:fs") as ReturnType<typeof createNodeFs>["fs"];
-                const text = String(fs.readFileSync("/workspace/file.txt", "utf8"));
+                // A workspace file is read asynchronously; the view holds only the CLI's own sync reads.
+                const text = String(await fs.promises.readFile("/workspace/file.txt", "utf8"));
                 if (mode === "no-machine") {
                   NodeAssert.ok(fs.readdirSync("/").includes("workspace"));
                   NodeAssert.ok((await fs.promises.readdir("/")).includes("workspace"));

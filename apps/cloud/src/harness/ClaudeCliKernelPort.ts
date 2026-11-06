@@ -95,7 +95,7 @@ export interface ClaudeCliInitialization {
   readonly cwd: string;
   readonly rootDescriptor: number;
   readonly posix: KernelPosixOptions | undefined;
-  readonly workingSet: CliFileWorkingSetOptions & { readonly paths: readonly string[] };
+  readonly workingSet: CliFileWorkingSetOptions;
   readonly kernel: ClaudeCliKernelPort;
   readonly callbacks: ClaudeKernelCallbacks;
   readonly io: {

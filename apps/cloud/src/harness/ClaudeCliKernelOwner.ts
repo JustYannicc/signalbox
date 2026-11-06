@@ -32,6 +32,8 @@ type Resources = Pick<
 };
 
 /** The canonical Computer filesystem and process table are never handed to the CLI Worker. */
+
+const METADATA_PAGE_ENTRIES = 2048;
 export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPort {
   readonly #resources;
   readonly #configuration;
@@ -205,7 +207,8 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
         cursor > snapshot.entries.length
       )
         throw kernelError("ESTALE");
-      const end = Math.min(snapshot.entries.length, cursor + 64);
+      // Each page is one RPC; a page of entries is a few hundred KB, so few pages cover an index.
+      const end = Math.min(snapshot.entries.length, cursor + METADATA_PAGE_ENTRIES);
       return {
         revision: snapshot.revision,
         entries: snapshot.entries.slice(cursor, end),

@@ -32,6 +32,10 @@ export async function cliFileBackendFixture(
     readonly onLeaseRefill?: () => void;
     /** Runs inside each view read of Computer: a full index or an incremental round. */
     readonly duringRefresh?: () => void;
+    /** The CLI's working directory and home, which decide the files it reads synchronously. */
+    readonly cwd?: string;
+    readonly home?: string;
+    readonly env?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const wakes = new KernelWakeRegistry();
@@ -56,6 +60,23 @@ export async function cliFileBackendFixture(
   owned.filesystem.installLowerFileSystem = (source) => (lower = install(source));
   options.seed?.(canonical, owned.filesystem);
   const writeTrace = createCliTraceLog(owned.storage, () => 0);
+  const processConfiguration = {
+    identity: {
+      version: "v24.21.0",
+      versions: { node: "24.21.0" },
+      platform: "linux" as const,
+      arch: "x64",
+      homedir: options.home ?? "/",
+      tmpdir: "/",
+      pid: 1,
+      ppid: 0,
+      execPath: "/cli",
+      argv0: "cli",
+      argv: ["cli"],
+    },
+    env: { ...options.env },
+    bun: { main: "/cli", version: "1.3.11", revision: "test" },
+  };
   const owner = new ClaudeCliKernelOwner(
     {
       storage: { files: owned.filesystem },
@@ -74,25 +95,7 @@ export async function cliFileBackendFixture(
         (await lower?.isLower(path, signal)) ?? false,
       trace: writeTrace,
     },
-    {
-      process: {
-        identity: {
-          version: "v24.21.0",
-          versions: { node: "24.21.0" },
-          platform: "linux",
-          arch: "x64",
-          homedir: "/",
-          tmpdir: "/",
-          pid: 1,
-          ppid: 0,
-          execPath: "/cli",
-          argv0: "cli",
-          argv: ["cli"],
-        },
-        env: {},
-        bun: { main: "/cli", version: "1.3.11", revision: "test" },
-      },
-    },
+    { process: processConfiguration },
     lifetime.signal,
     options.metadataLimit ?? 128,
   );
@@ -110,6 +113,17 @@ export async function cliFileBackendFixture(
   let refreshes = 0;
   let rounds = 0;
   let prefetchedBytes = 0;
+  const calls = { metadata: 0, lookup: 0, prefetch: 0, total: 0, inFlight: 0, peakInFlight: 0 };
+  // Every call the view makes into Computer, as RPCs in production, and how many await at once.
+  const counted =
+    (invoke: (...args: never[]) => unknown) =>
+    (...args: never[]) => {
+      calls.total++;
+      const result = invoke(...args);
+      if (!(result instanceof Promise)) return result;
+      calls.peakInFlight = Math.max(calls.peakInFlight, ++calls.inFlight);
+      return result.finally(() => calls.inFlight--);
+    };
   const held = async (method: ViewRead) => {
     const current = gate;
     if (current === undefined || !current.methods.includes(method)) return;
@@ -119,8 +133,17 @@ export async function cliFileBackendFixture(
   };
   const kernel = new Proxy(owner, {
     get(target, property) {
+      const value = route(target, property);
+      return typeof value === "function" && property !== "trace"
+        ? counted(value as (...args: never[]) => unknown)
+        : value;
+    },
+  });
+  function route(target: ClaudeCliKernelOwner, property: string | symbol): unknown {
+    {
       if (property === "metadata")
         return async (...args: Parameters<ClaudeCliKernelOwner["metadata"]>) => {
+          calls.metadata++;
           const page = await target.metadata(...args);
           if (args[0] === 0) {
             refreshes++;
@@ -139,6 +162,7 @@ export async function cliFileBackendFixture(
         };
       if (property === "lookup")
         return async (...args: Parameters<ClaudeCliKernelOwner["lookup"]>) => {
+          calls.lookup++;
           const results = await target.lookup(...args);
           options.duringRefresh?.();
           await held("lookup");
@@ -159,6 +183,7 @@ export async function cliFileBackendFixture(
         };
       if (property === "prefetch")
         return async (...args: Parameters<ClaudeCliKernelOwner["prefetch"]>) => {
+          calls.prefetch++;
           const bytes = await target.prefetch(...args);
           prefetchedBytes += bytes.byteLength;
           await held("prefetch");
@@ -175,22 +200,19 @@ export async function cliFileBackendFixture(
         };
       const value: unknown = Reflect.get(target, property);
       return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
+    }
+  }
   const traces: CliViewTrace[] = [];
   const files = await createCliFileBackend(
     {
       trace: (event) => traces.push(event),
       kernel,
-      cwd: "/",
+      cwd: options.cwd ?? "/",
+      process: processConfiguration,
       rootDescriptor: owner.rootDescriptor,
       posix: owned.filesystem.posixPolicy,
-      workingSet: {
-        byteLimit,
-        metadataLimit: options.metadataLimit ?? 128,
-        pathByteLimit: 256,
-        paths,
-      },
+      workingSet: { byteLimit, metadataLimit: options.metadataLimit ?? 128, pathByteLimit: 256 },
+      syncReads: paths,
     },
     lifetime.signal,
   ).catch(async (cause) => {
@@ -220,6 +242,8 @@ export async function cliFileBackendFixture(
     get prefetchedBytes() {
       return prefetchedBytes;
     },
+    /** Calls the view made into Computer, by method. */
+    calls,
     revision: () => owned.persistenceRevision(),
     /** What the view reported to the host journal, in order. */
     traces,

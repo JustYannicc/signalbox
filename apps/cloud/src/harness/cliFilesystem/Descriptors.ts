@@ -4,7 +4,7 @@ import type { KernelStat } from "../../kernel/KernelFileSystem.ts";
 import type { createNodeFsSyscallClient } from "../../isolate/NodeFsSyscallClient.ts";
 import type { CliFileWorkingSet } from "./WorkingSet.ts";
 import type { CliFilePaths } from "./Paths.ts";
-import type { CliContentView } from "./Content.ts";
+import { CliViewMiss, contentMiss, type CliContentView } from "./Content.ts";
 
 interface ReadView {
   path: string;
@@ -64,10 +64,12 @@ export class CliDescriptorViews {
     } catch (cause) {
       if (
         !(
-          typeof cause === "object" &&
-          cause !== null &&
-          "code" in cause &&
-          ["ENOENT", "ESTALE", "CLI_FS_NOT_PREFETCHED"].includes(String(cause.code))
+          cause instanceof CliViewMiss ||
+          (typeof cause === "object" &&
+            cause !== null &&
+            "code" in cause &&
+            // A view closed under a racing open has nothing to attach.
+            ["ENOENT", "EIO"].includes(String(cause.code)))
         )
       )
         throw cause;
@@ -153,10 +155,8 @@ export class CliDescriptorViews {
     if (!created && !parsed.pathOnly)
       this.#paths.assertAccess(stat, (readable ? 4 : 0) | (writable || parsed.truncate ? 2 : 0));
     const fd = this.#leased[0];
-    if (fd === undefined)
-      throw Object.assign(new Error("Synchronous descriptor leases need asynchronous refill"), {
-        code: "CLI_FS_NOT_PREFETCHED",
-      });
+    // Computer refills leases asynchronously, between the CLI's synchronous calls.
+    if (fd === undefined) throw new CliViewMiss(canonical, "descriptors");
     if (created) {
       this.#files.updateMetadata({ path: canonical, pending: true, stat });
       this.#files.replaceContent(canonical, new Uint8Array(0));
@@ -255,10 +255,11 @@ export class CliDescriptorViews {
   read(fd: number, target: Uint8Array, position: bigint | null) {
     const view = this.get(fd);
     if (!view.readable) throw kernelError("EBADF");
-    if (view.content === undefined)
-      throw Object.assign(new Error("Descriptor content was not prefetched"), {
-        code: "CLI_FS_NOT_PREFETCHED",
-      });
+    if (view.content === undefined) {
+      // Linux opens a directory for reading and fails the read, as readFileSync of `.git` expects.
+      if (view.stat.type === "directory") throw kernelError("EISDIR");
+      throw contentMiss(view.path);
+    }
     const offset = position ?? view.offset;
     if (offset < 0n || offset > BigInt(Number.MAX_SAFE_INTEGER)) throw kernelError("EINVAL");
     const count = view.content.copyInto(target, Number(offset));

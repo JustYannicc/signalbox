@@ -48,7 +48,6 @@ export const CliWorkingSetPolicy = Schema.Struct({
   byteLimit: Schema.Int.check(Schema.isGreaterThan(0)),
   metadataLimit: Schema.Int.check(Schema.isGreaterThan(0)),
   pathByteLimit: Schema.Int.check(Schema.isGreaterThan(0)),
-  paths: Schema.Array(Text),
 });
 export const BaseConfiguration = Schema.Struct(base);
 export const ConfigurationSchema = Schema.Struct({

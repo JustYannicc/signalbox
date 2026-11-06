@@ -14,12 +14,27 @@ export interface CliContentView {
   release(): void;
 }
 
-export function contentMiss(path: string) {
-  return Object.assign(new Error(`Synchronous CLI file was not prefetched: ${path}`), {
-    code: "CLI_FS_NOT_PREFETCHED",
-    path,
-  });
+/**
+ * A synchronous call the view can't answer from what it holds, since it can't wait for Computer.
+ * The CLI gets the errno a network filesystem gives for the same failure, never a private code.
+ */
+export class CliViewMiss extends Error {
+  readonly code: "EIO" | "EMFILE";
+  readonly path;
+  readonly reason;
+  constructor(path: string, reason: "content" | "unindexed" | "descriptors") {
+    super(
+      reason === "descriptors"
+        ? "All synchronous descriptors are open until Computer issues more"
+        : `Synchronous CLI ${reason === "content" ? "file was not prefetched" : "listing was not indexed"}: ${path}`,
+    );
+    this.code = reason === "descriptors" ? "EMFILE" : "EIO";
+    this.path = path;
+    this.reason = reason;
+  }
 }
+
+export const contentMiss = (path: string) => new CliViewMiss(path, "content");
 
 /** Names and open read views share one counted buffer, including detached, still-open inodes. */
 export class CliContentStore {
