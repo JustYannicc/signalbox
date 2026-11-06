@@ -1,7 +1,7 @@
 /* Adapted from Rivet agentOS's Node fs bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { createFileCallbackApi } from "./callback-files.ts";
 import { createAsyncOperations } from "./async-operations.ts";
 import { runAsync, type AsyncLeafRunner } from "./operations.ts";
@@ -19,7 +19,7 @@ type WriteCallback =
   | FsCallback<[number, ArrayBufferView]>
   | FsCallback<[number, string]>;
 
-export function createIoCallbackApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+export function createIoCallbackApi(kernelFs: NodeFsBackend, runLeaf?: AsyncLeafRunner) {
   const operations = createAsyncOperations(kernelFs, runLeaf);
   function open(path: PathLike, callback: FsCallback<[number]>): void;
   function open(path: PathLike, flags: string | number, callback: FsCallback<[number]>): void;

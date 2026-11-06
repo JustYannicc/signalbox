@@ -1,6 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off - POSIX paths describe the virtual filesystem; reads use KernelFileSystem.
+// @effect-diagnostics nodeBuiltinImport:off - POSIX paths describe the virtual filesystem; reads use NodeFsBackend.
 import * as NodePath from "node:path";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import type { KernelStat } from "./metadata.ts";
 import type { WatchEventType } from "./watchOptions.ts";
 
@@ -48,7 +48,7 @@ function isMissingError(error: unknown): boolean {
   );
 }
 
-function takeSnapshot(kernelFs: KernelFileSystem, path: string, recursive: boolean): Snapshot {
+function takeSnapshot(kernelFs: NodeFsBackend, path: string, recursive: boolean): Snapshot {
   const root = kernelFs.stat(path);
   let descriptorDependent = kernelFs.resolvesThroughDescriptors(path);
   if (root.type !== "directory") {
@@ -90,7 +90,7 @@ function takeSnapshot(kernelFs: KernelFileSystem, path: string, recursive: boole
 }
 
 export function takeWatchSnapshot(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: string,
   recursive: boolean,
 ): Snapshot {
@@ -98,7 +98,7 @@ export function takeWatchSnapshot(
 }
 
 export function takeWatchSnapshotAllowMissing(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: string,
   recursive: boolean,
 ): Snapshot {

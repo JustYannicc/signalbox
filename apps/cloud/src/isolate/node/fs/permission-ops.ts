@@ -1,72 +1,52 @@
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { fsOperation, leaf, type FsOperation } from "./operations.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
+import { fsOperation, type FsOperation, fileLeaf } from "./operations.ts";
 import { pathString, type PathLike } from "./path.ts";
 
 export function* accessOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   mode = 0,
 ): FsOperation<void> {
   const name = pathString(path);
-  yield* fsOperation(
-    "access",
-    name,
-    leaf(() => kernelFs.access(name, mode)),
-  );
+  yield* fsOperation("access", name, fileLeaf(kernelFs, "access", [name, mode]));
 }
 
 export function* chmodOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   mode: number | string,
 ): FsOperation<void> {
   const name = pathString(path);
   const permissions = parsePermissionMode(mode);
-  yield* fsOperation(
-    "chmod",
-    name,
-    leaf(() => kernelFs.chmod(name, permissions)),
-  );
+  yield* fsOperation("chmod", name, fileLeaf(kernelFs, "chmod", [name, permissions]));
 }
 
 export function* fchmodOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   mode: number | string,
 ): FsOperation<void> {
   const permissions = parsePermissionMode(mode);
-  yield* fsOperation(
-    "fchmod",
-    undefined,
-    leaf(() => kernelFs.fchmod(fd, permissions)),
-  );
+  yield* fsOperation("fchmod", undefined, fileLeaf(kernelFs, "fchmod", [fd, permissions]));
 }
 
 export function* chownOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   uid: number,
   gid: number,
 ): FsOperation<void> {
   const name = pathString(path);
-  yield* fsOperation(
-    "chown",
-    name,
-    leaf(() => kernelFs.chown(name, uid, gid)),
-  );
+  yield* fsOperation("chown", name, fileLeaf(kernelFs, "chown", [name, uid, gid]));
 }
 
 export function* fchownOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   uid: number,
   gid: number,
 ): FsOperation<void> {
-  yield* fsOperation(
-    "fchown",
-    undefined,
-    leaf(() => kernelFs.fchown(fd, uid, gid)),
-  );
+  yield* fsOperation("fchown", undefined, fileLeaf(kernelFs, "fchown", [fd, uid, gid]));
 }
 
 export function parsePermissionMode(mode: number | string): number {

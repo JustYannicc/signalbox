@@ -1,7 +1,7 @@
 /* Adapted from Rivet agentOS's Node fs bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { runSync, type AsyncLeafRunner } from "./operations.ts";
 import {
   accessOperation,
@@ -43,7 +43,7 @@ import { normalizeMode, parseOpenFlags } from "./constants.ts";
 import type { BigIntStats, NodeStats, NodeStatsLike } from "./metadata.ts";
 
 export function openSync(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   flags: string | number = "r",
   mode?: number,
@@ -51,12 +51,12 @@ export function openSync(
   return openFd(kernelFs, pathString(path), parseOpenFlags(flags), normalizeMode(mode));
 }
 
-export function closeSync(kernelFs: KernelFileSystem, fd: number): void {
+export function closeSync(kernelFs: NodeFsBackend, fd: number): void {
   closeFd(kernelFs, fd);
 }
 
 export function readSyncOverload(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   buffer: ArrayBufferView,
   offsetOrOptions: number | IoOptions = 0,
@@ -67,7 +67,7 @@ export function readSyncOverload(
 }
 
 export function writeSyncOverload(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   data: string | ArrayBufferView,
   offsetOrPosition?: number | null | IoOptions,
@@ -93,11 +93,11 @@ export function writeSyncOverload(
   return writeBufferSync(kernelFs, fd, data, options);
 }
 
-export function accessSync(kernelFs: KernelFileSystem, path: PathLike, mode = 0): void {
+export function accessSync(kernelFs: NodeFsBackend, path: PathLike, mode = 0): void {
   runSync(accessOperation(kernelFs, path, mode));
 }
 
-export function existsSync(kernelFs: KernelFileSystem, path: PathLike): boolean {
+export function existsSync(kernelFs: NodeFsBackend, path: PathLike): boolean {
   try {
     kernelFs.stat(pathString(path));
     return true;
@@ -106,24 +106,19 @@ export function existsSync(kernelFs: KernelFileSystem, path: PathLike): boolean 
   }
 }
 
-export function chmodSync(kernelFs: KernelFileSystem, path: PathLike, mode: number | string): void {
+export function chmodSync(kernelFs: NodeFsBackend, path: PathLike, mode: number | string): void {
   runSync(chmodOperation(kernelFs, path, mode));
 }
 
-export function fchmodSync(kernelFs: KernelFileSystem, fd: number, mode: number | string): void {
+export function fchmodSync(kernelFs: NodeFsBackend, fd: number, mode: number | string): void {
   runSync(fchmodOperation(kernelFs, fd, mode));
 }
 
-export function chownSync(
-  kernelFs: KernelFileSystem,
-  path: PathLike,
-  uid: number,
-  gid: number,
-): void {
+export function chownSync(kernelFs: NodeFsBackend, path: PathLike, uid: number, gid: number): void {
   runSync(chownOperation(kernelFs, path, uid, gid));
 }
 
-export function fchownSync(kernelFs: KernelFileSystem, fd: number, uid: number, gid: number): void {
+export function fchownSync(kernelFs: NodeFsBackend, fd: number, uid: number, gid: number): void {
   runSync(fchownOperation(kernelFs, fd, uid, gid));
 }
 
@@ -131,7 +126,7 @@ export function statfsSync(path: PathLike): never {
   throw unsupportedFs("statfs", pathString(path));
 }
 
-export function createSyncApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+export function createSyncApi(kernelFs: NodeFsBackend, runLeaf?: AsyncLeafRunner) {
   function statApi(path: PathLike, options: { bigint: true }): BigIntStats;
   function statApi(path: PathLike, options?: { bigint?: false }): NodeStats;
   function statApi(path: PathLike, options?: StatOptions): NodeStatsLike;

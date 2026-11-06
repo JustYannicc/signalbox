@@ -2,12 +2,11 @@ import type { ClaudeSdkRequest } from "./ClaudeSdkHostTypes.ts";
 import { RpcTarget } from "cloudflare:workers";
 import type { HarnessOpenInput } from "./Harness.ts";
 import type { HarnessProcessObserver, HarnessRuntimeReporter } from "./HarnessProcessLifetime.ts";
-import { launchNodeHarnessProcess, type NodeHarnessProcessInput } from "./NodeHarnessProcess.ts";
+import type { NodeHarnessBaseInput, NodeHarnessProcess } from "./NodeHarnessProcess.ts";
 import { abortableValue, applySdkLaunch } from "./claude/SdkRelease.ts";
 import { createClaudeInitializationProgress } from "./claude/InitializationProgress.ts";
 import { captureClaudeSpawnDiagnostic } from "./claude/SpawnContext.ts";
 import { observeClaudeModelTransport } from "./claude/TurnProgress.ts";
-import { createClaudeCliFiles } from "./claude/CliFiles.ts";
 import type {
   ClaudeCliLaunch,
   ClaudeCliProcessPort,
@@ -16,9 +15,19 @@ import type {
 import type { ClaudeToolHookInput } from "./ClaudeToolObservation.ts";
 import { ownRpcResponse } from "../rpc/response.ts";
 
-export type ClaudeCliProcessOptions = Omit<NodeHarnessProcessInput, "signal">;
+export interface ClaudeCliProcessOptions extends Omit<NodeHarnessBaseInput, "signal"> {
+  readonly launch: (input: NodeHarnessBaseInput) => NodeHarnessProcess;
+  readonly files: {
+    call(
+      operation: string,
+      args: ReadonlyArray<unknown>,
+      signal?: AbortSignal,
+    ): Promise<import("./ClaudeSdkHostProtocol.ts").ClaudeSdkFsReply>;
+    close(): Promise<void>;
+  };
+}
 
-/** The CLI Worker owns its existing kernel/personality and exactly one verified launch. */
+/** The CLI Worker owns its personality and one verified launch; Computer owns mutable kernel state. */
 export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort {
   readonly #process;
   readonly #release;
@@ -39,7 +48,9 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
 
   constructor(
     options: ClaudeCliProcessOptions,
-    input: HarnessOpenInput<unknown>,
+    input: Omit<HarnessOpenInput<unknown>, "computer"> & {
+      readonly computer: NodeHarnessBaseInput["computer"];
+    },
     reporter: HarnessRuntimeReporter,
     observation?: (
       input: ClaudeToolHookInput,
@@ -62,7 +73,7 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
     this.#transport = input.modelTransport;
     this.#observation = observation;
     this.#continuation = continuation;
-    this.#files = createClaudeCliFiles(options.computer.files);
+    this.#files = options.files;
     const initialization =
       reporter.turnMilestone === undefined
         ? undefined
@@ -71,7 +82,7 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
       initialization === undefined
         ? () => undefined
         : options.stdio.observeAcceptedWrites(initialization.acceptedWrite);
-    const processInput: NodeHarnessProcessInput = {
+    const processInput: NodeHarnessBaseInput = {
       ...options,
       loadedRelease: loaded,
       signal: this.#lifetime.signal,
@@ -104,7 +115,7 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
     };
     // Capture the installed context after SDK argv/environment mapping, before CLI evaluation.
     const loadRelease = processInput.loadRelease;
-    this.#process = launchNodeHarnessProcess({
+    this.#process = options.launch({
       ...processInput,
       loadRelease: async (bridge, signal) => {
         const release = await loadRelease(bridge, signal);
@@ -238,7 +249,9 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
     return (this.#disposed ??= (async () => {
       this.#lifetime.abort(new Error("Claude CLI owner closed"));
       this.#launch.reject(this.#lifetime.signal.reason);
-      const settled = await Promise.allSettled([this.#process.dispose(), this.#files.close()]);
+      // Process teardown still needs kernel streams and descriptor capabilities.
+      const settled = await Promise.allSettled([this.#process.dispose()]);
+      settled.push(...(await Promise.allSettled([this.#files.close()])));
       this.#unsubscribe();
       const failures = settled
         .filter((result) => result.status === "rejected")

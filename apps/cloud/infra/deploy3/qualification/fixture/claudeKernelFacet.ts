@@ -2,13 +2,11 @@
 import * as Schema from "effect/Schema";
 import { RunnerTurn } from "@signalbox/runner-protocol/RunnerProtocol";
 import { createClaudeKernelFacetClass } from "../../../../src/harness/ClaudeKernelSession.ts";
-import { DEFAULT_NODE_NATIVE_MODULES } from "../../../../src/harness/NodeNativeModules.ts";
 import {
   KernelFileTransfer,
   kernelFileTransferManifest,
 } from "../../../../src/kernel/KernelFileTransfer.ts";
 import { createMemoryFilePersistencePorts } from "../../../../src/kernel/MemoryFilePersistencePorts.ts";
-import { createClaudePreparedImports } from "./claudePreparedModules.ts";
 import { hydrateClaudeFiles } from "./claudeFiles.ts";
 import { claudeSeedPaths } from "./claudeSeed.ts";
 import { facetState, retainedFacetState, flushFacetDiagnostics } from "./facetState.ts";
@@ -28,22 +26,12 @@ const Base = createClaudeKernelFacetClass<ClaudeFacetEnvironment>(
     assert(configuration.threadId === turn.threadId, "CLI kernel changed thread owner");
     const cap = claudeCapability(env);
     const state = facetState(ctx, cap, configuration.sessionKey);
-    const imports = createClaudePreparedImports();
     const paths = claudeSeedPaths(claude.seed);
     return {
       files: {
         database: state.files.database,
         nowNs: state.files.nowNs,
         persistencePorts: createMemoryFilePersistencePorts(),
-      },
-      native: (loaded) => {
-        assert(loaded.plan.harness === "claude-code", "CLI kernel selected another provider");
-        const plan = loaded.plan;
-        return {
-          nativeModules: DEFAULT_NODE_NATIVE_MODULES,
-          loadPackages: async (_bridge, signal) => await imports.loadPackages(plan, signal),
-          loadRelease: async (_bridge, signal) => await imports.loadRelease(plan, signal),
-        };
       },
       machine: () => ({
         files: {
@@ -89,7 +77,7 @@ const Base = createClaudeKernelFacetClass<ClaudeFacetEnvironment>(
   },
 );
 
-/** This bundle has the official CLI and its one synchronous kernel, with no Computer or host orchestration. */
+/** Computer owns the sole kernel; the official CLI runs in its separate facet. */
 export class ClaudeKernelFacet extends Base {
   readonly facetNonce = crypto.randomUUID();
   identity() {

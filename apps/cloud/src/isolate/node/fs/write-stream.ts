@@ -5,7 +5,7 @@
 import * as NodeBuffer from "node:buffer";
 import * as NodeStream from "node:stream";
 import type { DescriptorLifetime } from "./descriptor-lifetime.ts";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { KernelOpenFlags } from "./constants.ts";
 import { nodeFsError } from "./errors.ts";
 import { writeAllOperation } from "./io.ts";
@@ -27,14 +27,14 @@ export interface WriteStreamOptions extends NodeStream.WritableOptions {
 export class NodeFsWriteStream extends NodeStream.Writable {
   readonly path: string | NodeBuffer.Buffer | undefined;
   bytesWritten = 0;
-  readonly #kernelFs: KernelFileSystem;
+  readonly #kernelFs: NodeFsBackend;
   readonly #file: StreamFile;
   readonly #options: WriteStreamOptions;
   #position: bigint | null;
   #ready: boolean;
 
   constructor(
-    kernelFs: KernelFileSystem,
+    kernelFs: NodeFsBackend,
     path: PathLike | undefined,
     options: WriteStreamOptions = {},
     runLeaf?: AsyncLeafRunner,

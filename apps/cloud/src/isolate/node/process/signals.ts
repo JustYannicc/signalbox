@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - node:os supplies static signal names; delivery stays with KernelProcessTable.
 import * as NodeOS from "node:os";
 
-import { type KernelErrorCode, type KernelResult } from "../../../kernel/KernelAbi.ts";
+import type { KernelErrorCode, KernelResult } from "../../../kernel/KernelAbi.ts";
 import { NodeSystemError } from "./NodeError.ts";
 
 const signalNumbers = NodeOS.constants.signals as Readonly<Record<string, number>>;

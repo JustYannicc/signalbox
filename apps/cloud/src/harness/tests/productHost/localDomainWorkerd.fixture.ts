@@ -42,6 +42,7 @@ interface Env {
   readonly LOADER: WorkerLoader;
   readonly REAL_OWNERS?: boolean;
   readonly KERNEL_SOURCE: string;
+  readonly CLI_SOURCE: string;
   readonly COMPUTER_SOURCE: string;
   readonly SDK_SOURCE: string;
 }
@@ -136,6 +137,7 @@ const ThreadBase = createLocalClaudeThreadObject<Env, string>((ctx, env, configu
           facets: ctx.facets,
           code: {
             kernel: code("kernel", env.KERNEL_SOURCE),
+            cli: code("cli", env.CLI_SOURCE),
             computer: code("computer", env.COMPUTER_SOURCE),
             sdk: code("sdk", env.SDK_SOURCE),
           },

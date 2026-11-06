@@ -6,6 +6,9 @@ import type { ComputerExecutionConfiguration } from "../../../../src/computer/Co
 import type { ComputerProgramOwnerPort } from "../../../../src/kernel/KernelComputerAdmissionPort.ts";
 
 interface Owners {
+  cli(
+    code: WorkerLoaderWorkerCode,
+  ): import("../../../../src/harness/ClaudeCliKernelPort.ts").ClaudeCliHost;
   kernel(code: WorkerLoaderWorkerCode): QualifierClaudeKernelPort;
   computer(
     code: WorkerLoaderWorkerCode,
@@ -54,6 +57,14 @@ export function ownedClaudeFacetWorker(
           "ClaudeKernelFacet",
           code,
         ) as unknown as QualifierClaudeKernelPort,
+      cli: (code) =>
+        open<
+          InstanceType<
+            ReturnType<
+              typeof import("../../../../src/harness/ClaudeCliSession.ts").createClaudeCliFacetClass
+            >
+          >
+        >("cli", "ClaudeCliFacet", code) as unknown as ReturnType<Owners["cli"]>,
       computer: (code) =>
         open<ComputerExecutionObject>(
           "computer",

@@ -1,4 +1,4 @@
-import type { KernelProgramHost } from "../../../kernel/KernelProgramHost.ts";
+import type { GuestExecutableLookup } from "../childProcess/resolveExecutable.ts";
 import type { BunShimHost } from "../../BunShim.ts";
 import type { createNodeProcess } from "../../NodeProcess.ts";
 import { resolveGuestExecutable } from "../childProcess/resolveExecutable.ts";
@@ -7,10 +7,7 @@ type BunProcess = Pick<ReturnType<typeof createNodeProcess>, "cwd" | "env">;
 type BunWhich = NonNullable<BunShimHost["which"]>;
 
 /** Resolves guest PATH entries only when the shared kernel registered an exact candidate. */
-export function createBunWhich(
-  host: Pick<KernelProgramHost, "resolve">,
-  process: BunProcess,
-): BunWhich {
+export function createBunWhich(host: GuestExecutableLookup, process: BunProcess): BunWhich {
   return (command, options) => {
     if (typeof command !== "string" || command.length === 0) return null;
 

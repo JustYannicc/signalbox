@@ -175,6 +175,7 @@ export async function buildCombinedFixture(raw: unknown) {
     ["claudeFacet", "qualifier-claude-implementation"],
     ["claudeSdkHost", "qualifier-claude-sdk-host"],
     ["claudeKernelFacet", "qualifier-claude-kernel"],
+    ["claudeCliFacet", "qualifier-claude-cli"],
     ["computerExecution", "qualifier-computer-execution"],
     ["worker", "qualifier-worker"],
   ] as const) {
@@ -234,6 +235,9 @@ export async function buildCombinedFixture(raw: unknown) {
         },
         turnJson: input.claudeRuntime.turnJson,
         seed: input.claudeRuntime.seed,
+        ...(input.claudeRuntime.workingSet === undefined
+          ? {}
+          : { workingSet: input.claudeRuntime.workingSet }),
       },
       environmentPackages: environmentPackages.assets,
       facetSource: await NodeFSP.readFile(
@@ -248,6 +252,7 @@ export async function buildCombinedFixture(raw: unknown) {
         NodePath.join(output, "qualifier-claude-kernel.mjs"),
         "utf8",
       ),
+      cliSource: await NodeFSP.readFile(NodePath.join(output, "qualifier-claude-cli.mjs"), "utf8"),
       computerSource: await NodeFSP.readFile(
         NodePath.join(output, "qualifier-computer-execution.mjs"),
         "utf8",

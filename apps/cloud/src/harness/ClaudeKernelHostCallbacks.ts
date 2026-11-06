@@ -1,5 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
-import type { ClaudeKernelCallbacks } from "./ClaudeKernelSessionPort.ts";
+import type { ClaudeKernelCallbacks } from "./ClaudeKernelBindings.ts";
 import type { HarnessRuntimeReporter } from "./HarnessProcessLifetime.ts";
 import type { ClaudeToolObservation } from "./ClaudeToolObservation.ts";
 import { ownRpcResponse } from "../rpc/response.ts";

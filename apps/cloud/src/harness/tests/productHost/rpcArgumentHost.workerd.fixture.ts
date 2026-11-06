@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import { ThreadId } from "@t3tools/contracts";
+import { workingSetPolicy } from "./workingSetPolicy.fixture.ts";
 import { createProductClaudeKernelHost } from "../../ProductClaudeKernelHost.ts";
 import { createClaudeProductOwners } from "../../ClaudeProductOwners.ts";
 import { createAssetChildWorkerLoader } from "../../../computer/CompiledChildWorkerLoader.ts";
@@ -28,6 +29,7 @@ interface Materials {
 interface Env {
   readonly LOADER: WorkerLoader;
   readonly KERNEL_SOURCE: string;
+  readonly CLI_SOURCE: string;
   readonly COMPUTER_SOURCE: string;
   readonly MATERIALS: Materials;
   readonly HOST: DurableObjectNamespace<Host>;
@@ -99,6 +101,7 @@ export class Host extends DurableObject<Env> {
         facets: this.ctx.facets,
         code: {
           kernel: code(this.env.KERNEL_SOURCE, "kernel.js"),
+          cli: code(this.env.CLI_SOURCE, "cli.js"),
           computer: code(this.env.COMPUTER_SOURCE, "computer.js", {
             CHILD_WORKERS: loader,
             RESIDENT_BYTE_LIMIT: "128000000",
@@ -146,7 +149,12 @@ export class Host extends DurableObject<Env> {
         kernel: this.#owners.kernel,
         commands: this.#owners.commands,
         admission: { limit: 4, path: ["/bin", "/usr/bin"] },
-        native: { sdkHost: this.#owners.sdkHost, process },
+        native: {
+          sdkHost: this.#owners.sdkHost,
+          cliHost: this.#owners.cliHost,
+          workingSet: workingSetPolicy,
+          process,
+        },
         continuations: { publish: () => Effect.die(new Error("No provider turn allowed")) },
         modelTransport: async () => {
           throw new Error("No model requests allowed");

@@ -1,11 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - native stream types describe host-provided streams; this module does not access a Node host.
 import type * as NodeStream from "node:stream";
-import * as Schema from "effect/Schema";
-import {
-  SystemIdentity,
-  systemIdentityForThread,
-  type SystemIdentity as SystemIdentityValue,
-} from "@t3tools/contracts/systemIdentity";
+import type { SystemIdentity as SystemIdentityValue } from "@t3tools/contracts/systemIdentity";
 
 import type { KernelHandle } from "../../../kernel/KernelAbi.ts";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
@@ -62,16 +57,6 @@ export interface NodeProcessHostContext {
   readonly cpuAccounting?: Pick<KernelCpuProcess, "snapshot">;
   readonly processes?: Pick<KernelProcessTable, "signalPid">;
   readonly parentProcessHandle?: KernelHandle<"process">;
-}
-
-const decodeSystemIdentity = Schema.decodeUnknownSync(SystemIdentity);
-
-export function resolveNodeProcessSystemIdentity(
-  context: Pick<NodeProcessHostContext, "identity" | "systemIdentity">,
-): SystemIdentityValue {
-  return context.systemIdentity === undefined
-    ? systemIdentityForThread("process-" + context.identity.pid)
-    : decodeSystemIdentity(context.systemIdentity);
 }
 
 export function validateNodeRuntimeIdentity(identity: NodeRuntimeIdentity): void {

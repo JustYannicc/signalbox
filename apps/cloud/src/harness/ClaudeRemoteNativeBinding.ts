@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
-import { ClaudeCliProcess, type ClaudeCliProcessOptions } from "./ClaudeCliProcess.ts";
+import { createLocalClaudeCliProcess } from "./LocalClaudeCliProcess.ts";
+import type { NodeHarnessProcessInput } from "./NodeHarnessProcess.ts";
 import { HarnessError } from "./Harness.ts";
 import type { NativeHostBinding } from "./HarnessSessionHost.ts";
 import type { HarnessContinuationRequests } from "./HarnessContinuations.ts";
@@ -9,7 +10,7 @@ import { claudeSdkContinuationCodec, type ClaudeSdkHostService } from "./ClaudeS
 import { makeClaudeSdkNativeBinding } from "./ClaudeSdkNativeBinding.ts";
 
 export interface ClaudeRemoteNativeOptions {
-  readonly process: ClaudeCliProcessOptions;
+  readonly process: Omit<NodeHarnessProcessInput, "signal">;
   readonly sdkHost: ClaudeSdkHostService;
   readonly continuations: HarnessContinuationRequests;
   readonly mcp: {
@@ -36,7 +37,7 @@ export function makeClaudeRemoteNativeBinding(
         const cli = yield* Effect.acquireRelease(
           Effect.try({
             try: () =>
-              new ClaudeCliProcess(
+              createLocalClaudeCliProcess(
                 options.process,
                 {
                   ...input,

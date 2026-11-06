@@ -1,3 +1,4 @@
+import type { NodeFsBackend } from "../../isolate/NodeFsBackend.ts";
 import type { Computer } from "../../computer/Computer.ts";
 import type { KernelHandle } from "../../kernel/KernelAbi.ts";
 import type { KernelExitStatus } from "../../kernel/KernelProcessTable.ts";
@@ -19,11 +20,21 @@ import type {
   ReleaseModuleOmittedFailure,
 } from "../HarnessProcessLifetime.ts";
 
-export interface NodeHarnessProcessInput {
+export interface NodeHarnessStdio {
+  readonly signal: AbortSignal;
+  readonly stdin: WritableStream<Uint8Array>;
+  readonly stdout: ReadableStream<Uint8Array>;
+  readonly stderr: ReadableStream<Uint8Array>;
+  assertBound(files: NodeFsBackend): void;
+  observeAcceptedWrites(observer: (fd: 0 | 1 | 2, bytes: Uint8Array) => void): () => void;
+  finish(): void | Promise<void>;
+  dispose(): Promise<void>;
+}
+
+export interface NodeHarnessBaseInput {
   readonly loadedRelease?: LoadedHarnessRelease;
-  readonly host: KernelProgramHost;
-  readonly computer: Computer;
-  readonly stdio: KernelSessionStdio;
+  readonly computer: { readonly threadId: string; readonly files: NodeFsBackend };
+  readonly stdio: NodeHarnessStdio;
   readonly identity: NodeRuntimeIdentity;
   readonly systemIdentity?: SystemIdentity;
   readonly env: NodeProcessEnvironment;
@@ -53,6 +64,12 @@ export interface NodeHarnessProcessInput {
     event: ReleaseModuleOmittedEvent,
     failure: ReleaseModuleOmittedFailure,
   ) => void | Promise<void>;
+}
+
+export interface NodeHarnessProcessInput extends Omit<NodeHarnessBaseInput, "computer" | "stdio"> {
+  readonly host: KernelProgramHost;
+  readonly computer: Computer;
+  readonly stdio: KernelSessionStdio;
 }
 
 export interface NodeHarnessProcess {

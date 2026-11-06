@@ -1,5 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
-import type { ClaudeKernelSeedSource } from "./ClaudeKernelSessionPort.ts";
+import type { ClaudeKernelSeedSource } from "./ClaudeKernelBindings.ts";
 import type { SeedCatalog } from "../kernel/KernelSeedCatalog.ts";
 import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
 import { KERNEL_FILE_TRANSFER_BYTES } from "../kernel/KernelFileTransfer.ts";

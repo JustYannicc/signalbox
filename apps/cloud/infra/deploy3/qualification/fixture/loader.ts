@@ -113,6 +113,7 @@ export function qualifierFacetLoader(
                   tail,
                 ).code,
               ),
+            cli: (code) => owners.cli(code),
             computer: (code) => owners.computer(code),
           });
           assertQualifierClaudeFacetConfiguration(prepared.code.env);

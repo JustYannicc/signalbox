@@ -1,9 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off - this fixture owns an isolated in-memory database.
 import * as NodeSqlite from "node:sqlite";
 import { createFacetSqliteStorage, type FacetStorage } from "../../../kernel/FacetSqliteStorage.ts";
-import { KernelFileSystem, type WasiStdio } from "../../../kernel/KernelFileSystem.ts";
+import {
+  KernelFileSystem,
+  type WasiStdio,
+  type KernelPosixOptions,
+} from "../../../kernel/KernelFileSystem.ts";
 
-export function createTestFilesystem(stdio?: readonly [WasiStdio, WasiStdio, WasiStdio]) {
+export function createTestFilesystem(
+  stdio?: readonly [WasiStdio, WasiStdio, WasiStdio],
+  posix?: KernelPosixOptions,
+) {
   const database = new NodeSqlite.DatabaseSync(":memory:");
   let transactionDepth = 0;
   const storage: FacetStorage = {
@@ -37,14 +44,17 @@ export function createTestFilesystem(stdio?: readonly [WasiStdio, WasiStdio, Was
       }
     },
   };
+  const inodes = createFacetSqliteStorage(storage, () => 1_800_000_000_000_000_001n);
+  if (posix !== undefined) inodes.posix.initialize(inodes.root, { mode: 0o777, uid: 0, gid: 0 });
   const filesystem = new KernelFileSystem({
     mounts: [
       {
         path: "/",
-        storage: createFacetSqliteStorage(storage, () => 1_800_000_000_000_000_001n),
+        storage: inodes,
       },
     ],
     ...(stdio === undefined ? {} : { stdio }),
+    ...(posix === undefined ? {} : { posix }),
   });
 
   return {

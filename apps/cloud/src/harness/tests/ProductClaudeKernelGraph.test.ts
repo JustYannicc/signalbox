@@ -6,7 +6,8 @@ const root = NodeURL.fileURLToPath(new URL("../../../../../", import.meta.url));
 
 it("registers separate CLI, Computer and host graphs through the deployed product entries", async () => {
   const entries = {
-    cli: "apps/cloud/infra/deploy3/qualification/fixture/claudeKernelFacet.ts",
+    cli: "apps/cloud/infra/deploy3/qualification/fixture/claudeCliFacet.ts",
+    kernel: "apps/cloud/infra/deploy3/qualification/fixture/claudeKernelFacet.ts",
     computer: "apps/cloud/src/computer/ComputerExecutionObject.ts",
     host: "apps/cloud/src/harness/ProductClaudeHarnessRequestFacet.ts",
     thread: "apps/cloud/src/thread/ProductClaudeThreadHost.ts",
@@ -28,8 +29,22 @@ it("registers separate CLI, Computer and host graphs through the deployed produc
   }
   const cli = graphs.get("cli")!;
   expect(cli).toContain("apps/cloud/src/harness/ClaudeCliProcess.ts");
-  expect(cli).toContain("apps/cloud/src/kernel/KernelComputerHost.ts");
-  expect(cli).toContain("apps/cloud/src/kernel/KernelFileSystem.ts");
+  expect(cli).toContain("apps/cloud/src/harness/ClaudeCliSession.ts");
+  expect(
+    cli.filter(
+      (path) =>
+        /(?:^|\/)effect\//.test(path) ||
+        path.includes("/computer/") ||
+        /\/kernel\/(?!Kernel(?:OpenFlags|WasiAbi|Errno|SyscallPort|FsSyscallAbi|ProcessSignal|FileTransferPort)\.ts)/.test(
+          path,
+        ),
+    ),
+  ).toEqual([]);
+  const kernel = graphs.get("kernel")!;
+  expect(kernel).toContain("apps/cloud/src/kernel/KernelFileSystem.ts");
+  expect(kernel).toContain("apps/cloud/src/kernel/KernelComputerHost.ts");
+  expect(kernel).not.toContain("apps/cloud/src/harness/ClaudeCliProcess.ts");
+  expect(kernel).not.toContain("apps/cloud/src/harness/ClaudeCliSession.ts");
   expect(
     cli.filter((path) =>
       /\/computer\/(?:CommandGateway|ComputerProgramOwner|ComputerProgramResolver|ComputerProgramAdmission|ComputerExecutionObject|ChildWorker(?:Capacity|InvocationRunner|Program)|WorkerLoaderDispatch|EscalationTable)\.ts$|\/harness\/(?:ProductClaudeKernelHost|ClaudeSdkNativeBinding|HarnessSessionHost|HarnessSessionFacet|HarnessRequestFacetObject|host\/lifecycle)\.ts$/.test(

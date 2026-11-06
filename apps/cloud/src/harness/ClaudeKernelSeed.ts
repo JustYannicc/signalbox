@@ -1,7 +1,7 @@
-import type { ClaudeKernelSeedSource } from "./ClaudeKernelSessionPort.ts";
+import type { ClaudeKernelSeedSource } from "./ClaudeKernelBindings.ts";
 import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
 import type { SeedCatalog } from "../kernel/KernelSeedCatalog.ts";
-import { KERNEL_FILE_TRANSFER_BYTES } from "../kernel/KernelFileTransfer.ts";
+import { KERNEL_FILE_TRANSFER_BYTES } from "../kernel/KernelFileTransferPort.ts";
 
 async function readVerified(
   entry: { readonly path: string; readonly bytes: number; readonly sha256: string },

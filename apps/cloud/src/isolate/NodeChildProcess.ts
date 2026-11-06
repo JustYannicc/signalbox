@@ -37,7 +37,7 @@ export type { NodeChildProcessOptions, NodeExecOptions, NodeSyncOptions, ExecCal
 export type { NodeChildProcessContext, NodeChildProcessTransport };
 export type NodeChildProcessSpawn = ReturnType<typeof normalizeSpawn>;
 export type NodeChildProcessObserver = (
-  child: NodeChildProcess,
+  child: import("./NodeChildProcessHandle.ts").NodeChildProcessHandle,
   spawn: NodeChildProcessSpawn,
 ) => void;
 

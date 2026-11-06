@@ -23,6 +23,10 @@
       "types": "./src/clientActionTiming.ts",
       "import": "./src/clientActionTiming.ts"
     },
+    "./harnessReleaseKeys": {
+      "types": "./src/harnessReleaseKeys.ts",
+      "import": "./src/harnessReleaseKeys.ts"
+    },
     "./harnessReleaseOmission": {
       "types": "./src/harnessReleaseOmission.ts",
       "import": "./src/harnessReleaseOmission.ts"

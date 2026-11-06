@@ -2,7 +2,7 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type * as NodeBuffer from "node:buffer";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { createAsyncOperations } from "./async-operations.ts";
 import { runAsync, type AsyncLeafRunner } from "./operations.ts";
 import { chmodOperation, chownOperation } from "./permission-ops.ts";
@@ -11,7 +11,7 @@ import type { lstatSync, readlinkSync, realpathSync, statSync, TimeLike } from "
 import { pathString, type PathLike } from "./path.ts";
 import { schedule, type FsCallback } from "./callback-utils.ts";
 
-export function createPathCallbackApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+export function createPathCallbackApi(kernelFs: NodeFsBackend, runLeaf?: AsyncLeafRunner) {
   const operations = createAsyncOperations(kernelFs, runLeaf);
   const realpath = (
     path: PathLike,

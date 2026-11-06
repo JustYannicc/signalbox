@@ -23,6 +23,7 @@ import {
 import { FDFLAGS } from "./wasi/internal_wasi_descriptors.ts";
 import { KernelFileSystemUnavailable } from "./KernelLowerFileSystem.ts";
 import { createKernelFileSystemPathSearch } from "./KernelFileSystemPathSearch.ts";
+import { createKernelNimbusMetadata } from "./KernelNimbusMetadata.ts";
 
 export interface KernelSyscallHostOptions
   extends KernelWasiSignalOptions, KernelWasiFileSystemOptions {
@@ -31,11 +32,13 @@ export interface KernelSyscallHostOptions
   readonly env: Readonly<Record<string, string>>;
   readonly signal: AbortSignal;
   readonly agentOsPreopens?: boolean;
+  readonly nimbusMetadata?: boolean;
 }
 
 /** Runs the existing WASI handlers against the process owner's descriptors, without a guest heap. */
 export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
   const memory = new SyscallMemory();
+  let creationMode: number | undefined;
   const sequence = new KernelFileIoSequence(options.filesystem);
   const filesystem = new WasiFileSystem(memory, [], [], {
     table: options.filesystem.descriptors,
@@ -46,7 +49,11 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
     openAccess: options.filesystem.assertOpenAllowed.bind(options.filesystem),
     creation: {
       createInode: options.filesystem.createInodeAsync.bind(options.filesystem),
-      takeCreateMode: options.filesystem.takeNextCreateMode.bind(options.filesystem),
+      takeCreateMode: () => {
+        const mode = creationMode;
+        creationMode = undefined;
+        return mode ?? options.filesystem.takeNextCreateMode();
+      },
     },
   });
   const validated = validateOptions({
@@ -74,6 +81,28 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
       })(memory, filesystem.imports),
     }),
   );
+  if (options.nimbusMetadata) {
+    const metadata = createKernelNimbusMetadata({
+      memory: () => memory,
+      filesystem: options.filesystem,
+    });
+    for (const [name, handler] of Object.entries(metadata)) {
+      imports.set(name, function* (...args: number[]) {
+        const pathIndex =
+          name === "stat_metadata" || name === "chown"
+            ? 1
+            : name === "access" || name === "realpath" || name === "chmod"
+              ? 0
+              : undefined;
+        if (pathIndex !== undefined && args[pathIndex] !== 0)
+          yield options.filesystem.prepareLowerPaths(
+            [memory.string(args[pathIndex]!, args[pathIndex + 1]!)],
+            options.signal,
+          );
+        return Reflect.apply(handler, metadata, args);
+      });
+    }
+  }
   const transform = options.agentOsPreopens
     ? createAgentOsWasiArgumentTransform(options.filesystem)
     : undefined;
@@ -105,6 +134,13 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
     async call(request: KernelSyscallRequest): Promise<KernelSyscallResponse> {
       if (closed || busy) throw new Error("Syscall owner is unavailable or already executing");
       controller.signal.throwIfAborted();
+      if (
+        request.creationMode !== undefined &&
+        (!Number.isInteger(request.creationMode) ||
+          request.creationMode < 0 ||
+          request.creationMode > 0o7777)
+      )
+        throw new TypeError("Invalid syscall creation mode");
       const handler = imports.get(request.name);
       if (!handler) {
         sequence.release();
@@ -126,6 +162,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
         throw new TypeError("Invalid syscall transfer length");
       }
       busy = true;
+      creationMode = request.creationMode;
       try {
         let response: KernelSyscallResponse;
         let moved = 0;
@@ -157,7 +194,25 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
             const owner = await sequence.begin(request, args, memory, controller.signal);
             memory.ioOwner = owner;
             descriptorIo = transferred ? io(request.name, args) : undefined;
-            const operation: WasiCall<number> = Reflect.apply(handler, undefined, args);
+            const operation: WasiCall<number> =
+              request.name === "path_open" && request.kernelOpenFlags !== undefined
+                ? (function* (): WasiCall<number> {
+                    const anchored = options.filesystem.fork(options.filesystem.descriptors);
+                    try {
+                      anchored.fchdir(Number(args[0]));
+                      const fd = yield anchored.openAsync(
+                        memory.string(Number(args[2]), Number(args[3])),
+                        request.kernelOpenFlags!,
+                        request.creationMode,
+                        controller.signal,
+                      );
+                      memory.u32(Number(args[8]), Number(fd));
+                      return 0;
+                    } finally {
+                      anchored.dispose();
+                    }
+                  })()
+                : Reflect.apply(handler, undefined, args);
             const value = await runKernelExecution(controller.signal, () => runAsync(operation));
             moved = value === 0 ? transferCount(request, memory) : 0;
             sequence.complete(request, moved, memory.transferLimit, value === 0);
@@ -183,6 +238,7 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
         return response;
       } finally {
         busy = false;
+        creationMode = undefined;
         if (closed || controller.signal.aborted) {
           sequence.release();
         }

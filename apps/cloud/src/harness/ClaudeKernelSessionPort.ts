@@ -1,46 +1,27 @@
-import type { ClaudeCliProcessPort, ClaudeSdkReport } from "./ClaudeSdkHostProtocol.ts";
-import type { ClaudeToolHookInput } from "./ClaudeToolObservation.ts";
+import type { ClaudeCliProcessPort } from "./ClaudeSdkHostProtocol.ts";
 import type { HarnessOpenInput } from "./Harness.ts";
 import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
-import type { NodeHarnessProcessInput } from "./NodeHarnessProcess.ts";
 import type { KernelChildRegistration } from "../kernel/KernelChildDispatchPort.ts";
 import type { ComputerProgramOwnerPort } from "../kernel/KernelComputerAdmissionPort.ts";
 import type { Computer } from "../computer/Computer.ts";
 import type { KernelCommand, KernelCommandChild } from "../kernel/KernelCommandForwarder.ts";
 import type { SeedCatalog } from "../kernel/KernelSeedCatalog.ts";
 import type { ClaudeTranscriptCapture } from "./ClaudeTranscriptPort.ts";
-import type { RpcRequest } from "../rpc/Request.ts";
 import type {
   KernelFileTransferManifest,
   KernelFileTransferPort,
 } from "../kernel/KernelFileTransfer.ts";
 
-export interface ClaudeKernelCallbacks {
-  model(id: string, request: RpcRequest): Promise<Response>;
-  cancel(id: string, reason?: unknown): Promise<void>;
-  report(report: ClaudeSdkReport): Promise<void>;
-  startup(cause: unknown): Promise<void>;
-  observeTool(input: ClaudeToolHookInput, toolUseId: string | undefined): Promise<void>;
-  continuation(input: unknown): Promise<void>;
-  output(fd: number, bytes: Uint8Array): Promise<void>;
-  input(bytes: Uint8Array): Promise<void>;
-}
-
-export interface ClaudeKernelSeedSource {
-  read(
-    stage: "assets" | "programs",
-    path: string,
-    offset: number,
-    length: number,
-  ): Promise<Uint8Array>;
-  releasePayload(path: string, offset: number, length: number): Promise<Uint8Array>;
-  release(stage: "assets" | "programs"): Promise<void>;
-}
-
-export interface ClaudeKernelProcessConfiguration extends Pick<
-  NodeHarnessProcessInput,
-  "identity" | "env" | "bun" | "systemIdentity"
-> {}
+export type {
+  ClaudeKernelCallbacks,
+  ClaudeKernelSeedSource,
+  ClaudeKernelProcessConfiguration,
+} from "./ClaudeKernelBindings.ts";
+import type {
+  ClaudeKernelCallbacks,
+  ClaudeKernelSeedSource,
+  ClaudeKernelProcessConfiguration,
+} from "./ClaudeKernelBindings.ts";
 
 export interface ClaudeKernelCommand {
   readonly stdin: WritableStream<Uint8Array>;
@@ -65,7 +46,7 @@ export interface ClaudeKernelInitialize {
   readonly machineInventory: import("../computer/MachineProgramInventory.ts").MachineProgramInventory;
 }
 
-/** Every operation is async; native Node filesystem calls stay inside this facet. */
+/** Computer owns the canonical kernel. The separate CLI facet receives only capabilities and read data. */
 export interface ClaudeKernelSessionPort {
   initialize(input: ClaudeKernelInitialize): Promise<{ readonly fileIdentity: string }>;
   configure(input: {
@@ -76,6 +57,10 @@ export interface ClaudeKernelSessionPort {
     readonly owner: ComputerProgramOwnerPort;
     readonly source: ClaudeKernelSeedSource;
     readonly callbacks: ClaudeKernelCallbacks;
+    readonly cli: import("./ClaudeCliKernelPort.ts").ClaudeCliHost;
+    readonly workingSet: import("./CliFileWorkingSet.ts").CliFileWorkingSetOptions & {
+      readonly paths: readonly string[];
+    };
   }): Promise<{
     readonly fileIdentity: string;
     readonly registrations: readonly KernelChildRegistration[];

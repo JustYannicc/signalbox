@@ -1,17 +1,16 @@
 import { RpcTarget } from "cloudflare:workers";
 import type { HarnessFilesStoreResult } from "../harness/HarnessFilesStore.ts";
 
-export const KERNEL_FILE_TRANSFER_BYTES = 64 * 1024;
-export type KernelFileTransferManifest = ReadonlyArray<{
-  readonly path: string;
-  readonly mode: number;
-  readonly kind?: "file" | "symlink";
-  readonly bytes: number;
-}>;
-export interface KernelFileTransferPort {
-  read(path: string, offset: number, length: number): Promise<Uint8Array>;
-  close(): Promise<void>;
-}
+export {
+  KERNEL_FILE_TRANSFER_BYTES,
+  type KernelFileTransferManifest,
+  type KernelFileTransferPort,
+} from "./KernelFileTransferPort.ts";
+import {
+  KERNEL_FILE_TRANSFER_BYTES,
+  type KernelFileTransferManifest,
+  type KernelFileTransferPort,
+} from "./KernelFileTransferPort.ts";
 
 /** A checkpoint's existing immutable payloads are released as soon as its bounded transfer ends. */
 export class KernelFileTransfer extends RpcTarget implements KernelFileTransferPort {

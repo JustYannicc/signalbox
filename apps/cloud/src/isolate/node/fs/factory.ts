@@ -1,7 +1,7 @@
 /* Adapted from Rivet agentOS's Node fs bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import type { AsyncLeafRunner } from "./operations.ts";
 import { createCallbackApi } from "./callbacks.ts";
 import { createFsConstants, fsConstants, type NativeFsConstants } from "./constants.ts";
@@ -41,7 +41,7 @@ function defineDefault<T extends object>(module: T): T & { default: T } {
 }
 
 export function createNodeFs(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   nativeConstants?: NativeFsConstants,
   runLeaf?: AsyncLeafRunner,
 ): NodeFsModules {

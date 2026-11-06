@@ -5,7 +5,7 @@
 import * as NodeBuffer from "node:buffer";
 import * as NodeStream from "node:stream";
 import type { DescriptorLifetime } from "./descriptor-lifetime.ts";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { nodeFsError } from "./errors.ts";
 import { readIntoOperation } from "./io.ts";
 import type { AsyncLeafRunner } from "./operations.ts";
@@ -25,7 +25,7 @@ export interface ReadStreamOptions extends NodeStream.ReadableOptions {
 export class NodeFsReadStream extends NodeStream.Readable {
   readonly path: string | NodeBuffer.Buffer | undefined;
   bytesRead = 0;
-  readonly #kernelFs: KernelFileSystem;
+  readonly #kernelFs: NodeFsBackend;
   readonly #file: StreamFile;
   #position: bigint | null;
   readonly #end: bigint | undefined;
@@ -34,7 +34,7 @@ export class NodeFsReadStream extends NodeStream.Readable {
   #ready: boolean;
 
   constructor(
-    kernelFs: KernelFileSystem,
+    kernelFs: NodeFsBackend,
     path: PathLike | undefined,
     options: ReadStreamOptions = {},
     runLeaf?: AsyncLeafRunner,
@@ -96,7 +96,11 @@ export class NodeFsReadStream extends NodeStream.Readable {
     let length = requested;
     let reachesEnd = false;
     if (this.#end !== undefined) {
-      const position = this.#position ?? this.#kernelFs.descriptors.get(fd).offset;
+      const position =
+        this.#position ??
+        (this.#kernelFs.descriptorOffset === undefined
+          ? this.#kernelFs.descriptors.get(fd).offset
+          : await this.#kernelFs.descriptorOffset(fd));
       if (position > this.#end) {
         this.#ended = true;
         this.push(null);

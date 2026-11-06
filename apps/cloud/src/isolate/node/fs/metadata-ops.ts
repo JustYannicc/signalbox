@@ -3,8 +3,8 @@
  */
 // @effect-diagnostics globalDate:off - Node fs utimes accepts the literal "now" synchronously.
 import type * as NodeBuffer from "node:buffer";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
+import { fsOperation, runSync, type FsOperation, fileLeaf } from "./operations.ts";
 import { encodedPath } from "./metadata.ts";
 import { pathString, type PathLike } from "./path.ts";
 
@@ -41,37 +41,29 @@ function timeNs(value: TimeLike): bigint {
 }
 
 export function* realpathOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   options?: BufferEncoding | { encoding?: BufferEncoding | "buffer" | null } | null,
 ): FsOperation<string | NodeBuffer.Buffer> {
   const name = pathString(path);
-  const result = yield* fsOperation(
-    "realpath",
-    name,
-    leaf(() => kernelFs.realpath(name)),
-  );
+  const result = yield* fsOperation("realpath", name, fileLeaf(kernelFs, "realpath", [name]));
   const encoding = typeof options === "string" ? options : options?.encoding;
   return encodedPath(result, encoding ?? "utf8");
 }
 
 export function* readlinkOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   options?: BufferEncoding | { encoding?: BufferEncoding | "buffer" | null } | null,
 ): FsOperation<string | NodeBuffer.Buffer> {
   const name = pathString(path);
-  const result = yield* fsOperation(
-    "readlink",
-    name,
-    leaf(() => kernelFs.readlink(name)),
-  );
+  const result = yield* fsOperation("readlink", name, fileLeaf(kernelFs, "readlink", [name]));
   const encoding = typeof options === "string" ? options : options?.encoding;
   return encodedPath(result, encoding ?? "utf8");
 }
 
 export function* utimesOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   atime: TimeLike,
   mtime: TimeLike,
@@ -79,29 +71,21 @@ export function* utimesOperation(
 ): FsOperation<void> {
   const name = pathString(path);
   const times = { atimeNs: timeNs(atime), mtimeNs: timeNs(mtime) };
-  yield* fsOperation(
-    "utimes",
-    name,
-    leaf(() => kernelFs.setTimes(name, times, follow)),
-  );
+  yield* fsOperation("utimes", name, fileLeaf(kernelFs, "setTimes", [name, times, follow]));
 }
 
 export function* futimesOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   atime: TimeLike,
   mtime: TimeLike,
 ): FsOperation<void> {
   const times = { atimeNs: timeNs(atime), mtimeNs: timeNs(mtime) };
-  yield* fsOperation(
-    "futimes",
-    undefined,
-    leaf(() => kernelFs.fsetTimes(fd, times)),
-  );
+  yield* fsOperation("futimes", undefined, fileLeaf(kernelFs, "fsetTimes", [fd, times]));
 }
 
 export function* truncateOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike | number,
   length = 0,
 ): FsOperation<void> {
@@ -115,15 +99,11 @@ export function* truncateOperation(
     return;
   }
   const name = pathString(path);
-  yield* fsOperation(
-    "truncate",
-    name,
-    leaf(() => kernelFs.truncate(name, BigInt(length))),
-  );
+  yield* fsOperation("truncate", name, fileLeaf(kernelFs, "truncate", [name, BigInt(length)]));
 }
 
 export function* ftruncateOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   length = 0,
 ): FsOperation<void> {
@@ -132,22 +112,18 @@ export function* ftruncateOperation(
       code: "ERR_OUT_OF_RANGE",
     });
   }
-  yield* fsOperation(
-    "ftruncate",
-    undefined,
-    leaf(() => kernelFs.ftruncate(fd, BigInt(length))),
-  );
+  yield* fsOperation("ftruncate", undefined, fileLeaf(kernelFs, "ftruncate", [fd, BigInt(length)]));
 }
 
 export function* fsyncOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   dataOnly = false,
 ): FsOperation<void> {
   yield* fsOperation(
     dataOnly ? "fdatasync" : "fsync",
     undefined,
-    leaf(() => kernelFs.sync(fd, dataOnly)),
+    fileLeaf(kernelFs, "sync", [fd, dataOnly]),
   );
 }
 

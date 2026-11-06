@@ -1,4 +1,4 @@
-import { ClaudeSeedConfiguration } from "./configuration.schema.ts";
+import { ClaudeSeedConfiguration, CliWorkingSetPolicy } from "./configuration.schema.ts";
 import { ClaudeMcpProbe } from "./claudeMcpProbe.ts";
 import * as Schema from "effect/Schema";
 import { readClaudeQualificationAssets } from "../runtimeAssets.ts";
@@ -37,6 +37,7 @@ const ClaudeFacetConfigurationSchema = Schema.Struct({
   }),
   turnJson: Schema.Array(NonEmpty),
   seed: ClaudeSeedConfiguration,
+  workingSet: Schema.optional(CliWorkingSetPolicy),
 }).annotate({ parseOptions: { onExcessProperty: "error" } });
 
 export interface ClaudeFacetConfiguration {
@@ -50,6 +51,7 @@ export interface ClaudeFacetConfiguration {
     readonly model: string;
   };
   readonly turnJson: readonly string[];
+  readonly workingSet?: typeof CliWorkingSetPolicy.Type | undefined;
   readonly seed: {
     readonly home: string;
     readonly cwd: "/workspace";

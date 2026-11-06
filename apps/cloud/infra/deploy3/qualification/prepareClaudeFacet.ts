@@ -19,6 +19,9 @@ export async function prepareClaudeFacetCode(
     readonly CONFIG_SHA256: string;
     readonly authorities: Parameters<typeof createQualifierClaudeFacetEnvironment>[3];
     readonly sdkHost?: (code: WorkerLoaderWorkerCode) => ClaudeSdkHostService;
+    readonly cli?: (
+      code: WorkerLoaderWorkerCode,
+    ) => import("../../../src/harness/ClaudeCliKernelPort.ts").ClaudeCliHost;
     readonly kernel?: (
       code: WorkerLoaderWorkerCode,
     ) => import("./fixture/claudeKernelProtocol.ts").QualifierClaudeKernelPort;
@@ -102,7 +105,10 @@ export async function prepareClaudeFacetCode(
         env: { CLAUDE_SDK_PLAN: loaded.plan, CLAUDE_SDK_RELEASE: loaded.plan.release },
         globalOutbound: null,
       });
-  if (!calibration && (inputs.kernel === undefined || inputs.computer === undefined))
+  if (
+    !calibration &&
+    (inputs.kernel === undefined || inputs.computer === undefined || inputs.cli === undefined)
+  )
     throw new Error("CLAUDE_PRODUCT_OWNER_LOADER_MISSING");
   const kernel = calibration
     ? undefined
@@ -113,13 +119,29 @@ export async function prepareClaudeFacetCode(
           : { compatibilityFlags: code.compatibilityFlags }),
         mainModule: "claude-kernel-entry.mjs",
         modules: {
-          ...modules,
           "claude-kernel-entry.mjs": {
             js: 'export { ClaudeKernelFacet } from "./qualifier-claude-kernel.mjs";',
           },
           "qualifier-claude-kernel.mjs": { js: configuration.claude.kernelSource },
         },
         env: environment,
+        globalOutbound: null,
+      });
+  const cli = calibration
+    ? undefined
+    : inputs.cli!({
+        compatibilityDate: code.compatibilityDate,
+        ...(code.compatibilityFlags === undefined
+          ? {}
+          : { compatibilityFlags: code.compatibilityFlags }),
+        mainModule: "claude-cli-entry.mjs",
+        modules: {
+          ...modules,
+          "claude-cli-entry.mjs": {
+            js: 'export { ClaudeCliFacet } from "./qualifier-claude-cli.mjs";',
+          },
+          "qualifier-claude-cli.mjs": { js: configuration.claude.cliSource },
+        },
         globalOutbound: null,
       });
   const computer = calibration
@@ -150,6 +172,7 @@ export async function prepareClaudeFacetCode(
         ...environment,
         ...(sdkHost === undefined ? {} : { CLAUDE_SDK_HOST: sdkHost }),
         ...(kernel === undefined ? {} : { CLAUDE_KERNEL: kernel }),
+        ...(cli === undefined ? {} : { CLAUDE_CLI: cli }),
         ...(computer === undefined ? {} : { COMPUTER_EXECUTION: computer }),
       },
       modules: {

@@ -2,14 +2,14 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type * as NodeBuffer from "node:buffer";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { createAsyncOperations } from "./async-operations.ts";
 import type { AsyncLeafRunner } from "./operations.ts";
 import type { appendFileSync, readFileSync, writeFileSync } from "./files.ts";
 import { pathString, type PathOrFd } from "./path.ts";
 import { schedule, type FsCallback } from "./callback-utils.ts";
 
-export function createFileCallbackApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+export function createFileCallbackApi(kernelFs: NodeFsBackend, runLeaf?: AsyncLeafRunner) {
   const operations = createAsyncOperations(kernelFs, runLeaf);
   function readFile(path: PathOrFd, callback: FsCallback<[NodeBuffer.Buffer | string]>): void;
   function readFile(

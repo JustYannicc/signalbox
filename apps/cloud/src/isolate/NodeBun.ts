@@ -1,7 +1,5 @@
-import type { KernelProgramHost } from "../kernel/KernelProgramHost.ts";
 import type { BunIsolateCapability, BunShimHost } from "./BunShim.ts";
 import type { NodeFsModules } from "./NodeFs.ts";
-import type { createNodeChildProcess } from "./NodeChildProcess.ts";
 import type { createNodeProcess, NodeProcessStreams } from "./NodeProcess.ts";
 import { createBunFileHost } from "./node/bunHost/files.ts";
 import { createBunSpawn } from "./node/bunHost/spawn.ts";
@@ -11,8 +9,8 @@ import { createBunWhich } from "./node/bunHost/which.ts";
 export interface NodeBunHostOptions {
   readonly filesystem: NodeFsModules;
   readonly process: Pick<ReturnType<typeof createNodeProcess>, "cwd" | "env"> & NodeProcessStreams;
-  readonly childProcess: Pick<ReturnType<typeof createNodeChildProcess>, "spawn">;
-  readonly programHost: Pick<KernelProgramHost, "resolve">;
+  readonly childProcess: import("./node/bunHost/spawn.ts").NodeChildProcessHost;
+  readonly programHost: import("./node/childProcess/resolveExecutable.ts").GuestExecutableLookup;
   readonly main: string;
   readonly version: string;
   readonly revision: string;

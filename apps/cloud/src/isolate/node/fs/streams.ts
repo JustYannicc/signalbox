@@ -2,7 +2,7 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type { DescriptorLifetime } from "./descriptor-lifetime.ts";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import type { AsyncLeafRunner } from "./operations.ts";
 import type { PathLike } from "./path.ts";
 import { NodeFsReadStream, type ReadStreamOptions } from "./read-stream.ts";
@@ -11,7 +11,7 @@ import { NodeFsWriteStream, type WriteStreamOptions } from "./write-stream.ts";
 export { NodeFsReadStream, type ReadStreamOptions, NodeFsWriteStream, type WriteStreamOptions };
 
 export function createReadStream(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike | undefined,
   options: ReadStreamOptions = {},
   runLeaf?: AsyncLeafRunner,
@@ -21,7 +21,7 @@ export function createReadStream(
 }
 
 export function createWriteStream(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike | undefined,
   options: WriteStreamOptions = {},
   runLeaf?: AsyncLeafRunner,

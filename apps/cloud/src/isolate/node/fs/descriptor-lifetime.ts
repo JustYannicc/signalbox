@@ -1,16 +1,17 @@
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { codedError } from "./errors.ts";
-import { closeFd } from "./io.ts";
+import { closeFdOperation } from "./io.ts";
+import { runAsync } from "./operations.ts";
 
 /** FileHandles and their streams share one close and drain their active operations first. */
 export class DescriptorLifetime {
   readonly fd: number;
-  readonly #kernelFs: KernelFileSystem;
+  readonly #kernelFs: NodeFsBackend;
   readonly #active = new Set<Promise<unknown>>();
   #closing: Promise<void> | undefined;
   #closed = false;
 
-  constructor(kernelFs: KernelFileSystem, fd: number) {
+  constructor(kernelFs: NodeFsBackend, fd: number) {
     this.#kernelFs = kernelFs;
     this.fd = fd;
   }
@@ -32,9 +33,9 @@ export class DescriptorLifetime {
   }
 
   close(): Promise<void> {
-    this.#closing ??= Promise.allSettled(this.#active).then(() => {
+    this.#closing ??= Promise.allSettled(this.#active).then(async () => {
       if (this.#closed) return;
-      closeFd(this.#kernelFs, this.fd);
+      await runAsync(closeFdOperation(this.#kernelFs, this.fd));
       this.#closed = true;
     });
     return this.#closing;

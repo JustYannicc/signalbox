@@ -2,7 +2,7 @@
 import * as NodeWorkerThreads from "node:worker_threads";
 import { expect, it, onTestFinished } from "vite-plus/test";
 
-it.each(["turns", "cancel-prepare"])(
+it.each(["turns", "cancel-prepare", "dispose-child"])(
   "keeps the product owners correct through %s",
   async (mode) => {
     const worker = new NodeWorkerThreads.Worker(

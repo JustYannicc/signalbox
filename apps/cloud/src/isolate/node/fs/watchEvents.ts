@@ -2,7 +2,7 @@
 // @effect-diagnostics globalTimers:off - The virtual FS watcher uses a Node-compatible polling scheduler.
 import * as NodeEvents from "node:events";
 import type * as NodeFS from "node:fs";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { nodeFsError } from "./errors.ts";
 import { encodedPath } from "./metadata.ts";
 import { pathString, type PathLike } from "./path.ts";
@@ -39,7 +39,7 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
   #removeCleanup: (() => void) | undefined;
   #abortListener: (() => void) | undefined;
 
-  readonly #kernelFs: KernelFileSystem;
+  readonly #kernelFs: NodeFsBackend;
   readonly #path: string;
   readonly #displayPath: string;
   readonly #options: ReturnType<typeof parseWatchOptions>["options"];
@@ -47,7 +47,7 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
   readonly #registerCleanup: RegisterCleanup;
 
   constructor(
-    kernelFs: KernelFileSystem,
+    kernelFs: NodeFsBackend,
     path: string,
     displayPath: string,
     options: ReturnType<typeof parseWatchOptions>["options"],
@@ -144,7 +144,7 @@ class PollingFSWatcher extends NodeEvents.EventEmitter {
 }
 
 export function createWatchEvents(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   registerCleanup: RegisterCleanup,
 ): {
   readonly watch: WatchFunction;

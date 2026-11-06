@@ -92,5 +92,5 @@ export function createComputerMachineProfile(options: {
       }
     },
   };
-  return { overlay, machine };
+  return { overlay, machine, metadataEpoch: () => metadataEpoch };
 }

@@ -2,7 +2,7 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type * as NodeBuffer from "node:buffer";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { callFs, unsupportedFs } from "./errors.ts";
 import { statfsSync } from "./sync.ts";
 import type { appendFileSync, readFileSync, writeFileSync } from "./files.ts";
@@ -24,7 +24,7 @@ export interface OpenDirectoryOptions {
   recursive?: boolean;
 }
 
-export function createPromisesApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+export function createPromisesApi(kernelFs: NodeFsBackend, runLeaf?: AsyncLeafRunner) {
   const operations = createAsyncOperations(kernelFs, runLeaf);
   return {
     glob: createNodeFsGlob(kernelFs, runLeaf),

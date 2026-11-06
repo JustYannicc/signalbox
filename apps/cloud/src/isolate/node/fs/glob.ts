@@ -1,8 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off - Path and URL helpers are pure; filesystem I/O uses KernelFileSystem.
+// @effect-diagnostics nodeBuiltinImport:off - Path and URL helpers are pure; filesystem I/O uses NodeFsBackend.
 import type * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { createAsyncOperations } from "./async-operations.ts";
 import { readdirSync } from "./directories.ts";
 import { lstatSync, realpathSync, statSync } from "./metadata-ops.ts";
@@ -132,7 +132,7 @@ function validateStringArray(value: unknown, name: string): void {
 }
 
 function createNodeGlobRuntime(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   runLeaf?: AsyncLeafRunner,
 ): NodeGlobCoreModule {
   const operations = createAsyncOperations(kernelFs, runLeaf);
@@ -214,10 +214,7 @@ function createNodeGlobRuntime(
   return createNodeGlobCore(dependencies) as NodeGlobCoreModule;
 }
 
-export function createNodeFsGlob(
-  kernelFs: KernelFileSystem,
-  runLeaf?: AsyncLeafRunner,
-): NodeFsGlob {
+export function createNodeFsGlob(kernelFs: NodeFsBackend, runLeaf?: AsyncLeafRunner): NodeFsGlob {
   const module = createNodeGlobRuntime(kernelFs, runLeaf);
   return async function* glob(pattern, options) {
     yield* new module.Glob(pattern, options).glob() as AsyncIterableIterator<
