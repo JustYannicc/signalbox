@@ -6,6 +6,8 @@ import { disposeWorkerLoaderStubs } from "../computer/WorkerLoaderResources.ts";
 import type { ComputerProgramOwnerPort } from "../kernel/KernelComputerAdmissionPort.ts";
 import type { createClaudeKernelFacetClass } from "./ClaudeKernelSession.ts";
 import type { ClaudeKernelSessionPort } from "./ClaudeKernelSessionPort.ts";
+import type { createClaudeCliFacetClass } from "./ClaudeCliSession.ts";
+import type { ClaudeCliHost } from "./ClaudeCliKernelPort.ts";
 import type { ClaudeSdkHostService } from "./ClaudeSdkHostProtocol.ts";
 
 export interface ClaudeProductOwnerRuntime {
@@ -13,6 +15,7 @@ export interface ClaudeProductOwnerRuntime {
   readonly facets: DurableObjectState["facets"];
   readonly code: {
     readonly kernel: WorkerLoaderWorkerCode;
+    readonly cli: WorkerLoaderWorkerCode;
     readonly computer: WorkerLoaderWorkerCode;
     readonly sdk: WorkerLoaderWorkerCode;
   };
@@ -55,7 +58,7 @@ export function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, na
       throw new AggregateError(failures, "Claude product owners could not retire");
   };
   const openFacet = <T extends Rpc.DurableObjectBranded>(
-    role: "kernel" | "computer",
+    role: "kernel" | "computer" | "cli",
     entrypoint: string,
   ) => {
     const key = `${name}:${role}`;
@@ -70,6 +73,10 @@ export function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, na
   };
   try {
     const kernel = openFacet<KernelFacet>("kernel", "ClaudeKernelFacet");
+    const cli = openFacet<InstanceType<ReturnType<typeof createClaudeCliFacetClass>>>(
+      "cli",
+      "ClaudeCliFacet",
+    );
     const computer = openFacet<ComputerExecutionObject>("computer", "ComputerExecutionObject");
     const sdkWorker = runtime.loader.get(`${name}:sdk`, () => runtime.code.sdk);
     stubs.push(sdkWorker);
@@ -77,6 +84,7 @@ export function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, na
     stubs.push(sdk);
     return {
       kernel: kernel as unknown as ClaudeKernelSessionPort,
+      cliHost: cli as unknown as ClaudeCliHost,
       commands: computer as unknown as ComputerOwner,
       sdkHost: sdk as unknown as ClaudeSdkHostService,
       dispose,

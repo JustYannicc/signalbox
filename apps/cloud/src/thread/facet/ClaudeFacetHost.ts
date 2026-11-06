@@ -38,7 +38,7 @@ export type ClaudeThreadHostOptions<G> = Omit<
   "continuations" | "sessionKey" | "kernel" | "commands" | "native"
 > & {
   readonly runtime: ClaudeProductOwnerRuntime;
-  readonly native: Omit<ProductClaudeKernelHostOptions<G>["native"], "sdkHost">;
+  readonly native: Omit<ProductClaudeKernelHostOptions<G>["native"], "sdkHost" | "cliHost">;
 };
 
 export interface ClaudeFacetHostOptions<G> {
@@ -170,6 +170,7 @@ export const createClaudeFacetHost = <G>(
               native: {
                 ...options.host.native,
                 sdkHost: owners.sdkHost,
+                cliHost: owners.cliHost,
                 process: {
                   ...options.host.native.process,
                   env: { ...options.host.native.process.env, ...gatewayEnvironment },

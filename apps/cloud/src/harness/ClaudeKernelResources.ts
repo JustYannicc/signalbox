@@ -14,7 +14,7 @@ import type { HarnessHostFilesOptions } from "./host/contracts.ts";
 import type { NodeHarnessProcessInput } from "./NodeHarnessProcess.ts";
 import type { Computer } from "../computer/Computer.ts";
 import type { ClaudeKernelInitialize, ClaudeKernelSessionPort } from "./ClaudeKernelSessionPort.ts";
-import { readClaudeKernelRelease, remoteKernelSeedCatalog } from "./ClaudeKernelSeed.ts";
+import { remoteKernelSeedCatalog } from "./ClaudeKernelSeed.ts";
 import type { LoadedHarnessRelease } from "./HarnessReleaseLoader.ts";
 import type { HarnessFilesStoreResult } from "./HarnessFilesStore.ts";
 
@@ -23,7 +23,7 @@ export interface ClaudeKernelLocalOptions {
     HarnessHostFilesOptions,
     "wakes" | "stdio" | "identity" | "rootMetadata" | "posix" | "cwd" | "assetMode"
   >;
-  readonly native: (
+  readonly native?: (
     loaded: LoadedHarnessRelease,
   ) => Pick<NodeHarnessProcessInput, "nativeModules" | "loadPackages" | "loadRelease"> &
     Partial<
@@ -100,6 +100,17 @@ export function createClaudeKernelResources(
   let prepared = false;
   return {
     storage,
+    // The lower view has no global change clock. Its owner brackets machine changes with this
+    // epoch; canonical filesystem changes still count even when KernelFileSystem cannot attest all mounts.
+    fileRevision: () => {
+      const machine = profile?.machineChanges() ?? { changes: 0, running: 0 };
+      return {
+        files: storage.persistence.storage.changeGeneration(),
+        machine: machine.changes,
+        machineRunning: machine.running > 0,
+      };
+    },
+    fileChanges: (since: number) => storage.persistence.storage.changesSince?.(since),
     stdio,
     processes,
     systemIdentity,
@@ -116,7 +127,7 @@ export function createClaudeKernelResources(
       });
       profile = machine;
       callbacks.current = config.callbacks;
-      loaded = await readClaudeKernelRelease(config.loaded.plan, config.source, signal);
+      loaded = { plan: config.loaded.plan, payloads: new Map() };
       const catalog = remoteKernelSeedCatalog(config.catalog, config.source);
       boot = createBootState(storage, catalog, input.threadId);
       commands = await createKernelComputerHost({
@@ -147,10 +158,6 @@ export function createClaudeKernelResources(
     loaded() {
       if (loaded === undefined) throw new Error("Kernel release is not configured");
       return loaded;
-    },
-    native() {
-      if (loaded === undefined) throw new Error("Kernel release is not configured");
-      return options.native(loaded);
     },
     async prepare(
       restored: HarnessFilesStoreResult["files"] | undefined,

@@ -8,189 +8,156 @@ type CapabilityEntry = readonly [name: string, evidence: string];
 const supportedFs: readonly CapabilityEntry[] = [
   [
     "openSync",
-    "createSyncApi parses Node flags and opens a descriptor on the supplied KernelFileSystem.",
+    "createSyncApi parses Node flags and opens a descriptor on the supplied NodeFsBackend.",
   ],
-  ["closeSync", "createSyncApi closes the descriptor owned by the supplied KernelFileSystem."],
+  ["closeSync", "createSyncApi closes the descriptor owned by the supplied NodeFsBackend."],
   [
     "readSync",
-    "createSyncApi maps Node buffer offsets and positions to KernelFileSystem descriptor reads.",
+    "createSyncApi maps Node buffer offsets and positions to NodeFsBackend descriptor reads.",
   ],
-  ["writeSync", "createSyncApi maps strings and byte views to KernelFileSystem descriptor writes."],
-  ["readFileSync", "The file adapter reads guest paths or descriptors through KernelFileSystem."],
-  ["writeFileSync", "The file adapter writes guest paths or descriptors through KernelFileSystem."],
+  ["writeSync", "createSyncApi maps strings and byte views to NodeFsBackend descriptor writes."],
+  ["readFileSync", "The file adapter reads guest paths or descriptors through NodeFsBackend."],
+  ["writeFileSync", "The file adapter writes guest paths or descriptors through NodeFsBackend."],
   [
     "appendFileSync",
-    "The file adapter appends through KernelFileSystem path or descriptor operations.",
+    "The file adapter appends through NodeFsBackend path or descriptor operations.",
   ],
-  ["fstatSync", "The stat adapter reads descriptor metadata through KernelFileSystem.fstat."],
-  ["statSync", "The stat adapter reads guest path metadata through KernelFileSystem.stat."],
+  ["fstatSync", "The stat adapter reads descriptor metadata through NodeFsBackend.fstat."],
+  ["statSync", "The stat adapter reads guest path metadata through NodeFsBackend.stat."],
   ["lstatSync", "The stat adapter reads guest path metadata without following the final symlink."],
-  ["readdirSync", "The directory adapter enumerates entries through KernelFileSystem.readdir."],
-  ["readlinkSync", "The metadata adapter reads symlink targets through KernelFileSystem.readlink."],
+  ["readdirSync", "The directory adapter enumerates entries through NodeFsBackend.readdir."],
+  ["readlinkSync", "The metadata adapter reads symlink targets through NodeFsBackend.readlink."],
   [
     "realpathSync",
-    "The canonical resolver uses KernelFileSystem.realpath; native is the same guest resolver.",
+    "The canonical resolver uses NodeFsBackend.realpath; native is the same guest resolver.",
   ],
-  ["renameSync", "The directory adapter renames entries through KernelFileSystem.rename."],
-  ["mkdirSync", "The directory adapter creates guest directories through KernelFileSystem.mkdir."],
+  ["renameSync", "The directory adapter renames entries through NodeFsBackend.rename."],
+  ["mkdirSync", "The directory adapter creates guest directories through NodeFsBackend.mkdir."],
   [
     "mkdtempSync",
-    "The directory adapter creates a unique guest directory through KernelFileSystem.mkdtemp.",
+    "The directory adapter creates a unique guest directory through NodeFsBackend.mkdtemp.",
   ],
-  ["rmSync", "The directory adapter removes guest files or trees through KernelFileSystem.rm."],
-  ["rmdirSync", "The directory adapter removes guest directories through KernelFileSystem.rmdir."],
-  ["unlinkSync", "The directory adapter removes guest entries through KernelFileSystem.unlink."],
-  ["linkSync", "The directory adapter creates guest hard links through KernelFileSystem.link."],
-  ["symlinkSync", "The directory adapter creates guest symlinks through KernelFileSystem.symlink."],
-  ["copyFileSync", "The file adapter copies bytes between guest paths through KernelFileSystem."],
+  ["rmSync", "The directory adapter removes guest files or trees through NodeFsBackend.rm."],
+  ["rmdirSync", "The directory adapter removes guest directories through NodeFsBackend.rmdir."],
+  ["unlinkSync", "The directory adapter removes guest entries through NodeFsBackend.unlink."],
+  ["linkSync", "The directory adapter creates guest hard links through NodeFsBackend.link."],
+  ["symlinkSync", "The directory adapter creates guest symlinks through NodeFsBackend.symlink."],
+  ["copyFileSync", "The file adapter copies bytes between guest paths through NodeFsBackend."],
   [
     "truncateSync",
-    "The metadata adapter truncates a guest path or descriptor through KernelFileSystem.",
+    "The metadata adapter truncates a guest path or descriptor through NodeFsBackend.",
   ],
-  ["ftruncateSync", "The metadata adapter truncates a guest descriptor through KernelFileSystem."],
-  ["fsyncSync", "The metadata adapter synchronizes a guest descriptor through KernelFileSystem."],
-  ["utimesSync", "The metadata adapter sets guest path times through KernelFileSystem.setTimes."],
+  ["ftruncateSync", "The metadata adapter truncates a guest descriptor through NodeFsBackend."],
+  ["fsyncSync", "The metadata adapter synchronizes a guest descriptor through NodeFsBackend."],
+  ["utimesSync", "The metadata adapter sets guest path times through NodeFsBackend.setTimes."],
   [
     "existsSync",
-    "The adapter checks guest path presence with KernelFileSystem.stat and returns false on errors.",
+    "The adapter checks guest path presence with NodeFsBackend.stat and returns false on errors.",
   ],
-  ["open", "The callback adapter opens a descriptor through the supplied KernelFileSystem."],
-  ["close", "The callback adapter closes a descriptor through the supplied KernelFileSystem."],
-  ["read", "The callback adapter maps buffer ranges to KernelFileSystem descriptor reads."],
-  [
-    "write",
-    "The callback adapter maps strings and byte views to KernelFileSystem descriptor writes.",
-  ],
-  ["readFile", "The callback adapter reads guest paths or descriptors through KernelFileSystem."],
-  ["writeFile", "The callback adapter writes guest paths or descriptors through KernelFileSystem."],
+  ["open", "The callback adapter opens a descriptor through the supplied NodeFsBackend."],
+  ["close", "The callback adapter closes a descriptor through the supplied NodeFsBackend."],
+  ["read", "The callback adapter maps buffer ranges to NodeFsBackend descriptor reads."],
+  ["write", "The callback adapter maps strings and byte views to NodeFsBackend descriptor writes."],
+  ["readFile", "The callback adapter reads guest paths or descriptors through NodeFsBackend."],
+  ["writeFile", "The callback adapter writes guest paths or descriptors through NodeFsBackend."],
   [
     "appendFile",
-    "The callback adapter appends through KernelFileSystem path or descriptor operations.",
+    "The callback adapter appends through NodeFsBackend path or descriptor operations.",
   ],
-  ["fstat", "The callback stat adapter reads descriptor metadata through KernelFileSystem.fstat."],
-  ["fsync", "The callback adapter synchronizes a guest descriptor through KernelFileSystem."],
-  ["stat", "The callback stat adapter reads guest path metadata through KernelFileSystem.stat."],
+  ["fstat", "The callback stat adapter reads descriptor metadata through NodeFsBackend.fstat."],
+  ["fsync", "The callback adapter synchronizes a guest descriptor through NodeFsBackend."],
+  ["stat", "The callback stat adapter reads guest path metadata through NodeFsBackend.stat."],
   [
     "lstat",
     "The callback stat adapter reads guest path metadata without following the final symlink.",
   ],
-  [
-    "readdir",
-    "The callback directory adapter enumerates entries through KernelFileSystem.readdir.",
-  ],
+  ["readdir", "The callback directory adapter enumerates entries through NodeFsBackend.readdir."],
   [
     "readlink",
-    "The callback metadata adapter reads symlink targets through KernelFileSystem.readlink.",
+    "The callback metadata adapter reads symlink targets through NodeFsBackend.readlink.",
   ],
   [
     "realpath",
-    "The callback adapter uses KernelFileSystem.realpath; native is the same guest resolver.",
+    "The callback adapter uses NodeFsBackend.realpath; native is the same guest resolver.",
   ],
-  ["rename", "The callback directory adapter renames entries through KernelFileSystem.rename."],
+  ["rename", "The callback directory adapter renames entries through NodeFsBackend.rename."],
   [
     "mkdir",
-    "The callback directory adapter creates guest directories through KernelFileSystem.mkdir.",
+    "The callback directory adapter creates guest directories through NodeFsBackend.mkdir.",
   ],
   [
     "mkdtemp",
-    "The callback directory adapter creates unique guest directories through KernelFileSystem.mkdtemp.",
+    "The callback directory adapter creates unique guest directories through NodeFsBackend.mkdtemp.",
   ],
-  [
-    "unlink",
-    "The callback directory adapter removes guest entries through KernelFileSystem.unlink.",
-  ],
+  ["unlink", "The callback directory adapter removes guest entries through NodeFsBackend.unlink."],
   [
     "rmdir",
-    "The callback directory adapter removes guest directories through KernelFileSystem.rmdir.",
+    "The callback directory adapter removes guest directories through NodeFsBackend.rmdir.",
   ],
-  [
-    "rm",
-    "The callback directory adapter removes guest files or trees through KernelFileSystem.rm.",
-  ],
-  [
-    "link",
-    "The callback directory adapter creates guest hard links through KernelFileSystem.link.",
-  ],
+  ["rm", "The callback directory adapter removes guest files or trees through NodeFsBackend.rm."],
+  ["link", "The callback directory adapter creates guest hard links through NodeFsBackend.link."],
   [
     "symlink",
-    "The callback directory adapter creates guest symlinks through KernelFileSystem.symlink.",
+    "The callback directory adapter creates guest symlinks through NodeFsBackend.symlink.",
   ],
-  [
-    "utimes",
-    "The callback metadata adapter sets guest path times through KernelFileSystem.setTimes.",
-  ],
+  ["utimes", "The callback metadata adapter sets guest path times through NodeFsBackend.setTimes."],
 ];
 
 const supportedPromises: readonly CapabilityEntry[] = [
   [
     "appendFile",
-    "The promise adapter appends through KernelFileSystem path, descriptor, or FileHandle operations.",
+    "The promise adapter appends through NodeFsBackend path, descriptor, or FileHandle operations.",
   ],
-  ["copyFile", "The promise adapter copies bytes between guest paths through KernelFileSystem."],
-  ["link", "The promise adapter creates guest hard links through KernelFileSystem.link."],
+  ["copyFile", "The promise adapter copies bytes between guest paths through NodeFsBackend."],
+  ["link", "The promise adapter creates guest hard links through NodeFsBackend.link."],
   [
     "lstat",
     "The promise stat adapter reads guest path metadata without following the final symlink.",
   ],
   ["lutimes", "The promise adapter sets guest path times without following the final symlink."],
-  [
-    "mkdir",
-    "The promise directory adapter creates guest directories through KernelFileSystem.mkdir.",
-  ],
+  ["mkdir", "The promise directory adapter creates guest directories through NodeFsBackend.mkdir."],
   [
     "mkdtemp",
-    "The promise directory adapter creates a unique guest directory through KernelFileSystem.mkdtemp.",
+    "The promise directory adapter creates a unique guest directory through NodeFsBackend.mkdtemp.",
   ],
   [
     "open",
-    "The promise adapter opens a KernelFileSystem descriptor and returns its FileHandle wrapper.",
+    "The promise adapter opens a NodeFsBackend descriptor and returns its FileHandle wrapper.",
   ],
   [
     "readFile",
-    "The promise adapter reads guest paths, descriptors, or FileHandles through KernelFileSystem.",
+    "The promise adapter reads guest paths, descriptors, or FileHandles through NodeFsBackend.",
   ],
-  ["readdir", "The promise directory adapter enumerates entries through KernelFileSystem.readdir."],
+  ["readdir", "The promise directory adapter enumerates entries through NodeFsBackend.readdir."],
   [
     "readlink",
-    "The promise metadata adapter reads symlink targets through KernelFileSystem.readlink.",
+    "The promise metadata adapter reads symlink targets through NodeFsBackend.readlink.",
   ],
-  [
-    "realpath",
-    "The promise adapter uses KernelFileSystem.realpath with no host filesystem fallback.",
-  ],
-  ["rename", "The promise directory adapter renames entries through KernelFileSystem.rename."],
-  ["rm", "The promise directory adapter removes guest files or trees through KernelFileSystem.rm."],
-  [
-    "rmdir",
-    "The promise directory adapter removes guest directories through KernelFileSystem.rmdir.",
-  ],
-  ["stat", "The promise stat adapter reads guest path metadata through KernelFileSystem.stat."],
+  ["realpath", "The promise adapter uses NodeFsBackend.realpath with no host filesystem fallback."],
+  ["rename", "The promise directory adapter renames entries through NodeFsBackend.rename."],
+  ["rm", "The promise directory adapter removes guest files or trees through NodeFsBackend.rm."],
+  ["rmdir", "The promise directory adapter removes guest directories through NodeFsBackend.rmdir."],
+  ["stat", "The promise stat adapter reads guest path metadata through NodeFsBackend.stat."],
   [
     "symlink",
-    "The promise directory adapter creates guest symlinks through KernelFileSystem.symlink.",
+    "The promise directory adapter creates guest symlinks through NodeFsBackend.symlink.",
   ],
-  [
-    "unlink",
-    "The promise directory adapter removes guest entries through KernelFileSystem.unlink.",
-  ],
-  [
-    "utimes",
-    "The promise metadata adapter sets guest path times through KernelFileSystem.setTimes.",
-  ],
+  ["unlink", "The promise directory adapter removes guest entries through NodeFsBackend.unlink."],
+  ["utimes", "The promise metadata adapter sets guest path times through NodeFsBackend.setTimes."],
   [
     "writeFile",
-    "The promise adapter writes guest paths, descriptors, or FileHandles through KernelFileSystem.",
+    "The promise adapter writes guest paths, descriptors, or FileHandles through NodeFsBackend.",
   ],
 ];
 
 const conditionalFs: readonly CapabilityEntry[] = [
   [
     "createReadStream",
-    "NodeFsReadStream reads guest descriptors with Node backpressure; paths must belong to the supplied KernelFileSystem.",
+    "NodeFsReadStream reads guest descriptors with Node backpressure; paths must belong to the supplied NodeFsBackend.",
   ],
   [
     "createWriteStream",
-    "NodeFsWriteStream writes guest descriptors; start with append flags is rejected and paths stay in KernelFileSystem.",
+    "NodeFsWriteStream writes guest descriptors; start with append flags is rejected and paths stay in NodeFsBackend.",
   ],
   [
     "watch",
@@ -206,7 +173,7 @@ const conditionalFs: readonly CapabilityEntry[] = [
 const conditionalPromises: readonly CapabilityEntry[] = [
   [
     "glob",
-    "The vendored Node glob core runs against KernelFileSystem adapters and a bounded set of internal module shims.",
+    "The vendored Node glob core runs against NodeFsBackend adapters and a bounded set of internal module shims.",
   ],
   [
     "opendir",
@@ -217,58 +184,58 @@ const conditionalPromises: readonly CapabilityEntry[] = [
 const permissionFs: readonly CapabilityEntry[] = [
   [
     "accessSync",
-    "KernelFileSystem access checks require a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend access checks require a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "chmodSync",
-    "KernelFileSystem chmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend chmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "fchmodSync",
-    "KernelFileSystem fchmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend fchmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "chownSync",
-    "KernelFileSystem chown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend chown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "fchownSync",
-    "KernelFileSystem fchown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend fchown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "access",
-    "KernelFileSystem access checks require a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend access checks require a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "chmod",
-    "KernelFileSystem chmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend chmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "chown",
-    "KernelFileSystem chown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend chown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "fchmod",
-    "KernelFileSystem fchmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend fchmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "fchown",
-    "KernelFileSystem fchown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend fchown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
 ];
 
 const permissionPromises: readonly CapabilityEntry[] = [
   [
     "access",
-    "KernelFileSystem access checks require a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend access checks require a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "chmod",
-    "KernelFileSystem chmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend chmod requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
   [
     "chown",
-    "KernelFileSystem chown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
+    "NodeFsBackend chown requires a configured POSIX policy and POSIX metadata on the mounted storage.",
   ],
 ];
 

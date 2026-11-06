@@ -1,4 +1,4 @@
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { withNodeAbort } from "./abort.ts";
 import {
   appendFileOperation,
@@ -41,10 +41,10 @@ import {
 import { runAsync, type AsyncLeafRunner, type FsOperation } from "./operations.ts";
 import { accessOperation, fchmodOperation } from "./permission-ops.ts";
 
-export function createAsyncOperations(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+export function createAsyncOperations(kernelFs: NodeFsBackend, runLeaf?: AsyncLeafRunner) {
   const bind =
     <Args extends unknown[], T>(
-      operation: (kernelFs: KernelFileSystem, ...args: Args) => FsOperation<T>,
+      operation: (kernelFs: NodeFsBackend, ...args: Args) => FsOperation<T>,
       signal?: (...args: Args) => AbortSignal | undefined,
     ) =>
     (...args: Args) => {

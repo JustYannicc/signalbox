@@ -44,6 +44,12 @@ const base = {
   observer: Schema.Struct({ routePinsSha256: Hash, producerListSha256: Hash }),
   sourcePins: Schema.Record(Schema.String, Hash),
 };
+export const CliWorkingSetPolicy = Schema.Struct({
+  byteLimit: Schema.Int.check(Schema.isGreaterThan(0)),
+  metadataLimit: Schema.Int.check(Schema.isGreaterThan(0)),
+  pathByteLimit: Schema.Int.check(Schema.isGreaterThan(0)),
+  paths: Schema.Array(Text),
+});
 export const BaseConfiguration = Schema.Struct(base);
 export const ConfigurationSchema = Schema.Struct({
   ...base,
@@ -61,10 +67,12 @@ export const ConfigurationSchema = Schema.Struct({
       }),
       turnJson: Schema.Struct({ baseline: Schema.Array(Text), hooks: Schema.Array(Text) }),
       seed: ClaudeSeedConfiguration,
+      workingSet: Schema.optional(CliWorkingSetPolicy),
     }),
     facetSource: Text,
     sdkHostSource: Text,
     kernelSource: Text,
+    cliSource: Text,
     computerSource: Text,
     environmentPackages: Schema.Record(Schema.String, AssetPinSchema),
     expected: Schema.Struct({ baseline: PreparedRelease, hooks: PreparedRelease }),

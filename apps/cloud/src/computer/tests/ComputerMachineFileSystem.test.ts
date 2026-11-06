@@ -40,6 +40,40 @@ describe("Computer machine filesystem sources", () => {
     expect(files.lookup).not.toHaveBeenCalled();
   });
 
+  it("lists image parents only while runtime-root absence is attested", async () => {
+    let state: ReturnType<MachineFilesPort["current"]> = {
+      generation: null,
+      generationAbsent: true,
+      pristine: false,
+    };
+    const files: MachineFilesPort = {
+      current: () => state,
+      markExecuted: async () => {},
+      lookup: vi.fn<MachineFilesPort["lookup"]>(async (input) => ({
+        generation: input.generation,
+        results: [{ id: "directory", op: "readdir", entries: [], nextCursor: null }],
+      })),
+    };
+    const source = createComputerMachineFileSystem({
+      inventory: { ...inventory, excludedRoots: ["/dev", "/proc", "/tmp"] },
+      files,
+      signal,
+    });
+    expect(source.readdirKnown?.("/")).toMatchObject([{ path: "/usr" }]);
+    expect(await source.readdir("/")).toMatchObject([{ path: "/usr" }]);
+    expect(files.lookup).not.toHaveBeenCalled();
+
+    state = { generation: null, pristine: false };
+    expect(source.readdirKnown?.("/")).toBeUndefined();
+    await expect(source.readdir("/")).rejects.toThrow("A machine generation is required");
+    expect(files.lookup).not.toHaveBeenCalled();
+
+    state = { generation: 1, pristine: true, imageDigest: inventory.imageDigest };
+    expect(source.readdirKnown?.("/")).toBeUndefined();
+    expect(await source.readdir("/")).toEqual([]);
+    expect(files.lookup).toHaveBeenCalledOnce();
+  });
+
   it("proves pristine presence and absence without contacting the machine", async () => {
     const files: MachineFilesPort = {
       current: () => ({ generation: null, pristine: true, imageDigest: inventory.imageDigest }),

@@ -181,9 +181,15 @@ export const buildClaudeFacetHostOptions = (input: ClaudeFacetBuildInput) =>
       capability: cap,
       state,
     });
+    assert(
+      claude.workingSet !== undefined,
+      "Claude sync working-set policy must be supplied before launch",
+    );
     const native: ProductClaudeKernelHostOptions<unknown>["native"] = {
       ...(observation === undefined ? {} : { toolObservation: observation }),
       sdkHost: input.env.CLAUDE_SDK_HOST,
+      cliHost: input.env.CLAUDE_CLI,
+      workingSet: claude.workingSet,
       reportCliStartupFailure: (cause) =>
         state.queue(() =>
           readRpcData(

@@ -39,6 +39,34 @@ export function createKernelNimbusMetadata(options: {
     return fd >>> 0;
   };
   return {
+    access: (pathPointer: number, length: number, mode: number, effectiveIds: number) =>
+      change(() =>
+        options.filesystem.access(
+          string(options.memory(), pathPointer, length),
+          mode,
+          effectiveIds !== 0,
+        ),
+      ),
+    realpath: (
+      pathPointer: number,
+      length: number,
+      out: number,
+      capacity: number,
+      needed: number,
+    ) => {
+      try {
+        const memory = options.memory();
+        const bytes = encoder.encode(
+          options.filesystem.realpath(string(memory, pathPointer, length)),
+        );
+        asWasiMemory(memory).u32(needed, bytes.byteLength);
+        if (bytes.byteLength > capacity >>> 0) return 68;
+        asWasiMemory(memory).writeRange(out, bytes.byteLength).set(bytes);
+        return 0;
+      } catch (error) {
+        return errno(error);
+      }
+    },
     stat_metadata: (
       fd: number,
       pathPointer: number,
@@ -71,7 +99,7 @@ export function createKernelNimbusMetadata(options: {
           symlink: 0o120000,
           character: 0o020000,
         };
-        const view = asWasiMemory(memory).view(out, 12);
+        const view = asWasiMemory(memory).writeView(out, 12);
         view.setUint32(0, bits[type] | (metadata.mode & 0o7777), true);
         view.setUint32(4, metadata.uid, true);
         view.setUint32(8, metadata.gid, true);

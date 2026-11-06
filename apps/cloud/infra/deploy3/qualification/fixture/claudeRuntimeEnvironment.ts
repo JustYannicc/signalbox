@@ -13,6 +13,7 @@ export type ClaudeFacetEnvironment = typeof QualifierClaudeFacetConfiguration.Ty
   HarnessCProductFacetEnvironment & {
     readonly HARNESS_PROCESS_LOADER_ID: string;
     readonly QUALIFIER_CLAUDE_VARIANT?: unknown;
+    readonly CLAUDE_CLI: import("../../../../src/harness/ClaudeCliKernelPort.ts").ClaudeCliHost;
     readonly CLAUDE_KERNEL: import("./claudeKernelProtocol.ts").QualifierClaudeKernelPort;
     readonly COMPUTER_EXECUTION: import("../../../../src/kernel/KernelComputerAdmissionPort.ts").ComputerProgramOwnerPort & {
       configure(

@@ -54,6 +54,7 @@ async function setup() {
       },
       facetSource: "synthetic",
       kernelSource: "export class ClaudeKernelFacet {}",
+      cliSource: "export class ClaudeCliFacet {}",
       computerSource: "export class ComputerExecutionObject {}",
       sdkHostSource: "synthetic-sdk-host",
       environmentPackages: {},
@@ -161,9 +162,18 @@ test.each(["baseline", "hooks"] as const)(
         },
       };
       let sdkCode: WorkerLoaderWorkerCode | undefined;
+      let cliCode: WorkerLoaderWorkerCode | undefined;
       let kernelCode: WorkerLoaderWorkerCode | undefined;
       let computerCode: WorkerLoaderWorkerCode | undefined;
       const inputs = {
+        cli: (code: WorkerLoaderWorkerCode) => {
+          cliCode = code;
+          return {
+            async open() {
+              throw new Error("Loader test must not start the CLI");
+            },
+          };
+        },
         kernel: (code: WorkerLoaderWorkerCode) => {
           kernelCode = code;
           return new Proxy(
@@ -215,7 +225,7 @@ test.each(["baseline", "hooks"] as const)(
       expect(kernelCode?.modules).toHaveProperty("qualifier-claude-kernel.mjs");
       expect(computerCode?.modules).toHaveProperty("computer-execution.mjs");
       expect(Object.keys(kernelCode?.modules ?? {}).some((key) => key.includes("/cli/"))).toBe(
-        true,
+        false,
       );
       expect(Object.keys(kernelCode?.modules ?? {}).some((key) => key.includes("/sdk/"))).toBe(
         false,
@@ -225,6 +235,9 @@ test.each(["baseline", "hooks"] as const)(
         "computer-execution-entry.mjs",
         "computer-execution.mjs",
       ]);
+      expect(cliCode?.modules).toHaveProperty("qualifier-claude-cli.mjs");
+      expect(Object.keys(cliCode?.modules ?? {}).some((key) => key.includes("/cli/"))).toBe(true);
+      expect(Object.keys(cliCode?.modules ?? {}).some((key) => key.includes("/sdk/"))).toBe(false);
       expect(sdkCode).toBeDefined();
       expect(sdkCode?.modules).toHaveProperty("qualifier-claude-sdk-host.mjs");
       expect(Object.keys(sdkCode?.modules ?? {}).some((key) => key.includes("/cli/"))).toBe(false);

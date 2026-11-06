@@ -5,12 +5,12 @@
 // @effect-diagnostics globalDate:off - Node fs Stats exposes Date fields derived from filesystem nanoseconds.
 import * as NodeBuffer from "node:buffer";
 import type * as NodeFS from "node:fs";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 
 export type BigIntStats = NodeFS.BigIntStats;
 export type NodeStats = NodeFS.Stats;
 
-export type KernelStat = ReturnType<KernelFileSystem["stat"]>;
+export type KernelStat = ReturnType<NodeFsBackend["stat"]>;
 export interface KernelDirectoryEntry {
   readonly name: string;
   readonly type: KernelStat["type"];

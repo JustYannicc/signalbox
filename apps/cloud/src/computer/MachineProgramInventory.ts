@@ -72,7 +72,10 @@ export interface MachineProgramInventoryIndex {
     paths: readonly string[],
   ) => readonly (MachineLowerFileSystemEntry | undefined)[];
   /** `undefined` means the directory is outside the immutable image inventory. */
-  readonly readdir: (path: string) => readonly MachineLowerFileSystemEntry[] | undefined;
+  readonly readdir: (
+    path: string,
+    runtimeRootsAbsent?: boolean,
+  ) => readonly MachineLowerFileSystemEntry[] | undefined;
   /** True when a live-only child makes the image directory listing incomplete. */
   readonly needsLiveDirectory: (path: string) => boolean;
   readonly readlink: (path: string) => string;
@@ -161,8 +164,8 @@ export function indexMachinePrograms(
         return resolved.kind === "entry" ? atPath(resolved.entry, path) : undefined;
       });
     },
-    readdir(path) {
-      if (needsLiveDirectory(path)) return undefined;
+    readdir(path, runtimeRootsAbsent = false) {
+      if (!runtimeRootsAbsent && needsLiveDirectory(path)) return undefined;
       const resolved = resolve(path, true);
       if (resolved.kind !== "entry" || resolved.entry.type !== "directory") return undefined;
       return (index().children.get(resolved.path) ?? []).map((entry) =>

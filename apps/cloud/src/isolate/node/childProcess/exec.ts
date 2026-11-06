@@ -1,7 +1,7 @@
 import * as NodeBuffer from "node:buffer";
 
 import { asChildProcessError, childProcessError, type ChildProcessError } from "./errors.ts";
-import type { NodeChildProcess } from "./ChildProcess.ts";
+import type { NodeChildProcessHandle as NodeChildProcess } from "../../NodeChildProcessHandle.ts";
 import {
   isArgumentList,
   normalizeSignal,

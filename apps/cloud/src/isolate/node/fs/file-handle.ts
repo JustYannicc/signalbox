@@ -1,7 +1,7 @@
 /* Adapted from Rivet agentOS's Node fs bridge at 63ae3b256749d47c7b3a7c463128d5deda57d1bb.
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { DescriptorLifetime } from "./descriptor-lifetime.ts";
 import { createAsyncOperations } from "./async-operations.ts";
 import { runAsync, type AsyncLeafRunner } from "./operations.ts";
@@ -15,12 +15,12 @@ import { createReadStream, createWriteStream } from "./streams.ts";
 export class NodeFileHandle {
   readonly fd: number;
   readonly path: string | undefined;
-  readonly #kernelFs: KernelFileSystem;
+  readonly #kernelFs: NodeFsBackend;
   readonly #operations: ReturnType<typeof createAsyncOperations>;
   readonly #runLeaf: AsyncLeafRunner | undefined;
   readonly #lifetime: DescriptorLifetime;
 
-  constructor(kernelFs: KernelFileSystem, fd: number, path?: string, runLeaf?: AsyncLeafRunner) {
+  constructor(kernelFs: NodeFsBackend, fd: number, path?: string, runLeaf?: AsyncLeafRunner) {
     this.#kernelFs = kernelFs;
     this.#runLeaf = runLeaf;
     this.#operations = createAsyncOperations(kernelFs, runLeaf);

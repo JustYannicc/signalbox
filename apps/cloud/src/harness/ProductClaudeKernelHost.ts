@@ -25,6 +25,7 @@ import { productLoadedPreparedReleaseObserver } from "./ProductHarnessProcessRel
 import { makeFacetLifetime } from "./facet/lifetime.ts";
 import { createHostLifecycle } from "./host/lifecycle.ts";
 import { createSeedCatalog } from "./host/seed.ts";
+import { ClaudeCliHostPort } from "./ClaudeCliHostPort.ts";
 import { ClaudeKernelHostSeed } from "./ClaudeKernelHostSeed.ts";
 import { ClaudeKernelHostCallbacks } from "./ClaudeKernelHostCallbacks.ts";
 import { claudeKernelOperation } from "./ClaudeKernelOperation.ts";
@@ -60,6 +61,10 @@ export interface ProductClaudeKernelHostOptions<G> extends Pick<
   readonly admission: Omit<ComputerExecutionConfiguration, "programs">;
   readonly native: {
     readonly sdkHost: ClaudeSdkHostService;
+    readonly cliHost: import("./ClaudeCliKernelPort.ts").ClaudeCliHost;
+    readonly workingSet: import("./CliFileWorkingSet.ts").CliFileWorkingSetOptions & {
+      readonly paths: readonly string[];
+    };
     readonly process: ClaudeKernelInitialize["process"];
     readonly toolObservation?: ClaudeToolObservation;
     readonly reportCliStartupFailure?: (cause: unknown) => void;
@@ -79,7 +84,7 @@ const attempt = <A>(message: string, run: () => Promise<A>) =>
     catch: (cause) => new HarnessError({ operation: "open", message, cause }),
   });
 
-/** The public Claude host coordinates three owners: this DO, Computer, and the retained CLI kernel. */
+/** The public Claude host coordinates three owners: the orchestration host, Computer, and the retained CLI. */
 export const createProductClaudeKernelHost = <G>(
   options: ProductClaudeKernelHostOptions<G>,
 ): Effect.Effect<ProductClaudeKernelHost<G>, HarnessError, Scope.Scope> =>
@@ -194,6 +199,8 @@ export const createProductClaudeKernelHost = <G>(
               owner: new ComputerExecutionPort(options.commands),
               source,
               callbacks,
+              cli: new ClaudeCliHostPort(options.native.cliHost),
+              workingSet: options.native.workingSet,
             });
             return {
               database: options.files.database,

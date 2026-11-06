@@ -2,6 +2,8 @@ import * as NodeAssert from "node:assert/strict";
 import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import type { ProductClaudeHarnessHostOptions } from "../../ProductClaudeHarnessSessionHost.ts";
 import type { ProductClaudeThreadMachine } from "../../../thread/ProductClaudeThreadHost.ts";
+import { createClaudeCliFacetClass } from "../../ClaudeCliSession.ts";
+import { workingSetPolicy } from "./workingSetPolicy.fixture.ts";
 import { ClaudeKernelSession } from "../../ClaudeKernelSession.ts";
 import { ComputerExecutionObject } from "../../../computer/ComputerExecutionObject.ts";
 import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
@@ -41,7 +43,11 @@ export function threadOwnerRuntimeFixture<G>(
         getDurableObjectClass(entrypoint: string) {
           NodeAssert.equal(
             entrypoint,
-            role === "kernel" ? "ClaudeKernelFacet" : "ComputerExecutionObject",
+            role === "kernel"
+              ? "ClaudeKernelFacet"
+              : role === "cli"
+                ? "ClaudeCliFacet"
+                : "ComputerExecutionObject",
           );
           return { role };
         },
@@ -99,6 +105,16 @@ export function threadOwnerRuntimeFixture<G>(
           }
         };
         kernel = current;
+        instances.set(key, current);
+        return current;
+      }
+      if (role === "cli") {
+        const Cli = createClaudeCliFacetClass(() => ({
+          nativeModules: original.native.process.nativeModules,
+          loadPackages: original.native.process.loadPackages,
+          loadRelease: original.native.process.loadRelease,
+        }));
+        const current = new Cli(context ?? ({} as DurableObjectState), {});
         instances.set(key, current);
         return current;
       }
@@ -161,9 +177,15 @@ export function threadOwnerRuntimeFixture<G>(
     runtime: {
       loader,
       facets,
-      code: { kernel: code("kernel"), computer: code("computer"), sdk: code("sdk") },
+      code: {
+        kernel: code("kernel"),
+        cli: code("cli"),
+        computer: code("computer"),
+        sdk: code("sdk"),
+      },
     },
     native: {
+      workingSet: workingSetPolicy,
       process: {
         identity: original.native.process.identity,
         env: original.native.process.env,

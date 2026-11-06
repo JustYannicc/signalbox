@@ -5,9 +5,9 @@
 import type * as NodeBuffer from "node:buffer";
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { codedError } from "./errors.ts";
-import { asyncLeaf, fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
+import { asyncLeaf, fsOperation, runSync, type FsOperation, fileLeaf } from "./operations.ts";
 import { parsePermissionMode } from "./permission-ops.ts";
 import { encodedPath, nodeDirent, type NodeDirentLike } from "./metadata.ts";
 import { pathString, type PathLike } from "./path.ts";
@@ -32,7 +32,7 @@ function appendChildPath(parent: string, child: string): string {
 }
 
 export function* readdirOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   options?: BufferEncoding | ReaddirOptions | null,
 ): FsOperation<Array<string | NodeBuffer.Buffer | NodeDirentLike>> {
@@ -43,13 +43,13 @@ export function* readdirOperation(
     "scandir",
     name,
     (function* (): FsOperation<Array<string | NodeBuffer.Buffer | NodeDirentLike>> {
-      const names = yield* leaf(() => kernelFs.readdir(name));
+      const names = yield* fileLeaf(kernelFs, "readdir", [name]);
       const entries: Array<string | NodeBuffer.Buffer | NodeDirentLike> = [];
       for (const entryName of names) {
         if (!normalized.withFileTypes) entries.push(encodedPath(entryName, encoding));
         else {
           const entryPath = appendChildPath(name, entryName);
-          const type = (yield* leaf(() => kernelFs.lstat(entryPath))).type;
+          const type = (yield* fileLeaf(kernelFs, "lstat", [entryPath])).type;
           entries.push(nodeDirent({ name: entryName, type }, name, encoding));
         }
       }
@@ -68,7 +68,7 @@ function codeOf(error: unknown): string | undefined {
 }
 
 function* mkdirRecursive(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: string,
   mode: number,
 ): FsOperation<string | undefined> {
@@ -82,18 +82,21 @@ function* mkdirRecursive(
     current =
       current === "/" ? `/${component}` : current === "" ? component : `${current}/${component}`;
     try {
-      if ((yield* leaf(() => kernelFs.stat(current))).type !== "directory") {
+      if ((yield* fileLeaf(kernelFs, "stat", [current])).type !== "directory") {
         throw codedError("ENOTDIR", "not a directory", "mkdir");
       }
     } catch (error) {
       if (codeOf(error) !== "ENOENT") throw error;
-      yield* leaf(() => kernelFs.mkdir(current, mode));
+      yield* fileLeaf(kernelFs, "mkdir", [current, mode]);
       firstCreated ??= current;
     }
   }
 
   if (current === "") current = ".";
-  if (components.length === 0 && (yield* leaf(() => kernelFs.stat(current))).type !== "directory") {
+  if (
+    components.length === 0 &&
+    (yield* fileLeaf(kernelFs, "stat", [current])).type !== "directory"
+  ) {
     throw codedError("ENOTDIR", "not a directory", "mkdir");
   }
 
@@ -101,7 +104,7 @@ function* mkdirRecursive(
 }
 
 export function* mkdirOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   options?: number | MkdirOptions,
 ): FsOperation<string | undefined> {
@@ -115,34 +118,22 @@ export function* mkdirOperation(
   }
   if (normalized.recursive)
     return yield* fsOperation("mkdir", name, mkdirRecursive(kernelFs, name, mode));
-  yield* fsOperation(
-    "mkdir",
-    name,
-    leaf(() => kernelFs.mkdir(name, mode)),
-  );
+  yield* fsOperation("mkdir", name, fileLeaf(kernelFs, "mkdir", [name, mode]));
   return undefined;
 }
 
-export function* rmdirOperation(kernelFs: KernelFileSystem, path: PathLike): FsOperation<void> {
+export function* rmdirOperation(kernelFs: NodeFsBackend, path: PathLike): FsOperation<void> {
   const name = pathString(path);
-  yield* fsOperation(
-    "rmdir",
-    name,
-    leaf(() => kernelFs.rmdir(name)),
-  );
+  yield* fsOperation("rmdir", name, fileLeaf(kernelFs, "rmdir", [name]));
 }
 
-export function* unlinkOperation(kernelFs: KernelFileSystem, path: PathLike): FsOperation<void> {
+export function* unlinkOperation(kernelFs: NodeFsBackend, path: PathLike): FsOperation<void> {
   const name = pathString(path);
-  yield* fsOperation(
-    "unlink",
-    name,
-    leaf(() => kernelFs.unlink(name)),
-  );
+  yield* fsOperation("unlink", name, fileLeaf(kernelFs, "unlink", [name]));
 }
 
 export function* renameOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   oldPath: PathLike,
   newPath: PathLike,
   asyncRename = false,
@@ -153,14 +144,18 @@ export function* renameOperation(
     "rename",
     source,
     asyncRename
-      ? asyncLeaf((signal) => kernelFs.renameAsync(source, destination, signal))
-      : leaf(() => kernelFs.rename(source, destination)),
+      ? asyncLeaf((signal) =>
+          kernelFs.asynchronous === undefined
+            ? kernelFs.renameAsync(source, destination, signal)
+            : kernelFs.asynchronous("rename", [source, destination], signal),
+        )
+      : fileLeaf(kernelFs, "rename", [source, destination]),
     destination,
   );
 }
 
 export function* linkOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   existingPath: PathLike,
   newPath: PathLike,
 ): FsOperation<void> {
@@ -169,13 +164,13 @@ export function* linkOperation(
   yield* fsOperation(
     "link",
     source,
-    leaf(() => kernelFs.link(source, destination)),
+    fileLeaf(kernelFs, "link", [source, destination]),
     destination,
   );
 }
 
 export function* symlinkOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   target: PathLike,
   path: PathLike,
   _type?: string,
@@ -184,13 +179,14 @@ export function* symlinkOperation(
   const name = pathString(path);
   yield* fsOperation(
     "symlink",
+    targetName,
+    fileLeaf(kernelFs, "symlink", [targetName, name]),
     name,
-    leaf(() => kernelFs.symlink(targetName, name)),
   );
 }
 
 export function* rmOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathLike,
   options: { force?: boolean; recursive?: boolean } = {},
 ): FsOperation<void> {
@@ -198,27 +194,27 @@ export function* rmOperation(
   const remove = function* (target: string): FsOperation<void> {
     let stat;
     try {
-      stat = yield* leaf(() => kernelFs.lstat(target));
+      stat = yield* fileLeaf(kernelFs, "lstat", [target]);
     } catch (error) {
       if (options.force && codeOf(error) === "ENOENT") return;
       throw error;
     }
     if (stat.type === "directory") {
       if (options.recursive) {
-        for (const entryName of yield* leaf(() => kernelFs.readdir(target)))
+        for (const entryName of yield* fileLeaf(kernelFs, "readdir", [target]))
           yield* remove(appendChildPath(target, entryName));
-        yield* leaf(() => kernelFs.rmdir(target));
+        yield* fileLeaf(kernelFs, "rmdir", [target]);
         return;
       }
       throw codedError("EISDIR", "is a directory", "rm");
     }
-    yield* leaf(() => kernelFs.unlink(target));
+    yield* fileLeaf(kernelFs, "unlink", [target]);
   };
   yield* fsOperation("rm", name, remove(name));
 }
 
 export function* mkdtempOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   prefix: PathLike,
   options?: BufferEncoding | { encoding?: BufferEncoding | "buffer" },
 ): FsOperation<string | NodeBuffer.Buffer> {
@@ -227,11 +223,7 @@ export function* mkdtempOperation(
   for (let attempt = 0; attempt < 8; attempt++) {
     const candidate = `${base}${NodeCrypto.randomUUID().replaceAll("-", "").slice(0, 6)}`;
     try {
-      yield* fsOperation(
-        "mkdtemp",
-        base,
-        leaf(() => kernelFs.mkdir(candidate)),
-      );
+      yield* fsOperation("mkdtemp", base, fileLeaf(kernelFs, "mkdir", [candidate]));
       const created = candidate;
       return encodedPath(created, encoding);
     } catch (error) {

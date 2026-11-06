@@ -4,9 +4,9 @@ import type { NodeEnvironmentPackage } from "../../isolate/NodeEnvironment.ts";
 import { createNodeEnvironmentResolver } from "../../isolate/NodeEnvironment.ts";
 import { createNodeModule } from "../../isolate/NodeModule.ts";
 import type { NodeBridge } from "../../isolate/NodeBridge.ts";
-import type { NodeHarnessProcessInput } from "./types.ts";
+import type { NodeHarnessBaseInput } from "./types.ts";
 
-export function createHarnessEnvironment(input: NodeHarnessProcessInput, bridge: () => NodeBridge) {
+export function createHarnessEnvironment(input: NodeHarnessBaseInput, bridge: () => NodeBridge) {
   const assets =
     input.loadedRelease === undefined || input.prepared !== undefined
       ? undefined

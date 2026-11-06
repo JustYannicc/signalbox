@@ -72,6 +72,35 @@ export async function programFixture() {
   return { codes, seed };
 }
 
+/** One fd_read of up to `length` bytes; an empty result is end of input. */
+export async function read(port: KernelSyscallPort, fd: number, length: number) {
+  const iovec = new Uint8Array(8);
+  new DataView(iovec.buffer).setUint32(0, 32, true);
+  new DataView(iovec.buffer).setUint32(4, length, true);
+  const result = await port.call({
+    name: "fd_read",
+    args: [fd, 0, 1, 8],
+    memorySize: 32 + length,
+    regions: [
+      { pointer: 0, bytes: iovec },
+      { pointer: 8, direction: "out", length: 4, bytes: new Uint8Array(0) },
+      { pointer: 32, direction: "out", length, bytes: new Uint8Array(0) },
+    ],
+  });
+  NodeAssert.equal(result.kind, "return");
+  if (result.kind !== "return") throw new Error("Unexpected exit");
+  NodeAssert.equal(result.value, 0);
+  const at = (pointer: number, length: number) => {
+    const region = result.regions.find(
+      (item) => item.pointer <= pointer && pointer + length <= item.pointer + item.bytes.byteLength,
+    );
+    if (region === undefined) throw new Error("fd_read omitted its output");
+    return region.bytes.subarray(pointer - region.pointer, pointer - region.pointer + length);
+  };
+  const count = new DataView(at(8, 4).slice().buffer).getUint32(0, true);
+  return count === 0 ? new Uint8Array(0) : at(32, count);
+}
+
 export async function write(port: KernelSyscallPort, fd: number, text: string) {
   const payload = new TextEncoder().encode(text);
   const iovec = new Uint8Array(8);
@@ -170,6 +199,16 @@ export function commandLoader() {
           identities.push({ pid: (await identity(2)).value, parentPid: (await identity(3)).value });
           await replaceFile(port);
           await write(port, 2, "sed controlled stderr\n");
+        } else if (input.command.executable === "/bin/cat") {
+          // A hook reads its JSON input from stdin, so the bytes cross the real stdin bridge.
+          const decoder = new TextDecoder();
+          let text = "";
+          for (;;) {
+            const bytes = await read(port, 0, 4096);
+            if (bytes.byteLength === 0) break;
+            text += decoder.decode(bytes, { stream: true });
+          }
+          await write(port, 1, text + decoder.decode());
         } else throw new Error(`Unexpected local command ${input.command.executable}`);
         return exit;
       } finally {

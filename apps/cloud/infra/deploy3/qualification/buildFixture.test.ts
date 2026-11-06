@@ -101,12 +101,14 @@ it.effect(
             "qualifier-claude-implementation.mjs",
             "qualifier-claude-sdk-host.mjs",
             "qualifier-claude-kernel.mjs",
+            "qualifier-claude-cli.mjs",
             "qualifier-computer-execution.mjs",
             "qualifier-worker.mjs",
             "qualifier-claude-workflow.mjs",
           ]);
           for (const pin of result.outputs) {
             const bytes = await NodeFSP.readFile(NodePath.join(input.outputDirectory, pin.path));
+            expect(bytes.byteLength).toBe(pin.bytes);
             expect(fixtureHash(bytes)).toBe(pin.sha256);
           }
           const claudeFacetSource = await NodeFSP.readFile(
@@ -122,6 +124,16 @@ it.effect(
           );
           expect(Object.values(sdkHost.outputs).flatMap((output) => output.exports)).toContain(
             "ClaudeSdkHost",
+          );
+          const cli = result.metafiles["qualifier-claude-cli"]!;
+          expect(Object.keys(cli.inputs)).toEqual(
+            expect.arrayContaining([
+              "repo/apps/cloud/infra/deploy3/qualification/fixture/claudeCliFacet.ts",
+              "repo/apps/cloud/src/harness/ClaudeCliSession.ts",
+            ]),
+          );
+          expect(Object.values(cli.outputs).flatMap((output) => output.exports)).toContain(
+            "ClaudeCliFacet",
           );
           expect(
             Object.keys(result.metafiles["qualifier-claude-implementation"]!.inputs).filter(
@@ -158,6 +170,12 @@ it.effect(
           expect(config.claude.sdkHostSource).toBe(
             await NodeFSP.readFile(
               NodePath.join(input.outputDirectory, "qualifier-claude-sdk-host.mjs"),
+              "utf8",
+            ),
+          );
+          expect(config.claude.cliSource).toBe(
+            await NodeFSP.readFile(
+              NodePath.join(input.outputDirectory, "qualifier-claude-cli.mjs"),
               "utf8",
             ),
           );

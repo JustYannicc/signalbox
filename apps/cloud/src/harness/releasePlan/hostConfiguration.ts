@@ -1,11 +1,8 @@
 import * as Schema from "effect/Schema";
 import { ReleaseOmissionConfiguration } from "@t3tools/contracts/harnessReleaseOmission";
 
-/** Only values enforced by every host launch may be folded. Caller-owned env stays dynamic. */
-export const CLAUDE_HOST_CONFIG = {
-  name: "product",
-  env: {},
-} as const satisfies typeof ReleaseOmissionConfiguration.Type;
+import { CLAUDE_HOST_CONFIG } from "./hostEnvironment.ts";
+export { CLAUDE_HOST_CONFIG } from "./hostEnvironment.ts";
 
 const decodeConfiguration = Schema.decodeUnknownSync(ReleaseOmissionConfiguration, {
   onExcessProperty: "error",

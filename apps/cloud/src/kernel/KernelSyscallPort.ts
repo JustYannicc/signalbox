@@ -17,6 +17,12 @@ export interface KernelSyscallRequest {
   readonly memorySize: number;
   /** A packed reactor reports all its live WASM memories; memorySize still bounds this call's ABI. */
   readonly residentWasmBytes?: number;
+  /** Correlates cancellation with the owner without accepting a caller-selected process. */
+  readonly operationId?: string;
+  /** Node open/mkdir mode belongs to this call, never a shared next-create slot. */
+  readonly creationMode?: number;
+  /** Linux flags cannot all be represented by preview1, including O_PATH and O_CLOEXEC. */
+  readonly kernelOpenFlags?: number;
   readonly regions: readonly KernelMemoryRegion[];
   /** Child-internal continuation over the original guest arguments. */
   readonly transferOffset?: number;

@@ -2,7 +2,7 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import type * as NodeBuffer from "node:buffer";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { callFs, unsupportedFs } from "./errors.ts";
 import { statfsSync } from "./sync.ts";
 import type { appendFileSync, readFileSync, writeFileSync } from "./files.ts";
@@ -24,7 +24,7 @@ export interface OpenDirectoryOptions {
   recursive?: boolean;
 }
 
-export function createPromisesApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLeafRunner) {
+export function createPromisesApi(kernelFs: NodeFsBackend, runLeaf?: AsyncLeafRunner) {
   const operations = createAsyncOperations(kernelFs, runLeaf);
   return {
     glob: createNodeFsGlob(kernelFs, runLeaf),
@@ -99,15 +99,25 @@ export function createPromisesApi(kernelFs: KernelFileSystem, runLeaf?: AsyncLea
         path,
         names as string[],
         (name) => callFs("scandir", absolute, () => entry(name)),
-        (name) =>
-          runAsync(
-            fsOperation(
-              "scandir",
-              absolute,
-              leaf(() => entry(name)),
-            ),
-            runLeaf,
-          ),
+        async (name) => {
+          const stat = await operations.lstat(
+            `${absolute.endsWith("/") ? absolute : `${absolute}/`}${name}`,
+          );
+          return nodeDirent(
+            {
+              name,
+              type: stat.isDirectory()
+                ? "directory"
+                : stat.isSymbolicLink()
+                  ? "symlink"
+                  : stat.isCharacterDevice()
+                    ? "character"
+                    : "file",
+            },
+            pathString(path),
+            options.encoding ?? "utf8",
+          );
+        },
         bufferSize,
       );
     },

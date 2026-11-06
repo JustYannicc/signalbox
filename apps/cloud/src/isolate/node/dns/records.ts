@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - DNS address validation uses the platform IP parser.
 import * as NodeNet from "node:net";
-import * as Schema from "effect/Schema";
 import { dnsError } from "./errors.ts";
 
 export const recordTypes = {
@@ -19,18 +18,45 @@ export const recordTypes = {
   CAA: 257,
 } as const;
 export type RecordType = keyof typeof recordTypes;
-const Answer = Schema.Struct({
-  name: Schema.String,
-  type: Schema.Number,
-  TTL: Schema.Number,
-  data: Schema.String,
-});
-const Response = Schema.Struct({
-  Status: Schema.Number,
-  Answer: Schema.optional(Schema.Array(Answer)),
-});
-export const decodeResponse = Schema.decodeUnknownSync(Response);
-export type Answer = typeof Answer.Type;
+export interface Answer {
+  readonly name: string;
+  readonly type: number;
+  readonly TTL: number;
+  readonly data: string;
+}
+
+// This bounded wire decoder also runs in the CLI facet, which cannot load the Effect runtime.
+export function decodeResponse(value: unknown): { Status: number; Answer?: readonly Answer[] } {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("Status" in value) ||
+    typeof value.Status !== "number" ||
+    !Number.isFinite(value.Status)
+  )
+    throw new TypeError("Invalid DNS response status");
+  if (!("Answer" in value) || value.Answer === undefined) return { Status: value.Status };
+  if (!Array.isArray(value.Answer)) throw new TypeError("Invalid DNS response answers");
+  const answers = value.Answer.map((answer: unknown): Answer => {
+    if (
+      typeof answer !== "object" ||
+      answer === null ||
+      !("name" in answer) ||
+      !("type" in answer) ||
+      !("TTL" in answer) ||
+      !("data" in answer) ||
+      typeof answer.name !== "string" ||
+      typeof answer.data !== "string" ||
+      typeof answer.type !== "number" ||
+      !Number.isFinite(answer.type) ||
+      typeof answer.TTL !== "number" ||
+      !Number.isFinite(answer.TTL)
+    )
+      throw new TypeError("Invalid DNS response answer");
+    return { name: answer.name, type: answer.type, TTL: answer.TTL, data: answer.data };
+  });
+  return { Status: value.Status, Answer: answers };
+}
 
 const domain = (value: string) => (value.endsWith(".") ? value.slice(0, -1) : value);
 

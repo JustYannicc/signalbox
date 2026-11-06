@@ -568,7 +568,7 @@ describe("Node child_process adapter", () => {
 
   it("stops at maxBuffer bytes, returns truncated output and preserves the callback error", async () => {
     const host = fixture();
-    let child!: ReturnType<typeof host.childProcess.spawn>;
+    let child!: ReturnType<typeof host.childProcess.execFile>;
     const callback = new Promise<unknown[]>((resolve) => {
       child = host.childProcess.execFile(
         "tool",

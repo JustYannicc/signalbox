@@ -1,4 +1,4 @@
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
 import { DescriptorLifetime } from "./descriptor-lifetime.ts";
 import { openFdAsyncOperation } from "./io.ts";
@@ -17,7 +17,7 @@ type Options = {
 export class StreamFile {
   fd: number | null;
   readonly path: string | undefined;
-  readonly #kernelFs: KernelFileSystem;
+  readonly #kernelFs: NodeFsBackend;
   readonly #options: Options;
   readonly #runLeaf: AsyncLeafRunner | undefined;
   #lifetime: DescriptorLifetime | undefined;
@@ -25,7 +25,7 @@ export class StreamFile {
   readonly #active = new Set<Promise<unknown>>();
 
   constructor(
-    kernelFs: KernelFileSystem,
+    kernelFs: NodeFsBackend,
     path: PathLike | undefined,
     options: Options,
     runLeaf?: AsyncLeafRunner,

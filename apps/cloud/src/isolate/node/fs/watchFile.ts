@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - Node stat watchers use the host scheduler and POSIX path identity.
 import * as NodeEvents from "node:events";
 import * as NodePath from "node:path";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { nodeFsError } from "./errors.ts";
 import {
   nodeStats,
@@ -38,7 +38,7 @@ function changed(current: KernelStat, previous: KernelStat): boolean {
   );
 }
 
-function sample(kernelFs: KernelFileSystem, path: string): KernelStat | undefined {
+function sample(kernelFs: NodeFsBackend, path: string): KernelStat | undefined {
   try {
     return kernelFs.stat(path);
   } catch (error) {
@@ -87,7 +87,7 @@ class NodeStatWatcher extends NodeEvents.EventEmitter {
   }
 }
 
-export function createWatchFile(kernelFs: KernelFileSystem) {
+export function createWatchFile(kernelFs: NodeFsBackend) {
   const watchers = new Map<string, NodeStatWatcher>();
   function watchFile(path: PathLike, listener: StatsListener): NodeStatWatcher;
   function watchFile(
@@ -139,6 +139,13 @@ export function createWatchFile(kernelFs: KernelFileSystem) {
         try {
           current = sample(kernelFs, filename);
         } catch (error) {
+          if (
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "ESTALE"
+          )
+            return;
           watcher.stop();
           watcher.emit("error", error);
           return;

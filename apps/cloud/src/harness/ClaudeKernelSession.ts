@@ -1,12 +1,12 @@
 // @effect-diagnostics cryptoRandomUUID:off - the CLI facet's incarnation and I/O ids exist without an Effect runtime.
 import { DurableObject, RpcTarget } from "cloudflare:workers";
-import type { Computer } from "../computer/Computer.ts";
 import type { KernelCommandChild } from "../kernel/KernelCommandForwarder.ts";
 import {
   createClaudeKernelResources,
   type ClaudeKernelLocalOptions,
 } from "./ClaudeKernelResources.ts";
-import { ClaudeCliProcess } from "./ClaudeCliProcess.ts";
+import type { ClaudeCliProcessPort } from "./ClaudeSdkHostProtocol.ts";
+import { ClaudeCliKernelOwner } from "./ClaudeCliKernelOwner.ts";
 import { captureClaudeTranscriptFiles } from "./ClaudeTranscriptFiles.ts";
 import type {
   ClaudeKernelInitialize,
@@ -25,9 +25,7 @@ import {
   type KernelFileTransferPort,
 } from "../kernel/KernelFileTransfer.ts";
 import { ClaudeKernelNetworkTarget } from "./ClaudeKernelNetworkPort.ts";
-import { ownRpcResponse } from "../rpc/response.ts";
 import { retainRpcCapability } from "../rpc/Capability.ts";
-import { rpcRequest } from "../rpc/Request.ts";
 
 class CommandControl extends RpcTarget {
   #child: KernelCommandChild | undefined;
@@ -59,7 +57,7 @@ class CommandControl extends RpcTarget {
   }
 }
 
-/** A CLI facet owns exactly one canonical kernel and one unchanged official process. */
+/** Computer owns the canonical kernel and controls one separately hosted official CLI. */
 export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessionPort {
   readonly #build;
   readonly #nonce = crypto.randomUUID();
@@ -76,7 +74,9 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
     | undefined;
   #callbacks: Parameters<ClaudeKernelSessionPort["configure"]>[0]["callbacks"] | undefined;
   #restored: Awaited<ReturnType<typeof readKernelFileTransfer>> | undefined;
-  #cli: ClaudeCliProcess | undefined;
+  #cli: ClaudeCliProcessPort | undefined;
+  #cliKernel: ClaudeCliKernelOwner | undefined;
+  #cliConfiguration: Parameters<ClaudeKernelSessionPort["configure"]>[0] | undefined;
   #opened = false;
   #closed: Promise<void> | undefined;
   readonly #commands = new Map<
@@ -147,6 +147,7 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
       owner: retain(config.owner),
       source: retain(config.source),
       callbacks: retain(config.callbacks),
+      cli: retain(config.cli),
     };
     this.#configured = (async () => {
       const resources = await this.#current();
@@ -156,6 +157,7 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
       )
         throw new Error("CLI kernel configuration changed process ownership");
       this.#callbacks = config.callbacks;
+      this.#cliConfiguration = config;
       const registrations = await resources.configure({
         ...config,
         callbacks: {
@@ -279,73 +281,49 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
     if (this.#opened || this.#input === undefined || this.#callbacks === undefined)
       throw new Error("CLI kernel has no available process ownership");
     this.#opened = true;
-    const callbacks = this.#callbacks;
-    const configured = this.#input;
-    const computer: Computer = {
-      threadId: configured.threadId,
-      files: resources.storage.files,
-      exec: resources.commands().exec,
-      port: (port, signal) => resources.port(port, signal),
-      save: (signal) => resources.save(signal),
-    };
-    const report = (value: Parameters<typeof callbacks.report>[0]) =>
-      this.#track(callbacks.report(value));
-    this.#cli = new ClaudeCliProcess(
-      {
-        ...configured.process,
-        ...resources.native(),
-        systemIdentity: resources.systemIdentity,
-        host: resources.commands().host,
-        computer,
-        stdio: resources.stdio,
-        loadedRelease: resources.loaded(),
-        modelTransport: (request) => this.#model(request),
-      },
-      {
-        ...input,
-        computer,
-        modelTransport: (request) => this.#model(request),
-        loadedRelease: resources.loaded(),
-      },
-      {
-        cliSpawnContext: (context) => report({ type: "spawn", context }),
-        turnMilestone: (stage) => report({ type: "milestone", stage }),
-        cliStartupFailure: (cause) => this.#track(callbacks.startup(cause)),
-        releaseModuleOmitted: (event, failure) => {
-          if (failure === undefined)
-            throw new Error("CLI omission did not include its compatibility failure");
-          return callbacks.report({ type: "omission", event, failure });
-        },
-      },
-      async (event, toolUseId) => callbacks.observeTool(event, toolUseId),
-      async (request) => callbacks.continuation(request),
+    const configured = this.#cliConfiguration;
+    if (configured === undefined) throw new Error("Computer has no separate CLI owner");
+    const kernel = new ClaudeCliKernelOwner(
+      resources,
+      this.#input,
+      this.#lifetime.signal,
+      configured.workingSet.metadataLimit,
     );
-    return this.#cli;
-  }
-  async #model(request: Request) {
-    const callbacks = this.#callbacks;
-    if (callbacks === undefined) throw new Error("CLI host callbacks are unavailable");
-    const id: string = crypto.randomUUID();
-    const abort = () => {
-      void callbacks.cancel(id, request.signal.reason).catch(() => undefined);
-    };
-    request.signal.addEventListener("abort", abort, { once: true });
-    if (request.signal.aborted) abort();
-    try {
-      const response = await callbacks.model(id, rpcRequest(request));
-      return await ownRpcResponse(response, {
-        signal: request.signal,
-        release: () => request.signal.removeEventListener("abort", abort),
-        bodyOpened() {},
-        bodyClosed() {},
-        bodyBytes() {},
-        socketOpened() {},
-        socketClosed() {},
-      });
-    } catch (error) {
-      request.signal.removeEventListener("abort", abort);
-      throw error;
-    }
+    this.#cliKernel = kernel;
+    const root = resources.processes.info(undefined);
+    if (root.status !== "ok") throw new Error("Computer root process is unavailable");
+    const cli = await configured.cli.open(
+      {
+        threadId: this.#input.threadId,
+        ...(this.#input.nativeSessionId === undefined
+          ? {}
+          : { nativeSessionId: this.#input.nativeSessionId }),
+        process: {
+          ...this.#input.process,
+          identity: {
+            ...this.#input.process.identity,
+            pid: root.value.pid,
+            ppid: root.value.parentPid,
+          },
+        },
+        systemIdentity: resources.systemIdentity,
+        loaded: { plan: resources.loaded().plan },
+        source: configured.source,
+        cwd: resources.storage.files.cwd,
+        rootDescriptor: kernel.rootDescriptor,
+        posix: resources.storage.files.posixPolicy,
+        workingSet: configured.workingSet,
+        kernel,
+        callbacks: this.#callbacks,
+        io: kernel.io(),
+      },
+      input,
+    );
+    // The returned stub goes to SDK; Computer retains its own reference for final cleanup.
+    const retained = retainRpcCapability(cli);
+    this.#capabilities.push(retained);
+    this.#cli = retained.value;
+    return cli;
   }
   exec(id: string, command: Parameters<ClaudeKernelSessionPort["exec"]>[1], localOnly: boolean) {
     return this.#operation(this.#exec(id, command, localOnly));
@@ -437,6 +415,7 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
         this.#cli?.dispose(),
         ...[...this.#commands.values()].map((entry) => entry.child?.dispose()),
       ]);
+      const cliKernelCleanup = await Promise.allSettled([this.#cliKernel?.dispose()]);
       const resourceCleanup = await Promise.allSettled([resources?.close()]);
       while (this.#diagnostics.size > 0) await Promise.allSettled(this.#diagnostics);
       this.#commands.clear();
@@ -447,8 +426,13 @@ export class ClaudeKernelSession extends RpcTarget implements ClaudeKernelSessio
       this.#initializing = undefined;
       this.#configured = undefined;
       this.#cli = undefined;
+      this.#cliKernel = undefined;
+      this.#cliConfiguration = undefined;
       const failures = [
         ...this.#diagnosticFailures,
+        ...cliKernelCleanup.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        ),
         ...results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
         ...resourceCleanup.flatMap((result) =>
           result.status === "rejected" ? [result.reason] : [],

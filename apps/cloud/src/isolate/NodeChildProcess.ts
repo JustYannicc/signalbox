@@ -37,7 +37,7 @@ export type { NodeChildProcessOptions, NodeExecOptions, NodeSyncOptions, ExecCal
 export type { NodeChildProcessContext, NodeChildProcessTransport };
 export type NodeChildProcessSpawn = ReturnType<typeof normalizeSpawn>;
 export type NodeChildProcessObserver = (
-  child: NodeChildProcess,
+  child: import("./NodeChildProcessHandle.ts").NodeChildProcessHandle,
   spawn: NodeChildProcessSpawn,
 ) => void;
 
@@ -49,7 +49,7 @@ export function createNodeChildProcess(
   host: KernelProgramHost,
   process: NodeChildProcessContext,
   transport?: NodeChildProcessTransport,
-  onChild?: NodeChildProcessObserver,
+  onChild?: (child: NodeChildProcess, spawn: NodeChildProcessSpawn) => void,
 ) {
   if (
     !host ||

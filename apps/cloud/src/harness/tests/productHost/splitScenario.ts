@@ -6,6 +6,8 @@ import { dataForDriver } from "../../adapter/tests/data.ts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { systemIdentityForThread } from "@t3tools/contracts/systemIdentity";
 import { createProductClaudeKernelHost } from "../../ProductClaudeKernelHost.ts";
+import { createClaudeCliFacetClass } from "../../ClaudeCliSession.ts";
+import { workingSetPolicy } from "./workingSetPolicy.fixture.ts";
 import { ClaudeKernelSession } from "../../ClaudeKernelSession.ts";
 import { ComputerExecutionObject } from "../../../computer/ComputerExecutionObject.ts";
 import { hostSqlite } from "../hostSqlite.ts";
@@ -21,7 +23,15 @@ import {
   readKernelFileTransfer,
 } from "../../../kernel/KernelFileTransfer.ts";
 
-export const run = (mode: "turns" | "cancel-prepare" = "turns") =>
+export const run = (
+  mode:
+    | "turns"
+    | "cancel-prepare"
+    | "dispose-child"
+    | "no-machine"
+    | "failed-metadata"
+    | "cancel-child-leases" = "turns",
+) =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -41,6 +51,8 @@ export const run = (mode: "turns" | "cancel-prepare" = "turns") =>
           },
         };
         const rgCalls: string[][] = [];
+        const childEntered = Promise.withResolvers<void>();
+        const childStopped = Promise.withResolvers<void>();
         const owner = new ComputerExecutionObject(
           { id: "controlled-computer-do", storage: childStorage } as unknown as DurableObjectState,
           {
@@ -59,10 +71,29 @@ export const run = (mode: "turns" | "cancel-prepare" = "turns") =>
                 const port = await target.host();
                 rgCalls.push([...invocation.command.argv]);
                 try {
+                  if (mode === "dispose-child") {
+                    const vector = new Uint8Array(8);
+                    new DataView(vector.buffer).setUint32(0, 32, true);
+                    new DataView(vector.buffer).setUint32(4, 1, true);
+                    const blocked = port.call({
+                      name: "fd_read",
+                      args: [0, 0, 1, 8],
+                      memorySize: 64,
+                      regions: [
+                        { pointer: 0, bytes: vector },
+                        { pointer: 8, bytes: new Uint8Array(4) },
+                        { pointer: 32, bytes: new Uint8Array(1) },
+                      ],
+                    });
+                    childEntered.resolve();
+                    await blocked;
+                    return { exitCode: 0, signal: 15, coreDumped: false };
+                  }
                   await write(port, 1, "file.txt:1:before\n");
                   return { exitCode: 0, signal: 0, coreDumped: false };
                 } finally {
                   await target.stopped();
+                  childStopped.resolve();
                 }
               },
             },
@@ -75,49 +106,83 @@ export const run = (mode: "turns" | "cancel-prepare" = "turns") =>
         const read = Promise.withResolvers<string>();
         const grep = Promise.withResolvers<string>();
         let launches = 0;
+        const startupFailure = Promise.withResolvers<never>();
+        void startupFailure.promise.catch(() => {});
+        const Cli = createClaudeCliFacetClass(() => ({
+          ...original.native.process,
+          reportCliStartupFailure: (cause) => startupFailure.reject(cause),
+          loadRelease: async (bridge, signal) => {
+            const release = await original.native.process.loadRelease(bridge, signal);
+            if (typeof release !== "object" || release === null)
+              throw new Error("Controlled release must be an object");
+            return {
+              ...release,
+              async launch() {
+                launches++;
+                const fs = bridge.require("node:fs") as ReturnType<typeof createNodeFs>["fs"];
+                const text = String(fs.readFileSync("/workspace/file.txt", "utf8"));
+                if (mode === "no-machine") {
+                  NodeAssert.ok(fs.readdirSync("/").includes("workspace"));
+                  NodeAssert.ok((await fs.promises.readdir("/")).includes("workspace"));
+                }
+                read.resolve(text);
+                const children = bridge.require("node:child_process") as ReturnType<
+                  typeof createNodeChildProcess
+                >;
+                if (mode === "cancel-child-leases") {
+                  for (let index = 0; index < 40; index++) {
+                    const cancelled = new AbortController();
+                    cancelled.abort(new Error("pre-start cancellation"));
+                    const child = children.spawn("/bin/rg", [], { signal: cancelled.signal });
+                    await new Promise<void>((resolve) => {
+                      child.on("error", () => {});
+                      child.once("close", () => resolve());
+                    });
+                  }
+                }
+                const child = children.spawn("/bin/rg", ["--line-number", "before", "file.txt"], {
+                  cwd: "/workspace",
+                });
+                const chunks: string[] = [];
+                child.stdout?.on("data", (bytes) => chunks.push(String(bytes)));
+                await new Promise<void>((resolve, reject) => {
+                  child.once("error", reject);
+                  child.once("close", (code) =>
+                    code === 0 ? resolve() : reject(new Error(`Grep exited ${code}`)),
+                  );
+                });
+                grep.resolve(chunks.join(""));
+                const launch = Reflect.get(release, "launch");
+                if (typeof launch !== "function")
+                  throw new Error("Controlled release omitted launch");
+                return await Reflect.apply(launch, release, []);
+              },
+            };
+          },
+        }));
+        const cli = new Cli({} as DurableObjectState, {});
         const kernel = new ClaudeKernelSession(() => ({
           files: {
             database: database.open().storage,
             nowNs: original.files.nowNs,
             persistencePorts: original.files.persistencePorts,
           },
-          native: () => ({
-            ...original.native.process,
-            loadRelease: async (bridge, signal) => {
-              const release = await original.native.process.loadRelease(bridge, signal);
-              if (typeof release !== "object" || release === null)
-                throw new Error("Controlled release must be an object");
-              return {
-                ...release,
-                async launch() {
-                  launches++;
-                  const fs = bridge.require("node:fs") as ReturnType<typeof createNodeFs>["fs"];
-                  const text = String(fs.readFileSync("/workspace/file.txt", "utf8"));
-                  read.resolve(text);
-                  const children = bridge.require("node:child_process") as ReturnType<
-                    typeof createNodeChildProcess
-                  >;
-                  const child = children.spawn("/bin/rg", ["--line-number", "before", "file.txt"], {
-                    cwd: "/workspace",
-                  });
-                  const chunks: string[] = [];
-                  child.stdout?.on("data", (bytes) => chunks.push(String(bytes)));
-                  await new Promise<void>((resolve, reject) => {
-                    child.once("error", reject);
-                    child.once("close", (code) =>
-                      code === 0 ? resolve() : reject(new Error(`Grep exited ${code}`)),
-                    );
-                  });
-                  grep.resolve(chunks.join(""));
-                  const launch = Reflect.get(release, "launch");
-                  if (typeof launch !== "function")
-                    throw new Error("Controlled release omitted launch");
-                  return await Reflect.apply(launch, release, []);
+          machine: (identity) => {
+            const machine = original.commands.machine(identity);
+            if (mode !== "no-machine") return machine;
+            return {
+              ...machine,
+              files: {
+                current: () => ({ generation: null, generationAbsent: true, pristine: false }),
+                markExecuted: async () => {
+                  throw new Error("No machine may execute");
                 },
-              };
-            },
-          }),
-          machine: original.commands.machine,
+                lookup: async () => {
+                  throw new Error("Drive startup must not query a machine");
+                },
+              },
+            };
+          },
           hydrate: async (binding) => {
             canonical = binding.files;
             if (mode === "cancel-prepare") {
@@ -138,7 +203,10 @@ export const run = (mode: "turns" | "cancel-prepare" = "turns") =>
           release: original.release,
           releaseVariants: original.releaseVariants,
           programs: original.programs,
-          machineInventory: original.machineInventory,
+          machineInventory:
+            mode === "no-machine"
+              ? { ...original.machineInventory, excludedRoots: ["/dev", "/proc", "/tmp"] }
+              : original.machineInventory,
           files: {
             identity: original.files.identity,
             database: original.files.database,
@@ -155,6 +223,11 @@ export const run = (mode: "turns" | "cancel-prepare" = "turns") =>
           admission: { limit: 2, path: ["/bin", "/usr/bin"] },
           native: {
             sdkHost: original.native.sdkHost,
+            cliHost: cli,
+            workingSet:
+              mode === "failed-metadata"
+                ? { ...workingSetPolicy, metadataLimit: 1 }
+                : workingSetPolicy,
             process: {
               identity: original.native.process.identity,
               env: original.native.process.env,
@@ -188,6 +261,19 @@ export const run = (mode: "turns" | "cancel-prepare" = "turns") =>
           NodeAssert.throws(() => canonical!.stat("/bin/bash"), /disposed/);
           return;
         }
+        if (mode === "failed-metadata") {
+          const failed = yield* Effect.exit(
+            host.open({
+              session: input.sessionInput,
+              bootAttemptId: "failed-metadata",
+            }),
+          );
+          NodeAssert.equal(failed._tag, "Failure");
+          yield* host.dispose;
+          NodeAssert.equal(launches, 0);
+          NodeAssert.throws(() => canonical!.stat("/workspace/file.txt"), /disposed/);
+          return;
+        }
         const prior = yield* dataForDriver(ProviderDriverKind.make("claudeAgent"));
         const session = yield* host.open({
           session: input.sessionInput,
@@ -210,8 +296,27 @@ export const run = (mode: "turns" | "cancel-prepare" = "turns") =>
           },
           initialAccess: input.access,
         });
+        if (mode === "dispose-child") {
+          yield* session.turn({ turn: input.turn, access: input.access });
+          yield* Effect.promise(() => childEntered.promise);
+          yield* host.dispose;
+          yield* Effect.promise(() => childStopped.promise);
+          NodeAssert.throws(() => canonical!.stat("/workspace/file.txt"), /disposed/);
+          return;
+        }
+        if (mode === "no-machine") {
+          yield* session.turn({ turn: input.turn, access: input.access });
+          NodeAssert.equal(yield* Effect.promise(() => read.promise), "before\n");
+          NodeAssert.equal(yield* Effect.promise(() => grep.promise), "file.txt:1:before\n");
+          NodeAssert.equal(launches, 1);
+          yield* host.dispose;
+          NodeAssert.throws(() => canonical!.stat("/workspace/file.txt"), /disposed/);
+          return;
+        }
         yield* session.retireCheckpointAccess;
-        yield* exerciseContinuation({ ...input, session });
+        yield* exerciseContinuation({ ...input, session }).pipe(
+          Effect.race(Effect.promise(() => startupFailure.promise)),
+        );
         NodeAssert.equal(yield* Effect.promise(() => read.promise), "before\n");
         NodeAssert.equal(yield* Effect.promise(() => grep.promise), "file.txt:1:before\n");
         NodeAssert.equal(launches, 1);

@@ -33,11 +33,8 @@ export interface NodeChildProcessTransport {
   ) => KernelResult<KernelHandle<"process">>;
 }
 
-const synchronousSpawnErrors = new WeakMap<NodeChildProcess, Error>();
-
-export function getSynchronousSpawnError(child: NodeChildProcess): Error | undefined {
-  return synchronousSpawnErrors.get(child);
-}
+import { synchronousSpawnErrors } from "./spawnErrors.ts";
+export { getSynchronousSpawnError } from "./spawnErrors.ts";
 
 export type NodeChildProcessWithPipes = NodeChildProcess & {
   readonly stdin: NodeStream.PassThrough;

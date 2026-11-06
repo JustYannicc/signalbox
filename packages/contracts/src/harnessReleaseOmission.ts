@@ -1,8 +1,11 @@
 import * as Schema from "effect/Schema";
 
-export const RELEASE_MODULE_OMITTED_CODE = "RELEASE_MODULE_OMITTED";
-export const RELEASE_MODULE_OMITTED_REPORTER_KEY = "signalbox.releaseModuleOmitted";
-export const CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY = "signalbox.claudeCliStartupFailure";
+import { RELEASE_MODULE_OMITTED_CODE } from "./harnessReleaseKeys.ts";
+export {
+  RELEASE_MODULE_OMITTED_CODE,
+  RELEASE_MODULE_OMITTED_REPORTER_KEY,
+  CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY,
+} from "./harnessReleaseKeys.ts";
 
 export const ReleaseOmissionConfiguration = Schema.Struct({
   name: Schema.Literals(["product", "qualification"]),

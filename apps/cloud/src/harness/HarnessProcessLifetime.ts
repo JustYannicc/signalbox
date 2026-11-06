@@ -1,8 +1,10 @@
 import {
   CLAUDE_CLI_STARTUP_FAILURE_REPORTER_KEY,
   RELEASE_MODULE_OMITTED_REPORTER_KEY,
-  type ReleaseModuleOmittedEvent,
-  type ReleaseModuleOmittedFailure,
+} from "@t3tools/contracts/harnessReleaseKeys";
+import type {
+  ReleaseModuleOmittedEvent,
+  ReleaseModuleOmittedFailure,
 } from "@t3tools/contracts/harnessReleaseOmission";
 import type { KernelExitStatus } from "../kernel/KernelProgramHost.ts";
 import type { ClaudeSpawnDiagnostic } from "./ClaudeSpawnContext.ts";

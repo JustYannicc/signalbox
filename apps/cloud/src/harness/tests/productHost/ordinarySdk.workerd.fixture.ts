@@ -72,7 +72,13 @@ export default class extends createClaudeSdkHostEntrypoint<OrdinaryOwnerEnvironm
               });
               const next = query.next.bind(query);
               query.next = async (...args) => {
+                await env.OBSERVE.record({ kind: "sdk-next-start", realm: realm() });
                 const result = await next(...args);
+                await env.OBSERVE.record({
+                  kind: "sdk-next-result",
+                  realm: realm(),
+                  detail: result.done ? "done" : result.value.type,
+                });
                 if (!result.done && result.value.type === "result")
                   await files.call(
                     "appendFile",

@@ -2,7 +2,7 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import * as NodeBuffer from "node:buffer";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { fsOperation, runSync, type FsOperation } from "./operations.ts";
 import { readIntoOperation, writeFromOperation, writeAllOperation, sliceView } from "./io.ts";
 import { finitePosition } from "./path.ts";
@@ -37,7 +37,7 @@ function ioArgs(
 }
 
 export function* readOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   buffer: ArrayBufferView,
   offsetOrOptions: number | IoOptions = 0,
@@ -58,7 +58,7 @@ export function* readOperation(
 }
 
 export function* writeBufferOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   buffer: ArrayBufferView,
   offsetOrOptions: number | IoOptions = 0,
@@ -78,7 +78,7 @@ export function* writeBufferOperation(
 }
 
 export function* writeStringOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   data: string,
   position?: number | null,

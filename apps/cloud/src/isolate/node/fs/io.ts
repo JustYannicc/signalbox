@@ -2,26 +2,22 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import * as NodeBuffer from "node:buffer";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
-import { asyncLeaf, fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
+import { asyncLeaf, fsOperation, runSync, type FsOperation, fileLeaf } from "./operations.ts";
 
 export const IO_CHUNK_BYTES = 64 * 1024;
 
 export function* openFdOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: string,
   flags: number,
   mode?: number,
 ): FsOperation<number> {
-  return yield* fsOperation(
-    "open",
-    path,
-    leaf(() => kernelFs.open(path, flags, mode)),
-  );
+  return yield* fsOperation("open", path, fileLeaf(kernelFs, "open", [path, flags, mode]));
 }
 
 export function* openFdAsyncOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: string,
   flags: number,
   mode?: number,
@@ -29,20 +25,20 @@ export function* openFdAsyncOperation(
   return yield* fsOperation(
     "open",
     path,
-    asyncLeaf((signal) => kernelFs.openAsync(path, flags, mode, signal)),
+    asyncLeaf((signal) =>
+      kernelFs.asynchronous === undefined
+        ? kernelFs.openAsync(path, flags, mode, signal)
+        : kernelFs.asynchronous("open", [path, flags, mode], signal),
+    ),
   );
 }
 
-export function* closeFdOperation(kernelFs: KernelFileSystem, fd: number): FsOperation<void> {
-  yield* fsOperation(
-    "close",
-    undefined,
-    leaf(() => kernelFs.close(fd), true),
-  );
+export function* closeFdOperation(kernelFs: NodeFsBackend, fd: number): FsOperation<void> {
+  yield* fsOperation("close", undefined, fileLeaf(kernelFs, "close", [fd], true));
 }
 
 export function* readIntoOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   target: Uint8Array,
   position: bigint | null,
@@ -52,13 +48,17 @@ export function* readIntoOperation(
     "read",
     undefined,
     asynchronous
-      ? asyncLeaf((signal) => kernelFs.readAsync(fd, target, position, signal))
-      : leaf(() => kernelFs.read(fd, target, position)),
+      ? asyncLeaf((signal) =>
+          kernelFs.asynchronous === undefined
+            ? kernelFs.readAsync(fd, target, position, signal)
+            : kernelFs.asynchronous("read", [fd, target, position], signal),
+        )
+      : fileLeaf(kernelFs, "read", [fd, target, position]),
   );
 }
 
 export function* writeFromOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   source: Uint8Array,
   position: bigint | null,
@@ -66,12 +66,12 @@ export function* writeFromOperation(
   return yield* fsOperation(
     "write",
     undefined,
-    leaf(() => kernelFs.write(fd, source, position)),
+    fileLeaf(kernelFs, "write", [fd, source, position]),
   );
 }
 
 export function* readAllOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   asynchronous = false,
 ): FsOperation<NodeBuffer.Buffer> {
@@ -88,7 +88,7 @@ export function* readAllOperation(
 }
 
 export function* writeAllOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   fd: number,
   source: Uint8Array,
   position: bigint | null = null,

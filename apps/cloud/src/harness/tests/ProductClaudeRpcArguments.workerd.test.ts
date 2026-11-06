@@ -43,6 +43,7 @@ describe.skipIf(programDir === undefined)("Product Claude retained RPC arguments
     }
     const sources: Record<string, string> = {};
     for (const [name, file] of [
+      ["CLI_SOURCE", new URL("./productHost/rpcArgumentCli.workerd.fixture.ts", import.meta.url)],
       [
         "KERNEL_SOURCE",
         new URL("./productHost/rpcArgumentKernel.workerd.fixture.ts", import.meta.url),

@@ -2,7 +2,7 @@
  * Licensed under Apache-2.0; see ../../bun/LICENSE.agentos and ../../bun/NOTICE.agentos.
  */
 import * as NodeBuffer from "node:buffer";
-import type { KernelFileSystem } from "../../../kernel/KernelFileSystem.ts";
+import type { NodeFsBackend } from "../../NodeFsBackend.ts";
 import { checkAbort } from "./abort.ts";
 import { codedError } from "./errors.ts";
 import {
@@ -12,7 +12,7 @@ import {
   readAllOperation,
   writeAllOperation,
 } from "./io.ts";
-import { fsOperation, leaf, runSync, type FsOperation } from "./operations.ts";
+import { fsOperation, runSync, type FsOperation, fileLeaf } from "./operations.ts";
 import { normalizeMode, parseOpenFlags } from "./constants.ts";
 import { pathOrFd, type PathOrFd } from "./path.ts";
 
@@ -43,7 +43,7 @@ function decoded(bytes: NodeBuffer.Buffer, encoding: BufferEncoding | "buffer" |
 }
 
 export function* readFileOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathOrFd,
   options?: BufferEncoding | ReadFileOptions | null,
   asyncOpen = false,
@@ -60,14 +60,14 @@ export function* readFileOperation(
       checkAbort(normalized.signal);
       return decoded(yield* readAllOperation(kernelFs, fd, asyncOpen), normalized.encoding);
     } finally {
-      yield* leaf(() => kernelFs.close(fd), true);
+      yield* fileLeaf(kernelFs, "close", [fd], true);
     }
   };
   return yield* fsOperation("readFile", typeof input === "string" ? input : undefined, operation());
 }
 
 export function* writeFileOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathOrFd,
   data: string | ArrayBuffer | ArrayBufferView,
   options?: BufferEncoding | WriteFileOptions | null,
@@ -80,7 +80,7 @@ export function* writeFileOperation(
   const operation = function* (): FsOperation<void> {
     if (typeof input === "number") {
       yield* writeAllOperation(kernelFs, input, bytes);
-      if (normalized.flush) yield* leaf(() => kernelFs.sync(input, false));
+      if (normalized.flush) yield* fileLeaf(kernelFs, "sync", [input, false]);
       return;
     }
     const open = asyncOpen ? openFdAsyncOperation : openFdOperation;
@@ -92,16 +92,16 @@ export function* writeFileOperation(
     );
     try {
       yield* writeAllOperation(kernelFs, fd, bytes);
-      if (normalized.flush) yield* leaf(() => kernelFs.sync(fd, false));
+      if (normalized.flush) yield* fileLeaf(kernelFs, "sync", [fd, false]);
     } finally {
-      yield* leaf(() => kernelFs.close(fd), true);
+      yield* fileLeaf(kernelFs, "close", [fd], true);
     }
   };
   yield* fsOperation("writeFile", typeof input === "string" ? input : undefined, operation());
 }
 
 export function* appendFileOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   path: PathOrFd,
   data: string | ArrayBuffer | ArrayBufferView,
   options?: BufferEncoding | WriteFileOptions | null,
@@ -114,7 +114,7 @@ export function* appendFileOperation(
   const operation = function* (): FsOperation<void> {
     if (typeof input === "number") {
       yield* writeAllOperation(kernelFs, input, bytes);
-      if (normalized.flush) yield* leaf(() => kernelFs.sync(input, false));
+      if (normalized.flush) yield* fileLeaf(kernelFs, "sync", [input, false]);
       return;
     }
     const open = asyncOpen ? openFdAsyncOperation : openFdOperation;
@@ -126,16 +126,16 @@ export function* appendFileOperation(
     );
     try {
       yield* writeAllOperation(kernelFs, fd, bytes);
-      if (normalized.flush) yield* leaf(() => kernelFs.sync(fd, false));
+      if (normalized.flush) yield* fileLeaf(kernelFs, "sync", [fd, false]);
     } finally {
-      yield* leaf(() => kernelFs.close(fd), true);
+      yield* fileLeaf(kernelFs, "close", [fd], true);
     }
   };
   yield* fsOperation("appendFile", typeof input === "string" ? input : undefined, operation());
 }
 
 export function* copyFileOperation(
-  kernelFs: KernelFileSystem,
+  kernelFs: NodeFsBackend,
   source: string,
   destination: string,
   flags = 0,
@@ -157,11 +157,11 @@ export function* copyFileOperation(
         yield* writeAllOperation(kernelFs, destinationFd, data);
       } finally {
         try {
-          yield* leaf(() => kernelFs.close(sourceFd), true);
+          yield* fileLeaf(kernelFs, "close", [sourceFd], true);
         } finally {
           if (destinationFd !== undefined) {
             const fd = destinationFd;
-            yield* leaf(() => kernelFs.close(fd), true);
+            yield* fileLeaf(kernelFs, "close", [fd], true);
           }
         }
       }

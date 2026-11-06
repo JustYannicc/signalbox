@@ -47,10 +47,12 @@ function descriptorInput(filesystem: KernelFileSystem, signal: AbortSignal) {
 
 function descriptorOutput(filesystem: KernelFileSystem, fd: 1 | 2, signal: AbortSignal) {
   return new WritableStream<Uint8Array>({
-    async write(chunk) {
+    async write(chunk: Uint8Array | ArrayBuffer) {
+      // Workers RPC streams deliver ArrayBuffers to the receiving writable sink.
+      const bytes = chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : chunk;
       let offset = 0;
-      while (offset < chunk.byteLength) {
-        const count = await descriptorIo(filesystem, fd, chunk.subarray(offset), "write", signal);
+      while (offset < bytes.byteLength) {
+        const count = await descriptorIo(filesystem, fd, bytes.subarray(offset), "write", signal);
         if (count === 0) throw new Error("Command output made no progress");
         offset += count;
       }

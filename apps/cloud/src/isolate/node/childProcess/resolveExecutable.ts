@@ -1,11 +1,14 @@
-import type { KernelProgramHost } from "../../../kernel/KernelProgramHost.ts";
+import type { KernelResult } from "../../../kernel/KernelAbi.ts";
+export interface GuestExecutableLookup {
+  resolve(executable: string): KernelResult<unknown>;
+}
 
 export type GuestExecutableResolution =
   | { readonly status: "found" | "missing"; readonly executable: string }
   | { readonly status: "error"; readonly executable: string; readonly error: unknown };
 
 export function resolveGuestExecutable(
-  host: Pick<KernelProgramHost, "resolve">,
+  host: GuestExecutableLookup,
   command: string,
   options: { readonly cwd: string; readonly baseCwd: string; readonly PATH: string | undefined },
 ): GuestExecutableResolution {
@@ -27,10 +30,7 @@ export function resolveGuestExecutable(
   return inspect(host, command);
 }
 
-function inspect(
-  host: Pick<KernelProgramHost, "resolve">,
-  executable: string,
-): GuestExecutableResolution {
+function inspect(host: GuestExecutableLookup, executable: string): GuestExecutableResolution {
   try {
     const result = host.resolve(executable);
     if (result.status === "ok") return { status: "found", executable };

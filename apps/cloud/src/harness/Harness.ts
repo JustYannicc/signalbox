@@ -49,6 +49,10 @@ function makeErrorSchema(causeValue: Schema.Codec<unknown, unknown, never, never
     name: Schema.String,
     message: Schema.String,
     code: Schema.optionalKey(causeValue),
+    errno: Schema.optionalKey(Schema.Number),
+    syscall: Schema.optionalKey(Schema.String),
+    path: Schema.optionalKey(Schema.String),
+    dest: Schema.optionalKey(Schema.String),
     stack: Schema.optionalKey(Schema.String),
     cause: Schema.optionalKey(causeValue),
   });
@@ -62,6 +66,10 @@ function makeErrorSchema(causeValue: Schema.Codec<unknown, unknown, never, never
             : new Error(fields.message, { cause: fields.cause });
         error.name = fields.name;
         if (fields.code !== undefined) Object.assign(error, { code: fields.code });
+        if (fields.errno !== undefined) Object.assign(error, { errno: fields.errno });
+        if (fields.syscall !== undefined) Object.assign(error, { syscall: fields.syscall });
+        if (fields.path !== undefined) Object.assign(error, { path: fields.path });
+        if (fields.dest !== undefined) Object.assign(error, { dest: fields.dest });
         if (fields.stack !== undefined) error.stack = fields.stack;
         return error;
       }),
@@ -70,6 +78,12 @@ function makeErrorSchema(causeValue: Schema.Codec<unknown, unknown, never, never
         name: error.name,
         message: error.message,
         ...("code" in error ? { code: error.code } : {}),
+        ...("errno" in error && typeof error.errno === "number" ? { errno: error.errno } : {}),
+        ...("syscall" in error && typeof error.syscall === "string"
+          ? { syscall: error.syscall }
+          : {}),
+        ...("path" in error && typeof error.path === "string" ? { path: error.path } : {}),
+        ...("dest" in error && typeof error.dest === "string" ? { dest: error.dest } : {}),
         ...(typeof error.stack === "string" ? { stack: error.stack } : {}),
         ...(error.cause === undefined ? {} : { cause: error.cause }),
       })),
@@ -83,6 +97,10 @@ function makeAggregateErrorSchema(causeValue: Schema.Codec<unknown, unknown, nev
     name: Schema.String,
     message: Schema.String,
     code: Schema.optionalKey(causeValue),
+    errno: Schema.optionalKey(Schema.Number),
+    syscall: Schema.optionalKey(Schema.String),
+    path: Schema.optionalKey(Schema.String),
+    dest: Schema.optionalKey(Schema.String),
     stack: Schema.optionalKey(Schema.String),
     cause: Schema.optionalKey(causeValue),
     errors: Schema.Array(causeValue),
@@ -97,6 +115,10 @@ function makeAggregateErrorSchema(causeValue: Schema.Codec<unknown, unknown, nev
             : new AggregateError(fields.errors, fields.message, { cause: fields.cause });
         error.name = fields.name;
         if (fields.code !== undefined) Object.assign(error, { code: fields.code });
+        if (fields.errno !== undefined) Object.assign(error, { errno: fields.errno });
+        if (fields.syscall !== undefined) Object.assign(error, { syscall: fields.syscall });
+        if (fields.path !== undefined) Object.assign(error, { path: fields.path });
+        if (fields.dest !== undefined) Object.assign(error, { dest: fields.dest });
         if (fields.stack !== undefined) error.stack = fields.stack;
         return error;
       }),
@@ -105,6 +127,12 @@ function makeAggregateErrorSchema(causeValue: Schema.Codec<unknown, unknown, nev
         name: error.name,
         message: error.message,
         ...("code" in error ? { code: error.code } : {}),
+        ...("errno" in error && typeof error.errno === "number" ? { errno: error.errno } : {}),
+        ...("syscall" in error && typeof error.syscall === "string"
+          ? { syscall: error.syscall }
+          : {}),
+        ...("path" in error && typeof error.path === "string" ? { path: error.path } : {}),
+        ...("dest" in error && typeof error.dest === "string" ? { dest: error.dest } : {}),
         ...(typeof error.stack === "string" ? { stack: error.stack } : {}),
         ...(error.cause === undefined ? {} : { cause: error.cause }),
         errors: Array.from(error.errors),

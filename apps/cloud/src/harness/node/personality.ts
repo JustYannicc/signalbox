@@ -1,8 +1,8 @@
 import { createHarnessModelTransport } from "./modelTransport.ts";
 import { installNodePersonality } from "../../isolate/NodeBootstrap.ts";
 import { RELEASE_MODULE_OMITTED_SYMBOL } from "../HarnessProcessLifetime.ts";
-import type { NodeHarnessProcessInput } from "./types.ts";
-import type { createHarnessRuntime } from "./runtime.ts";
+import type { NodeHarnessBaseInput } from "./types.ts";
+import type { NodeHarnessRuntime } from "./runtimeTypes.ts";
 
 let launched = false;
 let active: object | undefined;
@@ -28,15 +28,15 @@ export function reserveHarnessRealm() {
 }
 
 export function installHarnessPersonality(
-  runtime: ReturnType<typeof createHarnessRuntime>,
-  input: NodeHarnessProcessInput,
+  runtime: NodeHarnessRuntime,
+  input: NodeHarnessBaseInput,
   signal: AbortSignal,
 ) {
   const personality = installNodePersonality({
     modules: runtime.modules,
     globals: { Bun: runtime.bun, process: runtime.process },
   });
-  const reporter: NonNullable<NodeHarnessProcessInput["reportReleaseModuleOmitted"]> =
+  const reporter: NonNullable<NodeHarnessBaseInput["reportReleaseModuleOmitted"]> =
     input.reportReleaseModuleOmitted ?? (() => undefined);
   const previous = new Map<PropertyKey, PropertyDescriptor | undefined>(
     ["fetch", "console"].map(
