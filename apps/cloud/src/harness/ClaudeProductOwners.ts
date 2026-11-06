@@ -19,42 +19,35 @@ export interface ClaudeProductOwnerRuntime {
     readonly computer: WorkerLoaderWorkerCode;
     readonly sdk: WorkerLoaderWorkerCode;
   };
+  /**
+   * Each owner bundle's digest, from the build that produced it. The loader keeps a Worker under
+   * its key across deploys, so the key must name the code; hashing the bundles here would copy
+   * tens of MB inside a thread's memory limit.
+   */
+  readonly versions: {
+    readonly kernel: string;
+    readonly cli: string;
+    readonly computer: string;
+    readonly sdk: string;
+  };
 }
 
 type KernelFacet = InstanceType<ReturnType<typeof createClaudeKernelFacetClass>>;
-
-const versions = new WeakMap<WorkerLoaderWorkerCode, Promise<string>>();
-/** The loader keeps a Worker under its key across deploys, so a key names its code too. */
-const codeVersion = (code: WorkerLoaderWorkerCode) => {
-  let version = versions.get(code);
-  if (version === undefined) {
-    version = crypto.subtle
-      .digest("SHA-256", new TextEncoder().encode(JSON.stringify(code)))
-      .then((digest) =>
-        Array.from(new Uint8Array(digest).subarray(0, 8), (byte) =>
-          byte.toString(16).padStart(2, "0"),
-        ).join(""),
-      );
-    versions.set(code, version);
-  }
-  return version;
-};
 type ComputerOwner = ComputerProgramOwnerPort & {
   configure(input: ComputerExecutionConfiguration): Promise<void>;
 };
 
 /**
- * Normal thread startup provisions each owner from its own registered module map. An owner's
- * Worker is keyed by its code, so no release's CLI runs beside another's kernel; its facet keeps
- * its name, and with it its storage, across releases.
+ * Normal thread startup provisions each owner from its own registered module map. Each Worker is
+ * keyed by its bundle's build digest, and the CLI's also by the Claude release it runs, so the
+ * loader never pairs one release's CLI with another's kernel. The code itself is never read here.
  */
-export async function createClaudeProductOwners(runtime: ClaudeProductOwnerRuntime, name: string) {
-  const version = {
-    kernel: await codeVersion(runtime.code.kernel),
-    cli: await codeVersion(runtime.code.cli),
-    computer: await codeVersion(runtime.code.computer),
-    sdk: await codeVersion(runtime.code.sdk),
-  };
+export function createClaudeProductOwners(
+  runtime: ClaudeProductOwnerRuntime,
+  name: string,
+  release: string,
+) {
+  const version = { ...runtime.versions, cli: `${runtime.versions.cli}:${release}` };
   const stubs: unknown[] = [];
   const facets: string[] = [];
   let disposed = false;

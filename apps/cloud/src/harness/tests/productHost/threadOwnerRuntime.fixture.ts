@@ -38,8 +38,8 @@ export function threadOwnerRuntimeFixture<G>(
           loaded.push({ name, mainModule: code.mainModule });
         }),
       );
-      // `<machine>:<role>:<code version>`
-      const role = name.split(":").at(-2);
+      // `<machine>:<role>:<build>`, and the CLI's also `:<release>`
+      const role = /:(kernel|cli|computer|sdk):/.exec(name)?.[1];
       return {
         getDurableObjectClass(entrypoint: string) {
           NodeAssert.equal(
@@ -183,6 +183,12 @@ export function threadOwnerRuntimeFixture<G>(
         cli: code("cli"),
         computer: code("computer"),
         sdk: code("sdk"),
+      },
+      versions: {
+        kernel: "kernel-build",
+        cli: "cli-build",
+        computer: "computer-build",
+        sdk: "sdk-build",
       },
     },
     native: {

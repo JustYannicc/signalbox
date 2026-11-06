@@ -228,6 +228,46 @@ describe("CLI filesystem synchronous reads", () => {
         }
       });
       expect(readable).toHaveLength(4);
+      // The limit that failed is the pinned total: four files pinned and the fifth's bytes.
+      expect(f.traces).toContainEqual({
+        kind: "too-large",
+        bytes: 5 * config.length,
+        limit: 16 * 1024 * 1024,
+      });
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("lets a sync-read file's pin go once it grows too large, so another one fits", async () => {
+    const config = "c".repeat(3.5 * 1024 * 1024);
+    const f = await fixture(1024 * 1024, [], false, {
+      cwd: "/work",
+      home: "/home/u",
+      seed(fs) {
+        workspace(fs);
+        for (const path of [
+          "/home/u/.claude/settings.json",
+          "/home/u/.claude/settings.local.json",
+          "/work/.claude/settings.json",
+          "/work/.claude/settings.local.json",
+        ])
+          fs.writeFileSync(path, config);
+        fs.writeFileSync("/home/u/.claude.json", "g".repeat(1.5 * 1024 * 1024));
+      },
+    });
+    try {
+      // 14 MiB and the global config's 1.5 MiB are pinned. The config grows past 4 MiB, and a
+      // 1.9 MiB .mcp.json fits under 16 MiB, beside git's few bytes, only if that pin was let go.
+      await f.files.beforeRemote();
+      f.canonical.writeFileSync("/home/u/.claude.json", "g".repeat(5 * 1024 * 1024));
+      const mcp = "m".repeat(1.9 * 1024 * 1024);
+      f.canonical.writeFileSync("/work/.mcp.json", mcp);
+      await f.files.afterRemote();
+      expect(f.fs.readFileSync("/work/.mcp.json", "utf8")).toBe(mcp);
+      expect(() => f.fs.readFileSync("/home/u/.claude.json")).toThrow(
+        expect.objectContaining({ code: "EIO" }),
+      );
     } finally {
       await f.close();
     }

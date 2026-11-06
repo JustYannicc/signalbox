@@ -73,6 +73,16 @@ describe("CLI filesystem identity", () => {
     try {
       f.canonical.symlinkSync(`/proc/self/fd/${f.rootDescriptor}`, "/sneak");
       await expect(f.fs.promises.mkdir("/sneak/escaped")).rejects.toMatchObject({ code: "EBADF" });
+      // The CLI's client opens with kernel flags, a route that skips WASI's path handling.
+      const opened = await f.fs.promises.open("/sneak/escaped", "w").then(
+        async (handle) => {
+          await handle.close();
+          return "opened";
+        },
+        (cause: { code?: string }) => cause.code,
+      );
+      // The client stats the path first, on the WASI route, where ownership is checked.
+      expect(opened).toBe("EBADF");
       expect(f.canonical.existsSync("/escaped")).toBe(false);
     } finally {
       await f.close();

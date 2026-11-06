@@ -80,6 +80,17 @@ describe.skipIf(programDir === undefined)("Product Claude retained RPC arguments
             worker_loaders: [{ binding: "LOADER" }],
             vars: {
               ...sources,
+              // The build's digest of each owner bundle, which keys its Worker.
+              OWNER_VERSIONS: {
+                kernel: NodeCrypto.createHash("sha256")
+                  .update(sources.KERNEL_SOURCE!)
+                  .digest("hex"),
+                cli: NodeCrypto.createHash("sha256").update(sources.CLI_SOURCE!).digest("hex"),
+                computer: NodeCrypto.createHash("sha256")
+                  .update(sources.COMPUTER_SOURCE!)
+                  .digest("hex"),
+                sdk: "inline-sdk",
+              },
               MATERIALS: {
                 sources: prepared.programs,
                 seed,

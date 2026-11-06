@@ -30,6 +30,7 @@ interface Env {
   readonly LOADER: WorkerLoader;
   readonly KERNEL_SOURCE: string;
   readonly CLI_SOURCE: string;
+  readonly OWNER_VERSIONS: import("../../ClaudeProductOwners.ts").ClaudeProductOwnerRuntime["versions"];
   readonly COMPUTER_SOURCE: string;
   readonly MATERIALS: Materials;
   readonly HOST: DurableObjectNamespace<Host>;
@@ -68,7 +69,7 @@ export class ChildLoader extends WorkerEntrypoint<Env> {
 export class Host extends DurableObject<Env> {
   #scope: Scope.Closeable | undefined;
   #host: Effect.Success<ReturnType<typeof createProductClaudeKernelHost>> | undefined;
-  #owners: Awaited<ReturnType<typeof createClaudeProductOwners>> | undefined;
+  #owners: ReturnType<typeof createClaudeProductOwners> | undefined;
   async configure() {
     const materials = this.env.MATERIALS;
     const bytes = new Map(
@@ -95,7 +96,8 @@ export class Host extends DurableObject<Env> {
       globalOutbound: null,
       ...(env === undefined ? {} : { env }),
     });
-    this.#owners = await createClaudeProductOwners(
+    const release = await claudeFixture();
+    this.#owners = createClaudeProductOwners(
       {
         loader: this.env.LOADER,
         facets: this.ctx.facets,
@@ -111,10 +113,11 @@ export class Host extends DurableObject<Env> {
             "sdk.js",
           ),
         },
+        versions: this.env.OWNER_VERSIONS,
       },
       "argument-test",
+      release.options.identity.artifactHash,
     );
-    const release = await claudeFixture();
     const artifact = claudeReleaseArtifact(release.options.identity, "command-test");
     this.#scope = await Effect.runPromise(Scope.make());
     this.#host = await Effect.runPromise(

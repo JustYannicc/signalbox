@@ -29,10 +29,10 @@ const skipped = (cause: unknown, codes: readonly string[]) =>
     codes.includes(String(cause.code)));
 
 /**
- * Holds the bytes the CLI reads synchronously: its own sync-read files, always, whatever their
- * size; any a caller names; files it read synchronously before; and the small files a round found
- * new or changed, which is how a child's output reaches a later sync read. Everything else it reads
- * from Computer asynchronously.
+ * Holds the bytes the CLI reads synchronously: its own sync-read files, pinned within the limits
+ * above and otherwise held like any file; any a caller names; files it read synchronously before;
+ * and the small files a round found new or changed, which is how a child's output reaches a later
+ * sync read. Everything else it reads from Computer asynchronously.
  */
 export function createCliPrefetch(input: {
   readonly files: CliFileWorkingSet;
@@ -69,11 +69,28 @@ export function createCliPrefetch(input: {
         if (stat.type !== "file") continue;
         const size = Number(stat.size);
         const held = pinned.get(name)?.bytes ?? 0;
-        const pin =
-          essential && size <= PINNED_FILE_BYTES && pinnedBytes() - held + size <= PINNED_BYTES;
-        if (essential && !pin && !tooLarge.has(name)) {
-          tooLarge.add(name);
-          input.trace({ kind: "too-large", bytes: size, limit: PINNED_FILE_BYTES });
+        const total = pinnedBytes() - held + size;
+        const pin = essential && size <= PINNED_FILE_BYTES && total <= PINNED_BYTES;
+        if (essential && !pin) {
+          if (!tooLarge.has(name)) {
+            tooLarge.add(name);
+            input.trace(
+              size > PINNED_FILE_BYTES
+                ? { kind: "too-large", bytes: size, limit: PINNED_FILE_BYTES }
+                : { kind: "too-large", bytes: total, limit: PINNED_BYTES },
+            );
+          }
+          const previous = pinned.get(name);
+          if (previous !== undefined) {
+            previous.unpin();
+            pinned.delete(name);
+            // Its bytes were held outside the budget; held again, they count against it.
+            try {
+              files.evict(name);
+            } catch {
+              /* Open on a descriptor: those bytes go when it closes. */
+            }
+          }
         }
         // One that can never fit would only evict everything else first.
         if (!pin && stat.size > BigInt(input.byteLimit)) continue;

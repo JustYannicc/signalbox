@@ -69,7 +69,7 @@ export const createClaudeFacetHost = <G>(
           readonly generation: number;
           readonly scope: Scope.Closeable;
           readonly host: ClaudeHost<G>;
-          readonly kernel: Awaited<ReturnType<typeof createClaudeProductOwners>>["kernel"];
+          readonly kernel: ReturnType<typeof createClaudeProductOwners>["kernel"];
           attached: boolean;
         }
       | undefined;
@@ -156,8 +156,13 @@ export const createClaudeFacetHost = <G>(
             });
             modelCredential = work.modelToken;
             const owners = yield* Effect.acquireRelease(
-              Effect.tryPromise({
-                try: () => createClaudeProductOwners(options.host.runtime, machineId),
+              Effect.try({
+                try: () =>
+                  createClaudeProductOwners(
+                    options.host.runtime,
+                    machineId,
+                    selected.release.identity.artifactHash,
+                  ),
                 catch: (cause) => failed("Could not provision the Claude product owners.", cause),
               }),
               (owners) => Effect.sync(owners.dispose),

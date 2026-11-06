@@ -237,6 +237,15 @@ describe("names under a descriptor alias", () => {
       hidden = k.directory("/a/b");
       k.filesystem.symlink(`/proc/self/fd/${hidden}`, "/a/sneak");
       expect(await k.call("path_create_directory", root, "a/sneak/x")).toBe(errno.EBADF);
+      // The CLI's flagged open resolves in the kernel, which never follows a link into /proc.
+      expect(
+        (
+          await k.open(root, "a/sneak/x", {
+            create: true,
+            flags: KernelOpenFlags.O_CREAT | KernelOpenFlags.O_WRONLY,
+          })
+        ).errno,
+      ).toBe(errno.ENOENT);
       expect(k.exists("/a/b/x")).toBe(false);
     } finally {
       k.close();

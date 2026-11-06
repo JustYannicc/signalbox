@@ -37,7 +37,7 @@ export type CliViewTrace =
       /** Misses of this path so far; traced at 1, 2, 4… so a poller's are counted, not lost. */
       readonly count: number;
     }
-  /** A file the CLI reads synchronously too large to hold outside the budget. */
+  /** A sync-read file over a pinning limit: its own size, or the pinned total it would make. */
   | { readonly kind: "too-large"; readonly bytes: number; readonly limit: number }
   /** A round failed; the view waits this long before the next one. */
   | { readonly kind: "backoff"; readonly failures: number; readonly retryMs: number }
