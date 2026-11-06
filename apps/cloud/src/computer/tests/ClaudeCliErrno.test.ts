@@ -198,4 +198,51 @@ describe("CLI errno diagnostics through the real kernel port", () => {
       await f.close();
     }
   });
+
+  it("drops an indexed denial once the CLI grants access, without inventing unseen entries", async () => {
+    const f = await cliFileBackendFixture(128, ["/sync"], true, {
+      seed: (fs) => {
+        fs.mkdirSync("/blocked");
+        fs.writeFileSync("/blocked/hidden", "private");
+        fs.chmodSync("/blocked", 0);
+        fs.mkdirSync("/read-only");
+        fs.writeFileSync("/read-only/listed", "readable name");
+        fs.chmodSync("/read-only", 0o400);
+      },
+    });
+    try {
+      f.fs.chmodSync("/read-only", 0o500);
+      expect(await failure(() => f.fs.statSync("/read-only/listed"))).toMatchObject({
+        code: "CLI_FS_NOT_PREFETCHED",
+        path: "/read-only/listed",
+      });
+      expect((await f.fs.promises.stat("/read-only/listed")).isFile()).toBe(true);
+
+      f.fs.chmodSync("/blocked", 0o700);
+      expect(await failure(() => f.fs.readdirSync("/blocked"))).toMatchObject({
+        code: "CLI_FS_NOT_PREFETCHED",
+        path: "/blocked",
+      });
+      expect(await f.fs.promises.readdir("/blocked")).toEqual(["hidden"]);
+      // Never a false success that the queued remote mkdir would then contradict.
+      expect(await failure(() => f.fs.mkdirSync("/blocked/hidden"))).toMatchObject({
+        code: "EEXIST",
+      });
+
+      f.fs.chmodSync("/read-only", 0o700);
+      f.fs.writeFileSync("/read-only/created", "new");
+      expect(f.fs.readdirSync("/read-only").sort()).toEqual(["created", "listed"]);
+      expect(await failure(() => f.fs.statSync("/read-only/absent"))).toMatchObject({
+        code: "ENOENT",
+      });
+
+      f.fs.chmodSync("/read-only", 0o400);
+      expect(await failure(() => f.fs.statSync("/read-only/listed"))).toMatchObject({
+        code: "EACCES",
+        syscall: "stat",
+      });
+    } finally {
+      await f.close();
+    }
+  });
 });

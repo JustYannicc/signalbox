@@ -2,16 +2,29 @@ import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
 import type { KernelStat } from "../../kernel/KernelFileSystem.ts";
 import { CliWorkingSetBudget, CliWorkingSetLimit } from "./Budget.ts";
 import { CliWriteBarrier } from "./WriteBarrier.ts";
-import { CliContentStore } from "./Content.ts";
+import { CliContentStore, contentMiss } from "./Content.ts";
 
 export interface CliFileMetadata {
   readonly path: string;
   readonly stat: KernelStat;
   readonly target?: string;
   readonly directoryDenial?: { readonly read?: "EACCES"; readonly search?: "EACCES" };
+  /** Indexing was denied here before a later permission change; what it could not see stays unknown. */
+  readonly unindexed?: true;
   readonly children?: readonly string[];
   /** Computer assigns inode identity when the queued creation commits. */
   readonly pending?: true;
+}
+
+/** The indexer's denial described the old owner and mode; once they change, the path check decides. */
+export function withStat(entry: CliFileMetadata, stat: KernelStat): CliFileMetadata {
+  const { directoryDenial, ...rest } = entry;
+  const before = entry.stat.posix;
+  const after = stat.posix;
+  const permissionsChanged =
+    before?.mode !== after?.mode || before?.uid !== after?.uid || before?.gid !== after?.gid;
+  if (directoryDenial === undefined || !permissionsChanged) return { ...entry, stat };
+  return { ...rest, stat, unindexed: true };
 }
 
 export interface CliFileWorkingSetOptions {
@@ -94,8 +107,14 @@ export class CliFileWorkingSet {
   metadata(path: string) {
     this.assertCurrent();
     const entry = this.#metadata.get(path);
-    if (entry === undefined)
+    if (entry === undefined) {
+      const slash = path.lastIndexOf("/");
+      const parent = this.#metadata.get(path.slice(0, slash) || "/");
+      // A name the denied index never saw may exist; only a listed directory can prove absence.
+      if (parent?.unindexed && parent.children?.includes(path.slice(slash + 1)) !== false)
+        throw contentMiss(path);
       throw Object.assign(new Error(`No such file: ${path}`), { code: "ENOENT" });
+    }
     return {
       ...entry,
       stat: {
@@ -109,15 +128,17 @@ export class CliFileWorkingSet {
     const entry = this.metadata(path);
     if (entry.directoryDenial?.read !== undefined)
       throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+    if (entry.unindexed && entry.children === undefined) throw contentMiss(path);
     if (entry.stat.type !== "directory")
       throw Object.assign(new Error(`Not a directory: ${path}`), { code: "ENOTDIR" });
-    if (entry.children !== undefined) return [...entry.children];
     const prefix = path === "/" ? "/" : `${path}/`;
-    return [...this.#metadata.keys()].flatMap((name) => {
+    const indexed = [...this.#metadata.keys()].flatMap((name) => {
       if (!name.startsWith(prefix)) return [];
       const child = name.slice(prefix.length);
       return child !== "" && !child.includes("/") ? [child] : [];
     });
+    // A search-denied listing keeps names whose entries were never indexed, plus later creates.
+    return entry.children === undefined ? indexed : [...new Set([...entry.children, ...indexed])];
   }
 
   content(path: string) {

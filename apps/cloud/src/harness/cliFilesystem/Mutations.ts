@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 import { kernelError } from "../../kernel/KernelErrno.ts";
 import type { KernelPosixOptions, KernelStat } from "../../kernel/KernelFileSystem.ts";
 import type { createNodeFsSyscallClient } from "../../isolate/NodeFsSyscallClient.ts";
-import type { CliFileWorkingSet } from "./WorkingSet.ts";
+import { withStat, type CliFileWorkingSet } from "./WorkingSet.ts";
 import type { CliFilePaths } from "./Paths.ts";
 
 /** Updates the read projection while queued mutations retain their remote error barrier. */
@@ -74,10 +74,12 @@ export function createCliMetadataMutations(options: {
       files.writes.enqueue(0, async () => {
         await remote.chmod(current.path, mode, follow);
       });
-      files.updateMetadata({
-        ...current,
-        stat: { ...current.stat, posix: { ...current.stat.posix, mode } },
-      });
+      files.updateMetadata(
+        withStat(current, {
+          ...current.stat,
+          posix: { ...current.stat.posix, mode },
+        }),
+      );
     },
     chown(path: string, uid: number, gid: number, follow = true) {
       const current = entry(path, follow);
@@ -85,10 +87,12 @@ export function createCliMetadataMutations(options: {
       files.writes.enqueue(0, async () => {
         await remote.chown(current.path, uid, gid, follow);
       });
-      files.updateMetadata({
-        ...current,
-        stat: { ...current.stat, posix: { mode: current.stat.posix.mode & ~0o6000, uid, gid } },
-      });
+      files.updateMetadata(
+        withStat(current, {
+          ...current.stat,
+          posix: { mode: current.stat.posix.mode & ~0o6000, uid, gid },
+        }),
+      );
     },
     setTimes(path: string, times: Parameters<NodeFsBackendTimes>[1], follow = true) {
       const current = entry(path, follow);

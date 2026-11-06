@@ -9,7 +9,7 @@ import { KernelOpenFlags } from "../../kernel/KernelOpenFlags.ts";
 import { kernelError } from "../../kernel/KernelErrno.ts";
 import type { ClaudeCliInitialization } from "../ClaudeCliKernelPort.ts";
 import type { KernelStat } from "../../kernel/KernelFileSystem.ts";
-import { CliFileWorkingSet } from "./WorkingSet.ts";
+import { CliFileWorkingSet, withStat } from "./WorkingSet.ts";
 import { CliFilePaths } from "./Paths.ts";
 import { CliDescriptorViews } from "./Descriptors.ts";
 import { createCliMetadataMutations } from "./Mutations.ts";
@@ -265,7 +265,7 @@ export async function createCliFileBackend(
     const next = project(matches[0]?.stat ?? view.stat);
     files.writes.enqueue(0, commit);
     view.stat = next;
-    for (const item of matches) files.updateMetadata({ ...item, stat: next });
+    files.project(matches.map((item) => withStat(item, next)))();
   };
   const backend: NodeFsBackend = {
     get cwd() {
