@@ -113,8 +113,9 @@ export function qualifierFacetLoader(
                   tail,
                 ).code,
               ),
-            cli: (code) => owners.cli(code),
-            computer: (code) => owners.computer(code),
+            // Each owner facet is its own isolate; without its tail a memory reset there is unattributable.
+            cli: (code) => owners.cli({ ...code, tails: [...(code.tails ?? []), tail] }),
+            computer: (code) => owners.computer({ ...code, tails: [...(code.tails ?? []), tail] }),
           });
           assertQualifierClaudeFacetConfiguration(prepared.code.env);
           const route = (path: string) => ({ method: "POST", path });
