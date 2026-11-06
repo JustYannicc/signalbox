@@ -4,7 +4,8 @@ import type { ClaudeCliLookup } from "../ClaudeCliKernelPort.ts";
 import { kernelError } from "../../kernel/KernelErrno.ts";
 import { KernelOpenFlags } from "../../kernel/KernelOpenFlags.ts";
 import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../../kernel/KernelSyscallPort.ts";
-import { sha256Hex } from "../cliFilesystem/Digest.ts";
+import { sha256Hex, UNCHANGED_DIGEST } from "../cliFilesystem/Digest.ts";
+import { turnBudget } from "../cliFilesystem/Turn.ts";
 import { nodeFsError } from "../../isolate/NodeFsError.ts";
 
 /** Index accessible metadata without turning unsolicited traversal into a CLI permission failure. */
@@ -14,8 +15,10 @@ export async function readCliMetadata(
   signal: AbortSignal,
 ) {
   const entries: CliFileMetadata[] = [];
+  const turn = turnBudget();
   const visit = async (path: string) => {
     signal.throwIfAborted();
+    await turn();
     const stat = await filesystem.lstatAsync(path, signal).catch((cause) => {
       throw nodeFsError(cause, "lstat", path);
     });
@@ -73,8 +76,10 @@ export async function lookupCliPaths(
   signal: AbortSignal,
 ): Promise<ClaudeCliLookup[]> {
   const results: ClaudeCliLookup[] = [];
+  const turn = turnBudget();
   for (const path of paths) {
     signal.throwIfAborted();
+    await turn();
     if (typeof path !== "string" || !path.startsWith("/"))
       throw new TypeError("CLI lookup paths must be absolute");
     let stat;
@@ -124,15 +129,20 @@ export async function digestCliFiles(
   filesystem: KernelFileSystem,
   files: readonly { readonly path: string; readonly size: number }[],
   signal: AbortSignal,
+  unchanged?: (path: string, ino: bigint) => Promise<boolean>,
 ): Promise<(string | null)[]> {
   const digests: (string | null)[] = [];
+  const turn = turnBudget(16);
   for (const { path, size } of files) {
     signal.throwIfAborted();
+    await turn(size);
     if (typeof path !== "string" || !path.startsWith("/"))
       throw new TypeError("CLI digest paths must be absolute");
     if (!Number.isSafeInteger(size) || size < 0) throw new RangeError("Invalid CLI digest size");
     digests.push(
-      size > MAX_DIGEST_FILE_BYTES ? null : await digestFile(filesystem, path, size, signal),
+      size > MAX_DIGEST_FILE_BYTES
+        ? null
+        : await digestFile(filesystem, path, size, signal, unchanged),
     );
   }
   return digests;
@@ -143,11 +153,13 @@ async function digestFile(
   path: string,
   size: number,
   signal: AbortSignal,
+  unchanged?: (path: string, ino: bigint) => Promise<boolean>,
 ): Promise<string | null> {
   let fd: number;
   try {
     const stat = await filesystem.lstatAsync(path, signal);
     if (stat.type !== "file" || stat.size !== BigInt(size)) return null;
+    if (unchanged !== undefined && (await unchanged(path, stat.ino))) return UNCHANGED_DIGEST;
     fd = await filesystem.openAsync(path, KernelOpenFlags.O_RDONLY, undefined, signal);
   } catch (cause) {
     if (["ENOENT", "ENOTDIR", "EACCES"].includes(code(cause))) return null;

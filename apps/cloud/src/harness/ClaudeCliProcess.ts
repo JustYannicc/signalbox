@@ -178,6 +178,7 @@ export class ClaudeCliProcess extends RpcTarget implements ClaudeCliProcessPort 
   async report(report: ClaudeSdkReport) {
     if (report.type === "milestone") this.#reporter.turnMilestone?.(report.stage);
     else if (report.type === "spawn") this.#reporter.cliSpawnContext?.(report.context);
+    else if (report.type === "trace") this.#reporter.cliViewTrace?.(report.event);
     else await this.#reporter.releaseModuleOmitted(report.event, report.failure);
   }
   #beginOperation(id: string) {

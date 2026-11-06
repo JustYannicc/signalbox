@@ -7,6 +7,7 @@ import { createKernelSessionStdio } from "../../../kernel/KernelSessionStdio.ts"
 import { createTestFilesystem } from "./filesystem.ts";
 import type { KernelSyscallResponse } from "../../../kernel/KernelSyscallPort.ts";
 import type { KernelSyscallRequest } from "../../../kernel/KernelSyscallPort.ts";
+import type { CliViewTrace } from "../../../harness/CliViewTrace.ts";
 
 export async function cliFileBackendFixture(
   byteLimit = 128,
@@ -24,6 +25,8 @@ export async function cliFileBackendFixture(
     ) => void;
     /** Computer without a change feed, as when the machine layer changed. */
     readonly changeFeed?: false;
+    /** Paths the machine's lower layer serves; Computer's change feed doesn't cover them. */
+    readonly lowerPaths?: (path: string) => boolean;
     /** The machine layer's change counter and whether a machine command is running. */
     readonly machine?: () => { readonly machine: number; readonly machineRunning: boolean };
     /** Runs when the CLI refills descriptor leases, the last step of a view round. */
@@ -63,6 +66,7 @@ export async function cliFileBackendFixture(
       }),
       fileChanges: (since: number) =>
         options.changeFeed === false ? undefined : owned.fileChanges(since),
+      isLowerPath: async (path: string) => options.lowerPaths?.(path) ?? false,
     },
     {
       process: {
@@ -84,7 +88,7 @@ export async function cliFileBackendFixture(
       },
     },
     lifetime.signal,
-    128,
+    options.metadataLimit ?? 128,
   );
   const requests: KernelSyscallRequest[] = [];
   let failWrites = false;
@@ -161,8 +165,10 @@ export async function cliFileBackendFixture(
       return typeof value === "function" ? value.bind(target) : value;
     },
   });
+  const traces: CliViewTrace[] = [];
   const files = await createCliFileBackend(
     {
+      trace: (event) => traces.push(event),
       kernel,
       cwd: "/",
       rootDescriptor: owner.rootDescriptor,
@@ -203,6 +209,8 @@ export async function cliFileBackendFixture(
       return prefetchedBytes;
     },
     revision: () => owned.persistenceRevision(),
+    /** What the view reported to the host journal, in order. */
+    traces,
     /** Computer's side of the CLI port, as the CLI reaches it. */
     kernel,
     sql: owned.storage.sql,

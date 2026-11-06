@@ -1,3 +1,4 @@
+import type { CliViewTrace } from "./CliViewTrace.ts";
 import type { ClaudeSdkRequest } from "./ClaudeSdkHostTypes.ts";
 import {
   CheckpointId,
@@ -270,6 +271,7 @@ export interface ClaudeSdkProcessContext {
 export type ClaudeCliLaunch = Omit<SdkSpawnOptions, "signal"> & { readonly manifestSha256: string };
 export type ClaudeSdkReport =
   | { readonly type: "milestone"; readonly stage: HarnessTurnStage }
+  | { readonly type: "trace"; readonly event: CliViewTrace }
   | { readonly type: "spawn"; readonly context: ClaudeSpawnDiagnostic }
   | {
       readonly type: "omission";

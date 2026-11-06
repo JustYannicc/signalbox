@@ -12,6 +12,14 @@ export function createComputerMachineProfile(options: {
   readonly machineInventory: MachineProgramInventory;
   readonly transport: KernelCommandForwarder & { readonly files: MachineFilesPort };
   readonly signal: AbortSignal;
+  /** Counts and durations only; a machine command can keep the CLI's view re-indexing. */
+  readonly trace?: (event: {
+    readonly kind: "machine-command";
+    readonly phase: "start" | "exit";
+    readonly running: number;
+    readonly changes: number;
+    readonly durationMs?: number;
+  }) => void;
 }) {
   const signal = options.signal;
   const transport = options.transport;
@@ -38,12 +46,21 @@ export function createComputerMachineProfile(options: {
   const begin = () => {
     running++;
     changes++;
+    const started = performance.now();
+    options.trace?.({ kind: "machine-command", phase: "start", running, changes });
     let settled = false;
     return () => {
       if (settled) return;
       settled = true;
       running--;
       changes++;
+      options.trace?.({
+        kind: "machine-command",
+        phase: "exit",
+        running,
+        changes,
+        durationMs: Math.round(performance.now() - started),
+      });
     };
   };
   const invalidateMetadata = (epoch: number) => {

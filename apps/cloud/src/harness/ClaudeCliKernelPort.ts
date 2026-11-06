@@ -61,6 +61,8 @@ export interface ClaudeCliKernelPort extends KernelSyscallPort {
    */
   digest(
     files: readonly { readonly path: string; readonly size: number }[],
+    /** A revision Computer issued; its feed can prove upper files unchanged without a read. */
+    since?: number,
   ): Promise<readonly (string | null)[]>;
   leaseProcesses(
     count: number,

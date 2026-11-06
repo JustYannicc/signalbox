@@ -111,6 +111,9 @@ export function createClaudeKernelResources(
       };
     },
     fileChanges: (since: number) => storage.persistence.storage.changesSince?.(since),
+    // Without a machine there is no lower layer, so every path is Computer's own.
+    isLowerPath: async (path: string, signal: AbortSignal) =>
+      (await profile?.overlay.isLower(path, signal)) ?? false,
     stdio,
     processes,
     systemIdentity,
@@ -124,6 +127,9 @@ export function createClaudeKernelResources(
         machineInventory: input.machineInventory,
         transport: options.machine(systemIdentity),
         signal,
+        trace: (event) => {
+          void callbacks.current?.report({ type: "trace", event }).catch(() => undefined);
+        },
       });
       profile = machine;
       callbacks.current = config.callbacks;

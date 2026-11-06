@@ -9,7 +9,9 @@ describe("Computer machine change counter", () => {
     const owned = createTestFilesystem();
     const exit = Promise.withResolvers<KernelCommandExit>();
     const signal = new AbortController().signal;
+    const traces: unknown[] = [];
     const profile = createComputerMachineProfile({
+      trace: (event) => traces.push(event),
       filesystem: owned.filesystem,
       threadId: "machine-changes",
       machineInventory: machineInventoryFixture(),
@@ -42,6 +44,16 @@ describe("Computer machine change counter", () => {
       await child.exited.catch(() => undefined);
       // A reader that indexed while the command ran must see that the lower layer moved again.
       expect(profile.machineChanges()).toEqual({ changes: 2, running: 0 });
+      expect(traces).toEqual([
+        { kind: "machine-command", phase: "start", running: 1, changes: 1 },
+        {
+          kind: "machine-command",
+          phase: "exit",
+          running: 0,
+          changes: 2,
+          durationMs: expect.any(Number),
+        },
+      ]);
     } finally {
       owned.close();
     }
