@@ -1,3 +1,5 @@
+// @effect-diagnostics cryptoRandomUUID:off - synchronous seed transactions cannot require an Effect runtime.
+import { isKernelLowerFileSystemInode } from "./KernelLowerFileSystemStorage.ts";
 import type { KernelFileSystem } from "./KernelFileSystem.ts";
 import { KernelOpenFlags } from "./filesystem/KernelOpenFlags.ts";
 import type { LoadedHarnessRelease } from "../harness/HarnessReleaseLoader.ts";
@@ -52,8 +54,7 @@ export function ensureDirectory(files: KernelFileSystem, path: string) {
     } catch (error) {
       if (!code(error, "EEXIST")) throw error;
     }
-    if (files.lstat(current).type !== "directory")
-      throw new Error("Seed parent is not a directory");
+    if (files.stat(current).type !== "directory") throw new Error("Seed parent is not a directory");
   }
 }
 export function validateMetadata(value: SeedMetadata) {
@@ -159,7 +160,7 @@ function parents(files: KernelFileSystem, path: string) {
   let current = "";
   for (const part of path.slice(1).split("/").slice(0, -1)) {
     current += `/${part}`;
-    if (files.lstat(current).type !== "directory") throw new Error("Seed parent changed");
+    if (files.stat(current).type !== "directory") throw new Error("Seed parent changed");
   }
 }
 export function verifySeedFiles(
@@ -206,10 +207,37 @@ export function writeSeedFiles(
   entries: readonly SeedFile[],
   payloads: ReadonlyMap<string, Uint8Array>,
 ) {
+  const written = new Map<string, SeedFile>();
   for (const entry of entries) {
-    ensureDirectory(files, entry.path.slice(0, entry.path.lastIndexOf("/")) || "/");
+    const slash = entry.path.lastIndexOf("/");
+    const parent = entry.path.slice(0, slash) || "/";
+    ensureDirectory(files, parent);
+    const target = `${files.realpath(parent).replace(/\/$/, "")}${entry.path.slice(slash)}`;
+    const prior = written.get(target);
+    if (prior !== undefined) {
+      if (
+        prior.bytes !== entry.bytes ||
+        prior.sha256 !== entry.sha256 ||
+        prior.mode !== entry.mode ||
+        prior.uid !== entry.uid ||
+        prior.gid !== entry.gid
+      )
+        throw new Error("Conflicting seed aliases");
+      continue;
+    }
+    let lower = false;
+    try {
+      const resolved = files.resolve(entry.path, { followFinal: false });
+      lower =
+        (resolved.stat.type === "file" || resolved.stat.type === "symlink") &&
+        isKernelLowerFileSystemInode(resolved.mount.storage, resolved.inode);
+    } catch (error) {
+      if (!code(error, "ENOENT")) throw error;
+    }
+    // Rename a new upper file over native image entries without adopting unreceipted upper files.
+    const destination = lower ? `${target}.seed-${crypto.randomUUID()}` : entry.path;
     const fd = files.open(
-      entry.path,
+      destination,
       KernelOpenFlags.O_CREAT | KernelOpenFlags.O_EXCL | KernelOpenFlags.O_WRONLY,
       entry.mode,
     );
@@ -225,6 +253,8 @@ export function writeSeedFiles(
     } finally {
       files.close(fd);
     }
+    if (lower) files.rename(destination, target);
+    written.set(target, entry);
   }
   verifySeedFiles(files, entries, payloads);
 }
