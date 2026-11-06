@@ -144,6 +144,15 @@ describe("Node fs syscall client", () => {
       expect(await owned.client.call("readlink", ["/dir/link"])).toBe("a");
       await owned.client.call("rename", ["/dir/a", "/dir/b"]);
       expect((await owned.client.call("readdir", ["/dir"])).sort()).toEqual(["b", "link"]);
+      await owned.client.call("symlink", ["dir", "/dir-link"]);
+      expect((await owned.client.call("readdir", ["/dir-link"])).sort()).toEqual(["b", "link"]);
+      await expect(
+        owned.client.call("open", [
+          "/dir-link",
+          KernelOpenFlags.O_RDONLY | KernelOpenFlags.O_NOFOLLOW,
+        ]),
+      ).rejects.toMatchObject({ code: "ELOOP" });
+      await owned.client.call("unlink", ["/dir-link"]);
       await owned.client.call("unlink", ["/dir/link"]);
       await owned.client.call("unlink", ["/dir/b"]);
       await owned.client.call("rmdir", ["/dir"]);
@@ -216,5 +225,67 @@ describe("Node fs syscall client", () => {
     expect(settled).toBe(false);
     cancellationFinished.resolve();
     await expect(pending).rejects.toBe(reason);
+  });
+
+  it("cancels a stream's pending open lookup and joins it before closing the stream", async () => {
+    const owned = createTestFilesystem();
+    const lifetime = new AbortController();
+    const entered = Promise.withResolvers<KernelSyscallRequest>();
+    const response = Promise.withResolvers<KernelSyscallResponse>();
+    const cancellationFinished = Promise.withResolvers<void>();
+    const cancellations: { readonly id: string; readonly reason: unknown }[] = [];
+    const client = createNodeFsSyscallClient({
+      rootDescriptor: 3,
+      posix: false,
+      signal: lifetime.signal,
+      syscalls: {
+        async call(request) {
+          entered.resolve(request);
+          return await response.promise;
+        },
+        async cancel(id, reason) {
+          cancellations.push({ id, reason });
+          await cancellationFinished.promise;
+        },
+      },
+    });
+    const backend = Object.assign(owned.filesystem, {
+      asynchronous<K extends NodeFsOperation>(
+        name: K,
+        args: NodeFsArguments<K>,
+        signal?: AbortSignal,
+      ): Promise<NodeFsResult<K>> {
+        return client.call(name, args, signal);
+      },
+    });
+    const stream = createNodeFs(backend).fs.createReadStream("/pending");
+    stream.on("error", () => {});
+    let closed = false;
+    const finished = new Promise<void>((resolve) => {
+      stream.once("close", () => {
+        closed = true;
+        resolve();
+      });
+    });
+    stream.resume();
+    const request = await entered.promise;
+    const reason = new Error("Stream read cancelled");
+    try {
+      expect(request.name).toBe("path_filestat_get");
+      stream.destroy(reason);
+      expect(cancellations).toEqual([{ id: request.operationId, reason }]);
+      response.resolve({ kind: "return", value: 0, regions: [] });
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      cancellationFinished.resolve();
+      await finished;
+      expect(lifetime.signal.aborted).toBe(false);
+    } finally {
+      stream.destroy();
+      response.resolve({ kind: "return", value: 44, regions: [] });
+      cancellationFinished.resolve();
+      await finished;
+      owned.close();
+    }
   });
 });

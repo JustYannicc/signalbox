@@ -10,13 +10,13 @@ import type { NodeFsSyscalls } from "./Calls.ts";
 
 export function createRemoteFileIo(
   calls: NodeFsSyscalls,
-  type: (path: string) => Promise<KernelStat["type"]>,
+  type: (path: string, signal?: AbortSignal) => Promise<KernelStat["type"]>,
 ) {
   const open = async (path: string, flags: number, mode?: number, signal?: AbortSignal) => {
     const parsed = parseOpenFlags(flags);
     let fileType: KernelStat["type"] = "file";
     try {
-      fileType = await type(path);
+      fileType = await type(path, signal);
     } catch (cause) {
       if (
         !(

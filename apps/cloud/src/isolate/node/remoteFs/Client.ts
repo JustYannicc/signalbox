@@ -54,9 +54,15 @@ export function createNodeFsSyscallClient(options: {
 }) {
   const calls = new NodeFsSyscalls(options.syscalls, options.rootDescriptor);
   const metadata = createRemoteFileMetadata(calls, options.posix);
+  const withLifetime = (signal?: AbortSignal) =>
+    options.signal === undefined
+      ? signal
+      : signal === undefined
+        ? options.signal
+        : AbortSignal.any([options.signal, signal]);
   const io = createRemoteFileIo(
     calls,
-    async (path) => (await metadata.lstat(path, options.signal)).type,
+    async (path, signal) => (await metadata.lstat(path, withLifetime(signal))).type,
   );
   const directories = createRemoteDirectories(calls, io);
   const operations = { ...metadata, ...io, ...directories };
@@ -69,13 +75,7 @@ export function createNodeFsSyscallClient(options: {
     ): Promise<NodeFsResult<K>> {
       const values: unknown[] = [...args];
       while (values.length < operands[name]) values.push(undefined);
-      const combined =
-        options.signal === undefined
-          ? signal
-          : signal === undefined
-            ? options.signal
-            : AbortSignal.any([options.signal, signal]);
-      values.push(combined);
+      values.push(withLifetime(signal));
       return await Reflect.apply(operations[name], operations, values);
     },
   };
