@@ -26,13 +26,13 @@ describe("CLI synchronous file working set", () => {
     const files = workingSet(size);
     files.replaceMetadata(4, [metadata("/sync", size), metadata("/async", 4)]);
     const ranges: number[][] = [];
-    await files.prefetch("/sync", async (offset, length, revision) => {
-      ranges.push([offset, length, revision]);
+    await files.prefetch("/sync", async (offset, length) => {
+      ranges.push([offset, length]);
       return new Uint8Array(length).fill(9);
     });
     expect(ranges).toEqual([
-      [0, KERNEL_SYSCALL_MAX_IO_BYTES, 4],
-      [KERNEL_SYSCALL_MAX_IO_BYTES, 7, 4],
+      [0, KERNEL_SYSCALL_MAX_IO_BYTES],
+      [KERNEL_SYSCALL_MAX_IO_BYTES, 7],
     ]);
     expect(files.bytes).toBe(size);
     expect(() => files.content("/async")).toThrow("not prefetched");
@@ -66,6 +66,22 @@ describe("CLI synchronous file working set", () => {
     expect(() => files.replaceContent("/a", new Uint8Array(4))).toThrow("working set needs");
     expect(files.content("/a")).toEqual(new Uint8Array([1, 2, 3]));
     expect(files.bytes).toBe(3);
+    await files.close();
+  });
+
+  it("keeps bytes of an unchanged file across a metadata re-index", async () => {
+    const files = workingSet(16);
+    const grown = (size: number) => {
+      const entry = metadata("/grown", size);
+      return { ...entry, stat: { ...entry.stat, ino: 2n } };
+    };
+    files.replaceMetadata(1, [metadata("/same", 4), grown(4)]);
+    await files.prefetch("/same", async () => new Uint8Array([1, 2, 3, 4]));
+    await files.prefetch("/grown", async () => new Uint8Array(4));
+    files.replaceMetadata(7, [metadata("/same", 4), grown(5)]);
+    expect(files.content("/same")).toEqual(new Uint8Array([1, 2, 3, 4]));
+    expect(() => files.content("/grown")).toThrow("not prefetched");
+    expect(files.bytes).toBe(4);
     await files.close();
   });
 

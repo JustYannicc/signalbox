@@ -22,7 +22,9 @@ export async function cliFileBackendFixture(
       fs: ReturnType<typeof createNodeFs>["fs"],
       files: import("../../../kernel/KernelFileSystem.ts").KernelFileSystem,
     ) => void;
-    /** Runs inside each view refresh, after it starts reading Computer metadata. */
+    /** Computer without a change feed, as when the machine layer changed. */
+    readonly changeFeed?: false;
+    /** Runs inside each view read of Computer: a full index or an incremental round. */
     readonly duringRefresh?: () => void;
   } = {},
 ) {
@@ -51,7 +53,9 @@ export async function cliFileBackendFixture(
       commands: () => {
         throw new Error("Filesystem test cannot execute a process");
       },
-      compatibilityRevision: () => owned.persistenceRevision(),
+      fileRevision: () => ({ files: owned.persistenceRevision(), machine: 0 }),
+      fileChanges: (since: number) =>
+        options.changeFeed === false ? undefined : owned.fileChanges(since),
     },
     {
       process: {
@@ -77,14 +81,25 @@ export async function cliFileBackendFixture(
   );
   const requests: KernelSyscallRequest[] = [];
   let failWrites = false;
-  let prefetchGate:
+  type ViewRead = "metadata" | "changes" | "lookup" | "prefetch";
+  let gate:
     | {
+        methods: readonly ViewRead[];
         entered: ReturnType<typeof Promise.withResolvers<void>>;
         release: ReturnType<typeof Promise.withResolvers<void>>;
       }
     | undefined;
   let privateLease: number | undefined;
   let refreshes = 0;
+  let rounds = 0;
+  let prefetchedBytes = 0;
+  const held = async (method: ViewRead) => {
+    const current = gate;
+    if (current === undefined || !current.methods.includes(method)) return;
+    gate = undefined;
+    current.entered.resolve();
+    await current.release.promise;
+  };
   const kernel = new Proxy(owner, {
     get(target, property) {
       if (property === "metadata")
@@ -94,7 +109,23 @@ export async function cliFileBackendFixture(
             refreshes++;
             options.duringRefresh?.();
           }
+          await held("metadata");
           return page;
+        };
+      if (property === "changes")
+        return async (...args: Parameters<ClaudeCliKernelOwner["changes"]>) => {
+          const changes = await target.changes(...args);
+          rounds++;
+          options.duringRefresh?.();
+          await held("changes");
+          return changes;
+        };
+      if (property === "lookup")
+        return async (...args: Parameters<ClaudeCliKernelOwner["lookup"]>) => {
+          const results = await target.lookup(...args);
+          options.duringRefresh?.();
+          await held("lookup");
+          return results;
         };
       if (property === "leaseDescriptors")
         return async (count: number) => {
@@ -105,12 +136,8 @@ export async function cliFileBackendFixture(
       if (property === "prefetch")
         return async (...args: Parameters<ClaudeCliKernelOwner["prefetch"]>) => {
           const bytes = await target.prefetch(...args);
-          const gate = prefetchGate;
-          if (gate !== undefined) {
-            prefetchGate = undefined;
-            gate.entered.resolve();
-            await gate.release.promise;
-          }
+          prefetchedBytes += bytes.byteLength;
+          await held("prefetch");
           return bytes;
         };
       if (property === "call")
@@ -156,17 +183,29 @@ export async function cliFileBackendFixture(
     get privateLease() {
       return privateLease!;
     },
+    /** Full metadata indexes, including the startup index. */
     get refreshes() {
       return refreshes;
     },
+    /** Incremental rounds, each one change query. */
+    get rounds() {
+      return rounds;
+    },
+    get prefetchedBytes() {
+      return prefetchedBytes;
+    },
+    revision: () => owned.persistenceRevision(),
+    sql: owned.storage.sql,
     requests,
-    holdNextPrefetch() {
-      const gate = {
+    /** Holds the next matching view read of Computer until released. */
+    holdNext(...methods: ViewRead[]) {
+      const next = {
+        methods,
         entered: Promise.withResolvers<void>(),
         release: Promise.withResolvers<void>(),
       };
-      prefetchGate = gate;
-      return { entered: gate.entered.promise, release: () => gate.release.resolve() };
+      gate = next;
+      return { entered: next.entered.promise, release: () => next.release.resolve() };
     },
     failWrites() {
       failWrites = true;

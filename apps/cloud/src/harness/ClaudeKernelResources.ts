@@ -101,9 +101,12 @@ export function createClaudeKernelResources(
   return {
     storage,
     // The lower view has no global change clock. Its owner brackets machine changes with this
-    // epoch; canonical SQLite changes still count even when KernelFileSystem cannot attest all mounts.
-    compatibilityRevision: () =>
-      storage.persistence.storage.changeGeneration() + (profile?.metadataEpoch() ?? 0),
+    // epoch; canonical filesystem changes still count even when KernelFileSystem cannot attest all mounts.
+    fileRevision: () => ({
+      files: storage.persistence.storage.changeGeneration(),
+      machine: profile?.metadataEpoch() ?? 0,
+    }),
+    fileChanges: (since: number) => storage.persistence.storage.changedInodes?.(since),
     stdio,
     processes,
     systemIdentity,

@@ -94,6 +94,9 @@ export class CliDescriptorViews {
   isPublic(fd: number) {
     return this.#views.has(fd);
   }
+  pathOf(fd: number) {
+    return this.#views.get(fd)?.path;
+  }
   get(fd: number) {
     this.#files.assertCurrent();
     const view = this.#views.get(fd);
@@ -175,9 +178,8 @@ export class CliDescriptorViews {
           throw cause;
         }
       };
-      // Only a creation changes the view: its inode identity arrives at the next refresh.
-      if (created) this.#files.writes.enqueue(0, openRemote);
-      else this.#files.writes.order(openRemote);
+      // A created file's inode identity arrives when Computer confirms the projection.
+      this.#files.writes.enqueue(0, openRemote);
       this.#leased.shift();
       this.#views.set(fd, {
         path: canonical,
@@ -343,8 +345,9 @@ export class CliDescriptorViews {
       )
         this.#files.updateMetadata({ ...entry, stat: { ...entry.stat, size } });
   }
-  releaseNamedContent() {
+  releaseNamedContent(matches: (view: ReadView) => boolean = () => true) {
     for (const view of this.#views.values()) {
+      if (!matches(view)) continue;
       const named = this.#files.entries.some(
         (entry) =>
           !entry.pending && entry.stat.ino === view.stat.ino && entry.stat.dev === view.stat.dev,
@@ -355,8 +358,9 @@ export class CliDescriptorViews {
       view.content = undefined;
     }
   }
-  async refresh() {
+  async refresh(matches: (view: ReadView) => boolean = () => true) {
     for (const [fd, view] of this.#views) {
+      if (!matches(view)) continue;
       const previous = view.stat;
       view.stat = await this.#remote.fstat(fd);
       const entry = this.#files.entries.find(

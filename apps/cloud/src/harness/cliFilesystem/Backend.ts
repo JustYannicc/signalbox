@@ -13,6 +13,7 @@ import { CliFileWorkingSet, withStat } from "./WorkingSet.ts";
 import { CliFilePaths } from "./Paths.ts";
 import { CliDescriptorViews } from "./Descriptors.ts";
 import { createCliMetadataMutations } from "./Mutations.ts";
+import { createCliFileSync } from "./Sync.ts";
 
 const mutating = new Set<NodeFsOperation>([
   "chmod",
@@ -52,24 +53,6 @@ export async function createCliFileBackend(
   const views = new CliDescriptorViews(files, paths, remote, (fd) => kernel.reserveDescriptor(fd));
   const disposals = new Set<() => void>();
   const operations = new Set<Promise<unknown>>();
-  let remoteMutations = 0;
-  let refreshedVersion = 0;
-  let reconciling: Promise<void> | undefined;
-  const refresh = async () => {
-    const entries = [];
-    let cursor = 0;
-    let revision: number | undefined;
-    do {
-      const page = await kernel.metadata(cursor, revision);
-      revision ??= page.revision;
-      if (page.revision !== revision || (page.next !== null && page.next <= cursor))
-        throw kernelError("ESTALE");
-      entries.push(...page.entries);
-      if (entries.length > input.workingSet.metadataLimit) throw kernelError("E2BIG");
-      cursor = page.next ?? -1;
-    } while (cursor >= 0);
-    files.replaceMetadata(revision!, entries);
-  };
   const prefetch = async (requested: readonly string[]) => {
     const release: (() => void)[] = [];
     try {
@@ -103,7 +86,7 @@ export async function createCliFileBackend(
         }
         await files.prefetch(
           canonical,
-          (offset, length, revision) => kernel.prefetch(canonical, offset, length, revision),
+          (offset, length) => kernel.prefetch(canonical, offset, length),
           signal,
         );
         release.push(files.pin(canonical));
@@ -119,44 +102,96 @@ export async function createCliFileBackend(
     })().finally(() => {
       leasing = undefined;
     }));
-  const reconcile = () =>
-    (reconciling ??= (async () => {
-      while (remoteMutations === 0) {
-        await files.writes.flush();
-        const committedVersion = files.writes.version;
-        const requested = [...new Set([...input.workingSet.paths, ...files.paths])];
-        await refresh();
-        views.releaseNamedContent();
-        await prefetch(requested);
-        await views.refresh();
-        await refillLeases();
-        if (committedVersion !== files.writes.version) continue;
-        refreshedVersion = committedVersion;
-        return;
+  const fileSync = createCliFileSync({
+    files,
+    views,
+    kernel,
+    metadataLimit: input.workingSet.metadataLimit,
+    requested: input.workingSet.paths,
+    prefetch,
+    canonical(path) {
+      try {
+        return paths.resolve(path);
+      } catch {
+        return undefined;
       }
-    })().finally(() => {
-      reconciling = undefined;
-    }));
-  // Output needs only the CLI's own writes in Computer. A refresh re-reads the whole view across
-  // RPC and restarts after any change, so output that waited for it could wait indefinitely.
-  const commit = async () => {
+    },
+  });
+  // Children and SDK file calls change Computer outside the CLI; the view is invalid until then.
+  let remoteMutations = 0;
+  let syncing: Promise<void> | undefined;
+  let requestedRounds = 0;
+  let completedRounds = 0;
+  /** Waits for a round that started after this call, so it covers everything committed before. */
+  const sync = async () => {
+    const wanted = ++requestedRounds;
+    while (completedRounds < wanted && remoteMutations === 0) {
+      if (syncing === undefined) {
+        const covers = requestedRounds;
+        syncing = (async () => {
+          await fileSync.round();
+          await refillLeases();
+          completedRounds = Math.max(completedRounds, covers);
+        })().finally(() => {
+          syncing = undefined;
+        });
+      }
+      await syncing;
+    }
+  };
+  const committed = async () => {
     await files.writes.flush();
-    await kernel.processState(paths.cwd, policy?.umask);
+    return kernel.processState(paths.cwd, policy?.umask);
+  };
+  // Output needs only the CLI's own writes in Computer, never a view round.
+  const commit = async () => {
+    await committed();
   };
   const barrier = async () => {
-    await commit();
-    if (refreshedVersion !== files.writes.version) await reconcile();
+    const revision = await committed();
+    if (remoteMutations === 0 && (revision !== files.revision || files.projections.size > 0))
+      await sync();
     else await refillLeases();
+    // Writes queued while the round read Computer still commit before callers rely on them.
+    await files.writes.flush();
   };
   const beforeRemote = async () => {
-    while (reconciling !== undefined) await reconciling;
     await barrier();
+    // Another caller's round failing is that caller's error; the bracket re-syncs afterwards.
+    while (syncing !== undefined) await syncing.catch(() => undefined);
     remoteMutations++;
     files.invalidate();
   };
   const afterRemote = async () => {
     remoteMutations--;
-    if (remoteMutations === 0 && !signal.aborted) await reconcile();
+    if (remoteMutations > 0 || signal.aborted) return;
+    files.validate();
+    await sync();
+  };
+  /** Async calls bypass projection, so their targets' cached bytes are Computer's, not the CLI's. */
+  const markRemote = (values: readonly unknown[], pathIndices: readonly number[]) => {
+    const targets = pathIndices.flatMap((index) => {
+      const path = values[index];
+      if (typeof path !== "string") return [];
+      // Only canonical names: a lexical path through a symlink is not a view entry. The call
+      // may have acted on the link or its target, so both are marked.
+      return [
+        () => paths.resolve(path, false),
+        () => paths.resolve(path),
+        () => paths.destination(path),
+      ].flatMap((canonical) => {
+        try {
+          return [canonical()];
+        } catch {
+          return [];
+        }
+      });
+    });
+    if (pathIndices.length === 0 && typeof values[0] === "number") {
+      const path = views.pathOf(values[0]);
+      if (path !== undefined) targets.push(path);
+    }
+    for (const path of targets) files.projections.touch(path, true);
   };
   const run = <K extends NodeFsOperation>(
     name: K,
@@ -210,7 +245,6 @@ export async function createCliFileBackend(
               : [];
       for (const index of pathIndices)
         if (typeof values[index] === "string") values[index] = paths.absolute(values[index]);
-      if (mutation) await beforeRemote();
       try {
         const result = await remote.call(name, values as NodeFsArguments<K>, userSignal);
         if (name === "open") {
@@ -237,7 +271,10 @@ export async function createCliFileBackend(
           );
         return result;
       } finally {
-        if (mutation) await afterRemote();
+        if (mutation) {
+          markRemote(values, pathIndices);
+          await sync();
+        }
       }
     })();
     operations.add(operation);
@@ -247,8 +284,7 @@ export async function createCliFileBackend(
     );
     return operation;
   };
-  await refresh();
-  await prefetch(input.workingSet.paths);
+  await fileSync.index();
   await refillLeases();
   const metadata = (path: string, follow = true) => {
     const entry = files.metadata(paths.resolve(path, follow));
@@ -399,10 +435,7 @@ export async function createCliFileBackend(
       // Node's synchronous call queues delivery; the shared barrier exposes any owner rejection.
       files.writes.enqueue(0, () => kernel.signalProcess(selector, number));
     },
-    async refresh() {
-      await barrier();
-      await reconcile();
-    },
+    refresh: barrier,
     async close() {
       const failures: unknown[] = [];
       for (const dispose of disposals)

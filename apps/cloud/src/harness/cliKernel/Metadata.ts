@@ -1,5 +1,6 @@
 import type { KernelFileSystem } from "../../kernel/KernelFileSystem.ts";
 import type { CliFileMetadata } from "../CliFileWorkingSet.ts";
+import type { ClaudeCliLookup } from "../ClaudeCliKernelPort.ts";
 import { kernelError } from "../../kernel/KernelErrno.ts";
 import { nodeFsError } from "../../isolate/NodeFsError.ts";
 
@@ -57,4 +58,50 @@ export async function readCliMetadata(
   };
   await visit("/");
   return entries;
+}
+
+/** Reads named paths now; a denial asks the CLI to re-index so denial rules stay in one place. */
+export async function lookupCliPaths(
+  filesystem: KernelFileSystem,
+  paths: readonly string[],
+  signal: AbortSignal,
+): Promise<ClaudeCliLookup[]> {
+  const code = (cause: unknown) =>
+    typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : "";
+  const results: ClaudeCliLookup[] = [];
+  for (const path of paths) {
+    signal.throwIfAborted();
+    if (typeof path !== "string" || !path.startsWith("/"))
+      throw new TypeError("CLI lookup paths must be absolute");
+    let stat;
+    try {
+      stat = await filesystem.lstatAsync(path, signal);
+    } catch (cause) {
+      const failure = code(cause);
+      if (failure === "ENOENT" || failure === "ENOTDIR") results.push({ path, missing: true });
+      else if (failure === "EACCES") results.push({ path, denied: true });
+      else throw nodeFsError(cause, "lstat", path);
+      continue;
+    }
+    let target: string | undefined;
+    if (stat.type === "symlink") {
+      try {
+        target = filesystem.readlink(path);
+      } catch (cause) {
+        throw nodeFsError(cause, "readlink", path);
+      }
+    }
+    const entry: CliFileMetadata = { path, stat, ...(target === undefined ? {} : { target }) };
+    if (stat.type !== "directory") {
+      results.push({ path, entry });
+      continue;
+    }
+    try {
+      results.push({ path, entry, names: await filesystem.readdirAsync(path, signal) });
+    } catch (cause) {
+      if (code(cause) !== "EACCES") throw nodeFsError(cause, "scandir", path);
+      results.push({ path, denied: true });
+    }
+  }
+  return results;
 }

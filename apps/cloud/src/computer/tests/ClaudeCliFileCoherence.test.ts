@@ -91,7 +91,7 @@ describe("CLI filesystem coherence", () => {
 
   it("refreshes one remote mutation before admitting another during prefetch", async () => {
     const f = await fixture();
-    const gate = f.holdNextPrefetch();
+    const gate = f.holdNext("prefetch");
     let first: Promise<void> | undefined;
     let second: Promise<void> | undefined;
     try {

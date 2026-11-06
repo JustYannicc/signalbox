@@ -18,6 +18,18 @@ export interface ClaudeCliMetadataPage {
   readonly next: number | null;
 }
 
+/** `inodes` is null when Computer can't list what changed after the base revision. */
+export interface ClaudeCliChanges {
+  readonly revision: number;
+  readonly inodes: readonly bigint[] | null;
+}
+
+/** One path read at call time. `names` lists a readable directory. */
+export type ClaudeCliLookup =
+  | { readonly path: string; readonly entry: CliFileMetadata; readonly names?: readonly string[] }
+  | { readonly path: string; readonly missing: true }
+  | { readonly path: string; readonly denied: true };
+
 export interface ClaudeCliChild {
   readonly pid: number;
   readonly handle: KernelHandle<"process">;
@@ -34,15 +46,19 @@ export interface ClaudeCliChild {
 /** All mutable kernel state stays behind this capability in Computer. */
 export interface ClaudeCliKernelPort extends KernelSyscallPort {
   cancel(id: string, reason?: unknown): Promise<void>;
+  /** Pages one index snapshot. Its revision is where the read started; later changes are in `changes`. */
   metadata(cursor: number, revision?: number): Promise<ClaudeCliMetadataPage>;
-  prefetch(path: string, offset: number, length: number, revision: number): Promise<Uint8Array>;
+  changes(since: number): Promise<ClaudeCliChanges>;
+  lookup(paths: readonly string[]): Promise<readonly ClaudeCliLookup[]>;
+  prefetch(path: string, offset: number, length: number): Promise<Uint8Array>;
   leaseProcesses(
     count: number,
   ): Promise<readonly { readonly pid: number; readonly handle: KernelHandle<"process"> }[]>;
   leaseDescriptors(count: number): Promise<readonly number[]>;
   reserveDescriptor(fd: number): Promise<void>;
   signalProcess(selector: number, signal: number): Promise<void>;
-  processState(cwd: string, umask: number | undefined): Promise<void>;
+  /** Returns the filesystem revision after the CLI's committed state. */
+  processState(cwd: string, umask: number | undefined): Promise<number>;
   sdkFiles(id: string, operation: string, args: readonly unknown[]): Promise<ClaudeSdkFsReply>;
   spawn(
     id: string,

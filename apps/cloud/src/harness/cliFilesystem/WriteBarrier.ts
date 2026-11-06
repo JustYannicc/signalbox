@@ -5,10 +5,6 @@ export class CliWriteBarrier {
   #tail = Promise.resolve();
   #failure: { readonly cause: unknown } | undefined;
   #closed = false;
-  #version = 0;
-  get version() {
-    return this.#version;
-  }
   readonly budget;
   constructor(budget: CliWorkingSetBudget) {
     this.budget = budget;
@@ -19,17 +15,13 @@ export class CliWriteBarrier {
     if (this.#closed) throw new Error("CLI filesystem working set is closed");
   }
 
-  enqueue(bytes: number, commit: () => Promise<void>, cleanup = false, prepare?: () => void) {
-    this.#append(bytes, commit, cleanup, prepare);
-    this.#version++;
-  }
-
-  /** Orders descriptor bookkeeping that changes no path, metadata or bytes, so the view stays current. */
+  /** Orders descriptor bookkeeping that changes no path, metadata or bytes. */
   order(commit: () => Promise<void>, cleanup = false) {
-    this.#append(0, commit, cleanup);
+    this.enqueue(0, commit, cleanup);
   }
 
-  #append(bytes: number, commit: () => Promise<void>, cleanup: boolean, prepare?: () => void) {
+  /** `prepare` projects the change into the view; it runs only once the bytes are reserved. */
+  enqueue(bytes: number, commit: () => Promise<void>, cleanup = false, prepare?: () => void) {
     this.assertHealthy();
     const release = this.budget.reserve(bytes);
     try {

@@ -76,7 +76,7 @@ describe("CLI filesystem transactions", () => {
     }
   });
 
-  it("does not publish writes queued during reconciliation before they physically commit", async () => {
+  it("does not publish writes queued during a view round before they physically commit", async () => {
     vi.useFakeTimers();
     const writeEntered = Promise.withResolvers<void>(),
       releaseWrite = Promise.withResolvers<void>();
@@ -93,7 +93,7 @@ describe("CLI filesystem transactions", () => {
         return result;
       },
     });
-    const gate = f.holdNextPrefetch();
+    const gate = f.holdNext("lookup");
     let result: string | undefined;
     let reading: Promise<string> | undefined;
     try {

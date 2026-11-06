@@ -6,6 +6,8 @@ import type { Storage } from "./storage.ts";
  */
 export interface ChangeGenerationStorage extends Storage {
   changeGeneration(): number;
+  /** Inodes changed after `since`, or undefined when this incarnation can't say. */
+  changedInodes?(since: number): readonly bigint[] | undefined;
 }
 
 export function hasChangeGeneration(storage: unknown): storage is ChangeGenerationStorage {

@@ -3,6 +3,7 @@ import type { KernelStat } from "../../kernel/KernelFileSystem.ts";
 import { CliWorkingSetBudget, CliWorkingSetLimit } from "./Budget.ts";
 import { CliWriteBarrier } from "./WriteBarrier.ts";
 import { CliContentStore, contentMiss } from "./Content.ts";
+import { CliProjections, type CliProjectionSnapshot } from "./Projections.ts";
 
 export interface CliFileMetadata {
   readonly path: string;
@@ -27,6 +28,20 @@ export function withStat(entry: CliFileMetadata, stat: KernelStat): CliFileMetad
   return { ...rest, stat, unindexed: true };
 }
 
+type CliMetadataUpdate = CliFileMetadata | { readonly path: string; readonly removed: true };
+
+export const parentOf = (path: string) => path.slice(0, path.lastIndexOf("/")) || "/";
+
+/** Bytes are only reused when Computer still reports the same file version. */
+const sameFile = (before: KernelStat | undefined, after: KernelStat | undefined) =>
+  before !== undefined &&
+  after?.type === "file" &&
+  before.type === "file" &&
+  before.ino === after.ino &&
+  before.dev === after.dev &&
+  before.size === after.size &&
+  before.mtimeNs === after.mtimeNs;
+
 export interface CliFileWorkingSetOptions {
   readonly byteLimit: number;
   readonly metadataLimit: number;
@@ -37,6 +52,7 @@ export interface CliFileWorkingSetOptions {
 export class CliFileWorkingSet {
   readonly #budget;
   readonly writes;
+  readonly projections = new CliProjections();
   readonly #metadata = new Map<string, CliFileMetadata>();
   readonly #content;
   readonly #prefetching = new Set<string>();
@@ -74,6 +90,7 @@ export class CliFileWorkingSet {
       throw Object.assign(new Error("CLI filesystem metadata needs refresh"), { code: "ESTALE" });
   }
 
+  /** A full re-index. Unconfirmed projections and unchanged file bytes survive it. */
   replaceMetadata(revision: number, entries: readonly CliFileMetadata[]) {
     this.writes.assertHealthy();
     if (!Number.isSafeInteger(revision) || revision < 0)
@@ -97,11 +114,43 @@ export class CliFileWorkingSet {
         },
       });
     }
-    if (this.#revision !== revision) this.#content.invalidate();
+    for (const path of this.projections.paths) {
+      const current = this.#metadata.get(path);
+      if (current === undefined) metadata.delete(path);
+      else metadata.set(path, current);
+    }
+    if (metadata.size > this.#options.metadataLimit)
+      throw new CliWorkingSetLimit(metadata.size, this.#options.metadataLimit);
+    this.#content.project(
+      this.#content.paths.filter(
+        (path) =>
+          !this.projections.projected(path) &&
+          !sameFile(this.#metadata.get(path)?.stat, metadata.get(path)?.stat),
+      ),
+      [],
+    );
     this.#metadata.clear();
     for (const [path, entry] of metadata) this.#metadata.set(path, entry);
     this.#revision = revision;
     this.#invalid = false;
+  }
+
+  /** Applies Computer reads taken after `snapshot`, except where the CLI projected since. */
+  sync(
+    revision: number,
+    updates: readonly CliMetadataUpdate[],
+    evict: readonly string[],
+    snapshot: CliProjectionSnapshot,
+  ) {
+    this.assertCurrent();
+    if (!Number.isSafeInteger(revision) || revision < 0)
+      throw new TypeError("Invalid Computer filesystem revision");
+    const current = (path: string) => !this.projections.movedSince(snapshot, path);
+    const apply = this.#prepare(updates.filter((update) => current(update.path)));
+    this.#content.project(evict.filter(current), []);
+    apply();
+    this.projections.settle(snapshot);
+    this.#revision = revision;
   }
 
   metadata(path: string) {
@@ -160,7 +209,7 @@ export class CliFileWorkingSet {
 
   async prefetch(
     path: string,
-    read: (offset: number, length: number, revision: number) => Promise<Uint8Array>,
+    read: (offset: number, length: number) => Promise<Uint8Array>,
     signal?: AbortSignal,
   ) {
     const revision = this.revision;
@@ -171,6 +220,7 @@ export class CliFileWorkingSet {
       throw new CliWorkingSetLimit(Number.POSITIVE_INFINITY, this.#options.byteLimit);
     const size = Number(stat.size);
     if (this.#content.has(path)) return;
+    const projection = this.projections.seq(path);
     if (this.#prefetching.has(path))
       throw Object.assign(new Error(`CLI prefetch is already active: ${path}`), { code: "EBUSY" });
     const release = this.#content.reserve(size);
@@ -180,7 +230,7 @@ export class CliFileWorkingSet {
       for (let offset = 0; offset < size;) {
         signal?.throwIfAborted();
         const length = Math.min(size - offset, KERNEL_SYSCALL_MAX_IO_BYTES);
-        const chunk = await read(offset, length, revision);
+        const chunk = await read(offset, length);
         if (chunk.byteLength === 0 || chunk.byteLength > length)
           throw new Error("Computer returned an invalid prefetched file range");
         if (this.revision !== revision)
@@ -195,6 +245,11 @@ export class CliFileWorkingSet {
         throw Object.assign(new Error("Computer revision changed during prefetch"), {
           code: "ESTALE",
         });
+      // A sync write projected these bytes meanwhile; they are newer than the read.
+      if (this.projections.seq(path) !== projection || this.#content.has(path)) {
+        release();
+        return;
+      }
       this.#content.put(path, bytes, release);
     } catch (cause) {
       release();
@@ -214,8 +269,27 @@ export class CliFileWorkingSet {
     this.assertCurrent();
     this.#content.replace(path, length, fill);
   }
+  /** Prepares a CLI projection; the returned commit records it until Computer confirms it. */
   project(
-    updates: readonly (CliFileMetadata | { readonly path: string; readonly removed: true })[],
+    updates: readonly CliMetadataUpdate[],
+    moves: readonly { from: string; to: string; copy?: true }[] = [],
+  ) {
+    const apply = this.#prepare(updates, moves);
+    const touched = new Set<string>();
+    for (const update of updates) {
+      touched.add(update.path);
+      if ("removed" in update || !this.#metadata.has(update.path))
+        touched.add(parentOf(update.path));
+    }
+    for (const move of moves)
+      for (const path of [move.from, move.to]) touched.add(path).add(parentOf(path));
+    return () => {
+      apply();
+      for (const path of touched) this.projections.touch(path);
+    };
+  }
+  #prepare(
+    updates: readonly CliMetadataUpdate[],
     moves: readonly { from: string; to: string; copy?: true }[] = [],
   ) {
     this.assertCurrent();
@@ -248,11 +322,14 @@ export class CliFileWorkingSet {
       for (const [path, entry] of next) this.#metadata.set(path, entry);
     };
   }
-  updateMetadata(entry: CliFileMetadata | { readonly path: string; readonly removed: true }) {
+  updateMetadata(entry: CliMetadataUpdate) {
     this.project([entry])();
   }
   invalidate() {
     this.#invalid = true;
+  }
+  validate() {
+    if (this.#revision !== undefined) this.#invalid = false;
   }
   evict(path: string) {
     this.#content.evict(path);

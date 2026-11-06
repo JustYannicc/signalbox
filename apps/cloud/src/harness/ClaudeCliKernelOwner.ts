@@ -1,7 +1,11 @@
 // @effect-diagnostics cryptoRandomUUID:off - RPC operations exist outside Effect scopes.
 import { RpcTarget } from "cloudflare:workers";
 import type { createClaudeKernelResources } from "./ClaudeKernelResources.ts";
-import type { ClaudeCliKernelPort, ClaudeCliMetadataPage } from "./ClaudeCliKernelPort.ts";
+import type {
+  ClaudeCliChanges,
+  ClaudeCliKernelPort,
+  ClaudeCliMetadataPage,
+} from "./ClaudeCliKernelPort.ts";
 import type { ClaudeKernelInitialize } from "./ClaudeKernelSessionPort.ts";
 import type { CliFileMetadata } from "./CliFileWorkingSet.ts";
 import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
@@ -14,14 +18,14 @@ import { createNodeComputerChildProcess } from "../isolate/NodeComputerProcess.t
 import { NodeChildControl, createCliProcessLeases } from "./cliKernel/Children.ts";
 import { kernelError } from "../kernel/KernelErrno.ts";
 import { nodeProcessSignalError } from "../isolate/NodeProcessSignals.ts";
-import { readCliMetadata } from "./cliKernel/Metadata.ts";
+import { lookupCliPaths, readCliMetadata } from "./cliKernel/Metadata.ts";
 import { hasPrivateDescriptorAlias } from "./cliKernel/DescriptorAliases.ts";
 import { nodeFsError } from "../isolate/NodeFsError.ts";
 
 type OwnerResources = ReturnType<typeof createClaudeKernelResources>;
 type Resources = Pick<
   OwnerResources,
-  "processes" | "stdio" | "commands" | "compatibilityRevision"
+  "processes" | "stdio" | "commands" | "fileRevision" | "fileChanges"
 > & {
   readonly storage: Pick<OwnerResources["storage"], "files">;
 };
@@ -42,6 +46,8 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
   readonly #metadataLimit;
   readonly rootDescriptor;
   #snapshot: { revision: number; entries: CliFileMetadata[] } | undefined;
+  /** Revisions handed to the CLI, so a later change query knows which parts moved. */
+  readonly #issued = new Map<number, { readonly files: number; readonly machine: number }>();
   #closed: Promise<void> | undefined;
 
   constructor(
@@ -160,45 +166,71 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
     else if (this.#children.has(id)) await this.#children.get(id)!.dispose();
     else if (this.#cancelled.size < 64) this.#cancelled.set(id, reason);
   }
-  #revision() {
+  #revision(issue = false) {
     this.#lifetime.throwIfAborted();
-    const revision = this.#resources.compatibilityRevision();
-    if (revision === undefined) throw new Error("Computer filesystem has no revision counter");
+    const parts = this.#resources.fileRevision();
+    // Each part never decreases, so an equal sum means neither moved.
+    const revision = parts.files + parts.machine;
+    if (!issue) return revision;
+    this.#issued.delete(revision);
+    this.#issued.set(revision, parts);
+    for (const issued of this.#issued.keys()) {
+      if (this.#issued.size <= 16) break;
+      this.#issued.delete(issued);
+    }
     return revision;
   }
   metadata(cursor: number, revision?: number): Promise<ClaudeCliMetadataPage> {
     return this.#run(crypto.randomUUID(), async (signal) => {
       if (!Number.isSafeInteger(cursor) || cursor < 0)
         throw new RangeError("Invalid CLI metadata cursor");
-      const current = this.#revision();
-      if (revision !== undefined && revision !== current) throw kernelError("ESTALE");
       if (cursor === 0) {
+        // Changes that land while indexing are after this revision, so the CLI re-reads them.
+        const started = this.#revision(true);
         const entries = await readCliMetadata(
           this.#resources.storage.files,
           this.#metadataLimit,
           signal,
         );
-        if (this.#revision() !== current) throw kernelError("ESTALE");
-        this.#snapshot = { revision: current, entries };
+        this.#snapshot = { revision: started, entries };
       }
       const snapshot = this.#snapshot;
       if (
         snapshot === undefined ||
-        snapshot.revision !== current ||
+        (revision !== undefined && snapshot.revision !== revision) ||
         cursor > snapshot.entries.length
       )
         throw kernelError("ESTALE");
       const end = Math.min(snapshot.entries.length, cursor + 64);
       return {
-        revision: current,
+        revision: snapshot.revision,
         entries: snapshot.entries.slice(cursor, end),
         next: end === snapshot.entries.length ? null : end,
       };
     });
   }
-  prefetch(path: string, offset: number, length: number, revision: number) {
+  changes(since: number): Promise<ClaudeCliChanges> {
+    return this.#run(crypto.randomUUID(), async () => {
+      const base = this.#issued.get(since);
+      const revision = this.#revision(true);
+      const current = this.#issued.get(revision)!;
+      // Machine changes have no inode feed; the CLI re-indexes metadata instead.
+      const inodes =
+        base === undefined || base.machine !== current.machine
+          ? undefined
+          : this.#resources.fileChanges(base.files);
+      return { revision, inodes: inodes ?? null };
+    });
+  }
+  lookup(paths: readonly string[]) {
     return this.#run(crypto.randomUUID(), async (signal) => {
-      if (revision !== this.#revision()) throw kernelError("ESTALE");
+      if (!Array.isArray(paths) || paths.length > 1024)
+        throw new RangeError("Invalid CLI lookup batch");
+      return lookupCliPaths(this.#resources.storage.files, paths, signal);
+    });
+  }
+  prefetch(path: string, offset: number, length: number) {
+    return this.#run(crypto.randomUUID(), async (signal) => {
       if (
         !Number.isSafeInteger(offset) ||
         offset < 0 ||
@@ -220,7 +252,6 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
           .catch((cause) => {
             throw nodeFsError(cause, "read", path);
           });
-        if (revision !== this.#revision()) throw kernelError("ESTALE");
         return target.subarray(0, count);
       } finally {
         try {
@@ -266,6 +297,7 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
     const files = this.#resources.storage.files;
     if (files.cwd !== cwd) files.chdir(cwd);
     if (umask !== undefined && umask !== files.posixPolicy?.umask) files.setUmask(umask);
+    return this.#revision();
   }
   sdkFiles(id: string, operation: string, args: readonly unknown[]) {
     return this.#run(id, (signal) => this.#sdkFiles.call(operation, args, signal));
@@ -341,6 +373,7 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
       this.#fds.clear();
       this.#publicFds.clear();
       this.#snapshot = undefined;
+      this.#issued.clear();
       const failures = results.flatMap((result) =>
         result.status === "rejected" ? [result.reason] : [],
       );
