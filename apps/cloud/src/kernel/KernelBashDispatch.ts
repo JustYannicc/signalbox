@@ -1,4 +1,5 @@
 import { RpcTarget } from "cloudflare:workers";
+import { retainRpcCapability } from "../rpc/Capability.ts";
 import { createKernelBashHost } from "./KernelBashHost.ts";
 import type { KernelAsyncProgramContext } from "./KernelAsyncProgram.ts";
 import type { KernelBashCredentials } from "./KernelBashProgram.ts";
@@ -41,6 +42,7 @@ class BashPhase extends RpcTarget implements KernelBashPhasePort {
   readonly #onAbort;
   #host: Awaited<ReturnType<Parameters<KernelBashWorkerRunner["run"]>[1]>> | undefined;
   #opened = false;
+  #execution: ReturnType<typeof retainRpcCapability<KernelBashPhaseExecution>> | undefined;
   constructor(
     context: KernelAsyncProgramContext,
     create: Parameters<KernelBashWorkerRunner["run"]>[1],
@@ -85,10 +87,18 @@ class BashPhase extends RpcTarget implements KernelBashPhasePort {
     if (!Number.isSafeInteger(residentByteLimit) || residentByteLimit < 1)
       throw new RangeError("Invalid Bash resident byte limit");
     this.#opened = true;
-    this.#host = this.#create(context, this.#lease, {
-      residentByteLimit,
-      handoff: () => execution.handoff(),
-    });
+    const capability = retainRpcCapability(execution);
+    this.#execution = capability;
+    try {
+      this.#host = this.#create(context, this.#lease, {
+        residentByteLimit,
+        handoff: () => capability.value.handoff(),
+      });
+    } catch (cause) {
+      capability[Symbol.dispose]();
+      this.#execution = undefined;
+      throw cause;
+    }
     return this.#host.host;
   }
   async aborted() {
@@ -114,6 +124,8 @@ class BashPhase extends RpcTarget implements KernelBashPhasePort {
       this.#requester.close();
       context?.signal.removeEventListener("abort", this.#onAbort);
       this.#abort.resolve({ aborted: false });
+      this.#execution?.[Symbol.dispose]();
+      this.#execution = undefined;
     }
   }
 }

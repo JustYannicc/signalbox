@@ -9,7 +9,7 @@ import type {
 } from "../kernel/KernelComputerAdmissionPort.ts";
 import type { ChildProgramCodes } from "./ChildProgramCodes.ts";
 import type { ChildWorkerLoaderPort } from "./WorkerLoaderDispatch.ts";
-import { createComputerProgramCatalog } from "./ComputerProgramCatalog.ts";
+import { ownComputerProgramCatalog } from "./ComputerProgramCatalogOwner.ts";
 import { ComputerProgramResolver } from "./ComputerProgramResolver.ts";
 import { ComputerEscalationTable } from "./EscalationTable.ts";
 import type { ComputerEscalationEvidence } from "./EscalationTable.ts";
@@ -65,19 +65,30 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
   constructor(options: ComputerProgramOwnerOptions) {
     super();
     this.#options = options;
-    this.#catalog = createComputerProgramCatalog(options.programs);
     this.#resolver = new ComputerProgramResolver({ path: options.path });
-    this.#normal = new ComputerEscalationTable(
-      options.rules,
-      createComputerIsolatePolicy([...this.#catalog.programs.keys(), "cd"]),
-    );
-    for (const [path, descriptor] of this.#catalog.programs) {
-      let program = this.#programs.get(descriptor.implementation);
-      if (program === undefined) {
-        program = createComputerOwnerProgram(descriptor, options.capacity, options.loader);
-        this.#programs.set(descriptor.implementation, program);
+    this.#catalog = ownComputerProgramCatalog(options.programs);
+    try {
+      this.#normal = new ComputerEscalationTable(
+        options.rules,
+        createComputerIsolatePolicy([...this.#catalog.programs.keys(), "cd"]),
+      );
+      for (const [path, descriptor] of this.#catalog.programs) {
+        let program = this.#programs.get(descriptor.implementation);
+        if (program === undefined) {
+          program = createComputerOwnerProgram(descriptor, options.capacity, options.loader);
+          this.#programs.set(descriptor.implementation, program);
+        }
+        this.#bindings.set(path, { manifest: descriptor.manifest, implementation: program });
       }
-      this.#bindings.set(path, { manifest: descriptor.manifest, implementation: program });
+    } catch (cause) {
+      try {
+        this.#catalog[Symbol.dispose]();
+      } catch (cleanup) {
+        throw new AggregateError([cause, cleanup], "Computer program startup failed", {
+          cause: cleanup,
+        });
+      }
+      throw cause;
     }
   }
   async registrations() {
@@ -258,10 +269,13 @@ export class ComputerProgramOwner extends RpcTarget implements ComputerProgramOw
       const releases = await Promise.allSettled(
         [...this.#pending.values()].map(async (request) => request.release()),
       );
+      const sources = await Promise.allSettled([
+        Promise.resolve().then(() => this.#catalog[Symbol.dispose]()),
+      ]);
       this.#pending.clear();
       this.#grants.clear();
       this.#earlyCancel.clear();
-      const failures = [...results, ...runners, ...releases].flatMap((result) =>
+      const failures = [...results, ...runners, ...releases, ...sources].flatMap((result) =>
         result.status === "rejected" ? [result.reason] : [],
       );
       if (failures.length > 0) throw new AggregateError(failures, "Computer owner cleanup failed");

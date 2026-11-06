@@ -1,5 +1,6 @@
 // @effect-diagnostics cryptoRandomUUID:off - invocation ids belong to the portable kernel RPC adapter.
 import { RpcTarget } from "cloudflare:workers";
+import { rpcStubOwner } from "../rpc/Resources.ts";
 import { KernelProgramExecAdmissionError } from "./KernelAsyncProgram.ts";
 import type { KernelAsyncProgramContext } from "./KernelAsyncProgram.ts";
 import type {
@@ -18,6 +19,7 @@ import type { KernelExecutableNamespaceOwner } from "./KernelExecutableNamespace
 import type { KernelChildRegistration } from "./KernelChildDispatchPort.ts";
 import type {
   ComputerProgramOwnerPort,
+  ComputerAdmissionResult,
   KernelComputerAdmissionCapture,
 } from "./KernelComputerAdmissionPort.ts";
 import { KernelChildDispatch } from "./KernelChildDispatch.ts";
@@ -42,6 +44,7 @@ const bindCapture = Symbol("bindCapture");
 const dispatchCapture = Symbol("dispatchCapture");
 const finishNamespaceCapture = Symbol("finishNamespaceCapture");
 const closeCapture = Symbol("closeCapture");
+const ownReplyCapture = Symbol("ownReplyCapture");
 const signalCapture = Symbol("signalCapture");
 
 class AdmissionCapture extends RpcTarget implements KernelComputerAdmissionCapture {
@@ -63,6 +66,7 @@ class AdmissionCapture extends RpcTarget implements KernelComputerAdmissionCaptu
   readonly #onAbort;
   #requester: ReturnType<typeof createKernelProcessAdmissionPort> | undefined;
   #claimed = false;
+  #reply: (() => Promise<void>) | undefined;
   constructor(request: KernelProgramAdmissionRequest, namespace: KernelExecutableNamespaceOwner) {
     super();
     this.#request = request;
@@ -164,13 +168,33 @@ class AdmissionCapture extends RpcTarget implements KernelComputerAdmissionCaptu
     this.#requester?.close();
     await this.#namespace.close();
   }
+  [ownReplyCapture](reply: ComputerAdmissionResult) {
+    const owner = rpcStubOwner(reply);
+    let released: Promise<void> | undefined;
+    this.#reply = () =>
+      (released ??= (async () => {
+        try {
+          if (reply.route === "child") await reply.grant.finished();
+        } finally {
+          owner[Symbol.dispose]();
+        }
+      })());
+  }
   async [closeCapture]() {
     const request = this.#request;
     this.#request = undefined;
     this.#context = undefined;
     request?.signal.removeEventListener("abort", this.#onAbort);
     this.#abort.resolve({ aborted: false });
-    await this[finishNamespaceCapture]();
+    try {
+      await this[finishNamespaceCapture]();
+    } finally {
+      try {
+        await this.#reply?.();
+      } finally {
+        this.#reply = undefined;
+      }
+    }
   }
   [signalCapture](signal: AbortSignal) {
     return AbortSignal.any([signal, this.#controller.signal]);
@@ -206,6 +230,7 @@ export function createKernelComputerAdmission(options: {
         },
         capture,
       );
+      capture[ownReplyCapture](result);
       capture[currentCapture]();
       if (result.route === "machine") {
         assertComputerForwardingSupported(request);
