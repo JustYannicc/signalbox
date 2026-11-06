@@ -120,34 +120,46 @@ export async function createCliFileBackend(
   // Children and SDK file calls change Computer outside the CLI. Meanwhile the view stays the last
   // consistent picture, which is what a reader racing a writer gets on Linux, and rounds catch it up.
   let remoteMutations = 0;
-  /** When the view last matched Computer; `behind` while a round couldn't bring it there. */
-  let confirmedAt = Number.NEGATIVE_INFINITY;
+  /** When a barrier last asked Computer, or a round last caught the view up. */
+  let checkedAt = Number.NEGATIVE_INFINITY;
+  /** The view lags Computer: a round failed, or could re-read only the CLI's own changes. */
   let behind = false;
+  /** Computer's revision when a round last re-read only the CLI's own changes. */
+  let ownRevision: number | undefined;
+  let failures = 0;
+  let retryAt = Number.NEGATIVE_INFINITY;
   let syncing: Promise<void> | undefined;
   let requestedRounds = 0;
   let completedRounds = 0;
   /**
    * Waits for a round that started after this call, so it covers everything committed before. A
-   * failed round leaves the view where it was for the next barrier to retry. It is never the CLI
-   * call's error: that call read or wrote Computer, not the view.
+   * failed round leaves the view where it was, and the next one waits out a growing backoff. It is
+   * never the CLI call's error: that call read or wrote Computer, not the view.
    */
   const sync = async () => {
     const wanted = ++requestedRounds;
-    while (completedRounds < wanted) {
+    while (completedRounds < wanted && performance.now() >= retryAt) {
       if (syncing === undefined) {
         const covers = requestedRounds;
         syncing = (async () => {
           const started = performance.now();
           try {
-            const caughtUp = await fileSync.round(remoteMutations > 0);
-            behind = !caughtUp;
-            if (caughtUp) confirmedAt = Math.max(confirmedAt, started);
+            const round = await fileSync.round(remoteMutations > 0);
+            behind = !round.caughtUp;
+            ownRevision = round.caughtUp ? undefined : round.revision;
+            if (round.caughtUp) checkedAt = Math.max(checkedAt, started);
+            failures = 0;
           } catch {
             behind = true;
+            ownRevision = undefined;
+            const retryMs = Math.min(30_000, 250 * 2 ** failures++);
+            retryAt = performance.now() + retryMs;
+            trace({ kind: "backoff", failures, retryMs });
           } finally {
             completedRounds = Math.max(completedRounds, covers);
           }
-          await refillLeases();
+          // Missing leases only make sync opens wait; the next barrier asks again.
+          await refillLeases().catch(() => undefined);
         })().finally(() => {
           syncing = undefined;
         });
@@ -168,13 +180,13 @@ export async function createCliFileBackend(
     // A miss's fetch finishes before the CLI's next call relies on it.
     await prefetcher.settled();
     const revision = await committed();
-    if (revision !== files.revision || files.projections.size > 0) await sync();
-    else {
-      if (!behind) confirmedAt = Math.max(confirmedAt, started);
-      await refillLeases();
-    }
+    // Only the CLI's own changes are readable while a machine command runs, and none came since.
+    const nothingNew = behind && ownRevision === revision && files.projections.size === 0;
+    if ((revision !== files.revision || files.projections.size > 0) && !nothingNew) await sync();
+    else await refillLeases().catch(() => undefined);
     // Writes queued while the round read Computer still commit before callers rely on them.
     await files.writes.flush();
+    checkedAt = Math.max(checkedAt, started);
   };
   let confirming: Promise<void> | undefined;
   const beforeRemote = async () => {
@@ -321,7 +333,7 @@ export async function createCliFileBackend(
     return (async () => {
       // One barrier a second covers every call, so changes nobody bracketed still show. It
       // waits for a round only when Computer moved; otherwise the view is already current.
-      if (performance.now() - confirmedAt >= METADATA_FRESH_MS)
+      if (performance.now() - checkedAt >= METADATA_FRESH_MS)
         await (confirming ??= barrier().finally(() => {
           confirming = undefined;
         }));
@@ -331,10 +343,13 @@ export async function createCliFileBackend(
         try {
           return direct.get(name)!.apply(backend, args) as NodeFsResult<K>;
         } catch (cause) {
-          // A listing the index never read is Computer's to answer.
+          // A listing the index never read is Computer's to answer, and its round may index it.
           if (!(cause instanceof CliViewMiss)) throw cause;
+          return remoteRun(name, args, userSignal);
         }
-      return remoteRun(name, args, userSignal);
+      // One call: the barrier above already ran this second, and only the CLI's writes must land.
+      await files.writes.flush();
+      return remote.call(name, [path, ...args.slice(1)] as NodeFsArguments<K>, userSignal);
     })();
   };
   await fileSync.index();
@@ -525,6 +540,7 @@ export async function createCliFileBackend(
       for (const close of [
         () => Promise.allSettled(operations),
         () => prefetcher.settled(),
+        () => prefetcher.close(),
         () => files.writes.flush(),
         () => views.closeAll(),
         () => files.close(),

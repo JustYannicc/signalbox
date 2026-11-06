@@ -225,10 +225,12 @@ export class CliFileWorkingSet {
     return this.#content.has(path);
   }
 
+  /** `outsideBudget` holds a file the CLI must always be able to read, whatever its size. */
   async prefetch(
     path: string,
     read: (offset: number, length: number) => Promise<Uint8Array>,
     signal?: AbortSignal,
+    outsideBudget = false,
   ) {
     const revision = this.revision;
     const stat = this.metadata(path).stat;
@@ -242,7 +244,7 @@ export class CliFileWorkingSet {
     const identity = this.#metadata.get(path)!;
     if (this.#prefetching.has(path))
       throw Object.assign(new Error(`CLI prefetch is already active: ${path}`), { code: "EBUSY" });
-    const release = this.#content.reserve(size);
+    const release = outsideBudget ? () => {} : this.#content.reserve(size);
     this.#prefetching.add(path);
     try {
       const bytes = new Uint8Array(size);

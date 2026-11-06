@@ -31,9 +31,9 @@ type Resources = Pick<
   readonly storage: Pick<OwnerResources["storage"], "files">;
 };
 
-/** The canonical Computer filesystem and process table are never handed to the CLI Worker. */
-
 const METADATA_PAGE_ENTRIES = 2048;
+
+/** The canonical Computer filesystem and process table are never handed to the CLI Worker. */
 export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPort {
   readonly #resources;
   readonly #configuration;

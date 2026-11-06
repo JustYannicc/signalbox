@@ -7,7 +7,7 @@ import {
   type DeviceInfo,
 } from "./filesystem/KernelVirtualDevices.ts";
 import { joinGuestPath } from "./filesystem/KernelPathResolver.ts";
-import { descriptorPathAlias } from "./filesystem/KernelPathAliases.ts";
+import { descriptorPathAlias, descriptorPathSuffix } from "./filesystem/KernelPathAliases.ts";
 import { currentKernelIoMode } from "./process/KernelExecution.ts";
 import { complete, type WasiCall } from "./wasi/internal_wasi_calls.ts";
 import { FDFLAGS, RIGHTS } from "./wasi/internal_wasi_descriptors.ts";
@@ -48,6 +48,18 @@ export function createKernelWasiDeviceAdapter(
   createInode: WasiCreationPolicy["createInode"] = filesystem.createInode.bind(filesystem),
 ): WasiFileSystemImportAdapter {
   return (memory, imports) => {
+    // The path calls take a create's mode before resolving, so a descriptor path keeps it here.
+    let mode: number | undefined;
+    // These calls resolve only the parent, so the hook saw the descriptor path without the leaf.
+    const withLeaf = (parent: string, pointer: number, length: number) => {
+      const leaf = memory
+        .string(pointer, length)
+        .split("/")
+        .filter((component) => component !== "" && component !== ".")
+        .at(-1);
+      if (leaf === undefined || leaf === "..") throw new WasiError(28);
+      return joinGuestPath(parent, [leaf]);
+    };
     const paths = new WasiPathResolver(
       complete,
       filesystem.assertWasiPathVisible.bind(filesystem),
@@ -57,9 +69,12 @@ export function createKernelWasiDeviceAdapter(
         // Existing directories, symlinks and shadowing files have already won the lookup.
         const tail = remaining.filter((component) => component !== "");
         const alias = joinGuestPath(missing, tail);
-        if (descriptorPathAlias(alias) !== undefined) {
+        // Linux resolves a name under /proc/self/fd/N from that descriptor's directory, as
+        // openat does, which is how Claude Code creates and checks its task output directories.
+        const exact = descriptorPathAlias(alias) !== undefined;
+        if (exact || descriptorPathSuffix(alias) !== undefined) {
           filesystem.assertWasiPathVisible(parent.mount, [...parent.pathComponents, name, ...tail]);
-          if (requireDirectory) throw new WasiError(54);
+          if (exact && requireDirectory) throw new WasiError(54);
           throw new DescriptorPath(alias, parent.mount);
         }
         const namespace = missing === "/dev";
@@ -81,7 +96,7 @@ export function createKernelWasiDeviceAdapter(
       paths,
       {
         createInode,
-        takeCreateMode: filesystem.takeNextCreateMode.bind(filesystem),
+        takeCreateMode: () => (mode = filesystem.takeNextCreateMode()),
       },
       () => filesystem.fileBytes,
       filesystem.assertPathSearchAllowed.bind(filesystem),
@@ -96,7 +111,11 @@ export function createKernelWasiDeviceAdapter(
           if (!(error instanceof DevicePath || error instanceof DescriptorPath)) throw error;
           const [, , , , oflags, rightsBase, , fdflags, output] = args;
           if ((oflags & 8) !== 0 && error.mount.readOnly) throw new WasiError(69);
-          const fd = filesystem.open(error.path, kernelOpenFlags(oflags, rightsBase, fdflags));
+          const fd = filesystem.open(
+            error.path,
+            kernelOpenFlags(oflags, rightsBase, fdflags),
+            (oflags & 1) !== 0 ? mode : undefined,
+          );
           try {
             const descriptor = filesystem.descriptors.get(fd);
             descriptor.rightsBase &= BigInt.asUintN(64, rightsBase);
@@ -150,6 +169,36 @@ export function createKernelWasiDeviceAdapter(
             .writeRange(args[3], used)
             .set(target.subarray(memory.transferOffset, memory.transferOffset + used));
           memory.u32(args[5], used);
+          return 0;
+        }
+      },
+      path_create_directory: function* (...args): WasiCall<number> {
+        try {
+          return yield* calls.imports.path_create_directory(...args);
+        } catch (error) {
+          if (!(error instanceof DescriptorPath)) throw error;
+          if (error.mount.readOnly) throw new WasiError(69);
+          filesystem.mkdir(withLeaf(error.path, args[1], args[2]), mode);
+          return 0;
+        }
+      },
+      path_unlink_file: function* (...args): WasiCall<number> {
+        try {
+          return yield* calls.imports.path_unlink_file(...args);
+        } catch (error) {
+          if (!(error instanceof DescriptorPath)) throw error;
+          if (error.mount.readOnly) throw new WasiError(69);
+          filesystem.unlink(withLeaf(error.path, args[1], args[2]));
+          return 0;
+        }
+      },
+      path_remove_directory: function* (...args): WasiCall<number> {
+        try {
+          return yield* calls.imports.path_remove_directory(...args);
+        } catch (error) {
+          if (!(error instanceof DescriptorPath)) throw error;
+          if (error.mount.readOnly) throw new WasiError(69);
+          filesystem.rmdir(withLeaf(error.path, args[1], args[2]));
           return 0;
         }
       },

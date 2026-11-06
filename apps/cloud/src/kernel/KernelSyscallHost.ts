@@ -211,8 +211,11 @@ export function createKernelSyscallHost(options: KernelSyscallHostOptions) {
                     const anchored = options.filesystem.fork(options.filesystem.descriptors);
                     try {
                       anchored.fchdir(Number(args[0]));
+                      const name = memory.string(Number(args[2]), Number(args[3]));
                       const fd = yield anchored.openAsync(
-                        memory.string(Number(args[2]), Number(args[3])),
+                        // From the root, a name is its absolute path, which is the only spelling
+                        // that reaches a descriptor alias such as /proc/self/fd/N/name.
+                        anchored.cwd === "/" && !name.startsWith("/") ? `/${name}` : name,
                         request.kernelOpenFlags!,
                         request.creationMode,
                         controller.signal,

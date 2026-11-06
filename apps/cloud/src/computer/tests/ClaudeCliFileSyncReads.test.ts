@@ -116,6 +116,63 @@ describe("CLI filesystem synchronous reads", () => {
     }
   });
 
+  it("reads a file a child just created, a new name each time, as the Bash tool's cwd file", async () => {
+    const f = await open();
+    try {
+      for (const id of ["a", "b", "c"]) {
+        await f.files.beforeRemote();
+        f.canonical.mkdirSync("/tmp", { recursive: true });
+        f.canonical.writeFileSync(`/tmp/claude-${id}-cwd`, "/work\n");
+        await f.files.afterRemote();
+        expect(f.fs.readFileSync(`/tmp/claude-${id}-cwd`, "utf8")).toBe("/work\n");
+      }
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("holds a child's many new files only where the CLI read synchronously before", async () => {
+    const f = await open(workspace, 1_024);
+    try {
+      const burst = async (directory: string, prefix: string) => {
+        await f.files.beforeRemote();
+        f.canonical.mkdirSync(directory, { recursive: true });
+        for (let index = 0; index < 100; index++)
+          f.canonical.writeFileSync(`${directory}/${prefix}${index}`, `${prefix}${index}`);
+        await f.files.afterRemote();
+      };
+      await burst("/out", "a");
+      expect(() => f.fs.readFileSync("/out/a1")).toThrow(expect.objectContaining({ code: "EIO" }));
+      await burst("/out", "b");
+      expect(f.fs.readFileSync("/out/b1", "utf8")).toBe("b1");
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("always reads the CLI's own config, even larger than the byte budget", async () => {
+    const config = `{"projects":"${"p".repeat(100 * 1024)}"}`;
+    const f = await fixture(64 * 1024, ["/sync"], false, {
+      cwd: "/work",
+      home: "/home/u",
+      seed(fs) {
+        workspace(fs);
+        fs.writeFileSync("/home/u/.claude.json", config);
+        fs.writeFileSync("/filler", "f".repeat(60 * 1024));
+      },
+    });
+    try {
+      expect(f.fs.readFileSync("/home/u/.claude.json", "utf8")).toBe(config);
+      // Other files filling the budget never push it out.
+      expect(() => f.fs.readFileSync("/filler")).toThrow(expect.objectContaining({ code: "EIO" }));
+      await f.files.barrier();
+      expect(f.fs.readFileSync("/filler", "utf8")).toHaveLength(60 * 1024);
+      expect(f.fs.readFileSync("/home/u/.claude.json", "utf8")).toBe(config);
+    } finally {
+      await f.close();
+    }
+  });
+
   it(
     "indexes a Computer the size of the replayed session in a few calls",
     { timeout: 180_000 },

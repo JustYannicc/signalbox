@@ -73,4 +73,27 @@ describe("CLI filesystem watchFile", () => {
       await f.close();
     }
   });
+
+  it("traces a watched file under a directory the index couldn't read once, not every tick", async () => {
+    const f = await fixture(1024, ["/sync"], true, {
+      seed(fs) {
+        fs.mkdirSync("/blocked");
+        fs.writeFileSync("/blocked/hidden", "private");
+        fs.chmodSync("/blocked", 0);
+      },
+    });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      f.fs.chmodSync("/blocked", 0o700);
+      const watcher = f.fs.watchFile("/blocked/hidden", () => {});
+      await vi.advanceTimersByTimeAsync(30_000);
+      watcher.stop();
+      expect(f.traces.filter((event) => event.kind === "sync-miss")).toEqual([
+        { kind: "sync-miss", operation: "stat", reason: "unindexed", root: "other" },
+      ]);
+    } finally {
+      vi.useRealTimers();
+      await f.close();
+    }
+  });
 });

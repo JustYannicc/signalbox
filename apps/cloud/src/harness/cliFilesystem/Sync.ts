@@ -24,13 +24,17 @@ export function createCliFileSync(input: {
   readonly views: CliDescriptorViews;
   readonly kernel: Pick<ClaudeCliKernelPort, "metadata" | "changes" | "lookup" | "digest">;
   readonly metadataLimit: number;
-  /** Fetches these files' bytes, then whatever else the CLI reads synchronously is missing. */
-  readonly prefetch: (paths: readonly string[]) => Promise<void>;
+  /**
+   * Fetches `held` again, then whatever the CLI reads synchronously that the view lacks. `changed`
+   * names the files this round found new or changed, which the CLI may read next.
+   */
+  readonly prefetch: (held: readonly string[], changed: readonly string[]) => Promise<void>;
   readonly trace?: (event: CliViewTrace) => void;
 }) {
   const { files, views, kernel } = input;
   const trace = input.trace ?? (() => {});
   let active: "incremental" | "index" | undefined;
+  let indexed = false;
   const lookup = async (paths: readonly string[]) => {
     const results: ClaudeCliLookup[] = [];
     for (let offset = 0; offset < paths.length; offset += 512)
@@ -76,9 +80,24 @@ export function createCliFileSync(input: {
     } while (cursor >= 0);
     // Files the CLI held before keep being held, unless the index finds them changed.
     const held = files.paths;
+    const before = indexed
+      ? new Map(files.entries.map((entry) => [entry.path, entry.stat]))
+      : undefined;
+    const changed =
+      before === undefined
+        ? []
+        : entries.flatMap(({ path, stat }) => {
+            const previous = before.get(path);
+            return stat.type === "file" &&
+              snapshot?.has(path) !== true &&
+              (!sameFile(previous, stat) || previous!.mtimeNs !== stat.mtimeNs)
+              ? [path]
+              : [];
+          });
     files.replaceMetadata(revision!, entries, await verify(entries, since), snapshot);
+    indexed = true;
     views.releaseNamedContent();
-    await input.prefetch(held);
+    await input.prefetch(held, changed);
     await views.refresh();
     return entries.length;
   };
@@ -225,7 +244,13 @@ export function createCliFileSync(input: {
     const applied = files.sync(revision, [...updates.values()], evict, snapshot);
     const evicted = new Set(evict);
     views.releaseNamedContent((view) => evicted.has(view.path));
-    await input.prefetch(prefetch);
+    // Only another writer's files: the CLI's own writes are in its snapshot, bytes and all.
+    const changedFiles = [...updates.values()].flatMap((update) =>
+      "removed" in update || update.stat.type !== "file" || snapshot.has(update.path)
+        ? []
+        : [update.path],
+    );
+    await input.prefetch(prefetch, changedFiles);
     await views.refresh((view) => changed.has(view.stat.ino) || applied.has(view.path));
     return reread.size;
   };
@@ -258,7 +283,7 @@ export function createCliFileSync(input: {
             reread,
             durationMs,
           });
-        return !own;
+        return { caughtUp: !own, revision: changes.revision };
       } catch (cause) {
         if (!(cause instanceof IndexRequired)) {
           trace({ kind: "round", phase: "end", mode: "incremental", entries: 0, failed: true });
@@ -270,7 +295,7 @@ export function createCliFileSync(input: {
     // At most one index per round: while a machine command runs Computer can't list changes,
     // and the next round would only index again. The index confirms the projections it read.
     await index(snapshot);
-    return true;
+    return { caughtUp: true, revision: changes.revision };
   };
 
   return { index, round, activity: () => active };

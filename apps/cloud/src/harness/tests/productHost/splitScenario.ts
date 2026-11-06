@@ -224,7 +224,13 @@ export const run = (
           admission: { limit: 2, path: ["/bin", "/usr/bin"] },
           native: {
             sdkHost: original.native.sdkHost,
-            cliHost: cli,
+            // An older CLI Worker the loader still holds reads `paths`; it must arrive empty.
+            cliHost: {
+              open(configuration, openInput) {
+                NodeAssert.deepEqual(configuration.workingSet.paths, []);
+                return cli.open(configuration, openInput);
+              },
+            },
             workingSet:
               mode === "failed-metadata"
                 ? { ...workingSetPolicy, metadataLimit: 1 }

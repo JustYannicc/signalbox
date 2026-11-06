@@ -35,5 +35,7 @@ export type CliViewTrace =
       readonly reason: "content" | "unindexed" | "descriptors";
       readonly root: "home" | "workspace" | "other";
     }
+  /** A round failed; the view waits this long before the next one. */
+  | { readonly kind: "backoff"; readonly failures: number; readonly retryMs: number }
   /** Traces a bounded buffer could not keep, so a gap is visible as a gap. */
   | { readonly kind: "dropped"; readonly count: number };
