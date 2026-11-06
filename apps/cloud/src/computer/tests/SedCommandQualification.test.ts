@@ -17,6 +17,7 @@ describe("in-place sed qualification", () => {
   it.each([
     ["-i", "s/needle/thread/g", "input"],
     ["-i.bak", "s/needle/thread/g", "input"],
+    ["-i", "", "s/needle/thread/g", "input"],
     ["-i", "-e", "s/needle/thread/g", "-e", "s/thread/rope/g", "first", "second"],
     ["-i.bak", "-e", "s/needle/thread/g", "first", "second"],
     ["-i", "-E", "s/(needle) (one|two)/\\2/g", "input"],
@@ -25,7 +26,6 @@ describe("in-place sed qualification", () => {
   });
 
   it.each([
-    ["-i", "", "s/needle/thread/g", "input"],
     ["--sandbox", "-i", "s/needle/thread/g", "input"],
     ["-i*", "s/needle/thread/g", "input"],
     ["-i.bak", "s/needle/thread/g", "-"],

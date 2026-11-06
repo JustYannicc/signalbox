@@ -16,7 +16,7 @@ export function simpleSedScript(script: string, extended: boolean): boolean {
   if (flags !== "" && flags !== "g") return false;
 
   const captures = extended ? simpleExtendedPattern(pattern) : undefined;
-  const safePattern = extended ? captures !== undefined : simpleBasicPattern(pattern);
+  const safePattern = extended ? captures !== undefined : simpleSedSubstitutionPattern(pattern);
   return safePattern && simpleReplacement(replacement, captures ?? 0);
 }
 
@@ -121,7 +121,36 @@ function simpleReplacement(value: string, captures: number): boolean {
       if (reference === undefined || reference < "1" || reference > "9") return false;
       if (Number(reference) > captures) return false;
       index++;
-    } else if (!simplePatternCharacter(character)) {
+    } else if (
+      character === "&" ||
+      character.charCodeAt(0) < 0x20 ||
+      character.charCodeAt(0) > 0x7e
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function simpleSedSubstitutionPattern(value: string): boolean {
+  if (value.length === 0) return false;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    if (character === "\\") {
+      const escaped = value[++index];
+      if (escaped !== "." && escaped !== "\\") return false;
+      continue;
+    }
+    if (
+      character === "." ||
+      character === "*" ||
+      character === "[" ||
+      character === "]" ||
+      character === "^" ||
+      character === "$" ||
+      character.charCodeAt(0) < 0x20 ||
+      character.charCodeAt(0) > 0x7e
+    ) {
       return false;
     }
   }
