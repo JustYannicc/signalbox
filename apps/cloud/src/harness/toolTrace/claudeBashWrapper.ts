@@ -1,15 +1,24 @@
 export const CLAUDE_BASH_WRAPPER_TEMPLATE_ID = "claude-bash-shopt-eval-pwd-v1";
+/**
+ * The same wrapper once the CLI has a shell snapshot: it sources the snapshot first and runs
+ * `bash -c` without a login shell, which is how its Bash tool runs every command after the first.
+ */
+export const CLAUDE_BASH_SNAPSHOT_TEMPLATE_ID = "claude-bash-snapshot-shopt-eval-pwd-v1";
 
 const wrapperPrefix =
   "shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval ";
 const wrapperSuffixPrefix = " < /dev/null && pwd -P >| ";
 const outputPath = /^\/tmp\/[A-Za-z0-9._-]+$/;
+// The CLI shell-quotes the snapshot path only when it needs quoting.
+const snapshotSource = /^source (?:'[^']*'|[^\s'"\\;&|<>(){}$`]+) 2>\/dev\/null \|\| true && /;
 
 export interface ClaudeBashWrapperMatch {
-  readonly templateId: typeof CLAUDE_BASH_WRAPPER_TEMPLATE_ID;
+  readonly templateId:
+    | typeof CLAUDE_BASH_WRAPPER_TEMPLATE_ID
+    | typeof CLAUDE_BASH_SNAPSHOT_TEMPLATE_ID;
   readonly command: string;
   readonly operandSpan: {
-    readonly argvIndex: 3;
+    readonly argvIndex: 2 | 3;
     readonly start: number;
     readonly end: number;
     readonly unit: "utf16-code-units";
@@ -20,26 +29,33 @@ export type ClaudeBashWrapperResult =
   | { readonly kind: "matched"; readonly value: ClaudeBashWrapperMatch }
   | { readonly kind: "gap"; readonly reason: string };
 
-/** Recognizes only the retained Claude `bash -c -l` shell-state wrapper. */
+/**
+ * Recognizes the Claude Bash tool's shell-state wrapper: `bash -c -l <script>` before the CLI
+ * has a shell snapshot, and `bash -c <script>` sourcing that snapshot after.
+ */
 export function extractClaudeBashWrapper(
   executable: string,
   argv: readonly string[],
 ): ClaudeBashWrapperResult {
+  const login = argv.length === 4 && argv[2] === "-l";
   if (
     executable !== "/bin/bash" ||
-    argv.length !== 4 ||
     argv[0] !== "/bin/bash" ||
     argv[1] !== "-c" ||
-    argv[2] !== "-l"
+    !(login || argv.length === 3)
   ) {
     return { kind: "gap", reason: "unsupported-wrapper-argv" };
   }
-  const script = argv[3];
+  const argvIndex = login ? 3 : 2;
+  const script = argv[argvIndex];
   if (typeof script !== "string") return { kind: "gap", reason: "missing-wrapper-script" };
-  if (!script.startsWith(wrapperPrefix))
+  const source = login ? undefined : snapshotSource.exec(script);
+  if (!login && source === null) return { kind: "gap", reason: "unsupported-wrapper-prefix" };
+  const prefixStart = source?.[0].length ?? 0;
+  if (!script.startsWith(wrapperPrefix, prefixStart))
     return { kind: "gap", reason: "unsupported-wrapper-prefix" };
 
-  const operandStart = wrapperPrefix.length;
+  const operandStart = prefixStart + wrapperPrefix.length;
   const operand = parseShellQuotedOperand(script, operandStart);
   if (operand.kind === "gap") return operand;
   const suffix = script.slice(operand.end);
@@ -52,10 +68,10 @@ export function extractClaudeBashWrapper(
   return {
     kind: "matched",
     value: {
-      templateId: CLAUDE_BASH_WRAPPER_TEMPLATE_ID,
+      templateId: login ? CLAUDE_BASH_WRAPPER_TEMPLATE_ID : CLAUDE_BASH_SNAPSHOT_TEMPLATE_ID,
       command: operand.value,
       operandSpan: {
-        argvIndex: 3,
+        argvIndex,
         start: operandStart,
         end: operand.end,
         unit: "utf16-code-units",

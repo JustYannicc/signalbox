@@ -17,6 +17,7 @@ import { createCliFileSync } from "./Sync.ts";
 import { watchEventLoop } from "./LoopMonitor.ts";
 import { CliViewMiss } from "./Content.ts";
 import { createCliPrefetch } from "./Prefetch.ts";
+import { CliDescriptorHolds } from "./DescriptorHolds.ts";
 import type { CliViewTrace } from "../CliViewTrace.ts";
 
 /** Like an NFS attribute cache or FUSE's default attr_timeout: Computer's own changes show this soon. */
@@ -84,7 +85,14 @@ export async function createCliFileBackend(
   });
   let policy = input.posix;
   const paths = new CliFilePaths(files, input.cwd, () => policy);
-  const views = new CliDescriptorViews(files, paths, remote, (fd) => kernel.reserveDescriptor(fd));
+  const holds = new CliDescriptorHolds();
+  const views = new CliDescriptorViews(
+    files,
+    paths,
+    remote,
+    (fd) => kernel.reserveDescriptor(fd),
+    (fd) => holds.released(fd),
+  );
   const disposals = new Set<() => void>();
   const operations = new Set<Promise<unknown>>();
   const home = input.process.identity.homedir;
@@ -275,6 +283,7 @@ export async function createCliFileBackend(
               : [];
       for (const index of pathIndices)
         if (typeof values[index] === "string") values[index] = paths.absolute(values[index]);
+      if (name === "close") await holds.released(Number(values[0]));
       try {
         const result = await remote.call(name, values as NodeFsArguments<K>, userSignal);
         if (name === "open") {
@@ -523,6 +532,8 @@ export async function createCliFileBackend(
     barrier,
     beforeRemote,
     afterRemote,
+    /** Keeps `fds` open in Computer until a spawning child has its own copies. */
+    holdDescriptors: (fds: readonly number[]) => holds.hold(fds),
     signalProcess(selector: number, number: number) {
       // Node's synchronous call queues delivery; the shared barrier exposes any owner rejection.
       files.writes.enqueue(0, () => kernel.signalProcess(selector, number));

@@ -30,9 +30,11 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
   readonly #kernel;
   readonly #spawn;
   readonly #barrier;
+  readonly #captured;
   readonly #refresh;
   readonly #signal;
   readonly #pumps: Promise<void>[] = [];
+  readonly #outputs: (readonly [NodeStream.Readable, NodeStream.Writable])[] = [];
   readonly #abort = new AbortController();
   #signals = Promise.resolve();
   #timer: ReturnType<typeof setTimeout> | undefined;
@@ -47,6 +49,8 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
     };
     readonly spawn: NodeChildProcessSpawn;
     readonly signal: AbortSignal;
+    /** Lets the CLI close descriptors this child inherits, once Computer has its own copies. */
+    readonly captured: () => void;
     readonly barrier: () => Promise<void>;
     readonly refresh: (remoteStarted: boolean, submitted: boolean) => Promise<void>;
   }) {
@@ -56,6 +60,7 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
     this.#lease = options.lease;
     this.pid = options.lease.pid;
     this.#barrier = options.barrier;
+    this.#captured = options.captured;
     this.#refresh = options.refresh;
     this.#signal =
       options.spawn.signal === undefined
@@ -126,7 +131,11 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
       this.#signal.throwIfAborted();
       const { signal: _signal, ...spawn } = this.#spawn;
       submitted = true;
-      this.#remote = await this.#kernel.spawn(this.#id, this.#lease.handle, spawn);
+      try {
+        this.#remote = await this.#kernel.spawn(this.#id, this.#lease.handle, spawn);
+      } finally {
+        this.#captured();
+      }
       this.pid = this.#remote.pid;
       if (this.#signal.aborted) this.kill(this.#spawn.killSignal);
       this.#connect(this.#remote);
@@ -144,11 +153,18 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
       this.emit("exit", this.exitCode, this.signalCode);
       await Promise.all(this.#pumps.slice(this.stdin === null ? 0 : 1));
     } catch (cause) {
-      this.#report(cause);
-      this.stdin?.destroy();
-      this.stdout?.destroy();
-      this.stderr?.destroy();
+      if (this.#exited || nodeSpawnError(cause)) {
+        this.#report(cause);
+        // Node's exit code for a program it could not start is the negative errno.
+        const errno = spawnErrno(cause);
+        if (!this.#exited && this.#remote === undefined && errno !== undefined)
+          this.exitCode = -errno;
+        this.stdin?.destroy();
+        this.stdout?.destroy();
+        this.stderr?.destroy();
+      } else this.#fail(cause);
     } finally {
+      this.#captured();
       this.#exited = true;
       if (this.#timer !== undefined) clearTimeout(this.#timer);
       this.#abort.abort();
@@ -189,6 +205,25 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
       }
     }
   }
+  /**
+   * A child whose run fails in Computer still exits, as on Linux, with its error on stderr: 126
+   * when it never started, 1 when it did. Only Node's own spawn errors are `error` events.
+   */
+  #fail(cause: unknown) {
+    const started = this.#remote !== undefined;
+    this.stdin?.destroy();
+    // Computer's output streams may never end now; what reached the CLI stays, nothing more comes.
+    for (const [source, target] of this.#outputs) {
+      source.unpipe(target);
+      source.destroy();
+    }
+    this.stdout?.end();
+    this.stderr?.end(`${this.spawnfile}: ${asChildProcessError(cause).message}\n`);
+    this.#exited = true;
+    this.exitCode = started ? 1 : 126;
+    this.signalCode = null;
+    this.emit("exit", this.exitCode, null);
+  }
   #connect(remote: ClaudeCliChild) {
     if (this.stdin !== null && remote.stdin !== undefined) {
       const readable = NodeStream.Readable.toWeb(this.stdin) as ReadableStream<Uint8Array>;
@@ -218,6 +253,7 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
         target.once("close", resolve);
       });
       stream.pipe(target);
+      this.#outputs.push([stream, target]);
       this.#pumps.push(complete);
     }
     for (const [index, pump] of this.#pumps.entries())
@@ -227,6 +263,24 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
       });
   }
 }
+
+const SPAWN_ERRNO: Readonly<Record<string, number>> = { ENOENT: 2, EACCES: 13 };
+
+const codeOf = (cause: unknown) =>
+  typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : undefined;
+
+/** What Node itself reports as a spawn `error`: an abort, or a program it can't find or run. */
+function nodeSpawnError(cause: unknown) {
+  if (typeof cause === "object" && cause !== null && "name" in cause && cause.name === "AbortError")
+    return true;
+  const code = codeOf(cause);
+  return code === "ABORT_ERR" || (code !== undefined && code in SPAWN_ERRNO);
+}
+
+const spawnErrno = (cause: unknown) => {
+  const code = codeOf(cause);
+  return code === undefined ? undefined : SPAWN_ERRNO[code];
+};
 
 function closedInput(cause: unknown) {
   return (

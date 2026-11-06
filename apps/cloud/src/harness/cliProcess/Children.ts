@@ -19,6 +19,7 @@ export async function createRemoteChildren(input: {
   readonly process: NodeHarnessBaseInput;
   readonly beforeRemote: () => Promise<void>;
   readonly afterRemote: () => Promise<void>;
+  readonly holdDescriptors: (fds: readonly number[]) => () => void;
 }) {
   const leases = [...(await input.kernel.leaseProcesses(32))];
   return (signal: AbortSignal, onChild: NodeChildProcessObserver) => {
@@ -29,11 +30,16 @@ export async function createRemoteChildren(input: {
         throw Object.assign(new Error("CLI process leases need asynchronous refill"), {
           code: "EAGAIN",
         });
+      // Node duplicates a child's stdio inside spawn(); the CLI may close its copies right after.
+      const captured = input.holdDescriptors(
+        spawn.stdio.filter((mode): mode is number => typeof mode === "number"),
+      );
       const child = new RemoteNodeChild({
         kernel: input.kernel,
         lease,
         spawn,
         signal,
+        captured,
         barrier: input.beforeRemote,
         refresh: async (remoteStarted, submitted) => {
           try {

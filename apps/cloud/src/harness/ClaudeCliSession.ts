@@ -210,6 +210,7 @@ export function createClaudeCliFacetClass<Env>(
           process: options,
           beforeRemote: backend.beforeRemote,
           afterRemote: backend.afterRemote,
+          holdDescriptors: backend.holdDescriptors,
         });
         const runtime = remoteCliRuntime(
           { ...configuration, io },
