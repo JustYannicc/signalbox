@@ -61,29 +61,31 @@ describe("CLI filesystem async metadata", () => {
     },
   );
 
-  for (const machineRunning of [false, true])
-    it(`sees a running child's writes at the next barrier${machineRunning ? ", from Computer during a machine command" : ""}`, async () => {
-      let machine = { machine: 0, machineRunning: false };
-      const f = await fixture(1024, [], false, { machine: () => machine });
-      try {
-        await f.files.beforeRemote();
-        if (machineRunning) machine = { machine: 1, machineRunning: true };
-        f.canonical.writeFileSync("/child", "written by a child");
-        // A barrier's round reads the change feed; a machine command leaves only Computer knowing.
-        await f.files.refresh();
-        const calls = f.calls.total;
-        expect((await f.fs.promises.stat("/child")).size).toBe(18);
-        if (machineRunning) expect(f.calls.total).toBeGreaterThan(calls);
-        else expect(f.calls.total).toBe(calls);
-        machine = { machine: 1, machineRunning: false };
-        await f.files.afterRemote();
-        const after = f.calls.total;
-        expect((await f.fs.promises.stat("/child")).size).toBe(18);
-        expect(f.calls.total).toBe(after);
-      } finally {
-        await f.close();
-      }
-    });
+  it.each([
+    { machineRunning: false, label: "" },
+    { machineRunning: true, label: ", from Computer during a machine command" },
+  ])("sees a running child's writes at the next barrier$label", async ({ machineRunning }) => {
+    let machine = { machine: 0, machineRunning: false };
+    const f = await fixture(1024, [], false, { machine: () => machine });
+    try {
+      await f.files.beforeRemote();
+      if (machineRunning) machine = { machine: 1, machineRunning: true };
+      f.canonical.writeFileSync("/child", "written by a child");
+      // A barrier's round reads the change feed; a machine command leaves only Computer knowing.
+      await f.files.refresh();
+      const calls = f.calls.total;
+      expect((await f.fs.promises.stat("/child")).size).toBe(18);
+      if (machineRunning) expect(f.calls.total).toBeGreaterThan(calls);
+      else expect(f.calls.total).toBe(calls);
+      machine = { machine: 1, machineRunning: false };
+      await f.files.afterRemote();
+      const after = f.calls.total;
+      expect((await f.fs.promises.stat("/child")).size).toBe(18);
+      expect(f.calls.total).toBe(after);
+    } finally {
+      await f.close();
+    }
+  });
 
   it("waits for a round in progress rather than answering from the view it replaces", async () => {
     const f = await open();

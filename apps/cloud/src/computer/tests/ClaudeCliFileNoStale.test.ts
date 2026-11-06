@@ -12,8 +12,12 @@ const settle = async (call: () => unknown) => {
 };
 
 describe("CLI filesystem consistency without ESTALE", () => {
-  for (const machineRunning of [false, true])
-    it(`answers from the last consistent view while a child runs${machineRunning ? " a machine command" : ""}`, async () => {
+  it.each([
+    { machineRunning: false, label: "" },
+    { machineRunning: true, label: " a machine command" },
+  ])(
+    "answers from the last consistent view while a child runs$label",
+    async ({ machineRunning }) => {
       let machine = { machine: 0, machineRunning: false };
       const f = await fixture(1024, ["/sync"], false, { machine: () => machine });
       try {
@@ -56,7 +60,8 @@ describe("CLI filesystem consistency without ESTALE", () => {
       } finally {
         await f.close();
       }
-    });
+    },
+  );
 
   it("answers sync and async calls while a round reads Computer", async () => {
     const f = await fixture();
