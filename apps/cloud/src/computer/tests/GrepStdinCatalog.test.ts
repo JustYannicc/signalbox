@@ -42,6 +42,7 @@ describe.skipIf(!available)("pinned Ugrep grep through the public command gatewa
     args: readonly string[],
     source: "stdin" | "file" = "stdin",
     input = lines.join("\n") + "\n",
+    expectedInvocations?: readonly (readonly string[])[],
   ) {
     const dispatched: { executable: string; argv: readonly string[] }[] = [];
     const fixture = commandGatewayFixture({
@@ -84,12 +85,14 @@ describe.skipIf(!available)("pinned Ugrep grep through the public command gatewa
         ]);
         await fixture.gateway.drain();
         expect(fixture.machineSpawn).not.toHaveBeenCalled();
-        expect(dispatched).toEqual([
-          {
-            executable: "/bin/grep",
-            argv: ["grep", "--jobs=1", ...captured.argv.slice(1)],
-          },
-        ]);
+        expect(dispatched).toEqual(
+          (expectedInvocations ?? [["grep", "--jobs=1", ...captured.argv.slice(1)]]).map(
+            (argv) => ({
+              executable: "/bin/grep",
+              argv,
+            }),
+          ),
+        );
         expect(fixture.capacity.active).toBe(0);
         return {
           status,
@@ -109,12 +112,103 @@ describe.skipIf(!available)("pinned Ugrep grep through the public command gatewa
     expect(result).toEqual({ status: exited(), stdout: expected, stderr: "" });
   });
 
+  it.each([
+    {
+      args: ["-m1", "^- State:"],
+      source: "file" as const,
+      input: "heading\n- State: Ready\n- State: Working\n",
+      expected: "- State: Ready\n",
+    },
+    {
+      args: ["-o", "\\[[^]]*\\]"],
+      source: "stdin" as const,
+      input: "before [Ready] between [Working]\n[Done] after\n",
+      expected: "[Ready]\n[Working]\n[Done]\n",
+    },
+    {
+      args: ["-n", "-i", "a\\|b"],
+      source: "file" as const,
+      input: "zzz\nAlpha\nBETA\nccc\n",
+      expected: "2:Alpha\n3:BETA\n",
+    },
+  ])(
+    "runs the real Claude invocation $args with GNU output",
+    async ({ args, source, input, expected }) => {
+      expect(await run(args, source, input)).toEqual({
+        status: exited(),
+        stdout: expected,
+        stderr: "",
+      });
+    },
+  );
+
   it.each(cases.filter(({ args }) => args[0]?.includes("E")))(
     "runs $name against a file",
     async ({ args, expected }) => {
       expect(await run(args, "file")).toEqual({ status: exited(), stdout: expected, stderr: "" });
     },
   );
+
+  it.each([
+    { args: ["-m", "1", "needle"], stdout: "needle needle\n" },
+    { args: ["--max-count=1", "needle"], stdout: "needle needle\n" },
+    { args: ["-c", "needle"], stdout: "3\n" },
+    { args: ["-h", "needle"], stdout: "needle needle\nwordneedle\nneedle\n" },
+    { args: ["-H", "needle"], stdout: "input:needle needle\ninput:wordneedle\ninput:needle\n" },
+    { args: ["-w", "needle"], stdout: "needle needle\nneedle\n" },
+    { args: ["-x", "needle"], stdout: "needle\n" },
+    { args: ["-qs", "needle"], stdout: "" },
+    { args: ["-s", "needle"], stdout: "needle needle\nwordneedle\nneedle\n" },
+    { args: ["-F", "needle needle"], stdout: "needle needle\n" },
+    { args: ["-e", "needle", "-e", "quiet"], stdout: "needle needle\nwordneedle\nneedle\nquiet\n" },
+    { args: ["-B", "1", "^needle$"], stdout: "wordneedle\nneedle\n" },
+    { args: ["-C1", "^needle$"], stdout: "wordneedle\nneedle\nquiet\n" },
+    { args: ["--include=input", "needle"], stdout: "needle needle\nwordneedle\nneedle\n" },
+    { args: ["--exclude=input", "needle"], stdout: "", exitCode: 1 },
+    { args: ["--color=never", "needle"], stdout: "needle needle\nwordneedle\nneedle\n" },
+    { args: ["-nwhsF", "needle"], stdout: "1:needle needle\n3:needle\n" },
+  ])("preserves GNU output for $args", async ({ args, stdout, exitCode = 0 }) => {
+    expect(await run(args, "file", "needle needle\nwordneedle\nneedle\nquiet\n")).toEqual({
+      status: exited(exitCode),
+      stdout,
+      stderr: "",
+    });
+  });
+
+  it.each(["-s", "-qs"])("preserves GNU missing-file status with %s", async (option) => {
+    expect(await run([option, "needle", "missing"], "stdin", "")).toEqual({
+      status: exited(2),
+      stdout: "",
+      stderr: "",
+    });
+  });
+
+  it.each([
+    { args: ["-rc", "needle", "."], format: "--format=./%F%m%~", stdout: "./input:3\n" },
+    {
+      args: ["-rno", "needle", "."],
+      format: "--format=./%F%N%o%~",
+      stdout: "./input:1:needle\n./input:1:needle\n./input:2:needle\n./input:3:needle\n",
+    },
+    { args: ["-rlh", "needle", "."], format: "--format=./%f%~", stdout: "./input\n" },
+  ])("keeps GNU dot-root labels for $args", async ({ args, format, stdout }) => {
+    expect(
+      await run(args, "stdin", "needle needle\nwordneedle\nneedle\nquiet\n", [
+        ["grep", "--jobs=1", format, ...args],
+      ]),
+    ).toEqual({ status: exited(), stdout, stderr: "" });
+  });
+
+  it("keeps repeated -e patterns and -m values out of mixed recursive roots", async () => {
+    const args = ["-rnm", "1", "-e", "needle", "-e", "quiet"];
+    const stdout = "./input:1:needle needle\ninput:1:needle needle\n";
+    expect(
+      await run([...args, ".", "input"], "stdin", "needle needle\nquiet\n", [
+        ["grep", "--jobs=1", "--format=./%F%N%O%~", "-H", ...args, "."],
+        ["grep", "--jobs=1", "-H", ...args, "input"],
+      ]),
+    ).toEqual({ status: exited(), stdout, stderr: "" });
+  });
 
   it("returns status 1 for empty stdin", async () => {
     expect(await run(["needle"], "stdin", "")).toEqual({

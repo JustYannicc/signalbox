@@ -13,6 +13,73 @@ const command = (argv: readonly string[]) => ({
 });
 
 it.each([
+  ["-m", "1", "needle"],
+  ["-m1", "needle"],
+  ["--max-count=1", "needle"],
+  ["-o", "needle"],
+  ["-c", "needle"],
+  ["-h", "needle", "one", "two"],
+  ["-H", "needle", "file"],
+  ["-w", "needle"],
+  ["-x", "needle"],
+  ["-qs", "needle"],
+  ["-s", "needle", "file"],
+  ["-F", "literal.*"],
+  ["-e", "first", "-e", "second", "file"],
+  ["-e", ""],
+  ["-B", "2", "needle"],
+  ["-B2", "needle"],
+  ["-C", "2", "needle"],
+  ["-C2", "needle"],
+  ["-A", "2", "needle"],
+  ["--include=*.md", "needle", "file.md"],
+  ["--exclude=*.log", "needle", "file.md"],
+  ["--color=never", "needle"],
+  ["-nFwhs", "literal.*", "file"],
+  ["-rinm1", "needle", "tree"],
+  ["-nB2", "needle"],
+  ["-inefirst", "-e", "second", "file"],
+  ["-n", "-i", "a\\|b", "file"],
+  ["-E", "^\\s+I:|Peak:", "file"],
+])("qualifies GNU-compatible grep options %j", (...args) => {
+  expect(qualifyUgrepCommand({ ...command(["grep", ...args]), executable: "/bin/grep" })).toEqual({
+    kind: "qualified-isolate",
+  });
+});
+
+it.each([
+  ["-P", "needle"],
+  ["-co", "needle"],
+  ["-ov", "needle"],
+  ["-oA1", "needle"],
+  ["-o", "-B", "1", "needle"],
+  ["-oC1", "needle"],
+  ["-m0", "needle"],
+  ["--max-count=0", "needle"],
+  ["-m1,2", "needle"],
+  ["-m", "needle"],
+  ["-B101", "needle"],
+  ["-e"],
+  ["-EF", "needle"],
+  ["-hH", "needle"],
+  ["--include=*.md", "--exclude=*.md", "needle", "file.md"],
+  ["--include=tree/*.md", "needle", "tree/file.md"],
+  ["--exclude=**.md", "needle", "file.md"],
+  ["--color=always", "needle"],
+  ["-q", "needle"],
+  ["-q", "needle", "missing", "file"],
+  ["-G", "\\(a\\)\\1", "file"],
+  ["\\d", "file"],
+])("keeps differing or unqualified grep semantics on the machine %j", (...args) => {
+  expect(
+    qualifyUgrepCommand({ ...command(["grep", ...args]), executable: "/bin/grep" }),
+  ).toMatchObject({
+    kind: "machine",
+    reason: expect.stringMatching(/^(incompatible-option|unqualified-option|unqualified-script)$/),
+  });
+});
+
+it.each([
   ["claude", "--version"],
   ["ugrep", "--filter=external", "pattern"],
   ["ugrep", "--pager", "pattern"],
