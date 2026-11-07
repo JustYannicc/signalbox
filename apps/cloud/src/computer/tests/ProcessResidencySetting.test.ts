@@ -94,6 +94,8 @@ describe("the process residency setting", () => {
         const peak = Math.max(...fixture.bashWorkerCalls.map((call) => call.peakResidentWasmBytes));
         expect(peak).toBeGreaterThan(104 * 1024 * 1024);
         expect(peak).toBeLessThanOrEqual(Number(environment.RESIDENT_BYTE_LIMIT));
+        // Process exit precedes worker teardown and the return of its admission permits.
+        await fixture.computer.drain();
         expect(fixture.capacity.active).toBe(0);
         expect(fixture.machineCalls).toEqual([]);
       } finally {
