@@ -18,7 +18,6 @@ import { readRpcData } from "../../../../src/rpc/Resources.ts";
 import { createQualifierClaudeFacetEnvironment } from "../claudeFacetEnvironment.ts";
 import { createQualifierShardEnvironment } from "../shardEnvironment.ts";
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
-import { readClaudeQualificationInputs } from "./claudeConfiguration.ts";
 import { readMachineInventory } from "./configuration.ts";
 import {
   CLAUDE_OWNER_COMPATIBILITY,
@@ -107,8 +106,9 @@ const claudeThreadMachine: LocalClaudeThreadMachineFactory<
       configuration.modelSelection.model === claude.workload.model,
       "The Claude thread model differs from its workload",
     );
-    const qualification = yield* attempt("The Claude release variants are unavailable", () =>
-      readClaudeQualificationInputs(claude, env.PROGRAM_ASSETS),
+    // One read of the qualification assets: the owner release also carries the variants.
+    const release = yield* attempt("The Claude owner release could not open", () =>
+      openClaudeOwnerRelease(inputs.expected, inputs, env.PROGRAM_ASSETS),
     );
     const selected = yield* attempt("The Claude release could not be selected", async () =>
       selectHarnessCProductRelease({
@@ -124,9 +124,6 @@ const claudeThreadMachine: LocalClaudeThreadMachineFactory<
     // Deployed, pulling this 16,880-entry inventory from the proof object took about 30 seconds.
     const machineInventory = yield* attempt("The Claude machine inventory is unavailable", () =>
       readMachineInventory(env.PROGRAM_ASSETS, inputs.machineInventory),
-    );
-    const release = yield* attempt("The Claude owner release could not open", () =>
-      openClaudeOwnerRelease(inputs.expected, inputs, env.PROGRAM_ASSETS),
     );
     const incarnation = `thread:${configuration.threadId}`;
     const state = facetState(ctx, capability, incarnation);
@@ -152,8 +149,9 @@ const claudeThreadMachine: LocalClaudeThreadMachineFactory<
     const host: ProductClaudeThreadMachine<unknown>["host"] = {
       threadId: configuration.threadId,
       release: selected.release,
+      verifiedRelease: release.verified,
       processResumeArtifact: selected.artifact,
-      releaseVariants: qualification.releaseVariants,
+      releaseVariants: release.releaseVariants,
       programs: { codes: programs.codes, seed: programs.seed },
       machineInventory,
       executor: productExecutor(capabilities.executor),
