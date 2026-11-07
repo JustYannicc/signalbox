@@ -1,4 +1,5 @@
 import { prepareClaudeFacetCode } from "../prepareClaudeFacet.ts";
+import type { ClaudeOwnerCodeFactory } from "../../../../src/harness/ClaudeProductOwners.ts";
 import { expect, test } from "vite-plus/test";
 import { productLoadedPreparedRelease } from "../../../../src/harness/ProductHarnessProcessRelease.ts";
 import { loadDeploy3ClaudeAssets } from "../claudeAssets.ts";
@@ -163,27 +164,34 @@ test.each(["baseline", "hooks"] as const)(
         },
       };
       let sdkCode: WorkerLoaderWorkerCode | undefined;
-      let cliCode: WorkerLoaderWorkerCode | undefined;
-      let kernelCode: WorkerLoaderWorkerCode | undefined;
-      let computerCode: WorkerLoaderWorkerCode | undefined;
+      let cliFactory: ClaudeOwnerCodeFactory | undefined;
+      let kernelFactory: ClaudeOwnerCodeFactory | undefined;
+      let computerFactory: ClaudeOwnerCodeFactory | undefined;
+      let reads = 0;
+      const assets = {
+        fetch: (request: Request) => {
+          reads++;
+          return f.fixture.binding.fetch(request);
+        },
+      };
       const inputs = {
-        cli: (code: WorkerLoaderWorkerCode) => {
-          cliCode = code;
+        cli: (code: ClaudeOwnerCodeFactory) => {
+          cliFactory = code;
           return {
             async open() {
               throw new Error("Loader test must not start the CLI");
             },
           };
         },
-        kernel: (code: WorkerLoaderWorkerCode) => {
-          kernelCode = code;
+        kernel: (code: ClaudeOwnerCodeFactory) => {
+          kernelFactory = code;
           return new Proxy(
             {},
             { get: () => unavailable },
           ) as import("./claudeKernelProtocol.ts").QualifierClaudeKernelPort;
         },
-        computer: (code: WorkerLoaderWorkerCode) => {
-          computerCode = code;
+        computer: (code: ClaudeOwnerCodeFactory) => {
+          computerFactory = code;
           return new Proxy(
             {},
             { get: () => unavailable },
@@ -209,12 +217,14 @@ test.each(["baseline", "hooks"] as const)(
           continuations: f.fixture.binding,
         },
       };
-      const prepared = await prepareClaudeFacetCode(
-        code,
-        f.configuration,
-        f.fixture.binding,
-        inputs,
-      );
+      const prepared = await prepareClaudeFacetCode(code, f.configuration, assets, inputs);
+      // Preparing the facet reads none of the CLI's release; only its loader's factory does.
+      const preparedReads = reads;
+      const kernelCode = await kernelFactory!();
+      const computerCode = await computerFactory!();
+      expect(reads).toBe(preparedReads);
+      const cliCode = await cliFactory!();
+      expect(reads).toBeGreaterThan(preparedReads);
       expect(prepared.variant).toBe(variant);
       expect(prepared.code.env).toMatchObject({
         RUN_ID: rootRunId,

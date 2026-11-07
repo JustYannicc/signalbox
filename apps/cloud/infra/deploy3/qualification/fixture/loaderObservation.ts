@@ -74,6 +74,19 @@ function checkPin(pin: ObserverLoaderPin): void {
   }
 }
 
+const ORIGINAL_PREFIX = "__observer_original_";
+const platformLoaders = new WeakMap<WorkerLoader, WorkerLoader>();
+
+/** Remembers that `observed` wraps `platform`, so a second wrapper reaches the platform loader. */
+export function registerObservedLoader(platform: WorkerLoader, observed: WorkerLoader) {
+  platformLoaders.set(observed, platformLoaders.get(platform) ?? platform);
+  return observed;
+}
+
+export function platformLoader(loader: WorkerLoader) {
+  return platformLoaders.get(loader) ?? loader;
+}
+
 function sourceOf(module: WorkerLoaderWorkerCode["modules"][string]): string {
   if (typeof module === "string") return module;
   if (module && "js" in module && typeof module.js === "string") return module.js;
@@ -83,7 +96,7 @@ function sourceOf(module: WorkerLoaderWorkerCode["modules"][string]): string {
 function siblingName(main: string, modules: WorkerLoaderWorkerCode["modules"]): string {
   const slash = main.lastIndexOf("/");
   const dir = slash < 0 ? "" : main.slice(0, slash + 1);
-  let name = `${dir}__observer_original_${main.slice(slash + 1)}`;
+  let name = `${dir}${ORIGINAL_PREFIX}${main.slice(slash + 1)}`;
   while (Object.hasOwn(modules, name)) name = `${dir}_${name.slice(dir.length)}`;
   return name;
 }
@@ -204,6 +217,9 @@ export function observeWorkerCode(
   const main = code.mainModule;
   const original = code.modules[main];
   if (!main || original === undefined) throw new TypeError("Worker main module is absent");
+  // Observing observed code means its owners were prepared, and their code materialized, twice.
+  if (Object.keys(code.modules).some((name) => name.split("/").at(-1)!.includes(ORIGINAL_PREFIX)))
+    throw new TypeError("Worker code is already observed");
   sourceOf(original);
   const originalSourceModule = siblingName(main, code.modules);
   const modules = {

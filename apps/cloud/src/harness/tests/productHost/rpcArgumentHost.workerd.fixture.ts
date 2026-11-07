@@ -102,16 +102,18 @@ export class Host extends DurableObject<Env> {
         loader: this.env.LOADER,
         facets: this.ctx.facets,
         code: {
-          kernel: code(this.env.KERNEL_SOURCE, "kernel.js"),
-          cli: code(this.env.CLI_SOURCE, "cli.js"),
-          computer: code(this.env.COMPUTER_SOURCE, "computer.js", {
-            CHILD_WORKERS: loader,
-            RESIDENT_BYTE_LIMIT: "128000000",
-          }),
-          sdk: code(
-            'import {WorkerEntrypoint} from "cloudflare:workers";export default class extends WorkerEntrypoint {}',
-            "sdk.js",
-          ),
+          kernel: () => code(this.env.KERNEL_SOURCE, "kernel.js"),
+          cli: () => code(this.env.CLI_SOURCE, "cli.js"),
+          computer: () =>
+            code(this.env.COMPUTER_SOURCE, "computer.js", {
+              CHILD_WORKERS: loader,
+              RESIDENT_BYTE_LIMIT: "128000000",
+            }),
+          sdk: () =>
+            code(
+              'import {WorkerEntrypoint} from "cloudflare:workers";export default class extends WorkerEntrypoint {}',
+              "sdk.js",
+            ),
         },
         versions: this.env.OWNER_VERSIONS,
       },

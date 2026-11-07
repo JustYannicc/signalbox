@@ -179,10 +179,10 @@ export function threadOwnerRuntimeFixture<G>(
       loader,
       facets,
       code: {
-        kernel: code("kernel"),
-        cli: code("cli"),
-        computer: code("computer"),
-        sdk: code("sdk"),
+        kernel: () => code("kernel"),
+        cli: () => code("cli"),
+        computer: () => code("computer"),
+        sdk: () => code("sdk"),
       },
       versions: {
         kernel: "kernel-build",

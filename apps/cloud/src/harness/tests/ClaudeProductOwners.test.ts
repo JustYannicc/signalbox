@@ -4,16 +4,10 @@ import {
   type ClaudeProductOwnerRuntime,
 } from "../ClaudeProductOwners.ts";
 
-// Startup must never read an owner's tens of MB of code; touching it here throws.
-const untouchable = () =>
-  new Proxy(
-    {},
-    {
-      get() {
-        throw new Error("Owner code was read at startup");
-      },
-    },
-  ) as WorkerLoaderWorkerCode;
+// Startup must never build an owner's tens of MB of code; only the loader may call a factory.
+const untouchable = () => (): WorkerLoaderWorkerCode => {
+  throw new Error("Owner code was built at startup");
+};
 
 describe("Claude product owners", () => {
   it("keys each owner's Worker by its build and the CLI's by its release too, without reading code", () => {

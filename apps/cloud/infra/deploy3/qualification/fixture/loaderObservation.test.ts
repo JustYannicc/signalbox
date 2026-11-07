@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off cryptoRandomUUID:off - The regression executes the observer shim and WebCrypto in a controlled Node context.
 import * as NodeVM from "node:vm";
 import { expect, it } from "vite-plus/test";
-import { observeWorkerCode } from "./loaderObservation.ts";
+import { observeWorkerCode, platformLoader, registerObservedLoader } from "./loaderObservation.ts";
 
 it("observes the import-only Claude calibration entrypoint without native dispatch", async () => {
   const invocationId = "claude-import-calibration-baseline-test";
@@ -236,4 +236,36 @@ it("observes the real CLI kernel facet without replacing its process RPCs", asyn
     expect.objectContaining({ route, milestone: "entered" }),
     expect.objectContaining({ route, milestone: "terminal" }),
   ]);
+});
+
+it("never observes code twice, and a wrapper of a wrapper reaches the platform loader", () => {
+  const pin = {
+    loaderId: "owner",
+    role: "facet" as const,
+    entrypoint: "ClaudeFacet",
+    identity: "facet:claude:owner",
+    tag: "actual-claude-facet",
+    calls: {
+      identity: [{ callId: "*", route: { method: "POST", path: "/claude/baseline/inspect" } }],
+    },
+  };
+  const once = observeWorkerCode(
+    {
+      compatibilityDate: "2026-10-19",
+      mainModule: "qualifier-claude-facet.mjs",
+      modules: { "qualifier-claude-facet.mjs": { js: "export class ClaudeFacet {}" } },
+    },
+    "run",
+    pin,
+    {} as Fetcher,
+  ).code;
+  expect(() => observeWorkerCode(once, "run", pin, {} as Fetcher)).toThrow(
+    "Worker code is already observed",
+  );
+  const platform = {} as WorkerLoader;
+  const first = registerObservedLoader(platform, {} as WorkerLoader);
+  const second = registerObservedLoader(first, {} as WorkerLoader);
+  expect(platformLoader(first)).toBe(platform);
+  expect(platformLoader(second)).toBe(platform);
+  expect(platformLoader(platform)).toBe(platform);
 });

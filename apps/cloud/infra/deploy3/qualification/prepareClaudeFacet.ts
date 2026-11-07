@@ -8,6 +8,7 @@ import { decodePreparedRelease } from "./preparedRelease.schema.ts";
 import { readClaudeQualificationAssets } from "./runtimeAssets.ts";
 import { createQualifierClaudeFacetEnvironment } from "./claudeFacetEnvironment.ts";
 import type { ClaudeSdkHostService } from "../../../src/harness/ClaudeSdkHostProtocol.ts";
+import type { ClaudeOwnerCodeFactory } from "../../../src/harness/ClaudeProductOwners.ts";
 
 /** Materializes verified modules inside the real loader's lazy code callback. */
 export async function prepareClaudeFacetCode(
@@ -20,13 +21,13 @@ export async function prepareClaudeFacetCode(
     readonly authorities: Parameters<typeof createQualifierClaudeFacetEnvironment>[3];
     readonly sdkHost?: (code: WorkerLoaderWorkerCode) => ClaudeSdkHostService;
     readonly cli?: (
-      code: WorkerLoaderWorkerCode,
+      code: ClaudeOwnerCodeFactory,
     ) => import("../../../src/harness/ClaudeCliKernelPort.ts").ClaudeCliHost;
     readonly kernel?: (
-      code: WorkerLoaderWorkerCode,
+      code: ClaudeOwnerCodeFactory,
     ) => import("./fixture/claudeKernelProtocol.ts").QualifierClaudeKernelPort;
     readonly computer?: (
-      code: WorkerLoaderWorkerCode,
+      code: ClaudeOwnerCodeFactory,
     ) => import("../../../src/kernel/KernelComputerAdmissionPort.ts").ComputerProgramOwnerPort & {
       configure(
         input: import("../../../src/computer/ComputerExecutionObject.ts").ComputerExecutionConfiguration,
@@ -57,43 +58,41 @@ export async function prepareClaudeFacetCode(
     ...opened.loaderConfig,
   });
   if (loaded.plan.harness !== "claude-code") throw new Error("DEPLOY3_CLAUDE_PLAN_MISMATCH");
+  const plan = loaded.plan;
   const packages: Record<string, string> = {};
   for (const [name, pin] of Object.entries(configuration.claude.environmentPackages))
     packages[name] = new TextDecoder("utf-8", { fatal: true }).decode(await readAsset(assets, pin));
-  const prepared = await claudePreparedWorkerModules(
-    { artifact: selected.artifact, plan: loaded.plan },
-    packages,
-    calibration ? undefined : "cli",
-  );
   const readRange = opened.source.readRange;
   if (!readRange) throw new Error("DEPLOY3_CLAUDE_RANGE_READER_MISSING");
-  const modules = await materializeHarnessProcessModules(prepared, selected, readRange);
+  // Owner factories close over these fields, never over the facet's own code object.
+  const compatibility = {
+    compatibilityDate: code.compatibilityDate,
+    ...(code.compatibilityFlags === undefined
+      ? {}
+      : { compatibilityFlags: code.compatibilityFlags }),
+  };
+  const releaseModules = async (partition: "cli" | "sdk" | undefined) =>
+    materializeHarnessProcessModules(
+      await claudePreparedWorkerModules({ artifact: selected.artifact, plan }, packages, partition),
+      selected,
+      readRange,
+    );
+  // The CLI's ~49 MB of release source is built only inside its own loader's callback.
+  const modules = calibration ? await releaseModules(undefined) : {};
   const environment = createQualifierClaudeFacetEnvironment(
     code.env ?? {},
     inputs,
     variant,
     inputs.authorities,
   );
-  const sdkModules = calibration
-    ? {}
-    : await materializeHarnessProcessModules(
-        await claudePreparedWorkerModules(
-          { artifact: selected.artifact, plan: loaded.plan },
-          packages,
-          "sdk",
-        ),
-        selected,
-        readRange,
-      );
+  // The SDK host loader binding carries its code in props, so it cannot take a factory.
+  const sdkModules = calibration ? {} : await releaseModules("sdk");
   if (!calibration && inputs.sdkHost === undefined)
     throw new Error("CLAUDE_SDK_HOST_LOADER_MISSING");
   const sdkHost = calibration
     ? undefined
     : inputs.sdkHost!({
-        compatibilityDate: code.compatibilityDate,
-        ...(code.compatibilityFlags === undefined
-          ? {}
-          : { compatibilityFlags: code.compatibilityFlags }),
+        ...compatibility,
         mainModule: "claude-sdk-host-entry.mjs",
         modules: {
           ...sdkModules,
@@ -110,60 +109,52 @@ export async function prepareClaudeFacetCode(
     (inputs.kernel === undefined || inputs.computer === undefined || inputs.cli === undefined)
   )
     throw new Error("CLAUDE_PRODUCT_OWNER_LOADER_MISSING");
+  const { kernelSource, cliSource, computerSource } = configuration.claude;
   const kernel = calibration
     ? undefined
-    : inputs.kernel!({
-        compatibilityDate: code.compatibilityDate,
-        ...(code.compatibilityFlags === undefined
-          ? {}
-          : { compatibilityFlags: code.compatibilityFlags }),
+    : inputs.kernel!(() => ({
+        ...compatibility,
         mainModule: "claude-kernel-entry.mjs",
         modules: {
           "claude-kernel-entry.mjs": {
             js: 'export { ClaudeKernelFacet } from "./qualifier-claude-kernel.mjs";',
           },
-          "qualifier-claude-kernel.mjs": { js: configuration.claude.kernelSource },
+          "qualifier-claude-kernel.mjs": { js: kernelSource },
         },
         env: environment,
         globalOutbound: null,
-      });
+      }));
   const cli = calibration
     ? undefined
-    : inputs.cli!({
-        compatibilityDate: code.compatibilityDate,
-        ...(code.compatibilityFlags === undefined
-          ? {}
-          : { compatibilityFlags: code.compatibilityFlags }),
+    : inputs.cli!(async () => ({
+        ...compatibility,
         mainModule: "claude-cli-entry.mjs",
         modules: {
-          ...modules,
+          ...(await releaseModules("cli")),
           "claude-cli-entry.mjs": {
             js: 'export { ClaudeCliFacet } from "./qualifier-claude-cli.mjs";',
           },
-          "qualifier-claude-cli.mjs": { js: configuration.claude.cliSource },
+          "qualifier-claude-cli.mjs": { js: cliSource },
         },
         globalOutbound: null,
-      });
+      }));
   const computer = calibration
     ? undefined
-    : inputs.computer!({
-        compatibilityDate: code.compatibilityDate,
-        ...(code.compatibilityFlags === undefined
-          ? {}
-          : { compatibilityFlags: code.compatibilityFlags }),
+    : inputs.computer!(() => ({
+        ...compatibility,
         mainModule: "computer-execution-entry.mjs",
         modules: {
           "computer-execution-entry.mjs": {
             js: 'export { ComputerExecutionObject } from "./computer-execution.mjs";',
           },
-          "computer-execution.mjs": { js: configuration.claude.computerSource },
+          "computer-execution.mjs": { js: computerSource },
         },
         env: {
           CHILD_WORKERS: environment.HARNESS_C_PRODUCT_CAPABILITIES?.qualifierCommands,
           RESIDENT_BYTE_LIMIT: String(104 * 1024 * 1024),
         },
         globalOutbound: null,
-      });
+      }));
   return {
     variant,
     code: {
