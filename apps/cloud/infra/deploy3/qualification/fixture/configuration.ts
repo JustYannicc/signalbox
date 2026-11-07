@@ -1,6 +1,8 @@
 import type { HarnessProcessResumePreparedRelease } from "../../../../src/harness/HarnessProcessResume.ts";
 import type { AssetFetcher } from "../../../../src/assets/ChunkedAsset.ts";
 import { validateMachineProgramInventory } from "../../../../src/computer/MachineProgramInventory.ts";
+import * as Schema from "effect/Schema";
+import { MachineInventory } from "./computerConfiguration.ts";
 import {
   ConfigurationSchema,
   decodeConfiguration,
@@ -26,6 +28,17 @@ export async function readAsset(binding: AssetFetcher, pin: AssetPin) {
     `Changed asset ${pin.path}`,
   );
   return bytes;
+}
+const decodeMachineInventory = Schema.decodeUnknownSync(MachineInventory, {
+  onExcessProperty: "error",
+  reportInput: false,
+});
+/** The machine inventory as its own pinned file, so a reader never pulls it from another object. */
+export async function readMachineInventory(binding: AssetFetcher, pin: AssetPin) {
+  const bytes = await readAsset(binding, pin);
+  return validateMachineProgramInventory(
+    decodeMachineInventory(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))),
+  );
 }
 export async function readConfiguration(binding: AssetFetcher, configHash: string) {
   const response = await binding.fetch(new Request("https://assets.invalid/qualifier/config.json"));
