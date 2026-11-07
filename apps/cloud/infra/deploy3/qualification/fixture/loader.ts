@@ -1,7 +1,4 @@
-import { ownedClaudeFacetWorker } from "./ownedClaudeFacets.ts";
-import { loadClaudeSdkHost } from "../../../../src/harness/ClaudeSdkHostLoader.ts";
 import { readRpcData, withRpcStub, rpcStubOwner } from "../../../../src/rpc/Resources.ts";
-import { claudeStepRoute } from "./claudeScenario.ts";
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
 import { observeCommandInvocation } from "./commandObservation.ts";
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -20,6 +17,7 @@ import { readAsset, readConfiguration } from "./configuration.ts";
 import { assert, sha256 } from "./common.ts";
 import { COMMAND_ASSETS } from "./programRegistry.ts";
 import { prepareClaudeFacetCode } from "../prepareClaudeFacet.ts";
+import { CLAUDE_THREAD_ROUTE } from "./claudeDispatch.ts";
 import { assertQualifierCodexFacetConfiguration } from "../facetEnvironmentContract.ts";
 import { assertQualifierClaudeFacetConfiguration } from "../claudeCalibrationFacetContract.ts";
 
@@ -74,104 +72,46 @@ function facetPin(
 }
 
 /** Adds observation at the platform code boundary; C still owns its original loader and facet. */
-export function qualifierFacetLoader(
-  env: QualifierEnvironment,
-  tail: Fetcher,
-  ctx: DurableObjectState,
-): WorkerLoader {
+export function qualifierFacetLoader(env: QualifierEnvironment, tail: Fetcher): WorkerLoader {
   // A caller holding the shard's environment passes an already-observing loader; observing through
   // it again would prepare and materialize every owner twice, so always reach the platform loader.
   const platform = platformLoader(env.LOADER);
   return registerObservedLoader(platform, {
     get(name, getCode) {
       assert(typeof name === "string" && name.length > 0, "Facet loader identity is missing");
-      return ownedClaudeFacetWorker(ctx, platform, name, async (owners) => {
+      return platform.get(name, async () => {
         const actual = await getCode();
         const config = await readConfiguration(env.PROGRAM_ASSETS, env.CONFIG_SHA256);
-        if (
-          actual.mainModule === "qualifier-claude-facet.mjs" ||
-          actual.mainModule === "qualifier-claude-calibration-facet.mjs"
-        ) {
-          const authorities = requireClaudeAuthorities(env);
+        // Claude turns run on the product thread host; C only loads the import calibration.
+        if (actual.mainModule === "qualifier-claude-calibration-facet.mjs") {
           const prepared = await prepareClaudeFacetCode(actual, config, env.PROGRAM_ASSETS, {
             RUN_ID: env.RUN_ID,
             CONFIG_SHA256: env.CONFIG_SHA256,
-            authorities,
-            sdkHost: (code) => loadClaudeSdkHost(`${name}:sdk-host`, code),
-            kernel: (code) =>
-              owners.kernel(
-                async () =>
-                  observeWorkerCode(
-                    await code(),
-                    env.RUN_ID,
-                    {
-                      loaderId: `${name}:kernel`,
-                      role: "facet",
-                      entrypoint: "ClaudeKernelFacet",
-                      identity: `kernel:claude:${name}`,
-                      tag: "actual-claude-kernel",
-                      calls: {
-                        identity: [
-                          {
-                            callId: "*",
-                            route: { method: "POST", path: "/claude/kernel/inspect" },
-                          },
-                        ],
-                        isolateNonceProbe: [
-                          {
-                            callId: "*",
-                            route: { method: "POST", path: "/claude/kernel/inspect" },
-                          },
-                        ],
-                      },
-                    },
-                    tail,
-                  ).code,
-              ),
-            // Each owner facet is its own isolate; without its tail a memory reset there is unattributable.
-            cli: (code) => owners.cli(async () => withTail(await code(), tail)),
-            computer: (code) => owners.computer(async () => withTail(await code(), tail)),
+            authorities: requireClaudeAuthorities(env),
           });
           assertQualifierClaudeFacetConfiguration(prepared.code.env);
           const route = (path: string) => ({ method: "POST", path });
-          const calibration = route(`/claude/${prepared.variant}/calibration`);
-          const restore = route(`/claude/${prepared.variant}/replace/dispatch`);
-          const step = await withRpcStub(proof(env), async (stub) =>
-            readRpcData(stub.claudeStepForLoader()),
-          );
-          const run = route(step ? claudeStepRoute(step) : `/claude/${prepared.variant}/restore`);
+          const variant = prepared.variant;
           const pin: ObserverLoaderPin = {
             loaderId: name,
             role: "facet",
-            entrypoint:
-              actual.mainModule === "qualifier-claude-calibration-facet.mjs"
-                ? "ClaudeImportCalibrationFacet"
-                : "ClaudeFacet",
-            identity: `facet:claude:${prepared.variant}:${name}`,
+            entrypoint: "ClaudeImportCalibrationFacet",
+            identity: `facet:claude:${variant}:${name}`,
             tag: "actual-claude-facet",
             calls: {
-              identity: [{ callId: "*", route: route(`/claude/${prepared.variant}/inspect`) }],
-              isolateNonceProbe: [
-                { callId: "*", route: route(`/claude/${prepared.variant}/inspect`) },
-              ],
-              loadedPreparedRelease: [
-                { callId: "*", route: route(`/claude/${prepared.variant}/release`) },
-              ],
-              startFresh: [{ callId: "*", route: run }],
+              identity: [{ callId: "*", route: route(`/claude/${variant}/inspect`) }],
+              isolateNonceProbe: [{ callId: "*", route: route(`/claude/${variant}/inspect`) }],
+              loadedPreparedRelease: [{ callId: "*", route: route(`/claude/${variant}/release`) }],
+              startFresh: [{ callId: "*", route: route(`/claude/${variant}/restore`) }],
               run: [1, 2, 3].map((turn) => ({
-                callId: `${prepared.variant}-turn-${turn}`,
-                route: route(`/claude/${prepared.variant}/turn/${turn}/dispatch`),
+                callId: `${variant}-turn-${turn}`,
+                route: route(`/claude/${variant}/turn/${turn}/dispatch`),
               })),
-              prepareInert: [{ callId: "*", route: restore }],
-              dispose: [
-                {
-                  callId: "*",
-                  route: route(
-                    `/claude/${prepared.variant}/${actual.env?.HARNESS_RESUME_CREATION === true ? "replace" : "finish"}/dispatch`,
-                  ),
-                },
+              prepareInert: [{ callId: "*", route: route(`/claude/${variant}/replace/dispatch`) }],
+              dispose: [{ callId: "*", route: route(`/claude/${variant}/finish/dispatch`) }],
+              observerCalibration: [
+                { callId: "*", route: route(`/claude/${variant}/calibration`) },
               ],
-              observerCalibration: [{ callId: "*", route: calibration }],
             },
           };
           const observed = observeWorkerCode(prepared.code, env.RUN_ID, pin, tail);
@@ -220,10 +160,6 @@ export function qualifierFacetLoader(
   });
 }
 
-function withTail(code: WorkerLoaderWorkerCode, tail: Fetcher): WorkerLoaderWorkerCode {
-  return { ...code, tails: [...(code.tails ?? []), tail] };
-}
-
 export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
   async run(input: ChildWorkerInvocation, target: Parameters<ChildWorkerLoaderPort["run"]>[1]) {
     const owner = proof(this.env);
@@ -249,6 +185,7 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
                 "/observer-calibration",
                 "/replace/dispatch",
                 ...[1, 2, 3].map((turn) => `/turn/${turn}/dispatch`),
+                CLAUDE_THREAD_ROUTE,
               ].map((path) => ({ callId: path, route: { method: "POST", path } })),
             },
           };

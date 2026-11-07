@@ -74,7 +74,9 @@ export async function syntheticBundleInput(
       },
       seed,
       // The product's split-scenario CLI view policy; harness test fixtures are private to src.
-      workingSet: { byteLimit: 1024 * 1024, metadataLimit: 10_000, pathByteLimit: 4096 },
+      // The CLI indexes the whole kernel filesystem; the machine image inventory alone has
+      // about 17,000 entries, so a smaller metadata limit refuses the CLI with E2BIG.
+      workingSet: { byteLimit: 1024 * 1024, metadataLimit: 32_768, pathByteLimit: 4096 },
     },
   };
 }

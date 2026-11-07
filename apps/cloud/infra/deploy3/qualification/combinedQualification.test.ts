@@ -2,128 +2,38 @@ import { expect, it } from "vite-plus/test";
 import { collectCombinedQualification } from "./combinedQualification.ts";
 import { combinedEvidenceFixture } from "./combinedQualification.fixture.ts";
 
-it("joins both Claude variants and Codex without promoting synthetic evidence", async () => {
-  const result = await collectCombinedQualification(await combinedEvidenceFixture());
+it("joins Codex and the Claude thread step without promoting synthetic evidence", async () => {
+  const result = await collectCombinedQualification(combinedEvidenceFixture());
   expect(result.qualification).toBe("pending");
   expect(result.deploymentReady).toBe(false);
-  expect(result.claude.baseline.model.toolResults.map((item) => item.name)).toEqual([
-    "Write",
-    "Read",
-    "Edit",
-    "Bash",
-    "Grep",
-    "mcp__executor__qualification_echo",
-  ]);
-  expect(result.claude.hooks.workload.moduleInitNonce.same).toBe(true);
-  expect(result.claude.baseline.criteria.map((item) => item.name)).not.toContain("interrupt");
-  expect(result.claude.baseline.workflow.turns).toHaveLength(3);
-  expect(result.claude.baseline.workflow.completion.replacementCount).toBe(1);
+  expect(result.claude.runs).toEqual(["run-1", "run-2"]);
+  expect(result.claude.tools).toEqual(["Read", "Grep"]);
+  expect(result.claude.kernelGrep).toBe("thread-grep");
 });
 
-it("rejects model records copied from another public request", async () => {
-  const input = await combinedEvidenceFixture();
-  const records = input.claude.baseline.modelRecords.map((record) => ({
-    ...record,
-    publicRequestId: "another-request",
-  }));
-  await expect(
-    collectCombinedQualification({
-      ...input,
-      claude: { ...input.claude, baseline: { ...input.claude.baseline, modelRecords: records } },
-    }),
-  ).rejects.toThrow("MODEL_PUBLIC_BINDING_MISMATCH");
+it("rejects a failed or retired-lane Claude receipt", async () => {
+  const input = combinedEvidenceFixture();
+  const receipt = input.claude.receipt as Record<string, unknown>;
+  for (const changed of [
+    { ...receipt, status: "failed" },
+    { ...receipt, schema: "signalbox/claude-qualification-step/v1" },
+    { ...receipt, runId: "another-run" },
+  ])
+    await expect(
+      collectCombinedQualification({ ...input, claude: { ...input.claude, receipt: changed } }),
+    ).rejects.toThrow();
 });
 
-it("rejects unrelated C checkpoint receipts and changed nonces", async () => {
-  const input = await combinedEvidenceFixture();
-  const source = input.claude.baseline;
-  const changed = {
-    ...source,
-    workflow: { ...source.workflow, lane: { ...source.workflow.lane, runId: "another-run" } },
-  };
-  await expect(
-    collectCombinedQualification({ ...input, claude: { ...input.claude, baseline: changed } }),
-  ).rejects.toThrow("WORKFLOW_IDENTITY_INVALID");
-  await expect(
-    collectCombinedQualification({
-      ...input,
-      claude: {
-        ...input.claude,
-        baseline: {
-          ...source,
-          workload: { ...source.workload, moduleInitNonceAfter: "recycled-isolate" },
-        },
-      },
-    }),
-  ).rejects.toThrow("NONCE_CHANGED");
-});
-
-it("rejects missing final joins and an unchanged replacement identity", async () => {
-  const input = await combinedEvidenceFixture();
-  const baseline = input.claude.baseline;
-  await expect(
-    collectCombinedQualification({
-      ...input,
-      claude: {
-        ...input.claude,
-        baseline: {
-          ...baseline,
-          workflow: {
-            ...baseline.workflow,
-            completion: {
-              ...baseline.workflow.completion,
-              ownership: { ...baseline.workflow.completion.ownership, leases: 1 },
-            },
-          },
-        },
-      },
-    }),
-  ).rejects.toThrow("WORKFLOW_IDENTITY_INVALID");
-  const firstIdentity = baseline.workflow.turns[0]!.shard.processes[0]!.identity!;
-  await expect(
-    collectCombinedQualification({
-      ...input,
-      claude: {
-        ...input.claude,
-        baseline: {
-          ...baseline,
-          workflow: {
-            ...baseline.workflow,
-            replacement: {
-              ...baseline.workflow.replacement,
-              resumed: { ...baseline.workflow.replacement.resumed, identity: firstIdentity },
-            },
-          },
-        },
-      },
-    }),
-  ).rejects.toThrow("WORKFLOW_IDENTITY_INVALID");
-});
-
-it("requires the Grep result's own kernel invocation in combined qualification", async () => {
-  const input = await combinedEvidenceFixture();
-  expect((await collectCombinedQualification(input)).claude.baseline.model.kernelGrep).toEqual({
-    toolUseId: "toolu_sb1070_claude_5",
-    resultText: "/workspace/claude-qualification.txt:1:after",
-    kernelInvocationId: "baseline-action-grep",
-  });
-  await expect(
-    collectCombinedQualification({
-      ...input,
-      claude: { ...input.claude, baseline: { ...input.claude.baseline, kernelInvocations: [] } },
-    }),
-  ).rejects.toThrow("CLAUDE_GREP_PRODUCT_KERNEL_SEARCH_MISSING");
-  const unrelated = input.claude.baseline.kernelInvocations.map((value) => ({
-    ...(value as object),
-    toolUseId: "unrelated-tool",
-  }));
-  await expect(
-    collectCombinedQualification({
-      ...input,
-      claude: {
-        ...input.claude,
-        baseline: { ...input.claude.baseline, kernelInvocations: unrelated },
-      },
-    }),
-  ).rejects.toThrow("CLAUDE_GREP_PRODUCT_KERNEL_SEARCH_MISSING");
+it("requires a successful kernel ripgrep invocation under the Claude thread route", async () => {
+  const input = combinedEvidenceFixture();
+  const [grep] = input.claude.kernelInvocations as Record<string, unknown>[];
+  for (const kernelInvocations of [
+    [],
+    [{ ...grep, route: { method: "POST", path: "/claude/baseline/turn/1/dispatch" } }],
+    [{ ...grep, exit: { exitCode: 2 } }],
+    [{ ...grep, runId: "another-run" }],
+  ])
+    await expect(
+      collectCombinedQualification({ ...input, claude: { ...input.claude, kernelInvocations } }),
+    ).rejects.toThrow("DEPLOY3_COMBINED_CLAUDE_THREAD_INVALID");
 });

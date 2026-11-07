@@ -10,11 +10,13 @@ import {
 
 const root = NodeURL.fileURLToPath(new URL("../../../../../", import.meta.url));
 const harnessRoot = "apps/cloud/src/harness/";
+const CLAUDE_THREAD_COMPOSITION = "../thread/ProductClaudeThreadHost.ts";
 const harnesses = [
   {
     harness: "Claude",
     entry: "ProductClaudeHarnessSessionHost.ts",
-    composition: "ProductClaudeHarnessRequestFacet.ts",
+    // The product's in-object Claude path: its thread host opens the owners.
+    composition: CLAUDE_THREAD_COMPOSITION,
     binding: "ClaudeRemoteNativeBinding.ts",
     excluded:
       /(?:^|\/)packages\/provider-codex\/|(?:^|\/)packages\/effect-codex-app-server\/|\/harness\/(?:Codex[^/]*\.ts|codex\/)/,
@@ -60,12 +62,12 @@ it.each(
     const inputs = [...new Set(registered.flatMap(([, output]) => Object.keys(output.inputs)))];
     expect(inputs).toContain(
       harnessRoot +
-        (harness === "Claude" && source === "ProductClaudeHarnessRequestFacet.ts"
+        (harness === "Claude" && source === CLAUDE_THREAD_COMPOSITION
           ? "ClaudeSdkNativeBinding.ts"
           : binding),
     );
     expect(inputs).toContain(harnessRoot + "host/lifecycle.ts");
-    if (source !== "ProductClaudeHarnessRequestFacet.ts")
+    if (source !== CLAUDE_THREAD_COMPOSITION)
       expect(inputs).toContain("apps/cloud/src/kernel/KernelFileSystem.ts");
     expect(inputs.filter((path) => excluded.test(path))).toEqual([]);
     if (harness === "Claude") {

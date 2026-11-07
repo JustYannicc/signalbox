@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 import { claudeHostOptionsFixture } from "./claudeHostOptions.fixture.ts";
 
+// It builds and bundles the whole combined fixture first.
 it("the real Claude host builder injects gateway access and refuses either missing value before launch", async () => {
   const fixture = await claudeHostOptionsFixture();
   try {
@@ -39,4 +40,4 @@ it("the real Claude host builder injects gateway access and refuses either missi
   } finally {
     await fixture.dispose();
   }
-});
+}, 30_000);

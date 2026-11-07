@@ -16,23 +16,19 @@ describe("per-invocation command observation", () => {
     });
     expect(Object.keys(command)).toEqual(["argv", "cwd", "env"]);
   });
-  it("keeps Claude variant and workload phase distinct on cached command workers", () => {
-    const command = { executable: "bash", argv: ["bash", "-c", "echo qualification"] };
-    for (const variant of ["baseline", "hooks"]) {
-      for (const phase of ["turn/1", "replace", "turn/2", "turn/3", "finish"]) {
-        const path = `/claude/${variant}/${phase}/dispatch`;
-        expect(readCommandObservation(observeCommandInvocation(command, path, path))).toEqual({
-          command,
-          call: { route: { method: "POST", path }, invocationId: path },
-        });
-      }
-    }
-    for (const path of [
-      "/claude/other/work/dispatch",
-      "/claude/baseline/unknown/dispatch",
-      "/claude/hooks/work/receipt",
+  it("admits the Claude thread step's route and no retired Claude step route", () => {
+    const command = { executable: "/bin/rg", argv: ["rg", "needle", "/workspace"] };
+    const path = "/claude/thread/dispatch";
+    expect(readCommandObservation(observeCommandInvocation(command, path, "rg-1"))).toEqual({
+      command,
+      call: { route: { method: "POST", path }, invocationId: "rg-1" },
+    });
+    for (const retired of [
+      "/claude/baseline/turn/1/dispatch",
+      "/claude/hooks/replace/dispatch",
+      "/claude/thread/receipt",
     ])
-      expect(() => observeCommandInvocation(command, path, "invalid")).toThrow("invalid");
+      expect(() => observeCommandInvocation(command, retired, "invalid")).toThrow("invalid");
   });
   it("refuses missing metadata, collisions and undeclared routes", () => {
     expect(() => readCommandObservation({ argv: [] })).toThrow("missing");

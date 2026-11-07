@@ -10,7 +10,12 @@ import { QualifierCapabilities } from "./capabilities.ts";
 import type { QualifierEnvironment } from "./environment.ts";
 import { Lifecycle } from "./lifecycle.ts";
 import { ModelController, type Incarnation } from "./modelController.ts";
-import { ClaudeDispatch, type ClaudeDispatchStep } from "./claudeDispatch.ts";
+import {
+  CLAUDE_THREAD_ACTIVE,
+  CLAUDE_THREAD_RECEIPT_ROUTE,
+  CLAUDE_THREAD_ROUTE,
+  ClaudeDispatch,
+} from "./claudeDispatch.ts";
 import { claudeStepRoute } from "./claudeScenario.ts";
 import { ClaudeController } from "./claudeController.ts";
 import { requireClaudeAuthorities } from "./claudeAuthorities.ts";
@@ -58,6 +63,8 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
     return await this.claude.activeToolUse();
   }
   async commandPhase() {
+    // The thread step is claimed only while Codex is idle, and Codex claims refuse while it runs.
+    if (await this.claudeDispatch.active()) return CLAUDE_THREAD_ROUTE;
     if (
       !(await this.ctx.storage.get("execution-owner")) &&
       (await this.ctx.storage.get("observer/calibration-claimed"))
@@ -146,9 +153,6 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
   }
   async endClaudeStep(step: ClaudeStep) {
     return await this.claude.end(step);
-  }
-  async claudeStepForLoader() {
-    return await this.claude.active();
   }
   modelTransition() {
     return this.#phase;
@@ -337,6 +341,7 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       !(await this.ctx.storage.get("observer/calibration-claimed")),
       "Calibration already has a durable claim",
     );
+    assert(!(await this.claudeDispatch.active()), "The Claude thread step owns native commands");
     await this.ctx.storage.put("observer/calibration-claimed", true);
     const result = await withRpcStub(this.shard(), (stub) =>
       readRpcData(stub.observerCalibration()),
@@ -462,6 +467,10 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
           !(await tx.get("execution-owner")),
           "The official native attempt has already been claimed",
         );
+        assert(
+          !(await tx.get(CLAUDE_THREAD_ACTIVE)),
+          "The Claude thread step owns native commands",
+        );
         await tx.put("execution-owner", this.ctx.id.toString());
       }
       await tx.put(`step/${step}/claim`, { status: "reserved" });
@@ -557,8 +566,10 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
 
     if (request.method === "POST" && url.pathname !== "/export/blob")
       assert((await request.text()) === "{}", "Qualifier mutations require an empty JSON object");
-    if (request.method === "POST" && url.pathname === "/sequence/hold")
+    if (request.method === "POST" && url.pathname === "/sequence/hold") {
+      assert(!(await this.claudeDispatch.active()), "The Claude thread step owns native commands");
       return Response.json(await this.#sequenceLifetime.hold());
+    }
     if (request.method === "GET" && url.pathname === "/sequence/held")
       return Response.json(await this.#sequenceLifetime.ready());
     if (request.method === "POST" && url.pathname === "/sequence/release")
@@ -578,23 +589,16 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       return Response.json(
         await this.claudeImportCalibration(importCalibration[1] as ClaudeVariant),
       );
-    const claude = url.pathname.match(
-      /^\/claude\/(baseline|hooks)\/(turn\/[123]|replace|finish)\/(dispatch|receipt)$/u,
-    );
-    if (claude) {
-      const variant = claude[1] as ClaudeVariant;
-      const step = claude[2]!.replace("turn/", "turn-") as ClaudeDispatchStep;
-      if (claude[3] === "dispatch" && request.method === "POST") {
-        await this.#sequenceLifetime.check();
-        const claimed = await this.claudeDispatch.dispatch(variant, step);
-        this.ctx.waitUntil(this.claudeDispatch.pending(variant, step).then(() => undefined));
-        return Response.json(claimed, { status: 202 });
-      }
-      if (claude[3] === "receipt" && request.method === "GET")
-        return new Response(jsonBytes(await this.claudeDispatch.receipt(variant, step)), {
-          headers: { "content-type": "application/json" },
-        });
+    // One-shot claimed with a persisted receipt; it runs only while every Codex claim is idle.
+    if (request.method === "POST" && url.pathname === CLAUDE_THREAD_ROUTE) {
+      const claimed = await this.claudeDispatch.dispatch();
+      this.ctx.waitUntil(this.claudeDispatch.pending().then(() => undefined));
+      return Response.json(claimed, { status: 202 });
     }
+    if (request.method === "GET" && url.pathname === CLAUDE_THREAD_RECEIPT_ROUTE)
+      return new Response(jsonBytes(await this.claudeDispatch.receipt()), {
+        headers: { "content-type": "application/json" },
+      });
     const match = url.pathname.match(/^\/(turn\/[123]|replace|finish)\/(dispatch|receipt)$/);
     if (match) {
       const step = match[1]!.replace("/", "-") as Step;

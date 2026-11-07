@@ -1,5 +1,9 @@
 import { prepareClaudeFacetCode } from "../prepareClaudeFacet.ts";
-import type { ClaudeOwnerCodeFactory } from "../../../../src/harness/ClaudeProductOwners.ts";
+import {
+  CLAUDE_OWNER_COMPATIBILITY,
+  claudeOwnerCode,
+  openClaudeOwnerRelease,
+} from "./claudeOwnerCode.ts";
 import { expect, test } from "vite-plus/test";
 import { productLoadedPreparedRelease } from "../../../../src/harness/ProductHarnessProcessRelease.ts";
 import { loadDeploy3ClaudeAssets } from "../claudeAssets.ts";
@@ -38,7 +42,7 @@ async function setup() {
       home: "/workspace/.home/claude",
       cwd: "/workspace",
     },
-    workingSet: { byteLimit: 1024 * 1024, metadataLimit: 10_000, pathByteLimit: 4096 },
+    workingSet: { byteLimit: 1024 * 1024, metadataLimit: 32_768, pathByteLimit: 4096 },
   });
   const prepared = (variant: "baseline" | "hooks") =>
     productLoadedPreparedRelease(
@@ -150,23 +154,10 @@ test("both runtime releases load from full ledger rows through the exact public 
 });
 
 test.each(["baseline", "hooks"] as const)(
-  "%s loader preserves its configuration inputs and rejects another variant",
+  "%s owner code reads the CLI's release only inside the CLI's own factory",
   async (variant) => {
     const f = await setup();
     try {
-      const code = {
-        compatibilityDate: "2026-10-19",
-        mainModule: "qualifier-claude-facet.mjs",
-        modules: {},
-        env: {
-          HARNESS_C_TARGET_PREPARED_RELEASE: f.configuration.claude.expected[variant],
-          HARNESS_C_PRODUCT_CAPABILITIES: {},
-        },
-      };
-      let sdkCode: WorkerLoaderWorkerCode | undefined;
-      let cliFactory: ClaudeOwnerCodeFactory | undefined;
-      let kernelFactory: ClaudeOwnerCodeFactory | undefined;
-      let computerFactory: ClaudeOwnerCodeFactory | undefined;
       let reads = 0;
       const assets = {
         fetch: (request: Request) => {
@@ -174,100 +165,103 @@ test.each(["baseline", "hooks"] as const)(
           return f.fixture.binding.fetch(request);
         },
       };
-      const inputs = {
-        cli: (code: ClaudeOwnerCodeFactory) => {
-          cliFactory = code;
-          return {
-            async open() {
-              throw new Error("Loader test must not start the CLI");
-            },
-          };
+      const claude = f.configuration.claude;
+      const release = await openClaudeOwnerRelease(claude.expected[variant], claude, assets);
+      const owners = claudeOwnerCode({
+        compatibility: CLAUDE_OWNER_COMPATIBILITY,
+        release,
+        sources: {
+          kernel: () => claude.kernelSource,
+          cli: () => claude.cliSource,
+          computer: () => claude.computerSource,
+          sdk: () => claude.sdkHostSource,
         },
-        kernel: (code: ClaudeOwnerCodeFactory) => {
-          kernelFactory = code;
-          return new Proxy(
-            {},
-            { get: () => unavailable },
-          ) as import("./claudeKernelProtocol.ts").QualifierClaudeKernelPort;
-        },
-        computer: (code: ClaudeOwnerCodeFactory) => {
-          computerFactory = code;
-          return new Proxy(
-            {},
-            { get: () => unavailable },
-          ) as import("../../../../src/kernel/KernelComputerAdmissionPort.ts").ComputerProgramOwnerPort & {
-            configure(
-              input: import("../../../../src/computer/ComputerExecutionObject.ts").ComputerExecutionConfiguration,
-            ): Promise<void>;
-          };
-        },
-        sdkHost: (code: WorkerLoaderWorkerCode) => {
-          sdkCode = code;
-          return {
-            open: async () => {
-              throw new Error("This loader test does not execute SDK queries");
-            },
-          };
-        },
-        RUN_ID: rootRunId,
-        CONFIG_SHA256: "a".repeat(64),
-        authorities: {
-          access: f.fixture.binding,
-          executor: f.fixture.binding,
-          continuations: f.fixture.binding,
-        },
-      };
-      const prepared = await prepareClaudeFacetCode(code, f.configuration, assets, inputs);
-      // Preparing the facet reads none of the CLI's release; only its loader's factory does.
-      const preparedReads = reads;
-      const kernelCode = await kernelFactory!();
-      const computerCode = await computerFactory!();
-      expect(reads).toBe(preparedReads);
-      const cliCode = await cliFactory!();
-      expect(reads).toBeGreaterThan(preparedReads);
-      expect(prepared.variant).toBe(variant);
-      expect(prepared.code.env).toMatchObject({
-        RUN_ID: rootRunId,
-        CONFIG_SHA256: inputs.CONFIG_SHA256,
-        QUALIFIER_CLAUDE_VARIANT: variant,
+        kernelEnv: { QUALIFIER_CLAUDE_VARIANT: variant },
+        commands: "qualifier-commands",
       });
-      expect(prepared.code.modules).toHaveProperty("qualifier-claude-implementation.mjs");
-      expect(Object.keys(prepared.code.modules).some((key) => key.includes("/sdk/"))).toBe(false);
-      expect(kernelCode?.modules).toHaveProperty("qualifier-claude-kernel.mjs");
-      expect(computerCode?.modules).toHaveProperty("computer-execution.mjs");
-      expect(Object.keys(kernelCode?.modules ?? {}).some((key) => key.includes("/cli/"))).toBe(
-        false,
-      );
-      expect(Object.keys(kernelCode?.modules ?? {}).some((key) => key.includes("/sdk/"))).toBe(
-        false,
-      );
-      expect(Object.keys(prepared.code.modules).some((key) => key.includes("/cli/"))).toBe(false);
-      expect(Object.keys(computerCode?.modules ?? {})).toEqual([
+      const opened = reads;
+      const kernelCode = await owners.kernel();
+      const computerCode = await owners.computer();
+      expect(reads).toBe(opened);
+      const cliCode = await owners.cli();
+      expect(reads).toBeGreaterThan(opened);
+      const sdkCode = await owners.sdk();
+      const paths = (code: WorkerLoaderWorkerCode) => Object.keys(code.modules);
+      expect(kernelCode.env).toEqual({ QUALIFIER_CLAUDE_VARIANT: variant });
+      expect(paths(kernelCode)).toEqual(["claude-kernel-entry.mjs", "qualifier-claude-kernel.mjs"]);
+      expect(computerCode.env).toMatchObject({ CHILD_WORKERS: "qualifier-commands" });
+      expect(paths(computerCode)).toEqual([
         "computer-execution-entry.mjs",
         "computer-execution.mjs",
       ]);
-      expect(cliCode?.modules).toHaveProperty("qualifier-claude-cli.mjs");
-      expect(Object.keys(cliCode?.modules ?? {}).some((key) => key.includes("/cli/"))).toBe(true);
-      expect(Object.keys(cliCode?.modules ?? {}).some((key) => key.includes("/sdk/"))).toBe(false);
-      expect(sdkCode).toBeDefined();
-      expect(sdkCode?.modules).toHaveProperty("qualifier-claude-sdk-host.mjs");
-      expect(Object.keys(sdkCode?.modules ?? {}).some((key) => key.includes("/cli/"))).toBe(false);
-      await expect(
-        prepareClaudeFacetCode(
-          {
-            ...code,
-            env: {
-              ...code.env,
-              QUALIFIER_CLAUDE_VARIANT: variant === "baseline" ? "hooks" : "baseline",
-            },
-          },
-          f.configuration,
-          f.fixture.binding,
-          inputs,
-        ),
-      ).rejects.toThrow("SELECTED_VARIANT_MISMATCH");
+      expect(paths(cliCode)).toContain("qualifier-claude-cli.mjs");
+      expect(paths(cliCode).some((key) => key.includes("/cli/"))).toBe(true);
+      expect(paths(cliCode).some((key) => key.includes("/sdk/"))).toBe(false);
+      expect(paths(sdkCode)).toContain("qualifier-claude-sdk-host.mjs");
+      expect(paths(sdkCode).some((key) => key.includes("/cli/"))).toBe(false);
     } finally {
       await f.fixture.dispose();
     }
   },
 );
+
+test("the C loader prepares only the inert import calibration, never a Claude turn facet", async () => {
+  const f = await setup();
+  try {
+    const expected = f.configuration.claude.expected.baseline;
+    const inputs = {
+      RUN_ID: rootRunId,
+      CONFIG_SHA256: "a".repeat(64),
+      authorities: {
+        access: f.fixture.binding,
+        executor: f.fixture.binding,
+        continuations: f.fixture.binding,
+      },
+    };
+    const calibration = {
+      compatibilityDate: "2026-10-19",
+      mainModule: "qualifier-claude-calibration-facet.mjs",
+      modules: {},
+      env: {
+        HARNESS_C_TARGET_PREPARED_RELEASE: expected,
+        HARNESS_C_PRODUCT_CAPABILITIES: {},
+        QUALIFIER_CLAUDE_FACET_MODE: "inert-import-calibration",
+      },
+    };
+    const prepared = await prepareClaudeFacetCode(
+      calibration,
+      f.configuration,
+      f.fixture.binding,
+      inputs,
+    );
+    expect(prepared.variant).toBe("baseline");
+    expect(prepared.code.env).toMatchObject({
+      RUN_ID: rootRunId,
+      QUALIFIER_CLAUDE_VARIANT: "baseline",
+    });
+    expect(prepared.code.env).not.toHaveProperty("CLAUDE_KERNEL");
+    expect(prepared.code.modules).toHaveProperty("qualifier-claude-implementation.mjs");
+    await expect(
+      prepareClaudeFacetCode(
+        {
+          ...calibration,
+          mainModule: "qualifier-claude-facet.mjs",
+          env: { ...calibration.env, QUALIFIER_CLAUDE_FACET_MODE: undefined },
+        },
+        f.configuration,
+        f.fixture.binding,
+        inputs,
+      ),
+    ).rejects.toThrow("DEPLOY3_CLAUDE_FACET_MODE_MISMATCH");
+    await expect(
+      prepareClaudeFacetCode(
+        { ...calibration, env: { ...calibration.env, QUALIFIER_CLAUDE_VARIANT: "hooks" } },
+        f.configuration,
+        f.fixture.binding,
+        inputs,
+      ),
+    ).rejects.toThrow("SELECTED_VARIANT_MISMATCH");
+  } finally {
+    await f.fixture.dispose();
+  }
+});

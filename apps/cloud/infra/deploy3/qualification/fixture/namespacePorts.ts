@@ -4,7 +4,9 @@ import type { HarnessProcessPlacementStoreObject } from "../../../../src/harness
 import type { HarnessRunArtifact } from "../../../../src/harness/HarnessRunStore.ts";
 import type { QualifierCapabilities } from "./capabilities.ts";
 import type { Configuration } from "./configuration.ts";
-import type { ClaudeStep, ClaudeVariant } from "./claudeScenario.ts";
+import type { ClaudeVariant } from "./claudeScenario.ts";
+import type { ClaudeQualificationModelPeer } from "./claudeModelPeer.ts";
+import type { errorRecord } from "./common.ts";
 import type { createClaudeFixtureServices } from "./claudeFixtureServices.ts";
 import type {
   placementReleaseEvidence,
@@ -18,9 +20,11 @@ type JournalReceipt = Awaited<ReturnType<QualifierCapabilities["append"]>>;
 
 /** Namespace clients describe the RPC contract without depending on their object constructors. */
 export type QualifierProofPort = Rpc.DurableObjectBranded &
-  Pick<QualifierCapabilities, "append" | "readArtifactChunk"> & {
+  Pick<
+    QualifierCapabilities,
+    "append" | "readArtifactChunk" | "claudeThreadInputs" | "claudeOwnerSource"
+  > & {
     config(): Promise<Configuration>;
-    claudeStepForLoader(): Promise<ClaudeStep>;
     modelConstructionPhase(): Promise<{ route: string; logicalIncarnation: number }>;
     commandPhase(): Promise<string>;
     commandToolUse(): Promise<{
@@ -67,6 +71,15 @@ export type QualifierShardPort = Rpc.DurableObjectBranded &
     modelRecoveryEvidence(runId: string): ReturnType<typeof readShardRecoveryEvidence>;
     placementReleaseEvidence(): ReturnType<typeof placementReleaseEvidence>;
     evidence(): ReturnType<typeof readShardExecutionEvidence>;
+    claudeThreadTurns(): Promise<{
+      readonly completed: boolean;
+      readonly turns: readonly { readonly runId: string; readonly status: string }[];
+      readonly model: ReturnType<ClaudeQualificationModelPeer["snapshot"]>;
+      readonly failure?: {
+        readonly pretty: string;
+        readonly reasons: readonly ReturnType<typeof errorRecord>[];
+      };
+    }>;
     claudeObserverCalibration(): Promise<{
       readonly identity: { readonly facetNonce: string };
       readonly observed: {

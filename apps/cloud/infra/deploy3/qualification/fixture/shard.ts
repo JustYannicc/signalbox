@@ -18,6 +18,7 @@ import { readShardRecoveryEvidence, readShardExecutionEvidence } from "./shardEv
 import { assertQualifierRuntimeConfiguration } from "../environmentContract.ts";
 import { calibrateClaudeImport } from "./claudeImportCalibration.ts";
 import { calibrateClaudeObserver } from "./claudeObserverCalibration.ts";
+import { runQualifierClaudeThread } from "./claudeThreadDriver.ts";
 import type { ClaudeVariant } from "./claudeScenario.ts";
 
 export class QualifierShard extends HarnessProcessExecutionShardObject {
@@ -31,16 +32,15 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
     };
     super(
       ctx,
-      createQualifierShardEnvironment(
-        env,
-        qualifierFacetLoader(env, exports.QualifierTail, ctx),
-        cap,
-      ),
+      createQualifierShardEnvironment(env, qualifierFacetLoader(env, exports.QualifierTail), cap),
     );
     this.qualifierEnvironment = env;
   }
   claudeObserverCalibration() {
     return calibrateClaudeObserver(this.ctx, this.qualifierEnvironment);
+  }
+  claudeThreadTurns() {
+    return runQualifierClaudeThread(this.qualifierEnvironment);
   }
   claudeImportCalibration(variant: ClaudeVariant) {
     return calibrateClaudeImport(this.ctx, this.qualifierEnvironment, variant);
@@ -116,7 +116,7 @@ export class QualifierShard extends HarnessProcessExecutionShardObject {
       cap.append("observer-calibration-materialized", { modules: Object.keys(modules) }),
     );
     const exports = { QualifierTail: env.QUALIFIER_TAIL };
-    const loader = qualifierFacetLoader(env, exports.QualifierTail, this.ctx);
+    const loader = qualifierFacetLoader(env, exports.QualifierTail);
     const worker = loader.get(key, () => ({
       compatibilityDate: "2026-10-19",
       compatibilityFlags: ["nodejs_compat"],

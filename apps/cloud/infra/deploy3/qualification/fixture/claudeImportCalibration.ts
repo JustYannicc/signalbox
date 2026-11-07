@@ -21,7 +21,7 @@ export async function calibrateClaudeImport(
   const key = `claude-import-calibration-${variant}-${env.RUN_ID}`;
   const environment = createQualifierShardEnvironment(
     env,
-    qualifierFacetLoader(env, env.QUALIFIER_TAIL, ctx),
+    qualifierFacetLoader(env, env.QUALIFIER_TAIL),
     cap,
   );
   const owner = createHarnessProcessFacetStub(
