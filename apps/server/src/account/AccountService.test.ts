@@ -1,6 +1,10 @@
 import type { AccountAuthorizeParams } from "@t3tools/contracts/account";
 import { describe, expect, it } from "@effect/vitest";
-import { WORKOS_TEST_ENV } from "@signalbox/account/WorkOSTesting";
+import {
+  ORGANIZATION_SELECTION_GRANT,
+  WORKOS_TEST_ENV,
+  type WorkOSCodes,
+} from "@signalbox/account/WorkOSTesting";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -26,6 +30,8 @@ const handoffOf = (result: AccountSessions.AccountCallbackResult) => {
   expect(url.protocol).toBe("signalbox:");
   return url.searchParams.get("handoff") ?? "";
 };
+
+const WITH_WORKOS_KEY = { ...WORKOS_TEST_ENV, T3CODE_WORKOS_API_KEY: "sk_test" };
 
 describe("AccountService native handoff", () => {
   it.effect("redeems once with the PKCE verifier, yielding an account session", () => {
@@ -155,6 +161,96 @@ describe("AccountService accounts", () => {
         expect((yield* accounts.sessionState(bearerRequest(bootstrap.token))).account).toBeNull();
       }),
     ),
+  );
+});
+
+describe("AccountService email sign-in", () => {
+  it.effect(
+    "returns native email requests to the relative sign-in page with their PKCE target",
+    () => {
+      const exchanges: Array<Record<string, unknown>> = [];
+      return run(
+        Effect.gen(function* () {
+          const accounts = yield* AccountService.AccountService;
+          const params: AccountAuthorizeParams = {
+            provider: "email",
+            origin: "https://attacker.example",
+            mode: "native",
+            returnUrl: "signalbox://auth/return",
+            challenge: nativeParams.challenge,
+            via: "web",
+            screenHint: "sign-up",
+            selectAccount: "1",
+          };
+          const location = yield* accounts.authorize(params);
+          const url = new URL(location, "https://box.example.com");
+          expect(location.startsWith("/sign-in?")).toBe(true);
+          expect(url.origin).toBe("https://box.example.com");
+          expect(url.searchParams.get("provider")).toBe("email");
+          expect(url.searchParams.get("origin")).toBe("https://attacker.example");
+          expect(url.searchParams.get("mode")).toBe("native");
+          expect(url.searchParams.get("returnUrl")).toBe("signalbox://auth/return");
+          expect(url.searchParams.get("challenge")).toBe(nativeParams.challenge);
+          expect(url.searchParams.get("via")).toBe("web");
+          expect(url.searchParams.get("screenHint")).toBe("sign-up");
+          expect(url.searchParams.get("selectAccount")).toBe("1");
+          expect(exchanges).toHaveLength(0);
+        }),
+        { exchanges },
+      );
+    },
+  );
+
+  it.effect(
+    "pins a known email to its personal organization and rejects a changed identity",
+    () => {
+      const exchanges: Array<Record<string, unknown>> = [];
+      const knownUser = { id: "user_known", email: "known@example.com" };
+      const codes: WorkOSCodes = {
+        "code-known": { select: { user: knownUser, organizationId: "org-personal" } },
+        "code-other": { id: "user_other", email: "other@example.com" },
+      };
+      const params: AccountAuthorizeParams = {
+        ...browserParams,
+        provider: "email",
+        loginHint: "known@example.com",
+      };
+      return run(
+        Effect.gen(function* () {
+          const accounts = yield* AccountService.AccountService;
+          const authorizeUrl = new URL(yield* accounts.authorize(params));
+          expect(authorizeUrl.searchParams.get("organization_id")).toBe("org-personal");
+
+          const signedIn = yield* accounts.callback(
+            { state: authorizeUrl.searchParams.get("state") ?? "", code: "code-known" },
+            anonymousRequest,
+          );
+          expect(signedIn).toMatchObject({ _tag: "BrowserSession", location: "/threads" });
+          expect(
+            exchanges.find((body) => body.grant_type === ORGANIZATION_SELECTION_GRANT),
+          ).toMatchObject({
+            organization_id: "org-personal",
+            pending_authentication_token: "selection-code-known",
+          });
+
+          const secondAuthorizeUrl = new URL(yield* accounts.authorize(params));
+          const changedIdentity = yield* accounts.callback(
+            {
+              state: secondAuthorizeUrl.searchParams.get("state") ?? "",
+              code: "code-other",
+            },
+            anonymousRequest,
+          );
+          expect(changedIdentity).toEqual({ _tag: "Redirect", location: "/sign-in?error=failed" });
+        }),
+        {
+          codes,
+          exchanges,
+          memberships: { user_known: [{ id: "org-personal", name: "Personal" }] },
+          env: WITH_WORKOS_KEY,
+        },
+      );
+    },
   );
 });
 

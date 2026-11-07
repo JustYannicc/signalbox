@@ -52,29 +52,41 @@ const make = Effect.gen(function* () {
     const request = yield* policy.verify(input.rawBody, input.signature);
     const { user, workos } = yield* identities.resolve(request.user);
     if (request.mode === "browser") {
-      const result = yield* accounts.finishSignIn(
-        { origin: input.origin, codeVerifier: "", target: { mode: "browser", returnTo: "/" } },
-        user,
-        workos,
-      );
+      const result = yield* accounts
+        .finishSignIn(
+          { origin: input.origin, codeVerifier: "", target: { mode: "browser", returnTo: "/" } },
+          user,
+          workos,
+        )
+        .pipe(
+          Effect.catchTags({
+            WorkOSAuthenticateError: () => Effect.fail(new TestSignInFailed({})),
+          }),
+        );
       if (result._tag !== "BrowserSession") return yield* new TestSignInFailed({});
       return { mode: "browser", token: result.token, expiresAt: result.expiresAt };
     }
 
     const verifier = AccountFlow.randomToken();
-    const result = yield* accounts.finishSignIn(
-      {
-        origin: input.origin,
-        codeVerifier: "",
-        target: {
-          mode: "native",
-          returnUrl: "signalbox-dev://account-return",
-          challenge: AccountFlow.pkceChallenge(verifier),
+    const result = yield* accounts
+      .finishSignIn(
+        {
+          origin: input.origin,
+          codeVerifier: "",
+          target: {
+            mode: "native",
+            returnUrl: "signalbox-dev://account-return",
+            challenge: AccountFlow.pkceChallenge(verifier),
+          },
         },
-      },
-      user,
-      workos,
-    );
+        user,
+        workos,
+      )
+      .pipe(
+        Effect.catchTags({
+          WorkOSAuthenticateError: () => Effect.fail(new TestSignInFailed({})),
+        }),
+      );
     const handoff = new URL(result.location).searchParams.get("handoff");
     if (!handoff) return yield* new TestSignInFailed({});
     const { credential } = yield* accounts
