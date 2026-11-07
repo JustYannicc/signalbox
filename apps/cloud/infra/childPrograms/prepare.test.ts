@@ -1,4 +1,5 @@
 import { childProgramPaths } from "../../src/computer/ChildProgramPaths.ts";
+import { describeProductProgramInputs } from "../harnessReleases/productProgramInputs.ts";
 import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
 import { createChildProgramCatalog } from "../../src/computer/ChildProgramCatalog.ts";
 import { commandProgramCodes } from "../../src/computer/commandGatewayTesting.ts";
@@ -124,7 +125,7 @@ describe("full child program preparation", () => {
     ).toThrow("Prepared child program is missing coreutils mkdir");
   });
 
-  it("describes every executable path and rejects incomplete seeds", () => {
+  it("describes every executable path and rejects incomplete seeds", async () => {
     const paths = [
       ...new Set(
         [...Object.values(CHILD_PROGRAM_PATHS), ...CHILD_UGREP_EXECUTABLES].flatMap((path) => {
@@ -133,6 +134,8 @@ describe("full child program preparation", () => {
         }),
       ),
     ];
+    const pins = await describeProductProgramInputs();
+    expect(pins.commandExecutablePaths).toEqual([...paths].sort());
     const files = paths.map((path, index) => ({
       path,
       bytes: encoder.encode(path),

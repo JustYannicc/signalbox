@@ -3,7 +3,7 @@ import type { KernelBashPort } from "../../kernel/KernelBashPort.ts";
 import type { KernelBusyboxPort } from "../../kernel/KernelBusyboxPort.ts";
 import type { KernelCommand } from "../../kernel/KernelCommandForwarder.ts";
 import type { ChildWorkerInvocation } from "../ChildWorkerProgram.ts";
-import { CHILD_PROGRAM_PATHS } from "../ChildProgramSet.ts";
+import { CHILD_BUSYBOX_APPLETS, CHILD_PROGRAM_PATHS } from "../ChildProgramSet.ts";
 import {
   commandGatewayFixture,
   emptyChild,
@@ -35,9 +35,8 @@ describe("uniform command gateway admission", () => {
     try {
       const pathnames = Object.values(CHILD_PROGRAM_PATHS);
       const aliases = Object.keys(CHILD_PROGRAM_PATHS);
-      expect(pathnames).toHaveLength(26);
       expect(pathnames).toContain(CHILD_PROGRAM_PATHS.find);
-      expect(aliases).toHaveLength(26);
+      expect(aliases).toEqual(expect.arrayContaining([...CHILD_BUSYBOX_APPLETS]));
       expect(aliases).toContain("find");
       for (const executable of [...pathnames, ...aliases]) {
         expect(fixture.gateway.host.resolve(executable).status).toBe("ok");

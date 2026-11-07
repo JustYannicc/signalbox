@@ -53,13 +53,15 @@ it.each(paths)(
     });
     try {
       const argv =
-        name === "grep"
-          ? [name, "needle", "/work/input.txt"]
-          : name === "sed"
-            ? [name, "-n", "1p", "/work/input.txt"]
-            : name === "ugrep" || name === "claude"
-              ? ["ugrep", "needle"]
-              : [name];
+        name === "tr"
+          ? [name, "-d", "x"]
+          : name === "grep"
+            ? [name, "needle", "/work/input.txt"]
+            : name === "sed"
+              ? [name, "-n", "1p", "/work/input.txt"]
+              : name === "ugrep" || name === "claude"
+                ? ["ugrep", "needle"]
+                : [name];
       const child = await fixture.gateway.exec(
         { executable, argv, cwd: "/", env: { PATH: "/usr/bin:/bin" } },
         fixture.controller.signal,
