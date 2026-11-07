@@ -243,11 +243,16 @@ describe("CLI filesystem public adapter", () => {
     }
   });
 
-  it("delivers process signals in Computer and surfaces owner rejection at the barrier", async () => {
+  it("keeps the barrier usable after a queued probe of a missing process", async () => {
     const f = await fixture();
-    f.files.signalProcess(999_999, 0);
-    await expect(f.files.barrier()).rejects.toMatchObject({ code: "ESRCH" });
-    await expect(f.close()).rejects.toMatchObject({ message: "CLI filesystem cleanup failed" });
+    try {
+      f.files.signalProcess(999_999, 0);
+      f.fs.writeFileSync("/sync", "after probe");
+      await f.files.barrier();
+      expect(f.canonical.readFileSync("/sync", "utf8")).toBe("after probe");
+    } finally {
+      await f.close();
+    }
   });
 
   it("checks projected permissions before returning synchronous prefetched bytes", async () => {

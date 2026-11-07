@@ -225,6 +225,7 @@ export async function cliFileBackendFixture(
   });
   return {
     files,
+    processes,
     processConfiguration,
     stdin: stdio.stdin,
     /** Computer's own storage, below the overlay, for rows only its own operations write. */
