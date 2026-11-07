@@ -7,7 +7,6 @@ import type {
   ClaudeCliMetadataPage,
 } from "./ClaudeCliKernelPort.ts";
 import type { ClaudeKernelInitialize } from "./ClaudeKernelSessionPort.ts";
-import type { CliFileMetadata } from "./CliFileWorkingSet.ts";
 import type { CliViewTrace } from "./CliViewTrace.ts";
 import type { KernelSyscallRequest } from "../kernel/KernelSyscallPort.ts";
 import { KERNEL_SYSCALL_MAX_IO_BYTES } from "../kernel/KernelSyscallPort.ts";
@@ -19,7 +18,8 @@ import { createNodeComputerChildProcess } from "../isolate/NodeComputerProcess.t
 import { NodeChildControl, createCliProcessLeases } from "./cliKernel/Children.ts";
 import { kernelError } from "../kernel/KernelErrno.ts";
 import { nodeProcessSignalError } from "../isolate/NodeProcessSignals.ts";
-import { digestCliFiles, lookupCliPaths, readCliMetadata } from "./cliKernel/Metadata.ts";
+import { digestCliFiles, lookupCliPaths } from "./cliKernel/Metadata.ts";
+import { CliMetadataIndex, CliMetadataWalk } from "./cliKernel/MetadataWalk.ts";
 import { hasPrivateDescriptorAlias } from "./cliKernel/DescriptorAliases.ts";
 import { nodeFsError } from "../isolate/NodeFsError.ts";
 
@@ -48,7 +48,8 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
   readonly #leases;
   readonly #metadataLimit;
   readonly rootDescriptor;
-  #snapshot: { revision: number; entries: CliFileMetadata[] } | undefined;
+  /** The index being handed out, read on as the CLI asks for pages. */
+  #index: CliMetadataIndex | undefined;
   /** Revisions handed to the CLI, so a later change query knows which parts moved. */
   readonly #issued = new Map<
     number,
@@ -192,30 +193,24 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
     return this.#run(crypto.randomUUID(), async (signal) => {
       if (!Number.isSafeInteger(cursor) || cursor < 0)
         throw new RangeError("Invalid CLI metadata cursor");
-      if (cursor === 0) {
+      if (cursor === 0)
         // Changes that land while indexing are after this revision, so the CLI re-reads them.
-        const started = this.#revision(true);
-        const entries = await readCliMetadata(
-          this.#resources.storage.files,
-          this.#metadataLimit,
-          signal,
+        this.#index = new CliMetadataIndex(
+          this.#revision(true),
+          new CliMetadataWalk(this.#resources.storage.files, this.#metadataLimit),
+          (event) => this.#resources.trace("kernel", event),
         );
-        this.#snapshot = { revision: started, entries };
-      }
-      const snapshot = this.#snapshot;
-      if (
-        snapshot === undefined ||
-        (revision !== undefined && snapshot.revision !== revision) ||
-        cursor > snapshot.entries.length
-      )
+      const index = this.#index;
+      if (index === undefined || (revision !== undefined && index.revision !== revision))
         throw kernelError("ESTALE");
-      // Each page is one RPC; a page of entries is a few hundred KB, so few pages cover an index.
-      const end = Math.min(snapshot.entries.length, cursor + METADATA_PAGE_ENTRIES);
-      return {
-        revision: snapshot.revision,
-        entries: snapshot.entries.slice(cursor, end),
-        next: end === snapshot.entries.length ? null : end,
-      };
+      try {
+        // Each page is one RPC and reads at most its own entries, so no call walks the whole tree.
+        return await index.page(cursor, METADATA_PAGE_ENTRIES, signal);
+      } catch (cause) {
+        // A failed walk can't resume where it stopped; the CLI starts over at cursor 0.
+        if (index.failed && this.#index === index) this.#index = undefined;
+        throw cause;
+      }
     });
   }
   changes(since: number): Promise<ClaudeCliChanges> {
@@ -405,7 +400,7 @@ export class ClaudeCliKernelOwner extends RpcTarget implements ClaudeCliKernelPo
           this.#resources.storage.files.close(fd);
       this.#fds.clear();
       this.#publicFds.clear();
-      this.#snapshot = undefined;
+      this.#index = undefined;
       this.#issued.clear();
       const failures = results.flatMap((result) =>
         result.status === "rejected" ? [result.reason] : [],

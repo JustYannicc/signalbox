@@ -41,5 +41,17 @@ export type CliViewTrace =
   | { readonly kind: "too-large"; readonly bytes: number; readonly limit: number }
   /** A round failed; the view waits this long before the next one. */
   | { readonly kind: "backoff"; readonly failures: number; readonly retryMs: number }
+  /**
+   * One page of the CLI's index as Computer reads it, at its first entry. Durations are wall time
+   * as the runtime reports it, which in a Worker moves only across I/O.
+   */
+  | {
+      readonly kind: "index-page";
+      readonly phase: "start" | "end";
+      readonly cursor: number;
+      readonly entries: number;
+      readonly durationMs?: number;
+      readonly failed?: true;
+    }
   /** Traces a bounded buffer could not keep, so a gap is visible as a gap. */
   | { readonly kind: "dropped"; readonly count: number };

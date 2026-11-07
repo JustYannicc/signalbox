@@ -12,6 +12,8 @@ import {
 import { KernelLowerFileSystemDirectoryLayer } from "./KernelLowerFileSystemDirectoryLayer.ts";
 import { KernelLowerFileSystemFileLayer } from "./KernelLowerFileSystemFileLayer.ts";
 import { lowerFileSystemUpperStorage } from "./KernelLowerFileSystemUpperStorage.ts";
+import { KernelLowerFileSystemTree } from "./KernelLowerFileSystemTree.ts";
+import { hasStorageSnapshot } from "./KernelStorageSnapshot.ts";
 import type {
   CreateOptions,
   DirectoryEntry,
@@ -137,6 +139,22 @@ export class KernelLowerFileSystemStorage
 
   isLowerInode(inode: Inode): boolean {
     return this.#sourceIndex?.isInode(inode) ?? false;
+  }
+
+  /**
+   * The merged tree from one snapshot of upper storage; undefined when it can't take one. It
+   * answers by this class's `lookup`, `readdir`, `stat` and `posix.get` rules, so a change to
+   * any of them needs the same change in `KernelLowerFileSystemTree`.
+   */
+  tree(maxEntries: number): KernelLowerFileSystemTree | undefined {
+    if (!hasStorageSnapshot(this.#upper)) return undefined;
+    return new KernelLowerFileSystemTree(this.#upper.snapshot(maxEntries), {
+      root: this.root,
+      upper: this.#upper,
+      source: () => this.#sourceIndex,
+      upperFileForLower: (inode) => this.#files.upperInodeForLower(inode),
+      nativeMetadata: (inode) => this.nativeMetadata(inode),
+    });
   }
 
   byteViewStorage(inode: Inode): Storage | undefined {

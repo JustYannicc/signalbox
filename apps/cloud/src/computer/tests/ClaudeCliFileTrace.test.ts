@@ -133,8 +133,14 @@ describe("CLI filesystem view traces", () => {
       f.canonical.writeFileSync("/sync", "child wrote");
       await f.files.afterRemote();
       await f.files.barrier();
-      const rows = f.traceRows();
-      expect(rows.map(({ source }) => source)).toEqual(rows.map(() => "cli"));
+      const all = f.traceRows();
+      // Computer traces each page of an index it reads; the view traces the rounds around them.
+      expect(
+        all
+          .filter(({ source }) => source === "kernel")
+          .map(({ event }) => `${event.kind}:${event.phase}`),
+      ).toEqual(["index-page:start", "index-page:end", "index-page:start", "index-page:end"]);
+      const rows = all.filter(({ source }) => source === "cli");
       expect(rows.map(({ event }) => `${event.kind}:${event.phase}:${event.mode ?? ""}`)).toEqual([
         "round:start:index",
         "round:end:index",
@@ -143,7 +149,7 @@ describe("CLI filesystem view traces", () => {
         "digest:end:",
         "round:end:index",
       ]);
-      expect(JSON.stringify(rows)).not.toMatch(/\/sync|\/big/);
+      expect(JSON.stringify(all)).not.toMatch(/\/sync|\/big/);
     } finally {
       await f.close();
     }
@@ -155,6 +161,8 @@ describe("CLI filesystem view traces", () => {
       changeFeed: false,
       seed(fs, files) {
         fs.writeFileSync("/victim", "gone soon");
+        // Where storage can take no snapshot, the index reads path by path.
+        files.metadataTree = () => undefined;
         const readdir = files.readdirAsync.bind(files);
         files.readdirAsync = async (...args) => {
           const names = await readdir(...args);
@@ -174,6 +182,36 @@ describe("CLI filesystem view traces", () => {
       await f.files.afterRemote();
       expect(f.fs.readdirSync("/")).not.toContain("victim");
       expect(f.fs.readFileSync("/sync", "utf8")).toBe("child wrote");
+    } finally {
+      await f.close();
+    }
+  });
+
+  it("indexes from one snapshot, so a file removed while it is read is gone by the next round", async () => {
+    let remove: (() => void) | undefined;
+    const f = await fixture(256, ["/sync"], false, {
+      changeFeed: false,
+      seed(fs, files) {
+        fs.writeFileSync("/victim", "gone soon");
+        const metadataTree = files.metadataTree.bind(files);
+        files.metadataTree = (maxEntries) => {
+          const tree = metadataTree(maxEntries);
+          remove?.();
+          return tree;
+        };
+      },
+    });
+    try {
+      remove = () => {
+        remove = undefined;
+        f.canonical.unlinkSync("/victim");
+      };
+      await f.files.beforeRemote();
+      f.canonical.writeFileSync("/sync", "child wrote");
+      await f.files.afterRemote();
+      expect(f.fs.readFileSync("/sync", "utf8")).toBe("child wrote");
+      await f.files.barrier();
+      expect(f.fs.readdirSync("/")).not.toContain("victim");
     } finally {
       await f.close();
     }

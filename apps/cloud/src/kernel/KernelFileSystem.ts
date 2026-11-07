@@ -30,6 +30,7 @@ import {
 import { runCurrentKernelCpuSystem } from "./KernelCpuExecution.ts";
 import { KernelFileSystemOpen } from "./filesystem/KernelFileSystemOpen.ts";
 import { KernelFileSystemPaths } from "./filesystem/KernelFileSystemPaths.ts";
+import { KernelFileSystemTree } from "./filesystem/KernelFileSystemTree.ts";
 import {
   joinGuestPath,
   KernelPathResolver,
@@ -255,6 +256,34 @@ export class KernelFileSystem {
     const rootMount = this.#paths.resolver.mountForPath("/");
     const visible = paths.filter((path) => this.#paths.resolver.mountForPath(path) === rootMount);
     return this.#lowerFileSystemStorage?.prepare(visible, signal) ?? Promise.resolve();
+  }
+
+  /**
+   * The whole tree, as lstat and readdir report it path by path, from one snapshot of storage,
+   * for indexing it without resolving each path from the root. Undefined where storage can't
+   * take a snapshot or the tree has more than one mount; those callers index path by path.
+   */
+  metadataTree(maxEntries: number): KernelFileSystemTree | undefined {
+    return this.#system(() => {
+      this.#assertOpen();
+      if (this.#fileBytes.kind !== "canonical" || this.#mounts.length !== 1) return undefined;
+      const mount = this.#paths.resolver.mountForPath("/");
+      const storage = this.#lowerFileSystemStorage;
+      if (storage === undefined || mount.storage !== storage) return undefined;
+      const tree = storage.tree(maxEntries);
+      if (tree === undefined) return undefined;
+      return new KernelFileSystemTree({
+        tree,
+        device: mount.device,
+        posix: this.#posix,
+        paths: {
+          lstat: (path) => this.lstatAsync(path),
+          readdir: (path) => this.readdirAsync(path),
+          readlink: (path) => this.readlink(path),
+        },
+        run: (signal, run) => this.#async(signal, run),
+      });
+    });
   }
 
   /** Attaches a lower machine filesystem without reading it or touching upper storage. */

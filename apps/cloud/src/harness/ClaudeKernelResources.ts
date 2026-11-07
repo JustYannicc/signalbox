@@ -105,14 +105,14 @@ export function createClaudeKernelResources(
     /* Traces are lost for this session; the session itself is unaffected. */
   }
   // Diagnostics never change product state. Computer's own log keeps the trace even when no
-  // turn is running. The CLI reports its own traces to the host; machine traces go from here.
-  const trace = (source: "cli" | "machine", event: CliViewTrace) => {
+  // turn is running. The CLI reports its own traces to the host; Computer's go from here.
+  const trace = (source: "cli" | "machine" | "kernel", event: CliViewTrace) => {
     try {
       writeTrace(source, event);
     } catch {
       /* A lost trace is only a missing diagnostic. */
     }
-    if (source !== "machine") return;
+    if (source === "cli") return;
     try {
       void callbacks.current?.report({ type: "trace", event }).catch(() => undefined);
     } catch {

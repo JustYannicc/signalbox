@@ -21,7 +21,7 @@ export function createCliTraceLog(database: FacetStorage, now: () => number) {
       KEPT_ROWS,
     );
   prune();
-  return (source: "cli" | "machine", event: CliViewTrace) => {
+  return (source: "cli" | "machine" | "kernel", event: CliViewTrace) => {
     const encoded = JSON.stringify(event);
     if (typeof event?.kind !== "string" || encoded.length > MAX_EVENT_CHARS) return;
     const [row] = database.sql.exec(
