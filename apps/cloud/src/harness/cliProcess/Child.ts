@@ -30,7 +30,8 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
   readonly #kernel;
   readonly #spawn;
   readonly #barrier;
-  readonly #captured;
+  readonly #release;
+  readonly #writeDescriptor;
   readonly #refresh;
   readonly #signal;
   readonly #pumps: Promise<void>[] = [];
@@ -38,6 +39,7 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
   readonly #abort = new AbortController();
   #signals = Promise.resolve();
   #timer: ReturnType<typeof setTimeout> | undefined;
+  #killed: number | undefined;
   #error: Error | undefined;
   #closed = false;
 
@@ -49,8 +51,10 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
     };
     readonly spawn: NodeChildProcessSpawn;
     readonly signal: AbortSignal;
-    /** Lets the CLI close descriptors this child inherits, once Computer has its own copies. */
-    readonly captured: () => void;
+    /** Lets Computer close the descriptors this child inherits, once it no longer needs them. */
+    readonly release: () => void;
+    /** Writes to one of those descriptors, though the CLI may have closed its own copy. */
+    readonly writeDescriptor: (fd: number, bytes: Uint8Array) => Promise<void>;
     readonly barrier: () => Promise<void>;
     readonly refresh: (remoteStarted: boolean, submitted: boolean) => Promise<void>;
   }) {
@@ -60,7 +64,8 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
     this.#lease = options.lease;
     this.pid = options.lease.pid;
     this.#barrier = options.barrier;
-    this.#captured = options.captured;
+    this.#release = options.release;
+    this.#writeDescriptor = options.writeDescriptor;
     this.#refresh = options.refresh;
     this.#signal =
       options.spawn.signal === undefined
@@ -89,6 +94,7 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
   }
   start() {
     const abort = () => {
+      if (this.#exited) return;
       this.#report(abortError());
       void this.#kernel.cancel(this.#id, this.#signal.reason).catch((cause) => this.#report(cause));
       this.kill(this.#spawn.killSignal);
@@ -103,6 +109,7 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
     if (number !== 0 && number !== 9 && number !== 15)
       return unsupportedNodeOperation("child_process signal");
     this.killed = number !== 0;
+    if (number !== 0) this.#killed ??= number;
     this.#signals = this.#signals.then(async () => {
       if (this.#remote !== undefined) await this.#remote.control.signal(number);
       else if (number !== 0) await this.#kernel.cancel(this.#id, abortError());
@@ -124,6 +131,7 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
   async #run() {
     let remoteStarted = false;
     let submitted = false;
+    let step: Step = "barrier";
     try {
       this.#signal.throwIfAborted();
       await this.#barrier();
@@ -131,11 +139,9 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
       this.#signal.throwIfAborted();
       const { signal: _signal, ...spawn } = this.#spawn;
       submitted = true;
-      try {
-        this.#remote = await this.#kernel.spawn(this.#id, this.#lease.handle, spawn);
-      } finally {
-        this.#captured();
-      }
+      step = "spawn";
+      this.#remote = await this.#kernel.spawn(this.#id, this.#lease.handle, spawn);
+      step = "running";
       this.pid = this.#remote.pid;
       if (this.#signal.aborted) this.kill(this.#spawn.killSignal);
       this.#connect(this.#remote);
@@ -153,18 +159,8 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
       this.emit("exit", this.exitCode, this.signalCode);
       await Promise.all(this.#pumps.slice(this.stdin === null ? 0 : 1));
     } catch (cause) {
-      if (this.#exited || nodeSpawnError(cause)) {
-        this.#report(cause);
-        // Node's exit code for a program it could not start is the negative errno.
-        const errno = spawnErrno(cause);
-        if (!this.#exited && this.#remote === undefined && errno !== undefined)
-          this.exitCode = -errno;
-        this.stdin?.destroy();
-        this.stdout?.destroy();
-        this.stderr?.destroy();
-      } else this.#fail(cause);
+      await this.#settle(step, cause);
     } finally {
-      this.#captured();
       this.#exited = true;
       if (this.#timer !== undefined) clearTimeout(this.#timer);
       this.#abort.abort();
@@ -193,6 +189,7 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
               }),
           );
         await Promise.all(closed);
+        this.#release();
         {
           try {
             await this.#refresh(remoteStarted, submitted);
@@ -206,11 +203,42 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
     }
   }
   /**
-   * A child whose run fails in Computer still exits, as on Linux, with its error on stderr: 126
-   * when it never started, 1 when it did. Only Node's own spawn errors are `error` events.
+   * How a child that didn't exit normally ends, by the step that failed rather than the error's
+   * shape. After its exit, an output error is an `error`. A kill or abort ends it by its signal.
+   * A program Computer can't find or run at spawn is Node's own spawn `error`, with the negative
+   * errno as its exit code. Anything else exits as on Linux, with its error on stderr: 126 when
+   * the child never started, 1 when it did.
    */
-  #fail(cause: unknown) {
-    const started = this.#remote !== undefined;
+  async #settle(step: Step, cause: unknown) {
+    if (this.#exited) {
+      this.#report(cause);
+      this.#discard();
+      return;
+    }
+    // Computer may refuse a cancelled spawn with any error, as it comes over RPC.
+    if (this.#killed !== undefined || this.#signal.aborted) {
+      this.#discard();
+      this.#exited = true;
+      this.exitCode = null;
+      this.signalCode = signalName(this.#killed ?? normalizeSignal(this.#spawn.killSignal));
+      this.emit("exit", null, this.signalCode);
+      return;
+    }
+    const errno = step === "spawn" ? spawnErrno(cause) : undefined;
+    if (errno !== undefined) {
+      this.#report(cause);
+      this.#discard();
+      this.exitCode = -errno;
+      return;
+    }
+    await this.#fail(cause, step === "running");
+  }
+  #discard() {
+    this.stdin?.destroy();
+    this.stdout?.destroy();
+    this.stderr?.destroy();
+  }
+  async #fail(cause: unknown, started: boolean) {
     this.stdin?.destroy();
     // Computer's output streams may never end now; what reached the CLI stays, nothing more comes.
     for (const [source, target] of this.#outputs) {
@@ -218,7 +246,12 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
       source.destroy();
     }
     this.stdout?.end();
-    this.stderr?.end(`${this.spawnfile}: ${asChildProcessError(cause).message}\n`);
+    const text = `${this.spawnfile}: ${asChildProcessError(cause).message}\n`;
+    const target = this.#spawn.stdio[2];
+    if (this.stderr !== null) this.stderr.end(text);
+    // A file or the CLI's own stderr, as the Bash tool's output file is: the error goes there.
+    else if (typeof target === "number")
+      await this.#writeDescriptor(target, new TextEncoder().encode(text)).catch(() => undefined);
     this.#exited = true;
     this.exitCode = started ? 1 : 126;
     this.signalCode = null;
@@ -264,18 +297,14 @@ export class RemoteNodeChild extends NodeEvents.EventEmitter {
   }
 }
 
+/** Where a child was when it failed: reaching Computer, being spawned there, or running. */
+type Step = "barrier" | "spawn" | "running";
+
+/** The programs Node itself reports as a spawn `error`: one it can't find, or can't run. */
 const SPAWN_ERRNO: Readonly<Record<string, number>> = { ENOENT: 2, EACCES: 13 };
 
 const codeOf = (cause: unknown) =>
   typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code) : undefined;
-
-/** What Node itself reports as a spawn `error`: an abort, or a program it can't find or run. */
-function nodeSpawnError(cause: unknown) {
-  if (typeof cause === "object" && cause !== null && "name" in cause && cause.name === "AbortError")
-    return true;
-  const code = codeOf(cause);
-  return code === "ABORT_ERR" || (code !== undefined && code in SPAWN_ERRNO);
-}
 
 const spawnErrno = (cause: unknown) => {
   const code = codeOf(cause);

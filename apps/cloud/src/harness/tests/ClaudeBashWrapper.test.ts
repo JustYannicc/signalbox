@@ -116,7 +116,17 @@ describe("Claude Bash wrapper extraction", () => {
         script("source '/home/a b/.claude/shell-snapshots/snapshot-bash-1-x.sh'"),
       ]),
     ).toMatchObject({ kind: "matched", value: { command: "true" } });
-    for (const source of ["source $(evil)", "eval /tmp/x.sh", "source /tmp/x.sh; rm -rf /"])
+    for (const source of [
+      "source $(evil)",
+      "eval /tmp/x.sh",
+      "source /tmp/x.sh; rm -rf /",
+      // A comment would swallow the wrapper; a tilde or glob would not be that literal path.
+      "source #/tmp/x.sh",
+      "source ~/x.sh",
+      "source /tmp/*.sh",
+      "source /tmp/x?.sh",
+      "source /tmp/[ab].sh",
+    ])
       expect(extractClaudeBashWrapper("/bin/bash", ["/bin/bash", "-c", script(source)])).toEqual({
         kind: "gap",
         reason: "unsupported-wrapper-prefix",

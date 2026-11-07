@@ -283,7 +283,15 @@ export async function createCliFileBackend(
               : [];
       for (const index of pathIndices)
         if (typeof values[index] === "string") values[index] = paths.absolute(values[index]);
-      if (name === "close") await holds.released(Number(values[0]));
+      const held = name === "close" ? holds.released(Number(values[0])) : undefined;
+      if (held !== undefined) {
+        // A child still has it. The CLI's copy is closed now, as on Linux; Computer's goes when
+        // the child no longer needs it, so the CLI never waits for a child.
+        const fd = Number(values[0]);
+        views.observeClose(fd);
+        void held.then(() => remote.close(fd)).catch(() => undefined);
+        return undefined as NodeFsResult<K>;
+      }
       try {
         const result = await remote.call(name, values as NodeFsArguments<K>, userSignal);
         if (name === "open") {
@@ -532,8 +540,20 @@ export async function createCliFileBackend(
     barrier,
     beforeRemote,
     afterRemote,
-    /** Keeps `fds` open in Computer until a spawning child has its own copies. */
+    /** Keeps `fds` open in Computer for as long as a child inheriting them runs. */
     holdDescriptors: (fds: readonly number[]) => holds.hold(fds),
+    /**
+     * Writes to a descriptor a child inherited, as that child's stderr. The CLI may have closed its
+     * own copy, which a hold keeps open in Computer, so this skips the CLI's descriptor check.
+     */
+    async writeDescriptor(fd: number, bytes: Uint8Array) {
+      await barrier();
+      for (let written = 0; written < bytes.byteLength;) {
+        const count = await remote.write(fd, bytes.subarray(written), null);
+        if (count === 0) throw kernelError("EIO");
+        written += count;
+      }
+    },
     signalProcess(selector: number, number: number) {
       // Node's synchronous call queues delivery; the shared barrier exposes any owner rejection.
       files.writes.enqueue(0, () => kernel.signalProcess(selector, number));

@@ -20,6 +20,9 @@ export async function createRemoteChildren(input: {
   readonly beforeRemote: () => Promise<void>;
   readonly afterRemote: () => Promise<void>;
   readonly holdDescriptors: (fds: readonly number[]) => () => void;
+  readonly writeDescriptor: (fd: number, bytes: Uint8Array) => Promise<void>;
+  /** Ends every child, as when the CLI facet closes, before its files go. */
+  readonly stop?: AbortSignal;
 }) {
   const leases = [...(await input.kernel.leaseProcesses(32))];
   return (signal: AbortSignal, onChild: NodeChildProcessObserver) => {
@@ -31,15 +34,16 @@ export async function createRemoteChildren(input: {
           code: "EAGAIN",
         });
       // Node duplicates a child's stdio inside spawn(); the CLI may close its copies right after.
-      const captured = input.holdDescriptors(
+      const release = input.holdDescriptors(
         spawn.stdio.filter((mode): mode is number => typeof mode === "number"),
       );
       const child = new RemoteNodeChild({
         kernel: input.kernel,
         lease,
         spawn,
-        signal,
-        captured,
+        signal: input.stop === undefined ? signal : AbortSignal.any([signal, input.stop]),
+        release,
+        writeDescriptor: input.writeDescriptor,
         barrier: input.beforeRemote,
         refresh: async (remoteStarted, submitted) => {
           try {

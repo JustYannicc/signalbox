@@ -128,8 +128,11 @@ export function createClaudeCliFacetClass<Env>(
       };
       let files: Awaited<ReturnType<typeof createCliFileBackend>> | undefined;
       let closed: Promise<void> | undefined;
+      const childrenStopped = new AbortController();
       const close = () =>
         (closed ??= (async () => {
+          // A child still reaching Computer holds its files open; ending it first lets them close.
+          childrenStopped.abort(new Error("CLI facet closed"));
           const results = await Promise.allSettled([files?.close(), drainDiagnostics()]);
           try {
             await configuration.kernel.dispose();
@@ -211,6 +214,8 @@ export function createClaudeCliFacetClass<Env>(
           beforeRemote: backend.beforeRemote,
           afterRemote: backend.afterRemote,
           holdDescriptors: backend.holdDescriptors,
+          writeDescriptor: backend.writeDescriptor,
+          stop: childrenStopped.signal,
         });
         const runtime = remoteCliRuntime(
           { ...configuration, io },

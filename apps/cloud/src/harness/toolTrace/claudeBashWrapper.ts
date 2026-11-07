@@ -9,8 +9,9 @@ const wrapperPrefix =
   "shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval ";
 const wrapperSuffixPrefix = " < /dev/null && pwd -P >| ";
 const outputPath = /^\/tmp\/[A-Za-z0-9._-]+$/;
-// The CLI shell-quotes the snapshot path only when it needs quoting.
-const snapshotSource = /^source (?:'[^']*'|[^\s'"\\;&|<>(){}$`]+) 2>\/dev\/null \|\| true && /;
+// The CLI shell-quotes the snapshot path only when it needs quoting. An unquoted word with a
+// comment, tilde or glob character would not be that literal path, so it is no snapshot.
+const snapshotSource = /^source (?:'[^']*'|[^\s'"\\;&|<>(){}$`#~*?[]+) 2>\/dev\/null \|\| true && /;
 
 export interface ClaudeBashWrapperMatch {
   readonly templateId:

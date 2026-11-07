@@ -46,6 +46,7 @@ async function runChild(
       await files.afterRemote();
     },
     holdDescriptors: files.holdDescriptors,
+    writeDescriptor: files.writeDescriptor,
   });
   const child = children(new AbortController().signal, () => {}).spawn("/bin/sh", ["-c", "true"], {
     stdio: "pipe",

@@ -1,7 +1,8 @@
 /**
- * Descriptors a child is about to inherit as stdio. Node duplicates them inside `spawn()`, so a
- * parent may close its own copy at once, as Claude Code's Bash tool does with its output file.
- * Here the spawn reaches Computer later, so a close of a held descriptor waits until it has.
+ * Descriptors a child inherits as stdio, for as long as it runs. Node duplicates them inside
+ * `spawn()`, so a parent may close its own copy at once, as Claude Code's Bash tool does with its
+ * output file. Here the spawn reaches Computer later, and a failed child's error is written to
+ * them, so Computer's copy is closed only once the child no longer needs it.
  */
 export class CliDescriptorHolds {
   readonly #holds = new Map<number, Set<Promise<void>>>();
@@ -27,7 +28,7 @@ export class CliDescriptorHolds {
     };
   }
 
-  /** Resolves once no spawn still needs `fd`, or is undefined when none does. */
+  /** Resolves once no child still needs `fd`, or is undefined when none does. */
   released(fd: number) {
     const holds = this.#holds.get(fd);
     return holds === undefined ? undefined : Promise.all(holds).then(() => undefined);

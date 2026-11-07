@@ -32,7 +32,7 @@ export class CliDescriptorViews {
     paths: CliFilePaths,
     remote: ReturnType<typeof createNodeFsSyscallClient>,
     reserve: (fd: number) => Promise<void>,
-    /** A spawning child's hold on `fd`, which Computer must not see closed before the spawn. */
+    /** A child's hold on `fd`, which Computer must not see closed while the child needs it. */
     held: (fd: number) => Promise<void> | undefined = () => undefined,
   ) {
     this.#files = files;
@@ -208,7 +208,7 @@ export class CliDescriptorViews {
     view.release();
     const held = this.#held(fd);
     if (held === undefined) return this.#closeRemote(fd);
-    // The slot stays out of reuse until the child has its own copy and Computer closes this one.
+    // The slot stays out of reuse until the child no longer needs it and Computer closes it.
     void held.then(() => {
       try {
         this.#closeRemote(fd);
