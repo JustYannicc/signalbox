@@ -11,9 +11,9 @@ import type {
 export const PUBLISHED_ROOT = "https://github.com/JustYannicc/signalbox/releases/download";
 export const RELEASE_MANIFESTS = Object.freeze([
   {
-    tag: "kernel-programs-20261027-ugrep-c402734f",
-    bytes: 8_841,
-    sha256: "2d4328af7f15af3addfe757b1227fe5f66383f62938fd6f3491b6448d6f9a889",
+    tag: "kernel-programs-20261107-ugrep-365188e3",
+    bytes: 9_006,
+    sha256: "a5d86ad73ed802df262ab004d24dab999d0992aaee29e915202ab8960929e763",
   },
   {
     tag: "kernel-programs-20261023-sed-40c8bb93",
@@ -26,7 +26,7 @@ const RELEASE_ASSET_TAGS = Object.freeze({
   busybox: "kernel-programs-20261023-6aefd645-2d079609",
   ripgrep: "kernel-programs-20261019-17caf644-791b862a",
   coreutils: "kernel-programs-20261023-6aefd645-2d079609",
-  ugrep: "kernel-programs-20261027-ugrep-c402734f",
+  ugrep: "kernel-programs-20261107-ugrep-365188e3",
   sed: "kernel-programs-20261023-sed-40c8bb93",
 });
 const RELEASED_PROGRAMS = Object.freeze([

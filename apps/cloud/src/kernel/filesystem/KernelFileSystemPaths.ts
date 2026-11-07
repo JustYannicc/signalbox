@@ -465,8 +465,8 @@ export class KernelFileSystemPaths {
   *#withRetainedPath<T>(path: string, operation: () => WasiCall<T>): WasiCall<T> {
     const alias = descriptorPathAlias(path);
     if (alias === undefined) return yield* operation();
-    this.#getAlias(alias);
-    return yield* this.#descriptors.withRetained(alias, operation);
+    const descriptor = this.#getAlias(alias);
+    return yield* this.#descriptors.withRetained(descriptor.fd, operation);
   }
 
   *#statPath(path: string, followFinal: boolean, asynchronous: boolean): WasiCall<KernelStat> {

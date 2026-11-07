@@ -3,8 +3,8 @@ import * as NodePath from "node:path";
 import { object, sha256 } from "./fixture.ts";
 
 const PROGRAM_MANIFEST = {
-  url: "https://github.com/JustYannicc/signalbox/releases/download/kernel-programs-20261027-ugrep-c402734f/program-inputs.json",
-  sha256: "2d4328af7f15af3addfe757b1227fe5f66383f62938fd6f3491b6448d6f9a889",
+  url: "https://github.com/JustYannicc/signalbox/releases/download/kernel-programs-20261107-ugrep-365188e3/program-inputs.json",
+  sha256: "a5d86ad73ed802df262ab004d24dab999d0992aaee29e915202ab8960929e763",
 };
 const PROGRAM_FILES = {
   bash: "bash.wasm",

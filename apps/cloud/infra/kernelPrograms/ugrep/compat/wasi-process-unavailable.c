@@ -2,6 +2,16 @@
 
 #include <errno.h>
 #include <stdlib.h>
+#include <unistd.h>
+
+/* Stock wasi-libc starts at /; the host supplies the admitted cwd in PWD. */
+__attribute__((constructor)) static void initialize_working_directory(void) {
+  const char *cwd = getenv("PWD");
+  if (cwd != NULL && chdir(cwd) != 0) {
+    perror("ugrep: cannot enter working directory");
+    exit(2);
+  }
+}
 
 /* Preview 1 cannot launch processes, so report the missing capability. */
 pid_t fork(void) {

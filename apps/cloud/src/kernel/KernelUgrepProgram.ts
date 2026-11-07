@@ -1,8 +1,8 @@
 export const KERNEL_UGREP_ARTIFACT = Object.freeze({
   repository: "https://github.com/Genivia/ugrep",
-  version: "7.5.0+wasi.1",
+  version: "7.5.0+wasi.2",
   path: "ugrep.wasm",
   buildRecipe: "infra/kernelPrograms/ugrep/build.sh",
-  sha256: "c402734f83ded748eefb8e58c71ce9cff8bd76425b4ccbc96a7007654240f438",
-  bytes: 1_522_097,
+  sha256: "365188e3613a658551d9a40aa8422963ad15d20cdedfe0e052e56a6d8a849bdb",
+  bytes: 1_522_484,
 });
