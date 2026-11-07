@@ -11,6 +11,7 @@ import type { QualifierEnvironment } from "./environment.ts";
 import { Lifecycle } from "./lifecycle.ts";
 import { ModelController, type Incarnation } from "./modelController.ts";
 import {
+  CLAUDE_THREAD_ACTIVE,
   CLAUDE_THREAD_RECEIPT_ROUTE,
   CLAUDE_THREAD_ROUTE,
   ClaudeDispatch,
@@ -62,12 +63,13 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
     return await this.claude.activeToolUse();
   }
   async commandPhase() {
+    // The thread step is claimed only while Codex is idle, and Codex claims refuse while it runs.
+    if (await this.claudeDispatch.active()) return CLAUDE_THREAD_ROUTE;
     if (
       !(await this.ctx.storage.get("execution-owner")) &&
       (await this.ctx.storage.get("observer/calibration-claimed"))
     )
       return "/observer-calibration";
-    if (await this.claudeDispatch.active()) return CLAUDE_THREAD_ROUTE;
     const claudeStep = await this.ctx.storage.get<ClaudeStep>("claude/active-step");
     if (claudeStep) return claudeStepRoute(claudeStep);
     await this.assertLiveOwner();
@@ -339,6 +341,7 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       !(await this.ctx.storage.get("observer/calibration-claimed")),
       "Calibration already has a durable claim",
     );
+    assert(!(await this.claudeDispatch.active()), "The Claude thread step owns native commands");
     await this.ctx.storage.put("observer/calibration-claimed", true);
     const result = await withRpcStub(this.shard(), (stub) =>
       readRpcData(stub.observerCalibration()),
@@ -464,6 +467,10 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
           !(await tx.get("execution-owner")),
           "The official native attempt has already been claimed",
         );
+        assert(
+          !(await tx.get(CLAUDE_THREAD_ACTIVE)),
+          "The Claude thread step owns native commands",
+        );
         await tx.put("execution-owner", this.ctx.id.toString());
       }
       await tx.put(`step/${step}/claim`, { status: "reserved" });
@@ -559,8 +566,10 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
 
     if (request.method === "POST" && url.pathname !== "/export/blob")
       assert((await request.text()) === "{}", "Qualifier mutations require an empty JSON object");
-    if (request.method === "POST" && url.pathname === "/sequence/hold")
+    if (request.method === "POST" && url.pathname === "/sequence/hold") {
+      assert(!(await this.claudeDispatch.active()), "The Claude thread step owns native commands");
       return Response.json(await this.#sequenceLifetime.hold());
+    }
     if (request.method === "GET" && url.pathname === "/sequence/held")
       return Response.json(await this.#sequenceLifetime.ready());
     if (request.method === "POST" && url.pathname === "/sequence/release")
@@ -580,7 +589,7 @@ export class QualifierProof extends QualifierCapabilities<QualifierEnvironment> 
       return Response.json(
         await this.claudeImportCalibration(importCalibration[1] as ClaudeVariant),
       );
-    // One-shot claimed with a persisted receipt; a Claude-only run has no Codex sequence to hold.
+    // One-shot claimed with a persisted receipt; it runs only while every Codex claim is idle.
     if (request.method === "POST" && url.pathname === CLAUDE_THREAD_ROUTE) {
       const claimed = await this.claudeDispatch.dispatch();
       this.ctx.waitUntil(this.claudeDispatch.pending().then(() => undefined));

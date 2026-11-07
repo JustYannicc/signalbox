@@ -189,15 +189,6 @@ export async function buildCombinedFixture(raw: unknown) {
     if (!built.metafile) throw new Error("DEPLOY3_BUILD_METADATA_MISSING");
     metafiles[name] = built.metafile;
   }
-  const workflow = await build({
-    ...common,
-    platform: "node",
-    conditions: ["node"],
-    entryPoints: [NodePath.join(source, "claudeWorkflow.ts")],
-    outfile: NodePath.join(output, "qualifier-claude-workflow.mjs"),
-  });
-  if (!workflow.metafile) throw new Error("DEPLOY3_WORKFLOW_BUILD_METADATA_MISSING");
-  metafiles["qualifier-claude-workflow"] = workflow.metafile;
   const production = await build({
     entryPoints: [NodePath.join(cloud, "src/worker.ts")],
     bundle: false,
@@ -301,7 +292,6 @@ export async function buildCombinedFixture(raw: unknown) {
     "qualifier-claude-cli",
     "qualifier-computer-execution",
     "qualifier-worker",
-    "qualifier-claude-workflow",
   ]) {
     const path = `${name}.mjs`;
     const bytes = await NodeFSP.readFile(NodePath.join(output, path));

@@ -133,7 +133,19 @@ export async function runQualifierClaudeThread(env: ThreadEnvironment) {
       completed: false,
       turns: [],
       model: peer.snapshot(),
-      failure: errorRecord(Cause.squash(exit.cause)),
+      // Every reason, so a defect beside a failure is never lost.
+      failure: {
+        pretty: Cause.pretty(exit.cause),
+        reasons: exit.cause.reasons.map((reason) =>
+          errorRecord(
+            Cause.isFailReason(reason)
+              ? reason.error
+              : Cause.isDieReason(reason)
+                ? reason.defect
+                : reason,
+          ),
+        ),
+      },
     };
   const turns = exit.value;
   return {

@@ -9,7 +9,6 @@ it("registers separate CLI, Computer and host graphs through the deployed produc
     cli: "apps/cloud/infra/deploy3/qualification/fixture/claudeCliFacet.ts",
     kernel: "apps/cloud/infra/deploy3/qualification/fixture/claudeKernelFacet.ts",
     computer: "apps/cloud/src/computer/ComputerExecutionObject.ts",
-    host: "apps/cloud/src/harness/ProductClaudeHarnessRequestFacet.ts",
     thread: "apps/cloud/src/thread/ProductClaudeThreadHost.ts",
   };
   const graphs = new Map<string, string[]>();
@@ -63,17 +62,8 @@ it("registers separate CLI, Computer and host graphs through the deployed produc
         ),
       ),
   ).toEqual([]);
-  expect(graphs.get("host")).toContain("apps/cloud/src/harness/ProductClaudeKernelHost.ts");
-  expect(graphs.get("host")).toContain("apps/cloud/src/harness/host/lifecycle.ts");
-  expect(graphs.get("host")).toContain("apps/cloud/src/harness/ClaudeSdkNativeBinding.ts");
-  expect(
-    graphs
-      .get("host")!
-      .filter((path) =>
-        /\/harness\/(?:ClaudeCliProcess|NodeHarnessProcess|node\/process)\.ts$/.test(path),
-      ),
-  ).toEqual([]);
   const thread = graphs.get("thread")!;
+  expect(thread).toContain("apps/cloud/src/harness/host/lifecycle.ts");
   expect(thread).toContain("apps/cloud/src/thread/facet/ClaudeFacetHost.ts");
   expect(thread).toContain("apps/cloud/src/harness/ClaudeProductOwners.ts");
   expect(thread).toContain("apps/cloud/src/computer/ComputerExecutionPort.ts");
@@ -81,7 +71,7 @@ it("registers separate CLI, Computer and host graphs through the deployed produc
   expect(thread).toContain("apps/cloud/src/harness/ClaudeSdkNativeBinding.ts");
   expect(
     thread.filter((path) =>
-      /\/computer\/(?:ProductComputer|CommandGateway|ComputerProgramOwner|ComputerExecutionObject)\.ts$|\/harness\/(?:ClaudeCliProcess|ClaudeRemoteNativeBinding|ProductClaudeHarnessSessionHost|NodeHarnessProcess)\.ts$|\/kernel\/KernelFileSystem\.ts$/.test(
+      /\/computer\/(?:ProductComputer|CommandGateway|ComputerProgramOwner|ComputerExecutionObject)\.ts$|\/harness\/(?:ClaudeCliProcess|ClaudeRemoteNativeBinding|ProductClaudeHarnessSessionHost|NodeHarnessProcess|node\/process)\.ts$|\/kernel\/KernelFileSystem\.ts$/.test(
         path,
       ),
     ),

@@ -42,7 +42,7 @@ async function setup() {
       home: "/workspace/.home/claude",
       cwd: "/workspace",
     },
-    workingSet: { byteLimit: 1024 * 1024, metadataLimit: 10_000, pathByteLimit: 4096 },
+    workingSet: { byteLimit: 1024 * 1024, metadataLimit: 32_768, pathByteLimit: 4096 },
   });
   const prepared = (variant: "baseline" | "hooks") =>
     productLoadedPreparedRelease(

@@ -75,7 +75,10 @@ export type QualifierShardPort = Rpc.DurableObjectBranded &
       readonly completed: boolean;
       readonly turns: readonly { readonly runId: string; readonly status: string }[];
       readonly model: ReturnType<ClaudeQualificationModelPeer["snapshot"]>;
-      readonly failure?: ReturnType<typeof errorRecord>;
+      readonly failure?: {
+        readonly pretty: string;
+        readonly reasons: readonly ReturnType<typeof errorRecord>[];
+      };
     }>;
     claudeObserverCalibration(): Promise<{
       readonly identity: { readonly facetNonce: string };

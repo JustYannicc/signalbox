@@ -13,6 +13,10 @@ let origin: string;
 let runId: string;
 let log = "";
 
+/** The test's own Worker: the proof's front door, a gate on one seed read, and a command caller. */
+const HARNESS =
+  'import { DurableObject, RpcTarget, WorkerEntrypoint } from "cloudflare:workers";\n// The thread step reads this program seed while its product host seeds the kernel.\nconst GATED = "/qualifier/seed/bash";\nconst CHILD = `import { WorkerEntrypoint } from "cloudflare:workers";\nexport class Child extends WorkerEntrypoint {\n  run() { return { exitCode: 0, signal: 0, coreDumped: false }; }\n}`;\nexport class Gate extends DurableObject {\n  #blocked = Promise.withResolvers();\n  #released = Promise.withResolvers();\n  async wait() {\n    this.#blocked.resolve();\n    await this.#released.promise;\n  }\n  async blocked() {\n    await this.#blocked.promise;\n    return true;\n  }\n  release() {\n    this.#released.resolve();\n    return true;\n  }\n}\nexport class Assets extends WorkerEntrypoint {\n  async fetch(request) {\n    if (new URL(request.url).pathname === GATED) await this.env.GATE.getByName("gate").wait();\n    return this.env.DISK.fetch(request);\n  }\n}\nclass Target extends RpcTarget {\n  stopped() {}\n}\nexport default {\n  async fetch(request, env) {\n    const path = new URL(request.url).pathname;\n    if (path === "/gate/blocked") return Response.json(await env.GATE.getByName("gate").blocked());\n    if (path === "/gate/release") return Response.json(await env.GATE.getByName("gate").release());\n    if (path === "/command") {\n      const command = { executable: "/bin/rg", argv: ["rg", "needle", "/workspace"], cwd: "/workspace", env: {} };\n      const invocation = { loaderId: "thread-rg", mainModule: "main.js", entrypoint: "Child", modules: { "main.js": { js: CHILD } }, command };\n      return Response.json(await env.COMMANDS.run(invocation, new Target()));\n    }\n    return env.QUALIFIER.getByName(env.RUN_ID).fetch(request);\n  },\n};\n';
+
 const freePort = () =>
   new Promise<number>((resolve, reject) => {
     const server = NodeNet.createServer();
@@ -65,10 +69,7 @@ beforeAll(async () => {
   ] as const;
   const text = (name: string, value: string) =>
     `(name = "${name}", text = ${JSON.stringify(value)})`;
-  await NodeFSP.writeFile(
-    NodePath.join(output, "harness.js"),
-    "export default { fetch: (request, env) => env.QUALIFIER.getByName(env.RUN_ID).fetch(request) };",
-  );
+  await NodeFSP.writeFile(NodePath.join(output, "harness.js"), HARNESS);
   await NodeFSP.writeFile(
     NodePath.join(output, "config.capnp"),
     `using Workerd = import "/workerd/workerd.capnp";
@@ -93,7 +94,8 @@ const qualifier :Workerd.Worker = (
     ${text("BUNDLE_SHA256", "b".repeat(64))},
     ${namespaces.map(([name, className]) => `(name = "${name}", durableObjectNamespace = "${className}")`).join(",\n    ")},
     (name = "LOADER", workerLoader = ()),
-    (name = "PROGRAM_ASSETS", service = "assets"),
+    # The harness holds the thread step open on one seed read; every other read is the disk's.
+    (name = "PROGRAM_ASSETS", service = (name = "harness", entrypoint = "Assets")),
     (name = "QUALIFIER_COMMANDS", service = (name = "qualifier", entrypoint = "QualifierCommands")),
     (name = "QUALIFIER_TAIL", service = (name = "qualifier", entrypoint = "QualifierTail")),
   ],
@@ -109,7 +111,12 @@ const harness :Workerd.Worker = (
   bindings = [
     ${text("RUN_ID", runId)},
     (name = "QUALIFIER", durableObjectNamespace = (className = "QualifierProof", serviceName = "qualifier")),
+    (name = "GATE", durableObjectNamespace = "Gate"),
+    (name = "DISK", service = "assets"),
+    (name = "COMMANDS", service = (name = "qualifier", entrypoint = "QualifierCommands")),
   ],
+  durableObjectNamespaces = [(className = "Gate", uniqueKey = "claude-thread-route-gate")],
+  durableObjectStorage = (inMemory = void),
 );
 `,
   );
@@ -136,10 +143,15 @@ function messages(value: unknown): string[] {
   if (Array.isArray(value))
     return value.flatMap((item) => messages(item?.error ?? item?.defect ?? item));
   if (value === null || typeof value !== "object") return [];
-  const failure = value as { readonly message?: unknown; readonly cause?: unknown };
+  const failure = value as {
+    readonly message?: unknown;
+    readonly cause?: unknown;
+    readonly reasons?: unknown;
+  };
   return [
     ...(typeof failure.message === "string" ? [failure.message] : []),
     ...messages(failure.cause),
+    ...messages(failure.reasons),
   ];
 }
 
@@ -147,6 +159,19 @@ it("runs the proof's Claude step on the product thread host through to its SDK o
   expect(await call("GET", "/ready")).toMatchObject({ status: "ready", runId });
   await call("POST", "/claude/observer-calibration");
   expect(await call("POST", "/claude/thread/dispatch")).toMatchObject({ claimed: true, runId });
+  // While the step is held open, a Grep's ripgrep through the qualifier's commands binding is
+  // admitted and observed under the thread step's route.
+  expect(await call("GET", "/gate/blocked")).toBe(true);
+  expect(await call("POST", "/command")).toEqual({ exitCode: 0, signal: 0, coreDumped: false });
+  const commandEvents = log
+    .split("\n")
+    .filter((line) => line.includes('"producerEvent"') && line.includes('"actual-command-run"'))
+    .map((line) => JSON.parse(line.slice(line.indexOf("{"))).producerEvent);
+  expect(commandEvents.map((event) => [event.milestone, event.route.path])).toEqual([
+    ["entered", "/claude/thread/dispatch"],
+    ["terminal", "/claude/thread/dispatch"],
+  ]);
+  await call("POST", "/gate/release");
   const receipt = await call("GET", "/claude/thread/receipt");
   expect(receipt, log.slice(-3000)).toMatchObject({
     schema: "signalbox/claude-qualification-thread/v1",

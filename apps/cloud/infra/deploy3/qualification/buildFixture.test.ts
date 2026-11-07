@@ -104,7 +104,6 @@ it.effect(
             "qualifier-claude-cli.mjs",
             "qualifier-computer-execution.mjs",
             "qualifier-worker.mjs",
-            "qualifier-claude-workflow.mjs",
           ]);
           for (const pin of result.outputs) {
             const bytes = await NodeFSP.readFile(NodePath.join(input.outputDirectory, pin.path));

@@ -5,13 +5,30 @@ import { assert, errorRecord } from "./common.ts";
 /** Native commands that arrive while the thread step runs belong to this route. */
 export const CLAUDE_THREAD_ROUTE = "/claude/thread/dispatch";
 export const CLAUDE_THREAD_RECEIPT_ROUTE = "/claude/thread/receipt";
-const ACTIVE = "claude/thread/active";
+export const CLAUDE_THREAD_ACTIVE = "claude/thread/active";
 export interface ClaudeThreadReceipt {
   readonly schema: "signalbox/claude-qualification-thread/v1";
   readonly runId: string;
   readonly status: "completed" | "failed";
   readonly result?: unknown;
   readonly failure?: unknown;
+}
+
+/**
+ * Native commands report one route, so the thread step runs only while no Codex claim is live:
+ * no native sequence, no running observer calibration and no held sequence.
+ */
+export async function assertCodexIdle(tx: Pick<DurableObjectTransaction, "get">) {
+  assert(!(await tx.get("execution-owner")), "A Codex native sequence owns this proof");
+  assert(
+    !(await tx.get("observer/calibration-claimed")) ||
+      (await tx.get("observer/calibration")) !== undefined,
+    "The Codex observer calibration is still running",
+  );
+  assert(
+    (await tx.get<{ readonly phase?: string }>("sequence/lifetime-claim"))?.phase !== "held",
+    "The Codex sequence is held",
+  );
 }
 
 /**
@@ -33,7 +50,7 @@ export class ClaudeDispatch {
     this.#incarnation = incarnation;
   }
   async active() {
-    return (await this.#storage.get<boolean>(ACTIVE)) === true;
+    return (await this.#storage.get<boolean>(CLAUDE_THREAD_ACTIVE)) === true;
   }
   async dispatch() {
     assert(await this.#storage.get("ready"), "Readiness must precede Claude native dispatch");
@@ -41,13 +58,15 @@ export class ClaudeDispatch {
       await this.#storage.get("observer/claude-calibration"),
       "The Claude observer calibration must precede Claude native dispatch",
     );
+    // Inside the claim's transaction, so no Codex claim can interleave.
     await this.#storage.transaction(async (tx) => {
+      await assertCodexIdle(tx);
       assert(
         !(await tx.get("claude/thread/claim")),
         "The Claude thread step was already claimed; do not resubmit it",
       );
       await tx.put("claude/thread/claim", { incarnation: this.#incarnation });
-      await tx.put(ACTIVE, true);
+      await tx.put(CLAUDE_THREAD_ACTIVE, true);
     });
     await this.#owner.append("claude-thread-claimed", { incarnation: this.#incarnation });
     this.#pending = this.run();
@@ -68,7 +87,7 @@ export class ClaudeDispatch {
     }
     await this.#owner.saveState("claude-thread", receipt);
     await this.#storage.put("claude/thread/receipt", true);
-    await this.#storage.delete(ACTIVE);
+    await this.#storage.delete(CLAUDE_THREAD_ACTIVE);
     return receipt;
   }
   async receipt(): Promise<ClaudeThreadReceipt> {

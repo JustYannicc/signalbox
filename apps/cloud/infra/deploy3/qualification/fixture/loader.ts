@@ -17,6 +17,7 @@ import { readAsset, readConfiguration } from "./configuration.ts";
 import { assert, sha256 } from "./common.ts";
 import { COMMAND_ASSETS } from "./programRegistry.ts";
 import { prepareClaudeFacetCode } from "../prepareClaudeFacet.ts";
+import { CLAUDE_THREAD_ROUTE } from "./claudeDispatch.ts";
 import { assertQualifierCodexFacetConfiguration } from "../facetEnvironmentContract.ts";
 import { assertQualifierClaudeFacetConfiguration } from "../claudeCalibrationFacetContract.ts";
 
@@ -184,6 +185,7 @@ export class QualifierCommands extends WorkerEntrypoint<QualifierEnvironment> {
                 "/observer-calibration",
                 "/replace/dispatch",
                 ...[1, 2, 3].map((turn) => `/turn/${turn}/dispatch`),
+                CLAUDE_THREAD_ROUTE,
               ].map((path) => ({ callId: path, route: { method: "POST", path } })),
             },
           };

@@ -163,7 +163,6 @@ export default {
         "infra/deploy3/qualification/fixture/claudeCliFacet.ts",
         "infra/deploy3/qualification/fixture/claudeKernelFacet.ts",
         "infra/deploy3/qualification/fixture/worker.ts",
-        "infra/deploy3/qualification/fixture/claudeWorkflow.ts",
         "infra/syncProbe/worker.ts!",
         "infra/isolateProbe/alchemy.run.ts!",
         "infra/isolateProbe/ci.ts!",
