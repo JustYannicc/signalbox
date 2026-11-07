@@ -9,7 +9,7 @@ import type {
 import type { KernelExitStatus } from "../../../kernel/KernelProcessTable.ts";
 import type { NodeChildProcessTransport } from "../childProcess/ChildProcess.ts";
 import type { NormalizedSpawn } from "../childProcess/arguments.ts";
-import { abortError, unwrapHostResult } from "../childProcess/errors.ts";
+import { abortError, isCode, unwrapHostResult } from "../childProcess/errors.ts";
 import { createKernelProcessStreams } from "../../../kernel/KernelProcessStreams.ts";
 import { withAbort } from "./streams.ts";
 
@@ -40,7 +40,12 @@ export function createComputerProcessTransport(
       const queuedSignals: number[] = [];
       const forwardSignal = (target: KernelCommandChild, number: number) => {
         signalDone = signalDone.then(async () => {
-          unwrapHostResult(await target.signal(number), "signal");
+          try {
+            unwrapHostResult(await target.signal(number), "signal");
+          } catch (error) {
+            // Computer may reap the owned child before its exit reaches this host.
+            if (!isCode(error, "ESRCH")) throw error;
+          }
         });
         void signalDone.catch(() => undefined);
       };

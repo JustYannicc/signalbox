@@ -159,6 +159,57 @@ function controlledChild(disposeGate = Promise.resolve()) {
 }
 
 describe("Node child_process through Computer", () => {
+  it("settles host cancellation after the owned remote child exits and is reaped", async () => {
+    const wakes = new KernelWakeRegistry();
+    const processes = new KernelProcessTable({ wakes });
+    const exit = deferred<KernelCommandExit>();
+    const published = deferred<KernelCommandExit>();
+    const status = { exitCode: 0, signal: 0, coreDumped: false };
+    const admitted = processes.spawn(
+      undefined,
+      () => ({
+        completion: exit.promise,
+        signal: () => kernelOk(undefined),
+      }),
+      () => {},
+    );
+    if (admitted.status !== "ok") throw new Error("Remote child was not admitted");
+    const signal = vi.fn(async (number: number) =>
+      processes.signalPid(undefined, admitted.value.pid, number),
+    );
+    const h = harness({
+      exec: async () => ({
+        stdin: new WritableStream(),
+        stdout: new ReadableStream({ start: (stream) => stream.close() }),
+        stderr: new ReadableStream({ start: (stream) => stream.close() }),
+        exited: published.promise,
+        signal,
+        dispose: async () => {
+          published.resolve(status);
+        },
+      }),
+    });
+    const owner = new AbortController();
+    try {
+      const child = h.childProcess.spawn("hook", { signal: owner.signal });
+      child.on("error", () => {});
+      const done = closed(child);
+      await new Promise<void>((resolve) => child.once("spawn", resolve));
+      exit.resolve(status);
+      expect(await processes.terminateAndReap(admitted.value.handle)).toEqual(kernelOk(undefined));
+      owner.abort(new Error("SDK request cancelled"));
+      await done;
+      expect(signal).toHaveBeenCalledExactlyOnceWith(15);
+      expect(await h.host.processes.dispose()).toEqual(kernelOk(undefined));
+    } finally {
+      published.resolve(status);
+      exit.resolve(status);
+      await h.close();
+      await processes.dispose();
+      wakes.dispose();
+    }
+  });
+
   it("rejects unsupported process ownership before admission", async () => {
     const exec = vi.fn<ComputerExecPort["exec"]>(async () => echoChild());
     const h = harness({ exec });
