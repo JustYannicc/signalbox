@@ -146,6 +146,12 @@ export const createLocalClaudeThreadObject = <Env, G, E = HarnessError>(
   class LocalClaudeThreadObject extends DurableObject<Env> {
     private scope: Scope.Closeable | undefined;
     private binding: ProductClaudeThreadHostBinding<G> | undefined;
+    private inFlight:
+      | {
+          readonly binding: Promise<ProductClaudeThreadHostBinding<G>>;
+          readonly abandon: AbortController;
+        }
+      | undefined;
     private user: RpcStub<LocalUserCapabilityApi> | undefined;
     private pool: RpcStub<LocalPoolCapabilityApi> | undefined;
     private configuredAs: string | undefined;
@@ -155,39 +161,61 @@ export const createLocalClaudeThreadObject = <Env, G, E = HarnessError>(
       return new LocalThreadCapability(() => this.commandApi());
     }
 
-    configure(
+    async configure(
       configuration: LocalClaudeThreadConfiguration,
       user: RpcStub<LocalUserCapabilityApi>,
       pool: RpcStub<LocalPoolCapabilityApi>,
     ) {
-      return this.ctx.blockConcurrencyWhile(async () => {
+      // Only the claim holds the object's lock. Building waits on the machine's I/O, and the
+      // platform resets an object whose blockConcurrencyWhile outlasts 30 seconds.
+      const claimed = await this.ctx.blockConcurrencyWhile(async () => {
         if (this.closed) throw new Error("The local thread object is closed.");
         const identity = configurationOf(configuration);
         await this.assertConfiguration(identity);
         const key = configurationKey(identity);
         if (this.configuredAs !== undefined && this.configuredAs !== key)
           throw new Error("A local thread cannot be rebound to another owner, model, or thread.");
-        if (this.binding !== undefined) return;
+        if (this.binding !== undefined) return undefined;
+        if (this.inFlight !== undefined) return { building: this.inFlight.binding };
 
         const heldUser = user.dup();
         const heldPool = pool.dup();
-        const scope = Effect.runSync(Scope.make());
         this.user = heldUser;
         this.pool = heldPool;
-        this.scope = scope;
         this.configuredAs = key;
-        try {
-          this.binding = await Effect.runPromise(
-            this.buildBinding(configuration, heldUser, heldPool).pipe(Scope.provide(scope)),
-          );
-        } catch (error) {
-          this.binding = undefined;
+        return { building: this.build(configuration, heldUser, heldPool) };
+      });
+      if (claimed !== undefined) await claimed.building;
+    }
+
+    /** The one build every caller awaits; a failed build releases what it held. */
+    private build(
+      configuration: LocalClaudeThreadConfiguration,
+      user: RpcStub<LocalUserCapabilityApi>,
+      pool: RpcStub<LocalPoolCapabilityApi>,
+    ) {
+      const scope = Scope.makeUnsafe();
+      const abandon = new AbortController();
+      this.scope = scope;
+      const building = Effect.runPromise(
+        this.buildBinding(configuration, user, pool).pipe(Scope.provide(scope)),
+        { signal: abandon.signal },
+      ).then(
+        (binding) => {
+          this.binding = binding;
+          this.inFlight = undefined;
+          return binding;
+        },
+        async (error: unknown) => {
+          this.inFlight = undefined;
           this.scope = undefined;
           this.releaseCapabilities();
           await Effect.runPromise(Scope.close(scope, Exit.void)).catch(() => undefined);
           throw error;
-        }
-      });
+        },
+      );
+      this.inFlight = { binding: building, abandon };
+      return building;
     }
 
     async failure() {
@@ -197,6 +225,10 @@ export const createLocalClaudeThreadObject = <Env, G, E = HarnessError>(
     async dispose() {
       if (this.closed) return;
       this.closed = true;
+      // An in-flight build is dropped; its failure path releases what it held.
+      const inFlight = this.inFlight;
+      inFlight?.abandon.abort();
+      await inFlight?.binding.catch(() => undefined);
       const binding = this.binding;
       const scope = this.scope;
       this.binding = undefined;
@@ -223,8 +255,10 @@ export const createLocalClaudeThreadObject = <Env, G, E = HarnessError>(
 
     protected async getBinding() {
       if (this.closed) throw new Error("The local thread object is closed.");
-      if (this.binding === undefined) throw new Error("The local thread object is not configured.");
-      return this.binding;
+      const binding = this.binding ?? (await this.inFlight?.binding);
+      if (this.closed) throw new Error("The local thread object is closed.");
+      if (binding === undefined) throw new Error("The local thread object is not configured.");
+      return binding;
     }
 
     private async commandApi() {

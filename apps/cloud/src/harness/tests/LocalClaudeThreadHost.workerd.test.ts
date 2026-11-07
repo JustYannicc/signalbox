@@ -37,7 +37,7 @@ beforeAll(async () => {
   }
 }, 60_000);
 
-const makeHarness = (realOwners = false, failedMetadata = false) =>
+const makeHarness = (realOwners = false, failedMetadata = false, heldMachine = false) =>
   createTestHarness({
     workers: [
       {
@@ -54,6 +54,7 @@ const makeHarness = (realOwners = false, failedMetadata = false) =>
             OWNER_VERSIONS: ownerVersions,
             REAL_OWNERS: realOwners,
             FAILED_METADATA: failedMetadata,
+            HELD_MACHINE: heldMachine,
           },
           durable_objects: {
             bindings: [
@@ -61,12 +62,19 @@ const makeHarness = (realOwners = false, failedMetadata = false) =>
               { name: "POOLS", class_name: "LocalPool" },
               { name: "THREADS", class_name: "LocalThread" },
               { name: "OBSERVATIONS", class_name: "OrdinaryObservations" },
+              { name: "GATES", class_name: "MachineGate" },
             ],
           },
           migrations: [
             {
               tag: "v1",
-              new_sqlite_classes: ["LocalUser", "LocalPool", "LocalThread", "OrdinaryObservations"],
+              new_sqlite_classes: [
+                "LocalUser",
+                "LocalPool",
+                "LocalThread",
+                "OrdinaryObservations",
+                "MachineGate",
+              ],
             },
           ],
         },
@@ -95,6 +103,43 @@ it("completes one checked Opus 5.5 xhigh turn through separate user, pool and th
     poolGrants: expect.arrayContaining(["user_id", "role", "granted_at"]),
     indexedCompletedRuns: 1,
   });
+});
+
+const held = async (scenario: "join" | "fail" | "dispose") => {
+  await harness.close();
+  harness = makeHarness(false, false, true);
+  await harness.listen();
+  const response = await harness.fetch(`http://proof/held?scenario=${scenario}`);
+  const text = await response.text();
+  expect(response.status, text).toBe(200);
+  return JSON.parse(text);
+};
+
+// The fixture's probe answers while the machine is held; a configure that held the object's lock
+// across its build would never let it.
+it("builds the thread outside the object's lock and joins every caller to one build", async () => {
+  expect(await held("join")).toEqual({
+    hosted: "hosted",
+    order: ["released", "bound"],
+    gate: { builds: 1, released: true },
+  });
+});
+
+it("hands a failed build to every caller and still closes the domain", async () => {
+  const result = await held("fail");
+  expect(result.bound).toContain("The held machine failed.");
+  expect(result.hosted).toContain("The local thread could not be configured.");
+  expect(result.hosted).toContain("The held machine failed.");
+  expect(result.hosted).not.toContain("The local domain could not close.");
+  expect(result.gate).toEqual({ builds: 1, released: true });
+});
+
+it("drops an in-flight build when the thread is disposed", async () => {
+  const result = await held("dispose");
+  expect(result.atDispose).toEqual({ builds: 1, released: false });
+  expect(result.bound).toMatch(/^bound failed: /);
+  expect(result.hosted).toContain("The local thread could not be configured.");
+  expect(result.hosted).not.toContain("The local domain could not close.");
 });
 
 it("interrupts a model stream across both RPC hops and stops the pool and upstream request", async () => {
