@@ -11,25 +11,16 @@ export interface PreparedProductProgramShape {
 
 export function assertPreparedShape(
   prepared: PreparedProductProgramShape,
-  pins: Pick<ProductProgramPinSnapshot, "commandExecutablePaths" | "gitTemplates" | "coreutils">,
+  pins: Pick<
+    ProductProgramPinSnapshot,
+    "commandExecutablePaths" | "gitTemplates" | "coreutils" | "programs"
+  >,
 ): void {
-  const requiredPrograms = [
-    "bash",
-    "busyboxCat",
-    "busyboxApplets",
-    "productBusyboxApplets",
-    "ripgrep",
-    "coreutils",
-    "git",
-    "sed",
-    "jq",
-    "ugrep",
-  ];
   if (
     prepared.commandExecutablePathCount !== pins.commandExecutablePaths.length ||
     !sameEntries(prepared.commandExecutablePaths, pins.commandExecutablePaths) ||
     prepared.gitTemplateFileCount !== pins.gitTemplates.files.length ||
-    !sameEntries(prepared.programs, requiredPrograms) ||
+    !sameEntries(prepared.programs, pins.programs) ||
     !sameEntries(prepared.coreutils, Object.keys(pins.coreutils.commands))
   )
     throw new Error("PRODUCT_PROGRAM_PREPARER_SHAPE_MISMATCH");

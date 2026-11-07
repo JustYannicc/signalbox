@@ -59,6 +59,16 @@ function codexBinding<G>(
           ...bindingOptions,
           process: {
             ...process,
+            bootstrap: {
+              ...process.bootstrap,
+              overrides: {
+                // Codex 0.162.1 defaults code_mode off; code_mode_host already defaults on.
+                ...(ports.commands.host.resolve("/bin/codex-code-mode-host").status === "ok"
+                  ? { "features.code_mode": true }
+                  : {}),
+                ...process.bootstrap.overrides,
+              },
+            },
             host: ports.commands.host,
             computer: ports.computer,
             stdio: ports.stdio,

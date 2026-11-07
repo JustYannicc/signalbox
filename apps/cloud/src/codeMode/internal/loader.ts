@@ -6,7 +6,7 @@ import type {
   CodeModeCellInvocation,
   CodeModeCellLoaderPort,
   Json,
-} from "./types.ts";
+} from "../Types.ts";
 
 export interface CodeModeWorkerPolicy {
   /** Chosen by the loader service owner. No request field can override this. */

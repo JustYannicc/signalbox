@@ -75,7 +75,7 @@ export function findLossyHarnessCauses(source: string, fileName = "input.ts") {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
   const findings: Array<{ line: number; column: number; message: string }> = [];
   // Code cells have a separate guest protocol whose error result is text.
-  const structured = !fileName.replaceAll("\\", "/").includes("/harness/codeMode/");
+  const structured = !fileName.replaceAll("\\", "/").includes("/codeMode/");
   const report = (node: ts.Node, message: string) => {
     const position = file.getLineAndCharacterOfPosition(node.getStart(file));
     findings.push({ line: position.line + 1, column: position.character + 1, message });

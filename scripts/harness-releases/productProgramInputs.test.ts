@@ -153,18 +153,7 @@ it("gets current artifact pins through the public infra boundary", async () => {
     commandExecutablePathCount: snapshot.commandExecutablePaths.length,
     commandExecutablePaths: snapshot.commandExecutablePaths,
     gitTemplateFileCount: snapshot.gitTemplates.files.length,
-    programs: [
-      "bash",
-      "busyboxCat",
-      "busyboxApplets",
-      "productBusyboxApplets",
-      "ripgrep",
-      "coreutils",
-      "git",
-      "sed",
-      "jq",
-      "ugrep",
-    ],
+    programs: snapshot.programs,
     coreutils: Object.keys(snapshot.coreutils.commands),
   };
   expect(() => assertPreparedShape(prepared, snapshot)).not.toThrow();

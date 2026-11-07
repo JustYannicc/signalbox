@@ -7,7 +7,7 @@ import type {
   CodeModeCellCompletion,
   CodeModeCellEvents,
   CodeModeCellInvocation,
-} from "./types.ts";
+} from "../Types.ts";
 
 export default class CodeModeCellWorker extends WorkerEntrypoint {
   async run(

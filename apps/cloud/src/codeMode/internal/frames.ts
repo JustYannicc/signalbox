@@ -1,4 +1,4 @@
-import type { Json } from "./types.ts";
+import type { Json } from "../Types.ts";
 
 const MAX_FRAME_BYTES = 64 * 1024 * 1024;
 

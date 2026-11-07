@@ -2,6 +2,10 @@ import { childProgramPaths } from "../../src/computer/ChildProgramPaths.ts";
 import { describeProductProgramInputs } from "../harnessReleases/productProgramInputs.ts";
 import { KernelProgramRegistry } from "../../src/kernel/KernelAbi.ts";
 import { createChildProgramCatalog } from "../../src/computer/ChildProgramCatalog.ts";
+import {
+  CODE_MODE_HOST_EXECUTABLE,
+  CODE_MODE_HOST_MANIFEST,
+} from "../../src/computer/CodeModeManifest.ts";
 import { commandProgramCodes } from "../../src/computer/commandGatewayTesting.ts";
 import { childBusyboxFixture } from "../../src/computer/childBusyboxTesting.ts";
 import * as NodeCrypto from "node:crypto";
@@ -127,13 +131,14 @@ describe("full child program preparation", () => {
 
   it("describes every executable path and rejects incomplete seeds", async () => {
     const paths = [
+      CODE_MODE_HOST_EXECUTABLE,
       ...new Set(
         [...Object.values(CHILD_PROGRAM_PATHS), ...CHILD_UGREP_EXECUTABLES].flatMap((path) => {
           const [, bin, usrBin] = childProgramPaths(path);
           return [bin, usrBin];
         }),
       ),
-    ];
+    ] satisfies ChildProgramExecutablePath[];
     const pins = await describeProductProgramInputs();
     expect(pins.commandExecutablePaths).toEqual([...paths].sort());
     const files = paths.map((path, index) => ({
@@ -174,11 +179,25 @@ describe("full child program preparation", () => {
           },
         },
         programs: commandProgramCodes(),
+        codeModeHost: {
+          binding: {
+            manifest: CODE_MODE_HOST_MANIFEST,
+            implementation: {
+              kind: "async",
+              run: async () => {
+                throw new Error("Seed discovery must not start the companion");
+              },
+            },
+          },
+          drain: async () => {},
+        },
         hostname: "seed-catalog-test",
       });
       const paths = [
         ...new Set(
-          [...catalog.bindings.keys()].flatMap((path) => childProgramPaths(path).slice(1)),
+          [...catalog.bindings.keys()].flatMap((path) =>
+            path === CODE_MODE_HOST_EXECUTABLE ? [path] : childProgramPaths(path).slice(1),
+          ),
         ),
       ];
       const files = paths.map((path) => ({

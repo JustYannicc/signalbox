@@ -17,6 +17,8 @@ import { KERNEL_UGREP_ARTIFACT } from "../../src/kernel/KernelUgrepProgram.ts";
 import { PRODUCT_COMPUTER_BUSYBOX_ARTIFACT } from "../../src/kernel/KernelBusyboxProgram.ts";
 import { KERNEL_JQ_ARTIFACT } from "../../src/kernel/KernelJqProgram.ts";
 import { prepareBasePrograms } from "./basic.ts";
+import { prepareCodeModeHost } from "../codeMode/prepare.ts";
+import { CODE_MODE_HOST_EXECUTABLE } from "../../src/computer/CodeModeManifest.ts";
 import {
   readPinnedGitTemplates,
   type ChildProgramDataFile,
@@ -52,6 +54,7 @@ export interface ChildProgramSources extends MeasuredChildProgramSources {
   readonly bash: ChildProgramSourceCode;
   readonly busyboxCat: ChildProgramSourceCode;
   readonly ripgrep: ChildProgramSourceCode;
+  readonly codeMode?: ChildProgramSourceCode;
 }
 
 export interface FullChildProgramSources extends ChildProgramSources {
@@ -67,9 +70,9 @@ export interface FullChildProgramSources extends ChildProgramSources {
 type SeededProgramPath =
   | (typeof CHILD_PROGRAM_PATHS)[keyof typeof CHILD_PROGRAM_PATHS]
   | (typeof CHILD_UGREP_EXECUTABLES)[number];
-export type ChildProgramExecutablePath = ReturnType<typeof childProgramPaths<SeededProgramPath>>[
-  | 1
-  | 2];
+export type ChildProgramExecutablePath =
+  | typeof CODE_MODE_HOST_EXECUTABLE
+  | ReturnType<typeof childProgramPaths<SeededProgramPath>>[1 | 2];
 export type LegacyChildProgramExecutablePath = "/bin/bash" | "/bin/cat" | "/bin/rg";
 
 export interface ChildProgramExecutableFile {
@@ -168,6 +171,8 @@ export async function prepareChildPrograms(
     revision: KERNEL_JQ_ARTIFACT.version,
   });
   const gitTemplates = await readPinnedGitTemplates(programDir);
+  const codeMode = await prepareCodeModeHost({ cloudRoot });
+  for (const source of codeMode.inventory.sources) sources.set(source.path, source);
   for (const file of gitTemplates.dataFiles) {
     artifacts.set(file.path, {
       path: file.path,
@@ -236,6 +241,7 @@ export async function prepareChildPrograms(
     sed: busyboxGraph.code,
     jq: measured.graphs.coreutils.code,
     ugrep: busyboxGraph.code,
+    codeMode: codeMode.code,
   });
   const inventory: ChildProgramSourceInventory = Object.freeze({
     format: "signalbox-child-programs-v1",
@@ -252,6 +258,11 @@ export async function prepareChildPrograms(
       sed: programInventory(busyboxGraph),
       jq: programInventory(measured.graphs.coreutils),
       ugrep: programInventory(busyboxGraph),
+      codeMode: {
+        entrypoint: "default",
+        mainModule: codeMode.code.mainModule,
+        modules: Object.keys(codeMode.code.modules).sort(),
+      },
     }),
   });
   const canonicalFiles = [
@@ -272,15 +283,16 @@ export async function prepareChildPrograms(
       executableFile(childProgramPaths(path)[1], ugrepArtifact),
     ),
   ];
-  const commandExecutableFiles = Object.freeze(
-    canonicalFiles.flatMap((file) => {
+  const commandExecutableFiles = Object.freeze([
+    ...canonicalFiles.flatMap((file) => {
       const [, bin, usrBin] = childProgramPaths(file.path);
       return [
         { ...file, path: bin },
         { ...file, path: usrBin },
       ];
     }),
-  );
+    { ...codeMode.executable, mode: 0o755 as const },
+  ]);
   const commandExecutableCatalog = createChildProgramExecutableCatalog(commandExecutableFiles);
   const executableFiles = Object.freeze(
     commandExecutableFiles.filter(
@@ -308,11 +320,12 @@ export async function prepareChildPrograms(
 export function createChildProgramExecutableCatalog(
   files: readonly ChildProgramExecutableFile[],
 ): ChildProgramExecutableCatalog {
-  const expectedPaths = new Set(
+  const expectedPaths = new Set<string>(
     [...Object.values(CHILD_PROGRAM_PATHS), ...CHILD_UGREP_EXECUTABLES].flatMap((path) =>
       childProgramPaths(path).slice(1),
     ),
   );
+  expectedPaths.add(CODE_MODE_HOST_EXECUTABLE);
   if (
     files.length !== expectedPaths.size ||
     files.some((file) => !expectedPaths.delete(file.path)) ||
@@ -331,8 +344,10 @@ export function createChildProgramExecutableCatalog(
 }
 
 function executableFile(
-  path: ChildProgramExecutablePath,
+  path: Exclude<ChildProgramExecutablePath, typeof CODE_MODE_HOST_EXECUTABLE>,
   artifact: { readonly bytes: Uint8Array; readonly sha256: string },
-): ChildProgramExecutableFile {
+): ChildProgramExecutableFile & {
+  readonly path: Exclude<ChildProgramExecutablePath, typeof CODE_MODE_HOST_EXECUTABLE>;
+} {
   return Object.freeze({ path, ...artifact, mode: 0o755 });
 }

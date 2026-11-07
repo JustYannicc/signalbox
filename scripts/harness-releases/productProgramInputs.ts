@@ -157,6 +157,13 @@ async function readPinSnapshot(repositoryRoot: string): Promise<ProductProgramPi
 
 function validatePinSnapshot(pins: ProductProgramPinSnapshot): void {
   if (
+    !Array.isArray(pins.programs) ||
+    pins.programs.length === 0 ||
+    pins.programs.some((name) => typeof name !== "string") ||
+    new Set(pins.programs).size !== pins.programs.length
+  )
+    throw new Error("PRODUCT_PROGRAM_NAMES_INVALID");
+  if (
     !Array.isArray(pins.commandExecutablePaths) ||
     pins.commandExecutablePaths.length === 0 ||
     pins.commandExecutablePaths.some(

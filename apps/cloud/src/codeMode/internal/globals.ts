@@ -1,7 +1,7 @@
 import { codeModeAudio, codeModeImage, generatedCodeModeImage } from "./media.ts";
 import { CodeModeQueue } from "./queue.ts";
 import { CodeModeTimers } from "./timers.ts";
-import type { CodeModeCellInvocation, CodeModeContent, Json } from "./types.ts";
+import type { CodeModeCellInvocation, CodeModeContent, Json } from "../Types.ts";
 
 const EXIT_SENTINEL = "__codex_code_mode_exit__";
 

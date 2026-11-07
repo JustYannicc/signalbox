@@ -19,9 +19,19 @@ import { createChildSedBindings } from "./catalog/SedPrograms.ts";
 import { createChildUgrepBindings } from "./catalog/UgrepPrograms.ts";
 import { createChildJqBinding } from "./catalog/JqProgram.ts";
 import { registerProgramAliases } from "./catalog/ProgramAliases.ts";
+import type { KernelProgramBinding } from "../kernel/KernelProgramHost.ts";
+import { CODE_MODE_HOST_EXECUTABLE } from "./CodeModeManifest.ts";
+
+export interface ComputerCodeModeHost {
+  readonly binding: KernelProgramBinding;
+  readonly drain: () => Promise<void>;
+}
 
 /** One catalog supplies both local kernel registrations and Computer's execution owner. */
-export function createComputerProgramCatalog(codes: ChildProgramCodes) {
+export function createComputerProgramCatalog(
+  codes: ChildProgramCodes,
+  codeModeHost?: ComputerCodeModeHost,
+) {
   const programs = new Map<string, ComputerCatalogProgram>();
   const add: ChildProgramFactory = (executable, code, hostKind, pin, extras = {}) => {
     programs.set(
@@ -82,5 +92,8 @@ export function createComputerProgramCatalog(codes: ChildProgramCodes) {
   if (codes.jq !== undefined) createChildJqBinding({ code: codes.jq, child: add });
   if (codes.git !== undefined) add("/usr/bin/git", codes.git, "git", KERNEL_GIT_PROGRAM_MANIFEST);
   const aliases = registerProgramAliases(programs);
-  return { programs, aliases };
+  const asyncPrograms = new Map<string, KernelProgramBinding>();
+  if (codeModeHost !== undefined)
+    asyncPrograms.set(CODE_MODE_HOST_EXECUTABLE, codeModeHost.binding);
+  return { programs, aliases, asyncPrograms };
 }

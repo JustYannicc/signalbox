@@ -1,4 +1,4 @@
-import type { ChildWorkerCapacity } from "../../computer/ChildWorkerCapacity.ts";
+import type { CodeModeCellCapacity } from "../Capacity.ts";
 import { CodeModeDelegates } from "./delegates.ts";
 import { encodeCodeModeFrame, readCodeModeFrames } from "./frames.ts";
 import { parseCodeModeMessage } from "./protocol.ts";
@@ -11,7 +11,7 @@ import {
   type CodeModeCellCode,
   type CodeModeCellLoaderPort,
   type HostRequest,
-} from "./types.ts";
+} from "../Types.ts";
 
 interface Observation {
   cancel: AbortController;
@@ -23,7 +23,7 @@ export interface CodeModeConnectionOptions {
   readonly signal: AbortSignal;
   readonly loader: CodeModeCellLoaderPort;
   readonly code: CodeModeCellCode;
-  readonly cellCapacity: Pick<ChildWorkerCapacity, "acquire">;
+  readonly cellCapacity: Pick<CodeModeCellCapacity, "acquire">;
 }
 
 export async function runCodeModeHostConnection(options: CodeModeConnectionOptions) {
@@ -37,10 +37,16 @@ export async function runCodeModeHostConnection(options: CodeModeConnectionOptio
   const seenRequests = new Set<number>();
   const active = new Map<number, Observation>();
   const tasks = new Set<Promise<void>>();
+  const recordFailure = (error: unknown) => {
+    if (options.signal.aborted && error === options.signal.reason) return;
+    failure ??= error;
+  };
   const send = (message: unknown) => {
-    writes = writes.then(() => writer.write(encodeCodeModeFrame(message)));
+    writes = writes.then(() => {
+      if (!options.signal.aborted) return writer.write(encodeCodeModeFrame(message));
+    });
     void writes.catch((error: unknown) => {
-      failure ??= error;
+      recordFailure(error);
       controller.abort(error);
     });
   };
@@ -99,7 +105,7 @@ export async function runCodeModeHostConnection(options: CodeModeConnectionOptio
       }
     }
   } catch (error) {
-    if (!options.signal.aborted || failure !== undefined) failure ??= error;
+    recordFailure(error);
   } finally {
     controller.abort(new Error("CodeMode host disconnected"));
     for (const observation of active.values())
@@ -107,12 +113,12 @@ export async function runCodeModeHostConnection(options: CodeModeConnectionOptio
     const shutdown = await Promise.allSettled(
       [...sessions.values()].map((session) => session.shutdown()),
     );
-    for (const result of shutdown) if (result.status === "rejected") failure ??= result.reason;
+    for (const result of shutdown) if (result.status === "rejected") recordFailure(result.reason);
     await Promise.all(tasks);
     try {
       await writes;
     } catch (error) {
-      failure ??= error;
+      recordFailure(error);
     }
     writer.releaseLock();
   }
@@ -193,7 +199,7 @@ export async function runCodeModeHostConnection(options: CodeModeConnectionOptio
     function respond(value: unknown) {
       send({ type: "operation/response", id, result: ok(value) });
     }
-    function stamp(response: import("./types.ts").RuntimeResponse) {
+    function stamp(response: import("../Types.ts").RuntimeResponse) {
       const body =
         "Result" in response
           ? response.Result

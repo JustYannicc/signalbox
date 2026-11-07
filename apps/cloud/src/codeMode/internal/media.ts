@@ -1,4 +1,4 @@
-import type { CodeModeContent } from "./types.ts";
+import type { CodeModeContent } from "../Types.ts";
 
 const imageExpected =
   "image expects a non-empty image URL string, an object with image_url and optional detail, or a raw MCP image block";

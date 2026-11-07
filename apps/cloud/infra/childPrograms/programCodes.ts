@@ -55,6 +55,7 @@ export function createSeededCommandProgramCodes(
     sed: attachProgramReference(programs.sed, KERNEL_GNU_SED_ARTIFACT),
     jq: attachProgramReference(programs.jq, KERNEL_JQ_ARTIFACT),
     ugrep: attachProgramReference(programs.ugrep, KERNEL_UGREP_ARTIFACT),
+    ...(programs.codeMode === undefined ? {} : { codeMode: programs.codeMode }),
   });
 }
 

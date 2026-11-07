@@ -1,4 +1,4 @@
-import type { ChildWorkerCapacity } from "../../computer/ChildWorkerCapacity.ts";
+import type { CodeModeCellCapacity } from "../Capacity.ts";
 import { CodeModeCell, type CellObservation } from "./cell.ts";
 import type { CodeModeDelegates } from "./delegates.ts";
 import type {
@@ -8,13 +8,13 @@ import type {
   Json,
   RuntimeResponse,
   WaitOutcome,
-} from "./types.ts";
+} from "../Types.ts";
 
 interface SessionOptions {
   id: string;
   loader: CodeModeCellLoaderPort;
   code: CodeModeCellCode;
-  cellCapacity: Pick<ChildWorkerCapacity, "acquire">;
+  cellCapacity: Pick<CodeModeCellCapacity, "acquire">;
   delegates: CodeModeDelegates;
   send: (message: unknown) => void;
 }

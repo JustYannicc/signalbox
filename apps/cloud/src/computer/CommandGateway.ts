@@ -57,6 +57,7 @@ export interface CommandGatewayOptions {
   readonly capacity: Pick<ChildWorkerCapacity, "enqueue" | "run" | "reserve">;
   readonly loader: ChildProgramCatalogOptions["loader"];
   readonly programs: CommandProgramCodes;
+  readonly codeModeHost?: ChildProgramCatalogOptions["codeModeHost"];
   readonly hostname: string;
   readonly systemIdentity?: SystemIdentity;
   readonly machine: KernelCommandForwarder;
@@ -103,6 +104,7 @@ export function createCommandGateway(options: CommandGatewayOptions) {
       hostname: options.systemIdentity?.hostname ?? options.hostname,
       lifetimes,
       reservationFor,
+      ...(options.codeModeHost === undefined ? {} : { codeModeHost: options.codeModeHost }),
     });
     const admission = createComputerProgramAdmission({
       escalation: escalation(catalog.bindings),

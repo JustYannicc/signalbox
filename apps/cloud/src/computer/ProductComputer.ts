@@ -18,12 +18,16 @@ import type { MachineProgramInventory } from "./MachineProgramInventory.ts";
 import type { MachineFilesPort } from "./MachineFilesPort.ts";
 import { createComputerMachineProfile } from "./ComputerMachineProfile.ts";
 import { createKernelExecutableNamespace } from "../kernel/KernelExecutableNamespace.ts";
+import { createCodeModeHostProgram } from "./CodeModeHost.ts";
+import { ChildWorkerCapacity } from "./ChildWorkerCapacity.ts";
 
 export interface ProductComputerOptions extends Omit<
   CommandGatewayOptions,
   "processes" | "loader" | "systemIdentity" | "hostname" | "machine" | "resolver" | "namespace"
 > {
   readonly threadId: string;
+  readonly capacity: CommandGatewayOptions["capacity"] &
+    Pick<ChildWorkerCapacity, "limit" | "owner" | "residentByteLimit">;
   readonly systemIdentity?: SystemIdentityConfig;
   readonly machineInventory: MachineProgramInventory;
   /** Build the machine transport from the same resolved identity the isolate receives. */
@@ -78,6 +82,21 @@ export function createProductComputer(options: ProductComputerOptions) {
         );
   let gateway: ReturnType<typeof createCommandGateway>;
   try {
+    const codeModeHost =
+      programs.codeMode === undefined
+        ? undefined
+        : (() => {
+            if (loader.cells === undefined)
+              throw new TypeError("Product Computer requires a CodeMode cell loader");
+            return createCodeModeHostProgram({
+              loader: loader.cells,
+              capacity: new ChildWorkerCapacity(options.capacity.limit, {
+                owner: `${options.capacity.owner}/code-mode`,
+                RESIDENT_BYTE_LIMIT: String(options.capacity.residentByteLimit),
+              }),
+              code: programs.codeMode,
+            });
+          })();
     gateway = createCommandGateway({
       ...options,
       machine,
@@ -85,6 +104,7 @@ export function createProductComputer(options: ProductComputerOptions) {
       hostname: systemIdentity.hostname,
       loader,
       processes,
+      ...(codeModeHost === undefined ? {} : { codeModeHost }),
       resolver,
       namespace: (request) =>
         createKernelExecutableNamespace({

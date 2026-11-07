@@ -1,4 +1,5 @@
 import type { WorkerEntrypoint } from "cloudflare:workers";
+import { createCodeModeWorkerLoader } from "../codeMode/Loader.ts";
 import type { KernelCommand, KernelCommandExit } from "../kernel/KernelCommandForwarder.ts";
 import { copyKernelRpcRecord } from "../kernel/KernelRpcReply.ts";
 import type { ChildWorkerModules } from "./ChildWorkerProgram.ts";
@@ -82,6 +83,7 @@ function createChildWorkerLoader(
     limits,
   } as const;
   return {
+    cells: createCodeModeWorkerLoader({ loader, policy: limits }),
     async run(input, target) {
       const mainModule = input.mainModule;
       const entrypoint = input.entrypoint;
