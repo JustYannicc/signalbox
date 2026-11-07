@@ -9,7 +9,7 @@ import {
   type OrchestrationV2RuntimeRequest,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import type { SignalboxAsk, SignalboxAskQuestion } from "@t3tools/contracts/signalboxAsks";
+import type { SignalboxAsk } from "@t3tools/contracts/signalboxAsks";
 import { pendingAskQuestions } from "@t3tools/shared/signalboxAsks";
 import { useId, useState } from "react";
 
@@ -17,6 +17,7 @@ import { randomUUID } from "../../lib/utils";
 import { readAccountSession } from "../../account/accountSession";
 import { signalboxAskCommand } from "../../state/signalboxAsks";
 import { useAutomationCommand } from "../automations/useAutomationCommand";
+import { AskQuestion, askValueText } from "../asks/AskQuestion";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
@@ -26,107 +27,6 @@ const kindLabels = { blocker: "Blocker", ready: "Ready", considering: "Consideri
 const noAsks: ReadonlyArray<SignalboxAsk> = [];
 const noRequests: ReadonlyArray<OrchestrationV2RuntimeRequest> = [];
 const emptyDraft: AskDraftAnswer = { selectedOptionIndexes: [], text: "" };
-
-function answerText(value: SignalboxAskQuestion["recommendation"]) {
-  return typeof value === "string" ? value : JSON.stringify(value);
-}
-
-function AskQuestion({
-  question,
-  draft,
-  disabled,
-  onChange,
-}: {
-  question: SignalboxAskQuestion;
-  draft: AskDraftAnswer;
-  disabled: boolean;
-  onChange: (draft: AskDraftAnswer) => void;
-}) {
-  const id = useId();
-  return (
-    <div className="flex min-w-0 flex-col gap-2 wrap-anywhere">
-      <Label htmlFor={id}>{question.question}</Label>
-      <dl className="space-y-1 text-xs text-muted-foreground">
-        <div>
-          <dt className="inline font-medium">Why: </dt>
-          <dd className="inline">{question.why}</dd>
-        </div>
-        <div>
-          <dt className="inline font-medium">Unblocks: </dt>
-          <dd className="inline">{question.unblocks}</dd>
-        </div>
-        <div>
-          <dt className="inline font-medium">Whose decision: </dt>
-          <dd className="inline">{question.decisionOwner}</dd>
-        </div>
-        {question.recommendation === null ? null : (
-          <div>
-            <dt className="inline font-medium">Recommendation: </dt>
-            <dd className="inline">{answerText(question.recommendation)}</dd>
-          </div>
-        )}
-      </dl>
-      <div className="flex flex-wrap gap-1.5">
-        {question.options.map((option, index) => (
-          <Button
-            key={`${option.label}:${JSON.stringify(option.value)}`}
-            type="button"
-            size="sm"
-            variant={draft.selectedOptionIndexes.includes(index) ? "secondary" : "outline"}
-            aria-pressed={draft.selectedOptionIndexes.includes(index)}
-            title={option.description}
-            disabled={disabled}
-            onClick={() =>
-              onChange({
-                ...draft,
-                useRecommendation: false,
-                selectedOptionIndexes: draft.selectedOptionIndexes.includes(index)
-                  ? draft.selectedOptionIndexes.filter((selected) => selected !== index)
-                  : question.multiSelect
-                    ? [...draft.selectedOptionIndexes, index]
-                    : [index],
-              })
-            }
-          >
-            {option.label}
-          </Button>
-        ))}
-        {question.recommendation === null ? null : (
-          <Button
-            type="button"
-            size="sm"
-            variant={draft.useRecommendation ? "secondary" : "outline"}
-            aria-pressed={draft.useRecommendation === true}
-            disabled={disabled}
-            onClick={() =>
-              onChange({
-                ...draft,
-                selectedOptionIndexes: [],
-                useRecommendation: !draft.useRecommendation,
-              })
-            }
-          >
-            Use recommendation
-          </Button>
-        )}
-      </div>
-      {question.surface.kind === "html" ? (
-        <p className="text-xs text-muted-foreground">
-          Answer with the options or text below. The custom view is unavailable here.
-        </p>
-      ) : null}
-      <Textarea
-        id={id}
-        size="sm"
-        aria-label={`Answer or comment: ${question.question}`}
-        placeholder="Write an answer or add a comment"
-        value={draft.text}
-        disabled={disabled}
-        onChange={(event) => onChange({ ...draft, text: event.currentTarget.value })}
-      />
-    </div>
-  );
-}
 
 function AskRound({ ask, threadRef }: { ask: SignalboxAsk; threadRef: ScopedThreadRef }) {
   const canAnswer = useAtomValue(signalboxAskCommand.permissionAtom(threadRef.environmentId));
@@ -140,6 +40,8 @@ function AskRound({ ask, threadRef }: { ask: SignalboxAsk; threadRef: ScopedThre
   const pending = pendingAskQuestions(ask);
   const built = buildAskRoundAnswer(ask, drafts);
   const disabled = !canAnswer || command.busy;
+  // A draft the question can't accept blocks Send, so nothing the person set is silently dropped.
+  const blocked = built.problems.length > 0;
   const submit = async (deferAll: boolean) => {
     if (disabled) return;
     const result = await command.run({
@@ -149,7 +51,9 @@ function AskRound({ ask, threadRef }: { ask: SignalboxAsk; threadRef: ScopedThre
         commandId: CommandId.make(randomUUID()),
         threadId: threadRef.threadId,
         askId: ask.id,
-        ...built,
+        round: built.round,
+        answers: built.answers,
+        deferredQuestionIds: built.deferredQuestionIds,
         ...(deferAll
           ? { answers: [], deferredQuestionIds: pending.map((question) => question.id) }
           : {}),
@@ -178,7 +82,9 @@ function AskRound({ ask, threadRef }: { ask: SignalboxAsk; threadRef: ScopedThre
           key={question.id}
           question={question}
           draft={drafts[question.id] ?? emptyDraft}
+          problem={built.problems.find((item) => item.questionId === question.id)?.problem}
           disabled={disabled}
+          threadRef={threadRef}
           onChange={(draft) => setDrafts((current) => ({ ...current, [question.id]: draft }))}
         />
       ))}
@@ -200,7 +106,7 @@ function AskRound({ ask, threadRef }: { ask: SignalboxAsk; threadRef: ScopedThre
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
-          disabled={disabled || (built.answers.length === 0 && !comment.trim())}
+          disabled={disabled || blocked || (built.answers.length === 0 && !comment.trim())}
           onClick={() => void submit(false)}
         >
           {command.busy
@@ -222,7 +128,7 @@ function AskRound({ ask, threadRef }: { ask: SignalboxAsk; threadRef: ScopedThre
               {round.answers.map((answer) => (
                 <p key={answer.questionId}>
                   {ask.questions.find((question) => question.id === answer.questionId)?.question}:{" "}
-                  {answerText(answer.value)}
+                  {askValueText(answer.value)}
                   {answer.comment ? ` · ${answer.comment}` : ""}
                 </p>
               ))}
