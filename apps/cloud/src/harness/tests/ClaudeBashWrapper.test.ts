@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { createHarnessToolTraceLedger } from "../HarnessToolTrace.ts";
+import { createHarnessToolTraceLedger, extractClaudeBashWrapper } from "../HarnessToolTrace.ts";
 import {
   observedLedger,
   wrapperPrefix as prefix,
@@ -74,6 +74,65 @@ const rootMapping = {
 };
 
 describe("Claude Bash wrapper extraction", () => {
+  it("joins the shell-snapshot form the official CLI runs once it has a snapshot", () => {
+    // The CLI's own wrapper once a shell snapshot exists: it sources the snapshot and runs
+    // `bash -c` without a login shell.
+    const command = `cd /work/app && cat notes.md && for f in docs/*.md; do echo "--- $f"; head -20 "$f" | grep -iE "^(status|state)"; done`;
+    const source =
+      "source /home/claude/.claude/shell-snapshots/snapshot-bash-1794000000000-1abcde.sh 2>/dev/null || true && ";
+    const script = `${source}${prefix}${singleQuote(command)} < /dev/null && pwd -P >| /tmp/claude-5f2c-cwd`;
+    const ledger = observedLedger();
+    const pre = hook("snapshot-call", command);
+    ledger.observeHook("host", "PreToolUse", pre, "snapshot-call");
+    ledger.observeChildSpawn({
+      childId: "child",
+      processKey: "host",
+      executable: "/bin/bash",
+      argv: ["/bin/bash", "-c", script],
+      cwd: "/work",
+      raw: { executable: "/bin/bash", argv: ["/bin/bash", "-c", script], cwd: "/work" },
+    });
+    ledger.observeChildClose("child", { closeArgs: [0, null] });
+    ledger.observeHook("host", "PostToolUse", terminal(pre), "snapshot-call");
+    const result = ledger.finalize([
+      { id: "snapshot-call", name: "Bash", processKey: "host", sessionId: "session" },
+    ]);
+    expect(result.verdicts[0]).toMatchObject({
+      kind: "joined",
+      provenance: {
+        templateId: "claude-bash-snapshot-shopt-eval-pwd-v1",
+        operandSpan: { argvIndex: 2, start: source.length + prefix.length },
+      },
+    });
+  });
+
+  it("accepts a quoted snapshot path and refuses a source that is anything else", () => {
+    const script = (source: string) =>
+      `${source} 2>/dev/null || true && ${prefix}'true' < /dev/null && pwd -P >| /tmp/claude-1-cwd`;
+    expect(
+      extractClaudeBashWrapper("/bin/bash", [
+        "/bin/bash",
+        "-c",
+        script("source '/home/a b/.claude/shell-snapshots/snapshot-bash-1-x.sh'"),
+      ]),
+    ).toMatchObject({ kind: "matched", value: { command: "true" } });
+    for (const source of [
+      "source $(evil)",
+      "eval /tmp/x.sh",
+      "source /tmp/x.sh; rm -rf /",
+      // A comment would swallow the wrapper; a tilde or glob would not be that literal path.
+      "source #/tmp/x.sh",
+      "source ~/x.sh",
+      "source /tmp/*.sh",
+      "source /tmp/x?.sh",
+      "source /tmp/[ab].sh",
+    ])
+      expect(extractClaudeBashWrapper("/bin/bash", ["/bin/bash", "-c", script(source)])).toEqual({
+        kind: "gap",
+        reason: "unsupported-wrapper-prefix",
+      });
+  });
+
   it("decodes the observed template, compares the complete command, and records mapping provenance", () => {
     const command = `printf '%s' "quoted $HOME \`command\``;
     const ledger = observedLedger({ pathMapping: rootMapping });

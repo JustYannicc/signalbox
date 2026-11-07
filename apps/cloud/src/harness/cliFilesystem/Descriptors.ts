@@ -26,16 +26,20 @@ export class CliDescriptorViews {
   readonly #paths;
   readonly #remote;
   readonly #reserve;
+  readonly #held;
   constructor(
     files: CliFileWorkingSet,
     paths: CliFilePaths,
     remote: ReturnType<typeof createNodeFsSyscallClient>,
     reserve: (fd: number) => Promise<void>,
+    /** A child's hold on `fd`, which Computer must not see closed while the child needs it. */
+    held: (fd: number) => Promise<void> | undefined = () => undefined,
   ) {
     this.#files = files;
     this.#paths = paths;
     this.#remote = remote;
     this.#reserve = reserve;
+    this.#held = held;
   }
   lease(ids: readonly number[]) {
     for (const id of ids) {
@@ -202,6 +206,18 @@ export class CliDescriptorViews {
     const view = this.get(fd);
     this.#views.delete(fd);
     view.release();
+    const held = this.#held(fd);
+    if (held === undefined) return this.#closeRemote(fd);
+    // The slot stays out of reuse until the child no longer needs it and Computer closes it.
+    void held.then(() => {
+      try {
+        this.#closeRemote(fd);
+      } catch {
+        // A failed write queue fails the CLI's next call that relies on it.
+      }
+    });
+  }
+  #closeRemote(fd: number) {
     this.#files.writes.order(async () => {
       if (!this.#slots.has(fd)) {
         await this.#remote.close(fd);
